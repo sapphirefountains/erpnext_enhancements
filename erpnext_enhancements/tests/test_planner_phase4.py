@@ -1586,6 +1586,206 @@ class TestEquipmentDefinitions(unittest.TestCase):
 		)
 
 
+class TestNightlyLaborForecastRefresh(unittest.TestCase):
+	"""``planner_tracking.refresh_labor_forecasts``: the figure stored on the Labor line stays fresh
+	without anybody saving the Project."""
+
+	JOB = "erpnext_enhancements.project_enhancements.planner_tracking.refresh_labor_forecasts"
+
+	def setUp(self):
+		_reset()
+		self.lines = []  # the "database": {line, project, status, category, parentfield, labor_forecast}
+		self.writes = []
+		self.commits = []
+		self.rollbacks = []
+		self.queries = []
+		self.table_exists = True
+
+		def sql(query, values=None, as_dict=False, **kwargs):
+			# Honors the bound parameters the way the database would, so a wrong status list or
+			# category in the query is a failing test and not a silent pass.
+			self.queries.append((query, values))
+			rows = [
+				_Doc(line=r["line"], project=r["project"], labor_forecast=r.get("labor_forecast"))
+				for r in self.lines
+				if r["category"] == values["category"]
+				and r.get("parentfield", "custom_budget_lines") == values["field"]
+				and (r.get("status") or "") not in values["closed"]
+			]
+			return rows
+
+		self.patches = [
+			mock.patch.object(frappe.db, "sql", sql),
+			mock.patch.object(frappe.db, "table_exists", lambda dt: self.table_exists, create=True),
+			mock.patch.object(
+				frappe.db,
+				"set_value",
+				lambda *a, **k: self.writes.append((a, k)),
+				create=True,
+			),
+			mock.patch.object(frappe.db, "commit", lambda: self.commits.append(1), create=True),
+			mock.patch.object(frappe.db, "rollback", lambda: self.rollbacks.append(1), create=True),
+			mock.patch.object(frappe, "logger", lambda *a, **k: mock.Mock(), create=True),
+		]
+		for patcher in self.patches:
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+		def no_save(*a, **k):
+			raise AssertionError("the nightly job must never load or save a Project")
+
+		frappe.get_doc = no_save
+
+	def _line(self, project, category="Labor", status="Open", stored=0, name=None):
+		self.lines.append(
+			{
+				"line": name or f"{project}-{category}",
+				"project": project,
+				"category": category,
+				"status": status,
+				"labor_forecast": stored,
+			}
+		)
+
+	def _run(self, costs):
+		"""Run the job with ``labor_forecast`` answering ``costs[project]`` (an exception raises)."""
+
+		def forecast(project, with_cost=False, now=None):
+			self.assertTrue(with_cost)
+			value = costs[project]
+			if isinstance(value, Exception):
+				raise value
+			return {"forecast_cost": value}
+
+		with mock.patch.object(tracking, "labor_forecast", forecast):
+			return tracking.refresh_labor_forecasts()
+
+	def test_it_writes_only_the_values_that_changed_and_never_bumps_modified(self):
+		self._line("PRJ-1", stored=100)
+		self._line("PRJ-2", stored=250.5)
+		self._line("PRJ-3", stored=None)
+		summary = self._run({"PRJ-1": 100.0, "PRJ-2": 300.25, "PRJ-3": 0})
+		self.assertEqual(summary, {"checked": 3, "updated": 1, "failed": 0, "skipped": 0})
+		self.assertEqual(
+			self.writes,
+			[(("Project Budget Line", "PRJ-2-Labor", "labor_forecast", 300.25), {"update_modified": False})],
+		)
+		self.assertEqual(len(self.commits), 3)  # committed after each project, changed or not
+
+	def test_it_never_saves_a_project_and_every_write_is_a_child_row_without_modified(self):
+		self._line("PRJ-1", stored=1)
+		self._run({"PRJ-1": 2})  # get_doc is a tripwire in setUp
+		for args, kwargs in self.writes:
+			self.assertEqual(args[0], "Project Budget Line")
+			self.assertIs(kwargs.get("update_modified"), False)
+		source = TRACKING_PATH.read_text(encoding="utf-8")
+		body = source.split("def refresh_labor_forecasts(", 1)[1].split("\n# ----", 1)[0]
+		for forbidden in (".save(", "get_doc(", "doc.save", '"Project",'):
+			self.assertNotIn(forbidden, body)
+		self.assertIn("update_modified=False", body)
+
+	def test_one_failing_project_is_logged_and_the_rest_continue(self):
+		for project in ("PRJ-1", "PRJ-2", "PRJ-3"):
+			self._line(project, stored=0)
+		summary = self._run({"PRJ-1": 10, "PRJ-2": RuntimeError("engine blew up"), "PRJ-3": 30})
+		self.assertEqual(summary, {"checked": 3, "updated": 2, "failed": 1, "skipped": 0})
+		self.assertEqual([w[0][1] for w in self.writes], ["PRJ-1-Labor", "PRJ-3-Labor"])
+		self.assertEqual(len(frappe.errors), 1)
+		args, kwargs = frappe.errors[0]
+		self.assertEqual(args, ())  # keyword arguments only
+		self.assertEqual(kwargs["title"], tracking.REFRESH_TITLE)
+		self.assertIn("PRJ-2", kwargs["message"])
+		self.assertEqual(len(self.rollbacks), 1)
+		self.assertEqual(len(self.commits), 2)
+
+	def test_closed_projects_are_skipped(self):
+		for status in engine.CLOSED_PROJECT_STATUSES:
+			self._line(f"PRJ-{status}", status=status)
+		self._line("PRJ-OPEN", status="Open")
+		self._line("PRJ-BLANK", status=None)
+		summary = self._run({"PRJ-OPEN": 5, "PRJ-BLANK": 6})
+		self.assertEqual(summary["checked"], 2)
+		self.assertEqual(sorted(w[0][1] for w in self.writes), ["PRJ-BLANK-Labor", "PRJ-OPEN-Labor"])
+		query, values = self.queries[0]
+		self.assertEqual(set(values["closed"]), set(engine.CLOSED_PROJECT_STATUSES))
+
+	def test_lines_that_are_not_labor_are_untouched(self):
+		from erpnext_enhancements.quality import budgets
+
+		self._line("PRJ-1", category="Materials", stored=7)
+		self._line("PRJ-2", category="Labor", stored=7)
+		summary = self._run({"PRJ-2": 9})  # PRJ-1 is not in the map: asking for it would KeyError
+		self.assertEqual(summary["checked"], 1)
+		self.assertEqual([w[0][1] for w in self.writes], ["PRJ-2-Labor"])
+		self.assertEqual(self.queries[0][1]["category"], budgets.CATEGORY_LABOR)
+		self.assertEqual(self.queries[0][1]["field"], budgets.LINES_FIELD)
+
+	def test_a_second_labor_line_on_one_project_is_not_computed_twice(self):
+		self._line("PRJ-1", stored=1, name="ROW-A")
+		self._line("PRJ-1", stored=1, name="ROW-B")
+		summary = self._run({"PRJ-1": 2})
+		self.assertEqual(summary["checked"], 1)
+		self.assertEqual([w[0][1] for w in self.writes], ["ROW-A"])
+
+	def test_the_run_is_capped(self):
+		for index in range(5):
+			self._line(f"PRJ-{index}")
+		costs = {f"PRJ-{index}": index + 1 for index in range(5)}
+		with mock.patch.object(tracking, "REFRESH_MAX_PROJECTS", 2):
+			summary = self._run(costs)
+		self.assertEqual(summary, {"checked": 2, "updated": 2, "failed": 0, "skipped": 3})
+
+	def test_it_does_nothing_without_the_table_or_the_column(self):
+		self._line("PRJ-1")
+		self.table_exists = False
+		self.assertEqual(self._run({"PRJ-1": 1})["checked"], 0)
+		self.assertEqual((self.queries, self.writes), ([], []))
+		self.table_exists = True
+
+		def raising(doctype, column):
+			raise RuntimeError("Table 'tabProject Budget Line' doesn't exist")
+
+		with mock.patch.object(frappe.db, "has_column", raising):
+			self.assertEqual(self._run({"PRJ-1": 1})["checked"], 0)
+		with mock.patch.object(frappe.db, "has_column", lambda doctype, column: False):
+			self.assertEqual(self._run({"PRJ-1": 1})["checked"], 0)
+		self.assertEqual((self.queries, self.writes), ([], []))
+
+	def test_the_engine_is_called_with_google_off(self):
+		calls = []
+
+		def compute(start, end, resources=None, exclude=(), extra=(), google=True, equipment=False):
+			calls.append(google)
+			return {"resources": [], "days": {}}
+
+		self._line("PRJ-1", stored=5)
+		self._line("PRJ-2", stored=0)
+		frappe.tables["Project"] = [{"name": "PRJ-1"}, {"name": "PRJ-2"}]
+		with mock.patch.object(engine, "_compute", compute):
+			summary = tracking.refresh_labor_forecasts()  # the real labor_forecast
+		self.assertEqual(calls, [False, False])
+		self.assertEqual(summary["failed"], 0)
+		# No bookings and no clocked time: the forecast is 0, so only the line holding 5 changes.
+		self.assertEqual([w[0][1:] for w in self.writes], [("PRJ-1-Labor", "labor_forecast", 0.0)])
+
+	def test_it_is_registered_in_hooks_on_the_long_queue(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		events = next(
+			node.value
+			for node in tree.body
+			if isinstance(node, ast.Assign)
+			and any(getattr(t, "id", None) == "scheduler_events" for t in node.targets)
+		)
+		registered = [
+			key.value
+			for key, value in zip(events.keys, events.values, strict=True)
+			if self.JOB in {c.value for c in ast.walk(value) if isinstance(c, ast.Constant)}
+		]
+		self.assertEqual(registered, ["daily_long"])
+		module, _, function = self.JOB.rpartition(".")
+		self.assertTrue(callable(getattr(importlib.import_module(module), function)))
+
+
 class TestWiring(unittest.TestCase):
 	def test_the_phase4_endpoints_are_reads(self):
 		endpoints = _whitelisted(API_PATH)

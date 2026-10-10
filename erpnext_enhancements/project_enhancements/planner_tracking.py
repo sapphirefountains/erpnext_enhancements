@@ -37,6 +37,7 @@ The pure helpers take plain values so ``tests/test_planner_phase4.py`` runs them
 """
 
 import datetime
+import time
 from collections import defaultdict
 
 import frappe
@@ -559,6 +560,120 @@ def labor_forecast(project, with_cost=False, now=None):
 		rate_of = (lambda day, rows=rows: rate_on(rows, day)) if with_cost else None
 		people[key] = forecast_person(booked.get(key) or {}, dict(actual.get(key) or {}), today, rate_of)
 	return forecast_answer(project, people, labels, with_cost, through)
+
+
+# ---------------------------------------------------------------------- nightly refresh (P4.2)
+
+#: At most this many projects per night, newest activity first; the rest wait for the next run.
+REFRESH_MAX_PROJECTS = 500
+#: A time budget for the run (the `daily_long` queue allows 25 minutes), so a slow night stops
+#: cleanly between two projects instead of being killed in the middle of one.
+REFRESH_SECONDS = 20 * 60
+BUDGET_LINE = "Project Budget Line"
+REFRESH_TITLE = "Labor forecast nightly refresh failed"
+
+
+def _refresh_lines():
+	"""``[{"project", "line", "labor_forecast"}]``: each open project's first Labor line, newest first.
+
+	Closed projects (the engine's ``CLOSED_PROJECT_STATUSES``) are left out, so a finished job's
+	last figure stands. The first line by ``idx`` is the one ``budget_rollup.refresh_labor_forecast``
+	writes (``budgets.line_for``), so it is the one refreshed here.
+	"""
+	from erpnext_enhancements.quality import budgets
+
+	rows = frappe.db.sql(
+		"""
+		select bl.name as line, bl.parent as project, bl.labor_forecast as labor_forecast
+		from `tabProject Budget Line` bl
+		join `tabProject` p on p.name = bl.parent
+		where bl.parenttype = 'Project'
+		  and bl.parentfield = %(field)s
+		  and bl.category = %(category)s
+		  and ifnull(p.status, '') not in %(closed)s
+		order by p.modified desc, bl.parent, bl.idx
+		""",
+		{
+			"field": budgets.LINES_FIELD,
+			"category": budgets.CATEGORY_LABOR,
+			"closed": tuple(engine.CLOSED_PROJECT_STATUSES),
+		},
+		as_dict=True,
+	)
+	seen, out = set(), []
+	for row in rows or []:
+		if row.get("project") in seen:
+			continue
+		seen.add(row.get("project"))
+		out.append(row)
+	return out
+
+
+def refresh_labor_forecasts():
+	"""Scheduler (``daily_long``): refresh ``Project Budget Line.labor_forecast`` on every open project.
+
+	The figure is otherwise computed only when a Project is saved
+	(``budget_rollup.refresh_labor_forecast``), so it went stale as bookings and clock-ins changed
+	(Nik, 2026-10-09: "refresh it nightly"). For each project that has a Labor budget line and is
+	not closed, this computes :func:`labor_forecast` with cost (``google=False`` inside, so it costs
+	no Google call) and writes ``forecast_cost`` to that line.
+
+	How it writes, and why:
+
+	* **``frappe.db.set_value`` on the child row with ``update_modified=False``, and only when the
+	  figure changed.** Saving the Project would fire every Project hook and bump its ``modified``
+	  every night, which would also fail the next person's save as "document has been modified".
+	* **One project at a time, each in its own ``try``**, committed as it goes: one project that
+	  fails (an engine bug on odd data) is logged and the rest still run.
+	* **Bounded**: :data:`REFRESH_MAX_PROJECTS` projects and :data:`REFRESH_SECONDS` seconds.
+	* **Permissions do not apply**: the scheduler runs as the system, and the figure lands in the
+	  permlevel-2 field that only cost roles can read, exactly as it does on a save.
+	* **Does nothing** when the Project Budget Line table or its ``labor_forecast`` column is
+	  absent (a site mid-migrate, ERPNext's own test bootstrap). ``has_column`` raises on an
+	  unknown table, hence the ``try``.
+
+	Returns ``{"checked", "updated", "failed", "skipped"}`` and logs a one-line summary.
+	"""
+	summary = {"checked": 0, "updated": 0, "failed": 0, "skipped": 0}
+	try:
+		if not (frappe.db.table_exists(BUDGET_LINE) and frappe.db.has_column(BUDGET_LINE, "labor_forecast")):
+			return summary
+		lines = _refresh_lines()
+	except Exception:
+		frappe.log_error(title=REFRESH_TITLE, message=frappe.get_traceback())
+		return summary
+
+	started = time.monotonic()
+	for index, row in enumerate(lines):
+		if index >= REFRESH_MAX_PROJECTS or time.monotonic() - started > REFRESH_SECONDS:
+			summary["skipped"] = len(lines) - index
+			break
+		summary["checked"] += 1
+		try:
+			forecast = labor_forecast(row["project"], with_cost=True)
+			cost = round(_float(forecast.get("forecast_cost")), 2)
+			if cost != round(_float(row.get("labor_forecast")), 2):
+				frappe.db.set_value(BUDGET_LINE, row["line"], "labor_forecast", cost, update_modified=False)
+				summary["updated"] += 1
+			frappe.db.commit()
+		except Exception:
+			summary["failed"] += 1
+			try:
+				frappe.db.rollback()
+			except Exception:
+				pass
+			frappe.log_error(
+				title=REFRESH_TITLE,
+				message=f"Project {row.get('project')}: {frappe.get_traceback()}",
+			)
+	try:
+		frappe.logger("planner_tracking").info(
+			"labor forecast refresh: checked {checked}, updated {updated}, failed {failed}, "
+			"skipped {skipped}".format(**summary)
+		)
+	except Exception:
+		pass
+	return summary
 
 
 # ---------------------------------------------------------------------- Task validate (P4.4)

@@ -1619,6 +1619,18 @@ scheduler_events = {
 		# still lack coordinates, and geocodes a bounded batch (40). Never raises; idempotent.
 		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
 	],
+	"daily_long": [
+		# project planner labor forecast (Phase 4 follow-up): Project Budget Line.labor_forecast on the Labor
+		# line was computed only when a Project was saved, so it went stale as bookings and
+		# clock-ins changed (Nik, 2026-10-09: "refresh it nightly"). This recomputes it for every
+		# open project that has a Labor line (engine google=False: no Google calls) and writes it
+		# with frappe.db.set_value(update_modified=False), only when it changed -- never
+		# doc.save(), which would fire every Project hook and bump `modified` each night. One
+		# project at a time, each in its own try and committed, capped at 500 projects / 20
+		# minutes. On the long queue (the engine read per project is heavy); a no-op while the
+		# Project Budget Line table or its labor_forecast column does not exist.
+		"erpnext_enhancements.project_enhancements.planner_tracking.refresh_labor_forecasts",
+	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a
 		# session that ended without a final beacon (closed laptop, dead phone,

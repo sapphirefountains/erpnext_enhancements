@@ -4243,7 +4243,7 @@ const PP5_METHODS = {
 		return [`<span class="pp-chip pp-weather" title="${pp_esc(flags.join(", "))}">${pp_esc(text)}</span>`];
 	},
 
-	// "Thu, Oct 15: Rain 70%, Wind 45 km/h" for every flagged day of the task.
+	// "Thu, Oct 15: Rain 70%, Wind 28 mph" for every flagged day of the task.
 	weather_lines(card) {
 		return (Array.isArray(card.weather) ? card.weather : [])
 			.filter((entry) => (entry.flags || []).length)
@@ -5071,7 +5071,7 @@ const PP6A_METHODS = {
 						item(chip("pp-pencil", "Pencil"), "Pencilled in, not firm yet."),
 						item(chip("pp-amber", "Starts before Dig"), "It starts before a task it depends on ends."),
 						item(chip("pp-amber", "Missing Forklift"), "Nobody on the crew holds a qualification it needs."),
-						item(chip("pp-weather", "Rain 70%"), "Outdoor work on a day with rain, freezing or high wind in the forecast."),
+						item(chip("pp-weather", "Rain 70%"), "Outdoor work on a day with rain (60% or more), a low of 32 °F or colder, or wind of 25 mph or more in the forecast."),
 						item(chip("", "14h of 12h"), "Hours clocked against the plan. Red when it is running over."),
 						item(chip("pp-equip", "Truck 3"), "A vehicle or asset the task uses."),
 						item(chip("", "Delivery"), "A rental crew task. Its dates follow its Rental Booking."),

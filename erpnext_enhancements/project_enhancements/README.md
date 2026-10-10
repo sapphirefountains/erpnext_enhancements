@@ -35,10 +35,10 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
 | `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D) when the person has something booked, and never sending on a note or block alone (Phase 6E); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
-| `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`), and the Task equipment validator | `task_actuals`, `labor_forecast`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `doc_events["Task"]["validate"]` |
+| `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`) with its nightly refresh of the stored Labor-line figure, and the Task equipment validator | `task_actuals`, `labor_forecast`, `refresh_labor_forecasts`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `scheduler_events.daily_long`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
-| `planner_weather.py` | Phase 5 weather flags (v1.583.0): one Open-Meteo request per load for every uncached site, each point cached 3 hours; flags rain ≥ 60%, a low ≤ 0 °C and wind ≥ 40 km/h on tasks ticked *Outdoor work*. Never fails a read and never logs a request URL | `day_flags`, `forecasts`, `forecast_for_tasks`, `span_weather` | `api/project_planner` (`get_planner`, `get_route`, `suggest_dates`, `who_is_free`) |
+| `planner_weather.py` | Phase 5 weather flags (v1.583.0): one Open-Meteo request per load for every uncached site, each point cached 3 hours; flags rain ≥ 60%, a low ≤ 32 °F and wind ≥ 25 mph (imperial units, asked of Open-Meteo directly) on tasks ticked *Outdoor work*. Never fails a read and never logs a request URL | `day_flags`, `forecasts`, `forecast_for_tasks`, `span_weather` | `api/project_planner` (`get_planner`, `get_route`, `suggest_dates`, `who_is_free`) |
 | `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `doctype/planner_draft_change/` | One pending change per planner per task while in draft mode; Publish applies them, Discard drops them | `PlannerDraftChange` | `api/project_planner` |
@@ -733,7 +733,17 @@ shop" is one setting), through each located task, rental crew task and maintenan
     `setup_custom_perms`, so a site without Custom DocPerm rows keeps its standard ones; production
     already had 27). Frappe strips level-2 fields from the save response for anyone else.
   - The stored figure is refreshed when the Project is saved (`budget_rollup.refresh_labor_forecast`,
-    its own `try`), so it can go stale between saves; the planner's strip always reads it live.
+    its own `try`) **and nightly** (`planner_tracking.refresh_labor_forecasts`, `scheduler_events`
+    `daily_long`; Nik, 2026-10-09), so it no longer goes stale as bookings and clock-ins change; the
+    planner's strip always reads it live. The nightly job takes every Project that is not closed
+    (`crew_availability.CLOSED_PROJECT_STATUSES`) and has a Labor budget line, computes the forecast
+    with cost (`google=False`: no Google calls) and writes it with `frappe.db.set_value` on the child
+    row, `update_modified=False`, and only when the figure changed. It never saves the Project (that
+    would fire every Project hook and bump `modified` nightly). One project at a time, each in its
+    own `try` (a failure is logged with `frappe.log_error` and the rest continue) and committed as
+    it goes; capped at 500 projects and 20 minutes, newest activity first, with a one-line summary
+    in the `planner_tracking` log. A no-op while the Project Budget Line table or its
+    `labor_forecast` column does not exist.
 - **Crew Utilization** report: capacity vs booked vs clocked per person per week (site's first
   weekday) or month. Clocked time on non-customer work is its own **Other clocked** column, never
   dropped. Hours only.
@@ -754,8 +764,13 @@ shop" is one setting), through each located task, rental crew task and maintenan
   decision), and copies only from a Task with `is_template`. `before_insert` rather than
   `after_insert`, so the values go in with the one insert and pass the Task's own validation.
 - **Weather** (`planner_weather`, Open-Meteo: free and keyless): a task ticked *Outdoor work*
-  (`custom_outdoor`) carries `weather`, the days of its span with rain ≥ 60%, a low ≤ 0 °C or wind
-  ≥ 40 km/h. `[]` means the forecast is clear and `null` means there is none, which the page draws
+  (`custom_outdoor`) carries `weather`, the days of its span with rain ≥ 60%, a low ≤ 32 °F or wind
+  ≥ 25 mph. Units are imperial (Nik, 2026-10-09: "keep the weather thresholds but use imperial"):
+  the request asks Open-Meteo for `temperature_unit=fahrenheit` and `wind_speed_unit=mph`, nothing
+  is converted, and the chips read "Freezing 28 °F" and "Wind 28 mph". The thresholds are the same
+  lines as before (32 °F is freezing; 25 mph is the old 40 kilometres an hour, rounded). Each
+  point's three-hour cache key carries the unit (`CACHE_PREFIX`), so an answer cached under metric
+  units is never read back as imperial. `[]` means the forecast is clear and `null` means there is none, which the page draws
   as no chip. Route stops on outdoor tasks show it too, and *Suggest dates* scores each flagged day
   as 30 more minutes of driving and says why ("Forecast: Rain 70%") — a worse suggestion, never an
   impossible one. A failure hides the chip, backs off for 10 minutes and logs once an hour with a
@@ -1328,6 +1343,7 @@ Project Planner needs no constructor hook (its style is added on first use). The
 - `scheduler_events` (every 10 minutes) → `customer_confirmations.send_due_confirmations`, a no-op while the switch is off (v1.583.0).
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
+- `scheduler_events.daily_long` → `planner_tracking.refresh_labor_forecasts` (the nightly refresh of the Labor line's stored `labor_forecast`, no Google calls, never saves the Project; Phase 4 follow-up).
 - `assistant_tools` → `crew_conflicts.CrewConflicts` (Phase 6D: the Conflict center's list, read-only, never a block's note). Personal blocks and day notes need no hook: the engine reads them, and the planners' reads and the three digests call `api/planner_blocks` directly.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
