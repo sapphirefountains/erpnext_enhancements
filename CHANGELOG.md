@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.588.1] - 2026-10-09
+
+### Changed
+
+- **"Add visit here…" warns about a second open visit for the same fountain.** Submitting two open
+  visits for one fountain would roll its contract's next-visit date forward twice. Nik's call:
+  warn, never block.
+  - It asks for a reason, using the same prompt and conflict list as overbooking, and creates
+    nothing until it gets one.
+  - With a reason, the visit is created and the reason goes on its timeline.
+  - It uses the same open-visit lookup the form already names.
+  - It never applies to a visit that isn't linked to a contract.
+- **In working-days mode, a backward drag onto a weekend lands on the Friday before.** A forward drag
+  still lands on the Monday after (Nik).
+
 ## [1.588.0] - 2026-10-09
 
 ### Added
