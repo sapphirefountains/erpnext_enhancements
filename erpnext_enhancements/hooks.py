@@ -1620,7 +1620,7 @@ scheduler_events = {
 		"erpnext_enhancements.project_enhancements.routing.backfill_coordinates",
 	],
 	"daily_long": [
-		# project planner labor forecast (Phase 4 follow-up): Project Budget Line.labor_forecast on the Labor
+		# project planner labor forecast (Phase 4 follow-up, v1.589.0): Project Budget Line.labor_forecast on the Labor
 		# line was computed only when a Project was saved, so it went stale as bookings and
 		# clock-ins changed (Nik, 2026-10-09: "refresh it nightly"). This recomputes it for every
 		# open project that has a Labor line (engine google=False: no Google calls) and writes it

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.589.0] - 2026-10-09
+
+### Added
+
+- **The labor forecast refreshes nightly** (Nik, 2026-10-09). Until now
+  `Project Budget Line.labor_forecast` on the Labor line was recomputed only when the Project was
+  saved, so it went stale as bookings and clock-ins changed.
+  - A new `daily_long` job, `planner_tracking.refresh_labor_forecasts`, recomputes it for every open
+    project with a Labor line. The engine runs without Google, so it costs nothing.
+  - It writes only that figure, only when it changed, with `update_modified=False`. It never saves
+    the Project, which would fire every Project hook and bump `modified` every night.
+  - Each project runs in its own try and commits on its own, so one failure is logged and the rest
+    continue.
+  - Each run is capped at 500 projects and 20 minutes.
+  - It does nothing while the table or column is absent.
+  - It runs on the long queue because each project needs a full engine read.
+
+### Changed
+
+- **Weather flags are in imperial units, at the same thresholds** (Nik, 2026-10-09).
+  - The planner now asks Open-Meteo for Fahrenheit and mph, and flags rain of 60 % or more, a low of
+    **32 °F** or colder, and wind of **25 mph** or more. 40 km/h is 24.9 mph, so 25 mph is the same
+    threshold rounded.
+  - The flag text reads "Freezing 28 °F" and "Wind 28 mph" everywhere it shows: cards, the task
+    panel, route stops, Suggest dates and the legend.
+  - The cache key now carries the unit, so no cached metric answer is read back as imperial.
+
 ## [1.588.1] - 2026-10-09
 
 ### Changed
