@@ -308,6 +308,7 @@ class MaintenancePlanner {
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
 		this.init_phase6a();
+		this.init_phase6b();
 		this.init_phase6c();
 		this.init_phase6d();
 		this.bind_drag();
@@ -813,6 +814,7 @@ class MaintenancePlanner {
 				  )
 		);
 		this.render_phase6a();
+		this.render_phase6b();
 		this.render_phase6c();
 		this.render_phase6d();
 	}
@@ -1377,6 +1379,7 @@ class MaintenancePlanner {
 		document.body.classList.add("mp-drag-active");
 		this.place_ghost(drag.x, drag.y);
 		if (drag.touch && navigator.vibrate) navigator.vibrate(12);
+		this.p6b_lift(drag);
 	}
 
 	place_ghost(x, y) {
@@ -1498,6 +1501,7 @@ class MaintenancePlanner {
 	}
 
 	drop(source, target) {
+		if (this.p6b_drop(source, target)) return;
 		const plan = this.plan_drop(source, target);
 		if (!plan) return;
 		if (plan.refuse) {
@@ -1743,6 +1747,7 @@ class MaintenancePlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
+		if (this.p6b_undo(snap)) return;
 		const today = this.today();
 		const reason = __(MP.undo_reason);
 		if (snap.kind === "drafted") {
@@ -2739,13 +2744,1240 @@ const MP6A_METHODS = {
 					],
 				},
 				...this.p6d_legend_sections(),
-			],
+			].concat(this.p6b_legend_sections()),
 			{ title: __("How to read the Maintenance Planner"), owner: MP6A.owner }
 		);
 	},
 };
 
 Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
+
+// ====================================================================== Phase 6B: faster scheduling
+//
+// The Maintenance Planner's half of Phase 6B (TASK-2026-02468; the Project Planner has the rest, see
+// its own block). What applies to visits:
+//
+//   - right-click a visit, an empty spot or a name (a long press of about half a second on a touch
+//     screen, when the finger does not move)  a menu (planner_kit.menu): Edit, Assign to..., Move to
+//                                            next free day, Site at a glance, the technician's week;
+//                                            Everyone's day on an empty spot; See their week on a
+//                                            name. Other phases add items through this.p6_menu_providers
+//   - Shift-, Ctrl- or Cmd-click draft visits a selection (this.p6_selection, visit keys); drag one and
+//                                            they all move by the same number of calendar days, one
+//                                            move_visit each after a single confirmation, one reason
+//                                            for the lot and one Undo
+//   - the search box (or /)                  visits, sites and technicians on screen first, then the
+//                                            server (search_planner, planner="maintenance")
+//   - T, the arrows, 1 2 3, Ctrl/Cmd+Z, ?, Esc keyboard shortcuts, listed in the legend
+//
+// Left out on purpose: Duplicate, Split and Pencil (a visit has none of them), resizing (no visit
+// spans several days) and "Add visit here" (every way a visit is created today belongs to the
+// contract, the scheduler or the Visit Wizard on site; see the README).
+//
+// Nothing here picks a person: Assign to... lists the technicians who are free that day
+// (project_planner.who_is_free) and the planner clicks one. Every write is the page's own: move_visit
+// and add_crew through send(), so the reason prompt and Undo apply.
+//
+// Hooks into the class above, one line each: init_phase6b (constructor), render_phase6b (render),
+// p6b_lift (lift), p6b_drop (drop), p6b_undo (undo), and p6b_legend_sections (p6a_legend).
+
+const MP6B = {
+	who_is_free: "erpnext_enhancements.api.project_planner.who_is_free",
+	next_free_day: "erpnext_enhancements.api.planner_conflicts.get_next_free_day",
+	search: "erpnext_enhancements.api.planner_actions.search_planner",
+	long_press_ms: 500,
+	search_min: 2,
+	search_wait_ms: 250,
+	search_limit: 20,
+	flash_ms: 2600,
+	default_visit_hours: 2,
+	widths: { assign: 440, panel: 460 },
+};
+
+// Pure helpers, the same as the Project Planner's PP6B_PURE (tests/test_planner_phase6b.py runs the
+// same cases through both under node).
+const MP6B_PURE = {
+	ymd_add(ymd, days) {
+		const date = new Date(`${ymd}T00:00:00Z`);
+		date.setUTCDate(date.getUTCDate() + (Number(days) || 0));
+		return date.toISOString().slice(0, 10);
+	},
+	ymd_diff(a, b) {
+		return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+	},
+	toggle(set, key) {
+		if (set.has(key)) {
+			set.delete(key);
+			return false;
+		}
+		set.add(key);
+		return true;
+	},
+	shortcut(info) {
+		if (!info || info.editable || info.dialog) return null;
+		const key = String(info.key || "");
+		if ((info.ctrl || info.meta) && !info.alt && !info.shift && key.toLowerCase() === "z") return "undo";
+		// Ctrl+S, Ctrl+K, Ctrl+G, Alt+... stay frappe's.
+		if (info.ctrl || info.meta || info.alt) return null;
+		if (key === "Escape" || key === "Esc") return "escape";
+		if (key === "?") return "legend";
+		// Shift+T is frappe's console.
+		if (info.shift) return null;
+		if (key === "t" || key === "T") return "today";
+		if (key === "/") return "search";
+		if (key === "ArrowLeft") return "prev";
+		if (key === "ArrowRight") return "next";
+		if (key === "1" || key === "2" || key === "3") return `view${key}`;
+		return null;
+	},
+	with_providers(items, providers, target) {
+		const out = (items || []).slice();
+		(providers || []).forEach((provider) => {
+			let group = [];
+			try {
+				group = (provider(target) || []).filter(Boolean);
+			} catch (e) {
+				group = [];
+			}
+			if (!group.length) return;
+			if (out.length && !out[out.length - 1].divider) out.push({ divider: true });
+			out.push(...group);
+		});
+		return out;
+	},
+	search_local(q, entries, limit) {
+		const words = String(q || "")
+			.toLowerCase()
+			.split(/\s+/)
+			.filter(Boolean);
+		if (!words.length) return [];
+		const order = { person: 0, project: 1, site: 1, task: 2, visit: 2 };
+		const rank = (kind) => (kind in order ? order[kind] : 3);
+		const found = [];
+		(entries || []).forEach((entry) => {
+			const hay = [entry.label].concat(entry.keys || []).join(" ").toLowerCase();
+			if (!words.every((word) => hay.includes(word))) return;
+			const starts = String(entry.label || "").toLowerCase().startsWith(words[0]) ? 0 : 1;
+			found.push({ entry, starts });
+		});
+		found.sort(
+			(a, b) =>
+				a.starts - b.starts ||
+				rank(a.entry.kind) - rank(b.entry.kind) ||
+				String(a.entry.label || "").localeCompare(String(b.entry.label || ""))
+		);
+		return found.slice(0, limit || 20).map((item) => item.entry);
+	},
+};
+
+const MP6B_STYLE = `
+.mp-card.mp-p6b-selected{outline:2px solid #7c3aed;outline-offset:1px;}
+.mp-p6b-bar{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:1020;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;max-width:calc(100vw - 24px);padding:6px 10px;border:1px solid #7c3aed;border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px;}
+.mp-p6b-bar-count{font-weight:600;}
+.mp-p6b-bar-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
+.mp-p6b-count{position:absolute;top:-9px;right:-9px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.mp-card.mp-p6b-flash{animation:mp-p6b-flash .8s ease-in-out 3;}
+@keyframes mp-p6b-flash{0%,100%{box-shadow:none;}50%{box-shadow:0 0 0 4px rgba(245,158,11,.85);}}
+.mp-p6b-search-wrap{position:relative;display:inline-block;}
+.mp-toolbar input.mp-p6b-search{width:210px;}
+.mp-p6b-results{position:absolute;top:100%;left:0;z-index:1030;margin-top:4px;min-width:300px;max-width:min(420px,calc(100vw - 24px));max-height:60vh;overflow-y:auto;padding:4px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);box-shadow:0 10px 28px rgba(0,0,0,.2);}
+.mp-p6b-result{display:flex;flex-direction:column;padding:5px 10px;cursor:pointer;font-size:13px;}
+.mp-p6b-result.mp-p6b-active,.mp-p6b-result:hover{background:var(--control-bg);}
+.mp-p6b-result-kind{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);}
+.mp-p6b-result-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6b-result-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mp-p6b-results-note{padding:4px 10px;font-size:11px;color:var(--text-muted);}
+.mp-p6b-modes{margin:4px 0 8px;}
+.mp-p6b-modes label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:normal;}
+.mp-p6b-pick{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-bottom:4px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);color:var(--text-color);text-align:left;cursor:pointer;}
+.mp-p6b-pick:hover,.mp-p6b-pick:focus{background:var(--control-bg);outline:none;}
+.mp-p6b-pick-busy{border-style:dashed;}
+.mp-p6b-pick-why{font-size:11px;color:var(--text-muted);}
+.mp-p6b-kbd{display:inline-block;min-width:18px;margin-right:3px;padding:0 5px;border:1px solid var(--border-color);border-bottom-width:2px;border-radius:4px;background:var(--control-bg);font-size:11px;font-family:inherit;text-align:center;}
+@media (max-width:760px){
+.mp-p6b-search-wrap{flex:1 1 100%;}
+.mp-toolbar input.mp-p6b-search{width:100%;}
+.mp-p6b-bar{bottom:64px;}
+}
+`;
+
+const MP6B_METHODS = {
+	init_phase6b() {
+		if (!document.getElementById("mp-style-6b")) {
+			$("<style id='mp-style-6b'>").text(MP6B_STYLE).appendTo(document.head);
+		}
+		// The registries other phases add to (phase6-wave2): menu items and legend sections.
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_legend_providers = this.p6_legend_providers || [];
+		// The multi-selection: visit keys. 6C's print reads it.
+		this.p6_selection = this.p6_selection || new Set();
+		this.p6b = {
+			press: null,
+			flash: null,
+			seen: null,
+			next_free: {},
+			keys_on: false,
+			search: { q: "", token: 0, timer: null, local: [], remote: [], loading: false, active: 0, shown: [], list_id: "" },
+		};
+		this.$p6b_toolbar = this.$body.find(".mp-toolbar").first();
+		this.p6b_build_search();
+		this.$p6b_bar = $('<div class="mp-p6b-bar" role="toolbar"></div>')
+			.attr("aria-label", __("Selected visits"))
+			.hide()
+			.appendTo(this.$body);
+		const root = this.$body[0];
+		// Capture on the page's own container: a modified click on a visit selects it, ahead of the
+		// card's own click (which opens it) and of 6A's quick-look clicks.
+		(root.parentElement || root).addEventListener("click", (e) => this.p6b_modifier_click(e), true);
+		root.addEventListener("click", (e) => this.p6b_plain_click(e));
+		root.addEventListener("contextmenu", (e) => this.p6b_contextmenu(e));
+		root.addEventListener("pointerdown", (e) => this.p6b_pointer_down(e), true);
+		document.addEventListener("pointermove", (e) => this.p6b_pointer_move(e));
+		document.addEventListener("pointerup", (e) => this.p6b_pointer_up(e));
+		document.addEventListener("pointercancel", (e) => this.p6b_pointer_cancel(e));
+		this.p6b_bind_keys();
+	},
+
+	render_phase6b() {
+		if (!this.p6b) return;
+		if (this.p6b.seen !== this.data) {
+			this.p6b.seen = this.data;
+			this.p6b.next_free = {};
+		}
+		this.p6b_prune_selection();
+		this.p6b_decorate_selection();
+		this.p6b_render_bar();
+		this.p6b_flash_pending();
+	},
+
+	p6b_kit() {
+		return (this.p6a && this.p6a.kit) || null;
+	},
+
+	p6b_navigate(fn) {
+		const kit = this.p6b_kit();
+		return kit ? kit.drawer.navigate(fn) : fn();
+	},
+
+	p6b_panel(opts) {
+		const kit = this.p6b_kit();
+		if (!kit) return new frappe.ui.Dialog({ title: opts.title, fields: opts.fields });
+		return kit.panel({
+			title: opts.title,
+			subtitle: opts.subtitle || "",
+			fields: opts.fields,
+			width: MP6B.widths.panel,
+			key: opts.key || null,
+			owner: MP6A.owner,
+			push: this.$body[0],
+		});
+	},
+
+	p6b_resource(user) {
+		const person = user && this.tech_by_user[user];
+		return (person && person.resource) || null;
+	},
+
+	// The hours one person spends on a visit: the lead's effective length, else Planned hours, else 2.
+	p6b_visit_hours(card) {
+		return Number(card.hours) > 0
+			? Number(card.hours)
+			: Number(card.planned_hours) > 0
+			? Number(card.planned_hours)
+			: MP6B.default_visit_hours;
+	},
+
+	// ------------------------------------------------------------------ the right-click menu
+
+	p6b_target(el) {
+		if (!el || !el.closest || !this.$body[0].contains(el)) return null;
+		if (el.closest("button, a, input, select, textarea, .mp-toolbar, .mp-legend, .mp-route, [data-route-resource], .mp-p6b-bar")) {
+			return null;
+		}
+		const card_el = el.closest(".mp-card[data-key]");
+		if (card_el) {
+			const card = this.by_key[card_el.getAttribute("data-key")];
+			if (!card) return null;
+			const row = card_el.getAttribute("data-row-user");
+			const user = row == null ? card.technician || null : row || null;
+			return { kind: "card", card, ymd: card.date || null, user, resource: this.p6b_resource(user), el: card_el };
+		}
+		const person_el = el.closest(".mp-person[data-user]");
+		if (person_el) {
+			const user = person_el.getAttribute("data-user");
+			return { kind: "person", user, resource: this.p6b_resource(user), el: person_el };
+		}
+		const cell = el.closest(".mp-cell[data-date]");
+		if (cell) {
+			const user = cell.getAttribute("data-user") || null;
+			return { kind: "cell", user, resource: this.p6b_resource(user), ymd: cell.getAttribute("data-date"), el: cell };
+		}
+		const day = el.closest(".mp-grid .mp-day[data-date]");
+		if (day) return { kind: "cell", user: null, resource: null, ymd: day.getAttribute("data-date"), el: day };
+		return null;
+	},
+
+	p6b_contextmenu(e) {
+		if (this.drag) return;
+		if (!this.p6b_open_for(e.target, { x: e.clientX, y: e.clientY }, !!this.p6b.press)) return;
+		e.preventDefault();
+		if (this.p6b.press) this.p6b.press.opened = true;
+	},
+
+	p6b_open_for(el, anchor, from_touch) {
+		if (!this.p6b_kit() || !this.data) return false;
+		const target = this.p6b_target(el);
+		if (!target) return false;
+		// The page's own items, then every provider's (6C, 6D-UI): a target with none of ours can still
+		// carry theirs, and a provider that throws is skipped.
+		const items = this.p6b_menu_items(target);
+		const all = MP6B_PURE.with_providers(items, this.p6_menu_providers, target);
+		if (!all.length) return false;
+		if (from_touch) {
+			this.click_blocked_until = Date.now() + 600;
+			this.p6b_swallow_click();
+		}
+		this.p6b_open_menu(target, all, anchor);
+		return true;
+	},
+
+	p6b_swallow_click() {
+		// The click a lifting finger makes comes at once; a later one is the planner's own.
+		const until = Date.now() + 350;
+		const swallow = (e) => {
+			document.removeEventListener("click", swallow, true);
+			if (Date.now() < until) {
+				e.stopPropagation();
+				e.preventDefault();
+			}
+		};
+		document.addEventListener("click", swallow, true);
+		setTimeout(() => document.removeEventListener("click", swallow, true), 500);
+	},
+
+	p6b_menu_title(target) {
+		if (target.kind === "card") return this.site_of(target.card);
+		if (target.kind === "person") return this.tech_name(target.user);
+		return [target.user ? this.tech_name(target.user) : "", target.ymd ? mp_when(target.ymd) : ""].filter(Boolean).join(" · ");
+	},
+
+	p6b_menu_items(target) {
+		if (target.kind === "card") return this.p6b_card_items(target);
+		if (target.kind === "person") {
+			return [{ label: __("See their week"), on_click: () => this.p6a_open_person(target.user) }];
+		}
+		if (target.kind === "cell" && target.ymd) {
+			return [{ label: __("Everyone's day"), on_click: () => this.p6a_open_day(target.ymd) }];
+		}
+		return [];
+	},
+
+	// `all`: the page's items with the providers' already appended (p6b_open_for).
+	p6b_open_menu(target, all, anchor) {
+		const kit = this.p6b_kit();
+		const handle = kit.menu({ anchor, items: all, title: this.p6b_menu_title(target), owner: MP6A.owner });
+		all.forEach((item) => {
+			if (!item || !item.p6b_lookup) return;
+			item.p6b_lookup.then((answer) => {
+				const state = this.p6b_free_state(answer);
+				this.p6b_menu_hint(handle, item.label, state.hint, state.disabled);
+			});
+		});
+		return handle;
+	},
+
+	p6b_menu_hint(handle, label, hint, disabled) {
+		if (!handle || !handle.el || !handle.el.isConnected) return;
+		const button = Array.from(handle.el.querySelectorAll(".pk-menu-item")).find(
+			(node) => node.firstChild && node.firstChild.textContent === label
+		);
+		if (!button) return;
+		let span = button.querySelector(".pk-menu-hint");
+		if (!span) {
+			span = document.createElement("span");
+			span.className = "pk-menu-hint";
+			button.appendChild(span);
+		}
+		span.textContent = hint || "";
+		button.disabled = !!disabled;
+	},
+
+	// A visit's items. A project task, rental crew task or travel day shown here is read-only: none of
+	// ours (another phase's provider may still add some; with none at all the browser's menu shows).
+	p6b_card_items(target) {
+		const card = target.card;
+		if (card.kind === "booking") return [];
+		const visit = card.kind === "visit";
+		const can = !!(this.data && this.data.can_move_visits);
+		const movable = !!(visit && card.movable && can);
+		const why = !visit
+			? __("Follows the site's Maintenance Profile")
+			: !can
+			? __("You cannot move visits")
+			: card.started
+			? __("Started")
+			: card.status !== "draft"
+			? __("Finished")
+			: __("Read-only");
+		const items = [
+			{ label: __("Edit"), on_click: () => this.open_card(card) },
+			{ label: __("Assign to…"), hint: movable ? "" : why, disabled: !movable, on_click: () => this.p6b_assign(card) },
+			this.p6b_next_free_item(card, movable, why),
+		];
+		if (card.project || card.technician) items.push({ divider: true });
+		if (card.project) items.push({ label: __("Site at a glance"), on_click: () => this.p6a_open_site(card) });
+		if (card.technician) {
+			items.push({
+				label: __("{0}'s week", [this.tech_name(card.technician)]),
+				on_click: () => this.p6a_open_person(card.technician, card.date),
+			});
+		}
+		return items;
+	},
+
+	p6b_next_free(card, resource, hours) {
+		const key = [card.key, resource, hours, this.modified[card.name] || card.modified].join("|");
+		if (!this.p6b.next_free[key]) {
+			const args = { resource, hours, after: card.date || this.today() };
+			this.p6b.next_free[key] = Promise.resolve(frappe.call({ method: MP6B.next_free_day, args }))
+				.then((r) => (r && r.message) || null)
+				.catch(() => null);
+		}
+		return this.p6b.next_free[key];
+	},
+
+	p6b_free_state(answer) {
+		if (!answer) return { hint: __("Could not check"), disabled: false };
+		if (answer.date) return { hint: mp_when(answer.date), disabled: false };
+		return { hint: __("Nothing free in {0} days", [answer.horizon || 30]), disabled: true };
+	},
+
+	// The visit's technician's next day with its hours free (planner_conflicts.get_next_free_day), then
+	// move_visit through apply(): draft visits nobody has started only.
+	p6b_next_free_item(card, movable, why) {
+		const item = { label: __("Move to next free day"), hint: __("Looking…"), disabled: false };
+		if (!movable) return Object.assign(item, { hint: why, disabled: true });
+		if (!card.technician) return Object.assign(item, { hint: __("No technician"), disabled: true });
+		const resource = this.p6b_resource(card.technician);
+		if (!resource) return Object.assign(item, { hint: __("Not a Planner Resource"), disabled: true });
+		const lookup = this.p6b_next_free(card, resource, this.p6b_visit_hours(card));
+		item.p6b_lookup = lookup;
+		item.on_click = () =>
+			lookup.then((answer) => {
+				if (answer && answer.date) {
+					this.apply(card, { date: answer.date });
+					return;
+				}
+				frappe.show_alert(
+					{
+						message: (answer && answer.note) || __("No free day found for {0}.", [this.tech_name(card.technician)]),
+						indicator: "orange",
+					},
+					7
+				);
+			});
+		return item;
+	},
+
+	// ------------------------------------------------------------------ assign to...
+
+	p6b_assign(card) {
+		const kit = this.p6b_kit();
+		if (!kit) {
+			this.open_card(card);
+			return;
+		}
+		if (!card.date) {
+			frappe.msgprint(__("Give the visit a date first: who is free depends on the day."));
+			return;
+		}
+		const state = { mode: card.technician ? "add" : "tech", data: null };
+		const handle = kit.drawer.open({
+			title: __("Assign to…"),
+			subtitle: [this.site_of(card), mp_when(card.date)].join(" · "),
+			body: `<p class="pk-empty">${mp_esc(__("Finding who is free…"))}</p>`,
+			width: MP6B.widths.assign,
+			key: `assign:${card.key}`,
+			owner: MP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.p6b_assign(this.by_key[card.key] || card),
+			on_click: (e, h) => this.p6b_assign_click(e, h, card, state),
+		});
+		Promise.resolve(
+			frappe.call({ method: MP6B.who_is_free, args: { start: card.date, hours: this.p6b_visit_hours(card) } })
+		)
+			.then((r) => {
+				if (!handle.is_open()) return;
+				state.data = (r && r.message) || null;
+				handle.set_body(this.p6b_assign_html(card, state));
+			})
+			.catch(() => {
+				if (handle.is_open()) handle.set_body(this.p6b_assign_html(card, state));
+			});
+	},
+
+	p6b_assign_html(card, state) {
+		const on = new Set(this.visit_people(card));
+		const listed = new Set(((this.data && this.data.technicians) || []).filter((person) => person.enabled).map((person) => person.user));
+		const parts = [
+			`<p class="pk-note">${mp_esc(
+				__("Pick who should go: nobody is chosen for you. Someone who is not free can still be booked; you will be asked for a reason.")
+			)}</p>`,
+		];
+		if (card.technician) {
+			const option = (value, text) =>
+				`<label><input type="radio" name="mp-p6b-mode" value="${mp_esc(value)}"${state.mode === value ? " checked" : ""}> ${mp_esc(text)}</label>`;
+			parts.push(
+				`<div class="mp-p6b-modes" role="radiogroup" aria-label="${mp_esc(__("How to assign"))}">${option(
+					"add",
+					__("Add to the crew")
+				)}${option("tech", __("Make them the technician, in place of {0}", [this.tech_name(card.technician)]))}</div>`
+			);
+		} else {
+			parts.push(`<p class="pk-note">${mp_esc(__("The visit has no technician: the person you pick fills it in."))}</p>`);
+		}
+		const data = state.data;
+		if (!data) {
+			parts.push(`<p class="pk-empty">${mp_esc(__("Who is free could not be loaded. Close this and try again."))}</p>`);
+			return parts.join("");
+		}
+		const entry = (data.days || [])[0] || { free: [], not_free: [] };
+		// Technicians only (the people this planner can put on a visit), by user, not already on it.
+		const keep = (person) => person.user && listed.has(person.user) && !on.has(person.user);
+		const row = (person, busy) =>
+			`<button type="button" class="mp-p6b-pick${busy ? " mp-p6b-pick-busy" : ""}" data-mp-p6b-pick="${mp_esc(person.user)}">` +
+			`<span><b>${mp_esc(this.tech_name(person.user) || person.label)}</b></span>` +
+			`<span class="mp-p6b-pick-why">${mp_esc(busy ? person.reason || "" : __("{0}h free", [mp_hours(person.free_hours)]))}</span></button>`;
+		const free = (entry.free || []).filter(keep);
+		const busy = (entry.not_free || []).filter(keep);
+		parts.push(
+			`<div class="pk-section-title">${mp_esc(__("Free on {0} ({1}h or more)", [mp_when(entry.date || card.date), mp_hours(data.hours)]))}</div>`
+		);
+		parts.push(
+			free.length
+				? free.map((person) => row(person, false)).join("")
+				: `<p class="pk-empty">${mp_esc(__("No technician has those hours free that day."))}</p>`
+		);
+		if (busy.length) {
+			parts.push(`<div class="pk-section-title">${mp_esc(__("Not free"))}</div>`);
+			parts.push(busy.map((person) => row(person, true)).join(""));
+		}
+		if (on.size) {
+			parts.push(
+				`<div class="pk-section-title">${mp_esc(__("Already on it"))}</div><p class="pk-note">${mp_esc(
+					[...on].map((user) => this.tech_name(user)).join(", ")
+				)}</p>`
+			);
+		}
+		return parts.join("");
+	},
+
+	p6b_assign_click(e, handle, card, state) {
+		const radio = e.target && e.target.closest ? e.target.closest("input[name='mp-p6b-mode']") : null;
+		if (radio) {
+			state.mode = radio.value;
+			return;
+		}
+		const pick = e.target && e.target.closest ? e.target.closest("[data-mp-p6b-pick]") : null;
+		if (!pick) return;
+		const user = pick.getAttribute("data-mp-p6b-pick");
+		const mode = state.mode;
+		handle.close();
+		const fresh = this.by_key[card.key] || card;
+		if (!fresh.movable) return;
+		if (mode === "add" && fresh.technician) this.add_to_crew(fresh, user);
+		else this.apply(fresh, { technician: user });
+	},
+
+	// ------------------------------------------------------------------ long press
+
+	p6b_pointer_down(e) {
+		this.p6b.press =
+			e.pointerType === "touch" && !(e.button > 0)
+				? { id: e.pointerId, x: e.clientX, y: e.clientY, at: Date.now(), target: e.target, moved: false, opened: false }
+				: null;
+	},
+
+	p6b_pointer_move(e) {
+		const press = this.p6b.press;
+		if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > MP.drag_px) {
+			press.moved = true;
+		}
+	},
+
+	p6b_pointer_up(e) {
+		const press = this.p6b.press;
+		this.p6b.press = null;
+		if (!press || e.pointerId !== press.id || press.moved || press.opened) return;
+		if (Date.now() - press.at < MP6B.long_press_ms) return;
+		this.p6b_open_for(press.target, { x: e.clientX, y: e.clientY }, true);
+	},
+
+	p6b_pointer_cancel(e) {
+		if (this.p6b.press && e.pointerId === this.p6b.press.id) this.p6b.press = null;
+	},
+
+	// ------------------------------------------------------------------ selection
+
+	p6b_selectable(card) {
+		return !!(card && card.kind === "visit" && card.movable && card.date && this.data && this.data.can_move_visits);
+	},
+
+	p6b_selected_cards() {
+		return [...this.p6_selection].map((key) => this.by_key[key]).filter((card) => this.p6b_selectable(card));
+	},
+
+	p6b_modifier_click(e) {
+		if (!(e.shiftKey || e.ctrlKey || e.metaKey) || e.button > 0 || Date.now() < this.click_blocked_until) return;
+		const el = e.target && e.target.closest ? e.target.closest(".mp-card[data-key]") : null;
+		if (!el || !this.$body[0].contains(el) || e.target.closest("button, a, input, select, textarea")) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const key = el.getAttribute("data-key");
+		const card = this.by_key[key];
+		if (!card) return;
+		if (!this.p6_selection.has(key) && !this.p6b_selectable(card)) {
+			frappe.show_alert(
+				{
+					message: __("Only draft visits nobody has started can be moved together; {0} cannot.", [this.site_of(card)]),
+					indicator: "orange",
+				},
+				6
+			);
+			return;
+		}
+		MP6B_PURE.toggle(this.p6_selection, key);
+		this.p6b_selection_changed();
+	},
+
+	p6b_plain_click(e) {
+		if (!this.p6_selection.size || e.shiftKey || e.ctrlKey || e.metaKey) return;
+		const el = e.target;
+		if (!el || !el.closest) return;
+		if (el.closest(".mp-card, .mp-person, .mp-toolbar, .mp-p6b-bar, button, a, input, select, textarea, label")) return;
+		this.p6b_clear_selection();
+	},
+
+	p6b_clear_selection() {
+		if (!this.p6_selection.size) return false;
+		this.p6_selection.clear();
+		this.p6b_selection_changed();
+		return true;
+	},
+
+	p6b_selection_changed() {
+		this.p6b_decorate_selection();
+		this.p6b_render_bar();
+		$(document).trigger("p6-selection-changed", [this]);
+	},
+
+	p6b_prune_selection() {
+		if (!this.p6_selection.size || !this.data) return;
+		let changed = false;
+		[...this.p6_selection].forEach((key) => {
+			if (!this.p6b_selectable(this.by_key[key])) {
+				this.p6_selection.delete(key);
+				changed = true;
+			}
+		});
+		if (changed) $(document).trigger("p6-selection-changed", [this]);
+	},
+
+	p6b_decorate_selection() {
+		this.$body[0].querySelectorAll(".mp-card[data-key]").forEach((el) => {
+			el.classList.toggle("mp-p6b-selected", this.p6_selection.has(el.getAttribute("data-key")));
+		});
+	},
+
+	p6b_render_bar() {
+		const $bar = this.$p6b_bar;
+		if (!$bar) return;
+		const cards = this.p6b_selected_cards();
+		if (!cards.length) {
+			$bar.hide().empty();
+			return;
+		}
+		$bar.empty().show();
+		$('<span class="mp-p6b-bar-count"></span>').text(__("{0} selected", [cards.length])).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Move…"))
+			.on("click", () => this.p6b_move_panel())
+			.appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Clear"))
+			.on("click", () => this.p6b_clear_selection())
+			.appendTo($bar);
+		$('<span class="mp-p6b-bar-note"></span>')
+			.text(
+				__("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Esc clears the selection.")
+			)
+			.appendTo($bar);
+	},
+
+	p6b_lift(drag) {
+		if (!drag || !drag.ghost || !drag.source || drag.source.kind !== "card") return;
+		if (!this.p6_selection.has(drag.source.card.key)) return;
+		const count = this.p6b_selected_cards().length;
+		if (count < 2) return;
+		const badge = document.createElement("span");
+		badge.className = "mp-p6b-count";
+		badge.textContent = String(count);
+		drag.ghost.appendChild(badge);
+	},
+
+	// A drop of one selected visit when several are selected. True when it was handled here.
+	p6b_drop(source, target) {
+		if (!source || source.kind !== "card" || !source.card || this.p6_selection.size < 2) return false;
+		if (!this.p6_selection.has(source.card.key) || this.p6b_selected_cards().length < 2) return false;
+		const row_user = source.from_user == null ? source.card.technician || "" : source.from_user;
+		if (target.row && (target.user || "") !== row_user) {
+			frappe.show_alert(
+				{
+					message: __(
+						"Several visits are selected: drop them on the same technician's row to change their days. To hand one visit to someone else, clear the selection first."
+					),
+					indicator: "orange",
+				},
+				8
+			);
+			return true;
+		}
+		if (!source.card.date || !target.date) return true;
+		const days = MP6B_PURE.ymd_diff(source.card.date, target.date);
+		if (days) this.p6b_move_selection(days);
+		return true;
+	},
+
+	p6b_move_panel() {
+		const cards = this.p6b_selected_cards();
+		if (!cards.length) return;
+		const panel = this.p6b_panel({
+			title: __("Move {0} visits", [cards.length]),
+			key: "mp-p6b-move",
+			fields: [
+				{
+					fieldtype: "Int",
+					fieldname: "days",
+					label: __("Move by (days)"),
+					reqd: 1,
+					default: 7,
+					description: __("Calendar days; a negative number moves them earlier. Visits cannot move to a day that has passed."),
+				},
+			],
+		});
+		panel.set_primary_action(__("Move"), (values) => {
+			const days = parseInt(values && values.days, 10) || 0;
+			if (!days) return;
+			panel.hide();
+			this.p6b_move_selection(days);
+		});
+		panel.show();
+	},
+
+	// One confirmation, then one move_visit per visit through send(): the first conflict asks for a
+	// reason and that reason answers the rest; backing out stops the rest. A visit that fails is listed
+	// at the end and the others stay moved (each save is its own).
+	p6b_move_selection(days) {
+		const cards = this.p6b_selected_cards();
+		if (!cards.length || !days) return;
+		const today = this.today();
+		const plans = cards.map((card) => ({ card, date: MP6B_PURE.ymd_add(card.date, days) }));
+		if (plans.some((plan) => plan.date < today)) {
+			frappe.show_alert({ message: __("Visits can only be moved to today or a later day."), indicator: "orange" }, 6);
+			return;
+		}
+		const question =
+			days > 0
+				? __("Move {0} visits {1} day(s) later?", [plans.length, days])
+				: __("Move {0} visits {1} day(s) earlier?", [plans.length, -days]);
+		frappe.confirm(
+			`<p>${mp_esc(question)}</p><p class="text-muted">${mp_esc(
+				__("Each visit is saved on its own: if one cannot move, the others still do, and you are told which.")
+			)}</p>`,
+			() => this.p6b_run_moves(plans)
+		);
+	},
+
+	p6b_run_moves(plans) {
+		plans.forEach((plan) => (plan.card.saving = true));
+		this.render();
+		const moved = [];
+		const missed = [];
+		return this.p6b_one_reason((batch) =>
+			plans.reduce(
+				(chain, plan) =>
+					chain.then(() => {
+						if (batch.declined) {
+							missed.push(plan);
+							return null;
+						}
+						const before = plan.card.date;
+						return this.send(
+							"move_visit",
+							{ record: plan.card.name, modified: this.modified[plan.card.name] || plan.card.modified, date: plan.date },
+							{ noun: "visit" }
+						).then((result) => {
+							if (result) moved.push({ record: plan.card.name, site: this.site_of(plan.card), date: before });
+							else missed.push(plan);
+						});
+					}),
+				Promise.resolve()
+			)
+		)
+			.then(() => {
+				if (moved.length) {
+					const message = __("{0} visits moved", [moved.length]);
+					const snapshot = { p6b: "many", site: __("{0} visits", [moved.length]), items: moved };
+					if (!this.push_undo(snapshot, message)) frappe.show_alert({ message, indicator: "green" }, 5);
+				}
+				if (missed.length) {
+					frappe.msgprint({
+						title: __("Moved {0} of {1}", [moved.length, plans.length]),
+						message:
+							`<p>${mp_esc(__("These visits were not moved; the others were saved:"))}</p>` +
+							`<ul>${missed.map((plan) => `<li>${mp_esc(this.site_of(plan.card))}</li>`).join("")}</ul>`,
+						indicator: "orange",
+					});
+				}
+			})
+			.finally(() => this.load());
+	},
+
+	// While `work` runs, the first reason given answers every later conflict of the same batch, and
+	// backing out of it stops the rest. Only for the batch: the page's own ask_reason (the prototype's)
+	// is back as soon as it ends, and send() itself is untouched.
+	p6b_one_reason(work) {
+		const base = MaintenancePlanner.prototype.ask_reason;
+		const batch = { reason: null, declined: false };
+		this.ask_reason = (conflicts, noun) => {
+			if (batch.declined) return Promise.resolve(null);
+			if (batch.reason) return Promise.resolve(batch.reason);
+			return base.call(this, conflicts, noun).then((reason) => {
+				if (reason) batch.reason = reason;
+				else batch.declined = true;
+				return reason;
+			});
+		};
+		return Promise.resolve()
+			.then(() => work(batch))
+			.finally(() => {
+				delete this.ask_reason;
+			});
+	},
+
+	// ------------------------------------------------------------------ undo
+
+	p6b_undo(snap) {
+		if (!snap || snap.p6b !== "many") return false;
+		const today = this.today();
+		const back = (snap.items || []).filter((item) => item.date && item.date >= today);
+		const kept = (snap.items || []).length - back.length;
+		back.reduce(
+			(chain, item) =>
+				chain.then(() =>
+					this.send(
+						"move_visit",
+						{
+							record: item.record,
+							modified: this.modified[item.record] || (this.by_key[item.record] || {}).modified || "",
+							date: item.date,
+						},
+						{ auto_reason: __(MP.undo_reason), noun: "visit" }
+					)
+				),
+			Promise.resolve()
+		)
+			.then(() => {
+				frappe.show_alert({ message: __("Undone: {0}", [snap.site]), indicator: "green" }, 5);
+				if (kept) {
+					frappe.show_alert(
+						{ message: __("{0} visit(s) were on a day that has passed, so they stay where they are.", [kept]), indicator: "orange" },
+						8
+					);
+				}
+			})
+			.finally(() => this.load());
+		return true;
+	},
+
+	// ------------------------------------------------------------------ search
+
+	p6b_build_search() {
+		const $wrap = $('<span class="mp-p6b-search-wrap"></span>');
+		const $seg = this.$p6b_toolbar.children(".mp-seg").first();
+		if ($seg.length) $wrap.insertAfter($seg);
+		else $wrap.appendTo(this.$p6b_toolbar);
+		const list_id = `mp-p6b-results-${Math.random().toString(36).slice(2, 9)}`;
+		this.p6b.search.list_id = list_id;
+		this.$p6b_search = $('<input type="search" class="form-control input-sm mp-p6b-search" autocomplete="off" spellcheck="false">')
+			.attr({
+				placeholder: __("Search  ( / )"),
+				title: __("Find a visit, site or technician. Press / to come here."),
+				"aria-label": __("Search visits, sites and technicians"),
+				role: "combobox",
+				"aria-autocomplete": "list",
+				"aria-expanded": "false",
+				"aria-controls": list_id,
+			})
+			.appendTo($wrap);
+		this.$p6b_results = $('<div class="mp-p6b-results" role="listbox"></div>').attr("id", list_id).hide().appendTo($wrap);
+		this.$p6b_search.on("input", () => this.p6b_search_input());
+		this.$p6b_search.on("keydown", (e) => this.p6b_search_key(e));
+		this.$p6b_search.on("focus", () => {
+			if (this.p6b.search.q.length >= MP6B.search_min) this.p6b_render_results();
+		});
+		this.$p6b_search.on("blur", () => setTimeout(() => this.p6b_close_results(), 150));
+		this.$p6b_results.on("mousedown", (e) => e.preventDefault());
+		this.$p6b_results.on("click", "[data-mp-p6b-result]", (e) => {
+			const item = this.p6b.search.shown[Number(e.currentTarget.getAttribute("data-mp-p6b-result"))];
+			if (item) this.p6b_pick(item);
+		});
+	},
+
+	p6b_search_input() {
+		const search = this.p6b.search;
+		search.q = String(this.$p6b_search.val() || "").trim();
+		search.active = 0;
+		search.remote = [];
+		clearTimeout(search.timer);
+		const token = ++search.token;
+		if (search.q.length < MP6B.search_min) {
+			search.local = [];
+			search.loading = false;
+			this.p6b_close_results();
+			return;
+		}
+		search.local = MP6B_PURE.search_local(search.q, this.p6b_local_entries(), MP6B.search_limit);
+		search.loading = true;
+		this.p6b_render_results();
+		const q = search.q;
+		search.timer = setTimeout(() => this.p6b_remote_search(q, token), MP6B.search_wait_ms);
+	},
+
+	// What is on screen: every visit (drafted, unscheduled, projected), their sites and the technicians.
+	p6b_local_entries() {
+		const data = this.data || {};
+		const out = [];
+		const sites = {};
+		[].concat(data.visits || [], data.unscheduled || [], data.projected || []).forEach((card) => {
+			const site = this.site_of(card);
+			out.push({
+				kind: "visit",
+				key: card.key,
+				name: card.name,
+				label: site,
+				keys: [card.name, card.site_full || "", card.feature || "", card.label || "", ...this.visit_people(card).map((user) => this.tech_name(user))],
+				sub: [card.date ? mp_when(card.date) : __("Not scheduled"), card.label ? __(card.label) : ""].filter(Boolean).join(" · "),
+				date: card.date || null,
+			});
+			if (card.project && !sites[card.project]) {
+				sites[card.project] = true;
+				out.push({ kind: "site", project: card.project, label: site, keys: [card.project, card.site_full || ""], sub: card.project });
+			}
+		});
+		(data.technicians || [])
+			.filter((person) => person.enabled)
+			.forEach((person) => {
+				out.push({ kind: "person", user: person.user, label: person.name, keys: [], sub: person.group ? __(person.group) : "" });
+			});
+		return out;
+	},
+
+	p6b_result_key(item) {
+		return `${item.kind}|${item.key || item.name || item.project || item.user || ""}`;
+	},
+
+	p6b_from_server(item) {
+		if (!item || !item.kind) return null;
+		if (item.kind === "visit") {
+			return {
+				kind: "visit",
+				key: item.name,
+				name: item.name,
+				label: item.label || item.name,
+				sub: [item.date ? mp_when(item.date) : __("Not scheduled"), item.visit_label ? __(item.visit_label) : "", item.name]
+					.filter(Boolean)
+					.join(" · "),
+				date: item.date || null,
+			};
+		}
+		if (item.kind === "site") return { kind: "site", project: item.project, label: item.label || item.project, sub: item.project };
+		if (item.kind === "person" && item.user) {
+			return { kind: "person", user: item.user, label: item.label || item.user, sub: item.group ? __(item.group) : "" };
+		}
+		return null;
+	},
+
+	p6b_remote_search(q, token) {
+		return Promise.resolve(
+			frappe.call({ method: MP6B.search, args: { q, start: this.anchor, planner: "maintenance" } })
+		)
+			.then((r) => {
+				const search = this.p6b.search;
+				if (token !== search.token) return;
+				const seen = new Set(search.local.map((item) => this.p6b_result_key(item)));
+				search.remote = (((r && r.message) || {}).results || [])
+					.map((item) => this.p6b_from_server(item))
+					.filter((item) => item && !seen.has(this.p6b_result_key(item)));
+				search.loading = false;
+				if (this.$p6b_search.is(":focus")) this.p6b_render_results();
+			})
+			.catch(() => {
+				if (token !== this.p6b.search.token) return;
+				this.p6b.search.loading = false;
+				if (this.$p6b_search.is(":focus")) this.p6b_render_results();
+			});
+	},
+
+	p6b_render_results() {
+		const search = this.p6b.search;
+		if (search.q.length < MP6B.search_min) {
+			this.p6b_close_results();
+			return;
+		}
+		const shown = search.local.concat(search.remote).slice(0, MP6B.search_limit);
+		search.shown = shown;
+		if (search.active >= shown.length) search.active = 0;
+		const kinds = { visit: __("Visit"), site: __("Site"), person: __("Technician") };
+		const rows = shown.map(
+			(item, index) =>
+				`<div class="mp-p6b-result${index === search.active ? " mp-p6b-active" : ""}" role="option" id="${mp_esc(
+					`${search.list_id}-${index}`
+				)}" aria-selected="${index === search.active ? "true" : "false"}" data-mp-p6b-result="${index}">` +
+				`<span class="mp-p6b-result-kind">${mp_esc(kinds[item.kind] || item.kind)}</span>` +
+				`<span class="mp-p6b-result-label">${mp_esc(item.label)}</span>` +
+				(item.sub ? `<span class="mp-p6b-result-sub">${mp_esc(item.sub)}</span>` : "") +
+				`</div>`
+		);
+		const note = search.loading ? __("Searching the rest…") : shown.length ? "" : __("Nothing found.");
+		this.$p6b_results.html(rows.join("") + (note ? `<div class="mp-p6b-results-note">${mp_esc(note)}</div>` : "")).show();
+		this.$p6b_search.attr("aria-expanded", "true");
+		if (shown.length) this.$p6b_search.attr("aria-activedescendant", `${search.list_id}-${search.active}`);
+		else this.$p6b_search.removeAttr("aria-activedescendant");
+	},
+
+	p6b_close_results() {
+		if (!this.$p6b_results) return;
+		this.$p6b_results.hide().empty();
+		this.$p6b_search.attr("aria-expanded", "false").removeAttr("aria-activedescendant");
+	},
+
+	p6b_search_key(e) {
+		const search = this.p6b.search;
+		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+			if (!search.shown.length) return;
+			e.preventDefault();
+			search.active = (search.active + (e.key === "ArrowDown" ? 1 : -1) + search.shown.length) % search.shown.length;
+			this.p6b_render_results();
+		} else if (e.key === "Enter") {
+			e.preventDefault();
+			const item = search.shown[search.active] || search.shown[0];
+			if (item) this.p6b_pick(item);
+		} else if (e.key === "Escape") {
+			e.preventDefault();
+			e.stopPropagation();
+			if (this.$p6b_results.is(":visible")) this.p6b_close_results();
+			else this.$p6b_search.val("").trigger("blur");
+		}
+	},
+
+	p6b_pick(item) {
+		this.p6b_close_results();
+		this.$p6b_search.trigger("blur");
+		if (item.kind === "person") this.p6a_open_person(item.user);
+		else if (item.kind === "site") this.p6a_open_site({ project: item.project, site: item.label, site_full: item.label });
+		else if (item.kind === "visit") this.p6b_jump_to_visit(item);
+	},
+
+	// A visit: the calendar goes to its week (a real route) and the card flashes.
+	p6b_jump_to_visit(item) {
+		const card = this.by_key[item.key];
+		const date = item.date || (card && card.date) || null;
+		if (!date) {
+			if (card) {
+				this.p6b.flash = { key: card.key, date: null, wait: false };
+				this.p6b_flash_pending();
+				return;
+			}
+			this.p6b_navigate(() => frappe.set_route("Form", "Sapphire Maintenance Record", item.name));
+			return;
+		}
+		this.p6b.flash = { key: item.key, date, wait: true };
+		if (this.range_days().includes(date)) {
+			this.p6b_flash_pending();
+			return;
+		}
+		this.go(this.view === "week" || this.view === "crew" ? this.view : "week", date);
+	},
+
+	p6b_flash_pending() {
+		const flash = this.p6b.flash;
+		if (!flash || !this.data) return;
+		if (flash.date && !(this.data.start <= flash.date && flash.date <= this.data.end)) {
+			if (!flash.wait) this.p6b.flash = null;
+			return;
+		}
+		this.p6b.flash = null;
+		const el = Array.from(this.$body[0].querySelectorAll(".mp-card[data-key]")).find(
+			(node) => node.getAttribute("data-key") === flash.key
+		);
+		if (!el) {
+			if (flash.wait) {
+				frappe.show_alert({ message: __("That visit is hidden by the filters on screen."), indicator: "orange" }, 6);
+			}
+			return;
+		}
+		el.classList.add("mp-p6b-flash");
+		try {
+			el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+		} catch (e) {
+			el.scrollIntoView();
+		}
+		setTimeout(() => el.classList.remove("mp-p6b-flash"), MP6B.flash_ms);
+	},
+
+	// ------------------------------------------------------------------ keyboard
+
+	// One keydown listener on the document (capture), added while the page shows and removed when it
+	// hides; see the Project Planner's p6b_bind_keys for why not frappe.ui.keys.
+	p6b_bind_keys() {
+		const handler = (e) => this.p6b_key(e);
+		const on = () => {
+			if (this.p6b.keys_on) return;
+			document.addEventListener("keydown", handler, true);
+			this.p6b.keys_on = true;
+		};
+		const off = () => {
+			if (!this.p6b.keys_on) return;
+			document.removeEventListener("keydown", handler, true);
+			this.p6b.keys_on = false;
+			this.p6b_close_results();
+		};
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			// frappe triggers these on the page itself; a Bootstrap dropdown's or collapse's show/hide
+			// inside the page bubbles up as the same event name and must not switch the keys off.
+			wrapper.on("show", (e) => e.target === wrapper[0] && on()).on("hide", (e) => e.target === wrapper[0] && off());
+		}
+		on();
+	},
+
+	p6b_page_live() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== MP.route) return false;
+		const wrapper = this.page && this.page.wrapper;
+		return !wrapper || typeof wrapper.is !== "function" || wrapper.is(":visible");
+	},
+
+	p6b_key(e) {
+		if (e.defaultPrevented || !this.p6b_page_live()) return;
+		const target = e.target;
+		const editable = !!(
+			target &&
+			((target.closest && target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) ||
+				target.isContentEditable)
+		);
+		const action = MP6B_PURE.shortcut({
+			key: e.key,
+			ctrl: e.ctrlKey,
+			meta: e.metaKey,
+			shift: e.shiftKey,
+			alt: e.altKey,
+			editable,
+			dialog: !!(window.cur_dialog && window.cur_dialog.display),
+		});
+		if (!action) return;
+		if (target && target.closest && target.closest(".pk-menu")) return;
+		if (action === "escape") {
+			this.p6b_escape();
+			return;
+		}
+		if (!this.p6b_run_key(action)) return;
+		e.preventDefault();
+		e.stopPropagation();
+	},
+
+	p6b_run_key(action) {
+		if (action === "today") {
+			this.go(this.view, frappe.datetime.get_today());
+			return true;
+		}
+		if (action === "prev" || action === "next") {
+			this.shift(action === "prev" ? -1 : 1);
+			return true;
+		}
+		if (action.startsWith("view")) {
+			// The Maintenance Planner's own order: month, week, crew.
+			const view = MP.views[Number(action.slice(4)) - 1];
+			if (!view) return false;
+			this.go(view, this.anchor);
+			return true;
+		}
+		if (action === "undo") {
+			this.undo();
+			return true;
+		}
+		if (action === "legend") {
+			if (!this.p6b_kit()) return false;
+			this.p6a_legend();
+			return true;
+		}
+		if (action === "search") {
+			if (!this.$p6b_search || !this.$p6b_search.is(":visible")) return false;
+			this.$p6b_search.trigger("focus").trigger("select");
+			return true;
+		}
+		return false;
+	},
+
+	p6b_escape() {
+		if (this.drag) return;
+		const kit = this.p6b_kit();
+		if (kit && kit.guard && typeof kit.guard.top === "function" && kit.guard.top()) return;
+		this.p6b_clear_selection();
+	},
+
+	p6b_legend_sections() {
+		const key = (text) => `<kbd class="mp-p6b-kbd">${mp_esc(text)}</kbd>`;
+		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		const own = [
+			{
+				title: __("Keyboard"),
+				note: __("Not while typing in a box or with a dialog open."),
+				items: [
+					item(key("T"), "Go to today."),
+					item(key("←") + key("→"), "The previous or next month or week."),
+					item(key("1") + key("2") + key("3"), "Month, week or crew view."),
+					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
+					item(key("/"), "Search visits, sites and technicians."),
+					item(key("?"), "This help."),
+					item(key("Esc"), "Close a menu or side panel, or clear the selection."),
+				],
+			},
+			{
+				title: __("Faster scheduling"),
+				items: [
+					item("", "Right-click a visit, an empty spot or a name (on a touch screen, hold it still for a moment) for a menu: assign someone, move to the technician's next free day, the site at a glance."),
+					item(
+						`<span class="mp-p6a-sample mp-p6b-selected" style="outline:2px solid #7c3aed">${mp_esc(__("Visit"))}</span>`,
+						"Shift-click (or Ctrl- or ⌘-click) draft visits to select several. Drag one and they all move by the same number of calendar days."
+					),
+					item("", "Assign to… lists the technicians who are free that day. Nobody is picked for you."),
+				],
+			},
+		];
+		const extra = (this.p6_legend_providers || []).flatMap((provider) => {
+			try {
+				return provider() || [];
+			} catch (e) {
+				return [];
+			}
+		});
+		return own.concat(extra);
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 
 // ====================================================================== Phase 6C: big picture, tablet mode and print
 //

@@ -82,7 +82,8 @@ class TestCrewsPageSource(unittest.TestCase):
 			"full_day !== (card.full_day ? 1 : 0)",
 		):
 			self.assertIn(needle, dialog)
-		editor = self.code[self.code.index("build_crew_editor(dialog, card) {") :]
+		# The crew editor's two methods, to the end of the class (later phases append blocks after it).
+		editor = self.body("build_crew_editor(dialog, card) {", "\n}\n")
 		# Technicians and Field helpers the API lists, plus anyone already on the visit; names as text.
 		self.assertIn("this.data.technicians", editor)
 		self.assertIn(".text(person.name)", editor)
