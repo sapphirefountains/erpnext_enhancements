@@ -1897,9 +1897,15 @@ class TestGetRoute(unittest.TestCase):
 			set(got),
 			{
 				"resource", "label", "date", "day_start", "start", "end", "stops", "drive_minutes", "km",
-				"source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids", "travel", "off",
+				"miles", "source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids", "travel",
+				"off",
 			},
 		)
+		# Shown in miles (Nik, 2026-10-09); measured in km underneath, so both travel together.
+		self.assertAlmostEqual(got["miles"], round(got["km"] / api.KM_PER_MILE, 1))
+		self.assertTrue(all(("miles" in s) for s in got["stops"]))
+		self.assertEqual(api.fmt_miles(6.44), "4")
+		self.assertEqual(api.fmt_miles(20.4), "13")
 
 	def test_a_travel_day_lists_the_stops_without_a_route(self):
 		with self._readers(
@@ -1949,7 +1955,7 @@ class TestSuggestDates(unittest.TestCase):
 		self.assertEqual((best["date"], best["resource"], best["label"]), ("2026-10-13", "RES-1", "Jesse Pinkman"))
 		self.assertEqual(best["nearby"], [{"ref": "T-H", "label": "Highlands", "km": 2.4}])
 		self.assertLess(best["added_minutes"], 15)
-		self.assertTrue(best["reason"].startswith("Jesse is already at Highlands that day (2.4 km away): +"))
+		self.assertTrue(best["reason"].startswith("Jesse is already at Highlands that day (1.5 mi away): +"))
 		self.assertEqual(best["source"], "estimate")
 		# Everyone else has an empty day: a round trip from the shop, same score, by date then name.
 		rest = got["suggestions"][1:]

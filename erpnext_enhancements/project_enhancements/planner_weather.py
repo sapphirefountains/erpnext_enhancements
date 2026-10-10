@@ -8,9 +8,15 @@ comes from **Open-Meteo**'s daily forecast (Nik's choice, 2026-10-09: free, and 
 key). A day is flagged when the forecast crosses one of three lines (the constants below):
 
 * precipitation probability of 60% or more → ``"Rain 70%"``;
-* a minimum temperature at or below 0 °C → ``"Freezing −3 °C"``. Fountains care about freezing
+* a minimum temperature at or below 32 °F → ``"Freezing 28 °F"``. Fountains care about freezing
   more than most outdoor work does: a pump test or a fill on a night that freezes is wasted;
-* wind of 40 km/h or more → ``"Wind 45 km/h"``.
+* wind of 25 mph or more → ``"Wind 28 mph"``.
+
+**Units are imperial** (Nik, 2026-10-09: "keep the weather thresholds but use imperial"). The
+request asks Open-Meteo for Fahrenheit and mph itself (``temperature_unit=fahrenheit``,
+``wind_speed_unit=mph``), so nothing here converts and every number on screen is the number the
+forecast gave. The thresholds are the same lines as before: 32 °F is freezing, as 0 degrees
+Celsius was, and 25 mph is the old 40 kilometres an hour (24.9 mph) rounded to a clean figure.
 
 The location is the task's own, found by ``routing.locate`` exactly as the route view finds it
 (the task's address, else its project's site), so a chip and a route never disagree about where
@@ -23,7 +29,8 @@ Things this module is careful about, some of which look like bugs:
   three hours, never once per task.
 * **Cached in redis for three hours per point**, rounded to two decimals (about a kilometre), so
   two tasks on the same site share an answer. The deploy ``FLUSHDB``s redis and loses the cache;
-  that is fine, it is a cache.
+  that is fine, it is a cache. The cache key carries the unit (``CACHE_PREFIX``): a cached answer
+  holds finished flag text, so one stored under metric units must never be read back as imperial.
 * **Failures hide the chip and never the planner.** A timeout, an HTTP error or an answer that
   cannot be read leaves the task with no weather. The failure is logged **once an hour** (a flag
   in redis), and for ten minutes after one the planner does not ask again, so a down Open-Meteo
@@ -50,17 +57,21 @@ TIMEZONE = "America/Denver"
 FORECAST_DAYS = 16
 TIMEOUT_S = 8
 CACHE_SECONDS = 3 * 3600
-CACHE_PREFIX = "ee_planner_weather:"
+#: The unit is part of the key (see the module docstring): the cached value is flag *text*.
+UNITS = "imperial"
+CACHE_PREFIX = f"ee_planner_weather:{UNITS}:"
+TEMPERATURE_UNIT = "fahrenheit"
+WIND_SPEED_UNIT = "mph"
 #: Most points in one request; more go in another.
 BATCH = 50
 
 # The three lines a forecast must cross to put a chip on an outdoor task. Chosen for fountain work:
 # rain at 60% is the point a crew lead starts moving a pour or a fill; freezing at all matters
-# because water left in a line or a basin overnight is the damage; 40 km/h of wind blows spray off
-# the basin and makes lifts and tarps unsafe.
+# because water left in a line or a basin overnight is the damage; 25 mph of wind blows spray off
+# the basin and makes lifts and tarps unsafe. Freezing is 32 °F; 25 mph is the old 40 km/h (24.9 mph).
 RAIN_PERCENT = 60
-FREEZING_C = 0
-WIND_KMH = 40
+FREEZING_F = 32
+WIND_MPH = 25
 
 #: Set for an hour after a failure is logged, so the Error Log gets one entry an hour, not one a load.
 LOGGED_FLAG = "ee_planner_weather_logged"
@@ -107,10 +118,10 @@ def day_flags(rain=None, low=None, wind=None):
 	rain, low, wind = _number(rain), _number(low), _number(wind)
 	if rain is not None and rain >= RAIN_PERCENT:
 		out.append(f"Rain {int(round(rain))}%")
-	if low is not None and low <= FREEZING_C:
-		out.append(f"Freezing {_whole(low)} °C")
-	if wind is not None and wind >= WIND_KMH:
-		out.append(f"Wind {int(round(wind))} km/h")
+	if low is not None and low <= FREEZING_F:
+		out.append(f"Freezing {_whole(low)} °F")
+	if wind is not None and wind >= WIND_MPH:
+		out.append(f"Wind {int(round(wind))} mph")
 	return out
 
 
@@ -151,6 +162,8 @@ def request_params(keys):
 		"latitude": lats,
 		"longitude": lngs,
 		"daily": ",".join(DAILY_FIELDS),
+		"temperature_unit": TEMPERATURE_UNIT,
+		"wind_speed_unit": WIND_SPEED_UNIT,
 		"timezone": TIMEZONE,
 		"forecast_days": FORECAST_DAYS,
 	}

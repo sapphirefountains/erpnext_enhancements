@@ -67,7 +67,7 @@ class CrewDayRoute(BaseTool):
         self.name = "crew_day_route"  # must match module filename
         self.description = (
             "Show one person's route for one day on the Project Planner: the shop, each stop in driving "
-            "order with its arrival and departure times, drive minutes and kilometers, which stops have "
+            "order with its arrival and departure times, drive minutes and miles, which stops have "
             "no location, and whether the day is a long drive. Give the Planner Resource name, the "
             "person's full name or their email, and a date (YYYY-MM-DD). Read-only; it changes no "
             "booking. Requires the planner's roles (Projects or Maintenance)."

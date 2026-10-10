@@ -92,7 +92,8 @@ const pp_drive = (minutes) => {
 	if (!h) return `${m}m`;
 	return m ? `${h}h ${m}m` : `${h}h`;
 };
-const pp_km = (value) => String(Math.round((Number(value) || 0) * 10) / 10);
+// Distances arrive in km (routing measures in km) and are shown in miles (Nik, 2026-10-09).
+const pp_mi = (km) => String(Math.round(((Number(km) || 0) / 1.609344) * 10) / 10);
 const pp_valid_point = (lat, lng) =>
 	Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && (Number(lat) !== 0 || Number(lng) !== 0);
 
@@ -2969,7 +2970,7 @@ class ProjectPlanner {
 		const sum_legs = stops.reduce((total, stop) => total + (Number(stop.drive_minutes) || 0), 0);
 		const totals = [];
 		totals.push(`<b>${pp_esc(__("Driving"))}</b> ${pp_esc(pp_drive(data.drive_minutes))}`);
-		if (Number(data.km) > 0) totals.push(pp_esc(`${pp_km(data.km)} km`));
+		if (Number(data.km) > 0) totals.push(pp_esc(`${pp_mi(data.km)} mi`));
 		if (Number(data.drive_minutes) > 0 && data.source) totals.push(pp_esc(this.source_text(data.source)));
 		totals.push(pp_esc(__("{0} stop(s)", [stops.length])));
 		const long = data.long_drive ? `<span class="pp-chip pp-red">${pp_esc(__("Long drive"))}</span>` : "";
@@ -3013,8 +3014,8 @@ class ProjectPlanner {
 				.join(" · ");
 			let leg = "";
 			if (located && previous_located && Number(stop.drive_minutes) >= 0 && stop.drive_minutes != null) {
-				const km = Number(stop.km) > 0 ? ` · ${pp_km(stop.km)} km` : "";
-				leg = `<div class="pp-stop-leg">${pp_esc(`${pp_drive(stop.drive_minutes)}${km}`)}</div>`;
+				const dist = Number(stop.km) > 0 ? ` · ${pp_mi(stop.km)} mi` : "";
+				leg = `<div class="pp-stop-leg">${pp_esc(`${pp_drive(stop.drive_minutes)}${dist}`)}</div>`;
 			}
 			if (located) previous_located = true;
 			const waits =
@@ -4243,7 +4244,7 @@ const PP5_METHODS = {
 		return [`<span class="pp-chip pp-weather" title="${pp_esc(flags.join(", "))}">${pp_esc(text)}</span>`];
 	},
 
-	// "Thu, Oct 15: Rain 70%, Wind 45 km/h" for every flagged day of the task.
+	// "Thu, Oct 15: Rain 70%, Wind 28 mph" for every flagged day of the task.
 	weather_lines(card) {
 		return (Array.isArray(card.weather) ? card.weather : [])
 			.filter((entry) => (entry.flags || []).length)
@@ -5071,7 +5072,7 @@ const PP6A_METHODS = {
 						item(chip("pp-pencil", "Pencil"), "Pencilled in, not firm yet."),
 						item(chip("pp-amber", "Starts before Dig"), "It starts before a task it depends on ends."),
 						item(chip("pp-amber", "Missing Forklift"), "Nobody on the crew holds a qualification it needs."),
-						item(chip("pp-weather", "Rain 70%"), "Outdoor work on a day with rain, freezing or high wind in the forecast."),
+						item(chip("pp-weather", "Rain 70%"), "Outdoor work on a day with rain (60% or more), a low of 32 °F or colder, or wind of 25 mph or more in the forecast."),
 						item(chip("", "14h of 12h"), "Hours clocked against the plan. Red when it is running over."),
 						item(chip("pp-equip", "Truck 3"), "A vehicle or asset the task uses."),
 						item(chip("", "Delivery"), "A rental crew task. Its dates follow its Rental Booking."),

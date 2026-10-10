@@ -591,12 +591,43 @@ class TestTemplatePlanning(unittest.TestCase):
 
 class TestWeatherWording(unittest.TestCase):
 	def test_thresholds_and_wording(self):
-		self.assertEqual(weather.day_flags(70, 5, 10), ["Rain 70%"])
-		self.assertEqual(weather.day_flags(59, 0.4, 39.9), [])
-		self.assertEqual(weather.day_flags(60, 0, 40), ["Rain 60%", "Freezing 0 °C", "Wind 40 km/h"])
-		self.assertEqual(weather.day_flags(None, -3.4, 45.2), ["Freezing −3 °C", "Wind 45 km/h"])
+		self.assertEqual(weather.day_flags(70, 50, 10), ["Rain 70%"])
+		self.assertEqual(weather.day_flags(59, 33, 24), [])
+		self.assertEqual(weather.day_flags(60, 32, 25), ["Rain 60%", "Freezing 32 °F", "Wind 25 mph"])
+		self.assertEqual(weather.day_flags(None, -3.4, 28.2), ["Freezing −3 °F", "Wind 28 mph"])
 		self.assertEqual(weather.day_flags("", None, "x"), [])
-		self.assertEqual((weather.RAIN_PERCENT, weather.FREEZING_C, weather.WIND_KMH), (60, 0, 40))
+		self.assertEqual((weather.RAIN_PERCENT, weather.FREEZING_F, weather.WIND_MPH), (60, 32, 25))
+
+	def test_thresholds_are_inclusive_at_the_line_and_clear_just_past_it(self):
+		self.assertEqual(weather.day_flags(None, 32, None), ["Freezing 32 °F"])
+		self.assertEqual(weather.day_flags(None, 33, None), [])
+		self.assertEqual(weather.day_flags(None, None, 25), ["Wind 25 mph"])
+		self.assertEqual(weather.day_flags(None, None, 24), [])
+		self.assertEqual(weather.day_flags(60, None, None), ["Rain 60%"])
+		self.assertEqual(weather.day_flags(59, None, None), [])
+
+	def test_no_flag_text_or_page_string_is_metric(self):
+		self.assertEqual(weather.day_flags(100, -40, 90), ["Rain 100%", "Freezing −40 °F", "Wind 90 mph"])
+		for flag in weather.day_flags(100, -40, 90):
+			self.assertNotIn("°C", flag)
+			self.assertNotIn("km/h", flag)
+		for path in (
+			APP / "project_enhancements/planner_weather.py",
+			PAGE_JS,
+			API_PATH,
+			APP / "sapphire_maintenance/page/maintenance_planner/maintenance_planner.js",
+		):
+			text = path.read_text(encoding="utf-8")
+			code = "\n".join(
+				line for line in text.splitlines() if not line.lstrip().startswith(("#", "//", "*"))
+			)
+			self.assertNotIn("°C", code, path.name)
+			self.assertNotIn("km/h", code, path.name)
+		readme = (APP / "project_enhancements/README.md").read_text(encoding="utf-8")
+		for line in readme.splitlines():
+			if "planner_weather" in line or "Open-Meteo" in line:
+				self.assertNotIn("°C", line)
+				self.assertNotIn("km/h", line)
 
 	def test_point_keys_round_to_two_decimals(self):
 		self.assertEqual(weather.point_key((39.73915, -104.99025)), "39.74,-104.99")
@@ -607,12 +638,12 @@ class TestWeatherWording(unittest.TestCase):
 		daily = {
 			"time": ["2026-10-09", "2026-10-10"],
 			"precipitation_probability_max": [80, 10],
-			"temperature_2m_min": [3, -2],
-			"wind_speed_10m_max": [12, 50],
+			"temperature_2m_min": [45, 28],
+			"wind_speed_10m_max": [12, 30],
 		}
 		self.assertEqual(
 			weather.parse_daily({"daily": daily}),
-			{"2026-10-09": ["Rain 80%"], "2026-10-10": ["Freezing −2 °C", "Wind 50 km/h"]},
+			{"2026-10-09": ["Rain 80%"], "2026-10-10": ["Freezing 28 °F", "Wind 30 mph"]},
 		)
 		self.assertEqual(len(weather.parse_payload({"daily": daily}, 1)), 1)
 		self.assertEqual(len(weather.parse_payload([{"daily": daily}, {}], 2)), 2)
@@ -626,6 +657,7 @@ class TestWeatherWording(unittest.TestCase):
 		self.assertEqual(
 			params["daily"], "precipitation_probability_max,temperature_2m_min,wind_speed_10m_max"
 		)
+		self.assertEqual((params["temperature_unit"], params["wind_speed_unit"]), ("fahrenheit", "mph"))
 		self.assertEqual((params["timezone"], params["forecast_days"]), ("America/Denver", 16))
 		self.assertEqual(weather.OPEN_METEO_URL, "https://api.open-meteo.com/v1/forecast")
 
@@ -651,7 +683,7 @@ class TestWeatherFetching(unittest.TestCase):
 				"daily": {
 					"time": ["2026-10-12"],
 					"precipitation_probability_max": [rain],
-					"temperature_2m_min": [5],
+					"temperature_2m_min": [50],
 					"wind_speed_10m_max": [5],
 				}
 			}
@@ -665,8 +697,20 @@ class TestWeatherFetching(unittest.TestCase):
 		self.assertEqual(requests_stub.calls[0]["timeout"], 8)
 		self.assertEqual(out["39.74,-104.99"], {"2026-10-12": ["Rain 70%"]})
 		self.assertEqual(frappe.cache.expiry[weather.CACHE_PREFIX + "39.74,-104.99"], 3 * 3600)
+		self.assertEqual(requests_stub.calls[0]["params"]["temperature_unit"], "fahrenheit")
+		self.assertEqual(requests_stub.calls[0]["params"]["wind_speed_unit"], "mph")
 		weather.forecasts([(39.7392, -104.9903)])
 		self.assertEqual(len(requests_stub.calls), 1)  # served from the cache
+
+	def test_the_cache_key_carries_the_unit_so_a_metric_answer_is_never_read_as_imperial(self):
+		self.assertIn("imperial", weather.CACHE_PREFIX)
+		self.assertNotEqual(weather.CACHE_PREFIX, "ee_planner_weather:")
+		# An entry stored under the old, unit-less prefix is invisible to the new reader.
+		frappe.cache.set_value("ee_planner_weather:39.74,-104.99", {"2026-10-12": ["Wind 45 km/h"]})
+		requests_stub.answer = (200, self._answer(70))
+		out = weather.forecasts([(39.7392, -104.9903)])
+		self.assertEqual(len(requests_stub.calls), 1)
+		self.assertEqual(out["39.74,-104.99"], {"2026-10-12": ["Rain 70%"]})
 
 	def test_a_failure_hides_weather_backs_off_and_logs_once_without_the_url(self):
 		requests_stub.error = RuntimeError(
@@ -700,10 +744,10 @@ class TestWeatherOnThePlanner(unittest.TestCase):
 
 	def test_a_flagged_day_is_a_worse_suggestion_and_says_why(self):
 		entry = {"date": "2026-10-12", "score": 12.5, "reason": "Austin is nearby."}
-		out = api.weather_adjust(entry, ["Rain 70%", "Wind 45 km/h"])
+		out = api.weather_adjust(entry, ["Rain 70%", "Wind 28 mph"])
 		self.assertEqual(out["score"], 72.5)
-		self.assertEqual(out["weather"], ["Rain 70%", "Wind 45 km/h"])
-		self.assertEqual(out["reason"], "Austin is nearby. Forecast: Rain 70%, Wind 45 km/h.")
+		self.assertEqual(out["weather"], ["Rain 70%", "Wind 28 mph"])
+		self.assertEqual(out["reason"], "Austin is nearby. Forecast: Rain 70%, Wind 28 mph.")
 		clear = api.weather_adjust(entry, [])
 		self.assertEqual((clear["score"], clear["weather"], clear["reason"]), (12.5, [], "Austin is nearby."))
 		self.assertIsNone(api.weather_adjust(None, ["Rain 70%"]))
@@ -739,12 +783,12 @@ class TestWeatherOnThePlanner(unittest.TestCase):
 			{"name": "TASK-2", "project": "PRJ-1", "start": "2026-10-12", "end": "2026-10-12"},
 			{"name": "TASK-3", "project": "PRJ-1", "start": None, "end": None},
 		]
-		known = {"TASK-1": {"2026-10-12": [], "2026-10-13": ["Freezing −1 °C"]}}
+		known = {"TASK-1": {"2026-10-12": [], "2026-10-13": ["Freezing 30 °F"]}}
 		with mock.patch.object(weather, "forecast_for_tasks", return_value=known) as fetch:
 			api._phase5_cards(cards, str(TODAY))
 		self.assertEqual(fetch.call_args[0][0], [{"name": "TASK-1", "project": "PRJ-1"}])
 		self.assertEqual((cards[0]["outdoor"], cards[0]["customer_visit"]), (True, True))
-		self.assertEqual(cards[0]["weather"], [{"date": "2026-10-13", "flags": ["Freezing −1 °C"]}])
+		self.assertEqual(cards[0]["weather"], [{"date": "2026-10-13", "flags": ["Freezing 30 °F"]}])
 		self.assertEqual((cards[1]["outdoor"], cards[1]["weather"]), (False, None))
 		self.assertIsNone(cards[2]["weather"])  # undated: nothing to forecast
 
@@ -1564,7 +1608,7 @@ vm.runInContext(code + "\nthis.ProjectPlanner = ProjectPlanner;", ctx);
 const p = Object.create(ctx.ProjectPlanner.prototype);
 const card = {
 	name: "TASK-1", outdoor: true, customer_visit: true,
-	weather: [{ date: "2026-10-12", flags: ["Rain 70%", "Wind <45> km/h"] }],
+	weather: [{ date: "2026-10-12", flags: ["Rain 70%", "Wind <28> mph"] }],
 };
 const out = {};
 out.day = p.weather_chips(card, "2026-10-12");
@@ -1591,11 +1635,11 @@ p.save_phase5_flags(card, { outdoor: 1, customer_visit: 0 }).then((saved) => {
 		self.assertEqual(result.returncode, 0, result.stderr)
 		out = json.loads(result.stdout)
 		self.assertEqual(len(out["day"]), 1)
-		self.assertIn("Rain 70% · Wind &lt;45&gt; km/h", out["day"][0])
+		self.assertIn("Rain 70% · Wind &lt;28&gt; mph", out["day"][0])
 		self.assertEqual(out["other_day"], [])
 		self.assertIn("Rain 70% · Mon, Oct 12", out["tray"][0])
 		self.assertEqual(out["none"], [])
-		self.assertEqual(out["lines"], ["Mon, Oct 12: Rain 70%, Wind <45> km/h"])
+		self.assertEqual(out["lines"], ["Mon, Oct 12: Rain 70%, Wind <28> mph"])
 		self.assertEqual(out["links"], [["customer_preview", "Preview customer email"]])
 		self.assertEqual(out["no_links"], [])
 		self.assertEqual(out["fields"], [["outdoor", 1], ["customer_visit", 1]])
