@@ -167,10 +167,11 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         return fmtDuration(minutes * 60);
     }
 
+    // Metres in, imperial out: feet under about 1,000 ft, miles above (Nik, 2026-10-09).
     function fmtDistance(metres) {
         if (metres == null || !isFinite(metres)) return '—';
-        if (metres >= 1000) return __('{0} km', [(metres / 1000).toFixed(1)]);
-        return __('{0} m', [Math.round(metres)]);
+        if (metres >= 305) return __('{0} mi', [(metres / 1609.344).toFixed(1)]);
+        return __('{0} ft', [Math.round(metres * 3.28084)]);
     }
 
     function fmtPct(value) {
@@ -1047,7 +1048,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             if (p.accuracy != null) html += '<br>' + __('Accuracy ±{0}', [esc(fmtDistance(+p.accuracy))]);
             if (p.log_status === LOW_ACCURACY) html += ' · ' + esc(__('Low accuracy'));
             if (p.fix_source) html += '<br>' + __('Source: {0}', [esc(p.fix_source)]);
-            if (p.speed != null && +p.speed > 0) html += ' · ' + __('{0} km/h', [esc((+p.speed * 3.6).toFixed(0))]);
+            if (p.speed != null && +p.speed > 0) html += ' · ' + __('{0} mph', [esc((+p.speed * 2.23694).toFixed(0))]);
             return html;
         }
 

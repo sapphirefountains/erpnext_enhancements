@@ -721,10 +721,11 @@
     catch (e) { return toISODate(d); }
   }
 
+  // Metres in, imperial out: feet under about 1,000 ft, miles above (Nik, 2026-10-09).
   function distance(m) {
     if (m == null || isNaN(m)) return '';
-    if (m < 950) return Math.round(m) + ' m';
-    return (m / 1000).toFixed(1) + ' km';
+    if (m < 305) return Math.round(m * 3.28084) + ' ft';
+    return (m / 1609.344).toFixed(1) + ' mi';
   }
 
   function ago(when) {

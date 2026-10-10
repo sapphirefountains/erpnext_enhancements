@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The flag text reads "Freezing 28 °F" and "Wind 28 mph" everywhere it shows: cards, the task
     panel, route stops, Suggest dates and the legend.
   - The cache key now carries the unit, so no cached metric answer is read back as imperial.
+- **Distances are shown in miles, not km** (Nik: "show drive routes in miles not km etc.").
+  - **Planner:** the route view's legs and total, and the date suggestions ("Jesse is already at
+    Highlands that day (1.5 mi away)").
+  - **AI tool:** `get_route` now returns `miles` beside each `km`, and `crew_day_route` says miles.
+  - **Kiosk and location timeline:** distance to a site shows feet under about 1,000 ft and miles
+    above it. GPS speed shows in mph.
+  - **What's unchanged:** only the display changed. Routing, the Planner Drive Time cache and the
+    straight-line estimate still measure in km.
 
 ## [1.588.1] - 2026-10-09
 

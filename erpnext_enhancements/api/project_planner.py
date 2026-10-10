@@ -1927,12 +1927,23 @@ def copy_week(source_start, target_start, tasks, dry_run=1, reason=None):
 # ---------------------------------------------------------------------- routes: pure helpers
 
 
-def fmt_km(km):
-	"""``4.0`` → ``"4"``, ``3.46`` → ``"3.5"``, ``12.7`` → ``"13"``: a driver's precision."""
-	km = flt(km)
-	if km >= 10:
-		return str(int(round(km)))
-	return engine.fmt_hours(round(km, 1))
+#: Distances are measured in km everywhere underneath (routing, the drive-time cache) and shown
+#: in miles (Nik, 2026-10-09: "show drive routes in miles not km").
+KM_PER_MILE = 1.609344
+
+
+def to_miles(km):
+	"""Kilometres to miles."""
+	return flt(km) / KM_PER_MILE
+
+
+def fmt_miles(km):
+	"""A distance in km shown in miles at a driver's precision: ``6.44`` km → ``"4"``,
+	``5.57`` km → ``"3.5"``, ``20.4`` km → ``"13"``."""
+	miles = to_miles(km)
+	if miles >= 10:
+		return str(int(round(miles)))
+	return engine.fmt_hours(round(miles, 1))
 
 
 def fmt_minutes(minutes):
@@ -2078,6 +2089,7 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 				"drive_minutes": timing.get("drive_minutes"),
 				"wait_minutes": timing.get("wait_minutes"),
 				"km": round(flt(driven["km"]), 1) if driven else None,
+				"miles": round(to_miles(driven["km"]), 1) if driven else None,
 				"located": point is not None,
 			}
 		)
@@ -2103,11 +2115,13 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 				"arrive": times["finish"] if times and located_points else None,
 				"drive_minutes": times["back_minutes"] if times and located_points else None,
 				"km": round(flt(back["km"]), 1) if back else None,
+				"miles": round(to_miles(back["km"]), 1) if back else None,
 			}
 		),
 		"stops": stops,
 		"drive_minutes": drive,
 		"km": flt((route or {}).get("km")),
+		"miles": round(to_miles((route or {}).get("km")), 1),
 		"source": (route or {}).get("source") if drive > 0 else None,
 		"long_drive": bool(route and drive > _long_limit(settings)),
 		"unlocated": [
@@ -2187,13 +2201,13 @@ def suggestion(person, day, cell, route, site, shop, matrix, needed, settings, t
 
 	drive_total = flt((route or {}).get("drive_minutes")) + added
 	if near:
-		reason = _("{0} is already at {1} that day ({2} km away): +{3} min driving.").format(
-			name, near[0]["label"], fmt_km(near[0]["km"]), fmt_minutes(added)
+		reason = _("{0} is already at {1} that day ({2} mi away): +{3} min driving.").format(
+			name, near[0]["label"], fmt_miles(near[0]["km"]), fmt_minutes(added)
 		)
 	elif stops:
 		nearest = min(routing.haversine_km(site, s["point"]) for s in stops)
-		reason = _("{0} has other stops that day, the nearest {1} km away: +{2} min driving.").format(
-			name, fmt_km(nearest), fmt_minutes(added)
+		reason = _("{0} has other stops that day, the nearest {1} mi away: +{2} min driving.").format(
+			name, fmt_miles(nearest), fmt_minutes(added)
 		)
 	elif any(b.get("kind") in routing.STOP_KINDS for b in cell.get("bookings") or []):
 		reason = _("Nothing else on {0}'s day has a location: +{1} min driving.").format(

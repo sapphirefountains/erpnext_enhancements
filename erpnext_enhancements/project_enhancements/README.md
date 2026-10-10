@@ -622,6 +622,11 @@ shop" is one setting), through each located task, rental crew task and maintenan
   Project); a rental crew task's booking venue; a visit's site. A stop with no coordinates is
   listed (and counted as `unlocated`) but adds no driving. `backfill_coordinates` geocodes missing
   task and venue addresses daily, because a deploy's Redis flush kills any queued geocode.
+- **Distances are shown in miles** (Nik, 2026-10-09, v1.589.0), measured in km underneath: routing, the
+  drive-time cache and the straight-line estimate all keep km, and only what people read converts —
+  the route view's legs and total (`pp_mi`), the date suggestions' "2 mi away" (`api/project_planner.fmt_miles`),
+  and `get_route`'s `miles` beside each `km` for the `crew_day_route` AI tool. The kiosk's distance to a
+  site and the location timeline show feet or miles and mph the same way.
 - **Drive time** comes from Google Routes' `computeRouteMatrix` on the server key, cached per pair in
   `Planner Drive Time`. **One planner load makes one matrix request** for every pair it is missing,
   not one per person-day: each costs money. If Google refuses or fails, routing stops asking for an

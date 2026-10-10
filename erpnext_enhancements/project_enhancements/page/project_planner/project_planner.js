@@ -92,7 +92,8 @@ const pp_drive = (minutes) => {
 	if (!h) return `${m}m`;
 	return m ? `${h}h ${m}m` : `${h}h`;
 };
-const pp_km = (value) => String(Math.round((Number(value) || 0) * 10) / 10);
+// Distances arrive in km (routing measures in km) and are shown in miles (Nik, 2026-10-09).
+const pp_mi = (km) => String(Math.round(((Number(km) || 0) / 1.609344) * 10) / 10);
 const pp_valid_point = (lat, lng) =>
 	Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && (Number(lat) !== 0 || Number(lng) !== 0);
 
@@ -2969,7 +2970,7 @@ class ProjectPlanner {
 		const sum_legs = stops.reduce((total, stop) => total + (Number(stop.drive_minutes) || 0), 0);
 		const totals = [];
 		totals.push(`<b>${pp_esc(__("Driving"))}</b> ${pp_esc(pp_drive(data.drive_minutes))}`);
-		if (Number(data.km) > 0) totals.push(pp_esc(`${pp_km(data.km)} km`));
+		if (Number(data.km) > 0) totals.push(pp_esc(`${pp_mi(data.km)} mi`));
 		if (Number(data.drive_minutes) > 0 && data.source) totals.push(pp_esc(this.source_text(data.source)));
 		totals.push(pp_esc(__("{0} stop(s)", [stops.length])));
 		const long = data.long_drive ? `<span class="pp-chip pp-red">${pp_esc(__("Long drive"))}</span>` : "";
@@ -3013,8 +3014,8 @@ class ProjectPlanner {
 				.join(" · ");
 			let leg = "";
 			if (located && previous_located && Number(stop.drive_minutes) >= 0 && stop.drive_minutes != null) {
-				const km = Number(stop.km) > 0 ? ` · ${pp_km(stop.km)} km` : "";
-				leg = `<div class="pp-stop-leg">${pp_esc(`${pp_drive(stop.drive_minutes)}${km}`)}</div>`;
+				const dist = Number(stop.km) > 0 ? ` · ${pp_mi(stop.km)} mi` : "";
+				leg = `<div class="pp-stop-leg">${pp_esc(`${pp_drive(stop.drive_minutes)}${dist}`)}</div>`;
 			}
 			if (located) previous_located = true;
 			const waits =
