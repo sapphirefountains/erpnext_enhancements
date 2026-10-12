@@ -60,6 +60,25 @@ asked for a parts-needed section. Nik's call: a follow-up list that can make an 
 - Lead attribution is off on prod, so the Opportunity sets no lead source. If
   `require_lead_source_on_opportunity` is turned on, *Create Opportunity* shows that rule's own
   "Lead Source is required" message.
+- **Found in review, before release:**
+  - *Create Opportunity* could never have worked. This site's Property Setter replaces
+    ERPNext's Opportunity statuses with the sales stages, so "Open" was refused. A part's item row
+    also had no `rate`, which v16 requires. The Opportunity now starts at **Qualification**, as
+    the fountain-move conversion does, with rate 0, and its name is cut to the 140-character
+    field.
+  - A follow-up's photo goes onto the tracked follow-up only when it is a File attached to the
+    visit. The follow-up is inserted as the approver, and frappe attaches a copy of whatever
+    File it names, which every technician and sales user could then download. A phone could
+    otherwise have named any private file.
+  - A follow-up with no qty, whose save committed but whose answer was lost, would have been
+    sent again. The server stores a blank qty as 0, so the comparison now treats blank as 0,
+    and descriptions are compared as the server's sanitizing leaves them.
+  - Edits parked when leaving a visit with no signal put a follow-up back as a consumable,
+    which made every later save of the visit be refused. It now goes back on its own table.
+  - Canceling an approved visit cancels its follow-ups still being worked, with a note. An
+    amended visit tracks its rows again, since a row's copied link names the canceled original.
+  - On the Visit Review page, going to the follow-up list resets the "back to the queue" history,
+    so "Back to the queue" from a visit opened there goes to the queue.
 
 ### Tests
 
@@ -70,7 +89,12 @@ asked for a parts-needed section. Nik's call: a follow-up list that can make an 
   - the timeline note, escaped;
   - falling back to the person clicking;
   - made once;
-  - refused without create permission or a customer.
+  - refused without create permission or a customer;
+  - its Qualification stage and rate;
+  - a long project name cut to the field.
+
+  It also covers a photo copied only when attached to the visit, an amended visit's rows
+  tracked again, cancel canceling only the ones still being worked, and the cancel hook's wiring.
 - `test_visit_review`: the follow-up list (oldest first, names not IDs, closed ones on
   request), the role gate on all three endpoints, a status checked against the version shown,
   and the Opportunity needing write on the follow-up.
@@ -79,7 +103,9 @@ asked for a parts-needed section. Nik's call: a follow-up list that can make an 
   - a lost answer not sent twice;
   - names landing per table when a consumable and a follow-up go together;
   - a phone's pre-v1.600.0 kept answers still sent;
-  - a Fail answer's follow-up filled in.
+  - a Fail answer's follow-up filled in;
+  - a lost answer with no qty and sanitized markup not sent twice;
+  - a parked follow-up coming back as a follow-up.
 
   The harness's fake `save_visit` now names appended rows as the real one does.
 - `test_print_style` and `test_visit_review_digest`: the report's table (escaped, "Whole site",

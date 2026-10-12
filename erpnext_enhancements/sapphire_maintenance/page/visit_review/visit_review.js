@@ -115,6 +115,8 @@ class VisitReview {
 		const name = route[1] ? String(route[1]) : "";
 		this.current = name;
 		if (name === VR_FOLLOW_UPS) {
+			// Not the queue: a visit opened from here goes back to the queue by route, not Back.
+			this.came_from_queue = false;
 			this.show_follow_ups();
 		} else if (name) {
 			this.show_visit(name);

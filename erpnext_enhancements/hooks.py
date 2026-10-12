@@ -715,6 +715,8 @@ doc_events = {
 		"validate": "erpnext_enhancements.hr_enhancements.availability.warn_driver_cannot_drive",
 	},
 	"Sapphire Maintenance Record": {
+		# A canceled visit's follow-ups still being worked are Canceled with it (v1.600.0).
+		"on_cancel": "erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
 		"on_submit": [
 			"erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 			# Follow-ups and parts needed (v1.600.0): each of the visit's follow_ups rows becomes a

@@ -995,6 +995,30 @@ async function visitWizardSuite() {
 		assert.equal(db["MNT-1"].visit_notes, "typed offline");
 	});
 
+	await test("a parked follow-up comes back on screen as a follow-up, not a consumable", async () => {
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard");
+		await settle();
+		press("MNT-1");
+		await settle();
+		server.fail.add("save_visit");
+		wizard().add_follow_up();
+		ui.dialogs[ui.dialogs.length - 1].opts.primary_action({ description: "New manifold", serial_no: "SN-A" });
+		await back(); // leave_record's flush fails -> parked
+		await settle();
+		assert.ok(wizard()._parked["MNT-1"]);
+		server.fail.delete("save_visit");
+		await forward(); // straight back into MNT-1: nothing kept on this phone, the parked edits return
+		assert.deepEqual(
+			(wizard().doc.follow_ups || []).map((row) => row.description),
+			["New manifold"]
+		);
+		assert.ok(!(wizard().doc.consumables || []).some((row) => row._table === "follow_ups"));
+		await tick(5000);
+		assert.deepEqual(db["MNT-1"].follow_ups.map((row) => row.description), ["New manifold"]);
+		assert.equal(db["MNT-1"].consumables.length, 1);
+	});
+
 	await test("one save of a visit at a time: the second waits and carries the first's `modified`", async () => {
 		const db = visitServer({ "MNT-1": visit() });
 		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
@@ -1747,10 +1771,13 @@ async function visitWizardKeptSuite() {
 		const w = wizard();
 		server.hold.add("save_visit");
 		w.add_follow_up();
-		ui.dialogs[ui.dialogs.length - 1].opts.primary_action({ description: "Replace lens", serial_no: "SN-A" });
+		// No qty, and markup the server's sanitizing strips: as the real server keeps them,
+		// a blank Float is 0 and the description is rewritten.
+		ui.dialogs[ui.dialogs.length - 1].opts.primary_action({ description: "Replace <b>lens</b>", serial_no: "SN-A" });
 		await settle();
 		server.lose("save_visit"); // committed; the answer was lost
 		await settle();
+		Object.assign(db["MNT-1"].follow_ups[0], { qty: 0, description: "Replace lens" });
 		server.hold.clear();
 		server.fail.add("save_visit");
 		await tick(5000);

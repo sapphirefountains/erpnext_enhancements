@@ -267,13 +267,25 @@ const VZ_ADDED = {
 	follow_ups: {
 		sent: ["description", "item", "qty", "told", "serial_no", "source_question"],
 		kept: ["description", "item", "qty", "told", "serial_no", "source_question"],
+		// The server stores a blank qty as 0, and may rewrite a description's markup and
+		// spacing when it sanitizes Small Text, so both are compared as the server keeps them.
 		same: (server, row) =>
-			vz_same(server.description, row.description) &&
+			vz_loose_text(server.description) === vz_loose_text(row.description) &&
 			vz_same(server.item, row.item) &&
-			vz_same(server.qty, row.qty) &&
+			vz_same(server.qty || 0, row.qty || 0) &&
 			vz_same(server.serial_no, row.serial_no),
 	},
 };
+
+// Text as it survives the server's sanitizing: no tags or entities, spacing collapsed.
+function vz_loose_text(value) {
+	return String(value == null ? "" : value)
+		.replace(/<[^>]*>/g, "")
+		.replace(/&[#\w]+;/g, "")
+		.replace(/[<>&]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
 
 function vz_added_table(row) {
 	return row._table || "consumables";
@@ -1760,7 +1772,8 @@ class VisitWizard {
 			});
 		});
 		parked.pending_added.forEach((row) => {
-			(this.doc.consumables = this.doc.consumables || []).push(row);
+			const table = vz_added_table(row);
+			(this.doc[table] = this.doc[table] || []).push(row);
 			this.pending_added.push(row);
 		});
 		if (this.has_dirty()) this.schedule_save();

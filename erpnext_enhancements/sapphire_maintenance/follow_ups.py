@@ -31,6 +31,12 @@ VISIT = "Sapphire Maintenance Record"
 ROW = "Sapphire Visit Follow-Up"
 #: Still being worked: the follow-up list shows these.
 OPEN_STATUSES = ("Open", "Quoted", "Ordered", "Installed")
+#: A new Opportunity's stage. This site's Property Setter replaces ERPNext's status options
+#: (Open, Quotation, ...) with the sales stages, and "Qualification" is the first; the
+#: fountain-move conversion uses it too. "Open" is refused as not an option.
+OPPORTUNITY_STATUS = "Qualification"
+#: custom_opportunity_name is a Data field.
+NAME_LENGTH = 140
 STATUSES = (*OPEN_STATUSES, "Invoiced", "Canceled")
 SETTINGS = "ERPNext Enhancements Settings"
 OWNER_SETTING = "follow_up_opportunity_owner"
@@ -64,8 +70,10 @@ def check_follow_ups(doc):
 
 
 def on_visit_submit(doc, method=None):
-	"""Approved: one Maintenance Follow-Up per row not already tracked, linked back from the row."""
-	rows = [row for row in doc.get("follow_ups") or [] if not row.get("follow_up")]
+	"""Approved: one Maintenance Follow-Up per row not already tracked for this visit, linked back
+	from the row. An amended visit's rows carry the canceled original's links (an amendment
+	copies them), so a link counts only when its follow-up names this visit."""
+	rows = [row for row in doc.get("follow_ups") or [] if not _tracked_here(row, doc.name)]
 	if not rows:
 		return
 	raised_on = getdate(doc.get("visit_date") or doc.get("scheduled_visit_date") or nowdate())
@@ -78,7 +86,7 @@ def on_visit_submit(doc, method=None):
 				"item": row.get("item"),
 				"qty": row.get("qty"),
 				"told": row.get("told"),
-				"photo": row.get("photo"),
+				"photo": _visit_photo(row.get("photo"), doc.name),
 				"customer": doc.get("customer"),
 				"project": doc.get("project"),
 				"serial_no": row.get("serial_no") or doc.get("serial_no"),
@@ -90,6 +98,40 @@ def on_visit_submit(doc, method=None):
 		tracked.insert(ignore_permissions=True)
 		frappe.db.set_value(ROW, row.name, "follow_up", tracked.name, update_modified=False)
 		row.follow_up = tracked.name
+
+
+def on_visit_cancel(doc, method=None):
+	"""A canceled visit's follow-ups still being worked are Canceled too, with a note saying why,
+	so they leave Lisa's list. One already Invoiced or Canceled is left as it is."""
+	for name in frappe.get_all(
+		DOCTYPE, filters={"visit": doc.name, "status": ["in", list(OPEN_STATUSES)]}, pluck="name"
+	):
+		tracked = frappe.get_doc(DOCTYPE, name)
+		tracked.status = "Canceled"
+		tracked.flags.ignore_permissions = True
+		tracked.save()
+		tracked.add_comment(
+			"Comment", _("Canceled with its visit {0}.").format(frappe.utils.escape_html(doc.name))
+		)
+
+
+def _tracked_here(row, visit):
+	return bool(row.get("follow_up")) and frappe.db.get_value(DOCTYPE, row.follow_up, "visit") == visit
+
+
+def _visit_photo(url, visit):
+	"""The row's photo, only when it is a File on this site attached to the visit, as the
+	wizard's upload attaches it. The follow-up is inserted as the approver, and frappe's
+	``attach_files_to_document`` hook then attaches a copy of the named File to it, which
+	everyone who can read follow-ups (technicians, sales) can then download. So a URL a phone
+	sent naming some other private file must not be copied."""
+	url = str(url or "")
+	if not url.startswith(("/files/", "/private/files/")):
+		return None
+	attached = frappe.db.exists(
+		"File", {"file_url": url, "attached_to_doctype": VISIT, "attached_to_name": visit}
+	)
+	return url if attached else None
 
 
 def make_opportunity(name):
@@ -120,11 +162,13 @@ def make_opportunity(name):
 			"party_name": follow_up.customer,
 			"company": _default_company(),
 			"transaction_date": nowdate(),
-			"status": "Open",
+			"status": OPPORTUNITY_STATUS,
 			"opportunity_owner": owner,
-			"custom_opportunity_name": _("{0}: {1}").format(site, follow_up.get("title") or ""),
+			"custom_opportunity_name": _("{0}: {1}").format(site, follow_up.get("title") or "")[:NAME_LENGTH],
 			"custom_value_stream": [{"value_stream": VALUE_STREAM}],
-			"items": [{"item_code": follow_up.item, "qty": flt(follow_up.get("qty")) or 1}]
+			# Opportunity Item's rate is mandatory in v16, and nothing sets it; the price is
+			# for the quotation.
+			"items": [{"item_code": follow_up.item, "qty": flt(follow_up.get("qty")) or 1, "rate": 0}]
 			if follow_up.get("item")
 			else [],
 		}
