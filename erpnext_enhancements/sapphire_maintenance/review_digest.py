@@ -297,6 +297,8 @@ def build_context(doc):
 	compared = _compared_with(doc, comparison)
 	if compared:
 		summary.insert(next(i for i, row in enumerate(summary) if row[0] == _("Visit date")) + 1, compared)
+	# The fountain as the technician left it (v1.597.0), a link like every visit photo.
+	fountain_photo = _photo_link(doc.get("fountain_photo"), _("the fountain as we left it"))
 
 	return {
 		"name": doc.name,
@@ -312,10 +314,11 @@ def build_context(doc):
 		"blocks": blocks,
 		"notes_heading": _("Visit notes"),
 		"notes": (doc.get("visit_notes") or "").strip() or None,
+		"fountain_photo": fountain_photo,
 		# For the Visit Review page's queue row: the same findings the warnings word.
 		"out_of_range": out_of_range,
 		"unanswered": unanswered,
-		"photo_count": sum(len(block["photos"]) for block in blocks),
+		"photo_count": sum(len(block["photos"]) for block in blocks) + (1 if fountain_photo else 0),
 		"first_visit": comparison["first_visit"],
 	}
 

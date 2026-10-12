@@ -16,6 +16,8 @@ Review. Pinned here, through the real ``validate`` and ``before_submit``:
 * no other save stamps anything (autosaves, a reviewer's edit, Send Back);
 * the patch dates visits already waiting, from when they went for review.
 
+And the name a visit is given (v1.597.0), ``PRJ-00179-2026-V001``: the controller's ``autoname``.
+
 Stubs a minimal ``frappe`` in ``setUpModule``; runs the real controller and patch.
 
 Run: python -m unittest erpnext_enhancements.tests.test_visit_finished_for_review
@@ -40,6 +42,7 @@ STUBBED = (
 	"frappe.utils",
 	"frappe.model",
 	"frappe.model.document",
+	"frappe.model.naming",
 	RECORD_MODULE,
 	PATCH_MODULE,
 	CREW_MODULE,
@@ -90,8 +93,19 @@ def _reset(today=TODAY, now=NOW):
 			"comments": [],
 			"set_values": [],
 			"errors": [],
+			"series": {},
 		}
 	)
+
+
+def _make_autoname(key, doctype="", doc=None):
+	"""frappe.model.naming.make_autoname for a ``PREFIX.###`` key: one counter per prefix."""
+	assert doc is not None, "the controller passes itself"
+	prefix, hashes = key.rsplit(".", 1)
+	assert set(hashes) == {"#"}, key
+	assert "." not in prefix, "a dot in the prefix would split it into naming parts"
+	STATE["series"][prefix] = STATE["series"].get(prefix, 0) + 1
+	return f"{prefix}{STATE['series'][prefix]:0{len(hashes)}d}"
 
 
 def _interval(status, start, end=None, paused=0):
@@ -191,6 +205,9 @@ def setUpModule():
 	document = types.ModuleType("frappe.model.document")
 	document.Document = _Document
 	model.document = document
+	naming = types.ModuleType("frappe.model.naming")
+	naming.make_autoname = _make_autoname
+	model.naming = naming
 	frappe.model = model
 
 	crew = types.ModuleType(CREW_MODULE)
@@ -202,6 +219,7 @@ def setUpModule():
 			"frappe.utils": utils,
 			"frappe.model": model,
 			"frappe.model.document": document,
+			"frappe.model.naming": naming,
 			CREW_MODULE: crew,
 		}
 	)
@@ -391,6 +409,66 @@ class TestThePatch(unittest.TestCase):
 		entry = "erpnext_enhancements.patches.stamp_visit_date_on_pending_review"
 		self.assertIn(entry, lines)
 		self.assertGreater(lines.index(entry), lines.index("[post_model_sync]"))
+
+
+class TestTheReportNumber(unittest.TestCase):
+	"""Lisa (2026-10-12): could the report number be the PRJ number? Nik: with the year."""
+
+	def setUp(self):
+		_reset()
+
+	def _named(self, **fields):
+		doc = _visit(name=None, **fields)
+		doc.autoname()
+		return doc.name
+
+	def test_project_year_and_the_visits_number_that_year(self):
+		self.assertEqual(self._named(project="PRJ-00179", visit_date="2026-10-06"), "PRJ-00179-2026-V001")
+		self.assertEqual(self._named(project="PRJ-00179", visit_date="2026-10-20"), "PRJ-00179-2026-V002")
+		self.assertEqual(self._named(project="PRJ-00228", visit_date="2026-10-20"), "PRJ-00228-2026-V001")
+
+	def test_the_year_is_the_visits_own(self):
+		"""Drafted in December for a January visit: it counts in January's year."""
+		_reset(today=D(2026, 12, 28))
+		self.assertEqual(
+			self._named(project="PRJ-00179", visit_date=None, scheduled_visit_date="2027-01-05"),
+			"PRJ-00179-2027-V001",
+		)
+		self.assertEqual(
+			self._named(project="PRJ-00179", visit_date="2026-12-30", scheduled_visit_date="2027-01-05"),
+			"PRJ-00179-2026-V001",
+			"the day it was done outranks the day it was planned",
+		)
+		self.assertEqual(
+			self._named(project="PRJ-00179", visit_date=None, scheduled_visit_date=None),
+			"PRJ-00179-2026-V002",
+		)
+
+	def test_a_visit_with_no_project_is_left_to_frappe(self):
+		self.assertIsNone(self._named(project=None))
+		self.assertEqual(STATE["series"], {})
+
+	def test_a_project_name_that_reads_as_series_syntax_is_left_to_frappe(self):
+		"""make_autoname splits its key on dots and reads ``#`` and braces as placeholders."""
+		for project in ("PRJ.1", "PRJ-#1", "PRJ-{x}"):
+			with self.subTest(project=project):
+				self.assertIsNone(self._named(project=project))
+		self.assertEqual(STATE["series"], {})
+
+	def test_the_doctype_does_not_name_it_first(self):
+		"""v16 ``set_new_name`` runs a Document Naming Rule, then the controller's ``autoname``,
+		then the DocType's own option, then ``hash``. But an ``autoincrement`` or ``UUID`` option
+		returns before the controller is asked, and ``prompt`` keeps a typed name, so the JSON
+		must stay on the default."""
+		import json
+
+		meta = json.loads(
+			(
+				APP
+				/ "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.json"
+			).read_text(encoding="utf-8")
+		)
+		self.assertIn(meta.get("autoname") or "hash", ("hash", ""))
 
 
 if __name__ == "__main__":

@@ -849,11 +849,16 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         except ImportError:  # pragma: no cover
             self.skipTest("jinja2 not installed")
 
-    def render(self, doc):
+    def render(self, doc, report=None):
+        """``maintenance_report`` is visit_report.py's (tested on its own in test_visit_report);
+        here it is stubbed to what the template is given, empty unless the test says otherwise."""
         from jinja2 import Environment
 
         env = Environment()
         env.globals.update(_globals())
+        given = {"features": {}, "feature_lines": [], "contract_line": "", "charts": [], "fountain_photo": None}
+        given.update(report or {})
+        env.globals["maintenance_report"] = lambda d: given
         return env.from_string(self.record["html"]).render(doc=doc, frappe=_stub_frappe())
 
     def test_it_is_a_jinja_format_with_frappes_margins(self):
@@ -900,6 +905,45 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         self.assertIn("Contract SMC-2026-0042", out)
         self.assertEqual(out.count(">Water Feature<"), 4, "one per table")
         self.assertNotIn("None", out)
+
+    def test_features_print_by_name_and_the_contract_by_year(self):
+        """v1.597.0, Lisa's review: names rather than serials, the contract with its calendar
+        year, and the PRJ number that the report number is now built from."""
+        out = self.render(
+            _record(serial_no=None, maintenance_contract="SMC-2026-0042"),
+            {
+                "features": {"WF-0001": "East Courtyard Fountain"},
+                "feature_lines": ["East Courtyard Fountain", "West <Lobby> Wall"],
+                "contract_line": "Myers Mortuary Maintenance Contract · 2026",
+            },
+        )
+        self.assertIn("East Courtyard Fountain<br>West &lt;Lobby&gt; Wall", out)
+        self.assertNotIn("Site visit", out)
+        self.assertNotIn(">WF-0001<", out, "the feature column prints names too")
+        self.assertEqual(out.count(">East Courtyard Fountain</td>"), 8, "every row of all four tables")
+        self.assertIn("Myers Mortuary Maintenance Contract · 2026", out)
+        self.assertIn("Project PRJ-00001", out)
+
+    def test_without_a_contract_line_the_project_name_still_prints(self):
+        out = self.render(_record())
+        self.assertIn("PRJ-00001 project_name", out)
+        self.assertIn("WF-0001", out, "no name found: the serial, as before")
+
+    def test_charts_print_two_to_a_row_under_the_chemistry_table(self):
+        out = self.render(_record(), {"charts": ['<svg id="c1"></svg>', '<svg id="c2"></svg>', '<svg id="c3"></svg>']})
+        self.assertIn("The shaded band is the target range", out)
+        self.assertLess(out.index("Total alkalinity"), out.index('<svg id="c1">'))
+        squashed = re.sub(r"\s+", "", out)
+        self.assertIn('<svgid="c2"></svg></td></tr><tr>', squashed)
+        self.assertIn('<svgid="c3"></svg></td><tdstyle="width:50%;"></td></tr>', squashed, "an odd chart is padded")
+        self.assertNotIn("shaded band", self.render(_record()))
+
+    def test_the_fountain_photo_prints_after_the_notes(self):
+        out = self.render(_record(), {"fountain_photo": "data:image/jpeg;base64,/9j/"})
+        self.assertIn("The Fountain As We Left It", out)
+        self.assertIn('src="data:image/jpeg;base64,/9j/"', out)
+        self.assertLess(out.index("Basin drained"), out.index("The Fountain As We Left It"))
+        self.assertNotIn("As We Left It", self.render(_record()))
 
     def test_an_unsigned_record_says_so(self):
         out = self.render(_record(client_sign_off=None))

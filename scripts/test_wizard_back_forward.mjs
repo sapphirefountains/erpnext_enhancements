@@ -1829,6 +1829,41 @@ async function visitWizardKeptSuite() {
 		assert.deepEqual(p.outbox(), []);
 	});
 
+	await test("the fountain photo (v1.597.0) is kept like any photo and lands on the visit itself", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit(), "MNT-2": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		p.net.down = true;
+		wizard().take_photo(null, null, new Blob(["jpeg"]), $stub("btn"), "fountain_photo");
+		await settle();
+		const [kept] = p.outbox();
+		assert.deepEqual([kept.table, kept.row, kept.field], [null, null, "fountain_photo"]);
+		p.net.down = false;
+		// Opened again with signal: on screen, it becomes an edit of the visit and is saved.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].fountain_photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), []);
+
+		// Taken on MNT-2 with no signal, then sent from the list in the background.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2/wrapup");
+		p.install();
+		await settle();
+		p.net.down = true;
+		wizard().take_photo(null, null, new Blob(["jpeg"]), $stub("btn"), "fountain_photo");
+		await settle();
+		p.net.down = false;
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-2"].fountain_photo, "/private/files/MNT-2-2.jpg");
+		assert.deepEqual(p.outbox(), []);
+		assert.equal(p.kept("MNT-2"), null);
+	});
+
 	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {
 		visitServer({ "MNT-1": visit() });
 		const bootstrap = server.handlers.get_visit_bootstrap;

@@ -9,6 +9,7 @@
      summary                        [(label, value)]
      blocks                         [{heading, headers, rows, photos: [(url, label)], empty}]
      notes_heading, notes           the visit notes, or no notes
+     fountain_photo                 (url, label) of the fountain as we left it, or none
 
    A FRAGMENT: the chrome comes from email_style.render(). frappe's Jinja env has NO
    autoescape, and the macros escape their own text, so nothing here adds a second |e. #}
@@ -34,6 +35,9 @@
 {% if notes %}
 {{ ee.h(notes_heading) }}
 {{ ee.prose(notes) }}
+{% endif %}
+{% if fountain_photo %}
+{{ ee.links([fountain_photo]) }}
 {% endif %}
 {% if closing %}
 {{ ee.note(closing) }}

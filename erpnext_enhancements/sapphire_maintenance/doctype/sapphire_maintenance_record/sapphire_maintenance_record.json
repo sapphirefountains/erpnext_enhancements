@@ -34,6 +34,7 @@
   "maintenance_results",
   "consumables",
   "visit_notes",
+  "fountain_photo",
   "historical_visits",
   "completion_percent",
   "warranty_rma_flag",
@@ -217,6 +218,12 @@
    "label": "Visit Notes"
   },
   {
+   "description": "Taken in the Visit Wizard's Wrap-up as the technician leaves: the fountain running. Printed at the end of the customer's visit report (v1.597.0).",
+   "fieldname": "fountain_photo",
+   "fieldtype": "Attach Image",
+   "label": "Fountain As We Left It"
+  },
+  {
    "description": "Read-only panel — last 5 submitted visits for the Project. Rendered client-side from get_historical_visits; not a stored table.",
    "fieldname": "historical_visits",
    "fieldtype": "HTML",
@@ -264,7 +271,7 @@
    "label": "Client Sign-off"
   }
  ],
- "modified": "2026-10-09 16:00:00.000000",
+ "modified": "2026-10-12 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",

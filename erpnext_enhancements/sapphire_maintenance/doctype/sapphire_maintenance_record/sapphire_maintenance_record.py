@@ -67,6 +67,26 @@ class SapphireMaintenanceRecord(Document):
 	# are never public pages.
 	website = frappe._dict(condition_field="docstatus")
 
+	def autoname(self):
+		"""``PRJ-00179-2026-V001``: the project, the visit's year, and its number that year.
+
+		Lisa, reviewing the first customer report on 2026-10-12: the report number (a random
+		ID such as ``2hkckpg374``) meant nothing; could it be the PRJ number? A project has
+		many visits, so the project and the year lead and the visit's number follows (Nik:
+		"add the year"). The year is the visit's own, its date or else the scheduled date, so
+		a visit drafted in December for January counts in January. A visit with no project
+		keeps Frappe's random name, and so does one whose project name would read as series
+		syntax (make_autoname splits on dots and reads ``#`` and braces). Visits named before
+		v1.597.0 keep theirs, because review emails and links name them.
+		"""
+		project = self.get("project") or ""
+		if not project or any(c in project for c in ".#{}"):
+			return
+		from frappe.model.naming import make_autoname
+
+		year = getdate(self.get("visit_date") or self.get("scheduled_visit_date") or nowdate()).year
+		self.name = make_autoname(f"{project}-{year}-V.###", doc=self)
+
 	def validate(self):
 		# The crew (P1.8): no row for the technician, no person twice, no negative hours. See
 		# sapphire_maintenance/visit_crew.py; the on_update doc_event mirrors it into ToDos.

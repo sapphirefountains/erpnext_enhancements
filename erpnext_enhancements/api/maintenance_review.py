@@ -106,6 +106,7 @@ def get_review_visit(record):
 				"blocks",
 				"notes_heading",
 				"notes",
+				"fountain_photo",
 				"first_visit",
 			)
 		},

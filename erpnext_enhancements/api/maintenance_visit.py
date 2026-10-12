@@ -24,7 +24,7 @@ from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_reco
 # Wizard-writable fields. Anything else in a patch is silently dropped — the
 # wizard never edits identity/scheduling fields, so the API doesn't accept
 # them either.
-ALLOWED_PARENT_FIELDS = {"visit_notes", "safety_acknowledged", "client_sign_off", "visit_date"}
+ALLOWED_PARENT_FIELDS = {"visit_notes", "safety_acknowledged", "client_sign_off", "visit_date", "fountain_photo"}
 ALLOWED_ROW_FIELDS = {
     "maintenance_results": {"selection", "answer", "other_details", "photo"},
     "chemistry_readings": {"reading_value", "notes", "photo"},
