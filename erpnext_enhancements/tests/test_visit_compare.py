@@ -80,6 +80,23 @@ def _get_all(doctype, filters=None, fields=None, order_by=None, limit=None, **kw
 	return [_Dict({f: row.get(f) for f in fields}) for row in rows]
 
 
+def _db_sql(query, params, as_dict=False):
+	"""``visit_compare.EARLIER_SQL``, done in Python: the site's approved visits, other than this
+	one, whose day (visit date, else scheduled date, else creation) is on or before ``day``,
+	newest first, at most ``limit``. ``TestTheQuery`` pins that the SQL says the same."""
+	assert query is compare.EARLIER_SQL and as_dict
+	rows = [
+		row
+		for row in ROWS.get(RECORD, [])
+		if row.project == params["project"]
+		and row.docstatus == 1
+		and row.name != params["name"]
+		and compare.visit_day(row) <= params["day"]
+	]
+	rows.sort(key=lambda row: (compare.visit_day(row), str(row.creation)), reverse=True)
+	return [_Dict(row) for row in rows[: params["limit"]]]
+
+
 def _forget_package_attribute():
 	"""``from package import name`` prefers a stale package attribute to a fresh import."""
 	import erpnext_enhancements.sapphire_maintenance as package
@@ -96,6 +113,7 @@ def setUpModule():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
 	frappe.get_all = _get_all
+	frappe.db = types.SimpleNamespace(sql=_db_sql)
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(float(v or 0))
 	utils.flt = lambda v, *a: float(v or 0)
@@ -275,6 +293,57 @@ class TestMissingPreviousValue(_Base):
 			if week == compare.LOOKBACK:
 				_reading(name, "TDS", 900)
 		self.assertEqual(compare.compare(_visit([{"reading": "TDS", "reading_value": 950}]))["previous"], {})
+
+
+class TestLookbackIsPerFountain(_Base):
+	"""A Per Feature contract makes one record per fountain per visit (review of PR #1204)."""
+
+	def test_a_twelve_fountain_site_still_finds_last_weeks_reading(self):
+		for n in range(12):
+			_record(f"F{n}", "2026-10-05", serial_no=f"SN-{n}", created=f"2026-10-05 09:{n:02d}:00")
+			_reading(f"F{n}", "pH", 7.0 + n / 10)
+		for n in range(1, 12):  # this week's other fountains, approved already
+			_record(f"T{n}", "2026-10-12", serial_no=f"SN-{n}", created=f"2026-10-12 09:{n:02d}:00")
+			_reading(f"T{n}", "pH", 8.0)
+		doc = _visit([{"reading": "pH", "reading_value": 7.2}], serial_no="SN-0")
+		self.assertEqual(compare.compare(doc)["previous"][("SN-0", "ph")]["record"], "F0")
+
+	def test_a_site_visit_counts_for_every_fountain(self):
+		_record("SITE", "2026-10-05")
+		_reading("SITE", "pH", 7.6, serial_no="SN-0")
+		doc = _visit([{"reading": "pH", "reading_value": 7.2}], serial_no="SN-0")
+		self.assertEqual(compare.compare(doc)["previous"][("SN-0", "ph")]["value"], 7.6)
+
+	def test_an_older_visit_is_not_crowded_out_by_the_visits_after_it(self):
+		"""The dashboard of an approved visit from August, with fifty visits approved since."""
+		_record("AUGUST-BEFORE", "2026-08-03")
+		_reading("AUGUST-BEFORE", "pH", 7.1)
+		for week in range(60):
+			name = f"LATER{week}"
+			_record(name, str(datetime.date(2026, 8, 10) + datetime.timedelta(days=week)))
+			_reading(name, "pH", 8.0)
+		doc = _visit([{"reading": "pH", "reading_value": 7.3}], day="2026-08-05", name="AUGUST")
+		result = compare.compare(doc)
+		self.assertFalse(result["first_visit"])
+		self.assertEqual(result["previous"][("", "ph")]["record"], "AUGUST-BEFORE")
+
+
+class TestTheQuery(unittest.TestCase):
+	"""The stub above does in Python what the SQL says; this pins the SQL to the same rule."""
+
+	def test_the_sql_filters_and_orders_by_the_day_the_work_was_done(self):
+		sql = " ".join(compare.EARLIER_SQL.split())
+		day = "coalesce(visit_date, scheduled_visit_date, date(creation))"
+		for clause in (
+			"project = %(project)s",
+			"docstatus = 1",
+			"name != %(name)s",
+			f"{day} <= %(day)s",
+			f"order by {day} desc, creation desc",
+			"limit %(limit)s",
+		):
+			with self.subTest(clause=clause):
+				self.assertIn(clause, sql)
 
 
 class TestVisitDay(unittest.TestCase):

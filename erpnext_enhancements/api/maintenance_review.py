@@ -12,14 +12,20 @@ one visit with every answer and its two decisions.
   (``sapphire_maintenance/visit_compare.py``, A3).
 * **Through the workflow, as the reviewer.** *Approve & Submit* and *Send Back* are applied
   with ``frappe.model.workflow.apply_workflow`` in the reviewer's own session, so the
-  workflow's roles and its self-approval rule hold exactly as on the desk form: the person
-  who started a visit cannot approve it, and another reviewer does. The transitions are found
-  by where they lead (to a submitted state; back to the first state), not by their labels.
+  workflow's roles and its self-approval rule hold as on the desk form. The transitions are
+  found by where they lead (to a submitted state; back to the first state), not by their
+  labels.
+* **Nobody approves their own visit here.** The workflow's rule looks only at who *created*
+  the record, and the nightly scheduler creates most visits, so their owner is Administrator
+  and the person who did the work is the ``technician``. On this page a reviewer who is the
+  visit's technician or on its crew is offered no Approve either, and ``approve_visit``
+  refuses them (:func:`did_the_visit`). Another reviewer approves it. The desk form still
+  applies only the workflow's own rule.
 * **Send Back needs a note.** It goes on the visit's timeline and is emailed to the
   technician with their answers (``review_digest.send_sent_back``).
-* **Nothing stale is decided.** The page sends the ``modified`` it showed, and a visit
-  changed since then (the technician still editing, another reviewer) is refused with a
-  reload, never approved as something the reviewer did not see.
+* **Nothing stale is decided.** Both decisions require the ``modified`` the page showed, and
+  a visit changed since then (the technician still editing, another reviewer) is refused with
+  a reload, never approved as something the reviewer did not see.
 * **Missed visits ride along.** The queue answer carries ``missed_visits.missed_visits()``
   (A2), the same rows as the Missed Maintenance Visits report.
 
@@ -64,7 +70,8 @@ def get_review_queue():
 		"waiting": waiting,
 		"missed": missed,
 		"missed_failed": missed_failed,
-		"can_review": bool({"Maintenance Reviewer", "System Manager"} & set(frappe.get_roles())),
+		# The workflow's transitions name Maintenance Reviewer; nobody else gets a decision.
+		"can_review": "Maintenance Reviewer" in frappe.get_roles(),
 	}
 
 
@@ -289,9 +296,23 @@ def _check_waiting(doc):
 
 
 def _check_unchanged(doc, modified):
-	"""Refuse a decision on a version of the visit the reviewer was not shown."""
-	if modified and get_datetime(modified) != get_datetime(doc.modified):
+	"""Refuse a decision on a version of the visit the reviewer was not shown, or not named."""
+	if not modified:
+		frappe.throw(_("Reload the visit and decide again: the version you saw was not sent."))
+	if get_datetime(modified) != get_datetime(doc.modified):
 		frappe.throw(_("This visit changed since you opened it. Reload it to see the latest answers."))
+
+
+def did_the_visit(doc, user):
+	"""Is ``user`` the visit's technician or on its crew? Such a reviewer does not approve it.
+
+	Found in review of PR #1204: ``has_approval_access`` compares the user with ``owner`` only,
+	and a scheduler-drafted visit's owner is Administrator, so the workflow alone would let a
+	reviewer who filled the visit in approve it (``patches/seed_maintenance_reviewer_role.py``
+	describes the same gap).
+	"""
+	people = {doc.get("technician")} | {row.get("user") for row in doc.get("crew") or []}
+	return bool(user) and user in (people - {None, ""})
 
 
 def _actions(doc):
@@ -299,8 +320,9 @@ def _actions(doc):
 
 	``get_transitions`` filters by role only; ``apply_workflow`` then refuses a transition
 	without ``allow_self_approval`` when the user created the record, so the same test is
-	applied here and the page never offers a button that would only fail. ``blocked`` says
-	so when approving is the one thing in the way.
+	applied here and the page never offers a button that would only fail. Approving is also
+	withheld from the visit's own technician and crew (:func:`did_the_visit`). ``blocked``
+	says why when approving is the one thing in the way.
 	"""
 	if not _is_waiting(doc):
 		return None, None, None
@@ -312,14 +334,17 @@ def _actions(doc):
 	first = workflow.states[0].state if workflow.states else None
 	submitted = {state.state for state in workflow.states if cint(state.doc_status) == 1}
 	user = frappe.session.user
+	did_it = did_the_visit(doc, user)
 	approve = send_back = blocked = None
 	for transition in get_transitions(doc, workflow):
 		allowed = has_approval_access(user, doc, transition)
 		if transition.get("next_state") in submitted and approve is None:
-			if allowed:
-				approve = transition
-			else:
+			if not allowed:
 				blocked = _("You started this visit, so another reviewer approves it.")
+			elif did_it:
+				blocked = _("You did this visit, so another reviewer approves it.")
+			else:
+				approve = transition
 		elif transition.get("next_state") == first and send_back is None and allowed:
 			send_back = transition
 	return approve, send_back, blocked

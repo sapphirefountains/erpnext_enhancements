@@ -145,7 +145,7 @@ def _add_visit(name, modified, owner="Administrator", state="Pending Review", do
 		modified=modified,
 		project="PRJ-1",
 		completion_percent=extra.pop("completion", 100),
-		technician="austin@example.com",
+		technician=extra.pop("technician", "austin@example.com"),
 		**extra,
 	)
 
@@ -418,9 +418,12 @@ class TestTheQueue(_Base):
 		self.assertEqual(STATE["errors"], ["Visit Review: missed visits not listed"])
 
 	def test_only_reviewers_are_told_they_can_review(self):
+		"""The transitions name Maintenance Reviewer, so a System Manager without it decides nothing."""
 		self.assertTrue(review.get_review_queue()["can_review"])
-		STATE["roles"] = ["Maintenance Supervisor"]
-		self.assertFalse(review.get_review_queue()["can_review"])
+		for roles in (["Maintenance Supervisor"], ["System Manager"]):
+			STATE["roles"] = roles
+			with self.subTest(roles=roles):
+				self.assertFalse(review.get_review_queue()["can_review"])
 
 
 class TestOneVisit(_Base):
@@ -441,6 +444,24 @@ class TestOneVisit(_Base):
 		self.assertFalse(data["can_approve"])
 		self.assertTrue(data["can_send_back"], "Send Back allows self approval in the fixture")
 		self.assertEqual(data["approve_blocked"], "You started this visit, so another reviewer approves it.")
+
+	def test_the_technician_or_crew_of_a_scheduler_drafted_visit_cannot_approve_it(self):
+		visit = STATE["visits"]["NEW"]
+		self.assertEqual(visit.owner, "Administrator")
+		for change in ({"technician": "lisa@example.com"}, {"crew": [_Dict(user="lisa@example.com")]}):
+			_reset()
+			_add_visit("NEW", "2026-10-12 08:00:00", **change)
+			with self.subTest(change=change):
+				data = review.get_review_visit("NEW")
+				self.assertFalse(data["can_approve"])
+				self.assertTrue(data["can_send_back"])
+				self.assertEqual(
+					data["approve_blocked"], "You did this visit, so another reviewer approves it."
+				)
+
+	def test_another_reviewer_may_approve_it(self):
+		STATE["visits"]["NEW"].technician = "james@example.com"
+		self.assertTrue(review.get_review_visit("NEW")["can_approve"])
 
 	def test_a_supervisor_who_is_not_a_reviewer_is_offered_nothing(self):
 		STATE["roles"] = ["Maintenance Supervisor"]
@@ -476,8 +497,26 @@ class TestApprove(_Base):
 
 	def test_the_person_who_started_it_is_refused(self):
 		STATE["visits"]["OLD"].owner = "lisa@example.com"
-		with self.assertRaisesRegex(PermissionError_, "another reviewer approves it"):
-			review.approve_visit("OLD")
+		with self.assertRaisesRegex(PermissionError_, "You started this visit"):
+			review.approve_visit("OLD", modified="2026-10-12 09:00:00")
+		self.assertEqual(STATE["applied"], [])
+
+	def test_the_person_who_did_a_scheduler_drafted_visit_is_refused(self):
+		"""Owner Administrator (the nightly scheduler), technician the reviewer: the workflow's
+		own rule would allow it (review of PR #1204)."""
+		STATE["visits"]["OLD"].technician = "lisa@example.com"
+		with self.assertRaisesRegex(PermissionError_, "You did this visit"):
+			review.approve_visit("OLD", modified="2026-10-12 09:00:00")
+		self.assertEqual(STATE["applied"], [])
+
+	def test_a_version_must_be_named(self):
+		"""A direct POST without the version shown cannot approve whatever is current."""
+		for call in (
+			lambda: review.approve_visit("OLD"),
+			lambda: review.send_back_visit("OLD", note="fix"),
+		):
+			with self.subTest(call=call), self.assertRaisesRegex(Thrown, "the version you saw was not sent"):
+				call()
 		self.assertEqual(STATE["applied"], [])
 
 

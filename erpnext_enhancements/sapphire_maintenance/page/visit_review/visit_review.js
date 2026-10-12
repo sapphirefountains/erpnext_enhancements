@@ -73,6 +73,15 @@ const VR_STYLE = `
 @media (max-width:640px){.vr-missed .vr-hide-sm{display:none;}.vr-kv td:first-child{width:45%;}}
 `;
 
+// Did the server send a message frappe shows in its dialog (not a corner alert)?
+function vr_has_dialog_message(r) {
+	try {
+		return JSON.parse((r && r._server_messages) || "[]").some((m) => !JSON.parse(m).alert);
+	} catch (e) {
+		return false; // unreadable: move on rather than wait for a dialog that may not exist
+	}
+}
+
 class VisitReview {
 	constructor(page) {
 		this.page = page;
@@ -80,7 +89,7 @@ class VisitReview {
 		$("<style>").text(VR_STYLE).appendTo(page.body);
 		this.current = null; // the route rendered last: "" for the queue, else a visit name
 		this.came_from_queue = false;
-		page.set_secondary_action(__("Refresh"), () => this.handle_route(true));
+		page.set_secondary_action(__("Refresh"), () => this.handle_route());
 		page.add_menu_item(__("Missed Maintenance Visits report"), () =>
 			frappe.set_route("query-report", "Missed Maintenance Visits")
 		);
@@ -88,13 +97,13 @@ class VisitReview {
 
 	// ------------------------------------------------------------------ routing
 
-	handle_route(force) {
+	// Every show reloads, Back from the form included: a queue or a visit kept from before
+	// could show a decision another reviewer has since made.
+	handle_route() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== "visit-review") return;
 		const name = route[1] ? String(route[1]) : "";
-		if (!force && this.current === name && this.loaded) return;
 		this.current = name;
-		this.loaded = false;
 		if (name) {
 			this.show_visit(name);
 		} else {
@@ -134,7 +143,6 @@ class VisitReview {
 			.call({ method: VR_API + "get_review_queue" })
 			.then((r) => {
 				if (this.current !== "") return; // moved on while this was loading
-				this.loaded = true;
 				this.render_queue(r.message || {});
 			})
 			.catch(() => {
@@ -243,7 +251,6 @@ class VisitReview {
 			.call({ method: VR_API + "get_review_visit", args: { record: name } })
 			.then((r) => {
 				if (this.current !== name) return;
-				this.loaded = true;
 				this.visit = r.message;
 				this.render_visit(r.message);
 			})
@@ -358,8 +365,17 @@ class VisitReview {
 						freeze: true,
 						freeze_message: __("Approving…"),
 					})
-					.then((r) => this.decided(r.message || {}, __("Approved {0}.", [data.name])))
-					.catch(() => this.handle_route(true));
+					.then((r) => {
+						const result = r.message || {};
+						// Approved and submitted, or (were the doctype ever set to submit in the
+						// background) queued with the visit still waiting.
+						const said =
+							result.docstatus === 1
+								? __("Approved {0}.", [data.name])
+								: __("Approval of {0} is queued. It is still {1}.", [data.name, result.state]);
+						this.decided(r, said);
+					})
+					.catch(() => this.handle_route());
 			}
 		);
 	}
@@ -390,25 +406,36 @@ class VisitReview {
 						const result = r.message || {};
 						const told = (result.emailed || []).length
 							? __("Sent back {0}. The technician was emailed.", [data.name])
-							: __("Sent back {0}. The technician has no email address, so tell them.", [data.name]);
-						this.decided(result, told);
+							: __("Sent back {0}. The technician could not be emailed, so tell them.", [data.name]);
+						this.decided(r, told);
 					})
-					.catch(() => this.handle_route(true));
+					.catch(() => this.handle_route());
 			},
 		});
 		dialog.show();
 	}
 
-	// After a decision: say so, then show the next visit waiting (or the queue) in place of
-	// this one, which has nothing left to decide.
-	decided(result, message) {
+	// After a decision: say so, then show the next visit waiting in place of this one, which
+	// has nothing left to decide, or go back to the queue (Back, when the queue is the entry
+	// behind, so history does not hold the queue twice).
+	decided(r, message) {
+		const result = (r && r.message) || {};
 		frappe.show_alert({ message, indicator: "green" }, 6);
-		this.loaded = false;
-		if (result.next) {
-			this.go(result.next, true);
-		} else {
-			this.came_from_queue = false;
+		const move = () => {
+			if (result.next) return this.go(result.next, true);
+			if (this.came_from_queue) {
+				this.came_from_queue = false;
+				return window.history.back();
+			}
 			this.go("", true);
+		};
+		// A warning the decision's save raised (training not current, who is going) is in
+		// frappe's message dialog, and the router closes open dialogs on a route change, so it
+		// would vanish unread. Move on when it is closed instead.
+		if (vr_has_dialog_message(r) && frappe.msg_dialog) {
+			frappe.msg_dialog.custom_onhide = move;
+		} else {
+			move();
 		}
 	}
 }

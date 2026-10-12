@@ -117,19 +117,22 @@ def _get_all(doctype, filters=None, fields=None, **kwargs):
 	if doctype == "Serial No":
 		wanted = set((filters or {}).get("name", [None, []])[1])
 		return [row for row in STATE["serials"] if row.name in wanted]
-	if doctype == "Sapphire Maintenance Record":
-		# visit_compare's earlier approved visits to the same site.
-		if STATE.get("raise_in") == "history":
-			raise RuntimeError("history on fire")
-		return [
-			row
-			for row in STATE["history"]
-			if row.project == filters["project"] and row.docstatus == 1 and row.name != filters["name"][1]
-		]
 	if doctype == "Sapphire Chemistry Reading":
 		wanted = set(filters["parent"][1])
 		return [row for row in STATE["history_readings"] if row.parent in wanted]
 	return []
+
+
+def _db_sql(query, params, as_dict=False):
+	"""visit_compare's earlier approved visits to the same site (its EARLIER_SQL); the day
+	filter and order are pinned in test_visit_compare."""
+	if STATE.get("raise_in") == "history":
+		raise RuntimeError("history on fire")
+	return [
+		row
+		for row in STATE["history"]
+		if row.project == params["project"] and row.docstatus == 1 and row.name != params["name"]
+	]
 
 
 def _install_stubs():
@@ -155,7 +158,7 @@ def _install_stubs():
 		STATE["sent"].append(kwargs)
 
 	frappe.sendmail = _sendmail
-	frappe.db = types.SimpleNamespace(get_value=_db_get_value)
+	frappe.db = types.SimpleNamespace(get_value=_db_get_value, sql=_db_sql)
 	frappe.get_all = _get_all
 
 	def _get_cached_doc(doctype, *args, **kwargs):

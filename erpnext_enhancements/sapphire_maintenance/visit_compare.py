@@ -16,8 +16,12 @@ answer is worked out. Three surfaces read it, so they cannot disagree:
 and surrounding spaces) on the same water feature, at the most recent *approved* visit
 (docstatus 1) to the same site dated on or before this one. A visit that left the reading
 blank or zero did not measure it, as everywhere else on this form (``evaluate_reading_ranges``
-says why), so the search goes back to the latest visit that did, at most ``LOOKBACK`` approved
-visits. A visit not yet approved is never compared against: it may still be sent back.
+says why), so the search goes back to the latest visit that did, through at most ``LOOKBACK``
+earlier visits *to that water feature*: a record for that fountain, or a site visit, which
+covers every fountain. Counting per feature matters on a Per Feature contract, which makes one
+record per fountain per visit; counted per site, a twelve-fountain site's last ten records
+would all be other fountains'. A visit not yet approved is never compared against: it may
+still be sent back.
 
 **Which water feature.** A row's ``serial_no`` when the row is tagged (a Per Site Visit record
 tags every row), else the record's own ``serial_no``, else none (a site-level reading). The
@@ -38,13 +42,27 @@ import frappe
 from frappe.utils import cint, flt, getdate, nowdate
 
 DOCTYPE = "Sapphire Maintenance Record"
-#: How many earlier approved visits to the site are searched for a reading. A weekly site's
-#: ten visits are about two and a half months; a reading not taken in that time is not a
-#: useful comparison.
+#: How many earlier approved visits to a water feature are searched for a reading. A weekly
+#: site's ten visits are about two and a half months; a reading not taken in that time is not
+#: a useful comparison.
 LOOKBACK = 10
-#: Records read before the date filter, which cannot be expressed in ``get_all``: newest
-#: first by creation, so a backfilled visit created late is still among them.
-CANDIDATES = 50
+#: Earlier records read for the whole site, newest first by the day the work was done. Enough
+#: for ``LOOKBACK`` visits to each fountain of a large Per Feature site.
+CANDIDATES = 200
+
+#: The site's approved visits on or before a day, newest first. The day rule is
+#: :func:`visit_day`'s, in SQL, so an older visit's dashboard is not crowded out by the visits
+#: approved after it.
+EARLIER_SQL = """
+	select name, serial_no, visit_date, scheduled_visit_date, creation
+	from `tabSapphire Maintenance Record`
+	where project = %(project)s
+		and docstatus = 1
+		and name != %(name)s
+		and coalesce(visit_date, scheduled_visit_date, date(creation)) <= %(day)s
+	order by coalesce(visit_date, scheduled_visit_date, date(creation)) desc, creation desc
+	limit %(limit)s
+"""
 
 
 def visit_day(record):
@@ -71,35 +89,39 @@ def measured(row):
 
 
 def earlier_visits(doc):
-	"""The site's approved visits before this one, newest first, at most ``LOOKBACK``.
+	"""The site's approved visits dated on or before this one, newest first.
 
-	``[{name, serial_no, visit_date, scheduled_visit_date, creation, day}]``.
+	``[{name, serial_no, visit_date, scheduled_visit_date, creation, day}]``, at most
+	``CANDIDATES``; :func:`previous_readings` takes ``LOOKBACK`` of them per water feature.
 	"""
 	if not doc.get("project"):
 		return []
-	rows = frappe.get_all(
-		DOCTYPE,
-		filters={"project": doc.project, "docstatus": 1, "name": ["!=", doc.get("name") or ""]},
-		fields=["name", "serial_no", "visit_date", "scheduled_visit_date", "creation"],
-		order_by="creation desc",
-		limit=CANDIDATES,
+	rows = frappe.db.sql(
+		EARLIER_SQL,
+		{"project": doc.project, "name": doc.get("name") or "", "day": visit_day(doc), "limit": CANDIDATES},
+		as_dict=True,
 	)
-	day = visit_day(doc)
 	earlier = []
 	for row in rows:
 		row = frappe._dict(row)
 		row.day = visit_day(row)
-		if row.day <= day:
-			earlier.append(row)
+		earlier.append(row)
 	earlier.sort(key=lambda r: (r.day, str(r.get("creation") or "")), reverse=True)
-	return earlier[:LOOKBACK]
+	return earlier
+
+
+def covers(visit, feature):
+	"""Could ``visit`` hold readings of ``feature``? A site visit (no header serial) covers every
+	fountain; a Per Feature record covers its own."""
+	return not visit.get("serial_no") or visit.get("serial_no") == feature
 
 
 def previous_readings(doc, visits=None):
 	"""``{reading_key: {value, uom, day, record}}``: each reading's latest earlier measurement.
 
-	Only readings this visit has are looked up. See the module docstring for the rules.
-	``visits`` is ``earlier_visits(doc)`` when the caller already has it.
+	Only readings this visit has are looked up, each through at most ``LOOKBACK`` earlier visits
+	to its own water feature. See the module docstring for the rules. ``visits`` is
+	``earlier_visits(doc)`` when the caller already has it.
 	"""
 	wanted = {reading_key(doc, row) for row in doc.get("chemistry_readings") or []}
 	if not wanted:
@@ -107,26 +129,40 @@ def previous_readings(doc, visits=None):
 	visits = earlier_visits(doc) if visits is None else visits
 	if not visits:
 		return {}
-	by_name = {visit.name: visit for visit in visits}
-	rows = frappe.get_all(
+	searched = {
+		feature: [visit for visit in visits if covers(visit, feature)][:LOOKBACK]
+		for feature in {feature for feature, _label in wanted}
+	}
+	names = sorted({visit.name for each in searched.values() for visit in each})
+	if not names:
+		return {}
+	by_parent = {}
+	for row in frappe.get_all(
 		"Sapphire Chemistry Reading",
-		filters={"parenttype": DOCTYPE, "parent": ["in", list(by_name)]},
+		filters={"parenttype": DOCTYPE, "parent": ["in", names]},
 		fields=["parent", "reading", "reading_value", "uom", "serial_no"],
-	)
-	rank = {visit.name: index for index, visit in enumerate(visits)}
+	):
+		by_parent.setdefault(row.get("parent"), []).append(row)
+
 	found = {}
-	for row in sorted(rows, key=lambda r: rank.get(r.get("parent"), len(rank))):
-		visit = by_name.get(row.get("parent"))
-		if not visit or not measured(row):
-			continue
-		key = reading_key(visit, row)
-		if key in wanted and key not in found:
-			found[key] = {
-				"value": flt(row.get("reading_value")),
-				"uom": row.get("uom") or "",
-				"day": visit.day,
-				"record": visit.name,
-			}
+	for key in wanted:
+		for visit in searched[key[0]]:
+			row = next(
+				(
+					row
+					for row in by_parent.get(visit.name, [])
+					if measured(row) and reading_key(visit, row) == key
+				),
+				None,
+			)
+			if row:
+				found[key] = {
+					"value": flt(row.get("reading_value")),
+					"uom": row.get("uom") or "",
+					"day": visit.day,
+					"record": visit.name,
+				}
+				break
 	return found
 
 

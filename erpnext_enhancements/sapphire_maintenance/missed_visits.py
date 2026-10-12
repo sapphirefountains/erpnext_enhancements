@@ -14,17 +14,20 @@ section of the Visit Review page, through :func:`missed_visits`, so the two alwa
 Three kinds of row:
 
 * **Not drafted** (``KIND_NOT_DRAFTED``): a visit the contract says was due, with no open
-  draft standing for it. Regular visits mirror the nightly scheduler's own rule
+  draft standing for it. Regular visits use the nightly scheduler's own dedupe rule
   (``tasks.generate_predictive_maintenance_records``): an Active contract whose fountain's
   ``next_visit_date`` has passed, with no open *regular* draft (``visit_label`` not set) for
   that fountain, or for the contract on a Per Site Visit contract, which gets one row. Skipped,
-  as the scheduler skips them: a customer on service hold, a contract not started yet. A date
-  inside a paused contract's winter window (``maintenance_scheduling.defer_for_winter``) is
-  skipped too: that fountain is drained, and the Winterization visit stands in for the month.
+  as the scheduler skips them: a customer on service hold, a contract not started yet.
+  One rule is this list's own, not the scheduler's: a date inside a paused contract's winter
+  window (``maintenance_scheduling.defer_for_winter``) is left out, because that fountain is
+  drained and the Winterization visit stands in for the month (Nik's plan: "a paused contract
+  shows nothing"). The roll-forward already defers such dates, so the only ones left are
+  typed onto the contract by hand, which the scheduler would draft.
   Seasonal visits (Spring Startup, Winterization, custom rows) are drafted on the 1st of
   their month and stamped with the year, so one whose month has gone by this year with no
   stamp and no record of that visit was never drafted, unless the contract started after
-  that month began.
+  that month was over.
 * **Not started** (``KIND_NOT_STARTED``): an open draft dated before today with nothing
   filled in (``completion_percent`` 0).
 * **Started, not sent** (``KIND_NOT_SENT``): an open draft dated before today with some

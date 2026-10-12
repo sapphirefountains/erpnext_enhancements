@@ -35,10 +35,19 @@ Reviewer).
     - The workflow's roles and its self-approval rule hold as on the desk form. A reviewer who
       started a visit is told "You started this visit, so another reviewer approves it", and is
       offered no Approve button.
+    - **Nobody approves their own visit on this page.** The workflow's rule compares the user
+      with the record's `owner` only, and the nightly scheduler creates most visits, so their
+      owner is Administrator. A reviewer who is the visit's technician or on its crew is told
+      "You did this visit, so another reviewer approves it", and `approve_visit` refuses them
+      (`did_the_visit`). Found in review of this PR; `patches/seed_maintenance_reviewer_role.py`
+      describes the same gap. The desk form still applies only the workflow's own rule.
     - A Maintenance Supervisor without the reviewer role sees the queue but is offered nothing.
-  - **A decision on a changed visit is refused.** The page sends the `modified` it showed, and a
-    visit changed since then (the technician still editing, another reviewer) gets a reload, never
-    an approval of answers the reviewer did not see.
+  - **A decision on a changed visit is refused.** Both decisions require the `modified` the page
+    showed, and a visit changed since then (the technician still editing, another reviewer) gets
+    a reload, never an approval of answers the reviewer did not see.
+  - Every show of the page reloads it. A warning the decision's save raises (training, who is
+    going) stays in frappe's dialog until it is closed, and only then does the page move on: the
+    router closes open dialogs on a route change, so it would otherwise vanish unread.
   - **Send Back needs a note.** It goes on the visit's timeline (escaped) and is emailed to the
     technician (below).
   - Backend: `api/maintenance_review.py`. It is role-checked in code as well as on the Page:
@@ -63,8 +72,10 @@ Reviewer).
   - **Not drafted**: a contract visit that fell due with nothing drafted for it, by the nightly
     scheduler's own dedupe rule (an open *regular* draft). A Per Site Visit contract gets one row.
     - Skipped as the scheduler skips them: a customer on service hold, a contract not started.
-    - A date inside a paused contract's winter window (`defer_for_winter`) is skipped: the fountain
-      is drained, and the Winterization visit stands in for the month.
+    - A date inside a paused contract's winter window (`defer_for_winter`) is left out: the
+      fountain is drained, and the Winterization visit stands in for the month. That rule is
+      this list's own; the scheduler would draft such a date, which only a hand-typed date can
+      be.
     - A seasonal visit whose month went by this year with no stamp and no record of that visit
       counts, unless the contract started after that month was over. No contract on prod started
       before July, so no April startup is flagged.
@@ -87,7 +98,11 @@ Reviewer).
     - Readings match on their label, ignoring case and spacing, and on the same water feature.
       The feature is the row's tag, else the record's, so a contract that changed between Per
       Feature and Per Site Visit still lines up.
-    - A reading the last visit did not take is looked for further back, up to 10 approved visits.
+    - A reading the last visit did not take is looked for further back, through up to 10
+      approved visits *to that water feature* (its own records or site visits). Counted per
+      site, a twelve-fountain Per Feature site's last ten records would all be other fountains'.
+    - The earlier visits are read in SQL (`EARLIER_SQL`) by the day the work was done, so an
+      older visit's dashboard is not crowded out by the visits approved after it.
   - The summary says what the "was" values are: "The approved visit on …", "No earlier readings
     of these", or "First recorded visit".
   - A failed lookup is logged as "Visit review: last visit not compared", and the email goes out
@@ -102,11 +117,12 @@ Reviewer).
 ### Tests
 
 - Four bench-free suites, each with its own CI step:
-  - `test_visit_review` (new, 24 tests): the role gate on every endpoint, the queue order and
-    waiting time, both decisions, the self-approval and stale-visit refusals, the required note,
-    and the Page/report/workspace wiring.
-  - `test_visit_compare` (new, 13 tests): a per-fountain site visit, a reading found further back
-    or missing, a first visit, and approved-only, same-site, not-later.
+  - `test_visit_review` (new, 28 tests): the role gate on every endpoint, the queue order and
+    waiting time, both decisions, the self-approval (owner, technician, crew) and stale-visit
+    refusals, the required version and note, and the Page/report/workspace wiring.
+  - `test_visit_compare` (new, 17 tests): a per-fountain site visit, a reading found further back
+    or missing, a first visit, approved-only, same-site, not-later, the lookback counted per
+    fountain on a twelve-fountain site, and an older visit not crowded out.
   - `test_missed_visits` (new, 22 tests): all three kinds, the scheduler's dedupe rule, a paused
     contract, service hold, and seasonal visits.
   - `test_visit_review_digest` (extended to 52 tests): the "was" values, the summary line, the

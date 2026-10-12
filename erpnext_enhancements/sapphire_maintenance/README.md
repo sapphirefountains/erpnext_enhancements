@@ -256,11 +256,18 @@ How the page behaves:
 - **Both decisions go through `apply_workflow` as the reviewer.**
   - The transitions are found by where they lead (to a submitted state, or back to the first
     state), not by their labels.
-  - The workflow's roles and its self-approval rule hold exactly as on the form. Whoever started
+  - The workflow's roles and its self-approval rule hold as on the form. Whoever started
     a visit is offered no Approve and is told another reviewer approves it.
+  - **Nobody approves their own visit on this page.** The workflow's rule looks only at who
+    created the record, and the nightly scheduler creates most visits (owner Administrator). So a
+    reviewer who is the visit's technician or on its crew is offered no Approve either, and the
+    endpoint refuses them. The desk form still applies only the workflow's own rule.
   - A Maintenance Supervisor who is not a reviewer sees the queue and decides nothing.
-- **A decision on a changed visit is refused.** It carries the `modified` the page showed, so a
-  visit changed since then (the technician still editing, another reviewer) gets a reload.
+- **A decision on a changed visit is refused.** It must carry the `modified` the page showed, so
+  a visit changed since then (the technician still editing, another reviewer) gets a reload.
+- **Every show reloads**, so Back from the form never shows a decision another reviewer has
+  since made. A warning the decision's save raises (training, who is going) stays on screen
+  until it is closed; only then does the page move on.
 - **Send Back needs a note.** It goes on the timeline and to the technician in a "Sent back to
   you" email (`review_digest.send_sent_back`). The email holds the note, then every answer, with a
   **Fix the visit** button into the Visit Wizard.
@@ -274,8 +281,10 @@ screen and the **Missed Maintenance Visits** report. **Nothing is sent automatic
 - **Not drafted**: a contract visit that fell due with nothing drafted for it.
   - It uses the scheduler's own dedupe rule: an open *regular* draft for the fountain, or for the
     contract on a Per Site Visit contract, which gets one row.
-  - It skips a customer on service hold, a contract not started yet, and a date inside a paused
-    contract's winter window.
+  - It skips a customer on service hold and a contract not started yet, as the scheduler does.
+  - It also leaves out a date inside a paused contract's winter window, which the scheduler
+    would draft: the fountain is drained (Nik's plan: "a paused contract shows nothing"). The
+    roll-forward already defers such dates, so only a date typed by hand can be there.
   - It also covers seasonal visits whose month went by this year with no stamp and no record,
     unless the contract started after that month was over.
 
@@ -300,8 +309,11 @@ The rules:
 - Readings match on their label, ignoring case and spacing, and on the same water feature: the
   row's tag, else the record's. A contract that changed between Per Feature and Per Site Visit
   still lines up.
-- A reading the last visit did not take is looked for further back, up to `LOOKBACK` (10)
-  approved visits.
+- A reading the last visit did not take is looked for further back, through up to `LOOKBACK`
+  (10) approved visits *to that water feature*: its own records, or site visits. Counted per
+  site, a twelve-fountain Per Feature site's last ten records would all be other fountains'.
+- The earlier visits are read in SQL by the day the work was done, so an older visit's
+  dashboard is not crowded out by the visits approved after it.
 
 With no approved visit to the site before this one, every surface says "First recorded visit".
 
