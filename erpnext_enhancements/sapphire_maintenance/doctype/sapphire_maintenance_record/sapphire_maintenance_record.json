@@ -35,6 +35,7 @@
   "consumables",
   "visit_notes",
   "fountain_photo",
+  "follow_ups",
   "historical_visits",
   "completion_percent",
   "warranty_rma_flag",
@@ -224,6 +225,13 @@
    "label": "Fountain As We Left It"
   },
   {
+   "description": "Parts needed and work to come back for, with who on site was told. Each becomes a tracked Maintenance Follow-Up when the visit is approved.",
+   "fieldname": "follow_ups",
+   "fieldtype": "Table",
+   "label": "Follow-ups and Parts Needed",
+   "options": "Sapphire Visit Follow-Up"
+  },
+  {
    "description": "Read-only panel — last 5 submitted visits for the Project. Rendered client-side from get_historical_visits; not a stored table.",
    "fieldname": "historical_visits",
    "fieldtype": "HTML",
@@ -271,7 +279,7 @@
    "label": "Client Sign-off"
   }
  ],
- "modified": "2026-10-12 16:00:00.000000",
+ "modified": "2026-10-12 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",
