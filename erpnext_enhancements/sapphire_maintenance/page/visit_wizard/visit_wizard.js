@@ -586,12 +586,15 @@ const vz_finish_key = (record) => `finish|${record}`;
 
 // upload_file, as the page has always sent a photo: the file url, or a rejection. A
 // rejection with a `status` is the server turning it down (vz_refused tells which kind);
-// one without is no signal.
-function vz_upload(blob, filename, record) {
+// one without is no signal. `fieldname` is for a photo on the visit itself (the fountain
+// photo, v1.597.0): frappe's on_update hook looks for a File attached to that field, and
+// inserts a second File row for the same photo when the upload did not name it.
+function vz_upload(blob, filename, record, fieldname) {
 	const form = new FormData();
 	form.append("file", blob, filename || "photo.jpg");
 	form.append("doctype", "Sapphire Maintenance Record");
 	form.append("docname", record);
+	if (fieldname) form.append("fieldname", fieldname);
 	form.append("is_private", "1");
 	return fetch("/api/method/upload_file", {
 		method: "POST",
@@ -2187,7 +2190,7 @@ class VisitWizard {
 					.reduce(
 						(chain, item) =>
 							chain.then(() =>
-								vz_upload(item.blob, item.filename, name).then(
+								vz_upload(item.blob, item.filename, name, item.table ? null : item.field).then(
 									(url) => {
 										const change = vz_photo_change(item, url);
 										vz_put_change(patch, change);
@@ -2375,7 +2378,7 @@ class VisitWizard {
 	}
 
 	send_photo(item) {
-		return vz_upload(item.blob, item.filename, item.record).then(
+		return vz_upload(item.blob, item.filename, item.record, item.table ? null : item.field).then(
 			(url) => {
 				// On the answer first (kept on the phone with the rest), then the blob goes.
 				this.record_photo(item, url);
@@ -2486,7 +2489,7 @@ class VisitWizard {
 
 	// The upload as it was before v1.596.0, for a browser that cannot keep the photo.
 	upload_photo_now(doc, table, row, file, $btn, field) {
-		vz_upload(file, file.name, doc.name).then(
+		vz_upload(file, file.name, doc.name, table ? null : field).then(
 			(file_url) => {
 				if (this.doc !== doc) return;
 				if (table) this.set_row(table, row, field || "photo", file_url);

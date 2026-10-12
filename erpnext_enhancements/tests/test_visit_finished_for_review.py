@@ -16,7 +16,8 @@ Review. Pinned here, through the real ``validate`` and ``before_submit``:
 * no other save stamps anything (autosaves, a reviewer's edit, Send Back);
 * the patch dates visits already waiting, from when they went for review.
 
-And the name a visit is given (v1.597.0), ``PRJ-00179-2026-V001``: the controller's ``autoname``.
+And, v1.597.0: the name a visit is given (``PRJ-00179-2026-V001``, the controller's ``autoname``)
+and the check that its fountain photo was taken on it.
 
 Stubs a minimal ``frappe`` in ``setUpModule``; runs the real controller and patch.
 
@@ -94,8 +95,20 @@ def _reset(today=TODAY, now=NOW):
 			"set_values": [],
 			"errors": [],
 			"series": {},
+			"files": [],
+			"user": "austin@example.com",
 		}
 	)
+
+
+class _Thrown(Exception):
+	pass
+
+
+class _Session:
+	@property
+	def user(self):
+		return STATE["user"]
 
 
 def _make_autoname(key, doctype="", doc=None):
@@ -175,6 +188,13 @@ def setUpModule():
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(k.get("title"))
 
 	def _get_all(doctype, filters=None, fields=None, **kwargs):
+		if doctype == "File":
+			assert set(filters) == {"file_url"}, filters
+			return [
+				_Dict({f: row.get(f) for f in fields})
+				for row in STATE["files"]
+				if row.file_url == filters["file_url"]
+			]
 		assert doctype == "Sapphire Maintenance Record"
 		assert filters == {
 			"docstatus": 0,
@@ -192,6 +212,12 @@ def setUpModule():
 		STATE["set_values"].append((name, field, value, update_modified))
 
 	frappe.get_all = _get_all
+	frappe.session = _Session()
+
+	def _throw(message, *args, **kwargs):
+		raise _Thrown(message)
+
+	frappe.throw = _throw
 	frappe.db = types.SimpleNamespace(get_value=_get_value, set_value=_set_value, exists=lambda *a: True)
 
 	utils = types.ModuleType("frappe.utils")
@@ -252,6 +278,7 @@ def tearDownModule():
 
 def _visit(state="Draft", changed=("workflow_state",), **fields):
 	values = {
+		"doctype": "Sapphire Maintenance Record",
 		"name": "SMR-1",
 		"docstatus": 0,
 		"workflow_state": state,
@@ -448,12 +475,17 @@ class TestTheReportNumber(unittest.TestCase):
 		self.assertIsNone(self._named(project=None))
 		self.assertEqual(STATE["series"], {})
 
-	def test_a_project_name_that_reads_as_series_syntax_is_left_to_frappe(self):
-		"""make_autoname splits its key on dots and reads ``#`` and braces as placeholders."""
-		for project in ("PRJ.1", "PRJ-#1", "PRJ-{x}"):
+	def test_a_project_name_that_could_not_lead_a_series_is_left_to_frappe(self):
+		"""v16's make_autoname refuses a series outside ``^[\\w\\- /.#{}]+$`` and reads ``.``, ``#``
+		and braces as syntax. Every project is PRJ-##### today, but Project allows rename, and
+		an insert that raised here would stop the nightly scheduler at that contract."""
+		for project in ("PRJ.1", "PRJ-#1", "PRJ-{x}", "Myers (Sanctuary)", "O'Brien", "A&B", "A/B", "P" * 61):
 			with self.subTest(project=project):
 				self.assertIsNone(self._named(project=project))
 		self.assertEqual(STATE["series"], {})
+		self.assertEqual(
+			self._named(project="Myers Sanctuary", visit_date="2026-10-06"), "Myers Sanctuary-2026-V001"
+		)
 
 	def test_the_doctype_does_not_name_it_first(self):
 		"""v16 ``set_new_name`` runs a Document Naming Rule, then the controller's ``autoname``,
@@ -469,6 +501,58 @@ class TestTheReportNumber(unittest.TestCase):
 			).read_text(encoding="utf-8")
 		)
 		self.assertIn(meta.get("autoname") or "hash", ("hash", ""))
+
+
+class TestTheFountainPhoto(unittest.TestCase):
+	"""frappe's on_update hook attaches any unattached File an Attach field names, with no
+	permission check, and the customer's report inlines what is attached to the visit."""
+
+	def setUp(self):
+		_reset()
+
+	def _file(self, url, owner="lisa@example.com", attached=(None, None)):
+		STATE["files"].append(
+			_Dict(file_url=url, owner=owner, attached_to_doctype=attached[0], attached_to_name=attached[1])
+		)
+
+	def _save(self, url):
+		doc = _visit(changed=("fountain_photo",), fountain_photo=url)
+		doc._check_fountain_photo()
+
+	def test_a_photo_attached_to_this_visit_or_uploaded_by_the_saver_is_kept(self):
+		self._file("/private/files/a.jpg", attached=("Sapphire Maintenance Record", "SMR-1"))
+		self._file("/private/files/b.jpg", owner="austin@example.com")
+		self._file(
+			"/private/files/c.jpg",
+			owner="austin@example.com",
+			attached=("Sapphire Maintenance Record", "new-1"),
+		)
+		for url in ("/private/files/a.jpg", "/private/files/b.jpg", "/private/files/c.jpg", None, ""):
+			with self.subTest(url=url):
+				self._save(url)
+
+	def test_someone_elses_file_is_refused(self):
+		self._file("/private/files/payroll.png")
+		self._file("/private/files/theirs.jpg", attached=("Sapphire Maintenance Record", "SMR-2"))
+		for url in (
+			"/private/files/payroll.png",
+			"/private/files/theirs.jpg",
+			"/private/files/gone.jpg",
+			"https://x.test/a.jpg",
+		):
+			with self.subTest(url=url), self.assertRaises(_Thrown):
+				self._save(url)
+
+	def test_an_unchanged_photo_is_not_checked_again(self):
+		"""A reviewer saving the visit later is not refused over the technician's upload."""
+		doc = _visit(changed=("workflow_state",), fountain_photo="/private/files/gone.jpg")
+		doc._check_fountain_photo()
+
+	def test_validate_runs_it(self):
+		self._file("/private/files/payroll.png")
+		doc = _visit(changed=("fountain_photo",), fountain_photo="/private/files/payroll.png")
+		with self.assertRaises(_Thrown):
+			doc.validate()
 
 
 if __name__ == "__main__":

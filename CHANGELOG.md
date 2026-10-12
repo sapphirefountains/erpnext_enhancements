@@ -22,8 +22,8 @@ needed, follow-ups and Hardware's one visit for four fountains follow as D2 to D
 - **The contract year.** The customer block reads "Myers Mortuary Maintenance Contract · 2026"
   and then the PRJ number. Nik chose the visit's calendar year over a contract year, because
   contract start dates in ERPNext are the day each contract was entered, not a renewal date.
-- **A chart per reading.** Each reading taken on the visit is charted over the site's last six
-  approved visits and this one, with one line per fountain on a site visit. The target range
+- **A chart per reading.** Each reading taken on the visit is charted over this visit and up to
+  five approved visits before it, with one line per fountain on a site visit. The target range
   is shaded, and the axis is labelled at it, since that is what a customer reads the line
   against. Out-of-range points are red. Each fountain gets a legend row above the plot, so
   four of them never cover their own lines. The charts are inline SVG in the print design
@@ -39,9 +39,16 @@ needed, follow-ups and Hardware's one visit for four fountains follow as D2 to D
   counts in January), and its number that year. The controller's `autoname` does this from a
   naming series per project and year. Prod has no Document Naming Rule or `autoname` Property
   Setter that would run first, and the DocType's own `autoname` must stay empty, since
-  `autoincrement` or `UUID` would name the visit before the controller is asked. A visit with no
-  project, or one whose project name holds series syntax, keeps Frappe's random name. So does
-  every existing visit, because review emails and links name them.
+  `autoincrement` or `UUID` would name the visit before the controller is asked.
+  - The project name must fit v16's naming-series rule, or the insert raises. Nothing on prod
+    breaks it today: all 658 projects are `PRJ-#####`. But Project allows rename, and the
+    nightly scheduler has no per-contract `try`, so one renamed project would have stopped
+    every visit drafted after it. Such a project, or a visit with none, keeps Frappe's random
+    name.
+  - The year is fixed at insert. A visit drafted for 2 January and done on 31 December keeps its
+    2027 name while the contract line says 2026. That happens only in the scheduler's week
+    around New Year, and renaming a visit after its review email has named it would be worse.
+  - Every existing visit keeps its name, because review emails and links name them.
 
 ### Security
 
@@ -52,7 +59,13 @@ needed, follow-ups and Hardware's one visit for four fountains follow as D2 to D
     document a caller posts as JSON. A `fountain_photo` naming someone else's private file would
     otherwise have been inlined into the caller's PDF.
   - So the global loads the visit again by name and checks read, as `ee_trip_sheet` and
-    `kb_document` already do. It inlines an image only when it is a File attached to that visit.
+    `kb_document` already do. It inlines an image only when it is a File on this site's disk
+    attached to that visit.
+  - Attached is not enough on its own: frappe's `attach_files_to_document` hook attaches any
+    unattached File an Attach field names, with no permission check. So the visit now refuses a
+    fountain photo that is neither attached to it nor uploaded by the person saving it.
+  - The wizard names the field when it uploads the fountain photo. Without it, that same hook
+    inserted a second File row for every fountain photo.
   - Images are inlined as data URIs, shrunk to 1200 px, because the finalize job that emails the
     PDF has no session for the renderer to fetch a private file with.
   - It never raises. A part that fails is logged as "Visit report: … not printed" and the report
@@ -63,12 +76,13 @@ needed, follow-ups and Hardware's one visit for four fountains follow as D2 to D
 - New bench-free `tests/test_visit_report.py`, with its own CI step, which installs the Pillow
   that Frappe v16 pins so the photo tests run rather than skip. It covers names, the contract
   line, the charts (band, axis labels, legend, red points, escaping, design-system colours
-  only), the photo
-  (inlined and shrunk, refused unless attached to the visit), a posted copy printing what is
-  saved, and a failing part logged and left out.
-- `test_print_style` renders the report with the new parts. `test_visit_finished_for_review`
-  pins the naming. `test_visit_review_digest` covers the photo link, and the wizard harness
-  covers the photo being kept and landing on the visit.
+  only), the photo (inlined and shrunk; refused unless it is a file on this site's disk attached
+  to the visit), a posted copy printing what is saved, and a failing part logged and left out.
+- `test_print_style` renders the report with the new parts.
+- `test_visit_finished_for_review` pins the naming (series rule, year, no project) and the
+  fountain-photo check.
+- `test_visit_review_digest` covers the photo link. The wizard harness covers the photo being
+  kept, landing on the visit, and its upload naming the field.
 
 ## [1.596.1] - 2026-10-12
 

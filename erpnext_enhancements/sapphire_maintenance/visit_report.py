@@ -337,7 +337,9 @@ def image_data_uri(file_url, visit):
 	"""The image at ``file_url`` as a data URI, shrunk to ``PHOTO_SIDE`` on its longest side, when
 	it is a File attached to ``visit``. None for no image, a file attached elsewhere or nowhere,
 	or one that cannot be read or shrunk below ``PHOTO_MAX_BYTES``."""
-	if not file_url or not visit:
+	# A File on this site's disk only: an external URL would be fetched by nothing here, and
+	# File.get_full_path refuses one, which would log an error on every print.
+	if not visit or not str(file_url or "").startswith(("/files/", "/private/files/")):
 		return None
 	name = frappe.db.get_value(
 		"File",

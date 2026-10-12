@@ -420,6 +420,10 @@ class TestFountainPhoto(unittest.TestCase):
 		self.assertIsNone(report.image_data_uri(None, "NOW"))
 		self.assertIsNone(report.image_data_uri("/private/files/gone.jpg", "NOW"))
 
+	def test_only_a_file_on_this_sites_disk(self):
+		FILES["https://example.test/a.jpg"] = {"name": "FILE-9", "path": "x", "attached_to": (RECORD, "NOW")}
+		self.assertIsNone(report.image_data_uri("https://example.test/a.jpg", "NOW"))
+
 	def test_a_file_attached_anywhere_else_prints_nothing(self):
 		"""Only this visit's own Files: a URL is not a permission."""
 		_needs_pillow(self)

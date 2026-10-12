@@ -1257,7 +1257,7 @@ function phone() {
 					fakeSetTimeout(() => {
 						if (net.down) return reject(new TypeError("Failed to fetch"));
 						const docname = opts.body.get("docname");
-						net.uploads.push({ url, docname });
+						net.uploads.push({ url, docname, fieldname: opts.body.get("fieldname") });
 						const file_url = `/private/files/${docname}-${net.uploads.length}.jpg`;
 						resolve({ ok: true, status: 200, json: () => Promise.resolve({ message: { file_url } }) });
 					}, net.delay);
@@ -1376,6 +1376,7 @@ async function visitWizardKeptSuite() {
 		browser.window.dispatch("online");
 		await settle();
 		assert.equal(p.net.uploads.length, 1, "the photo uploaded once");
+		assert.equal(p.net.uploads[0].fieldname, null, "a row's photo names no field on the visit");
 		assert.equal(server.sent("finish_visit").length - finishes, 1, "the Finish sent once");
 		assert.equal(db["MNT-1"].docstatus, 1);
 		assert.equal(db["MNT-1"].visit_notes, "All done");
@@ -1862,6 +1863,11 @@ async function visitWizardKeptSuite() {
 		assert.equal(db["MNT-2"].fountain_photo, "/private/files/MNT-2-2.jpg");
 		assert.deepEqual(p.outbox(), []);
 		assert.equal(p.kept("MNT-2"), null);
+		// Both uploads named the field, or frappe's on_update hook adds a second File row.
+		assert.deepEqual(
+			p.net.uploads.map((upload) => upload.fieldname),
+			["fountain_photo", "fountain_photo"]
+		);
 	});
 
 	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {

@@ -43,10 +43,21 @@ Whitelisted helpers used by the desk form's JS: ``get_visit_payload``
 ``get_dashboard_context`` (technician on-site briefing).
 """
 
+import re
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, getdate, nowdate
+
+#: A project name that can lead a visit's name. v16's make_autoname refuses a series outside
+#: ``^[\w\- /.#{}]+$`` (``NamingSeries.validate``); ``.``, ``#`` and braces are series syntax
+#: and a slash reads as a path in a link, so this is the safe part of that set. The length
+#: keeps ``<project>-2026-V###`` and its tabSeries key well inside their columns. Every
+#: project on prod is ``PRJ-#####``
+#: (checked 2026-10-12), but Project allows rename, and an insert that raises here would
+#: stop the nightly scheduler at that contract.
+PROJECT_IN_NAME = re.compile(r"[\w\- ]{1,60}")
 
 #: The workflow state a technician's Finish (or the form's Request Review) moves a visit into.
 #: Kept in step with ``review_digest.REVIEW_STATE`` and the workflow fixture.
@@ -74,13 +85,18 @@ class SapphireMaintenanceRecord(Document):
 		ID such as ``2hkckpg374``) meant nothing; could it be the PRJ number? A project has
 		many visits, so the project and the year lead and the visit's number follows (Nik:
 		"add the year"). The year is the visit's own, its date or else the scheduled date, so
-		a visit drafted in December for January counts in January. A visit with no project
-		keeps Frappe's random name, and so does one whose project name would read as series
-		syntax (make_autoname splits on dots and reads ``#`` and braces). Visits named before
+		a visit drafted in December for January counts in January. It is fixed at insert: a
+		visit drafted for 2 January and done on 31 December keeps its 2027 name while the
+		report's contract line, which reads the visit date, says 2026. That happens only in
+		the scheduler's week around New Year, and renaming a visit after its review email has
+		named it would be worse.
+
+		A visit with no project keeps Frappe's random name, and so does one whose project
+		name could not lead a naming series (:data:`PROJECT_IN_NAME`). Visits named before
 		v1.597.0 keep theirs, because review emails and links name them.
 		"""
 		project = self.get("project") or ""
-		if not project or any(c in project for c in ".#{}"):
+		if not PROJECT_IN_NAME.fullmatch(project):
 			return
 		from frappe.model.naming import make_autoname
 
@@ -97,6 +113,35 @@ class SapphireMaintenanceRecord(Document):
 		self.completion_percent = compute_completion_percent(self)
 		self._autofill_clock_in()
 		self._finish_on_review()
+		self._check_fountain_photo()
+
+	def _check_fountain_photo(self):
+		"""The fountain photo must be one uploaded to this visit, or by the person saving it.
+
+		The customer's report inlines it (``visit_report.image_data_uri``) only when it is a
+		File attached to this visit. But frappe's ``attach_files_to_document`` hook attaches any
+		*unattached* File whose URL an Attach field names, with no permission check, so naming
+		someone else's loose private file would otherwise attach it here and print it. A Desk
+		upload on an unsaved visit is attached to the form's temporary name until frappe
+		relinks it after insert, so the uploader's own File is accepted wherever it hangs.
+		"""
+		url = self.get("fountain_photo") or ""
+		if not url or not self.has_value_changed("fountain_photo"):
+			return
+		if url.startswith(("/files/", "/private/files/")):
+			for row in frappe.get_all(
+				"File",
+				filters={"file_url": url},
+				fields=["attached_to_doctype", "attached_to_name", "owner"],
+			):
+				if row.get("owner") == frappe.session.user:
+					return
+				if row.get("attached_to_doctype") == self.doctype and row.get("attached_to_name") == self.name:
+					return
+		frappe.throw(
+			_("The fountain photo must be a photo taken on this visit. Take it again from the visit."),
+			title=_("Photo not from this visit"),
+		)
 
 	def before_submit(self):
 		# Where no workflow is active the technician's own submit is the finish. With the
