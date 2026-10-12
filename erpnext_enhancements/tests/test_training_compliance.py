@@ -499,6 +499,50 @@ class TestTheSettingsGate(unittest.TestCase):
 		self.assertEqual(STATE["msgprints"], [])
 
 
+class TestThePopupSwitch(unittest.TestCase):
+	"""``silence_uncertified_popup`` mutes the pop-up and nothing else.
+
+	The Visit Wizard autosaves on every page, so the pop-up came back on every page
+	of one visit. Muting it must not cost the record its timeline note or the
+	supervisor their email — that is what separates it from the master switch.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		_assign()
+
+	def test_silenced_means_no_popup(self):
+		STATE["settings"]["silence_uncertified_popup"] = 1
+		compliance.warn_uncertified_technician(_visit())
+		compliance.warn_uncertified_assignee(_task())
+		self.assertEqual(STATE["msgprints"], [])
+
+	def test_silenced_still_notes_the_record_and_tells_the_supervisor(self):
+		STATE["settings"]["silence_uncertified_popup"] = 1
+		compliance.warn_uncertified_technician(_visit())
+		_run_enqueued()
+		self.assertEqual(len(STATE["comments"]), 1)
+		recipients = [r for mail in STATE["emails"] for r in mail["recipients"]]
+		self.assertEqual(recipients, ["boss@example.com"])
+
+	def test_a_site_that_never_saved_the_field_still_shows_the_popup(self):
+		"""A new field on a Single has no ``tabSingles`` row on an existing site, so it
+		reads as missing whatever the JSON default says. Missing must mean "not
+		silenced", or deploying the switch would itself switch the pop-up off."""
+		STATE["settings"].pop("silence_uncertified_popup", None)
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 1)
+
+	def test_the_switch_is_declared_off_by_default(self):
+		settings_json = (
+			Path(compliance.__file__).parent / "doctype" / "training_settings" / "training_settings.json"
+		)
+		fields = {f["fieldname"]: f for f in json.loads(settings_json.read_text(encoding="utf-8"))["fields"]}
+		field = fields["silence_uncertified_popup"]
+		self.assertEqual(field["fieldtype"], "Check")
+		self.assertEqual(field.get("default"), "0")
+
+
 # ------------------------------------------------------------ what it warns about
 
 

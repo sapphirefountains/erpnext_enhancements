@@ -209,7 +209,10 @@ class TestItWarnsAndNeverBlocks(unittest.TestCase):
         can they be there — and a site may want one without the other."""
         hooks = _text(HOOKS)
         at = hooks.index('"Sapphire Maintenance Record"')
-        block = hooks[at : at + 1400]
+        # The record's whole `validate` list, not a fixed-length window: a window of
+        # 1400 characters failed the build when a comment above the list grew one line.
+        start = hooks.index('"validate": [', at)
+        block = hooks[start : hooks.index("],", start)]
         self.assertIn("compliance.warn_uncertified_technician", block)
         self.assertIn("availability.warn_unavailable_technician", block)
 

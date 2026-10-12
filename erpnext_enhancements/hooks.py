@@ -721,8 +721,9 @@ doc_events = {
 		# blocking the visit form would mean the work happens with NO RECORD AT ALL, which
 		# is worse than the uncertified assignment it is flagging. Appends a comment plus an
 		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
-		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
-		# read as a gate.
+		# warn_on_uncertified_dispatch; silence_uncertified_popup mutes the msgprint alone (the
+		# Visit Wizard autosaves on every page). On validate, not before_submit: before_submit
+		# would read as a gate.
 		"validate": [
 			"erpnext_enhancements.training.compliance.warn_uncertified_technician",
 			# hr_enhancements (WI-073): is this person actually free that day? Approved

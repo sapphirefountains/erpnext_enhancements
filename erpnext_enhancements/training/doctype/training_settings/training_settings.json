@@ -41,7 +41,8 @@
   "max_video_mb",
   "signed_url_ttl_minutes",
   "compliance_section",
-  "warn_on_uncertified_dispatch"
+  "warn_on_uncertified_dispatch",
+  "silence_uncertified_popup"
  ],
  "fields": [
   {
@@ -282,11 +283,19 @@
    "fieldname": "warn_on_uncertified_dispatch",
    "fieldtype": "Check",
    "label": "Warn on Uncertified Assignment"
+  },
+  {
+   "default": "0",
+   "depends_on": "warn_on_uncertified_dispatch",
+   "description": "Stop the \"Training not current\" pop-up from appearing when a visit or task is saved. The warning is still noted on the record's timeline and the supervisor is still emailed, so nothing is lost from the record; only the pop-up the person saving sees is muted. The Visit Wizard saves the visit as the technician moves through it, so without this the pop-up comes back on every page. To stop the warning entirely, untick Warn on Uncertified Assignment instead.",
+   "fieldname": "silence_uncertified_popup",
+   "fieldtype": "Check",
+   "label": "Silence Pop-up Warning"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-19 12:00:00.000000",
+ "modified": "2026-10-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Training",
  "name": "Training Settings",
