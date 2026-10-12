@@ -47,6 +47,8 @@ STUBBED = (
 	"frappe.model.workflow",
 	f"{PACKAGE}.review_digest",
 	f"{PACKAGE}.missed_visits",
+	f"{PACKAGE}.follow_ups",
+	f"{PACKAGE}.visit_report",
 	API,
 )
 
@@ -246,6 +248,7 @@ def setUpModule():
 		v.date() if isinstance(v, datetime.datetime) else datetime.date(2026, 10, 12)
 	)
 	utils.nowdate = lambda: "2026-10-12"
+	utils.get_url_to_form = lambda doctype, name: f"https://erp.test/app/{doctype}/{name}"
 	frappe.utils = utils
 
 	model = types.ModuleType("frappe.model")
@@ -293,6 +296,15 @@ def setUpModule():
 
 	missed.missed_visits = _missed_visits
 
+	# Follow-ups (v1.600.0): the module's own rules are tested in test_maintenance_follow_ups.
+	follow = types.ModuleType(f"{PACKAGE}.follow_ups")
+	follow.DOCTYPE = "Maintenance Follow-Up"
+	follow.OPEN_STATUSES = ("Open", "Quoted", "Ordered", "Installed")
+	follow.STATUSES = (*follow.OPEN_STATUSES, "Invoiced", "Canceled")
+	follow.make_opportunity = lambda name: STATE.setdefault("opportunities", []).append(name) or "CRM-OPP-1"
+	report = types.ModuleType(f"{PACKAGE}.visit_report")
+	report.short_name = lambda item_name: (item_name or "").split(" - ", 1)[-1]
+
 	sys.modules.update(
 		{
 			"frappe": frappe,
@@ -301,12 +313,19 @@ def setUpModule():
 			"frappe.model.workflow": workflow,
 			f"{PACKAGE}.review_digest": digest,
 			f"{PACKAGE}.missed_visits": missed,
+			f"{PACKAGE}.follow_ups": follow,
+			f"{PACKAGE}.visit_report": report,
 		}
 	)
 	import erpnext_enhancements.api as api
 	import erpnext_enhancements.sapphire_maintenance as package
 
-	for attr, module in (("review_digest", digest), ("missed_visits", missed)):
+	for attr, module in (
+		("review_digest", digest),
+		("missed_visits", missed),
+		("follow_ups", follow),
+		("visit_report", report),
+	):
 		_saved_attrs[attr] = vars(package).get(attr)
 		setattr(package, attr, module)
 	# A stale attribute would be taken over the fresh import below.

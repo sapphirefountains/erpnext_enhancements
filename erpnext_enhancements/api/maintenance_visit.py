@@ -30,9 +30,12 @@ ALLOWED_ROW_FIELDS = {
     "chemistry_readings": {"reading_value", "notes", "photo"},
     "cleaning_tasks": {"is_done", "not_applicable", "notes", "photo"},
     "consumables": {"item", "qty", "warehouse", "uom"},
+    # v1.600.0. serial_no and source_question are set when the wizard adds the row; the
+    # record's validate keeps serial_no on a feature the visit covers.
+    "follow_ups": {"description", "item", "qty", "told", "photo", "serial_no", "source_question"},
 }
 # Tables that accept appended rows from the wizard (the "add other item" flow).
-APPENDABLE_TABLES = {"consumables"}
+APPENDABLE_TABLES = {"consumables", "follow_ups"}
 
 # "Do Visit Today" creates a record carrying this visit_label. A labelled visit
 # is skipped by api.maintenance_scheduling.update_next_visit_dates, so pulling a

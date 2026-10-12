@@ -114,6 +114,10 @@ class SapphireMaintenanceRecord(Document):
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
 		self._settle_task_states()
+		# Follow-ups and parts needed (v1.600.0): tidied, and kept on a feature this visit covers.
+		from erpnext_enhancements.sapphire_maintenance.follow_ups import check_follow_ups
+
+		check_follow_ups(self)
 		self._autofill_clock_in()
 		self._finish_on_review()
 		self._check_fountain_photo()
