@@ -18,6 +18,11 @@
 // downstream automation is untouched. The desk form remains the
 // supervisor/review surface.
 //
+// What has not reached the server yet (answers, photos, a Finish) is kept on
+// the phone and sent when there is signal (v1.596.0): see the note above
+// vz_storage. The Safety step shows the site's last approved visit
+// (render_last_visit).
+//
 // Styling uses Frappe CSS variables so Frappe Light and Timeless Night both
 // work; semantic pass/fail colors stay literal (house convention). The
 // page-loader serves this file version-aware, so no .bundle.* is needed.
@@ -66,6 +71,11 @@ const VZ_STYLE = `
 .vz-savestate{position:fixed;left:0;right:0;bottom:calc(74px + env(safe-area-inset-bottom));text-align:center;font-size:13px;pointer-events:none;z-index:6;}
 .vz-savestate span{display:inline-block;padding:4px 12px;border-radius:12px;background:var(--control-bg);color:var(--text-muted);border:1px solid var(--border-color);}
 .vz-savestate.vz-err span{background:#fde8e8;color:#b91c1c;border-color:#b91c1c;font-weight:600;pointer-events:auto;}
+.vz-savestate.vz-offline span{background:#fef3e2;color:#92400e;border-color:#d97706;font-weight:600;}
+.vz-choice-list{margin:8px 0 0 18px;padding:0;}
+.vz-choice-list li{margin-bottom:4px;}
+.vz-choice-btn{display:block;width:100%;min-height:48px;margin-bottom:8px;border-radius:10px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:16px;font-weight:600;cursor:pointer;}
+.vz-choice-btn.vz-choice-phone{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;}
 .vz-num{width:100%;margin-top:10px;font-size:26px;text-align:center;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
 .vz-num:focus{outline:2px solid var(--primary,#2490ef);}
 .vz-stepper{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;}
@@ -81,6 +91,7 @@ const VZ_STYLE = `
 .vz-row-extra input{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
 .vz-photo-btn{flex:0 0 auto;min-width:50px;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);cursor:pointer;font-size:18px;}
 .vz-photo-btn.vz-has-photo{border-color:#15803d;background:#e7f7ed;}
+.vz-photo-btn.vz-photo-waiting{border-color:#d97706;background:#fef3e2;}
 .vz-check-card{display:flex;align-items:center;gap:12px;cursor:pointer;}
 .vz-check-box{flex:0 0 30px;height:30px;border:2px solid var(--border-color);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
 .vz-check-card.vz-on .vz-check-box{background:#15803d;border-color:#15803d;}
@@ -100,6 +111,10 @@ const VZ_STYLE = `
 .vz-help.vz-open .vz-help-body{display:block;}
 .vz-help-body img{max-width:100%;border-radius:8px;margin:10px 0 2px;display:block;}
 .vz-help-cap{font-size:13px;color:var(--text-muted);margin-bottom:8px;}
+.vz-last-summary{font-size:13px;font-weight:400;color:var(--text-muted);text-align:right;}
+.vz-last-feature{font-weight:600;margin:10px 0 2px;}
+.vz-last-line{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--border-color);}
+.vz-last-bad{color:#b91c1c;font-weight:600;}
 .vz-location{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-muted);margin:2px 0 8px;}
 .vz-location a{color:var(--primary,#2490ef);font-weight:600;white-space:nowrap;}
 .vz-group-head{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin:16px 0 8px;}
@@ -247,6 +262,307 @@ function vz_merge_dirty(base, top) {
 	return merged;
 }
 
+// ----- kept on this phone until the server has it (v1.596.0, TASK-2026-02483) -----
+//
+// Until v1.596.0 every answer not yet saved lived only in this page's memory. Saves retried
+// on a backoff and parked against their own visit, but a reload, a crash, or the phone
+// closing the browser on a site with no signal dropped them. Nik's decision of 2026-10-12:
+// "never lose answers", without a full offline mode. The visit is still opened with signal
+// (at the truck), and from then on nothing the technician enters is lost:
+//
+//   * Answers: what has not reached the server for a visit is written to localStorage
+//     (`vz-unsent:<visit>`) on every change: the changed fields and rows, consumables added
+//     here, edits parked against a visit left behind, and a save still on the wire. It is
+//     the union of all of them (VisitWizard.unsent), rewritten when a save lands, and
+//     removed when nothing is left.
+//   * Photos, and a Finish (with the drawn signature), go into IndexedDB (`vz-outbox`):
+//     too big for localStorage, and a Finish has to survive the tab. They are sent when
+//     signal returns: the page's "online" event, a save that gets through, the page
+//     opening again, and a backoff while anything is waiting.
+//   * Opening a visit puts back what this phone kept for it. Each kept answer remembers the
+//     server's value from before it was changed (`base`), so the server's current version
+//     decides (vz_reconcile): unchanged on the server, the phone's answer goes back on;
+//     already there (a save that landed and lost its answer), it is dropped; changed by
+//     someone else, the technician is asked. A newer server edit is never overwritten
+//     without saying so.
+//
+// Nothing here can stop the page working: storage that is blocked or full (a private
+// window, site data turned off) leaves the wizard as it was, and its save state says
+// "NOT SAVED" rather than "Saved on this phone".
+const VZ_UNSENT_KEY = "vz-unsent:";
+const VZ_UNSENT_INDEX = "vz-unsent-index";
+const VZ_OUTBOX_DB = "vz-outbox";
+const VZ_OUTBOX_STORE = "items";
+
+function vz_storage() {
+	try {
+		return window.localStorage || null;
+	} catch (e) {
+		return null; // blocked: nothing is kept, as before v1.596.0
+	}
+}
+
+function vz_unsent_names() {
+	const store = vz_storage();
+	if (!store) return [];
+	try {
+		return JSON.parse(store.getItem(VZ_UNSENT_INDEX) || "[]");
+	} catch (e) {
+		return [];
+	}
+}
+
+function vz_unsent_read(name) {
+	const store = vz_storage();
+	if (!store || !name) return null;
+	try {
+		return JSON.parse(store.getItem(VZ_UNSENT_KEY + name) || "null");
+	} catch (e) {
+		return null;
+	}
+}
+
+// Keep `entry` for visit `name`, or forget it (null). True when the phone now holds it.
+function vz_unsent_write(name, entry) {
+	const store = vz_storage();
+	if (!store || !name) return false;
+	try {
+		const names = vz_unsent_names().filter((other) => other !== name);
+		if (entry) {
+			store.setItem(VZ_UNSENT_KEY + name, JSON.stringify(entry));
+			names.push(name);
+		} else {
+			store.removeItem(VZ_UNSENT_KEY + name);
+		}
+		store.setItem(VZ_UNSENT_INDEX, JSON.stringify(names));
+		return !!entry;
+	} catch (e) {
+		return false; // full or blocked
+	}
+}
+
+function vz_unsent_empty(entry) {
+	return (
+		!entry ||
+		(!Object.keys((entry.dirty || {}).fields || {}).length &&
+			!Object.keys((entry.dirty || {}).rows || {}).length &&
+			!(entry.pending_added || []).length)
+	);
+}
+
+// The consumables added here, as plain data the patch needs (and nothing that is not JSON).
+function vz_plain_added(rows) {
+	return rows.map((row) => ({
+		item: row.item,
+		item_name: row.item_name,
+		qty: row.qty,
+		uom: row.uom,
+		warehouse: row.warehouse,
+		qty_step: row.qty_step,
+		serial_no: row.serial_no,
+	}));
+}
+
+// The server's values from before each unsent change, for exactly the changes still unsent.
+function vz_prune_base(base, dirty) {
+	const kept = { fields: {}, rows: {} };
+	if (!base) return kept;
+	Object.keys(dirty.fields).forEach((field) => {
+		if (field in (base.fields || {})) kept.fields[field] = base.fields[field];
+	});
+	Object.entries(dirty.rows).forEach(([table, by_name]) => {
+		Object.entries(by_name).forEach(([name, changes]) => {
+			const old = ((base.rows || {})[table] || {})[name] || {};
+			Object.keys(changes).forEach((field) => {
+				if (field in old) {
+					((kept.rows[table] = kept.rows[table] || {})[name] = kept.rows[table][name] || {})[field] =
+						old[field];
+				}
+			});
+		});
+	});
+	return kept;
+}
+
+// One answer, however it is typed: blank, null and "" are the same; 7.4 and "7.4" are too.
+function vz_same(a, b) {
+	const blank = (v) => v === null || v === undefined || v === "";
+	if (blank(a) || blank(b)) return blank(a) && blank(b);
+	const x = Number(a);
+	const y = Number(b);
+	if (Number.isFinite(x) && Number.isFinite(y)) return x === y;
+	return String(a) === String(b);
+}
+
+// What to do with the answers this phone kept for a visit, against the server's version of
+// it now (`doc`). Returns {apply, added, conflicts, dropped}: `apply` and `conflicts` are
+// [{table, row, field, value, server}] (table null for a field on the visit itself), `added`
+// the consumables still to add, `dropped` how many the server already has.
+function vz_reconcile(entry, doc) {
+	const out = { apply: [], added: [], conflicts: [], dropped: 0 };
+	const same_version = !!entry.modified && entry.modified === doc.modified;
+	const base = entry.base || { fields: {}, rows: {} };
+	const judge = (table, row, field, value, server, before, has_before) => {
+		const change = { table, row, field, value, server };
+		if (same_version) out.apply.push(change);
+		else if (vz_same(server, value)) out.dropped += 1;
+		else if (has_before && vz_same(server, before)) out.apply.push(change);
+		else out.conflicts.push(change);
+	};
+	Object.entries((entry.dirty || {}).fields || {}).forEach(([field, value]) => {
+		const has = field in (base.fields || {});
+		judge(null, null, field, value, doc[field], has ? base.fields[field] : undefined, has);
+	});
+	Object.entries((entry.dirty || {}).rows || {}).forEach(([table, by_name]) => {
+		Object.entries(by_name).forEach(([name, changes]) => {
+			const row = (doc[table] || []).find((candidate) => candidate.name === name);
+			if (!row) return; // gone from the visit since: nowhere to put it
+			const old = ((base.rows || {})[table] || {})[name] || {};
+			Object.entries(changes).forEach(([field, value]) => {
+				judge(table, name, field, value, row[field], old[field], field in old);
+			});
+		});
+	});
+	// A consumable added here has no name until the server has it. On another version of
+	// the visit, a matching row may be one this phone sent whose answer was lost.
+	const unmatched = (doc.consumables || []).slice();
+	(entry.pending_added || []).forEach((row) => {
+		if (!same_version) {
+			const index = unmatched.findIndex(
+				(server_row) =>
+					server_row.item === row.item && vz_same(server_row.qty, row.qty) && vz_same(server_row.uom, row.uom)
+			);
+			if (index >= 0) {
+				unmatched.splice(index, 1);
+				out.dropped += 1;
+				return;
+			}
+		}
+		out.added.push(row);
+	});
+	return out;
+}
+
+// One change ({table, row, field, value}; table null for a field on the visit itself) into
+// a {fields, rows} batch of edits.
+function vz_put_change(dirty, change) {
+	if (!change.table) {
+		dirty.fields[change.field] = change.value;
+		return dirty;
+	}
+	const rows = (dirty.rows[change.table] = dirty.rows[change.table] || {});
+	(rows[change.row] = rows[change.row] || {})[change.field] = change.value;
+	return dirty;
+}
+
+// A change made away from the screen (an uploaded photo's url), into the answers this phone
+// keeps for visit `name`. Its server value from before is taken as blank, a photo not yet
+// attached, so opening the visit puts it on unless somebody attached another meanwhile.
+function vz_keep_change(entry, name, change, modified) {
+	entry = entry || {
+		record: name,
+		modified: modified || null,
+		dirty: { fields: {}, rows: {} },
+		pending_added: [],
+		base: { fields: {}, rows: {} },
+	};
+	vz_put_change(entry.dirty, change);
+	entry.base = entry.base || { fields: {}, rows: {} };
+	entry.base.rows = entry.base.rows || {};
+	const rows = (entry.base.rows[change.table] = entry.base.rows[change.table] || {});
+	const old = (rows[change.row] = rows[change.row] || {});
+	if (!(change.field in old)) old[change.field] = null;
+	entry.at = Date.now();
+	vz_unsent_write(name, entry);
+	return entry;
+}
+
+// IndexedDB: the photos and Finishes waiting for signal. Resolves null when the browser has
+// none (or refuses it), and the page then works as it did before v1.596.0.
+function vz_outbox_db() {
+	if (!vz_outbox_db.opening) {
+		vz_outbox_db.opening = new Promise((resolve) => {
+			let idb = null;
+			try {
+				idb = window.indexedDB || null;
+			} catch (e) {
+				idb = null;
+			}
+			if (!idb) return resolve(null);
+			let request;
+			try {
+				request = idb.open(VZ_OUTBOX_DB, 1);
+			} catch (e) {
+				return resolve(null);
+			}
+			request.onupgradeneeded = () => request.result.createObjectStore(VZ_OUTBOX_STORE, { keyPath: "key" });
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => resolve(null);
+			// A browser that never answers (some private modes) must not hold the page up: the
+			// visit list and loading a visit wait on this.
+			setTimeout(() => resolve(null), 3000);
+		});
+	}
+	return vz_outbox_db.opening;
+}
+
+// One request in its own transaction, settled when the transaction completes (a write is
+// on disk then, not merely queued).
+function vz_outbox(mode, work) {
+	return vz_outbox_db().then((db) => {
+		if (!db) return null;
+		return new Promise((resolve, reject) => {
+			try {
+				const tx = db.transaction(VZ_OUTBOX_STORE, mode);
+				const request = work(tx.objectStore(VZ_OUTBOX_STORE));
+				tx.oncomplete = () => resolve(request.result === undefined ? true : request.result);
+				tx.onerror = tx.onabort = () => reject(tx.error);
+			} catch (e) {
+				reject(e);
+			}
+		});
+	});
+}
+
+const vz_outbox_put = (item) => vz_outbox("readwrite", (store) => store.put(item));
+const vz_outbox_delete = (key) => vz_outbox("readwrite", (store) => store.delete(key));
+const vz_outbox_items = () =>
+	vz_outbox("readonly", (store) => store.getAll()).then(
+		(items) => (Array.isArray(items) ? items : []),
+		() => []
+	);
+const vz_photo_key = (record, table, row) => `photo|${record}|${table}|${row}`;
+const vz_finish_key = (record) => `finish|${record}`;
+
+// upload_file, as the page has always sent a photo: the file url, or a rejection. A
+// rejection with a `status` is the server turning it down (vz_refused tells which kind);
+// one without is no signal.
+function vz_upload(blob, filename, record) {
+	const form = new FormData();
+	form.append("file", blob, filename || "photo.jpg");
+	form.append("doctype", "Sapphire Maintenance Record");
+	form.append("docname", record);
+	form.append("is_private", "1");
+	return fetch("/api/method/upload_file", {
+		method: "POST",
+		headers: { "X-Frappe-CSRF-Token": frappe.csrf_token },
+		body: form,
+	})
+		.then((response) => {
+			if (!response.ok) {
+				const error = new Error("upload refused");
+				error.status = response.status;
+				throw error;
+			}
+			return response.json();
+		})
+		.then((data) => {
+			const file_url = data && data.message && data.message.file_url;
+			if (!file_url) throw new Error("upload failed");
+			return file_url;
+		});
+}
+
 class VisitWizard {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -260,21 +576,50 @@ class VisitWizard {
 		this._parked = {};
 		this._park_warned = new Set();
 		this._saving = {};
+		// Kept on this phone (v1.596.0; see the note above vz_storage). Like the parked
+		// saves, all of it belongs to a record, not to the screen, so none is in reset():
+		// the batch of each visit's save on the wire (unsent until it is answered), the
+		// server's value from before each unsent change, visits whose Finish waits on this
+		// phone (their copy here is the visit's until it is sent), photos waiting, and
+		// visits whose kept answers clash with the server's (opening one asks).
+		this._inflight = {};
+		this._base = {};
+		this._handed = new Set();
+		this._photo_waiting = new Set();
+		this._photo_runs = {};
+		this._needs_you = new Set();
+		this._held = {};
+		this._sync = null;
+		this._sync_attempt = 0;
 		// Bumped whenever the picker or a visit is asked for, so a slow answer for
 		// a screen the technician has already left is dropped instead of painted.
 		this._paint_seq = 0;
 		// Closing the tab mid-visit used to lose whatever had not autosaved yet,
-		// silently. Technicians work on phones and switch apps constantly.
+		// silently. Technicians work on phones and switch apps constantly. Since
+		// v1.596.0 the answers are kept on the phone, so this warns only where the
+		// browser will not keep them.
 		window.addEventListener("beforeunload", (event) => {
 			if (
-				(this.doc && this.doc.docstatus === 0 && this.has_dirty()) ||
-				Object.keys(this._parked).length
+				!vz_storage() &&
+				((this.doc && this.doc.docstatus === 0 && this.has_dirty()) || Object.keys(this._parked).length)
 			) {
 				event.preventDefault();
 				event.returnValue = "";
 				return "";
 			}
 		});
+		// Signal is back: send what waited for it.
+		window.addEventListener("online", () => this.signal_back());
+		// What this phone was already holding when the page opened: a Finish makes its
+		// visit wait for signal, a photo marks its camera button. Loading a visit waits
+		// for this, then everything kept is sent.
+		this._outbox_ready = vz_outbox_items().then((items) => {
+			items.forEach((item) => {
+				if (item.kind === "finish") this._handed.add(item.record);
+				if (item.kind === "photo") this._photo_waiting.add(item.key);
+			});
+		});
+		this._outbox_ready.then(() => this.sync_stored());
 		this.reset();
 	}
 
@@ -305,6 +650,9 @@ class VisitWizard {
 		this._signature_drawn = false;
 		this._signature_data = null;
 		this._signature_canvas = null;
+		// Kept answers waiting on the technician's choice (render_choice) for the visit on
+		// screen; the answers themselves are held per visit in this._held.
+		this._choice = null;
 	}
 
 	// ----- routing -------------------------------------------------------
@@ -555,12 +903,20 @@ class VisitWizard {
 		Promise.all([
 			frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today"),
 			frappe.call("erpnext_enhancements.api.maintenance_visit.get_upcoming_visits"),
-		]).then(([today_res, upcoming_res]) => {
+			this.kept_records(),
+		]).then(([today_res, upcoming_res, kept]) => {
 			// A visit opened (or Forward pressed) while the list loaded wins.
 			if (ticket !== this._paint_seq) return;
 			const today = (today_res && today_res.message) || [];
 			const upcoming = (upcoming_res && upcoming_res.message) || [];
 			this.$wrap.empty();
+
+			// What this phone holds that the server does not have yet (v1.596.0): first,
+			// so nobody walks off thinking a visit with no signal at the fountain went in.
+			if (kept.names.length) {
+				this.$wrap.append(`<div class="vz-section-head">${__("Saved on this phone, not sent yet")}</div>`);
+				kept.names.forEach((name) => this.$wrap.append(this.kept_card(name, kept.items)));
+			}
 
 			this.$wrap.append(`<div class="vz-section-head">${__("Today's Visits")}</div>`);
 			if (today.length) {
@@ -722,6 +1078,23 @@ class VisitWizard {
 			});
 	}
 
+	// A visit with something kept on this phone: what it is, and what is needed.
+	kept_card(name, items) {
+		const mine = items.filter((item) => item.record === name);
+		const photos = mine.filter((item) => item.kind === "photo").length;
+		const bits = [];
+		if (!vz_unsent_empty(vz_unsent_read(name))) bits.push(__("answers"));
+		if (photos) bits.push(__("{0} photos", [photos]));
+		if (mine.some((item) => item.kind === "finish")) bits.push(__("Finish"));
+		const sub = this._needs_you.has(name)
+			? __("Open it to choose which answers to keep.")
+			: __("Waiting for signal: {0}", [bits.join(", ") || __("nothing left")]);
+		return $(`<button class="vz-pick-card">
+				<div class="vz-card-title">${frappe.utils.escape_html(name)}</div>
+				<div class="vz-card-sub">${frappe.utils.escape_html(sub)}</div>
+			</button>`).on("click", () => this.open_record(name));
+	}
+
 	today_card(visit) {
 		const sub = visit.visit_label || visit.serial_no || __("Site visit");
 		return $(`<button class="vz-pick-card">
@@ -780,6 +1153,8 @@ class VisitWizard {
 		// was read, leaving the screen a version behind and the next autosave
 		// refused as out of date. Let it land (or fail, and be parked) first.
 		Promise.resolve(this._saving[name])
+			// What the phone held when the page opened (a Finish waiting, photos) is known first.
+			.then(() => this._outbox_ready)
 			.then(() => {
 				if (ticket !== this._paint_seq) return null;
 				parked = this.take_parked(name);
@@ -803,8 +1178,24 @@ class VisitWizard {
 				this.template_meta = data.template_meta || {};
 				this.feature_names = data.features || {};
 				this.apply_state(data.state);
-				if (parked) this.reapply_parked(parked);
+				// What this phone kept for the visit (v1.596.0). Written from everything
+				// this page held for it, parked edits included, so it replaces them.
+				const kept = vz_unsent_read(name);
+				if (this._handed.has(name)) {
+					// Its Finish waits on this phone, unless it went through meanwhile.
+					if (this.doc.docstatus === 0) {
+						this.build_steps();
+						this.render_finish_waiting();
+						this.sync_route(true);
+						this.schedule_sync(0);
+						return;
+					}
+					this._handed.delete(name);
+					vz_outbox_delete(vz_finish_key(name));
+				}
+				if (!this.restore_kept(kept) && parked) this.reapply_parked(parked);
 				parked = null;
+				if (this._photo_waiting.size) this.send_photos(name);
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
 				this.build_features();
@@ -892,17 +1283,22 @@ class VisitWizard {
 	// ----- dirty tracking + autosave --------------------------------------
 
 	set_field(field, value) {
+		this.note_base(null, null, field, this.doc[field]);
 		this.doc[field] = value;
 		this.dirty.fields[field] = value;
+		this.journal(this.doc.name);
 		this.schedule_save();
 	}
 
 	set_row(table, row, field, value) {
+		if (row.name) this.note_base(table, row.name, field, row[field]);
 		row[field] = value;
 		if (row.name) {
 			const table_dirty = (this.dirty.rows[table] = this.dirty.rows[table] || {});
 			(table_dirty[row.name] = table_dirty[row.name] || {})[field] = value;
 		}
+		// A consumable added here (no name yet) is kept whole, its new qty with it.
+		this.journal(this.doc.name);
 		this.schedule_save();
 	}
 
@@ -928,8 +1324,11 @@ class VisitWizard {
 			saving: __("Saving..."),
 			saved: __("Saved"),
 			error: __("NOT SAVED - retrying"),
+			// No signal, and the answers are kept on the phone (v1.596.0).
+			offline: __("Saved on this phone - will send when signal returns"),
 		};
 		$el.toggleClass("vz-err", state === "error");
+		$el.toggleClass("vz-offline", state === "offline");
 		if (!labels[state]) {
 			$el.empty();
 			return;
@@ -985,6 +1384,8 @@ class VisitWizard {
 		const patch = vz_patch(sent_dirty, added_local);
 		this.dirty = { fields: {}, rows: {} };
 		this.pending_added = [];
+		// Unsent until answered: still part of what the phone keeps (unsent()).
+		this._inflight[doc.name] = { doc, dirty: sent_dirty, pending_added: added_local };
 		this.set_save_state("saving");
 
 		const done = frappe
@@ -1002,13 +1403,18 @@ class VisitWizard {
 				((state.added || {}).consumables || []).forEach((name, index) => {
 					if (added_local[index]) added_local[index].name = name;
 				});
+				delete this._inflight[doc.name];
+				this.rebase(doc.name, sent_dirty);
 				if (doc !== this.doc) {
 					// Nothing of it is on screen any more, but a later save of this
 					// record (a parked one) must carry the version this one made.
 					doc.modified = state.modified || doc.modified;
+					this.journal(doc.name);
+					this.after_signal();
 					return;
 				}
 				this.apply_state(state);
+				this.journal(doc.name);
 				if (state.clock_cleared) {
 					frappe.show_alert({
 						message: __(
@@ -1020,8 +1426,10 @@ class VisitWizard {
 				this.refresh_reading_flags();
 				this._retry_attempt = 0;
 				this.set_save_state(this.has_dirty() ? "pending" : "saved");
+				this.after_signal();
 			})
 			.catch((error) => {
+				delete this._inflight[doc.name];
 				if (doc !== this.doc) {
 					// Never into the visit on screen now — these rows are not on it.
 					// Anything parked for this record since is newer, so this goes under it.
@@ -1031,7 +1439,9 @@ class VisitWizard {
 				// keep the edits — newer in-flight changes win over the failed batch
 				this.dirty = vz_merge_dirty(sent_dirty, this.dirty);
 				this.pending_added = added_local.concat(this.pending_added);
-				this.set_save_state("error");
+				// No signal, and the phone holds every answer: say that, not "NOT SAVED".
+				const kept = this.journal(doc.name);
+				this.set_save_state(kept && !vz_refused(error) ? "offline" : "error");
 				this.schedule_retry();
 				throw error;
 			});
@@ -1082,6 +1492,7 @@ class VisitWizard {
 			: parked.pending_added.concat(pending_added);
 		parked.attempt = Math.max(parked.attempt, options.attempt || 0);
 		this._parked[name] = parked;
+		this.journal(name);
 		clearTimeout(parked.timer);
 		if (options.refused) {
 			// Opening the visit again loads it fresh and puts these back on
@@ -1122,6 +1533,7 @@ class VisitWizard {
 		const sent = Promise.resolve(this._saving[name]).then(() => {
 			parked = this.take_parked(name);
 			if (!parked) return null;
+			this._inflight[name] = parked;
 			return frappe.call({
 				method: "erpnext_enhancements.api.maintenance_visit.save_visit",
 				args: {
@@ -1137,12 +1549,17 @@ class VisitWizard {
 			sent.then(
 				(r) => {
 					if (!parked) return;
+					delete this._inflight[name];
+					this.rebase(name, parked.dirty);
 					parked.doc.modified = ((r && r.message) || {}).modified || parked.doc.modified;
 					this._park_warned.delete(name);
+					this.journal(name);
 					frappe.show_alert({ message: __("Saved your changes to {0}.", [name]), indicator: "green" });
+					this.after_signal();
 				},
 				(error) => {
 					if (!parked) return;
+					delete this._inflight[name];
 					this.park(parked.doc, parked.dirty, parked.pending_added, {
 						underneath: true,
 						attempt: parked.attempt + 1,
@@ -1184,6 +1601,615 @@ class VisitWizard {
 		if (this.has_dirty()) this.schedule_save();
 	}
 
+	// ----- kept on this phone (v1.596.0) -------------------------------------------
+	//
+	// See the note above vz_storage. What follows keeps the copy on the phone in step with
+	// what this page holds, puts it back when a visit is opened, and sends what waited for
+	// signal (photos, a Finish, and the answers of a visit no longer on screen).
+
+	// Before a field's first unsent change, remember the server's value, so a kept answer
+	// can later tell "unchanged on the server" from "someone else changed it".
+	note_base(table, row_name, field, old) {
+		const name = this.doc && this.doc.name;
+		if (!name || this.unsent_has(name, table, row_name, field)) return;
+		const base = (this._base[name] = this._base[name] || { fields: {}, rows: {} });
+		if (table) {
+			const rows = (base.rows[table] = base.rows[table] || {});
+			(rows[row_name] = rows[row_name] || {})[field] = old === undefined ? null : old;
+		} else {
+			base.fields[field] = old === undefined ? null : old;
+		}
+	}
+
+	// A save landed: for anything in it that was edited again meanwhile, the server's value
+	// is now what that save sent, so that is the before-value of the edit still unsent.
+	rebase(name, landed) {
+		const base = this._base[name];
+		if (!base) return;
+		Object.entries(landed.fields).forEach(([field, value]) => {
+			if (this.unsent_has(name, null, null, field)) base.fields[field] = value;
+		});
+		Object.entries(landed.rows).forEach(([table, by_name]) => {
+			Object.entries(by_name).forEach(([row_name, changes]) => {
+				Object.entries(changes).forEach(([field, value]) => {
+					if (!this.unsent_has(name, table, row_name, field)) return;
+					const rows = (base.rows[table] = base.rows[table] || {});
+					(rows[row_name] = rows[row_name] || {})[field] = value;
+				});
+			});
+		});
+	}
+
+	unsent_has(name, table, row_name, field) {
+		const parts = [this._inflight[name], this._parked[name], this._held[name]];
+		if (this.doc && this.doc.name === name) parts.push({ dirty: this.dirty });
+		return parts.some((part) => {
+			if (!part) return false;
+			if (!table) return field in part.dirty.fields;
+			return field in (((part.dirty.rows || {})[table] || {})[row_name] || {});
+		});
+	}
+
+	// Everything of visit `name` the server does not have yet, oldest first: kept answers
+	// awaiting the technician's choice, the save on the wire, edits parked against it, and
+	// the edits on screen. `modified` is the version they were made against.
+	unsent(name) {
+		let dirty = { fields: {}, rows: {} };
+		let added = [];
+		const on_screen = this.doc && this.doc.name === name;
+		const parts = [
+			this._held[name],
+			this._inflight[name],
+			this._parked[name],
+			on_screen ? { dirty: this.dirty, pending_added: this.pending_added } : null,
+		];
+		parts.forEach((part) => {
+			if (!part) return;
+			dirty = vz_merge_dirty(dirty, part.dirty);
+			added = added.concat(part.pending_added || []);
+		});
+		const holder = (on_screen && this.doc) || (this._parked[name] || {}).doc || (this._inflight[name] || {}).doc;
+		return {
+			dirty,
+			// A consumable the server has named is on it.
+			pending_added: added.filter((row) => !row.name),
+			modified: (holder && holder.modified) || (this._held[name] || {}).modified || null,
+		};
+	}
+
+	// Write what visit `name` has unsent to this phone, or forget it once there is none.
+	// True when the phone holds it. Not while the visit loads (this page does not hold all
+	// of it then) or while its Finish waits here (the copy on the phone is the visit's).
+	journal(name) {
+		if (!name || this._loading === name || this._handed.has(name)) return false;
+		const unsent = this.unsent(name);
+		if (vz_unsent_empty(unsent)) {
+			delete this._base[name];
+			vz_unsent_write(name, null);
+			return false;
+		}
+		return vz_unsent_write(name, {
+			record: name,
+			modified: unsent.modified,
+			dirty: unsent.dirty,
+			pending_added: vz_plain_added(unsent.pending_added),
+			base: vz_prune_base(this._base[name], unsent.dirty),
+			at: Date.now(),
+		});
+	}
+
+	// The visit just loaded: put back what this phone kept for it (see vz_reconcile). True
+	// when it held anything. Answers the server has since changed differently wait on the
+	// technician's choice (render_choice) and stay kept until then.
+	restore_kept(entry) {
+		const doc = this.doc;
+		const name = doc.name;
+		if (vz_unsent_empty(entry)) return false;
+		this._needs_you.delete(name);
+		if (doc.docstatus !== 0) {
+			vz_unsent_write(name, null);
+			frappe.msgprint(
+				__(
+					"This phone kept answers for {0} that never reached the server, and the visit has been submitted since, so they could not be added. Tell the office if something is missing.",
+					[name]
+				)
+			);
+			return true;
+		}
+		const plan = vz_reconcile(entry, doc);
+		this._base[name] = vz_prune_base(entry.base, entry.dirty);
+		plan.apply.forEach((change) => this.put_back(change));
+		plan.added.forEach((row) => {
+			const copy = { ...row };
+			(doc.consumables = doc.consumables || []).push(copy);
+			this.pending_added.push(copy);
+		});
+		const back = plan.apply.length + plan.added.length;
+		if (plan.conflicts.length) {
+			const held = { dirty: { fields: {}, rows: {} }, modified: entry.modified };
+			plan.conflicts.forEach((change) => vz_put_change(held.dirty, change));
+			this._held[name] = held;
+			this._choice = { record: name, conflicts: plan.conflicts };
+			this._needs_you.add(name);
+		}
+		this.journal(name);
+		if (this.has_dirty()) this.schedule_save();
+		if (back) {
+			frappe.show_alert({
+				message: __("{0} answers kept on this phone were put back, and are being sent.", [back]),
+				indicator: "blue",
+			});
+		}
+		return true;
+	}
+
+	// One kept answer back onto the visit as an unsent edit, its server value from before
+	// the change remembered (kept from the phone's copy).
+	put_back(change) {
+		const doc = this.doc;
+		if (!change.table) {
+			doc[change.field] = change.value;
+			this.dirty.fields[change.field] = change.value;
+			return;
+		}
+		const row = (doc[change.table] || []).find((candidate) => candidate.name === change.row);
+		if (!row) return;
+		row[change.field] = change.value;
+		const rows = (this.dirty.rows[change.table] = this.dirty.rows[change.table] || {});
+		(rows[change.row] = rows[change.row] || {})[change.field] = change.value;
+	}
+
+	// Kept answers the server has since changed differently: say which, and let the
+	// technician pick. Nothing else shows until they do (render() comes here), so nothing
+	// on screen can be answered on top of a value that is still in question.
+	render_choice() {
+		const choice = this._choice;
+		const label = (change) => {
+			if (!change.table) return change.field.replace(/_/g, " ");
+			const row = (this.doc[change.table] || []).find((r) => r.name === change.row) || {};
+			const what = row.reading || row.question || row.task || row.item_name || row.item || change.table;
+			const where = row.serial_no && this.features.length ? ` (${this.feature_names[row.serial_no] || row.serial_no})` : "";
+			const main = { chemistry_readings: "reading_value", maintenance_results: "selection", cleaning_tasks: "is_done", consumables: "qty" };
+			return main[change.table] === change.field ? what + where : `${what}${where}: ${change.field.replace(/_/g, " ")}`;
+		};
+		const shown = (value) => (value === null || value === undefined || value === "" ? __("(blank)") : String(value));
+		const lines = choice.conflicts
+			.map(
+				(change) =>
+					`<li><b>${frappe.utils.escape_html(label(change))}</b>: ${__("this phone")} <b>${frappe.utils.escape_html(
+						shown(change.value)
+					)}</b>, ${__("the server")} <b>${frappe.utils.escape_html(shown(change.server))}</b></li>`
+			)
+			.join("");
+		this.$wrap.empty().append(`
+			<div class="vz-banner vz-banner-blue">
+				<h6>${__("Answers kept on this phone")}</h6>
+				${__(
+					"This phone kept answers for this visit that did not reach the server, and since then the server's copy of these has changed (someone else edited the visit). Which should the visit keep?"
+				)}
+				<ul class="vz-choice-list">${lines}</ul>
+			</div>
+		`);
+		$(`<button type="button" class="vz-choice-btn vz-choice-phone">${__("Use this phone's answers")}</button>`)
+			.on("click", () => this.resolve_kept(true))
+			.appendTo(this.$wrap);
+		$(`<button type="button" class="vz-choice-btn vz-choice-server">${__("Keep the server's")}</button>`)
+			.on("click", () => this.resolve_kept(false))
+			.appendTo(this.$wrap);
+	}
+
+	resolve_kept(use_phone) {
+		const choice = this._choice;
+		if (!choice || !this.doc || this.doc.name !== choice.record) return;
+		const name = choice.record;
+		delete this._held[name];
+		this._choice = null;
+		this._needs_you.delete(name);
+		if (use_phone) {
+			// The phone's answer, chosen over what the server has now: that is the value
+			// it replaces, should this edit itself be kept and compared again.
+			choice.conflicts.forEach((change) => {
+				const row = change.table ? (this.doc[change.table] || []).find((r) => r.name === change.row) : null;
+				this.note_base(change.table, change.row, change.field, change.table ? (row || {})[change.field] : this.doc[change.field]);
+				this.put_back(change);
+			});
+			if (this.has_dirty()) this.schedule_save();
+		}
+		this.journal(name);
+		this.render();
+	}
+
+	// A Finish with no signal (finish() could not reach the server): keep it, with the
+	// signature, on this phone. The visit's answers are already kept; from here the copy on
+	// the phone is the visit's, and sync_stored sends the answers, then the photos, then the
+	// Finish, when signal returns.
+	keep_finish(doc, signature) {
+		const name = doc.name;
+		const cannot = () =>
+			frappe.msgprint(
+				__("There is no signal, and this browser cannot keep the Finish on the phone. Tap Finish again when you have signal.")
+			);
+		if (!vz_storage()) return Promise.resolve(cannot());
+		return vz_outbox_put({ key: vz_finish_key(name), kind: "finish", record: name, signature: signature || null, at: Date.now() }).then(
+			(kept) => {
+				if (!kept) return cannot();
+				this.journal(name);
+				this._handed.add(name);
+				if (this.doc === doc) {
+					clearTimeout(this._save_timer);
+					clearTimeout(this._retry_timer);
+					this.dirty = { fields: {}, rows: {} };
+					this.pending_added = [];
+					this.render_finish_waiting();
+				}
+				this.schedule_sync(0);
+			},
+			cannot
+		);
+	}
+
+	render_finish_waiting() {
+		this.set_save_state("idle");
+		this.$wrap.empty().append(`
+			<div class="vz-done-screen">
+				<div class="vz-done-icon">📱</div>
+				<h4>${__("Saved on this phone")}</h4>
+				<p class="vz-muted">${__(
+					"There is no signal here. This visit, its photos and the Finish will be sent as soon as there is. You can close this page; opening the Visit Wizard again sends them too."
+				)}</p>
+			</div>
+		`);
+		$(`<button type="button" class="vz-pick-card" style="text-align:center;font-weight:600;">${__("Back to Today's Visits")}</button>`)
+			.on("click", () => this.push_route({ record: "", step: "", feature: "" }))
+			.appendTo(this.$wrap.find(".vz-done-screen"));
+	}
+
+	// The page's "online" event: send the answers on screen now rather than at the next
+	// retry, then everything else that waited.
+	signal_back() {
+		const doc = this.doc;
+		if (doc && doc.docstatus === 0 && !this._handed.has(doc.name) && this.has_dirty()) {
+			this.flush_save().catch(() => {});
+		}
+		this.after_signal();
+	}
+
+	// A call got through, so there is signal: send the photos of the visit on screen and
+	// whatever is kept for other visits. Nothing is read or sent when nothing is kept.
+	after_signal() {
+		const doc = this.doc;
+		if (doc && doc.docstatus === 0 && !this._handed.has(doc.name) && this._photo_waiting.size) {
+			this.send_photos(doc.name);
+		}
+		if (this._handed.size || this._photo_waiting.size || vz_unsent_names().length) this.schedule_sync(0);
+	}
+
+	schedule_sync(delay) {
+		clearTimeout(this._sync_timer);
+		this._sync_timer = setTimeout(() => this.sync_stored(), delay || 0);
+	}
+
+	// Visits with something kept on this phone: answers, photos or a Finish.
+	kept_records() {
+		return vz_outbox_items().then((items) => {
+			const names = new Set(vz_unsent_names());
+			items.forEach((item) => names.add(item.record));
+			return { names: [...names], items };
+		});
+	}
+
+	// Send everything kept for visits this page is not working on, one visit at a time,
+	// then try again on a backoff while anything is left (15 s, doubling to 2 minutes).
+	sync_stored() {
+		if (this._sync) return this._sync;
+		clearTimeout(this._sync_timer);
+		const run = this.kept_records()
+			.then(({ names, items }) =>
+				names.reduce(
+					(chain, name) =>
+						chain.then(() => {
+							if (this.doc && this.doc.name === name && !this._handed.has(name)) {
+								return this.send_photos(name);
+							}
+							if (!this.sync_ready(name)) return null;
+							return this.sync_record(name, items.filter((item) => item.record === name)).then(
+								() => null,
+								() => null
+							);
+						}),
+					Promise.resolve()
+				)
+			)
+			.then(() => this.kept_records())
+			.then(({ names }) => {
+				this._sync = null;
+				// The visit being edited on screen is the autosave's, unless photos of it wait.
+				const editing = this.doc && !this._handed.has(this.doc.name) ? this.doc.name : null;
+				const waiting = names.filter(
+					(name) =>
+						!this._needs_you.has(name) &&
+						(name !== editing || [...this._photo_waiting].some((key) => key.startsWith(`photo|${name}|`)))
+				);
+				if (!waiting.length) {
+					this._sync_attempt = 0;
+					return;
+				}
+				this._sync_attempt = Math.min(this._sync_attempt + 1, 4);
+				this.schedule_sync(15000 * Math.pow(2, this._sync_attempt - 1));
+			});
+		this._sync = run.catch(() => {
+			this._sync = null;
+		});
+		return this._sync;
+	}
+
+	// Nothing of `name` is held in this page's memory (that copy is sent by the autosave
+	// and the parked saves), and nobody needs to choose first.
+	sync_ready(name) {
+		if (this._loading === name || this._parked[name] || this._inflight[name]) return false;
+		if (this._needs_you.has(name) || this._held[name]) return false;
+		return !(this.doc && this.doc.name === name && !this._handed.has(name));
+	}
+
+	// One visit not on screen: against the server's version now, its kept answers (stopping
+	// at a clash, for the technician to choose on opening it), then each photo (its url kept
+	// with the answers before the photo is let go), one save, then the Finish.
+	sync_record(name, items) {
+		const photos = items.filter((item) => item.kind === "photo" && !item.refused);
+		const finish = items.find((item) => item.kind === "finish" && !item.refused);
+		let entry = vz_unsent_read(name);
+		if (vz_unsent_empty(entry) && !photos.length && !finish) {
+			if (entry) vz_unsent_write(name, null);
+			return Promise.resolve();
+		}
+		const bootstrap = () =>
+			frappe.call({
+				method: "erpnext_enhancements.api.maintenance_visit.get_visit_bootstrap",
+				args: { record: name },
+				silent: true,
+			});
+		const work = bootstrap().then((r) => {
+			const data = (r && r.message) || {};
+			const doc = data.record || {};
+			let modified = (data.state || {}).modified || doc.modified;
+			if (doc.docstatus !== 0) return this.settle_finished(name, entry, photos, finish);
+			const plan = vz_reconcile(entry || {}, doc);
+			if (plan.conflicts.length) {
+				this._needs_you.add(name);
+				frappe.show_alert({
+					message: __("Answers kept on this phone for {0} differ from the server's. Open that visit to choose.", [name]),
+					indicator: "orange",
+				});
+				return null;
+			}
+			const patch = { fields: {}, rows: {} };
+			plan.apply.forEach((change) => vz_put_change(patch, change));
+			return photos
+				.reduce(
+					(chain, item) =>
+						chain.then(() =>
+							vz_upload(item.blob, item.filename, name).then(
+								(url) => {
+									const change = { table: item.table, row: item.row, field: "photo", value: url };
+									vz_put_change(patch, change);
+									entry = vz_keep_change(entry, name, change, modified);
+									this._photo_waiting.delete(item.key);
+									return vz_outbox_delete(item.key);
+								},
+								(error) => (vz_refused(error) ? this.photo_refused(item) : Promise.reject(error))
+							)
+						),
+					Promise.resolve()
+				)
+				.then(() => {
+					if (vz_unsent_empty({ dirty: patch, pending_added: plan.added })) return modified;
+					return frappe
+						.call({
+							method: "erpnext_enhancements.api.maintenance_visit.save_visit",
+							args: { record: name, patch: JSON.stringify(vz_patch(patch, plan.added)), modified },
+							silent: true,
+						})
+						.then(
+							(saved) => {
+								vz_unsent_write(name, null);
+								frappe.show_alert({ message: __("Saved your changes to {0}.", [name]), indicator: "green" });
+								return ((saved && saved.message) || {}).modified || modified;
+							},
+							(error) => {
+								// Turned down (not merely no signal): retrying cannot help. Kept, and
+								// said; opening the visit puts the answers back on screen.
+								if (vz_refused(error)) {
+									this._needs_you.add(name);
+									frappe.show_alert({
+										message: __("Changes to {0} were turned down by the server. They are kept: open that visit.", [name]),
+										indicator: "red",
+									});
+								}
+								return Promise.reject(error);
+							}
+						);
+				})
+				.then((now) => {
+					modified = now;
+					if (!finish) return null;
+					return frappe
+						.call({
+							method: "erpnext_enhancements.api.maintenance_visit.finish_visit",
+							args: { record: name, signature: finish.signature, modified },
+							silent: true,
+						})
+						.then(
+							(done) => this.finish_sent(name, finish, (done && done.message) || {}),
+							(error) => {
+								if (!vz_refused(error)) return Promise.reject(error);
+								// Turned down: most likely it went through already and its answer
+								// was lost. The visit says which.
+								return bootstrap().then((again) => {
+									const state = ((again && again.message) || {}).record || {};
+									if (state.docstatus !== 0 || (state.workflow_state && state.workflow_state !== "Draft")) {
+										return this.finish_sent(name, finish, state);
+									}
+									this._handed.delete(name);
+									return vz_outbox_put({ ...finish, refused: 1 }).then(() =>
+										frappe.show_alert({
+											message: __("Finishing {0} was turned down by the server. Open that visit to finish it.", [name]),
+											indicator: "red",
+										})
+									);
+								});
+							}
+						);
+				});
+		});
+		this.track_save(name, work);
+		return work;
+	}
+
+	// The Finish went through (now, or before, with its answer lost).
+	finish_sent(name, finish, state) {
+		this._handed.delete(name);
+		const submitted = state.docstatus === 1;
+		frappe.show_alert({
+			message: submitted ? __("Visit {0} submitted.", [name]) : __("Visit {0} sent for review.", [name]),
+			indicator: "green",
+		});
+		if (this.doc && this.doc.name === name) {
+			if (state.modified) this.doc.modified = state.modified;
+			if (state.docstatus != null) this.doc.docstatus = state.docstatus;
+			if (state.workflow_state !== undefined) this.doc.workflow_state = state.workflow_state;
+			this.$wrap.find(".vz-done-icon").text(submitted ? "✅" : "📨");
+			this.$wrap.find(".vz-done-screen h4").text(submitted ? __("Visit submitted") : __("Sent for review"));
+			this.$wrap.find(".vz-done-screen p").text(__("Everything kept on this phone has been sent."));
+		}
+		return vz_outbox_delete(finish.key);
+	}
+
+	// The visit was submitted while this phone held things for it: nothing more can go on
+	// it. A Finish is done; answers and photos are said, not silently dropped.
+	settle_finished(name, entry, photos, finish) {
+		this._handed.delete(name);
+		const lost = (vz_unsent_empty(entry) ? 0 : 1) + photos.length;
+		vz_unsent_write(name, null);
+		if (lost) {
+			frappe.msgprint(
+				__(
+					"Visit {0} was submitted before this phone could send everything it kept for it ({1} photos). Tell the office if something is missing.",
+					[name, photos.length]
+				)
+			);
+		}
+		return Promise.all([finish ? vz_outbox_delete(finish.key) : null, ...photos.map((item) => vz_outbox_delete(item.key))]);
+	}
+
+	// Photos of the visit on screen, kept on this phone, uploaded one at a time. One run per
+	// visit; no signal ends the run, and the photos stay for the next.
+	send_photos(name) {
+		if (this._photo_runs[name]) return this._photo_runs[name];
+		const run = vz_outbox_items()
+			.then((items) => items.filter((item) => item.kind === "photo" && item.record === name && !item.refused))
+			.then((items) => items.reduce((chain, item) => chain.then(() => this.send_photo(item)), Promise.resolve()))
+			.catch(() => {})
+			.then(() => {
+				delete this._photo_runs[name];
+			});
+		this._photo_runs[name] = run;
+		return run;
+	}
+
+	send_photo(item) {
+		return vz_upload(item.blob, item.filename, item.record).then(
+			(url) => {
+				// On the answer first (kept on the phone with the rest), then the blob goes.
+				this.record_photo(item, url);
+				this._photo_waiting.delete(item.key);
+				frappe.show_alert({ message: __("Photo attached."), indicator: "green" });
+				return vz_outbox_delete(item.key);
+			},
+			(error) => (vz_refused(error) ? this.photo_refused(item) : Promise.reject(error))
+		);
+	}
+
+	// An uploaded photo's url onto its answer: on screen as an edit; else onto the visit's
+	// parked save, or its answers kept on the phone.
+	record_photo(item, url) {
+		const change = { table: item.table, row: item.row, field: "photo", value: url };
+		if (this.doc && this.doc.name === item.record && !this._handed.has(item.record)) {
+			const row = (this.doc[item.table] || []).find((candidate) => candidate.name === item.row);
+			if (row) this.set_row(item.table, row, "photo", url);
+			return;
+		}
+		const parked = this._parked[item.record];
+		if (parked) {
+			vz_put_change(parked.dirty, change);
+			this.journal(item.record);
+			return;
+		}
+		vz_keep_change(vz_unsent_read(item.record), item.record, change, null);
+	}
+
+	// The server turned a photo down (too big, not allowed): retrying cannot help. It is
+	// kept, marked, and said, not dropped.
+	photo_refused(item) {
+		this._photo_waiting.delete(item.key);
+		frappe.show_alert({
+			message: __("A photo for {0} was turned down by the server. Take it again, or send it to the office.", [item.record]),
+			indicator: "red",
+		});
+		return vz_outbox_put({ ...item, refused: 1 });
+	}
+
+	// A photo taken for a row: kept on this phone first (v1.596.0), then uploaded. With no
+	// signal it waits there and goes when there is, page reloaded or not. A browser that
+	// cannot keep it uploads straight away, as before.
+	take_photo(table, row, file, $btn) {
+		const doc = this.doc;
+		const item = {
+			key: vz_photo_key(doc.name, table, row.name),
+			kind: "photo",
+			record: doc.name,
+			table,
+			row: row.name,
+			blob: file,
+			filename: file.name,
+			at: Date.now(),
+		};
+		return vz_outbox_put(item).then(
+			(kept) => {
+				if (!kept) return this.upload_photo_now(doc, table, row, file, $btn);
+				this._photo_waiting.add(item.key);
+				$btn.addClass("vz-photo-waiting");
+				return this.send_photos(doc.name).then(() => {
+					if (this._photo_waiting.has(item.key) && this.doc === doc) {
+						frappe.show_alert({
+							message: __("No signal: the photo is saved on this phone and will upload when there is."),
+							indicator: "orange",
+						});
+					}
+				});
+			},
+			() => this.upload_photo_now(doc, table, row, file, $btn)
+		);
+	}
+
+	// The camera button's class: a photo attached, or one waiting on this phone.
+	photo_class(table, row) {
+		if (row.photo) return "vz-has-photo";
+		return this.doc && this._photo_waiting.has(vz_photo_key(this.doc.name, table, row.name)) ? "vz-photo-waiting" : "";
+	}
+
+	// The upload as it was before v1.596.0, for a browser that cannot keep the photo.
+	upload_photo_now(doc, table, row, file, $btn) {
+		vz_upload(file, file.name, doc.name).then(
+			(file_url) => {
+				if (this.doc !== doc) return;
+				this.set_row(table, row, "photo", file_url);
+				$btn.addClass("vz-has-photo");
+				frappe.show_alert({ message: __("Photo attached."), indicator: "green" });
+			},
+			() => frappe.show_alert({ message: __("Photo upload failed."), indicator: "red" })
+		);
+	}
+
 	refresh_reading_flags() {
 		this.$wrap.find("[data-reading-row]").each((_, el) => {
 			const $card = $(el);
@@ -1199,6 +2225,11 @@ class VisitWizard {
 	// ----- rendering -------------------------------------------------------
 
 	render() {
+		// Kept answers that clash with the server's are settled before anything else shows.
+		if (this._choice && this.doc && this._choice.record === this.doc.name) {
+			this.render_choice();
+			return;
+		}
 		const step = this.steps[this.step_index];
 		const readonly = this.doc.docstatus !== 0;
 		this.page.set_title(
@@ -1514,6 +2545,7 @@ class VisitWizard {
 		// Visit-type safety guidance from the form template (the site-specific
 		// text above stays prominent in the red banner, never collapsed).
 		this.render_help(this.template_meta.safety, __("Before you start"));
+		this.render_last_visit();
 
 		const $ack = $(`
 			<div class="vz-card vz-check-card ${this.safety_ok ? "vz-on" : ""}">
@@ -1533,6 +2565,65 @@ class VisitWizard {
 		this.$wrap.append($ack);
 		this.render_safety_brief();
 		this.render_report_incident();
+	}
+
+	// "Last visit here" (v1.596.0, TASK-2026-02482): technicians used to start each visit
+	// blind. The site's previous approved visit, from the dashboard context the wizard
+	// already loads (visit_compare.last_visit, the helper behind "Compared with last
+	// visit"): its readings with the out-of-range ones marked, anything found Fail or
+	// Replace, and the notes, by water feature on a site visit. Collapsed, with what
+	// matters in its header, so the Safety step stays short. Read-only.
+	render_last_visit() {
+		const last = this.dashboard.last_visit;
+		if (!last) return;
+		const esc = (value) => frappe.utils.escape_html(String(value == null ? "" : value));
+		const number = (value) => String(Math.round(Number(value) * 1000) / 1000);
+		let summary;
+		let body;
+		if (last.first_visit) {
+			summary = __("First recorded visit");
+			body = `<div class="vz-muted">${__("No earlier approved visit here to look back at.")}</div>`;
+		} else {
+			const groups = last.groups || [];
+			const flagged = groups.reduce((n, g) => n + g.readings.filter((r) => r.out_of_range).length, 0);
+			const problems = groups.reduce((n, g) => n + g.problems.length, 0);
+			const day = last.day ? frappe.datetime.str_to_user(last.day) : "";
+			summary = [day, last.technician_name].filter(Boolean).join(" · ");
+			if (flagged) summary += ` · ${__("{0} out of range", [flagged])}`;
+			if (problems) summary += ` · ${__("{0} to look at", [problems])}`;
+			const named = groups.length > 1 || groups.some((g) => g.serial_no && !this.doc.serial_no);
+			body = groups
+				.map((group) => {
+					let html = named ? `<div class="vz-last-feature">${esc(group.label || __("Whole site"))}</div>` : "";
+					group.readings.forEach((r) => {
+						html += `<div class="vz-last-line${r.out_of_range ? " vz-last-bad" : ""}"><span>${esc(r.reading)}</span><span>${esc(
+							number(r.value)
+						)}${r.uom ? " " + esc(r.uom) : ""}${r.out_of_range ? " · " + __("out of range") : ""}</span></div>`;
+					});
+					group.problems.forEach((p) => {
+						html += `<div class="vz-last-line vz-last-bad"><span>${esc(p.question)}</span><span>${esc(p.answer)}</span></div>`;
+						if (p.details) html += `<div class="vz-muted">${vz_plain_html(p.details)}</div>`;
+					});
+					return html;
+				})
+				.join("");
+			if (last.notes) {
+				body += `<div class="vz-last-feature">${__("Notes")}</div><div>${vz_plain_html(last.notes)}</div>`;
+			}
+			if (!body) body = `<div class="vz-muted">${__("Nothing was recorded on that visit.")}</div>`;
+		}
+		const $card = $(`
+			<div class="vz-help vz-last">
+				<button type="button" class="vz-help-head">
+					<span>🕘 ${__("Last visit here")}</span>
+					<span class="vz-last-summary">${esc(summary)}</span>
+					<span class="vz-help-caret">▸</span>
+				</button>
+				<div class="vz-help-body">${body}</div>
+			</div>
+		`);
+		$card.find(".vz-help-head").on("click", () => $card.toggleClass("vz-open"));
+		this.$wrap.append($card);
 	}
 
 	// The brief, assembled at the moment: the SDS for the chemicals actually on
@@ -1859,7 +2950,7 @@ class VisitWizard {
 					placeholder="—" value="${row.reading_value || ""}">
 				<div class="vz-row-extra">
 					<input type="text" placeholder="${__("Notes")}" value="${frappe.utils.escape_html(row.notes || "")}">
-					<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
+					<button type="button" class="vz-photo-btn ${this.photo_class("chemistry_readings", row)}">📷</button>
 				</div>
 			</div>
 		`);
@@ -1970,6 +3061,7 @@ class VisitWizard {
 				};
 				this.doc.consumables.push(row);
 				this.pending_added.push(row);
+				this.journal(this.doc.name);
 				// Drawn whether or not the save got through (a failed one shows as
 				// NOT SAVED and retries), and only onto the visit it was added to.
 				const doc = this.doc;
@@ -1998,7 +3090,7 @@ class VisitWizard {
 				<div class="vz-seg"></div>
 				<div class="vz-row-extra" style="display:none;">
 					<input type="text" placeholder="${__("Details")}" value="">
-					<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
+					<button type="button" class="vz-photo-btn ${this.photo_class("maintenance_results", row)}">📷</button>
 				</div>
 			</div>
 		`);
@@ -2259,28 +3351,7 @@ class VisitWizard {
 			input.capture = "environment";
 			input.onchange = () => {
 				const file = input.files && input.files[0];
-				if (!file) return;
-				const form = new FormData();
-				form.append("file", file, file.name);
-				form.append("doctype", "Sapphire Maintenance Record");
-				form.append("docname", this.doc.name);
-				form.append("is_private", "1");
-				fetch("/api/method/upload_file", {
-					method: "POST",
-					headers: { "X-Frappe-CSRF-Token": frappe.csrf_token },
-					body: form,
-				})
-					.then((response) => response.json())
-					.then((data) => {
-						const file_url = data.message && data.message.file_url;
-						if (!file_url) throw new Error("upload failed");
-						this.set_row(table, row, "photo", file_url);
-						$btn.addClass("vz-has-photo");
-						frappe.show_alert({ message: __("Photo attached."), indicator: "green" });
-					})
-					.catch(() => {
-						frappe.show_alert({ message: __("Photo upload failed."), indicator: "red" });
-					});
+				if (file) this.take_photo(table, row, file, $btn);
 			};
 			input.click();
 		});
@@ -2337,9 +3408,11 @@ class VisitWizard {
 					.on("click", () => this.push_route({ record: "", step: "", feature: "" }))
 					.appendTo(this.$wrap.find(".vz-done-screen"));
 			})
-			.catch(() => {
-				// The failed save is already on screen and retrying; a refused
-				// finish showed the server's own message.
+			.catch((error) => {
+				// A refused finish showed the server's own message (a required item, the
+				// visit out of date) and stays as it was. No answer at all is no signal:
+				// the Finish is kept on this phone and sent when there is (v1.596.0).
+				if (error && !vz_refused(error)) this.keep_finish(doc, signature);
 			});
 	}
 }

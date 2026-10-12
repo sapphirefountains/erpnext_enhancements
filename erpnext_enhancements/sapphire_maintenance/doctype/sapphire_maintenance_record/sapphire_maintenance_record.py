@@ -553,7 +553,9 @@ def get_dashboard_context(project, serial_no=None, record=None):
 		record (str, optional): the saved visit on the form. With it, ``compared``
 			holds each of its readings next to the value at the site's previous
 			approved visit (``visit_compare``, v1.595.0), the same values the
-			review email and the Visit Review page show.
+			review email and the Visit Review page show, and ``last_visit`` that
+			previous visit's readings, problems and notes for the Visit Wizard's
+			"Last visit here" card (``visit_compare.last_visit``, v1.596.0).
 
 	Returns:
 		dict: {
@@ -631,25 +633,47 @@ def get_dashboard_context(project, serial_no=None, record=None):
 	# 6. Chemistry trends — last 5 visits' readings, for the dashboard sparklines.
 	context['trends'] = _chemistry_trends(project, serial_no)
 
-	# 7. Compared with last visit (A3): this visit's readings beside the previous approved ones.
-	context['compared'] = _compared_with_last_visit(record)
+	# 7. The site's previous approved visit, for a saved visit the user may read: this visit's
+	# readings beside it (A3, the desk form) and what it found (C1, the Visit Wizard).
+	doc = _readable_record(record)
+	context['compared'] = _compared_with_last_visit(doc)
+	context['last_visit'] = _last_visit_here(doc)
 
 	return context
 
 
-def _compared_with_last_visit(record):
-	"""``{first_visit, lines, features}`` for a saved visit the user may read, else None.
-
-	A failure is logged and leaves the rest of the dashboard standing.
-	"""
+def _readable_record(record):
+	"""The saved visit ``record`` when the user may read it, else None."""
 	if not record or not frappe.db.exists("Sapphire Maintenance Record", record):
+		return None
+	doc = frappe.get_doc("Sapphire Maintenance Record", record)
+	return doc if doc.has_permission("read") else None
+
+
+def _last_visit_here(doc):
+	"""``visit_compare.last_visit(doc)``, or None without a visit. A failure is logged and
+	leaves the rest of the dashboard (and the wizard's Safety step) standing."""
+	if doc is None:
 		return None
 	try:
 		from erpnext_enhancements.sapphire_maintenance import visit_compare
 
-		doc = frappe.get_doc("Sapphire Maintenance Record", record)
-		if not doc.has_permission("read"):
-			return None
+		return visit_compare.last_visit(doc)
+	except Exception:
+		frappe.log_error(title="Last visit here not shown", message=frappe.get_traceback())
+		return None
+
+
+def _compared_with_last_visit(doc):
+	"""``{first_visit, lines, features}`` for a saved visit the user may read, else None.
+
+	A failure is logged and leaves the rest of the dashboard standing.
+	"""
+	if doc is None:
+		return None
+	try:
+		from erpnext_enhancements.sapphire_maintenance import visit_compare
+
 		result = visit_compare.compare(doc)
 		lines = visit_compare.reading_comparisons(doc, result)
 		serials = sorted({line["serial_no"] for line in lines if line["serial_no"]})

@@ -97,6 +97,16 @@ def _db_sql(query, params, as_dict=False):
 	return [_Dict(row) for row in rows[: params["limit"]]]
 
 
+def _db_get_value(doctype, name, fields, as_dict=False, **kwargs):
+	"""A record's header (technician, notes) and a user's full name."""
+	if doctype == "User":
+		return {"austin@example.com": "Austin Healey"}.get(name)
+	row = next((r for r in ROWS.get(doctype, []) if r.name == name), None)
+	if row is None:
+		return None
+	return _Dict({f: row.get(f) for f in fields}) if as_dict else [row.get(f) for f in fields]
+
+
 def _forget_package_attribute():
 	"""``from package import name`` prefers a stale package attribute to a fresh import."""
 	import erpnext_enhancements.sapphire_maintenance as package
@@ -113,7 +123,7 @@ def setUpModule():
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
 	frappe.get_all = _get_all
-	frappe.db = types.SimpleNamespace(sql=_db_sql)
+	frappe.db = types.SimpleNamespace(sql=_db_sql, get_value=_db_get_value)
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(float(v or 0))
 	utils.flt = lambda v, *a: float(v or 0)
@@ -344,6 +354,113 @@ class TestTheQuery(unittest.TestCase):
 		):
 			with self.subTest(clause=clause):
 				self.assertIn(clause, sql)
+
+
+def _result(parent, question, selection, answer="", details="", serial_no=None, idx=1):
+	ROWS.setdefault("Sapphire Maintenance Result", []).append(
+		_Dict(
+			parent=parent,
+			parenttype=RECORD,
+			question=question,
+			selection=selection,
+			answer=answer,
+			other_details=details,
+			serial_no=serial_no,
+			idx=idx,
+		)
+	)
+
+
+class TestLastVisitHere(_Base):
+	"""C1 (TASK-2026-02482): the Visit Wizard's "Last visit here" card."""
+
+	def setUp(self):
+		super().setUp()
+		ROWS["Serial No"] = [
+			_Dict(name="SN-EAST", item_name="East Fountain"),
+			_Dict(name="SN-WEST", item_name="West Fountain"),
+		]
+
+	def test_first_recorded_visit(self):
+		self.assertEqual(
+			compare.last_visit(_visit([{"reading": "pH", "reading_value": 7.4}])), {"first_visit": True}
+		)
+
+	def test_the_previous_approved_visit_with_readings_problems_and_notes(self):
+		_record("PREV", "2026-10-06", technician="austin@example.com", visit_notes="  Pump was loud.  ")
+		_reading("PREV", "pH", 7.4)
+		_reading("PREV", "ORP", 400, uom="mV")
+		_reading("PREV", "Alkalinity", 0)  # not measured
+		ROWS[READING][1]["out_of_range"] = 1
+		_result("PREV", "Nozzles", "Replace", answer="Two cracked", details="Ordered", idx=1)
+		_result("PREV", "Pump", "Pass", idx=2)
+		_result("PREV", "Lights", "Fail", idx=3)
+		_record("LATER", "2026-10-20")  # after this visit: not its last
+		_record("DRAFT", "2026-10-10", docstatus=0)  # not approved
+		last = compare.last_visit(_visit([{"reading": "pH", "reading_value": 7.5}]))
+		self.assertEqual(
+			{k: last[k] for k in ("first_visit", "name", "day", "technician_name", "notes")},
+			{
+				"first_visit": False,
+				"name": "PREV",
+				"day": "2026-10-06",
+				"technician_name": "Austin Healey",
+				"notes": "Pump was loud.",
+			},
+		)
+		(group,) = last["groups"]
+		self.assertEqual(
+			group["readings"],
+			[
+				{"reading": "pH", "value": 7.4, "uom": "", "out_of_range": 0},
+				{"reading": "ORP", "value": 400.0, "uom": "mV", "out_of_range": 1},
+			],
+		)
+		self.assertEqual(
+			group["problems"],
+			[
+				{"question": "Nozzles", "answer": "Replace Two cracked", "details": "Ordered"},
+				{"question": "Lights", "answer": "Fail", "details": ""},
+			],
+		)
+
+	def test_a_site_visit_shows_each_fountain_under_its_name(self):
+		_record("PREV", "2026-10-06")
+		_reading("PREV", "pH", 7.4, serial_no="SN-EAST")
+		_reading("PREV", "pH", 9.1, serial_no="SN-WEST")
+		_result("PREV", "Nozzles", "Fail", serial_no="SN-WEST")
+		last = compare.last_visit(_visit([{"reading": "pH", "reading_value": 7.5, "serial_no": "SN-EAST"}]))
+		self.assertEqual(
+			[(g["serial_no"], g["label"]) for g in last["groups"]],
+			[("SN-EAST", "East Fountain"), ("SN-WEST", "West Fountain")],
+		)
+		self.assertEqual(last["groups"][1]["problems"][0]["question"], "Nozzles")
+
+	def test_a_fountains_visit_sees_only_its_own_rows_and_its_own_last_visit(self):
+		"""Per Feature: the newest earlier record for this fountain, or a site visit's rows for it."""
+		_record("SITE", "2026-09-29")
+		_reading("SITE", "pH", 7.1, serial_no="SN-EAST")
+		_reading("SITE", "pH", 9.1, serial_no="SN-WEST")
+		_record("WEST-ONLY", "2026-10-06", serial_no="SN-WEST")  # newer, but another fountain's
+		_reading("WEST-ONLY", "pH", 8.8)
+		last = compare.last_visit(_visit([{"reading": "pH", "reading_value": 7.5}], serial_no="SN-EAST"))
+		self.assertEqual(last["name"], "SITE")
+		(group,) = last["groups"]
+		self.assertEqual((group["serial_no"], [r["value"] for r in group["readings"]]), ("SN-EAST", [7.1]))
+
+
+class TestTheDashboardCarriesIt(unittest.TestCase):
+	"""The wizard reads it from the dashboard context it already loads (no second query path)."""
+
+	def test_bootstrap_asks_the_dashboard_for_this_visit(self):
+		src = (REPO_ROOT / "erpnext_enhancements/api/maintenance_visit.py").read_text(encoding="utf-8")
+		self.assertIn("get_dashboard_context(doc.project, doc.serial_no, record=doc.name)", src)
+		record = (
+			REPO_ROOT
+			/ "erpnext_enhancements/sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.py"
+		).read_text(encoding="utf-8")
+		self.assertIn("context['last_visit'] = _last_visit_here(doc)", record)
+		self.assertIn("return visit_compare.last_visit(doc)", record)
 
 
 class TestVisitDay(unittest.TestCase):

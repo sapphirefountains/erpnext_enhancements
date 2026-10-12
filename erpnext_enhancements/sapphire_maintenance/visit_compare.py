@@ -12,6 +12,10 @@ answer is worked out. Three surfaces read it, so they cannot disagree:
 * the Visit Review page, which shows that same context;
 * the record's desk-form dashboard (``get_dashboard_context(record=...)``).
 
+The Visit Wizard's **Last visit here** card (C1, TASK-2026-02482, v1.596.0) is built here too
+(:func:`last_visit`), from the same earlier visits, so a technician starts each visit seeing
+what the reviewer will compare it with.
+
 **What counts as the previous value.** The same reading (matched on its label, ignoring case
 and surrounding spaces) on the same water feature, at the most recent *approved* visit
 (docstatus 1) to the same site dated on or before this one. A visit that left the reading
@@ -211,3 +215,102 @@ def compared_days(result):
 	"""The distinct days the previous values came from, newest first."""
 	days = {entry["day"] for entry in result["previous"].values() if isinstance(entry["day"], datetime.date)}
 	return sorted(days, reverse=True)
+
+
+#: What a technician needs flagged from the last visit: the inspection answers that found
+#: something. The standard options are Pass / Fail / Replace / Other (``Sapphire Maintenance
+#: Result.selection``); a template's own options are free text and are not guessed at.
+PROBLEM_ANSWERS = ("Fail", "Replace")
+
+
+def last_visit(doc):
+	"""The visit before this one, as the Visit Wizard's "Last visit here" card shows it.
+
+	The most recent approved visit to the site, dated on or before this one, that covers this
+	visit's water feature (:func:`covers`; any earlier visit for a site visit). Its readings
+	(measured ones only, out-of-range flagged), the inspection answers that found something
+	(``PROBLEM_ANSWERS``) and its notes, grouped by water feature. A Per Feature visit sees only
+	its own fountain's rows, even when the last visit was a site visit. Read-only.
+
+	``{"first_visit": True}`` with nothing earlier; otherwise ``{"first_visit": False, "name",
+	"day", "technician_name", "notes", "groups": [{"serial_no", "label", "readings":
+	[{reading, value, uom, out_of_range}], "problems": [{question, answer, details}]}]}``.
+	"""
+	own = doc.get("serial_no") or None
+	visit = next((v for v in earlier_visits(doc) if own is None or covers(v, own)), None)
+	if not visit:
+		return {"first_visit": True}
+
+	def mine(row):
+		return own is None or feature_of(visit, row) == own
+
+	readings = [
+		row
+		for row in frappe.get_all(
+			"Sapphire Chemistry Reading",
+			filters={"parenttype": DOCTYPE, "parent": visit.name},
+			fields=["reading", "reading_value", "uom", "out_of_range", "serial_no", "idx"],
+			order_by="idx asc",
+		)
+		if measured(row) and mine(row)
+	]
+	problems = [
+		row
+		for row in frappe.get_all(
+			"Sapphire Maintenance Result",
+			filters={"parenttype": DOCTYPE, "parent": visit.name, "selection": ["in", list(PROBLEM_ANSWERS)]},
+			fields=["question", "selection", "answer", "other_details", "serial_no", "idx"],
+			order_by="idx asc",
+		)
+		if mine(row)
+	]
+	header = frappe.db.get_value(DOCTYPE, visit.name, ["technician", "visit_notes"], as_dict=True) or {}
+
+	groups = {}
+	for row in readings:
+		groups.setdefault(feature_of(visit, row), {"readings": [], "problems": []})["readings"].append(
+			{
+				"reading": row.get("reading") or "",
+				"value": flt(row.get("reading_value")),
+				"uom": row.get("uom") or "",
+				"out_of_range": cint(row.get("out_of_range")),
+			}
+		)
+	for row in problems:
+		groups.setdefault(feature_of(visit, row), {"readings": [], "problems": []})["problems"].append(
+			{
+				"question": row.get("question") or "",
+				"answer": " ".join(p for p in (row.get("selection"), row.get("answer")) if p),
+				"details": row.get("other_details") or "",
+			}
+		)
+	labels = _feature_labels([key for key in groups if key])
+	return {
+		"first_visit": False,
+		"name": visit.name,
+		"day": str(visit.day),
+		"technician_name": _full_name(header.get("technician")),
+		"notes": (header.get("visit_notes") or "").strip(),
+		"groups": [
+			{"serial_no": key or None, "label": labels.get(key) or key or "", **group}
+			for key, group in sorted(groups.items(), key=lambda item: item[0] or "")
+		],
+	}
+
+
+def _feature_labels(serials):
+	if not serials:
+		return {}
+	return {
+		row.get("name"): row.get("item_name")
+		for row in frappe.get_all(
+			"Serial No", filters={"name": ["in", sorted(serials)]}, fields=["name", "item_name"]
+		)
+		if row.get("item_name")
+	}
+
+
+def _full_name(user):
+	if not user:
+		return ""
+	return frappe.db.get_value("User", user, "full_name") or user
