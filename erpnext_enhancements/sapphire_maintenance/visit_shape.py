@@ -21,10 +21,14 @@ about everything else, because deleting a draft cannot be undone:
 * **Only the next trip's bare drafts.** A draft folds only when it is dated today or later, has
   never been opened (no section rows: the wizard and the form build them on first open, and
   an opened draft may have answers still on a phone, which the server cannot see), has
-  nothing on it (an answer, note, clock, signature, photo, date chosen, an attachment or a
-  comment) and is still Draft. The earliest becomes the site visit; the others fold into it
-  only when planned the same way (same day, technician and crew), so a date or crew somebody
-  set in the Maintenance Planner is not thrown away.
+  nothing on it (an answer, note, clock, signature, photo, date chosen or an attachment) and
+  is still Draft. The earliest becomes the site visit; the others fold into it only when
+  planned the same way (same day, technician and crew), so a date or crew somebody set in the
+  Maintenance Planner is not thrown away.
+* **Comments move, they do not block** (v1.599.1). A folded draft's comments go onto the site
+  visit, one of each: the scheduler's training warning and the Planner's conflict notes are
+  on almost every draft, so counting a comment as work left every Hardware draft unfolded the
+  first time it ran (2026-10-12).
 * **Everything else is left and named**: overdue drafts stay missed visits (the Missed
   Maintenance Visits report lists them), opened or started ones, ones planned differently,
   and ones another record links to. Labelled drafts (a Winterization, a follow-up) are
@@ -58,7 +62,15 @@ STARTED_FIELDS = (
 	"safety_acknowledged",
 	"client_sign_off",
 	"fountain_photo",
+	# Not started, but out in the world: an invoice made from it, or a morning digest that texted
+	# its link (the crew's digest stamps are checked in started()). The Planner's own undo
+	# (api.maintenance_actions._removal_problem) refuses to delete a visit for the same reasons.
+	"sales_invoice",
+	"dispatch_digest_sent_on",
 )
+#: The training warning's marker (training/compliance.py): its text changes with the reason
+#: ("Not completed", "Overdue") while the marker names the same people and courses.
+TRAINING_MARKER = "<!-- training-compliance:"
 REGULAR = {"docstatus": 0, "visit_label": ["is", "not set"]}
 
 
@@ -92,6 +104,7 @@ def fold_feature_drafts(contract_name):
 		"overdue": [],
 		"site_visit": None,
 		"beside": [],
+		"comments": 0,
 	}
 	names = frappe.get_all(
 		DOCTYPE,
@@ -134,6 +147,7 @@ def fold_feature_drafts(contract_name):
 		elif _linked(doc):
 			result["linked"].append(doc.name)
 		else:
+			result["comments"] += _carry_comments(doc.name, keep.name)
 			_cancel_todos(doc.name)
 			frappe.delete_doc(DOCTYPE, doc.name, ignore_permissions=True)
 			result["removed"].append(doc.name)
@@ -143,20 +157,87 @@ def fold_feature_drafts(contract_name):
 def started(doc):
 	"""Somebody has opened or begun the visit, so folding it could lose work: section rows (the
 	wizard builds them on first open, and answers may still be on a phone), any header field
-	of :data:`STARTED_FIELDS`, a state past Draft, an attachment or a comment."""
+	of :data:`STARTED_FIELDS` (an invoice or a texted digest among them), a crew member's digest
+	sent, a state past Draft, or an attachment. Not a comment: those are carried to the site
+	visit (:func:`_carry_comments`)."""
 	if (doc.get("workflow_state") or "Draft") != "Draft":
 		return True
 	if any(doc.get(table) for table in TABLES):
 		return True
 	if any(doc.get(field) for field in STARTED_FIELDS):
 		return True
-	if frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}):
+	if any(row.get("digest_sent_on") for row in doc.get("crew") or []):
 		return True
-	return bool(
-		frappe.db.exists(
-			"Comment", {"reference_doctype": DOCTYPE, "reference_name": doc.name, "comment_type": "Comment"}
+	return bool(frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}))
+
+
+def _carry_comments(source, target):
+	"""A folded draft's comments onto the site visit, so nothing written on it is lost: a note to
+	the technician, the Planner's conflict notes. Returns how many were carried.
+
+	* **As written.** Each keeps its author and time: ``insert()`` would make whoever saved the
+	  contract their author (the timeline shows ``owner``, and only the owner may edit or
+	  delete a comment) and, through ``after_insert``, send every @mention in them again in that
+	  person's name. So each is written with ``db_insert`` and the visit's comment cache updated,
+	  as ``insert`` would have.
+	* **Once.** One the site visit already has is not repeated: by its text, or a training
+	  warning by its marker, whose text changes with the reason.
+	* **Threaded.** A reply (``custom_parent_comment``, ``api/comments.py``) points at its parent's
+	  copy, or at the site visit's own copy of it.
+	"""
+	from frappe.core.doctype.comment.comment import update_comment_in_doc
+
+	threaded = frappe.db.has_column("Comment", "custom_parent_comment")
+	filters = {"reference_doctype": DOCTYPE, "comment_type": "Comment"}
+	have = {
+		_comment_key(row.content): row.name
+		for row in frappe.get_all(
+			"Comment", filters={**filters, "reference_name": target}, fields=["name", "content"]
 		)
-	)
+	}
+	copies = {}
+	carried = 0
+	for row in frappe.get_all(
+		"Comment",
+		filters={**filters, "reference_name": source},
+		fields=["name", "content", "comment_email", "comment_by", "owner", "creation"]
+		+ (["custom_parent_comment"] if threaded else []),
+		order_by="creation asc",
+	):
+		key = _comment_key(row.content)
+		if key in have:
+			copies[row.name] = have[key]
+			continue
+		comment = frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": "Comment",
+				"reference_doctype": DOCTYPE,
+				"reference_name": target,
+				"content": row.content,
+				"comment_email": row.comment_email,
+				"comment_by": row.comment_by,
+				"owner": row.owner,
+				"modified_by": row.owner,
+				"creation": row.creation,
+				"modified": row.creation,
+			}
+		)
+		if threaded and row.get("custom_parent_comment"):
+			comment.custom_parent_comment = copies.get(row.custom_parent_comment)
+		comment.db_insert()
+		update_comment_in_doc(comment)
+		have[key] = copies[row.name] = comment.name
+		carried += 1
+	return carried
+
+
+def _comment_key(content):
+	"""What makes two comments the same: a training warning's marker, else the text."""
+	content = content or ""
+	if TRAINING_MARKER in content:
+		return content[content.index(TRAINING_MARKER) :].split("-->", 1)[0]
+	return content
 
 
 def _plan(doc):
@@ -218,6 +299,8 @@ def describe(result):
 				len(result["removed"]), names("removed")
 			)
 		)
+	if result.get("comments"):
+		lines.append(_("Their comments are on {0} now.").format(result["kept"]))
 	for key, text in (
 		(
 			"started",
