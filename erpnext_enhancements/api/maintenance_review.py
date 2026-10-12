@@ -226,6 +226,7 @@ def _queue_row(doc, since, today):
 		"completion": cint(doc.get("completion_percent")),
 		"out_of_range": context.get("out_of_range") or [],
 		"unanswered": context.get("unanswered") or [],
+		"unexplained": context.get("unexplained") or [],
 		"photo_count": cint(context.get("photo_count")),
 		"first_visit": bool(context.get("first_visit")),
 	}

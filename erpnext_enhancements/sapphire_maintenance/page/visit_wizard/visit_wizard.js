@@ -96,6 +96,12 @@ const VZ_STYLE = `
 .vz-check-card{display:flex;align-items:center;gap:12px;cursor:pointer;}
 .vz-check-box{flex:0 0 30px;height:30px;border:2px solid var(--border-color);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
 .vz-check-card.vz-on .vz-check-box{background:#15803d;border-color:#15803d;}
+.vz-task-card .vz-check-card{align-items:flex-start;}
+.vz-task-card.vz-na{opacity:.72;}
+.vz-na-btn{flex:0 0 auto;min-width:56px;min-height:40px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;font-weight:600;cursor:pointer;}
+.vz-na-btn.vz-on{background:#475569;border-color:#475569;color:#fff;}
+.vz-why input:placeholder-shown{border-color:#d97706;}
+.vz-why-task{font-size:14px;font-weight:600;margin-top:12px;}
 .vz-banner{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:15px;line-height:1.45;}
 .vz-banner-red{background:#fde8e8;color:#b91c1c;}
 .vz-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
@@ -198,9 +204,25 @@ function vz_rich_html(value) {
 const VZ_ANSWERED = {
 	maintenance_results: (row) => !!(row.selection || row.answer),
 	chemistry_readings: (row) => !!parseFloat(row.reading_value),
-	cleaning_tasks: (row) => !!(row.is_done || row.notes),
+	cleaning_tasks: (row) => vz_task_state(row) !== "open" || !!String(row.notes || "").trim(),
 	consumables: () => true,
 };
+
+// Fields that together make one answer, judged together when kept answers meet the server.
+const VZ_PAIRED_FIELDS = { cleaning_tasks: ["is_done", "not_applicable"] };
+
+// A cleaning task is done, N/A or not done (v1.598.0); done wins, as the record's validate
+// settles a row ticked both ways. MIRRORS sapphire_maintenance/task_rules.py.
+function vz_task_state(row) {
+	if (row.is_done) return "done";
+	if (row.not_applicable) return "na";
+	return "open";
+}
+
+// Left not done with nothing said about why: what the wrap-up asks about.
+function vz_task_unexplained(row) {
+	return vz_task_state(row) === "open" && !String(row.notes || "").trim();
+}
 
 function vz_row_answered(table, row) {
 	const test = VZ_ANSWERED[table];
@@ -450,6 +472,18 @@ function vz_reconcile(entry, doc) {
 			const row = (doc[table] || []).find((candidate) => candidate.name === name);
 			if (!row) return;
 			Object.entries(changes).forEach(([field, value]) => ask(table, name, field, value, row[field]));
+		});
+	});
+	// A cleaning task's Done and N/A are one answer (v1.598.0). When either is in question, so
+	// is the other: applying the half nobody disputes would make a task both done and N/A, which
+	// the server settles as done without asking, over the office's N/A.
+	out.conflicts.slice().forEach((conflict) => {
+		const pair = VZ_PAIRED_FIELDS[conflict.table];
+		if (!pair || !pair.includes(conflict.field)) return;
+		out.apply = out.apply.filter((change) => {
+			const partner = change.table === conflict.table && change.row === conflict.row && pair.includes(change.field);
+			if (partner) out.conflicts.push(change);
+			return !partner;
 		});
 	});
 	// A consumable added here has no name until the server has it. On another version of
@@ -3433,22 +3467,64 @@ class VisitWizard {
 		this.render_step_groups("cleaning_tasks", (row) => this.task_card(row));
 	}
 
+	// Tap the task for done, N/A for a task this visit does not need (v1.598.0), and a note for
+	// anything worth saying, above all why a task was not done: Lisa, on the Myers report, "It
+	// only states that one cartridge wasn't cleaned out; why wasn't it?" The note was on the
+	// form all along, but the card was a single tap with nowhere to type.
 	task_card(row) {
 		const $card = $(`
-			<div class="vz-card vz-check-card ${row.is_done ? "vz-on vz-done" : ""}">
-				<div class="vz-check-box">${row.is_done ? "✓" : ""}</div>
-				<div style="flex:1;">
-					<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")} <span class="vz-req-slot">${vz_required_chip("cleaning_tasks", row)}</span></div>
-					${row.notes ? `<div class="vz-card-sub">${frappe.utils.escape_html(row.notes)}</div>` : ""}
+			<div class="vz-card vz-task-card">
+				<div class="vz-check-card">
+					<div class="vz-check-box"></div>
+					<div style="flex:1;">
+						<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")} <span class="vz-req-slot"></span></div>
+					</div>
+					<button type="button" class="vz-na-btn">${__("N/A")}</button>
+				</div>
+				<div class="vz-row-extra">
+					<input type="text" value="">
+					<button type="button" class="vz-photo-btn ${this.photo_class("cleaning_tasks", row)}">📷</button>
 				</div>
 			</div>
-		`).on("click", () => {
-			const done = row.is_done ? 0 : 1;
-			this.set_row("cleaning_tasks", row, "is_done", done);
-			$card.toggleClass("vz-on vz-done", !!done);
-			$card.find(".vz-check-box").text(done ? "✓" : "");
+		`);
+		const $note = $card.find(".vz-row-extra input").val(row.notes || "");
+		const paint = () => {
+			const state = vz_task_state(row);
+			$card.toggleClass("vz-done", state === "done").toggleClass("vz-na", state === "na");
+			$card.find(".vz-check-card").toggleClass("vz-on", state === "done");
+			$card.find(".vz-check-box").text(state === "done" ? "✓" : "");
+			$card.find(".vz-na-btn").toggleClass("vz-on", state === "na");
 			$card.find(".vz-req-slot").html(vz_required_chip("cleaning_tasks", row));
+			$note.attr(
+				"placeholder",
+				state === "done"
+					? __("Note (optional)")
+					: state === "na"
+						? __("Why it isn't needed (optional)")
+						: __("Not done? Say why")
+			);
+		};
+		// Done and N/A each clear the other: a task is one or the other, or neither. Both fields
+		// are written on every tap, whatever this phone thinks they hold: answers kept on the
+		// phone are judged field by field against the server (vz_reconcile), so a Done kept here
+		// while the office marked the task N/A is asked about only if the phone also says "not
+		// N/A". And the server settles a row ticked both ways without telling the phone.
+		const set_state = (state) => {
+			this.set_row("cleaning_tasks", row, "is_done", state === "done" ? 1 : 0);
+			this.set_row("cleaning_tasks", row, "not_applicable", state === "na" ? 1 : 0);
+			paint();
+		};
+		$card.find(".vz-check-card").on("click", () => set_state(vz_task_state(row) === "done" ? "open" : "done"));
+		$card.find(".vz-na-btn").on("click", (event) => {
+			event.stopPropagation();
+			set_state(vz_task_state(row) === "na" ? "open" : "na");
 		});
+		$note.on("change", (event) => {
+			this.set_row("cleaning_tasks", row, "notes", event.target.value);
+			paint();
+		});
+		this.bind_photo($card.find(".vz-photo-btn"), "cleaning_tasks", row);
+		paint();
 		return $card;
 	}
 
@@ -3472,6 +3548,7 @@ class VisitWizard {
 		this.render_help(wrapup_meta, __("Wrapping up"));
 
 		this.render_visit_date();
+		this.render_not_done();
 
 		const $notes_card = $(`
 			<div class="vz-card">
@@ -3497,6 +3574,41 @@ class VisitWizard {
 		`);
 		this.setup_signature($sig_card);
 		this.$wrap.append($sig_card);
+	}
+
+	// Every cleaning task left not done, with nothing said about why (v1.598.0): the
+	// customer's report prints it as "Not done", and the office is the one asked why. A
+	// reason here is the task's own note, the same field as on the card. Answered tasks
+	// stay listed until the step is drawn again, so a reason typed is not snatched away.
+	// Every water feature's tasks on a site visit, not only the tab on screen.
+	render_not_done() {
+		const open = (this.doc.cleaning_tasks || []).filter((row) => vz_task_unexplained(row));
+		if (!open.length) return;
+		const $card = $(`
+			<div class="vz-card vz-why">
+				<div class="vz-card-title">${__("Tasks not done")}</div>
+				<div class="vz-card-sub">${__(
+					"The customer's report shows these as not done. Say why for each, or go back and mark it done or N/A."
+				)}</div>
+			</div>
+		`);
+		open.forEach((row) => {
+			const where =
+				row.serial_no && this.features.length
+					? ` (${this.feature_names[row.serial_no] || row.serial_no})`
+					: "";
+			const $row = $(`
+				<div>
+					<div class="vz-why-task">${frappe.utils.escape_html((row.task || "") + where)}</div>
+					<div class="vz-row-extra"><input type="text" placeholder="${__("Why wasn't it done?")}"></div>
+				</div>
+			`);
+			$row.find("input")
+				.val(row.notes || "")
+				.on("change", (event) => this.set_row("cleaning_tasks", row, "notes", event.target.value));
+			$card.append($row);
+		});
+		this.$wrap.append($card);
 	}
 
 	// The fountain as the technician leaves it (v1.597.0): Lisa asked for a picture of the
@@ -3670,7 +3782,21 @@ class VisitWizard {
 
 	// ----- finish -------------------------------------------------------------
 
+	// A last nudge before Finish, never a block: the visit still goes for review, where the
+	// email names each task left not done with no reason.
 	finish() {
+		const unexplained = (this.doc.cleaning_tasks || []).filter((row) => vz_task_unexplained(row));
+		if (!unexplained.length || this.doc.workflow_state === "Pending Review") return this.finish_now();
+		frappe.confirm(
+			__(
+				"{0} not done, with no reason given. The customer's report will show it as not done. Finish anyway?",
+				[unexplained.length === 1 ? __("1 task is") : __("{0} tasks are", [unexplained.length])]
+			),
+			() => this.finish_now()
+		);
+	}
+
+	finish_now() {
 		const signature = this._signature_drawn
 			? this._signature_data ||
 				(this._signature_canvas ? this._signature_canvas.toDataURL("image/png") : null)

@@ -573,6 +573,49 @@ class TestWhatItSays(unittest.TestCase):
 	def test_cleaning_tasks_say_done_or_not(self):
 		rows = _block(self.context, "Cleaning")["rows"]
 		self.assertEqual(rows, [["Skim surface", "Done", ""], ["Brush walls", "Not done", "Ran out of time"]])
+		self.assertEqual(_block(self.context, "Cleaning")["headers"][1], "Status")
+
+	def test_a_task_is_done_na_or_not_done_and_says_why(self):
+		"""v1.598.0, Lisa on the Myers report: "It only states that one cartridge wasn't cleaned
+		out; why wasn't it?" A task left not done with nothing said is called out for the
+		reviewer; a required one is named once, as a required item."""
+		context = digest.build_context(
+			_visit(
+				cleaning_tasks=[
+					_Dict(task="Heater check", not_applicable=1, section_title="Cleaning"),
+					_Dict(task="Clean cartridge filters", section_title="Cleaning"),
+					_Dict(task="Brush walls", notes="Ran out of time", section_title="Cleaning"),
+					_Dict(task="Empty skimmer", is_mandatory=1, section_title="Cleaning"),
+					_Dict(task="Rinse deck", notes="   ", section_title="Cleaning"),
+				]
+			)
+		)
+		self.assertEqual(
+			_block(context, "Cleaning")["rows"],
+			[
+				["Heater check", "N/A", ""],
+				["Clean cartridge filters", "Not done", "No reason given"],
+				["Brush walls", "Not done", "Ran out of time"],
+				["Empty skimmer", "Not done", "No reason given"],
+				["Rinse deck", "Not done", "No reason given"],
+			],
+			"a note of only spaces is no reason, in the table as in the warning",
+		)
+		self.assertEqual(context["unexplained"], ["Clean cartridge filters", "Rinse deck"])
+		self.assertIn(
+			"Warning: 2 tasks not done, with no reason given: Clean cartridge filters, Rinse deck.",
+			context["warnings"],
+		)
+		self.assertTrue(any("Empty skimmer" in w and "required" in w for w in context["warnings"]))
+		self.assertFalse(any("Empty skimmer" in w and "no reason" in w for w in context["warnings"]))
+
+	def test_the_review_queue_names_tasks_left_unexplained(self):
+		source = (REPO_ROOT / "erpnext_enhancements/api/maintenance_review.py").read_text(encoding="utf-8")
+		self.assertIn('"unexplained": context.get("unexplained") or [],', source)
+		page = (
+			REPO_ROOT / "erpnext_enhancements/sapphire_maintenance/page/visit_review/visit_review.js"
+		).read_text(encoding="utf-8")
+		self.assertIn("row.unexplained", page)
 
 	def test_inspection_answers_keep_the_selection_and_the_words(self):
 		rows = _block(self.context, "Pump Inspection")["rows"]

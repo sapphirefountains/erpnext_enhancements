@@ -28,7 +28,7 @@ ALLOWED_PARENT_FIELDS = {"visit_notes", "safety_acknowledged", "client_sign_off"
 ALLOWED_ROW_FIELDS = {
     "maintenance_results": {"selection", "answer", "other_details", "photo"},
     "chemistry_readings": {"reading_value", "notes", "photo"},
-    "cleaning_tasks": {"is_done", "notes", "photo"},
+    "cleaning_tasks": {"is_done", "not_applicable", "notes", "photo"},
     "consumables": {"item", "qty", "warehouse", "uom"},
 }
 # Tables that accept appended rows from the wizard (the "add other item" flow).

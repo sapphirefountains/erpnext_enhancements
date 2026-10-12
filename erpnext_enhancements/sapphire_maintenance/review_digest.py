@@ -52,7 +52,7 @@ from frappe import _
 from frappe.utils import cint, flt, formatdate, get_datetime, get_url, get_url_to_form, nowdate
 
 from erpnext_enhancements import email_style
-from erpnext_enhancements.sapphire_maintenance import visit_compare
+from erpnext_enhancements.sapphire_maintenance import task_rules, visit_compare
 from erpnext_enhancements.utils.url_safety import is_safe_url
 
 SETTINGS = "ERPNext Enhancements Settings"
@@ -273,6 +273,13 @@ def build_context(doc):
 		if cint(row.get("out_of_range")) and flt(row.get("reading_value"))
 	]
 	unanswered = _unanswered(doc, labels)
+	# Left not done with nothing said about why (v1.598.0, Lisa: "why wasn't it?"). A required
+	# task is already in ``unanswered``, so it is not named twice.
+	unexplained = [
+		_tagged(doc, row, labels, row.get("task"))
+		for row in doc.get("cleaning_tasks") or []
+		if task_rules.task_unexplained(row) and not cint(row.get("is_mandatory"))
+	]
 
 	warnings = []
 	if out_of_range:
@@ -285,6 +292,12 @@ def build_context(doc):
 		warnings.append(
 			_("Warning: {0} not answered yet: {1}.").format(
 				_count(len(unanswered), _("required item"), _("required items")), ", ".join(unanswered)
+			)
+		)
+	if unexplained:
+		warnings.append(
+			_("Warning: {0} not done, with no reason given: {1}.").format(
+				_count(len(unexplained), _("task"), _("tasks")), ", ".join(unexplained)
 			)
 		)
 
@@ -318,6 +331,7 @@ def build_context(doc):
 		# For the Visit Review page's queue row: the same findings the warnings word.
 		"out_of_range": out_of_range,
 		"unanswered": unanswered,
+		"unexplained": unexplained,
 		"photo_count": sum(len(block["photos"]) for block in blocks) + (1 if fountain_photo else 0),
 		"first_visit": comparison["first_visit"],
 	}
@@ -445,12 +459,18 @@ def _block(table, heading, rows, doc=None, previous=None):
 		]
 		labels = [row.get("reading") for row in rows]
 	elif table == "cleaning_tasks":
-		headers = [_("Task"), _("Done"), _("Notes")]
+		headers = [_("Task"), _("Status"), _("Notes")]
+		status = {
+			task_rules.DONE: _("Done"),
+			task_rules.NOT_APPLICABLE: _("N/A"),
+			task_rules.NOT_DONE: _("Not done"),
+		}
 		cells = [
 			[
 				row.get("task") or "",
-				_("Done") if cint(row.get("is_done")) else _("Not done"),
-				row.get("notes") or "",
+				status[task_rules.task_state(row)],
+				(row.get("notes") or "").strip()
+				or ("" if task_rules.task_answered(row) else _("No reason given")),
 			]
 			for row in rows
 		]
@@ -520,7 +540,7 @@ def _unanswered(doc, labels):
 		if cint(row.get("is_mandatory")) and not flt(row.get("reading_value")):
 			missing.append(_tagged(doc, row, labels, row.get("reading")))
 	for row in doc.get("cleaning_tasks") or []:
-		if cint(row.get("is_mandatory")) and not (row.get("is_done") or row.get("notes")):
+		if cint(row.get("is_mandatory")) and not task_rules.task_answered(row):
 			missing.append(_tagged(doc, row, labels, row.get("task")))
 	return missing
 
