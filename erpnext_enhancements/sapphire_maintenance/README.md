@@ -141,16 +141,22 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
   - already there (a save that landed but lost its answer): it is dropped;
   - changed by someone else: the technician is asked, on a screen of its own, which to keep.
   - A newer server edit is never overwritten without saying so. A save that lands while the same answer was changed again moves that answer's before-value along (`rebase`), so the second change is not mistaken for a clash later.
-- **Visits whose answers, photos or Finish are still on the phone** head the list ("Saved on this phone, not sent yet"). Their answers are sent in the background (`sync_stored`), so opening them is not needed.
-  - A save or a photo the server turns down (not merely no signal) is kept and named, and not retried.
-  - A Finish the server turns down because it already went through (its answer lost) is recognized from the visit's state and is not sent twice.
+  - A question left unanswered (Back, a closed tab) stays a question. It is kept apart (`held`) and asked again on every open, whatever the version, and is never sent in the background.
+  - A consumable added on the phone is taken for a server row only if the phone did not already know that row by name (`known`), and only on no water feature or the same one.
+- **Visits whose answers, photos or Finish are still on the phone** head the list ("Saved on this phone, not sent yet"). They are sent in the background (`sync_stored`) through the read-only `api/maintenance_visit.get_visit_state`, so opening them is not needed. `get_visit_bootstrap` would claim the visit and instantiate its template on every retry.
+  - **No signal means no answer at all.** A server that answers with an error, a refusal or a 500, stops that visit's sending for good and says so. A refused save or photo is kept and named, and a visit that can no longer be read is not retried.
+  - **A Finish that is refused, or held back by a clash or a refused save,** does not keep the visit on "Saved on this phone". The visit opens and says why, and the technician finishes it again. A Finish held for a clash goes with the technician's choice. One that already went through (its answer lost) is recognized from the visit's state and not sent twice. A 500 on Finish is shown, not kept as if there were no signal.
+  - A visit waiting on the technician offers **Discard what this phone kept**, after a confirmation. Photos the server refused are let go, with a message, when the visit is opened.
+- **Each photo has its own key** (a strictly increasing time), so a retake while the first is still uploading is the one the answer keeps, and a retake replaces an earlier one still waiting. Photos upload oldest first, one run per visit, and the background sender leaves a visit alone while its run is out.
+- **Known limit:** two tabs on one phone editing the same visit both write its kept copy, and the last write wins. Nothing is lost while both stay open.
 - **The save state says "Saved on this phone - will send when signal returns"** when there is no signal and the answers are kept. "NOT SAVED - retrying" now means the phone could not keep them, or the server refused them. The close-tab warning is shown only where the browser will not keep answers.
 - **Storage that is blocked or full** (a private window, site data turned off) leaves the wizard working as it did before.
 - `scripts/test_wizard_back_forward.mjs` ("Visit Wizard: kept on the phone") runs the real page with a phone's storage that outlives a reload. It proves:
   - answers survive a reload with no signal and arrive once;
   - a photo and a Finish queued offline each go out exactly once;
   - a lost-answer save or Finish is not sent twice;
-  - an office edit is asked about, never overwritten.
+  - an office edit is asked about, never overwritten, also when the question was left unanswered;
+  - each failure mode an independent review found has a test that fails without its fix (18 tests in the suite).
 
 **Last visit here (v1.596.0, TASK-2026-02482).** Technicians used to start each visit blind. The Safety step now has a collapsed **Last visit here** card. Its header carries the date, who did it, how many readings were out of range and how many answers need a look. Inside are the previous visit's readings, with out-of-range ones marked, anything answered Fail or Replace, and the notes, grouped by water feature on a site visit.
 

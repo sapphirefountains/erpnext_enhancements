@@ -320,6 +320,7 @@ function call(opts, args) {
 				if (out instanceof Error) reject(refusal(out.message, opts));
 				else resolve({ message: out });
 			} catch (err) {
+				// A thrown {status} is the server answering with that error (a 404, a 500).
 				reject(err);
 			}
 		};
@@ -693,6 +694,11 @@ function visitServer(records, sections) {
 			sections: sections || {},
 			state: { modified: rec.modified, docstatus: rec.docstatus, completion_percent: 10 },
 		};
+	};
+	// The background sender's read-only look at a visit (v1.596.0).
+	server.handlers.get_visit_state = ({ record }) => {
+		const rec = clone(db[record]);
+		return { record: rec, state: { modified: rec.modified, docstatus: rec.docstatus, workflow_state: rec.workflow_state } };
 	};
 	server.handlers.save_visit = ({ record, patch, modified }) => {
 		const rec = db[record];
@@ -1235,7 +1241,7 @@ function fakeIndexedDB(databases) {
 function phone() {
 	const local = new Map();
 	const databases = new Map();
-	const net = { down: false, uploads: [] };
+	const net = { down: false, uploads: [], delay: 1 };
 	return {
 		net,
 		// After every boot(), before the page has loaded (boot routes asynchronously).
@@ -1254,7 +1260,7 @@ function phone() {
 						net.uploads.push({ url, docname });
 						const file_url = `/private/files/${docname}-${net.uploads.length}.jpg`;
 						resolve({ ok: true, status: 200, json: () => Promise.resolve({ message: { file_url } }) });
-					}, 1);
+					}, net.delay);
 				});
 		},
 		kept(name) {
@@ -1289,6 +1295,7 @@ async function visitWizardKeptSuite() {
 
 		// The phone closes the tab; opened again, still with no signal, the visit cannot load.
 		server.fail.add("get_visit_bootstrap");
+		server.fail.add("get_visit_state");
 		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
 		p.install();
 		await tick(1000);
@@ -1298,9 +1305,15 @@ async function visitWizardKeptSuite() {
 		// Signal returns.
 		server.fail.clear();
 		const before = server.sent("save_visit").length;
+		const bootstraps = server.sent("get_visit_bootstrap").length;
 		browser.window.dispatch("online");
 		await settle();
 		assert.equal(server.sent("save_visit").length - before, 1, "one save, not one per answer");
+		assert.equal(
+			server.sent("get_visit_bootstrap").length,
+			bootstraps,
+			"the background sender reads get_visit_state, which claims and builds nothing"
+		);
 		assert.equal(db["MNT-1"].visit_notes, "Pump loud");
 		assert.equal(db["MNT-1"].chemistry_readings[0].reading_value, 7.4);
 		assert.equal(p.kept("MNT-1"), null, "nothing left on the phone");
@@ -1387,7 +1400,7 @@ async function visitWizardKeptSuite() {
 		server.hold.add("finish_visit");
 		wizard().finish();
 		await settle();
-		server.fail.add("get_visit_bootstrap"); // and then no signal to check with
+		server.fail.add("get_visit_state"); // and then no signal to check with
 		server.lose("finish_visit"); // it went through; the answer did not come back
 		await settle();
 		assert.equal(db["MNT-1"].docstatus, 1);
@@ -1516,6 +1529,232 @@ async function visitWizardKeptSuite() {
 		assert.equal(server.sent("save_visit").length, tries, "not retried");
 		assert.ok(p.kept("MNT-1"), "still kept");
 		assert.equal(db["MNT-1"].visit_notes, undefined);
+	});
+
+	// ---- found in review of PR #1206 ------------------------------------------------------
+
+	await test("a clash left unanswered is asked about again, and never applied over the office's answer", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_row("chemistry_readings", wizard().doc.chemistry_readings[1], "reading_value", 8.1);
+		await tick(5000);
+		db["MNT-1"].chemistry_readings[1].reading_value = 7.6;
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		assert.ok(wizard()._choice, "asked");
+		// The tab is closed without choosing; the list opens, and the background sender runs.
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await tick(600000);
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 7.6, "applied in the background");
+		// Opened again: asked again.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.deepEqual(
+			wizard()._choice.conflicts.map((c) => [c.row, c.value, c.server]),
+			[["r2", 8.1, 7.6]]
+		);
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 7.6, "applied on opening");
+	});
+
+	await test("a Finish the server turns down lets the visit open, to be fixed and finished again", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		server.fail.add("finish_visit");
+		wizard().finish();
+		await settle();
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true });
+		server.fail.clear();
+		const finish_visit = server.handlers.finish_visit;
+		server.handlers.finish_visit = () => new Error("Required item missing");
+		boot("visit-wizard", "/desk/visit-wizard"); // the list: sent in the background, turned down
+		p.install();
+		await tick(1000);
+		assert.ok(ui.alerts.some((a) => /Finishing MNT-1 was turned down/.test(a)), ui.alerts.join(" | "));
+		const tries = server.sent("finish_visit").length;
+		await tick(600000);
+		assert.equal(server.sent("finish_visit").length, tries, "not retried");
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(1000);
+		assert.equal(last().step, "wrapup", "the visit opens, not the waiting screen");
+		assert.ok(ui.msgprints.some((m) => /turned down by the server/.test(m)), ui.msgprints.join(" | "));
+		server.handlers.finish_visit = finish_visit; // fixed
+		wizard().finish();
+		await settle();
+		assert.equal(db["MNT-1"].docstatus, 1);
+		assert.deepEqual(p.outbox(), [], "the kept Finish is gone once it went through");
+	});
+
+	await test("a Finish kept on the phone waits for a clash to be chosen on, then goes with the choice", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		server.fail.add("finish_visit");
+		wizard().set_row("chemistry_readings", wizard().doc.chemistry_readings[1], "reading_value", 8.1);
+		wizard().finish();
+		await settle();
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true });
+		db["MNT-1"].chemistry_readings[1].reading_value = 7.6;
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		browser.window.dispatch("online");
+		await tick(600000);
+		assert.equal(db["MNT-1"].docstatus, 0, "not finished over a clash");
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 7.6);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(1000);
+		assert.ok(wizard()._choice, "the visit opens on the choice");
+		wizard().resolve_kept(true);
+		await tick(10000);
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 8.1);
+		assert.equal(db["MNT-1"].docstatus, 1, "finished with the choice");
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("a consumable added on another water feature is not taken for one already on the visit", async () => {
+		const p = phone();
+		const db = visitServer({
+			"MNT-1": visit({ consumables: [{ name: "c1", serial_no: "SN-A", item: "Chlorine", qty: 1, uom: "lb" }] }),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.fail.add("save_visit");
+		const row = { item: "Chlorine", item_name: "Chlorine", qty: 1, uom: "lb", serial_no: "SN-B" };
+		w.doc.consumables.push(row);
+		w.pending_added.push(row);
+		w.journal("MNT-1");
+		await tick(5000);
+		db["MNT-1"].visit_notes = "office note";
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].consumables.length, 2, "the second Chlorine 1 lb reached the server");
+	});
+
+	await test("a second dose of the same chemical added on the phone is not taken for the first", async () => {
+		const p = phone();
+		// The first dose was added in the wizard earlier: the server gave it no water feature.
+		const db = visitServer({
+			"MNT-1": visit({ consumables: [{ name: "c9", item: "Flocculant", qty: 1, uom: "cap full" }] }),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.fail.add("save_visit");
+		const row = { item: "Flocculant", item_name: "Flocculant", qty: 1, uom: "cap full" };
+		w.doc.consumables.push(row);
+		w.pending_added.push(row);
+		w.journal("MNT-1");
+		await tick(5000);
+		db["MNT-1"].visit_notes = "office note";
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].consumables.length, 2, "the phone knew c9 by name: the new dose is another");
+	});
+
+	await test("a retake while the first photo is uploading is the photo the answer keeps", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		const row = w.doc.chemistry_readings[0];
+		p.net.delay = 1000; // a slow upload
+		w.take_photo("chemistry_readings", row, new Blob(["blurry"]), $stub("btn"));
+		await tick(500); // the first is on its way
+		w.take_photo("chemistry_readings", row, new Blob(["sharp"]), $stub("btn"));
+		await tick(10000);
+		assert.equal(p.net.uploads.length, 2);
+		assert.equal(row.photo, "/private/files/MNT-1-2.jpg", "the retake, not the first");
+		await tick(5000);
+		assert.equal(db["MNT-1"].chemistry_readings[0].photo, "/private/files/MNT-1-2.jpg");
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("a photo still uploading when the technician leaves the visit is uploaded once", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		p.net.delay = 3000;
+		w.take_photo("chemistry_readings", w.doc.chemistry_readings[0], new Blob(["jpeg"]), $stub("btn"));
+		await tick(500);
+		F.set_route("visit-wizard"); // Back to the list while it uploads
+		await tick(100);
+		browser.window.dispatch("online"); // and the background sender wakes meanwhile
+		await tick(600000);
+		assert.equal(p.net.uploads.length, 1, "uploaded once, not again by the background sender");
+		assert.equal(db["MNT-1"].chemistry_readings[0].photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), []);
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("a server error on Finish is shown, not kept as if there were no signal", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		server.handlers.finish_visit = () => {
+			throw { status: 500, statusText: "Internal Server Error" };
+		};
+		wizard().finish();
+		await settle();
+		assert.deepEqual(p.outbox(), [], "not kept: there was signal, and the server failed");
+		assert.notDeepEqual(last(), { record: "MNT-1", waiting: true });
+	});
+
+	await test("a visit that can no longer be read is not retried forever, and can be discarded", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit(), "MNT-2": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_field("visit_notes", "kept");
+		await tick(5000);
+		server.fail.clear();
+		server.handlers.get_visit_state = () => {
+			throw { status: 404, statusText: "Not Found" };
+		};
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2");
+		p.install();
+		await settle();
+		const reads = server.sent("get_visit_state").length;
+		assert.ok(wizard()._needs_you.has("MNT-1"));
+		await tick(600000);
+		assert.equal(server.sent("get_visit_state").length, reads, "not retried");
+		wizard().discard_kept("MNT-1"); // IndexedDB answers on the harness clock
+		await settle();
+		assert.equal(p.kept("MNT-1"), null);
+		assert.deepEqual(p.outbox(), []);
 	});
 
 	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {

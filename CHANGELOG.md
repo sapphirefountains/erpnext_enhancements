@@ -39,11 +39,41 @@ technicians.
     - A newer server edit is never overwritten without saying so. A save that lands while its
       answer was changed again moves that answer's before-value along, so the second change is
       not mistaken for a clash.
-  - **The visit list starts with "Saved on this phone, not sent yet",** and those visits'
-    answers are sent in the background without being opened.
-    - A save or photo the server turns down is kept and named, never retried in a loop.
-    - A Finish that already went through (its answer lost) is recognized from the visit's state
-      and not sent again.
+    - An answer the technician was asked about and did not choose on (Back, a closed tab) stays
+      a question. It is kept apart (`held`) and asked again on every open, whatever the
+      version. It is never sent in the background, and never applied because the visit's version
+      has moved on.
+  - **The visit list starts with "Saved on this phone, not sent yet",** and those visits are sent
+    in the background without being opened.
+    - The background sender reads the visit through a new read-only `get_visit_state`, not
+      `get_visit_bootstrap`. That bootstrap would instantiate a bare draft's template and claim
+      the visit for the caller (moving its technician and ToDo) on every retry.
+    - "No signal" means no answer at all. A server that answers with an error, a refusal or a
+      500, stops that visit's sending for good and says so; it is not waited out.
+      - A refused save or photo is kept and named.
+      - A Finish that already went through (its answer lost) is recognized from the visit's
+        state and not sent again.
+      - A Finish that is refused, or held back by a clash or a refused save, no longer keeps the
+        visit on "Saved on this phone". The visit opens, says why, and is finished again; a
+        Finish held for a clash goes with the technician's choice.
+      - A visit that can no longer be read (deleted, reassigned) is not retried.
+    - A visit waiting on the technician offers **Discard what this phone kept**, after a
+      confirmation. Photos the server refused are let go, with a message, when their visit is
+      opened.
+  - **Finish on a server error is said, not kept.** A 500 used to be treated as no signal,
+    telling the technician "will be sent" and retrying for as long as the page was open.
+  - **Photos:** each photo taken has its own key, so a retake while the first is still uploading
+    is the one the answer keeps; a retake replaces an earlier one still waiting. Uploads run
+    oldest first, one run per visit. The background sender leaves a visit alone while its photo
+    run is out, so a photo is never uploaded twice.
+  - **A consumable added on the phone** is taken for a server row only when the phone did not
+    already know that row by name, and only on no water feature or the same one. Two doses of
+    the same chemical, or the same chemical on another fountain, are never merged into one.
+  - The Finish waits for any save of the visit still on the wire before it takes over the
+    answers. It does not take over unless the phone could keep them all. The close-tab warning
+    also shows when the phone could not keep the last change (storage full).
+  - **Known limit:** two tabs on one phone editing the same visit each write that visit's kept
+    copy, and the last write wins. Nothing is lost while both tabs stay open.
   - **The save state reads "Saved on this phone - will send when signal returns"** when there is
     no signal and the answers are kept. The close-tab warning shows only where the browser cannot
     keep them.
@@ -66,18 +96,25 @@ technicians.
 
 ### Tests
 
-- `scripts/test_wizard_back_forward.mjs` gains "Visit Wizard: kept on the phone" (9 tests). It
+- `scripts/test_wizard_back_forward.mjs` gains "Visit Wizard: kept on the phone" (18 tests). It
   runs the real page with a phone's `localStorage` and IndexedDB that outlive a reload, and a
   fake upload endpoint. It proves:
-  - answers survive a reload with no signal and arrive in one save once it is back;
+  - answers survive a reload with no signal and arrive in one save once it is back, without the
+    bootstrap;
   - a photo and a Finish queued offline each go out exactly once;
   - a save or Finish whose answer was lost is not sent twice;
-  - an office edit is asked about and never overwritten, both ways the choice can go;
+  - an office edit is asked about and never overwritten, both ways the choice can go, and also
+    when the question was left unanswered;
   - an answer changed again in flight is not mistaken for a clash;
-  - a turned-down background save is not retried;
+  - a turned-down background save, a refused Finish and an unreadable visit are not retried;
+  - a refused Finish lets the visit open and be finished again;
+  - a Finish held for a clash goes with the choice;
+  - a 500 on Finish is not kept;
+  - a retake, and a photo uploading as its visit is left, each upload once;
+  - a dose on another fountain, or a second dose, is not merged away;
   - the Last visit here card renders.
-  - Breaking the phone's storage fails 6 of them, and dropping the kept Finish fails 2. The 22
-    existing wizard tests pass unchanged.
+  - An independent review of this PR found nine of these failure modes. Each now has a test that
+    fails with its fix removed. The 22 existing wizard tests pass unchanged.
 - `test_visit_compare` (now 22): `last_visit` for a first visit; readings, problems and notes;
   a site visit by fountain; a fountain's visit seeing only its own rows. Also checks that the
   wizard's bootstrap asks for it.
