@@ -2211,6 +2211,12 @@ jobs:
       # own rule, minus a paused contract's winter window, with seasonal visits.
       - name: Missed maintenance visits (not drafted, not started, not sent)
         run: python -m unittest erpnext_enhancements.tests.test_missed_visits -v
+      # A visit is dated and clocked out when the technician sends it for review (v1.595.1),
+      # not at approval days later: the schedule rolls from the day the work was done, and a
+      # later kiosk interval never becomes this visit's clock-out. Plus the patch that dates
+      # visits already waiting.
+      - name: Visit finished for review (dated and clocked out then)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_finished_for_review -v
       # The OSHA injury log. Shaped by the regulation rather than by what would be
       # tidy, so most of this suite is really "does the code still match the rule":
       # the record exists the moment it is filed (a log a manager can suppress at

@@ -23,6 +23,11 @@ Lifecycle / wiring:
   * ``validate`` computes per-reading ``out_of_range`` flags and the parent
     ``has_out_of_range_readings`` (drives the "Maintenance Reading Out of
     Range" Notification fixture on submit).
+  * On the save that moves a visit into Pending Review, ``validate`` dates it
+    (blank ``visit_date`` -> today) and closes its clock from the kiosk
+    interval (``_finish_on_review``, v1.595.1), so an approval days later
+    neither rolls the schedule from the approval day nor takes a later
+    interval as the clock-out.
   * ``on_submit`` enqueues the background worker
     ``api.maintenance_workflow.process_maintenance_submission`` (Stock Entry,
     Timesheet, Warranty Claim, Sales Invoice). The next-visit scheduling
@@ -42,6 +47,10 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, getdate, nowdate
+
+#: The workflow state a technician's Finish (or the form's Request Review) moves a visit into.
+#: Kept in step with ``review_digest.REVIEW_STATE`` and the workflow fixture.
+REVIEW_STATE = "Pending Review"
 
 
 class SapphireMaintenanceRecord(Document):
@@ -67,10 +76,45 @@ class SapphireMaintenanceRecord(Document):
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
 		self._autofill_clock_in()
+		self._finish_on_review()
 
 	def before_submit(self):
+		# Where no workflow is active the technician's own submit is the finish. With the
+		# workflow, the visit was closed out when it went for review (_finish_on_review), and a
+		# later approval is a backfill by then, which this skips.
 		self._autofill_clock_out()
 		self._validate_mandatory_rows()
+
+	def _finish_on_review(self):
+		"""The technician has finished: stamp the day of the visit and close out its clock.
+
+		Runs on the save that moves the visit into Pending Review, from the Visit Wizard's
+		Finish or the form's Request Review. Until v1.595.1 nothing was settled until the
+		reviewer's Approve & Submit, often days later, and with ``visit_date`` blank (the
+		scheduler drafts visits without one, and the wizard's "Date of visit" is empty for
+		"today"):
+
+		* ``update_next_visit_dates`` rolled the contract forward from the **approval** day
+		  (``visit_date or nowdate()``). State Capitol, sent for review on 2026-10-09 and
+		  approved on 2026-10-12, had its next visit counted from the 12th.
+		* ``_autofill_clock_out`` took the technician's latest kiosk interval on the project at
+		  approval time, which on a weekly site can be the *next* visit's, giving a clock-out
+		  days after the clock-in and a timesheet to match.
+
+		So ``visit_date`` becomes today when it is blank, the day the technician finished,
+		which is what the wizard's empty "Date of visit" already means. A date the technician
+		chose (a backfill) is kept. The clock then closes out here, while the kiosk interval
+		is still this visit's; at approval the visit is dated in the past and
+		``_autofill_clock_out`` leaves it alone (:meth:`_is_backfill`). A visit sent back and
+		sent again keeps the date it was first given.
+		"""
+		if self.docstatus != 0 or (self.get("workflow_state") or "") != REVIEW_STATE:
+			return
+		if not self.has_value_changed("workflow_state"):
+			return
+		if not self.get("visit_date"):
+			self.visit_date = getdate(nowdate())
+		self._autofill_clock_out()
 
 	def _validate_mandatory_rows(self):
 		"""Block submit while template-mandated rows are unanswered.
@@ -147,12 +191,13 @@ class SapphireMaintenanceRecord(Document):
 			self.clock_in_time = interval.start_time
 
 	def _autofill_clock_out(self):
-		"""On submit, close out blank clock fields from the kiosk interval.
+		"""When the visit is finished, close out blank clock fields from the kiosk interval.
 
-		A still-running interval means the tech is submitting before clocking
-		out — stamp "now" and carry the interval's pause time. A recently
-		completed interval supplies its real end time. A backfilled visit is
-		skipped entirely: "now" is the wrong day for it.
+		Called as the visit goes for review (:meth:`_finish_on_review`) and again on
+		submit, which is the finish where no workflow is active. A still-running interval
+		means the tech is finishing before clocking out — stamp "now" and carry the
+		interval's pause time. A recently completed interval supplies its real end time.
+		A backfilled visit is skipped entirely: "now" is the wrong day for it.
 		"""
 		if self._is_backfill():
 			return
