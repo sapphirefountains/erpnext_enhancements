@@ -1818,6 +1818,13 @@ jinja = {
 		# header and the downloaded PDF's filename are the same string because they are
 		# this same call; two renderings of one idea drift.
 		"erpnext_enhancements.po_pdf_filename.purchase_order_document_id",
+		# The customer's maintenance visit report (Maintenance Record Print, v1.597.0): water
+		# feature names, the contract line with the year, the chemistry charts (SVG) and the
+		# fountain photo inlined, none of which the print sandbox can query or draw. Never
+		# raises: the PDF is made in the finalize job and emailed. Like ee_trip_sheet below, it
+		# reads the visit loaded again by name after a read check, never the doc it is handed
+		# (a global is reachable from any template), and inlines only Files attached to it.
+		"erpnext_enhancements.sapphire_maintenance.visit_report.maintenance_report",
 		# The email design system (docs/email-design-system.md). Notification
 		# bodies are Jinja strings edited through the Desk, so they reach the
 		# shared chrome through these globals rather than {% extends %}: in a

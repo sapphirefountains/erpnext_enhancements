@@ -2217,6 +2217,15 @@ jobs:
       # visits already waiting.
       - name: Visit finished for review (dated and clocked out then)
         run: python -m unittest erpnext_enhancements.tests.test_visit_finished_for_review -v
+      # The customer's visit report (v1.597.0, Lisa's review of the first one): water features
+      # by name, the contract with the visit's calendar year, a chart per reading over recent
+      # visits, and the "fountain as we left it" photo inlined. Never raises: a part that fails
+      # is logged and left out. Pillow is what Frappe v16 itself pins; installed here so the
+      # photo-shrinking tests run instead of skipping. Own step for its own frappe stub.
+      - name: Visit report (names, contract year, charts, fountain photo)
+        run: |
+          python -m pip install "Pillow~=12.3.0"
+          python -m unittest erpnext_enhancements.tests.test_visit_report -v
       # The OSHA injury log. Shaped by the regulation rather than by what would be
       # tidy, so most of this suite is really "does the code still match the rule":
       # the record exists the moment it is filed (a log a manager can suppress at

@@ -92,6 +92,7 @@ const VZ_STYLE = `
 .vz-photo-btn{flex:0 0 auto;min-width:50px;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);cursor:pointer;font-size:18px;}
 .vz-photo-btn.vz-has-photo{border-color:#15803d;background:#e7f7ed;}
 .vz-photo-btn.vz-photo-waiting{border-color:#d97706;background:#fef3e2;}
+.vz-fountain-photo{display:block;max-width:100%;max-height:220px;border-radius:8px;margin-top:8px;}
 .vz-check-card{display:flex;align-items:center;gap:12px;cursor:pointer;}
 .vz-check-box{flex:0 0 30px;height:30px;border:2px solid var(--border-color);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
 .vz-check-card.vz-on .vz-check-box{background:#15803d;border-color:#15803d;}
@@ -503,10 +504,15 @@ function vz_keep_change(entry, name, change, modified) {
 	};
 	vz_put_change(entry.dirty, change);
 	entry.base = entry.base || { fields: {}, rows: {} };
+	entry.base.fields = entry.base.fields || {};
 	entry.base.rows = entry.base.rows || {};
-	const rows = (entry.base.rows[change.table] = entry.base.rows[change.table] || {});
-	const old = (rows[change.row] = rows[change.row] || {});
-	if (!(change.field in old)) old[change.field] = null;
+	if (!change.table) {
+		if (!(change.field in entry.base.fields)) entry.base.fields[change.field] = null;
+	} else {
+		const rows = (entry.base.rows[change.table] = entry.base.rows[change.table] || {});
+		const old = (rows[change.row] = rows[change.row] || {});
+		if (!(change.field in old)) old[change.field] = null;
+	}
 	entry.at = Date.now();
 	vz_unsent_write(name, entry);
 	return entry;
@@ -566,6 +572,12 @@ const vz_outbox_items = () =>
 		(items) => (Array.isArray(items) ? items : []),
 		() => []
 	);
+// The answer a kept photo belongs to: a row's `photo`, or (v1.597.0) a field on the visit
+// itself, such as the fountain as the technician left it (table and row empty).
+function vz_photo_change(item, url) {
+	return { table: item.table || null, row: item.row || null, field: item.field || "photo", value: url };
+}
+
 // One key per photo taken: a retake while the first is still uploading must not share its
 // key, or deleting the uploaded first would delete the retake with it.
 const vz_photo_prefix = (record, table, row) => `photo|${record}|${table}|${row}|`;
@@ -574,12 +586,15 @@ const vz_finish_key = (record) => `finish|${record}`;
 
 // upload_file, as the page has always sent a photo: the file url, or a rejection. A
 // rejection with a `status` is the server turning it down (vz_refused tells which kind);
-// one without is no signal.
-function vz_upload(blob, filename, record) {
+// one without is no signal. `fieldname` is for a photo on the visit itself (the fountain
+// photo, v1.597.0): frappe's on_update hook looks for a File attached to that field, and
+// inserts a second File row for the same photo when the upload did not name it.
+function vz_upload(blob, filename, record, fieldname) {
 	const form = new FormData();
 	form.append("file", blob, filename || "photo.jpg");
 	form.append("doctype", "Sapphire Maintenance Record");
 	form.append("docname", record);
+	if (fieldname) form.append("fieldname", fieldname);
 	form.append("is_private", "1");
 	return fetch("/api/method/upload_file", {
 		method: "POST",
@@ -2175,9 +2190,9 @@ class VisitWizard {
 					.reduce(
 						(chain, item) =>
 							chain.then(() =>
-								vz_upload(item.blob, item.filename, name).then(
+								vz_upload(item.blob, item.filename, name, item.table ? null : item.field).then(
 									(url) => {
-										const change = { table: item.table, row: item.row, field: "photo", value: url };
+										const change = vz_photo_change(item, url);
 										vz_put_change(patch, change);
 										// Kept with the answers before the photo is let go (read afresh: the
 										// page may have written since).
@@ -2363,7 +2378,7 @@ class VisitWizard {
 	}
 
 	send_photo(item) {
-		return vz_upload(item.blob, item.filename, item.record).then(
+		return vz_upload(item.blob, item.filename, item.record, item.table ? null : item.field).then(
 			(url) => {
 				// On the answer first (kept on the phone with the rest), then the blob goes.
 				this.record_photo(item, url);
@@ -2378,10 +2393,14 @@ class VisitWizard {
 	// An uploaded photo's url onto its answer: on screen as an edit; else onto the visit's
 	// parked save, or its answers kept on the phone.
 	record_photo(item, url) {
-		const change = { table: item.table, row: item.row, field: "photo", value: url };
+		const change = vz_photo_change(item, url);
 		if (this.editing(item.record)) {
-			const row = (this.doc[item.table] || []).find((candidate) => candidate.name === item.row);
-			if (row) this.set_row(item.table, row, "photo", url);
+			if (!change.table) {
+				this.set_field(change.field, url);
+				return;
+			}
+			const row = (this.doc[change.table] || []).find((candidate) => candidate.name === change.row);
+			if (row) this.set_row(change.table, row, change.field, url);
 			return;
 		}
 		const parked = this._parked[item.record];
@@ -2409,25 +2428,28 @@ class VisitWizard {
 	// A photo taken for a row: kept on this phone first (v1.596.0), then uploaded. With no
 	// signal it waits there and goes when there is, page reloaded or not. A browser that
 	// cannot keep it uploads straight away, as before. It replaces a photo of the same row
-	// still waiting.
-	take_photo(table, row, file, $btn) {
+	// still waiting. With no table and no row, it is `field` on the visit itself (v1.597.0:
+	// the fountain as the technician left it).
+	take_photo(table, row, file, $btn, field) {
 		const doc = this.doc;
+		field = field || "photo";
 		// Strictly increasing, so two photos in one millisecond still get their own keys.
 		const at = (this._photo_at = Math.max(Date.now(), (this._photo_at || 0) + 1));
-		const prefix = vz_photo_prefix(doc.name, table, row.name);
+		const prefix = vz_photo_prefix(doc.name, table || "-", row ? row.name : field);
 		const item = {
 			key: prefix + at,
 			kind: "photo",
 			record: doc.name,
-			table,
-			row: row.name,
+			table: table || null,
+			row: row ? row.name : null,
+			field,
 			blob: file,
 			filename: file.name,
 			at,
 		};
 		return vz_outbox_put(item).then(
 			(kept) => {
-				if (!kept) return this.upload_photo_now(doc, table, row, file, $btn);
+				if (!kept) return this.upload_photo_now(doc, table, row, file, $btn, field);
 				this._photo_waiting.add(item.key);
 				$btn.addClass("vz-photo-waiting");
 				return vz_outbox_items()
@@ -2451,24 +2473,27 @@ class VisitWizard {
 						}
 					});
 			},
-			() => this.upload_photo_now(doc, table, row, file, $btn)
+			() => this.upload_photo_now(doc, table, row, file, $btn, field)
 		);
 	}
 
-	// The camera button's class: a photo attached, or one waiting on this phone.
-	photo_class(table, row) {
-		if (row.photo) return "vz-has-photo";
+	// The camera button's class: a photo attached, or one waiting on this phone. With no
+	// table, `row` is the visit and the photo is its `field`.
+	photo_class(table, row, field) {
+		field = field || "photo";
+		if ((row || {})[field]) return "vz-has-photo";
 		if (!this.doc) return "";
-		const prefix = vz_photo_prefix(this.doc.name, table, row.name);
+		const prefix = vz_photo_prefix(this.doc.name, table || "-", table ? row.name : field);
 		return [...this._photo_waiting].some((key) => key.startsWith(prefix)) ? "vz-photo-waiting" : "";
 	}
 
 	// The upload as it was before v1.596.0, for a browser that cannot keep the photo.
-	upload_photo_now(doc, table, row, file, $btn) {
-		vz_upload(file, file.name, doc.name).then(
+	upload_photo_now(doc, table, row, file, $btn, field) {
+		vz_upload(file, file.name, doc.name, table ? null : field).then(
 			(file_url) => {
 				if (this.doc !== doc) return;
-				this.set_row(table, row, "photo", file_url);
+				if (table) this.set_row(table, row, field || "photo", file_url);
+				else this.set_field(field, file_url);
 				$btn.addClass("vz-has-photo");
 				frappe.show_alert({ message: __("Photo attached."), indicator: "green" });
 			},
@@ -3460,6 +3485,7 @@ class VisitWizard {
 		});
 		this.setup_dictation($notes_card);
 		this.$wrap.append($notes_card);
+		this.render_fountain_photo();
 
 		const $sig_card = $(`
 			<div class="vz-card">
@@ -3471,6 +3497,25 @@ class VisitWizard {
 		`);
 		this.setup_signature($sig_card);
 		this.$wrap.append($sig_card);
+	}
+
+	// The fountain as the technician leaves it (v1.597.0): Lisa asked for a picture of the
+	// customer's fountain on their visit report, and a photo of it running as we left is the
+	// one worth sending. Kept on this phone like any photo until it uploads.
+	render_fountain_photo() {
+		const photo = this.doc.fountain_photo;
+		const $card = $(`
+			<div class="vz-card">
+				<div class="vz-card-title">${__("The fountain as you leave it")}</div>
+				<div class="vz-card-sub">${__("A photo of it running. It goes on the customer's visit report.")}</div>
+				${photo ? `<img class="vz-fountain-photo" src="${encodeURI(String(photo))}" alt="">` : ""}
+				<div style="margin-top:8px;">
+					<button type="button" class="vz-photo-btn ${this.photo_class(null, this.doc, "fountain_photo")}">📷</button>
+				</div>
+			</div>
+		`);
+		if (this.doc.docstatus === 0) this.bind_photo($card.find(".vz-photo-btn"), null, null, "fountain_photo");
+		this.$wrap.append($card);
 	}
 
 	// The day the work was done (Nik, 2026-10-12: workers "need to be able to historically
@@ -3609,7 +3654,7 @@ class VisitWizard {
 
 	// ----- photos -----------------------------------------------------------
 
-	bind_photo($btn, table, row) {
+	bind_photo($btn, table, row, field) {
 		$btn.on("click", () => {
 			const input = document.createElement("input");
 			input.type = "file";
@@ -3617,7 +3662,7 @@ class VisitWizard {
 			input.capture = "environment";
 			input.onchange = () => {
 				const file = input.files && input.files[0];
-				if (file) this.take_photo(table, row, file, $btn);
+				if (file) this.take_photo(table, row, file, $btn, field);
 			};
 			input.click();
 		});

@@ -630,6 +630,19 @@ class TestWhatItSays(unittest.TestCase):
 		self.assertEqual(chemistry, [(f"{SITE}/private/files/chlorine%20strip.jpg", "Photo: Free chlorine")])
 		self.assertEqual(_block(self.context, "Pump Inspection")["photos"], [])
 
+	def test_the_fountain_as_we_left_it_is_a_photo_link_after_the_notes(self):
+		"""v1.597.0: the technician's last photo, the one the customer's report prints."""
+		self.assertIsNone(self.context["fountain_photo"])
+		context = digest.build_context(_visit(fountain_photo="/private/files/east fountain.jpg"))
+		self.assertEqual(
+			context["fountain_photo"],
+			(f"{SITE}/private/files/east%20fountain.jpg", "Photo: the fountain as we left it"),
+		)
+		self.assertEqual(context["photo_count"], self.context["photo_count"] + 1)
+		self.assertIsNone(
+			digest.build_context(_visit(fountain_photo="javascript:alert(1)"))["fountain_photo"]
+		)
+
 	def test_a_site_visit_names_each_feature(self):
 		context = digest.build_context(_site_visit())
 		self.assertEqual(
@@ -683,6 +696,14 @@ class TestTheTemplateRendersIt(unittest.TestCase):
 		):
 			with self.subTest(text=text):
 				self.assertIn(text, html)
+
+	def test_the_fountain_photo_follows_the_notes(self):
+		context = digest.build_context(_visit(fountain_photo="/private/files/east.jpg"))
+		context.update(digest._audience_context(context, "review"))
+		html = self.env.get_template(digest.TEMPLATE).render(**context)
+		self.assertIn(f"{SITE}/private/files/east.jpg", html)
+		self.assertLess(html.index("Cleared the intake."), html.index("Photo: the fountain as we left it"))
+		self.assertNotIn("as we left it", self._html("review"))
 
 	def test_free_text_is_escaped(self):
 		"""frappe's Jinja env has no autoescape; the macros must do it, exactly once."""

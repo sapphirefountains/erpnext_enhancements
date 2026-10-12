@@ -318,6 +318,11 @@ class VisitReview {
 		if (ctx.notes) {
 			html += `<div class="vr-block"><h5>${esc(ctx.notes_heading)}</h5><div class="vr-notes">${esc(ctx.notes)}</div></div>`;
 		}
+		if (ctx.fountain_photo) {
+			html += `<div class="vr-photos"><a href="${esc(ctx.fountain_photo[0])}" target="_blank" rel="noopener noreferrer">${esc(
+				ctx.fountain_photo[1]
+			)}</a></div>`;
+		}
 
 		html += '<div class="vr-actions">';
 		if (data.can_approve) {

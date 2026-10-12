@@ -1257,7 +1257,7 @@ function phone() {
 					fakeSetTimeout(() => {
 						if (net.down) return reject(new TypeError("Failed to fetch"));
 						const docname = opts.body.get("docname");
-						net.uploads.push({ url, docname });
+						net.uploads.push({ url, docname, fieldname: opts.body.get("fieldname") });
 						const file_url = `/private/files/${docname}-${net.uploads.length}.jpg`;
 						resolve({ ok: true, status: 200, json: () => Promise.resolve({ message: { file_url } }) });
 					}, net.delay);
@@ -1376,6 +1376,7 @@ async function visitWizardKeptSuite() {
 		browser.window.dispatch("online");
 		await settle();
 		assert.equal(p.net.uploads.length, 1, "the photo uploaded once");
+		assert.equal(p.net.uploads[0].fieldname, null, "a row's photo names no field on the visit");
 		assert.equal(server.sent("finish_visit").length - finishes, 1, "the Finish sent once");
 		assert.equal(db["MNT-1"].docstatus, 1);
 		assert.equal(db["MNT-1"].visit_notes, "All done");
@@ -1827,6 +1828,46 @@ async function visitWizardKeptSuite() {
 		await settle();
 		assert.equal(p.kept("MNT-1"), null);
 		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("the fountain photo (v1.597.0) is kept like any photo and lands on the visit itself", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit(), "MNT-2": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		p.net.down = true;
+		wizard().take_photo(null, null, new Blob(["jpeg"]), $stub("btn"), "fountain_photo");
+		await settle();
+		const [kept] = p.outbox();
+		assert.deepEqual([kept.table, kept.row, kept.field], [null, null, "fountain_photo"]);
+		p.net.down = false;
+		// Opened again with signal: on screen, it becomes an edit of the visit and is saved.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].fountain_photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), []);
+
+		// Taken on MNT-2 with no signal, then sent from the list in the background.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2/wrapup");
+		p.install();
+		await settle();
+		p.net.down = true;
+		wizard().take_photo(null, null, new Blob(["jpeg"]), $stub("btn"), "fountain_photo");
+		await settle();
+		p.net.down = false;
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-2"].fountain_photo, "/private/files/MNT-2-2.jpg");
+		assert.deepEqual(p.outbox(), []);
+		assert.equal(p.kept("MNT-2"), null);
+		// Both uploads named the field, or frappe's on_update hook adds a second File row.
+		assert.deepEqual(
+			p.net.uploads.map((upload) => upload.fieldname),
+			["fountain_photo", "fountain_photo"]
+		);
 	});
 
 	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {
