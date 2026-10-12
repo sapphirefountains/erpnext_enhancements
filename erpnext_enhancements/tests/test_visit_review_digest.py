@@ -586,6 +586,7 @@ class TestWhatItSays(unittest.TestCase):
 					_Dict(task="Clean cartridge filters", section_title="Cleaning"),
 					_Dict(task="Brush walls", notes="Ran out of time", section_title="Cleaning"),
 					_Dict(task="Empty skimmer", is_mandatory=1, section_title="Cleaning"),
+					_Dict(task="Rinse deck", notes="   ", section_title="Cleaning"),
 				]
 			)
 		)
@@ -596,11 +597,14 @@ class TestWhatItSays(unittest.TestCase):
 				["Clean cartridge filters", "Not done", "No reason given"],
 				["Brush walls", "Not done", "Ran out of time"],
 				["Empty skimmer", "Not done", "No reason given"],
+				["Rinse deck", "Not done", "No reason given"],
 			],
+			"a note of only spaces is no reason, in the table as in the warning",
 		)
-		self.assertEqual(context["unexplained"], ["Clean cartridge filters"])
+		self.assertEqual(context["unexplained"], ["Clean cartridge filters", "Rinse deck"])
 		self.assertIn(
-			"Warning: 1 task not done, with no reason given: Clean cartridge filters.", context["warnings"]
+			"Warning: 2 tasks not done, with no reason given: Clean cartridge filters, Rinse deck.",
+			context["warnings"],
 		)
 		self.assertTrue(any("Empty skimmer" in w and "required" in w for w in context["warnings"]))
 		self.assertFalse(any("Empty skimmer" in w and "no reason" in w for w in context["warnings"]))

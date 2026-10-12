@@ -584,6 +584,15 @@ class TestCleaningTaskStates(unittest.TestCase):
 				self.assertEqual(task_rules.task_answered(row), answered)
 				self.assertEqual(task_rules.task_unexplained(row), not answered)
 
+	def test_the_desk_form_clears_one_box_when_the_other_is_ticked(self):
+		"""Else validate's "done wins" undoes a reviewer's N/A on a task wrongly marked done."""
+		form = (
+			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"
+		).read_text(encoding="utf-8")
+		handler = form[form.index('frappe.ui.form.on("Sapphire Cleaning Task"') :]
+		self.assertIn('frappe.model.set_value(cdt, cdn, "not_applicable", 0)', handler)
+		self.assertIn('frappe.model.set_value(cdt, cdn, "is_done", 0)', handler)
+
 	def test_done_wins_when_a_task_is_ticked_both_ways(self):
 		"""The Desk grid shows both boxes; the wizard clears one when the other is set."""
 		row = _Dict(task="Heater check", is_done=1, not_applicable=1, notes="")

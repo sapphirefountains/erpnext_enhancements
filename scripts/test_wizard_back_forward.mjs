@@ -1894,6 +1894,50 @@ async function visitWizardKeptSuite() {
 		}
 	});
 
+	await test("a task kept as Done while the office marked it N/A is asked about, not merged", async () => {
+		const p = phone();
+		// As the server sends a task: both Checks, 0 or 1.
+		const db = visitServer({
+			"MNT-1": visit({ cleaning_tasks: [{ name: "t1", serial_no: "SN-A", task: "Skim", is_done: 0, not_applicable: 0 }] }),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks/SN-A");
+		p.install();
+		await settle();
+		const w = wizard();
+		w.$wrap = $stub("wrap");
+		server.fail.add("save_visit"); // no signal
+		w.task_card(w.doc.cleaning_tasks[0]);
+		const done = clicks.filter((c) => c.event === "click" && c.src.includes("Skim") && c.src.endsWith(".vz-check-card")).pop();
+		done.fn({});
+		await tick(5000);
+		// Meanwhile the office marks the same task N/A on the desk form.
+		Object.assign(db["MNT-1"].cleaning_tasks[0], { is_done: 0, not_applicable: 1 });
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks/SN-A");
+		p.install();
+		await tick(5000);
+		const w2 = wizard();
+		assert.ok(w2._choice, "asked, not merged into a task both done and N/A");
+		assert.deepEqual(
+			w2._choice.conflicts.map((c) => [c.row, c.field, c.value, c.server]),
+			[
+				["t1", "not_applicable", 0, 1],
+				["t1", "is_done", 1, 0], // its partner, undisputed on its own, asked with it
+			]
+		);
+		assert.deepEqual(
+			[db["MNT-1"].cleaning_tasks[0].is_done, db["MNT-1"].cleaning_tasks[0].not_applicable],
+			[0, 1],
+			"the office's N/A stands until the technician chooses"
+		);
+
+		w2.resolve_kept(true); // keep this phone's: Done, and so not N/A
+		await tick(5000);
+		assert.deepEqual([db["MNT-1"].cleaning_tasks[0].is_done, db["MNT-1"].cleaning_tasks[0].not_applicable], [1, 0]);
+	});
+
 	await test("cleaning tasks (v1.598.0): done, N/A or a note; wrap-up asks why; Finish nudges, never blocks", async () => {
 		const db = visitServer({
 			"MNT-1": visit({
