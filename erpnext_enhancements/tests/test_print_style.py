@@ -945,6 +945,19 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         self.assertLess(out.index("Basin drained"), out.index("The Fountain As We Left It"))
         self.assertNotIn("As We Left It", self.render(_record()))
 
+    def test_a_cleaning_task_prints_done_na_or_not_done_with_its_reason(self):
+        """v1.598.0: "Heater Check (winter only)" printed "Not done" on an October report."""
+        out = self.render(_record(cleaning_tasks=[
+            _Doc(serial_no="WF-0001", task="Heater check", is_done=0, not_applicable=1, notes=""),
+            _Doc(serial_no="WF-0001", task="Clean cartridge filters", is_done=0, not_applicable=0, notes="Pump off; told the manager"),
+            _Doc(serial_no="WF-0001", task="Vacuum basin floor", is_done=1, not_applicable=0, notes=""),
+        ]))
+        squashed = re.sub(r"\s+", " ", out)
+        self.assertIn(">Status</th>", squashed)
+        self.assertRegex(squashed, r"Heater check</td> <td[^>]*>N/A</td>")
+        self.assertRegex(squashed, r"Clean cartridge filters</td> <td[^>]*>Not done</td> <td[^>]*>Pump off; told the manager</td>")
+        self.assertRegex(squashed, r"Vacuum basin floor</td> <td[^>]*><span[^>]*>Done</span></td>")
+
     def test_an_unsigned_record_says_so(self):
         out = self.render(_record(client_sign_off=None))
         self.assertIn("Not signed on site", out)

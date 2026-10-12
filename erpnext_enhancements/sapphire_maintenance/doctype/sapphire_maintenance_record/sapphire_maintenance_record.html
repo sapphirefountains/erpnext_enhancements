@@ -124,7 +124,7 @@
                         <td class="whitespace-nowrap px-3 py-4 text-sm">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
                                 {% if row.is_done %} bg-green-100 text-green-800 {% else %} bg-gray-100 text-gray-800 {% endif %}">
-                                {{ _("Done") if row.is_done else _("Not Done") }}
+                                {{ _("Done") if row.is_done else (_("N/A") if row.not_applicable else _("Not Done")) }}
                             </span>
                         </td>
                         <td class="px-3 py-4 text-sm text-gray-500">{{ row.notes or '' }}</td>

@@ -50,6 +50,8 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt, getdate, nowdate
 
+from erpnext_enhancements.sapphire_maintenance.task_rules import task_answered
+
 #: A project name that can lead a visit's name. v16's make_autoname refuses a series outside
 #: ``^[\w\- /.#{}]+$`` (``NamingSeries.validate``); ``.``, ``#`` and braces are series syntax
 #: and a slash reads as a path in a link, so this is the safe part of that set. The length
@@ -111,9 +113,22 @@ class SapphireMaintenanceRecord(Document):
 		validate_crew(self)
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
+		self._settle_task_states()
 		self._autofill_clock_in()
 		self._finish_on_review()
 		self._check_fountain_photo()
+
+	def _settle_task_states(self):
+		"""A cleaning task is done, N/A, or neither, never both: done wins.
+
+		N/A (v1.598.0) is for a task this visit does not need, such as the Myers heater check,
+		which printed "Not done" on an October report. The wizard clears one when the other is
+		set, but the Desk grid shows both boxes, and a task ticked both ways would print as
+		done while counting as not needed.
+		"""
+		for row in self.get("cleaning_tasks") or []:
+			if row.get("is_done") and row.get("not_applicable"):
+				row.not_applicable = 0
 
 	def _check_fountain_photo(self):
 		"""The fountain photo must be one uploaded to this visit, or by the person saving it.
@@ -186,9 +201,9 @@ class SapphireMaintenanceRecord(Document):
 
 		Rows carry ``is_mandatory`` copied from their template section item
 		(``get_visit_payload``). "Answered" matches compute_completion_percent:
-		a selection/answer, a non-zero reading, a task ticked done or
-		annotated. Consumables are exempt — an untouched qty-0 dosing prefill
-		is a legitimate "none used".
+		a selection/answer, a non-zero reading, a task done, N/A or with a note
+		(:func:`task_answered`). Consumables are exempt — an untouched qty-0
+		dosing prefill is a legitimate "none used".
 		"""
 		def tag(row, label):
 			if row.serial_no and not self.serial_no:
@@ -203,7 +218,7 @@ class SapphireMaintenanceRecord(Document):
 			if row.is_mandatory and not flt(row.reading_value):
 				missing.append(tag(row, row.reading))
 		for row in self.get("cleaning_tasks", []):
-			if row.is_mandatory and not (row.is_done or row.notes):
+			if row.is_mandatory and not task_answered(row):
 				missing.append(tag(row, row.task))
 		if missing:
 			frappe.throw(
@@ -332,8 +347,9 @@ def compute_completion_percent(doc):
 	"""How much of the visit form has been filled in, as 0–100.
 
 	Counted as answered: inspection rows with a selection or answer, readings
-	with a value, cleaning tasks ticked done or annotated. Consumables don't
-	count — an untouched qty-0 dosing prefill is a legitimate "none used".
+	with a value, cleaning tasks done, N/A or with a note (:func:`task_answered`).
+	Consumables don't count — an untouched qty-0 dosing prefill is a legitimate
+	"none used".
 	Returns 0 for a record with no section rows. Pure function — no DB access.
 	"""
 	answered = total = 0
@@ -347,9 +363,10 @@ def compute_completion_percent(doc):
 			answered += 1
 	for row in doc.get("cleaning_tasks", []):
 		total += 1
-		if row.get("is_done") or row.get("notes"):
+		if task_answered(row):
 			answered += 1
 	return round(answered / total * 100, 1) if total else 0
+
 
 
 def evaluate_reading_ranges(rows):

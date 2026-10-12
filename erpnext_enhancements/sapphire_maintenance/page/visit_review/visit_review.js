@@ -184,6 +184,11 @@ class VisitReview {
 					`<span class="vr-chip vr-orange">${__("Required, blank: {0}", [esc(row.unanswered.join(", "))])}</span>`
 				);
 			}
+			if ((row.unexplained || []).length) {
+				chips.push(
+					`<span class="vr-chip vr-orange">${__("Not done, no reason: {0}", [esc(row.unexplained.join(", "))])}</span>`
+				);
+			}
 			if (row.photo_count) {
 				chips.push(`<span class="vr-chip">${__("{0} photos", [row.photo_count])}</span>`);
 			}

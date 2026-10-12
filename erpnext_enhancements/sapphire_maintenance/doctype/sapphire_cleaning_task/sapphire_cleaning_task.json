@@ -8,6 +8,7 @@
   "serial_no",
   "task",
   "is_done",
+  "not_applicable",
   "is_mandatory",
   "notes",
   "photo"
@@ -52,7 +53,15 @@
   },
   {
    "default": "0",
-   "description": "Submit is blocked while this task is neither done nor annotated. Copied from the template section item.",
+   "description": "Not needed on this visit, such as a winter-only task in October. The customer's report says N/A instead of Not done.",
+   "fieldname": "not_applicable",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "N/A"
+  },
+  {
+   "default": "0",
+   "description": "Submit is blocked while this task is not done, not marked N/A and has no note. Copied from the template section item.",
    "fieldname": "is_mandatory",
    "fieldtype": "Check",
    "hidden": 1,
@@ -62,7 +71,9 @@
   {
    "fieldname": "notes",
    "fieldtype": "Data",
-   "label": "Notes"
+   "label": "Notes",
+   "description": "Why it was not done, or anything worth recording. The Visit Wizard asks for it at wrap-up for a task left not done.",
+   "in_list_view": 1
   },
   {
    "description": "Before/after photo of the task.",
@@ -73,7 +84,7 @@
  ],
  "istable": 1,
  "editable_grid": 1,
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-10-12 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Cleaning Task",

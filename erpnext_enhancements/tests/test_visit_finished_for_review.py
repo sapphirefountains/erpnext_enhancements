@@ -17,7 +17,8 @@ Review. Pinned here, through the real ``validate`` and ``before_submit``:
 * the patch dates visits already waiting, from when they went for review.
 
 And, v1.597.0: the name a visit is given (``PRJ-00179-2026-V001``, the controller's ``autoname``)
-and the check that its fountain photo was taken on it.
+and the check that its fountain photo was taken on it. v1.598.0: a cleaning task's three states
+(done, N/A, not done with a reason) in the record's own rules.
 
 Stubs a minimal ``frappe`` in ``setUpModule``; runs the real controller and patch.
 
@@ -224,6 +225,7 @@ def setUpModule():
 	utils.flt = lambda v, *a: float(v or 0)
 	utils.getdate = _getdate
 	utils.nowdate = lambda: str(STATE["today"])
+	utils.escape_html = lambda text: text
 	utils.now_datetime = lambda: STATE["now"]
 	frappe.utils = utils
 
@@ -553,6 +555,56 @@ class TestTheFountainPhoto(unittest.TestCase):
 		doc = _visit(changed=("fountain_photo",), fountain_photo="/private/files/payroll.png")
 		with self.assertRaises(_Thrown):
 			doc.validate()
+
+
+class TestCleaningTaskStates(unittest.TestCase):
+	"""v1.598.0 (D2): done, N/A, or not done with a note saying why. Lisa, on the Myers report:
+	"It only states that one cartridge wasn't cleaned out; why wasn't it?"
+	"""
+
+	#: The same table as the wizard harness's "the cleaning-task rule matches" test.
+	CASES = [
+		({"is_done": 1, "not_applicable": 0, "notes": ""}, "done", True),
+		({"is_done": 0, "not_applicable": 1, "notes": ""}, "na", True),
+		({"is_done": 1, "not_applicable": 1, "notes": ""}, "done", True),
+		({"is_done": 0, "not_applicable": 0, "notes": "Pump off"}, "open", True),
+		({"is_done": 0, "not_applicable": 0, "notes": "   "}, "open", False),
+		({"is_done": 0, "not_applicable": 0, "notes": None}, "open", False),
+	]
+
+	def setUp(self):
+		_reset()
+
+	def test_the_rule(self):
+		from erpnext_enhancements.sapphire_maintenance import task_rules
+
+		for row, state, answered in self.CASES:
+			with self.subTest(row=row):
+				self.assertEqual(task_rules.task_state(row), state)
+				self.assertEqual(task_rules.task_answered(row), answered)
+				self.assertEqual(task_rules.task_unexplained(row), not answered)
+
+	def test_done_wins_when_a_task_is_ticked_both_ways(self):
+		"""The Desk grid shows both boxes; the wizard clears one when the other is set."""
+		row = _Dict(task="Heater check", is_done=1, not_applicable=1, notes="")
+		doc = _visit(changed=(), cleaning_tasks=[row])
+		doc.validate()
+		self.assertEqual((row.is_done, row.not_applicable), (1, 0))
+
+	def test_na_and_a_reason_count_towards_completion(self):
+		doc = _visit(
+			cleaning_tasks=[_Dict(is_done=0, not_applicable=1), _Dict(notes="Pump off"), _Dict(notes="  ")]
+		)
+		self.assertEqual(record_module.compute_completion_percent(doc), round(2 / 3 * 100, 1))
+
+	def test_a_required_task_is_answered_by_na_or_a_reason_but_not_by_nothing(self):
+		for row in (_Dict(not_applicable=1), _Dict(notes="Pump off")):
+			with self.subTest(row=row):
+				row.update(task="Heater check", is_mandatory=1)
+				_visit(cleaning_tasks=[row])._validate_mandatory_rows()
+		blank = _Dict(task="Heater check", is_mandatory=1, notes=" ")
+		with self.assertRaises(_Thrown):
+			_visit(cleaning_tasks=[blank])._validate_mandatory_rows()
 
 
 if __name__ == "__main__":

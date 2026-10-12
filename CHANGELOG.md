@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.598.0] - 2026-10-12
+
+### Added
+
+D2 of Phase D (TASK-2026-02487), from Lisa's review of the Myers visit report on 2026-10-12:
+"It only states that one cartridge wasn't cleaned out; why wasn't it?" The report had a Notes
+column all along, but in the Visit Wizard a cleaning task was a single tap with nowhere to
+type. And "Heater Check (winter only)" printed "Not done" in October.
+
+- **A cleaning task is Done, N/A or Not done, and says why.**
+  - A new `not_applicable` check (N/A) on Sapphire Cleaning Task, for a task this visit does not
+    need. The record's `validate` settles a task ticked both ways as done, because the Desk grid
+    shows both boxes.
+  - In the wizard each task card is tapped for done. It has an N/A button, a note field whose
+    prompt changes with the state ("Not done? Say why"), and a photo button for the row's
+    existing `photo` field. Done and N/A each clear the other.
+- **Wrap-up asks why.** A "Tasks not done" card lists every task, on every water feature of a
+  site visit, that is not done, not N/A and has no note, each with a "Why wasn't it done?"
+  field. The reason is the task's own note.
+- **Finish asks once, never blocks.** Finishing with a task still unexplained asks "1 task is
+  not done, with no reason given. … Finish anyway?". The visit still goes for review, where the
+  office sees it.
+- **The report, the review email and the Visit Review page say it.**
+  - The report's cleaning table has a Status column (Done / N/A / Not done) beside the note.
+    The portal view says N/A too.
+  - The review email writes "No reason given" in the note of a task left unexplained, and
+    warns "1 task not done, with no reason given: …". A required task is named once, as a
+    required item, not twice.
+  - The Visit Review queue shows a "Not done, no reason" chip.
+- **One rule for "answered".** A task counts as answered when it is done, N/A or has a note,
+  for completion, the required-task check, the review email and the wizard alike. A note of
+  only spaces no longer counts. The rule lives in `sapphire_maintenance/task_rules.py`, and the
+  wizard's `vz_task_state` mirrors it. `save_visit` accepts `not_applicable`.
+
+### Tests
+
+- `test_visit_finished_for_review`: the rule on a table of cases, done winning over N/A,
+  completion, and a required task answered by N/A or a reason but not by nothing.
+- The wizard harness checks the same table of cases against the JavaScript copy. It also
+  drives a task card (done then N/A, a note, saved), the wrap-up prompt across both water
+  features (an N/A task is not asked about), and the Finish nudge (asked once, nothing sent
+  until answered, straight through once a reason is given).
+- `test_visit_review_digest`: Status, N/A, "No reason given", the warning, a required task
+  named once, and the queue chip. `test_print_style`: the report's Status column.
+
 ## [1.597.0] - 2026-10-12
 
 ### Added

@@ -36,7 +36,7 @@ function ee_tables_pristine(frm) {
 	return (
 		(frm.doc.maintenance_results || []).every((r) => !r.answer && !r.selection) &&
 		(frm.doc.chemistry_readings || []).every((r) => !r.reading_value && !r.notes) &&
-		(frm.doc.cleaning_tasks || []).every((r) => !r.is_done && !r.notes) &&
+		(frm.doc.cleaning_tasks || []).every((r) => !r.is_done && !r.not_applicable && !r.notes) &&
 		(frm.doc.consumables || []).every((r) => !r.qty)
 	);
 }

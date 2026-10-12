@@ -503,9 +503,12 @@ function installFrappe(browser) {
 			// A function scope per load, so each test boots a fresh copy of the page — frappe
 			// evaluates a page script once per page load, the same thing.
 			const source = fs.readFileSync(spec.file, "utf8");
-			vm.runInThisContext(`(function () {${source}\n;globalThis.__klass_${spec.klass} = ${spec.klass};\n})();`, {
-				filename: spec.file,
-			});
+			// The cleaning-task rule (v1.598.0) is exported too, to check it against task_rules.py.
+			vm.runInThisContext(
+				`(function () {${source}\n;globalThis.__klass_${spec.klass} = ${spec.klass};\n` +
+					`globalThis.__vz_tasks = typeof vz_task_state === "function" ? { vz_task_state, vz_task_unexplained, vz_row_answered } : null;\n})();`,
+				{ filename: spec.file }
+			);
 			patchRender(name, globalThis[`__klass_${spec.klass}`]);
 			if (wrapper.on_page_load) wrapper.on_page_load(wrapper);
 		}
@@ -1868,6 +1871,83 @@ async function visitWizardKeptSuite() {
 			p.net.uploads.map((upload) => upload.fieldname),
 			["fountain_photo", "fountain_photo"]
 		);
+	});
+
+	await test("the cleaning-task rule matches sapphire_maintenance/task_rules.py, case for case", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const { vz_task_state, vz_task_unexplained, vz_row_answered } = globalThis.__vz_tasks;
+		// The same table as TestCleaningTaskStates.CASES in tests/test_visit_finished_for_review.py.
+		const cases = [
+			[{ is_done: 1, not_applicable: 0, notes: "" }, "done", true],
+			[{ is_done: 0, not_applicable: 1, notes: "" }, "na", true],
+			[{ is_done: 1, not_applicable: 1, notes: "" }, "done", true],
+			[{ is_done: 0, not_applicable: 0, notes: "Pump off" }, "open", true],
+			[{ is_done: 0, not_applicable: 0, notes: "   " }, "open", false],
+			[{ is_done: 0, not_applicable: 0, notes: null }, "open", false],
+		];
+		for (const [row, state, answered] of cases) {
+			assert.equal(vz_task_state(row), state, JSON.stringify(row));
+			assert.equal(vz_row_answered("cleaning_tasks", row), answered, JSON.stringify(row));
+			assert.equal(vz_task_unexplained(row), !answered, JSON.stringify(row));
+		}
+	});
+
+	await test("cleaning tasks (v1.598.0): done, N/A or a note; wrap-up asks why; Finish nudges, never blocks", async () => {
+		const db = visitServer({
+			"MNT-1": visit({
+				cleaning_tasks: [
+					{ name: "t1", serial_no: "SN-A", task: "Heater check" },
+					{ name: "t2", serial_no: "SN-B", task: "Clean cartridge filters" },
+				],
+			}),
+		});
+		const on = (text, selector, event = "click") => {
+			const found = clicks
+				.filter((c) => c.event === event && c.src.includes(text) && c.src.endsWith(selector))
+				.pop();
+			assert.ok(found, `no ${event} on ${selector} showing "${text}"`);
+			return found.fn;
+		};
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks/SN-A");
+		await settle();
+		assert.equal(last().step, "tasks");
+		// render() is the recorder, so the card and the wrap-up prompt are drawn here.
+		const w = wizard();
+		w.$wrap = $stub("wrap");
+		w.task_card(w.doc.cleaning_tasks[0]);
+		// Done, then N/A: one clears the other. Then a note.
+		on("Heater check", ".vz-check-card")({});
+		assert.equal(wizard().doc.cleaning_tasks[0].is_done, 1);
+		on("Heater check", ".vz-na-btn")({ stopPropagation() {} });
+		on("Heater check", ".vz-row-extra input", "change")({ target: { value: "Winter only" } });
+		await tick(10000);
+		const t1 = db["MNT-1"].cleaning_tasks[0];
+		assert.deepEqual([t1.is_done, t1.not_applicable, t1.notes], [0, 1, "Winter only"]);
+
+		// Wrap-up asks about the other fountain's task, left not done with nothing said.
+		w.render_not_done();
+		const asking = clicks.filter((c) => c.event === "change" && c.src.includes("Why wasn't it done?"));
+		assert.ok(asking.some((c) => c.src.includes("Clean cartridge filters")), "the other tab's task is listed");
+		assert.ok(!asking.some((c) => c.src.includes("Heater check")), "an N/A task is not asked about");
+
+		// Finish with it unexplained: asked once, and nothing is sent until the answer.
+		const asked = [];
+		F.confirm = (message) => asked.push(message);
+		wizard().finish();
+		await settle();
+		assert.equal(asked.length, 1);
+		assert.ok(asked[0].includes("1 task is not done"), asked[0]);
+		assert.equal(server.sent("finish_visit").length, 0);
+
+		// A reason given: Finish goes straight through, and the reason is on the visit.
+		on("Why wasn't it done?", "input", "change")({ target: { value: "Pump off; told the manager" } });
+		wizard().finish();
+		await settle();
+		assert.equal(asked.length, 1, "not asked again");
+		assert.equal(server.sent("finish_visit").length, 1);
+		assert.equal(db["MNT-1"].cleaning_tasks[1].notes, "Pump off; told the manager");
 	});
 
 	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {
