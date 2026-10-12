@@ -147,6 +147,8 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
 
 **Stock:** weekly *truck restock suggestions* (Settings toggle + source warehouse) draft one Material Transfer request per technician vehicle warehouse, replenishing the past week's consumption (`tasks.suggest_truck_restocks`).
 
+**Two switches, both off (Nik, 2026-10-12, before the first approval):** ERPNext Enhancements Settings → Maintenance → **Draft Invoices from Approved Visits** (off: billing stays in QuickBooks until the cutover, and `create_sales_invoice` does nothing) and **Chemicals Used Account** (empty: `create_stock_entry` issues no stock, so nothing posts, and comments on the visit; a set but unusable account fails the step rather than falling back to Stock Adjustment). Once the account is set, re-running a visit's submission issues its chemicals, because every step is idempotent. On prod the chemicals are stocked in Inventory Room - SF, and every contract fountain points there (data fix, 2026-10-12).
+
 **On submit**, `SapphireMaintenanceRecord.on_submit` enqueues [`api/maintenance_workflow.py::process_maintenance_submission`](../api/README.md) (background, "default" queue) which runs isolated steps:
 
 - `create_stock_entry` — Material Issue for consumables with qty > 0 (untouched dosing prefills don't move stock); per-row warehouse falls back feature store → technician's vehicle (`Employee.custom_default_vehicle_warehouse`) → settings default.

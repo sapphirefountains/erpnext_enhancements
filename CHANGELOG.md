@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.593.0] - 2026-10-12
+
+### Added
+
+- **Two switches on approving a maintenance visit, both off** (Nik, 2026-10-12, after the
+  pre-flight of the first approval found that no visit had ever been approved on prod).
+  - **Draft Invoices from Approved Visits** (ERPNext Enhancements Settings → Maintenance,
+    `maintenance_invoicing_enabled`, default off). Nik: "Keep billing outside of ERPNext until
+    we switch over from QBO". While it is off, `create_sales_invoice` does nothing and leaves
+    no comment. Before this, approval drafted no invoice only by accident: none of the 17
+    contracts has a Sales Order, which that step needs. Adding one would have started billing
+    in ERPNext in parallel with QuickBooks. Turn it on at the cutover. Monthly, Quarterly and
+    Annual contracts stay under Recurring Maintenance Billing, which is also off.
+  - **Chemicals Used Account** (`maintenance_chemicals_account`, empty). Nik: "Don't post to
+    any account yet, but make it configurable so I can add it when I have the information".
+    While it is empty, `create_stock_entry` issues no stock and says so on the visit. With
+    perpetual inventory on, issuing stock is a posting. Before this it posted to whatever the
+    account resolver found, which on prod is the lone `5119 - Stock Adjustment` account. Once
+    set, the account goes to the resolver as its configured account. A set but unusable account
+    (a group, disabled, a Stock account, another company's) fails the step with a message,
+    instead of falling back to Stock Adjustment, which is the posting the setting exists to
+    prevent.
+  - Maintenance stopped using Inventory Scanner Settings' *Parts Taken* account as its
+    configured account; it has its own now.
+  - Visits approved before the account is set can have their chemicals issued later by
+    re-running their submission, since every step is idempotent per visit.
+  - Both new fields read as off on an existing site, which is the falsy reading of a new
+    field on a Single, so no backfill patch is needed.
+  - `tests/test_visit_approval_switches.py`, 8 bench-free tests, with its own CI step. Checked
+    by mutation: forcing billing on fails the "off does nothing" test.
+
+### Changed (prod data, 2026-10-12, through the AI-gated tools, not this release)
+
+- Every contract fountain's chemical warehouse (24 rows on 17 contracts), and the chemical
+  lines on the 6 open visits that had them (28 rows), now point at **Inventory Room - SF**,
+  where the maintenance chemicals are actually stocked. They pointed at *Stores - SF*, which
+  holds none, so every stock issue would have failed. Nik: "use their current location for all
+  of them right now".
+
 ## [1.592.1] - 2026-10-12
 
 ### Fixed

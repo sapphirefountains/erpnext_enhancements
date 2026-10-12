@@ -11,6 +11,11 @@ others:
         4. Draft Sales Invoice (maintenance fee + consumables) — only when the
            contract bills "Per Visit".
 
+Two of those are switched in ERPNext Enhancements Settings → Maintenance, and both ship
+off (Nik, 2026-10-12): the Stock Entry needs a **Chemicals Used Account** (none set:
+nothing is issued or posted), and the Sales Invoice needs **Draft Invoices from Approved
+Visits** (off: billing stays in QuickBooks until the cutover).
+
 It also adds a Comment listing any out-of-range chemistry readings (the
 supervisor email itself is the "Maintenance Reading Out of Range" Notification
 fixture, firing on submit off ``has_out_of_range_readings``).
@@ -167,7 +172,9 @@ def create_stock_entry(doc):
         doc: The Sapphire Maintenance Record document.
 
     No-op if no consumable row has qty > 0 (dosing sections prefill rows at
-    qty 0; untouched chemicals must not move stock). Company is taken from the
+    qty 0; untouched chemicals must not move stock). Also a no-op, with a Comment,
+    while ERPNext Enhancements Settings → Chemicals Used Account is empty: nothing is
+    issued or posted until finance has chosen the account (v1.593.0). Company is taken from the
     linked Project (falling back to the global default). Inserts and submits a
     Stock Entry and adds a Comment linking to it. May raise on stock errors
     (e.g. insufficient quantity) — caught by the per-step handler in the caller.
@@ -188,13 +195,24 @@ def create_stock_entry(doc):
       ``cost_center`` stays blank so ERPNext fills it (Project → Item → Company); the
       header ``project`` is set so the first step of that chain can apply.
     """
-    from erpnext_enhancements.inventory_enhancements.doctype.inventory_scanner_settings.inventory_scanner_settings import (
-        get_settings,
-    )
-    from erpnext_enhancements.inventory_enhancements.stock_accounts import difference_account
+    from erpnext_enhancements.inventory_enhancements.stock_accounts import difference_account, usable_account
 
     rows = build_stock_entry_rows(doc)
     if not rows:
+        return
+
+    # No account, no stock movement (Nik, 2026-10-12: "Don't post to any account yet, but make
+    # it configurable so I can add it when I have the information"). With perpetual inventory
+    # on, issuing stock IS a posting, so the whole step waits for the account. It used to post
+    # to whatever `difference_account` found, which on prod is the lone 5119 Stock Adjustment
+    # account. The comment marks the visit so its chemicals can be issued once the account is
+    # set: this step is idempotent per record, so re-running the submission is enough.
+    account = frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_chemicals_account")
+    if not account:
+        doc.add_comment("Comment", _(
+            "Chemicals not issued from stock: no Chemicals Used Account is set in ERPNext "
+            "Enhancements Settings, so nothing was posted."
+        ))
         return
 
     # Idempotent: a re-run (manual re-enqueue, or the hourly sweep after a deploy flushed
@@ -215,9 +233,16 @@ def create_stock_entry(doc):
     if doc.project:
         stock_entry.project = doc.project
 
-    configured = get_settings().get("take_expense_account")
+    # A set but unusable account (a group, disabled, a Stock account, another company's) is an
+    # error, never a reason to fall back: the resolver's fallbacks end at 5119, which is exactly
+    # the posting the setting exists to prevent. The step fails and says why.
+    if not usable_account(account, stock_entry.company):
+        frappe.throw(_(
+            "The Chemicals Used Account {0} cannot take this posting for {1}. It must be an "
+            "enabled ledger of that company and not a Stock account."
+        ).format(account, stock_entry.company))
     for row in rows:
-        row["expense_account"] = difference_account(stock_entry.company, row["item_code"], configured)
+        row["expense_account"] = difference_account(stock_entry.company, row["item_code"], account)
         stock_entry.append("items", row)
 
     stock_entry.insert()
@@ -451,12 +476,22 @@ def create_sales_invoice(doc):
     Generates a draft Sales Invoice for the Maintenance Record.
     Includes base maintenance fee and consumed consumables (qty > 0).
 
+    Does nothing at all while ERPNext Enhancements Settings → Draft Invoices from
+    Approved Visits is off (the default: billing is in QuickBooks until the cutover).
     Skipped (with a Comment) when the contract's invoicing frequency is not
     "Per Visit" — monthly/quarterly/annual billing runs off the Sales Order
     instead. The parent Sales Order is found via the contract first, then the
     legacy serial-no / project lookups. No item codes are hardcoded: the fee
     item and services group come from ERPNext Enhancements Settings.
     """
+    from frappe.utils import cint
+
+    # Billing stays outside ERPNext until the QuickBooks cutover (Nik, 2026-10-12). Quietly:
+    # every approved visit would otherwise carry a note saying it was not billed here, which
+    # is true of all of them and so says nothing.
+    if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_invoicing_enabled")):
+        return
+
     # 0. Respect the contract's invoicing cadence
     invoicing_frequency = "Per Visit"
     contract_so = None
