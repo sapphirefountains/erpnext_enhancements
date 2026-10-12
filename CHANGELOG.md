@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.592.0] - 2026-10-12
+
+### Added
+
+- **A visit can be filled in for an earlier day** (Nik: "Sometimes the workers might forget a
+  visit wizard form so they need to be able to historically submit a draft for review that
+  isn't on the same day as the day they fill it out").
+  - **The Visit Wizard's Wrap-up step has a Date of visit picker.** It shows today for a visit
+    done on the day, and accepts any day back to 60 days. When a scheduled visit's date has
+    passed, it suggests that day. A visit dated in the past shows a banner on every step.
+  - `save_visit` now writes `visit_date`. It is checked by `checked_visit_date`, the same rule
+    Log a visit already used: no future date, at most `MAX_BACKFILL_DAYS` back. A reviewer can
+    still set any date on the desk form.
+  - **Clock times from another day are dropped when the date moves.** The wizard cannot enter
+    clock times; only the kiosk autofill can have put them there, from whatever interval was
+    running when the form was opened. Kept, they would put Tuesday's labor on today's
+    timesheet. The technician is told, and the office can enter the real times on the desk.
+
+### Changed
+
+- **"Sapphire Maintenance" is called "Maintenance" on the home page and its own page** (Nik:
+  "can we call it just Maintenance instead of Sapphire Maintenance so people can find it on
+  the homepage easier").
+  - Only the words change: the tile's label, the workspace page title and the legacy Workspace
+    Sidebar title. The Desktop Icon and Workspace docnames, the module and
+    `/desk/sapphire-maintenance` are unchanged, so every link and bookmark still works.
+  - `setup/desktop_icon_map.DISPLAY_LABELS` holds the mapping. The after-migrate sync
+    (`desktop_icons._sync_display_labels`) applies it and is a no-op once applied.
+  - **Saved home layouts get the module as well as the label.** In v16.50 a tile finds its
+    sidebar by `module`, falling back to its label. A saved layout is a frozen copy with no
+    `module`, and ERPNext ships a module called Maintenance. A saved tile relabelled
+    "Maintenance" without it would have opened ERPNext's maintenance pages. Four of the six
+    saved layouts on prod hold this tile.
+
+### Fixed
+
+- **"No permission for ERPNext Enhancements Settings" no longer pops up for everyone but a
+  System Manager** (Nik: "whenever someone tries to search, they get a warning or error saying
+  they don't have permissions for ERPNext Enhancements").
+  - Opening a Maintenance Record, Maintenance Section, Maintenance Contract or Sales Order form,
+    or the Fountain Move list's store picker, read one settings value from the browser with
+    `frappe.db.get_single_value` or `frappe.client.get`.
+  - Both refuse a user without read on the settings, which is a System Manager doctype. v16.50
+    says "No permission for ERPNext Enhancements Settings". That is what people saw on opening
+    a record they had just searched for.
+  - The three values those screens need now ride in the boot payload
+    (`boot._settings_for_forms`): the consumables Item Group, the water-feature Item and the
+    enabled store names. None is sensitive, and the server-side code that acts on them still
+    reads the settings itself.
+  - `tests/test_settings_not_read_from_browser.py` fails the build if a desk script reads the
+    settings from the browser again.
+- **Log a visit no longer drops the chosen date** when the site already has an open draft. It
+  returned that draft unchanged, so a technician filling in a form the scheduler had drafted
+  could not say which day the work was done. A draft with no date now takes the chosen one
+  (`_date_existing_draft`). A draft that already has a date keeps it, and so does one waiting
+  for review, which a technician may not edit.
+
 ## [1.591.0] - 2026-10-12
 
 ### Added

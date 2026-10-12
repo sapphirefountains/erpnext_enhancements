@@ -109,6 +109,7 @@ const VZ_STYLE = `
 .vz-nav button.vz-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;}
 .vz-nav button:disabled{opacity:.45;cursor:not-allowed;}
 .vz-textarea{width:100%;min-height:110px;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
+.vz-date{width:100%;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:17px;min-height:48px;}
 .vz-sig{width:100%;height:160px;border:1px dashed var(--border-color);border-radius:10px;background:var(--card-bg);touch-action:none;}
 .vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:15px;cursor:pointer;padding:6px 0;}
 .vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;color:var(--text-color);}
@@ -137,6 +138,10 @@ const VZ_STYLE = `
 // "<ul><li><b>" technicians were reading in the guidance panels. Parse it instead
 // and strip only what could execute. DOMParser neither runs scripts nor fetches
 // resources, so nothing in the stored string can fire while we clean it.
+// How far back a visit may be dated: api/maintenance_visit.py MAX_BACKFILL_DAYS, which the
+// server enforces (checked_visit_date). Mirrored only to bound the date picker.
+const VZ_MAX_BACKFILL_DAYS = 60;
+
 const VZ_STRIP_TAGS = "script,style,iframe,object,embed,link,meta,base,form,input,button";
 const VZ_URL_ATTRS = ["href", "src", "xlink:href", "action", "formaction"];
 
@@ -675,7 +680,9 @@ class VisitWizard {
 								if (!name) throw new Error("no record returned");
 								if (site.open_draft && site.open_draft === name) {
 									frappe.show_alert({
-										message: __("This site already had an open form — opening that one."),
+										message: __(
+											"This site already had an open form — opening that one. Check its date on the Wrap-up step."
+										),
 										indicator: "blue",
 									});
 								}
@@ -1001,6 +1008,14 @@ class VisitWizard {
 					return;
 				}
 				this.apply_state(state);
+				if (state.clock_cleared) {
+					frappe.show_alert({
+						message: __(
+							"Clock times from another day were removed from this visit. The office can enter the real times."
+						),
+						indicator: "orange",
+					});
+				}
 				this.refresh_reading_flags();
 				this._retry_attempt = 0;
 				this.set_save_state(this.has_dirty() ? "pending" : "saved");
@@ -1199,6 +1214,15 @@ class VisitWizard {
 		} else if (this.doc.workflow_state === "Pending Review") {
 			this.$wrap.append(
 				`<div class="vz-banner vz-banner-blue">${__("This visit is pending review.")}</div>`
+			);
+		}
+		// A form filled in for an earlier day says so on every step, so nobody sends it for
+		// review believing it is today's.
+		if (!readonly && this.doc.visit_date && this.doc.visit_date < frappe.datetime.get_today()) {
+			this.$wrap.append(
+				`<div class="vz-banner vz-banner-blue">${__("Filling in the visit of {0}. Change the date on the Wrap-up step.", [
+					frappe.utils.escape_html(frappe.datetime.str_to_user(this.doc.visit_date)),
+				])}</div>`
 			);
 		}
 
@@ -2054,6 +2078,8 @@ class VisitWizard {
 		};
 		this.render_help(wrapup_meta, __("Wrapping up"));
 
+		this.render_visit_date();
+
 		const $notes_card = $(`
 			<div class="vz-card">
 				<div class="vz-card-title">${__("Visit Notes")}</div>
@@ -2077,6 +2103,44 @@ class VisitWizard {
 		`);
 		this.setup_signature($sig_card);
 		this.$wrap.append($sig_card);
+	}
+
+	// The day the work was done (Nik, 2026-10-12: workers "need to be able to historically
+	// submit a draft for review that isn't on the same day as the day they fill it out").
+	// Empty means the day it is submitted, which is what a visit filled in on the day wants.
+	// The server applies the Log a visit rule (checked_visit_date) and drops clock times
+	// from another day, which only the kiosk autofill can have put there.
+	render_visit_date() {
+		const today = frappe.datetime.get_today();
+		const earliest = frappe.datetime.add_days(today, -VZ_MAX_BACKFILL_DAYS);
+		const scheduled = this.doc.scheduled_visit_date;
+		const hint =
+			!this.doc.visit_date && scheduled && scheduled < today
+				? __("This visit was scheduled for {0}. If you did the work then, pick that day.", [
+						frappe.datetime.str_to_user(scheduled),
+					])
+				: __("Leave it as today unless you are filling in for an earlier day.");
+		const $card = $(`
+			<div class="vz-card">
+				<div class="vz-card-title">${__("Date of visit")}</div>
+				<div class="vz-card-sub">${frappe.utils.escape_html(hint)}</div>
+				<input class="vz-date" type="date" min="${earliest}" max="${today}">
+			</div>
+		`);
+		const $input = $card.find("input").val(this.doc.visit_date || today);
+		if (this.doc.docstatus !== 0) $input.prop("disabled", true);
+		$input.on("change", () => {
+			const value = $input.val();
+			if (value && (value > today || value < earliest)) {
+				frappe.msgprint(
+					__("Pick a day between {0} and today.", [frappe.datetime.str_to_user(earliest)])
+				);
+				$input.val(this.doc.visit_date || today);
+				return;
+			}
+			this.set_field("visit_date", value || null);
+		});
+		this.$wrap.append($card);
 	}
 
 	setup_dictation($card) {

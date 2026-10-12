@@ -24,7 +24,7 @@ from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_reco
 # Wizard-writable fields. Anything else in a patch is silently dropped — the
 # wizard never edits identity/scheduling fields, so the API doesn't accept
 # them either.
-ALLOWED_PARENT_FIELDS = {"visit_notes", "safety_acknowledged", "client_sign_off"}
+ALLOWED_PARENT_FIELDS = {"visit_notes", "safety_acknowledged", "client_sign_off", "visit_date"}
 ALLOWED_ROW_FIELDS = {
     "maintenance_results": {"selection", "answer", "other_details", "photo"},
     "chemistry_readings": {"reading_value", "notes", "photo"},
@@ -214,6 +214,53 @@ def _reassign_todo(doc, prior):
         frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (add) failed")
 
 
+def checked_visit_date(value):
+    """The day a visit's work was done, checked. Today when ``value`` is empty.
+
+    Never in the future, and at most :data:`MAX_BACKFILL_DAYS` back: the same rule whether
+    the visit is started by Log a visit (:func:`create_visit`) or an existing draft is
+    re-dated in the wizard (:func:`save_visit`). A reviewer can still set any date on the
+    desk form, which does not come through here.
+    """
+    from frappe.utils import add_days, getdate, nowdate
+
+    today = getdate(nowdate())
+    day = getdate(value) if value else today
+    if day > today:
+        frappe.throw(_("A visit cannot be logged for a future date."))
+    if day < add_days(today, -MAX_BACKFILL_DAYS):
+        frappe.throw(
+            _("A visit can only be backdated {0} days. Check the date, or ask a supervisor to enter it.").format(
+                MAX_BACKFILL_DAYS
+            )
+        )
+    return day
+
+
+def _clear_clock_from_another_day(doc, day):
+    """Drop clock times that fall on a different day from the visit's new date. True if any did.
+
+    The wizard cannot enter clock times; the only way a draft gets them is the kiosk autofill
+    (``_autofill_clock_in``), which stamps whatever interval is running when the form is
+    opened. A technician filling in last Tuesday's form today, while clocked in somewhere,
+    would otherwise carry today's times onto Tuesday's visit, and the timesheet built from
+    them at submit would put the labor on the wrong day. With the times cleared a backfilled
+    visit makes no timesheet, as one logged through Log a visit never did; the office enters
+    the real times on the desk form if it wants one.
+    """
+    from frappe.utils import get_datetime, getdate
+
+    if not day:
+        return False
+    stamps = [doc.get("clock_in_time"), doc.get("clock_out_time")]
+    if not any(stamps) or all(getdate(get_datetime(stamp)) == getdate(day) for stamp in stamps if stamp):
+        return False
+    doc.clock_in_time = None
+    doc.clock_out_time = None
+    doc.paused_duration = 0
+    return True
+
+
 def _check_not_stale(doc, modified):
     """Optimistic lock: reject writes based on a version someone else replaced."""
     if modified and str(doc.modified) != str(modified):
@@ -232,6 +279,7 @@ def _wizard_state(doc):
         "workflow_state": doc.get("workflow_state"),
         "completion_percent": doc.completion_percent,
         "has_out_of_range_readings": doc.has_out_of_range_readings,
+        "visit_date": str(doc.visit_date) if doc.get("visit_date") else None,
         "readings": [
             {"name": row.name, "out_of_range": row.out_of_range}
             for row in doc.get("chemistry_readings", [])
@@ -484,9 +532,16 @@ def save_visit(record, patch, modified=None):
 
     patch = frappe.parse_json(patch) or {}
 
+    clock_cleared = False
     for field, value in (patch.get("fields") or {}).items():
-        if field in ALLOWED_PARENT_FIELDS:
-            doc.set(field, value)
+        if field not in ALLOWED_PARENT_FIELDS:
+            continue
+        if field == "visit_date":
+            # Filling in a form for an earlier day (Nik, 2026-10-12: "Sometimes the workers
+            # might forget a visit wizard form"). Empty means "the day it is submitted".
+            value = checked_visit_date(value) if value else None
+            clock_cleared = _clear_clock_from_another_day(doc, value) or clock_cleared
+        doc.set(field, value)
 
     added = {}
     rows_by_name = {row.name: row for table in ALLOWED_ROW_FIELDS for row in doc.get(table, [])}
@@ -512,6 +567,7 @@ def save_visit(record, patch, modified=None):
     state["added"] = {
         table: [row.name for row in rows] for table, rows in added.items()
     }
+    state["clock_cleared"] = clock_cleared
     return state
 
 
@@ -797,6 +853,37 @@ def get_loggable_sites():
     return entries
 
 
+def _date_existing_draft(name, visit_date):
+    """Give the site's open draft the date the technician chose, if it has none yet.
+
+    Until v1.592.0 :func:`create_visit` returned the open draft and dropped the date picked in
+    Log a visit, so a technician filling in a form they forgot (the scheduler had already
+    drafted it) could not say which day the work was done (Nik, 2026-10-12). A draft that
+    already carries a date keeps it: that is somebody's answer, and the wizard's Wrap-up step
+    can change it. So does one past Draft, which a technician may not edit (the workflow gives
+    Pending Review to the Maintenance Reviewer).
+    """
+    try:
+        doc = frappe.get_doc("Sapphire Maintenance Record", name)
+        if doc.docstatus != 0 or doc.get("visit_date"):
+            return
+        if (doc.get("workflow_state") or "Draft") != "Draft":
+            return
+        if not frappe.has_permission(doc.doctype, ptype="write", doc=doc):
+            return
+        doc.visit_date = visit_date
+        _clear_clock_from_another_day(doc, visit_date)
+        doc.save()
+    except Exception:
+        # Dating the draft is a convenience; opening it is the point. A refusal here must not
+        # stop Log a visit handing the technician their form: the Wrap-up step can still set
+        # the date. Logged, because a draft that silently keeps no date is the bug this fixed.
+        try:
+            frappe.log_error(title="Log a visit could not date the open draft", message=frappe.get_traceback())
+        except Exception:
+            pass
+
+
 @frappe.whitelist()
 def create_visit(contract, serial_no=None, visit_date=None):
     """Start a visit record for a site on a chosen date — today, or backfilled.
@@ -812,30 +899,20 @@ def create_visit(contract, serial_no=None, visit_date=None):
     and wrong here: a backfilled form *is* the visit that was due, so it must
     advance the schedule — from ``visit_date``, not from the day it was typed in.
 
-    The site's open regular draft is returned as-is instead of creating a
-    duplicate, so two technicians tapping the same site converge on one record.
+    The site's open regular draft is returned instead of creating a duplicate, so
+    two technicians tapping the same site converge on one record. A draft with no
+    date yet takes the one chosen here (:func:`_date_existing_draft`).
     An open seasonal or other labelled draft is a different visit and is left
     alone (:func:`open_regular_draft`).
 
     Returns:
         str: the Sapphire Maintenance Record name (the wizard opens it).
     """
-    from frappe.utils import add_days, getdate, nowdate
-
     contract_doc = frappe.get_doc("Sapphire Maintenance Contract", contract)
     if contract_doc.status != "Active":
         frappe.throw(_("{0} is not an Active contract.").format(contract))
 
-    today = getdate(nowdate())
-    visit_date = getdate(visit_date) if visit_date else today
-    if visit_date > today:
-        frappe.throw(_("A visit cannot be logged for a future date."))
-    if visit_date < add_days(today, -MAX_BACKFILL_DAYS):
-        frappe.throw(
-            _("A visit can only be backdated {0} days. Check the date, or ask a supervisor to enter it.").format(
-                MAX_BACKFILL_DAYS
-            )
-        )
+    visit_date = checked_visit_date(visit_date)
 
     covered = [row.serial_no for row in contract_doc.covered_features]
     if not covered:
@@ -849,6 +926,7 @@ def create_visit(contract, serial_no=None, visit_date=None):
 
     existing = open_regular_draft(contract_doc.name)
     if existing:
+        _date_existing_draft(existing, visit_date)
         return existing
 
     record = frappe.new_doc("Sapphire Maintenance Record")

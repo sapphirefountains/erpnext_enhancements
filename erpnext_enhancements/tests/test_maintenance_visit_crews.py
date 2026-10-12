@@ -1317,5 +1317,130 @@ class TestAddCrew(unittest.TestCase):
 		self.assertIn('@frappe.whitelist(methods=["POST"])\ndef add_crew(', source)
 
 
+# ---------------------------------------------------------------------- backdating
+
+
+class TestFillingInAnEarlierDay(unittest.TestCase):
+	"""Nik, 2026-10-12: "Sometimes the workers might forget a visit wizard form so they need to be
+	able to historically submit a draft for review that isn't on the same day as the day they fill
+	it out." A draft the scheduler made could not be re-dated: the wizard would not write
+	``visit_date``, and Log a visit returned the site's open draft and dropped the chosen date."""
+
+	TUESDAY = D(2026, 10, 6)
+
+	def setUp(self):
+		_reset()
+
+	def _save(self, value, **record):
+		_record(**{"completion_percent": 0, "has_out_of_range_readings": 0, **record})
+		return visit.save_visit("SMR-1", json.dumps({"fields": {"visit_date": value}}))
+
+	def test_the_rule_is_today_or_up_to_sixty_days_back(self):
+		self.assertEqual(visit.checked_visit_date(None), TODAY)
+		self.assertEqual(visit.checked_visit_date("2026-10-06"), self.TUESDAY)
+		self.assertEqual(
+			visit.checked_visit_date(TODAY - datetime.timedelta(days=visit.MAX_BACKFILL_DAYS)),
+			TODAY - datetime.timedelta(days=visit.MAX_BACKFILL_DAYS),
+		)
+		for bad in ("2026-10-13", TODAY - datetime.timedelta(days=visit.MAX_BACKFILL_DAYS + 1)):
+			with self.subTest(day=bad), self.assertRaises(_Throw):
+				visit.checked_visit_date(bad)
+
+	def test_the_wizard_can_date_a_draft_to_an_earlier_day(self):
+		state = self._save("2026-10-06")
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["visit_date"], self.TUESDAY)
+		self.assertEqual(state["visit_date"], "2026-10-06")
+		self.assertFalse(state["clock_cleared"])
+		self.assertEqual(len(frappe.saved), 1)
+
+	def test_a_future_date_is_refused_and_nothing_is_saved(self):
+		with self.assertRaises(_Throw):
+			self._save("2026-10-20")
+		self.assertEqual(frappe.saved, [])
+
+	def test_clearing_the_date_means_the_day_it_is_submitted(self):
+		self._save("", visit_date=self.TUESDAY)
+		self.assertIsNone(frappe.docs[(RECORD, "SMR-1")]["visit_date"])
+
+	def test_todays_clock_times_do_not_follow_the_visit_to_tuesday(self):
+		"""The kiosk autofill stamps whatever interval is running when the form is opened. Kept,
+		they would put Tuesday's labor on today's timesheet."""
+		state = self._save(
+			"2026-10-06",
+			clock_in_time=datetime.datetime(2026, 10, 12, 8, 0),
+			clock_out_time=datetime.datetime(2026, 10, 12, 9, 30),
+			paused_duration=600,
+		)
+		doc = frappe.docs[(RECORD, "SMR-1")]
+		self.assertTrue(state["clock_cleared"])
+		self.assertEqual(
+			(doc["clock_in_time"], doc["clock_out_time"], doc["paused_duration"]), (None, None, 0)
+		)
+
+	def test_clock_times_on_the_visit_day_are_kept(self):
+		start = datetime.datetime(2026, 10, 6, 8, 0)
+		state = self._save("2026-10-06", clock_in_time=start, clock_out_time=None)
+		self.assertFalse(state["clock_cleared"])
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["clock_in_time"], start)
+
+	def _contract(self):
+		contract = _Doc(
+			name="SMC-1",
+			doctype="Sapphire Maintenance Contract",
+			status="Active",
+			customer="CUST-1",
+			project="PRJ-1",
+			covered_features=[_Doc(serial_no="SN-1")],
+		)
+		frappe.docs[("Sapphire Maintenance Contract", "SMC-1")] = contract
+		return contract
+
+	def _open_draft(self, **values):
+		doc = _record(maintenance_contract="SMC-1", visit_label=None, **values)
+		frappe.tables[RECORD] = [doc]
+		return doc
+
+	def test_log_a_visit_dates_the_open_draft_it_hands_back(self):
+		self._contract()
+		self._open_draft()
+		name = visit.create_visit("SMC-1", serial_no="SN-1", visit_date="2026-10-06")
+		self.assertEqual(name, "SMR-1")
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["visit_date"], self.TUESDAY)
+		self.assertEqual(len(frappe.saved), 1)
+
+	def test_a_draft_that_already_has_a_date_keeps_it(self):
+		self._contract()
+		self._open_draft(visit_date=D(2026, 10, 8))
+		visit.create_visit("SMC-1", serial_no="SN-1", visit_date="2026-10-06")
+		self.assertEqual(frappe.docs[(RECORD, "SMR-1")]["visit_date"], D(2026, 10, 8))
+		self.assertEqual(frappe.saved, [])
+
+	def test_a_draft_waiting_for_review_is_not_touched(self):
+		"""Pending Review belongs to the Maintenance Reviewer; a technician's save would be refused."""
+		self._contract()
+		self._open_draft(workflow_state="Pending Review")
+		visit.create_visit("SMC-1", serial_no="SN-1", visit_date="2026-10-06")
+		self.assertIsNone(frappe.docs[(RECORD, "SMR-1")]["visit_date"])
+		self.assertEqual(frappe.saved, [])
+
+	def test_a_failure_dating_the_draft_still_opens_it(self):
+		"""Dating is a convenience; handing the technician their form is the point."""
+		self._contract()
+		self._open_draft()
+
+		def _refuse(*args, **kwargs):
+			raise _PermissionError("not permitted")
+
+		frappe.has_permission = _refuse
+		self.assertEqual(visit.create_visit("SMC-1", serial_no="SN-1", visit_date="2026-10-06"), "SMR-1")
+		self.assertEqual(frappe.saved, [])
+		self.assertTrue(frappe.errors)
+
+	def test_the_wizard_shows_and_edits_the_date(self):
+		source = (APP / "sapphire_maintenance/page/visit_wizard/visit_wizard.js").read_text(encoding="utf-8")
+		self.assertIn('this.set_field("visit_date"', source)
+		self.assertIn("visit_date", visit.ALLOWED_PARENT_FIELDS)
+
+
 if __name__ == "__main__":
 	unittest.main()
