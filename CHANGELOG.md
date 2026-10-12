@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     behavior, no backfill patch is needed.
   - Showing the pop-up once per visit, rather than muting it, is still the intended end state
     and is not done here.
+  - `test_hr_availability.test_the_two_advisories_are_separate_hooks` now reads the record's
+    whole `validate` list. It used to read a fixed 1,400-character window of `hooks.py`, and the
+    one comment line this release adds above that list pushed the second hook out of the window
+    and failed the build.
 
 ## [1.589.0] - 2026-10-09
 
