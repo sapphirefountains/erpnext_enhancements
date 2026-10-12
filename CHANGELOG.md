@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.590.0] - 2026-10-12
+
+### Added
+
+- **A switch to silence the "Training not current" pop-up** (Nik: "Every page on the visit
+  wizard will pop up with a Training not current pop up … for now can you create a toggle to
+  silence the training warnings?").
+  - **Why it came back on every page:** the Visit Wizard autosaves the visit through
+    `maintenance_visit.save_visit` as the technician moves through it. Each save runs
+    `validate`, and `training/compliance.py` re-checks the technician and crew and calls
+    `msgprint` every time. The timeline comment and supervisor email were already deduped on a
+    fingerprint; the pop-up never was.
+  - **The switch:** Training Settings → Compliance → **Silence Pop-up Warning**
+    (`silence_uncertified_popup`). It mutes only the pop-up, on visits and Tasks alike. The
+    advisory still runs, the timeline note is still written once, and the supervisor is still
+    emailed, so nothing is lost from the record. **Warn on Uncertified Assignment** is still the
+    switch that turns the whole advisory off.
+  - **It ships unticked, so nothing changes until somebody ticks it.** It is phrased as
+    "silence" rather than "show" on purpose. A new field on a Single gets no `tabSingles` row on
+    an existing site and reads 0 whatever its JSON default says. A "show pop-up, default 1" field
+    would therefore have switched the pop-up off on deploy. Because the falsy reading is today's
+    behavior, no backfill patch is needed.
+  - Showing the pop-up once per visit, rather than muting it, is still the intended end state
+    and is not done here.
+
 ## [1.589.0] - 2026-10-09
 
 ### Added

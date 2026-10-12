@@ -20,8 +20,9 @@ raising helper does not propagate.
 Gated on ``Training Settings → warn_on_uncertified_dispatch``, off by default.
 
 The warning has two halves. The inline half is a ``msgprint`` the person saving
-sees. The durable half — timeline comment plus an email to the supervisor — is
-enqueued ``after_commit``, for two reasons: on a brand-new record the document
+sees, and ``silence_uncertified_popup`` mutes that half alone. The durable
+half — timeline comment plus an email to the supervisor — is enqueued
+``after_commit``, for two reasons: on a brand-new record the document
 does not exist yet at validate time (name is set before validate, the row is
 not), so a Comment pointing at it would fail its own link validation; and a slow
 SMTP must never sit inside a save.
@@ -198,7 +199,8 @@ def _check(doc, users):
 	if not findings:
 		return
 
-	_msgprint(findings)
+	if not _popup_silenced():
+		_msgprint(findings)
 
 	fingerprint = _fingerprint(findings)
 	frappe.enqueue(
@@ -409,6 +411,23 @@ def _lines(findings):
 		)
 		for f in findings
 	)
+
+
+def _popup_silenced():
+	"""``Training Settings → silence_uncertified_popup``: mute the inline half only.
+
+	The Visit Wizard autosaves the visit as a technician moves through it, and every
+	save re-runs ``validate``, so the pop-up came back on every page of one visit.
+	The durable half is deliberately untouched — the timeline note is still written
+	(once, deduped on the fingerprint) and the supervisor still hears — so muting
+	the pop-up costs the record nothing. ``warn_on_uncertified_dispatch`` is the
+	switch that turns the whole advisory off.
+
+	A switch that *silences* rather than one that *shows*, so its falsy reading is
+	today's behavior: a new field on a Single has no ``tabSingles`` row on an
+	existing site and reads 0 whatever its JSON default says.
+	"""
+	return is_enabled("silence_uncertified_popup")
 
 
 def _msgprint(findings):
