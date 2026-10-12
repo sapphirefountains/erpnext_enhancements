@@ -469,7 +469,8 @@ def _block(table, heading, rows, doc=None, previous=None):
 			[
 				row.get("task") or "",
 				status[task_rules.task_state(row)],
-				row.get("notes") or ("" if task_rules.task_answered(row) else _("No reason given")),
+				(row.get("notes") or "").strip()
+				or ("" if task_rules.task_answered(row) else _("No reason given")),
 			]
 			for row in rows
 		]

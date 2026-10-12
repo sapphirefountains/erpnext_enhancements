@@ -75,6 +75,15 @@ type. And "Heater Check (winter only)" printed "Not done" in October.
   for completion, the required-task check, the review email and the wizard alike. A note of
   only spaces no longer counts. The rule lives in `sapphire_maintenance/task_rules.py`, and the
   wizard's `vz_task_state` mirrors it. `save_visit` accepts `not_applicable`.
+- **Done and N/A are one answer everywhere** (found in review, before release).
+  - On the Desk form, ticking one box clears the other. Without that, the record's
+    "done wins" rule undid a reviewer's N/A on a task wrongly marked done, and the customer's
+    report said Done.
+  - In the wizard, every tap writes both fields. Answers kept on the phone judge the pair
+    together: if the office marked a task N/A while the phone kept Done, both halves are asked
+    about. Applying the undisputed half would have made the task both, which the server
+    settles as done over the office's N/A without asking.
+  - A note of only spaces is no reason in the email's table either, matching its warning.
 
 ### Tests
 
@@ -83,7 +92,8 @@ type. And "Heater Check (winter only)" printed "Not done" in October.
 - The wizard harness checks the same table of cases against the JavaScript copy. It also
   drives a task card (done then N/A, a note, saved), the wrap-up prompt across both water
   features (an N/A task is not asked about), and the Finish nudge (asked once, nothing sent
-  until answered, straight through once a reason is given).
+  until answered, straight through once a reason is given). A kept Done that meets the office's
+  N/A asks about both fields, and keeping the phone's answer saves Done and not N/A.
 - `test_visit_review_digest`: Status, N/A, "No reason given", the warning, a required task
   named once, and the queue chip. `test_print_style`: the report's Status column.
 
