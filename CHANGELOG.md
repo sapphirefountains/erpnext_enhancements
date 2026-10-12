@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.594.1] - 2026-10-12
+
+### Fixed
+
+- **A maintenance visit is dated and clocked out when the technician sends it for review, not
+  when a reviewer approves it.**
+  - Why: since reviewers approve visits (v1.576.2), nothing was settled until Approve & Submit,
+    often days later. Scheduler-drafted visits carry no `visit_date`, and the Visit Wizard's
+    "Date of visit" is empty for "today", so visits reached approval undated. Found in review of
+    PR #1204, whose Visit Review page makes late approvals routine.
+  - **The schedule rolled from the approval day.** `update_next_visit_dates` rolls the contract
+    forward from `visit_date or nowdate()`. State Capitol (4lm6v4e7vu) went for review on
+    2026-10-09, was approved on 2026-10-12, and had its next visit counted from the 12th.
+  - **The clock-out could be another visit's.** `before_submit`'s `_autofill_clock_out` took the
+    technician's latest kiosk interval on the project at approval time. On a weekly site that can
+    be the next visit's, giving a clock-out days after the clock-in and a timesheet to match.
+    Nobody had clocked in through the kiosk yet, so no timesheet on prod was affected.
+  - Now `SapphireMaintenanceRecord._finish_on_review` runs on the save that moves a visit into
+    Pending Review (the wizard's Finish or the form's Request Review):
+    - `visit_date` becomes today if it is blank. A date the technician chose is kept, and a visit
+      sent back and sent again keeps its first date.
+    - The clock closes out then, from the kiosk interval that is still this visit's. At approval
+      the visit is dated in the past, so `_is_backfill` makes the autofill skip it.
+    - Where no workflow is active, the technician's own submit is still the finish.
+  - `patches/stamp_visit_date_on_pending_review.py` dates the visits already waiting, from the
+    day each went for review: the newest "Pending Review" Workflow comment, else the day it was
+    last changed. On 2026-10-12 that is one visit, Sequoia (4ltqt3v803), which went for review
+    that morning.
+    - It touches only Pending Review drafts with a blank date.
+    - It writes with `set_value(update_modified=False)`, so a reviewer with the visit open on the
+      Visit Review page is not told it changed.
+    - It cannot raise.
+  - Submitted visits are left alone: their schedule has already rolled forward, and a new date
+    would not roll it again. State Capitol's next visit (2026-10-26) stays as approved unless
+    someone moves it.
+
+### Tests
+
+- `test_visit_finished_for_review` (new, 13 tests, own CI step). It drives the real `validate`
+  and `before_submit` through review and an approval three days later, and covers the patch.
+  - Without the fix, 5 of the 13 fail, including a later interval becoming the clock-out.
+
 ## [1.594.0] - 2026-10-12
 
 ### Changed
