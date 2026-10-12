@@ -20,9 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that was Sent Back and is resubmitted sends a fresh copy with the corrected answers. On a
     site with no active workflow a visit never passes through review, so the digest is sent on
     submit there.
-  - **Who:** `service_repair@sapphirefountains.com` gets "Ready for review", with a button to
-    the record. The visit's `technician` (the person filling it in) gets "Your visit form" as
-    their copy. No copy goes to a disabled user or to Administrator.
+  - **Who:** the addresses in **ERPNext Enhancements Settings → Maintenance → Visit Review
+    Emails** get "Ready for review", with a button to the record (Nik: "service_repair should be
+    a setting we can change which emails it goes too"). The visit's `technician` (the person
+    filling it in) gets "Your visit form" as their copy. No copy goes to a disabled user or to
+    Administrator, and a technician on the list gets one email, not two.
+  - **The list starts with `service_repair@sapphirefountains.com`.** A Table field has no
+    default, so it would be empty on every existing site. `patches/seed_visit_review_emails.py`
+    seeds that one row, once, only into an empty table, by inserting the child row directly
+    rather than saving the Single (its `validate` covers 189 fields the patch does not touch). An
+    empty list from then on sends the review copy to nobody, which is a choice somebody can
+    make.
   - **What:** a summary (site, account, visit type, technician and crew, date, time on site
     less paused time, completion, safety acknowledgment, client sign-off), then every answer by
     form section: readings with value, unit and target range; cleaning tasks done or not;
@@ -43,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New: `sapphire_maintenance/review_digest.py`, the
     `templates/emails/sapphire_maintenance/visit_review_digest.html` body on the email design
     system (Service pillar), the `on_update` and `on_submit` hooks, and
-    `tests/test_visit_review_digest.py` (31 bench-free tests, its own CI step). One of those
+    `tests/test_visit_review_digest.py` (41 bench-free tests, its own CI step). One of those
     tests renders the template under jinja2 and checks the answers in the HTML.
 
 ### Fixed

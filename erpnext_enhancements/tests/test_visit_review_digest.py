@@ -38,6 +38,7 @@ if str(REPO_ROOT) not in sys.path:
 digest = None
 STATE = {}
 SITE = "https://erp.example.test"
+INBOX = "service_repair@sapphirefountains.com"
 _SAVED_MODULES = {}
 _STUBBED = (
 	"frappe",
@@ -82,6 +83,8 @@ def _reset_state():
 				_Dict(name="SN-EAST", item_name="East Fountain"),
 				_Dict(name="SN-WEST", item_name="West Fountain"),
 			],
+			# ERPNext Enhancements Settings -> Visit Review Emails, as the seed patch leaves it.
+			"review_emails": [INBOX],
 		}
 	)
 	if "frappe" in sys.modules and hasattr(sys.modules["frappe"], "flags"):
@@ -138,6 +141,14 @@ def _install_stubs():
 	frappe.sendmail = _sendmail
 	frappe.db = types.SimpleNamespace(get_value=_db_get_value)
 	frappe.get_all = _get_all
+
+	def _get_cached_doc(doctype, *args, **kwargs):
+		if STATE.get("raise_in") == "settings":
+			raise RuntimeError("settings unreadable")
+		assert doctype == "ERPNext Enhancements Settings", doctype
+		return _Dict(visit_review_emails=[_Dict(email=email) for email in STATE["review_emails"]])
+
+	frappe.get_cached_doc = _get_cached_doc
 
 	utils = types.ModuleType("frappe.utils")
 	utils.cint = lambda v: int(float(v or 0))
@@ -320,9 +331,8 @@ class TestWhenItSends(unittest.TestCase):
 		digest.on_visit_update(_visit())
 		self.assertEqual(
 			[mail["recipients"] for mail in STATE["sent"]],
-			[[digest.REVIEW_INBOX], ["austin@example.com"]],
+			[[INBOX], ["austin@example.com"]],
 		)
-		self.assertEqual(digest.REVIEW_INBOX, "service_repair@sapphirefountains.com")
 
 	def test_both_copies_point_back_at_the_record(self):
 		digest.on_visit_update(_visit())
@@ -371,12 +381,12 @@ class TestWhenItSends(unittest.TestCase):
 
 	def test_no_technician_still_sends_the_review(self):
 		digest.on_visit_update(_visit(technician=None))
-		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[digest.REVIEW_INBOX]])
+		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[INBOX]])
 		self.assertIn("The technician sent this visit", STATE["rendered"][0]["context"]["intro"])
 
 	def test_a_disabled_technician_gets_no_copy(self):
 		digest.on_visit_update(_visit(technician="korben@example.com"))
-		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[digest.REVIEW_INBOX]])
+		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[INBOX]])
 
 	def test_on_submit_sends_only_where_no_workflow_is_active(self):
 		digest.on_visit_submit(_visit(docstatus=1))
@@ -384,6 +394,95 @@ class TestWhenItSends(unittest.TestCase):
 		STATE["workflow"] = None
 		digest.on_visit_submit(_visit(docstatus=1))
 		self.assertEqual(len(STATE["sent"]), 2)
+
+
+class TestWhoReviewsIsASetting(unittest.TestCase):
+	"""ERPNext Enhancements Settings → Visit Review Emails (Nik: "service_repair should be a
+	setting we can change which emails it goes to")."""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_every_listed_address_gets_the_review_once(self):
+		STATE["review_emails"] = ["lisa@example.com", "james@example.com", " Lisa@Example.com "]
+		digest.on_visit_update(_visit())
+		self.assertEqual(STATE["sent"][0]["recipients"], ["lisa@example.com", "james@example.com"])
+
+	def test_an_empty_list_sends_the_review_to_nobody_but_the_technician_still_gets_a_copy(self):
+		STATE["review_emails"] = []
+		digest.on_visit_update(_visit())
+		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [["austin@example.com"]])
+
+	def test_a_technician_on_the_list_is_not_sent_two_copies(self):
+		STATE["review_emails"] = [INBOX, "Austin@example.com"]
+		digest.on_visit_update(_visit())
+		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [[INBOX, "Austin@example.com"]])
+
+	def test_an_unreadable_setting_is_logged_and_the_technician_still_gets_a_copy(self):
+		STATE["raise_in"] = "settings"
+		digest.on_visit_update(_visit())
+		self.assertEqual([mail["recipients"] for mail in STATE["sent"]], [["austin@example.com"]])
+		self.assertTrue(STATE["errors"])
+
+	def test_the_setting_is_declared_on_the_settings_doctype(self):
+		import json
+
+		path = (
+			REPO_ROOT
+			/ "erpnext_enhancements/enhancements_core/doctype/erpnext_enhancements_settings"
+			/ "erpnext_enhancements_settings.json"
+		)
+		meta = json.loads(path.read_text(encoding="utf-8"))
+		field = {f["fieldname"]: f for f in meta["fields"]}[digest.RECIPIENTS_FIELD]
+		self.assertEqual((field["fieldtype"], field["options"]), ("Table", "Project Reminder Email"))
+		self.assertIn(digest.RECIPIENTS_FIELD, meta["field_order"])
+
+
+class TestTheSeedPatch(unittest.TestCase):
+	"""A Table field has no default, so the list starts empty on every existing site. The patch
+	seeds service_repair@ once, and must never be able to abort the migrate that is the deploy."""
+
+	PATCH = REPO_ROOT / "erpnext_enhancements/patches/seed_visit_review_emails.py"
+
+	def _code(self):
+		"""The patch's executable source: docstrings and comments stripped, quotes normalised."""
+		import ast
+
+		tree = ast.parse(self.PATCH.read_text(encoding="utf-8"))
+		for node in ast.walk(tree):
+			body = getattr(node, "body", None)
+			if (
+				isinstance(node, (ast.Module, ast.FunctionDef))
+				and body
+				and isinstance(body[0], ast.Expr)
+				and isinstance(body[0].value, ast.Constant)
+			):
+				node.body = body[1:] or [ast.Pass()]
+		return ast.unparse(tree).replace("'", '"')
+
+	def test_it_seeds_the_service_inbox(self):
+		self.assertIn(f'DEFAULT = "{INBOX}"', self._code())
+
+	def test_it_writes_only_into_an_empty_table(self):
+		code = self._code()
+		self.assertIn("frappe.db.count(CHILD", code)
+		self.assertLess(code.index("frappe.db.count(CHILD"), code.index("db_insert()"))
+
+	def test_it_never_saves_the_single(self):
+		"""Saving runs the settings' validate over 189 fields this patch does not touch."""
+		code = self._code()
+		for call in (".save(", ".insert(", "get_single(", '"Singles"'):
+			self.assertNotIn(call, code)
+
+	def test_a_failure_is_logged_not_raised(self):
+		code = self._code()
+		self.assertIn("except Exception:", code)
+		self.assertIn("frappe.log_error(", code)
+
+	def test_it_is_registered_after_model_sync(self):
+		text = (REPO_ROOT / "erpnext_enhancements/patches.txt").read_text(encoding="utf-8")
+		at = text.index("erpnext_enhancements.patches.seed_visit_review_emails")
+		self.assertIn("[post_model_sync]", text[:at])
 
 
 class TestItNeverBlocksTheReview(unittest.TestCase):

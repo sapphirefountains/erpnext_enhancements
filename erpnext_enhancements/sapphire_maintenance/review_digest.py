@@ -9,8 +9,10 @@ Reviewer to approve it before it is billed. Nik, 2026-10-12: send that review to
 ``service_repair@`` for Lisa to check, and to the technician who filled the form out, "so
 they have a copy of all their answers and such, like a digest".
 
-**Two emails, one body.** The review inbox (:data:`REVIEW_INBOX`) gets it as "ready for
-review". The technician gets the same answers as their copy. The technician is the record's
+**Two emails, one body.** The review list gets it as "ready for review": ERPNext
+Enhancements Settings → Visit Review Emails, seeded with ``service_repair@`` by
+``patches/seed_visit_review_emails.py`` (Nik asked for it to be a setting). An empty list
+sends the review copy to nobody. The technician gets the same answers as their copy. The technician is the record's
 ``technician`` field, which is the person filling the visit in (see the record controller):
 the Visit Wizard moves that field to whoever actually does the visit.
 
@@ -44,7 +46,8 @@ from frappe.utils import cint, flt, formatdate, get_datetime, get_url, get_url_t
 from erpnext_enhancements import email_style
 from erpnext_enhancements.utils.url_safety import is_safe_url
 
-REVIEW_INBOX = "service_repair@sapphirefountains.com"
+SETTINGS = "ERPNext Enhancements Settings"
+RECIPIENTS_FIELD = "visit_review_emails"
 REVIEW_STATE = "Pending Review"
 TEMPLATE = "erpnext_enhancements/templates/emails/sapphire_maintenance/visit_review_digest.html"
 QUIET_FLAGS = ("in_import", "in_patch", "in_install", "in_migrate")
@@ -91,15 +94,38 @@ def on_visit_submit(doc, method=None):
 
 
 def send(doc):
-	"""Send the digest to the review inbox and to the technician. Returns who it went to."""
+	"""Send the digest to the review list and to the technician. Returns who it went to."""
 	context = build_context(doc)
 	sent = []
-	if _send([REVIEW_INBOX], doc, context, "review"):
-		sent.append(REVIEW_INBOX)
+	reviewers = review_recipients()
+	if reviewers and _send(reviewers, doc, context, "review"):
+		sent.extend(reviewers)
 	technician = _technician_email(doc)
-	if technician and technician.lower() != REVIEW_INBOX and _send([technician], doc, context, "technician"):
-		sent.append(technician)
+	if technician and technician.lower() not in {r.lower() for r in reviewers}:
+		if _send([technician], doc, context, "technician"):
+			sent.append(technician)
 	return sent
+
+
+def review_recipients():
+	"""ERPNext Enhancements Settings → Visit Review Emails, deduped, in the order listed.
+
+	Empty means nobody, by choice: the patch that seeds it runs once. A settings read that
+	fails is logged and also reads as nobody, so the technician's copy still goes out.
+	"""
+	try:
+		rows = frappe.get_cached_doc(SETTINGS).get(RECIPIENTS_FIELD) or []
+	except Exception:
+		_log()
+		return []
+	seen = set()
+	recipients = []
+	for row in rows:
+		email = (row.get("email") or "").strip()
+		if email and email.lower() not in seen:
+			seen.add(email.lower())
+			recipients.append(email)
+	return recipients
 
 
 # ---------------------------------------------------------------------- sending
@@ -161,7 +187,7 @@ def _audience_context(context, audience):
 		}
 	return {
 		"intro": _(
-			"This is your copy of the visit form you sent for review. Every answer you recorded " "is below."
+			"This is your copy of the visit form you sent for review. Every answer you recorded is below."
 		),
 		"button_label": _("Open the visit"),
 		"closing": _("If anything here is wrong, tell the office before the visit is approved."),

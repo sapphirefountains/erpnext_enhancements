@@ -759,7 +759,8 @@ doc_events = {
 			# */10 sweep. Never raises. See project_enhancements/customer_confirmations.py.
 			"erpnext_enhancements.project_enhancements.customer_confirmations.on_visit_update",
 			# The visit review digest: when a visit moves into Pending Review, every answer on it
-			# is emailed to service_repair@ (Lisa reviews visits before billing) and, as their
+			# is emailed to ERPNext Enhancements Settings -> Visit Review Emails (seeded with
+			# service_repair@, where Lisa reviews visits before billing) and, as their
 			# copy, to the technician who filled it in. Again on a resubmission after Send Back.
 			# Inline sendmail, so it commits with the state change. Never raises. See
 			# sapphire_maintenance/review_digest.py.
