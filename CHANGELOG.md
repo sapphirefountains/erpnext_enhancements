@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.592.1] - 2026-10-12
+
+### Fixed
+
+- **The QuickBooks Online dashboard's Connect button no longer reads QuickBooks Online Settings
+  from the browser** (Nik: "fix the QBO settings pop up too").
+  - It read the environment with `frappe.db.get_single_value`, only to pass it straight back to
+    `start_oauth`. That read refuses anyone without read on the Settings with "No permission for
+    QuickBooks Online Settings", the same failure v1.592.0 fixed for ERPNext Enhancements
+    Settings.
+  - It now calls `start_oauth` with no environment, which connects to the one stored on the
+    Settings. That also drops a needless save of the Settings on every Connect.
+  - The Settings form's own Connect button still sends the form's environment, so an unsaved
+    switch between Sandbox and Production still takes effect.
+  - On prod the dashboard's roles (System Manager, Accounts Manager) both read the Settings, so
+    this mostly stops the pop-up coming back if permissions ever change.
+- **The guard now covers every settings Single.** `tests/test_settings_not_read_from_browser.py`
+  refuses any `get_single_value` in a desk script, and any `frappe.db.get_value`,
+  `frappe.db.get_doc`, `with_doc` or `frappe.client.get*` call that names a `... Settings`
+  doctype. A read of the browser's own locals (`frappe.model.get_doc`, as the procurement
+  tracker reads Print Settings) is left alone, because it never reaches the server.
+
 ## [1.592.0] - 2026-10-12
 
 ### Added

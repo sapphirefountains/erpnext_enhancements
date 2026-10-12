@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""The browser never asks for ERPNext Enhancements Settings.
+"""The browser never asks the server for a settings Single.
 
 Nik, 2026-10-12: "whenever someone tries to search, they get a warning or error saying they don't
 have permissions for ERPNext Enhancements". Opening the Maintenance Record, Maintenance Section and
@@ -14,6 +14,12 @@ else saw that dialog each time one of those opened, which is most often straight
 The values now arrive in the boot payload (``boot._settings_for_forms``). This pins both halves: no
 desk script asks the server for the settings, and boot still ships what the forms read.
 
+**Every Single, not only that one** (v1.592.1, Nik: "fix the QBO settings pop up too"). The
+QuickBooks Online dashboard's Connect button read QuickBooks Online Settings the same way, only to
+pass the value straight back to ``start_oauth``. The refusal is the same for any Single, so the
+scan refuses any ``get_single_value`` in a desk script, and any ``frappe.client.get*``,
+``get_value``, ``with_doc`` or ``get_doc`` call that names a ``... Settings`` doctype.
+
 Bench-free: source text and ``ast`` only.
 
 Run: python -m unittest erpnext_enhancements.tests.test_settings_not_read_from_browser
@@ -25,15 +31,24 @@ import unittest
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
-SETTINGS = "ERPNext Enhancements Settings"
 
-#: A browser read of the settings: a ``frappe.db``/``frappe.model`` call, or a ``frappe.call`` to a
-#: ``frappe.client.get*`` method, naming the doctype within the next few lines.
-BROWSER_READ = re.compile(
-	r"(?:(?:get_single_value|get_value|with_doc|get_doc)\s*\(|[\"']frappe\.client\.get\w*[\"'])"
-	r"[^;]{0,200}?" + re.escape(SETTINGS),
+#: ``frappe.db.get_single_value`` reads a Single by definition, whichever one it names.
+SINGLE_READ = re.compile(r"\bget_single_value\s*\(")
+
+#: Any other browser request naming a ``... Settings`` doctype within the next few lines:
+#: ``frappe.db.get_value`` / ``frappe.db.get_doc`` / ``frappe.model.with_doc``, or a
+#: ``frappe.call`` to a ``frappe.client.get*`` method. Only calls that reach the server: a
+#: ``frappe.model.get_doc`` or ``frappe.get_doc`` reads the browser's own locals and is refused
+#: by nobody (``project_enhancements.js`` reads Print Settings that way, and that is fine).
+SETTINGS_READ = re.compile(
+	r"(?:(?:db\s*\.\s*get_value|db\s*\.\s*get_doc|with_doc)\s*\(|[\"']frappe\.client\.get\w*[\"'])"
+	r"[^;]{0,200}?[\"'][A-Z][\w ]*Settings[\"']",
 	re.DOTALL,
 )
+
+
+def _reads(code):
+	return bool(SINGLE_READ.search(code) or SETTINGS_READ.search(code))
 
 
 def _scripts():
@@ -44,39 +59,60 @@ def _scripts():
 
 
 def _code(src):
-	"""JS with comments and string-free noise left in, but `//` and `/* */` comments removed:
-	the scripts that used to do this now say so in a comment, which names the call."""
+	"""JS with ``//`` and ``/* */`` comments removed: the scripts that used to do this now say so in
+	a comment, which names the call."""
 	src = re.sub(r"/\*.*?\*/", "", src, flags=re.DOTALL)
 	return re.sub(r"(^|[^:\"'])//[^\n]*", r"\1", src)
 
 
-class TestNoDeskScriptReadsTheSettings(unittest.TestCase):
+class TestNoDeskScriptReadsASettingsSingle(unittest.TestCase):
 	def test_the_scan_finds_scripts(self):
 		self.assertGreater(len(list(_scripts())), 100)
 
-	def test_no_script_asks_the_server_for_the_settings(self):
-		offenders = []
-		for path in _scripts():
-			src = path.read_text(encoding="utf-8", errors="replace")
-			if SETTINGS not in src:
-				continue
-			if BROWSER_READ.search(_code(src)):
-				offenders.append(str(path.relative_to(APP)))
+	def test_no_script_asks_the_server_for_a_settings_single(self):
+		offenders = [
+			str(path.relative_to(APP))
+			for path in _scripts()
+			if _reads(_code(path.read_text(encoding="utf-8", errors="replace")))
+		]
 		self.assertEqual(
 			offenders,
 			[],
-			"These read ERPNext Enhancements Settings from the browser, which shows everyone but a "
-			"System Manager a permission error. Ship the value in boot.py instead.",
+			"These read a settings Single from the browser, which shows anyone without read on it "
+			'"No permission for ... Settings". Ship the value in boot.py, or have the endpoint '
+			"that needs it read it on the server.",
 		)
 
 	def test_the_check_would_catch_the_old_calls(self):
-		"""The regex must match the shapes it replaced, or the test above proves nothing."""
+		"""The patterns must match the shapes they replaced, or the test above proves nothing."""
 		for old in (
 			'frappe.db\n\t.get_single_value("ERPNext Enhancements Settings", "water_feature_item")',
 			'frappe.call({\n\tmethod: "frappe.client.get",\n\targs: { doctype: "ERPNext Enhancements Settings" },',
+			'frappe.db.get_single_value("QuickBooks Online Settings", "environment").then((environment) => {',
+			'frappe.db.get_value("Training Settings", "Training Settings", "gcs_bucket")',
 		):
-			with self.subTest(old=old[:30]):
-				self.assertTrue(BROWSER_READ.search(old))
+			with self.subTest(old=old[:40]):
+				self.assertTrue(_reads(_code(old)))
+
+	def test_the_check_leaves_ordinary_reads_alone(self):
+		for fine in (
+			'frappe.db.get_value("Item", item, "item_name")',
+			'frappe.set_route("Form", "Training Settings")',
+			'frappe.model.get_doc(":Print Settings", "Print Settings") || {}',
+			"// frappe.db.get_single_value used to be here",
+		):
+			with self.subTest(fine=fine[:40]):
+				self.assertFalse(_reads(_code(fine)))
+
+	def test_the_qbo_dashboard_lets_the_server_pick_the_environment(self):
+		"""``start_oauth`` with no environment connects to the one stored on the Settings."""
+		js = (
+			APP / "quickbooks_online/page/quickbooks_online_dashboard/quickbooks_online_dashboard.js"
+		).read_text(encoding="utf-8")
+		at = js.index("function connectQuickBooks()")
+		body = _code(js[at : js.index("function disconnectQuickBooks()")])
+		self.assertIn("core.api.start_oauth", body)
+		self.assertNotIn("environment", body)
 
 
 class TestBootShipsWhatTheFormsRead(unittest.TestCase):

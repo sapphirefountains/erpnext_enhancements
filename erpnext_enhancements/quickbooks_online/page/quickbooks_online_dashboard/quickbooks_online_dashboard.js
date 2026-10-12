@@ -182,18 +182,19 @@ function renderLogs(root, logs) {
 	});
 }
 
+// No environment is sent: start_oauth then connects to the one stored on QuickBooks Online
+// Settings. This used to read it first with frappe.db.get_single_value only to pass it straight
+// back, and that read refuses anyone without read on the Settings with "No permission for
+// QuickBooks Online Settings" (v1.592.1). The Settings form still sends its own unsaved choice.
 function connectQuickBooks() {
-	frappe.db.get_single_value("QuickBooks Online Settings", "environment").then((environment) => {
-		frappe.call({
-			method: "erpnext_enhancements.quickbooks_online.core.api.start_oauth",
-			args: { environment },
-			callback(response) {
-				const url = response.message && response.message.authorization_url;
-				if (url) {
-					window.location.href = url;
-				}
-			},
-		});
+	frappe.call({
+		method: "erpnext_enhancements.quickbooks_online.core.api.start_oauth",
+		callback(response) {
+			const url = response.message && response.message.authorization_url;
+			if (url) {
+				window.location.href = url;
+			}
+		},
 	});
 }
 
