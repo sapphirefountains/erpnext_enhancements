@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.596.1] - 2026-10-12
+
+### Fixed
+
+v1.596.0's "kept on the phone" (the Visit Wizard's answers, photos and Finish kept until the
+server has them) was merged before its review finished. Two independent reviews found the
+defects below, all of which shipped in v1.596.0. Each now has a test in
+`scripts/test_wizard_back_forward.mjs` that fails with its fix removed (21 "kept on the phone"
+tests in all).
+
+- **A clash left unanswered was applied silently.** The office changes an answer the phone also
+  kept, and the technician leaves the "which do you keep?" screen without choosing (Back, a closed
+  tab). The next open, or the background sender, then saved the phone's answer over the office's,
+  because the kept copy had been rewritten under the office's version.
+  - Such answers are now kept apart (`held`) and asked about again on every open, whatever the
+    version. They are never sent in the background.
+- **A Finish the server turned down trapped its visit on "Saved on this phone"** after any
+  reload, with no way to fix the visit. The same happened to a kept Finish whose answers
+  clashed, or were refused, which was never sent and never asked about.
+  - A Finish is now kept as `refused` or `blocked`. The visit opens normally and says why, and
+    can be finished again.
+  - A Finish held for a clash goes with the technician's choice.
+  - A Finish that went through clears any Finish kept for its visit.
+- **A consumable added on the phone could be dropped as "already on the server"** when the visit
+  already had the same item, qty and unit: another fountain's row, or the first of two identical
+  doses. That loses chemical usage.
+  - It now matches only a row the phone did not already know by name (`known`), on no water
+    feature or the same one.
+- **A retake while the first photo was still uploading was deleted**, and the answer kept the
+  first photo. Both photos shared one key per row.
+  - Each photo now has its own key (a strictly increasing time). A retake replaces an earlier
+    one still waiting. Uploads run oldest first, one run per visit.
+- **A photo could be uploaded twice** when its visit was left mid-upload. The background
+  sender now leaves a visit alone while its photo run is out.
+- **The background sender claimed visits.** It read each visit through `get_visit_bootstrap`,
+  which instantiates a bare draft's template and claims the visit for the caller. That moved its
+  technician and ToDo on every retry.
+  - It now uses a new read-only `api/maintenance_visit.get_visit_state`.
+- **Errors were not told apart from no signal, either way.**
+  - A 500 on Finish told the technician "will be sent" and retried for as long as the page was
+    open.
+  - A deleted or reassigned visit was retried forever, and what the phone kept for it could not
+    be thrown away.
+  - Now `vz_try_later` treats only Frappe turning a request down as final: an exception it
+    raised, or a 4xx. That is said and not retried.
+  - These are sent again later: no answer at all, 401, 408, 429, a gateway's 502/503/504 while a
+    deploy restarts the bench, and a server error with no Frappe exception body. The first
+    version of this fix treated a deploy's 503 as final, which deleted a photo that never
+    uploaded and blocked a kept Finish; the second review caught it.
+  - A visit waiting on the technician offers **Discard what this phone kept**, after a
+    confirmation, once any send of it still on the wire has answered.
+  - A photo the server refused is never deleted unseen: opening its visit tries it again.
+  - An answer without the visit in it is never read as "submitted".
+- **Smaller fixes.**
+  - The Finish waits for any save of the visit still on the wire before it takes over the
+    answers, and takes over only what the phone could keep.
+  - The close-tab warning also shows when the phone could not keep the last change (storage
+    full).
+- Known limit, unchanged: two tabs on one phone editing the same visit each write its kept copy,
+  and the last write wins. Nothing is lost while both tabs stay open.
+
 ## [1.596.0] - 2026-10-12
 
 Phase C of the 2026-10-12 Maintenance tools plan (TASK-2026-02481): the Visit Wizard, for the
