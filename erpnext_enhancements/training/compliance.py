@@ -20,7 +20,9 @@ raising helper does not propagate.
 Gated on ``Training Settings → warn_on_uncertified_dispatch``, off by default.
 
 The warning has two halves. The inline half is a ``msgprint`` the person saving
-sees, and ``silence_uncertified_popup`` mutes that half alone. The durable
+sees **once per record** for the same findings (``utils/popup_once.py``: the Visit
+Wizard saves on every page, and the pop-up used to come back on each one), and
+``silence_uncertified_popup`` mutes that half alone. The durable
 half — timeline comment plus an email to the supervisor — is enqueued
 ``after_commit``, for two reasons: on a brand-new record the document
 does not exist yet at validate time (name is set before validate, the row is
@@ -51,6 +53,7 @@ from erpnext_enhancements.training.doctype.training_assignment.training_assignme
 	OPEN_STATUSES,
 )
 from erpnext_enhancements.training.doctype.training_settings.training_settings import is_enabled
+from erpnext_enhancements.utils.popup_once import first_time
 
 # Embedded in the timeline comment so a re-save can recognise its own previous
 # warning. A marker rather than a custom field: this fires on two doctypes we do
@@ -199,10 +202,10 @@ def _check(doc, users):
 	if not findings:
 		return
 
-	if not _popup_silenced():
+	fingerprint = _fingerprint(findings)
+	if not _popup_silenced() and first_time(MARKER, doc.doctype, doc.name, fingerprint):
 		_msgprint(findings)
 
-	fingerprint = _fingerprint(findings)
 	frappe.enqueue(
 		"erpnext_enhancements.training.compliance.record_advisory",
 		queue="short",
@@ -418,6 +421,8 @@ def _popup_silenced():
 
 	The Visit Wizard autosaves the visit as a technician moves through it, and every
 	save re-runs ``validate``, so the pop-up came back on every page of one visit.
+	That is now handled by showing it once per person per record (``first_time`` in
+	``_check``); this switch remains for a site that wants no pop-up at all.
 	The durable half is deliberately untouched — the timeline note is still written
 	(once, deduped on the fingerprint) and the supervisor still hears — so muting
 	the pop-up costs the record nothing. ``warn_on_uncertified_dispatch`` is the

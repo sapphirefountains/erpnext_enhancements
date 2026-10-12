@@ -145,8 +145,11 @@ def _reset_state():
 			"roles": {"tech@example.com": ["Employee"], "boss@example.com": ["Training Manager"]},
 			"session_user": "dispatcher@example.com",
 			"raise_in": None,
+			"cache": {},
 		}
 	)
+	if "frappe" in sys.modules and hasattr(sys.modules["frappe"], "session"):
+		sys.modules["frappe"].session.user = "dispatcher@example.com"
 
 
 # ------------------------------------------------------------------ stub frappe
@@ -281,6 +284,21 @@ def _install_frappe_stub():
 
 	frappe.enqueue = _enqueue
 	frappe.sendmail = lambda **kwargs: STATE["emails"].append(kwargs)
+
+	class _Cache:
+		"""``frappe.cache``: a dict per test. ``raise_in == "cache"`` makes it unreachable."""
+
+		def get_value(self, key, *args, **kwargs):
+			if STATE.get("raise_in") == "cache":
+				raise ConnectionError("redis is down")
+			return STATE["cache"].get(key)
+
+		def set_value(self, key, value, *args, **kwargs):
+			if STATE.get("raise_in") == "cache":
+				raise ConnectionError("redis is down")
+			STATE["cache"][key] = value
+
+	frappe.cache = _Cache()
 
 	def _get_doc(doctype, name=None):
 		if isinstance(doctype, dict):
@@ -541,6 +559,70 @@ class TestThePopupSwitch(unittest.TestCase):
 		field = fields["silence_uncertified_popup"]
 		self.assertEqual(field["fieldtype"], "Check")
 		self.assertEqual(field.get("default"), "0")
+
+
+class TestThePopupShowsOncePerVisit(unittest.TestCase):
+	"""The Visit Wizard saves the visit on every page, and each save re-runs validate.
+
+	The pop-up is shown once per person per record for the same findings. The durable
+	half is not deduped here, because it already dedupes itself on the fingerprint.
+	"""
+
+	def setUp(self):
+		_reset_state()
+		_assign()
+
+	def test_a_resave_does_not_repeat_the_popup(self):
+		for _page in range(4):
+			compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 1)
+
+	def test_a_resave_still_hands_the_durable_half_its_job(self):
+		"""Each save still enqueues the record step; record_advisory is what dedupes it."""
+		compliance.warn_uncertified_technician(_visit())
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["enqueued"]), 2)
+		_run_enqueued()
+		self.assertEqual(len(STATE["comments"]), 1)
+
+	def test_another_reader_is_told_once_too(self):
+		"""The reviewer approving the visit is not silenced by the technician having seen it."""
+		compliance.warn_uncertified_technician(_visit())
+		sys.modules["frappe"].session.user = "reviewer@example.com"
+		compliance.warn_uncertified_technician(_visit())
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 2)
+
+	def test_another_visit_is_a_new_warning(self):
+		compliance.warn_uncertified_technician(_visit(name="SMR-0001"))
+		compliance.warn_uncertified_technician(_visit(name="SMR-0002"))
+		self.assertEqual(len(STATE["msgprints"]), 2)
+
+	def test_a_new_finding_on_the_same_visit_is_shown(self):
+		"""The point is to stop repeating a warning, never to hide a different one."""
+		compliance.warn_uncertified_technician(_visit())
+		STATE["tables"]["Training Course"].append(
+			_Dict(name="TRN-CRS-00003", weight="Required", status="Published")
+		)
+		_assign(course="TRN-CRS-00003")
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 2)
+
+	def test_an_unreachable_cache_shows_the_popup(self):
+		"""Fails open: a duplicate pop-up is a nuisance, a vanished safety warning is not."""
+		STATE["raise_in"] = "cache"
+		compliance.warn_uncertified_technician(_visit())
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 2)
+		self.assertEqual(STATE["errors"], [])
+
+	def test_silenced_does_not_spend_the_one_showing(self):
+		"""Unticking the switch later should still show the warning the first time."""
+		STATE["settings"]["silence_uncertified_popup"] = 1
+		compliance.warn_uncertified_technician(_visit())
+		STATE["settings"]["silence_uncertified_popup"] = 0
+		compliance.warn_uncertified_technician(_visit())
+		self.assertEqual(len(STATE["msgprints"]), 1)
 
 
 # ------------------------------------------------------------ what it warns about

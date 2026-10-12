@@ -715,15 +715,22 @@ doc_events = {
 		"validate": "erpnext_enhancements.hr_enhancements.availability.warn_driver_cannot_drive",
 	},
 	"Sapphire Maintenance Record": {
-		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
+		"on_submit": [
+			"erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
+			# The visit review digest, on a site with NO active workflow only: there a visit is
+			# submitted directly and never passes through Pending Review, where the on_update
+			# entry below sends it. Never raises. See sapphire_maintenance/review_digest.py.
+			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_submit",
+		],
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
 		# throws -- by the time this runs a truck is usually already at the site, and
 		# blocking the visit form would mean the work happens with NO RECORD AT ALL, which
 		# is worse than the uncertified assignment it is flagging. Appends a comment plus an
 		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
-		# warn_on_uncertified_dispatch; silence_uncertified_popup mutes the msgprint alone (the
-		# Visit Wizard autosaves on every page). On validate, not before_submit: before_submit
-		# would read as a gate.
+		# warn_on_uncertified_dispatch. The msgprint shows once per person per visit
+		# (utils/popup_once.py: the Visit Wizard autosaves on every page), and
+		# silence_uncertified_popup mutes it entirely. On validate, not before_submit:
+		# before_submit would read as a gate.
 		"validate": [
 			"erpnext_enhancements.training.compliance.warn_uncertified_technician",
 			# hr_enhancements (WI-073): is this person actually free that day? Approved
@@ -751,6 +758,13 @@ doc_events = {
 			# customer_date_confirmations is ticked; at most once per (visit, date); re-driven by the
 			# */10 sweep. Never raises. See project_enhancements/customer_confirmations.py.
 			"erpnext_enhancements.project_enhancements.customer_confirmations.on_visit_update",
+			# The visit review digest: when a visit moves into Pending Review, every answer on it
+			# is emailed to ERPNext Enhancements Settings -> Visit Review Emails (seeded with
+			# service_repair@, where Lisa reviews visits before billing) and, as their
+			# copy, to the technician who filled it in. Again on a resubmission after Send Back.
+			# Inline sendmail, so it commits with the state change. Never raises. See
+			# sapphire_maintenance/review_digest.py.
+			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_update",
 		],
 	},
 	"Project Contract": {

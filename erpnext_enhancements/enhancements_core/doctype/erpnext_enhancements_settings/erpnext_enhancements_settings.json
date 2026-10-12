@@ -18,6 +18,7 @@
   "maintenance_sms_nudges",
   "out_of_range_followup_days",
   "email_service_report_to_customer",
+  "visit_review_emails",
   "auto_renew_maintenance_contracts",
   "recurring_maintenance_billing",
   "maintenance_dispatch_digests",
@@ -283,6 +284,13 @@
    "fieldname": "email_service_report_to_customer",
    "fieldtype": "Check",
    "label": "Email Service Report to Customer on Finalize"
+  },
+  {
+   "description": "Who gets every answer on a visit when a technician sends it for review (the visit review digest). The technician always gets their own copy as well. Leave empty to send the review copy to nobody.",
+   "fieldname": "visit_review_emails",
+   "fieldtype": "Table",
+   "label": "Visit Review Emails",
+   "options": "Project Reminder Email"
   },
   {
    "default": "0",
@@ -1452,7 +1460,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-25 12:00:00.000000",
+ "modified": "2026-10-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

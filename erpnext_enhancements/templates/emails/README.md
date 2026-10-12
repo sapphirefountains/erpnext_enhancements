@@ -10,6 +10,7 @@ guide, the palette, and an inventory of every email the app can send are in
 | `_components.html` | The macros. **The only email markup in the app.** |
 | `crm_enhancements/` | Fountain Move request + intake invite bodies |
 | `project_enhancements/` | Contract e-sign bodies |
+| `sapphire_maintenance/` | The visit review digest (every answer on a visit, sent for review) |
 | `travel/` | Travel Trip bodies |
 
 ## The shape of a body template

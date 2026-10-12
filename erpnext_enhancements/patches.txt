@@ -1301,3 +1301,6 @@ erpnext_enhancements.patches.materialize_planner_phase5_settings
 # Project Planner Phase 5: seed the Email Template "Planner Date Confirmation" that words the customer date confirmation,
 # so Nik designs it in the Desk. Insert-only (never over his edits), sends nothing (the switch stays off), cannot raise.
 erpnext_enhancements.patches.seed_planner_date_confirmation_template
+# Visit review digest (v1.591.0): seed ERPNext Enhancements Settings -> Visit Review Emails with
+# service_repair@, once, only into an empty table. Inserts the child row; never saves the Single.
+erpnext_enhancements.patches.seed_visit_review_emails

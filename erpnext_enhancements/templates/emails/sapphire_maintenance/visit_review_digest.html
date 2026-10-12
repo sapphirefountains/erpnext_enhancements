@@ -1,0 +1,40 @@
+{# The visit review digest: every answer on a Sapphire Maintenance Record, sent when
+   the visit goes to Pending Review (sapphire_maintenance/review_digest.py). It goes to
+   the review inbox and, as their copy, to the technician who filled the visit in.
+
+   Context. All of it is worded in Python, so this file only lays it out:
+     intro, button_label, closing   differ between the reviewer's and the technician's copy
+     url                            the record's desk form
+     warnings                       [str], out-of-range readings and unanswered required items
+     summary                        [(label, value)]
+     blocks                         [{heading, headers, rows, photos: [(url, label)], empty}]
+     notes_heading, notes           the visit notes, or no notes
+
+   A FRAGMENT: the chrome comes from email_style.render(). frappe's Jinja env has NO
+   autoescape, and the macros escape their own text, so nothing here adds a second |e. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p(intro) }}
+{% for warning in warnings %}
+{{ ee.callout(warning, "warning") }}
+{% endfor %}
+{{ ee.kv(summary) }}
+{{ ee.button(url, button_label) }}
+{% for block in blocks %}
+{{ ee.h(block.heading) }}
+{% if block.rows %}
+{{ ee.table(block.headers, block.rows) }}
+{% else %}
+{{ ee.p(block.empty) }}
+{% endif %}
+{% if block.photos %}
+{{ ee.links(block.photos) }}
+{% endif %}
+{% endfor %}
+{% if notes %}
+{{ ee.h(notes_heading) }}
+{{ ee.prose(notes) }}
+{% endif %}
+{% if closing %}
+{{ ee.note(closing) }}
+{% endif %}
