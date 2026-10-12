@@ -17,7 +17,6 @@ import frappe
 from frappe.utils import add_days, getdate, nowdate
 
 from erpnext_enhancements.api.maintenance_workflow import (
-	build_stock_entry_rows,
 	resolve_consumable_warehouse,
 )
 from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
@@ -253,19 +252,6 @@ class TestMaintenanceSections(unittest.TestCase):
 		frappe.db.set_single_value(
 			"ERPNext Enhancements Settings", "default_consumables_warehouse", settings_value
 		)
-
-	def test_build_stock_entry_rows_skips_untouched_prefills(self):
-		warehouse = frappe.get_all("Warehouse", filters={"is_group": 0}, limit=1, pluck="name")[0]
-		record = frappe.new_doc("Sapphire Maintenance Record")
-		record.customer = self.customer
-		record.project = self.project
-		record.serial_no = SERIALS[0]
-		record.append("consumables", {"item": CHEMICAL_ITEM, "qty": 0, "warehouse": warehouse})
-		record.append("consumables", {"item": CHEMICAL_ITEM, "qty": 2, "warehouse": warehouse})
-		rows = build_stock_entry_rows(record)
-		self.assertEqual(len(rows), 1)
-		self.assertEqual(rows[0]["qty"], 2)
-		self.assertEqual(rows[0]["s_warehouse"], warehouse)
 
 	# ------------------------------------------------------------------ contract
 

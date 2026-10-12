@@ -2,15 +2,15 @@
  * Sapphire Maintenance Section form script.
  *
  * The items grid is shared by all four section types, but only some columns
- * apply to each: `item` to Chemical Dosing, `uom`/`min_value`/`max_value` to
- * Water Chemistry, `options`/`is_mandatory` to Equipment Inspection. This
+ * apply to each: `item` and `uom` (the dose unit, e.g. "cap full") to Chemical
+ * Dosing, `uom`/`min_value`/`max_value` to Water Chemistry, `options`/`is_mandatory` to Equipment Inspection. This
  * script shows/hides those grid columns whenever the section type changes, and
  * restricts the dosing Item picker to stock items in the configured
  * consumables item group.
  */
 
 const EE_SECTION_COLUMNS = {
-	"Chemical Dosing": ["item"],
+	"Chemical Dosing": ["item", "uom"],
 	"Water Chemistry": ["uom", "min_value", "max_value"],
 	"Equipment Inspection": ["options", "is_mandatory"],
 	"Cleaning Tasks": [],

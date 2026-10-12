@@ -54,11 +54,10 @@
    "read_only": 1
   },
   {
-   "fetch_from": "item.stock_uom",
    "fieldname": "uom",
    "fieldtype": "Data",
-   "label": "Unit",
-   "read_only": 1
+   "label": "Dose Unit",
+   "description": "The unit the dose is counted in (tablet, cap full, tablespoon, bottle), from the template's Chemical Dosing line. Not the stock unit: a visit records what went into the fountain, and stock moves by the container."
   },
   {
    "fieldname": "warehouse",
@@ -98,7 +97,7 @@
    "options": "Serial and Batch Bundle"
   }
  ],
- "modified": "2024-05-22 12:00:00.000000",
+ "modified": "2026-10-12 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Consumable",

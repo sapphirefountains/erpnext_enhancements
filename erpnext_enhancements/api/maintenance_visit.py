@@ -29,7 +29,7 @@ ALLOWED_ROW_FIELDS = {
     "maintenance_results": {"selection", "answer", "other_details", "photo"},
     "chemistry_readings": {"reading_value", "notes", "photo"},
     "cleaning_tasks": {"is_done", "notes", "photo"},
-    "consumables": {"item", "qty", "warehouse"},
+    "consumables": {"item", "qty", "warehouse", "uom"},
 }
 # Tables that accept appended rows from the wizard (the "add other item" flow).
 APPENDABLE_TABLES = {"consumables"}
@@ -131,10 +131,8 @@ def _claim_visit(doc):
     outside the crew displaced them, so the caller re-points that technician's
     dispatch assignment (after saving); ``""`` when ``technician`` changed with no
     assignment to move (an unassigned draft, or a crew member's claim); else
-    ``None``. Consumable source warehouses need no realignment here: only the
-    tech-independent feature warehouse is baked at instantiation, and the vehicle
-    fallback is resolved from the final ``technician`` at submit (see
-    get_visit_payload / build_stock_entry_rows).
+    ``None``. Consumable warehouses need no realignment here: approval issues no
+    stock (v1.594.0), so a row's warehouse is informational.
     """
     from erpnext_enhancements.sapphire_maintenance.visit_crew import crew_users
 
@@ -558,6 +556,10 @@ def save_visit(record, patch, modified=None):
                     frappe.throw(_("Unknown row {0} in {1}.").format(row_name, table))
                 row.update(changes)
             elif table in APPENDABLE_TABLES:
+                # A chemical added on site carries the dose unit the technician typed
+                # ("cap full"); with none, the item's stock unit, as before v1.594.0.
+                if table == "consumables" and not (changes.get("uom") or "").strip() and changes.get("item"):
+                    changes["uom"] = frappe.db.get_value("Item", changes["item"], "stock_uom")
                 new_row = doc.append(table, changes)
                 added.setdefault(table, []).append(new_row)
 

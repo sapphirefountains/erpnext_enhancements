@@ -2,26 +2,30 @@
 
 Not whitelisted. ``process_maintenance_submission`` is the background worker
 enqueued from the Sapphire Maintenance Record controller's ``on_submit`` (see
-``sapphire_maintenance/doctype/sapphire_maintenance_record``). It chains four
+``sapphire_maintenance/doctype/sapphire_maintenance_record``). It chains three
 independent downstream actions, each isolated so one failure does not abort the
 others:
-        1. Stock Entry (Material Issue) for consumables (chemical dosing).
-        2. Timesheet for labour (job costing).
-        3. Warranty check -> native Warranty Claim per failed in-warranty serial.
-        4. Draft Sales Invoice (maintenance fee + consumables) — only when the
-           contract bills "Per Visit".
+        1. Timesheet for labour (job costing).
+        2. Warranty check -> native Warranty Claim per failed in-warranty serial.
+        3. Draft Sales Invoice (maintenance fee + consumables) — only when the
+           contract bills "Per Visit", and only while ERPNext Enhancements Settings →
+           Draft Invoices from Approved Visits is on (off until the QuickBooks cutover).
 
-Two of those are switched in ERPNext Enhancements Settings → Maintenance, and both ship
-off (Nik, 2026-10-12): the Stock Entry needs a **Chemicals Used Account** (none set:
-nothing is issued or posted), and the Sales Invoice needs **Draft Invoices from Approved
-Visits** (off: billing stays in QuickBooks until the cutover).
+**Chemicals never leave stock here** (Nik, 2026-10-12, v1.594.0). A visit records what
+went into the fountain in the dose unit the technician counts in — a tablet, a cap full,
+half a bottle — and stock moves by the container instead, when it is taken from the
+Inventory Room (the Stock Scan page's Take or Move). A dose is not a stock unit: tablets
+per bucket varies by brand and size, and "a cap full" of flocculant is no fraction of
+anything the inventory counts. Until v1.594.0 a ``create_stock_entry`` step issued the
+consumables as a Material Issue on approval; v1.593.0 had already gated it on an account
+that was never set, so it never posted on prod.
 
 It also adds a Comment listing any out-of-range chemistry readings (the
 supervisor email itself is the "Maintenance Reading Out of Range" Notification
 fixture, firing on submit off ``has_out_of_range_readings``).
 
-Side effects: inserts/submits Stock Entry, Timesheet, Warranty Claim, and
-Sales Invoice documents; adds Comments to the record; uses
+Side effects: inserts/submits Timesheet, Warranty Claim and Sales Invoice
+documents; adds Comments to the record; uses
 ``frappe.publish_realtime`` to notify the record owner of partial/critical
 failures. Reads item/fee config from "ERPNext Enhancements Settings". No
 external services. No item codes are hardcoded — items come from document
@@ -50,7 +54,6 @@ def process_maintenance_submission(record_name):
             return
 
         steps = [
-            ("Stock Entry Generation", create_stock_entry),
             ("Job Costing (Timesheet)", create_timesheet),
             ("Warranty Claim Hook", check_warranty_and_rma),
             ("Sales Invoice Generation", create_sales_invoice),
@@ -125,131 +128,6 @@ def resolve_consumable_warehouse(feature_warehouse=None, technician=None):
 
     return frappe.db.get_single_value("ERPNext Enhancements Settings", "default_consumables_warehouse")
 
-
-def _contract_feature_warehouses(doc):
-    """Map serial_no -> chemical warehouse from the record's contract features."""
-    if not doc.get("maintenance_contract"):
-        return {}
-    rows = frappe.get_all(
-        "Sapphire Contract Feature",
-        filters={"parent": doc.maintenance_contract, "parenttype": "Sapphire Maintenance Contract"},
-        fields=["serial_no", "default_warehouse"],
-    )
-    return {row.serial_no: row.default_warehouse for row in rows if row.default_warehouse}
-
-
-def build_stock_entry_rows(doc):
-    """Build Stock Entry item rows from the record's consumables.
-
-    Rows with qty <= 0 are untouched dosing-template prefills and are skipped.
-    Rows without a warehouse get one resolved per the fallback chain in
-    :func:`resolve_consumable_warehouse` (feature -> vehicle -> settings).
-    Returns a list of dicts ready to append to a "Material Issue" Stock Entry.
-    """
-    feature_warehouses = _contract_feature_warehouses(doc)
-    rows = []
-    for item in doc.consumables:
-        if flt(item.qty) <= 0:
-            continue
-        warehouse = item.warehouse or resolve_consumable_warehouse(
-            feature_warehouse=feature_warehouses.get(item.serial_no or doc.serial_no),
-            technician=doc.technician,
-        )
-        rows.append({
-            "item_code": item.item,
-            "s_warehouse": warehouse,
-            "qty": flt(item.qty),
-            "serial_and_batch_bundle": item.serial_and_batch_bundle,
-            "project": doc.project,
-        })
-    return rows
-
-
-def create_stock_entry(doc):
-    """Issue the record's consumed consumables via a "Material Issue" Stock Entry.
-
-    Args:
-        doc: The Sapphire Maintenance Record document.
-
-    No-op if no consumable row has qty > 0 (dosing sections prefill rows at
-    qty 0; untouched chemicals must not move stock). Also a no-op, with a Comment,
-    while ERPNext Enhancements Settings → Chemicals Used Account is empty: nothing is
-    issued or posted until finance has chosen the account (v1.593.0). Company is taken from the
-    linked Project (falling back to the global default). Inserts and submits a
-    Stock Entry and adds a Comment linking to it. May raise on stock errors
-    (e.g. insufficient quantity) — caught by the per-step handler in the caller.
-
-    Two things v16 requires that this used to leave out (fixed v1.521.0; it had never
-    run on production, where no record had yet been submitted):
-
-    * **``stock_entry_type``, not ``purpose``.** The type is mandatory and ``purpose``
-      is a read-only fetch from it; ``validate`` never derives one from the other
-      (ERPNext's own builders call ``set_stock_entry_type()`` by hand). Setting only
-      ``purpose`` raised ``MandatoryError: stock_entry_type`` on insert.
-    * **A difference account on every row.** Production's Company has no Stock
-      Adjustment Account and no Item names one, so ERPNext's default chain comes up
-      empty and ``validate_difference_account`` refused the entry. Rows now take
-      ``inventory_enhancements.stock_accounts.difference_account`` — the same rule the
-      Stock Scan page uses, including its "Parts Taken" account from Inventory Scanner
-      Settings, since consumables used on a visit are parts taken for a job.
-      ``cost_center`` stays blank so ERPNext fills it (Project → Item → Company); the
-      header ``project`` is set so the first step of that chain can apply.
-    """
-    from erpnext_enhancements.inventory_enhancements.stock_accounts import difference_account, usable_account
-
-    rows = build_stock_entry_rows(doc)
-    if not rows:
-        return
-
-    # No account, no stock movement (Nik, 2026-10-12: "Don't post to any account yet, but make
-    # it configurable so I can add it when I have the information"). With perpetual inventory
-    # on, issuing stock IS a posting, so the whole step waits for the account. It used to post
-    # to whatever `difference_account` found, which on prod is the lone 5119 Stock Adjustment
-    # account. The comment marks the visit so its chemicals can be issued once the account is
-    # set: this step is idempotent per record, so re-running the submission is enough.
-    account = frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_chemicals_account")
-    if not account:
-        doc.add_comment("Comment", _(
-            "Chemicals not issued from stock: no Chemicals Used Account is set in ERPNext "
-            "Enhancements Settings, so nothing was posted."
-        ))
-        return
-
-    # Idempotent: a re-run (manual re-enqueue, or the hourly sweep after a deploy flushed
-    # the original job) must not issue stock twice. Stock Entry has no maintenance-record
-    # link field, so the record name is carried in `remarks` and matched here. A cancelled
-    # entry (docstatus 2) does not block a fresh issue.
-    marker = f"Sapphire Maintenance Record {doc.name}"
-    if frappe.db.exists("Stock Entry", {"remarks": ["like", f"%{marker}%"], "docstatus": ["<", 2]}):
-        return
-
-    stock_entry = frappe.new_doc("Stock Entry")
-    # The type, not the purpose: purpose is fetched from it on insert (see docstring).
-    stock_entry.stock_entry_type = "Material Issue"
-    stock_entry.remarks = f"Auto-generated from {marker}"
-    stock_entry.company = frappe.db.get_value("Project", doc.project, "company") or frappe.defaults.get_global_default("company")
-    # The rows already carry the project; the header is what ERPNext's cost-center default
-    # reads (get_default_cost_center takes the header project), so set it too.
-    if doc.project:
-        stock_entry.project = doc.project
-
-    # A set but unusable account (a group, disabled, a Stock account, another company's) is an
-    # error, never a reason to fall back: the resolver's fallbacks end at 5119, which is exactly
-    # the posting the setting exists to prevent. The step fails and says why.
-    if not usable_account(account, stock_entry.company):
-        frappe.throw(_(
-            "The Chemicals Used Account {0} cannot take this posting for {1}. It must be an "
-            "enabled ledger of that company and not a Stock account."
-        ).format(account, stock_entry.company))
-    for row in rows:
-        row["expense_account"] = difference_account(stock_entry.company, row["item_code"], account)
-        stock_entry.append("items", row)
-
-    stock_entry.insert()
-    stock_entry.submit()
-    doc.add_comment("Comment", _("Stock Entry {0} created for consumables.").format(
-        frappe.get_link_to_form("Stock Entry", stock_entry.name)
-    ))
 
 def create_timesheet(doc):
     """Create and submit a Timesheet for the technician's logged labour.

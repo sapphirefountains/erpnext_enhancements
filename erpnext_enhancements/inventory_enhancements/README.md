@@ -201,9 +201,11 @@ Reconciliations too; that is a settings decision for accounting, so nothing here
 
 The maintenance consumables issue (`api/maintenance_workflow.create_stock_entry`) shipped
 without a difference account *and* without a `stock_entry_type` (first bullet below), and had
-simply never run on production. Since v1.521.0 it uses the same resolver and sets the type,
-and `tests/test_stock_entry_builders.py` fails the build on any Stock Entry builder that does
-not.
+simply never run on production. v1.521.0 fixed both. **v1.594.0 removed it:** approving a visit
+no longer moves stock at all. The visit records doses in the unit a technician counts in (a cap
+full, a tablet), and stock moves by the container here, on Stock Scan.
+`tests/test_stock_entry_builders.py` still fails the build on any Stock Entry builder that
+does not set the type and the difference account.
 
 Three more things the obvious version gets wrong, each verified against v16:
 
