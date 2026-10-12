@@ -44,6 +44,10 @@
  * server is a fake with an optimistic lock on `modified`, like the real save endpoints; time
  * is a virtual clock, so a 4-second autosave and a retry backoff run in microseconds.
  *
+ * The Visit Wizard also keeps what has not reached the server on the phone (v1.596.0): the
+ * "kept on the phone" suite gives each test a phone whose localStorage and IndexedDB outlive a
+ * reload of the page (boot), and an upload endpoint that can lose signal.
+ *
  * Run: node scripts/test_wizard_back_forward.mjs [visit-wizard|plan-a-trip]   (default: both)
  */
 
@@ -552,6 +556,12 @@ function patchRender(name, klass) {
 		klass.prototype.show_picker = function () {
 			ui.renders.push({ picker: true });
 			return show_picker.call(this);
+		};
+		// A Finish kept on the phone with no signal (v1.596.0): a screen of its own.
+		const render_finish_waiting = klass.prototype.render_finish_waiting;
+		klass.prototype.render_finish_waiting = function () {
+			ui.renders.push({ record: this.doc && this.doc.name, waiting: true });
+			return render_finish_waiting.call(this);
 		};
 	}
 	if (name === "plan-a-trip") {
@@ -1171,6 +1181,386 @@ async function visitWizardSuite() {
 		assert.ok(wizard()._parked["MNT-1"]);
 		assert.ok(ui.alerts.some((a) => /MNT-1 were turned down/.test(a)));
 	});
+}
+
+// ------------------------------------------------------------------ Visit Wizard: kept on the phone (v1.596.0)
+//
+// TASK-2026-02483 (C2, "never lose answers") and TASK-2026-02482 (C1, "Last visit here").
+// A phone's own storage outlives the page: phone() keeps localStorage and IndexedDB across
+// boot(), which is a reload of the page (the tab closed and opened again), and fakes the photo
+// upload endpoint, with `net.down` for no signal. save_visit / finish_visit / bootstrap with no
+// signal are server.fail (no answer, status 0), as everywhere above.
+
+// window.indexedDB, as much of it as the wizard's outbox uses: open (with the upgrade on first
+// open), one object store, put / delete / getAll, each settling on the harness clock.
+function fakeIndexedDB(databases) {
+	return {
+		open(name) {
+			const request = {};
+			fakeSetTimeout(() => {
+				const fresh = !databases.has(name);
+				if (fresh) databases.set(name, new Map());
+				const data = databases.get(name);
+				request.result = {
+					createObjectStore() {},
+					transaction() {
+						const tx = {};
+						const settle_request = (r, apply) => {
+							fakeSetTimeout(() => {
+								apply();
+								if (r.onsuccess) r.onsuccess();
+								if (tx.oncomplete) tx.oncomplete();
+							}, 0);
+							return r;
+						};
+						tx.objectStore = () => ({
+							put: (item) => settle_request({ result: item.key }, () => data.set(item.key, item)),
+							delete: (key) => settle_request({ result: undefined }, () => data.delete(key)),
+							getAll() {
+								const r = {};
+								return settle_request(r, () => (r.result = [...data.values()]));
+							},
+						});
+						return tx;
+					},
+				};
+				if (fresh && request.onupgradeneeded) request.onupgradeneeded();
+				if (request.onsuccess) request.onsuccess();
+			}, 0);
+			return request;
+		},
+	};
+}
+
+function phone() {
+	const local = new Map();
+	const databases = new Map();
+	const net = { down: false, uploads: [] };
+	return {
+		net,
+		// After every boot(), before the page has loaded (boot routes asynchronously).
+		install() {
+			window.localStorage = {
+				getItem: (key) => (local.has(key) ? local.get(key) : null),
+				setItem: (key, value) => local.set(key, String(value)),
+				removeItem: (key) => local.delete(key),
+			};
+			window.indexedDB = fakeIndexedDB(databases);
+			globalThis.fetch = (url, opts) =>
+				new Promise((resolve, reject) => {
+					fakeSetTimeout(() => {
+						if (net.down) return reject(new TypeError("Failed to fetch"));
+						const docname = opts.body.get("docname");
+						net.uploads.push({ url, docname });
+						const file_url = `/private/files/${docname}-${net.uploads.length}.jpg`;
+						resolve({ ok: true, status: 200, json: () => Promise.resolve({ message: { file_url } }) });
+					}, 1);
+				});
+		},
+		kept(name) {
+			return local.has(`vz-unsent:${name}`) ? JSON.parse(local.get(`vz-unsent:${name}`)) : null;
+		},
+		outbox() {
+			return [...(databases.get("vz-outbox") || new Map()).values()];
+		},
+	};
+}
+
+async function visitWizardKeptSuite() {
+	console.log("Visit Wizard: kept on the phone");
+	const realFetch = globalThis.fetch;
+
+	await test("answers survive a reload with no signal, and arrive exactly once when it is back", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.fail.add("save_visit");
+		w.set_row("chemistry_readings", w.doc.chemistry_readings[0], "reading_value", 7.4);
+		w.set_field("visit_notes", "Pump loud");
+		await tick(5000); // the 4-second autosave, with no signal
+		assert.equal(w._save_state, "offline", "'Saved on this phone', not 'NOT SAVED'");
+		const kept = p.kept("MNT-1");
+		assert.deepEqual(kept.dirty.fields, { visit_notes: "Pump loud" });
+		assert.equal(kept.dirty.rows.chemistry_readings.r1.reading_value, 7.4);
+		assert.equal(kept.base.rows.chemistry_readings.r1.reading_value, null, "the server's value before");
+
+		// The phone closes the tab; opened again, still with no signal, the visit cannot load.
+		server.fail.add("get_visit_bootstrap");
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(1000);
+		assert.ok(p.kept("MNT-1"), "still on the phone");
+		assert.equal(db["MNT-1"].visit_notes, undefined);
+
+		// Signal returns.
+		server.fail.clear();
+		const before = server.sent("save_visit").length;
+		browser.window.dispatch("online");
+		await settle();
+		assert.equal(server.sent("save_visit").length - before, 1, "one save, not one per answer");
+		assert.equal(db["MNT-1"].visit_notes, "Pump loud");
+		assert.equal(db["MNT-1"].chemistry_readings[0].reading_value, 7.4);
+		assert.equal(p.kept("MNT-1"), null, "nothing left on the phone");
+		await tick(200000);
+		assert.equal(server.sent("save_visit").length - before, 1, "and nothing sent again");
+	});
+
+	await test("opened again with signal, kept answers go back on screen and are sent", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_field("visit_notes", "Skimmed");
+		await tick(5000);
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		assert.equal(wizard().doc.visit_notes, "Skimmed", "back on screen");
+		assert.ok(ui.alerts.some((a) => /1 answers kept on this phone were put back/.test(a)), ui.alerts.join(" | "));
+		await tick(5000);
+		assert.equal(db["MNT-1"].visit_notes, "Skimmed");
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("a photo and a Finish taken with no signal each go out exactly once when it returns", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		p.net.down = true;
+		server.fail.add("save_visit");
+		server.fail.add("finish_visit");
+		w.take_photo("chemistry_readings", w.doc.chemistry_readings[0], new Blob(["jpeg"]), $stub("btn"));
+		await settle();
+		assert.equal(p.net.uploads.length, 0);
+		assert.equal(p.outbox().filter((item) => item.kind === "photo").length, 1, "the photo is on the phone");
+		w.set_field("visit_notes", "All done");
+		w.finish();
+		await settle();
+		assert.ok(p.outbox().some((item) => item.kind === "finish" && item.record === "MNT-1"), "the Finish is on the phone");
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true });
+		assert.equal(p.kept("MNT-1").dirty.fields.visit_notes, "All done");
+
+		// Closed and opened again, still no signal: the visit says it is waiting, nothing more.
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(1000);
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true });
+		assert.equal(db["MNT-1"].docstatus, 0);
+
+		// Signal returns: answers and photo in one save, then the Finish.
+		p.net.down = false;
+		server.fail.clear();
+		const finishes = server.sent("finish_visit").length;
+		browser.window.dispatch("online");
+		await settle();
+		assert.equal(p.net.uploads.length, 1, "the photo uploaded once");
+		assert.equal(server.sent("finish_visit").length - finishes, 1, "the Finish sent once");
+		assert.equal(db["MNT-1"].docstatus, 1);
+		assert.equal(db["MNT-1"].visit_notes, "All done");
+		assert.equal(db["MNT-1"].chemistry_readings[0].photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), [], "nothing left waiting");
+		assert.equal(p.kept("MNT-1"), null);
+		assert.ok(ui.alerts.some((a) => /Visit MNT-1 submitted/.test(a)), ui.alerts.join(" | "));
+
+		// Signal again, and time passes: nothing goes out a second time.
+		browser.window.dispatch("online");
+		await tick(600000);
+		assert.equal(p.net.uploads.length, 1);
+		assert.equal(server.sent("finish_visit").length - finishes, 1);
+	});
+
+	await test("a Finish whose answer was lost is not sent twice", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		server.hold.add("finish_visit");
+		wizard().finish();
+		await settle();
+		server.fail.add("get_visit_bootstrap"); // and then no signal to check with
+		server.lose("finish_visit"); // it went through; the answer did not come back
+		await settle();
+		assert.equal(db["MNT-1"].docstatus, 1);
+		assert.ok(p.outbox().some((item) => item.kind === "finish"), "kept: the phone cannot tell yet");
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true });
+		server.hold.clear();
+		server.fail.clear();
+		const finishes = server.sent("finish_visit").length;
+		browser.window.dispatch("online");
+		await settle();
+		assert.equal(server.sent("finish_visit").length, finishes, "a submitted visit is not finished again");
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("kept answers already on the server are not sent twice; one the office changed is asked about", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.hold.add("save_visit");
+		w.set_field("visit_notes", "Skimmed");
+		w.flush_save().catch(() => {});
+		await settle();
+		server.lose("save_visit"); // committed; the answer was lost
+		await settle();
+		server.hold.clear();
+		server.fail.add("save_visit"); // and from here, no signal
+		w.set_row("chemistry_readings", w.doc.chemistry_readings[1], "reading_value", 8.1);
+		await tick(5000);
+		// Meanwhile the office corrects the same reading on the desk form.
+		db["MNT-1"].chemistry_readings[1].reading_value = 7.6;
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		const saves = server.sent("save_visit").length;
+
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(5000);
+		const w2 = wizard();
+		assert.deepEqual(
+			w2._choice.conflicts.map((c) => [c.row, c.field, c.value, c.server]),
+			[["r2", "reading_value", 8.1, 7.6]]
+		);
+		assert.equal(server.sent("save_visit").length, saves, "nothing sent while it is in question");
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 7.6);
+		assert.ok(p.kept("MNT-1"), "still kept until the technician chooses");
+
+		w2.resolve_kept(false); // keep the server's
+		await tick(5000);
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 7.6);
+		assert.equal(db["MNT-1"].visit_notes, "Skimmed");
+		assert.equal(p.kept("MNT-1"), null);
+		assert.equal(server.sent("save_visit").length, saves, "'Skimmed' was already there: not sent again");
+	});
+
+	await test("choosing the phone's answer sends it over the office's", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_row("chemistry_readings", wizard().doc.chemistry_readings[1], "reading_value", 8.1);
+		await tick(5000);
+		db["MNT-1"].chemistry_readings[1].reading_value = 7.6;
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		wizard().resolve_kept(true);
+		await tick(5000);
+		assert.equal(db["MNT-1"].chemistry_readings[1].reading_value, 8.1);
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("an answer changed again while its save was on the wire is not asked about later", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.hold.add("save_visit");
+		w.set_field("visit_notes", "first");
+		w.flush_save().catch(() => {});
+		await settle();
+		w.set_field("visit_notes", "second"); // while "first" is on the wire
+		server.hold.clear();
+		server.release("save_visit"); // "first" lands
+		await settle();
+		server.fail.add("save_visit"); // "second" does not
+		await tick(5000);
+		db["MNT-1"].chemistry_readings[0].reading_value = 7.2; // the office, on another answer
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(5000);
+		assert.equal(wizard()._choice, null, "the server holds what this phone sent itself: nothing to ask");
+		assert.equal(db["MNT-1"].visit_notes, "second");
+		assert.equal(db["MNT-1"].chemistry_readings[0].reading_value, 7.2, "the office's answer stands");
+	});
+
+	await test("kept answers the server turns down are not retried in the background forever", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit(), "MNT-2": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_field("visit_notes", "kept");
+		await tick(5000);
+		server.fail.clear();
+		server.handlers.save_visit = () => new Error("Not permitted");
+		boot("visit-wizard", "/desk/visit-wizard/MNT-2"); // another visit; MNT-1 is sent in the background
+		p.install();
+		await settle();
+		const tries = server.sent("save_visit").length;
+		assert.ok(tries >= 1);
+		assert.ok(wizard()._needs_you.has("MNT-1"));
+		assert.ok(ui.alerts.some((a) => /Changes to MNT-1 were turned down/.test(a)), ui.alerts.join(" | "));
+		await tick(600000);
+		assert.equal(server.sent("save_visit").length, tries, "not retried");
+		assert.ok(p.kept("MNT-1"), "still kept");
+		assert.equal(db["MNT-1"].visit_notes, undefined);
+	});
+
+	await test("Last visit here: the previous visit's readings, problems and notes, or 'First recorded visit'", async () => {
+		visitServer({ "MNT-1": visit() });
+		const bootstrap = server.handlers.get_visit_bootstrap;
+		const last_visit = {
+			first_visit: false,
+			name: "MNT-0",
+			day: "2026-10-06",
+			technician_name: "Austin Healey",
+			notes: "Pump was loud.",
+			groups: [
+				{
+					serial_no: null,
+					label: "",
+					readings: [
+						{ reading: "pH", value: 7.4, uom: "", out_of_range: 0 },
+						{ reading: "ORP", value: 400, uom: "mV", out_of_range: 1 },
+					],
+					problems: [{ question: "Nozzles", answer: "Replace Two cracked", details: "Ordered" }],
+				},
+			],
+		};
+		server.handlers.get_visit_bootstrap = (args) => ({ ...bootstrap(args), dashboard: { last_visit } });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const html = drawn(() => wizard().render_last_visit()).join("\n");
+		for (const text of [
+			"Last visit here",
+			"2026-10-06 · Austin Healey · 1 out of range · 1 to look at",
+			"ORP",
+			"400 mV · out of range",
+			"Nozzles",
+			"Replace Two cracked",
+			"Pump was loud.",
+		]) {
+			assert.ok(html.includes(text), `missing ${text}`);
+		}
+		wizard().dashboard.last_visit = { first_visit: true };
+		assert.ok(drawn(() => wizard().render_last_visit()).join("").includes("First recorded visit"));
+		wizard().dashboard.last_visit = null;
+		assert.deepEqual(drawn(() => wizard().render_last_visit()), [], "nothing from an older server");
+	});
+
+	globalThis.fetch = realFetch;
 }
 
 // ------------------------------------------------------------------ Plan a Trip fixtures
@@ -4595,7 +4985,10 @@ function fakeGoogleMaps(options) {
 // ------------------------------------------------------------------ main
 
 const which = process.argv[2];
-if (!which || which === "visit-wizard") await visitWizardSuite();
+if (!which || which === "visit-wizard") {
+	await visitWizardSuite();
+	await visitWizardKeptSuite();
+}
 if (!which || which === "plan-a-trip") await planATripSuite();
 
 console.log(`${checks - failures} passed, ${failures} failed`);

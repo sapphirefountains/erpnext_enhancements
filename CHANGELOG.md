@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.596.0] - 2026-10-12
+
+Phase C of the 2026-10-12 Maintenance tools plan (TASK-2026-02481): the Visit Wizard, for the
+technicians.
+
+### Added
+
+- **Answers, photos and Finish are kept on the phone until the server has them** (C2,
+  TASK-2026-02483).
+  - Why: an answer not yet saved lived only in the page's memory. Saves retried and parked
+    against their own visit, but a reload, a crash, or the phone closing the browser at a
+    fountain with no signal dropped them.
+  - Nik's decision of 2026-10-12: "never lose answers", not a full offline mode. The visit is
+    still opened with signal, at the truck.
+  - **Answers** go to `localStorage` (`vz-unsent:<visit>`) on every change. What is kept is
+    everything the server does not have yet: the edits on screen, a save on the wire, saves
+    parked against a visit left behind, and consumables added here. It is rewritten when a save
+    lands and removed when empty.
+  - **Photos, and a Finish with its drawn signature,** go to IndexedDB (`vz-outbox`).
+    - A photo is kept, then uploaded. Its camera button turns amber while it waits.
+    - A Finish with no signal shows "Saved on this phone". The answers, photos and Finish are
+      then sent in that order.
+    - Sending happens on the browser's `online` event, any save that gets through, the page
+      opening again, and a backoff (15 s doubling to 2 min).
+  - **Opening a visit puts back what was kept.** Each kept answer remembers the server's value
+    from before it was changed, and the server's current version decides (`vz_reconcile`):
+    - unchanged there, the phone's answer goes back on;
+    - already there (a save that landed and lost its answer), it is dropped;
+    - changed by someone else, the technician is asked which to keep, on a screen of its own.
+    - A newer server edit is never overwritten without saying so. A save that lands while its
+      answer was changed again moves that answer's before-value along, so the second change is
+      not mistaken for a clash.
+  - **The visit list starts with "Saved on this phone, not sent yet",** and those visits'
+    answers are sent in the background without being opened.
+    - A save or photo the server turns down is kept and named, never retried in a loop.
+    - A Finish that already went through (its answer lost) is recognized from the visit's state
+      and not sent again.
+  - **The save state reads "Saved on this phone - will send when signal returns"** when there is
+    no signal and the answers are kept. The close-tab warning shows only where the browser cannot
+    keep them.
+  - Blocked or full storage (a private window, site data off) leaves the wizard as it was.
+    IndexedDB that never answers is given up on after 3 seconds, so the list and a visit still
+    load.
+  - The photo upload moved into `take_photo` / `vz_upload`. An upload that answers after the
+    technician left the visit no longer writes the photo onto whichever visit is on screen.
+- **Last visit here** (C1, TASK-2026-02482): a collapsed card on the Safety step.
+  - Why: technicians started each visit blind.
+  - The header shows the date, who did it, readings out of range and answers to look at.
+  - Inside: the site's previous approved visit's readings (out-of-range marked), anything
+    answered Fail or Replace, and the notes, by water feature on a site visit.
+  - From `visit_compare.last_visit`, the same helper and earlier visits as "Compared with last
+    visit" (v1.595.0). A Per Feature visit sees only its own fountain's rows. "First recorded
+    visit" when there is none.
+  - It arrives in the dashboard context the wizard already loads: `get_visit_bootstrap` now
+    passes the record to `get_dashboard_context`. That context loads the visit once for both
+    `compared` and `last_visit`.
+
+### Tests
+
+- `scripts/test_wizard_back_forward.mjs` gains "Visit Wizard: kept on the phone" (9 tests). It
+  runs the real page with a phone's `localStorage` and IndexedDB that outlive a reload, and a
+  fake upload endpoint. It proves:
+  - answers survive a reload with no signal and arrive in one save once it is back;
+  - a photo and a Finish queued offline each go out exactly once;
+  - a save or Finish whose answer was lost is not sent twice;
+  - an office edit is asked about and never overwritten, both ways the choice can go;
+  - an answer changed again in flight is not mistaken for a clash;
+  - a turned-down background save is not retried;
+  - the Last visit here card renders.
+  - Breaking the phone's storage fails 6 of them, and dropping the kept Finish fails 2. The 22
+    existing wizard tests pass unchanged.
+- `test_visit_compare` (now 22): `last_visit` for a first visit; readings, problems and notes;
+  a site visit by fountain; a fountain's visit seeing only its own rows. Also checks that the
+  wizard's bootstrap asks for it.
+
 ## [1.595.1] - 2026-10-12
 
 ### Fixed

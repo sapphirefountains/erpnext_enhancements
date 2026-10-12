@@ -350,7 +350,8 @@ def get_visit_bootstrap(record):
 
     return {
         "record": doc.as_dict(),
-        "dashboard": get_dashboard_context(doc.project, doc.serial_no) if doc.project else {},
+        # With the record: the "Last visit here" card on the Safety step (v1.596.0).
+        "dashboard": get_dashboard_context(doc.project, doc.serial_no, record=doc.name) if doc.project else {},
         "sections": _section_meta(doc),
         "template_meta": _template_meta(doc.get("template")),
         "features": _feature_names(doc),

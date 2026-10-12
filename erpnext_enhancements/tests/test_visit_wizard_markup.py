@@ -111,14 +111,20 @@ class TestVisitWizardMarkup(unittest.TestCase):
 			)
 
 	def test_autosave_failure_is_visible_and_retried(self):
-		"""A silent failed autosave can lose a whole visit on a bad signal."""
+		"""A silent failed autosave can lose a whole visit on a bad signal.
+
+		Since v1.596.0 a failure with no signal, whose answers the phone has kept, shows
+		"Saved on this phone" ("offline") rather than the error; either way it is shown and
+		retried.
+		"""
 		self.assertIn("set_save_state(", self.code)
 		self.assertIn("schedule_retry(", self.code)
 		self.assertRegex(
 			self.code,
-			r'set_save_state\("error"\)[\s\S]{0,120}?schedule_retry\(\)',
-			"a failed save must both show an error and schedule a retry",
+			r'set_save_state\([^;]*"offline" : "error"\);[\s\S]{0,120}?schedule_retry\(\)',
+			"a failed save must both show its state and schedule a retry",
 		)
+		self.assertIn('offline: __("Saved on this phone - will send when signal returns")', self.code)
 		self.assertIn("beforeunload", self.code, "closing the tab must warn while edits are unsaved")
 
 	def test_no_raw_control_bytes(self):
