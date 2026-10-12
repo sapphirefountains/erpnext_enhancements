@@ -208,6 +208,9 @@ const VZ_ANSWERED = {
 	consumables: () => true,
 };
 
+// Fields that together make one answer, judged together when kept answers meet the server.
+const VZ_PAIRED_FIELDS = { cleaning_tasks: ["is_done", "not_applicable"] };
+
 // A cleaning task is done, N/A or not done (v1.598.0); done wins, as the record's validate
 // settles a row ticked both ways. MIRRORS sapphire_maintenance/task_rules.py.
 function vz_task_state(row) {
@@ -469,6 +472,18 @@ function vz_reconcile(entry, doc) {
 			const row = (doc[table] || []).find((candidate) => candidate.name === name);
 			if (!row) return;
 			Object.entries(changes).forEach(([field, value]) => ask(table, name, field, value, row[field]));
+		});
+	});
+	// A cleaning task's Done and N/A are one answer (v1.598.0). When either is in question, so
+	// is the other: applying the half nobody disputes would make a task both done and N/A, which
+	// the server settles as done without asking, over the office's N/A.
+	out.conflicts.slice().forEach((conflict) => {
+		const pair = VZ_PAIRED_FIELDS[conflict.table];
+		if (!pair || !pair.includes(conflict.field)) return;
+		out.apply = out.apply.filter((change) => {
+			const partner = change.table === conflict.table && change.row === conflict.row && pair.includes(change.field);
+			if (partner) out.conflicts.push(change);
+			return !partner;
 		});
 	});
 	// A consumable added here has no name until the server has it. On another version of
@@ -3489,12 +3504,14 @@ class VisitWizard {
 						: __("Not done? Say why")
 			);
 		};
-		// Done and N/A each clear the other: a task is one or the other, or neither.
+		// Done and N/A each clear the other: a task is one or the other, or neither. Both fields
+		// are written on every tap, whatever this phone thinks they hold: answers kept on the
+		// phone are judged field by field against the server (vz_reconcile), so a Done kept here
+		// while the office marked the task N/A is asked about only if the phone also says "not
+		// N/A". And the server settles a row ticked both ways without telling the phone.
 		const set_state = (state) => {
-			if (row.not_applicable && state !== "na") this.set_row("cleaning_tasks", row, "not_applicable", 0);
-			if (row.is_done && state !== "done") this.set_row("cleaning_tasks", row, "is_done", 0);
-			if (state === "done" && !row.is_done) this.set_row("cleaning_tasks", row, "is_done", 1);
-			if (state === "na" && !row.not_applicable) this.set_row("cleaning_tasks", row, "not_applicable", 1);
+			this.set_row("cleaning_tasks", row, "is_done", state === "done" ? 1 : 0);
+			this.set_row("cleaning_tasks", row, "not_applicable", state === "na" ? 1 : 0);
 			paint();
 		};
 		$card.find(".vz-check-card").on("click", () => set_state(vz_task_state(row) === "done" ? "open" : "done"));

@@ -483,3 +483,18 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		});
 	},
 });
+
+// A cleaning task is done, N/A, or neither (v1.598.0). The grid shows both boxes, and the
+// record's validate settles a row ticked both ways as done, so without this a reviewer who
+// ticks N/A to correct a task wrongly marked done would see it put back to Done on save, and
+// the customer's report would say Done. Whichever box was ticked last wins here.
+frappe.ui.form.on("Sapphire Cleaning Task", {
+	is_done(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (row.is_done && row.not_applicable) frappe.model.set_value(cdt, cdn, "not_applicable", 0);
+	},
+	not_applicable(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (row.not_applicable && row.is_done) frappe.model.set_value(cdt, cdn, "is_done", 0);
+	},
+});
