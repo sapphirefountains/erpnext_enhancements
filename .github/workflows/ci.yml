@@ -2222,6 +2222,11 @@ jobs:
       # visits, and the "fountain as we left it" photo inlined. Never raises: a part that fails
       # is logged and left out. Pillow is what Frappe v16 itself pins; installed here so the
       # photo-shrinking tests run instead of skipping. Own step for its own frappe stub.
+      # Switching a contract to one visit for the site (v1.599.0, Hardware Apartments): the
+      # untouched per-feature drafts fold into one site visit, the earliest kept and saved before
+      # anything is deleted; a started or linked draft is left and named; only the switch does it.
+      - name: Contract switched to one visit per site folds its drafts
+        run: python -m unittest erpnext_enhancements.tests.test_visit_shape_fold -v
       - name: Visit report (names, contract year, charts, fountain photo)
         run: |
           python -m pip install "Pillow~=12.3.0"

@@ -209,6 +209,12 @@ class SapphireMaintenanceContract(Document):
 
 	def on_update(self):
 		self._ensure_maintenance_profile()
+		# Switched to one visit for the whole site (v1.599.0): fold the per-feature drafts
+		# already drafted for the next trip into one site visit, or the scheduler would not
+		# draft the site visit until all of them were done. See sapphire_maintenance/visit_shape.py.
+		from erpnext_enhancements.sapphire_maintenance.visit_shape import on_contract_update
+
+		on_contract_update(self)
 
 	def _ensure_maintenance_profile(self):
 		"""On activation, stub the site's Maintenance Profile if it is missing.

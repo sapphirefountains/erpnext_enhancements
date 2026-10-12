@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.599.0] - 2026-10-12
+
+### Added
+
+D4 of Phase D (TASK-2026-02489). Lisa asked how Hardware Apartments' four fountains on one
+invoice would work. Its contract (MNT-CON-2026-00008) is Per Feature, so each trip makes four
+visit forms and four reports. Nik chose one visit for all four.
+
+- **Switching a contract to Per Site Visit folds its drafts into one site visit**
+  (`sapphire_maintenance/visit_shape.py`, from the contract's `on_update`).
+  - **Why the switch alone was not enough.** The scheduler drafts a site visit only while the
+    contract has no open regular draft. The per-feature drafts already made for the next trip
+    (Hardware's four for 19 October) are exactly that. So no site visit would appear until all
+    four had been done as four visits, and "Log a visit" would keep opening one of them.
+  - **What the fold does.** The earliest untouched per-feature draft becomes the site visit: no
+    water feature, and its tables emptied so the wizard builds them for every feature on first
+    open. It is saved before anything is deleted. The other untouched drafts are deleted, and
+    `delete_doc` removes their ToDos.
+  - **What it leaves.** A draft somebody has started is left and named in the message: an answer,
+    a photo, a note, a clock, a signature, safety acknowledged, a date chosen, or past Draft. So
+    is a draft something links to. Labelled drafts (a Winterization, a follow-up) are separate
+    visits and are never touched.
+  - **When it runs.** Only on the save that switches the shape. Switching back to Per Feature
+    leaves an open site visit as it is.
+  - **Hardware itself still needs the switch** on its contract once this is deployed. All four of
+    its 19 October drafts are bare (checked on prod 2026-10-12), so they fold into one.
+
+### Tests
+
+- New bench-free `tests/test_visit_shape_fold.py`, with its own CI step. It covers Hardware's
+  drafts as they are on prod, the kept draft saved before any delete, the earliest kept with its
+  rows emptied, ten ways a draft counts as started, an opened but untouched draft still folding,
+  a linked draft left with messages unmuted again, another contract's drafts untouched, only the
+  switch folding, and the contract's `on_update` calling it.
+
 ## [1.598.0] - 2026-10-12
 
 ### Added
