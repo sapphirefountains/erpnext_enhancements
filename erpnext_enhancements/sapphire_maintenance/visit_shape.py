@@ -21,10 +21,14 @@ about everything else, because deleting a draft cannot be undone:
 * **Only the next trip's bare drafts.** A draft folds only when it is dated today or later, has
   never been opened (no section rows: the wizard and the form build them on first open, and
   an opened draft may have answers still on a phone, which the server cannot see), has
-  nothing on it (an answer, note, clock, signature, photo, date chosen, an attachment or a
-  comment) and is still Draft. The earliest becomes the site visit; the others fold into it
-  only when planned the same way (same day, technician and crew), so a date or crew somebody
-  set in the Maintenance Planner is not thrown away.
+  nothing on it (an answer, note, clock, signature, photo, date chosen or an attachment) and
+  is still Draft. The earliest becomes the site visit; the others fold into it only when
+  planned the same way (same day, technician and crew), so a date or crew somebody set in the
+  Maintenance Planner is not thrown away.
+* **Comments move, they do not block** (v1.599.1). A folded draft's comments go onto the site
+  visit, one of each: the scheduler's training warning and the Planner's conflict notes are
+  on almost every draft, so counting a comment as work left every Hardware draft unfolded the
+  first time it ran (2026-10-12).
 * **Everything else is left and named**: overdue drafts stay missed visits (the Missed
   Maintenance Visits report lists them), opened or started ones, ones planned differently,
   and ones another record links to. Labelled drafts (a Winterization, a follow-up) are
@@ -92,6 +96,7 @@ def fold_feature_drafts(contract_name):
 		"overdue": [],
 		"site_visit": None,
 		"beside": [],
+		"comments": 0,
 	}
 	names = frappe.get_all(
 		DOCTYPE,
@@ -134,6 +139,7 @@ def fold_feature_drafts(contract_name):
 		elif _linked(doc):
 			result["linked"].append(doc.name)
 		else:
+			result["comments"] += _carry_comments(doc.name, keep.name)
 			_cancel_todos(doc.name)
 			frappe.delete_doc(DOCTYPE, doc.name, ignore_permissions=True)
 			result["removed"].append(doc.name)
@@ -143,20 +149,46 @@ def fold_feature_drafts(contract_name):
 def started(doc):
 	"""Somebody has opened or begun the visit, so folding it could lose work: section rows (the
 	wizard builds them on first open, and answers may still be on a phone), any header field
-	of :data:`STARTED_FIELDS`, a state past Draft, an attachment or a comment."""
+	of :data:`STARTED_FIELDS`, a state past Draft, or an attachment. Not a comment: those are
+	carried to the site visit (:func:`_carry_comments`)."""
 	if (doc.get("workflow_state") or "Draft") != "Draft":
 		return True
 	if any(doc.get(table) for table in TABLES):
 		return True
 	if any(doc.get(field) for field in STARTED_FIELDS):
 		return True
-	if frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}):
-		return True
-	return bool(
-		frappe.db.exists(
-			"Comment", {"reference_doctype": DOCTYPE, "reference_name": doc.name, "comment_type": "Comment"}
-		)
-	)
+	return bool(frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}))
+
+
+def _carry_comments(source, target):
+	"""A folded draft's comments onto the site visit, so nothing written on it is lost: a note to
+	the technician, the Planner's conflict notes. One the site visit already has (the same
+	training warning on every draft) is not repeated. Returns how many were carried."""
+	filters = {"reference_doctype": DOCTYPE, "comment_type": "Comment"}
+	have = set(frappe.get_all("Comment", filters={**filters, "reference_name": target}, pluck="content"))
+	carried = 0
+	for row in frappe.get_all(
+		"Comment",
+		filters={**filters, "reference_name": source},
+		fields=["content", "comment_email", "comment_by"],
+		order_by="creation asc",
+	):
+		if row.content in have:
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": "Comment",
+				"reference_doctype": DOCTYPE,
+				"reference_name": target,
+				"content": row.content,
+				"comment_email": row.comment_email,
+				"comment_by": row.comment_by,
+			}
+		).insert(ignore_permissions=True)
+		have.add(row.content)
+		carried += 1
+	return carried
 
 
 def _plan(doc):
@@ -218,6 +250,8 @@ def describe(result):
 				len(result["removed"]), names("removed")
 			)
 		)
+	if result.get("comments"):
+		lines.append(_("Their comments are on {0} now.").format(result["kept"]))
 	for key, text in (
 		(
 			"started",

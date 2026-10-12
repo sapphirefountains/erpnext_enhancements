@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.599.1] - 2026-10-12
+
+### Fixed
+
+- **Switching a contract to one visit per site folded nothing on its first real use.**
+  - Hardware Apartments' contract (MNT-CON-2026-00008) was switched to Per Site Visit right
+    after v1.599.0 deployed. All four of its 19 October drafts were left as they were.
+  - The fold counted any comment as a sign somebody had started the visit. Every scheduler draft
+    carries the training-compliance warning the scheduler writes, and these four also had the
+    Maintenance Planner's conflict notes ("Kept a conflict … Working holiday").
+  - Comments no longer stop a fold. A folded draft's comments move onto the site visit, keeping
+    who wrote them, and one the site visit already has is not repeated (the same training
+    warning was on all four). The message says so.
+  - Hardware is still Per Site Visit with its four drafts. A fold runs only on the save that
+    switches the shape, so once this is deployed the contract is switched to Per Feature and
+    back, which folds them.
+
+### Tests
+
+- `test_visit_shape_fold`: Hardware's drafts with the comments they carry on prod still fold;
+  their comments land on the site visit once each, keeping who wrote them; the message says so.
+  The "comment means started" case is gone.
+
 ## [1.599.0] - 2026-10-12
 
 ### Added

@@ -65,7 +65,9 @@ def _is_set(value):
 	return value not in (None, "")
 
 
-def _get_all(doctype, filters=None, pluck=None, order_by=None, limit=None, **kwargs):
+def _get_all(doctype, filters=None, pluck=None, order_by=None, limit=None, fields=None, **kwargs):
+	if doctype == "Comment":
+		return _comments(filters, pluck, fields, order_by)
 	if doctype == "ToDo":
 		assert filters["status"] == "Open"
 		return [
@@ -96,10 +98,25 @@ def _get_all(doctype, filters=None, pluck=None, order_by=None, limit=None, **kwa
 def _exists(doctype, filters):
 	if doctype == "File":
 		return filters["attached_to_name"] in STATE["files"]
-	if doctype == "Comment":
-		assert filters["comment_type"] == "Comment"
-		return filters["reference_name"] in STATE["comments"]
 	raise AssertionError(doctype)
+
+
+def _comments(filters=None, pluck=None, fields=None, order_by=None):
+	assert filters["reference_doctype"] == RECORD and filters["comment_type"] == "Comment"
+	rows = [c for c in STATE["comments"] if c.reference_name == filters["reference_name"]]
+	if pluck:
+		return [c[pluck] for c in rows]
+	assert order_by == "creation asc"
+	return [_Dict({f: c.get(f) for f in fields}) for c in rows]
+
+
+def _get_doc(arg, name=None):
+	if isinstance(arg, dict):
+		assert arg["doctype"] == "Comment"
+		comment = _Dict(arg)
+		comment.insert = lambda ignore_permissions=False: STATE["comments"].append(comment)
+		return comment
+	return STATE["records"][name]
 
 
 def _set_value(doctype, name, field, value):
@@ -137,7 +154,7 @@ def setUpModule():
 	frappe.__dict__["_"] = lambda text, *a, **k: text
 	frappe.LinkExistsError = _LinkExistsError
 	frappe.get_all = _get_all
-	frappe.get_doc = lambda doctype, name: STATE["records"][name]
+	frappe.get_doc = _get_doc
 	frappe.delete_doc = _delete_doc
 	frappe.msgprint = lambda message, **kwargs: STATE["messages"].append(message)
 	frappe.flags = types.SimpleNamespace(mute_messages=False)
@@ -185,7 +202,7 @@ def _reset():
 			"records": {},
 			"todos": [],
 			"files": set(),
-			"comments": set(),
+			"comments": [],
 			"linked": set(),
 			"set_values": [],
 			"deleted": [],
@@ -283,6 +300,55 @@ class TestHardware(unittest.TestCase):
 		self.assertFalse(STATE["flags"].mute_messages)
 
 
+def _comment(reference, content, by="nikolas@example.com"):
+	STATE["comments"].append(
+		_Dict(
+			reference_doctype=RECORD,
+			reference_name=reference,
+			comment_type="Comment",
+			content=content,
+			comment_email=by,
+			comment_by=by,
+		)
+	)
+
+
+class TestComments(unittest.TestCase):
+	"""v1.599.1: on 2026-10-12 every Hardware draft carried the scheduler's training warning and
+	the Planner's conflict note, so counting a comment as work left all four unfolded."""
+
+	def setUp(self):
+		_reset()
+		_hardware()
+		training = "<!-- training-compliance:636275e86857 --><p><b>Required training is not current</b>"
+		conflict = (
+			"Kept a conflict on Mon Oct 12: Austin Healey: Booked on a day off. Reason: Working holiday"
+		)
+		for name in ("4lpc1ncnah", "4lq1bpi8uk", "4lr8msbd4j", "4lsbmepacj"):
+			_comment(name, training, by="Administrator")
+			_comment(name, conflict)
+		_comment("4lpc1ncnah", "Scheduled over a conflict on the Maintenance Planner: Over by 2h")
+		_comment("4lr8msbd4j", "Gate code is 4471 now")
+
+	def test_drafts_with_comments_still_fold(self):
+		result = _fold()
+		self.assertEqual(result["kept"], "4lpc1ncnah")
+		self.assertEqual(result["removed"], ["4lq1bpi8uk", "4lr8msbd4j", "4lsbmepacj"])
+		self.assertEqual(result["started"], [])
+
+	def test_their_comments_move_onto_the_site_visit_once_each(self):
+		result = _fold()
+		on_site_visit = [c for c in STATE["comments"] if c.reference_name == "4lpc1ncnah"]
+		self.assertEqual(len(on_site_visit), 4, "training, conflict, Planner note, and the gate code")
+		self.assertIn("Gate code is 4471 now", [c.content for c in on_site_visit])
+		gate = next(c for c in on_site_visit if c.content == "Gate code is 4471 now")
+		self.assertEqual(
+			(gate.comment_email, gate.comment_by), ("nikolas@example.com", "nikolas@example.com")
+		)
+		self.assertEqual(result["comments"], 1)
+		self.assertIn("Their comments are on 4lpc1ncnah now.", shape.describe(result))
+
+
 class TestWhatIsLeft(unittest.TestCase):
 	def setUp(self):
 		_reset()
@@ -308,15 +374,12 @@ class TestWhatIsLeft(unittest.TestCase):
 			"review": {"workflow_state": "Pending Review"},
 			"photo": {"fountain_photo": "/private/files/f.jpg"},
 			"attachment": {"_file": True},
-			"comment": {"_comment": True},
 		}
 		for label, extra in cases.items():
 			with self.subTest(label=label):
 				_reset()
 				if extra.pop("_file", None):
 					STATE["files"].add("started")
-				if extra.pop("_comment", None):
-					STATE["comments"].add("started")
 				_draft("started", "SN-A", **extra)
 				_draft("bare", "SN-B")
 				result = _fold()
@@ -333,7 +396,9 @@ class TestWhatIsLeft(unittest.TestCase):
 		_draft("other_crew", "SN-E")
 		result = _fold()
 		self.assertEqual((result["kept"], result["removed"]), ("kept", ["same"]))
-		self.assertEqual(result["different"], ["other_tech", "other_crew", "other_day"], "by date, as they were drafted")
+		self.assertEqual(
+			result["different"], ["other_tech", "other_crew", "other_day"], "by date, as they were drafted"
+		)
 
 	def test_a_contract_that_already_has_a_site_visit_folds_nothing(self):
 		"""Switched to Per Site Visit, back, and again: never two site visits for one trip."""
