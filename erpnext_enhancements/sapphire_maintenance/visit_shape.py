@@ -15,12 +15,27 @@ the same filter as ``api.maintenance_visit.open_regular_draft``), and the per-fe
 already drafted for the next trip are exactly that. So the site visit would not appear until
 all four were finished, as four visits, and "Log a visit" would open one of them.
 
-So saving the switch **folds** them: the contract's open per-feature regular drafts nobody has
-started become one site visit. The earliest is kept and turned into it (no water feature,
-section tables emptied so the wizard builds them for every feature on first open, as it does
-for any scheduler draft), and the rest are deleted with their ToDos. A draft somebody has
-started (:func:`started`) is left as it is and named, as is one something links to. Labelled
-drafts (a Winterization, a follow-up) are separate visits and never touched.
+So saving the switch **folds** the next trip's drafts into one site visit, and is careful
+about everything else, because deleting a draft cannot be undone:
+
+* **Only the next trip's bare drafts.** A draft folds only when it is dated today or later, has
+  never been opened (no section rows: the wizard and the form build them on first open, and
+  an opened draft may have answers still on a phone, which the server cannot see), has
+  nothing on it (an answer, note, clock, signature, photo, date chosen, an attachment or a
+  comment) and is still Draft. The earliest becomes the site visit; the others fold into it
+  only when planned the same way (same day, technician and crew), so a date or crew somebody
+  set in the Maintenance Planner is not thrown away.
+* **Everything else is left and named**: overdue drafts stay missed visits (the Missed
+  Maintenance Visits report lists them), opened or started ones, ones planned differently,
+  and ones another record links to. Labelled drafts (a Winterization, a follow-up) are
+  separate visits and are never looked at.
+* **Never a second site visit.** A contract that already has an open site visit folds nothing.
+* **The kept draft is converted in place** (its water feature cleared, one field written), so
+  no save hook runs on it; a full save would stamp a kiosk clock-in from whatever interval
+  the technician is on when the office saves the contract.
+* **ToDos go at once.** ``delete_doc`` removes a deleted draft's ToDos only in a job queued
+  after commit, which a deploy's Redis flush destroys, so the open ones are canceled here, in
+  the same transaction.
 
 This is a code change, not a one-off fix for Hardware, so it works for any contract switched
 later. Only this direction is handled: switching back to Per Feature leaves an open site
@@ -29,9 +44,7 @@ visit as it is.
 
 import frappe
 from frappe import _
-from frappe.utils import flt, formatdate
-
-from erpnext_enhancements.sapphire_maintenance.task_rules import task_answered
+from frappe.utils import formatdate, getdate, nowdate
 
 DOCTYPE = "Sapphire Maintenance Record"
 PER_SITE = "Per Site Visit"
@@ -46,6 +59,7 @@ STARTED_FIELDS = (
 	"client_sign_off",
 	"fountain_photo",
 )
+REGULAR = {"docstatus": 0, "visit_label": ["is", "not set"]}
 
 
 def on_contract_update(contract):
@@ -56,89 +70,141 @@ def on_contract_update(contract):
 	before = contract.get_doc_before_save()
 	if not before or before.get("visit_shape") == PER_SITE:
 		return
-	result = fold_feature_drafts(contract.name)
-	message = describe(result)
+	message = describe(fold_feature_drafts(contract.name))
 	if message:
 		frappe.msgprint(message, title=_("One visit for the whole site"), indicator="blue")
 
 
 def fold_feature_drafts(contract_name):
-	"""Fold the contract's open per-feature regular drafts into one site visit.
+	"""Fold the contract's next-trip per-feature drafts into one site visit (module docstring).
 
-	Returns ``{"kept": name or None, "removed": [names], "left": [names]}``.
+	Returns ``{"kept", "date", "removed", "started", "different", "linked", "overdue",
+	"site_visit", "beside"}``: names, except ``date``. ``beside`` is every per-feature draft,
+	left because the contract already has a site visit open.
 	"""
+	result = {
+		"kept": None,
+		"date": None,
+		"removed": [],
+		"started": [],
+		"different": [],
+		"linked": [],
+		"overdue": [],
+		"site_visit": None,
+		"beside": [],
+	}
 	names = frappe.get_all(
 		DOCTYPE,
-		filters={
-			"maintenance_contract": contract_name,
-			"docstatus": 0,
-			"visit_label": ["is", "not set"],
-			"serial_no": ["is", "set"],
-		},
+		filters={"maintenance_contract": contract_name, **REGULAR, "serial_no": ["is", "set"]},
 		pluck="name",
 		order_by="scheduled_visit_date asc, creation asc",
 	)
-	drafts = [frappe.get_doc(DOCTYPE, name) for name in names]
-	left = [doc.name for doc in drafts if started(doc)]
-	untouched = [doc for doc in drafts if not started(doc)]
-	if not untouched:
-		return {"kept": None, "removed": [], "left": left}
+	if not names:
+		return result
+	site_visit = frappe.get_all(
+		DOCTYPE,
+		filters={"maintenance_contract": contract_name, **REGULAR, "serial_no": ["is", "not set"]},
+		pluck="name",
+		limit=1,
+	)
+	if site_visit:
+		result["site_visit"] = site_visit[0]
+		result["beside"] = list(names)
+		return result
 
-	# The earliest becomes the site visit, and is saved before anything is deleted, so a save
-	# that fails leaves every draft where it was (the whole contract save rolls back).
-	keep, rest = untouched[0], untouched[1:]
-	keep.serial_no = None
-	for table in TABLES:
-		keep.set(table, [])
-	keep.save(ignore_permissions=True)
-
-	removed = []
-	for doc in rest:
-		if _delete(doc.name):
-			removed.append(doc.name)
+	today = getdate(nowdate())
+	bare = []
+	for doc in (frappe.get_doc(DOCTYPE, name) for name in names):
+		if not doc.get("scheduled_visit_date") or getdate(doc.scheduled_visit_date) < today:
+			result["overdue"].append(doc.name)
+		elif started(doc):
+			result["started"].append(doc.name)
 		else:
-			left.append(doc.name)
-	return {"kept": keep.name, "date": keep.get("scheduled_visit_date"), "removed": removed, "left": left}
+			bare.append(doc)
+	if not bare:
+		return result
+
+	keep, rest = bare[0], bare[1:]
+	# In place, one field: no save hooks on the kept draft (module docstring).
+	frappe.db.set_value(DOCTYPE, keep.name, "serial_no", None)
+	result["kept"], result["date"] = keep.name, keep.get("scheduled_visit_date")
+	for doc in rest:
+		if _plan(doc) != _plan(keep):
+			result["different"].append(doc.name)
+		elif _linked(doc):
+			result["linked"].append(doc.name)
+		else:
+			_cancel_todos(doc.name)
+			frappe.delete_doc(DOCTYPE, doc.name, ignore_permissions=True)
+			result["removed"].append(doc.name)
+	return result
 
 
 def started(doc):
-	"""Somebody has begun the visit: an answer, a photo, a note, a clock, a signature, safety
-	acknowledged, a date chosen, or it has gone further than Draft. Such a draft holds work
-	that a fold must not throw away."""
+	"""Somebody has opened or begun the visit, so folding it could lose work: section rows (the
+	wizard builds them on first open, and answers may still be on a phone), any header field
+	of :data:`STARTED_FIELDS`, a state past Draft, an attachment or a comment."""
 	if (doc.get("workflow_state") or "Draft") != "Draft":
+		return True
+	if any(doc.get(table) for table in TABLES):
 		return True
 	if any(doc.get(field) for field in STARTED_FIELDS):
 		return True
-	for row in doc.get("maintenance_results") or []:
-		if row.get("selection") or row.get("answer") or row.get("other_details") or row.get("photo"):
-			return True
-	for row in doc.get("chemistry_readings") or []:
-		if flt(row.get("reading_value")) or row.get("notes") or row.get("photo"):
-			return True
-	for row in doc.get("cleaning_tasks") or []:
-		if task_answered(row) or row.get("photo"):
-			return True
-	return any(flt(row.get("qty")) for row in doc.get("consumables") or [])
+	if frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": doc.name}):
+		return True
+	return bool(
+		frappe.db.exists(
+			"Comment", {"reference_doctype": DOCTYPE, "reference_name": doc.name, "comment_type": "Comment"}
+		)
+	)
 
 
-def _delete(name):
-	"""Delete an untouched draft and its ToDos (``delete_doc`` removes those). False when
-	something links to it, which ``delete_doc`` refuses with a message; that message is muted
-	here because the draft is named in the fold's own summary instead."""
+def _plan(doc):
+	"""How the visit is planned: the day, the technician and the crew."""
+	crew = sorted(row.get("user") or "" for row in doc.get("crew") or [])
+	return (str(doc.get("scheduled_visit_date") or ""), doc.get("technician") or "", crew)
+
+
+def _linked(doc):
+	"""Another record links to the draft, so ``delete_doc`` would refuse it. Checked first, with
+	its message muted (the draft is named in the summary instead), so that a real error in the
+	delete itself is still shown."""
+	from frappe.model.delete_doc import check_if_doc_is_dynamically_linked, check_if_doc_is_linked
+
 	muted = frappe.flags.mute_messages
 	frappe.flags.mute_messages = True
 	try:
-		frappe.delete_doc(DOCTYPE, name, ignore_permissions=True)
-		return True
-	except frappe.LinkExistsError:
+		check_if_doc_is_linked(doc)
+		check_if_doc_is_dynamically_linked(doc)
 		return False
+	except frappe.LinkExistsError:
+		return True
 	finally:
 		frappe.flags.mute_messages = muted
 
 
+def _cancel_todos(name):
+	for todo in frappe.get_all(
+		"ToDo", filters={"reference_type": DOCTYPE, "reference_name": name, "status": "Open"}, pluck="name"
+	):
+		frappe.db.set_value("ToDo", todo, "status", "Cancelled")
+
+
 def describe(result):
 	"""What the fold did, for the person who saved the contract. Empty when nothing changed."""
+
+	def names(key):
+		return ", ".join(result.get(key) or [])
+
 	lines = []
+	if result.get("site_visit"):
+		lines.append(
+			_(
+				"This contract already has a site visit open ({0}), so its per-feature drafts were left "
+				"as they are: {1}."
+			).format(result["site_visit"], names("beside"))
+		)
+		return "<br>".join(frappe.utils.escape_html(line) for line in lines)
 	if result.get("kept"):
 		when = formatdate(result["date"]) if result.get("date") else _("its next date")
 		lines.append(
@@ -148,15 +214,22 @@ def describe(result):
 		)
 	if result.get("removed"):
 		lines.append(
-			_("Removed {0} per-feature drafts nobody had started: {1}.").format(
-				len(result["removed"]), ", ".join(result["removed"])
+			_("Removed {0} per-feature drafts for the same trip that nobody had opened: {1}.").format(
+				len(result["removed"]), names("removed")
 			)
 		)
-	if result.get("left"):
-		lines.append(
+	for key, text in (
+		(
+			"started",
 			_(
-				"Left as they are, because someone has started them: {0}. Finish or delete them; "
-				"until then they stand beside the site visit."
-			).format(", ".join(result["left"]))
-		)
+				"Left, because someone has opened or started them: {0}. Finish or delete them; until "
+				"then they stand beside the site visit."
+			),
+		),
+		("different", _("Left, because they are planned for another day, technician or crew: {0}.")),
+		("linked", _("Left, because other records link to them: {0}.")),
+		("overdue", _("Left as missed visits, because their date has passed: {0}.")),
+	):
+		if result.get(key):
+			lines.append(text.format(names(key)))
 	return "<br>".join(frappe.utils.escape_html(line) for line in lines)

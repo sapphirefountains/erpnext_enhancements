@@ -21,26 +21,45 @@ visit forms and four reports. Nik chose one visit for all four.
     contract has no open regular draft. The per-feature drafts already made for the next trip
     (Hardware's four for 19 October) are exactly that. So no site visit would appear until all
     four had been done as four visits, and "Log a visit" would keep opening one of them.
-  - **What the fold does.** The earliest untouched per-feature draft becomes the site visit: no
-    water feature, and its tables emptied so the wizard builds them for every feature on first
-    open. It is saved before anything is deleted. The other untouched drafts are deleted, and
-    `delete_doc` removes their ToDos.
-  - **What it leaves.** A draft somebody has started is left and named in the message: an answer,
-    a photo, a note, a clock, a signature, safety acknowledged, a date chosen, or past Draft. So
-    is a draft something links to. Labelled drafts (a Winterization, a follow-up) are separate
-    visits and are never touched.
+  - **What folds: only the next trip's bare drafts.** A draft folds only when it is dated today or
+    later, has never been opened, has nothing on it and is still Draft. Never opened means no
+    section rows: the wizard builds them on first open, and an opened draft may have answers
+    still on a phone, where the server cannot see them. Nothing on it means no answer, note,
+    clock, signature, photo, chosen date, attachment or comment. The earliest such draft becomes
+    the site visit. The others fold into it only when planned the same way (same day,
+    technician and crew), so a date or crew someone set in the Maintenance Planner is kept.
+  - **The kept draft is converted in place**: its water feature is cleared in a single field
+    write, and the wizard builds its rows for every feature on first open. A full save would
+    run the record's hooks and could stamp a kiosk clock-in from whatever interval the
+    technician happened to be on.
+  - **ToDos go at once.** A deleted draft's open ToDos are canceled in the same transaction.
+    `delete_doc` removes them only in a job queued after commit, and a deploy's Redis flush
+    destroys queued jobs.
+  - **Everything else is left and named** in the message. That covers overdue drafts, which
+    stay on the Missed Maintenance Visits report. It also covers drafts that were opened or
+    started, drafts planned differently, and drafts another record links to. Links are checked
+    first with the message muted, so a real error in the delete itself still shows. Labelled
+    drafts (a Winterization, a follow-up) are separate visits and are never looked at.
+  - **Never a second site visit.** A contract that already has an open site visit folds nothing.
   - **When it runs.** Only on the save that switches the shape. Switching back to Per Feature
     leaves an open site visit as it is.
   - **Hardware itself still needs the switch** on its contract once this is deployed. All four of
-    its 19 October drafts are bare (checked on prod 2026-10-12), so they fold into one.
+    its 19 October drafts are bare, share a day, technician and crew, and have one ToDo each
+    (checked on prod 2026-10-12), so they fold into one.
+  - The review before release found that the first version kept the oldest draft. That could
+    have turned an overdue, never-filled-in visit into the site visit and deleted the next trip's
+    drafts. It could also have emptied a draft whose answers were still on a phone, and made a
+    second site visit after switching back and forth.
 
 ### Tests
 
 - New bench-free `tests/test_visit_shape_fold.py`, with its own CI step. It covers Hardware's
-  drafts as they are on prod, the kept draft saved before any delete, the earliest kept with its
-  rows emptied, ten ways a draft counts as started, an opened but untouched draft still folding,
-  a linked draft left with messages unmuted again, another contract's drafts untouched, only the
-  switch folding, and the contract's `on_update` calling it.
+  drafts as they are on prod, the kept draft converted in place with no save, the deleted
+  drafts' ToDos canceled, and overdue drafts (and an undated one) left as missed visits. It also
+  covers nine ways a draft counts as opened or started, drafts planned differently, a linked
+  draft left (with the delete itself unmuted), an existing site visit folding nothing, another
+  contract's drafts never looked at, only the switch folding, and the contract's `on_update`
+  calling it.
 
 ## [1.598.0] - 2026-10-12
 
