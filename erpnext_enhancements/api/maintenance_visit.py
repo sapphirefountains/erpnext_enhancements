@@ -286,6 +286,22 @@ def _wizard_state(doc):
 
 
 @frappe.whitelist()
+def get_visit_state(record):
+    """The visit as it stands, read-only, for the wizard's background sender (v1.596.0).
+
+    Answers, photos and a Finish kept on a technician's phone are sent for visits nobody is
+    looking at (``VisitWizard.sync_record``). That needs the rows and the version and nothing
+    else. :func:`get_visit_bootstrap` would also instantiate a bare draft's template, claim
+    the visit for the caller (``_claim_visit``), which must happen only when someone opens it,
+    and compute the whole dashboard, on every retry. A missing or forbidden visit raises
+    here as there (404 / 403), which the sender treats as "turned down", not "no signal".
+    """
+    doc = _get_record(record)
+    doc.apply_fieldlevel_read_permissions()
+    return {"record": doc.as_dict(), "state": _wizard_state(doc)}
+
+
+@frappe.whitelist()
 def get_visit_bootstrap(record):
     """Everything the wizard needs to render a visit in one round trip.
 
