@@ -82,7 +82,11 @@ def boot_session(bootinfo):
 	can warn instead of handing out a URL that 404s. ``ee_fountain_move_url`` is
 	the public form URL, resolved server-side via ``get_url`` so the client never
 	hand-builds it. The server-side guards in ``feature_flags`` remain the
-	authority for both.
+	authority for both. ``ee_fountain_move_locations`` is that list's store picker.
+
+	``frappe.boot.ee_item_pickers`` carries the two settings the link pickers on the
+	Maintenance Record, Section and Contract forms and on the Sales Order form filter by:
+	the consumables Item Group and the water-feature Item. See :func:`_settings_for_forms`.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -99,3 +103,35 @@ def boot_session(bootinfo):
 	bootinfo.ee_fountain_move_url = get_url("/fountain-move")
 	bootinfo.ee_contract_esign = 1 if contract_esign_enabled() else 0
 	bootinfo.ee_contract_esign_public = 1 if contract_esign_public_page_enabled() else 0
+	pickers, locations = _settings_for_forms()
+	bootinfo.ee_item_pickers = pickers
+	bootinfo.ee_fountain_move_locations = locations if bootinfo.ee_fountain_move else []
+
+
+def _settings_for_forms():
+	"""``(item pickers, fountain move store names)``, from ERPNext Enhancements Settings.
+
+	**Read here, never from the browser.** Those forms used to ask for these values with
+	``frappe.db.get_single_value`` and ``frappe.client.get``, which require read permission on
+	the settings, a System Manager doctype. Everybody else got "No permission for ERPNext
+	Enhancements Settings" every time one of those forms or lists opened (Nik, 2026-10-12:
+	"they get a warning or error saying they don't have permissions for ERPNext
+	Enhancements"). None of the three values is sensitive: an Item Group, an Item code and the
+	names of the stores. The server-side code that acts on them reads the settings itself.
+
+	Never raises: boot runs on every desk page, and a settings read is not worth a broken desk.
+	"""
+	try:
+		settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+	except Exception:
+		return {}, []
+	pickers = {
+		"consumables_item_group": settings.get("consumables_item_group") or None,
+		"water_feature_item": settings.get("water_feature_item") or None,
+	}
+	locations = [
+		row.get("location_name")
+		for row in settings.get("fountain_move_locations") or []
+		if row.get("location_name") and not row.get("disabled")
+	]
+	return pickers, locations

@@ -132,16 +132,11 @@ function open_send_dialog() {
 
 function populate_locations(dialog) {
 	// The store list is operator-editable in settings, so read it rather than
-	// hardcoding three options that will eventually be wrong.
-	frappe.call({
-		method: "frappe.client.get",
-		args: { doctype: "ERPNext Enhancements Settings" },
-		callback(response) {
-			const rows = (response.message || {}).fountain_move_locations || [];
-			const names = rows.filter((row) => !row.disabled).map((row) => row.location_name);
-			dialog.set_df_property("ct_location", "options", [""].concat(names).join("\n"));
-		},
-	});
+	// hardcoding three options that will eventually be wrong. From the boot payload
+	// (enabled store names only), not frappe.client.get: that needs read on ERPNext
+	// Enhancements Settings, which only a System Manager has (boot.py).
+	const names = frappe.boot.ee_fountain_move_locations || [];
+	dialog.set_df_property("ct_location", "options", [""].concat(names).join("\n"));
 }
 
 function report_sent(result) {

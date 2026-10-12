@@ -36,11 +36,10 @@ frappe.ui.form.on("Sapphire Maintenance Contract", {
 		frm.set_query("service_plan", function () {
 			return { filters: { disabled: 0 } };
 		});
-		frappe.db
-			.get_single_value("ERPNext Enhancements Settings", "water_feature_item")
-			.then((item) => {
-				frm._ee_water_feature_item = item;
-			});
+		// From the boot payload, not frappe.db.get_single_value: that needs read on
+		// ERPNext Enhancements Settings, and everyone but a System Manager got "No permission
+		// for ERPNext Enhancements Settings" each time this form opened (boot.py).
+		frm._ee_water_feature_item = (frappe.boot.ee_item_pickers || {}).water_feature_item;
 	},
 
 	refresh(frm) {

@@ -2186,6 +2186,11 @@ jobs:
       # not stop a visit going for review), and the HTML a reader actually gets.
       - name: Visit review digest (every answer, to the reviewer and the technician)
         run: python -m unittest erpnext_enhancements.tests.test_visit_review_digest -v
+      # Desk scripts that read ERPNext Enhancements Settings showed everyone but a System
+      # Manager "No permission for ERPNext Enhancements Settings" whenever those forms opened.
+      # The values ride in the boot payload now; this keeps a browser read from coming back.
+      - name: Settings are never read from the browser
+        run: python -m unittest erpnext_enhancements.tests.test_settings_not_read_from_browser -v
       # The OSHA injury log. Shaped by the regulation rather than by what would be
       # tidy, so most of this suite is really "does the code still match the rule":
       # the record exists the moment it is filed (a log a manager can suppress at
