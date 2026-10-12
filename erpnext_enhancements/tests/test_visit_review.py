@@ -86,6 +86,17 @@ class _Visit(_Dict):
 		STATE["comments"].append((self.name, kind, text))
 
 
+class _FollowUp(_Dict):
+	def check_permission(self, ptype):
+		STATE["checked"].append((self.name, ptype))
+		if ptype in STATE["follow_up_denied"]:
+			raise PermissionError_(ptype)
+
+	def save(self):
+		self.modified = "2026-10-12 12:00:00"
+		STATE["saved"].append((self.name, self.status))
+
+
 WORKFLOW = _Dict(
 	states=[
 		_Dict(state="Draft", doc_status="0"),
@@ -133,6 +144,15 @@ def _reset():
 			"errors": [],
 			"missed": [],
 			"missed_raises": False,
+			"follow_ups": {},
+			"follow_up_denied": set(),
+			"saved": [],
+			"can_opportunity": True,
+			"names": {
+				"Project": {"PRJ-00228": "Hardware Apartments"},
+				"Serial No": {"SN-EAST": "Hardware Apartments - East Courtyard Fountain"},
+				"User": {"austin@example.com": "Austin Healey"},
+			},
 		}
 	)
 
@@ -164,6 +184,10 @@ def _throw(message, exc=None):
 
 
 def _get_all(doctype, filters=None, fields=None, order_by=None, limit=None, **kwargs):
+	if doctype in ("Project", "Serial No", "User"):
+		names = STATE["names"][doctype]
+		field = fields[1]
+		return [_Dict(name=n, **{field: names[n]}) for n in filters["name"][1] if n in names]
 	if doctype == RECORD:
 		rows = [
 			v
@@ -180,8 +204,32 @@ def _get_all(doctype, filters=None, fields=None, order_by=None, limit=None, **kw
 
 
 def _get_doc(doctype, name):
+	if doctype == "Maintenance Follow-Up":
+		return STATE["follow_ups"][name]
 	assert doctype == RECORD
 	return STATE["visits"][name]
+
+
+def _get_list(doctype, filters=None, fields=None, order_by=None, limit_page_length=None, **kwargs):
+	assert doctype == "Maintenance Follow-Up" and order_by == "creation asc"
+	wanted = set(filters["status"][1])
+	rows = sorted((f for f in STATE["follow_ups"].values() if f.status in wanted), key=lambda f: f.creation)
+	return [_Dict({field: row.get(field) for field in fields}) for row in rows]
+
+
+def _add_follow_up(name, status="Open", creation="2026-10-12 09:00:00", **extra):
+	STATE["follow_ups"][name] = _FollowUp(
+		name=name,
+		status=status,
+		creation=creation,
+		modified="2026-10-12 10:00:00",
+		title="New manifold",
+		description="New manifold for the east basin",
+		project="PRJ-00228",
+		serial_no="SN-EAST",
+		raised_by="austin@example.com",
+		**extra,
+	)
 
 
 def _get_value(doctype, name, fields, **kwargs):
@@ -226,11 +274,17 @@ def setUpModule():
 	frappe.throw = _throw
 	frappe.get_roles = lambda *a: list(STATE["roles"])
 	frappe.get_all = _get_all
+	frappe.get_list = _get_list
 	frappe.get_doc = _get_doc
+	frappe.has_permission = lambda doctype, ptype="read", *a, **k: (
+		STATE["can_opportunity"] if doctype == "Opportunity" else True
+	)
 	frappe.get_traceback = lambda: "traceback"
 	frappe.log_error = lambda *a, **k: STATE["errors"].append(k.get("title"))
 	frappe.db = types.SimpleNamespace(
-		exists=lambda doctype, name: name in STATE["visits"], get_value=_get_value
+		exists=lambda doctype, name: name
+		in (STATE["follow_ups"] if doctype == "Maintenance Follow-Up" else STATE["visits"]),
+		get_value=_get_value,
 	)
 
 	class _Session:
@@ -594,7 +648,18 @@ class TestTheWiring(unittest.TestCase):
 	def test_the_page_calls_only_whitelisted_endpoints_that_exist(self):
 		js = (APP / "sapphire_maintenance/page/visit_review/visit_review.js").read_text(encoding="utf-8")
 		called = set(re.findall(r'VR_API \+ "(\w+)"', js))
-		self.assertEqual(called, {"get_review_queue", "get_review_visit", "approve_visit", "send_back_visit"})
+		self.assertEqual(
+			called,
+			{
+				"get_review_queue",
+				"get_review_visit",
+				"approve_visit",
+				"send_back_visit",
+				"get_follow_ups",
+				"set_follow_up_status",
+				"make_follow_up_opportunity",
+			},
+		)
 		tree = ast.parse((APP / "api/maintenance_review.py").read_text(encoding="utf-8"))
 		whitelisted = {
 			node.name
@@ -606,7 +671,12 @@ class TestTheWiring(unittest.TestCase):
 
 	def test_the_decisions_are_post_only(self):
 		src = (APP / "api/maintenance_review.py").read_text(encoding="utf-8")
-		for name in ("approve_visit", "send_back_visit"):
+		for name in (
+			"approve_visit",
+			"send_back_visit",
+			"set_follow_up_status",
+			"make_follow_up_opportunity",
+		):
 			with self.subTest(name=name):
 				self.assertIn(f'@frappe.whitelist(methods=["POST"])\ndef {name}(', src)
 
@@ -617,6 +687,70 @@ class TestTheWiring(unittest.TestCase):
 		for key in re.findall(r'"(\w+)",', block):
 			with self.subTest(key=key):
 				self.assertIn(f'"{key}":', digest)
+
+
+class TestFollowUps(unittest.TestCase):
+	"""v1.600.0 (D3): the follow-up list, its statuses, and the one-click Opportunity."""
+
+	def setUp(self):
+		_reset()
+		_add_follow_up("MFU-2", creation="2026-10-12 11:00:00", item="MANIFOLD-2", qty=1)
+		_add_follow_up("MFU-1", creation="2026-10-11 09:00:00")
+		_add_follow_up("MFU-OLD", status="Invoiced")
+
+	def test_the_open_ones_oldest_first_with_names_not_ids(self):
+		data = review.get_follow_ups()
+		rows = data["follow_ups"]
+		self.assertEqual([row["name"] for row in rows], ["MFU-1", "MFU-2"])
+		self.assertEqual(rows[0]["site"], "Hardware Apartments")
+		self.assertEqual(rows[0]["feature"], "East Courtyard Fountain")
+		self.assertEqual(rows[0]["raised_by_name"], "Austin Healey")
+		self.assertEqual(data["statuses"][-2:], ["Invoiced", "Canceled"])
+		self.assertTrue(data["can_make_opportunity"])
+
+	def test_invoiced_and_canceled_on_request(self):
+		names = [row["name"] for row in review.get_follow_ups(include_closed=1)["follow_ups"]]
+		self.assertIn("MFU-OLD", names)
+
+	def test_only_reviewers_and_supervisors(self):
+		STATE["roles"] = ["Maintenance User"]
+		for call in (
+			lambda: review.get_follow_ups(),
+			lambda: review.set_follow_up_status("MFU-1", "Quoted", "2026-10-12 10:00:00"),
+			lambda: review.make_follow_up_opportunity("MFU-1"),
+		):
+			with self.assertRaises(PermissionError_):
+				call()
+
+	def test_a_status_moves_on_against_the_version_shown(self):
+		result = review.set_follow_up_status("MFU-1", "Quoted", "2026-10-12 10:00:00")
+		self.assertEqual(result["status"], "Quoted")
+		self.assertEqual(STATE["saved"], [("MFU-1", "Quoted")])
+		self.assertIn(("MFU-1", "write"), STATE["checked"])
+
+	def test_a_stale_or_unknown_status_is_refused(self):
+		with self.assertRaises(Thrown):
+			review.set_follow_up_status("MFU-1", "Quoted", "2026-10-12 09:59:00")
+		with self.assertRaises(Thrown):
+			review.set_follow_up_status("MFU-1", "Quoted", None)
+		with self.assertRaises(Thrown):
+			review.set_follow_up_status("MFU-1", "Shipped", "2026-10-12 10:00:00")
+		with self.assertRaises(DoesNotExistError_):
+			review.set_follow_up_status("MFU-NONE", "Quoted", "2026-10-12 10:00:00")
+		self.assertEqual(STATE["saved"], [])
+
+	def test_the_opportunity_needs_write_on_the_follow_up(self):
+		STATE["follow_up_denied"].add("write")
+		with self.assertRaises(PermissionError_):
+			review.make_follow_up_opportunity("MFU-1")
+		self.assertNotIn("opportunities", STATE)
+
+	def test_the_opportunity_is_made_by_follow_ups(self):
+		result = review.make_follow_up_opportunity("MFU-1")
+		self.assertEqual(
+			result, {"opportunity": "CRM-OPP-1", "url": "https://erp.test/app/Opportunity/CRM-OPP-1"}
+		)
+		self.assertEqual(STATE["opportunities"], ["MFU-1"])
 
 
 if __name__ == "__main__":

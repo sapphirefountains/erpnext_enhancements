@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.600.0] - 2026-10-12
+
+### Added
+
+D3 of Phase D (TASK-2026-02488). Lisa, 2026-10-12: "say Austin talked to someone and told them
+you need a new manifold, and then he adds it to the form with a follow up and then I can get it
+over to Brian and follow it through until the new part is installed and invoiced." She also
+asked for a parts-needed section. Nik's call: a follow-up list that can make an Opportunity.
+
+- **Follow-ups and parts needed on the visit.** A new child table, `follow_ups` (Sapphire Visit
+  Follow-Up), records:
+  - what is needed;
+  - a part and qty, if the technician knows them;
+  - who on site was told;
+  - a photo;
+  - on a site visit, the water feature;
+  - the inspection answer it came from.
+
+  The record's `validate` tidies each row and keeps it on a water feature the visit covers.
+- **In the Visit Wizard.** Wrap-up has a "Follow-ups and parts needed" card and an *Add a
+  follow-up* dialog. A Fail or Replace answer offers *＋ Follow-up*, filled in from the question
+  and its details.
+  - Added with no signal, a follow-up is kept on the phone like any answer. The added-row
+    machinery is generalized from consumables to one rule per table (`VZ_ADDED`): the fields
+    sent, the fields kept, and how to recognize a row already sent whose answer was lost.
+  - The server's names for added rows now land per table. A row kept on a phone before this
+    version reads as a consumable.
+  - A photo can be added once the follow-up has saved, because a photo is kept by its row's
+    name.
+- **On approval, each row becomes a Maintenance Follow-Up**, a new doctype tracked Open →
+  Quoted → Ordered → Installed → Invoiced (or Canceled), and the row links to it
+  (`sapphire_maintenance/follow_ups.py`, an `on_submit` hook).
+  - The hook raises rather than logs. An approved visit whose follow-ups were silently not
+    tracked is exactly what this exists to prevent, so the approval rolls back with it.
+  - "Invoiced" is set by hand until invoicing moves to ERPNext.
+- **The Visit Review page's follow-up list** (`/desk/visit-review/follow-ups`, its own history
+  entry, also linked from the queue and the page menu) lists them oldest first. Each shows its
+  site, water feature, part, who raised it and who on site was told.
+  - A status select moves it on, refused when it changed since the list was drawn.
+  - *Create Opportunity* makes the Opportunity in one click:
+    - for the customer, in the Service value stream, with the part as its item;
+    - owned by the new **ERPNext Enhancements Settings → Follow-up Opportunity Owner** (to be set
+      to Brian), or by whoever clicks when that is empty;
+    - with what was found, who was told and the visit on its timeline, escaped.
+
+    It is made once, and only by someone who may create Opportunities.
+- **On the customer's report and in the review email.** The report gains a "Follow-ups and
+  Parts Needed" table before the fountain photo. The email and the Visit Review page gain a
+  "Follow-ups and parts needed" block with photo links. The review queue shows a follow-up
+  count, and the Sapphire Maintenance workspace links the Maintenance Follow-Up list.
+- Lead attribution is off on prod, so the Opportunity sets no lead source. If
+  `require_lead_source_on_opportunity` is turned on, *Create Opportunity* shows that rule's own
+  "Lead Source is required" message.
+
+### Tests
+
+- New bench-free `tests/test_maintenance_follow_ups.py`, with its own CI step. It covers rows
+  tidied and kept on a covered feature, one tracked follow-up per row on approval (only once)
+  and the hook's wiring, and the Opportunity:
+  - its fields, owner and value stream;
+  - the timeline note, escaped;
+  - falling back to the person clicking;
+  - made once;
+  - refused without create permission or a customer.
+- `test_visit_review`: the follow-up list (oldest first, names not IDs, closed ones on
+  request), the role gate on all three endpoints, a status checked against the version shown,
+  and the Opportunity needing write on the follow-up.
+- The wizard harness covers:
+  - a follow-up kept with no signal and then sent with its water feature;
+  - a lost answer not sent twice;
+  - names landing per table when a consumable and a follow-up go together;
+  - a phone's pre-v1.600.0 kept answers still sent;
+  - a Fail answer's follow-up filled in.
+
+  The harness's fake `save_visit` now names appended rows as the real one does.
+- `test_print_style` and `test_visit_review_digest`: the report's table (escaped, "Whole site",
+  before the photo) and the email's block.
+
 ## [1.599.0] - 2026-10-12
 
 ### Added

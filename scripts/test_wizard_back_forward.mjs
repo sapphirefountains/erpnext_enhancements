@@ -333,7 +333,7 @@ function call(opts, args) {
 
 // `dialog` is the message dialog open now: frappe.msgprint opens it, and every route change
 // closes it (router.set_history -> frappe.ui.hide_open_dialog), as on the real desk.
-let ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [] };
+let ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [], dialogs: [] };
 
 function installFrappe(browser) {
 	const { hist, location, window } = browser;
@@ -355,6 +355,18 @@ function installFrappe(browser) {
 			}),
 			hide_open_dialog() {
 				ui.dialog = null;
+			},
+			// A form dialog (Add Item, Add a follow-up): kept, so a test can read its fields
+			// and press its primary action with the values a person would have typed.
+			Dialog: class {
+				constructor(opts) {
+					this.opts = opts;
+					ui.dialogs.push(this);
+				}
+				show() {}
+				hide() {
+					this.hidden = true;
+				}
 			},
 		},
 		utils: {
@@ -640,7 +652,7 @@ let F;
 function boot(page, startUrl) {
 	for (const key of Object.keys(PAGES)) delete globalThis[`__klass_${PAGES[key].klass}`];
 	clicks.length = 0;
-	ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [] };
+	ui = { alerts: [], msgprints: [], renders: [], dialog: null, save_state: null, drawn: [], dialogs: [] };
 	clock.timers.clear();
 	browser = makeBrowser(startUrl);
 	F = installFrappe(browser);
@@ -709,15 +721,20 @@ function visitServer(records, sections) {
 		if (modified !== rec.modified) return new Error("Visit Out of Date");
 		const p = JSON.parse(patch);
 		Object.assign(rec, p.fields);
+		const added = {};
 		Object.entries(p.rows).forEach(([table, rows]) =>
 			rows.forEach((row) => {
 				const hit = (rec[table] || []).find((r) => r.name === row.name);
 				if (hit) Object.assign(hit, row);
-				else (rec[table] = rec[table] || []).push({ ...row, name: `${table}-${++bump}` });
+				else {
+					const name = `${table}-${++bump}`;
+					(rec[table] = rec[table] || []).push({ ...row, name });
+					(added[table] = added[table] || []).push(name);
+				}
 			})
 		);
 		rec.modified = `${record}@${++bump}`;
-		return { modified: rec.modified, docstatus: 0, completion_percent: 50 };
+		return { modified: rec.modified, docstatus: 0, completion_percent: 50, added };
 	};
 	server.handlers.finish_visit = ({ record, modified }) => {
 		const rec = db[record];
@@ -1678,6 +1695,136 @@ async function visitWizardKeptSuite() {
 		p.install();
 		await tick(10000);
 		assert.equal(db["MNT-1"].consumables.length, 2, "the phone knew c9 by name: the new dose is another");
+	});
+
+	await test("a follow-up (v1.600.0) added with no signal is kept, then sent with its water feature", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.fail.add("save_visit"); // no signal
+		w.add_follow_up();
+		const dialog = ui.dialogs[ui.dialogs.length - 1];
+		assert.deepEqual(
+			dialog.opts.fields.map((f) => f.fieldname),
+			["description", "item", "qty", "told", "serial_no"],
+			"a site visit asks which water feature"
+		);
+		dialog.opts.primary_action({
+			description: "  New manifold for the east basin ",
+			item: "MANIFOLD-2",
+			qty: 1,
+			told: "Property manager",
+			serial_no: "SN-B",
+		});
+		await tick(5000);
+		const kept = p.kept("MNT-1");
+		assert.equal(kept.pending_added.length, 1);
+		assert.equal(kept.pending_added[0]._table, "follow_ups");
+		assert.equal(kept.pending_added[0].description, "New manifold for the east basin");
+		assert.equal((db["MNT-1"].follow_ups || []).length, 0);
+
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(10000);
+		const [sent] = db["MNT-1"].follow_ups;
+		assert.deepEqual(
+			[sent.description, sent.item, sent.qty, sent.told, sent.serial_no],
+			["New manifold for the east basin", "MANIFOLD-2", 1, "Property manager", "SN-B"]
+		);
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("a follow-up whose save committed but whose answer was lost is not sent twice", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.hold.add("save_visit");
+		w.add_follow_up();
+		ui.dialogs[ui.dialogs.length - 1].opts.primary_action({ description: "Replace lens", serial_no: "SN-A" });
+		await settle();
+		server.lose("save_visit"); // committed; the answer was lost
+		await settle();
+		server.hold.clear();
+		server.fail.add("save_visit");
+		await tick(5000);
+		db["MNT-1"].visit_notes = "office note";
+		db["MNT-1"].modified = "MNT-1@office";
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].follow_ups.length, 1, "the server's row is the one this phone sent");
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("the server's names land on the right rows when a consumable and a follow-up go together", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		await settle();
+		const w = wizard();
+		const dose = { item: "Chlorine", item_name: "Chlorine", qty: 2, uom: "tab" };
+		w.doc.consumables.push(dose);
+		w.pending_added.push(dose);
+		w.add_follow_up();
+		ui.dialogs[ui.dialogs.length - 1].opts.primary_action({ description: "Order a pump seal", serial_no: "" });
+		await tick(5000);
+		assert.ok(dose.name && dose.name.startsWith("consumables-"), dose.name);
+		const follow_up = w.doc.follow_ups[0];
+		assert.ok(follow_up.name && follow_up.name.startsWith("follow_ups-"), follow_up.name);
+		assert.equal(follow_up.serial_no, null, "Whole site");
+	});
+
+	await test("answers kept on a phone before v1.600.0 (consumables only) are still sent", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		// What v1.596.0-v1.599.0 kept: no _table, and `known` a plain list of consumables.
+		window.localStorage.setItem(
+			"vz-unsent:MNT-1",
+			JSON.stringify({
+				record: "MNT-1",
+				modified: "MNT-1@1",
+				dirty: { fields: {}, rows: {} },
+				pending_added: [{ item: "Algaecide", item_name: "Algaecide", qty: 1, uom: "qt" }],
+				known: ["c1"],
+				base: { fields: {}, rows: {} },
+				at: 1,
+			})
+		);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.ok(db["MNT-1"].consumables.some((row) => row.item === "Algaecide"));
+		assert.equal(p.kept("MNT-1"), null);
+	});
+
+	await test("a Fail answer offers a follow-up, filled in from the question and its details", async () => {
+		visitServer({
+			"MNT-1": visit({
+				maintenance_results: [{ name: "m1", serial_no: "SN-B", question: "Manifold", selection: "Fail", answer: "Cracked" }],
+			}),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.$wrap = $stub("wrap");
+		w.result_card(w.doc.maintenance_results[0]);
+		clicks.filter((c) => c.event === "click" && c.src.includes("Manifold") && c.src.endsWith(".vz-follow-btn")).pop().fn({});
+		const dialog = ui.dialogs[ui.dialogs.length - 1];
+		const value = (name) => dialog.opts.fields.find((f) => f.fieldname === name).default;
+		assert.equal(value("description"), "Manifold: Cracked");
+		assert.equal(value("serial_no"), "SN-B");
+		dialog.opts.primary_action({ description: "Manifold: Cracked", serial_no: "SN-B" });
+		assert.equal(w.doc.follow_ups[0].source_question, "Manifold");
 	});
 
 	await test("a retake while the first photo is uploading is the photo the answer keeps", async () => {

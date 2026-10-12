@@ -609,6 +609,33 @@ class TestWhatItSays(unittest.TestCase):
 		self.assertTrue(any("Empty skimmer" in w and "required" in w for w in context["warnings"]))
 		self.assertFalse(any("Empty skimmer" in w and "no reason" in w for w in context["warnings"]))
 
+	def test_follow_ups_are_a_block_for_the_office(self):
+		"""v1.600.0: what the site needs after today, with who on site was told."""
+		context = digest.build_context(
+			_visit(
+				follow_ups=[
+					_Dict(
+						description="New manifold",
+						item="MANIFOLD-2",
+						qty=1,
+						told="Property manager",
+						photo="/private/files/manifold.jpg",
+					),
+					_Dict(description="Come back for the lights", item=None, qty=0, told=None),
+				]
+			)
+		)
+		block = _block(context, "Follow-ups and parts needed")
+		self.assertEqual(block["headers"], ["What is needed", "Part", "Told on site"])
+		self.assertEqual(
+			block["rows"],
+			[["New manifold", "MANIFOLD-2 × 1", "Property manager"], ["Come back for the lights", "", ""]],
+		)
+		self.assertEqual(block["photos"], [(f"{SITE}/private/files/manifold.jpg", "Photo: New manifold")])
+		self.assertEqual(context["follow_up_count"], 2)
+		self.assertEqual(context["photo_count"], self.context["photo_count"] + 1)
+		self.assertNotIn("Follow-ups and parts needed", [b["heading"] for b in self.context["blocks"]])
+
 	def test_the_review_queue_names_tasks_left_unexplained(self):
 		source = (REPO_ROOT / "erpnext_enhancements/api/maintenance_review.py").read_text(encoding="utf-8")
 		self.assertIn('"unexplained": context.get("unexplained") or [],', source)
