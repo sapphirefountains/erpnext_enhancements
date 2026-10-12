@@ -1716,19 +1716,91 @@ async function visitWizardKeptSuite() {
 		assert.equal(p.kept("MNT-1"), null);
 	});
 
-	await test("a server error on Finish is shown, not kept as if there were no signal", async () => {
+	await test("an error Frappe raised on Finish is shown, not kept as if there were no signal", async () => {
 		const p = phone();
 		visitServer({ "MNT-1": visit() });
 		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
 		p.install();
 		await settle();
 		server.handlers.finish_visit = () => {
-			throw { status: 500, statusText: "Internal Server Error" };
+			throw { status: 500, statusText: "Internal Server Error", responseJSON: { exc_type: "TypeError" } };
 		};
 		wizard().finish();
 		await settle();
 		assert.deepEqual(p.outbox(), [], "not kept: there was signal, and the server failed");
 		assert.notDeepEqual(last(), { record: "MNT-1", waiting: true });
+	});
+
+	await test("a 503 while a deploy restarts the server keeps the Finish, and it goes once the server is back", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const finish_visit = server.handlers.finish_visit;
+		server.handlers.finish_visit = () => {
+			throw { status: 503, statusText: "Service Unavailable" }; // the gateway's page, no Frappe body
+		};
+		wizard().finish();
+		await settle();
+		assert.deepEqual(last(), { record: "MNT-1", waiting: true }, "kept, as with no signal");
+		server.handlers.finish_visit = finish_visit;
+		const state = server.handlers.get_visit_state;
+		let first = true;
+		server.handlers.get_visit_state = (args) => {
+			if (first) {
+				first = false;
+				throw { status: 503, statusText: "Service Unavailable" }; // still restarting
+			}
+			return state(args);
+		};
+		browser.window.dispatch("online");
+		await tick(600000);
+		assert.equal(db["MNT-1"].docstatus, 1, "sent once the server was back, not blocked");
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("a photo upload that meets a 503 is kept and goes later, never lost", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		const fetch_ok = globalThis.fetch;
+		globalThis.fetch = () => Promise.resolve({ ok: false, status: 503, json: () => Promise.reject(new Error("html")) });
+		w.take_photo("chemistry_readings", w.doc.chemistry_readings[0], new Blob(["jpeg"]), $stub("btn"));
+		await settle();
+		assert.equal(p.outbox().length, 1, "still on the phone");
+		assert.ok(!p.outbox()[0].refused, "not taken for a refusal");
+		globalThis.fetch = fetch_ok;
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].chemistry_readings[0].photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("a photo the server did turn down is tried again on opening the visit, never deleted unseen", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await settle();
+		const w = wizard();
+		const fetch_ok = globalThis.fetch;
+		globalThis.fetch = () =>
+			Promise.resolve({ ok: false, status: 417, json: () => Promise.resolve({ exc_type: "ValidationError" }) });
+		w.take_photo("chemistry_readings", w.doc.chemistry_readings[0], new Blob(["jpeg"]), $stub("btn"));
+		await settle();
+		assert.ok(p.outbox()[0].refused, "marked");
+		assert.ok(ui.alerts.some((a) => /turned down/.test(a)));
+		globalThis.fetch = fetch_ok; // whatever it was, it is fixed now
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings");
+		p.install();
+		await tick(10000);
+		assert.equal(db["MNT-1"].chemistry_readings[0].photo, "/private/files/MNT-1-1.jpg");
+		assert.deepEqual(p.outbox(), []);
 	});
 
 	await test("a visit that can no longer be read is not retried forever, and can be discarded", async () => {

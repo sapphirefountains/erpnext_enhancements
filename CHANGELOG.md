@@ -48,9 +48,16 @@ technicians.
     - The background sender reads the visit through a new read-only `get_visit_state`, not
       `get_visit_bootstrap`. That bootstrap would instantiate a bare draft's template and claim
       the visit for the caller (moving its technician and ToDo) on every retry.
-    - "No signal" means no answer at all. A server that answers with an error, a refusal or a
-      500, stops that visit's sending for good and says so; it is not waited out.
-      - A refused save or photo is kept and named.
+    - **Final versus try-later (`vz_try_later`).** Only Frappe turning a request down (an
+      exception it raised, a 4xx) stops a visit's sending for good, and is said. These are sent
+      again later, like no signal:
+      - no answer at all;
+      - an expired session (401) or throttling (408, 429);
+      - a gateway's 502/503/504 while the bench restarts, which every deploy to `main` does;
+      - any server error with no Frappe exception in its body.
+      - The second review caught the first version of this rule treating a deploy's 503 as
+        final. That deleted a photo that never reached the server and blocked a kept Finish.
+      - A refused save is kept and named.
       - A Finish that already went through (its answer lost) is recognized from the visit's
         state and not sent again.
       - A Finish that is refused, or held back by a clash or a refused save, no longer keeps the
@@ -58,8 +65,11 @@ technicians.
         Finish held for a clash goes with the technician's choice.
       - A visit that can no longer be read (deleted, reassigned) is not retried.
     - A visit waiting on the technician offers **Discard what this phone kept**, after a
-      confirmation. Photos the server refused are let go, with a message, when their visit is
-      opened.
+      confirmation, once any send of it still on the wire has answered. A photo the server
+      refused is never deleted unseen: opening its visit tries it again, and turned down again it
+      stays kept and marked, to retake or discard.
+    - An answer without the visit in it is never read as "submitted" (which would let the kept
+      copy go).
   - **Finish on a server error is said, not kept.** A 500 used to be treated as no signal,
     telling the technician "will be sent" and retrying for as long as the page was open.
   - **Photos:** each photo taken has its own key, so a retake while the first is still uploading
@@ -96,7 +106,7 @@ technicians.
 
 ### Tests
 
-- `scripts/test_wizard_back_forward.mjs` gains "Visit Wizard: kept on the phone" (18 tests). It
+- `scripts/test_wizard_back_forward.mjs` gains "Visit Wizard: kept on the phone" (21 tests). It
   runs the real page with a phone's `localStorage` and IndexedDB that outlive a reload, and a
   fake upload endpoint. It proves:
   - answers survive a reload with no signal and arrive in one save once it is back, without the
@@ -109,12 +119,15 @@ technicians.
   - a turned-down background save, a refused Finish and an unreadable visit are not retried;
   - a refused Finish lets the visit open and be finished again;
   - a Finish held for a clash goes with the choice;
-  - a 500 on Finish is not kept;
+  - an error Frappe raised on Finish is shown and not kept, while a deploy's 503 on Finish, or
+    on the background read, keeps it until the server is back;
+  - a photo that met a 503 or was turned down is never lost, and goes later;
   - a retake, and a photo uploading as its visit is left, each upload once;
   - a dose on another fountain, or a second dose, is not merged away;
   - the Last visit here card renders.
-  - An independent review of this PR found nine of these failure modes. Each now has a test that
-    fails with its fix removed. The 22 existing wizard tests pass unchanged.
+  - Two independent reviews of this PR found these failure modes: nine in the first, and the
+    deploy-503 rule in the second. Each now has a test that fails with its fix removed. The 22
+    existing wizard tests pass unchanged.
 - `test_visit_compare` (now 22): `last_visit` for a first visit; readings, problems and notes;
   a site visit by fountain; a fountain's visit seeing only its own rows. Also checks that the
   wizard's bootstrap asks for it.

@@ -350,11 +350,17 @@ function vz_unsent_empty(entry) {
 	return !entry || (vz_no_changes(entry.dirty) && !(entry.pending_added || []).length && vz_no_changes(entry.held));
 }
 
-// No answer at all: a bad signal (jqXHR status 0), or a fetch that never reached the
-// server. A server that answered with an error (a refusal, a 500) is not "no signal": it
-// is said, and not waited out.
-function vz_no_signal(error) {
-	return !error || !error.status;
+// Worth sending again later, rather than said and stopped. No answer at all (a bad signal,
+// jqXHR status 0, a fetch that never reached the server), or an answer that is not the
+// server's own verdict on the visit: an expired session (401), a timeout or throttling (408,
+// 429), a gateway while the bench restarts, which every deploy does (502, 503, 504), or a
+// server error with no Frappe exception in its body. Only Frappe turning the request down
+// (an exception it raised, a 4xx) is final.
+const VZ_TRY_LATER = [401, 408, 429, 502, 503, 504];
+function vz_try_later(error) {
+	if (!error || !error.status) return true;
+	if (VZ_TRY_LATER.includes(error.status)) return true;
+	return error.status >= 500 && !(error.responseJSON && error.responseJSON.exc_type);
 }
 
 // The consumables added here, as plain data the patch needs (and nothing that is not JSON).
@@ -581,12 +587,16 @@ function vz_upload(blob, filename, record) {
 		body: form,
 	})
 		.then((response) => {
-			if (!response.ok) {
-				const error = new Error("upload refused");
-				error.status = response.status;
-				throw error;
-			}
-			return response.json();
+			if (response.ok) return response.json();
+			// Frappe's own errors come as JSON with an exc_type; a gateway's are a page.
+			return Promise.resolve(response.json ? response.json() : null)
+				.catch(() => null)
+				.then((body) => {
+					const error = new Error("upload refused");
+					error.status = response.status;
+					error.responseJSON = body;
+					throw error;
+				});
 		})
 		.then((data) => {
 			const file_url = data && data.message && data.message.file_url;
@@ -1132,7 +1142,7 @@ class VisitWizard {
 		let needs_you = true;
 		if (finish && finish.refused) sub = __("Finishing it was turned down. Open it to finish it again.");
 		else if (this._needs_you.has(name) || (finish && finish.blocked)) sub = __("Needs you: open it.");
-		else if (mine.some((item) => item.refused)) sub = __("A photo was turned down. Open it.");
+		else if (mine.some((item) => item.refused)) sub = __("A photo was turned down. Open it to try again.");
 		else {
 			needs_you = false;
 			sub = __("Waiting for signal: {0}", [bits.join(", ") || __("nothing left")]);
@@ -1263,8 +1273,7 @@ class VisitWizard {
 				if (!this.restore_kept(kept) && parked) this.reapply_parked(parked);
 				parked = null;
 				this.say_kept_finish(name);
-				this.let_go_refused_photos(name);
-				if (this._photo_waiting.size) this.send_photos(name);
+				this.retry_refused_photos(name);
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
 				this.build_features();
@@ -1510,7 +1519,7 @@ class VisitWizard {
 				this.pending_added = added_local.concat(this.pending_added);
 				// No signal, and the phone holds every answer: say that, not "NOT SAVED".
 				const kept = this.journal(doc.name);
-				this.set_save_state(kept && vz_no_signal(error) ? "offline" : "error");
+				this.set_save_state(kept && vz_try_later(error) ? "offline" : "error");
 				this.schedule_retry();
 				throw error;
 			});
@@ -1690,26 +1699,28 @@ class VisitWizard {
 				__("Finishing this visit was turned down by the server. Fix what it asked for and tap Finish again.")
 			);
 		} else if (finish.blocked && !this._choice) {
-			frappe.msgprint(
-				__("This visit's Finish was not sent: the server turned its answers down. Fix them and tap Finish again.")
-			);
+			frappe.msgprint(__("This visit's Finish was not sent. Check its answers, then tap Finish again."));
 		}
 	}
 
-	// Photos of this visit the server turned down are let go on opening it (they were said
-	// when it happened); the camera buttons show which rows still have none.
-	let_go_refused_photos(name) {
-		return vz_outbox_items().then((items) => {
-			const refused = items.filter((item) => item.kind === "photo" && item.record === name && item.refused);
-			if (!refused.length) return null;
-			frappe.show_alert({
-				message: __("{0} photos the server turned down were removed from this phone. Take them again if needed.", [
-					refused.length,
-				]),
-				indicator: "orange",
-			});
-			return Promise.all(refused.map((item) => vz_outbox_delete(item.key)));
-		});
+	// Photos of this visit the server turned down get another try on opening it, and are
+	// never let go unseen: turned down again, they stay kept and marked, for the technician
+	// to retake (a retake replaces them) or discard from the list.
+	retry_refused_photos(name) {
+		return vz_outbox_items()
+			.then((items) =>
+				Promise.all(
+					items
+						.filter((item) => item.kind === "photo" && item.record === name && item.refused)
+						.map((item) => {
+							const again = { ...item };
+							delete again.refused;
+							this._photo_waiting.add(again.key);
+							return vz_outbox_put(again);
+						})
+				)
+			)
+			.then(() => (this._photo_waiting.size ? this.send_photos(name) : null));
 	}
 
 	// Before a field's first unsent change, remember the server's value, so a kept answer
@@ -2148,6 +2159,8 @@ class VisitWizard {
 			(r) => {
 				const data = (r && r.message) || {};
 				const doc = data.record || {};
+				// An answer without the visit is no answer: never read as "submitted".
+				if (doc.name !== name) return Promise.reject(new Error(`no state for ${name}`));
 				let modified = (data.state || {}).modified || doc.modified;
 				if (doc.docstatus !== 0) return this.settle_finished(name, entry, photos, finish);
 				const plan = vz_reconcile(entry || {}, doc);
@@ -2172,7 +2185,7 @@ class VisitWizard {
 										this._photo_waiting.delete(item.key);
 										return vz_outbox_delete(item.key);
 									},
-									(error) => (vz_no_signal(error) ? Promise.reject(error) : this.photo_refused(item))
+									(error) => (vz_try_later(error) ? Promise.reject(error) : this.photo_refused(item))
 								)
 							),
 						Promise.resolve()
@@ -2192,7 +2205,7 @@ class VisitWizard {
 									return ((saved && saved.message) || {}).modified || modified;
 								},
 								(error) => {
-									if (!vz_no_signal(error)) {
+									if (!vz_try_later(error)) {
 										stuck(
 											__("Changes to {0} were turned down by the server. They are kept: open that visit.", [name])
 										);
@@ -2213,7 +2226,7 @@ class VisitWizard {
 							.then(
 								(done) => this.finish_sent(name, (done && done.message) || {}),
 								(error) => {
-									if (vz_no_signal(error)) return Promise.reject(error);
+									if (vz_try_later(error)) return Promise.reject(error);
 									// Answered with an error. Most likely it went through already and its
 									// answer was lost: the visit says which.
 									return read().then((again) => {
@@ -2239,7 +2252,7 @@ class VisitWizard {
 					});
 			},
 			(error) => {
-				if (!vz_no_signal(error)) {
+				if (!vz_try_later(error)) {
 					stuck(
 						__(
 							"Visit {0} could not be read (deleted, or no longer yours). What this phone kept for it is listed under Saved on this phone.",
@@ -2295,6 +2308,11 @@ class VisitWizard {
 	// Throw away what this phone kept for a visit, at the technician's word (the list's
 	// Discard): for a visit that can no longer take it (deleted, reassigned, turned down).
 	discard_kept(name) {
+		// After any send of it still on the wire, which could otherwise write it back.
+		return Promise.resolve(this._saving[name]).then(() => this.discard_now(name));
+	}
+
+	discard_now(name) {
 		vz_unsent_write(name, null);
 		delete this._held[name];
 		delete this._base[name];
@@ -2353,7 +2371,7 @@ class VisitWizard {
 				frappe.show_alert({ message: __("Photo attached."), indicator: "green" });
 				return vz_outbox_delete(item.key);
 			},
-			(error) => (vz_no_signal(error) ? Promise.reject(error) : this.photo_refused(item))
+			(error) => (vz_try_later(error) ? Promise.reject(error) : this.photo_refused(item))
 		);
 	}
 
@@ -2375,8 +2393,8 @@ class VisitWizard {
 		vz_keep_change(vz_unsent_read(item.record), item.record, change, null);
 	}
 
-	// The server turned a photo down (too big, not allowed, or an error): retrying cannot
-	// help. It is kept, marked, and said; opening the visit lets it go.
+	// The server turned a photo down (too big, not allowed): retrying now cannot help. It is
+	// kept, marked, and said; opening the visit tries it once more (retry_refused_photos).
 	photo_refused(item) {
 		this._photo_waiting.delete(item.key);
 		frappe.show_alert({
@@ -3662,7 +3680,7 @@ class VisitWizard {
 				// A refused finish showed the server's own message (a required item, the
 				// visit out of date) and stays as it was. No answer at all is no signal:
 				// the Finish is kept on this phone and sent when there is (v1.596.0).
-				if (error && vz_no_signal(error)) this.keep_finish(doc, signature);
+				if (error && vz_try_later(error)) this.keep_finish(doc, signature);
 			});
 	}
 }
