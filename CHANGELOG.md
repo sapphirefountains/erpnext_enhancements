@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.594.0] - 2026-10-12
+
+### Changed
+
+- **Approving a maintenance visit records chemicals and no longer issues them from stock.**
+  Nik: "can we just make it record the chemicals and then we update stock when we take it from
+  our inventory to vehicles?".
+  - Why per-visit issuing could not work:
+    - Inventory counts the container: a bucket of Chlortabs, a bottle of algaecide.
+    - Technicians dose in other units: 2 tablets from a bucket, half a bottle, "a cap full or
+      about a tablespoon" of flocculant.
+    - Tablets per bucket vary by brand and size, so no dose converts to a stock quantity.
+    - The item's stock unit, "Unit", is whole-number only and is shared by about 811 items, so it
+      could not simply be loosened.
+  - The `create_stock_entry` step and its helpers are removed from
+    `process_maintenance_submission`. Stock now moves by the container on the Stock Scan page:
+    **Move** to a vehicle (a transfer, which posts no expense) or **Take** (an issue).
+  - v1.593.0's **Chemicals Used Account** setting, which gated that step and was never set, is
+    removed with it.
+  - Nothing ever posted from the old step on prod: the three visits approved on 2026-10-12 ran
+    with the account empty.
+
+### Added
+
+- **Custom dose units.** Nik: "those dose units need to be custom".
+  - Each Chemical Dosing line on a Section names the unit a technician counts in: a tablet, a
+    cap full, a tablespoon, a bottle. The Section form now shows its Unit column for Chemical
+    Dosing; it was previously documented and shown for Water Chemistry only.
+  - New visits carry that unit, falling back to the item's stock unit, and keep it.
+    `Sapphire Maintenance Consumable.uom` was `fetch_from: item.stock_uom`, which re-fetched
+    "Unit" over any other value on every save.
+  - The wizard's Add Item dialog takes a unit. A chemical added with none takes the item's stock
+    unit. `save_visit` now accepts `uom` on an appended consumable.
+  - Quantities may be fractional, which the wizard already allowed by tapping the number to type
+    one. The review email shows "1 cap full".
+  - **Before turning invoicing on:** the per-visit invoice and recurring billing still add chemical
+    lines as `qty` of the item at its selling price. With dose units that is wrong: "1 cap full"
+    would bill a whole bottle. Decide how chemicals are billed before switching on Draft Invoices
+    from Approved Visits.
+  - `tests/test_visit_approval_switches.py` now pins "no stock step" and the dose-unit path;
+    `test_maintenance_visit_crews` covers a typed unit and the stock-unit fallback.
+    `test_stock_entry_builders`' inventory of builders drops the removed function.
+
 ## [1.593.0] - 2026-10-12
 
 ### Added

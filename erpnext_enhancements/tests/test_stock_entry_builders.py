@@ -45,7 +45,8 @@ APP = Path(__file__).resolve().parents[1]
 
 #: (module path relative to the app package, function) for every Stock Entry this app builds.
 KNOWN_BUILDERS = {
-	("api/maintenance_workflow.py", "create_stock_entry"),
+	# `api/maintenance_workflow.create_stock_entry` was here until v1.594.0, when approving a
+	# visit stopped issuing chemicals at all (stock moves by the container, on Stock Scan).
 	("api/stock_scan.py", "_stock_entry"),
 }
 

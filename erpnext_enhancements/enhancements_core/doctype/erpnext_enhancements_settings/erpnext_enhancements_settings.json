@@ -20,7 +20,6 @@
   "email_service_report_to_customer",
   "visit_review_emails",
   "maintenance_invoicing_enabled",
-  "maintenance_chemicals_account",
   "auto_renew_maintenance_contracts",
   "recurring_maintenance_billing",
   "maintenance_dispatch_digests",
@@ -300,13 +299,6 @@
    "fieldname": "maintenance_invoicing_enabled",
    "fieldtype": "Check",
    "label": "Draft Invoices from Approved Visits"
-  },
-  {
-   "description": "The account a visit's chemicals and parts post to when it is approved. Empty: approving a visit issues no stock and posts nothing, and a comment on the visit says so. Must be a ledger (not a group) of this company, enabled, and not a Stock account.",
-   "fieldname": "maintenance_chemicals_account",
-   "fieldtype": "Link",
-   "label": "Chemicals Used Account",
-   "options": "Account"
   },
   {
    "default": "0",
@@ -1476,7 +1468,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 13:00:00.000000",
+ "modified": "2026-10-12 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

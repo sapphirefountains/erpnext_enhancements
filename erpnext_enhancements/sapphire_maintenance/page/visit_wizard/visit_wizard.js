@@ -217,6 +217,7 @@ function vz_patch(dirty, pending_added) {
 			item: row.item,
 			qty: row.qty,
 			warehouse: row.warehouse,
+			uom: row.uom,
 		});
 	});
 	return { fields: dirty.fields, rows };
@@ -1947,6 +1948,14 @@ class VisitWizard {
 					get_query: () => ({ filters: { is_stock_item: 1 } }),
 				},
 				{ fieldname: "qty", fieldtype: "Float", label: __("Qty"), reqd: 1, default: 1 },
+				// The dose unit, as the template's Chemical Dosing lines carry one: a visit
+				// records what went into the fountain ("1 cap full"), not what left stock.
+				{
+					fieldname: "uom",
+					fieldtype: "Data",
+					label: __("Unit"),
+					description: __("What you counted in, e.g. tablet, cap full, tablespoon, bottle."),
+				},
 			],
 			primary_action_label: __("Add"),
 			primary_action: (values) => {
@@ -1955,6 +1964,7 @@ class VisitWizard {
 					item: values.item,
 					item_name: values.item,
 					qty: values.qty,
+					uom: (values.uom || "").trim() || null,
 					qty_step: 1,
 					serial_no: this.feature,
 				};

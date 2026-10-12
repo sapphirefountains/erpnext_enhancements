@@ -337,9 +337,9 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 			"consumables": Chemical Dosing rows {item, item_name, uom, qty: 0,
 			               default_qty, qty_step, warehouse, section,
 			               section_title, serial_no} (warehouse = the feature's
-			               on-site chemical store only; the technician-vehicle ->
-			               settings-default fallback is deferred to submit in
-			               build_stock_entry_rows, keyed on the final technician),
+			               on-site chemical store only. Informational since
+			               v1.594.0, when approval stopped issuing chemicals; uom
+			               is the template's dose unit, else the stock unit),
 		}
 	"""
 	contract = None
@@ -397,12 +397,9 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 
 		feature_serial = feature["serial_no"]
 		overrides = _reading_overrides(feature_serial)
-		# Bake only the feature's on-site store (tech-independent). The
-		# technician-vehicle / settings-default fallback is deferred to submit
-		# (build_stock_entry_rows resolves blank warehouses from the final
-		# doc.technician), so a substitute who takes the visit later sources
-		# consumables from THEIR van, not the technician assigned when the form
-		# was first opened.
+		# Bake only the feature's on-site store (tech-independent). Since v1.594.0
+		# no stock moves on approval, so this records where a chemical is kept
+		# rather than where an issue will be drawn from.
 		warehouse = feature.get("default_warehouse")
 
 		for section in sections:
@@ -450,7 +447,10 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 							common,
 							item=item.item,
 							item_name=details.item_name,
-							uom=details.stock_uom,
+							# The dose unit the template names (a tablet, a cap full), else the
+							# stock unit. A visit records what went into the fountain, not what
+							# left stock (v1.594.0), so the two need not match.
+							uom=(item.uom or "").strip() or details.stock_uom,
 							qty=0,
 							default_qty=item.default_qty,
 							qty_step=item.qty_step or 1,

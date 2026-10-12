@@ -1436,6 +1436,30 @@ class TestFillingInAnEarlierDay(unittest.TestCase):
 		self.assertEqual(frappe.saved, [])
 		self.assertTrue(frappe.errors)
 
+	def _add(self, **row):
+		class _Named(_Doc):
+			"""Names an appended row, as frappe does on save; the shared fake leaves them unnamed."""
+
+			def append(self, table, value=None):
+				added = _Doc.append(self, table, value)
+				added.setdefault("name", f"{table}-{len(self[table])}")
+				return added
+
+		doc = _record(completion_percent=0, has_out_of_range_readings=0, consumables=[])
+		object.__setattr__(doc, "__class__", _Named)  # _Doc.__setattr__ would store a key instead
+		frappe.tables["Item"] = [{"name": "CON-SRV-FLOCCULANT", "stock_uom": "Unit"}]
+		visit.save_visit("SMR-1", json.dumps({"rows": {"consumables": [row]}}))
+		return frappe.docs[(RECORD, "SMR-1")]["consumables"][-1]
+
+	def test_a_chemical_added_on_site_keeps_the_unit_typed(self):
+		"""v1.594.0: a visit records the dose ("1 cap full"), not a stock quantity."""
+		row = self._add(item="CON-SRV-FLOCCULANT", qty=1, uom="cap full")
+		self.assertEqual((row["qty"], row["uom"]), (1, "cap full"))
+
+	def test_with_no_unit_it_takes_the_items_stock_unit(self):
+		row = self._add(item="CON-SRV-FLOCCULANT", qty=1)
+		self.assertEqual(row["uom"], "Unit")
+
 	def test_the_wizard_shows_and_edits_the_date(self):
 		source = (APP / "sapphire_maintenance/page/visit_wizard/visit_wizard.js").read_text(encoding="utf-8")
 		self.assertIn('this.set_field("visit_date"', source)
