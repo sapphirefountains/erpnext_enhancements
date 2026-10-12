@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.595.0] - 2026-10-12
+
+Phase A of the 2026-10-12 Maintenance tools plan (TASK-2026-02473): tools for the four people
+who review visits before they are billed (Lisa, James, Nik and Clegg, who hold Maintenance
+Reviewer).
+
+### Added
+
+- **Visit Review page** (`/desk/visit-review`, A1, TASK-2026-02474).
+  - Why: reviewers had no list of what was waiting, only the review emails and the raw record
+    list. The Day Board's roles do not include them.
+  - The queue lists every visit in Pending Review, longest waiting first. Waiting is counted from
+    when the visit last went for review: the workflow's own "Pending Review" timeline comment,
+    else the visit's last change. Each row shows the site, visit date, technician and crew, days
+    waiting, how much is filled in, out-of-range readings and blank required items by name, the
+    photo count, and "First recorded visit".
+  - `/desk/visit-review/<visit>` shows every answer, with **Approve & Submit**, **Send back…**,
+    Previous/Next, and a link to the form. Each screen is its own history entry, so Back and
+    Forward move between them. After a decision the page moves to the next visit waiting,
+    replacing the decided visit's entry.
+  - **The answers are the review email's own context** (`review_digest.build_context`), so the
+    page and the email cannot disagree.
+  - **Both decisions go through `apply_workflow` as the reviewer.**
+    - The transitions are found by where they lead (to a submitted state, or back to the first
+      state), not by their labels.
+    - The workflow's roles and its self-approval rule hold as on the desk form. A reviewer who
+      started a visit is told "You started this visit, so another reviewer approves it", and is
+      offered no Approve button.
+    - A Maintenance Supervisor without the reviewer role sees the queue but is offered nothing.
+  - **A decision on a changed visit is refused.** The page sends the `modified` it showed, and a
+    visit changed since then (the technician still editing, another reviewer) gets a reload, never
+    an approval of answers the reviewer did not see.
+  - **Send Back needs a note.** It goes on the visit's timeline (escaped) and is emailed to the
+    technician (below).
+  - Backend: `api/maintenance_review.py`. It is role-checked in code as well as on the Page:
+    Maintenance Reviewer, Maintenance Supervisor, System Manager. The decisions are POST-only.
+  - The page is linked from the Maintenance workspace (a shortcut and the Tools card). The
+    module's sidebar is computed from what the module holds in frappe 16.50, so it lists the page
+    and the report with no sidebar record to edit.
+- **The review email's button opens the visit on the Visit Review page**, where it can be approved
+  or sent back. The technician's copy still opens the form.
+- **"Sent back to you" email.** A visit sent back from the page emails the technician the
+  reviewer's note, followed by every answer they gave, with a **Fix the visit** button into the
+  Visit Wizard (`review_digest.send_sent_back`). It uses the digest's own template. It goes to the
+  technician only, and never raises.
+- **Missed Maintenance Visits** report (A2, TASK-2026-02475). Its rows also appear in the Visit
+  Review page's "Missed and not sent" section; both come from `sapphire_maintenance/missed_visits.py`.
+  - Why: on 2026-10-12, 18 of 23 drafts were 0% filled in, and a forgotten form was found by
+    accident. Backdating (v1.592.0) fixes the form; this says which forms need it.
+  - **Not started**: an open draft dated before today with nothing filled in.
+  - **Started, not sent**: an open draft dated before today with answers, never sent for review.
+  - A draft's date is its `visit_date`, else its Scheduled Visit Date. Today's visits, visits in
+    Pending Review and unscheduled drafts are not late.
+  - **Not drafted**: a contract visit that fell due with nothing drafted for it, by the nightly
+    scheduler's own dedupe rule (an open *regular* draft). A Per Site Visit contract gets one row.
+    - Skipped as the scheduler skips them: a customer on service hold, a contract not started.
+    - A date inside a paused contract's winter window (`defer_for_winter`) is skipped: the fountain
+      is drained, and the Winterization visit stands in for the month.
+    - A seasonal visit whose month went by this year with no stamp and no record of that visit
+      counts, unless the contract started after that month was over. No contract on prod started
+      before July, so no April startup is flagged.
+  - The Open column opens a draft in the Visit Wizard, where the day the work was done can be
+    set, or the contract for a visit never drafted.
+  - **Nothing is sent automatically** (Nik, 2026-10-12). Roles are the Visit Review page's.
+- **Compared with last visit** (A3, TASK-2026-02476): each water reading beside its value at the
+  site's previous approved visit.
+  - Why: a reviewer judging "pH 8.6" needs to know whether it was 7.4 last week or 8.7 every week.
+  - One helper, `sapphire_maintenance/visit_compare.py`, read by three surfaces so they agree:
+    - the review email: the Value cell reads "7.4 (was 7.9)", keeping the table at the email
+      system's four columns;
+    - the Visit Review page, through that same context;
+    - a "Compared with last visit" panel on the record's desk-form dashboard
+      (`get_dashboard_context(record=...)`), with the date and the change.
+  - The rules:
+    - Only approved visits (docstatus 1) count, since one still in review may be sent back.
+    - A previous visit must be dated on or before this one, so a backfilled visit compares with
+      the visits before it.
+    - Readings match on their label, ignoring case and spacing, and on the same water feature.
+      The feature is the row's tag, else the record's, so a contract that changed between Per
+      Feature and Per Site Visit still lines up.
+    - A reading the last visit did not take is looked for further back, up to 10 approved visits.
+  - The summary says what the "was" values are: "The approved visit on …", "No earlier readings
+    of these", or "First recorded visit".
+  - A failed lookup is logged as "Visit review: last visit not compared", and the email goes out
+    without the "was" values.
+
+### Changed
+
+- **Review digest context.** `review_digest.build_context` also returns the findings the page's
+  queue row needs: `out_of_range`, `unanswered`, `photo_count`, `first_visit`, `review_url` and
+  `wizard_url`.
+
+### Tests
+
+- Four bench-free suites, each with its own CI step:
+  - `test_visit_review` (new, 24 tests): the role gate on every endpoint, the queue order and
+    waiting time, both decisions, the self-approval and stale-visit refusals, the required note,
+    and the Page/report/workspace wiring.
+  - `test_visit_compare` (new, 13 tests): a per-fountain site visit, a reading found further back
+    or missing, a first visit, and approved-only, same-site, not-later.
+  - `test_missed_visits` (new, 22 tests): all three kinds, the scheduler's dedupe rule, a paused
+    contract, service hold, and seasonal visits.
+  - `test_visit_review_digest` (extended to 52 tests): the "was" values, the summary line, the
+    review-page button and the sent-back email.
+- These suites also clear the package attribute of each module they stub. `from package import
+  name` prefers a stale package attribute over a fresh import, so a module imported under another
+  suite's stub would read that suite's `frappe`.
+- CI: the visit-approval step's comment and name still described v1.593.0's Chemicals Used
+  Account; they now say chemicals are recorded, not issued (v1.594.0).
+
 ## [1.594.0] - 2026-10-12
 
 ### Changed
