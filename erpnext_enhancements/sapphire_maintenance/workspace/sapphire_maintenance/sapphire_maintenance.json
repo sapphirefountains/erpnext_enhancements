@@ -127,7 +127,7 @@
    "link_to": "maintenance-day-board"
   }
  ],
- "modified": "2026-10-07 12:00:00.000000",
+ "modified": "2026-10-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance",
@@ -160,6 +160,6 @@
    "type": "DocType"
   }
  ],
- "title": "Sapphire Maintenance",
+ "title": "Maintenance",
  "type": "Workspace"
 }

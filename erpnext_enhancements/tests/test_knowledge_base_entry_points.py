@@ -52,7 +52,7 @@ if str(REPO_ROOT) not in sys.path:
 from erpnext_enhancements.knowledge_base import constants as K
 from erpnext_enhancements.knowledge_base import content as C
 from erpnext_enhancements.knowledge_base import reporting as R
-from erpnext_enhancements.setup.desktop_icon_map import ASSET_SUBDIR, TILES, logo_url
+from erpnext_enhancements.setup.desktop_icon_map import ASSET_SUBDIR, DISPLAY_LABELS, TILES, logo_url
 
 KB = APP / "knowledge_base"
 WORKSPACE_PATH = KB / "workspace" / "knowledge_base" / "knowledge_base.json"
@@ -905,7 +905,15 @@ class _Site:
 		self.layout_reads = 0
 
 	def exists(self, doctype, name=None):
-		return doctype == "Desktop Icon" and name in self.icons
+		if doctype != "Desktop Icon":
+			return False
+		if isinstance(name, dict):
+			# `_sync_display_labels` asks whether another tile already holds a label.
+			other = (name.get("name") or [None, None])[1]
+			return any(
+				row.get("label") == name.get("label") and key != other for key, row in self.icons.items()
+			)
+		return name in self.icons
 
 	def table_exists(self, doctype):
 		return doctype in self.tables
@@ -940,7 +948,9 @@ def icon_row(label, **overrides):
 	"""A Desktop Icon as ``add_workspace_to_desktop`` makes it (``desktop_icon.py:346-351``), stamped."""
 	row = {field: None for field in desktop_icons.LAYOUT_FIELDS}
 	row.update(
-		label=label,
+		# A tile renamed for display (DISPLAY_LABELS) already carries its new label: the steady
+		# state after the first migrate, which is what these tests model.
+		label=DISPLAY_LABELS.get(label, label),
 		name=label,
 		icon_type="Link",
 		link_type="Workspace Sidebar",
