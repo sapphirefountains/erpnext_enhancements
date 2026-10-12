@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.591.0] - 2026-10-12
+
+### Added
+
+- **The visit review digest** (Nik: "I'd like the review of the form to be sent to
+  service_repair@sapphirefountains.com for Lisa to get and check and review, and to the
+  technician who filled the form out, so they have a copy of all their answers and such, like
+  a digest").
+  - **When:** a Sapphire Maintenance Record moves into Pending Review. That happens when the
+    technician presses Finish in the Visit Wizard or Request Review on the desk form. A visit
+    that was Sent Back and is resubmitted sends a fresh copy with the corrected answers. On a
+    site with no active workflow a visit never passes through review, so the digest is sent on
+    submit there.
+  - **Who:** `service_repair@sapphirefountains.com` gets "Ready for review", with a button to
+    the record. The visit's `technician` (the person filling it in) gets "Your visit form" as
+    their copy. No copy goes to a disabled user or to Administrator.
+  - **What:** a summary (site, account, visit type, technician and crew, date, time on site
+    less paused time, completion, safety acknowledgment, client sign-off), then every answer by
+    form section: readings with value, unit and target range; cleaning tasks done or not;
+    inspection answers with details; chemicals and parts actually used; the visit notes.
+    Out-of-range readings and required items still unanswered are called out at the top in
+    words. A Per Site Visit names the fountain on each section.
+  - **Worded by the record's own rules.** A zero reading reads "Not recorded", because
+    `evaluate_reading_ranges` and the completion count both treat blank and zero as "not
+    measured". "Required, not answered" uses the same test as the submit check.
+  - **Photos are links, not images.** Visit photos are private files, which a mail client
+    cannot load without signing in.
+  - **Sent inline, not enqueued.** `frappe.sendmail` writes Email Queue rows in the same
+    transaction, so the digest commits with the state change. The deploy's Redis flush destroys
+    queued jobs but not Email Queue rows.
+  - **It never raises.** A digest that fails to render or send is logged, and the visit still
+    goes for review.
+  - The existing "Maintenance Review Needed" Notification to `operations@` is unchanged.
+  - New: `sapphire_maintenance/review_digest.py`, the
+    `templates/emails/sapphire_maintenance/visit_review_digest.html` body on the email design
+    system (Service pillar), the `on_update` and `on_submit` hooks, and
+    `tests/test_visit_review_digest.py` (31 bench-free tests, its own CI step). One of those
+    tests renders the template under jinja2 and checks the answers in the HTML.
+
+### Fixed
+
+- **"Training not current" now pops up once per visit, not on every page of the Visit
+  Wizard** (Nik: "It should only display once and not through every page of the form").
+  - The wizard autosaves the visit on every page, and every save runs `validate`, so the
+    advisory's `msgprint` repeated.
+  - New `utils/popup_once.first_time()` remembers in Redis, for a week, that this person has
+    seen these findings on this record. The training advisory now shows its pop-up only the
+    first time.
+  - It is **per person**, so the reviewer approving the visit is still told once.
+  - It is **per finding**, so a new uncertified course on the same visit shows again.
+  - It **fails open**: if Redis cannot answer, the pop-up shows. A duplicate pop-up is a
+    nuisance; a safety warning that vanished is not.
+  - The timeline note and supervisor email were already deduped and are unchanged. **Silence
+    Pop-up Warning** (v1.590.0) still turns the pop-up off entirely.
+- **"Check who is going" (approved time off, restricted duty) shows once per visit too.** It
+  had the same shape on the same wizard and now uses the same helper. It is keyed on the
+  person, the day and the reasons given, so moving a visit to another day off in the
+  Maintenance Planner, which saves the visit, still warns.
+
 ## [1.590.0] - 2026-10-12
 
 ### Added

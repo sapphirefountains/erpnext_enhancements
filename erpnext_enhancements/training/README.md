@@ -1045,7 +1045,9 @@ made.
 under Compliance. **Warn on Uncertified Assignment** (`warn_on_uncertified_dispatch`) turns
 the whole thing on or off. **Silence Pop-up Warning** (`silence_uncertified_popup`, v1.590.0)
 mutes only the "Training not current" pop-up; the timeline note and the supervisor email
-still happen. It exists because the Visit Wizard autosaves on every page, so the pop-up
-came back on every page of one visit. It is phrased as *silence* rather than *show* so
+still happen. It was added because the Visit Wizard autosaves on every page, so the pop-up
+came back on every page of one visit. Since v1.591.0 the pop-up shows once per person per
+visit for the same findings (`utils/popup_once.py`), and this switch is for turning it off
+entirely. It is phrased as *silence* rather than *show* so
 that an existing site, which has no `tabSingles` row for a new field and reads it as 0,
 keeps the pop-up until somebody ticks the box.

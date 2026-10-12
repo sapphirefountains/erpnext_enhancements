@@ -2179,6 +2179,13 @@ jobs:
       # filed one, and reading that as "cannot drive" flags 15 of 16 people on day one).
       - name: HR availability (who can I send, and who cannot go)
         run: python -m unittest erpnext_enhancements.tests.test_hr_availability -v
+      # When a visit goes to Pending Review, every answer on it is emailed to the review
+      # inbox (Lisa checks visits before billing) and a copy to the technician. Pins when
+      # it sends (only on the move INTO review), what it says (by the record's own rules:
+      # a zero reading is "not recorded"), that it never raises (a digest that fails must
+      # not stop a visit going for review), and the HTML a reader actually gets.
+      - name: Visit review digest (every answer, to the reviewer and the technician)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_review_digest -v
       # The OSHA injury log. Shaped by the regulation rather than by what would be
       # tidy, so most of this suite is really "does the code still match the rule":
       # the record exists the moment it is filed (a log a manager can suppress at

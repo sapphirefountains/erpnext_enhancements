@@ -238,10 +238,18 @@ def warn_unavailable_technician(doc, method=None):
 	if not when:
 		return
 
+	from erpnext_enhancements.utils.popup_once import first_time
+
 	reasons = reasons_unavailable(people, when)
 	for person in people:
 		sentences = reasons.get(person) or []
 		if not sentences:
+			continue
+		# Once per record per reader for the same day and reasons: the Visit Wizard saves on
+		# every page, and this used to come back on each one. A new reason is a new warning,
+		# and so is a new day (the Maintenance Planner moves a visit by saving it).
+		key = ("availability", doc.doctype, doc.name, person, str(when), *[str(s) for s in sentences])
+		if not first_time(*key):
 			continue
 		who = frappe.db.get_value("User", person, "full_name") or person
 		frappe.msgprint(
