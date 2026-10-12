@@ -2191,6 +2191,11 @@ jobs:
       # The values ride in the boot payload now; this keeps a browser read from coming back.
       - name: Settings are never read from the browser
         run: python -m unittest erpnext_enhancements.tests.test_settings_not_read_from_browser -v
+      # Approving a maintenance visit drafts no invoice while billing is in QuickBooks, and
+      # issues no stock (so posts nothing) until a Chemicals Used Account is chosen. Both ship
+      # off; an unusable account fails the step instead of falling back to Stock Adjustment.
+      - name: Visit approval switches (billing off, chemicals wait for an account)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_approval_switches -v
       # The OSHA injury log. Shaped by the regulation rather than by what would be
       # tidy, so most of this suite is really "does the code still match the rule":
       # the record exists the moment it is filed (a log a manager can suppress at
