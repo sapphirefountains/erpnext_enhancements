@@ -85,6 +85,10 @@ def _reset_state():
 			],
 			# ERPNext Enhancements Settings -> Visit Review Emails, as the seed patch leaves it.
 			"review_emails": [INBOX],
+			# Earlier approved visits to the site, for "Compared with last visit". None by
+			# default: every visit is the site's first, as on prod until 2026-10-12.
+			"history": [],
+			"history_readings": [],
 		}
 	)
 	if "frappe" in sys.modules and hasattr(sys.modules["frappe"], "flags"):
@@ -113,7 +117,22 @@ def _get_all(doctype, filters=None, fields=None, **kwargs):
 	if doctype == "Serial No":
 		wanted = set((filters or {}).get("name", [None, []])[1])
 		return [row for row in STATE["serials"] if row.name in wanted]
+	if doctype == "Sapphire Chemistry Reading":
+		wanted = set(filters["parent"][1])
+		return [row for row in STATE["history_readings"] if row.parent in wanted]
 	return []
+
+
+def _db_sql(query, params, as_dict=False):
+	"""visit_compare's earlier approved visits to the same site (its EARLIER_SQL); the day
+	filter and order are pinned in test_visit_compare."""
+	if STATE.get("raise_in") == "history":
+		raise RuntimeError("history on fire")
+	return [
+		row
+		for row in STATE["history"]
+		if row.project == params["project"] and row.docstatus == 1 and row.name != params["name"]
+	]
 
 
 def _install_stubs():
@@ -139,7 +158,7 @@ def _install_stubs():
 		STATE["sent"].append(kwargs)
 
 	frappe.sendmail = _sendmail
-	frappe.db = types.SimpleNamespace(get_value=_db_get_value)
+	frappe.db = types.SimpleNamespace(get_value=_db_get_value, sql=_db_sql)
 	frappe.get_all = _get_all
 
 	def _get_cached_doc(doctype, *args, **kwargs):
@@ -154,6 +173,7 @@ def _install_stubs():
 	utils.cint = lambda v: int(float(v or 0))
 	utils.flt = lambda v: float(v or 0)
 	utils.nowdate = lambda: "2026-10-12"
+	utils.getdate = lambda v=None: datetime.date.fromisoformat(str(v or "2026-10-12")[:10])
 	utils.formatdate = lambda value, *a, **k: str(value)
 	utils.get_url = lambda path="": f"{SITE}{path}"
 	utils.get_url_to_form = lambda doctype, name: f"{SITE}/app/{doctype.lower().replace(' ', '-')}/{name}"
@@ -192,18 +212,30 @@ def _install_stubs():
 	erpnext_enhancements.email_style = email_style
 
 
+def _forget_real_modules():
+	"""Drop the digest and the comparison helper it imports, from ``sys.modules`` and from the
+	package: ``from package import name`` takes a stale package attribute over a fresh import,
+	and a module imported under another suite's stub would read that suite's ``frappe``."""
+	import erpnext_enhancements.sapphire_maintenance as package
+
+	for name in ("review_digest", "visit_compare"):
+		sys.modules.pop(f"erpnext_enhancements.sapphire_maintenance.{name}", None)
+		if name in vars(package):
+			delattr(package, name)
+
+
 def setUpModule():
 	global digest
 	_install_stubs()
 	_reset_state()
-	sys.modules.pop("erpnext_enhancements.sapphire_maintenance.review_digest", None)
+	_forget_real_modules()
 	from erpnext_enhancements.sapphire_maintenance import review_digest
 
 	digest = review_digest
 
 
 def tearDownModule():
-	sys.modules.pop("erpnext_enhancements.sapphire_maintenance.review_digest", None)
+	_forget_real_modules()
 	for name in _STUBBED:
 		sys.modules.pop(name, None)
 	sys.modules.update(_SAVED_MODULES)
@@ -666,12 +698,142 @@ class TestTheTemplateRendersIt(unittest.TestCase):
 		self.assertIn("tell the office before the visit is approved", html)
 		self.assertNotIn("Review the visit", html)
 
+	def test_the_sent_back_email(self):
+		STATE["users"]["lisa@example.com"] = _Dict(
+			full_name="Lisa Symanski", email="lisa@example.com", enabled=1
+		)
+		context = digest.build_context(_visit())
+		context.update(sent_back_note="Re-test the <pH>.", reviewer_name="Lisa Symanski")
+		context.update(digest._audience_context(context, "sent_back"))
+		html = self.env.get_template(digest.TEMPLATE).render(**context)
+		self.assertIn("Note from Lisa Symanski: Re-test the &lt;pH&gt;.", html)
+		self.assertIn("Fix the visit", html)
+		self.assertIn(f"{SITE}/desk/visit-wizard/SMR-0001", html)
+		self.assertNotIn("Review the visit", html)
+
 	def test_it_is_in_the_email_inventory(self):
 		inventory = (REPO_ROOT / "docs" / "email-design-system.md").read_text(encoding="utf-8")
 		self.assertTrue(
 			"sapphire_maintenance/visit_review_digest.html" in inventory,
 			"add the digest to the Inventory table in docs/email-design-system.md",
 		)
+
+
+# ------------------------------------------------------------------ v1.595.0
+
+
+def _history(name="SMR-PREV", day="2026-10-05", readings=(("pH", 7.6), ("Free chlorine", 2.5))):
+	"""An approved earlier visit to the same fountain, with its readings."""
+	STATE["history"].append(
+		_Dict(
+			name=name,
+			project="PRJ-0001",
+			docstatus=1,
+			serial_no="SN-EAST",
+			visit_date=day,
+			scheduled_visit_date=None,
+			creation=f"{day} 09:00:00",
+		)
+	)
+	for reading, value in readings:
+		STATE["history_readings"].append(
+			_Dict(parent=name, reading=reading, reading_value=value, uom="", serial_no=None)
+		)
+
+
+class TestComparedWithLastVisit(unittest.TestCase):
+	"""A3: each reading beside its value at the site's previous approved visit, in the Value
+	cell so the table keeps the email system's four columns."""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_a_first_visit_says_so(self):
+		context = digest.build_context(_visit())
+		self.assertEqual(dict(context["summary"])["Compared with"], "First recorded visit")
+		self.assertTrue(context["first_visit"])
+		self.assertEqual(_block(context, "Water Chemistry")["rows"][0][1], "7.4")
+
+	def test_each_value_carries_last_visits(self):
+		_history()
+		context = digest.build_context(_visit())
+		rows = _block(context, "Water Chemistry")["rows"]
+		self.assertEqual(rows[0], ["pH", "7.4 (was 7.6)", "7.2–7.8", ""])
+		self.assertEqual(rows[1][1], "6.5 ppm (OUT OF RANGE, was 2.5)")
+		self.assertEqual(rows[2][1], "Not recorded", "never measured before either")
+		self.assertEqual(len(rows[0]), 4)
+		self.assertEqual(dict(context["summary"])["Compared with"], "The approved visit on 2026-10-05")
+		self.assertFalse(context["first_visit"])
+		labels = [label for label, _value in context["summary"]]
+		self.assertEqual(labels[labels.index("Visit date") + 1], "Compared with")
+
+	def test_earlier_visits_that_never_took_these_readings(self):
+		_history(readings=(("TDS", 900),))
+		summary = dict(digest.build_context(_visit())["summary"])
+		self.assertEqual(summary["Compared with"], "No earlier readings of these")
+
+	def test_a_failed_lookup_is_logged_and_the_digest_still_goes_out(self):
+		STATE["raise_in"] = "history"
+		context = digest.build_context(_visit())
+		self.assertNotIn("Compared with", dict(context["summary"]))
+		self.assertEqual(_block(context, "Water Chemistry")["rows"][0][1], "7.4")
+		self.assertEqual(STATE["errors"], ["Visit review: last visit not compared"])
+
+	def test_the_review_page_reads_the_same_findings(self):
+		context = digest.build_context(_visit())
+		self.assertEqual(context["out_of_range"], ["Free chlorine"])
+		self.assertEqual(context["unanswered"], ["Lights", "Alkalinity"])
+		self.assertEqual(context["photo_count"], 1, "the unsafe javascript: photo is dropped")
+
+
+class TestTheReviewersButton(unittest.TestCase):
+	def setUp(self):
+		_reset_state()
+
+	def test_the_reviewer_opens_the_visit_review_page_and_the_technician_the_form(self):
+		digest.on_visit_update(_visit())
+		review, copy = STATE["rendered"]
+		self.assertEqual(review["context"]["url"], f"{SITE}/desk/visit-review/SMR-0001")
+		self.assertEqual(copy["context"]["url"], f"{SITE}/app/sapphire-maintenance-record/SMR-0001")
+
+
+class TestSentBack(unittest.TestCase):
+	"""A visit sent back from the Visit Review page: the technician gets the note and their answers."""
+
+	def setUp(self):
+		_reset_state()
+		STATE["users"]["lisa@example.com"] = _Dict(
+			full_name="Lisa Symanski", email="lisa@example.com", enabled=1
+		)
+
+	def test_the_technician_gets_the_note_and_their_answers(self):
+		sent = digest.send_sent_back(_visit(), "  Re-test the pH.  ", "lisa@example.com")
+		self.assertEqual(sent, ["austin@example.com"])
+		(mail,) = STATE["sent"]
+		self.assertEqual(mail["recipients"], ["austin@example.com"])
+		self.assertEqual(mail["subject"], "Sent back to you: Highlands Plaza visit, 2026-10-12")
+		self.assertEqual(mail["reference_name"], "SMR-0001")
+		context = STATE["rendered"][0]["context"]
+		self.assertEqual(context["warnings"][0], "Note from Lisa Symanski: Re-test the pH.")
+		self.assertIn("Warning: 1 reading out of range", context["warnings"][1])
+		self.assertEqual(
+			(context["button_label"], context["url"]), ("Fix the visit", f"{SITE}/desk/visit-wizard/SMR-0001")
+		)
+		self.assertIn("Lisa Symanski sent this visit back to you", context["intro"])
+
+	def test_it_does_not_go_to_the_review_list(self):
+		digest.send_sent_back(_visit(), "Re-test the pH.", "lisa@example.com")
+		self.assertNotIn(INBOX, [r for mail in STATE["sent"] for r in mail["recipients"]])
+
+	def test_no_usable_technician_sends_nothing(self):
+		self.assertEqual(digest.send_sent_back(_visit(technician=None), "x"), [])
+		self.assertEqual(digest.send_sent_back(_visit(technician="korben@example.com"), "x"), [])
+		self.assertEqual(STATE["sent"], [])
+
+	def test_it_never_raises(self):
+		STATE["raise_in"] = "sendmail"
+		self.assertEqual(digest.send_sent_back(_visit(), "x", "lisa@example.com"), [])
+		self.assertEqual(STATE["errors"], ["Visit review digest not sent"])
 
 
 if __name__ == "__main__":

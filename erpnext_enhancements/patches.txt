@@ -1304,7 +1304,7 @@ erpnext_enhancements.patches.seed_planner_date_confirmation_template
 # Visit review digest (v1.591.0): seed ERPNext Enhancements Settings -> Visit Review Emails with
 # service_repair@, once, only into an empty table. Inserts the child row; never saves the Single.
 erpnext_enhancements.patches.seed_visit_review_emails
-# Visits already in Pending Review with no visit date (v1.594.1): date them from when they went
+# Visits already in Pending Review with no visit date (v1.595.1): date them from when they went
 # for review, as the new rule in SapphireMaintenanceRecord._finish_on_review would have. Blank
 # dates on Pending Review drafts only; set_value without touching modified; cannot raise.
 erpnext_enhancements.patches.stamp_visit_date_on_pending_review

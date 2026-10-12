@@ -2192,11 +2192,26 @@ jobs:
       - name: Settings are never read from the browser
         run: python -m unittest erpnext_enhancements.tests.test_settings_not_read_from_browser -v
       # Approving a maintenance visit drafts no invoice while billing is in QuickBooks, and
-      # issues no stock (so posts nothing) until a Chemicals Used Account is chosen. Both ship
-      # off; an unusable account fails the step instead of falling back to Stock Adjustment.
-      - name: Visit approval switches (billing off, chemicals wait for an account)
+      # never issues chemicals (v1.594.0): a visit records doses in the technician's own unit,
+      # and stock moves by the container on the Stock Scan page.
+      - name: Visit approval switches (billing off, chemicals recorded not issued)
         run: python -m unittest erpnext_enhancements.tests.test_visit_approval_switches -v
-      # A visit is dated and clocked out when the technician sends it for review (v1.594.1),
+      # Visit Review (v1.595.0): the reviewers' queue and its two decisions. The role gate in
+      # code, the queue longest-waiting first, Approve & Submit and Send Back through the
+      # workflow as the reviewer (so the self-approval rule holds), a stale visit refused, a
+      # note required to send one back, and the Page/report/workspace wiring.
+      - name: Visit Review page (queue, approve, send back)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_review -v
+      # Compared with last visit (v1.595.0): each reading beside the same fountain's value at
+      # the site's previous approved visit, which the email, the page and the form all read.
+      - name: Visit comparison (each reading against the last approved visit)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_compare -v
+      # Missed and stale visits (v1.595.0): drafts dated before today, split on whether
+      # anything is filled in, and contract visits nothing was drafted for, by the scheduler's
+      # own rule, minus a paused contract's winter window, with seasonal visits.
+      - name: Missed maintenance visits (not drafted, not started, not sent)
+        run: python -m unittest erpnext_enhancements.tests.test_missed_visits -v
+      # A visit is dated and clocked out when the technician sends it for review (v1.595.1),
       # not at approval days later: the schedule rolls from the day the work was done, and a
       # later kiosk interval never becomes this visit's clock-out. Plus the patch that dates
       # visits already waiting.

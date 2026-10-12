@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests: a visit is dated and clocked out when it goes for review (v1.594.1).
+"""Bench-free tests: a visit is dated and clocked out when it goes for review (v1.595.1).
 
 Scheduler-drafted visits reached review with no ``visit_date``, and nothing was settled until
 a reviewer approved them, often days later. So the contract's next visit was counted from the
@@ -331,7 +331,7 @@ class TestApprovalDaysLater(unittest.TestCase):
 		self.assertEqual(doc.clock_out_time, DT(2026, 10, 9, 7, 5))
 
 	def test_a_later_interval_never_becomes_this_visits_clock_out(self):
-		"""Before v1.594.1: clock-out on the 12th for a visit done on the 9th."""
+		"""Before v1.595.1: clock-out on the 12th for a visit done on the 9th."""
 		doc = _send_for_review(_visit(clock_in_time=DT(2026, 10, 9, 6, 30)))
 		self.assertIsNone(doc.clock_out_time, "no interval at review")
 		_interval("Completed", DT(2026, 10, 11, 8, 0), end=DT(2026, 10, 11, 10, 0))

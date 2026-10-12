@@ -35,6 +35,14 @@ visit for review. The failure is logged and the visit goes through.
 **Photos are links, not images.** Visit photos are private files, which a mail client
 cannot load without signing in, so an ``<img>`` would arrive broken. A link opens the photo
 for anyone who is signed in.
+
+**One context, three readers (v1.595.0).** ``build_context`` also feeds the Visit Review
+page (``api/maintenance_review.py``), which shows exactly these blocks, so the page and the
+email cannot disagree. Each reading's value carries its value at the site's previous
+approved visit, "7.4 (was 7.9)", from ``visit_compare``. The reviewer's button opens the
+visit on the Visit Review page, where it can be approved or sent back. A visit sent back
+from that page emails the technician this same body, headed with the reviewer's note
+(``send_sent_back``).
 """
 
 from urllib.parse import quote
@@ -44,6 +52,7 @@ from frappe import _
 from frappe.utils import cint, flt, formatdate, get_datetime, get_url, get_url_to_form, nowdate
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements.sapphire_maintenance import visit_compare
 from erpnext_enhancements.utils.url_safety import is_safe_url
 
 SETTINGS = "ERPNext Enhancements Settings"
@@ -105,6 +114,26 @@ def send(doc):
 		if _send([technician], doc, context, "technician"):
 			sent.append(technician)
 	return sent
+
+
+def send_sent_back(doc, note, reviewer=None):
+	"""Email the technician that a reviewer sent their visit back, with the note. Never raises.
+
+	The Visit Review page calls this after the Send Back transition has been applied. The
+	body is the digest, headed with the note, so the technician sees what to fix next to
+	every answer they gave. Returns who it went to (nobody, without a usable technician).
+	"""
+	try:
+		technician = _technician_email(doc)
+		if not technician:
+			return []
+		context = build_context(doc)
+		context["sent_back_note"] = (note or "").strip()
+		context["reviewer_name"] = _full_name(reviewer) or _("A reviewer")
+		return [technician] if _send([technician], doc, context, "sent_back") else []
+	except Exception:
+		_log()
+		return []
 
 
 def review_recipients():
@@ -171,6 +200,8 @@ def _send(recipients, doc, context, audience):
 def _subject(context, audience):
 	if audience == "review":
 		return _("Ready for review: {0} visit, {1}").format(context["site"], context["visit_date"])
+	if audience == "sent_back":
+		return _("Sent back to you: {0} visit, {1}").format(context["site"], context["visit_date"])
 	return _("Your visit form: {0}, {1}").format(context["site"], context["visit_date"])
 
 
@@ -183,6 +214,20 @@ def _audience_context(context, audience):
 				"to approve it or send it back."
 			).format(context["technician_name"]),
 			"button_label": _("Review the visit"),
+			"url": context["review_url"],
+			"closing": None,
+		}
+	if audience == "sent_back":
+		note = context.get("sent_back_note")
+		lead = [_("Note from {0}: {1}").format(context.get("reviewer_name"), note)] if note else []
+		return {
+			"intro": _(
+				"{0} sent this visit back to you. Fix it in the Visit Wizard and send it for "
+				"review again. Your answers as they stand are below."
+			).format(context.get("reviewer_name")),
+			"warnings": lead + list(context["warnings"]),
+			"button_label": _("Fix the visit"),
+			"url": context["wizard_url"],
 			"closing": None,
 		}
 	return {
@@ -220,6 +265,7 @@ def build_context(doc):
 	site = _site(doc)
 	visit_date = formatdate(doc.get("visit_date") or doc.get("scheduled_visit_date") or nowdate())
 	completion = f"{cint(flt(doc.get('completion_percent')))}%"
+	comparison = _comparison(doc)
 
 	out_of_range = [
 		_tagged(doc, row, labels, row.get("reading"))
@@ -246,19 +292,63 @@ def build_context(doc):
 	if out_of_range:
 		preheader.append(_count(len(out_of_range), _("reading out of range"), _("readings out of range")))
 
+	blocks = _blocks(doc, labels, comparison)
+	summary = _summary(doc, labels, site, visit_date, technician_name, completion)
+	compared = _compared_with(doc, comparison)
+	if compared:
+		summary.insert(next(i for i, row in enumerate(summary) if row[0] == _("Visit date")) + 1, compared)
+
 	return {
 		"name": doc.name,
 		"site": site,
 		"visit_date": visit_date,
 		"technician_name": technician_name,
 		"url": get_url_to_form(doc.doctype, doc.name),
+		"review_url": get_url(f"/desk/visit-review/{quote(str(doc.name), safe='')}"),
+		"wizard_url": get_url(f"/desk/visit-wizard/{quote(str(doc.name), safe='')}"),
 		"preheader": " · ".join(preheader),
 		"warnings": warnings,
-		"summary": _summary(doc, labels, site, visit_date, technician_name, completion),
-		"blocks": _blocks(doc, labels),
+		"summary": summary,
+		"blocks": blocks,
 		"notes_heading": _("Visit notes"),
 		"notes": (doc.get("visit_notes") or "").strip() or None,
+		# For the Visit Review page's queue row: the same findings the warnings word.
+		"out_of_range": out_of_range,
+		"unanswered": unanswered,
+		"photo_count": sum(len(block["photos"]) for block in blocks),
+		"first_visit": comparison["first_visit"],
 	}
+
+
+def _comparison(doc):
+	"""``visit_compare.compare(doc)``, or nothing to compare with when it fails.
+
+	A failed lookup of last visit's readings must not cost the reviewer this visit's own
+	answers, so it is logged and the digest goes out without the "was" values.
+	"""
+	try:
+		return visit_compare.compare(doc)
+	except Exception:
+		try:
+			frappe.log_error(title="Visit review: last visit not compared", message=frappe.get_traceback())
+		except Exception:
+			pass
+		return {"previous": {}, "first_visit": False, "failed": True}
+
+
+def _compared_with(doc, comparison):
+	"""The summary line saying what the "was" values are, or None for a visit with no readings."""
+	if not doc.get("chemistry_readings") or comparison.get("failed"):
+		return None
+	if comparison["first_visit"]:
+		return (_("Compared with"), _("First recorded visit"))
+	days = visit_compare.compared_days(comparison)
+	if not days:
+		return (_("Compared with"), _("No earlier readings of these"))
+	dates = ", ".join(formatdate(day) for day in days)
+	if len(days) == 1:
+		return (_("Compared with"), _("The approved visit on {0}").format(dates))
+	return (_("Compared with"), _("The approved visits on {0}").format(dates))
 
 
 def _summary(doc, labels, site, visit_date, technician_name, completion):
@@ -290,7 +380,7 @@ def _summary(doc, labels, site, visit_date, technician_name, completion):
 	return rows
 
 
-def _blocks(doc, labels):
+def _blocks(doc, labels, comparison=None):
 	"""One block per (water feature, form section), then the chemicals used.
 
 	A Per Site Visit record covers several features and tags each row with one, so its
@@ -305,6 +395,7 @@ def _blocks(doc, labels):
 				order.append(key)
 	named = len(order) > 1
 
+	previous = (comparison or {}).get("previous") or {}
 	blocks = []
 	for key in order:
 		feature = (labels.get(key) or key or _("Whole site")) if named else None
@@ -315,7 +406,7 @@ def _blocks(doc, labels):
 		):
 			rows = [row for row in doc.get(table) or [] if _feature_key(doc, row) == key]
 			for title, section_rows in _by_section(rows, default_title):
-				blocks.append(_block(table, _heading(feature, title), section_rows))
+				blocks.append(_block(table, _heading(feature, title), section_rows, doc, previous))
 
 	consumables = doc.get("consumables") or []
 	if consumables:
@@ -340,11 +431,15 @@ def _blocks(doc, labels):
 	return blocks
 
 
-def _block(table, heading, rows):
+def _block(table, heading, rows, doc=None, previous=None):
 	photos = []
 	if table == "chemistry_readings":
 		headers = [_("Reading"), _("Value"), _("Target"), _("Notes")]
-		cells = [_reading_cells(row) for row in rows]
+		previous = previous or {}
+		cells = [
+			_reading_cells(row, previous.get(visit_compare.reading_key(doc, row)) if doc else None)
+			for row in rows
+		]
 		labels = [row.get("reading") for row in rows]
 	elif table == "cleaning_tasks":
 		headers = [_("Task"), _("Done"), _("Notes")]
@@ -368,17 +463,25 @@ def _block(table, heading, rows):
 	return {"heading": heading, "headers": headers, "rows": cells, "photos": photos, "empty": None}
 
 
-def _reading_cells(row):
+def _reading_cells(row, before=None):
+	"""The four cells of a reading. ``before`` is its previous value (``visit_compare``), shown
+	inside the Value cell so the table keeps the email system's four columns."""
 	value = flt(row.get("reading_value"))
 	unit = (row.get("uom") or "").strip()
+	was = _("was {0}").format(_number(before["value"])) if before else None
 	if not value:
 		# Blank and zero are the same thing on this form: "not measured"
 		# (evaluate_reading_ranges says why, and the completion count agrees).
 		shown = _("Not recorded")
+		if was:
+			shown = f"{shown} ({was})"
 	else:
 		shown = _amount(value, unit)
-		if cint(row.get("out_of_range")):
-			shown = _("{0} (OUT OF RANGE)").format(shown)
+		notes = [_("OUT OF RANGE")] if cint(row.get("out_of_range")) else []
+		if was:
+			notes.append(was)
+		if notes:
+			shown = f"{shown} ({', '.join(notes)})"
 	return [row.get("reading") or "", shown, _target(row, unit), row.get("notes") or ""]
 
 

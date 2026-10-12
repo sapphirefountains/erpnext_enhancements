@@ -25,7 +25,7 @@ Lifecycle / wiring:
     Range" Notification fixture on submit).
   * On the save that moves a visit into Pending Review, ``validate`` dates it
     (blank ``visit_date`` -> today) and closes its clock from the kiosk
-    interval (``_finish_on_review``, v1.594.1), so an approval days later
+    interval (``_finish_on_review``, v1.595.1), so an approval days later
     neither rolls the schedule from the approval day nor takes a later
     interval as the clock-out.
   * ``on_submit`` enqueues the background worker
@@ -89,7 +89,7 @@ class SapphireMaintenanceRecord(Document):
 		"""The technician has finished: stamp the day of the visit and close out its clock.
 
 		Runs on the save that moves the visit into Pending Review, from the Visit Wizard's
-		Finish or the form's Request Review. Until v1.594.1 nothing was settled until the
+		Finish or the form's Request Review. Until v1.595.1 nothing was settled until the
 		reviewer's Approve & Submit, often days later, and with ``visit_date`` blank (the
 		scheduler drafts visits without one, and the wizard's "Date of visit" is empty for
 		"today"):
@@ -540,7 +540,7 @@ def get_historical_visits(project, exclude=None):
 
 
 @frappe.whitelist()
-def get_dashboard_context(project, serial_no=None):
+def get_dashboard_context(project, serial_no=None, record=None):
 	"""Return the on-site briefing data for the technician dashboard widget.
 
 	Whitelisted; called by the desk form JS (``render_dashboard``) to build the
@@ -550,6 +550,10 @@ def get_dashboard_context(project, serial_no=None):
 		project (str): Project name (docname).
 		serial_no (str, optional): Serial No name. Omitted for Per Site Visit
 			records, which have no header serial.
+		record (str, optional): the saved visit on the form. With it, ``compared``
+			holds each of its readings next to the value at the site's previous
+			approved visit (``visit_compare``, v1.595.0), the same values the
+			review email and the Visit Review page show.
 
 	Returns:
 		dict: {
@@ -627,7 +631,41 @@ def get_dashboard_context(project, serial_no=None):
 	# 6. Chemistry trends — last 5 visits' readings, for the dashboard sparklines.
 	context['trends'] = _chemistry_trends(project, serial_no)
 
+	# 7. Compared with last visit (A3): this visit's readings beside the previous approved ones.
+	context['compared'] = _compared_with_last_visit(record)
+
 	return context
+
+
+def _compared_with_last_visit(record):
+	"""``{first_visit, lines, features}`` for a saved visit the user may read, else None.
+
+	A failure is logged and leaves the rest of the dashboard standing.
+	"""
+	if not record or not frappe.db.exists("Sapphire Maintenance Record", record):
+		return None
+	try:
+		from erpnext_enhancements.sapphire_maintenance import visit_compare
+
+		doc = frappe.get_doc("Sapphire Maintenance Record", record)
+		if not doc.has_permission("read"):
+			return None
+		result = visit_compare.compare(doc)
+		lines = visit_compare.reading_comparisons(doc, result)
+		serials = sorted({line["serial_no"] for line in lines if line["serial_no"]})
+		features = {}
+		if serials:
+			features = {
+				row.name: row.item_name
+				for row in frappe.get_all(
+					"Serial No", filters={"name": ["in", serials]}, fields=["name", "item_name"]
+				)
+				if row.item_name
+			}
+		return {"first_visit": result["first_visit"], "lines": lines, "features": features}
+	except Exception:
+		frappe.log_error(title="Compared with last visit not shown", message=frappe.get_traceback())
+		return None
 
 
 def _chemistry_trends(project, serial_no=None):

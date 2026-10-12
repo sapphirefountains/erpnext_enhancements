@@ -83,7 +83,12 @@ Configuration lives in **ERPNext Enhancements Settings → Maintenance**: fee it
 | `page/maintenance_planner/maintenance_planner.js` | Maintenance Planner desk page: month/week calendar, drag a card to move a visit | one route per month/week (`handle_route`/`go`), pointer-event dragging (touch has to hold first), Unscheduled tray, card dialog (date + technician) |
 | `../api/maintenance_planner.py` | Planner backend | `get_planner` (visits, unscheduled drafts, projections), `move_visit`, `move_projected`; pure `build_projections`, `rows_to_move`, `project_series` |
 | `visit_crew.py` | Multi-person visits (v1.579.0): crew rules shared by the record and the profile, and the crew → assignment (ToDo) mirror | `validate_crew`, `on_record_update` (`doc_events`), `crew_users`, `crew_record_names`, `set_crew` |
-| `review_digest.py` | The visit review digest (v1.591.0): every answer on a visit, emailed to the Visit Review Emails list and the technician when it goes for review | `on_visit_update` / `on_visit_submit` (`doc_events`), `send`, `build_context`; body `templates/emails/sapphire_maintenance/visit_review_digest.html` |
+| `review_digest.py` | The visit review digest (v1.591.0): every answer on a visit, emailed to the Visit Review Emails list and the technician when it goes for review | `on_visit_update` / `on_visit_submit` (`doc_events`), `send`, `send_sent_back` (v1.595.0), `build_context`; body `templates/emails/sapphire_maintenance/visit_review_digest.html` |
+| `page/visit_review/visit_review.js` | **Visit Review** desk page (v1.595.0): the reviewers' queue, one visit with every answer, Approve & Submit / Send back, and the missed and unsent visits | `VisitReview`: `handle_route` (`/desk/visit-review[/<visit>]`, one history entry per screen), `render_queue`, `render_visit`, `approve`, `send_back`, `decided` |
+| `../api/maintenance_review.py` | Visit Review backend | `get_review_queue`, `get_review_visit`, `approve_visit`, `send_back_visit` (POST) |
+| `visit_compare.py` | Compared with last visit (v1.595.0): each reading's value at the site's previous approved visit, for the email, the Visit Review page and the form dashboard | `compare`, `previous_readings`, `reading_comparisons`, `earlier_visits`, `visit_day` |
+| `missed_visits.py` | Missed and stale visits (v1.595.0): Not drafted, Not started, Started not sent, for the report and the Visit Review page | `missed_visits`, `late_drafts`, `undrafted_visits` |
+| `report/missed_maintenance_visits/` | **Missed Maintenance Visits** Script Report over `missed_visits` | `execute` |
 | `doctype/sapphire_visit_crew_member/…` | Child table on the visit (`crew`) and the profile (`default_crew`): user, own hours, and the helper's per-day digest stamp | (no custom logic) |
 | `doctype/sapphire_maintenance_section/…py` / `.js` | Section controller / type-driven grid columns | `validate` (dosing rows need an Item; min ≤ max) |
 | `doctype/sapphire_maintenance_template/…py` | Template controller | (no custom logic) |
@@ -142,6 +147,8 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
 - `completion_percent` on every record (answered rows / total rows; consumable prefills excluded) — list column + form indicator.
 - *Maintenance Day Board* (`/app/maintenance-day-board`, roles: System Manager / Maintenance Supervisor / Projects Manager): scheduled drafts, techs clocked in, submitted today, flagged last-7-days; auto-refreshes every 60s (`api/maintenance_board.py`).
 - *Maintenance Planner* (`/app/maintenance-planner`, roles: System Manager / Maintenance Supervisor / Projects Manager / Maintenance User). See the next section.
+- *Visit Review* (`/desk/visit-review`, roles: Maintenance Reviewer / Maintenance Supervisor / System Manager; v1.595.0, Phase A of the 2026-10-12 Maintenance tools plan). See [Visit Review](#visit-review) below.
+- *Missed Maintenance Visits* report (same roles): visits that should have happened and have not. Its rows are also the Visit Review page's "Missed and not sent" section.
 - *Chemistry trend sparklines* on the record dashboard — last 5 visits per reading, red dots out-of-range (`_chemistry_trends`).
 - *Out-of-range follow-up* — Settings days > 0 drafts a "Chemistry Follow-Up" visit + technician ToDo on submit of a flagged record (deduped; labelled visits don't advance the regular cadence).
 
@@ -151,7 +158,7 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
 
 **Chemicals are recorded, not issued (v1.594.0).** Nik's words: "can we just make it record the chemicals and then we update stock when we take it from our inventory to vehicles?" Approving a visit moves no stock. Each Chemical Dosing line on a Section names its **dose unit** in the Unit column: a tablet, a cap full, a tablespoon, a bottle. The visit carries that unit (its `uom` is no longer fetched from the item), any quantity including halves is allowed (tap the number in the wizard to type one), and the review email shows "1 cap full". Stock moves by the container on the Stock Scan page: **Move** to a vehicle (a transfer, which posts no expense) or **Take** (an issue). Tablets per bucket varies by brand and size, so no dose converts to a stock quantity. v1.593.0's Chemicals Used Account went with the removed step. **Before turning invoicing on:** the per-visit invoice and recurring billing still add chemical lines as `qty` of the item at its selling price, which with dose units is wrong ("1 cap full" would bill a bottle). Decide how chemicals are billed first.
 
-**When the technician sends a visit for review (v1.594.1)** — the Visit Wizard's Finish, or Request Review on the form — `SapphireMaintenanceRecord._finish_on_review` settles two things that used to wait for the reviewer's approval, often days later:
+**When the technician sends a visit for review (v1.595.1)** — the Visit Wizard's Finish, or Request Review on the form — `SapphireMaintenanceRecord._finish_on_review` settles two things that used to wait for the reviewer's approval, often days later:
 
 - **The day of the visit.** `visit_date` becomes today if it is blank, which is what the wizard's empty "Date of visit" already means. A date the technician chose is kept, and a visit sent back and sent again keeps the date it was first given. Before this, a scheduler-drafted visit reached approval with no date, and the contract's next visit was counted from the approval day: State Capitol went for review on 2026-10-09, was approved on the 12th, and had its next visit counted from the 12th.
 - **The clock.** `_autofill_clock_out` runs at this point, while the technician's kiosk interval on the project is still this visit's. At approval the visit is dated in the past, so the autofill skips it (`_is_backfill`). Before, it took whatever interval was on the project at approval time, which on a weekly site could be the next visit's, giving a clock-out days after the clock-in and a timesheet to match. Where no workflow is active, the technician's own submit is still the finish.
@@ -228,6 +235,95 @@ Drafts with no date at all wait in the **Unscheduled** tray above the calendar u
   - **Undo** (the toast and Ctrl+Z) deletes the new draft through `remove_created_visit` (never `force`) and only while nothing has been attached: it is still the creator's, unchanged, a Draft, not started (no visit date or clock times), its form has no rows, no digest was texted for it, no invoice, nobody else commented, no file. Otherwise it says why and leaves the visit.
   - The **checklist template** is recorded on the visit, but the visit form re-resolves it (contract, fountain, project) when the visit is first opened, so changing it here records a choice rather than changing the checklist. The **customer date confirmation** (Phase 5, off) fires for a dated draft as it does for the scheduler's; this adds and suppresses nothing there.
 
+## Visit Review
+
+Phase A of the 2026-10-12 Maintenance tools plan (TASK-2026-02473, v1.595.0) is for the four
+people who review every visit before it is billed: Lisa, James, Nik and Clegg, who hold
+**Maintenance Reviewer**.
+
+**The page** (`/desk/visit-review`, [`page/visit_review/`](page/visit_review/), backend
+[`api/maintenance_review.py`](../api/maintenance_review.py)) has two screens, each its own
+history entry.
+
+- **The queue** lists every visit in Pending Review, longest waiting first.
+  - Waiting is counted from when the visit last went for review: the workflow's own "Pending
+    Review" timeline comment, else the visit's last change.
+  - Each row shows the site, visit date, technician and crew, days waiting, how much is filled
+    in, out-of-range readings and blank required items by name, the photo count, and "First
+    recorded visit".
+- **`/desk/visit-review/<visit>`** shows every answer, with **Approve & Submit**, **Send back…**,
+  Previous/Next, and **Open the form**. After a decision the page moves to the next visit
+  waiting, replacing the decided visit's history entry.
+
+How the page behaves:
+
+- **Its answers are the review email's.** It shows `review_digest.build_context`, the context the
+  review email is rendered from, so the two cannot disagree. The email's button now opens the
+  visit here.
+- **Both decisions go through `apply_workflow` as the reviewer.**
+  - The transitions are found by where they lead (to a submitted state, or back to the first
+    state), not by their labels.
+  - The workflow's roles and its self-approval rule hold as on the form. Whoever started
+    a visit is offered no Approve and is told another reviewer approves it.
+  - **Nobody approves their own visit on this page.** The workflow's rule looks only at who
+    created the record, and the nightly scheduler creates most visits (owner Administrator). So a
+    reviewer who is the visit's technician or on its crew is offered no Approve either, and the
+    endpoint refuses them. The desk form still applies only the workflow's own rule.
+  - A Maintenance Supervisor who is not a reviewer sees the queue and decides nothing.
+- **A decision on a changed visit is refused.** It must carry the `modified` the page showed, so
+  a visit changed since then (the technician still editing, another reviewer) gets a reload.
+- **Every show reloads**, so Back from the form never shows a decision another reviewer has
+  since made. A warning the decision's save raises (training, who is going) stays on screen
+  until it is closed; only then does the page move on.
+- **Send Back needs a note.** It goes on the timeline and to the technician in a "Sent back to
+  you" email (`review_digest.send_sent_back`). The email holds the note, then every answer, with a
+  **Fix the visit** button into the Visit Wizard.
+
+**Missed and not sent** (A2, [`missed_visits.py`](missed_visits.py)) is the bottom of the queue
+screen and the **Missed Maintenance Visits** report. **Nothing is sent automatically** (Nik,
+2026-10-12). It lists three kinds of row:
+
+- **Not started**: an open draft dated before today with nothing filled in.
+- **Started, not sent**: an open draft dated before today with answers.
+- **Not drafted**: a contract visit that fell due with nothing drafted for it.
+  - It uses the scheduler's own dedupe rule: an open *regular* draft for the fountain, or for the
+    contract on a Per Site Visit contract, which gets one row.
+  - It skips a customer on service hold and a contract not started yet, as the scheduler does.
+  - It also leaves out a date inside a paused contract's winter window, which the scheduler
+    would draft: the fountain is drained (Nik's plan: "a paused contract shows nothing"). The
+    roll-forward already defers such dates, so only a date typed by hand can be there.
+  - It also covers seasonal visits whose month went by this year with no stamp and no record,
+    unless the contract started after that month was over.
+
+A draft's date is its `visit_date`, else its Scheduled Visit Date. Today's visits, visits in
+review and unscheduled drafts are not late. The Open link goes to the Visit Wizard, where the
+day the work was done can be set (v1.592.0), or to the contract for a visit never drafted.
+
+**Compared with last visit** (A3, [`visit_compare.py`](visit_compare.py)) puts each water reading
+beside its value at the site's previous approved visit, in one helper read by three surfaces:
+
+- the review email: "7.4 (was 7.9)" inside the Value cell, keeping the four-column table;
+- the Visit Review page, through the same context;
+- a "Compared with last visit" panel on the desk form's dashboard
+  (`get_dashboard_context(record=...)`).
+
+The rules:
+
+- Only approved visits count, since one still in review may be sent back.
+- The previous visit is dated on or before this one, so a backfilled visit compares with what
+  came before it. A visit's date is `visit_date`, else the Scheduled Visit Date, else the day it
+  was created.
+- Readings match on their label, ignoring case and spacing, and on the same water feature: the
+  row's tag, else the record's. A contract that changed between Per Feature and Per Site Visit
+  still lines up.
+- A reading the last visit did not take is looked for further back, through up to `LOOKBACK`
+  (10) approved visits *to that water feature*: its own records, or site visits. Counted per
+  site, a twelve-fountain Per Feature site's last ten records would all be other fountains'.
+- The earlier visits are read in SQL by the day the work was done, so an older visit's
+  dashboard is not crowded out by the visits approved after it.
+
+With no approved visit to the site before this one, every surface says "First recorded visit".
+
 ## Workflow, notifications, portal
 
 - **Workflow state** is stored in `workflow_state`; the maintenance workflow's states/notifications ship as fixtures. Roles: techs (**Maintenance User**) edit Draft and Request Review; the office reviewers (**Maintenance Reviewer**, v1.576.2) edit Pending Review and run Approve & Submit (docstatus 1, which is when the automation fires) or **Send Back** (to Draft, so the technician can fix the visit). The wizard's Finish button applies the first *forward* action the session user may apply; it never sends a visit back.
@@ -235,7 +331,7 @@ Drafts with no date at all wait in the **Unscheduled** tray above the calendar u
 - **Self-approval: allowed on Request Review, refused on Approve & Submit, and stated explicitly in the fixture.** Frappe checks self-approval on every transition, against the record's owner. Until v1.576.0 the fixture left `allow_self_approval` out, and a fixture import applies no field defaults (`Document._set_defaults` returns early under `frappe.flags.in_import`), so prod held 0 on both instead of Frappe's default of 1. A technician who had started a visit themselves (Log a Visit, Do Visit Today) therefore could not even send it for review: no action on the form, and "Self approval is not allowed" from the wizard. Approve & Submit stays refused to the creator, so a reviewer cannot approve a visit they started either; another reviewer does. `tests/test_maintenance_planner.py` fails the build on any fixture transition that leaves the flag out.
 - **Mandatory items:** section items flagged `is_mandatory` block submit while unanswered (`before_submit`); consumables are exempt (qty 0 = "none used").
 - **Notifications:** "Maintenance Review Needed", "Maintenance Finalized", and "Maintenance Reading Out of Range" (fires on submit when `has_out_of_range_readings`; emails the **Maintenance Supervisor** role — assign it to a real user).
-- **Visit review digest (v1.591.0).** When a visit moves into Pending Review, `review_digest.py` emails every answer on it to the addresses in **ERPNext Enhancements Settings → Visit Review Emails** (seeded with `service_repair@sapphirefountains.com`, where Lisa reviews visits before billing; empty sends the review copy to nobody), and a copy to the visit's `technician`, so they have a record of what they sent. It includes the readings with their targets, cleaning, inspection answers, chemicals used, notes and photo links. Out-of-range readings and required rows still empty are called out at the top. It is sent again when a visit that was Sent Back is resubmitted. On a site with no active workflow it is sent on submit instead. It is sent inline (Email Queue rows commit with the state change, so a deploy's Redis flush cannot lose it) and never raises. This is separate from "Maintenance Review Needed", which still tells `operations@` that a review is waiting.
+- **Visit review digest (v1.591.0).** When a visit moves into Pending Review, `review_digest.py` emails every answer on it to the addresses in **ERPNext Enhancements Settings → Visit Review Emails** (seeded with `service_repair@sapphirefountains.com`, where Lisa reviews visits before billing; empty sends the review copy to nobody), and a copy to the visit's `technician`, so they have a record of what they sent. It includes the readings with their targets, cleaning, inspection answers, chemicals used, notes and photo links. Out-of-range readings and required rows still empty are called out at the top. It is sent again when a visit that was Sent Back is resubmitted. On a site with no active workflow it is sent on submit instead. It is sent inline (Email Queue rows commit with the state change, so a deploy's Redis flush cannot lose it) and never raises. This is separate from "Maintenance Review Needed", which still tells `operations@` that a review is waiting. Since v1.595.0 the reviewer's button opens the visit on the [Visit Review](#visit-review) page, each reading carries its value at the previous approved visit, and a visit sent back from that page emails the technician the note with their answers.
 - **Save-time warnings show once.** The Visit Wizard autosaves on every page, and each save runs `validate`, so the training ("Training not current") and availability ("Check who is going") pop-ups used to come back on every page. They now show once per person per visit for the same findings (`utils/popup_once.py`). A new finding shows again, and the reviewer is told separately from the technician.
 - **Print format:** "Maintenance Record Print" — a Jinja fixture (`fixtures/print_format.json`) on the print design system's chrome via the `ps_*` Jinja globals ([docs/print-design-system.md](../../docs/print-design-system.md)); it is the PDF `api/maintenance_workflow.py` emails to the customer on finalize, so it prints no labor hours. The `.html` above is the **portal** view only. Guarded by `tests/test_print_style.py`, which renders the fixture against sample records.
 - **Portal:** route `/maintenance-records` is registered for the **Customer** role (`portal_menu_items` in `hooks.py`); `get_context` sets `show_labor` from the Sales Order's `custom_display_labor_hours`.

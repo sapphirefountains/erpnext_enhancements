@@ -1,6 +1,6 @@
-"""Date the visits already waiting for review with no visit date (v1.594.1).
+"""Date the visits already waiting for review with no visit date (v1.595.1).
 
-From v1.594.1 a maintenance visit gets its ``visit_date`` when the technician sends it for
+From v1.595.1 a maintenance visit gets its ``visit_date`` when the technician sends it for
 review, if it has none (``SapphireMaintenanceRecord._finish_on_review``). Visits already in
 Pending Review when that shipped went for review without one, so their approval would still
 roll the contract's next visit forward from the approval day. On 2026-10-12 that was one

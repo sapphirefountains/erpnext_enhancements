@@ -1,0 +1,25 @@
+{
+ "content": "",
+ "creation": "2026-10-12 14:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "modified": "2026-10-12 14:00:00.000000",
+ "module": "Sapphire Maintenance",
+ "name": "visit-review",
+ "owner": "Administrator",
+ "page_name": "visit-review",
+ "public": 0,
+ "roles": [
+  {
+   "role": "Maintenance Reviewer"
+  },
+  {
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Visit Review"
+}
