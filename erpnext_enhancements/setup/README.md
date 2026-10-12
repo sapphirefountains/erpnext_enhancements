@@ -28,7 +28,7 @@ every time, so they both *create* what's missing and *correct* drift.
 | `supplier_groups.py` | `after_migrate` | Relabels `supplier_group` to "Primary Supplier Group" and adds the additional-groups Table MultiSelect plus the denormalized text fields `supplier_query.sync_supplier_groups` populates |
 | `workspace_tweaks.py` | `after_migrate` | Re-asserts overrides on core (erpnext-owned) workspaces and sidebars. Hides the "Project" link in the Projects sidebar: drops the row from the `Workspace Sidebar` before frappe 16.50, and from 16.50 sets `hidden` on ERPNext's own `Sidebar Item` row (a `Custom Sidebar` layer would reorder the sidebar; see the function's docstring). Since v1.583.1 it also **adds** the Project Planner (after Task) and the Crew Utilization report (after the module's other reports) to the Projects sidebar (`add_core_sidebar_items`): ERPNext's own rows are inserted at the right `idx` with `db_insert`, a link already there is left alone even if hidden, and the rows come back after an ERPNext re-import |
 | `desktop_icon_map.py` | — | Data only: the Desk home-grid tile for each module (slug, glyph, colour). Importless on purpose — the generator and the bench-free test read it without a frappe stub |
-| `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, creates the tile for a workspace core never gave one, and appends the `ADD_TO_SAVED_LAYOUTS` tiles to every saved home-screen layout that lacks them |
+| `desktop_icons.py` | `after_migrate`, `after_install` | Stamps that artwork onto `Desktop Icon.logo_url`, creates the tile for a workspace core never gave one, appends the `ADD_TO_SAVED_LAYOUTS` tiles to every saved home-screen layout that lacks them, and shows each `DISPLAY_LABELS` tile under its display name (Sapphire Maintenance as **Maintenance**, v1.592.0: label, legacy Workspace Sidebar title and saved layouts, never a docname or URL) |
 
 ## The repo is the source of truth — and here that means overwriting
 
@@ -165,6 +165,28 @@ every Desk User may open may go in that list:** a saved layout is drawn verbatim
 `get_desktop_icons`' role or sidebar checks, so a role-gated tile added there would show to
 people its page refuses. Adding Time Kiosk (no roles, every signed-in user) would be safe and
 is a separate decision; a team hub never is.
+
+### Renaming a tile for display (`DISPLAY_LABELS`)
+
+Nik asked on 2026-10-12 for Sapphire Maintenance to be called **Maintenance** so people find
+it on the home page. `desktop_icon_map.DISPLAY_LABELS` maps a tile's docname to the words it
+shows. `_sync_display_labels` writes three things: the tile's `label`, the legacy Workspace
+Sidebar's `title`, and the tile in every saved layout. The workspace JSON carries the page
+heading (`title`).
+
+Nothing that identifies the tile moves. The Desktop Icon docname, the Workspace's name and
+`label` (its docname), the module and `/desk/sapphire-maintenance` all stay. Two v16.50 facts
+make that safe, and one makes it necessary:
+
+- `get_desktop_icons` stamps each tile with its workspace's `module`, and the client routes
+  through `sidebar_for_module(icon.module || icon.label)`. So a site tile's label is display
+  text only.
+- `create_desktop_icons_from_workspace` looks a tile up by label but inserts it by docname
+  with `ignore_if_duplicate`. A relabelled tile is therefore never duplicated by a later
+  upgrade.
+- **A saved layout is a frozen copy with no `module`**, and ERPNext ships a module called
+  Maintenance. Relabelled without its module, a saved tile would route to ERPNext's own
+  maintenance pages. So every relabelled layout entry also gets `module`.
 
 ## Writing a new one
 

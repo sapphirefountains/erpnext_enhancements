@@ -145,6 +145,18 @@ TILES = {
 	"Quality Control": ("quality_control", "shield-check", DELIVERY),
 }
 
+# What a tile is CALLED, where that differs from its docname. Nik, 2026-10-12: "can we call it
+# just Maintenance instead of Sapphire Maintenance so people can find it on the homepage easier".
+#
+# Only the words change. The Desktop Icon's docname, the Workspace's name (its `label`, which is
+# its docname), the module and every `/desk/...` URL stay exactly as they are, so bookmarks,
+# links in emails and every lookup above keep working. `setup/desktop_icons._sync_display_labels`
+# writes the tile's `label`, the legacy Workspace Sidebar's `title` and the tile in each saved
+# home layout; the workspace JSON carries the page heading (`title`).
+DISPLAY_LABELS = {
+	"Sapphire Maintenance": "Maintenance",
+}
+
 # Where the generated artwork lives, relative to the app package, and the URL it is
 # served at. `<app>/public` is symlinked to `sites/assets/<app>`, so the two agree.
 ASSET_SUBDIR = "public/desktop_icons"

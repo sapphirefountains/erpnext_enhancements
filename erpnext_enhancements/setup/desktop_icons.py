@@ -40,7 +40,7 @@ import json
 
 import frappe
 
-from erpnext_enhancements.setup.desktop_icon_map import TILES, logo_url
+from erpnext_enhancements.setup.desktop_icon_map import DISPLAY_LABELS, TILES, logo_url
 
 #: Tiles appended to every saved home-screen layout that does not hold them yet (see the module
 #: docstring). **Only a tile every Desk User may open belongs here.** A saved layout is drawn
@@ -101,6 +101,9 @@ def _sync():
 		changed = True
 
 	if _sync_roles():
+		changed = True
+
+	if _sync_display_labels():
 		changed = True
 
 	if _sync_saved_layouts():
@@ -173,6 +176,86 @@ def _sync_roles():
 		changed = True
 
 	return changed
+
+
+def _sync_display_labels():
+	"""Show each ``DISPLAY_LABELS`` tile under the name people look for. Return True if anything moved.
+
+	Only what is read changes: the tile's ``label`` (the home grid and its search), the legacy
+	Workspace Sidebar's ``title``, and the tile in every saved home layout. Every docname stays, so
+	this module's own lookups, ``_sync_roles`` and every ``/desk/...`` URL are untouched. A label
+	another tile already holds is left alone and logged: ``label`` is unique on Desktop Icon, and a
+	collision would otherwise raise out of the whole sync.
+
+	**The module travels with the new label, because the label is how a frozen tile finds its
+	sidebar.** v16.50 routes a tile through ``sidebar_for_module(icon.module || icon.label)``
+	(``desktop_icons.bundle.js``). ``get_desktop_icons`` fills ``module`` from the linked workspace,
+	so a site tile is fine. A saved layout is a frozen copy without it, and ERPNext ships a module
+	called Maintenance: a saved tile relabelled "Maintenance" with no module would open ERPNext's
+	maintenance pages instead of ours. So every relabelled layout entry also gets its ``module``.
+	"""
+	changed = False
+	modules = {}
+	for name, label in DISPLAY_LABELS.items():
+		if not frappe.db.exists("Desktop Icon", name):
+			continue
+		if frappe.db.exists("Workspace", name):
+			modules[name] = frappe.db.get_value("Workspace", name, "module")
+		if frappe.db.get_value("Desktop Icon", name, "label") != label:
+			if frappe.db.exists("Desktop Icon", {"label": label, "name": ["!=", name]}):
+				frappe.log_error(title=f"Desktop tile {name} not relabelled: another tile is called {label}")
+				continue
+			frappe.db.set_value("Desktop Icon", name, "label", label, update_modified=False)
+			changed = True
+		if frappe.db.table_exists("Workspace Sidebar") and frappe.db.exists("Workspace Sidebar", name):
+			if frappe.db.get_value("Workspace Sidebar", name, "title") != label:
+				frappe.db.set_value("Workspace Sidebar", name, "title", label, update_modified=False)
+				changed = True
+
+	if not frappe.db.table_exists("Desktop Layout"):
+		return changed
+	for row in frappe.get_all("Desktop Layout", fields=["name", "layout"], order_by="name"):
+		layout = relabelled_layout(row.get("layout"), DISPLAY_LABELS, modules)
+		if layout is None:
+			continue
+		# Past the ORM and without moving `modified`, as in `_sync_saved_layouts`: the person's own
+		# row, and only the words on one tile change.
+		frappe.db.set_value("Desktop Layout", row.get("name"), "layout", layout, update_modified=False)
+		changed = True
+	return changed
+
+
+def relabelled_layout(layout, labels, modules):
+	"""Return a saved layout's JSON with each tile named in ``labels`` (by docname) showing its new
+	label and carrying its module, or None when there is nothing to change. Pure.
+
+	``labels`` maps a Desktop Icon docname to the label it should show; ``modules`` maps the same
+	docname to its workspace's module. An entry is matched on its ``name``, which a saved layout
+	carries (``LAYOUT_FIELDS``), falling back to its label for a layout too old to hold one. One this
+	cannot read is left alone, as in :func:`layout_with`.
+	"""
+	if not layout or not labels:
+		return None
+	try:
+		entries = json.loads(layout)
+	except (TypeError, ValueError):
+		return None
+	if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+		return None
+
+	changed = False
+	for entry in entries:
+		name = entry.get("name") or entry.get("label")
+		if name not in labels:
+			continue
+		if entry.get("label") != labels[name]:
+			entry["label"] = labels[name]
+			changed = True
+		module = modules.get(name)
+		if module and entry.get("module") != module:
+			entry["module"] = module
+			changed = True
+	return json.dumps(entries) if changed else None
 
 
 def _create_tile(label):

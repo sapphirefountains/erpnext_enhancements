@@ -131,11 +131,10 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			}
 			return { filters: filters };
 		});
-		frappe.db
-			.get_single_value("ERPNext Enhancements Settings", "consumables_item_group")
-			.then((group) => {
-				frm._ee_consumables_item_group = group;
-			});
+		// From the boot payload, not frappe.db.get_single_value: that needs read on
+		// ERPNext Enhancements Settings, and everyone but a System Manager got "No permission
+		// for ERPNext Enhancements Settings" each time this form opened (boot.py).
+		frm._ee_consumables_item_group = (frappe.boot.ee_item_pickers || {}).consumables_item_group;
 
 		frm.set_query("serial_no", function () {
 			return {

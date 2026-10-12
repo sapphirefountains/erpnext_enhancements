@@ -162,5 +162,178 @@ class TestTileRolesAreDerivedNotKept(unittest.TestCase):
 				self.assertIn(hub, TILES)
 
 
+class _FakeDB:
+	"""The rows ``_sync_display_labels`` reads and writes: tiles, workspaces, the legacy Workspace
+	Sidebar and saved layouts. Writes are recorded so a second run can be shown to write nothing."""
+
+	def __init__(self, icons, workspaces, sidebars, layouts):
+		self.rows = {"Desktop Icon": icons, "Workspace": workspaces, "Workspace Sidebar": sidebars}
+		self.layouts = dict(layouts)
+		self.writes = []
+
+	def table_exists(self, doctype):
+		return doctype in ("Desktop Layout", "Workspace Sidebar")
+
+	def exists(self, doctype, name=None):
+		rows = self.rows.get(doctype, {})
+		if isinstance(name, dict):
+			other = (name.get("name") or [None, None])[1]
+			return any(row.get("label") == name.get("label") and key != other for key, row in rows.items())
+		return name in rows
+
+	def get_value(self, doctype, name, field):
+		return (self.rows.get(doctype, {}).get(name) or {}).get(field)
+
+	def set_value(self, doctype, name, field, value, update_modified=True):
+		self.writes.append((doctype, name, field))
+		if doctype == "Desktop Layout":
+			self.layouts[name] = value
+		else:
+			self.rows[doctype][name][field] = value
+
+	def get_all(self, doctype, fields=None, order_by=None, **kwargs):
+		assert doctype == "Desktop Layout", doctype
+		return [{"name": name, "layout": layout} for name, layout in sorted(self.layouts.items())]
+
+
+class TestTheMaintenanceTileIsCalledMaintenance(unittest.TestCase):
+	"""Nik, 2026-10-12: "can we call it just Maintenance instead of Sapphire Maintenance so people can
+	find it on the homepage easier". Only the words change. Every docname and URL stays."""
+
+	@classmethod
+	def setUpClass(cls):
+		import importlib
+		import sys
+		import types
+
+		cls._saved = sys.modules.get("frappe")
+		stub = types.ModuleType("frappe")
+		stub.errors = []
+		stub.log_error = lambda *a, **k: stub.errors.append(k.get("title"))
+		sys.modules["frappe"] = stub
+		sys.modules.pop("erpnext_enhancements.setup.desktop_icons", None)
+		cls.icons = importlib.import_module("erpnext_enhancements.setup.desktop_icons")
+		cls.frappe = stub
+
+	@classmethod
+	def tearDownClass(cls):
+		import sys
+
+		sys.modules.pop("erpnext_enhancements.setup.desktop_icons", None)
+		if cls._saved is not None:
+			sys.modules["frappe"] = cls._saved
+		else:
+			sys.modules.pop("frappe", None)
+
+	def _site(self, layouts=(), icons=None):
+		import json
+
+		layouts = dict(layouts)
+		db = _FakeDB(
+			icons=icons
+			or {
+				"Sapphire Maintenance": {"label": "Sapphire Maintenance"},
+				"Fleet Maintenance": {"label": "Fleet Maintenance"},
+			},
+			workspaces={"Sapphire Maintenance": {"module": "Sapphire Maintenance"}},
+			sidebars={"Sapphire Maintenance": {"title": "Sapphire Maintenance"}},
+			layouts={name: json.dumps(entries) for name, entries in layouts.items()},
+		)
+		self.frappe.db = db
+		self.frappe.get_all = db.get_all
+		self.frappe.errors.clear()
+		return db
+
+	def test_the_map_names_a_real_tile(self):
+		from erpnext_enhancements.setup.desktop_icon_map import DISPLAY_LABELS
+
+		self.assertEqual(DISPLAY_LABELS, {"Sapphire Maintenance": "Maintenance"})
+		for name, label in DISPLAY_LABELS.items():
+			self.assertIn(name, TILES)
+			self.assertNotIn(label, TILES, "a display label may not be another tile's docname")
+
+	def test_the_tile_and_the_sidebar_are_relabelled_and_the_docnames_kept(self):
+		db = self._site()
+		self.assertTrue(self.icons._sync_display_labels())
+		self.assertEqual(db.rows["Desktop Icon"]["Sapphire Maintenance"]["label"], "Maintenance")
+		self.assertEqual(db.rows["Workspace Sidebar"]["Sapphire Maintenance"]["title"], "Maintenance")
+		self.assertIn("Sapphire Maintenance", db.rows["Desktop Icon"], "the docname must not move")
+		self.assertEqual(db.rows["Desktop Icon"]["Fleet Maintenance"]["label"], "Fleet Maintenance")
+
+	def test_a_saved_layout_gets_the_label_and_the_module(self):
+		"""ERPNext ships a module called Maintenance. A frozen tile relabelled without its module
+		would route through sidebar_for_module("Maintenance") and open ERPNext's pages."""
+		import json
+
+		db = self._site(
+			layouts={
+				"lisa@example.com": [
+					{"name": "Sapphire Maintenance", "label": "Sapphire Maintenance", "idx": 3},
+					{"name": "Fleet Maintenance", "label": "Fleet Maintenance", "idx": 4},
+				]
+			}
+		)
+		self.icons._sync_display_labels()
+		entries = json.loads(db.layouts["lisa@example.com"])
+		self.assertEqual(
+			entries[0],
+			{
+				"name": "Sapphire Maintenance",
+				"label": "Maintenance",
+				"idx": 3,
+				"module": "Sapphire Maintenance",
+			},
+		)
+		self.assertEqual(entries[1], {"name": "Fleet Maintenance", "label": "Fleet Maintenance", "idx": 4})
+
+	def test_a_layout_without_names_is_matched_on_the_old_label(self):
+		import json
+
+		layout = json.dumps([{"label": "Sapphire Maintenance", "idx": 1}])
+		out = json.loads(self.icons.relabelled_layout(layout, {"Sapphire Maintenance": "Maintenance"}, {}))
+		self.assertEqual(out, [{"label": "Maintenance", "idx": 1}])
+
+	def test_a_second_run_writes_nothing(self):
+		db = self._site(
+			layouts={"lisa@example.com": [{"name": "Sapphire Maintenance", "label": "Sapphire Maintenance"}]}
+		)
+		self.icons._sync_display_labels()
+		db.writes.clear()
+		self.assertFalse(self.icons._sync_display_labels())
+		self.assertEqual(db.writes, [])
+
+	def test_a_label_another_tile_holds_is_left_alone_and_logged(self):
+		db = self._site(
+			icons={
+				"Sapphire Maintenance": {"label": "Sapphire Maintenance"},
+				"Something Else": {"label": "Maintenance"},
+			}
+		)
+		self.icons._sync_display_labels()
+		self.assertEqual(db.rows["Desktop Icon"]["Sapphire Maintenance"]["label"], "Sapphire Maintenance")
+		self.assertTrue(self.frappe.errors)
+
+	def test_an_unreadable_layout_is_left_alone(self):
+		for layout in ("", "not json", "{}", "[1, 2]"):
+			with self.subTest(layout=layout):
+				self.assertIsNone(
+					self.icons.relabelled_layout(layout, {"Sapphire Maintenance": "Maintenance"}, {})
+				)
+
+	def test_it_runs_in_the_sync(self):
+		src = (APP_DIR / "setup/desktop_icons.py").read_text(encoding="utf-8")
+		self.assertIn("if _sync_display_labels():", src)
+
+	def test_the_workspace_page_is_titled_maintenance_and_keeps_its_name(self):
+		import json
+
+		path = APP_DIR / "sapphire_maintenance/workspace/sapphire_maintenance/sapphire_maintenance.json"
+		meta = json.loads(path.read_text(encoding="utf-8"))
+		self.assertEqual(meta["title"], "Maintenance")
+		# The name and label are the docname: renaming them would move /desk/sapphire-maintenance
+		# and break every link to it.
+		self.assertEqual((meta["name"], meta["label"], meta["module"]), ("Sapphire Maintenance",) * 3)
+
+
 if __name__ == "__main__":
 	unittest.main()
