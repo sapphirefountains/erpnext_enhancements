@@ -17,17 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The fold counted any comment as a sign somebody had started the visit. Every scheduler draft
     carries the training-compliance warning the scheduler writes, and these four also had the
     Maintenance Planner's conflict notes ("Kept a conflict … Working holiday").
-  - Comments no longer stop a fold. A folded draft's comments move onto the site visit, keeping
-    who wrote them, and one the site visit already has is not repeated (the same training
-    warning was on all four). The message says so.
+  - Comments no longer stop a fold. A folded draft's comments move onto the site visit:
+    - **as written**: author and time are kept. `insert()` would have made whoever saved the
+      contract the author, and the timeline shows the author while only the author may edit a
+      comment. It would also have sent every @mention again in that person's name. Each copy is
+      therefore written with `db_insert`, and the visit's comment cache is updated as `insert`
+      would have done;
+    - **once**: a comment the site visit already has is not repeated. A training warning counts
+      as the same by its marker, since its text changes with the reason;
+    - **threaded**: a reply points at its parent's copy.
+  - The message says the comments were moved.
+  - Found in the same review: a draft whose morning digest was already texted (its own stamp or a
+    crew member's), or with an invoice linked, now counts as started and is never folded away.
+    The Planner's own undo refuses to delete a visit for the same reasons.
   - Hardware is still Per Site Visit with its four drafts. A fold runs only on the save that
     switches the shape, so once this is deployed the contract is switched to Per Feature and
     back, which folds them.
 
 ### Tests
 
-- `test_visit_shape_fold`: Hardware's drafts with the comments they carry on prod still fold;
-  their comments land on the site visit once each, keeping who wrote them; the message says so.
+- `test_visit_shape_fold` (20 tests):
+  - Hardware's drafts with the comments they carry on prod still fold;
+  - their comments land on the site visit once each, with author, time and thread kept, with no
+    `insert()` and the comment cache updated;
+  - a training warning on another day counts as the same by its marker;
+  - an invoiced or texted draft, or one whose crew digest was texted, is left.
+
   The "comment means started" case is gone.
 
 ## [1.599.0] - 2026-10-12
