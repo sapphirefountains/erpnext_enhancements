@@ -33,7 +33,13 @@ about everything else, because deleting a draft cannot be undone:
   Maintenance Visits report lists them), opened or started ones, ones planned differently,
   and ones another record links to. Labelled drafts (a Winterization, a follow-up) are
   separate visits and are never looked at.
-* **Never a second site visit.** A contract that already has an open site visit folds nothing.
+* **Never a second site visit.** A contract that already has an open site visit folds its
+  per-feature drafts into that one when it is bare and upcoming (v1.599.2: a fold left half
+  done, or a switch back and forth), and folds nothing when somebody has started it.
+* **A draft's own workflow actions are not links** (v1.599.2). Every draft under the maintenance
+  workflow has an open Workflow Action, and ``delete_doc`` clears it in ``on_trash`` before its
+  own link check; checking links before calling it counted that as a link, so the first run
+  kept Hardware's site visit and left the other three drafts.
 * **The kept draft is converted in place** (its water feature cleared, one field written), so
   no save hook runs on it; a full save would stamp a kiosk clock-in from whatever interval
   the technician is on when the office saves the contract.
@@ -72,6 +78,9 @@ STARTED_FIELDS = (
 #: ("Not completed", "Overdue") while the marker names the same people and courses.
 TRAINING_MARKER = "<!-- training-compliance:"
 REGULAR = {"docstatus": 0, "visit_label": ["is", "not set"]}
+#: Dynamic links ``delete_doc`` removes in ``on_trash`` (frappe's ``process_workflow_actions``)
+#: before its own link check, so they never stop a delete.
+CLEARED_ON_TRASH = frozenset({"Workflow Action"})
 
 
 def on_contract_update(contract):
@@ -92,7 +101,7 @@ def fold_feature_drafts(contract_name):
 
 	Returns ``{"kept", "date", "removed", "started", "different", "linked", "overdue",
 	"site_visit", "beside"}``: names, except ``date``. ``beside`` is every per-feature draft,
-	left because the contract already has a site visit open.
+	left because the contract already has a site visit open that somebody has started.
 	"""
 	result = {
 		"kept": None,
@@ -120,26 +129,34 @@ def fold_feature_drafts(contract_name):
 		pluck="name",
 		limit=1,
 	)
-	if site_visit:
-		result["site_visit"] = site_visit[0]
+	today = getdate(nowdate())
+
+	def overdue(doc):
+		return not doc.get("scheduled_visit_date") or getdate(doc.scheduled_visit_date) < today
+
+	existing = frappe.get_doc(DOCTYPE, site_visit[0]) if site_visit else None
+	if existing and (overdue(existing) or started(existing)):
+		result["site_visit"] = existing.name
 		result["beside"] = list(names)
 		return result
 
-	today = getdate(nowdate())
 	bare = []
 	for doc in (frappe.get_doc(DOCTYPE, name) for name in names):
-		if not doc.get("scheduled_visit_date") or getdate(doc.scheduled_visit_date) < today:
+		if overdue(doc):
 			result["overdue"].append(doc.name)
 		elif started(doc):
 			result["started"].append(doc.name)
 		else:
 			bare.append(doc)
-	if not bare:
+	if existing:
+		# The contract's site visit is already there and bare: the drafts fold into it.
+		keep, rest = existing, bare
+	elif bare:
+		keep, rest = bare[0], bare[1:]
+		# In place, one field: no save hooks on the kept draft (module docstring).
+		frappe.db.set_value(DOCTYPE, keep.name, "serial_no", None)
+	else:
 		return result
-
-	keep, rest = bare[0], bare[1:]
-	# In place, one field: no save hooks on the kept draft (module docstring).
-	frappe.db.set_value(DOCTYPE, keep.name, "serial_no", None)
 	result["kept"], result["date"] = keep.name, keep.get("scheduled_visit_date")
 	for doc in rest:
 		if _plan(doc) != _plan(keep):
@@ -249,19 +266,22 @@ def _plan(doc):
 def _linked(doc):
 	"""Another record links to the draft, so ``delete_doc`` would refuse it. Checked first, with
 	its message muted (the draft is named in the summary instead), so that a real error in the
-	delete itself is still shown."""
-	from frappe.model.delete_doc import check_if_doc_is_dynamically_linked, check_if_doc_is_linked
+	delete itself is still shown.
+
+	The check is ``delete_doc``'s own, less what ``delete_doc`` clears in ``on_trash`` before it
+	checks: the draft's Workflow Actions (:data:`CLEARED_ON_TRASH`). Every draft under the
+	maintenance workflow has one, so without this every draft read as linked."""
+	from frappe.model.delete_doc import check_if_doc_is_linked, get_dynamic_linked_docs
 
 	muted = frappe.flags.mute_messages
 	frappe.flags.mute_messages = True
 	try:
 		check_if_doc_is_linked(doc)
-		check_if_doc_is_dynamically_linked(doc)
-		return False
 	except frappe.LinkExistsError:
 		return True
 	finally:
 		frappe.flags.mute_messages = muted
+	return any(link.get("reference_doctype") not in CLEARED_ON_TRASH for link in get_dynamic_linked_docs(doc))
 
 
 def _cancel_todos(name):

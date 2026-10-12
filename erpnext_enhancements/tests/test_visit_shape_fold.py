@@ -200,7 +200,15 @@ def setUpModule():
 	model = types.ModuleType("frappe.model")
 	delete_doc = types.ModuleType("frappe.model.delete_doc")
 	delete_doc.check_if_doc_is_linked = _check_linked
-	delete_doc.check_if_doc_is_dynamically_linked = lambda doc, method="Delete": None
+	# As on prod: every draft under the maintenance workflow has an open Workflow Action, which
+	# delete_doc clears in on_trash before its own link check.
+	delete_doc.get_dynamic_linked_docs = lambda doc, method="Delete": [
+		{"reference_doctype": "Workflow Action", "reference_docname": f"WA-{doc.name}"}
+	] + [
+		{"reference_doctype": "Stock Scan Log", "reference_docname": "SSL-1"}
+		for _ in [1]
+		if doc.name in STATE["dyn_linked"]
+	]
 	model.delete_doc = delete_doc
 	frappe.model = model
 	sys.modules.update(
@@ -237,6 +245,7 @@ def _reset():
 			"comments": [],
 			"cache_updates": [],
 			"linked": set(),
+			"dyn_linked": set(),
 			"set_values": [],
 			"deleted": [],
 			"checked": [],
@@ -289,6 +298,15 @@ class TestHardware(unittest.TestCase):
 	def setUp(self):
 		_reset()
 		_hardware()
+
+	def test_hardwares_half_done_fold_finishes(self):
+		"""Prod after the v1.599.1 run: 4lpc1ncnah converted, the other three left as linked by
+		their own Workflow Actions. Switched again, they fold into it."""
+		STATE["records"]["4lpc1ncnah"].serial_no = None
+		result = _fold()
+		self.assertEqual(result["kept"], "4lpc1ncnah")
+		self.assertEqual(result["removed"], ["4lq1bpi8uk", "4lr8msbd4j", "4lsbmepacj"])
+		self.assertEqual(result["linked"], [])
 
 	def test_four_bare_drafts_become_one_site_visit(self):
 		result = _fold()
@@ -480,14 +498,33 @@ class TestWhatIsLeft(unittest.TestCase):
 			result["different"], ["other_tech", "other_crew", "other_day"], "by date, as they were drafted"
 		)
 
-	def test_a_contract_that_already_has_a_site_visit_folds_nothing(self):
-		"""Switched to Per Site Visit, back, and again: never two site visits for one trip."""
-		_draft("site", None)
+	def test_a_site_visit_somebody_started_takes_nothing(self):
+		"""Never two site visits for one trip, and never folded into work in progress."""
+		_draft("site", None, visit_notes="Pump noisy")
 		_draft("a", "SN-A")
 		_draft("b", "SN-B")
 		result = _fold()
 		self.assertEqual((result["site_visit"], result["beside"], result["kept"]), ("site", ["a", "b"], None))
 		self.assertEqual((STATE["deleted"], STATE["set_values"]), ([], []))
+
+	def test_a_bare_site_visit_takes_the_drafts_planned_like_it(self):
+		"""v1.599.2: switched back and forth, or a fold left half done, as Hardware's was on
+		2026-10-12 (the site visit made, three drafts left): the drafts fold into it."""
+		_draft("site", None)
+		_draft("a", "SN-A")
+		_draft("b", "SN-B", day="2026-10-26")
+		result = _fold()
+		self.assertEqual((result["kept"], result["removed"], result["different"]), ("site", ["a"], ["b"]))
+		self.assertEqual(
+			STATE["set_values"][0][1:], ("TODO-a", "status", "Cancelled"), "no conversion: it is one"
+		)
+
+	def test_a_draft_linked_by_more_than_its_workflow_action_is_left(self):
+		STATE["dyn_linked"].add("b")
+		_draft("a", "SN-A")
+		_draft("b", "SN-B")
+		result = _fold()
+		self.assertEqual((result["kept"], result["linked"]), ("a", ["b"]))
 
 	def test_nothing_bare_folds_nothing(self):
 		_draft("a", "SN-A", visit_notes="x")

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.599.2] - 2026-10-12
+
+### Fixed
+
+- **The contract fold kept Hardware's site visit and left the other three drafts.**
+  - Switched back and forth on v1.599.1, the fold turned 4lpc1ncnah into the 19 October site
+    visit. It then named the other three drafts as linked to other records, so they stayed.
+  - The link: every draft under the maintenance workflow has an open Workflow Action.
+    `delete_doc` clears it in `on_trash` *before* its own link check. The fold checked links
+    before calling `delete_doc`, so it counted the draft's own Workflow Action as a link. That
+    makes every workflow draft look linked, and no fold could delete one.
+  - The check is now `delete_doc`'s own, less the dynamic links it clears first (Workflow
+    Action).
+- **A contract that already has a bare, upcoming site visit now folds its per-feature drafts
+  into it.** That covers a fold left half done, as Hardware's was, and a contract switched back
+  and forth. One somebody has started still takes nothing, so there is never a second site
+  visit.
+- Hardware needs one more switch to Per Feature and back once this is deployed. The three
+  drafts then fold into 4lpc1ncnah.
+
+### Tests
+
+- `test_visit_shape_fold` (23 tests) now gives every draft its open Workflow Action, as on
+  prod. It reproduces Hardware's half-done fold finishing, a bare site visit taking the drafts
+  planned like it, a started one taking none, and a draft linked by more than its Workflow
+  Action being left.
+
 ## [1.599.1] - 2026-10-12
 
 ### Fixed
