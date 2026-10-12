@@ -423,6 +423,7 @@ Every email the app can send. **Audience**: `customer` = leaves the company.
 | Unclaimed expenses nudge | `travel/expense_nudge.html` | Daily post-trip sweep | the traveler | staff |
 | Trip change alert | `travel/trip_changed.html` | A Booked / In Progress trip changed; cron `*/5`, 10 min after the last edit | only the people the change affects | staff |
 | Visit review digest | `sapphire_maintenance/visit_review_digest.html` | A `Sapphire Maintenance Record` enters Pending Review, again on a resubmission; on submit where no workflow is active Settings → Visit Review Emails (seeded `service_repair@`) + the visit's technician (their copy) | staff |
+| Visit sent back | `sapphire_maintenance/visit_review_digest.html` (the digest's body, `sent_back` audience: the reviewer's note first) | A reviewer presses Send back on the Visit Review page (v1.595.0) | the visit's technician | staff |
 
 All travel emails are gated by **Travel Settings → Send Travel Notifications**. The change
 alert also needs **Send Change Alerts**, which is off until someone ticks it.

@@ -495,7 +495,7 @@ def get_historical_visits(project, exclude=None):
 
 
 @frappe.whitelist()
-def get_dashboard_context(project, serial_no=None):
+def get_dashboard_context(project, serial_no=None, record=None):
 	"""Return the on-site briefing data for the technician dashboard widget.
 
 	Whitelisted; called by the desk form JS (``render_dashboard``) to build the
@@ -505,6 +505,10 @@ def get_dashboard_context(project, serial_no=None):
 		project (str): Project name (docname).
 		serial_no (str, optional): Serial No name. Omitted for Per Site Visit
 			records, which have no header serial.
+		record (str, optional): the saved visit on the form. With it, ``compared``
+			holds each of its readings next to the value at the site's previous
+			approved visit (``visit_compare``, v1.595.0), the same values the
+			review email and the Visit Review page show.
 
 	Returns:
 		dict: {
@@ -582,7 +586,41 @@ def get_dashboard_context(project, serial_no=None):
 	# 6. Chemistry trends — last 5 visits' readings, for the dashboard sparklines.
 	context['trends'] = _chemistry_trends(project, serial_no)
 
+	# 7. Compared with last visit (A3): this visit's readings beside the previous approved ones.
+	context['compared'] = _compared_with_last_visit(record)
+
 	return context
+
+
+def _compared_with_last_visit(record):
+	"""``{first_visit, lines, features}`` for a saved visit the user may read, else None.
+
+	A failure is logged and leaves the rest of the dashboard standing.
+	"""
+	if not record or not frappe.db.exists("Sapphire Maintenance Record", record):
+		return None
+	try:
+		from erpnext_enhancements.sapphire_maintenance import visit_compare
+
+		doc = frappe.get_doc("Sapphire Maintenance Record", record)
+		if not doc.has_permission("read"):
+			return None
+		result = visit_compare.compare(doc)
+		lines = visit_compare.reading_comparisons(doc, result)
+		serials = sorted({line["serial_no"] for line in lines if line["serial_no"]})
+		features = {}
+		if serials:
+			features = {
+				row.name: row.item_name
+				for row in frappe.get_all(
+					"Serial No", filters={"name": ["in", serials]}, fields=["name", "item_name"]
+				)
+				if row.item_name
+			}
+		return {"first_visit": result["first_visit"], "lines": lines, "features": features}
+	except Exception:
+		frappe.log_error(title="Compared with last visit not shown", message=frappe.get_traceback())
+		return None
 
 
 def _chemistry_trends(project, serial_no=None):

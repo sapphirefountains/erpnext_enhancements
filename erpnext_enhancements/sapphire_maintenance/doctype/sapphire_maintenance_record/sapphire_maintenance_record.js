@@ -121,6 +121,45 @@ function ee_sparkline(points, min_value, max_value) {
 	);
 }
 
+// "Compared with last visit" (v1.595.0): each reading on this visit beside its value at the
+// site's previous approved visit, from get_dashboard_context's `compared`, which reads
+// visit_compare.py, as the review email and the Visit Review page do.
+function ee_compared_html(compared) {
+	if (!compared || !(compared.lines || []).length) return "";
+	const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+	const number = (v) => String(Math.round(v * 1000) / 1000);
+	const features = compared.features || {};
+	const named = new Set(compared.lines.map((l) => l.serial_no || "")).size > 1;
+	let body;
+	if (compared.first_visit) {
+		body = `<p class="text-xs text-gray-500">${__("First recorded visit: no earlier approved visit to compare with.")}</p>`;
+	} else {
+		body = compared.lines
+			.map((line) => {
+				const label = named && line.serial_no ? `${line.reading} (${features[line.serial_no] || line.serial_no})` : line.reading;
+				const now = line.value == null ? __("Not recorded") : `${number(line.value)} ${line.uom || ""}`;
+				let was = __("No earlier reading");
+				if (line.previous != null) {
+					const day = line.previous_day ? frappe.datetime.str_to_user(line.previous_day) : "";
+					was = __("was {0} on {1}", [number(line.previous), day]);
+					if (line.change) was += ` (${line.change > 0 ? "+" : ""}${number(line.change)})`;
+				}
+				return `
+				<div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+					<span class="text-xs font-medium text-gray-600">${esc(label)}</span>
+					<span class="text-xs ${line.out_of_range ? "font-bold text-red-600" : "text-gray-700"}">${esc(now)}</span>
+					<span class="text-xs text-gray-500">${esc(was)}</span>
+				</div>`;
+			})
+			.join("");
+	}
+	return `
+		<div class="p-4 bg-indigo-50 border-l-4 border-indigo-400 rounded-r-md">
+			<h3 class="text-sm font-bold text-indigo-800">${__("Compared with last visit")}</h3>
+			<div class="mt-2">${body}</div>
+		</div>`;
+}
+
 frappe.ui.form.on("Sapphire Maintenance Record", {
 	setup: function (frm) {
 		// Filter items in consumables to stock items in the configured group
@@ -260,6 +299,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			args: {
 				project: frm.doc.project,
 				serial_no: frm.doc.serial_no,
+				record: frm.is_new() ? null : frm.doc.name,
 			},
 			callback: function (r) {
 				if (r.message) {
@@ -307,6 +347,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 							</div>
 						`;
 					}
+
+					const compared_html = ee_compared_html(ctx.compared);
 
 					let scope_html = "";
 					const deliverables = (ctx.service_scope && ctx.service_scope.deliverables) || [];
@@ -377,6 +419,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 									</div>
 								</div>
 							</div>
+
+							${compared_html}
 
 							${trends_html}
 
