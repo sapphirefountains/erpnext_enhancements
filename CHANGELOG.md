@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.609.0] - 2026-10-13
+
+### Added
+
+Calendar cutover, C5: the tools to retire the hand-made recurring series on the shared **Maintenance**
+Google calendar when ERPNext's sync (C2) takes it over, without losing what those series know. Until now
+the team kept the maintenance schedule there by hand, one recurring series per site, dragging single
+occurrences around, and the series' descriptions hold site knowledge written down nowhere else: Google
+Sites links, special instructions and gate codes. Nik's plan of 2026-10-12, settled: copy that knowledge
+into the Maintenance Profiles through a review list (nothing written until a person approves it), fill a
+missing site address the same way, end the hand-made series at the cutover so past occurrences stay as
+history and future ones stop, and switch the sync on by hand. Switching on and deleting the old
+"ERPNext Tasks / Project / ToDo" calendars stay Nik's own steps.
+
+- **Scan the Maintenance calendar** (read-only on Google). One `events.list` with `singleEvents=false`,
+  so each series comes back as its master with its RRULE. Events carrying C2's private `erpnext_*`
+  properties, of any site, are ignored. Each running hand-made series becomes a **Calendar Cutover Item**
+  proposing: the Maintenance Profile it belongs to, with the reason (matched by name or by street
+  address, ambiguous, or unmatched with the nearest named); the Google Sites links, with Google's
+  `google.com/url?q=` wrapper unwrapped; the description as plain text, read with `HTMLParser` rather
+  than a regex; any access, gate, alarm or lockbox codes, found by C2's own rule; and the event's location
+  when the project has no `custom_project_address`, scrubbed of codes, because a project address becomes
+  the location of that site's calendar events. **A rescan refreshes Pending rows only**: an Approved,
+  Applied or Ignored row keeps everything a person decided, and so does a profile picked by hand.
+- **Apply approved.** It shows what it would write, then writes. The Maintenance Profile gets a new *Site
+  links and special instructions* section: links are added to **Google Sites links** once each, and the
+  instructions are **appended** to **Special Instructions** under a "From the old Maintenance calendar"
+  header, never over what is there and never twice. Codes go to **Access Codes** when they fit its 140
+  characters; otherwise they stay in the appended block. A project address is filled **only if it is
+  still empty**, and then the existing geocode is queued for it.
+- **End the old series** at a cutover date (today or later), the only step that writes to Google. A
+  **dry run** lists each series' rule now and after, what is left alone and why, occurrences moved past
+  the cutover, and any running series missing from the review list. Confirming re-plans and **refuses
+  unless the dry run's token still matches**, and needs the master switch on, an authorized account and
+  the Maintenance calendar ID. It then sends `events.patch` with only `recurrence` and `sendUpdates=none`
+  to each series master. It never deletes anything, and never touches a single event or an ERPNext event.
+  Every change is logged in **Calendar Cutover Log** with the original rule.
+- **Undo end**, also a dry run and then a confirm, puts the original rules back. It only does so on a
+  series whose rule is still the one we wrote; a series changed in Google since is skipped, with its
+  original shown. Undo needs the account but not the switch, because it is the way back when the sync
+  itself is the problem.
+- **RRULE handling.** An open rule gets `UNTIL` appended. An `UNTIL` on or after the cutover is moved
+  back, and one already before it is left alone. `COUNT` is swapped for `UNTIL` only when Google's
+  `instances` list shows an occurrence whose *original* day is on or after the cutover: swapping the
+  COUNT of a rule that had already run out would *extend* it. EXDATE and EXRULE are kept, and RDATE
+  dates from the cutover on are dropped. `UNTIL` matches the start's type, as Google requires: a date for
+  an all-day series, or the UTC instant one second before local midnight in the event's time zone for a
+  timed one, so DST is handled. An invitation copy organized on another calendar is not touched.
+- **The page is the Calendar Cutover Item list**, with a *Cutover* menu: Scan, Apply approved, End the
+  old series, Undo end. Rows are approved, ignored or sent back to Pending from the list or the form.
+  The Calendar Sync Settings form links to it under *Sync*. Everything is System Manager only and POST
+  only (`api/calendar_cutover.py`).
+- **Codes stay inside.** The profile is internal, so codes may be copied there. C2's readers and event
+  builder name none of `special_instructions`, `google_sites_links` or `access_codes`, and the new test
+  fails the build if one starts to.
+- `tests/test_calendar_cutover.py`, bench-free with a fake Google client, runs as its own CI step. It
+  covers all of the above, and builds both new dialogs under node through a stand-in that asks every
+  `get_data` / `get_query` during construction, the way Frappe does (the v1.602.0 temporal-dead-zone
+  bug).
+
+### Notes
+
+- **Not verifiable without the real calendar**: whether Google keeps or drops occurrences that were
+  dragged past the cutover once the master's UNTIL moves. They are separate exception events, and the
+  tool never deletes them. The dry run counts them per series so they can be checked by hand.
+
 ## [1.604.0] - 2026-10-12
 
 ### Added

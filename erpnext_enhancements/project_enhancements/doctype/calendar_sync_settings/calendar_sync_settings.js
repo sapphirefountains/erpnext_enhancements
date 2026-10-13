@@ -40,6 +40,8 @@ frappe.ui.form.on("Calendar Sync Settings", {
 		}
 		frm.add_custom_button(__("Preview"), () => cs_preview(frm), __("Sync"));
 		frm.add_custom_button(__("Re-sync everything"), () => cs_resync(frm), __("Sync"));
+		// C5: the hand-made Maintenance series' cutover (scan, review, apply, end, undo) is its list.
+		frm.add_custom_button(__("Cutover from the old Maintenance calendar"), () => frappe.set_route("List", "Calendar Cutover Item"), __("Sync"));
 	},
 });
 

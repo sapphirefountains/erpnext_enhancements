@@ -50,6 +50,9 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
 | `doctype/calendar_sync_link/` | One Google event ERPNext owns: source (`doctype|name|key`, unique), calendar, event id, content hash, Google etag of our last write, last synced, last error | `CalendarSyncLink` | written only by `calendar_sync.engine` |
 | `doctype/calendar_sync_color/` | Child of Calendar Sync Settings: a value stream (or Day Note / Unavailable) and its Google `colorId` | `CalendarSyncColor` | `calendar_sync.engine.color_overrides` |
+| `calendar_sync/cutover.py` | **Calendar cutover** (C5, v1.609.0): scan the hand-made Maintenance series into a review list, apply approved rows to Maintenance Profiles (append only), end the series with a dry run and a confirm token, undo. See [Cutover](#cutover-from-the-hand-made-maintenance-calendar-c5-v16090) | `scan`, `set_status`, `apply_approved`, `end_series`, `undo_end`; pure `parse_series`, `match_profile`, `rewrite_recurrence` | `api/calendar_cutover.py` |
+| `doctype/calendar_cutover_item/` | One hand-made series under review: the proposed profile and why, the Sites links, instructions, codes and address to copy, Pending/Approved/Applied/Ignored, and whether it is ended at cutover. System Manager only; only the scan creates rows. Its list view is the cutover page | `CalendarCutoverItem` | `calendar_sync.cutover` |
+| `doctype/calendar_cutover_log/` | Each change to a series' recurrence (End or Undo) with the lines before and after: what Undo restores. Read-only | `CalendarCutoverLog` | written only by `calendar_sync.cutover` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
 | `doctype/planner_resource_work_pattern/` | Child table: hours for each weekday, optionally between two dates (a seasonal schedule) | `PlannerResourceWorkPattern` | child-table controller |
@@ -1519,6 +1522,83 @@ dedupe (C6).
 `tests/test_calendar_sync.py` (bench-free, own CI step) pins the payload, the secrets rules, ids, hashes,
 the snap-back table, colors, the readers' states, the master switch, the dry run, the triggers, the
 client's backoff and the wiring.
+
+### Cutover from the hand-made Maintenance calendar (C5, v1.609.0)
+
+Before the sync, the maintenance schedule was kept by hand on the shared **Maintenance** calendar: one
+recurring series per site, with occurrences dragged around by hand, and descriptions holding site
+knowledge written down nowhere else (Google Sites links, special instructions, gate codes). Nik's plan
+(2026-10-12, settled): copy that knowledge into the Maintenance Profiles **through a review list**, fill a
+missing site address the same way, **end the hand-made series at the cutover** (past occurrences stay as
+history, future ones stop), and switch the sync on by hand. Deleting the old "ERPNext Tasks / Project /
+ToDo" calendars is Nik's job too. Everything is in `calendar_sync/cutover.py`, behind
+`api/calendar_cutover.py` (System Manager only, POST only), and the page **is the Calendar Cutover Item
+list** (*Cutover* menu; also *Sync → Cutover from the old Maintenance calendar* on the Settings form).
+
+1. **Scan** (read-only on Google; needs an authorized account and the Maintenance calendar ID, not the
+   switch). One `events.list` with `singleEvents=false`, so each series comes back as its **master with
+   its RRULE**. Every event with C2's private `erpnext_*` properties (any site) is skipped; single events,
+   moved occurrences (`recurringEventId`) and series that already ended before today are counted, not
+   listed. Each running hand-made series becomes a **Calendar Cutover Item** (`CCI-#####`, `series_id`
+   unique): its title, recurrence lines, first date, time zone, location and moved-occurrence count, and
+   the proposals — the profile, the Sites links (Google's `google.com/url?q=` wrapper unwrapped), the
+   description as text (read with `HTMLParser`, never a regex; the links taken out), any codes (C2's own
+   `payload._SENSITIVE` rule) and, only when the matched project has no `custom_project_address`, the
+   event's location **scrubbed of codes** (a project address becomes the location of its events).
+   **A rescan refreshes Pending rows only**; an Approved, Applied or Ignored row keeps every proposal,
+   and a profile picked by hand is kept even on a Pending row. A row whose series vanished from the
+   calendar is flagged, never deleted.
+2. **Matching** (`match_profile`, explained in the row's *Why this profile*). Names are compared as word
+   sets without stop words (cadence, "fountain", "maintenance", legal suffixes, years) against the project
+   name, its short site name, the customer and the project id: same words 100, the title holds every word
+   of the name 90, the reverse 80, otherwise a share of 75 by overlap. A matching street address
+   (house number + first street word, so "3000 E 1st Ave" = "3000 East 1st Avenue") scores 85, and adds
+   10 when the name agrees too. **Matched** at 60 or more with no other profile within 10; **Ambiguous**
+   (nothing proposed, the close ones named) when one is; **Unmatched** otherwise (the nearest named).
+3. **Review**: *Approve* (needs a profile), *Ignore* (copy nothing), *Back to Pending*, per row on the form
+   or ticked rows in the list. `status` is read-only on the form. *End this series at cutover* is a
+   separate tick: Ignore alone does not keep a series running.
+4. **Apply approved** (shows what it would write, then writes): on the profile's new *Site links and
+   special instructions* section, the links are added to **Google Sites links** one per line and never
+   twice, the instructions are **appended** to **Special Instructions** under "From the old Maintenance
+   calendar (“title”, copied date)" after a blank line, never over what is there and never twice; codes
+   go to **Access Codes** after " | " when they fit its 140 characters, else into the appended block. The
+   address is written to the project **only if it is still empty**, then `workforce.sites.geocode_project`
+   is queued. A comment on the profile says where the text came from (never the codes). Rows become
+   Applied; one failure leaves its row Approved with the error shown.
+5. **End the old series** (the only Google write). Pick the cutover date (today or later: an earlier one
+   would erase occurrences that already happened). The **dry run** lists, per reviewed row still ticked,
+   the rule now and the rule after, what is left alone and why (Pending, unticked, already ended, an
+   invitation copy organized elsewhere, an unreadable rule), moved occurrences after the cutover, and any
+   running series not on the review list. **Confirming re-plans and refuses unless the plan's token is
+   the one the dry run showed**, and needs the master switch on, an authorized account and the Maintenance
+   calendar ID. It sends `events.patch` with only `recurrence` and `sendUpdates=none` to each series
+   master: never a delete, never a single event, never an ERPNext event (those are never series masters
+   here, whatever a row says). Each change is logged in **Calendar Cutover Log** with the original lines.
+6. **Undo end** (dry run, then confirm with its token) patches the original lines back, but only on a
+   series whose rule is still the one we wrote; one changed in Google since is skipped and its original
+   shown. It needs the account, **not** the switch: it is the way back when the sync itself is the problem.
+
+**RRULE handling** (`rewrite_recurrence`, pure): an open rule gets `UNTIL` appended; an `UNTIL` on or
+after the cutover is moved back, one already before it is left alone; `COUNT` is replaced by `UNTIL` (RFC
+5545 forbids both) **only when Google's `instances` list shows an occurrence whose original day is on or
+after the cutover**, because swapping the COUNT of a rule that already ran out would extend it. Every
+other part keeps its place; EXDATE and EXRULE lines are kept; RDATE dates on or after the cutover are
+dropped. `UNTIL` matches the start's type, as Google requires: the day before the cutover for an all-day
+series, and for a timed one the UTC instant one second before local midnight of the cutover in the
+event's time zone (so DST is right: `20261020T055959Z` in October, `20261102T065959Z` in November). A
+rule with several RRULE lines, or a timed one with no usable time zone, is not touched.
+
+**Moved occurrences.** Ending a series does not delete the occurrences people dragged in Google (they are
+separate events). The dry run counts the ones after the cutover per series; check them by hand.
+
+**Codes stay inside.** The profile is internal, so codes may land there; C2's readers and event builder
+never name `special_instructions`, `google_sites_links` or `access_codes`, and the test fails the build if
+one starts to.
+
+`tests/test_calendar_cutover.py` (bench-free, own CI step, fake Google client) pins all of the above,
+including the two dialogs built under node through a stand-in that asks every `get_data`/`get_query`
+while they are being constructed.
 
 ## `hooks.py` touchpoints
 
