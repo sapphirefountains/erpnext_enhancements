@@ -54,6 +54,7 @@ from frappe.model.document import Document
 from frappe.utils import flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.sapphire_maintenance.task_rules import task_answered
+from erpnext_enhancements.sapphire_maintenance.visit_days import checklist_day, scheduled_on
 
 #: A project name that can lead a visit's name. v16's make_autoname refuses a series outside
 #: ``^[\w\- /.#{}]+$`` (``NamingSeries.validate``); ``.``, ``#`` and braces are series syntax
@@ -560,7 +561,9 @@ def _reading_overrides(serial_no):
 
 
 @frappe.whitelist()
-def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, technician=None, visit_label=None):
+def get_visit_payload(
+	project=None, serial_no=None, maintenance_contract=None, technician=None, visit_label=None, visit_date=None
+):
 	"""Instantiate the visit form's child-table rows from the resolved template.
 
 	Whitelisted; called by the desk form JS (``populate_from_template``).
@@ -574,6 +577,10 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 	results, and its ``default_qty``/``qty_step`` plus the Item's
 	name/stock-UOM on consumables — one enrichment point serving the desk
 	form, the visit wizard, print and portal renders alike.
+
+	``visit_date`` is the day the checklist is for (v1.619.0; blank: today). A template line
+	whose ``days`` names other weekdays is left off, so a daily site's Tuesday visit carries
+	the agreement's Tuesday tasks and not Monday's (``visit_days``).
 
 	Returns:
 		dict: {
@@ -616,6 +623,7 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 
 	customer = contract.customer if contract else None
 	payload = {"template": None, "results": [], "readings": [], "tasks": [], "consumables": []}
+	weekday = checklist_day(visit_date)
 	template_cache = {}
 	item_cache = {}
 
@@ -656,7 +664,10 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 		for section in sections:
 			if section.disabled:
 				continue
-			items = sorted(section.items, key=lambda row: (row.sequence or row.idx))
+			items = sorted(
+				(row for row in section.items if scheduled_on(row.get("days"), weekday)),
+				key=lambda row: (row.sequence or row.idx),
+			)
 			common = {
 				"section": section.name,
 				"section_title": section.section_title,
@@ -770,6 +781,8 @@ def get_dashboard_context(project, serial_no=None, record=None):
 			"visits": last 3 submitted Sapphire Maintenance Records for the project,
 			"contract": Active Maintenance Contract context — gate code, key
 				location, preferred days/time from the linked Project Contract,
+			"agreement": what that agreement covers (``agreement_scope``, v1.619.0):
+				schedule, chosen services, Exhibit A, what is not included; {} without one,
 			"service_scope": the Project's Service stream Customer Requests and
 				Deliverables (free-text rows from the contract scope model),
 		}
@@ -802,6 +815,7 @@ def get_dashboard_context(project, serial_no=None, record=None):
 	# 4. Contract-driven context: site access + cadence from the signed
 	# Maintenance Services Agreement, via the Active operational contract.
 	context['contract'] = {}
+	context['agreement'] = {}
 	contract = frappe.db.get_value(
 		"Sapphire Maintenance Contract",
 		{"project": project, "status": "Active"},
@@ -819,6 +833,10 @@ def get_dashboard_context(project, serial_no=None, record=None):
 			)
 			if legal:
 				context['contract'].update(legal)
+			# What the agreement covers, for the Visit Wizard's card (v1.619.0). Never raises.
+			from erpnext_enhancements.sapphire_maintenance.agreement_scope import agreement_scope
+
+			context['agreement'] = agreement_scope(contract.project_contract)
 
 	# 5. Service-stream scope from the Project (customer's words + our deliverables).
 	context['service_scope'] = {

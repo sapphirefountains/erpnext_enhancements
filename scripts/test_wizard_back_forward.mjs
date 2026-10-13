@@ -2413,6 +2413,45 @@ async function visitWizardKeptSuite() {
 		assert.deepEqual(drawn(() => wizard().render_last_visit()), [], "nothing from an older server");
 	});
 
+	// The harness's escape_html passes text through, so escaping is pinned in Python
+	// (tests/test_visit_agreement_match.py); this drives the real card.
+	await test("What the agreement covers: schedule, Exhibit A and what is not included (v1.619.0)", async () => {
+		visitServer({ "MNT-1": visit() });
+		const bootstrap = server.handlers.get_visit_bootstrap;
+		const agreement = {
+			name: "SF-MAINT-2026-0010",
+			schedule: "Daily, 7 days per week",
+			preferred_days: "",
+			time_window: "Before 10:00am, daily",
+			startup: "May 1st Startup.",
+			winterization: "September 30th.",
+			services: ["Winterization (Fall)"],
+			custom_plan: "EQUIPMENT ROOM\nDaily: chemical check",
+			not_included: ["Electrical repairs beyond minor bulb replacement"],
+			billed_on_top: "Chemicals are billed in addition to the base rate.",
+		};
+		server.handlers.get_visit_bootstrap = (args) => ({ ...bootstrap(args), dashboard: { agreement } });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const html = drawn(() => wizard().render_agreement()).join("\n");
+		for (const text of [
+			"What the agreement covers",
+			"Daily, 7 days per week · Before 10:00am, daily",
+			"May 1st Startup.",
+			"Winterization (Fall)",
+			"Custom plan (Exhibit A)",
+			"EQUIPMENT ROOM<br>Daily: chemical check",
+			"Not included: raise a follow-up for a quote",
+			"Electrical repairs beyond minor bulb replacement",
+			"Chemicals are billed in addition to the base rate.",
+		]) {
+			assert.ok(html.includes(text), `missing ${text}`);
+		}
+		assert.ok(!html.includes("Days</b>"), "an empty value draws no row");
+		wizard().dashboard.agreement = {};
+		assert.deepEqual(drawn(() => wizard().render_agreement()), [], "nothing without a maintenance agreement");
+	});
+
 	await test("a Finish kept with no signal keeps the technician's signature and sends it", async () => {
 		const p = phone();
 		const db = visitServer({ "MNT-1": visit({ technician_signature: null }) });
