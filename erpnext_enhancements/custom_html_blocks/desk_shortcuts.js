@@ -66,7 +66,14 @@
                         new URLSearchParams(rel.slice(q + 1).split("#")[0]).forEach((v, k) => (opts[k] = v));
                         frappe.route_options = opts;
                     }
-                    frappe.set_route(...path.split("/").filter(Boolean).map(decodeURIComponent));
+                    const segments = path.split("/").filter(Boolean).map((part) => {
+                        try {
+                            return decodeURIComponent(part);
+                        } catch (e) {
+                            return part; // a stray % is part of the name, not an escape
+                        }
+                    });
+                    frappe.set_route(...segments);
                 } else {
                     window.location.href = u; // site-relative www page, e.g. /kiosk
                 }

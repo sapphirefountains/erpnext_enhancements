@@ -39,11 +39,21 @@ no new framework; the shared page kit (`sf_kit`) is step 2.
   `/app`) URL in place instead of reloading.
   - Left alone on purpose: links in emails, digests, SMS and calendar event bodies, OAuth redirects, AI
     assistant results and www pages. A fresh load is a full load either way, and `/app` still redirects.
-  - **Known limit:** a dashboard block renders inside a shadow root, which Desk's link router cannot see
-    into, so a block's link is still a full load. It is now a direct load of `/desk/...` rather than a
-    redirect. Routing block clicks in place is part of the page kit (S2/S3).
-- **The child-task table escapes task subjects.** `get_child_tasks_html` interpolated each subject raw
-  into the Task form's HTML.
+  - **Links inside dashboard blocks route in place too.** A block renders inside a shadow root, and Desk's
+    link handler (`router.js`, a jQuery delegate on body) only ever sees the shadow *host*, so every block
+    link was a full load even with a `/desk` href. The shared workspace-block helper now routes a block's
+    `/desk` links itself, by that handler's rules (same host, no `target="_blank"`, no modifier key, not a
+    bare `#`, query string into `route_options`). Every block that registers for workspace returns gets it
+    (39 of 41; the other two have no links), and the node harness clicks through it.
+- **Record names are escaped where this release touched their links.** The child-task table on the Task
+  form (`get_child_tasks_html`), the Project form's task grid (`task_tree_manager.js`) and three rows of
+  the Projects Dashboard block interpolated task subjects and project names raw into HTML; they are
+  escaped now, and the names in their hrefs encoded. The contact and address links in the unified tab
+  controller encode names too.
+- **The Maintenance Day Board's timer refresh is quiet.** A persistent server error no longer stacks one
+  frappe message dialog a minute on a board left open; the first load still reports normally.
+- **The visit record form's history table links into the Desk** (`/desk/...`, not `/app/...`), now that
+  the maintenance-agreement PR that owned the file has merged.
 - **QuickBooks Online Settings' "Link Existing Records" opens Record Matching** (S1.4), the page that
   replaced the dashboard dialog the button was named for. It used to open the dashboard.
 - **The morning briefing email is sanitized** (S1.6). `email_style.markdown()` renders the AI-written
@@ -101,9 +111,9 @@ no new framework; the shared page kit (`sf_kit`) is step 2.
 - Force-imports the 11 edited workspaces and the Sales Pipeline page past `import_file`'s timestamp
   gate. Every prod row carried exactly the repo's old stamp on 2026-10-13, so no hand edit is
   overwritten.
-- Deletes the auto-made Task Enhancements sidebar row and any shortcut or link that points at the
-  retired page, then the Page itself, without `force`, so an unforeseen link makes it refuse and log
-  rather than dangle.
+- Deletes the auto-made Task Enhancements sidebar row and any shortcut that points at the retired page
+  (not card link rows, whose Card Break counts it would leave wrong; prod had none), then the Page
+  itself, without `force`, so an unforeseen link makes it refuse and log rather than dangle.
 - Moves the seeded `/app/projects` Desk Shortcut to `/desk/projects`.
 
 Each step logs its own failure, so the patch cannot raise; it is safe to run twice.

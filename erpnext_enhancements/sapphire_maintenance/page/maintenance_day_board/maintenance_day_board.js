@@ -77,10 +77,12 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 
 	$board.html('<div class="mdb-empty">' + __('Loading…') + '</div>');
 
-	function refresh() {
+	// `quiet` (the timer) asks frappe not to pop its message dialog: a board left on a wall
+	// screen must not stack an error dialog every minute while the server is unhappy.
+	function refresh(quiet) {
 		if (state.inflight) return;
 		state.inflight = true;
-		frappe.call('erpnext_enhancements.api.maintenance_board.get_day_board_data').then((r) => {
+		frappe.call({ method: 'erpnext_enhancements.api.maintenance_board.get_day_board_data', silent: Boolean(quiet) }).then((r) => {
 			const data = r.message || {};
 			state.loaded = true;
 			$board.html([
@@ -114,7 +116,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		stop();
 		state.timer = setInterval(() => {
 			if (!isCurrent()) return stop();
-			if (!document.hidden) refresh();
+			if (!document.hidden) refresh(true);
 		}, 60000);
 	}
 

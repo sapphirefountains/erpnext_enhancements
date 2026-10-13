@@ -593,7 +593,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 						.map(
 							(v) => `
 						<div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
-							<a class="text-xs font-medium text-blue-600" href="/app/sapphire-maintenance-record/${encodeURIComponent(v.name)}">
+							<a class="text-xs font-medium text-blue-600" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">
 								${frappe.datetime.global_date_format(v.creation)}
 							</a>
 							<span class="text-xs text-gray-500">${sanitise(v.technician || "")}</span>

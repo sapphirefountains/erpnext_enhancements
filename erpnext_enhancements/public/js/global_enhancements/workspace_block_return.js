@@ -52,6 +52,15 @@
  * registration whose host has left the document (the page was rendered again, or
  * another workspace was rendered in its place) is dropped.
  *
+ * LINKS INSIDE A BLOCK (v1.623.0). Desk's own link handler (frappe/public/js/frappe/
+ * router.js:25-70) is a jQuery delegate on body. A click inside a block's shadow root
+ * reaches body retargeted to the shadow HOST, so its `a` selector never matches, and every
+ * block link was a full page load that booted the whole Desk again (and Back loaded it a
+ * second time). Registering a root therefore also routes its `/desk` links in place, by
+ * the same rules as that delegate: same host, no target="_blank", no onclick, no modifier
+ * key, not a bare "#", query string into frappe.route_options, then frappe.set_route.
+ * One click listener per root, on the root itself, so nothing outside the block changes.
+ *
  * ONE HANDLER, NEVER A THROW. frappe.router is an event emitter
  * (frappe/public/js/frappe/event_emitter.js:26-28) whose off() wraps the handler in a
  * new function before it unbinds, so it can never remove one. This file binds exactly
@@ -132,6 +141,59 @@
 		}
 	}
 
+	// A click on a `/desk` link inside a block, routed the way router.js routes one outside.
+	function onBlockClick(event) {
+		try {
+			if (event.defaultPrevented || event.button > 0) return;
+			if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+			const target = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+			if (!target) return;
+			const href = target.getAttribute("href") || "";
+			if (!href || href.charAt(0) === "#") return;
+			if (target.getAttribute("target") === "_blank" || target.getAttribute("onclick")) return;
+			if (target.hasAttribute && target.hasAttribute("download")) return;
+			if (target.hostname !== window.location.hostname) return;
+			const router = frappe.router;
+			if (!router || typeof router.is_app_route !== "function" || !router.is_app_route(target.pathname)) return;
+			if (typeof frappe.set_route !== "function") return;
+			if (target.search) {
+				const options = {};
+				new URLSearchParams(target.search).forEach((value, key) => {
+					options[key] = value;
+				});
+				frappe.route_options = options;
+			}
+			if (target.hash) frappe.route_hash = target.hash;
+			event.preventDefault();
+			frappe.set_route(target.pathname);
+		} catch (error) {
+			warn("a block's link", error);
+		}
+	}
+
+	const routed = typeof WeakSet === "function" ? new WeakSet() : null;
+
+	function routeLinks(root) {
+		try {
+			if (!root || typeof root.addEventListener !== "function") return false;
+			if (routed) {
+				if (routed.has(root)) return true;
+				routed.add(root);
+			} else {
+				if (root.__ee_links_routed) return true;
+				root.__ee_links_routed = true;
+			}
+			root.addEventListener("click", onBlockClick);
+			return true;
+		} catch (error) {
+			warn("route links", error);
+			return false;
+		}
+	}
+
+	/** Route a block's `/desk` links in place. Registering with onWorkspaceReturn does it too. */
+	api.routeLinks = routeLinks;
+
 	function bind() {
 		if (bound) return true;
 		const router = frappe.router;
@@ -149,6 +211,7 @@
 	api.onWorkspaceReturn = function (root, load) {
 		try {
 			if (!root || typeof load !== "function") return false;
+			routeLinks(root);
 			if (!bind()) return false;
 			const route = currentRoute();
 			const registration = { root, load, route, workspace: shownWorkspace(route) };

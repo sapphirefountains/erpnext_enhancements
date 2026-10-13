@@ -62,9 +62,6 @@ DESK_SERVER_MODULES = [
 # checked to STILL violate, so a fixed or deleted file fails the build until its entry is
 # removed here: this list can only shrink.
 ALLOWED = {
-	"sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js": (
-		"edited by the Visit Wizard / maintenance PR (#1238); fix with that change"
-	),
 }
 
 
@@ -199,7 +196,7 @@ class TestNoHardCodedAppPathsInTheDesk(unittest.TestCase):
 
 	def test_the_desk_shortcuts_block_routes_desk_urls_in_place(self):
 		code = "\n".join(line for _, line in _code_lines(APP / "custom_html_blocks" / "desk_shortcuts.js"))
-		self.assertIn("frappe.set_route(...path.split", code)
+		self.assertIn("frappe.set_route(...segments)", code)
 		self.assertRegex(code, r"\(desk\|app\)")
 
 	def test_allowed_entries_are_still_needed(self):

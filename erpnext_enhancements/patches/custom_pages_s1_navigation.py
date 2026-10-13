@@ -21,8 +21,8 @@ What changes:
 
 Then the retired page. Its files are gone from the repo, which stops managing the Page but
 does not delete it, so this removes the rows that point at it — the auto-made
-`Task Enhancements` Workspace Sidebar item, plus any shortcut or link a private workspace may
-carry — and then the Page itself, WITHOUT `force`: if something unforeseen still links to it,
+`Task Enhancements` Workspace Sidebar item, plus any shortcut a private workspace may carry —
+and then the Page itself, WITHOUT `force`: if something unforeseen still links to it,
 `delete_doc` refuses and that is logged rather than left dangling.
 
 And the one seeded Enhancement Desk Shortcut that still read `/app/projects` (the seeder is
@@ -110,9 +110,12 @@ def _step(fn, label, done, failed):
 
 
 def _retire_page():
-	# Rows that point at the page, in every workspace and sidebar, standard or private. The
-	# Task Enhancements workspace's own shortcut is already gone with its re-import above.
-	for child in ("Workspace Shortcut", "Workspace Link", "Workspace Sidebar Item"):
+	# Shortcut and sidebar rows that point at the page, in any workspace or sidebar, standard
+	# or private (prod had one of each on 2026-10-13; the Task Enhancements shortcut is already
+	# gone with the re-import above). Not Workspace Link rows: deleting one from a card would
+	# leave its Card Break's link_count wrong, and prod had none. A link row nobody foresaw
+	# makes the delete below refuse, which is logged.
+	for child in ("Workspace Shortcut", "Workspace Sidebar Item"):
 		if frappe.db.exists("DocType", child):
 			frappe.db.delete(child, {"link_to": RETIRED_PAGE})
 

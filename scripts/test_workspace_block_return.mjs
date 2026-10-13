@@ -317,6 +317,54 @@ await test("evaluated twice, it keeps one registry and one handler", () => {
 	assert.deepEqual([a.loads, b.loads], [2, 2]);
 });
 
+await test("a /desk link inside a block routes in place; the ones Desk leaves alone stay alone", () => {
+	// router.js's body delegate never sees an anchor inside a shadow root, so the helper
+	// routes them, by that delegate's rules (router.js:25-70).
+	const routes = [];
+	const desk = makeDesk({ globals: { location: { hostname: "erp.example.com" }, URLSearchParams } });
+	desk.sandbox.frappe.router.is_app_route = (path) => String(path || "").split("/")[1] === "desk";
+	desk.sandbox.frappe.set_route = (route) => routes.push(route);
+	const listeners = [];
+	const root = { host: { isConnected: true }, addEventListener: (type, fn) => listeners.push([type, fn]) };
+	desk.api.onWorkspaceReturn(root, () => {});
+	desk.api.onWorkspaceReturn(root, () => {});
+	assert.equal(listeners.length, 1, "registering a root twice must not add a second click listener");
+	assert.equal(listeners[0][0], "click");
+	const anchor = (href, attrs = {}, at = {}) => {
+		const url = new URL(href, "https://erp.example.com/desk/home");
+		return {
+			getAttribute: (name) => (name === "href" ? href : attrs[name] == null ? null : attrs[name]),
+			hasAttribute: (name) => name in attrs,
+			hostname: at.hostname || url.hostname,
+			pathname: url.pathname,
+			search: url.search,
+			hash: url.hash,
+		};
+	};
+	const click = (a, extra = {}) => {
+		let prevented = false;
+		const event = Object.assign(
+			{ button: 0, target: { closest: () => a }, preventDefault: () => (prevented = true) },
+			extra,
+		);
+		listeners[0][1](event);
+		return prevented;
+	};
+
+	assert.equal(click(anchor("/desk/task/TASK-1")), true);
+	assert.deepEqual(routes, ["/desk/task/TASK-1"]);
+	assert.equal(click(anchor("/desk/task?status=Open")), true);
+	assert.equal(desk.sandbox.frappe.route_options.status, "Open", "a query string becomes route_options");
+	const before = routes.length;
+	assert.equal(click(anchor("/desk/task/X", { target: "_blank" })), false, "a new-tab link is the browser's");
+	assert.equal(click(anchor("/desk/task/X"), { ctrlKey: true }), false, "ctrl-click opens a tab");
+	assert.equal(click(anchor("#tdb-top")), false, "a bare hash is not a route");
+	assert.equal(click(anchor("/kiosk")), false, "a www page is a full load");
+	assert.equal(click(anchor("https://example.org/x", {}, { hostname: "example.org" })), false, "external");
+	assert.equal(click(null), false, "a click on no link");
+	assert.equal(routes.length, before, "none of those routed");
+});
+
 // ============================================================ part two: every block
 
 /**
