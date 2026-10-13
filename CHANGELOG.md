@@ -90,6 +90,37 @@ quick-add argument; under node, the grid's pure helpers, the dependency order co
 what the page sends, and the page's hooks. `test_planner_phase6e` now reads its block up to the next
 phase's banner rather than to the end of the file.
 
+## [1.600.1] - 2026-10-12
+
+### Fixed
+
+- **The route map now follows the roads.** On the route view that both planners link to
+  (`/desk/project-planner/route/<person>/<date>`), the line between the stops had always been straight
+  segments, pin to pin. The README admitted it ("The map polyline is straight segments"), so it was
+  a known gap, not a regression. Nik saw it on a real day: Ogden, then Draper, then South Jordan.
+  - **How the road is drawn.** The browser asks Google for the road on the map's own key, through
+    the same ladder the pick-up map climbs (`pick_routing_map.js`).
+    1. The Routes library's `computeRoutes` is tried first, when Travel Settings → *Use Routes API*
+       is on. The planner sends only the `path` field: `computeRoutes` refuses a request with no
+       field mask.
+    2. Otherwise, or when Routes fails, the older Directions service. Every key that already draws
+       the pick-up map can call it.
+    3. Only then straight segments, with a one-line notice saying so. A straight line is never
+       passed off as the road.
+  - **Nothing on the list changes.** The stops keep the planner's own driving order
+    (`optimizeWaypoints: false`; neither engine is asked to reorder). Every time and mile on the
+    list is still the server's. This changes the line, nothing else.
+  - **What it costs.** One Google request each time a route view is opened.
+  - **A failed Routes call is remembered for the life of the page.** Otherwise every re-draw would
+    pay for another doomed request before falling back. The latch is `PP.routes_unavailable`.
+  - **Staleness is re-checked after every await.** Stepping to the next day mid-request must not
+    paint the old day's road onto the new map.
+  - **The "routes" library comes through the shared `EEGoogleMaps` loader.** The planner never
+    calls `importLibrary` itself, and `test_the_only_maps_loader_is_the_shared_one` still holds.
+  - **`get_route` adds `use_routes_api`** (`_maps_config`), the same Travel Settings switch
+    `api.pickup_routing._use_routes_api` reads. The `crew_day_route` AI tool passes it through
+    unchanged, as it already passes `map_ids`. Only the billable key is stripped there.
+
 ## [1.600.0] - 2026-10-12
 
 ### Added

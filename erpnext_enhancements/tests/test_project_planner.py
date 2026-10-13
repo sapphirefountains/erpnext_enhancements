@@ -1810,6 +1810,7 @@ class TestGetRoute(unittest.TestCase):
 		]
 		frappe.singles[("Travel Settings", "google_maps_api_key")] = "browser-key"
 		frappe.singles[("Travel Settings", "google_maps_map_id_light")] = "light-id"
+		frappe.singles[("Travel Settings", "use_routes_api")] = 1
 
 	def _readers(self, **kwargs):
 		return _Readers(
@@ -1892,13 +1893,16 @@ class TestGetRoute(unittest.TestCase):
 		self.assertEqual(
 			(got["maps_key"], got["map_ids"]), ("browser-key", {"map_id_light": "light-id", "map_id_dark": ""})
 		)
+		# The Travel Settings switch the pick-up map reads: may the browser key call Routes, which
+		# draws the road between the stops (v1.600.1)?
+		self.assertEqual(got["use_routes_api"], 1)
 		self.assertEqual((got["travel"], got["off"]), (None, None))
 		self.assertEqual(
 			set(got),
 			{
 				"resource", "label", "date", "day_start", "start", "end", "stops", "drive_minutes", "km",
-				"miles", "source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids", "travel",
-				"off",
+				"miles", "source", "long_drive", "unlocated", "maps_url", "maps_key", "map_ids",
+				"use_routes_api", "travel", "off",
 			},
 		)
 		# Shown in miles (Nik, 2026-10-09); measured in km underneath, so both travel together.

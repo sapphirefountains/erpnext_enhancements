@@ -99,6 +99,7 @@ ROUTE_KEYS = (
 	"maps_url",
 	"maps_key",
 	"map_ids",
+	"use_routes_api",
 	"drive_minutes",
 	"km",
 	"source",
@@ -215,6 +216,33 @@ class TestRouting(unittest.TestCase):
 		# The list is built before the map, and a map failure only hides the map.
 		self.assertLess(code.index("const $list ="), code.index("this.draw_route_map("))
 		self.assertIn("$map.hide()", code)
+
+	def test_the_route_map_draws_the_road_not_a_straight_line(self):
+		# v1.600.1: Nik saw straight pin-to-pin lines on both planners' route view. The line now comes
+		# from Google on the map's own key: Routes when Travel Settings allows it, else Directions,
+		# and straight segments only as a last resort that says so.
+		code = _code_without_comments()
+		body = code[code.index("async draw_road(") :]
+		body = body[: body.index("\n\t}\n")]
+		# Through the shared loader, like the map itself (no importLibrary of its own).
+		self.assertIn('window.EEGoogleMaps.load({ apiKey: data.maps_key, libraries: ["routes"] })', body)
+		self.assertIn("Route.computeRoutes(", body)
+		self.assertIn("data.use_routes_api", body)
+		self.assertIn('fields: ["path"]', body)  # computeRoutes refuses a request without one
+		self.assertIn("createPolylines(", body)
+		self.assertIn("DirectionsService", body)
+		self.assertIn("optimizeWaypoints: false", body)  # the planner's order is the route's order
+		self.assertIn("overview_path", body)
+		self.assertIn("PP.routes_unavailable = true", body)
+		# Rung 3 is a line plus a notice, never a bare straight line passing as the road.
+		self.assertLess(body.index("overview_path"), body.index("Google could not draw the roads"))
+		self.assertIn("$note", body)
+		# Every await is followed by a staleness check: stepping a day mid-request must not paint
+		# the old day's road onto the new map.
+		self.assertGreaterEqual(body.count("if (stale()) return;"), body.count("await "))
+		# The straight Polyline is no longer drawn before Google is asked.
+		draw = code[code.index("draw_route_map(token, data") : code.index("async draw_road(")]
+		self.assertNotIn("new maps.Polyline", draw)
 
 
 class TestApiCalls(unittest.TestCase):
