@@ -12,7 +12,7 @@ contact values at all. It was derived from production DocField and Custom Field 
 2026-10-13 and every exclusion below carries its reason.
 
 **The rules every consumer follows** (the dry-run report, the save hook
-``utils/normalize_hook.py``, and the cleanup in P2-C later):
+``utils/normalize_hook.py``, and the P2-C cleanup ``utils/normalize_cleanup.py``):
 
 * **A record with ``docstatus`` 1 or 2 is never touched.** A submitted or cancelled document
   is a record of what was true when it was submitted; rewriting a field on it is editing

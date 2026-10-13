@@ -1375,3 +1375,9 @@ erpnext_enhancements.patches.refresh_subcontractor_agreement_layout
 # Settings AND the global default (the Desk reads tabDefaultValue, not the Single) without saving the Single through
 # its controller, whose validate() enforces unrelated rules. Clears the cache. Cannot raise, safe twice.
 erpnext_enhancements.patches.set_desk_date_and_time_format
+# Form kit P2-C (v1.621.0): rewrite the stored phones, emails, websites, address parts and names that predate
+# normalize-on-save, exactly the Data Normalization Preview's "Will change" rows Nik approved on 2026-10-13
+# (TASK-2026-02751). Leaves "Can't normalize" values as typed, never touches a submitted record or a Single, never
+# blanks a value. Writes with set_value(update_modified=False) after saving a private undo file; leaves the counts as
+# a comment on the report. Cannot raise, safe twice.
+erpnext_enhancements.patches.normalize_stored_values
