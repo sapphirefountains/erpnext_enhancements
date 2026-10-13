@@ -131,6 +131,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `fixtures/` | Version-controlled Custom Fields, Property Setters, roles, workflows | [README](erpnext_enhancements/fixtures/README.md) |
 | `setup/` | Migrate-time provisioning re-asserted on every `bench migrate` | [README](erpnext_enhancements/setup/README.md) |
 | `utils/` | Cross-cutting helpers, including two site-wide monkeypatches/hooks | [README](erpnext_enhancements/utils/README.md) |
+| `form_kit/` | The guided-entry engine (form kit P4): a DocType's form walked as steps, step saves with an allowlist and optimistic locking, step-1-creates-the-draft, and per-stage completeness. Config per DocType lives in code (`form_kit/config/`, Opportunity first); four endpoints in `form_kit/api.py` | [README](erpnext_enhancements/form_kit/README.md) |
 | `assistant_tools/` · `data/` | MCP tools and skills for AI assistants, plus the AI write gate | [tools](erpnext_enhancements/assistant_tools/README.md) · [skills](erpnext_enhancements/data/README.md) |
 
 > **History:** v0.2.0 merged the previously separate `crm_enhancements`, `global_enhancements`, `project_enhancements`, `task_enhancements`, and `qb_time_integration` apps into this one app. Their public assets are namespaced under `public/{js,css}/<module>/` to avoid collisions. Uninstall the old standalone apps from existing benches after deploying.

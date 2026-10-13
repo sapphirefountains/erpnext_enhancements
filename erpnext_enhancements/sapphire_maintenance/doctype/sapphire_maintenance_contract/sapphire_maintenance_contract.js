@@ -62,6 +62,13 @@ frappe.ui.form.on("Sapphire Maintenance Contract", {
 			);
 		}
 
+		// Which visit form each kind of visit opens with (v1.620.0): the regular visit, a water
+		// feature's own form, each seasonal visit, and where a blank link falls back to. Resolved
+		// on the server by the function a visit's first open uses (get_visit_forms).
+		if (!frm.is_new()) {
+			frm.add_custom_button(__("Visit Forms"), () => ee_show_visit_forms(frm));
+		}
+
 		if (frm.doc.docstatus === 0 && !frm._ee_batch_button) {
 			frm._ee_batch_button = frm.fields_dict.covered_features.grid.add_custom_button(
 				__("Add Water Features"),
@@ -138,6 +145,39 @@ frappe.ui.form.on("Sapphire Contract Feature", {
 		}
 	},
 });
+
+// "Visit Forms": one table of which form each kind of visit opens with, each a link to the
+// template. Saved values only (the server reads the contract), so unsaved edits are flagged.
+function ee_show_visit_forms(frm) {
+	frappe
+		.call({
+			method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.get_visit_forms",
+			args: { contract: frm.doc.name },
+		})
+		.then((r) => {
+			const esc = (value) => frappe.utils.escape_html(String(value == null ? "" : value));
+			const rows = (r.message || [])
+				.map((row) => {
+					const form = row.template
+						? `<a href="${esc(frappe.utils.get_form_link("Sapphire Maintenance Template", row.template))}">${esc(
+								row.template
+						  )}</a>`
+						: `<span class="text-muted">${__("None")}</span>`;
+					return `<tr><td>${esc(row.visit)}</td><td>${form}</td><td class="text-muted">${esc(row.source)}</td></tr>`;
+				})
+				.join("");
+			const unsaved = frm.is_dirty()
+				? `<p class="text-warning">${__("This shows the saved contract. Save to see your changes here.")}</p>`
+				: "";
+			frappe.msgprint({
+				title: __("Visit Forms"),
+				wide: true,
+				message: `${unsaved}<table class="table table-bordered table-sm"><thead><tr><th>${__("Visit")}</th><th>${__(
+					"Form"
+				)}</th><th>${__("Where it comes from")}</th></tr></thead><tbody>${rows}</tbody></table>`,
+			});
+		});
+}
 
 // "Add Water Features" — multi-select the project's water features (all
 // pre-checked, native Select All) with one shared frequency and first-visit

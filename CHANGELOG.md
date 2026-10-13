@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.622.0] - 2026-10-13
+
+Form kit P4-A: the server engine for guided data entry (TASK-2026-02759, 02764). Nothing draws it yet;
+the page is P4-B.
+
+### Added
+
+- **`form_kit/`, a DocType's form walked as a guided flow of steps.** It is a plain package, not a
+  Frappe module. `form_kit/README.md` gives the payload shapes.
+  - **`steps.flow_steps`** reads the meta the way the Desk lays the form out (tabs, sections) and
+    turns it into steps using a per-DocType config in code.
+    - Every field the form shows stays in the flow: Nik chose "keep showing everything". A section
+      no step claims becomes a step of its own, so a field added later appears with no code change.
+    - `tests/test_form_kit.py` compares the flow with the form field by field.
+  - **Permissions per field are the Desk's own.**
+    - Level 0 follows the document permission (sharing, if-owner and user permissions included).
+    - A higher permlevel follows the role rows.
+    - A field the user can only read comes back read-only. A level they cannot read is not sent at
+      all, neither the field nor its value.
+  - **`saver.create_record` makes the record real after step 1.** It inserts a draft from step 1's
+    fields, with the same defaults the Desk's New form gives. This was the P4 decision of 2026-10-13.
+  - **`saver.save_step` saves one step onto the record.**
+    - The editable fields are worked out again on the server and assigned one by one. A crafted key
+      such as `owner`, `docstatus` or a higher-permlevel field is ignored.
+    - Child rows are matched by `name`.
+    - Every save runs the normal validation, the normalize-on-save hook and Opportunity's own hooks.
+    - **Optimistic lock:** if `modified` has moved, nothing is written. It returns
+      `{"conflict": true, "server": ...}`, the shape the offline queue (P4.7) will replay against.
+  - **`completeness.stage_completeness`** measures a record against its stage's list. The
+    Opportunity lists come from prod fill rates (TASK-2026-02773). `completeness_for` measures up to
+    500 records for the board in one permission-checked list query plus one bound query per child
+    table.
+  - **Four whitelisted endpoints in `form_kit/api.py`.**
+    - Each one serves only the DocTypes in `form_kit.config.CONFIGS`, which is just Opportunity for
+      now.
+    - Writes are POST only and nothing is open to guests.
+    - `test_whitelist_placement` pins the endpoint surface.
+- **The Opportunity config:** basics → contact → scope → one scope step per value stream (shown only
+  while that stream is chosen) → schedule → Events schedule → budget → close → more → hand-off
+  (read-only, last).
+  - Step 1 asks for the account, name, value streams, owner and lead source. Lead source is
+    included because `enforce_source` requires it on new records.
+  - Ten HTML widgets that the form's JavaScript draws are skipped, each with its reason.
+- A "guided-flow engine" section in `docs/app-design-system.md`, and `tests/test_form_kit.py` (67
+  tests) in its own CI step. The tests are checked against a trimmed ERPNext v16.50.0 Opportunity
+  meta fixture plus this app's custom fields and property setters.
+
+## [1.621.0] - 2026-10-13
+
+Form kit P2-C, part one: the one-time cleanup of stored contact values (TASK-2026-02752). Nik approved
+it from the Data Normalization Preview report on 2026-10-13 with no exceptions (TASK-2026-02751).
+
+### Added
+
+- **The cleanup patch `normalize_stored_values`.** It rewrites the phones, emails, websites, address
+  parts and names stored before v1.618.0 began normalizing on save, so a phone already on file reads
+  `+18015550100` like a new one. The logic is `utils/normalize_cleanup.py`; the patch only runs it.
+  - **It writes exactly the report's *Will change* rows.** Its plan is the report's own `collect()`,
+    now able to return each row's write target (`targets=True`, never sent to the browser), so what Nik
+    approved is what runs.
+  - **It leaves alone:**
+    - the 84 *Can't normalize* values (test numbers, international numbers without a +, text in phone
+      fields), which stay as typed for a person;
+    - submitted and cancelled records, and every Single;
+    - any value that would become blank. None existed on prod, but a blank address line makes the
+      Address unsaveable;
+    - a value edited while the patch runs. It is re-read and compared exactly in Python, because SQL
+      equality ignores trailing spaces (PAD SPACE). The edit wins.
+  - **It writes with `set_value(update_modified=False)`.** No controller and no validation run, so no
+    record can fail part-way, as the plan required. `modified` is untouched, so no open form reports
+    a conflict. A child row also clears its parent's cache. It commits once per table.
+  - **Before the first write it saves a private undo file** (`data-normalization-undo-<stamp>.json`,
+    attached to nothing, so only Administrator and server code can read it). If that file cannot be
+    saved, nothing is written. `normalize_cleanup.undo(<file name>)` restores the old values, but
+    only where a value still holds what the cleanup wrote.
+  - **It leaves the counts per field as a comment on the report.** The comment holds counts, never a
+    value. The same counts are printed in the migrate log.
+  - It never raises, because a patch that raises aborts `bench migrate`, which is the deploy. A second
+    run plans nothing, and `disable_value_normalization` stops it.
+- `tests/test_normalize_cleanup.py`, in its own CI step.
+
+### Not in this release
+
+- **Typing the fields `Phone`, `Email` or `URL` (P2-C, part two).** Frappe v16 validates a typed Data
+  field on every save, so a field still holding one of the 84 unreadable values would freeze that
+  record. That is how a website field once froze 408 records. Typing is decided field by field from
+  the report once this has run.
+
+## [1.620.0] - 2026-10-13
+
+Two of the follow-ups Nik picked from the custom-pages brainstorm (2026-10-13), after v1.619.0 made
+the visit form match the maintenance agreement.
+
+### Added
+
+- **"What the agreement covers" on the Maintenance Record desk form.** The dashboard now shows the card
+  the Visit Wizard shows on its Safety step (`ee_agreement_html`, from the dashboard context's
+  `agreement`). Whoever reviews or keys in a visit sees the same schedule, Exhibit A and exclusions the
+  technician saw. It is collapsed, its values are escaped, and it reads no rate field.
+- **Visit Forms** on the Maintenance Contract form (`get_visit_forms`, `ee_show_visit_forms`). One table
+  lists which form each kind of visit opens with:
+  - the regular visit;
+  - each water feature with a form of its own;
+  - each seasonal visit, with its month.
+
+  Each row links the template and says where it comes from: the Default Form Template, its own form,
+  the project's or the customer's Active template, or none (the visit opens with nothing to fill in).
+  Before, finding out meant opening the template links one by one. The feature overrides sat in a
+  collapsed row section, and a blank link's fallback was nowhere on screen.
+  - The contract-level rows are resolved with `resolve_template`, the function a visit's first open
+    uses, so they cannot disagree with the visits. A water feature's own form is its row's form, which
+    `resolve_template` takes first.
+  - The list says when the contract-level form serves only the water features without their own form,
+    and when every feature has one so it opens nothing.
+  - A seasonal visit with no form of its own says that a water feature's own form comes first, as
+    `resolve_template` does.
+  - Two seasonal visits sharing a label both get the first one's form, and the second says so rather
+    than claiming its own.
+  - A contract with no project names a customer's form as the customer's.
+  - It reads the saved contract, needs read on it, and says so when the form has unsaved changes.
+- `tests/test_visit_agreement_match.py` covers both, with 11 more tests (33 in all):
+  - the real `get_visit_forms` with each fallback, no project, a shared label and the permission check;
+  - the dashboard drawing the card with every value escaped;
+  - the button's escaping.
+
 ## [1.619.1] - 2026-10-13
 
 Small fixes from an audit of the custom pages (the custom-pages brainstorm, 2026-10-13), done after

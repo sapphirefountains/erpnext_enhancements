@@ -16,6 +16,9 @@ on. A template could only put every line on every visit. Pinned here, through th
 * section 2.4's "not included" lines still match the agreement template word for word;
 * the wizard draws the card on the Safety step, escaped.
 
+v1.620.0: the same card on the desk form's dashboard, and the contract's **Visit Forms** list
+(``get_visit_forms``), resolved by the function a visit's first open uses.
+
 Stubs a minimal ``frappe`` in ``setUpModule``; runs the real modules.
 
 Run: python -m unittest erpnext_enhancements.tests.test_visit_agreement_match
@@ -38,6 +41,7 @@ RECORD_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_main
 SECTION_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_section.sapphire_maintenance_section"
 DAYS_MODULE = "erpnext_enhancements.sapphire_maintenance.visit_days"
 SCOPE_MODULE = "erpnext_enhancements.sapphire_maintenance.agreement_scope"
+CONTRACT_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract"
 STUBBED = (
 	"frappe",
 	"frappe.utils",
@@ -47,9 +51,11 @@ STUBBED = (
 	SECTION_MODULE,
 	DAYS_MODULE,
 	SCOPE_MODULE,
+	CONTRACT_MODULE,
 )
 
 record_module = None
+contract_module = None
 section_module = None
 visit_days = None
 agreement_scope = None
@@ -103,12 +109,14 @@ def _reset():
 			"readable": set(),
 			"options": [],
 			"errors": [],
+			"active": {},
+			"serials": {},
 		}
 	)
 
 
 def setUpModule():
-	global record_module, section_module, visit_days, agreement_scope
+	global record_module, section_module, visit_days, agreement_scope, contract_module
 	for name in STUBBED:
 		_saved[name] = sys.modules.pop(name, None)
 	_forget_package_attrs()
@@ -129,6 +137,9 @@ def setUpModule():
 	def _get_all(doctype, filters=None, fields=None, pluck=None, **kwargs):
 		if doctype == "Sapphire Reading Range Override":
 			return []
+		if doctype == "Serial No":
+			assert kwargs.get("as_list"), kwargs
+			return [(name, STATE["serials"].get(name)) for name in filters["name"][1]]
 		if doctype == "Contract Service Option":
 			assert filters["included"] == 1 and filters["parenttype"] == "Project Contract", filters
 			rows = [r for r in STATE["options"] if r["parent"] == filters["parent"] and r["included"]]
@@ -138,6 +149,11 @@ def setUpModule():
 	def _get_value(doctype, name, fields=None, as_dict=False, **kwargs):
 		if doctype == "Item":
 			return _Dict(item_name=name, stock_uom="Nos")
+		if isinstance(name, dict):
+			# resolve_template's fallback: the Active template for a project, then a customer.
+			assert name.get("status") == "Active" and fields == "name", (name, fields)
+			key = ("project", name["project"]) if "project" in name else ("customer", name["customer"])
+			return STATE["active"].get(key)
 		row = STATE["values"].get((doctype, name))
 		if row is None:
 			return None
@@ -158,6 +174,9 @@ def setUpModule():
 	utils.getdate = _getdate
 	utils.nowdate = lambda: str(STATE["today"])
 	utils.now_datetime = lambda: datetime.datetime.combine(STATE["today"], datetime.time(9))
+	utils.add_days = lambda d, n: _getdate(d) + datetime.timedelta(days=n)
+	utils.add_months = lambda d, n: _getdate(d)
+	utils.add_years = lambda d, n: _getdate(d)
 	frappe.utils = utils
 
 	model = types.ModuleType("frappe.model")
@@ -175,10 +194,12 @@ def setUpModule():
 	agreement_scope = importlib.import_module(SCOPE_MODULE)
 	section_module = importlib.import_module(SECTION_MODULE)
 	record_module = importlib.import_module(RECORD_MODULE)
+	contract_module = importlib.import_module(CONTRACT_MODULE)
 
 
 def _forget_package_attrs():
 	import erpnext_enhancements.sapphire_maintenance as package
+	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract as contract_package
 	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record as record_package
 	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_section as section_package
 
@@ -187,6 +208,7 @@ def _forget_package_attrs():
 		(package, "agreement_scope"),
 		(record_package, "sapphire_maintenance_record"),
 		(section_package, "sapphire_maintenance_section"),
+		(contract_package, "sapphire_maintenance_contract"),
 	):
 		if attr in vars(owner):
 			delattr(owner, attr)
@@ -472,6 +494,183 @@ class TestWizardCard(unittest.TestCase):
 				self.assertIn("${esc(text)", expression)
 				continue
 			self.assertRegex(expression, r"^(esc\(|vz_plain_html\(|__\()", expression)
+
+
+class _Contract(_Document):
+	def check_permission(self, ptype):
+		assert ptype == "read"
+		if not STATE.get("may_read_contract", True):
+			raise _Thrown("not permitted")
+
+
+class TestVisitForms(unittest.TestCase):
+	"""The contract's Visit Forms list (v1.620.0) is what a visit's first open would resolve."""
+
+	def setUp(self):
+		_reset()
+		STATE["serials"] = {"EAST": "Day Dairy - East Fountain"}
+		STATE["values"][("Sapphire Maintenance Template", "Project Daily")] = {"project": "PRJ-1"}
+
+	def _contract(self, **fields):
+		base = dict(
+			name="MNT-1",
+			project="PRJ-1",
+			customer="Wasatch",
+			default_template=None,
+			covered_features=[_Dict(serial_no="EAST", template=None), _Dict(serial_no="WEST", template=None)],
+			seasonal_startup=1,
+			startup_month="May",
+			startup_template="Startup Form",
+			winterization=1,
+			winterization_month="October",
+			winterization_template=None,
+			seasonal_visits=[],
+		)
+		base.update(fields)
+		doc = _Contract(**base)
+		STATE["docs"][("Sapphire Maintenance Contract", "MNT-1")] = doc
+		return doc
+
+	def test_each_kind_of_visit_and_where_its_form_comes_from(self):
+		self._contract(default_template="Bi-Weekly Form")
+		rows = contract_module.get_visit_forms("MNT-1")
+		self.assertEqual(
+			[(r["visit"], r["template"], r["source"]) for r in rows],
+			[
+				("Regular visit", "Bi-Weekly Form", "Default Form Template"),
+				("Seasonal Startup (May)", "Startup Form", "Its own form"),
+				("Winterization (October)", "Bi-Weekly Form", "Default Form Template (no form of its own)"),
+			],
+		)
+
+	def test_a_feature_with_its_own_form_is_listed_by_name(self):
+		self._contract(
+			default_template="Bi-Weekly Form",
+			covered_features=[
+				_Dict(serial_no="EAST", template="East Form"),
+				_Dict(serial_no="WEST", template=None),
+			],
+		)
+		rows = contract_module.get_visit_forms("MNT-1")
+		self.assertIn(
+			{
+				"visit": "Regular visit: Day Dairy - East Fountain",
+				"template": "East Form",
+				"source": "This water feature's own form",
+			},
+			rows,
+		)
+		self.assertEqual(rows[0]["visit"], "Regular visit: water features without their own form")
+		self.assertEqual(rows[0]["source"], "Default Form Template")
+		winter = next(r for r in rows if r["visit"].startswith("Winterization"))
+		self.assertEqual(
+			winter["source"],
+			"Default Form Template (no form of its own; a water feature's own form comes first)",
+		)
+
+	def test_a_default_no_visit_uses_says_so(self):
+		"""Every water feature has its own form, so the contract-level one opens nothing."""
+		self._contract(
+			default_template="Bi-Weekly Form",
+			covered_features=[
+				_Dict(serial_no="EAST", template="East Form"),
+				_Dict(serial_no="WEST", template="West Form"),
+			],
+		)
+		self.assertEqual(
+			contract_module.get_visit_forms("MNT-1")[0]["source"],
+			"Default Form Template; not used, since every water feature has its own form",
+		)
+
+	def test_a_contract_without_a_project_names_the_customers_form(self):
+		"""Review fix: the customer's template has no project either, and None == None."""
+		self._contract(project=None)
+		STATE["active"][("customer", "Wasatch")] = "Customer Form"
+		STATE["values"][("Sapphire Maintenance Template", "Customer Form")] = {"project": None}
+		self.assertEqual(
+			contract_module.get_visit_forms("MNT-1")[0],
+			{"visit": "Regular visit", "template": "Customer Form", "source": "The customer's active form"},
+		)
+
+	def test_two_seasonal_visits_with_one_label_are_not_both_their_own_form(self):
+		"""resolve_template takes the first with the label; the second must not claim its form."""
+		self._contract(
+			default_template="Bi-Weekly Form",
+			seasonal_startup=0,
+			winterization=1,
+			winterization_template="Winter A",
+			seasonal_visits=[
+				_Dict(visit_label="Winterization", target_month="November", template="Winter B")
+			],
+		)
+		rows = [r for r in contract_module.get_visit_forms("MNT-1") if r["visit"].startswith("Winterization")]
+		self.assertEqual(
+			[(r["template"], r["source"]) for r in rows],
+			[
+				("Winter A", "Its own form"),
+				("Winter A", "Another seasonal visit's form: two share the label Winterization"),
+			],
+		)
+
+	def test_a_blank_default_falls_back_to_the_projects_active_form(self):
+		self._contract()
+		STATE["active"][("project", "PRJ-1")] = "Project Daily"
+		self.assertEqual(
+			contract_module.get_visit_forms("MNT-1")[0],
+			{"visit": "Regular visit", "template": "Project Daily", "source": "The project's active form"},
+		)
+
+	def test_no_form_at_all_says_so(self):
+		self._contract(seasonal_startup=0, winterization=0)
+		rows = contract_module.get_visit_forms("MNT-1")
+		self.assertEqual(rows[0]["template"], None)
+		self.assertIn("nothing to fill in", rows[0]["source"])
+
+	def test_the_list_needs_read_on_the_contract(self):
+		self._contract()
+		STATE["may_read_contract"] = False
+		with self.assertRaises(_Thrown):
+			contract_module.get_visit_forms("MNT-1")
+
+
+class TestDeskFormAgreementCard(unittest.TestCase):
+	"""The record form's dashboard shows the wizard's agreement card (v1.620.0), escaped."""
+
+	def setUp(self):
+		self.source = (
+			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"
+		).read_text(encoding="utf-8")
+
+	def test_the_dashboard_draws_it(self):
+		self.assertIn("${ee_agreement_html(ctx.agreement)}", self.source)
+
+	def test_every_value_is_escaped(self):
+		start = self.source.index("function ee_agreement_html(scope) {")
+		body = self.source[start : self.source.index("\n}\n", start)]
+		self.assertIn("frappe.utils.escape_html", body)
+		for match in re.finditer(r"\$\{([^}]*)\}", body):
+			expression = match.group(1)
+			if expression == "body":
+				continue
+			if expression.startswith("left_out"):
+				self.assertIn("${text(line)", expression)
+				continue
+			if expression.startswith("summary ?"):
+				self.assertIn("${text(summary)", expression)
+				continue
+			self.assertRegex(expression, r"^(text\(|__\()", expression)
+
+	def test_the_contract_form_offers_visit_forms(self):
+		js = (
+			APP
+			/ "sapphire_maintenance/doctype/sapphire_maintenance_contract/sapphire_maintenance_contract.js"
+		).read_text(encoding="utf-8")
+		self.assertIn('frm.add_custom_button(__("Visit Forms"), () => ee_show_visit_forms(frm));', js)
+		self.assertIn("sapphire_maintenance_contract.get_visit_forms", js)
+		start = js.index("function ee_show_visit_forms(frm) {")
+		body = js[start : js.index("\n}\n", start)]
+		for value in ("visit", "template", "source"):
+			self.assertRegex(body, r"esc\(\s*row\." + value + r"\s*\)")
 
 
 if __name__ == "__main__":
