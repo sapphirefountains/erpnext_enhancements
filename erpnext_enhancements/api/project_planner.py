@@ -623,6 +623,8 @@ def get_planner(start, end, draft=0):
 							"date": day,
 							"resource": resource,
 							"hours": booking["hours"],
+							# v1.601.0: a pencilled maintenance visit is drawn as a pencil here too.
+							"tentative": bool(booking.get("tentative")),
 						}
 					)
 
@@ -2515,20 +2517,22 @@ def same_moment(a, b):
 		return str(a) == str(b)
 
 
-def batch_conflicts(before_days, after_days, names, labels):
+def batch_conflicts(before_days, after_days, names, labels, kinds=("task", "rental")):
 	"""The conflicts the drafted tasks create together, ``{person: ["2026-10-12: Over by 2h"]}``.
 
 	``before_days``/``after_days`` are the engine's ``days`` for the same people and range, as
 	stored and with every draft in place. Only days a drafted task is booked on count, a conflict
 	already there before does not, and a double booking between two other tasks is not the drafts'
-	doing (the same rules as ``engine._preview``, for many tasks at once).
+	doing (the same rules as ``engine._preview``, for many tasks at once). ``kinds`` are the booking
+	kinds the drafts are (v1.601.0: the Maintenance Planner passes ``("visit",)``).
 	"""
 	names = set(names or ())
+	kinds = tuple(kinds or ())
 	out = {}
 	for resource, per_day in (after_days or {}).items():
 		for day, cell in sorted((per_day or {}).items()):
 			bookings = cell.get("bookings") or []
-			if not any(b.get("ref") in names and b.get("kind") in ("task", "rental") for b in bookings):
+			if not any(b.get("ref") in names and b.get("kind") in kinds for b in bookings):
 				continue
 			known = set((((before_days or {}).get(resource) or {}).get(day) or {}).get("conflicts") or [])
 			for conflict in cell.get("conflicts") or []:
@@ -2636,10 +2640,14 @@ def day_entry(person, day, cell, route, settings, details, titles, mates, notes)
 
 def _draft_rows(user=None):
 	"""``(rows, duplicates)``: the caller's Draft rows, one per task (the newest wins), oldest
-	first, and any older duplicate a racing double-save left behind."""
+	first, and any older duplicate a racing double-save left behind.
+
+	Task rows only (``task`` set): since v1.601.0 the same doctype also holds the Maintenance
+	Planner's visit drafts (``visit`` set, ``api/maintenance_drafts.py``), which this planner
+	neither shows, publishes nor discards."""
 	rows = frappe.get_all(
 		DRAFT_DOCTYPE,
-		filters={"owner": user or frappe.session.user, "status": DRAFT},
+		filters={"owner": user or frappe.session.user, "status": DRAFT, "task": ["is", "set"]},
 		fields=["name", "task", "subject", "payload", "base_modified", "modified"],
 		order_by="creation asc",
 		limit_page_length=DRAFT_LIMIT,

@@ -20,10 +20,28 @@ planner presses Publish (``api.project_planner.publish_drafts``).
 Nobody types into this doctype (``in_create``, every field read-only): the planner page writes it.
 Projects Users and Managers see only their own rows (``if_owner``). The class name is the one
 Frappe derives (``doctype.replace(" ", "")``); ``tests/test_doctype_controller_names.py`` guards it.
+
+**Visits too (v1.601.0).** The Maintenance Planner's draft mode (``api.maintenance_drafts``) keeps
+its drafts here as well: a row names **either** a ``task`` (Project Planner) **or** a ``visit``
+(a Sapphire Maintenance Record), never both, and :meth:`PlannerDraftChange.validate` holds that,
+since ``task`` stopped being mandatory. One doctype rather than a second one because a draft of a
+visit is the same thing with the same life (Draft, then Published or Discarded, ``base_modified``
+optimistic locking, one row per owner and target) and the Google Calendar sync that follows reads
+"what is still only drafted" from one place. A plain second Link rather than a Dynamic Link pair
+because every Task row on production already has ``task`` set: nothing is migrated, and each planner
+filters on its own column (``task`` / ``visit`` is set), so neither ever reads, publishes or discards
+the other's rows. A visit row's ``subject`` is written by the planner ("Highlands · SMR-0001");
+``fetch_from`` fills it only for a task. Maintenance Supervisors and Maintenance Users, the
+Maintenance Planner's roles, get the same own-rows permissions as Projects Users.
 """
 
+import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
 class PlannerDraftChange(Document):
-	pass
+	def validate(self):
+		# One target per row: what ``reqd`` on ``task`` used to promise, now that a row may be a visit's.
+		if bool(self.get("task")) == bool(self.get("visit")):
+			frappe.throw(_("A planner draft changes exactly one task or one visit."))

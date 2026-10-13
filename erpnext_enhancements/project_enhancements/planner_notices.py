@@ -288,16 +288,18 @@ def sms_text(headline, lines, link):
 # ---------------------------------------------------------------------- sending
 
 
-def _bell(user, subject, lines, task=None, from_user=None):
+def _bell(user, subject, lines, task=None, from_user=None, doctype="Task"):
 	"""The in-app notification. Type "Alert", which Frappe never emails, so the email below is the
-	only one the person gets (see ``notification_skip_email_types`` in hooks.py)."""
+	only one the person gets (see ``notification_skip_email_types`` in hooks.py). ``task`` is the
+	document the bell opens and ``doctype`` its type (v1.601.0: a maintenance visit's publish
+	notice opens the visit)."""
 	frappe.get_doc(
 		{
 			"doctype": "Notification Log",
 			"for_user": user,
 			"from_user": from_user,
 			"type": "Alert",
-			"document_type": "Task" if task else None,
+			"document_type": (doctype or "Task") if task else None,
 			"document_name": task,
 			"subject": frappe.utils.escape_html(subject),
 			"email_content": "<br>".join(frappe.utils.escape_html(line) for line in lines or []),
@@ -305,7 +307,7 @@ def _bell(user, subject, lines, task=None, from_user=None):
 	).insert(ignore_permissions=True)
 
 
-def _email(user, subject, intro, lines, link, link_label):
+def _email(user, subject, intro, lines, link, link_label, eyebrow=None):
 	from erpnext_enhancements import email_style
 
 	body = email_style.p(intro) + email_style.bullets(list(lines or []))
@@ -314,7 +316,7 @@ def _email(user, subject, intro, lines, link, link_label):
 	frappe.sendmail(
 		recipients=[email_of(user)],
 		subject=subject,
-		message=email_style.wrap(body, title=_("Your schedule changed"), eyebrow=_("Project Planner")),
+		message=email_style.wrap(body, title=_("Your schedule changed"), eyebrow=_(eyebrow or "Project Planner")),
 	)
 
 
@@ -329,13 +331,17 @@ def _text(user, message):
 	return True
 
 
-def send_publish_notices(notices, publisher=None):
+def send_publish_notices(notices, publisher=None, planner=None):
 	"""One notice per person after a publish. ``notices``: ``{user: {"lines": [...], "urgent":
 	[alert entries], "task": first task, "day": first changed day}}``.
 
 	The bell entry and the email are written now, in the publishing transaction; the texts go in one
 	job after the commit (a slow gateway must not hold the planner's request). Returns how many
 	people were told. One person failing never stops the next.
+
+	v1.601.0, the Maintenance Planner's publish (``api/maintenance_drafts.py``): ``planner`` names
+	the planner in the email ("on the Maintenance Planner"), and a notice's ``doctype`` says what its
+	``task`` is (a visit record). Without either, the Project Planner's notice is unchanged.
 	"""
 	told = 0
 	texts = {}
@@ -348,14 +354,18 @@ def send_publish_notices(notices, publisher=None):
 		subject = alert_headline(urgent) if urgent else _("Your schedule changed")
 		link = route_url(user, notice.get("day"))
 		try:
-			_bell(user, subject, lines, notice.get("task"), publisher)
+			doctype = notice.get("doctype")
+			_bell(user, subject, lines, notice.get("task"), publisher, *([doctype] if doctype else []))
 			_email(
 				user,
 				subject,
-				_("{0} published changes to your schedule on the Project Planner:").format(name),
+				_("{0} published changes to your schedule on the {1}:").format(
+					name, _(planner or "Project Planner")
+				),
 				lines,
 				link,
 				_("Open your route"),
+				*([planner] if planner else []),
 			)
 			texts[user] = sms_text(subject if urgent else _("your schedule changed:"), lines, link)
 			told += 1

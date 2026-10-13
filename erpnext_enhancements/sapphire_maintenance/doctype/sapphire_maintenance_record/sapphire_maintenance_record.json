@@ -18,6 +18,7 @@
   "crew",
   "planned_hours",
   "full_day",
+  "tentative",
   "scheduled_visit_date",
   "visit_date",
   "dispatch_digest_sent_on",
@@ -114,6 +115,14 @@
    "fieldname": "full_day",
    "fieldtype": "Check",
    "label": "Full day"
+  },
+  {
+   "default": "0",
+   "description": "Pencilled in, not firm yet: the planners count it as soft hours and never as a conflict, nobody is assigned or texted it, and the customer is not told the date until it is firmed up.",
+   "fieldname": "tentative",
+   "fieldtype": "Check",
+   "label": "Tentative (pencil)",
+   "no_copy": 1
   },
   {
    "description": "Dispatch date for this visit — stamped by the scheduler from the feature's due date, shifted to a preferred visit day. Feeds the Day Board and the morning technician digest.",
@@ -279,7 +288,7 @@
    "label": "Client Sign-off"
   }
  ],
- "modified": "2026-10-12 18:00:00.000000",
+ "modified": "2026-10-12 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",

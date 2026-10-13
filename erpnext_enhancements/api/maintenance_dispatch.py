@@ -259,14 +259,22 @@ def send_morning_digests():
         return
     today = getdate(nowdate())
 
+    fields = [
+        "name", "technician", "project", "customer", "serial_no", "visit_label",
+        "dispatch_digest_sent_on",
+    ]
+    # A pencilled visit (v1.601.0) is not anybody's work yet, so nobody is texted it, the way the
+    # combined digest leaves a pencil Task out of a routed day. Read only once the column exists.
+    pencils = _has_tentative()
+    if pencils:
+        fields.append("tentative")
     visits = frappe.get_all(
         "Sapphire Maintenance Record",
         filters={"scheduled_visit_date": today, "docstatus": 0},
-        fields=[
-            "name", "technician", "project", "customer", "serial_no", "visit_label",
-            "dispatch_digest_sent_on",
-        ],
+        fields=fields,
     )
+    if pencils:
+        visits = [v for v in visits if not cint(v.get("tentative"))]
     if not visits:
         return
     crew_rows = frappe.get_all(
@@ -333,6 +341,14 @@ def send_morning_digests():
             )
         except Exception:
             frappe.log_error(frappe.get_traceback(), f"Dispatch digest failed: {person}")
+
+
+def _has_tentative():
+    """Whether the visit record has its pencil column (v1.601.0); never raises."""
+    try:
+        return bool(frappe.db.has_column("Sapphire Maintenance Record", "tentative"))
+    except Exception:
+        return False
 
 
 def _combined_digest_covers():

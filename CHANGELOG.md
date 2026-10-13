@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.601.0] - 2026-10-12
+
+C1: the Maintenance Planner gets the Project Planner's two ideas of "not committed yet", Draft mode
+with Publish and pencil (tentative) visits. Nik chose both. A Google Calendar sync comes next and
+will push only committed work to Google, so both planners need the same line between "trying
+things" and "the schedule" before it can tell them apart. Until now every drag on the Maintenance
+Planner saved the visit at once, and a visit had no pencil.
+
+### Added
+
+- **Draft mode on the Maintenance Planner.** A toolbar switch, remembered per browser, as on the
+  Project Planner.
+  - **While it is on**, every visit write the page sends goes with `draft=1`: drags, the dialog,
+    the right-click menu, the selection bar, the Conflict center's fixes and Undo. That is
+    `maintenance_planner.move_visit` and `add_crew`.
+  - **Where a draft goes.** It is kept on the planner's own **Planner Draft Change** row for the
+    visit. The new `api/maintenance_drafts.py` applies the change in memory with the same
+    `_edit_visit` a live save uses, and saves nothing. No ToDo moves, nobody is texted and no
+    customer is emailed for a change that is still being tried.
+  - **On the calendar**, drafted visits show where they were drafted, with a dashed outline and a
+    *Draft* chip. `get_planner(draft=1)` overlays the drafts, and the engine counts each drafted
+    visit's people on the drafted day (`crew_availability.availability(visit_overrides=)`).
+  - **The bar along the bottom** reads "N unpublished change(s) · Publish · Discard", plus
+    *Discard out-of-date* for a draft whose visit was saved by somebody else since.
+- **Publish** saves each draft through `maintenance_planner._apply_visit`. That is `move_visit`'s
+  own save path, so the workflow, the validate warnings, the crew mirror, the technician's dispatch
+  ToDo and the timeline note all happen exactly as for a drag. `move_visit` was split into
+  `_edit_visit` (the change, in memory) and `_apply_visit` (check and save) to make that true
+  rather than approximately true.
+  - **All or nothing on conflicts.** The engine works out the affected people's days with every
+    draft in place and compares them with the days as stored
+    (`project_planner.batch_conflicts`, now with `kinds=`). Any conflict the drafts make together
+    asks for one reason for the lot before anything is saved.
+  - **The half-saved batch.** A visit that only conflicts while the batch is half saved is retried
+    after the rest. On the third pass it is saved with "Published from the Maintenance Planner with
+    other drafted changes".
+  - **No publishing over someone else's change.** A visit saved elsewhere since it was drafted is
+    skipped and its draft kept. This is optimistic locking on `base_modified`, exactly as for Task
+    drafts. A new draft of that visit starts from it as it is now, and the planner is told.
+  - **Each save has its own savepoint**, under `frappe.flags.planner_publishing`, so one visit the
+    record refuses fails alone.
+  - **Telling people.** Each person whose visits moved gets one notice, and the publisher gets none
+    (`planner_notices.send_publish_notices`, which now takes `planner=`). A notice's bell opens the
+    visit (a `doctype` on the notice).
+- **Pencil (tentative) visits.** `Sapphire Maintenance Record.tentative`, "Tentative (pencil)", is
+  a real field on this app's own doctype, not a Custom Field. Its default is 0 on a normal doctype,
+  so the `ALTER` writes 0 into every existing row and no backfill is needed. A visit is pencilled
+  or firmed up from its right-click menu (*Pencil* / *Firm up*) or the *Tentative (pencil)* box in
+  its dialog. That is a normal `move_visit(tentative=)` write, drafted like any other in Draft
+  mode, and undone like any other by Undo. A pencilled visit gets exactly what a pencil Task
+  already gets:
+  - **The engine books it softly** for everyone on it (`crew_availability`). It lands in
+    `soft_booked` and is never in `booked`, `free` or the conflicts. Its bookings carry
+    `"tentative": True`, so pencil-aware code needs no change: the routes, the drive padding, the
+    Conflict center and the free-hours strips.
+  - **It never asks for a reason.** `maintenance_planner._people_conflicts` answers nothing for a
+    pencil. Firming one up checks everyone on it, like a move.
+  - **It assigns nobody.** `visit_crew.on_record_update` follows `crew_sync`'s pencil rule. When
+    the visit is firmed up, the technician and the whole crew are assigned at that moment.
+    Pencilling a firm visit removes nothing. A pencil handed to another technician unassigns the
+    old one and assigns nobody new (`_move_assignment`).
+  - **The customer is not told the date until it is firmed up**
+    (`customer_confirmations.visit_customer_date`, like `task_customer_date`). The preview says
+    why.
+  - **It is left out of the technician's 6 AM text** (`maintenance_dispatch.send_morning_digests`).
+    That matches how the combined digest leaves a pencil out of a routed day.
+  - **It is hatched on both planners.** That covers the Maintenance Planner's own cards and pencil
+    tasks among its read-only bookings. The Project Planner's maintenance bookings now carry
+    `tentative` too.
+  - **New code reads the field defensively.** Hooks use `getattr`/`.get`, and the raw-SQL visit
+    reads select the column only once `frappe.db.has_column` says it exists. A planner that loads
+    between the code reaching the workers and `bench migrate` reads every visit as firm and does
+    not blank.
+- `tests/test_maintenance_visit_drafts.py`, a new bench-free suite with its own CI step. It reuses
+  the visit-crews suite's `frappe` stub.
+
+### Changed
+
+- **Planner Draft Change holds visits too.** It gains a `visit` Link to Sapphire Maintenance
+  Record, and `task` is no longer mandatory. A row names exactly one of the two, and the
+  controller's new `validate` holds that because `reqd` no longer can. Maintenance Supervisor and
+  Maintenance User get the same own-rows (`if_owner`) permissions as Projects User.
+  - **Why one doctype.** A visit draft has the same life as a task draft: Draft, then Published or
+    Discarded, `base_modified`, one row per owner and target. The Calendar sync can then read
+    "what is still only drafted" from one place.
+  - **Why a second Link and not a Dynamic Link pair.** Every existing row on production already
+    has `task` set, so nothing is migrated. Each planner filters on its own column, and
+    `project_planner._draft_rows` now asks for `task` set.
+  - **Each planner publishes and discards only its own drafts, deliberately.** A planner with
+    drafts on both pages publishes each from its page, so one Publish never announces work the
+    other page was still trying.
+- **Drafted rows no longer block deleting what they point at.** `Planner Draft Change` joins
+  `ignore_links_on_delete`. Its rows are kept as a record after Publish or Discard, and Frappe
+  v16's `check_if_doc_is_linked` would otherwise refuse to delete any visit (or task) a planner had
+  ever drafted. A draft whose visit is gone shows as "no longer exists" and is discarded from the
+  bar. *Add visit here*'s Undo (`remove_created_visit`) still refuses while anybody holds an
+  unpublished draft of the new visit, as the Project Planner's Undo does for a task.
+
+### Notes
+
+Two writes are refused in Draft mode, on the page and by the server:
+
+- ***Add visit here*** (`maintenance_actions.create_visit`, `draft=1`). A visit that does not exist
+  has no record for a draft to hang on. This is the Project Planner's rule for a new task
+  (`planner_actions.DRAFT_REFUSAL`).
+- **Moving a projected visit** (`move_projected`, `draft=1`). It rewrites the contract's feature
+  rows and may draft a visit record on the spot. Holding that back would need a second kind of
+  draft (a contract row) and a second projection overlay, out of proportion to how rarely a
+  projected card is moved while rehearsing a week. Turn Draft mode off to move it.
+
+A known gap, not changed here:
+
+- On a day with **only** pencilled work, the combined 6 AM digest's day entry lists the pencils
+  (unrouted) without saying they are pencils. `project_planner.route_payload` lists every stop
+  when there is no firm route. This is true of pencil Tasks since Phase 3A and now of pencil visits
+  too. On a day with firm work the pencils are left out, as before.
+
 ## [1.600.0] - 2026-10-12
 
 ### Added

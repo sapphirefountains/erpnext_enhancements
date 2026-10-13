@@ -27,6 +27,13 @@ The mirror is one-sided and conservative, like the Task one:
   from the sidebar who was never on the crew is never touched.
 * Submitted and cancelled visits are skipped, and so are imports, patches, installs and migrates.
 * It never raises: a visit must stay saveable even if an assignee is disabled or a share fails.
+* **A pencilled visit assigns nobody** (``tentative``, v1.601.0), exactly as ``crew_sync`` treats a
+  pencil Task: pencilled work is not yet anyone's to do, and an assignment notifies the person.
+  When it is firmed up (pencilled before this save, not now) everyone on it is "added", the
+  technician included (the dispatcher's silent assignment, ``maintenance_dispatch``), so the whole
+  visit gets its assignments at that moment; an existing open ToDo is still left alone. Removal is
+  unchanged: someone taken off a pencilled crew loses the assignment they had, and pencilling a
+  firm visit removes nothing.
 
 ``doc_events`` fire during ERPNext's own test bootstrap, before this app's fields exist, so every
 read of ``crew`` goes through ``getattr(doc, "crew", None) or []``.
@@ -123,6 +130,14 @@ def validate_crew(doc, method=None, table="crew", lead_field="technician", hours
 			frappe.throw(_("A visit's hours cannot be negative."))
 
 
+def is_tentative(doc):
+	"""True when the visit is pencilled in. ``tentative`` is read safely: ``doc_events`` fire before
+	this app's fields exist (the field arrived in v1.601.0)."""
+	if doc is None:
+		return False
+	return bool(flt(_get(doc, "tentative")))
+
+
 def _skipped_by_flags():
 	flags = frappe.flags
 	return bool(
@@ -149,10 +164,17 @@ def on_record_update(doc, method=None):
 		before = set(crew_users(before_doc)) if before_doc else set()
 		technician = _get(doc, "technician")
 
-		added = sorted(now - before)
+		firmed = before_doc is not None and is_tentative(before_doc) and not is_tentative(doc)
+		if is_tentative(doc):
+			added = []  # a pencil assigns nobody
+		elif firmed:
+			added = sorted(now)  # firmed up: the whole crew is assigned now (the technician below)
+		else:
+			added = sorted(now - before)
 		# Someone who left the crew to become the technician keeps the ToDo they hold.
 		removed = sorted(before - now - {technician})
-		if not added and not removed:
+		lead = technician if firmed and technician else None
+		if not added and not removed and not lead:
 			return
 
 		from frappe.desk.form.assign_to import add as assign_add
@@ -166,7 +188,11 @@ def on_record_update(doc, method=None):
 			)
 		)
 
-		for user in added:
+		people = [(user, _("On the crew for a maintenance visit.")) for user in added]
+		if lead and lead not in added:
+			# The dispatcher's wording (maintenance_dispatch.assign_to_technician).
+			people.insert(0, (lead, _("Scheduled maintenance visit.")))
+		for user, description in people:
 			if user in open_todos:
 				continue
 			try:
@@ -175,7 +201,7 @@ def on_record_update(doc, method=None):
 						"assign_to": [user],
 						"doctype": RECORD,
 						"name": doc.name,
-						"description": _("On the crew for a maintenance visit."),
+						"description": description,
 					}
 				)
 			except Exception:
