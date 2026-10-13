@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   planners and the wizards each drew rounded cards, shadows and generic blue/green/amber hex values of their
   own. Now:
   - `public/css/sf_tokens.bundle.css`, loaded on every Desk page (`app_include_css`), holds `--sf-*`
-    custom properties and the display face's `@font-face`, and **nothing that styles an element**. The Desk
+    custom properties and the `@font-face` rules for the brand's two faces, and **nothing that styles an
+    element**. The Desk
     looks exactly as it did until a screen reads a variable. Two layers: the system's palette by its own
     token names, and semantic tokens (`--sf-bg`, `--sf-text`, `--sf-field-border`, `--sf-focus`,
     `--sf-on-primary`...) that screens use;
@@ -31,9 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - four values the system has no token for, each documented: `ink-500` `#5c6066` for muted text,
     `border-300` `#80858b` for a field's edge (the system's border-100 is 1.4:1 on white, and its own
     FormField notes ask for 3:1), and the 2016 guide's red and yellow as status fills, as print uses them;
-  - `print_style.STREAM_PILLAR` is the one record of which pillar each value stream takes: Products is
-    Build (as the project brief has always drawn it), Events is Rent, and **Delivery is neutral until Nik
-    picks a pillar**. `test_print_style` now holds the project brief's copy to it;
+  - **Lato, the brand's body face, is vendored.** `public/fonts/lato_regular.woff2` (400) and
+    `lato_bold.woff2` (700) are Google Fonts' Lato v25 "latin" subset, about 23 KB each, downloaded from
+    fonts.gstatic.com with Nik's OK. They ship with their SIL Open Font License 1.1
+    (`public/fonts/LATO_OFL.txt`, from google/fonts). `--sf-font-sans` names Lato first. Until now no
+    browser surface had it, and the stacks that named it fell through to the system sans;
+  - `print_style.STREAM_PILLAR` is the one record of which pillar each value stream takes. Products is
+    Build (as the project brief has always drawn it), **Delivery is Build** (Nik, 2026-10-13: "make
+    Delivery Build"), and Events is Rent. `project_brief.js` gains the Delivery entry, and
+    `test_print_style` now holds its copy to the record. **Visible change:** a Project whose leading
+    stream or type is Delivery now prints its brief with the Build stripe instead of the neutral navy band;
   - [docs/app-design-system.md](docs/app-design-system.md) is the guide: tokens in both themes, pillars and
     streams, type (the display face for titles only; inputs never under 16px, or iOS zooms), square
     structure, no shadows, phone rules, and the specs of the components the form kit builds next (head
@@ -44,15 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the palette or a pillar stop drifts from `print_style`;
   - the device-dark block differs from the Desk-dark one;
   - any text pairing the guide names falls under 4.5:1, or a boundary or focus ring under 3:1, in light
-    or in dark.
+    or in dark;
+  - a declared font file is missing, isn't a woff2, or Lato's licence is gone.
 
   Each check was proven to fail by breaking the file on purpose.
-
-### Not done yet
-
-- **Lato is not vendored.** `--sf-font-sans` names it first, so a device with Lato installed uses it and
-  every other device falls back to its system sans. Shipping the woff2 files (OFL licence) is a follow-up
-  that needs the files downloaded.
 
 ## [1.615.0] - 2026-10-13
 

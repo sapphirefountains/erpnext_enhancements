@@ -40,7 +40,7 @@ app_include_css = [
 	# be inlined by sass, not esbuild — but the built asset name stays .css).
 	"desk_addons.bundle.css",
 	# The Sapphire app design tokens (form kit P1): --sf-* custom properties and the
-	# display face's @font-face, light and dark from the Desk's own data-theme. Styles
+	# brand fonts' @font-face rules, light and dark from the Desk's own data-theme. Styles
 	# no element, so loading it everywhere changes nothing until a screen reads a
 	# variable. Guide: docs/app-design-system.md; tests/test_app_design_tokens.py.
 	"sf_tokens.bundle.css",

@@ -4,7 +4,7 @@ Form kit P1 (TASK-2026-02742; P1.1 02744, P1.2 02745). The file translates the S
 Fountains Design System from the website to the Desk, and it loads on every Desk page
 (hooks.py `app_include_css`), so two failures matter more than any other:
 
-* **it must style nothing.** It is custom properties and one @font-face. A selector that
+* **it must style nothing.** It is custom properties and @font-face rules. A selector that
   reached an element would restyle the whole Desk the day it deployed;
 * **a colour pairing must not quietly fail contrast in one theme.** A value that reads in
   light can vanish in dark (deep-sea-blue rules on a navy card are 1.06:1), and nobody
@@ -303,6 +303,30 @@ class TestTypeAndShape(unittest.TestCase):
         self.assertIn('url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2")', face)
         self.assertIn("font-display: swap", face)
         self.assertTrue(Path(ps.FONT_PATH).is_file())
+
+    def test_lato_regular_and_bold_ship_with_their_licence(self):
+        """The brand's body face, vendored 2026-10-13 from Google Fonts (Lato v25, latin
+        subset). A face declared with a missing file fails silently: every screen just
+        falls back to the system sans and nobody notices."""
+        fonts = APP / "public" / "fonts"
+        faces = re.findall(r"@font-face\s*\{([^}]*)\}", CSS)
+        lato = {
+            re.search(r"font-weight:\s*(\d+)", face).group(1): face
+            for face in faces
+            if 'font-family: "Lato"' in face
+        }
+        self.assertEqual(set(lato), {"400", "700"})
+        for weight, filename in (("400", "lato_regular.woff2"), ("700", "lato_bold.woff2")):
+            with self.subTest(weight):
+                self.assertIn(f'url("/assets/erpnext_enhancements/fonts/{filename}")', lato[weight])
+                self.assertIn("font-display: swap", lato[weight])
+                path = fonts / filename
+                self.assertTrue(path.is_file(), path)
+                with open(path, "rb") as handle:
+                    self.assertEqual(handle.read(4), b"wOF2", f"{filename} is not a woff2")
+        licence = (fonts / "LATO_OFL.txt").read_text(encoding="utf-8")
+        self.assertIn("SIL OPEN FONT LICENSE", licence)
+        self.assertTrue(resolve("--sf-font-sans").startswith("Lato,"))
 
     def test_inputs_are_never_small_enough_to_make_ios_zoom(self):
         self.assertGreaterEqual(int(resolve("--sf-text-input").rstrip("px")), 16)

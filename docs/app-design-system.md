@@ -16,8 +16,9 @@ The design system itself is the claude.ai artifact *Sapphire Fountains* (Design 
 ## What ships
 
 One stylesheet, `erpnext_enhancements/public/css/sf_tokens.bundle.css`, loaded on every Desk
-page through `app_include_css`. It holds `--sf-*` custom properties and the display face's
-`@font-face`, and **nothing else**. No selector in it reaches an element, so the Desk looks
+page through `app_include_css`. It holds `--sf-*` custom properties and the `@font-face` rules
+for the brand's two faces (Big Noodle Titling, Lato), and **nothing else**. A face downloads
+only when something renders in it. No selector in it reaches an element, so the Desk looks
 exactly as it did until a screen reads a variable. `tests/test_app_design_tokens.py` fails
 the build if a rule that styles something gets into the file.
 
@@ -109,7 +110,8 @@ The rules:
 - **A flat pillar colour is the opening stop.** It is a fill or a rule, never text: fresh-blue
   is 3.0:1 on white and teal 1.8:1.
 - **A pillar chip** (the board's card band, a tag in a list) is filled with the **closing
-  stop** under an off-white label. Every closing stop clears 6:1.
+  stop** under an off-white label, and edged with the opening stop. Every closing stop clears
+  6:1. The edge keeps a Build chip visible on a dark card (see Chip, below).
 - **Never invent a fifth pillar colour or reassign one.** Design is violet.
 
 **Value streams to pillars** live in `print_style.STREAM_PILLAR`, the one record of which
@@ -120,14 +122,14 @@ pillar a stream takes:
 | Design | design |
 | Build | build |
 | Products | build |
+| Delivery | build |
 | Service | service |
 | Events | rent |
-| Delivery | none: the neutral band |
 
-Products has always been drawn as Build in the project brief. **Delivery is neutral until
-Nik picks a pillar for it.** `project_brief.js` carries a copy, and
-`tests/test_print_style.py` holds that copy to `STREAM_PILLAR`. The Kanban's own value-stream
-colours are retired by form kit P6.
+Products has always been drawn as Build in the project brief. Nik chose Build for Delivery on
+2026-10-13. A stream mapped to `None` would take the neutral band. `project_brief.js` carries a
+copy, and `tests/test_print_style.py` holds that copy to `STREAM_PILLAR`. The Kanban's own
+value-stream colours are retired by form kit P6.
 
 ## Type
 
@@ -136,10 +138,12 @@ colours are retired by form kit P6.
   section titles **only**: never body copy, buttons or labels. Its leading is 1 (the face
   reads as a block), and it takes no letter-spacing. Sizes: `--sf-display-sm` 22px, `-md`
   28px, `-lg` 40px.
-- **`--sf-font-sans`** names **Lato** first. Lato is the brand's body face, but it is not
-  vendored yet, so a device without it installed renders the system sans. Vendoring the
-  woff2 files (OFL licence) is a follow-up. Sizes: `--sf-text-xs` 12px, `-sm` 13px, `-md`
-  15px, `-lg` 18px.
+- **`--sf-font-sans`** is **Lato**, the brand's body face, vendored on 2026-10-13. The files
+  are `public/fonts/lato_regular.woff2` (400) and `lato_bold.woff2` (700): Google Fonts' Lato
+  v25 "latin" subset (U+0000–00FF and common punctuation), about 23 KB each, under the SIL
+  Open Font License 1.1 (`public/fonts/LATO_OFL.txt`). A character outside the subset falls
+  back to the next face in the stack, and italics are synthesized. Sizes: `--sf-text-xs`
+  12px, `-sm` 13px, `-md` 15px, `-lg` 18px.
 - **`--sf-text-input` is 16px and must stay at least 16px.** iOS zooms the page into any
   input set smaller (tested).
 - **Capitals in buttons and eyebrows are typed into the copy, not applied with
@@ -178,7 +182,7 @@ Built in form kit P4 and P6, specified here so they come out the same everywhere
 | **Field** | `--sf-label` above (never a placeholder for a label), a square `--sf-field-bg` input with a 1px `--sf-field-border` and 16px text, then the hint in `--sf-hint` under it. Focus is a 2px `--sf-focus` ring. |
 | **Help bubble** | An (i) button, 44px hit area, beside the label. It opens the field's longer explanation in a square panel on `--sf-surface` with a `--sf-rule` edge, and Back or Esc closes it. |
 | **Card** | Square `--sf-surface` on `--sf-bg`, a `--sf-rule` hairline, no shadow. A pillar card leads with a band in the pillar's closing stop. |
-| **Chip** | A pill in a closing stop with an `--sf-on-pillar` label, or `--sf-danger` / `--sf-warn` with its own label. A status always carries its word, not just its colour. |
+| **Chip** | A pill in a closing stop with an `--sf-on-pillar` label and a 1px border in the pillar's **opening** stop, or `--sf-danger` / `--sf-warn` with its own label. The border is not decoration: Build's closing stop is navy-800, the same colour as a dark-theme card, so without it a Build chip is a floating word (seen in the 2026-10-13 render). A status always carries its word, not just its colour. |
 | **Button** | `--sf-radius-control`. Primary: `--sf-primary` fill, `--sf-on-primary` label, at most one per panel. Secondary: transparent with a 2px `--sf-text` stroke. Hover changes colour only. |
 | **Toast** | Inverted: a `--sf-text-strong` ground with `--sf-surface` text, so it stands out in both themes (a navy toast would vanish against the dark page). One action. |
 

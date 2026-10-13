@@ -26,14 +26,34 @@
  *   - a pillar chip is filled with the pillar's closing stop: off-white on teal is 1.8:1.
  */
 
-/* The display face. Same file print_style inlines into every PDF; served by raw path because its
-   content never changes, so the one-year immutable /assets cache cannot serve a stale copy
-   (design_review.bundle.css and project_brief.js load it the same way). Lato, the brand's body
-   face, is not vendored yet: --sf-font-sans names it first, so a device with Lato installed uses
-   it and every other device falls back to its system sans. */
+/* The fonts, served by raw path: a font file's content never changes, so the one-year immutable
+   /assets cache cannot serve a stale copy (design_review.bundle.css and project_brief.js load the
+   display face the same way). A face downloads only when something renders in it.
+
+   The display face is the same file print_style inlines into every PDF.
+
+   Lato, the brand's body face: Google Fonts' "latin" subset of Lato v25 (U+0000-00FF and the
+   common punctuation), regular and bold, under the SIL Open Font License 1.1 (fonts/LATO_OFL.txt).
+   Text outside the subset falls back to the next face in --sf-font-sans; italics are synthesized. */
 @font-face {
 	font-family: "Big Noodle Titling";
 	src: url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") format("woff2");
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Lato";
+	src: url("/assets/erpnext_enhancements/fonts/lato_regular.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Lato";
+	src: url("/assets/erpnext_enhancements/fonts/lato_bold.woff2") format("woff2");
 	font-weight: 700;
 	font-style: normal;
 	font-display: swap;
