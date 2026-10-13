@@ -1,4 +1,9 @@
 [pre_model_sync]
+# v1.615.0: the "Contract Manager" role (and its one-role profile) that now issues, signs and sends
+# contracts and edits Contract Template wording. pre_model_sync so the role exists before Project
+# Contract / Contract Template / Contract Signature Request sync permission rows naming it.
+# Insert-only; grants it to nobody.
+erpnext_enhancements.patches.seed_contract_manager_role
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 erpnext_enhancements.patches.rename_poseidon_settings_doctype

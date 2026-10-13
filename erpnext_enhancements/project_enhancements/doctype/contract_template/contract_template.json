@@ -17,7 +17,7 @@
  ],
  "fields": [
   {
-   "description": "Stable machine key (msa, sow, owner, rental, maintenance). Drives the contract numbering series and generation logic \u2014 do not change after contracts exist.",
+   "description": "Stable machine key (msa, sow, owner, rental, maintenance). Drives the contract numbering series and generation logic — do not change after contracts exist.",
    "fieldname": "template_key",
    "fieldtype": "Data",
    "label": "Template Key",
@@ -68,7 +68,7 @@
    "label": "Description"
   },
   {
-   "description": "Jinja HTML rendered with the Project Contract as context (doc, fill(), cb(), money(), dt() helpers \u2014 see process docs). Edit here when legal text changes; no deploy needed. Seeded from the version-controlled sources in templates/contracts/.",
+   "description": "Jinja HTML rendered with the Project Contract as context (doc, fill(), cb(), money(), dt() helpers — see process docs). Edit here when legal text changes; no deploy needed. Seeded from the version-controlled sources in templates/contracts/.",
    "fieldname": "body",
    "fieldtype": "Code",
    "label": "Body (Jinja HTML)",
@@ -77,7 +77,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-10-13 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Contract Template",
@@ -103,9 +103,18 @@
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Projects Manager",
+   "role": "Contract Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1
   },
   {
    "email": 1,

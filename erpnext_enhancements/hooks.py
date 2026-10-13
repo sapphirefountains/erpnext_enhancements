@@ -2547,6 +2547,8 @@ fixtures = [
 	# edit to the profile survives and fixture sync does not re-insert it every migrate.
 	# "KB Mirror" (desk_access 0, no DocPerm; the private mirror's snapshot endpoint) is
 	# absent too: patches/seed_knowledge_base_mirror_role.py owns it (WI-080 PR 8, v1.561.0).
+	# "Contract Manager" and its one-role Role Profile are absent too:
+	# patches/seed_contract_manager_role.py owns both (v1.615.0), insert-only, pre_model_sync.
 	# NOTE: this list's order governs *export* only. Fixtures IMPORT in alphabetical
 	# filename order (frappe/utils/fixtures.py sorts the directory), so
 	# custom_docperm.json lands before role.json and role.json before

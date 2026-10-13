@@ -980,6 +980,76 @@ class TestInitialsClauses(unittest.TestCase):
         self.assertEqual(set(blocks), set(initials.CLAUSE_BLOCKS))
 
 
+class TestContractManagerRole(unittest.TestCase):
+    """Nik, 2026-10-13: "make a Contract Manager role for sales, Lisa, James and me" (and Clegg).
+    Issuing, signing, sending, cancelling, amending and template wording are the Contract Manager's;
+    building and saving drafts stays open."""
+
+    EXECUTE = {"submit", "cancel", "amend", "delete"}
+
+    def perms(self, path):
+        return {row["role"]: row for row in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
+
+    def test_only_a_contract_manager_issues_a_contract(self):
+        perms = self.perms(PC_JSON)
+        for role in ("System Manager", "Contract Manager"):
+            self.assertTrue(all(perms[role].get(p) for p in self.EXECUTE | {"create", "write"}), role)
+        for role in ("Projects Manager", "Sales Manager", "Sales User"):
+            self.assertTrue(perms[role].get("create") and perms[role].get("write"), role)  # still builds drafts
+            self.assertFalse([p for p in self.EXECUTE if perms[role].get(p)], role)
+        holders = {role for role, row in perms.items() if row.get("submit")}
+        self.assertEqual(holders, {"System Manager", "Contract Manager"})
+
+    def test_only_a_contract_manager_edits_the_wording(self):
+        perms = self.perms(APP / "project_enhancements" / "doctype" / "contract_template" / "contract_template.json")
+        writers = {role for role, row in perms.items() if row.get("write")}
+        self.assertEqual(writers, {"System Manager", "Contract Manager"})
+
+    def test_signing_and_sending_are_the_contract_managers(self):
+        self.assertEqual(builder.SIGN_ROLES, {"System Manager", "Contract Manager"})
+        api = (APP / "project_enhancements" / "esign" / "api.py").read_text(encoding="utf-8")
+        self.assertIn('SEND_ROLES = ("System Manager", "Contract Manager")', api)
+        evidence = self.perms(CSR_JSON)
+        self.assertTrue(evidence["Contract Manager"].get("read"))
+
+    def test_marking_signed_on_paper_is_checked_on_the_server(self):
+        """Defence in depth: Frappe 16 needs submit for an update after submit, which DocPerm now gives
+        only a Contract Manager; the server check also covers submit granted through a document Share."""
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        gate = controller[controller.index("def before_update_after_submit(self):"):controller.index("def on_update_after_submit(self):")]
+        self.assertIn('frappe.flags.get("esign_executing")', gate)  # online signing is not stopped
+        self.assertIn('{"System Manager", "Contract Manager"}', gate)
+        self.assertIn("frappe.PermissionError", gate)
+        form = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('frappe.user.has_role(["System Manager", "Contract Manager"])', form)
+
+    def test_the_role_exists_before_the_doctypes_that_name_it(self):
+        patches = (APP / "patches.txt").read_text(encoding="utf-8")
+        pre, post = patches.split("[post_model_sync]")
+        self.assertIn("erpnext_enhancements.patches.seed_contract_manager_role", pre)
+        self.assertNotIn("seed_contract_manager_role", post)
+        seed = (APP / "patches" / "seed_contract_manager_role.py").read_text(encoding="utf-8")
+        self.assertIn('ROLE = "Contract Manager"', seed)
+        self.assertNotIn("add_roles", seed)  # grants it to nobody: who holds it is decided per site
+
+    def test_a_builder_without_the_role_can_ask_for_it(self):
+        source = (APP / "project_enhancements" / "contract_builder.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "ask_contract_manager")
+        body = ast.get_source_segment(source, fn)
+        self.assertIn('doc.check_permission("write")', body)
+        self.assertIn("escape_html", body)
+        js = (APP / "project_enhancements" / "page" / "contract_builder" / "contract_builder.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("`${CB_API}ask_contract_manager`", js)
+        self.assertIn("if (data.can_ask)", js)
+
+
 class TestShownFields(unittest.TestCase):
     """Review of #1230: a field only shown for one choice is not a blank while that choice is not made."""
 
