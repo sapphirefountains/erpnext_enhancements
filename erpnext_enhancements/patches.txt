@@ -1345,3 +1345,7 @@ erpnext_enhancements.patches.update_maintenance_agreement_terms
 # agreements (the maintenance agreement gets it in the patch above). Inserted only before the
 # first section heading when that heading is unique; an edited body is logged and left alone. Cannot raise.
 erpnext_enhancements.patches.add_contract_summaries
+# Maintenance agreement layout (v1.611.1): the Word copy's numbered clauses, bulleted lists and indented
+# options. Replaces the live body only when it is exactly the v1.609.0 or v1.611.0 shipped body; freezes
+# paper-signed copies first and waits while a signing link is out. Does not touch any contract's terms. Cannot raise.
+erpnext_enhancements.patches.refresh_maintenance_agreement_layout

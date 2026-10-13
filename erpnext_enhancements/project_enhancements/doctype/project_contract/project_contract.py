@@ -430,11 +430,17 @@ def _blank(width=30):
 	return f'<span class="ct-blank">{"&nbsp;" * width}</span>'
 
 
+def _val(html):
+	"""A filled-in value, marked so the print sets it bold, as typed entries are in the Word
+	agreements: the reader can tell what this contract says from what every contract says."""
+	return f'<span class="ct-val">{html}</span>'
+
+
 def _fill(value, width=30):
 	"""A value, or a fillable blank line when empty — paper fallback stays usable."""
 	if value in (None, ""):
 		return _blank(width)
-	return frappe.utils.escape_html(str(value))
+	return _val(frappe.utils.escape_html(str(value)))
 
 
 def _cb(checked):
@@ -444,19 +450,21 @@ def _cb(checked):
 def _money(value, width=14):
 	if value in (None, "", 0):
 		return _blank(width)
-	return frappe.utils.fmt_money(flt(value), currency=frappe.defaults.get_global_default("currency") or "USD")
+	return _val(
+		frappe.utils.fmt_money(flt(value), currency=frappe.defaults.get_global_default("currency") or "USD")
+	)
 
 
 def _dt(value, width=18):
 	if not value:
 		return _blank(width)
-	return frappe.utils.formatdate(value)
+	return _val(frappe.utils.formatdate(value))
 
 
 def _multiline(value, width=80, lines=3):
 	"""Long-text value, or several blank writing lines."""
 	if value:
-		return frappe.utils.escape_html(str(value)).replace("\n", "<br>")
+		return _val(frappe.utils.escape_html(str(value)).replace("\n", "<br>"))
 	return "<br>".join(_blank(width) for _ in range(lines))
 
 

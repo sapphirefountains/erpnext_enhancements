@@ -170,7 +170,10 @@ def footer_html(doc):
 	  selector cannot match in the extracted document (nothing there has a
 	  ``.contract-doc`` ancestor), which is exactly the behaviour wanted.
 	"""
-	label = frappe.utils.escape_html(frappe.utils.cstr(_footer_label(doc)))
+	# "Sapphire Fountains, LLC | <number> | Confidential", as the Word agreements' footer reads
+	# (v1.611.1), with the contract number in the middle where the Word copy has nothing to name.
+	number = frappe.utils.escape_html(frappe.utils.cstr(_footer_label(doc)))
+	label = "  |  ".join(part for part in ("Sapphire Fountains, LLC", number, "Confidential") if part)
 	base = "font-family:Lato,'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:8pt;color:#363636;"
 	return (
 		f'<div id="footer-html" style="{base}border-top:1px solid #00263E;'

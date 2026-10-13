@@ -26,6 +26,8 @@ TEMPLATE_KEY = "maintenance"
 
 # (label, old, new) — `label` names the section in the log when a block is
 # refused, so "the patch did not apply here" says *which* part is still blank.
+# §4.2 and §9.1 match from their text, not their <p>: v1.611.1 gave those paragraphs classes for
+# the DOCX layout (numbered clause, indented options), and the binding is about the values, not the wrapper.
 REPLACEMENTS = [
 	(
 		"Service Plan Selection — Annual Service Fee Total",
@@ -34,16 +36,16 @@ REPLACEMENTS = [
 	),
 	(
 		"§4.2 — invoicing frequency",
-		"<p>4.2  Invoices shall be issued: [ ] Per visit  [ ] Monthly  [ ] Quarterly  [ ] Annually (prepaid).</p>",
-		'<p>4.2  Invoices shall be issued: {{ cb(doc.invoicing_frequency=="Per Visit") }} Per visit  '
+		"Invoices shall be issued: [ ] Per visit  [ ] Monthly  [ ] Quarterly  [ ] Annually (prepaid).</p>",
+		'Invoices shall be issued: {{ cb(doc.invoicing_frequency=="Per Visit") }} Per visit  '
 		'{{ cb(doc.invoicing_frequency=="Monthly") }} Monthly  '
 		'{{ cb(doc.invoicing_frequency=="Quarterly") }} Quarterly  '
 		'{{ cb(doc.invoicing_frequency=="Annually") }} Annually (prepaid).</p>',
 	),
 	(
 		"§9.1 — initial term",
-		"<p>[ ] One (1) Year    [ ] Two (2) Years    [ ] Month-to-Month    [ ] Other: {{ blank(30) }}</p>",
-		'<p>{{ cb(doc.initial_term=="One (1) Year") }} One (1) Year    '
+		"[ ] One (1) Year    [ ] Two (2) Years    [ ] Month-to-Month    [ ] Other: {{ blank(30) }}</p>",
+		'{{ cb(doc.initial_term=="One (1) Year") }} One (1) Year    '
 		'{{ cb(doc.initial_term=="Two (2) Years") }} Two (2) Years    '
 		'{{ cb(doc.initial_term=="Month-to-Month") }} Month-to-Month    '
 		'{{ cb(doc.initial_term=="Other") }} Other: '

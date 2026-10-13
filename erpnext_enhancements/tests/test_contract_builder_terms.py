@@ -602,6 +602,71 @@ class TestSummary(unittest.TestCase):
         )
 
 
+# --------------------------------------------------------------------------- layout (v1.611.1)
+
+
+class TestWordCopyLayout(unittest.TestCase):
+    """Nik: "I need the printed agreement to match the DOCX better and be formatted with bullet points
+    and numbering etc." The Word copy numbers every clause, bullets the lists under §2.1-§2.4, indents
+    the plan options and shades the label column of its tables."""
+
+    def setUp(self):
+        self.text = TEMPLATE.read_text(encoding="utf-8")
+        records = json.loads((APP / "fixtures" / "print_format.json").read_text(encoding="utf-8"))
+        self.css = next(r for r in records if r["name"] == "Project Contract Print")["css"]
+
+    def test_every_numbered_clause_hangs_its_number(self):
+        self.assertEqual(re.findall(r"<p>\d+\.\d+\s", self.text), [])  # no plain-paragraph clause left
+        numbers = re.findall(r'<p class="ct-clause"><span class="ct-num">(\d+\.\d+)</span>', self.text)
+        self.assertEqual(len(numbers), 55)
+        self.assertEqual(numbers[:4], ["2.1", "2.2", "2.3", "2.4"])
+
+    def test_the_scope_lists_are_bulleted(self):
+        lists = re.findall(r'<ul class="ct-list">(.*?)</ul>', self.text, flags=re.S)
+        self.assertEqual([chunk.count("<li>") for chunk in lists], [11, 6, 5, 5])
+
+    def test_titled_clauses_lead_in_bold(self):
+        for title in ("Standard Maintenance Services.", "Liability Cap.", "Automatic Renewal and Annual Rate Increase."):
+            self.assertIn(f"<b>{title}</b>", self.text)
+
+    def test_the_print_format_styles_the_structure(self):
+        for rule in (".contract-doc p.ct-clause", ".contract-doc ul.ct-list", ".contract-doc p.ct-option",
+                     ".contract-doc .ct-val { font-weight: 700; }", "background: #e8f1f8",
+                     ".contract-doc p.ct-clause * { text-indent: 0; }"):
+            self.assertIn(rule, self.css)
+
+    def test_filled_values_are_marked_and_blanks_are_not(self):
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        fill = controller[controller.index("def _fill("):controller.index("def _cb(")]
+        self.assertIn("return _blank(width)", fill)
+        self.assertIn("return _val(", fill)
+
+    def test_the_footer_reads_like_the_word_copy(self):
+        style = (APP / "project_enhancements" / "contract_style.py").read_text(encoding="utf-8")
+        self.assertIn('("Sapphire Fountains, LLC", number, "Confidential")', style)
+
+    def test_the_layout_patch_replaces_only_a_shipped_body_and_leaves_terms_alone(self):
+        from erpnext_enhancements.patches import refresh_maintenance_agreement_layout as layout
+
+        new = TEMPLATE.read_text(encoding="utf-8")
+        self.assertEqual(layout.decide(new, new), "current")
+        self.assertEqual(layout.decide("edited on the site", new), "diverged")
+        layout.REPLACEABLE_BODY_SHA256.add(terms_patch.body_sha256("v1.611.0 body"))
+        try:
+            self.assertEqual(layout.decide("v1.611.0 body", new), "replace")
+        finally:
+            layout.REPLACEABLE_BODY_SHA256.discard(terms_patch.body_sha256("v1.611.0 body"))
+        self.assertNotIn(terms_patch.body_sha256(new), layout.REPLACEABLE_BODY_SHA256)
+        source = (APP / "patches" / "refresh_maintenance_agreement_layout.py").read_text(encoding="utf-8")
+        self.assertNotIn("keep_issued_terms(", source)  # agreements issued since v1.611.0 keep their terms
+        self.assertIn(
+            "erpnext_enhancements.patches.refresh_maintenance_agreement_layout",
+            (APP / "patches.txt").read_text(encoding="utf-8"),
+        )
+
+
 # --------------------------------------------------------------------------- template patch
 
 

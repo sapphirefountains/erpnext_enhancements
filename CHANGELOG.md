@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.611.1] - 2026-10-13
+
+### Changed
+
+- **The printed Maintenance Services Agreement follows the Word copy's layout.** Nik, 2026-10-13: "I need
+  the printed agreement to match the DOCX better and be formatted with bullet points and numbering etc."
+  Read from the Hardware / Salt Development agreement's own formatting (`word/document.xml`, its numbering
+  and styles):
+  - every numbered clause hangs its number in a column, with the text aligned beside it (`ct-clause`,
+    `ct-num`), and the titled ones lead in bold ("**Liability Cap.**", "**Automatic Renewal and Annual
+    Rate Increase.**");
+  - the lists under §2.1–§2.4 are bulleted and indented to the clause text, as the Word copy's list
+    paragraphs are (`ct-list`);
+  - the plan options, §9.1's term options and §4.3's payment-method boxes sit on their own indented lines,
+    each box kept with its label, and §4.3's lettered payment clauses are indented beneath it (`ct-option`,
+    `ct-sub`);
+  - the information tables tint the label column (#E8F1F8) as the Word tables do, and every value the
+    contract fills in is set bold, so what this contract says stands apart from what every contract says
+    (`fill`, `money`, `dt` and `multiline` now mark a filled value `ct-val`; blank lines are unchanged);
+  - the footer reads "Sapphire Fountains, LLC | <contract number> | Confidential | Page X of Y".
+  The wording does not change. The table tint, the bold values and the footer apply to every contract
+  type; the clause and list markup is the maintenance agreement's for now.
+- `patches/refresh_maintenance_agreement_layout` brings the live template up to this layout, under the
+  same rules as the terms patch: only a body this repo shipped (v1.609.0 or v1.611.0) is replaced,
+  paper-signed contracts are frozen first, and nothing changes while a signing link is out. It does not
+  re-run the terms patch's reset of issued agreements: one issued since v1.611.0 was issued on the new terms.
+- `bind_maintenance_template_fields` matches §4.2 and §9.1 by their text rather than their `<p>`, since
+  those paragraphs now carry classes.
+
+### Fixed
+
+- An initials box or blank line inside a numbered clause slid back over the text before it: an
+  inline-block inherits the clause's negative hanging indent. Everything inside a clause resets it.
+
 ## [1.611.0] - 2026-10-13
 
 ### Added
