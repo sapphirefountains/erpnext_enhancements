@@ -122,6 +122,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - In the first builder the plan's tick-and-price rows were squeezed into a half-width column, so the price
   boxes overlapped the option names ("Standard M 690 Plan").
+- **An issued contract stayed "Draft" in the database until a signing link went out.** `on_submit` set
+  `status = "Out for Signature"` by assignment, but v16's `_save` writes the row (`db_update`) before
+  `run_post_save_methods` runs `on_submit`, so the assignment never reached the database. Contracts issued
+  from the builder were missing from its "Waiting for a signature" list, and Sign & execute (issue, then
+  sign, in one request) would have been refused every time as unsignable. `on_submit` now uses `db_set`, and
+  `sign_here` reads the contract back after issuing it. Found in review before release.
 
 ## [1.611.1] - 2026-10-13
 

@@ -266,8 +266,13 @@ class ProjectContract(Document):
 		self.annual_maintenance_fee = computed if computed is not None else 0
 
 	def on_submit(self):
+		# db_set, not a plain assignment: v16's _save writes the row (db_update) BEFORE
+		# run_post_save_methods calls on_submit, so an assignment here never reached the
+		# database. Every issued contract sat at "Draft" until a link was sent, which kept
+		# it out of the builder's "Waiting for a signature" list and made the builder's
+		# own Sign & execute (issue, then sign, in one request) refuse it as unsignable.
 		if self.get("status") == "Draft":
-			self.status = "Out for Signature"
+			self.db_set("status", "Out for Signature", update_modified=False)
 
 	def on_cancel(self):
 		self.status = "Void"

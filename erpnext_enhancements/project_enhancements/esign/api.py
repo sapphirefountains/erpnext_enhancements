@@ -330,15 +330,31 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	  snapshot must be initialed, each set drawn separately (``validate_initials``, the
 	  signing page's own rule), and beside the wording the snapshot has: a clause that
 	  changed after its initials were drawn is returned in ``redo`` and nothing is signed.
-	* The contract row is re-read under a lock before execution, as on the signing page.
+	* The contract row is locked and re-read first, as on the signing page (and in the same
+	  order, so a client signing an emailed link at the same moment cannot deadlock with it).
 
-	Returns ``{"ok": True, "request"}``, or ``{"ok": False, "error", "redo"}`` having signed
-	nothing. The caller owns the transaction: on a refusal it rolls back, so an issue made
+	Returns ``{"ok": True, "request"}``, or ``{"ok": False, "error", "redo", "reload"?}`` having
+	signed nothing: ``redo`` names every box to initial again, ``reload`` that the contract
+	changed under the page. The caller owns the transaction: on a refusal it rolls back, so an issue made
 	in the same request is undone with it.
 	"""
 	from erpnext_enhancements.project_enhancements.esign import initials as initials_module
 	from erpnext_enhancements.project_enhancements.esign import lifecycle, portal
 	from erpnext_enhancements.project_enhancements.esign.lifecycle import SignatureEvidence
+
+	# The contract row first, as the signing page takes it (portal.sign_contract): taking the
+	# request's row first and the contract's second would let a client signing from an
+	# emailed link at the same moment deadlock with this.
+	locked = frappe.db.get_value(
+		"Project Contract", contract.name, ["docstatus", "status"], as_dict=True, for_update=True
+	)
+	if not locked or locked.docstatus != 1 or locked.status not in lifecycle.SIGNABLE_CONTRACT_STATUSES:
+		return {
+			"ok": False,
+			"error": _("This agreement is no longer available to sign here. It may have just been signed or voided."),
+			"redo": [],
+			"reload": True,
+		}
 
 	request, _result = open_in_person_request(contract, recipient)
 	drawn = initials if isinstance(initials, dict) else {}
@@ -353,8 +369,10 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 	images = {key: (entry or {}).get("image") for key, entry in drawn.items() if isinstance(entry, dict)}
 	captured, error = portal._validated_initials(images, request.document_snapshot)
 	if error:
-		missing = [key for key, _label in initials_module.initial_slots(request.document_snapshot) if not images.get(key)]
-		return {"ok": False, "error": error, "redo": missing}
+		redo = initials_module.initials_to_redo(
+			images, request.document_snapshot, portal._validated_signature_image
+		)
+		return {"ok": False, "error": error, "redo": redo}
 
 	settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
 	evidence = SignatureEvidence(
@@ -371,12 +389,6 @@ def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", s
 		provider_status="Signed",
 		initials=captured,
 	)
-
-	locked = frappe.db.get_value(
-		"Project Contract", contract.name, ["docstatus", "status"], as_dict=True, for_update=True
-	)
-	if not locked or locked.docstatus != 1 or locked.status not in lifecycle.SIGNABLE_CONTRACT_STATUSES:
-		return {"ok": False, "error": _("This agreement is no longer available to sign."), "redo": []}
 
 	contract.add_comment(
 		"Comment",

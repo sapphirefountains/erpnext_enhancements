@@ -1035,16 +1035,43 @@ class TestSignHere(unittest.TestCase):
         body = self.segment("sign_here")
         self.assertLess(body.index("esign_api.sign_in_person("), body.index("frappe.db.rollback()"))
 
+    def test_signing_reads_back_what_issuing_wrote(self):
+        """Review of #1228: v16 writes the row before on_submit runs, so on_submit's status never
+        reached the database and the builder's issue-then-sign was refused every time."""
+        body = self.segment("sign_here")
+        self.assertIn("doc.submit()\n\t\t# Read back", body)
+        self.assertGreater(body.find("doc = frappe.get_doc(DOCTYPE, name)", body.index("doc.submit()")), 0)
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        on_submit = controller[controller.index("def on_submit(self):"):controller.index("def on_cancel(self):")]
+        self.assertIn('self.db_set("status", "Out for Signature", update_modified=False)', on_submit)
+
+    def test_the_card_offer_respects_the_clients_answer(self):
+        body = self.segment("start_card_on_file")
+        self.assertIn("throw_if_contract_esign_disabled()", body)
+        self.assertIn('request.signing_channel != "In Person"', body)
+        self.assertIn('request.autopay_outcome == "Declined"', body)
+
+    def test_a_refusal_names_every_box_to_redo(self):
+        box = lambda key: initials.initial_markup({}, key, key)  # noqa: E731
+        snapshot = "".join(f"<p>Clause {key}. {box(key)}</p>" for key in ("a", "b", "c", "d"))
+        supplied = {"a": _png("one"), "b": "data:image/gif;base64,AAAA", "c": _png("one")}
+        self.assertEqual(initials.initials_to_redo(supplied, snapshot, _accept), ["b", "c", "d"])
+        self.assertEqual(initials.initials_to_redo({}, "<p>none</p>", _accept), [])
+
     def test_execution_goes_through_the_signing_pages_evidence_path(self):
         api_src = (APP / "project_enhancements" / "esign" / "api.py").read_text(encoding="utf-8")
         tree = ast.parse(api_src)
         fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sign_in_person")
         body = ast.get_source_segment(api_src, fn)
+        # The contract row is locked first, in the signing page's order, so a client signing an
+        # emailed link at the same moment cannot deadlock with the builder.
         order = [
+            "for_update=True",
             "open_in_person_request(",
             "stale_initials(",
             "_validated_initials(",
-            "for_update=True",
             "lifecycle.execute_contract(request, evidence)",
         ]
         positions = [body.index(step) for step in order]

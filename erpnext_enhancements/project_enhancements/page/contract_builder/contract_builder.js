@@ -569,6 +569,11 @@ class ContractBuilder {
 				{ name: this.values.contact_person || "", email: this.values.contact_email || "" }
 			);
 			this.autopay = null;
+			// Nothing of the last contract survives into this one: not its signing link (a
+			// bearer link), not its initials boxes, not a half-finished signing.
+			this.sign_url = null;
+			this.boxes = [];
+			this.signing_now = false;
 		});
 	}
 
@@ -1981,11 +1986,19 @@ class ContractBuilder {
 						return;
 					}
 					$button.text(__("Sign & execute"));
+					frappe.msgprint({ message: cb_esc(result.error || __("It could not be signed.")), indicator: "orange" });
+					if (result.reload) {
+						// Signed or voided under us: show the contract as it now is.
+						return frappe.xcall(`${CB_API}get_builder`, { name: this.data.name }).then((data) => {
+							this.set_data(data);
+							this.preview_key = null;
+							this.render_review("fade");
+						});
+					}
 					(result.redo || []).forEach((key) => delete this.initials[key]);
 					this.save_initials();
 					this.decorate();
 					this.render_review_checks();
-					frappe.msgprint({ message: cb_esc(result.error || __("It could not be signed.")), indicator: "orange" });
 					const first = this.boxes.find((box) => (result.redo || []).includes(box.key));
 					if (first) this.show_box(first);
 				})

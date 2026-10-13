@@ -534,6 +534,8 @@ def sign_here(
 
 	if doc.docstatus == 0:
 		doc.submit()
+		# Read back what submitting wrote (status included) rather than trusting the instance.
+		doc = frappe.get_doc(DOCTYPE, name)
 	result = esign_api.sign_in_person(
 		doc,
 		recipient,
@@ -546,7 +548,12 @@ def sign_here(
 	if not result.get("ok"):
 		# Nothing signed: undo the issue made above with everything else in this request.
 		frappe.db.rollback()
-		return {"ok": False, "error": result.get("error"), "redo": result.get("redo") or []}
+		return {
+			"ok": False,
+			"error": result.get("error"),
+			"redo": result.get("redo") or [],
+			"reload": 1 if result.get("reload") else 0,
+		}
 
 	request = frappe.get_doc("Contract Signature Request", result["request"])
 	return {
@@ -561,18 +568,25 @@ def start_card_on_file(name):
 	"""After signing in the builder: open the card-on-file page the agreement promises.
 
 	The same enrolment the signing page offers (``esign.portal.begin_autopay``), for the
-	contract's latest signed request; every condition is re-checked there.
+	contract's latest signed request; every condition is re-checked there. Only for a contract
+	signed in person, and never over the client's own "No thanks" (``autopay_outcome``
+	Declined): this is the offer made at the table, not a way round an answer.
 	"""
 	from erpnext_enhancements.project_enhancements.esign import portal
 
+	throw_if_contract_esign_disabled()
 	frappe.only_for(list(SIGN_ROLES))
 	frappe.get_doc(DOCTYPE, name).check_permission("read")
 	request = frappe.db.get_value(
-		"Contract Signature Request", {"project_contract": name, "status": "Signed"}, "name", order_by="signed_on desc"
+		"Contract Signature Request",
+		{"project_contract": name, "status": "Signed"},
+		["name", "signing_channel", "autopay_outcome"],
+		order_by="signed_on desc",
+		as_dict=True,
 	)
-	if not request:
+	if not request or request.signing_channel != "In Person" or request.autopay_outcome == "Declined":
 		return {"ok": False}
-	return portal.begin_autopay(frappe.get_doc("Contract Signature Request", request))
+	return portal.begin_autopay(frappe.get_doc("Contract Signature Request", request.name))
 
 
 @frappe.whitelist()

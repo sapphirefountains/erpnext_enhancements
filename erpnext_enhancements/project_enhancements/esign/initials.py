@@ -218,6 +218,27 @@ def stale_initials(drawn, snapshot):
 	return stale
 
 
+def initials_to_redo(supplied, snapshot, validate_image):
+	"""The boxes to initial again after :func:`validate_initials` refused a set: in document order.
+
+	Missing, failing the image check (too large, not a real PNG), or a repeat of an earlier
+	box's drawing. The Contract Builder clears exactly these, so a refusal never leaves the
+	page resending the same initials.
+	"""
+	supplied = supplied if isinstance(supplied, dict) else {}
+	redo, seen = [], set()
+	for key, _label in initial_slots(snapshot):
+		image = validate_image(supplied.get(key))
+		if not image:
+			redo.append(key)
+			continue
+		digest = hashlib.sha256(base64.b64decode(image[len(PNG_PREFIX):])).hexdigest()
+		if digest in seen:
+			redo.append(key)
+		seen.add(digest)
+	return redo
+
+
 def validate_initials(raw, snapshot, validate_image, clean_text=None):
 	"""``(initials, error)`` — every box in ``snapshot``, each drawn on its own.
 
