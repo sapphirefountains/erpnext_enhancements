@@ -62,7 +62,7 @@ Sapphire Maintenance Record (parent, submittable, route: maintenance-records)
                                                         (wizard stepper hints)
 
 Sapphire Maintenance Profile          one per Project (unique): safety_instructions, access_codes,
-                                      google_sites_links + special_instructions (v1.609.0; first
+                                      google_sites_links + special_instructions (v1.607.0; first
                                       filled from the old Maintenance calendar by the calendar
                                       cutover, appended only; internal, never on a calendar)
 Sapphire Reading Range Override       child table on Serial No (custom_reading_overrides):

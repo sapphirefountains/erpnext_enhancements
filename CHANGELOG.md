@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.609.0] - 2026-10-13
+## [1.607.0] - 2026-10-13
 
 ### Added
 
@@ -72,6 +72,153 @@ history and future ones stop, and switch the sync on by hand. Switching on and d
 - **Not verifiable without the real calendar**: whether Google keeps or drops occurrences that were
   dragged past the cutover once the master's UNTIL moves. They are separate exception events, and the
   tool never deletes them. The dry run counts them per series so they can be checked by hand.
+
+## [1.606.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C4: **time off read in from Google.** People already put their time off on the shared
+"Company Holidays & Vacations" calendar by hand ("Austin Off", "Clegg - ooo"); ERPNext now reads those
+events into the planners as Unavailable Planner Blocks, so whoever schedules work knows who is out. Nik's
+decisions of 2026-10-12, settled. It is the one thing ERPNext takes from Google: C2 still pushes
+everything else one way, out. **It ships off**: Calendar Sync Settings → *Read time off from Google*
+defaults to 0 and also needs C2's master switch, an authorized account and the calendar ID.
+
+- **Reading.** C2's client and account, `events.list` with `singleEvents=true` so a recurring event
+  arrives as its instances. Every 10 minutes from its own stored `syncToken` (C2's snap-back lists the
+  same calendar with a different query, and Google ties a token to its query, so the two cannot share
+  one); a 410 lists in full. Nightly (`daily_long`) the whole window is read again (C2's window, 14 days
+  back to 180 ahead), every review decision is re-applied and imported blocks whose event has gone are
+  removed, but only after a complete listing. That nightly read is what re-does anything the deploy's
+  `FLUSHDB` destroys. A redis `SET NX` keeps two reads from running at once, and a race between them
+  heals itself (two blocks for one person-day keep the first).
+- **Matching** (`calendar_sync/time_off_rules.py`, pure and tested). In order: ERPNext's own events are
+  never read; a deleted event removes its blocks; birthdays are skipped (Google's `birthday` event type,
+  "birthday", "bday", "b-day"); a planner's decision for the event id; a decision remembered for the
+  title; "Company holiday" is everyone; a first name, full name or alias **plus** a time-off word (off,
+  OOO, out, vacation, PTO, sick, leave, appointment, ...), as whole words, the longer name winning and a
+  shared first name settled by the event's creator; with no name, a time-off word and whoever created it
+  (creator, then organizer, never the calendar itself, by User → active Planner Resource); everything
+  else to review. A name **without** a time-off word ("Austin - Denver") is only a best guess on a review
+  row: the calendar also carries things like "Lunch with Austin". Planner Resource gains *Names on the
+  shared calendar* for aliases. Subcontractors and inactive people are never matched.
+- **Blocks follow the event.** One all-day or timed block per person per day (a timed event is cut at
+  midnight in the site's time zone; a piece that is the whole day is all day), with `source` "Google",
+  the event id and a private note "From Google Calendar: <title>". Each read creates, updates or deletes
+  only the difference, and only inside the window. **A block made in ERPNext is never read, changed or
+  deleted by the import**: every query filters on `source = "Google"`, and the update and delete paths
+  re-check the row.
+- **Imported blocks are read-only and never go back out (the loop guard).** C2 pushes Planner Blocks
+  out to this same calendar, so an imported block synced out would duplicate every hand-made Google
+  event. `sources.block_item` reads an imported block as gone, `refs_in_window` leaves it out and the
+  Planner Block trigger does not even queue it; and the import never reads an event carrying C2's private
+  properties (any site's, so staging's copies too) or C2's "Managed by ERPNext" footer. `PlannerBlock`
+  refuses any edit not made by the import (and a delete by anyone but a System Manager), nobody can turn
+  a hand-made block into an imported one, and both planners show it without the edit form ("from the
+  Google vacations calendar: change it there"). A wrong match is fixed where the truth lives: rename the
+  event in Google, or add an alias.
+- **"Company holiday" means everyone**: a block for every active staff resource (not subcontractors,
+  whom the availability engine gives no holidays either), except on a day their Holiday List, the one
+  the planners already read, already has as a holiday. The Holiday List itself is HR's (leave and payroll
+  read it) and is never written from a calendar title.
+- **Review list**: new doctype **Calendar Time Off Review**, one row per unclear event, with the reason
+  and a best guess. A planner (the Planner Block schedulers: System Manager, Projects Manager, Projects
+  User, Maintenance Supervisor) picks a person, *Everyone* or *Ignore*; the choice is kept for the event
+  id and, with *Same for this title*, for every event whose title matches without case, punctuation or
+  numbers. A decision applies from the event stored on the row, with no Google call, after commit; an
+  Open row whose event becomes clear or disappears is removed.
+- **Telling the planners.** New *Time off alerts* table on Calendar Sync Settings (new child doctype
+  Calendar Sync Alert Recipient; empty means whoever authorized the Google account). They get a bell
+  (Notification Log type Alert, the planners' own channel, never emailed) when new events wait for
+  review, and when newly imported time off lands on a day its person has firm bookings: the same check
+  the Conflict center makes for a hand-made block (`planner_blocks._conflicts_made`), **once per block**
+  (`Planner Block.time_off_alerted`; a block is one person's one day), and never for a day already past.
+  The conflict itself also shows in the Conflict center, as for any block.
+- **Preview** (*Time off → Preview time off*): what a full read would create, update and delete, and what
+  would wait for review. It has to read Google to know (one read-only listing) and **writes nothing**: no
+  block, no review row, no alert, no sync state. *Read time off now* queues the full read; the status
+  lines show the last check, the last full read, blocks read in and how many wait for review.
+
+### Changed
+
+- `Planner Block` gains `source` (Select Planner / Google, default Planner), `google_event_id` and
+  `time_off_alerted`. It is a normal doctype, so the `ALTER` that adds `source` writes "Planner" into
+  every existing row, and the import matches only "Google": existing blocks read as hand-made, which is
+  what they are. (Not a Single: no backfill patch is needed, and one keyed on emptiness would match
+  nothing.)
+- Calendar Sync Settings gains *Read time off from Google* (Check, default 0), *Time off alerts* and the
+  read's own state. Patch `materialize_calendar_time_off_settings` gives each new field its `tabSingles`
+  row (the v1.604.0 patch ran before they existed, and a patch never runs twice); `write_state` also
+  materializes before every state write. Ticking the switch with sync off, or with no calendar ID, is
+  refused; switching sync off while it is ticked still saves.
+- `api/planner_blocks.block_entry` and the engine's block bookings carry `from_google`; `can_edit` is
+  false for an imported block.
+## [1.605.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C3: **route stops get real times, and the first stop of a day says when to leave.** C2
+wrote every item as an all-day event, which tells a crew which day but not when, and the planner already
+knows when: its route view leaves the shop at the day start, drives each leg, works the booked hours and
+waits for a slotted stop. Nik's decisions of 2026-10-12, settled. Like C2 it does nothing while Calendar
+Sync Settings is off; the leave-by ping has its own switch and is off too.
+
+- **Timed events for route stops.** A single-day, firm task, visit or projected visit that is a stop on
+  someone's route that day becomes a timed event, on site from the route's arrival to its departure, in the
+  site's time zone (System Settings, else America/Denver). The times come from the planner's own engine
+  call and its own two passes (`project_enhancements/route_slots.py` runs `routing.route_times`,
+  `merge_unlocated`, `route_times` again, exactly as `api/project_planner.route_payload` does), and a test
+  compares the two stop by stop, so the calendar and the route view cannot disagree. **Times are computed
+  on read and never stored on the task or visit.** Drive padding (`pad_drive_time`) decides whether driving
+  counts against a person's hours; it does not move the clock, on the route view or here.
+- **What stays all-day:** multi-day tasks, full-day work (a task with no estimate, no slot, no rental kind
+  and no crew hours books the whole day; a full-day visit), day notes, blocks, pencils (the planner never
+  routes a pencil), a day beyond the near window, and a day whose route could not be worked out (logged once
+  an hour; the planner's own route view would show the same failure). The planner *does* route projected
+  contract visits, so they are timed, and stay tentative. A full-day task's description now says "Hours:
+  Full day" where it said nothing, a one-off update for those events.
+- **"Leave by 7:35 am"** leads the description of the first stop of the timing person's day: the arrival
+  less the drive, so a stop slotted for 10:00 says when to leave for it, not the day start. In the
+  description rather than the title, because the title is shared by a crew whose mornings may differ.
+- **One event per task, shared by its crew, timed from the lead's route** (a judgement call Nik can
+  revisit): no lead, the first crew member in order; a lead with no route that day (a travel day), the next
+  one who has one. When another crew member's slot differs the description says "Times are Austin's route
+  (times differ by person)". A visit's technician is its lead.
+- **A change re-times the whole day.** Moving one stop moves every other stop that person drives that day,
+  so an item job now collects the days it touched (the day it is on, and the day its event was on before:
+  a move or a cancellation) and queues `engine.run_day_job` for each, after commit, on a stable `job_id`
+  with `deduplicate`. A queued day job has not read anything yet, so it covers every later change; a
+  running one may have read too early, so one more (`::again`) is allowed; with both busy the nightly repair
+  is the backstop. A publish of thirty tasks on one day is thirty item jobs and one or two day jobs, never
+  thirty squared, and the day job reconciles against C2's content hash, so a stop whose times did not
+  change costs no Google call. Pencils that stay pencils, and far days, fan out nothing.
+- **Bounded Google Routes cost.** Only the **near window** is timed: Calendar Sync Settings
+  `timed_days_ahead`, default **14 days, today included** (0 makes every event all-day again). The nightly
+  repair, which still covers 14 days back to 180 ahead, prices the near window in **one** engine call and no
+  other day: **past days and finished work keep the times stored on their `Calendar Sync Link`** (new
+  `timing` field) while they are still on that day, so adding a ✓ to yesterday's job leaves its slot alone
+  and the past is never re-routed. Legs come from the Planner Drive Time cache, and Google is asked only for
+  a missing leg and only where the planner itself would (its `use_google_routes` switch and routes-down flag
+  apply). The preview asks Google nothing.
+- **Snap-back still holds**: a timed event somebody drags in Google is rewritten to ERPNext's times, and
+  a re-timed event changes the content hash while an unchanged one costs no call.
+- **Opt-in leave-by ping** (`project_enhancements/leave_by.py`, every five minutes). Google's reminders
+  cannot carry "leave by" to the crew: the Calendar API's reminders belong to the account that writes the
+  events, Nik's, so they would ping only him; the events keep no reminders. ERPNext sends it instead: each
+  person who ticks **Ping me at leave-by time** on their Planner Resource (default off) gets one notice,
+  **Ping this many minutes before leave-by** (Project Planner Settings, default 10) before they must leave
+  for the first stop of their day, while **Leave-by pings** (Project Planner Settings, default off) is on.
+  Same channels and rule as the change alerts: a bell notification, and a text, or an email when they have
+  no cell number. Never for a pencil, a day with no hours (a day off, a holiday, time off, an all-day
+  block), a travel day or a first stop with no location. **At most once per person per stop per day**: a
+  new `Planner Ping Log` row keyed `user|date|stop` (unique) is inserted and committed before anything is
+  sent, the `Planner Digest Log` pattern, because the deploy's `FLUSHDB` would erase a redis marker and
+  re-ping everyone. The ping does **not** follow the change alerts switch: that one governs messages
+  nobody asked for, and this one is asked for person by person. It asks Google nothing (cached legs and the
+  estimate only), because a five-minute cron is not where the planner itself would pay for a route.
+- **Settings defaults are materialized** (`patches/materialize_route_timing_settings.py`): a default never
+  reaches a Single's existing row, and a blank Int on the Settings form saves as 0, which would quietly
+  switch timing off or give pings no lead time. Never over a stored value; switches nothing on.
 
 ## [1.604.0] - 2026-10-12
 
@@ -163,6 +310,105 @@ until a System Manager authorizes an account, fills in the calendars and ticks t
    that owns the three calendars.
 3. *Pick calendars* (or paste the three calendar IDs), then *Sync* → *Preview* to see what would be written.
 4. Tick **Push committed work to Google Calendar** and save; a full repair is queued at once.
+
+## [1.603.0] - 2026-10-12
+
+### Added
+
+- **New tasks can be drafted on the Project Planner.** Nik, 2026-10-12: "build out a whole new schedule
+  as a draft and publish it once." Until now Draft mode refused every new task, because a
+  `Planner Draft Change` was a pending change *of a task that exists*. Quick add, Duplicate and the
+  Build out grid now work in Draft mode (they send `draft=1`): the server makes the same checks as the
+  live call, with the same messages and the same row numbers, and then keeps the task-to-be as a
+  **`New task` draft row** instead of creating it.
+  - **A drafted new task is never a Task.** Publishing is also the moment work reaches Google Calendar
+    (the sync follows saved Tasks), so nothing may exist on `tabTask` before it: no assignment, digest,
+    change alert, conflict-center line or calendar event can come from a draft. A test pins that nothing
+    is inserted or saved on `tabTask` by drafting a quick add, a duplicate or a build out.
+  - **Data model.** `Planner Draft Change` gains `kind` (`Change`, the default, or `New task`), `project`
+    and `created_task`. It is a normal doctype, so the `ALTER` that adds `kind` writes `Change` into
+    every existing row: there is no backfill patch, and none is needed (the Single-doctype trap in
+    `CLAUDE.md` does not apply). `validate` holds the rules: a `Change` names exactly one task or visit
+    and no project; a `New task` names neither and needs its project. Its `payload` is the Task it will
+    become, as plain data (`load_spec`): the Task's fields, crew, qualifications, equipment and what it
+    waits on. Only whitelisted Task fields are ever applied, and the status is always Open.
+  - **Draft names.** A drafted task goes by `draft-new:<its row's name>` everywhere a task name goes: its
+    card, `save_task`, `add_crew`, `swap_crew`, `move_many`, the Undo and `discard_drafts`. A phase or a
+    prerequisite that is another drafted task is written the same way in the spec, and mapped to the
+    real Task when it is created. A `draft-new:` name sent to a live call is simply "not a task of that
+    project".
+  - **Which planner reads which rows.** The Project Planner reads its own `task` rows and its own `New
+    task` rows, never a visit's; the Maintenance Planner still asks for rows with a `visit`, so it never
+    sees a `New task` row. Asking for `kind` is guarded by `has_column`, so a request served between the
+    new code and `bench migrate` does not ask for a column that is not there.
+  - **Showing them.** `get_planner(draft=1)` draws a drafted new task as a card with a dashed outline
+    and a "New" chip: a dated one on its day, an undated one in the Unscheduled tray. The engine counts
+    it as an `extra` of `_compute` (never an `exclude`: there is nothing stored to hide), so free hours,
+    conflicts and the week's load include it. A drafted phase has no card but is counted in "N
+    unpublished changes". A draft whose project stopped being a customer job, whose person left the
+    planner, or whose phase or prerequisite was discarded is reported "out of date" and not drawn;
+    *Discard out-of-date* clears it.
+  - **Editing.** A drafted new task can be dragged, resized, pencilled and re-crewed through the same
+    `save_task`/`add_crew`/`swap_crew` draft path as any task, which rewrites its spec in place (never a
+    Task save). It can be selected with others and moved with `move_many`. It has no Task to open,
+    duplicate, split or look up yet, so those menu items say "Not published yet".
+  - **Undo** of a drafted quick add or duplicate (`remove_created_task`) and of a drafted build out
+    (`remove_built_out_tasks`) discards the rows. It refuses, discarding none, while another drafted task
+    is filed under or waits on one of them.
+  - **Publish** creates them in the same request as the other drafts, through the code path the live
+    calls use: one `task_from_spec` builds the Task document and one `_insert_doc` inserts it. The live
+    quick add, duplicate and build out now build their documents from the same spec, so a task
+    published from a draft is exactly the one the live call would have made. Phases are created first,
+    then the tasks, each after what it waits on (`new_task_order`, whatever order they were drafted
+    in), with `draft-new:` names mapped to the real names as they go. The new tasks join the existing
+    `Change` rows in the **one** whole-batch conflict check (all or nothing: one reason for the lot, put
+    on each new task's timeline; the conflict lines name a new task by its subject, not its draft
+    name) and in the per-person publish notices, where a new task is "You're on X", not "moved". Each
+    task is created in its own savepoint with `planner_publishing` up, so a task ERPNext refuses is
+    reported in `failed` and stays a Draft, never half created, and what waits on it is reported too.
+    Published rows record `created_task`. Changes to existing tasks publish exactly as before.
+  - **Build out grid in Draft mode.** A second drafted build out can file tasks under, or make them wait
+    on, the phases and tasks an earlier one drafted (`get_build_out_context(draft=1)` offers them, marked
+    `draft`), and typing a drafted phase's name again is that phase, not a second one.
+  - **Split stays refused in Draft mode.** It changes a task that exists and creates another at once,
+    which one draft row cannot hold. The sentence now says exactly that (`DRAFT_REFUSAL`), and the page
+    still refuses before it asks.
+- **Paste a list** (Build out grid). A footer action turns free-form lines into rows:
+  `Excavate basin, 16h`, `Pour slab - 8 hours`, `Set pumps 4h`, `• Pull wire (6 hrs)`,
+  `3. Commission system`, and `Electrical: Pull wire, 6h` (a phase before a colon). Bullets, checkboxes
+  and numbering are dropped, a trailing `4h` / `4 hrs` / `4 hours` (after a space, comma or dash, or in
+  brackets) or a bare number after a comma is the hours, blank lines and a line of nothing but hours are
+  skipped. The parser is `PPT1_PURE.parse_lines`, run under node against every one of those shapes. The
+  tab-separated spreadsheet paste is unchanged and shares its row filling.
+- **Copy from project…** (Build out grid). Starts the grid from any project the user can read (not only
+  customer jobs: it is a source of a plan). New `planner_actions.get_copy_source(project)` (GET) returns
+  the source's **leaf** tasks as grid rows: subject, hours (`expected_time`), phase (the parent group's
+  subject), crew size, and dependencies as `row:N` within the copied set (a dependency on anything not
+  copied is dropped and counted in the note). Templates and canceled tasks are left out, **finished tasks
+  are kept** (a finished job is the best template), in the project's own order (phase, then `lft`,
+  `idx`, creation), at most 100 rows with a `truncated` flag. Never copied: dates, people, crew rows,
+  assignments, status, timesheets, descriptions, addresses. Task read permission applies (`get_list`).
+  The grid replaces its rows when empty and otherwise asks Append or Replace; a copied task that waits
+  on several rows keeps all of them (the Depends on cell shows the first and says "Also waits on row(s)").
+  The tasks are created on the *current* project, or drafted there in Draft mode.
+
+### Changed
+
+- **`Draft mode` no longer greys out Duplicate, Add task here… and Build out.** Their menu hints,
+  `DRAFT_REFUSAL` and the Build out grid's intro changed with it; the Undo of a draft-mode create is a
+  discard instead of a delete.
+
+### Tests
+
+- `tests/test_planner_draft_new_tasks.py` (own CI step, unittest, on Phase 6B's fake site): the
+  doctype's `kind` rules; which planner reads which rows; drafting makes no Task and checks what the live
+  call checks (a case list run both ways must give the same message); the card, the overlay and the tray;
+  editing, moving and removing; publish order, reference mapping, the batch check, all or nothing, a
+  refused task, a discarded phase and the notices; `copy_plan` and `get_copy_source`; and, under node, the
+  pasted-list parser, the copied rows' dependencies, and every dialog this adds built through a stand-in
+  that asks each `get_data`/`get_query` while the dialog is being constructed (the 1.602.0 `const dialog`
+  bug) and again once it exists. Phase 6B's and the build-out suite's refusal tests now pin the new
+  behaviour: only a split is refused in Draft mode.
 
 ## [1.602.1] - 2026-10-12
 

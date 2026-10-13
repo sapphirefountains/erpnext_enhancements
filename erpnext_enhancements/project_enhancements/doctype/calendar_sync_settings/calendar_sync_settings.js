@@ -42,6 +42,10 @@ frappe.ui.form.on("Calendar Sync Settings", {
 		frm.add_custom_button(__("Re-sync everything"), () => cs_resync(frm), __("Sync"));
 		// C5: the hand-made Maintenance series' cutover (scan, review, apply, end, undo) is its list.
 		frm.add_custom_button(__("Cutover from the old Maintenance calendar"), () => frappe.set_route("List", "Calendar Cutover Item"), __("Sync"));
+		// C4: time off read in from the Company Holidays & Vacations calendar.
+		frm.add_custom_button(__("Preview time off"), () => cs_preview_time_off(frm), __("Time off"));
+		frm.add_custom_button(__("Read time off now"), () => cs_read_time_off(frm), __("Time off"));
+		frm.add_custom_button(__("Review list"), () => frappe.set_route("List", "Calendar Time Off Review", { status: "Open" }), __("Time off"));
 	},
 });
 
@@ -112,7 +116,86 @@ function cs_render_health(frm, test) {
 				"</ul>";
 		}
 		field.$wrapper.html(`<table>${rows.join("")}</table>${errors}`);
+		cs_render_time_off(frm, h.time_off || {});
 	});
+}
+
+// C4: the time-off read's own status lines, under its switch.
+function cs_render_time_off(frm, t) {
+	const field = frm.get_field("time_off_health_html");
+	if (!field) return;
+	if (!t.installed) {
+		field.$wrapper.html(`<div class="text-muted">${cs_esc(__("Run bench migrate to finish installing the time-off read."))}</div>`);
+		return;
+	}
+	const rows = [];
+	const state = t.active ? __("On") : t.switch ? __("Ticked, but sync, the account or the calendar ID is missing") : __("Off");
+	rows.push(cs_line(__("Reading time off"), cs_yes_no(t.active, __("On"), state)));
+	rows.push(cs_line(__("Last check"), cs_esc(t.last_sync || __("never"))));
+	rows.push(cs_line(__("Last full read"), cs_esc(t.last_full_read || __("never")) + (t.summary ? "<br>" + cs_esc(t.summary) : "")));
+	rows.push(cs_line(__("Blocks read in"), cs_esc(t.imported_blocks || 0)));
+	const waiting = Number(t.open_reviews) || 0;
+	rows.push(
+		cs_line(
+			__("Waiting for review"),
+			waiting ? `<a href="${cs_esc(t.review_route || "/app/calendar-time-off-review")}">${cs_esc(waiting)}</a>` : cs_esc(0)
+		)
+	);
+	rows.push(cs_line(__("Alerts go to"), cs_esc((t.recipients || []).join(", ") || __("nobody yet"))));
+	field.$wrapper.html(`<table>${rows.join("")}</table>`);
+}
+
+function cs_read_time_off(frm) {
+	frappe.call({ method: CS_API + "read_time_off_now", type: "POST" }).then(() =>
+		frappe.show_alert({ message: __("Time-off read queued. The status lines show when it finished."), indicator: "blue" })
+	);
+}
+
+function cs_preview_time_off(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Preview: what reading time off from Google would do"),
+		size: "extra-large",
+		fields: [
+			{ fieldname: "start", fieldtype: "Date", label: __("From") },
+			{ fieldname: "column", fieldtype: "Column Break" },
+			{ fieldname: "end", fieldtype: "Date", label: __("To") },
+			{ fieldname: "section", fieldtype: "Section Break" },
+			{ fieldname: "result", fieldtype: "HTML" },
+		],
+		primary_action_label: __("Preview"),
+		primary_action(values) {
+			const out = dialog.get_field("result").$wrapper;
+			out.html(`<div class="text-muted">${cs_esc(__("Reading the calendar… nothing is written anywhere."))}</div>`);
+			frappe.call({ method: CS_API + "preview_time_off", args: { start: values.start, end: values.end } }).then((r) => {
+				const p = r.message || {};
+				const counts = Object.keys(p.counts || {})
+					.sort()
+					.map((a) => `${cs_esc(a)}: ${cs_esc(p.counts[a])}`)
+					.join(" · ");
+				const rows = (p.rows || [])
+					.map(
+						(row) =>
+							`<tr><td>${cs_esc(row.date)}</td><td>${cs_esc(row.action)}</td><td>${cs_esc(row.person)}</td><td>${cs_esc(row.time || __("all day"))}</td><td>${cs_esc(row.title)}</td><td class="text-muted">${cs_esc(row.how)}</td></tr>`
+					)
+					.join("");
+				const review = (p.review || [])
+					.map((row) => `<tr><td>${cs_esc(row.dates)}</td><td>${cs_esc(row.title)}</td><td>${cs_esc(row.reason)}</td><td>${cs_esc(row.suggested)}</td></tr>`)
+					.join("");
+				out.html(
+					`<p>${cs_esc(p.start)} → ${cs_esc(p.end)}. ${counts}${p.enabled ? "" : " " + cs_esc(__("(reading is off: nothing will change until it is on)"))}${
+						p.complete === false ? " " + cs_esc(__("(the calendar was too long to list in one go: this is the first part)")) : ""
+					}</p>` +
+						(rows
+							? `<div style="max-height:40vh;overflow:auto"><table class="table table-bordered table-condensed"><thead><tr><th>${cs_esc(__("Date"))}</th><th>${cs_esc(__("Action"))}</th><th>${cs_esc(__("Person"))}</th><th>${cs_esc(__("Time"))}</th><th>${cs_esc(__("Event"))}</th><th>${cs_esc(__("Matched by"))}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+							: `<p>${cs_esc(__("No block would change."))}</p>`) +
+						(review
+							? `<p style="margin-top:12px;font-weight:600">${cs_esc(__("Would wait for review"))}</p><div style="max-height:30vh;overflow:auto"><table class="table table-bordered table-condensed"><thead><tr><th>${cs_esc(__("When"))}</th><th>${cs_esc(__("Event"))}</th><th>${cs_esc(__("Why"))}</th><th>${cs_esc(__("Best guess"))}</th></tr></thead><tbody>${review}</tbody></table></div>`
+							: "")
+				);
+			});
+		},
+	});
+	dialog.show();
 }
 
 function cs_pick_calendars(frm) {

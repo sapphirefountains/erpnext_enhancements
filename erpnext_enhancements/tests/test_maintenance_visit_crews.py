@@ -447,7 +447,7 @@ class TestDocTypes(unittest.TestCase):
 		self.assertEqual(fields["default_crew"]["options"], CREW)
 		self.assertEqual(fields["visit_hours"]["fieldtype"], "Float")
 		self.assertEqual(fields["visit_full_day"]["fieldtype"], "Check")
-		# Moved on by the calendar cutover (v1.609.0, the Sites links and special instructions); never
+		# Moved on by the calendar cutover (v1.607.0, the Sites links and special instructions); never
 		# backwards, or bench migrate skips the JSON.
 		self.assertGreaterEqual(doc["modified"], "2026-10-09 14:00:00.000000")
 		order = doc["field_order"]

@@ -388,6 +388,28 @@ class Client:
 			params["pageToken"] = page_token
 		return self.request("GET", f"/calendars/{quote(calendar_id, safe='')}/events", params=params)
 
+	def list_instances(
+		self, calendar_id, sync_token=None, page_token=None, time_min=None, time_max=None, show_deleted=True
+	):
+		"""One page of ``events.list`` with ``singleEvents=true`` (recurring events as instances), for
+		the C4 time-off read. Incremental from ``sync_token``; or a window (``time_min`` /
+		``time_max``, which Google does not allow with a token). A 410 means the token expired."""
+		params = {
+			"singleEvents": "true",
+			"maxResults": 250,
+			"showDeleted": "true" if show_deleted else "false",
+		}
+		if sync_token:
+			params["syncToken"] = sync_token
+		else:
+			if time_min:
+				params["timeMin"] = time_min
+			if time_max:
+				params["timeMax"] = time_max
+		if page_token:
+			params["pageToken"] = page_token
+		return self.request("GET", f"/calendars/{quote(calendar_id, safe='')}/events", params=params)
+
 	# -- calendars
 	def calendar_list(self):
 		out, page = [], None

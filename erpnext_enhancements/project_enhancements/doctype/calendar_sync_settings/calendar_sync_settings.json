@@ -22,6 +22,12 @@
   "column_break_calendars",
   "days_back",
   "days_ahead",
+  "timed_days_ahead",
+  "section_time_off",
+  "read_time_off",
+  "time_off_health_html",
+  "column_break_time_off",
+  "time_off_alert_recipients",
   "section_colors",
   "colors",
   "section_state",
@@ -29,7 +35,13 @@
   "last_full_repair",
   "column_break_state",
   "last_full_repair_summary",
-  "sync_tokens"
+  "sync_tokens",
+  "section_time_off_state",
+  "last_time_off_sync",
+  "last_time_off_full_read",
+  "column_break_time_off_state",
+  "last_time_off_summary",
+  "time_off_sync_token"
  ],
  "fields": [
   {
@@ -105,7 +117,7 @@
    "label": "Maintenance calendar ID"
   },
   {
-   "description": "Unavailable blocks from the planners. Never the block's note.",
+   "description": "Unavailable blocks from the planners go out to it (never the block's note); with Read time off from Google on, people's own time off on it comes in.",
    "fieldname": "holidays_calendar_id",
    "fieldtype": "Data",
    "label": "Company Holidays & Vacations calendar ID"
@@ -129,6 +141,43 @@
    "fieldtype": "Int",
    "label": "Repair window: days ahead",
    "non_negative": 1
+  },
+  {
+   "default": "14",
+   "description": "Route stops (a single-day task or visit on someone's route) get real times, with a leave-by line on the first stop of the day, from today for this many days. Later days stay all-day, so Google Routes is never asked about them. 0 makes every event all-day.",
+   "fieldname": "timed_days_ahead",
+   "fieldtype": "Int",
+   "label": "Timed route stops: days ahead (today included)",
+   "non_negative": 1
+  },
+  {
+   "description": "Read the time off people put on the Company Holidays & Vacations calendar by hand (\"Austin Off\", \"Clegg - ooo\") into the planners as Unavailable blocks. Needs the switch above on, an authorized account and the Company Holidays & Vacations calendar ID.",
+   "fieldname": "section_time_off",
+   "fieldtype": "Section Break",
+   "label": "Time off from Google"
+  },
+  {
+   "default": "0",
+   "description": "Every 10 minutes (and the whole window nightly): a name plus off / OOO / out / vacation / PTO / sick / leave becomes an Unavailable block for that person; \"Company holiday\" for everyone; birthdays are skipped; anything unclear waits in Calendar Time Off Review. Blocks read in are read-only and never written back out.",
+   "fieldname": "read_time_off",
+   "fieldtype": "Check",
+   "label": "Read time off from Google"
+  },
+  {
+   "fieldname": "time_off_health_html",
+   "fieldtype": "HTML",
+   "label": "Time off status"
+  },
+  {
+   "fieldname": "column_break_time_off",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Who gets a bell when time off read in lands on booked work, and when events wait for review. Empty: whoever authorized the Google account.",
+   "fieldname": "time_off_alert_recipients",
+   "fieldtype": "Table",
+   "label": "Time off alerts",
+   "options": "Calendar Sync Alert Recipient"
   },
   {
    "collapsible": 1,
@@ -178,11 +227,47 @@
    "hidden": 1,
    "label": "Incremental sync tokens",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_time_off_state",
+   "fieldtype": "Section Break",
+   "label": "Time off read state"
+  },
+  {
+   "fieldname": "last_time_off_sync",
+   "fieldtype": "Datetime",
+   "label": "Last time-off check",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_time_off_full_read",
+   "fieldtype": "Datetime",
+   "label": "Last full time-off read",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_time_off_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_time_off_summary",
+   "fieldtype": "Small Text",
+   "label": "Last time-off result",
+   "read_only": 1
+  },
+  {
+   "description": "Google nextSyncToken for the time-off read (its query differs from snap-back's). Not secret; losing it costs one full listing.",
+   "fieldname": "time_off_sync_token",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Time-off sync token",
+   "read_only": 1
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 12:00:00.000000",
+ "modified": "2026-10-13 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Calendar Sync Settings",

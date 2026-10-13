@@ -22,7 +22,8 @@ needs the server is here:
   grid: subject, hours, phase, depends-on, crew size), new phases (group tasks) first; they land in
   the Unscheduled tray. :func:`remove_built_out_tasks` is its Undo, and
   :func:`get_build_out_context` / :func:`get_projects_needing_tasks` are the reads behind the grid
-  and the Needs tasks list.
+  and the Needs tasks list. :func:`get_copy_source` (v1.603.0) reads another project's leaf tasks as
+  grid rows, the starting plan of "Copy from project...".
 * :func:`move_many` moves several tasks (and/or pencils or firms them) in one call: one conflict
   check for the lot, one reason, all or nothing, as ``shift_successors`` and ``copy_week`` do.
 * :func:`remove_created_task` is the Undo of a task the planner just created (a duplicate, a quick
@@ -42,10 +43,16 @@ The rules every write here keeps, because the page relies on them:
   halves ("suggest a crew" was declined).
 * **Each planner moves only its own records.** Every write here is a project Task's. A rental crew
   task is refused: its dates follow its Rental Booking.
-* **A new task cannot be a draft.** Draft mode (Phase 3B) holds back changes to tasks that exist,
-  as a ``Planner Draft Change`` of that task; a task that does not exist yet has nothing to hang one
-  on. So duplicate, split, quick add and build out refuse in draft mode with a sentence that says so, and the
-  page refuses before it asks. :func:`move_many` changes tasks that exist, so it drafts properly.
+* **A new task can be a draft, except a split's (v1.603.0).** Draft mode (Phase 3B) holds a change
+  back as a ``Planner Draft Change``. Quick add, duplicate and build out with ``draft=1`` make the
+  same checks as the live call and then keep the task-to-be as a ``New task`` Draft row
+  (``project_planner.store_new_draft``): no Task exists, so no assignment, digest, conflict-centre
+  line or calendar event can come from it, until Publish creates it through the same code path
+  (``project_planner.task_from_spec``). Its card is named ``draft-new:<row>``, and
+  :func:`remove_created_task` / :func:`remove_built_out_tasks` discard such rows. Split stays refused
+  in draft mode (it changes a task that exists and creates another at once), with a sentence that
+  says so, and the page refuses before it asks. :func:`move_many` changes tasks that exist, so it
+  drafts properly.
 * **Writes are as the caller.** ``check_permission`` on every task, ``create`` for a new one, and
   ``doc.save()`` / ``doc.insert()`` so ERPNext's own checks and the crew-to-assignment sync run.
 """
@@ -77,8 +84,8 @@ QUICK_ADD_MAX_HOURS = 400
 #: The timeline reason when an Undo puts the first half of a split back over a conflict.
 UNDO_REASON = "Undo on the Project Planner"
 DRAFT_REFUSAL = (
-	"Draft mode holds back changes to tasks that already exist; a new task cannot be a draft. "
-	"Turn Draft mode off to add it."
+	"Draft mode holds back changes to tasks that already exist, and a new task can be drafted; but a split "
+	"changes a task and creates another at once, which cannot be a draft. Turn Draft mode off to split it."
 )
 INTERVAL_DOCTYPE = planner_tracking.INTERVAL_DOCTYPE
 DRAFT_DOCTYPE = "Planner Draft Change"
@@ -95,6 +102,8 @@ NEEDS_TASKS_LIMIT = 200
 #: Task statuses that are not a task for the Needs tasks list: canceled work is no work. (Finished
 #: work is deliberately NOT here: a project whose tasks are all finished has had tasks.)
 NOT_A_TASK = ("Canceled", "Cancelled", "Template")
+#: The statuses of a canceled task (a copy from another project leaves them out).
+CANCELED_STATUSES = ("Canceled", "Cancelled")
 #: How many open tasks the build-out grid offers as things to depend on.
 BUILD_OUT_CONTEXT_TASKS = 300
 
@@ -386,11 +395,9 @@ def _has_intervals(name):
 
 
 def _insert(doc):
-	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings."""
-	log = pp._message_log()
-	mark = len(log) if log is not None else 0
-	doc.insert()
-	return pp._take_messages(log, mark)
+	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings. The one
+	insert behind every new Task, which Publish (``project_planner._create_new_tasks``) shares."""
+	return pp._insert_doc(doc)
 
 
 def _copy_credentials(target, source):
@@ -438,13 +445,18 @@ def duplicate_task(task, date=None, reason=None, draft=0):
 	description. An undated task's copy is undated, unless ``date`` is given (then it gets enough days
 	for its estimate, as a drop from the Unscheduled tray does).
 
-	Refused for a rental crew task, a group or template task, a task that is not a customer job, in
-	draft mode, and without create permission. A copy that would overbook someone answers
-	``{"needs_reason": True, "conflicts"}`` and creates nothing. Returns ``{"name", "modified",
-	"created": True, "source", "card", "warnings", "conflicts"}``.
+	Refused for a rental crew task, a group or template task, a task that is not a customer job, and
+	without create permission. A copy that would overbook someone answers ``{"needs_reason": True,
+	"conflicts"}`` and creates nothing. Returns ``{"name", "modified", "created": True, "source",
+	"card", "warnings", "conflicts"}``.
+
+	``draft=1`` (v1.603.0): every check above is made, then the copy is kept as a ``New task`` Draft
+	row instead of a Task (``project_planner.store_new_draft``): it returns ``{"drafted": True, "name":
+	"draft-new:<row>", "source", "modified", "card", "warnings", "conflicts"}`` and the conflicts are
+	only information, since drafting never asks for a reason.
 	"""
 	pp._require_planner()
-	_refuse_draft(draft)
+	drafting = bool(cint(pp.given(draft)))
 	_require_create()
 	doc = frappe.get_doc("Task", task)
 	doc.check_permission("read")
@@ -473,15 +485,30 @@ def duplicate_task(task, date=None, reason=None, draft=0):
 	)
 	conflicts = engine.preview_batch([(preview, crew)]) if engine.task_span(preview) else {}
 	reason = (pp.given(reason) or "").strip()
-	if conflicts and not reason:
+	if conflicts and not reason and not drafting:
 		return {"needs_reason": True, "conflicts": conflicts}
 
-	new = frappe.get_doc(values)
-	pp._set_crew(new, crew, crew)
-	_copy_credentials(new, doc)
-	if doc.get("custom_equipment"):
-		pp._set_equipment(new, pp.equipment_payload(doc.get("custom_equipment")))
+	# The same spec builds the live copy and the drafted one (project_planner.task_from_spec).
+	spec = {
+		"op": "duplicate",
+		"source": doc.name,
+		"values": {key: value for key, value in values.items() if key != "doctype"},
+		"crew": pp.crew_payload(crew),
+		"keep_crew": [member.get("resource") for member in crew if member.get("resource")],
+		"credentials": [
+			row.get("credential_type")
+			for row in (doc.get("custom_required_credentials") or [])
+			if row.get("credential_type")
+		],
+		"equipment": pp.equipment_payload(doc.get("custom_equipment"))
+		if doc.get("custom_equipment")
+		else None,
+		"depends_on": [],
+	}
+	new = pp.task_from_spec(spec)
 	new.check_permission("create")
+	if drafting:
+		return dict(pp.store_new_draft(spec, new, conflicts), source=doc.name)
 	warnings = _insert(new)
 	if conflicts:
 		_comment_reason(
@@ -666,7 +693,9 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 	and both get a timeline note. All or nothing, in one savepoint.
 
 	Refused for a rental crew task, a task with time on a timesheet or clocked at the kiosk (Job
-	Interval), a finished, group or template task, in draft mode, and without create permission;
+	Interval), a finished, group or template task, in draft mode (a split changes a task that exists
+	and creates another at once, which no single draft row can hold: v1.603.0 drafts the other
+	three ways to add a task, not this one), and without create permission;
 	``modified`` is the optimistic lock, as for ``save_task``. A split that would overbook someone
 	answers ``needs_reason`` and writes nothing. Returns ``{"name", "modified", "card", "first":
 	{start, end, expected_time}, "second": {name, modified, start, end, expected_time, card},
@@ -679,11 +708,7 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 	page hands the list back to :func:`remove_created_task` so the Undo can put them back.
 	"""
 	pp._require_planner()
-	_refuse_draft(
-		draft,
-		"Draft mode holds back changes to tasks that already exist; a split makes a new task, which "
-		"cannot be a draft. Turn Draft mode off to split it.",
-	)
+	_refuse_draft(draft)
 	_require_create()
 	doc = pp._load(task, modified)
 	_refuse_split(doc)
@@ -781,7 +806,8 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 			new.add_comment(
 				"Comment",
 				_("Tasks that waited on {0} now wait on this one: {1}.").format(
-					frappe.utils.escape_html(doc.name), ", ".join(frappe.utils.escape_html(n) for n in repointed)
+					frappe.utils.escape_html(doc.name),
+					", ".join(frappe.utils.escape_html(n) for n in repointed),
 				),
 			)
 		if conflicts:
@@ -815,10 +841,14 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 # ---------------------------------------------------------------------- quick add
 
 
-def _project_task_rows(project, names=None):
+def _project_task_rows(project, names=None, draft=False):
 	"""``{name: row}`` of the project's Tasks (``name``, ``subject``, ``status``, ``is_group``,
 	``is_template``, ``exp_end_date``), or just ``names`` of them, in ONE read. A name that is not on
-	this project is simply absent, which is how every caller tells "not here" from "here"."""
+	this project is simply absent, which is how every caller tells "not here" from "here".
+
+	``draft`` (v1.603.0, a drafting build-out) adds the caller's own drafted new tasks of the project
+	under their ``draft-new:`` names, so a second grid can file a task under a phase, or make it wait
+	on a task, the first one drafted. Without it a ``draft-new:`` name is simply "not a task of"."""
 	filters = {"project": project}
 	if names is not None:
 		filters["name"] = ["in", sorted(names)]
@@ -828,7 +858,33 @@ def _project_task_rows(project, names=None):
 		fields=["name", "subject", "status", "is_group", "is_template", "exp_end_date"],
 		limit_page_length=0,
 	)
-	return {row.get("name"): row for row in rows}
+	out = {row.get("name"): row for row in rows}
+	if draft:
+		for row in _drafted_task_rows(project):
+			if names is None or row["name"] in names:
+				out[row["name"]] = row
+	return out
+
+
+def _drafted_task_rows(project):
+	"""The caller's drafted new tasks of ``project``, in the shape of :func:`_project_task_rows`."""
+	rows, _duplicates = pp._draft_rows()
+	out = []
+	for row in rows:
+		if not pp.is_new_row(row) or row.get("project") != project:
+			continue
+		values = pp.load_spec(row.get("payload"))["values"]
+		out.append(
+			{
+				"name": pp.draft_ref(row.get("name")),
+				"subject": values.get("subject") or row.get("subject"),
+				"status": "Open",
+				"is_group": cint(values.get("is_group")),
+				"is_template": 0,
+				"exp_end_date": values.get("exp_end_date"),
+			}
+		)
+	return out
 
 
 def _is_finished(row):
@@ -854,7 +910,7 @@ def _check_phase(name, rows, project, number=None):
 		)
 	if _is_finished(row):
 		frappe.throw(_("{0} is finished, so nothing new can go under it.").format(label))
-	if not frappe.has_permission("Task", "read", doc=name):
+	if not pp.is_draft_ref(name) and not frappe.has_permission("Task", "read", doc=name):
 		frappe.throw(_("You cannot read {0}.").format(label), frappe.PermissionError)
 	return row
 
@@ -867,7 +923,7 @@ def _check_predecessor(name, rows, project, number=None):
 		frappe.throw(_("{0} is not a task of {1}.").format(label, project))
 	if cint(row.get("is_group")):
 		frappe.throw(_("{0} is a phase. A task can wait on another task, not on a phase.").format(label))
-	if not frappe.has_permission("Task", "read", doc=name):
+	if not pp.is_draft_ref(name) and not frappe.has_permission("Task", "read", doc=name):
 		frappe.throw(_("You cannot read {0}.").format(label), frappe.PermissionError)
 	return row
 
@@ -920,7 +976,12 @@ def quick_add_task(
 	holds spread over the next weekdays, as a drop from the Unscheduled tray does
 	(``crew_availability.span_for_estimate``). ``tentative`` makes it a pencil. Created as the caller
 	(``check_permission("create")``), on a customer job only. A task that would overbook the person
-	answers ``{"needs_reason": True, "conflicts"}`` and creates nothing. Refused in draft mode.
+	answers ``{"needs_reason": True, "conflicts"}`` and creates nothing.
+
+	``draft=1`` (v1.603.0): every check is made, then the task is kept as a ``New task`` Draft row
+	instead of a Task (``project_planner.store_new_draft``). It returns ``{"drafted": True, "name":
+	"draft-new:<row>", "modified", "card", "warnings", "conflicts"}``; conflicts are information, and
+	nothing asks for a reason until Publish.
 
 	Every argument after ``draft`` is optional and new in v1.602.0 (the richer quick add); leave them
 	all out and the task is exactly what it always was:
@@ -941,7 +1002,7 @@ def quick_add_task(
 	Returns ``{"name", "modified", "created": True, "card", "warnings", "conflicts"}``.
 	"""
 	pp._require_planner()
-	_refuse_draft(draft)
+	drafting = bool(cint(pp.given(draft)))
 	_require_create()
 	subject = clean_text(pp.given(subject))
 	if not subject:
@@ -1026,10 +1087,13 @@ def quick_add_task(
 	for name in needs:
 		_check_predecessor(name, rows, project)
 
-	new = frappe.get_doc(values)
-	for name in needs:
-		new.append("depends_on", {"task": name, "subject": rows[name].get("subject")})
-	pp._set_crew(new, crew, [])  # an unknown or inactive person is refused here
+	spec = {
+		"op": "quick_add",
+		"values": {key: value for key, value in values.items() if key in pp.SPEC_VALUE_KEYS},
+		"crew": crew,
+		"depends_on": [{"task": name, "subject": rows[name].get("subject")} for name in needs],
+	}
+	new = pp.task_from_spec(spec)  # an unknown or inactive person is refused here
 
 	preview = dict(
 		values,
@@ -1046,6 +1110,9 @@ def quick_add_task(
 		waiting = pp.dependency_conflicts(preview, list(pp._task_rows(needs).values()))
 		if waiting:
 			conflicts = dict(conflicts, **{pp.DEPENDENCY_KEY: waiting})
+	if drafting:
+		new.check_permission("create")
+		return pp.store_new_draft(spec, new, conflicts)
 	reason = (pp.given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts}
@@ -1223,43 +1290,57 @@ def build_out_tasks(project, rows, draft=0):
 	Every row is checked before anything is written (a row's mistake is named by its number), then the
 	phases are made, then the tasks in an order where each comes after what it waits on (the grid's
 	own order when it already is). Created as the caller (``check_permission("create")``), on a
-	customer job only, never in draft mode (a task that does not exist yet has nothing to be a draft
-	of), and all or nothing: a task ERPNext refuses fails the request, which Frappe rolls back. No
-	person and no day is picked: the tasks are undated and crewless, so they wait in the Unscheduled
-	tray. Returns ``{"project", "count", "phases": [{name, subject, modified}], "tasks": [{name, row,
-	subject, modified, parent_task, depends_on}], "warnings"}`` (``phases`` only the new ones, the
-	tasks in the grid's order). ``remove_built_out_tasks`` undoes it with those names and stamps.
+	customer job only, and all or nothing: a task ERPNext refuses fails the request, which Frappe
+	rolls back. No person and no day is picked: the tasks are undated and crewless, so they wait in
+	the Unscheduled tray. Returns ``{"project", "count", "phases": [{name, subject, modified}],
+	"tasks": [{name, row, subject, modified, parent_task, depends_on}], "warnings"}`` (``phases`` only
+	the new ones, the tasks in the grid's order). ``remove_built_out_tasks`` undoes it with those
+	names and stamps.
+
+	``draft=1`` (v1.603.0): the same checks, row by row with the rows numbered, then every phase and
+	task is kept as a ``New task`` Draft row instead of a Task (``project_planner.insert_new_draft``),
+	in the same order, so a row that waits on another waits on its ``draft-new:<row>`` name, and a
+	drafted task is filed under a drafted phase the same way. The answer has the same shape with
+	``draft-new:`` names and ``"drafted": True``; nothing is a Task until Publish. A grid may also
+	name, as a phase or as something to wait on, a task an earlier drafted build-out made
+	(``get_build_out_context(draft=1)`` offers them).
 	"""
 	pp._require_planner()
-	_refuse_draft(draft)
+	drafting = bool(cint(pp.given(draft)))
 	_require_create()
 	project = pp.given(project)
 	if not project or not frappe.db.exists("Project", project):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
 	items = _build_rows(rows)
-	known = _project_task_rows(project)
+	known = _project_task_rows(project, draft=drafting)
 	plan = _plan_build_out(project, items, known)
+	if drafting:
+		pp.require_draft_room(len(items) + len(plan["phases"]))
 
+	# Each phase and task is a spec, built into a document by the one function that builds a Task
+	# (project_planner.task_from_spec) for the live insert and for a drafted row alike.
 	warnings, phase_names, made_phases = [], {}, []
 	for key, title in zip(plan["phase_keys"], plan["phases"], strict=True):
-		doc = frappe.get_doc(
-			{"doctype": "Task", "subject": title, "project": project, "status": "Open", "is_group": 1}
-		)
+		spec = {"op": "build_out", "values": {"subject": title, "project": project, "is_group": 1}}
+		doc = pp.task_from_spec(spec)
 		doc.check_permission("create")
-		warnings.extend(_insert_row(doc, _("Phase {0}").format(title)))
-		phase_names[key] = doc.name
+		if drafting:
+			doc = pp.insert_new_draft(spec)
+			phase_names[key] = pp.draft_ref(doc.get("name"))
+		else:
+			warnings.extend(_insert_row(doc, _("Phase {0}").format(title)))
+			phase_names[key] = doc.name
 		made_phases.append(doc)
 
 	names = {}
 	made = {}
+	specs = {}
 	for index in plan["order"]:
 		item = items[index]
 		values = {
-			"doctype": "Task",
 			"subject": item["subject"],
 			"project": project,
-			"status": "Open",
 			"expected_time": item["hours"],
 		}
 		if item["crew_size"]:
@@ -1269,20 +1350,40 @@ def build_out_tasks(project, rows, draft=0):
 			values["parent_task"] = ref
 		elif kind == "new":
 			values["parent_task"] = phase_names[ref]
-		doc = frappe.get_doc(values)
-		for other in sorted(plan["waits"].get(index) or ()):
-			doc.append("depends_on", {"task": names[other], "subject": items[other]["subject"]})
-		for task in plan["existing"].get(index) or ():
-			doc.append("depends_on", {"task": task, "subject": known[task].get("subject")})
+		waiting = [
+			{"task": names[other], "subject": items[other]["subject"]}
+			for other in sorted(plan["waits"].get(index) or ())
+		]
+		waiting += [
+			{"task": task, "subject": known[task].get("subject")}
+			for task in plan["existing"].get(index) or ()
+		]
+		spec = {"op": "build_out", "row": item["number"], "values": values, "depends_on": waiting}
+		doc = pp.task_from_spec(spec)
 		doc.check_permission("create")
-		warnings.extend(_insert_row(doc, _("Row {0} ({1})").format(item["number"], item["subject"])))
-		names[index] = doc.name
+		if drafting:
+			doc = pp.insert_new_draft(spec)
+			names[index] = pp.draft_ref(doc.get("name"))
+		else:
+			warnings.extend(_insert_row(doc, _("Row {0} ({1})").format(item["number"], item["subject"])))
+			names[index] = doc.name
 		made[index] = doc
+		specs[index] = spec
 
 	# The phases were saved again as each child was added (ERPNext lists a child among its parent's
-	# dependencies), so the stamp the Undo compares against is read last.
+	# dependencies), so the stamp the Undo compares against is read last. A drafted phase is not a
+	# Task: its stamp is its Draft row's own.
 	phases = []
 	for doc in made_phases:
+		if drafting:
+			phases.append(
+				{
+					"name": pp.draft_ref(doc.get("name")),
+					"subject": doc.get("subject"),
+					"modified": str(doc.get("modified")),
+				}
+			)
+			continue
 		stamp = frappe.db.get_value("Task", doc.name, "modified")
 		phases.append(
 			{"name": doc.name, "subject": doc.get("subject"), "modified": str(stamp or doc.modified)}
@@ -1293,32 +1394,44 @@ def build_out_tasks(project, rows, draft=0):
 			"row": items[index]["number"],
 			"subject": items[index]["subject"],
 			"modified": str(made[index].modified),
-			"parent_task": made[index].get("parent_task") or None,
-			"depends_on": [row.get("task") for row in (made[index].get("depends_on") or [])],
+			"parent_task": specs[index]["values"].get("parent_task") or None,
+			"depends_on": [row.get("task") for row in specs[index]["depends_on"]],
 		}
 		for index in range(len(items))
 	]
-	return {"project": project, "count": len(tasks), "phases": phases, "tasks": tasks, "warnings": warnings}
+	answer = {"project": project, "count": len(tasks), "phases": phases, "tasks": tasks, "warnings": warnings}
+	if drafting:
+		answer["drafted"] = True
+	return answer
 
 
 @frappe.whitelist()
-def get_build_out_context(project):
+def get_build_out_context(project, draft=0):
 	"""What the Build out grid offers for ``project``: ``{"project", "title", "phases": [{name,
 	subject}], "tasks": [{name, subject, status}], "truncated", "can_create"}``.
 
 	``phases`` are the project's open group Tasks (what a row can be filed under); ``tasks`` its open
 	plain Tasks (what a row can wait on), at most 300, one read for both. A project that is not a
-	customer job is refused, as everywhere on the planner.
+	customer job is refused, as everywhere on the planner. ``draft=1`` (v1.603.0) also lists the
+	caller's drafted new phases and tasks of the project, under their ``draft-new:`` names and marked
+	``"draft": True``, so a drafting grid can build on what an earlier one drafted.
 	"""
 	pp._require_planner()
 	project = pp.given(project)
 	if not project or not frappe.db.exists("Project", project):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
-	rows = [row for row in _project_task_rows(project).values() if not _is_finished(row)]
+	rows = [
+		row
+		for row in _project_task_rows(project, draft=bool(cint(pp.given(draft)))).values()
+		if not _is_finished(row)
+	]
 	phases = sorted(
 		(
-			{"name": row.get("name"), "subject": row.get("subject") or row.get("name")}
+			dict(
+				{"name": row.get("name"), "subject": row.get("subject") or row.get("name")},
+				**({"draft": True} if pp.is_draft_ref(row.get("name")) else {}),
+			)
 			for row in rows
 			if cint(row.get("is_group"))
 		),
@@ -1326,11 +1439,14 @@ def get_build_out_context(project):
 	)
 	tasks = sorted(
 		(
-			{
-				"name": row.get("name"),
-				"subject": row.get("subject") or row.get("name"),
-				"status": row.get("status"),
-			}
+			dict(
+				{
+					"name": row.get("name"),
+					"subject": row.get("subject") or row.get("name"),
+					"status": row.get("status"),
+				},
+				**({"draft": True} if pp.is_draft_ref(row.get("name")) else {}),
+			)
 			for row in rows
 			if not cint(row.get("is_group"))
 		),
@@ -1344,6 +1460,152 @@ def get_build_out_context(project):
 		"truncated": len(tasks) > BUILD_OUT_CONTEXT_TASKS,
 		"can_create": bool(frappe.has_permission("Task", "create")),
 	}
+
+
+def _copy_order(task):
+	return (cint(task.get("lft")), cint(task.get("idx")), str(task.get("creation") or ""), task.get("name"))
+
+
+def copy_plan(tasks, depends, cap=BUILD_OUT_MAX_ROWS):
+	"""A project's tasks as the starting rows of a build-out grid: ``{"rows", "count", "total",
+	"truncated", "dropped_dependencies", "skipped": {"templates", "canceled"}}``. Pure.
+
+	``tasks`` are Task rows (``name``, ``subject``, ``status``, ``is_group``, ``is_template``,
+	``parent_task``, ``expected_time``, ``custom_crew_size``, ``lft``, ``idx``, ``creation``) and
+	``depends`` the ``Task Depends On`` rows (``parent`` waits on ``task``) of the same project.
+
+	* Only the **leaf** tasks are rows; a group is a phase, and its subject is the ``phase`` of the
+	  leaves directly under it. Templates and canceled tasks are skipped (and counted); finished tasks
+	  are copied, since a finished job is the best template there is.
+	* Order is the project's own: the phases in tree order, the tasks of each in tree order
+	  (``lft``, then ``idx``, then creation), tasks under no phase first. At most ``cap`` rows.
+	* ``needs`` are ``row:N`` (the N-th row returned, from 1) for each dependency whose task is among
+	  the rows; a dependency on anything else (a task not copied, a phase) is dropped and counted.
+	* Only subject, hours, phase and crew size are copied. Never dates, people, crew rows, assignments,
+	  status, timesheets, notes, addresses or anything else of the customer's.
+	"""
+	groups = sorted((t for t in tasks if cint(t.get("is_group"))), key=_copy_order)
+	rank = {group.get("name"): index for index, group in enumerate(groups)}
+	subjects = {group.get("name"): clean_text(group.get("subject")) for group in groups}
+	skipped = {"templates": 0, "canceled": 0}
+	leaves = []
+	for task in tasks:
+		if cint(task.get("is_group")):
+			continue
+		if cint(task.get("is_template")) or task.get("status") == "Template":
+			skipped["templates"] += 1
+		elif task.get("status") in CANCELED_STATUSES:
+			skipped["canceled"] += 1
+		elif clean_text(task.get("subject")):
+			leaves.append(task)
+	leaves.sort(key=lambda task: (rank.get(task.get("parent_task"), -1), *_copy_order(task)))
+	total = len(leaves)
+	leaves = leaves[:cap]
+	place = {task.get("name"): number for number, task in enumerate(leaves, start=1)}
+	waits, dropped = {}, set()
+	for row in depends or []:
+		child, needed = row.get("parent"), row.get("task")
+		if child not in place or not needed:
+			continue
+		if needed in place and needed != child:
+			waits.setdefault(child, set()).add(place[needed])
+		else:
+			dropped.add((child, needed))
+	rows = [
+		{
+			"subject": clean_text(task.get("subject"))[:SUBJECT_MAX],
+			"hours": round(flt(task.get("expected_time")), 2),
+			"phase": subjects.get(task.get("parent_task"), "")[:SUBJECT_MAX],
+			"crew_size": cint(task.get("custom_crew_size")),
+			"needs": [f"row:{number}" for number in sorted(waits.get(task.get("name"), ()))],
+		}
+		for task in leaves
+	]
+	return {
+		"rows": rows,
+		"count": len(rows),
+		"total": total,
+		"truncated": total > len(rows),
+		"dropped_dependencies": len(dropped),
+		"skipped": skipped,
+	}
+
+
+def _copy_note(plan):
+	"""The sentence under a loaded copy: what came across and what did not."""
+	parts = [
+		_("{0} tasks copied. Dates, people, notes and addresses are never copied.").format(plan["count"])
+	]
+	if plan["dropped_dependencies"]:
+		parts.append(
+			_("{0} dependencies on tasks that were not copied were left out.").format(
+				plan["dropped_dependencies"]
+			)
+		)
+	skipped = plan["skipped"]
+	if skipped["templates"] or skipped["canceled"]:
+		parts.append(
+			_("Left out: {0} template and {1} canceled tasks.").format(
+				skipped["templates"], skipped["canceled"]
+			)
+		)
+	if plan["truncated"]:
+		parts.append(_("Only the first {0} of {1} tasks were copied.").format(plan["count"], plan["total"]))
+	return " ".join(parts)
+
+
+@frappe.whitelist()
+def get_copy_source(project):
+	"""Another project's tasks as the starting rows of the Build out grid ("Copy from project...").
+
+	``project`` is any Project the caller can read, not only a customer job: it is a source of a
+	plan, nothing is written to it. Returns :func:`copy_plan`'s answer plus ``"project"``, ``"title"``
+	and a ``"note"`` sentence; each row is ``{"subject", "hours", "phase", "crew_size", "needs":
+	["row:N", ...]}``, ready for the grid, which creates them on ITS project (and, in Draft mode, as
+	drafts). Read-only, and Task read permission applies (``get_list``): a task the caller cannot read
+	is not copied.
+	"""
+	pp._require_planner()
+	project = clean_text(pp.given(project))
+	if not project or not frappe.db.exists("Project", project):
+		frappe.throw(_("Pick the project to copy from."))
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(
+			_("You cannot read {0}.").format(frappe.utils.escape_html(project)), frappe.PermissionError
+		)
+	fields = [
+		"name",
+		"subject",
+		"status",
+		"is_group",
+		"is_template",
+		"parent_task",
+		"expected_time",
+		"lft",
+		"idx",
+		"creation",
+	]
+	if pp._task_has_column("custom_crew_size"):
+		fields.append("custom_crew_size")
+	tasks = frappe.get_list("Task", filters={"project": project}, fields=fields, limit_page_length=0)
+	names = [t.get("name") for t in tasks if not cint(t.get("is_group"))]
+	depends = (
+		frappe.get_all(
+			"Task Depends On",
+			filters={"parenttype": "Task", "parent": ["in", names]},
+			fields=["parent", "task"],
+			limit_page_length=0,
+		)
+		if names
+		else []
+	)
+	plan = copy_plan(tasks, depends)
+	plan.update(
+		project=project,
+		title=frappe.db.get_value("Project", project, "project_name") or project,
+		note=_copy_note(plan),
+	)
+	return plan
 
 
 @frappe.whitelist()
@@ -1586,6 +1848,36 @@ def _restore_plan(restore):
 	return value
 
 
+def _discard_new(refs):
+	"""The Undo of drafted new tasks: mark the caller's Draft rows for ``refs`` (``draft-new:`` names)
+	Discarded. ``(discarded, gone)``. Refused, discarding none, while another of the caller's drafted
+	tasks (one not being discarded too) is filed under one of them or waits on one: it would be left
+	pointing at nothing. A row that is not the caller's, or not a Draft any more, is "gone"."""
+	rows, _duplicates = pp._draft_rows()
+	mine = {pp.draft_ref(row.get("name")): row for row in rows if pp.is_new_row(row)}
+	live = [ref for ref in dict.fromkeys(refs) if ref in mine]
+	gone = [ref for ref in dict.fromkeys(refs) if ref not in mine]
+	problems = []
+	for ref, row in mine.items():
+		hit = pp.spec_refs(pp.load_spec(row.get("payload"))) & set(live)
+		if ref not in live and hit:
+			problems.append(
+				_("{0} is filed under or waits on a task you are removing").format(row.get("subject") or ref)
+			)
+	if problems:
+		frappe.throw(
+			_("Nothing was removed. {0}. Discard those first.").format(
+				frappe.utils.escape_html("; ".join(problems))
+			),
+			title=_("Not undone"),
+		)
+	for ref in live:
+		draft = frappe.get_doc(DRAFT_DOCTYPE, mine[ref].get("name"))
+		draft.status = pp.DISCARDED
+		draft.save()
+	return live, gone
+
+
 @frappe.whitelist(methods=["POST"])
 def remove_created_task(task, modified, restore=None):
 	"""Undo a task the planner just created (a duplicate, a quick add, a split's second half).
@@ -1604,6 +1896,10 @@ def remove_created_task(task, modified, restore=None):
 	the Undo; a task that started waiting on the second half after the split does.
 	"""
 	pp._require_planner()
+	if pp.is_draft_ref(task):
+		# v1.603.0: the Undo of a drafted quick add or duplicate discards its Draft row. There is no Task.
+		live, gone = _discard_new([task])
+		return {"removed": task, "name": task, "discarded": bool(live), "gone": gone, "warnings": []}
 	doc = frappe.get_doc("Task", task)
 	plan = _restore_plan(restore)
 	moved = [name for name in (pp.parse_list(pp.given(plan.get("dependents"))) or [])] if plan else []
@@ -1712,6 +2008,18 @@ def remove_built_out_tasks(tasks, phases=None):
 	leaves, groups = _undo_items(tasks), _undo_items(phases)
 	if not leaves and not groups:
 		frappe.throw(_("Nothing to undo."))
+	drafted = [pp.is_draft_ref(name) for name, _stamp in leaves + groups]
+	if any(drafted):
+		# v1.603.0: the Undo of a drafting build-out discards its Draft rows (there is no Task to delete).
+		if not all(drafted):
+			frappe.throw(_("Drafted and saved tasks cannot be undone together."))
+		live, gone = _discard_new([name for name, _stamp in leaves + groups])
+		return {
+			"removed": [name for name, _stamp in leaves if name in live],
+			"phases": [name for name, _stamp in groups if name in live],
+			"gone": gone,
+			"discarded": True,
+		}
 	docs, gone = {}, []
 	for name, _stamp in leaves + groups:
 		if frappe.db.exists("Task", name):

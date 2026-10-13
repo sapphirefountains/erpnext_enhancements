@@ -22,6 +22,12 @@ Three ways work reaches Google, all safe to run twice:
   event without our properties is somebody else's and is never touched. A 410 drops the token and
   lists in full.
 
+**Route times (C3, v1.605.0).** :func:`reconcile` runs every item through ``timing.attach``, which
+times a route stop in the near window from its lead's route (see ``timing.py``). Moving one stop
+re-times every other stop that person drives that day, so an item job collects the days it touched
+(``timing.fan_out_days``) and queues one :func:`run_day_job` per day, coalesced (:func:`queue_day`):
+a publish of thirty tasks is thirty item jobs and a day job or two, never thirty squared.
+
 **The master switch.** With Calendar Sync Settings ``enabled`` off (its default) or no Google
 account authorized, every job returns before building a client, so there is no Google call at all.
 :func:`plan` (the preview) works either way and never writes: neither Google nor the database.
@@ -36,7 +42,7 @@ import time
 
 import frappe
 
-from erpnext_enhancements.project_enhancements.calendar_sync import google_api, payload, sources
+from erpnext_enhancements.project_enhancements.calendar_sync import google_api, payload, sources, timing
 
 SETTINGS = "Calendar Sync Settings"
 LINK = "Calendar Sync Link"
@@ -48,6 +54,8 @@ ROLE_FIELDS = {
 }
 
 REPAIR_SECONDS = 20 * 60
+DAY_JOB = "erpnext_enhancements.project_enhancements.calendar_sync.engine.run_day_job"
+DAY_JOB_ID = "calendar_sync::day::{day}"
 SNAP_PAGES = 40
 SNAP_ACTIONS = 300
 PREVIEW_MAX_DAYS = 400
@@ -242,6 +250,8 @@ def reconcile(item, doc=None, client=None, dry_run=False, force=False):
 		_save_link(link, item, ref, status="Deleted", last_synced=_now(), last_error="", error_count=0)
 		return "delete", link.get("title")
 
+	# C3: a route stop in the near window gets its route's times; the preview never asks Google.
+	item = timing.attach(item, doc, link, google=not dry_run)
 	calendar_id = calendar_ids(doc).get(item.get("calendar"))
 	body = payload.build_event(item, site(), color_overrides(doc))
 	if not calendar_id:
@@ -280,6 +290,7 @@ def reconcile(item, doc=None, client=None, dry_run=False, force=False):
 		calendar_id=calendar_id,
 		event_id=event_id,
 		event_date=item.get("start"),
+		timing=timing.stored_value(item),
 		content_hash=digest,
 		etag=(event or {}).get("etag") or "",
 		last_synced=_now(),
@@ -312,14 +323,24 @@ def _auth_failed(exc):
 		pass
 
 
-def sync_ref(doctype, name, key=None, doc=None, client=None):
-	"""Reconcile one source record. Returns the action. Never raises except on a refused sign-in."""
+def sync_ref(doctype, name, key=None, doc=None, client=None, fan_out=None):
+	"""Reconcile one source record. Returns the action. Never raises except on a refused sign-in.
+
+	``fan_out`` (a set) collects the days whose other route stops must be re-timed because this
+	record synced (C3, ``timing.fan_out_days``); the caller queues them (:func:`queue_days`).
+	"""
 	doc = doc or settings()
 	try:
 		item = sources.item_for(doctype, name, key)
 	except Exception:
 		_log_failure("Calendar sync: could not read a record")
 		return "error"
+	if fan_out is not None:
+		try:
+			before = get_link(payload.source_ref(doctype, name, key))
+			fan_out.update(timing.fan_out_days(item, before, doc))
+		except Exception:
+			_log_failure("Calendar sync: could not work out which days to re-time")
 	try:
 		action, _title = reconcile(item, doc, client or google_api.Client())
 	except google_api.GoogleAuthError:
@@ -335,12 +356,113 @@ def run_item_job(doctype, name, key=None):
 	doc = settings()
 	if not is_on(doc):
 		return
+	days = set()
 	try:
-		sync_ref(doctype, name, key, doc)
+		sync_ref(doctype, name, key, doc, fan_out=days)
+	except google_api.GoogleAuthError as exc:
+		_auth_failed(exc)
+		return
+	except Exception:
+		_log_failure("Calendar sync: item job failed")
+	queue_days(days)
+
+
+# ---------------------------------------------------------------------- C3: re-time a whole day
+
+
+def _job_state(job_id):
+	"""``"queued"``, ``"started"``, another RQ status or None. Never raises."""
+	try:
+		from frappe.utils.background_jobs import get_job
+
+		job = get_job(job_id)
+		if not job:
+			return None
+		state = job.get_status(refresh=False)
+		return str(getattr(state, "value", state) or "")
+	except Exception:
+		return None
+
+
+def queue_day(day):
+	"""Queue :func:`run_day_job` for ``day`` after commit, coalesced. True when one was queued.
+
+	A publish of thirty tasks on one day runs thirty item jobs, and each of them asks for that day;
+	this keeps it to **at most one queued day job per day** (``deduplicate`` on a stable ``job_id``).
+	A queued one has not read anything yet, so it will see this change and nothing more is needed.
+	A *running* one may have read the day before this change committed, so a second slot
+	(``::again``) takes one more run; with both busy the request is dropped and the nightly repair
+	re-times the day. So the work is O(items + days), never items squared.
+	"""
+	base = DAY_JOB_ID.format(day=day)
+	for job_id in (base, f"{base}::again"):
+		state = _job_state(job_id)
+		if state == "queued":
+			return False
+		if state == "started":
+			continue
+		frappe.enqueue(
+			DAY_JOB,
+			queue="default",
+			enqueue_after_commit=True,
+			job_id=job_id,
+			deduplicate=True,
+			day=str(day),
+		)
+		return True
+	return False
+
+
+def queue_days(days):
+	"""Queue a day job for each of ``days`` (once each). Returns how many were queued. Never raises."""
+	queued = 0
+	for day in sorted(set(days or ())):
+		try:
+			queued += bool(queue_day(day))
+		except Exception:
+			_log_failure("Calendar sync: could not queue a day re-time")
+	return queued
+
+
+def _day_refs(day):
+	"""Every task and visit on ``day`` (the ones a route can time), for :func:`run_day_job`."""
+	return [ref for ref in sources.refs_in_window(day, day) if ref[0] in (sources.TASK, sources.VISIT)]
+
+
+def run_day_job(day):
+	"""Re-time every route stop on ``day`` (C3).
+
+	Moving one stop moves every other stop that person drives that day, so after an item syncs its
+	days come here. Each item is reconciled against its content hash, so a stop whose times did not
+	change costs no Google call. Fans out nothing itself. A no-op while the switch is off, and for a
+	day outside the near window (a past day keeps what it had; a far one is all-day anyway).
+	"""
+	from frappe.utils import getdate
+
+	doc = settings()
+	if not is_on(doc):
+		return
+	day = getdate(day)
+	if not timing.in_window(day, timing.near_window(doc, sources._today())):
+		return
+	client = google_api.Client()
+	try:
+		timing.load(day, day)
+		for doctype, name in _day_refs(day):
+			sync_ref(doctype, name, doc=doc, client=client)
+			frappe.db.commit()
+		for item in sources.projected_items(day, day):
+			try:
+				reconcile(item, doc, client)
+			except google_api.GoogleAuthError:
+				raise
+			except Exception:
+				_log_failure("Calendar sync: could not re-time a projected visit")
+			frappe.db.commit()
 	except google_api.GoogleAuthError as exc:
 		_auth_failed(exc)
 	except Exception:
-		_log_failure("Calendar sync: item job failed")
+		_log_failure("Calendar sync: day re-time failed")
 
 
 def run_project_job(project):
@@ -372,13 +494,17 @@ def run_project_job(project):
 	)
 	in_window = set(sources.refs_in_window(start, end))
 	client = google_api.Client()
+	days = set()
 	try:
 		for ref in refs:
 			if ref in in_window or ref[1] in linked:
-				sync_ref(ref[0], ref[1], doc=doc, client=client)
+				# An address change moves the drive to every stop of the day, not only this one's.
+				sync_ref(ref[0], ref[1], doc=doc, client=client, fan_out=days)
 				frappe.db.commit()
 	except google_api.GoogleAuthError as exc:
 		_auth_failed(exc)
+		return
+	queue_days(days)
 
 
 def sync_projections(doc=None, client=None, dry_run=False, start=None, end=None):
@@ -425,6 +551,7 @@ def run_projections_job():
 	if not is_on(doc):
 		return
 	try:
+		timing.prime(doc)
 		sync_projections(doc, google_api.Client())
 	except google_api.GoogleAuthError as exc:
 		_auth_failed(exc)
@@ -459,6 +586,9 @@ def full_repair(doc=None, budget=REPAIR_SECONDS):
 	doc = doc or settings()
 	start, end = repair_window(doc)
 	client = google_api.Client()
+	# C3: the near window's routes in one engine call. Past days reuse what they had and far ones
+	# are all-day, so no other day's route is ever priced.
+	timing.prime(doc)
 	counts = {}
 	began = time.monotonic()
 	finished = True
@@ -629,6 +759,7 @@ def plan(start, end):
 		frappe.throw(frappe._("Pick a range of {0} days or less.").format(PREVIEW_MAX_DAYS))
 	doc = settings()
 	rows, counts = [], {}
+	timing.prime(doc, google=False)
 	for doctype, name in _window_refs(start, end):
 		item = sources.item_for(doctype, name)
 		action, title = reconcile(item, doc, None, dry_run=True)

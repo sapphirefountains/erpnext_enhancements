@@ -70,7 +70,7 @@
    "label": "Site links and special instructions"
   },
   {
-   "description": "One link per line: the site's Google Sites pages. The first ones came from the old Maintenance Google calendar (calendar cutover, v1.609.0).",
+   "description": "One link per line: the site's Google Sites pages. The first ones came from the old Maintenance Google calendar (calendar cutover, v1.607.0).",
    "fieldname": "google_sites_links",
    "fieldtype": "Small Text",
    "label": "Google Sites links"

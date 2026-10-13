@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Calendar cutover (C5, v1.609.0): retire the hand-made Maintenance series without losing what they know.
+"""Calendar cutover (C5, v1.607.0): retire the hand-made Maintenance series without losing what they know.
 
 What this pins, because each of these fails quietly or on the one shared calendar everybody reads:
 

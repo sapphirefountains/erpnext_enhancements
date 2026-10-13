@@ -17,6 +17,10 @@ and the patch ``materialize_calendar_sync_settings`` does it once at install.
 that is negative or absurd. It never refuses a field nobody touched, so the page cannot become
 unsaveable the way Chat Settings once did.
 
+**Read time off from Google** (C4, v1.606.0, off by default) is a second switch under the first:
+``calendar_sync.time_off`` reads people's time off off the holidays calendar only while both are on,
+an account is authorized and the calendar ID is filled in. Ticking it queues one full read.
+
 The class name is the one Frappe derives (``doctype.replace(" ", "")``);
 ``tests/test_doctype_controller_names.py`` guards it.
 """
@@ -28,6 +32,8 @@ from frappe.model.document import Document
 SETTINGS_DOCTYPE = "Calendar Sync Settings"
 MAX_DAYS_BACK = 90
 MAX_DAYS_AHEAD = 730
+#: C3: route stops are timed this far ahead at most (each day is a priced route).
+MAX_TIMED_DAYS = 60
 CALENDAR_FIELDS = ("projects_calendar_id", "maintenance_calendar_id", "holidays_calendar_id")
 
 
@@ -40,6 +46,9 @@ class CalendarSyncSettings(Document):
 			frappe.throw(_("Days back must be between 0 and {0}.").format(MAX_DAYS_BACK))
 		if ahead not in (None, "") and not 1 <= int(ahead) <= MAX_DAYS_AHEAD:
 			frappe.throw(_("Days ahead must be between 1 and {0}.").format(MAX_DAYS_AHEAD))
+		timed = self.get("timed_days_ahead")
+		if timed not in (None, "") and not 0 <= int(timed) <= MAX_TIMED_DAYS:
+			frappe.throw(_("Timed route stops must be between 0 and {0} days ahead.").format(MAX_TIMED_DAYS))
 		seen = set()
 		for row in self.get("colors") or []:
 			if row.get("applies_to") in seen:
@@ -50,15 +59,36 @@ class CalendarSyncSettings(Document):
 				frappe.throw(_("Click Authorize with Google before switching sync on."))
 			if not any(self.get(field) for field in CALENDAR_FIELDS):
 				frappe.throw(_("Fill in at least one calendar ID before switching sync on."))
+		self._validate_time_off()
+
+	def _validate_time_off(self):
+		"""C4: *Read time off from Google* needs the switch, an account and the holidays calendar.
+		Checked only when it is being ticked (or the calendar cleared under it), so switching sync off
+		while it is ticked still saves; the read itself checks all three every run."""
+		if not int(self.get("read_time_off") or 0):
+			return
+		if not self.get("holidays_calendar_id"):
+			frappe.throw(
+				_("Fill in the Company Holidays & Vacations calendar ID before reading time off from it.")
+			)
+		before = self.get_doc_before_save()
+		if before is not None and int(before.get("read_time_off") or 0):
+			return
+		if not int(self.get("enabled") or 0):
+			frappe.throw(_("Switch sync on before reading time off from Google."))
 
 	def on_update(self):
-		"""Switched on, or a calendar changed while on: repair the window straight away."""
+		"""Switched on, or a calendar changed while on: repair the window straight away. *Read time
+		off from Google* just ticked, or its calendar changed: read the window in straight away."""
+		self._queue_time_off_read()
 		try:
 			before = self.get_doc_before_save()
 			if not int(self.get("enabled") or 0):
 				return
 			changed = before is None or not int(before.get("enabled") or 0)
 			changed = changed or any(before.get(f) != self.get(f) for f in CALENDAR_FIELDS)
+			# C3: a different near window re-times (or un-times) the days that moved in or out of it.
+			changed = changed or before.get("timed_days_ahead") != self.get("timed_days_ahead")
 			changed = changed or [(r.applies_to, r.color_id) for r in before.get("colors") or []] != [
 				(r.applies_to, r.color_id) for r in self.get("colors") or []
 			]
@@ -72,6 +102,24 @@ class CalendarSyncSettings(Document):
 				)
 		except Exception:
 			frappe.log_error(title="Calendar sync: repair not queued", message=frappe.get_traceback())
+
+	def _queue_time_off_read(self):
+		try:
+			if not int(self.get("read_time_off") or 0) or not int(self.get("enabled") or 0):
+				return
+			before = self.get_doc_before_save()
+			if (
+				before is not None
+				and int(before.get("read_time_off") or 0)
+				and int(before.get("enabled") or 0)
+				and before.get("holidays_calendar_id") == self.get("holidays_calendar_id")
+			):
+				return
+			from erpnext_enhancements.project_enhancements.calendar_sync import time_off
+
+			time_off.queue_full_read()
+		except Exception:
+			frappe.log_error(title="Calendar time off: read not queued", message=frappe.get_traceback())
 
 
 def missing_defaults(fields, stored):

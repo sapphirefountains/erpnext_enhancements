@@ -13,7 +13,7 @@ this pins, because each can fail quietly:
   is an open phase of the project already is that phase; a dependency is another row or a task of
   the same project, never a phase or another project's; a loop of rows is refused with the rows
   named (and a row waiting on itself); tasks are made in an order where each follows what it waits
-  on. Created as the caller, on a customer job only, never in draft mode.
+  on. Created as the caller, on a customer job only (and, since v1.603.0, as drafts in draft mode).
 * **Its Undo** (``remove_built_out_tasks``) removes the lot or nothing: anything attached since to
   any one of them (time, a file, someone else's comment, a changed field, a dependent that is not
   part of the build-out, a sub-task nobody here made) stops all of it. Never ``force``.
@@ -381,9 +381,7 @@ class TestRicherQuickAdd(_Site):
 				self.quick(**kwargs)
 		self.assertEqual(self.frappe.inserted, [])
 
-	def test_draft_mode_and_permissions_still_refuse(self):
-		with self.assertRaises(_Throw):
-			self.quick(draft=1, parent_task="TASK-P1")
+	def test_permissions_still_refuse(self):
 		self.frappe.perms["create"] = False
 		with self.assertRaises(_PermissionError):
 			self.quick()
@@ -583,9 +581,11 @@ class TestBuildOut(_Site):
 		with self.assertRaises(_Throw):
 			self.build([{"subject": "x"}], project=None)
 
-	def test_never_in_draft_mode_and_only_with_create_permission(self):
-		self.refused([{"subject": "x"}], "Draft mode", draft=1)
-		self.refused([{"subject": "x"}], "Draft mode", draft="1")
+	def test_only_with_create_permission_even_as_a_draft(self):
+		self.frappe.perms["create"] = False
+		with self.assertRaises(_PermissionError):
+			self.build([{"subject": "x"}], draft=1)
+		self.frappe.perms["create"] = True
 		self.frappe.perms["create"] = False
 		with self.assertRaises(_PermissionError):
 			self.build([{"subject": "x"}])
@@ -1074,6 +1074,7 @@ const out = {};
 		p6_menu_providers: [],
 		p6_legend_providers: [],
 		p6b_refuse_in_draft: () => false,
+		draft_args() { return this.draft_on ? { draft: 1 } : {}; },
 		send: (method, args, opts) => { sent.push([method, args, opts]); return Promise.resolve({}); },
 		load: () => undone.push("load"),
 		render_trays: () => undone.push("trays"),
@@ -1110,7 +1111,7 @@ const out = {};
 	out.sent = sent.map(([method, args, opts]) => [method, JSON.parse(args.tasks), JSON.parse(args.phases), opts.message]);
 	// Quick add (Phase 6B's dialog): only what was filled in is sent.
 	const created = [];
-	const qa = Object.assign(Object.create(ctx.B), { p6b_create: (method, args, subject, message) => { created.push([method, args, subject, message]); return null; } });
+	const qa = Object.assign(Object.create(ctx.B), { draft_args: () => ({}), p6b_create: (method, args, subject, message) => { created.push([method, args, subject, message]); return null; } });
 	const panel = { hide: () => null };
 	const base = { project: "PRJ-1", subject: " Fix ", date: "2026-10-13", hours: "3", resource: "RES-1", tentative: 1 };
 	qa.p6b_quick_add_save(panel, base);
@@ -1137,6 +1138,7 @@ const out = {};
 		today: () => "2026-10-13",
 		resource_label: (name) => name,
 		p6b_refuse_in_draft: () => false,
+		draft_args: () => ({}),
 		p6b_panel: (opts) => {
 			const ask = () => opts.fields.forEach((df) => {
 				if (df.get_data) df.get_data("");
@@ -1332,7 +1334,7 @@ class TestPageSource(unittest.TestCase):
 		# Never a side door to a write; the two reads are plain frappe.calls.
 		self.assertEqual(
 			set(re.findall(r"frappe\.call\(\{ method: `\$\{PPT1\.actions\}\.(\w+)`", block)),
-			{"get_projects_needing_tasks", "get_build_out_context"},
+			{"get_projects_needing_tasks", "get_build_out_context", "get_copy_source"},
 		)
 
 	def test_back_and_forward_belong_to_the_kit_drawer(self):
@@ -1352,9 +1354,10 @@ class TestPageSource(unittest.TestCase):
 			self.assertNotIn(forbidden, bare, forbidden)
 		self.assertIn("kit.drawer.open({", bare)
 		self.assertIn("reopen: () => this.t1_open_build_out(project, title)", bare)
-		# What was typed is kept for a Back that closes the panel, and Draft mode is refused.
+		# What was typed is kept for a Back that closes the panel. (v1.603.0: Draft mode no longer refuses
+		# it; Create sends draft=1 instead, see test_planner_draft_new_tasks.)
 		self.assertIn("this.t1.drafts[project]", bare)
-		self.assertGreaterEqual(bare.count("this.p6b_refuse_in_draft()"), 2)
+		self.assertNotIn("p6b_refuse_in_draft", bare)
 
 	def test_every_method_is_t1_prefixed_and_defined_once(self):
 		table = self.block[self.block.index("const PPT1_METHODS = {") :]

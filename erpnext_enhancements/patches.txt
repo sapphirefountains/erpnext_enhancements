@@ -1313,3 +1313,14 @@ erpnext_enhancements.patches.stamp_visit_date_on_pending_review
 # (sync tokens, last-run stamps). Write a tabSingles row for every declared default that has none, so the first
 # state write cannot blank days_back/days_ahead. Never over a stored value; switches nothing on; cannot raise.
 erpnext_enhancements.patches.materialize_calendar_sync_settings
+
+# Calendar sync C3 (v1.605.0): route stops get real times and a leave-by line; opt-in leave-by pings. New Single fields
+# Calendar Sync Settings.timed_days_ahead (14), Project Planner Settings.leave_by_pings (0) and leave_by_ping_minutes (10).
+# A default never reaches a Single's existing row, so write a row for each that has none (never over a stored value).
+# Switches nothing on; cannot raise; safe twice.
+erpnext_enhancements.patches.materialize_route_timing_settings
+
+# Calendar time off in (C4, v1.606.0): Calendar Sync Settings gained Read time off from Google (default 0) and its
+# read state. Write a tabSingles row for each new field that has none, so the read's first state write cannot blank
+# the rest. Never over a stored value; switches nothing on; cannot raise.
+erpnext_enhancements.patches.materialize_calendar_time_off_settings

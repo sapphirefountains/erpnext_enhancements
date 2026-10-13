@@ -1420,6 +1420,13 @@ scheduler_events = {
 			# without this site's private ERPNext properties are other people's and never touched.
 			# A no-op while Calendar Sync Settings is off. See calendar_sync/engine.py.
 			"erpnext_enhancements.project_enhancements.calendar_sync.engine.snapback",
+			# Calendar time off in (C4, v1.606.0): what changed on the Company Holidays & Vacations
+			# calendar since the last read (its own syncToken, singleEvents=true), as Unavailable
+			# Planner Blocks marked source "Google": a name plus off/OOO/out/vacation, "Company
+			# holiday" for everyone, birthdays skipped, the rest to Calendar Time Off Review. Never
+			# reads an event ERPNext wrote, never touches a hand-made block. A no-op unless Calendar
+			# Sync Settings is on AND "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+			"erpnext_enhancements.project_enhancements.calendar_sync.time_off.incremental_read",
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
@@ -1523,6 +1530,17 @@ scheduler_events = {
 		# reads 0 until it is ticked (Nik, 2026-09-27), and with nothing Pending a tick is
 		# one indexed query.
 		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
+		# Leave-by pings (calendar sync C3, v1.605.0): each person who ticked "Ping me at leave-by
+		# time" on their Planner Resource gets one notice before they must leave for the first stop
+		# of their day (bell, then a text, or an email). At most once per person per stop per day
+		# through a Planner Ping Log row claimed before sending, so a deploy's FLUSHDB cannot
+		# re-send; a tick may run up to 10 minutes late and still send. No Google request (cached
+		# legs and the estimate only). Its own key, every five minutes from :04, because a repeated
+		# key would silently replace the entry it collided with (and the travel line above is
+		# pinned verbatim by tests/test_trip_change_alerts.py). Dormant: Project Planner Settings'
+		# Leave-by pings defaults to off, and with it off a tick is one cached read. See
+		# project_enhancements/leave_by.py.
+		"4-59/5 * * * *": ["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 	},
 	"daily": [
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
@@ -1711,6 +1729,11 @@ scheduler_events = {
 		# destroys queued sync jobs; this is what redoes them. Unchanged items cost no Google call (a
 		# content hash on Calendar Sync Link). Capped at 20 minutes. A no-op while the switch is off.
 		"erpnext_enhancements.project_enhancements.calendar_sync.engine.nightly_repair",
+		# Calendar time off in (C4, v1.606.0): the whole window of the Company Holidays & Vacations
+		# calendar read again, every review decision re-applied, and imported blocks whose event has
+		# gone removed (only after a complete listing). Redoes whatever the deploy's FLUSHDB lost.
+		# A no-op unless "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a
@@ -2965,7 +2988,8 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # Planner Draft Change (v1.601.0) links a Task or, since then, a maintenance visit, and its rows are
 # kept as a record after Publish or Discard: without this a visit (or task) any planner had ever
 # drafted could never be deleted. A draft whose target is gone shows as "no longer exists" on the
-# planner and is discarded from there.
+# planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
+# published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
 
 portal_menu_items = [
