@@ -295,11 +295,12 @@
 		resetInitialPad();
 	}
 
-	function closeInitial() {
+	function closeInitial(moving_on) {
 		$("cs-initial-modal").hidden = true;
 		var box = activeInitial;
 		activeInitial = null;
-		if (box && box.el.focus) box.el.focus();
+		// After a cancel, focus returns to the box; after an apply, advanceFrom moves it on.
+		if (!moving_on && box && box.el.focus) box.el.focus();
 	}
 
 	function applyInitial() {
@@ -321,8 +322,40 @@
 		img.src = image;
 		img.alt = "Your initials";
 		box.el.appendChild(img);
-		closeInitial();
+		closeInitial(true);
 		updateInitialsProgress();
+		advanceFrom(box);
+	}
+
+	/* Nik, 2026-10-13: "when doing one initial can you have it auto scroll to the next and
+	 * the next". After each set of initials the agreement scrolls to the next box still
+	 * waiting, after this one in reading order (then any skipped earlier), and highlights it.
+	 * It does not open the pad by itself: the client should read the clause first. Once the
+	 * last box is done, it moves on to the signature. */
+	function advanceFrom(box) {
+		var start = initialBoxes.indexOf(box);
+		var next = null;
+		for (var i = start + 1; i < initialBoxes.length && !next; i++) {
+			if (!initialBoxes[i].image) next = initialBoxes[i];
+		}
+		next = next || pendingInitials()[0];
+		if (next) {
+			showBox(next);
+			return;
+		}
+		var signature = $("cs-signature");
+		if (signature && signature.scrollIntoView) {
+			signature.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+	}
+
+	function showBox(box) {
+		if (box.el.scrollIntoView) box.el.scrollIntoView({ behavior: "smooth", block: "center" });
+		if (box.el.focus) box.el.focus({ preventScroll: true });
+		box.el.classList.add("is-flash");
+		setTimeout(function () {
+			box.el.classList.remove("is-flash");
+		}, 1600);
 	}
 
 	function pendingInitials() {
@@ -344,12 +377,7 @@
 
 	function goToNextInitial() {
 		var next = pendingInitials()[0];
-		if (!next) return;
-		if (next.el.scrollIntoView) next.el.scrollIntoView({ behavior: "smooth", block: "center" });
-		next.el.classList.add("is-flash");
-		setTimeout(function () {
-			next.el.classList.remove("is-flash");
-		}, 1600);
+		if (next) showBox(next);
 	}
 
 	function collectInitials() {

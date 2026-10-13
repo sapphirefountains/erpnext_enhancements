@@ -3,6 +3,7 @@
 <p><b>Sapphire Fountains, LLC</b></p>
 <p>85 W 300 S, Bountiful, UT 84010</p>
 <p>www.sapphirefountains.com</p>
+{{ summary() }}
 <h1>CLIENT &amp; PROPERTY INFORMATION</h1>
 <table class="ct-table"><tr><td><b>Client Name:</b></td><td>{{ fill(doc.party_display, 50) }}</td></tr><tr><td><b>Billing Address:</b></td><td>{{ multiline(doc.billing_address, 50, 2) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.contact_phone, 50) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.contact_email, 50) }}</td></tr><tr><td><b>Service Site Address:</b></td><td>{{ multiline(doc.site_address, 50, 1) }}</td></tr><tr><td><b>Property Type:</b></td><td>{{ cb(doc.property_type=="Residential") }} Residential    {{ cb(doc.property_type=="Commercial") }} Commercial    {{ cb(doc.property_type in ("Municipal", "Other")) }} Other: {{ blank(14) }}</td></tr><tr><td><b>Feature Location:</b></td><td>{{ cb(doc.feature_location=="Outdoor") }} Outdoor    {{ cb(doc.feature_location=="Indoor") }} Indoor    {{ cb(doc.feature_location=="Both") }} Both</td></tr><tr><td><b>Feature Description:</b></td><td>{{ multiline(doc.feature_description, 50, 2) }}</td></tr><tr><td><b>Agreement Start Date:</b></td><td>{{ dt(doc.agreement_start_date) }}</td></tr><tr><td><b>Gate Code / Entry Code:</b></td><td>{{ fill(doc.gate_code, 50) }}</td></tr><tr><td><b>Key Location:</b></td><td>{{ fill(doc.key_location, 50) }}</td></tr><tr><td><b>Access Notes:</b></td><td>{{ multiline(doc.access_notes, 50, 1) }}</td></tr></table>
 <h1>SERVICE PLAN SELECTION</h1>

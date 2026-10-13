@@ -438,6 +438,7 @@ def _pct(value, width=6):
 
 
 def _render_context(doc):
+	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
 	from erpnext_enhancements.project_enhancements.esign.initials import initial_markup, signed_initials
 	from erpnext_enhancements.project_enhancements.esign.render import (
 		signature_markup,
@@ -463,6 +464,11 @@ def _render_context(doc):
 		# box on paper. See esign/initials.py.
 		return initial_markup(initials, key, label)
 
+	def _summary():
+		# "What you are agreeing to, in short": this contract's own terms in plain words,
+		# placed by the template after its title. See contract_summary.py.
+		return summary_html(doc)
+
 	return {
 		"doc": doc,
 		"fill": _fill,
@@ -475,6 +481,7 @@ def _render_context(doc):
 		"pct": _pct,
 		"sig": _sig,
 		"initial": _initial,
+		"summary": _summary,
 		# The countersignature (recorded, never required) lives on the signature
 		# record, not the contract — templates read it from here. Always a dict,
 		# so an unsigned render resolves to empty values and prints blanks.

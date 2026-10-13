@@ -1337,3 +1337,7 @@ erpnext_enhancements.patches.grant_project_template_editing
 # at renewal, any payment method on file, client initials. Replaces the live body only when it is exactly
 # the v1.609.0 shipped body (SHA-256); a site-edited body is logged and left alone. Cannot raise.
 erpnext_enhancements.patches.update_maintenance_agreement_terms
+# Plain-language summary (v1.611.0): {{ summary() }} after the title of the live Rental and Owner
+# agreements (the maintenance agreement gets it in the patch above). Inserted only before the
+# first section heading when that heading is unique; an edited body is logged and left alone. Cannot raise.
+erpnext_enhancements.patches.add_contract_summaries

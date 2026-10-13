@@ -56,6 +56,8 @@ initials = None
 builder = None
 renewal = None
 terms_patch = None
+summary = None
+summary_patch = None
 
 
 class _DF(dict):
@@ -125,7 +127,7 @@ def _install_frappe_stub():
 
 
 def setUpModule():
-    global initials, builder, renewal, terms_patch
+    global initials, builder, renewal, terms_patch, summary, summary_patch
     _install_frappe_stub()
     for mod in list(sys.modules):
         if mod.startswith(
@@ -133,16 +135,20 @@ def setUpModule():
                 "erpnext_enhancements.project_enhancements",
                 "erpnext_enhancements.api.maintenance_renewal",
                 "erpnext_enhancements.patches.update_maintenance_agreement_terms",
+                "erpnext_enhancements.patches.add_contract_summaries",
                 "erpnext_enhancements.feature_flags",
             )
         ):
             sys.modules.pop(mod, None)
     from erpnext_enhancements.api import maintenance_renewal as _renewal
+    from erpnext_enhancements.patches import add_contract_summaries as _summary_patch
     from erpnext_enhancements.patches import update_maintenance_agreement_terms as _patch
     from erpnext_enhancements.project_enhancements import contract_builder as _builder
+    from erpnext_enhancements.project_enhancements import contract_summary as _summary
     from erpnext_enhancements.project_enhancements.esign import initials as _initials
 
     initials, builder, renewal, terms_patch = _initials, _builder, _renewal, _patch
+    summary, summary_patch = _summary, _summary_patch
 
 
 def tearDownModule():
@@ -296,6 +302,7 @@ class TestMaintenanceTemplate(unittest.TestCase):
             return str(int(number)) if number == int(number) else f"{number:g}"
 
         doc = _Doc(
+            template_key="maintenance",
             party_display="Salt Development",
             payment_method="Credit / Debit Card",
             payment_section_choice="Payment Link",
@@ -321,6 +328,7 @@ class TestMaintenanceTemplate(unittest.TestCase):
             pct=lambda v, w=6: f"{qty(v)}%" if qty(v) else blank() + "%",
             sig=lambda party="client", width=30: blank(),
             initial=lambda key, label="": initials.initial_markup({}, key, label),
+            summary=lambda: summary.summary_html(doc),
             signature=_Doc(),
             service_options={"standard": _Doc(included=1, price=690, unit="visit")},
         )
@@ -375,11 +383,161 @@ class TestMaintenanceTemplate(unittest.TestCase):
         self.assertNotIn("Card Number:", html)
         self.assertIn("Due within 30 days of the invoice date", html)
 
+    def test_the_summary_opens_the_agreement(self):
+        html = self.render(
+            visit_frequency="Bi-Weekly",
+            service_options=[_Doc(option_key="standard", included=1, price=690)],
+        )
+        self.assertLess(html.index("What you are agreeing to"), html.index("CLIENT &amp; PROPERTY INFORMATION"))
+        self.assertIn("every two weeks at a base rate of $690.00 per visit", html)
+
     def test_exhibit_a_ticks_and_prints_a_custom_plan(self):
         html = self.render(custom_plan_details="Monthly lobby wall descale")
         self.assertIn("[x]  Custom Plan", html)
         self.assertIn("Monthly lobby wall descale", html)
         self.assertIn("[ ]  Custom Plan", self.render())
+
+
+# --------------------------------------------------------------------------- plain-language summary
+
+
+TEMPLATES = APP / "templates" / "contracts"
+
+
+class TestSummary(unittest.TestCase):
+    """Nik: "a summary that summarizes what they've agreed to in simple terms and language"."""
+
+    def maintenance(self, **overrides):
+        doc = _Doc(
+            template_key="maintenance",
+            site_address="455 West 200 North\nSalt Lake City, UT 84103",
+            visit_frequency="Bi-Weekly",
+            service_options=[
+                _Doc(option_key="standard", included=1, price=690),
+                _Doc(option_key="as_needed", included=1, price=180),
+                _Doc(option_key="startup", included=0, price=500),
+            ],
+            annual_maintenance_fee=17940,
+            emergency_rate=250,
+            after_hours_emergency_rate=350,
+            emergency_minimum_hours=1,
+            business_hours="Monday to Friday, 7:00 a.m. to 5:00 p.m.",
+            agreement_start_date="2026-10-01",
+            initial_term="One (1) Year",
+            renewal_increase_percent=12,
+            payment_method="Credit / Debit Card",
+            invoicing_frequency="Monthly",
+        )
+        doc.update(overrides)
+        return summary.summary_html(doc)
+
+    def test_states_this_clients_terms_in_plain_words(self):
+        html = self.maintenance()
+        for fact in (
+            "455 West 200 North, Salt Lake City, UT 84103",
+            "every two weeks at a base rate of $690.00 per visit",
+            "$180.00 an hour (1-hour minimum)",
+            "Chemicals are extra:",
+            "$17,940.00 in base rates, before chemicals",
+            "$250.00 an hour during business hours (Monday to Friday, 7:00 a.m. to 5:00 p.m.)",
+            "$350.00 an hour at any other time",
+            "Starts 2026-10-01 for one year, then renews by itself every year",
+            "each renewal raises every rate by 12%",
+            "Your card on file is charged automatically",
+            "A credit card is not required",
+            "the agreement governs",
+        ):
+            self.assertIn(fact, html)
+        self.assertNotIn("spring startup", html)  # not ticked, not summarized
+
+    def test_follows_the_choices(self):
+        self.assertIn("rates stay the same at renewal", self.maintenance(renewal_increase_percent=0))
+        self.assertIn("runs month to month", self.maintenance(initial_term="Month-to-Month"))
+        self.assertIn("bank account is debited", self.maintenance(payment_method="Bank Account (ACH)"))
+        self.assertIn(
+            "check or bank transfer within 45 days",
+            self.maintenance(payment_method="Invoice (Check or Bank Transfer)", invoice_due_days=45),
+        )
+        self.assertIn("You choose in Section 4.3", self.maintenance(payment_method=""))
+
+    def test_is_deterministic_and_escaped(self):
+        """The drift check re-renders and compares, and the site address is typed by staff."""
+        self.assertEqual(self.maintenance(), self.maintenance())
+        html = self.maintenance(site_address="<script>x</script>")
+        self.assertNotIn("<script>", html)
+
+    def test_rental_and_owner_have_one_and_the_rest_do_not(self):
+        rental = summary.summary_html(
+            _Doc(
+                template_key="rental",
+                equipment_items=[_Doc(description="Tiered fountain")],
+                rental_start_date="2026-11-01",
+                rental_end_date="2026-11-03",
+                total_rental_amount=1200,
+                security_deposit=300,
+                total_due_at_signing=900,
+            )
+        )
+        self.assertIn("Tiered fountain", rental)
+        self.assertIn("$1,200.00", rental)
+        self.assertIn("we keep half the rental fees", rental)
+        owner = summary.summary_html(
+            _Doc(
+                template_key="owner",
+                phases=[_Doc(phase_key="construction", included=1, fee=50000)],
+                total_contract_value=50000,
+            )
+        )
+        self.assertIn("construction and installation ($50,000.00)", owner)
+        self.assertIn("signed Change Order", owner)
+        self.assertNotIn("Design:", owner)
+        for key in ("msa", "sow", "nda", "architect", "employee_contractor"):
+            self.assertEqual(summary.summary_html(_Doc(template_key=key)), "", key)
+
+    def test_every_fixed_figure_it_quotes_is_in_the_agreement(self):
+        """The summary restates clauses; this catches a clause changed in the repo template without
+        the summary being changed with it."""
+        clauses = {
+            "maintenance_services_agreement.html": (
+                "cost plus a 15% handling fee", "25% of the remaining prepaid balance", "SIX (6) CALENDAR MONTHS",
+                "$35.00 declined-transaction fee", "$35.00 returned-payment fee", "binding arbitration in Salt Lake City",
+                "thirty (30) days past due", "thirty (30) days&#x27; written notice", "attorneys&#x27; fees",
+            ),
+            "rental_agreement.html": (
+                "5:00 PM on the Rental End Date", "3% processing fee", "1.5% per month", "fourteen (14) business days",
+                "fewer than fifteen (15) days", "50% of rental fees retained", "JURY TRIAL WAIVER",
+                "50% of the Total Rental Amount plus the full Security Deposit",
+            ),
+            "owner_contract.html": (
+                "fourteen (14) calendar days", "within ten (10) days", "five (5) business days of each milestone",
+                "one (1) year from Substantial Completion", "fourteen (14) days&#x27; written notice",
+                "Monday through Friday, 7:00 AM to 5:00 PM", "1.5% per month", "five (5) days&#x27; written notice",
+            ),
+        }
+        for template, phrases in clauses.items():
+            text = (TEMPLATES / template).read_text(encoding="utf-8")
+            for phrase in phrases:
+                self.assertIn(phrase, text, f"{template}: {phrase}")
+
+    def test_each_customer_template_places_it_once_after_the_title(self):
+        for template in ("maintenance_services_agreement.html", "rental_agreement.html", "owner_contract.html"):
+            text = (TEMPLATES / template).read_text(encoding="utf-8")
+            self.assertEqual(text.count("{{ summary() }}"), 1, template)
+            self.assertLess(text.index("{{ summary() }}"), text.index("<h1>"), template)
+
+    def test_the_patch_adds_it_to_the_live_rental_and_owner_bodies(self):
+        for key, template in (("rental", "rental_agreement.html"), ("owner", "owner_contract.html")):
+            shipped = (TEMPLATES / template).read_text(encoding="utf-8")
+            before = shipped.replace(summary_patch.MARKER, "", 1)
+            new_body, changed = summary_patch.insert_summary(before, summary_patch.ANCHORS[key])
+            self.assertTrue(changed, key)
+            self.assertEqual(new_body, shipped, key)
+            self.assertEqual(summary_patch.insert_summary(shipped, summary_patch.ANCHORS[key]), (shipped, False))
+            diverged = before.replace(summary_patch.ANCHORS[key], "<h1>RENTER</h1>")
+            self.assertEqual(summary_patch.insert_summary(diverged, summary_patch.ANCHORS[key])[1], False)
+        self.assertIn(
+            "erpnext_enhancements.patches.add_contract_summaries", (APP / "patches.txt").read_text(encoding="utf-8")
+        )
 
 
 # --------------------------------------------------------------------------- template patch
@@ -580,6 +738,10 @@ class TestSchema(unittest.TestCase):
         self.assertIn("pendingInitials().length", js)
         # Every set starts from an empty pad.
         self.assertIn("resetInitialPad();", js)
+        # Nik: "auto scroll to the next and the next": every apply moves on to the next box.
+        apply = js[js.index("function applyInitial()"):js.index("function advanceFrom(")]
+        self.assertIn("advanceFrom(box);", apply)
+        self.assertIn('$("cs-signature")', js)
 
     def test_generate_contract_opens_the_builder(self):
         js = (APP / "public" / "js" / "contracts.js").read_text(encoding="utf-8")

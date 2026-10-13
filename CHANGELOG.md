@@ -46,10 +46,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy paste the initial)." A template marks a clause with `{{ initial('renewal', '…') }}`; unsigned it
   prints a blank box, and the box is deterministic, because execution's drift check re-renders and compares.
   The signing page turns every box into its own pad, which starts empty each time, and blocks Sign until
-  each is done. The server requires exactly the boxes in the request's stored snapshot, never a caller's
+  each is done. After each set it scrolls to the next box still waiting and highlights it ("auto scroll to
+  the next and the next"), without opening the pad, so the clause is read first; after the last, it moves
+  on to the signature. The server requires exactly the boxes in the request's stored snapshot, never a caller's
   list, checks each drawing like a drawn signature, and refuses two identical images, which only a copied
   drawing can produce. The drawings are stored as read-only evidence (`initials_json`, `initials_count`;
   added to the assistant tool's never-return list) and printed in their boxes in the executed copy.
+- **"What you are agreeing to, in short."** Nik: "a summary that summarizes what they've agreed to in
+  simple terms and language would be great." `project_enhancements/contract_summary.py` builds a
+  plain-language box from the contract's own figures (its plan and prices, chemicals extra, the yearly
+  estimate, emergency rates, start and term, the renewal increase, how they pay, their part, how to end it,
+  the limits) and the template prints it right after the title with `{{ summary() }}`. Being in the body,
+  it is on the signing page, in the builder's preview and in the signed copy; it ends by saying the full
+  agreement governs where the two differ. Maintenance, Rental and Owner agreements have one
+  (`patches/add_contract_summaries` adds the line to the live Rental and Owner records, exact-match only);
+  subcontractor agreements and the NDA do not. Every fixed figure a summary quotes is checked against its
+  template's text by a test, so a clause changed in the repo cannot leave the summary saying the old thing.
 - **The maintenance agreement's terms, as fields.** On Project Contract: `emergency_rate` ($250 default),
   `after_hours_emergency_rate` ($350), `emergency_minimum_hours` (1), `business_hours`,
   `renewal_increase_percent` (12%), `payment_method` (required), `payment_method_notes`, `invoice_due_days`

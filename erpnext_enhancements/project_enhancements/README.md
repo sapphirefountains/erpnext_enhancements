@@ -422,6 +422,12 @@ or sent for the client to sign in their own time.
   drawings ("each initial needs to be done as its own, not copy paste"). The drawings are
   stored on the request (`initials_json`, `initials_count`, both read-only evidence, never
   returned by the assistant tool) and printed in their boxes in the executed copy.
+- **The plain-language summary** (`contract_summary.py`, `{{ summary() }}` after each customer
+  agreement's title): "What you are agreeing to, in short", built from this contract's own figures, part
+  of the signed body, ending with "where the two differ, the agreement governs". Maintenance, Rental and
+  Owner only. Each sentence restates a clause of the shipped template; change both together (a test
+  checks the quoted figures against the template text). The signing page scrolls to the next initials
+  box after each one, then to the signature.
 - **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
   which replaces the live body only when it is exactly the v1.609.0 shipped body):
   Standard Maintenance is the base rate per visit plus chemicals, always billed in addition
