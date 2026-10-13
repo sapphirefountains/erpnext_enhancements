@@ -15,7 +15,14 @@ needs the server is here:
   picked (the person's next free day). All or nothing, inside one savepoint. Phase 6E: the open tasks
   of the same project that waited on the original now wait on the second part, the half that ends
   where the work ends (:func:`_repoint_dependents`); both parts keep the same name.
-* :func:`quick_add_task` creates a task for one person on one day from a double-click.
+* :func:`quick_add_task` creates a task for one person on one day from a double-click; since
+  v1.602.0 it also takes a phase, dependencies, a time slot, several crew, an address, the outdoor
+  and customer-visit flags, a description and a crew size.
+* :func:`build_out_tasks` creates MANY undated tasks on one project in one request (the Build out
+  grid: subject, hours, phase, depends-on, crew size), new phases (group tasks) first; they land in
+  the Unscheduled tray. :func:`remove_built_out_tasks` is its Undo, and
+  :func:`get_build_out_context` / :func:`get_projects_needing_tasks` are the reads behind the grid
+  and the Needs tasks list.
 * :func:`move_many` moves several tasks (and/or pencils or firms them) in one call: one conflict
   check for the lot, one reason, all or nothing, as ``shift_successors`` and ``copy_week`` do.
 * :func:`remove_created_task` is the Undo of a task the planner just created (a duplicate, a quick
@@ -37,7 +44,7 @@ The rules every write here keeps, because the page relies on them:
   task is refused: its dates follow its Rental Booking.
 * **A new task cannot be a draft.** Draft mode (Phase 3B) holds back changes to tasks that exist,
   as a ``Planner Draft Change`` of that task; a task that does not exist yet has nothing to hang one
-  on. So duplicate, split and quick add refuse in draft mode with a sentence that says so, and the
+  on. So duplicate, split, quick add and build out refuse in draft mode with a sentence that says so, and the
   page refuses before it asks. :func:`move_many` changes tasks that exist, so it drafts properly.
 * **Writes are as the caller.** ``check_permission`` on every task, ``create`` for a new one, and
   ``doc.save()`` / ``doc.insert()`` so ERPNext's own checks and the crew-to-assignment sync run.
@@ -75,6 +82,18 @@ DRAFT_REFUSAL = (
 )
 INTERVAL_DOCTYPE = planner_tracking.INTERVAL_DOCTYPE
 DRAFT_DOCTYPE = "Planner Draft Change"
+#: Build-out (v1.602.0): most rows one grid may create, most new phases among them, and the cap on
+#: a crew size typed into a cell (a typing slip of 400 for 4).
+BUILD_OUT_MAX_ROWS = 100
+BUILD_OUT_MAX_PHASES = 25
+CREW_SIZE_MAX = 50
+#: The longest note a quick add keeps on the task (Task.description is a Text Editor).
+DESCRIPTION_MAX = 4000
+CLOCK_FORMATS = ("%H:%M:%S", "%H:%M")
+#: How many projects the Needs tasks list answers with at most.
+NEEDS_TASKS_LIMIT = 200
+#: How many open tasks the build-out grid offers as things to depend on.
+BUILD_OUT_CONTEXT_TASKS = 300
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -164,6 +183,160 @@ def nearest_first(rows, anchor, day_of):
 def hypothetical(name, what):
 	"""The name a task that does not exist yet goes by in a conflict check ("TASK-1 (copy)")."""
 	return f"{name} ({what})"
+
+
+def clean_text(value):
+	"""``value`` with its whitespace collapsed ("" for nothing): a subject typed with a stray tab."""
+	return " ".join(str(value if value is not None else "").split())
+
+
+def as_names(value):
+	"""A list argument of names as sent by ``frappe.call``: a JSON list, a list, or a comma list.
+
+	Blank entries and repeats are dropped, order kept. ``None`` and ``""`` are an empty list.
+	"""
+	value = pp.given(value)
+	if value is None:
+		return []
+	if isinstance(value, str):
+		text = value.strip()
+		try:
+			value = json.loads(text) if text.startswith("[") else text.split(",")
+		except ValueError:
+			value = text.split(",")  # not JSON after all: read as a comma list; the names are then checked
+	if not isinstance(value, list | tuple):
+		value = [value]
+	out = []
+	for item in value:
+		name = clean_text(item)
+		if name and name not in out:
+			out.append(name)
+	return out
+
+
+def parse_clock(value):
+	"""A time of day typed as ``HH:MM`` or ``HH:MM:SS`` as a ``datetime.time``; None when blank.
+
+	Raises ``ValueError`` for anything else (the Time field of a form sends ``HH:MM:SS``).
+	"""
+	text = clean_text(pp.given(value))
+	if not text:
+		return None
+	for fmt in CLOCK_FORMATS:
+		try:
+			return datetime.datetime.strptime(text, fmt).time()
+		except ValueError:
+			continue
+	raise ValueError(text)
+
+
+def slot_for(day, start_time, end_time):
+	"""``(start, end, hours)`` for a same-day time slot: ``start``/``end`` as ``YYYY-MM-DD HH:MM:SS``
+	and the length in hours; None when neither time is given. Raises ``ValueError`` for a half-given
+	slot, a time that is not a time, or an end that is not after the start."""
+	first, last = parse_clock(start_time), parse_clock(end_time)
+	if first is None and last is None:
+		return None
+	if first is None or last is None or last <= first:
+		raise ValueError("slot")
+	span = datetime.datetime.combine(day, last) - datetime.datetime.combine(day, first)
+	return (
+		f"{day} {first.strftime('%H:%M:%S')}",
+		f"{day} {last.strftime('%H:%M:%S')}",
+		round(span.total_seconds() / 3600, 2),
+	)
+
+
+def build_order(count, depends):
+	"""``(order, cycle)``: row numbers ``0..count-1`` in an order where every row comes after the rows
+	it depends on, otherwise the grid's own order; ``cycle`` is the loop of rows when there is one.
+
+	``depends`` maps a row to the set of rows it waits on. A stable topological sort: the lowest row
+	number that is ready goes first, so a grid whose rows only depend on rows above them comes back
+	untouched. With a cycle ``order`` is None and ``cycle`` lists the rows going round (a row that
+	merely waits on the loop is not in it).
+	"""
+	waiting = {row: set(depends.get(row) or ()) for row in range(count)}
+	done, order = set(), []
+	while len(order) < count:
+		ready = [row for row in range(count) if row not in done and waiting[row] <= done]
+		if not ready:
+			remaining = [row for row in range(count) if row not in done]
+			row, seen = remaining[0], []
+			while row not in seen:
+				seen.append(row)
+				row = min(waiting[row] - done)
+			return None, seen[seen.index(row) :]
+		done.add(ready[0])
+		order.append(ready[0])
+	return order, []
+
+
+def deletion_order(names, depends):
+	"""``names`` reordered so a task comes before every task it depends on (the Undo of a build-out
+	deletes the waiting task first; Frappe refuses to delete one that something still links to).
+
+	``depends`` maps a task to the set of tasks it waits on. Anything left in a loop keeps its place.
+	"""
+	remaining = list(names)
+	out = []
+	while remaining:
+		free = [
+			name
+			for name in remaining
+			if not any(name in (depends.get(other) or ()) for other in remaining if other != name)
+		]
+		pick = free[0] if free else remaining[0]
+		out.append(pick)
+		remaining.remove(pick)
+	return out
+
+
+def needs_tasks_query(has_owner, limit=NEEDS_TASKS_LIMIT):
+	"""``(sql, values)``: the Active customer-job projects with no open task, in ONE statement.
+
+	"No open task" is no task that is a leaf (not a phase), not a template and not finished
+	(``crew_availability.FINISHED_STATUSES``): a project whose phases exist but whose work does not
+	needs tasks too, and one whose every task is finished is as empty to a planner as a new one.
+	``finished_tasks`` (a subquery on the same index) lets the page say which of the two it is.
+	The customer-job rule is the planners' own (``crew_availability.planner_job_condition``), and
+	the page's PM filter reads ``pm`` (the project owner's Employee name, NULL before that custom
+	field exists). Newest project first. Everything bound; nothing client-supplied reaches it.
+	"""
+	type_expr, stream = engine.planner_job_sql("p")
+	owner = "e.employee_name" if has_owner else "NULL"
+	join = "LEFT JOIN `tabEmployee` e ON e.name = p.custom_project_owner" if has_owner else ""
+	sql = f"""
+		SELECT p.name, p.project_name AS title, {owner} AS pm, p.customer,
+			p.expected_start_date, p.expected_end_date,
+			{type_expr} AS project_type, {stream} AS planner_stream,
+			(
+				SELECT COUNT(*) FROM `tabTask` d
+				WHERE d.project = p.name
+					AND IFNULL(d.is_group, 0) = 0
+					AND IFNULL(d.is_template, 0) = 0
+			) AS finished_tasks
+		FROM `tabProject` p
+		{join}
+		WHERE p.status = %(active)s
+			AND {engine.planner_job_condition("p")}
+			AND NOT EXISTS (
+				SELECT 1 FROM `tabTask` t
+				WHERE t.project = p.name
+					AND IFNULL(t.is_group, 0) = 0
+					AND IFNULL(t.is_template, 0) = 0
+					AND IFNULL(t.status, '') NOT IN %(finished)s
+			)
+		ORDER BY p.creation DESC
+		LIMIT %(limit)s
+	"""
+	values = {
+		"active": pp.ACTIVE_PROJECT,
+		"finished": engine.FINISHED_STATUSES,
+		"limit": int(limit),
+		**engine.PLANNER_SQL_VALUES,
+	}
+	return sql, values
 
 
 # ---------------------------------------------------------------------- shared checks
@@ -644,8 +817,104 @@ def split_task(task, split_date, modified, reason=None, draft=0):
 # ---------------------------------------------------------------------- quick add
 
 
+def _project_task_rows(project, names=None):
+	"""``{name: row}`` of the project's Tasks (``name``, ``subject``, ``status``, ``is_group``,
+	``is_template``, ``exp_end_date``), or just ``names`` of them, in ONE read. A name that is not on
+	this project is simply absent, which is how every caller tells "not here" from "here"."""
+	filters = {"project": project}
+	if names is not None:
+		filters["name"] = ["in", sorted(names)]
+	rows = frappe.get_all(
+		"Task",
+		filters=filters,
+		fields=["name", "subject", "status", "is_group", "is_template", "exp_end_date"],
+		limit_page_length=0,
+	)
+	return {row.get("name"): row for row in rows}
+
+
+def _is_finished(row):
+	return row.get("status") in engine.FINISHED_STATUSES or cint(row.get("is_template"))
+
+
+def _where(number):
+	"""``Row 3: `` for a message about a grid row; nothing for a quick add."""
+	return _("Row {0}: ").format(number) if number else ""
+
+
+def _check_phase(name, rows, project, number=None):
+	"""``name`` as a phase to file a new task under: a group Task of ``project`` that is still open."""
+	label = _where(number) + frappe.utils.escape_html(name)
+	row = rows.get(name)
+	if not row:
+		frappe.throw(_("{0} is not a task of {1}.").format(label, project))
+	if not cint(row.get("is_group")):
+		frappe.throw(
+			_("{0} is not a phase. A phase is a group task; pick one, or type a new phase name.").format(
+				label
+			)
+		)
+	if _is_finished(row):
+		frappe.throw(_("{0} is finished, so nothing new can go under it.").format(label))
+	if not frappe.has_permission("Task", "read", doc=name):
+		frappe.throw(_("You cannot read {0}.").format(label), frappe.PermissionError)
+	return row
+
+
+def _check_predecessor(name, rows, project, number=None):
+	"""``name`` as something a new task waits on: a plain Task of ``project``, not a phase or template."""
+	label = _where(number) + frappe.utils.escape_html(name)
+	row = rows.get(name)
+	if not row or cint(row.get("is_template")):
+		frappe.throw(_("{0} is not a task of {1}.").format(label, project))
+	if cint(row.get("is_group")):
+		frappe.throw(_("{0} is a phase. A task can wait on another task, not on a phase.").format(label))
+	if not frappe.has_permission("Task", "read", doc=name):
+		frappe.throw(_("You cannot read {0}.").format(label), frappe.PermissionError)
+	return row
+
+
+def _quick_add_people(resource, crew):
+	"""The names a quick add books, in order: ``resource`` (the cell's person) first, then ``crew``."""
+	people = []
+	for name in [pp.given(resource), *as_names(crew)]:
+		name = clean_text(name)
+		if name and name not in people:
+			people.append(name)
+	return people
+
+
+def _flag(value):
+	return 1 if pp.as_bool(pp.given(value) or 0) else 0
+
+
+def _plain_note(text):
+	"""A typed note as the HTML Task.description holds: escaped, line breaks kept."""
+	escaped = frappe.utils.escape_html(text.strip())
+	return "<p>" + escaped.replace("\r\n", "\n").replace("\n", "<br>") + "</p>"
+
+
 @frappe.whitelist(methods=["POST"])
-def quick_add_task(project, subject, date, hours=None, resource=None, tentative=0, reason=None, draft=0):
+def quick_add_task(
+	project,
+	subject,
+	date,
+	hours=None,
+	resource=None,
+	tentative=0,
+	reason=None,
+	draft=0,
+	parent_task=None,
+	depends_on=None,
+	start_time=None,
+	end_time=None,
+	crew=None,
+	address=None,
+	outdoor=0,
+	customer_visit=0,
+	description=None,
+	crew_size=None,
+):
 	"""A new Task from a double-click on a person's day (or a day): ``subject`` on ``project`` on
 	``date``, for ``resource`` when one is given (the planner named them; nobody is picked here).
 
@@ -654,12 +923,29 @@ def quick_add_task(project, subject, date, hours=None, resource=None, tentative=
 	(``crew_availability.span_for_estimate``). ``tentative`` makes it a pencil. Created as the caller
 	(``check_permission("create")``), on a customer job only. A task that would overbook the person
 	answers ``{"needs_reason": True, "conflicts"}`` and creates nothing. Refused in draft mode.
+
+	Every argument after ``draft`` is optional and new in v1.602.0 (the richer quick add); leave them
+	all out and the task is exactly what it always was:
+
+	* ``parent_task``: a phase (an open group Task of the same project) to file it under.
+	* ``depends_on``: tasks of the same project it waits on (a JSON list or comma list). One that is
+	  still running when this task starts is a "Dependencies" line in the needs_reason answer, as on
+	  ``save_task``; a pencil needs no reason.
+	* ``start_time`` and ``end_time`` (``HH:MM``): a time slot on ``date``, which becomes the task's
+	  ``custom_start_datetime``/``custom_end_datetime`` and its one day (the slot decides the day,
+	  ``crew_availability.task_span``). With no ``hours`` the estimate is the slot's length.
+	* ``crew``: more people (a JSON list or comma list of Planner Resources) on top of ``resource``.
+	  Nobody is picked: the first person named is the lead when there is more than one, and each has
+	  an even share. Every one of them is conflict-checked together.
+	* ``address`` (an Address), ``outdoor`` and ``customer_visit`` (the Phase 5 flags),
+	  ``description`` (plain text, kept escaped) and ``crew_size``.
+
 	Returns ``{"name", "modified", "created": True, "card", "warnings", "conflicts"}``.
 	"""
 	pp._require_planner()
 	_refuse_draft(draft)
 	_require_create()
-	subject = " ".join(str(pp.given(subject) or "").split())
+	subject = clean_text(pp.given(subject))
 	if not subject:
 		frappe.throw(_("Give the task a subject."))
 	if len(subject) > SUBJECT_MAX:
@@ -674,9 +960,28 @@ def quick_add_task(project, subject, date, hours=None, resource=None, tentative=
 	estimate = flt(pp.given(hours)) if pp.given(hours) is not None else 0.0
 	if estimate < 0 or estimate > QUICK_ADD_MAX_HOURS:
 		frappe.throw(_("Hours must be between 0 and {0}.").format(QUICK_ADD_MAX_HOURS))
-	resource = pp.given(resource)
-	crew = [{"resource": resource, "hours": None, "is_lead": 0}] if resource else []
-	first, last = engine.span_for_estimate(day, estimate, 1, engine.get_settings()["default_day_hours"])
+	people = _quick_add_people(resource, crew)
+	# The first person is the lead once there is a crew; a person alone is not "the lead of" anyone.
+	crew = [
+		{"resource": name, "hours": None, "is_lead": 1 if (len(people) > 1 and index == 0) else 0}
+		for index, name in enumerate(people)
+	]
+	size = pp.given(crew_size)
+	size = cint(size) if size is not None else 0
+	if size < 0 or size > CREW_SIZE_MAX:
+		frappe.throw(_("Crew size must be between 0 and {0}.").format(CREW_SIZE_MAX))
+
+	try:
+		slot = slot_for(day, start_time, end_time)
+	except ValueError:
+		frappe.throw(_("Give the time slot a start and an end, as HH:MM, with the end after the start."))
+	if slot:
+		first = last = day
+		estimate = estimate or slot[2]
+	else:
+		first, last = engine.span_for_estimate(
+			day, estimate, max(len(people), size, 1), engine.get_settings()["default_day_hours"]
+		)
 	pencil = 1 if pp.as_bool(pp.given(tentative) or 0) else 0
 	values = {
 		"doctype": "Task",
@@ -688,20 +993,61 @@ def quick_add_task(project, subject, date, hours=None, resource=None, tentative=
 		"expected_time": estimate,
 		"custom_tentative": pencil,
 	}
+	if slot:
+		values["custom_start_datetime"], values["custom_end_datetime"] = slot[0], slot[1]
+	if size:
+		values["custom_crew_size"] = size
+	if _flag(outdoor):
+		values["custom_outdoor"] = 1
+	if _flag(customer_visit):
+		values["custom_customer_visit"] = 1
+	note = pp.given(description)
+	if note is not None and str(note).strip():
+		if len(str(note)) > DESCRIPTION_MAX:
+			frappe.throw(_("Keep the description to {0} characters.").format(DESCRIPTION_MAX))
+		values["description"] = _plain_note(str(note))
+	place = clean_text(pp.given(address))
+	if place:
+		if not frappe.db.exists("Address", place):
+			frappe.throw(_("{0} is not an Address.").format(frappe.utils.escape_html(place)))
+		values["custom_locationaddress_of_task"] = place
+
+	parent = clean_text(pp.given(parent_task))
+	needs = as_names(depends_on)
+	rows = _project_task_rows(project, ([parent] if parent else []) + needs) if (parent or needs) else {}
+	if parent:
+		phase = _check_phase(parent, rows, project)
+		ends = engine._as_date(phase.get("exp_end_date"))
+		if ends and last > ends:
+			frappe.throw(
+				_("{0} ends on {1}, so a task under it cannot run to {2}. Pick an earlier day.").format(
+					frappe.utils.escape_html(parent), ends, last
+				)
+			)
+		values["parent_task"] = parent
+	for name in needs:
+		_check_predecessor(name, rows, project)
+
 	new = frappe.get_doc(values)
+	for name in needs:
+		new.append("depends_on", {"task": name, "subject": rows[name].get("subject")})
 	pp._set_crew(new, crew, [])  # an unknown or inactive person is refused here
 
 	preview = dict(
 		values,
 		name=hypothetical(subject, "new"),
-		custom_start_datetime=None,
-		custom_end_datetime=None,
+		custom_start_datetime=values.get("custom_start_datetime"),
+		custom_end_datetime=values.get("custom_end_datetime"),
 		custom_rental_booking=None,
 		custom_rental_task_kind=None,
-		custom_crew_size=0,
+		custom_crew_size=size,
 		equipment=[],
 	)
 	conflicts = engine.preview_batch([(preview, crew)]) if crew else {}
+	if needs and not pencil:
+		waiting = pp.dependency_conflicts(preview, list(pp._task_rows(needs).values()))
+		if waiting:
+			conflicts = dict(conflicts, **{pp.DEPENDENCY_KEY: waiting})
 	reason = (pp.given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts}
@@ -713,6 +1059,328 @@ def quick_add_task(project, subject, date, hours=None, resource=None, tentative=
 			new, _("Added on the Project Planner over a conflict: {0}. Reason: {1}"), conflicts, reason
 		)
 	return _created(new, warnings, conflicts)
+
+
+# ---------------------------------------------------------------------- build out (v1.602.0)
+
+# Nik, 2026-10-12: "I definitely want to be able to easily create tasks for projects in the project
+# planner screen so I don't have to leave it to build out tasks for a project." The Build out grid
+# types many tasks at once; they are created UNDATED, so they land in the Unscheduled tray, ready to
+# drag onto days. Nothing here picks a person or a day for anyone.
+
+
+def _build_rows(rows):
+	"""The grid's rows, each checked on its own: ``[{"number", "subject", "hours", "parent",
+	"phase", "crew_size", "needs"}]``. Numbers are the 1-based places in the list sent (the blank
+	rows are the page's to drop, so ``row:3`` means the third row of what it sent)."""
+	try:
+		items = pp.parse_list(pp.given(rows)) or []
+	except ValueError:
+		frappe.throw(_("The rows could not be read. Reload the planner and try again."))
+	if not items:
+		frappe.throw(_("Add at least one task to build out."))
+	if len(items) > BUILD_OUT_MAX_ROWS:
+		frappe.throw(_("Build out {0} tasks or fewer at once.").format(BUILD_OUT_MAX_ROWS))
+	out = []
+	for number, item in enumerate(items, start=1):
+		if not isinstance(item, dict):
+			frappe.throw(_("Row {0}: expected a task.").format(number))
+		subject = clean_text(pp.given(item.get("subject")))
+		if not subject:
+			frappe.throw(_("Row {0}: give the task a subject.").format(number))
+		if len(subject) > SUBJECT_MAX:
+			frappe.throw(_("Row {0}: keep the subject to {1} characters.").format(number, SUBJECT_MAX))
+		hours = flt(pp.given(item.get("hours"))) if pp.given(item.get("hours")) is not None else 0.0
+		if hours < 0 or hours > QUICK_ADD_MAX_HOURS:
+			frappe.throw(_("Row {0}: hours must be between 0 and {1}.").format(number, QUICK_ADD_MAX_HOURS))
+		size = pp.given(item.get("crew_size"))
+		size = cint(size) if size is not None else 0
+		if size < 0 or size > CREW_SIZE_MAX:
+			frappe.throw(_("Row {0}: crew size must be between 0 and {1}.").format(number, CREW_SIZE_MAX))
+		phase = clean_text(pp.given(item.get("phase")))
+		if len(phase) > SUBJECT_MAX:
+			frappe.throw(_("Row {0}: keep the phase name to {1} characters.").format(number, SUBJECT_MAX))
+		out.append(
+			{
+				"number": number,
+				"subject": subject,
+				"hours": hours,
+				"parent": clean_text(pp.given(item.get("parent_task"))),
+				"phase": phase,
+				"crew_size": size,
+				"needs": as_names(item.get("depends_on")),
+			}
+		)
+	return out
+
+
+def _plan_build_out(project, items, rows):
+	"""Resolve the phases and dependencies of ``items`` against the project's tasks ``rows``.
+
+	Returns ``{"phases": [title, ...], "phase_keys": [...], "parents": {row_index: ("task", name) |
+	("new", key)}, "waits": {row_index: {row_index, ...}}, "existing": {row_index: [task, ...]},
+	"order": [...]}`` (``phases`` are the new phases' titles, ``phase_keys`` what ``("new", key)`` names).
+	Refuses, naming the row, a phase that is not an open group of this project, a dependency that is
+	not a task of it, a row waiting on itself or on a row that is not there, and a loop.
+
+	A typed phase name that is the name or the subject (any capitals) of an open phase of the project
+	is that phase, so typing "Pumps" twice never makes two; the same new name on several rows is ONE
+	new phase, spelt the way its first row spelt it.
+	"""
+	open_phases = {
+		name: row for name, row in rows.items() if cint(row.get("is_group")) and not _is_finished(row)
+	}
+	by_subject = {}
+	for name, row in open_phases.items():
+		by_subject.setdefault(clean_text(row.get("subject")).casefold(), name)
+	phases, spelled, parents = [], {}, {}
+	for index, item in enumerate(items):
+		if item["parent"]:
+			_check_phase(item["parent"], rows, project, item["number"])
+			parents[index] = ("task", item["parent"])
+		elif item["phase"]:
+			key = item["phase"].casefold()
+			if item["phase"] in open_phases:
+				parents[index] = ("task", item["phase"])
+			elif key in by_subject:
+				parents[index] = ("task", by_subject[key])
+			else:
+				if key not in spelled:
+					spelled[key] = item["phase"]
+					phases.append(key)
+				parents[index] = ("new", key)
+	if len(phases) > BUILD_OUT_MAX_PHASES:
+		frappe.throw(_("Make {0} new phases or fewer at once.").format(BUILD_OUT_MAX_PHASES))
+
+	waits, existing = {}, {}
+	for index, item in enumerate(items):
+		for token in item["needs"]:
+			if token.lower().startswith("row:"):
+				try:
+					other = int(token[4:])
+				except ValueError:
+					other = 0
+				if not 1 <= other <= len(items):
+					frappe.throw(
+						_("Row {0}: it waits on row {1}, which is not in the grid.").format(
+							item["number"], frappe.utils.escape_html(token[4:])
+						)
+					)
+				if other == item["number"]:
+					frappe.throw(_("Row {0}: a task cannot wait on itself.").format(item["number"]))
+				waits.setdefault(index, set()).add(other - 1)
+			else:
+				_check_predecessor(token, rows, project, item["number"])
+				existing.setdefault(index, []).append(token)
+	order, cycle = build_order(len(items), waits)
+	if cycle:
+		frappe.throw(
+			_("Rows {0} wait on each other, round and round. Take one of those dependencies out.").format(
+				", ".join(str(index + 1) for index in cycle)
+			),
+			title=_("Circular dependency"),
+		)
+	return {
+		"phases": [spelled[key] for key in phases],
+		"phase_keys": phases,
+		"parents": parents,
+		"waits": waits,
+		"existing": existing,
+		"order": order,
+	}
+
+
+def _insert_row(doc, label):
+	"""``_insert`` with the row named when ERPNext refuses it. A permission error passes as it is."""
+	log = pp._message_log()
+	mark = len(log) if log is not None else 0
+	try:
+		return _insert(doc)
+	except frappe.PermissionError:
+		raise
+	except Exception as exc:
+		text = pp._failure_text(exc, pp._take_messages(log, mark))
+		frappe.throw(
+			_("{0} could not be created, so nothing was: {1}").format(
+				frappe.utils.escape_html(label), frappe.utils.escape_html(text)
+			),
+			title=_("Build out stopped"),
+		)
+
+
+@frappe.whitelist(methods=["POST"])
+def build_out_tasks(project, rows, draft=0):
+	"""Create many undated Tasks on one customer job, in ONE request: the Build out grid.
+
+	``rows`` is a JSON list (at most 100) of ``{"subject", "hours", "parent_task", "phase",
+	"depends_on", "crew_size"}``. ``subject`` is required; ``hours`` is the estimate (blank: none).
+
+	* ``parent_task`` files the task under an existing phase (an open group Task of the project);
+	  ``phase`` is a name instead: an existing phase of that name, else a NEW phase (a group Task),
+	  made first and shared by every row that typed it. ``parent_task`` wins when both are sent.
+	* ``depends_on`` lists what the task waits on: ``"row:3"`` for the third row of ``rows``, or the
+	  name of an existing task of the project. A row waiting on itself, or a loop of rows, is refused
+	  with the rows named (ERPNext would refuse it later, with only a "Circular Reference Error").
+
+	Every row is checked before anything is written (a row's mistake is named by its number), then the
+	phases are made, then the tasks in an order where each comes after what it waits on (the grid's
+	own order when it already is). Created as the caller (``check_permission("create")``), on a
+	customer job only, never in draft mode (a task that does not exist yet has nothing to be a draft
+	of), and all or nothing: a task ERPNext refuses fails the request, which Frappe rolls back. No
+	person and no day is picked: the tasks are undated and crewless, so they wait in the Unscheduled
+	tray. Returns ``{"project", "count", "phases": [{name, subject, modified}], "tasks": [{name, row,
+	subject, modified, parent_task, depends_on}], "warnings"}`` (``phases`` only the new ones, the
+	tasks in the grid's order). ``remove_built_out_tasks`` undoes it with those names and stamps.
+	"""
+	pp._require_planner()
+	_refuse_draft(draft)
+	_require_create()
+	project = pp.given(project)
+	if not project or not frappe.db.exists("Project", project):
+		frappe.throw(_("Pick the project to build out."))
+	_require_customer_job(project)
+	items = _build_rows(rows)
+	known = _project_task_rows(project)
+	plan = _plan_build_out(project, items, known)
+
+	warnings, phase_names, made_phases = [], {}, []
+	for key, title in zip(plan["phase_keys"], plan["phases"], strict=True):
+		doc = frappe.get_doc(
+			{"doctype": "Task", "subject": title, "project": project, "status": "Open", "is_group": 1}
+		)
+		doc.check_permission("create")
+		warnings.extend(_insert_row(doc, _("Phase {0}").format(title)))
+		phase_names[key] = doc.name
+		made_phases.append(doc)
+
+	names = {}
+	made = {}
+	for index in plan["order"]:
+		item = items[index]
+		values = {
+			"doctype": "Task",
+			"subject": item["subject"],
+			"project": project,
+			"status": "Open",
+			"expected_time": item["hours"],
+		}
+		if item["crew_size"]:
+			values["custom_crew_size"] = item["crew_size"]
+		kind, ref = plan["parents"].get(index, (None, None))
+		if kind == "task":
+			values["parent_task"] = ref
+		elif kind == "new":
+			values["parent_task"] = phase_names[ref]
+		doc = frappe.get_doc(values)
+		for other in sorted(plan["waits"].get(index) or ()):
+			doc.append("depends_on", {"task": names[other], "subject": items[other]["subject"]})
+		for task in plan["existing"].get(index) or ():
+			doc.append("depends_on", {"task": task, "subject": known[task].get("subject")})
+		doc.check_permission("create")
+		warnings.extend(_insert_row(doc, _("Row {0} ({1})").format(item["number"], item["subject"])))
+		names[index] = doc.name
+		made[index] = doc
+
+	# The phases were saved again as each child was added (ERPNext lists a child among its parent's
+	# dependencies), so the stamp the Undo compares against is read last.
+	phases = []
+	for doc in made_phases:
+		stamp = frappe.db.get_value("Task", doc.name, "modified")
+		phases.append(
+			{"name": doc.name, "subject": doc.get("subject"), "modified": str(stamp or doc.modified)}
+		)
+	tasks = [
+		{
+			"name": names[index],
+			"row": items[index]["number"],
+			"subject": items[index]["subject"],
+			"modified": str(made[index].modified),
+			"parent_task": made[index].get("parent_task") or None,
+			"depends_on": [row.get("task") for row in (made[index].get("depends_on") or [])],
+		}
+		for index in range(len(items))
+	]
+	return {"project": project, "count": len(tasks), "phases": phases, "tasks": tasks, "warnings": warnings}
+
+
+@frappe.whitelist()
+def get_build_out_context(project):
+	"""What the Build out grid offers for ``project``: ``{"project", "title", "phases": [{name,
+	subject}], "tasks": [{name, subject, status}], "truncated", "can_create"}``.
+
+	``phases`` are the project's open group Tasks (what a row can be filed under); ``tasks`` its open
+	plain Tasks (what a row can wait on), at most 300, one read for both. A project that is not a
+	customer job is refused, as everywhere on the planner.
+	"""
+	pp._require_planner()
+	project = pp.given(project)
+	if not project or not frappe.db.exists("Project", project):
+		frappe.throw(_("Pick the project to build out."))
+	_require_customer_job(project)
+	rows = [row for row in _project_task_rows(project).values() if not _is_finished(row)]
+	phases = sorted(
+		(
+			{"name": row.get("name"), "subject": row.get("subject") or row.get("name")}
+			for row in rows
+			if cint(row.get("is_group"))
+		),
+		key=lambda entry: (entry["subject"].lower(), entry["name"]),
+	)
+	tasks = sorted(
+		(
+			{
+				"name": row.get("name"),
+				"subject": row.get("subject") or row.get("name"),
+				"status": row.get("status"),
+			}
+			for row in rows
+			if not cint(row.get("is_group"))
+		),
+		key=lambda entry: entry["name"],
+	)
+	return {
+		"project": project,
+		"title": frappe.db.get_value("Project", project, "project_name") or project,
+		"phases": phases,
+		"tasks": tasks[:BUILD_OUT_CONTEXT_TASKS],
+		"truncated": len(tasks) > BUILD_OUT_CONTEXT_TASKS,
+		"can_create": bool(frappe.has_permission("Task", "create")),
+	}
+
+
+@frappe.whitelist()
+def get_projects_needing_tasks():
+	"""The Needs tasks list: Active customer jobs with no open task, newest first.
+
+	``{"projects": [{name, title, pm, expected_start, expected_end, finished_tasks}], "limit",
+	"can_create"}``. ONE query for all of them (:func:`needs_tasks_query`), however many projects
+	there are; the page applies its own project and PM filters. ``finished_tasks`` is how many tasks
+	the project has, all of them finished (0: it has never had any).
+	"""
+	pp._require_planner()
+	try:
+		has_owner = bool(frappe.db.has_column("Project", "custom_project_owner"))
+	except Exception:
+		has_owner = False
+	query, values = needs_tasks_query(has_owner)
+	rows = frappe.db.sql(query, values, as_dict=True)
+	projects = [
+		{
+			"name": row.get("name"),
+			"title": row.get("title") or row.get("name"),
+			"pm": row.get("pm"),
+			"expected_start": str(row["expected_start_date"]) if row.get("expected_start_date") else None,
+			"expected_end": str(row["expected_end_date"]) if row.get("expected_end_date") else None,
+			"finished_tasks": cint(row.get("finished_tasks")),
+		}
+		for row in rows or []
+		if engine.is_planner_job({"project": row.get("name"), **row})
+	]
+	return {
+		"projects": projects,
+		"limit": NEEDS_TASKS_LIMIT,
+		"can_create": bool(frappe.has_permission("Task", "create")),
+	}
 
 
 # ---------------------------------------------------------------------- move many
@@ -858,7 +1526,7 @@ def move_many(moves, reason=None, draft=0):
 # ---------------------------------------------------------------------- undo of a created task
 
 
-def _removal_problem(doc, modified, moved_dependents=()):
+def _removal_problem(doc, modified, moved_dependents=(), created_children=None):
 	"""Why the task just created cannot simply be deleted again, as a phrase, or None.
 
 	Anything that has happened to it since is a reason to stop: it was changed, time was logged or
@@ -868,6 +1536,11 @@ def _removal_problem(doc, modified, moved_dependents=()):
 	``moved_dependents`` (Phase 6E) are the tasks a split pointed at this one, which its Undo puts
 	back before it deletes: they are not "another task depends on it". Any other task that waits on
 	it, one added since, still stops the Undo.
+
+	``created_children`` (v1.602.0, the Undo of a build-out) are the tasks filed under this one that
+	the same Undo removes too: a phase made by the build-out has them by design, and any other
+	sub-task, one somebody added to the phase since, still stops the Undo. ``None`` (every other
+	caller) means no sub-task is allowed.
 	"""
 	user = frappe.session.user
 	name = doc.name
@@ -879,7 +1552,10 @@ def _removal_problem(doc, modified, moved_dependents=()):
 		return _("time is logged against it on a timesheet")
 	if _has_intervals(name):
 		return _("someone has clocked time on it")
-	if frappe.db.exists("Task", {"parent_task": name}):
+	if created_children is None:
+		if frappe.db.exists("Task", {"parent_task": name}):
+			return _("it has sub-tasks")
+	elif set(frappe.get_all("Task", filters={"parent_task": name}, pluck="name")) - set(created_children):
 		return _("it has sub-tasks")
 	if {row.get("parent") for row in _dependency_rows(name)} - set(moved_dependents or ()):
 		return _("another task depends on it")
@@ -935,7 +1611,10 @@ def remove_created_task(task, modified, restore=None):
 	doc = frappe.get_doc("Task", task)
 	plan = _restore_plan(restore)
 	moved = [name for name in (pp.parse_list(pp.given(plan.get("dependents"))) or [])] if plan else []
-	problem = _removal_problem(doc, modified, moved)
+	# A task filed under a phase is listed among the phase's dependencies by ERPNext itself
+	# (v1.602.0): that row is not "another task depends on it", and goes before the delete.
+	parent = doc.get("parent_task")
+	problem = _removal_problem(doc, modified, [*moved, parent] if parent else moved)
 	if problem:
 		frappe.throw(
 			_("{0} was not removed: {1}. Delete it on the task form if it should go.").format(
@@ -954,6 +1633,8 @@ def remove_created_task(task, modified, restore=None):
 	result = {"removed": doc.name, "warnings": []}
 	if first is not None:
 		result["restored_dependents"] = _restore_dependents(doc, first, moved)
+	if parent:
+		_unlink_from_parent(parent, doc.name)
 	frappe.delete_doc("Task", doc.name)
 	if first is not None:
 		restored = pp._apply(
@@ -977,6 +1658,123 @@ def remove_created_task(task, modified, restore=None):
 			warnings=restored.get("warnings") or [],
 		)
 	return result
+
+
+def _undo_items(value):
+	"""``[(task, modified)]`` from a JSON list of ``{"task", "modified"}``."""
+	items = pp.parse_list(pp.given(value)) or []
+	if len(items) > BUILD_OUT_MAX_ROWS + BUILD_OUT_MAX_PHASES:
+		frappe.throw(_("Too many tasks to undo at once."))
+	out = []
+	for item in items:
+		if not isinstance(item, dict) or not pp.given(item.get("task")):
+			frappe.throw(_("Each task to undo needs its name."))
+		out.append((item["task"], item.get("modified")))
+	return out
+
+
+def _unlink_from_parent(parent, task):
+	"""Take ``task`` out of its phase's dependencies. ERPNext lists every sub-task there when it is
+	saved (``populate_depends_on``), and Frappe will not delete a task that a row still links to.
+	Written straight to the table and the parent's ``depends_on_tasks`` text, as ``_swap_dependency``
+	does, so the phase is not saved (and no date is rescheduled) by an Undo."""
+	frappe.db.delete("Task Depends On", {"parenttype": "Task", "parent": parent, "task": task})
+	left = frappe.get_all(
+		"Task Depends On",
+		filters={"parenttype": "Task", "parent": parent},
+		fields=["task"],
+		order_by="idx asc",
+		limit_page_length=0,
+	)
+	kept = []
+	for row in left:
+		if row.get("task") and row.get("task") not in kept:
+			kept.append(row.get("task"))
+	frappe.db.set_value(
+		"Task", parent, "depends_on_tasks", "".join(f"{name}," for name in kept), update_modified=False
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_built_out_tasks(tasks, phases=None):
+	"""Undo :func:`build_out_tasks`: delete the tasks it made, and the new phases it made.
+
+	``tasks`` and ``phases`` are JSON lists of ``{"task", "modified"}``, exactly as ``build_out_tasks``
+	answered. Every one is checked before anything is deleted (:func:`_removal_problem`, the check of
+	a single created task's Undo): changed since, logged time or clocked time on it, another task
+	waiting on it, a file, somebody else's comment or draft, or not the caller's own. A phase also
+	stops the Undo if a sub-task that is not one of these has been filed under it. Tasks of the same
+	build-out waiting on each other, and a phase's own list of sub-tasks, do not count. If anything
+	stops it, **nothing** is removed and the answer says which and why.
+
+	Then the tasks go (the waiting one before what it waits on, each taken off its phase's list of
+	dependencies first), then the phases, each through ``frappe.delete_doc`` as the caller and never
+	with ``force``. A task already deleted is skipped. Returns ``{"removed": [...], "phases": [...],
+	"gone": [...]}``.
+	"""
+	pp._require_planner()
+	leaves, groups = _undo_items(tasks), _undo_items(phases)
+	if not leaves and not groups:
+		frappe.throw(_("Nothing to undo."))
+	docs, gone = {}, []
+	for name, _stamp in leaves + groups:
+		if frappe.db.exists("Task", name):
+			docs[name] = frappe.get_doc("Task", name)
+		else:
+			gone.append(name)
+	live = set(docs)
+	group_names = {name for name, _stamp in groups if name in live}
+	leaf_names = [name for name, _stamp in leaves if name in live]
+	children = {}
+	for name in leaf_names:
+		parent = docs[name].get("parent_task")
+		if parent in group_names:
+			children.setdefault(parent, set()).add(name)
+
+	problems = []
+	for name, stamp in leaves + groups:
+		if name not in live:
+			continue
+		doc = docs[name]
+		# Another task of this build-out waiting on it is being deleted too, and a sub-task's phase
+		# lists it by ERPNext's own doing.
+		allowed = live | ({doc.get("parent_task")} if doc.get("parent_task") else set())
+		problem = _removal_problem(
+			doc, stamp, allowed, children.get(name, set()) if name in group_names else None
+		)
+		if problem is None and not frappe.has_permission("Task", "delete", doc=doc):
+			problem = _("you cannot delete Tasks")
+		if problem:
+			problems.append(f"{name}: {problem}")
+	if problems:
+		frappe.throw(
+			_("Nothing was removed. {0}. Delete them on the task forms if they should go.").format(
+				frappe.utils.escape_html("; ".join(problems))
+			),
+			title=_("Not undone"),
+		)
+
+	for name in leaf_names:
+		parent = docs[name].get("parent_task")
+		if parent:
+			_unlink_from_parent(parent, name)
+	waits = {}
+	if leaf_names:
+		for row in frappe.get_all(
+			"Task Depends On",
+			filters={"parenttype": "Task", "parent": ["in", leaf_names]},
+			fields=["parent", "task"],
+			limit_page_length=0,
+		):
+			if row.get("task") in leaf_names and row.get("task") != row.get("parent"):
+				waits.setdefault(row.get("parent"), set()).add(row.get("task"))
+	removed = deletion_order(leaf_names, waits)
+	for name in removed:
+		frappe.delete_doc("Task", name)
+	phases_removed = [name for name, _stamp in groups if name in group_names]
+	for name in phases_removed:
+		frappe.delete_doc("Task", name)
+	return {"removed": removed, "phases": phases_removed, "gone": gone}
 
 
 # ---------------------------------------------------------------------- search

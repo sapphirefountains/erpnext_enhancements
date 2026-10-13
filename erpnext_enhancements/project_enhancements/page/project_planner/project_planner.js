@@ -383,6 +383,7 @@ class ProjectPlanner {
 		this.init_phase6b();
 		this.init_phase6c();
 		this.init_phase6d();
+		this.init_t1();
 		this.bind_drag();
 	}
 
@@ -675,6 +676,7 @@ class ProjectPlanner {
 				this.load_phase4();
 				this.render();
 				this.load_overdue();
+				this.t1_load_needs();
 			})
 			.catch(() => {
 				if (token === this.request) this.$body.removeClass("pp-loading");
@@ -1026,6 +1028,7 @@ class ProjectPlanner {
 			const $cards = $('<div class="pp-tray-cards"></div>').appendTo($tray);
 			$cards.html(shown.map((card) => this.card_html(card, null)).join(""));
 		}
+		this.t1_render_tray();
 	}
 
 	// The days of the range a dated task covers.
@@ -1864,6 +1867,7 @@ class ProjectPlanner {
 			frappe.show_alert({ message: __("Nothing to undo"), indicator: "blue" }, 4);
 			return;
 		}
+		if (this.t1_undo(snap)) return;
 		if (this.p6b_undo(snap)) return;
 		const card = this.by_task[snap.task];
 		if (card) {
@@ -4791,6 +4795,7 @@ const PP6A_METHODS = {
 		if (known && PP.views.includes(this.view)) {
 			actions.unshift({ label: __("Show only this project"), on_click: () => this.p6a_filter_project(project) });
 		}
+		actions.push(...this.t1_project_actions(project));
 		const handle = kit.drawer.open({
 			title: (known && known.title) || project,
 			subtitle: project,
@@ -6117,6 +6122,38 @@ const PP6B_METHODS = {
 				},
 				{ fieldtype: "Date", fieldname: "date", label: __("Date"), reqd: 1, default: target.ymd || this.today() },
 				{ fieldtype: "Check", fieldname: "tentative", label: __("Pencil (tentative)") },
+				// v1.602.0: the rest of a task, folded away so the common add stays four fields long.
+				{ fieldtype: "Section Break", fieldname: "more", label: __("More about the task"), collapsible: 1, collapsed: 1 },
+				{
+					fieldtype: "Link",
+					fieldname: "parent_task",
+					label: __("Phase"),
+					options: "Task",
+					description: __("A phase (group task) of the same project."),
+					get_query: () => ({ filters: { project: panel.get_value("project") || "", is_group: 1 } }),
+				},
+				{
+					fieldtype: "MultiSelectPills",
+					fieldname: "depends_on",
+					label: __("Depends on"),
+					description: __("Tasks of the same project that come first."),
+					get_data: (txt) =>
+						frappe.db.get_link_options("Task", txt, { project: panel.get_value("project") || "", is_group: 0 }),
+				},
+				{ fieldtype: "Time", fieldname: "start_time", label: __("Starts at") },
+				{ fieldtype: "Time", fieldname: "end_time", label: __("Ends at"), description: __("A time slot on the date above; blank is an all-day task.") },
+				{
+					fieldtype: "MultiSelectPills",
+					fieldname: "crew",
+					label: __("Others on the crew"),
+					description: __("The person above is the lead. Nobody is picked for you."),
+					get_data: (txt) => frappe.db.get_link_options("Planner Resource", txt, { is_active: 1 }),
+				},
+				{ fieldtype: "Int", fieldname: "crew_size", label: __("Crew size") },
+				{ fieldtype: "Link", fieldname: "address", label: __("Address"), options: "Address" },
+				{ fieldtype: "Check", fieldname: "outdoor", label: __("Outdoor work") },
+				{ fieldtype: "Check", fieldname: "customer_visit", label: __("Customer-facing visit") },
+				{ fieldtype: "Small Text", fieldname: "description", label: __("Description") },
 			],
 		});
 		panel.set_primary_action(__("Add"), (values) => this.p6b_quick_add_save(panel, values || {}));
@@ -6129,6 +6166,25 @@ const PP6B_METHODS = {
 		const args = { project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 };
 		if (Number(values.hours) > 0) args.hours = Number(values.hours);
 		if (values.resource) args.resource = values.resource;
+		// v1.602.0: only what was filled in is sent, so a plain add sends what it always sent.
+		if (values.parent_task) args.parent_task = values.parent_task;
+		const needs = (values.depends_on || []).filter(Boolean);
+		if (needs.length) args.depends_on = JSON.stringify(needs);
+		if (values.start_time || values.end_time) {
+			if (!values.start_time || !values.end_time || String(values.end_time) <= String(values.start_time)) {
+				frappe.msgprint(__("Give the time slot a start and an end, with the end after the start."));
+				return null;
+			}
+			args.start_time = values.start_time;
+			args.end_time = values.end_time;
+		}
+		const others = (values.crew || []).filter((name) => name && name !== values.resource);
+		if (others.length) args.crew = JSON.stringify(others);
+		if (values.address) args.address = values.address;
+		if (values.outdoor) args.outdoor = 1;
+		if (values.customer_visit) args.customer_visit = 1;
+		if (String(values.description || "").trim()) args.description = String(values.description).trim();
+		if (parseInt(values.crew_size, 10) > 0) args.crew_size = parseInt(values.crew_size, 10);
 		panel.hide();
 		return this.p6b_create("quick_add_task", args, subject, __("{0} added on {1}", [subject, pp_when(values.date)]));
 	},
@@ -9218,3 +9274,727 @@ const PP6E_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP6E_METHODS);
+
+// ====================================================================== T1: build out tasks, Needs tasks, richer quick add
+//
+// Nik, 2026-10-12: "I definitely want to be able to easily create tasks for projects in the project
+// planner screen so I don't have to leave it to build out tasks for a project." Three things:
+//
+//   - Build out tasks       a spreadsheet-style grid in the side panel: one row per task, with
+//                           Subject, Hours, Phase, Depends on and Crew size. Enter drops to the same
+//                           cell of the next row (a new row at the bottom, in the same phase), Tab
+//                           goes along the row, pasting lines from a spreadsheet fills rows, and
+//                           Ctrl/Cmd+Enter creates them. One build_out_tasks call makes all of them;
+//                           the tasks are UNDATED, so they appear in the Unscheduled tray, ready to
+//                           drag onto days. Nobody is picked and no day is chosen for anyone. Undo
+//                           (remove_built_out_tasks) takes the lot back, unless something has been
+//                           attached to one of them since. Opened from a project's side panel, the
+//                           Needs tasks tray, or a card's right-click menu.
+//   - Needs tasks           a tray of Active customer jobs that have no open task at all, each with a
+//                           "Build out" button (get_projects_needing_tasks: one query). It follows
+//                           the page's project and manager filters.
+//   - Richer quick add      is part of Phase 6B's dialog above (p6b_quick_add): phase, depends on, a
+//                           time slot, several crew, address, outdoor and customer-visit, a
+//                           description and a crew size.
+//
+// Back and Forward: the grid is a drawer of the planner kit, which owns its history entry (Back closes
+// it, Forward reopens it through `reopen`), and what was typed is kept per project in this.t1.drafts
+// so a Back that closes it does not lose the rows. Draft mode refuses it, like every new task.
+//
+// Hooks into the class above, one line each: init_t1 (constructor), t1_load_needs (load),
+// t1_render_tray (render_trays), t1_undo (undo), and t1_project_actions in Phase 6A's
+// p6a_open_project. The right-click menu and the legend take their items through the registries.
+
+const PPT1 = {
+	actions: "erpnext_enhancements.api.planner_actions",
+	// The writes: send() looks their module up in this.p6_send_modules.
+	methods: ["build_out_tasks", "remove_built_out_tasks"],
+	width: 920,
+	start_rows: 5,
+	max_rows: 100,
+	// The Needs tasks tray shows this many projects until "Show all".
+	needs_show: 30,
+	// A planner load does not ask for the list again within this long (a build-out forces it).
+	needs_wait_ms: 15000,
+	// Grid columns, left to right; Enter moves down the column it is in.
+	columns: ["subject", "hours", "phase", "needs", "crew_size"],
+	check_wait_ms: 150,
+};
+
+const PPT1_STYLE = `
+.t1-wrap{padding:2px 0 8px;}
+.t1-intro{margin:0 0 8px;font-size:12px;color:var(--text-muted);}
+.t1-scroll{overflow-x:auto;}
+.t1-grid{width:100%;min-width:700px;border-collapse:collapse;}
+.t1-grid th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);text-align:left;padding:2px 4px;white-space:nowrap;}
+.t1-grid td{padding:2px 3px;vertical-align:middle;}
+.t1-num{width:28px;text-align:right;font-size:12px;color:var(--text-muted);}
+.t1-grid input,.t1-grid select{width:100%;min-width:0;}
+.t1-c-subject{width:32%;}
+.t1-c-hours{width:70px;}
+.t1-c-phase{width:20%;}
+.t1-c-needs{width:26%;}
+.t1-c-crew_size{width:64px;}
+.t1-c-del{width:30px;}
+.t1-bad input,.t1-bad select{border-color:#dc2626;}
+.t1-del{border:none;background:transparent;color:var(--text-muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;}
+.t1-del:hover{color:#b91c1c;}
+.t1-status{margin:10px 0 0;font-size:12px;color:var(--text-muted);}
+.t1-problems{margin:6px 0 0;padding-left:18px;font-size:12px;color:#b91c1c;}
+.t1-tray-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border-color);}
+.t1-tray-main{flex:1;min-width:0;}
+.t1-tray-title{font-weight:600;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
+.t1-tray-title:hover{text-decoration:underline;}
+.t1-tray-sub{font-size:11px;color:var(--text-muted);}
+`;
+
+// Pure helpers: no page, no frappe beyond __(). tests/test_planner_build_out.py runs them under node,
+// and checks build_order against the server's (api/planner_actions.build_order).
+const PPT1_PURE = {
+	blank_row(id, phase) {
+		return { id, subject: "", hours: "", phase: phase || "", needs: "", crew_size: "" };
+	},
+	// A row nobody has typed in. Its phase alone does not count: a new row inherits the one above.
+	is_blank(row) {
+		return !String(row.subject || "").trim() && !String(row.hours || "").trim() && !row.needs && !String(row.crew_size || "").trim();
+	},
+	clean(text) {
+		return String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+	},
+	// What the server will do with a typed phase: an existing open phase of that name (or subject, in
+	// any capitals) is that phase; anything else is a new one, spelt as typed.
+	phase_match(text, phases) {
+		const typed = PPT1_PURE.clean(text);
+		if (!typed) return null;
+		const key = typed.toLowerCase();
+		const found = (phases || []).find((phase) => phase.name === typed || PPT1_PURE.clean(phase.subject).toLowerCase() === key);
+		return found ? { parent_task: found.name } : { phase: typed };
+	},
+	// The order rows can be created in: a row after the rows it waits on, else the grid's own order.
+	// {order, cycle}; with a loop `order` is null and `cycle` lists the rows (0-based) going round.
+	// Kept in step with api/planner_actions.build_order (both are tested).
+	build_order(count, waits) {
+		const need = {};
+		for (let row = 0; row < count; row++) need[row] = new Set((waits && waits[row]) || []);
+		const done = new Set();
+		const order = [];
+		while (order.length < count) {
+			let ready = -1;
+			for (let row = 0; row < count; row++) {
+				if (!done.has(row) && [...need[row]].every((other) => done.has(other))) {
+					ready = row;
+					break;
+				}
+			}
+			if (ready < 0) {
+				const seen = [];
+				let row = [...Array(count).keys()].find((r) => !done.has(r));
+				while (!seen.includes(row)) {
+					seen.push(row);
+					row = Math.min(...[...need[row]].filter((other) => !done.has(other)));
+				}
+				return { order: null, cycle: seen.slice(seen.indexOf(row)) };
+			}
+			done.add(ready);
+			order.push(ready);
+		}
+		return { order, cycle: [] };
+	},
+	// The call's rows from the grid's, and what is wrong with them. Blank rows are left out; a row's
+	// number is its place among the rest (the server counts the same way). `needs` is "" , "row:<id>"
+	// (another row of the grid) or a task's name.
+	rows_payload(rows, phases) {
+		const kept = (rows || []).filter((row) => !PPT1_PURE.is_blank(row));
+		const place = {};
+		kept.forEach((row, index) => (place[row.id] = index + 1));
+		const problems = [];
+		const waits = {};
+		const fresh = [];
+		const out = kept.map((row, index) => {
+			const number = index + 1;
+			const entry = { subject: PPT1_PURE.clean(row.subject) };
+			if (!entry.subject) problems.push(__("Row {0}: give the task a subject.", [number]));
+			else if (entry.subject.length > 140) problems.push(__("Row {0}: keep the subject to 140 characters.", [number]));
+			const typed = String(row.hours == null ? "" : row.hours).trim();
+			if (typed) {
+				const hours = parseFloat(typed);
+				if (!Number.isFinite(hours) || hours < 0 || hours > 400) problems.push(__("Row {0}: hours must be a number from 0 to 400.", [number]));
+				else if (hours > 0) entry.hours = hours;
+			}
+			const phase = PPT1_PURE.phase_match(row.phase, phases);
+			if (phase) {
+				Object.assign(entry, phase);
+				if (phase.phase && !fresh.some((title) => title.toLowerCase() === phase.phase.toLowerCase())) fresh.push(phase.phase);
+			}
+			const size = String(row.crew_size == null ? "" : row.crew_size).trim();
+			if (size) {
+				const people = parseInt(size, 10);
+				if (!(people >= 0 && people <= 50)) problems.push(__("Row {0}: crew size must be a number from 0 to 50.", [number]));
+				else if (people > 0) entry.crew_size = people;
+			}
+			if (row.needs) {
+				if (String(row.needs).indexOf("row:") === 0) {
+					const other = place[String(row.needs).slice(4)];
+					if (!other) problems.push(__("Row {0}: it waits on a row that is empty or gone.", [number]));
+					else if (other === number) problems.push(__("Row {0}: a task cannot wait on itself.", [number]));
+					else {
+						entry.depends_on = [`row:${other}`];
+						waits[index] = new Set([other - 1]);
+					}
+				} else {
+					entry.depends_on = [row.needs];
+				}
+			}
+			return entry;
+		});
+		const sorted = PPT1_PURE.build_order(kept.length, waits);
+		if (sorted.cycle.length) {
+			problems.push(__("Rows {0} wait on each other, round and round. Take one of those dependencies out.", [sorted.cycle.map((i) => i + 1).join(", ")]));
+		}
+		return { rows: out, problems, new_phases: fresh, cycle: sorted.cycle.map((i) => kept[i].id) };
+	},
+	// Lines pasted from a spreadsheet as rows: Subject, Hours, Phase, Crew size, tab-separated.
+	// null for a single plain line, which the browser pastes into the cell as usual.
+	parse_paste(text) {
+		const raw = String(text == null ? "" : text);
+		const lines = raw.split(/\r?\n/).filter((line) => line.trim());
+		if (lines.length < 2 && raw.indexOf("\t") < 0) return null;
+		return lines.map((line) => {
+			const cells = line.split("\t");
+			const cell = (i) => String(cells[i] == null ? "" : cells[i]).trim();
+			return { subject: cell(0), hours: cell(1), phase: cell(2), crew_size: cell(3) };
+		});
+	},
+	// "5 tasks and 2 phases" (the phases only when there are some).
+	counts(count, phases) {
+		const tasks = count === 1 ? __("1 task") : __("{0} tasks", [count]);
+		if (!phases) return tasks;
+		return phases === 1 ? __("{0} and 1 phase", [tasks]) : __("{0} and {1} phases", [tasks, phases]);
+	},
+	// The Create button: "Create 5 tasks and 2 phases".
+	summary(count, phases) {
+		return count ? __("Create {0}", [PPT1_PURE.counts(count, phases)]) : __("Create tasks");
+	},
+	// Does a Needs tasks row pass the page's project and manager filters.
+	needs_visible(row, project, pm) {
+		if (project && row.name !== project) return false;
+		if (pm && row.pm !== pm) return false;
+		return true;
+	},
+};
+
+const PPT1_METHODS = {
+	init_t1() {
+		if (!document.getElementById("pp-style-t1")) {
+			$("<style id='pp-style-t1'>").text(PPT1_STYLE).appendTo(document.head);
+		}
+		this.t1 = { needs: null, needs_token: 0, needs_at: 0, needs_open: false, show_all: false, drafts: {}, ids: 0, grid: null };
+		this.p6_send_modules = this.p6_send_modules || {};
+		PPT1.methods.forEach((method) => (this.p6_send_modules[method] = PPT1.actions));
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.t1_menu_items(target));
+		this.p6_legend_providers = this.p6_legend_providers || [];
+		this.p6_legend_providers.push(() => this.t1_legend_sections());
+	},
+
+	t1_can() {
+		return !!(this.t1 && this.data && this.data.can_edit);
+	},
+
+	// ------------------------------------------------------------------ where it opens from
+
+	t1_project_actions(project) {
+		if (!this.t1_can() || !project) return [];
+		return [
+			{
+				label: __("Build out tasks"),
+				primary: true,
+				title: __("Add many tasks to this project at once"),
+				on_click: () => this.t1_open_build_out(project),
+			},
+		];
+	},
+
+	t1_menu_items(target) {
+		if (!this.t1_can() || !target || target.kind !== "card" || !target.card || !target.card.project) return [];
+		const project = target.card.project;
+		return [{ label: __("Build out tasks for this project…"), on_click: () => this.t1_open_build_out(project) }];
+	},
+
+	t1_legend_sections() {
+		return [
+			{
+				title: __("Building out a project"),
+				items: [
+					{
+						sample_html: "",
+						text: __("Build out tasks (a project's side panel, the Needs tasks tray, or a card's right-click menu) opens a grid: type a task on each row, Enter for the next row, and Create. They land in the Unscheduled tray, ready to drag onto days."),
+					},
+					{
+						sample_html: "",
+						text: __("Phase: pick an existing phase of the project, or type a new name to make one. Depends on: another row of the grid, or a task the project already has. You can paste lines from a spreadsheet (Subject, Hours, Phase, Crew size)."),
+					},
+					{
+						sample_html: "",
+						text: __("Needs tasks lists the active projects that have no open task yet; Build out starts their plan."),
+					},
+				],
+			},
+		];
+	},
+
+	// ------------------------------------------------------------------ the Needs tasks tray
+
+	t1_load_needs(force) {
+		const t1 = this.t1;
+		if (!t1 || !this.data || !this.data.can_edit) return Promise.resolve(null);
+		if (!force && t1.needs && Date.now() - t1.needs_at < PPT1.needs_wait_ms) return Promise.resolve(null);
+		const token = ++t1.needs_token;
+		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_projects_needing_tasks` }))
+			.then((r) => {
+				if (token !== t1.needs_token) return;
+				t1.needs = (r && r.message) || null;
+				t1.needs_at = Date.now();
+				if (this.view !== PP.heatmap_view && this.data) this.render_trays();
+			})
+			.catch(() => null);
+	},
+
+	t1_needs_rows() {
+		const needs = this.t1 && this.t1.needs;
+		if (!needs || !needs.can_create || !this.data || !this.data.can_edit) return [];
+		return (needs.projects || []).filter((row) => PPT1_PURE.needs_visible(row, this.project, this.pm));
+	},
+
+	t1_render_tray() {
+		const rows = this.t1_needs_rows();
+		if (!rows.length) return;
+		const t1 = this.t1;
+		const $tray = $('<div class="pp-tray t1-tray"></div>').appendTo(this.$trays);
+		const $h = $("<h5></h5>").appendTo($tray);
+		$("<span></span>").text(__("Needs tasks ({0}): projects with nothing to schedule yet", [rows.length])).appendTo($h);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(t1.needs_open ? __("Hide") : __("Show"))
+			.attr("aria-expanded", t1.needs_open ? "true" : "false")
+			.on("click", () => {
+				t1.needs_open = !t1.needs_open;
+				this.render_trays();
+			})
+			.appendTo($h);
+		if (!t1.needs_open) return;
+		const shown = t1.show_all ? rows : rows.slice(0, PPT1.needs_show);
+		shown.forEach((row) => {
+			const $row = $('<div class="t1-tray-row"></div>').appendTo($tray);
+			const $main = $('<div class="t1-tray-main"></div>').appendTo($row);
+			$('<span class="t1-tray-title" role="button" tabindex="0"></span>')
+				.text(row.title || row.name)
+				.attr("title", __("See the project at a glance"))
+				.on("click", () => this.p6a_open_project(row.name))
+				.on("keydown", (e) => {
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						this.p6a_open_project(row.name);
+					}
+				})
+				.appendTo($main);
+			const note = row.finished_tasks ? __("All {0} tasks are finished", [row.finished_tasks]) : __("No tasks yet");
+			$('<span class="t1-tray-sub"></span>')
+				.text([row.name, row.pm, note].filter(Boolean).join(" · "))
+				.appendTo($main);
+			$('<button type="button" class="btn btn-primary btn-xs"></button>')
+				.text(__("Build out"))
+				.on("click", () => this.t1_open_build_out(row.name, row.title))
+				.appendTo($row);
+		});
+		if (rows.length > shown.length) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Show all"))
+				.on("click", () => {
+					t1.show_all = true;
+					this.render_trays();
+				})
+				.appendTo($tray);
+		}
+	},
+
+	// ------------------------------------------------------------------ the grid
+
+	// The planner_actions writes go through send() like every other write (reason prompt, Undo).
+	t1_send(method, args, opts) {
+		return this.send(method, args, opts);
+	},
+
+	t1_el(tag, props, kids) {
+		const el = document.createElement(tag);
+		Object.entries(props || {}).forEach(([key, value]) => {
+			if (value == null || value === false) return;
+			if (key === "class") el.className = value;
+			else if (key === "text") el.textContent = value;
+			else el.setAttribute(key, value === true ? "" : String(value));
+		});
+		(kids || []).forEach((kid) => kid && el.appendChild(kid));
+		return el;
+	},
+
+	t1_new_id() {
+		this.t1.ids += 1;
+		return `r${this.t1.ids}`;
+	},
+
+	t1_open_build_out(project, title) {
+		if (!this.t1_can() || this.p6b_refuse_in_draft()) return null;
+		const kit = this.p6b_kit();
+		if (!kit) {
+			frappe.msgprint(__("The side panel is still loading. Try again in a moment."));
+			return null;
+		}
+		const known = this.by_project[project] || {};
+		const label = title || known.title || project;
+		const saved = this.t1.drafts[project];
+		const body = this.t1_el("div", { class: "t1-wrap", text: __("Loading…") });
+		const state = {
+			project,
+			label,
+			body,
+			handle: null,
+			phases: [],
+			tasks: [],
+			rows: saved && saved.length ? saved : null,
+			busy: false,
+			timer: null,
+		};
+		this.t1.grid = state;
+		state.handle = kit.drawer.open({
+			title: __("Build out tasks"),
+			subtitle: [label, project !== label ? project : ""].filter(Boolean).join(" · "),
+			body,
+			width: PPT1.width,
+			key: `t1-build:${project}`,
+			owner: PP6A.owner,
+			push: this.$body[0],
+			actions: this.t1_actions(state, 0, 0),
+			reopen: () => this.t1_open_build_out(project, title),
+			on_close: () => {
+				clearTimeout(state.timer);
+				// What was typed is kept, so Back and Forward (or a stray click) do not lose it.
+				if (!state.done && state.rows) this.t1.drafts[project] = state.rows.filter((row) => !PPT1_PURE.is_blank(row));
+				if (this.t1.grid === state) this.t1.grid = null;
+			},
+		});
+		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_build_out_context`, args: { project } }))
+			.then((r) => {
+				const context = (r && r.message) || {};
+				state.phases = context.phases || [];
+				state.tasks = context.tasks || [];
+				state.truncated = !!context.truncated;
+				if (!state.rows) state.rows = this.t1_start_rows();
+				else state.rows = state.rows.map((row) => Object.assign(PPT1_PURE.blank_row(this.t1_new_id()), row, { id: row.id || this.t1_new_id() }));
+				if (!state.handle.is_open()) return;
+				this.t1_build_grid(state);
+			})
+			.catch(() => {
+				if (!state.handle.is_open()) return;
+				body.textContent = __("The project could not be loaded. Try again.");
+			});
+	},
+
+	t1_start_rows() {
+		return Array.from({ length: PPT1.start_rows }, () => PPT1_PURE.blank_row(this.t1_new_id()));
+	},
+
+	t1_build_grid(state) {
+		const body = state.body;
+		while (body.firstChild) body.removeChild(body.firstChild);
+		body.appendChild(
+			this.t1_el("p", {
+				class: "t1-intro",
+				text: __("One task per row. They are created without dates and appear in the Unscheduled tray. Enter moves to the next row; you can paste lines from a spreadsheet."),
+			})
+		);
+		const heads = [
+			["", "t1-num"],
+			[__("Subject"), "t1-c-subject"],
+			[__("Hours"), "t1-c-hours"],
+			[__("Phase / parent"), "t1-c-phase"],
+			[__("Depends on"), "t1-c-needs"],
+			[__("Crew size"), "t1-c-crew_size"],
+			["", "t1-c-del"],
+		];
+		const head = this.t1_el("tr", {}, heads.map(([text, cls]) => this.t1_el("th", { class: cls, scope: "col", text })));
+		state.tbody = this.t1_el("tbody", {});
+		state.list_id = `t1-phases-${this.t1.ids}-${Math.random().toString(36).slice(2, 7)}`;
+		state.datalist = this.t1_el("datalist", { id: state.list_id });
+		state.table = this.t1_el("table", { class: "t1-grid", role: "grid" }, [this.t1_el("thead", {}, [head]), state.tbody]);
+		body.appendChild(this.t1_el("div", { class: "t1-scroll" }, [state.table, state.datalist]));
+		state.status = this.t1_el("div", { class: "t1-status", "aria-live": "polite" });
+		state.problems = this.t1_el("ul", { class: "t1-problems" });
+		body.appendChild(state.status);
+		body.appendChild(state.problems);
+		if (state.truncated) {
+			body.appendChild(this.t1_el("p", { class: "t1-status", text: __("Only the first tasks of this project are offered under Depends on.") }));
+		}
+		state.table.addEventListener("input", (e) => this.t1_input(state, e));
+		state.table.addEventListener("change", (e) => this.t1_input(state, e));
+		state.table.addEventListener("keydown", (e) => this.t1_key(state, e));
+		state.table.addEventListener("paste", (e) => this.t1_paste(state, e));
+		state.table.addEventListener("click", (e) => {
+			const del = e.target && e.target.closest ? e.target.closest("[data-t1-del]") : null;
+			if (del) this.t1_remove_row(state, del.getAttribute("data-t1-del"));
+		});
+		this.t1_rebuild_rows(state, { row: 0, col: "subject" });
+	},
+
+	// Draw every row again (adding, deleting or pasting changes them all); typing never does this.
+	t1_rebuild_rows(state, focus) {
+		while (state.tbody.firstChild) state.tbody.removeChild(state.tbody.firstChild);
+		state.rows.forEach((row, index) => state.tbody.appendChild(this.t1_row_el(state, row, index)));
+		this.t1_refresh_options(state);
+		this.t1_check(state);
+		if (focus) this.t1_focus(state, focus.row, focus.col);
+	},
+
+	t1_row_el(state, row, index) {
+		const cell = (col, kid) => this.t1_el("td", { class: `t1-c-${col}` }, [kid]);
+		const label = (name) => __("{0}, row {1}", [name, index + 1]);
+		const field = (col, props) => {
+			const input = this.t1_el("input", Object.assign({ class: "form-control input-sm", "data-t1-col": col, "data-t1-row": row.id, autocomplete: "off" }, props));
+			input.value = row[col] == null ? "" : String(row[col]);
+			return input;
+		};
+		const select = this.t1_el("select", { class: "form-control input-sm", "data-t1-col": "needs", "data-t1-row": row.id, "aria-label": label(__("Depends on")) });
+		const tr = this.t1_el("tr", { "data-t1-id": row.id }, [
+			this.t1_el("td", { class: "t1-num", text: String(index + 1) }),
+			cell("subject", field("subject", { type: "text", maxlength: 140, "aria-label": label(__("Subject")) })),
+			cell("hours", field("hours", { type: "number", min: 0, max: 400, step: "0.25", inputmode: "decimal", "aria-label": label(__("Hours")) })),
+			cell("phase", field("phase", { type: "text", maxlength: 140, list: state.list_id, "aria-label": label(__("Phase / parent")), placeholder: __("None") })),
+			cell("needs", select),
+			cell("crew_size", field("crew_size", { type: "number", min: 0, max: 50, step: "1", inputmode: "numeric", "aria-label": label(__("Crew size")) })),
+			cell(
+				"del",
+				this.t1_el("button", { type: "button", class: "t1-del", "data-t1-del": row.id, title: __("Remove this row"), "aria-label": label(__("Remove")), text: "×" })
+			),
+		]);
+		return tr;
+	},
+
+	// The Depends on lists (the other rows, and the project's own tasks) and the Phase suggestions.
+	t1_refresh_options(state) {
+		const rows = state.rows;
+		const phases = state.phases.map((phase) => phase.subject || phase.name);
+		const seen = new Set(phases.map((name) => name.toLowerCase()));
+		rows.forEach((row) => {
+			const typed = PPT1_PURE.clean(row.phase);
+			if (typed && !seen.has(typed.toLowerCase())) {
+				seen.add(typed.toLowerCase());
+				phases.push(typed);
+			}
+		});
+		while (state.datalist.firstChild) state.datalist.removeChild(state.datalist.firstChild);
+		phases.forEach((name) => state.datalist.appendChild(this.t1_el("option", { value: name })));
+		const live = new Set(rows.filter((row) => !PPT1_PURE.is_blank(row) && PPT1_PURE.clean(row.subject)).map((row) => row.id));
+		rows.forEach((row, index) => {
+			const select = state.tbody.querySelector(`select[data-t1-row="${row.id}"]`);
+			if (!select) return;
+			if (row.needs && String(row.needs).indexOf("row:") === 0 && !live.has(String(row.needs).slice(4))) row.needs = "";
+			while (select.firstChild) select.removeChild(select.firstChild);
+			select.appendChild(this.t1_el("option", { value: "", text: __("Nothing") }));
+			const here = this.t1_el("optgroup", { label: __("Rows in this grid") });
+			rows.forEach((other, at) => {
+				if (other.id === row.id || !live.has(other.id)) return;
+				const text = PPT1_PURE.clean(other.subject);
+				here.appendChild(this.t1_el("option", { value: `row:${other.id}`, text: `${at + 1}. ${text.length > 40 ? `${text.slice(0, 39)}…` : text}` }));
+			});
+			if (here.firstChild) select.appendChild(here);
+			if (state.tasks.length) {
+				const there = this.t1_el("optgroup", { label: __("Tasks the project already has") });
+				state.tasks.forEach((task) => {
+					const text = PPT1_PURE.clean(task.subject);
+					there.appendChild(this.t1_el("option", { value: task.name, text: `${text.length > 40 ? `${text.slice(0, 39)}…` : text} (${task.name})` }));
+				});
+				select.appendChild(there);
+			}
+			select.value = row.needs || "";
+			if (select.value !== (row.needs || "")) row.needs = select.value;
+		});
+	},
+
+	t1_focus(state, index, col) {
+		const row = state.rows[index];
+		if (!row) return;
+		const el = state.tbody.querySelector(`[data-t1-row="${row.id}"][data-t1-col="${col}"]`);
+		if (!el) return;
+		el.focus();
+		if (el.select && el.type !== "number") el.select();
+	},
+
+	t1_input(state, e) {
+		const el = e.target;
+		if (!el || !el.getAttribute) return;
+		const id = el.getAttribute("data-t1-row");
+		const col = el.getAttribute("data-t1-col");
+		const row = id && state.rows.find((item) => item.id === id);
+		if (!row || !col) return;
+		row[col] = el.value;
+		state.rows_changed = true;
+		clearTimeout(state.timer);
+		state.timer = setTimeout(() => {
+			if (col === "subject" || col === "phase") this.t1_refresh_options(state);
+			this.t1_check(state);
+		}, PPT1.check_wait_ms);
+	},
+
+	t1_key(state, e) {
+		const el = e.target;
+		if (!el || !el.getAttribute || !el.getAttribute("data-t1-col")) return;
+		if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+			e.preventDefault();
+			this.t1_create(state);
+			return;
+		}
+		if (e.key !== "Enter" || e.isComposing) return;
+		e.preventDefault();
+		const id = el.getAttribute("data-t1-row");
+		const col = el.getAttribute("data-t1-col");
+		const index = state.rows.findIndex((row) => row.id === id);
+		if (index < 0) return;
+		const target = index + (e.shiftKey ? -1 : 1);
+		if (target < 0) return;
+		if (target >= state.rows.length) {
+			if (state.rows.length >= PPT1.max_rows) return;
+			this.t1_add_row(state, { inherit: state.rows[index].phase, col });
+			return;
+		}
+		this.t1_focus(state, target, col);
+	},
+
+	t1_add_row(state, opts) {
+		opts = opts || {};
+		if (state.rows.length >= PPT1.max_rows) {
+			frappe.show_alert({ message: __("Build out {0} tasks or fewer at once.", [PPT1.max_rows]), indicator: "orange" }, 5);
+			return;
+		}
+		state.rows.push(PPT1_PURE.blank_row(this.t1_new_id(), opts.inherit || ""));
+		this.t1_rebuild_rows(state, { row: state.rows.length - 1, col: opts.col || "subject" });
+	},
+
+	t1_remove_row(state, id) {
+		const index = state.rows.findIndex((row) => row.id === id);
+		if (index < 0) return;
+		state.rows.splice(index, 1);
+		if (!state.rows.length) state.rows.push(PPT1_PURE.blank_row(this.t1_new_id()));
+		this.t1_rebuild_rows(state, { row: Math.min(index, state.rows.length - 1), col: "subject" });
+	},
+
+	t1_paste(state, e) {
+		const el = e.target;
+		if (!el || !el.getAttribute || el.getAttribute("data-t1-col") !== "subject") return;
+		const text = e.clipboardData && e.clipboardData.getData ? e.clipboardData.getData("text") : "";
+		const lines = PPT1_PURE.parse_paste(text);
+		if (!lines) return;
+		e.preventDefault();
+		const at = Math.max(state.rows.findIndex((row) => row.id === el.getAttribute("data-t1-row")), 0);
+		// Pasted lines fill the rows from this one down; a row with something in it is not overwritten.
+		let index = at;
+		lines.forEach((line) => {
+			while (index < state.rows.length && !PPT1_PURE.is_blank(state.rows[index])) index += 1;
+			if (index >= PPT1.max_rows) return;
+			const row = index < state.rows.length ? state.rows[index] : null;
+			if (row) Object.assign(row, line);
+			else state.rows.push(Object.assign(PPT1_PURE.blank_row(this.t1_new_id()), line));
+			index += 1;
+		});
+		this.t1_rebuild_rows(state, { row: Math.min(index, state.rows.length - 1), col: "subject" });
+	},
+
+	// The footer's buttons, with the count of what Create would make.
+	t1_actions(state, count, phases) {
+		return [
+			{ label: __("Add row"), title: __("A new row at the bottom"), on_click: () => state.rows && state.table && this.t1_add_row(state) },
+			{ label: PPT1_PURE.summary(count, phases), primary: true, title: __("Ctrl or Cmd + Enter"), on_click: () => this.t1_create(state) },
+		];
+	},
+
+	// Check the grid as it stands: the rows with a mistake are marked, the count is on the button.
+	t1_check(state) {
+		if (!state.rows || !state.tbody) return null;
+		const built = PPT1_PURE.rows_payload(state.rows, state.phases);
+		state.tbody.querySelectorAll("tr").forEach((tr) => tr.classList.toggle("t1-bad", built.cycle.indexOf(tr.getAttribute("data-t1-id")) >= 0));
+		while (state.problems.firstChild) state.problems.removeChild(state.problems.firstChild);
+		built.problems.forEach((text) => state.problems.appendChild(this.t1_el("li", { text })));
+		state.status.textContent = built.rows.length
+			? __("Ready to create {0}. Rows with nothing typed in them are skipped.", [PPT1_PURE.counts(built.rows.length, built.new_phases.length)])
+			: __("Type a subject on a row to begin.");
+		if (state.handle && state.handle.is_open() && !state.busy) {
+			state.handle.set_actions(this.t1_actions(state, built.rows.length, built.new_phases.length));
+		}
+		return built;
+	},
+
+	// ------------------------------------------------------------------ create and undo
+
+	t1_create(state) {
+		if (state.busy || !state.rows) return Promise.resolve(null);
+		if (this.p6b_refuse_in_draft()) return Promise.resolve(null);
+		// Drop the blank rows first, so the numbers in any message are the numbers on the screen.
+		state.rows = state.rows.filter((row) => !PPT1_PURE.is_blank(row));
+		if (!state.rows.length) state.rows.push(PPT1_PURE.blank_row(this.t1_new_id()));
+		this.t1_rebuild_rows(state, null);
+		const built = PPT1_PURE.rows_payload(state.rows, state.phases);
+		if (!built.rows.length) {
+			frappe.show_alert({ message: __("Type at least one task first."), indicator: "orange" }, 5);
+			return Promise.resolve(null);
+		}
+		if (built.problems.length) {
+			frappe.msgprint({ title: __("Fix these first"), message: built.problems.map((text) => pp_esc(text)).join("<br>"), indicator: "orange" });
+			return Promise.resolve(null);
+		}
+		state.busy = true;
+		return this.t1_send("build_out_tasks", { project: state.project, rows: JSON.stringify(built.rows) }, {})
+			.then((result) => {
+				state.busy = false;
+				if (!result || !result.tasks) {
+					if (state.handle && state.handle.is_open()) this.t1_check(state);
+					return result;
+				}
+				state.done = true;
+				delete this.t1.drafts[state.project];
+				result.tasks.concat(result.phases || []).forEach((item) => {
+					if (item.name && item.modified) this.modified[item.name] = item.modified;
+				});
+				const count = result.tasks.length;
+				const message = __("{0} tasks created on {1}. They are in the Unscheduled tray.", [count, state.label]);
+				const snapshot = {
+					t1: "built",
+					subject: count === 1 ? result.tasks[0].subject : __("{0} tasks", [count]),
+					project: state.project,
+					tasks: result.tasks.map((item) => ({ task: item.name, modified: item.modified })),
+					phases: (result.phases || []).map((item) => ({ task: item.name, modified: item.modified })),
+				};
+				if (!this.push_undo(snapshot, message)) frappe.show_alert({ message, indicator: "green" }, 6);
+				if (state.handle && state.handle.is_open()) state.handle.close();
+				return result;
+			})
+			.finally(() => {
+				state.busy = false;
+				this.t1_load_needs(true);
+				this.load();
+			});
+	},
+
+	// Undo of a build-out. False for any other entry. The server refuses (and says why) when
+	// anything has been attached to one of the tasks since, and then removes none of them.
+	t1_undo(snap) {
+		if (!snap || snap.t1 !== "built") return false;
+		const args = {
+			tasks: JSON.stringify(snap.tasks.map((item) => ({ task: item.task, modified: this.modified[item.task] || item.modified }))),
+			phases: JSON.stringify((snap.phases || []).map((item) => ({ task: item.task, modified: this.modified[item.task] || item.modified }))),
+		};
+		this.t1_send("remove_built_out_tasks", args, { message: __("Undone: {0}", [snap.subject]) }).finally(() => {
+			this.t1_load_needs(true);
+			this.load();
+		});
+		return true;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPT1_METHODS);

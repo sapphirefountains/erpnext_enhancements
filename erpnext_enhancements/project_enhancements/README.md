@@ -1341,6 +1341,73 @@ Hooks into the classes and into Phase 6B's blocks, one line each: `p6e_bar_switc
 Project Planner needs no constructor hook (its style is added on first use). The existing
 `p6b_undo` line is untouched. `tests/test_planner_phase6e.py` pins all four.
 
+### Build out tasks, Needs tasks and the richer quick add (T1, v1.602.0)
+
+Nik, 2026-10-12: "I definitely want to be able to easily create tasks for projects in the project
+planner screen so I don't have to leave it to build out tasks for a project." The page work is
+`PPT1_PURE` / `PPT1_METHODS` at the end of `project_planner.js` (the **T1** block, methods `t1_*`); the
+server is `api/planner_actions.py`.
+
+- **Build out tasks.** A side panel (the planner kit's drawer, so Esc and Back close it and Forward
+  reopens it) with a spreadsheet-style grid, one row per task: **Subject** (required), **Hours**,
+  **Phase / parent**, **Depends on** and **Crew size**. *Enter* drops to the same cell of the next
+  row (a new row at the bottom, in the phase of the row above), *Tab* goes along the row, *Shift+Enter*
+  goes up, *Ctrl/Cmd+Enter* creates; lines pasted from a spreadsheet into a Subject cell
+  (`Subject<TAB>Hours<TAB>Phase<TAB>Crew size`) fill rows from there down. **Phase** suggests the
+  project's open phases (group Tasks); a name that is one of them (or its subject, in any capitals)
+  files the task under it, **any other name makes a new phase** (a group Task, made first and shared by
+  every row that typed it). **Depends on** lists the other rows of the grid ("3. Wire the pumps") and
+  the project's own open tasks; a loop of rows, a row waiting on itself or on a row that was emptied
+  is marked on the screen and refused by the server with the rows named. The button says what it will
+  make ("Create 5 tasks and 2 phases"); blank rows are skipped. What was typed is kept per project in
+  `this.t1.drafts` so a Back that closes the panel does not lose it. Draft mode refuses it (a new task
+  has no task for a draft to hang on), as quick add does.
+  - **The tasks are undated and crewless**, so they appear in the Unscheduled tray, ready to drag onto
+    days. Nobody and no day is picked: no conflict check runs.
+  - **One request, all or nothing**: `build_out_tasks(project, rows)` checks every row first (a mistake
+    is named by its row number), makes the new phases, then the tasks in an order where each comes after
+    what it waits on (the grid's own order when it already is; `build_order`, a stable topological sort
+    the page runs too and a test compares), with the `depends_on` rows in the insert. A task ERPNext
+    refuses ("Row 3 (Wire them) could not be created, so nothing was") fails the request and Frappe rolls
+    it back. ERPNext lists every sub-task among its phase's dependencies by itself
+    (`Task.populate_depends_on`), so a phase is saved again as each child is added; the stamp the Undo
+    compares is read last.
+  - **Undo** (`remove_built_out_tasks`) takes the lot back or nothing: every task and phase goes through
+    `remove_created_task`'s own test (its creator, unchanged since, no timesheet or clocked time, no
+    other dependent, no other people's comments, file or draft). Inside a build-out, tasks waiting on each
+    other and a phase's own list of sub-tasks do not count; a sub-task somebody else added to a new phase,
+    or anything attached to one task, stops **all** of it and the answer says which. Each task comes off
+    its phase's dependency list (straight in `Task Depends On`, the phase is not saved), the waiting task
+    is deleted before what it waits on, then the phases; `frappe.delete_doc` as the caller, never `force`.
+    `remove_created_task` got the same allowance for a quick add filed under a phase: the phase's own
+    `depends_on` row is no longer "another task depends on it" (before this version, undoing a
+    duplicate or quick add of a sub-task always refused).
+  - **Where it opens from**: the project's side panel (*Build out tasks*, Phase 6A's drawer actions via
+    `t1_project_actions`), the Needs tasks tray, and a card's right-click menu (*Build out tasks for this
+    project…*, a `p6_menu_providers` entry).
+- **Needs tasks** (tray, below Unscheduled; collapsed with its count until opened): the Active
+  customer-job projects with **no open task** (no leaf task that is not a template or finished: a
+  project whose phases exist but whose work does not counts, and so does one whose every task is
+  finished; the line says "No tasks yet" or "All 4 tasks are finished"), each with a *Build out* button
+  and the name that opens the project's side panel. `get_projects_needing_tasks` is **one** query for the
+  lot (`needs_tasks_query`: `NOT EXISTS` over `tabTask`, the planners' own `planner_job_condition`, all
+  bound, at most 200); the page re-reads it after a load at most every 15 seconds, and straight away
+  after a build-out or an Undo, and applies its own project and project-manager filters
+  (`PPT1_PURE.needs_visible`). Hidden for anyone who cannot create Tasks.
+- **Richer quick add** (Phase 6B's *Add a task* dialog, `p6b_quick_add`): a collapsed "More about the
+  task" section adds **Phase** (a group Task of the chosen project), **Depends on**, **Starts at /
+  Ends at** (a time slot on the date: `custom_start_datetime`/`custom_end_datetime`, one day, the
+  estimate defaulting to the slot's length), **Others on the crew** (the *Person* above is the lead
+  when there are others; nobody is picked for you, every person is conflict-checked together and any
+  conflict asks for a reason as before), **Crew size**, **Address**, **Outdoor work**,
+  **Customer-facing visit** and a **Description** (stored escaped). A plain add sends exactly what it
+  always sent; `quick_add_task`'s new arguments are all optional. A dependency still running when the new
+  task starts is a `Dependencies` line in the reason prompt (a pencil needs no reason).
+
+Hooks into the class and Phase 6A, one line each: `init_t1` (constructor), `t1_load_needs` (`load`),
+`t1_render_tray` (`render_trays`), `t1_undo` (`undo`, before `p6b_undo`) and `t1_project_actions`
+(`p6a_open_project`). `tests/test_planner_build_out.py` pins the server and the page.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.

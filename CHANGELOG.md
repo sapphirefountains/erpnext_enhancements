@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.602.0] - 2026-10-12
+
+### Added
+
+Project Planner T1: build out a project's tasks without leaving the planner. Nik, 2026-10-12: "I
+definitely want to be able to easily create tasks for projects in the project planner screen so I
+don't have to leave it to build out tasks for a project." Before this, a project's tasks were made on
+the Task form or one at a time from a double-click, and a project with no tasks drew nothing on the
+planner at all, so there was nothing to click.
+
+- **Build out tasks: a spreadsheet-style grid in the side panel.** Open it from a project's side panel
+  (*Build out tasks*), from the new Needs tasks tray, or from a card's right-click menu. One row per
+  task: Subject (required), Hours, Phase / parent, Depends on and Crew size. Enter drops to the same
+  cell of the next row (a new row at the bottom, in the phase of the row above), Tab goes along the row,
+  Ctrl/Cmd+Enter creates, and lines pasted from a spreadsheet (`Subject<TAB>Hours<TAB>Phase<TAB>Crew
+  size`) fill rows. The button says what it will make ("Create 5 tasks and 2 phases"). The tasks are
+  created **undated and crewless**, so they appear in the Unscheduled tray, ready to drag onto days;
+  nobody and no day is picked for anyone. It is a planner-kit drawer, so Esc and Back close it and
+  Forward reopens it, and what was typed is kept per project so a Back does not lose it. Draft mode
+  refuses it, as it does quick add: a task that does not exist yet has nothing to be a draft of.
+  - **Phase / parent**: pick one of the project's open phases (group tasks), or type a new name and a
+    new phase (an `is_group` Task) is made first and shared by every row that typed it. A name that is
+    an open phase already (its name or its subject, in any capitals) is that phase, so typing "Pumps"
+    twice never makes two.
+  - **Depends on**: another row of the grid, or a task the project already has. A loop of rows, a row
+    waiting on itself, or one waiting on a row that was emptied is marked on screen and refused by the
+    server with the rows named ("Rows 1, 2, 3 wait on each other"), where ERPNext would only say
+    "Circular Reference Error" after the fact. Tasks are made in an order where each follows what it
+    waits on, the grid's own order when it already is.
+- **`planner_actions.build_out_tasks(project, rows)`**, a POST, creates them all in one request, all or
+  nothing: permission (`create`), `_require_customer_job`, then every row checked and named by its
+  number before anything is written (subject, hours 0 to 400, crew size 0 to 50, a phase that is an
+  open group of this project, dependencies that are plain tasks of this project the caller can read),
+  then the new phases, then the tasks. At most 100 rows and 25 new phases. A task ERPNext refuses
+  names its row and fails the request, which Frappe rolls back.
+- **Undo**: `planner_actions.remove_built_out_tasks`. It runs `remove_created_task`'s own test on every
+  task and new phase first (its creator, unchanged since, no timesheet or clocked time, no other
+  dependent, no other people's comments, file or draft) and removes **all of them or none**: a
+  sub-task somebody filed under a new phase, or anything attached to one task, stops the whole Undo
+  and the message says which. Tasks of the same build-out waiting on each other, and a phase's own list
+  of sub-tasks, do not count. Each task comes off its phase's dependency list first, the waiting task is
+  deleted before what it waits on, then the phases; `frappe.delete_doc` as the caller, never `force`.
+- **Needs tasks**, a tray under Unscheduled (collapsed with its count until opened): the Active
+  customer-job projects with no open task, each with a *Build out* button and a name that opens the
+  project's side panel. "No open task" means no leaf task that is not a template or finished, so a
+  project that is all phases, or all finished work, is listed too ("No tasks yet" or "All 4 tasks are
+  finished"). `planner_actions.get_projects_needing_tasks` is **one** bound query for all of them
+  (`needs_tasks_query`: `NOT EXISTS` over `tabTask`, the planners' own `planner_job_condition`), never
+  a loop per project, and avoids Frappe 16's refusal of SQL functions as `get_all` field strings by
+  using `frappe.db.sql`. The page applies its own project and project-manager filters, re-reads the list
+  at most every 15 seconds, and hides it from anyone who cannot create Tasks.
+  `planner_actions.get_build_out_context` (GET) gives the grid a project's open phases and open tasks.
+- **A richer quick add.** The *Add a task* dialog (double-click an empty cell) gets a collapsed "More
+  about the task" section: Phase, Depends on, Starts at / Ends at (a time slot on the date, which
+  becomes `custom_start_datetime`/`custom_end_datetime`; with no hours the estimate is the slot's
+  length), Others on the crew, Crew size, Address, Outdoor work, Customer-facing visit and a
+  Description. `quick_add_task` takes the matching optional arguments (`parent_task`, `depends_on`,
+  `start_time`, `end_time`, `crew`, `address`, `outdoor`, `customer_visit`, `description`,
+  `crew_size`); with none of them it is exactly what it was. Several crew are conflict-checked
+  together and any overbooking asks for a reason as before; the person in the cell is the lead when
+  others are added, and nobody is picked for anyone. A dependency still running when the new task
+  starts is a "Dependencies" line in the reason prompt, as on `save_task`; a pencil needs none. A
+  task cannot run past the day its phase ends (ERPNext's rule, said in plain words before it fires).
+  Still refused in draft mode.
+
+### Fixed
+
+- **Undoing a quick add, duplicate or split of a task filed under a phase always refused.** ERPNext
+  lists every sub-task among its phase's `depends_on` (`Task.populate_depends_on`), so the Undo's
+  "another task depends on it" check found the phase and said no. `remove_created_task` now lets that
+  one row through (only the task's own `parent_task`; any other dependent still refuses) and takes it
+  off the phase's list before it deletes, as a dependency re-point does, so the phase is not saved.
+
+### Tests
+
+`tests/test_planner_build_out.py` (own CI step, unittest, reusing Phase 6B's fake site): the row checks
+and what each refusal names, shared and reused phases, dependency order and the loop and self-dependency
+refusals, permission, customer-job and draft refusals, the all-or-nothing Undo and each thing that stops
+it, the Needs tasks query (one bound statement; the customer-job rule re-checked in Python), and every new
+quick-add argument; under node, the grid's pure helpers, the dependency order compared with the server's,
+what the page sends, and the page's hooks. `test_planner_phase6e` now reads its block up to the next
+phase's banner rather than to the end of the file.
+
 ## [1.600.0] - 2026-10-12
 
 ### Added
