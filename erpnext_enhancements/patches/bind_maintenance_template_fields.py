@@ -46,7 +46,8 @@ REPLACEMENTS = [
 		'<p>{{ cb(doc.initial_term=="One (1) Year") }} One (1) Year    '
 		'{{ cb(doc.initial_term=="Two (2) Years") }} Two (2) Years    '
 		'{{ cb(doc.initial_term=="Month-to-Month") }} Month-to-Month    '
-		'{{ cb(doc.initial_term=="Other") }} Other: {{ blank(30) }}</p>',
+		'{{ cb(doc.initial_term=="Other") }} Other: '
+		'{{ fill(doc.initial_term_other if doc.initial_term=="Other" else None, 30) }}</p>',
 	),
 ]
 

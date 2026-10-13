@@ -51,6 +51,7 @@ def signed_signature_for(doc):
 				"countersigned_by",
 				"countersigned_title",
 				"countersigned_on",
+				"initials_json",
 			],
 			order_by="signed_on desc",
 			as_dict=True,

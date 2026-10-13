@@ -75,16 +75,24 @@ MAINTENANCE_OPTIONS = [
 	("startup", "Seasonal Startup (Spring)"),
 	("winterization", "Winterization (Fall)"),
 	("package", "Seasonal Startup + Winterization Package"),
+	("as_needed", "As-Needed / On-Call Service"),
 ]
 
 # Per-option unit printed on the plan; standard's price seeds from the
-# maintenance fee Item Price, the rest are entered per contract.
+# maintenance fee Item Price, as-needed from the hourly rate below, the rest
+# are entered per contract.
 MAINTENANCE_OPTION_UNITS = {
 	"standard": "visit",
 	"startup": "event",
 	"winterization": "event",
 	"package": "year",
+	"as_needed": "hour",
 }
+
+# The as-needed hourly rate a new agreement starts from. $180 is what the
+# Hardware / Salt Development agreement of 2026-09-30 quoted; editable per
+# contract like every other price on the plan.
+AS_NEEDED_DEFAULT_RATE = 180
 
 # Visits per year by Project Contract visit_frequency (Custom/blank -> unknown).
 VISITS_PER_YEAR = {"Weekly": 52, "Bi-Weekly": 26, "Monthly": 12, "Quarterly": 4}
@@ -129,6 +137,8 @@ class ProjectContract(Document):
 
 	def validate(self):
 		self._fetch_template_props()
+		if self.get("template_key") == "maintenance" and not self.get("docstatus"):
+			_ensure_maintenance_options(self)
 		self._resolve_party_display()
 		self._stamp_revision()
 		self.validate_msa_gate()
@@ -274,6 +284,26 @@ class ProjectContract(Document):
 		"""
 		if self.get("status") == "Signed":
 			self._void_live_signature_requests()
+			self.freeze_executed_copy()
+
+	def freeze_executed_copy(self):
+		"""Store the agreement as it reads now, for a contract signed on paper.
+
+		An e-signed contract already has its executed instrument on its Contract Signature
+		Request. One recorded with "Mark as Signed" had none, so it re-rendered from the live,
+		site-editable template on every print, and a template change rewrote what a signed
+		contract said. The review of v1.611.0 found the one this would have hit on prod:
+		SF-MAINT-2026-0001, marked signed on paper on 2026-08-03, whose reprint would have
+		gained the 2026-10-13 terms. ``update_maintenance_agreement_terms`` freezes contracts
+		like it before it swaps the template. Never raises: this runs inside the save that marks
+		the contract signed.
+		"""
+		try:
+			if self.get("executed_html") or _signed_request_html(self.get("name")):
+				return
+			self.db_set("executed_html", self.render_body(), update_modified=False)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Project Contract: freezing the executed copy failed")
 
 	def _void_live_signature_requests(self):
 		"""Kill any signing link still in flight.
@@ -353,10 +383,27 @@ class ProjectContract(Document):
 def _executed_html(name):
 	"""The stored executed instrument for a contract, or None.
 
+	The e-signed copy on its Contract Signature Request, else the copy frozen when it was
+	marked signed on paper (``executed_html``, v1.611.0).
+
 	Never raises — every caller is on a read path (print, preview, the Project
 	form's Contracts tab) and none of them may 500 because an evidence lookup
 	hiccupped; they fall back to a live render of the template instead.
 	"""
+	if not name:
+		return None
+	signed = _signed_request_html(name)
+	if signed:
+		return signed
+	try:
+		return frappe.db.get_value("Project Contract", name, "executed_html") or None
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: paper executed copy lookup failed")
+		return None
+
+
+def _signed_request_html(name):
+	"""The e-signed executed instrument (the Signed request's ``agreement_html``), or None."""
 	if not name:
 		return None
 	try:
@@ -413,7 +460,23 @@ def _multiline(value, width=80, lines=3):
 	return "<br>".join(_blank(width) for _ in range(lines))
 
 
+def _qty(value):
+	"""A count for the prose ("1", "1.5"), or None so ``fill()`` prints a blank line."""
+	if value in (None, "") or not flt(value):
+		return None
+	number = flt(value)
+	return str(int(number)) if number == int(number) else f"{number:g}"
+
+
+def _pct(value, width=6):
+	"""``12%`` (or ``12.5%``); a blank line followed by % when there is no figure."""
+	text = _qty(value)
+	return f"{text}%" if text else f"{_blank(width)}%"
+
+
 def _render_context(doc):
+	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
+	from erpnext_enhancements.project_enhancements.esign.initials import initial_markup, signed_initials
 	from erpnext_enhancements.project_enhancements.esign.render import (
 		signature_markup,
 		signed_signature_for,
@@ -427,9 +490,21 @@ def _render_context(doc):
 	# contract) sig() returns exactly what blank() does, so existing output is
 	# unchanged.
 	signature = signed_signature_for(doc)
+	initials = signed_initials(signature)
 
 	def _sig(party="client", width=30):
 		return signature_markup(signature, party=party, width=width, blank=_blank)
+
+	def _initial(key, label=""):
+		# The client's initials beside a clause that matters (§3.3, §4.3, §9.2 …): each one
+		# drawn separately on the signing page, printed in place once signed, and a blank
+		# box on paper. See esign/initials.py.
+		return initial_markup(initials, key, label)
+
+	def _summary():
+		# "What you are agreeing to, in short": this contract's own terms in plain words,
+		# placed by the template after its title. See contract_summary.py.
+		return summary_html(doc)
 
 	return {
 		"doc": doc,
@@ -439,7 +514,11 @@ def _render_context(doc):
 		"money": _money,
 		"dt": _dt,
 		"multiline": _multiline,
+		"qty": _qty,
+		"pct": _pct,
 		"sig": _sig,
+		"initial": _initial,
+		"summary": _summary,
 		# The countersignature (recorded, never required) lives on the signature
 		# record, not the contract — templates read it from here. Always a dict,
 		# so an unsigned render resolves to empty values and prints blanks.
@@ -881,19 +960,34 @@ def _seed_fixed_rows(doc):
 	if doc.template_key == "owner" and not doc.get("phases"):
 		for key, label in OWNER_PHASES:
 			doc.append("phases", {"phase_key": key, "phase_label": label, "included": 0})
-	if doc.template_key == "maintenance" and not doc.get("service_options"):
-		standard_rate = _maintenance_fee_rate()
-		for key, label in MAINTENANCE_OPTIONS:
-			doc.append(
-				"service_options",
-				{
-					"option_key": key,
-					"option_label": label,
-					"included": 0,
-					"unit": MAINTENANCE_OPTION_UNITS.get(key),
-					"price": standard_rate if key == "standard" else None,
-				},
-			)
+	if doc.template_key == "maintenance":
+		_ensure_maintenance_options(doc)
+
+
+def _ensure_maintenance_options(doc):
+	"""Give a maintenance agreement one row per plan option, adding only what is missing.
+
+	A draft made before an option existed (As-Needed arrived in v1.611.0), or one created
+	by hand with an empty table, would otherwise print that line with no way to tick or
+	price it. Rows already there are never touched, so a price someone typed survives.
+	"""
+	present = {row.get("option_key") for row in (doc.get("service_options") or [])}
+	missing = [(key, label) for key, label in MAINTENANCE_OPTIONS if key not in present]
+	if not missing:
+		return
+	standard_rate = _maintenance_fee_rate() if any(key == "standard" for key, _label in missing) else None
+	seeded_price = {"standard": standard_rate, "as_needed": AS_NEEDED_DEFAULT_RATE}
+	for key, label in missing:
+		doc.append(
+			"service_options",
+			{
+				"option_key": key,
+				"option_label": label,
+				"included": 0,
+				"unit": MAINTENANCE_OPTION_UNITS.get(key),
+				"price": seeded_price.get(key),
+			},
+		)
 
 
 def _prefill_from_opportunity(doc, opportunity):
@@ -1002,6 +1096,11 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	elif source_doctype == "Supplier" and source_name:
 		frappe.get_doc("Supplier", source_name).check_permission("read")
 		_prefill_from_supplier(doc, source_name)
+
+	# An SOW is issued under the supplier's signed MSA, and validate_msa_gate refuses to
+	# save one without it — so link it here rather than failing the very first insert.
+	if cint(template_doc.requires_msa) and doc.party and not doc.get("msa_contract"):
+		doc.msa_contract = get_signed_msa(doc.party)
 
 	# Party billing address when a party is known (Customer types from the
 	# source; Supplier for an SOW generated off a Project/Opportunity with the

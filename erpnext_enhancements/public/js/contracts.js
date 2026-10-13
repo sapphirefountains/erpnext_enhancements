@@ -29,6 +29,9 @@
 		{ value: "nda", label: __("Mutual Non-Disclosure Agreement") },
 	];
 
+	// The new draft opens in the Contract Builder (v1.611.0): a step-by-step walk through
+	// its fields with the agreement previewed beside them, ending in sign-here or send.
+	// The full form is one click away from there.
 	function create_contract(template, source_doctype, source_name, extra) {
 		frappe
 			.call(`${M}.create_contract`, {
@@ -37,7 +40,7 @@
 				source_name: source_name,
 				...(extra || {}),
 			})
-			.then((r) => frappe.set_route("Form", "Project Contract", r.message));
+			.then((r) => frappe.set_route("contract-builder", r.message));
 	}
 
 	// SOWs are gated on a Signed MSA: proceed when one exists, otherwise

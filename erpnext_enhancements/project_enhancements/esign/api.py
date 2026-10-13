@@ -16,7 +16,7 @@ import re
 import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
-from frappe.utils import escape_html, get_url, now_datetime, validate_email_address
+from frappe.utils import add_to_date, escape_html, get_url, now_datetime, validate_email_address
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements.feature_flags import throw_if_contract_esign_disabled
@@ -29,6 +29,9 @@ from erpnext_enhancements.project_enhancements.esign.tokens import text_fingerpr
 SEND_ROLES = ("System Manager", "Projects Manager", "Sales Manager")
 SENDABLE_CONTRACT_STATUSES = ("Draft", "Out for Signature")
 LIVE_REQUEST_STATUSES = ("Sent", "Viewed")
+# How long a link opened for in-person signing stays usable. It is meant for the table it
+# was opened at; "Send for Signature" re-issues it by email with the normal expiry.
+IN_PERSON_LINK_HOURS = 12
 
 INVITE_TEMPLATE = (
 	"erpnext_enhancements/templates/emails/project_enhancements/contract_signature_invite.html"
@@ -160,6 +163,11 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	if recipient_email:
 		request.signer_email = _valid_single_email(recipient_email)
 
+	# A resend is always an email: a request first opened in person and then sent on for the
+	# client to finish at their own pace is no longer being presented by anyone.
+	request.signing_channel = "Email Link"
+	request.presented_by = None
+
 	# Re-snapshot: the customer must sign what the agreement says NOW, not what it
 	# said when the first link went out.
 	body = contract.render_body()
@@ -192,6 +200,103 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	return {
 		"request": request.name,
 		"to": request.signer_email,
+		"expires_on": request.expires_on,
+		"url": result["signing_url"],
+	}
+
+
+@frappe.whitelist()
+@rate_limit(limit=60, seconds=3600, methods=["POST"])
+def start_in_person_signing(project_contract, signer_email=None):
+	"""Open the signing page on this device, for a client who is here to sign now.
+
+	Everything that makes an emailed signature trustworthy still applies, because it is
+	the same request, the same single-use token and the same /contract-sign page: the
+	client re-types their own address, the bot check runs, the snapshot is frozen and
+	hashed, and the executed copy is emailed to them afterwards. Only the delivery
+	differs. Nothing is emailed now; the link comes back once, to the staff member who
+	asked (who could equally have sent it to themselves); and the request records that it
+	was signed in person and who presented it, which the completion certificate prints.
+
+	The link is short-lived (:data:`IN_PERSON_LINK_HOURS`): it exists to be used at the
+	table. If the client would rather read it at home, "Send for Signature" re-issues it
+	by email with the normal expiry and retires this one.
+
+	Returns ``{"request", "url", "expires_on", "to"}``. A live request for the contract
+	(emailed or in person) is reused with a fresh token, so there is never more than one
+	live link.
+	"""
+	throw_if_contract_esign_disabled()
+	frappe.only_for(SEND_ROLES)
+
+	contract = frappe.get_doc("Project Contract", project_contract)
+	contract.check_permission("submit")
+	_assert_sendable(contract)
+	_assert_template_can_show_a_signature(contract)
+
+	recipient = _valid_single_email(signer_email or contract.get("contact_email"))
+	body = contract.render_body()
+
+	existing = frappe.db.get_value(
+		"Contract Signature Request",
+		{"project_contract": contract.name, "status": ["in", LIVE_REQUEST_STATUSES]},
+		"name",
+	)
+	if existing:
+		request = frappe.get_doc("Contract Signature Request", existing)
+		request.signer_email = recipient
+		request.document_snapshot = body
+		request.document_hash = text_fingerprint(body)
+		request.contract_revision = contract.get("revision") or 0
+		result = get_provider(request.provider).refresh_request(request, contract)
+		request.resend_count = (request.resend_count or 0) + 1
+		request.email_attempts = 0
+	else:
+		request = frappe.get_doc(
+			{
+				"doctype": "Contract Signature Request",
+				"project_contract": contract.name,
+				"contract_revision": contract.get("revision") or 0,
+				"status": "Draft",
+				"provider": configured_provider_key(),
+				"signer_email": recipient,
+				"signer_name": contract.get("contact_person") or contract.get("party_display"),
+				"document_snapshot": body,
+				"document_hash": text_fingerprint(body),
+				"template_body_hash": text_fingerprint(
+					frappe.db.get_value("Contract Template", contract.contract_template, "body") or ""
+				),
+				"sent_by": frappe.session.user,
+			}
+		).insert(ignore_permissions=True)
+		result = get_provider(request.provider).create_request(request, contract)
+		request.provider_reference = result.get("provider_reference")
+		request.provider_status = result.get("provider_status")
+
+	request.status = "Sent"
+	request.sent_on = now_datetime()
+	request.first_sent_on = request.get("first_sent_on") or request.sent_on
+	request.signing_channel = "In Person"
+	request.presented_by = frappe.session.user
+	request.expires_on = add_to_date(request.sent_on, hours=IN_PERSON_LINK_HOURS)
+	request.save(ignore_permissions=True)
+
+	# Same edge as an emailed send, for the same reason: no document events here.
+	if contract.status == "Draft":
+		contract.db_set("status", "Out for Signature", update_modified=False)
+
+	contract.add_comment(
+		"Comment",
+		_("Opened for signing in person by {0} ({1}); the link works until {2}.").format(
+			escape_html(frappe.utils.get_fullname(frappe.session.user)),
+			escape_html(recipient),
+			frappe.utils.format_datetime(request.expires_on),
+		),
+	)
+	frappe.db.commit()
+	return {
+		"request": request.name,
+		"to": recipient,
 		"expires_on": request.expires_on,
 		"url": result["signing_url"],
 	}

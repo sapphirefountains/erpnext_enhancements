@@ -1,0 +1,30 @@
+{
+ "content": "",
+ "creation": "2026-10-13 10:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "file",
+ "modified": "2026-10-13 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "contract-builder",
+ "owner": "Administrator",
+ "page_name": "contract-builder",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "Sales User"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Contract Builder"
+}

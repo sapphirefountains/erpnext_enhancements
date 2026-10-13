@@ -3,6 +3,7 @@
 <p><b>Sapphire Fountains, LLC</b></p>
 <p>85 W 300 S, Bountiful, UT 84010</p>
 <p>www.sapphirefountains.com</p>
+{{ summary() }}
 <h1>RENTER &amp; RENTAL INFORMATION</h1>
 <table class="ct-table"><tr><td><b>Renter Name:</b></td><td>{{ fill(doc.party_display, 50) }}</td></tr><tr><td><b>Renter Address:</b></td><td>{{ multiline(doc.billing_address, 50, 1) }}</td></tr><tr><td><b>City / State / Zip:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.contact_phone, 50) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.contact_email, 50) }}</td></tr><tr><td><b>Rental Site Address:</b></td><td>{{ multiline(doc.site_address, 50, 1) }}</td></tr><tr><td><b>Rental Start Date:</b></td><td>{{ dt(doc.rental_start_date) }}</td></tr><tr><td><b>Rental End Date:</b></td><td>{{ dt(doc.rental_end_date) }}</td></tr><tr><td><b>Agreement Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr></table>
 <h1>EQUIPMENT DESCRIPTION</h1>

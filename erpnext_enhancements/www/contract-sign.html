@@ -32,6 +32,9 @@
 		<h1>{{ _("Review and sign") }}</h1>
 		<p class="cs-lede">{{ boot.contract_label | e }}</p>
 		<p class="cs-hint">{{ _("Please read the agreement below, then sign at the bottom of the page.") }}</p>
+		{% if boot.in_person %}
+		<p class="cs-in-person">{{ _("You're signing in person with") }} {{ boot.presented_by_name | e }}. {{ _("Take your time; nothing is final until you press Sign & execute.") }}</p>
+		{% endif %}
 	</header>
 
 	{# The stored snapshot: exactly the text that was emailed, never a live
@@ -53,7 +56,17 @@
 			</details>
 		</section>
 
-		<section class="cs-section">
+		{# Shown by contract_sign.js only when the agreement has initials boxes. Each box is
+		   tapped and drawn on its own: the pad starts empty every time, and the server
+		   refuses two identical drawings. #}
+		<section class="cs-section" id="cs-initials" hidden>
+			<h2>{{ _("Your initials") }}</h2>
+			<p class="cs-hint">{{ _("A few clauses in the agreement have an initials box beside them. Tap each box and draw your initials. Each set is drawn separately.") }}</p>
+			<p class="cs-initials-progress" id="cs-initials-progress" aria-live="polite"></p>
+			<button type="button" class="cs-decline" id="cs-initials-next">{{ _("Take me to the next one") }}</button>
+		</section>
+
+		<section class="cs-section" id="cs-signature">
 			<h2>{{ _("Your signature") }}</h2>
 
 			<div class="cs-modes" role="tablist" aria-label="{{ _('Signature type') }}">
@@ -107,9 +120,30 @@
 		<p class="cs-hint">{{ _("This link expires") }} {{ boot.expires_on | e }}.</p>
 	</form>
 
+	{# The pad for one set of initials. An overlay, not a screen: this page adds no history
+	   entries anywhere (see contract_sign.js), so it closes with its own buttons or Escape. #}
+	<div class="cs-initial-modal" id="cs-initial-modal" hidden role="dialog" aria-modal="true" aria-labelledby="cs-initial-title">
+		<div class="cs-initial-sheet">
+			<h3 id="cs-initial-title">{{ _("Your initials") }}</h3>
+			<p class="cs-hint" id="cs-initial-what"></p>
+			<div class="cs-pad-wrap">
+				<canvas class="cs-pad cs-initial-pad" id="cs-initial-pad" aria-label="{{ _('Initials pad') }}"></canvas>
+				<button type="button" class="cs-clear" id="cs-initial-clear">{{ _("Clear") }}</button>
+			</div>
+			<p class="cs-error" id="cs-initial-error" role="alert" hidden></p>
+			<div class="cs-actions">
+				<button type="button" class="cs-submit" id="cs-initial-apply">{{ _("Initial this clause") }}</button>
+				<button type="button" class="cs-decline" id="cs-initial-cancel">{{ _("Cancel") }}</button>
+			</div>
+		</div>
+	</div>
+
 	<div id="cs-done" class="cs-done" hidden role="status">
 		<h2>{{ _("Signed — thank you.") }}</h2>
 		<p>{{ _("We've emailed you a copy of the fully executed agreement for your records.") }}</p>
+		{% if boot.in_person %}
+		<p><b>{{ _("Please hand the device back to") }} {{ boot.presented_by_name | e }}.</b></p>
+		{% endif %}
 	</div>
 
 	{# Shown only after the contract is already executed and committed, so

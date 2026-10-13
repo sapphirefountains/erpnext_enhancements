@@ -147,9 +147,13 @@
 	/* Trim to the ink bounding box so the PDF doesn't get a mostly-empty image. */
 	function trimmedSignature() {
 		if (!pad || !strokes) return "";
-		var w = pad.width;
-		var h = pad.height;
-		var data = ctx.getImageData(0, 0, w, h).data;
+		return trimInk(pad);
+	}
+
+	function trimInk(canvas) {
+		var w = canvas.width;
+		var h = canvas.height;
+		var data = canvas.getContext("2d").getImageData(0, 0, w, h).data;
 		var minX = w;
 		var minY = h;
 		var maxX = -1;
@@ -173,8 +177,215 @@
 		var out = document.createElement("canvas");
 		out.width = maxX - minX + 1;
 		out.height = maxY - minY + 1;
-		out.getContext("2d").drawImage(pad, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
+		out.getContext("2d").drawImage(canvas, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
 		return out.toDataURL("image/png");
+	}
+
+	/* -------------------------------------------------------------- initials */
+
+	/* The agreement marks each clause the client must initial with a box
+	 * (<span class="ct-initial" data-initial="renewal" data-label="…">, from the
+	 * template's initial() helper). Each box is tapped and drawn on its own pad,
+	 * which starts empty every time — including a redo — so no set of initials is
+	 * ever a copy of another, and the server refuses two identical drawings.
+	 *
+	 * The pad is an overlay, not a screen: like everything else here it adds no
+	 * history entry, and closes with its own buttons or Escape. */
+	var initialBoxes = [];
+	var activeInitial = null;
+	var ipad = null;
+	var ictx = null;
+	var istrokes = 0;
+
+	function setupInitials() {
+		var agreement = $("cs-agreement");
+		if (!agreement || !agreement.querySelectorAll) return;
+		var nodes = agreement.querySelectorAll(".ct-initial[data-initial]");
+		var seen = {};
+		for (var i = 0; i < nodes.length; i++) {
+			var el = nodes[i];
+			var key = el.getAttribute("data-initial");
+			if (!key || seen[key] || el.classList.contains("is-signed")) continue;
+			seen[key] = true;
+			var box = { key: key, label: el.getAttribute("data-label") || "", el: el, image: "" };
+			el.classList.add("is-pending");
+			el.setAttribute("role", "button");
+			el.setAttribute("tabindex", "0");
+			el.setAttribute("aria-label", "Initial: " + (box.label || key));
+			el.addEventListener("click", openInitial.bind(null, box));
+			el.addEventListener("keydown", initialKey.bind(null, box));
+			initialBoxes.push(box);
+		}
+		if (!initialBoxes.length) return;
+
+		$("cs-initials").hidden = false;
+		$("cs-initials-next").addEventListener("click", goToNextInitial);
+		$("cs-initial-apply").addEventListener("click", applyInitial);
+		$("cs-initial-cancel").addEventListener("click", closeInitial);
+		$("cs-initial-clear").addEventListener("click", function () {
+			if (ictx) ictx.clearRect(0, 0, ipad.width, ipad.height);
+			istrokes = 0;
+		});
+		document.addEventListener("keydown", function (event) {
+			if (event.key === "Escape" && activeInitial) closeInitial();
+		});
+		setupInitialPad();
+		updateInitialsProgress();
+	}
+
+	function initialKey(box, event) {
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			openInitial(box);
+		}
+	}
+
+	function setupInitialPad() {
+		ipad = $("cs-initial-pad");
+		if (!ipad) return;
+		var drawing = false;
+		function pos(event) {
+			var rect = ipad.getBoundingClientRect();
+			return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+		}
+		ipad.addEventListener("pointerdown", function (event) {
+			drawing = true;
+			istrokes += 1;
+			ipad.setPointerCapture(event.pointerId);
+			var p = pos(event);
+			ictx.beginPath();
+			ictx.moveTo(p.x, p.y);
+			event.preventDefault();
+		});
+		ipad.addEventListener("pointermove", function (event) {
+			if (!drawing) return;
+			var p = pos(event);
+			ictx.lineTo(p.x, p.y);
+			ictx.stroke();
+			event.preventDefault();
+		});
+		["pointerup", "pointercancel", "pointerleave"].forEach(function (name) {
+			ipad.addEventListener(name, function () {
+				drawing = false;
+			});
+		});
+	}
+
+	/* Size the pad for this screen and wipe it. Called every time the overlay
+	 * opens, so every set of initials starts from an empty pad. */
+	function resetInitialPad() {
+		var ratio = window.devicePixelRatio || 1;
+		var rect = ipad.getBoundingClientRect();
+		ipad.width = Math.round((rect.width || 300) * ratio);
+		ipad.height = Math.round((rect.height || 140) * ratio);
+		ictx = ipad.getContext("2d");
+		ictx.scale(ratio, ratio);
+		ictx.lineWidth = 2;
+		ictx.lineCap = "round";
+		ictx.lineJoin = "round";
+		ictx.strokeStyle = "#111";
+		istrokes = 0;
+	}
+
+	function openInitial(box) {
+		activeInitial = box;
+		$("cs-initial-what").textContent = box.label ? "Initialing: " + box.label : "";
+		$("cs-initial-error").hidden = true;
+		$("cs-initial-modal").hidden = false;
+		resetInitialPad();
+	}
+
+	function closeInitial(moving_on) {
+		$("cs-initial-modal").hidden = true;
+		var box = activeInitial;
+		activeInitial = null;
+		// After a cancel, focus returns to the box; after an apply, advanceFrom moves it on.
+		if (!moving_on && box && box.el.focus) box.el.focus();
+	}
+
+	function applyInitial() {
+		var box = activeInitial;
+		if (!box) return;
+		var image = istrokes ? trimInk(ipad) : "";
+		if (!image) {
+			var error = $("cs-initial-error");
+			error.textContent = "Draw your initials in the box first.";
+			error.hidden = false;
+			return;
+		}
+		box.image = image;
+		box.el.classList.remove("is-pending");
+		box.el.classList.add("is-done");
+		while (box.el.firstChild) box.el.removeChild(box.el.firstChild);
+		var img = document.createElement("img");
+		img.className = "ct-initial-img";
+		img.src = image;
+		img.alt = "Your initials";
+		box.el.appendChild(img);
+		closeInitial(true);
+		updateInitialsProgress();
+		advanceFrom(box);
+	}
+
+	/* Nik, 2026-10-13: "when doing one initial can you have it auto scroll to the next and
+	 * the next". After each set of initials the agreement scrolls to the next box still
+	 * waiting, after this one in reading order (then any skipped earlier), and highlights it.
+	 * It does not open the pad by itself: the client should read the clause first. Once the
+	 * last box is done, it moves on to the signature. */
+	function advanceFrom(box) {
+		var start = initialBoxes.indexOf(box);
+		var next = null;
+		for (var i = start + 1; i < initialBoxes.length && !next; i++) {
+			if (!initialBoxes[i].image) next = initialBoxes[i];
+		}
+		next = next || pendingInitials()[0];
+		if (next) {
+			showBox(next);
+			return;
+		}
+		var signature = $("cs-signature");
+		if (signature && signature.scrollIntoView) {
+			signature.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+	}
+
+	function showBox(box) {
+		if (box.el.scrollIntoView) box.el.scrollIntoView({ behavior: "smooth", block: "center" });
+		if (box.el.focus) box.el.focus({ preventScroll: true });
+		box.el.classList.add("is-flash");
+		setTimeout(function () {
+			box.el.classList.remove("is-flash");
+		}, 1600);
+	}
+
+	function pendingInitials() {
+		return initialBoxes.filter(function (box) {
+			return !box.image;
+		});
+	}
+
+	function updateInitialsProgress() {
+		var progress = $("cs-initials-progress");
+		if (!progress) return;
+		var left = pendingInitials().length;
+		var done = initialBoxes.length - left;
+		progress.textContent = left
+			? "You have initialed " + done + " of " + initialBoxes.length + " clauses."
+			: "All " + initialBoxes.length + " clauses are initialed. Thank you.";
+		$("cs-initials-next").hidden = !left;
+	}
+
+	function goToNextInitial() {
+		var next = pendingInitials()[0];
+		if (next) showBox(next);
+	}
+
+	function collectInitials() {
+		var out = {};
+		initialBoxes.forEach(function (box) {
+			if (box.image) out[box.key] = box.image;
+		});
+		return out;
 	}
 
 	/* ------------------------------------------------------------ turnstile */
@@ -251,6 +462,15 @@
 			button.disabled = false;
 			return;
 		}
+		var missing = pendingInitials().length;
+		if (missing) {
+			showError(
+				"Please initial every marked clause in the agreement: " + missing + " still to do."
+			);
+			goToNextInitial();
+			button.disabled = false;
+			return;
+		}
 
 		var ready = sid ? Promise.resolve({}) : begin();
 		ready
@@ -263,6 +483,7 @@
 					signature_image: image,
 					signed_title: ($("cs-title").value || "").trim(),
 					agree: $("cs-agree").checked ? 1 : 0,
+					initials: JSON.stringify(collectInitials()),
 				});
 			})
 			.then(function (result) {
@@ -489,6 +710,7 @@
 			$("cs-preview").textContent = event.target.value;
 		});
 		setupPad();
+		setupInitials();
 		form.addEventListener("submit", submit);
 		$("cs-decline").addEventListener("click", decline);
 

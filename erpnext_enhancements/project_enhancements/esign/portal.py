@@ -77,6 +77,10 @@ SIGNATURE_MAX_BYTES = 200 * 1024
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_SIGNATURE_PIXELS = 4_000_000
 
+# Project Contract payment methods that agreed to no automatic charge (§4.3(c) of the
+# maintenance agreement): no "save a card" offer after signing.
+NO_AUTOPAY_METHODS = ("Invoice (Check or Bank Transfer)", "Other")
+
 # Email attempts per request: generous for typos, useless for fishing.
 EMAIL_ATTEMPTS_PER_HOUR = 5
 EMAIL_ATTEMPTS_LIFETIME = 15
@@ -165,8 +169,13 @@ def sign_contract(
 	signature_image=None,
 	signed_title=None,
 	agree=None,
+	initials=None,
 ):
-	"""Execute the contract. The end of the customer's journey."""
+	"""Execute the contract. The end of the customer's journey.
+
+	``initials`` is a JSON object of ``{clause key: drawn PNG data URI}``, one entry per
+	initials box in the agreement the signer was sent (see :func:`_validated_initials`).
+	"""
 	_require_public_page()
 
 	session = _get_session(esign_sid)
@@ -226,6 +235,10 @@ def sign_contract(
 		if not image:
 			return {"ok": False, "error": _("Draw your signature in the box, or switch to typing it.")}
 
+	captured_initials, initials_error = _validated_initials(initials, request.document_snapshot)
+	if initials_error:
+		return {"ok": False, "error": initials_error, "initials": True}
+
 	settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
 	evidence = SignatureEvidence(
 		mode=mode,
@@ -242,6 +255,7 @@ def sign_contract(
 		review_seconds=_review_seconds(session),
 		scrolled_to_end=0,
 		provider_status="Signed",
+		initials=captured_initials,
 	)
 
 	# The authoritative anti-double-sign guard: re-read the contract under a row
@@ -385,6 +399,12 @@ def _autopay_offer(request):
 			"Project Contract", request.project_contract, ["party_type", "party"]
 		)
 		if party_type != "Customer" or not party:
+			return {"offer": False}
+
+		# A client who chose to pay by invoice (§4.3(c)) agreed to no automatic charge, so
+		# asking them to save a card straight after signing would contradict the page they
+		# just signed. Card, bank account (ACH) or no choice recorded keep the offer.
+		if frappe.db.get_value("Project Contract", request.project_contract, "payment_method") in NO_AUTOPAY_METHODS:
 			return {"offer": False}
 
 		enrolled = frappe.db.get_value(
@@ -705,6 +725,23 @@ def _validated_signature_image(value):
 	if not _dimensions_sane(content):
 		return ""
 	return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+
+
+def _validated_initials(raw, snapshot):
+	"""``(initials, error)`` for the boxes in the signer's snapshot; see :mod:`.initials`.
+
+	Each set goes through the same checks as a drawn signature
+	(:func:`_validated_signature_image`), and the boxes required come from the request's
+	stored snapshot, never from the caller.
+	"""
+	from erpnext_enhancements.project_enhancements.esign.initials import validate_initials
+
+	return validate_initials(
+		raw,
+		snapshot,
+		_validated_signature_image,
+		clean_text=lambda text, limit: _clean_text(text, limit=limit),
+	)
 
 
 def _dimensions_sane(content):

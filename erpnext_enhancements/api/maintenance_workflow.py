@@ -373,16 +373,21 @@ def create_sales_invoice(doc):
     # 0. Respect the contract's invoicing cadence
     invoicing_frequency = "Per Visit"
     contract_so = None
+    # The contract's own base rate per visit (v1.611.0): the rate the signed agreement set,
+    # raised by its Annual Increase at each renewal. When it is set it is the price, ahead of
+    # whatever the Sales Order line or the price list says; chemicals stay separate lines.
+    contract_rate = 0
     if doc.get("maintenance_contract"):
         contract = frappe.db.get_value(
             "Sapphire Maintenance Contract",
             doc.maintenance_contract,
-            ["invoicing_frequency", "sales_order"],
+            ["invoicing_frequency", "sales_order", "visit_rate"],
             as_dict=True,
         )
         if contract:
             invoicing_frequency = contract.invoicing_frequency or "Per Visit"
             contract_so = contract.sales_order
+            contract_rate = flt(contract.visit_rate)
 
     if invoicing_frequency != "Per Visit":
         doc.add_comment("Comment", _("Sales Invoice not drafted: contract bills {0}.").format(invoicing_frequency))
@@ -431,12 +436,12 @@ def create_sales_invoice(doc):
         invoice.append("items", {
             "item_code": base_item[0].item_code,
             "qty": 1,
-            "rate": base_item[0].rate,
+            "rate": contract_rate or base_item[0].rate,
             "sales_order": so_name
         })
     elif fee_item:
         # Fallback to fee_item from settings
-        rate = frappe.db.get_value("Item Price", {"item_code": fee_item, "price_list": "Standard Selling"}, "price_list_rate") or 0
+        rate = contract_rate or frappe.db.get_value("Item Price", {"item_code": fee_item, "price_list": "Standard Selling"}, "price_list_rate") or 0
         invoice.append("items", {
             "item_code": fee_item,
             "qty": 1,
