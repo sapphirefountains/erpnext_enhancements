@@ -534,7 +534,7 @@ class TestSummary(unittest.TestCase):
         html = self.maintenance(site_address="<script>x</script>")
         self.assertNotIn("<script>", html)
 
-    def test_rental_and_owner_have_one_and_the_rest_do_not(self):
+    def test_every_contract_type_has_one(self):
         rental = summary.summary_html(
             _Doc(
                 template_key="rental",
@@ -559,8 +559,11 @@ class TestSummary(unittest.TestCase):
         self.assertIn("construction and installation ($50,000.00)", owner)
         self.assertIn("signed Change Order", owner)
         self.assertNotIn("Design:", owner)
+        # Since v1.613.0 every contract type has one (Nik: "do the contract builder and building for all
+        # contract types"); an unknown type still has none.
         for key in ("msa", "sow", "nda", "architect", "employee_contractor"):
-            self.assertEqual(summary.summary_html(_Doc(template_key=key)), "", key)
+            self.assertIn("where the two differ, the agreement governs", summary.summary_html(_Doc(template_key=key)), key)
+        self.assertEqual(summary.summary_html(_Doc(template_key="no_such_type")), "")
 
     def test_every_fixed_figure_it_quotes_is_in_the_agreement(self):
         """The summary restates clauses; this catches a clause changed in the repo template without
@@ -975,6 +978,29 @@ class TestInitialsClauses(unittest.TestCase):
         js = (APP / "project_enhancements" / "page" / "contract_builder" / "contract_builder.js").read_text(encoding="utf-8")
         blocks = re.search(r'const CB_BLOCKS = "([^"]+)";', js).group(1).split(",")
         self.assertEqual(set(blocks), set(initials.CLAUSE_BLOCKS))
+
+
+class TestPartyWording(unittest.TestCase):
+    """Nik, 2026-10-13: the builder for every contract type, so "With the client" and "Client
+    initials" must name the party each agreement is actually with."""
+
+    def test_each_agreement_names_its_own_party(self):
+        self.assertEqual(builder.party_noun("maintenance"), "client")
+        self.assertEqual(builder.party_noun("rental"), "client")
+        self.assertEqual(builder.party_noun("msa"), "subcontractor")
+        self.assertEqual(builder.party_noun("sow"), "subcontractor")
+        self.assertEqual(builder.party_noun("architect"), "architect")
+        self.assertEqual(builder.party_noun(None), "client")
+
+    def test_customer_agreements_keep_their_caption_byte_for_byte(self):
+        """The unsigned box is part of every snapshot: the customer agreements' must not change."""
+        self.assertIn(">Client initials<", initials.initial_markup({}, "renewal", "Renewal"))
+        self.assertNotIn("maintenance", initials.INITIALS_CAPTIONS)
+        self.assertIn(">Subcontractor initials<", initials.initial_markup({}, "k", "L", caption="Subcontractor initials"))
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('caption=INITIALS_CAPTIONS.get(doc.get("template_key") or "")', controller)
 
 
 class TestBuilderSections(unittest.TestCase):

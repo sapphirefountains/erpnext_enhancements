@@ -121,8 +121,31 @@ STEP_COPY = {
 	"section_msa_term": ("Term", ""),
 	"section_msa_rates": ("Rate schedule", ""),
 	"sow_section": ("The engagement", "Which master agreement it sits under, and the dates."),
-	"scope_section": ("Scope of work", "Pulled from the project's requests and deliverables; edit freely."),
+	"scope_section": (
+		"Scope of work",
+		"What the work covers. A Statement of Work starts from the project's requests and deliverables; edit "
+		"freely.",
+	),
+	"architect_section": (
+		"Notices and Statement of Work",
+		"Who notices go to on each side, and the Statement of Work: what the Architect provides, its term, and "
+		"how Sapphire is paid.",
+	),
+	"sow_services_section": ("Included services", "Tick each kind of work the subcontractor is doing on this job."),
+	"sow_deliverables_section": (
+		"Deliverables",
+		"When each deliverable is due. Accepted By is signed by hand when each one is accepted.",
+	),
+	"sow_compensation_section": (
+		"Compensation",
+		"How the work is priced, the retention held back, and when invoices are due.",
+	),
 	"tm_section": ("Time and materials rates", "Only if any of the work is billed by the hour."),
+	"sow_terms_section": (
+		"Safety, quality and special terms",
+		"Site safety rules, days to fix rejected work, the inspections when the project has no locked Scope of "
+		"Work, and any terms that change the master agreement for this job.",
+	),
 	"supervisor_section": ("Site supervisor", ""),
 }
 
@@ -136,6 +159,20 @@ CONTEXT_TABLES = {"service_options": re.compile(r"\bservice_options\b"), "phases
 
 #: Roles that may issue a contract and take its signature (esign.api.SEND_ROLES).
 SIGN_ROLES = {"System Manager", "Projects Manager", "Sales Manager"}
+
+#: What each agreement calls the other side, for the walk's wording ("With the subcontractor",
+#: "the architect's signature"). Anything not listed is a client agreement.
+PARTY_NOUNS = {
+	"msa": "subcontractor",
+	"sow": "subcontractor",
+	"architect": "architect",
+	"employee_contractor": "employee-contractor",
+	"nda": "other party",
+}
+
+
+def party_noun(template_key):
+	return PARTY_NOUNS.get(template_key or "", "client")
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +689,7 @@ def _payload(doc):
 		"title": doc.get("title") or doc.name,
 		"signature": signature,
 		"template_key": doc.get("template_key"),
+		"party_noun": _(party_noun(doc.get("template_key"))),
 		"template_title": template.get("title") or doc.get("contract_template"),
 		"docstatus": doc.docstatus,
 		"status": doc.get("status"),

@@ -37,8 +37,21 @@
   "feature_location",
   "feature_description",
   "nda_purpose",
+  "nda_entity_type",
   "architect_owner",
   "architect_owner_agreement_date",
+  "sow_project_type",
+  "sow_project_type_other",
+  "sow_feature_type",
+  "sow_feature_type_other",
+  "architect_section",
+  "architect_notice_attention",
+  "sapphire_contact",
+  "sapphire_contact_email",
+  "column_break_architect",
+  "architect_services",
+  "architect_sow_term",
+  "architect_payment_terms",
   "msa_section",
   "msa_tier",
   "section_msa_term",
@@ -60,8 +73,42 @@
   "final_completion_date",
   "working_hours",
   "site_access_notes",
+  "sow_schedule_days",
+  "sow_liquidated_damages",
+  "sow_liquidated_damages_rate",
+  "sow_services_section",
+  "sow_svc_site_prep",
+  "sow_svc_excavation",
+  "sow_svc_concrete",
+  "sow_svc_plumbing",
+  "sow_svc_electrical",
+  "sow_svc_equipment",
+  "column_break_sow_svc",
+  "sow_svc_assembly",
+  "sow_svc_finish",
+  "sow_svc_landscaping",
+  "sow_svc_startup",
+  "sow_svc_cleanup",
+  "sow_svc_other",
   "scope_section",
   "scope_of_work",
+  "sow_exclusions",
+  "sow_company_furnished",
+  "sow_company_furnished_items",
+  "sow_deliverables_section",
+  "sow_due_completed_work",
+  "sow_due_as_builts",
+  "sow_due_equipment_docs",
+  "sow_due_lien_waiver",
+  "column_break_sow_deliv",
+  "sow_other_deliverable",
+  "sow_other_deliverable_standard",
+  "sow_other_deliverable_due",
+  "sow_compensation_section",
+  "sow_compensation_type",
+  "sow_retention_percent",
+  "column_break_sow_comp",
+  "sow_invoice_day",
   "tm_section",
   "rate_journeyman",
   "rate_apprentice",
@@ -76,6 +123,17 @@
   "column_break_super",
   "supervisor_email",
   "supervisor_license",
+  "sow_terms_section",
+  "sow_safety_requirements",
+  "sow_correction_days",
+  "sow_special_terms",
+  "column_break_sow_terms",
+  "sow_hold_pre_pour",
+  "sow_hold_rough_plumbing",
+  "sow_hold_electrical",
+  "sow_hold_equipment",
+  "sow_hold_final",
+  "sow_hold_other",
   "owner_section",
   "phases",
   "total_contract_value",
@@ -251,7 +309,7 @@
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\" || doc.template_key==\"nda\" || doc.template_key==\"architect\" || doc.template_key==\"msa\" || doc.template_key==\"sow\"",
    "description": "The client's name as it should read on the agreement, when it differs from the customer record (e.g. \"Salt Development — Hardware Buildings\"). Blank prints the customer's name.",
    "fieldname": "agreement_party_name",
    "fieldtype": "Data",
@@ -295,7 +353,7 @@
    "label": "Billing / Mailing Address"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\" || doc.template_key==\"nda\" || doc.template_key==\"architect\" || doc.template_key==\"employee_contractor\" || doc.template_key==\"msa\" || doc.template_key==\"sow\"",
    "description": "Printed as its own row under the billing address. Leave blank when the address above already includes it.",
    "fieldname": "billing_city_state_zip",
    "fieldtype": "Data",
@@ -359,6 +417,13 @@
    "label": "Proposed Business Relationship"
   },
   {
+   "depends_on": "eval:doc.template_key==\"nda\"",
+   "description": "Prints in the NDA's opening paragraph and information table: the Company is \"a ____ with its principal place of business at …\" (e.g. Utah corporation, Delaware limited liability company).",
+   "fieldname": "nda_entity_type",
+   "fieldtype": "Data",
+   "label": "Company's Entity Type"
+  },
+  {
    "depends_on": "eval:doc.template_key==\"architect\"",
    "fieldname": "architect_owner",
    "fieldtype": "Data",
@@ -370,6 +435,86 @@
    "fieldname": "architect_owner_agreement_date",
    "fieldtype": "Date",
    "label": "Prime Agreement Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Statement of Work §1.2.",
+   "fieldname": "sow_project_type",
+   "fieldtype": "Select",
+   "label": "Project Type",
+   "options": "\nNew Installation\nRenovation / Retrofit\nRepair\nMaintenance\nOther"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" && doc.sow_project_type==\"Other\"",
+   "fieldname": "sow_project_type_other",
+   "fieldtype": "Data",
+   "label": "Other Project Type"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Statement of Work §1.3.",
+   "fieldname": "sow_feature_type",
+   "fieldtype": "Select",
+   "label": "Feature Type",
+   "options": "\nCommercial Fountain\nResidential Fountain\nIndoor Feature\nOutdoor Feature\nPond / Water Garden\nOther"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" && doc.sow_feature_type==\"Other\"",
+   "fieldname": "sow_feature_type_other",
+   "fieldtype": "Data",
+   "label": "Other Feature Type"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "fieldname": "architect_section",
+   "fieldtype": "Section Break",
+   "label": "Notices & Statement of Work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "The Attention line under the Architect's notice address. Blank prints the Contact Person.",
+   "fieldname": "architect_notice_attention",
+   "fieldtype": "Data",
+   "label": "Architect Notices to the Attention of"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Sapphire's day-to-day contact for this Architect, printed under Sapphire's notice address.",
+   "fieldname": "sapphire_contact",
+   "fieldtype": "Data",
+   "label": "Sapphire Primary Contact"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "fieldname": "sapphire_contact_email",
+   "fieldtype": "Data",
+   "label": "Sapphire Contact Email"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "fieldname": "column_break_architect",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Statement of Work: what the Architect provides. Sapphire's own services are the Scope of Work.",
+   "fieldname": "architect_services",
+   "fieldtype": "Small Text",
+   "label": "Services Provided by Architect"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Statement of Work: how long it runs, e.g. a date range or \"through construction documents\".",
+   "fieldname": "architect_sow_term",
+   "fieldtype": "Data",
+   "label": "Statement of Work Term"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Statement of Work: what the Architect pays and when. Left blank, Section 3 applies: Sapphire's customary rates, invoiced monthly, due 30 days from receipt of invoice.",
+   "fieldname": "architect_payment_terms",
+   "fieldtype": "Small Text",
+   "label": "Payment and Payment Timing"
   },
   {
    "depends_on": "eval:doc.template_key==\"msa\"",
@@ -512,15 +657,230 @@
   },
   {
    "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§4.1: the subcontractor submits a project schedule within this many business days of signing.",
+   "fieldname": "sow_schedule_days",
+   "fieldtype": "Int",
+   "label": "Schedule Due (business days after signing)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§4.3. Left blank, neither box is ticked.",
+   "fieldname": "sow_liquidated_damages",
+   "fieldtype": "Select",
+   "label": "Liquidated Damages",
+   "options": "\nN/A\nPer Calendar Day"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" && doc.sow_liquidated_damages==\"Per Calendar Day\"",
+   "description": "Charged for each calendar day past the Substantial Completion Date.",
+   "fieldname": "sow_liquidated_damages_rate",
+   "fieldtype": "Currency",
+   "label": "Liquidated Damages (per calendar day)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_services_section",
+   "fieldtype": "Section Break",
+   "label": "Included Services"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§2.1: tick each service this SOW includes.",
+   "fieldname": "sow_svc_site_prep",
+   "fieldtype": "Check",
+   "label": "Site preparation and layout"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_excavation",
+   "fieldtype": "Check",
+   "label": "Excavation and grading"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_concrete",
+   "fieldtype": "Check",
+   "label": "Concrete / masonry work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_plumbing",
+   "fieldtype": "Check",
+   "label": "Plumbing / hydraulic installation"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_electrical",
+   "fieldtype": "Check",
+   "label": "Electrical rough-in / conduit"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_equipment",
+   "fieldtype": "Check",
+   "label": "Equipment installation (pumps, filters, lighting)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_sow_svc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_assembly",
+   "fieldtype": "Check",
+   "label": "Water feature / fountain assembly"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_finish",
+   "fieldtype": "Check",
+   "label": "Tile / stone / decorative finish work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_landscaping",
+   "fieldtype": "Check",
+   "label": "Landscaping / planting"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_startup",
+   "fieldtype": "Check",
+   "label": "System startup, testing, and commissioning"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_svc_cleanup",
+   "fieldtype": "Check",
+   "label": "Cleanup and debris removal"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Ticks the Other box when filled in.",
+   "fieldname": "sow_svc_other",
+   "fieldtype": "Data",
+   "label": "Other Included Service"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" || doc.template_key==\"architect\"",
    "fieldname": "scope_section",
    "fieldtype": "Section Break",
    "label": "Scope of Work"
   },
   {
-   "depends_on": "eval:doc.template_key==\"sow\"",
+   "depends_on": "eval:doc.template_key==\"sow\" || doc.template_key==\"architect\"",
    "fieldname": "scope_of_work",
    "fieldtype": "Text Editor",
    "label": "Scope of Work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§2.3: items excluded from this SOW (Owner-furnished, Company-furnished, or outside the subcontractor's scope).",
+   "fieldname": "sow_exclusions",
+   "fieldtype": "Small Text",
+   "label": "Exclusions"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Section 6: None means all materials and equipment are subcontractor-furnished.",
+   "fieldname": "sow_company_furnished",
+   "fieldtype": "Select",
+   "label": "Company-Furnished Items",
+   "options": "\nNone\nCompany-Furnished Items"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" && doc.sow_company_furnished==\"Company-Furnished Items\"",
+   "fieldname": "sow_company_furnished_items",
+   "fieldtype": "Small Text",
+   "label": "Items Company Furnishes"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_deliverables_section",
+   "fieldtype": "Section Break",
+   "label": "Deliverables"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Section 3: a date, or when it falls due (e.g. \"At Substantial Completion\"). Accepted By is signed by hand when each one is accepted.",
+   "fieldname": "sow_due_completed_work",
+   "fieldtype": "Data",
+   "label": "Completed Work - Due"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_due_as_builts",
+   "fieldtype": "Data",
+   "label": "As-Built Markups - Due"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_due_equipment_docs",
+   "fieldtype": "Data",
+   "label": "Equipment Documentation - Due"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_due_lien_waiver",
+   "fieldtype": "Data",
+   "label": "Lien Waiver / Release - Due"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_sow_deliv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_other_deliverable",
+   "fieldtype": "Data",
+   "label": "Other Deliverable"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_other_deliverable_standard",
+   "fieldtype": "Data",
+   "label": "Other Deliverable - Description / Standard"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_other_deliverable_due",
+   "fieldtype": "Data",
+   "label": "Other Deliverable - Due"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_compensation_section",
+   "fieldtype": "Section Break",
+   "label": "Compensation"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§5.1.",
+   "fieldname": "sow_compensation_type",
+   "fieldtype": "Select",
+   "label": "Compensation Type",
+   "options": "\nFixed Price (Lump Sum)\nTime & Materials\nUnit Price\nCost Plus Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§5.3: withheld from each progress payment until Final Completion and the final lien waiver.",
+   "fieldname": "sow_retention_percent",
+   "fieldtype": "Percent",
+   "label": "Retention (%)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_sow_comp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§5.5, e.g. \"25th\".",
+   "fieldname": "sow_invoice_day",
+   "fieldtype": "Data",
+   "label": "Invoices Submitted By (day of month)"
   },
   {
    "collapsible": 1,
@@ -606,6 +966,76 @@
    "fieldname": "supervisor_license",
    "fieldtype": "Data",
    "label": "License / Certification"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_terms_section",
+   "fieldtype": "Section Break",
+   "label": "Safety, Quality & Special Terms"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§8.1.",
+   "fieldname": "sow_safety_requirements",
+   "fieldtype": "Small Text",
+   "label": "Site-Specific Safety Requirements"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§9.3: work that fails the quality standards is corrected within this many business days of written notice.",
+   "fieldname": "sow_correction_days",
+   "fieldtype": "Int",
+   "label": "Correction Period (business days)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Section 10: terms for this SOW that supplement or modify the MSA. The subcontractor initials them.",
+   "fieldname": "sow_special_terms",
+   "fieldtype": "Small Text",
+   "label": "Special Terms"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_sow_terms",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "§9.4 prints these inspections only when the project has no locked Scope of Work; otherwise it lists that scope's contracted hold points.",
+   "fieldname": "sow_hold_pre_pour",
+   "fieldtype": "Check",
+   "label": "Pre-pour inspection (before concrete placement)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_hold_rough_plumbing",
+   "fieldtype": "Check",
+   "label": "Rough plumbing inspection"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_hold_electrical",
+   "fieldtype": "Check",
+   "label": "Electrical rough-in inspection"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_hold_equipment",
+   "fieldtype": "Check",
+   "label": "Equipment installation inspection"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_hold_final",
+   "fieldtype": "Check",
+   "label": "Final completion / startup inspection"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "Ticks the Other box when filled in.",
+   "fieldname": "sow_hold_other",
+   "fieldtype": "Data",
+   "label": "Other Inspection / Hold Point"
   },
   {
    "depends_on": "eval:doc.template_key==\"owner\"",
@@ -1101,7 +1531,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-13 16:00:00.000000",
+ "modified": "2026-10-13 17:30:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Contract",
