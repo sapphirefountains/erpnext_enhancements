@@ -246,12 +246,18 @@ class TestDoctypeNames(unittest.TestCase):
 			self.assertEqual(self.totals["doctypes"][module], len(names), module)
 
 	def test_names_a_title_cased_folder_gets_wrong_appear_verbatim(self):
+		# Checked against every JSON name, not only the listed ones: a module lists at most
+		# MAX_DOCTYPES_PER_MODULE, sorted, and Project Enhancements outgrew it in v1.607.0, so
+		# "Project Scope of Work" now sorts past the cut. That the listing is the JSON names verbatim
+		# is test_every_module_lists_exactly_its_json_names_sorted's job.
+		all_expected = {name for names in self.expected.values() for name in names}
 		for right, wrong in (
 			("Project Scope of Work", "Project Scope Of Work"),
 			("AI Model Usage", "Ai Model Usage"),
 			("QuickBooks Sync Log", "Quickbooks Sync Log"),
 		):
-			self.assertIn(right, self.all_listed)
+			self.assertIn(right, all_expected)
+			self.assertNotIn(wrong, all_expected)
 			self.assertNotIn(wrong, self.all_listed)
 
 	def test_a_folder_with_no_doctype_json_is_not_listed(self):

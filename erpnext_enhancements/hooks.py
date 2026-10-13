@@ -591,6 +591,12 @@ doc_events = {
 			# Never raises. See project_enhancements/customer_confirmations.py. Before crew_sync,
 			# which stays last (tests/test_planner_doctypes.py).
 			"erpnext_enhancements.project_enhancements.customer_confirmations.on_task_update",
+			# Calendar sync (C2, v1.604.0): queue this record's Google Calendar event after commit, once
+			# per record per request (a Planner publish saves many). Off unless Calendar Sync Settings
+			# is switched on; skipped in import/patch/install/migrate; never raises. The job re-reads
+			# the saved record, so drafts (Planner Draft Change) never reach a calendar. See
+			# project_enhancements/calendar_sync/triggers.py.
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 			# Project Planner (v1.577.0): mirror the Task's crew table into ordinary assignments
 			# (ToDos) so the tech digest, ToDo lists and morning briefing keep working. Adds only
 			# for users newly on the crew, removes only users who were on it before this save,
@@ -603,7 +609,11 @@ doc_events = {
 		# overwrites, never copies the crew, never raises. before_insert so the values are saved in
 		# the one insert and pass the Task's validate. See project_enhancements/task_templates.py.
 		"before_insert": "erpnext_enhancements.project_enhancements.task_templates.copy_template_planning",
-		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+		"on_trash": [
+			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+			# Calendar sync (C2): a deleted task's event is removed (the job finds the task gone).
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+		],
 		"validate": [
 			# training: warn-only certification check when a task is assigned to somebody
 			# lacking a current certification for the task type. Never blocks.
@@ -671,6 +681,10 @@ doc_events = {
 			# Project save must not wait on it), after commit so the worker reads the
 			# saved address. Every custom-field read is getattr-guarded; never raises.
 			"erpnext_enhancements.workforce.sites.on_project_update",
+			# Calendar sync (C2, v1.604.0): a changed name, status, type or address changes what its
+			# tasks' and visits' events say. Queues one job for the project after commit, only when one
+			# of those fields changed; off unless Calendar Sync Settings is on; never raises.
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_project_change",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -716,7 +730,14 @@ doc_events = {
 	},
 	"Sapphire Maintenance Record": {
 		# A canceled visit's follow-ups still being worked are Canceled with it (v1.600.0).
-		"on_cancel": "erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
+		"on_cancel": [
+			"erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",
+			# Calendar sync (C2): a canceled visit's event is removed.
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+		],
+		# Calendar sync (C2): a deleted visit's event is removed; a change after submit re-syncs it.
+		"on_trash": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+		"on_update_after_submit": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		"on_submit": [
 			"erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 			# Follow-ups and parts needed (v1.600.0): each of the visit's follow_ups rows becomes a
@@ -727,6 +748,8 @@ doc_events = {
 			# submitted directly and never passes through Pending Review, where the on_update
 			# entry below sends it. Never raises. See sapphire_maintenance/review_digest.py.
 			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_submit",
+			# Calendar sync (C2): a done visit keeps its event, with a check mark.
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
 		# training: WARN-ONLY certification check on the assigned technician. It NEVER
 		# throws -- by the time this runs a truck is usually already at the site, and
@@ -772,7 +795,31 @@ doc_events = {
 			# Inline sendmail, so it commits with the state change. Never raises. See
 			# sapphire_maintenance/review_digest.py.
 			"erpnext_enhancements.sapphire_maintenance.review_digest.on_visit_update",
+			# Calendar sync (C2, v1.604.0): queue this record's Google Calendar event after commit, once
+			# per record per request (a Planner publish saves many). Off unless Calendar Sync Settings
+			# is switched on; skipped in import/patch/install/migrate; never raises. The job re-reads
+			# the saved record, so drafts (Planner Draft Change) never reach a calendar. See
+			# project_enhancements/calendar_sync/triggers.py.
+			# A visit change also re-projects its contract's later visits (one job per request).
+			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
+	},
+	# Calendar sync (C2, v1.604.0): a contract's dates, frequencies or features change its projected
+	# visits on the Maintenance calendar. Queues one re-projection after commit; off unless Calendar
+	# Sync Settings is on; never raises. See project_enhancements/calendar_sync/triggers.py.
+	"Sapphire Maintenance Contract": {
+		"on_update": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_contract_change",
+	},
+	# Calendar sync (C2, v1.604.0): day notes go to the Projects calendar and unavailable blocks to
+	# Company Holidays & Vacations (never the block's private note). Queued after commit; off unless
+	# Calendar Sync Settings is on; never raises.
+	"Planner Day Note": {
+		"on_update": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+		"on_trash": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+	},
+	"Planner Block": {
+		"on_update": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
+		"on_trash": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 	},
 	"Project Contract": {
 		# quality (WI-075 sub-phase L): `validate_msa_gate` already refuses a Statement of Work
@@ -1367,6 +1414,19 @@ scheduler_events = {
 			# is what makes a lost job a ten-minute delay instead of a customer never told. A no-op
 			# while Project Planner Settings customer_date_confirmations is off (the default).
 			"erpnext_enhancements.project_enhancements.customer_confirmations.send_due_confirmations",
+			# Calendar sync (C2, v1.604.0): snap-back. Google's incremental events.list per calendar
+			# (stored syncToken; a 410 lists in full): an ERPNext event somebody edited in Google is
+			# rewritten, one deleted there is recreated, one whose source is gone is deleted. Events
+			# without this site's private ERPNext properties are other people's and never touched.
+			# A no-op while Calendar Sync Settings is off. See calendar_sync/engine.py.
+			"erpnext_enhancements.project_enhancements.calendar_sync.engine.snapback",
+			# Calendar time off in (C4, v1.606.0): what changed on the Company Holidays & Vacations
+			# calendar since the last read (its own syncToken, singleEvents=true), as Unavailable
+			# Planner Blocks marked source "Google": a name plus off/OOO/out/vacation, "Company
+			# holiday" for everyone, birthdays skipped, the rest to Calendar Time Off Review. Never
+			# reads an event ERPNext wrote, never touches a hand-made block. A no-op unless Calendar
+			# Sync Settings is on AND "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+			"erpnext_enhancements.project_enhancements.calendar_sync.time_off.incremental_read",
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
@@ -1470,6 +1530,17 @@ scheduler_events = {
 		# reads 0 until it is ticked (Nik, 2026-09-27), and with nothing Pending a tick is
 		# one indexed query.
 		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
+		# Leave-by pings (calendar sync C3, v1.605.0): each person who ticked "Ping me at leave-by
+		# time" on their Planner Resource gets one notice before they must leave for the first stop
+		# of their day (bell, then a text, or an email). At most once per person per stop per day
+		# through a Planner Ping Log row claimed before sending, so a deploy's FLUSHDB cannot
+		# re-send; a tick may run up to 10 minutes late and still send. No Google request (cached
+		# legs and the estimate only). Its own key, every five minutes from :04, because a repeated
+		# key would silently replace the entry it collided with (and the travel line above is
+		# pinned verbatim by tests/test_trip_change_alerts.py). Dormant: Project Planner Settings'
+		# Leave-by pings defaults to off, and with it off a tick is one cached read. See
+		# project_enhancements/leave_by.py.
+		"4-59/5 * * * *": ["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 	},
 	"daily": [
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release
@@ -1652,6 +1723,17 @@ scheduler_events = {
 		# minutes. On the long queue (the engine read per project is heavy); a no-op while the
 		# Project Budget Line table or its labor_forecast column does not exist.
 		"erpnext_enhancements.project_enhancements.planner_tracking.refresh_labor_forecasts",
+		# Calendar sync (C2, v1.604.0): the nightly full repair. Every task, visit, projected visit,
+		# day note and block in the window (Calendar Sync Settings: 14 days back to 180 ahead) is
+		# reconciled, and stale projected events are removed. The deploy FLUSHDBs redis, which
+		# destroys queued sync jobs; this is what redoes them. Unchanged items cost no Google call (a
+		# content hash on Calendar Sync Link). Capped at 20 minutes. A no-op while the switch is off.
+		"erpnext_enhancements.project_enhancements.calendar_sync.engine.nightly_repair",
+		# Calendar time off in (C4, v1.606.0): the whole window of the Company Holidays & Vacations
+		# calendar read again, every review decision re-applied, and imported blocks whose event has
+		# gone removed (only after a complete listing). Redoes whatever the deploy's FLUSHDB lost.
+		# A no-op unless "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a

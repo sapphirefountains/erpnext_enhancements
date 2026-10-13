@@ -1,0 +1,288 @@
+{
+ "actions": [],
+ "creation": "2026-10-12 12:00:00.000000",
+ "custom": 0,
+ "description": "One-way push of committed planner work (firm and pencil tasks, maintenance visits, projected contract visits, day notes and unavailable blocks) to Sapphire's shared Google Calendars. ERPNext is the only source of truth: an edit made in Google is undone.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_switch",
+  "enabled",
+  "health_html",
+  "section_account",
+  "google_account",
+  "authorized_by",
+  "column_break_account",
+  "authorized_on",
+  "refresh_token",
+  "section_calendars",
+  "projects_calendar_id",
+  "maintenance_calendar_id",
+  "holidays_calendar_id",
+  "column_break_calendars",
+  "days_back",
+  "days_ahead",
+  "timed_days_ahead",
+  "section_time_off",
+  "read_time_off",
+  "time_off_health_html",
+  "column_break_time_off",
+  "time_off_alert_recipients",
+  "section_colors",
+  "colors",
+  "section_state",
+  "last_incremental_sync",
+  "last_full_repair",
+  "column_break_state",
+  "last_full_repair_summary",
+  "sync_tokens",
+  "section_time_off_state",
+  "last_time_off_sync",
+  "last_time_off_full_read",
+  "column_break_time_off_state",
+  "last_time_off_summary",
+  "time_off_sync_token"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_switch",
+   "fieldtype": "Section Break",
+   "label": "Sync"
+  },
+  {
+   "default": "0",
+   "description": "The master switch. Off: nothing is sent to Google and no job is queued. The preview works either way.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Push committed work to Google Calendar"
+  },
+  {
+   "fieldname": "health_html",
+   "fieldtype": "HTML",
+   "label": "Health"
+  },
+  {
+   "description": "Sync signs in as one Google account through Google Settings' OAuth client. That account must be able to make changes to all three calendars.",
+   "fieldname": "section_account",
+   "fieldtype": "Section Break",
+   "label": "Google account"
+  },
+  {
+   "fieldname": "google_account",
+   "fieldtype": "Data",
+   "label": "Connected account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "authorized_by",
+   "fieldtype": "Link",
+   "label": "Authorized by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_account",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "authorized_on",
+   "fieldtype": "Datetime",
+   "label": "Authorized on",
+   "read_only": 1
+  },
+  {
+   "description": "Written by Authorize with Google. Never shown and never logged.",
+   "fieldname": "refresh_token",
+   "fieldtype": "Password",
+   "label": "Refresh token",
+   "length": 2048,
+   "read_only": 1
+  },
+  {
+   "description": "Calendar IDs (Google Calendar > Settings > Integrate calendar > Calendar ID), or use Pick calendars once authorized.",
+   "fieldname": "section_calendars",
+   "fieldtype": "Section Break",
+   "label": "Calendars"
+  },
+  {
+   "description": "Project tasks (firm and pencil) and day notes.",
+   "fieldname": "projects_calendar_id",
+   "fieldtype": "Data",
+   "label": "Projects calendar ID"
+  },
+  {
+   "description": "Maintenance visits and projected contract visits.",
+   "fieldname": "maintenance_calendar_id",
+   "fieldtype": "Data",
+   "label": "Maintenance calendar ID"
+  },
+  {
+   "description": "Unavailable blocks from the planners go out to it (never the block's note); with Read time off from Google on, people's own time off on it comes in.",
+   "fieldname": "holidays_calendar_id",
+   "fieldtype": "Data",
+   "label": "Company Holidays & Vacations calendar ID"
+  },
+  {
+   "fieldname": "column_break_calendars",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "14",
+   "description": "The nightly full repair and Re-sync everything cover this many days before today...",
+   "fieldname": "days_back",
+   "fieldtype": "Int",
+   "label": "Repair window: days back",
+   "non_negative": 1
+  },
+  {
+   "default": "180",
+   "description": "...and this many days after it.",
+   "fieldname": "days_ahead",
+   "fieldtype": "Int",
+   "label": "Repair window: days ahead",
+   "non_negative": 1
+  },
+  {
+   "default": "14",
+   "description": "Route stops (a single-day task or visit on someone's route) get real times, with a leave-by line on the first stop of the day, from today for this many days. Later days stay all-day, so Google Routes is never asked about them. 0 makes every event all-day.",
+   "fieldname": "timed_days_ahead",
+   "fieldtype": "Int",
+   "label": "Timed route stops: days ahead (today included)",
+   "non_negative": 1
+  },
+  {
+   "description": "Read the time off people put on the Company Holidays & Vacations calendar by hand (\"Austin Off\", \"Clegg - ooo\") into the planners as Unavailable blocks. Needs the switch above on, an authorized account and the Company Holidays & Vacations calendar ID.",
+   "fieldname": "section_time_off",
+   "fieldtype": "Section Break",
+   "label": "Time off from Google"
+  },
+  {
+   "default": "0",
+   "description": "Every 10 minutes (and the whole window nightly): a name plus off / OOO / out / vacation / PTO / sick / leave becomes an Unavailable block for that person; \"Company holiday\" for everyone; birthdays are skipped; anything unclear waits in Calendar Time Off Review. Blocks read in are read-only and never written back out.",
+   "fieldname": "read_time_off",
+   "fieldtype": "Check",
+   "label": "Read time off from Google"
+  },
+  {
+   "fieldname": "time_off_health_html",
+   "fieldtype": "HTML",
+   "label": "Time off status"
+  },
+  {
+   "fieldname": "column_break_time_off",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Who gets a bell when time off read in lands on booked work, and when events wait for review. Empty: whoever authorized the Google account.",
+   "fieldname": "time_off_alert_recipients",
+   "fieldtype": "Table",
+   "label": "Time off alerts",
+   "options": "Calendar Sync Alert Recipient"
+  },
+  {
+   "collapsible": 1,
+   "description": "Defaults: Design 3 Grape, Build 9 Blueberry, Service 10 Basil, Events 6 Tangerine, Delivery 5 Banana, Day Note 8 Graphite, Unavailable 8 Graphite. A row here overrides one default.",
+   "fieldname": "section_colors",
+   "fieldtype": "Section Break",
+   "label": "Colors"
+  },
+  {
+   "fieldname": "colors",
+   "fieldtype": "Table",
+   "label": "Colors",
+   "options": "Calendar Sync Color"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_state",
+   "fieldtype": "Section Break",
+   "label": "Sync state"
+  },
+  {
+   "fieldname": "last_incremental_sync",
+   "fieldtype": "Datetime",
+   "label": "Last snap-back check",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_full_repair",
+   "fieldtype": "Datetime",
+   "label": "Last full repair",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_full_repair_summary",
+   "fieldtype": "Small Text",
+   "label": "Last full repair result",
+   "read_only": 1
+  },
+  {
+   "description": "{calendar ID: Google nextSyncToken}. Not secret; losing it costs one full listing.",
+   "fieldname": "sync_tokens",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Incremental sync tokens",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_time_off_state",
+   "fieldtype": "Section Break",
+   "label": "Time off read state"
+  },
+  {
+   "fieldname": "last_time_off_sync",
+   "fieldtype": "Datetime",
+   "label": "Last time-off check",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_time_off_full_read",
+   "fieldtype": "Datetime",
+   "label": "Last full time-off read",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_time_off_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_time_off_summary",
+   "fieldtype": "Small Text",
+   "label": "Last time-off result",
+   "read_only": 1
+  },
+  {
+   "description": "Google nextSyncToken for the time-off read (its query differs from snap-back's). Not secret; losing it costs one full listing.",
+   "fieldname": "time_off_sync_token",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Time-off sync token",
+   "read_only": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-10-13 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Sync Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

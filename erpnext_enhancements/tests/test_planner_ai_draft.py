@@ -1205,14 +1205,18 @@ class TestPageUnderNode(unittest.TestCase):
 	def test_the_footer_offers_ai_draft_before_add_row_and_create(self):
 		out = self.out
 		self.assertEqual(out["t4_actions"], ["AI draft…"])
+		# T3's "Start from template…" (v1.608.0) leads the footer when its line is in t1_actions; the
+		# rest of the order is what T4 pins.
+		template = "Start from template…"
+		footer = [label for label in out["footer"] if label != template]
+		without = [label for label in out["footer_without_t4"] if label != template]
+		for labels in (out["footer"], out["footer_without_t4"]):
+			self.assertIn(labels.index(template) if template in labels else 0, (0,))
 		self.assertEqual(
-			out["footer"],
-			["Paste a list…", "Copy from project…", "AI draft…", "Add row", "Create 2 tasks and 1 phase"],
+			footer, ["Paste a list…", "Copy from project…", "AI draft…", "Add row", "Create 2 tasks and 1 phase"]
 		)
 		# Where only the T1 block is loaded, the footer is what it was.
-		self.assertEqual(
-			out["footer_without_t4"], ["Paste a list…", "Copy from project…", "Add row", "Create tasks"]
-		)
+		self.assertEqual(without, ["Paste a list…", "Copy from project…", "Add row", "Create tasks"])
 
 	def test_the_dialog_builds_while_its_fields_ask_for_their_options(self):
 		built, shown, kinds, names = self.out["empty_built"]

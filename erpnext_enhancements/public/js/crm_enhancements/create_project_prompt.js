@@ -116,6 +116,11 @@ frappe.provide("erpnext_enhancements.crm");
 						fieldtype: "Link",
 						options: "Project Template",
 						reqd: 1,
+						// The Project Planner's phase templates and bundles (v1.608.0) are not
+						// project templates to create a job from: ERPNext would copy every task
+						// in, all dated the project's first day. They are loaded per job from
+						// the planner's Build out grid instead.
+						get_query: () => ({ filters: { custom_template_kind: ["is", "not set"] } }),
 					},
 					{
 						label: __("Users to Notify"),

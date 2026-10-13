@@ -72,6 +72,381 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     through a stand-in that asks every `get_data` / `get_query` while the dialog is being constructed
     (the v1.602.0 "before initialization" bug), and fills the grid.
 
+## [1.608.0] - 2026-10-13
+
+### Added
+
+- **Start from template… on the Project Planner's Build out grid (T3).** Nik, 2026-10-12: start a
+  job's plan from DOC-0041's phases instead of typing it, and keep reusable, composable **bundles** of
+  tasks ("Control panel design + build" and its subtasks) rather than one monolith. A new footer action
+  opens a dialog with the phase template (its phases ticked; pick the ones this job needs) and/or any
+  number of bundles, and the phase the bundles go under. The rows land in the grid, subject, default
+  hours, phase, crew size and dependencies as `row:N`, through Copy from project's own path (an empty
+  grid is replaced, otherwise Append or Replace, so bundles can be added to a grid that has rows). The
+  planner edits them, then Create runs as usual, or drafts them in Draft mode (T2).
+  - **The sequence.** Inside a phase or a bundle the tasks run in order, each waiting on the one before,
+    unless the template's own dependencies say otherwise; the Project management task runs alongside
+    its phase. Phases run 100 > 200 > 300 > 400, then **500 and 600 side by side, then 700, which waits
+    on both**: a phase's first tasks wait on the last tasks of the nearest PICKED phase(s) before it,
+    walking through any that were not picked. **Phase 800 (Maintenance) is never offered**, whatever a
+    template holds or a request asks: maintenance contracts own it.
+  - **Materials are a procurement checklist on each phase, never calendar tasks.** A template phase
+    keeps it in a new Task field, one item per line, so it is easy to edit; when the grid creates the
+    phase, `build_out_tasks` (new optional `phase_checklists`) writes it into the NEW phase's
+    description as a Quill tick list (`<ol><li data-list="unchecked">`, what v16's Text Editor stores
+    and Frappe's sanitizer keeps), every item escaped. A phase the project already has is never written
+    to.
+  - **Endpoints.** `api/planner_templates.py`: `get_planner_templates` (the dialog's catalog) and
+    `get_template_rows` (the picked phases and bundles as grid rows, in `get_copy_source`'s shape, plus
+    each phase's checklist). Planner roles only, read-only, at most 100 rows. The rules are pure
+    (`project_enhancements/planner_templates.py`). T5's seam: every row carries its corrected
+    `cost_code`, and `apply_estimate_hours` will put a live estimate's hours in by code (nothing calls
+    it with any yet; the hours are the template's).
+- **The templates are ERPNext Project Templates, edited in the Desk.** A phase is a group template Task
+  (`is_template`); its tasks sit under it. New fields: on Project Template, *Planner Template Kind*
+  (Phase template / Bundle; blank is an ordinary ERPNext template the planner never offers), *Review
+  Status* (Needs review / Reviewed) and *Template Notes*; on Task, shown on template Tasks only, a
+  *Planner Template* section with *Template Line* (Labor / Subcontract / Project management), *Cost
+  Code*, and on a template phase *Phase Number*, *Runs After Phases* ("500, 600") and *Procurement
+  Checklist*. ERPNext's own model holds phases, order and dependencies; a custom doctype was not needed.
+- **Seeded: "Fountain build phases (DOC-0041)" and six starter bundles** (patch `seed_planner_templates`),
+  from `project_enhancements/data/planner_templates.json`, which `scripts/derive_planner_templates.py`
+  derives from DOC-0041 Sapphire Cost Worksheet v1.0 (nothing parses a spreadsheet at migrate time).
+  Labor lines and the subcontracted scope Nik named (demolition, earthwork, concrete, waterproofing,
+  tile, stone, paint, electrical) are tasks, with ONE Project management task per phase; everything else
+  is the phase's checklist. **Cost codes are the corrected catalog's (`quality/cost_codes.OLD_TO_NEW`),
+  never DOC-0041's**, except two lines whose DOC-0041 code was wrong in the old catalog too (Relocate
+  Existing Hose Bib -> 22 1119; Programming Labor -> 26 0900.16). v1.0 defects not copied: phase 500's
+  "Merchanical" (Mechanical Room), row 92's second "Exterior Fountains" (it is 13 1223, Interior
+  Fountains), row 52's missing units (a material, so no hours). Every labor line's "# Units" in v1.0 is
+  1, the blank worksheet's placeholder rather than an estimate, so **the hours are blank: fill them in
+  per template** (a 1-hour default would book every templated task as a 1-hour job; the derivation
+  leaves them all unset when every labor line reads 1, and says so). The bundles (Control panel design +
+  build, Interior fountain, Splash pad, Lighting package, Equipment room (pump + filter skid),
+  Commissioning + hand-off) are Nik's list drafted for him to correct: blank hours, tasks in order, and
+  everything seeded is marked **Needs review** (the dialog says so) until he sets it to Reviewed.
+  - The patch is insert-only by template name (an existing template is never touched, a deleted one stays
+    deleted), creates its custom fields first from `fixtures/custom_field.json` (patches run before
+    fixture sync), seeds each template inside its own savepoint so a refused one is rolled back whole,
+    and cannot raise (`log_error(title=..., message=...)`): a raising patch aborts `bench migrate`, which
+    is the deploy.
+- **Projects Manager can edit Project Templates** (patch `grant_project_template_editing`). ERPNext v16
+  gives Projects Manager only *select* on Project Template; this widens its level-0 row to read, write,
+  create and delete, after `setup_custom_perms` so a site with no Custom DocPerm rows keeps its standard
+  ones. Only ever widens.
+
+### Changed
+
+- **The Create Project dialog (from an Opportunity) no longer offers the planner's templates.** ERPNext's
+  `copy_from_template` would copy every task in, all dated the project's first day; they are loaded per
+  job from the Build out grid instead (`custom_template_kind` "is not set").
+- `tests/test_planner_draft_new_tasks.py` no longer pins the exact version (it failed the next release)
+  and reads `build_out_tasks`'s arguments as built first.
+
+## [1.607.0] - 2026-10-13
+
+### Added
+
+Calendar cutover, C5: the tools to retire the hand-made recurring series on the shared **Maintenance**
+Google calendar when ERPNext's sync (C2) takes it over, without losing what those series know. Until now
+the team kept the maintenance schedule there by hand, one recurring series per site, dragging single
+occurrences around, and the series' descriptions hold site knowledge written down nowhere else: Google
+Sites links, special instructions and gate codes. Nik's plan of 2026-10-12, settled: copy that knowledge
+into the Maintenance Profiles through a review list (nothing written until a person approves it), fill a
+missing site address the same way, end the hand-made series at the cutover so past occurrences stay as
+history and future ones stop, and switch the sync on by hand. Switching on and deleting the old
+"ERPNext Tasks / Project / ToDo" calendars stay Nik's own steps.
+
+- **Scan the Maintenance calendar** (read-only on Google). One `events.list` with `singleEvents=false`,
+  so each series comes back as its master with its RRULE. Events carrying C2's private `erpnext_*`
+  properties, of any site, are ignored. Each running hand-made series becomes a **Calendar Cutover Item**
+  proposing: the Maintenance Profile it belongs to, with the reason (matched by name or by street
+  address, ambiguous, or unmatched with the nearest named); the Google Sites links, with Google's
+  `google.com/url?q=` wrapper unwrapped; the description as plain text, read with `HTMLParser` rather
+  than a regex; any access, gate, alarm or lockbox codes, found by C2's own rule; and the event's location
+  when the project has no `custom_project_address`, scrubbed of codes, because a project address becomes
+  the location of that site's calendar events. **A rescan refreshes Pending rows only**: an Approved,
+  Applied or Ignored row keeps everything a person decided, and so does a profile picked by hand.
+- **Apply approved.** It shows what it would write, then writes. The Maintenance Profile gets a new *Site
+  links and special instructions* section: links are added to **Google Sites links** once each, and the
+  instructions are **appended** to **Special Instructions** under a "From the old Maintenance calendar"
+  header, never over what is there and never twice. Codes go to **Access Codes** when they fit its 140
+  characters; otherwise they stay in the appended block. A project address is filled **only if it is
+  still empty**, and then the existing geocode is queued for it.
+- **End the old series** at a cutover date (today or later), the only step that writes to Google. A
+  **dry run** lists each series' rule now and after, what is left alone and why, occurrences moved past
+  the cutover, and any running series missing from the review list. Confirming re-plans and **refuses
+  unless the dry run's token still matches**, and needs the master switch on, an authorized account and
+  the Maintenance calendar ID. It then sends `events.patch` with only `recurrence` and `sendUpdates=none`
+  to each series master. It never deletes anything, and never touches a single event or an ERPNext event.
+  Every change is logged in **Calendar Cutover Log** with the original rule.
+- **Undo end**, also a dry run and then a confirm, puts the original rules back. It only does so on a
+  series whose rule is still the one we wrote; a series changed in Google since is skipped, with its
+  original shown. Undo needs the account but not the switch, because it is the way back when the sync
+  itself is the problem.
+- **RRULE handling.** An open rule gets `UNTIL` appended. An `UNTIL` on or after the cutover is moved
+  back, and one already before it is left alone. `COUNT` is swapped for `UNTIL` only when Google's
+  `instances` list shows an occurrence whose *original* day is on or after the cutover: swapping the
+  COUNT of a rule that had already run out would *extend* it. EXDATE and EXRULE are kept, and RDATE
+  dates from the cutover on are dropped. `UNTIL` matches the start's type, as Google requires: a date for
+  an all-day series, or the UTC instant one second before local midnight in the event's time zone for a
+  timed one, so DST is handled. An invitation copy organized on another calendar is not touched.
+- **The page is the Calendar Cutover Item list**, with a *Cutover* menu: Scan, Apply approved, End the
+  old series, Undo end. Rows are approved, ignored or sent back to Pending from the list or the form.
+  The Calendar Sync Settings form links to it under *Sync*. Everything is System Manager only and POST
+  only (`api/calendar_cutover.py`).
+- **Codes stay inside.** The profile is internal, so codes may be copied there. C2's readers and event
+  builder name none of `special_instructions`, `google_sites_links` or `access_codes`, and the new test
+  fails the build if one starts to.
+- `tests/test_calendar_cutover.py`, bench-free with a fake Google client, runs as its own CI step. It
+  covers all of the above, and builds both new dialogs under node through a stand-in that asks every
+  `get_data` / `get_query` during construction, the way Frappe does (the v1.602.0 temporal-dead-zone
+  bug).
+
+### Notes
+
+- **Not verifiable without the real calendar**: whether Google keeps or drops occurrences that were
+  dragged past the cutover once the master's UNTIL moves. They are separate exception events, and the
+  tool never deletes them. The dry run counts them per series so they can be checked by hand.
+
+## [1.606.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C4: **time off read in from Google.** People already put their time off on the shared
+"Company Holidays & Vacations" calendar by hand ("Austin Off", "Clegg - ooo"); ERPNext now reads those
+events into the planners as Unavailable Planner Blocks, so whoever schedules work knows who is out. Nik's
+decisions of 2026-10-12, settled. It is the one thing ERPNext takes from Google: C2 still pushes
+everything else one way, out. **It ships off**: Calendar Sync Settings → *Read time off from Google*
+defaults to 0 and also needs C2's master switch, an authorized account and the calendar ID.
+
+- **Reading.** C2's client and account, `events.list` with `singleEvents=true` so a recurring event
+  arrives as its instances. Every 10 minutes from its own stored `syncToken` (C2's snap-back lists the
+  same calendar with a different query, and Google ties a token to its query, so the two cannot share
+  one); a 410 lists in full. Nightly (`daily_long`) the whole window is read again (C2's window, 14 days
+  back to 180 ahead), every review decision is re-applied and imported blocks whose event has gone are
+  removed, but only after a complete listing. That nightly read is what re-does anything the deploy's
+  `FLUSHDB` destroys. A redis `SET NX` keeps two reads from running at once, and a race between them
+  heals itself (two blocks for one person-day keep the first).
+- **Matching** (`calendar_sync/time_off_rules.py`, pure and tested). In order: ERPNext's own events are
+  never read; a deleted event removes its blocks; birthdays are skipped (Google's `birthday` event type,
+  "birthday", "bday", "b-day"); a planner's decision for the event id; a decision remembered for the
+  title; "Company holiday" is everyone; a first name, full name or alias **plus** a time-off word (off,
+  OOO, out, vacation, PTO, sick, leave, appointment, ...), as whole words, the longer name winning and a
+  shared first name settled by the event's creator; with no name, a time-off word and whoever created it
+  (creator, then organizer, never the calendar itself, by User → active Planner Resource); everything
+  else to review. A name **without** a time-off word ("Austin - Denver") is only a best guess on a review
+  row: the calendar also carries things like "Lunch with Austin". Planner Resource gains *Names on the
+  shared calendar* for aliases. Subcontractors and inactive people are never matched.
+- **Blocks follow the event.** One all-day or timed block per person per day (a timed event is cut at
+  midnight in the site's time zone; a piece that is the whole day is all day), with `source` "Google",
+  the event id and a private note "From Google Calendar: <title>". Each read creates, updates or deletes
+  only the difference, and only inside the window. **A block made in ERPNext is never read, changed or
+  deleted by the import**: every query filters on `source = "Google"`, and the update and delete paths
+  re-check the row.
+- **Imported blocks are read-only and never go back out (the loop guard).** C2 pushes Planner Blocks
+  out to this same calendar, so an imported block synced out would duplicate every hand-made Google
+  event. `sources.block_item` reads an imported block as gone, `refs_in_window` leaves it out and the
+  Planner Block trigger does not even queue it; and the import never reads an event carrying C2's private
+  properties (any site's, so staging's copies too) or C2's "Managed by ERPNext" footer. `PlannerBlock`
+  refuses any edit not made by the import (and a delete by anyone but a System Manager), nobody can turn
+  a hand-made block into an imported one, and both planners show it without the edit form ("from the
+  Google vacations calendar: change it there"). A wrong match is fixed where the truth lives: rename the
+  event in Google, or add an alias.
+- **"Company holiday" means everyone**: a block for every active staff resource (not subcontractors,
+  whom the availability engine gives no holidays either), except on a day their Holiday List, the one
+  the planners already read, already has as a holiday. The Holiday List itself is HR's (leave and payroll
+  read it) and is never written from a calendar title.
+- **Review list**: new doctype **Calendar Time Off Review**, one row per unclear event, with the reason
+  and a best guess. A planner (the Planner Block schedulers: System Manager, Projects Manager, Projects
+  User, Maintenance Supervisor) picks a person, *Everyone* or *Ignore*; the choice is kept for the event
+  id and, with *Same for this title*, for every event whose title matches without case, punctuation or
+  numbers. A decision applies from the event stored on the row, with no Google call, after commit; an
+  Open row whose event becomes clear or disappears is removed.
+- **Telling the planners.** New *Time off alerts* table on Calendar Sync Settings (new child doctype
+  Calendar Sync Alert Recipient; empty means whoever authorized the Google account). They get a bell
+  (Notification Log type Alert, the planners' own channel, never emailed) when new events wait for
+  review, and when newly imported time off lands on a day its person has firm bookings: the same check
+  the Conflict center makes for a hand-made block (`planner_blocks._conflicts_made`), **once per block**
+  (`Planner Block.time_off_alerted`; a block is one person's one day), and never for a day already past.
+  The conflict itself also shows in the Conflict center, as for any block.
+- **Preview** (*Time off → Preview time off*): what a full read would create, update and delete, and what
+  would wait for review. It has to read Google to know (one read-only listing) and **writes nothing**: no
+  block, no review row, no alert, no sync state. *Read time off now* queues the full read; the status
+  lines show the last check, the last full read, blocks read in and how many wait for review.
+
+### Changed
+
+- `Planner Block` gains `source` (Select Planner / Google, default Planner), `google_event_id` and
+  `time_off_alerted`. It is a normal doctype, so the `ALTER` that adds `source` writes "Planner" into
+  every existing row, and the import matches only "Google": existing blocks read as hand-made, which is
+  what they are. (Not a Single: no backfill patch is needed, and one keyed on emptiness would match
+  nothing.)
+- Calendar Sync Settings gains *Read time off from Google* (Check, default 0), *Time off alerts* and the
+  read's own state. Patch `materialize_calendar_time_off_settings` gives each new field its `tabSingles`
+  row (the v1.604.0 patch ran before they existed, and a patch never runs twice); `write_state` also
+  materializes before every state write. Ticking the switch with sync off, or with no calendar ID, is
+  refused; switching sync off while it is ticked still saves.
+- `api/planner_blocks.block_entry` and the engine's block bookings carry `from_google`; `can_edit` is
+  false for an imported block.
+## [1.605.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C3: **route stops get real times, and the first stop of a day says when to leave.** C2
+wrote every item as an all-day event, which tells a crew which day but not when, and the planner already
+knows when: its route view leaves the shop at the day start, drives each leg, works the booked hours and
+waits for a slotted stop. Nik's decisions of 2026-10-12, settled. Like C2 it does nothing while Calendar
+Sync Settings is off; the leave-by ping has its own switch and is off too.
+
+- **Timed events for route stops.** A single-day, firm task, visit or projected visit that is a stop on
+  someone's route that day becomes a timed event, on site from the route's arrival to its departure, in the
+  site's time zone (System Settings, else America/Denver). The times come from the planner's own engine
+  call and its own two passes (`project_enhancements/route_slots.py` runs `routing.route_times`,
+  `merge_unlocated`, `route_times` again, exactly as `api/project_planner.route_payload` does), and a test
+  compares the two stop by stop, so the calendar and the route view cannot disagree. **Times are computed
+  on read and never stored on the task or visit.** Drive padding (`pad_drive_time`) decides whether driving
+  counts against a person's hours; it does not move the clock, on the route view or here.
+- **What stays all-day:** multi-day tasks, full-day work (a task with no estimate, no slot, no rental kind
+  and no crew hours books the whole day; a full-day visit), day notes, blocks, pencils (the planner never
+  routes a pencil), a day beyond the near window, and a day whose route could not be worked out (logged once
+  an hour; the planner's own route view would show the same failure). The planner *does* route projected
+  contract visits, so they are timed, and stay tentative. A full-day task's description now says "Hours:
+  Full day" where it said nothing, a one-off update for those events.
+- **"Leave by 7:35 am"** leads the description of the first stop of the timing person's day: the arrival
+  less the drive, so a stop slotted for 10:00 says when to leave for it, not the day start. In the
+  description rather than the title, because the title is shared by a crew whose mornings may differ.
+- **One event per task, shared by its crew, timed from the lead's route** (a judgement call Nik can
+  revisit): no lead, the first crew member in order; a lead with no route that day (a travel day), the next
+  one who has one. When another crew member's slot differs the description says "Times are Austin's route
+  (times differ by person)". A visit's technician is its lead.
+- **A change re-times the whole day.** Moving one stop moves every other stop that person drives that day,
+  so an item job now collects the days it touched (the day it is on, and the day its event was on before:
+  a move or a cancellation) and queues `engine.run_day_job` for each, after commit, on a stable `job_id`
+  with `deduplicate`. A queued day job has not read anything yet, so it covers every later change; a
+  running one may have read too early, so one more (`::again`) is allowed; with both busy the nightly repair
+  is the backstop. A publish of thirty tasks on one day is thirty item jobs and one or two day jobs, never
+  thirty squared, and the day job reconciles against C2's content hash, so a stop whose times did not
+  change costs no Google call. Pencils that stay pencils, and far days, fan out nothing.
+- **Bounded Google Routes cost.** Only the **near window** is timed: Calendar Sync Settings
+  `timed_days_ahead`, default **14 days, today included** (0 makes every event all-day again). The nightly
+  repair, which still covers 14 days back to 180 ahead, prices the near window in **one** engine call and no
+  other day: **past days and finished work keep the times stored on their `Calendar Sync Link`** (new
+  `timing` field) while they are still on that day, so adding a ✓ to yesterday's job leaves its slot alone
+  and the past is never re-routed. Legs come from the Planner Drive Time cache, and Google is asked only for
+  a missing leg and only where the planner itself would (its `use_google_routes` switch and routes-down flag
+  apply). The preview asks Google nothing.
+- **Snap-back still holds**: a timed event somebody drags in Google is rewritten to ERPNext's times, and
+  a re-timed event changes the content hash while an unchanged one costs no call.
+- **Opt-in leave-by ping** (`project_enhancements/leave_by.py`, every five minutes). Google's reminders
+  cannot carry "leave by" to the crew: the Calendar API's reminders belong to the account that writes the
+  events, Nik's, so they would ping only him; the events keep no reminders. ERPNext sends it instead: each
+  person who ticks **Ping me at leave-by time** on their Planner Resource (default off) gets one notice,
+  **Ping this many minutes before leave-by** (Project Planner Settings, default 10) before they must leave
+  for the first stop of their day, while **Leave-by pings** (Project Planner Settings, default off) is on.
+  Same channels and rule as the change alerts: a bell notification, and a text, or an email when they have
+  no cell number. Never for a pencil, a day with no hours (a day off, a holiday, time off, an all-day
+  block), a travel day or a first stop with no location. **At most once per person per stop per day**: a
+  new `Planner Ping Log` row keyed `user|date|stop` (unique) is inserted and committed before anything is
+  sent, the `Planner Digest Log` pattern, because the deploy's `FLUSHDB` would erase a redis marker and
+  re-ping everyone. The ping does **not** follow the change alerts switch: that one governs messages
+  nobody asked for, and this one is asked for person by person. It asks Google nothing (cached legs and the
+  estimate only), because a five-minute cron is not where the planner itself would pay for a route.
+- **Settings defaults are materialized** (`patches/materialize_route_timing_settings.py`): a default never
+  reaches a Single's existing row, and a blank Int on the Settings form saves as 0, which would quietly
+  switch timing off or give pings no lead time. Never over a stored value; switches nothing on.
+
+## [1.604.0] - 2026-10-12
+
+### Added
+
+Calendar sync, C2: committed planner work pushed **one way** to Sapphire's shared Google Calendars, so
+the team sees the schedule there. Nik's decisions of 2026-10-12, settled: ERPNext is the only source of
+truth (two-way sync was withdrawn), the three target calendars already exist under his account, and the
+sync signs in as his account "for now". **It ships off**: nothing is queued and no Google call is made
+until a System Manager authorizes an account, fills in the calendars and ticks the switch.
+
+- **What syncs, as all-day events.** Project Planner tasks on customer jobs (the planners' own
+  `is_planner_job` rule, so an internal project never reaches a shared calendar), multi-day as one event
+  from `exp_start_date` to `exp_end_date` (Google's end date is exclusive, so the day after is sent); pencil
+  tasks as tentative with "✎ "; maintenance visits on the day the Maintenance Planner shows them, pencil
+  visits tentative; the Maintenance Planner's projected contract visits as tentative "(projected)" events;
+  day notes on the Projects calendar; unavailable blocks on Company Holidays & Vacations. Finished work
+  keeps its event with "✓ "; canceled or deleted work has its event removed. An undated task syncs nothing.
+- **Drafts never sync.** Both planners' drafts live in `Planner Draft Change` rows and never touch the
+  record until Publish, so the sync reads only saved records; no sync module names the draft doctype or
+  either overlay, and the test fails the build if one does.
+- **The event**: `"<site> · <subject or visit label> — <crew first names>"`, the stop's address, hours,
+  crew, equipment, qualifications needed, flagged weather from the existing `planner_weather` cache, and
+  "Managed by ERPNext — edits made here are undone. Change it in the planner: <link to that day>". Colored by
+  value stream (a small Settings table over sensible defaults). No attendees, ever.
+- **Nothing secret on a shared calendar.** The description is built only from structured fields, and the
+  readers never select a task description, project or visit notes, a Maintenance Profile's
+  `access_codes`, or a block's private note. Subjects, addresses and day notes pass through a scrubber that
+  drops any segment naming a gate, alarm, lockbox or keypad code, a code or PIN followed by digits, a
+  password or a combination.
+- **Re-drivable and idempotent.** Every event carries private extended properties (site, doctype, name,
+  kind) and a deterministic client-supplied id (`"erp"` + SHA-1, inside Google's base32hex alphabet), so a
+  job run twice, or after a lost job, inserts the same id, gets 409 and updates; that also restores an event
+  someone deleted. A new `Calendar Sync Link` doctype records each event's calendar, id, content hash and
+  the etag of our last write, so an unchanged record costs no Google call.
+- **Triggers**: `doc_events` on Task, Sapphire Maintenance Record, Sapphire Maintenance Contract, Planner
+  Day Note, Planner Block and Project enqueue one job per record per request, after commit, with a stable
+  `job_id`; a Planner publish that saves a task five times queues it once. Skipped during import, patch,
+  install and migrate; never raises into the save.
+- **Because the prod deploy FLUSHDBs redis**, which destroys queued jobs: a nightly full repair
+  (`daily_long`, 14 days back to 180 ahead, capped at 20 minutes) and a *Re-sync everything* button redo
+  whatever a lost job would have done.
+- **Snap-back** every 10 minutes: Google's incremental `events.list` per calendar with a stored
+  `syncToken`. An event with this site's properties that somebody edited is rewritten from ERPNext, one
+  deleted in Google is recreated, one whose source is gone is deleted. Events without our properties are
+  other people's and are never touched. Our own writes echoing back are recognised by etag, not by
+  comparing text, which Google may normalize (a comparison that never matched would rewrite the same event
+  every ten minutes forever). A 410 drops the token and lists in full.
+- **Calendar Sync Settings** (System Manager only): the switch, *Authorize with Google* (refresh token in a
+  Password field, connected account shown), *Pick calendars* from the account's own writable calendars,
+  the repair window, colors, a **dry-run Preview** for any range (no Google call, no write, works with the
+  switch off) and a **health panel**: account, a test token refresh, the redirect URI, last snap-back check,
+  last full repair and its counts, events by status, and the last ten errors.
+- Endpoints in `api/calendar_sync.py`, all System Manager only. The sync is
+  `project_enhancements/calendar_sync/` (`payload`, `sources`, `google_api`, `engine`, `triggers`); the
+  date seam C3's timed route slots will replace is the single function `payload.event_times`.
+- `tests/test_calendar_sync.py`, bench-free and its own CI step: the payload, the secrets rules, ids,
+  hashes, the snap-back decision table, colors, the readers' states, the master switch (no Google call from
+  any job, nothing queued), the dry run (no write), the triggers, the client's backoff and the wiring.
+
+### Why it is built this way
+
+- **OAuth as a person, not a service account.** Google Workspace caps sharing outside the domain at "See
+  all event details", so a service account can never be given edit rights on these calendars; a dedicated
+  account, domain-wide delegation and loosening sharing were all declined.
+- **Frappe's shared Google callback** (`/api/method/frappe.integrations.google_oauth.callback`, v16.31+)
+  with the callback named in the server-side state, so no route of ours has to be registered. Scopes are
+  `calendar.events` and `calendar.readonly` only, and `include_granted_scopes` is deliberately not sent: it
+  would hand the token every scope Nik's account ever granted this client.
+- **Not Frappe's own Google Calendar doctype.** Its three production rows stay disabled by decision, and the
+  v1.346.0 removal of the every-Task broadcast stands.
+- `requests` against the REST API, matching the QuickBooks and Stripe clients; no new dependency. Errors
+  carry an HTTP status and Google's short reason only, raised `from None`, so no token, secret or code
+  reaches an Error Log.
+- **Singles**: the sync writes its own state (sync tokens, last-run stamps) into Calendar Sync Settings, so
+  `materialize_defaults` runs before every such write and the patch `materialize_calendar_sync_settings`
+  runs it once at install. Otherwise the first write would blank `days_back` / `days_ahead` (CLAUDE.md).
+- `Calendar Sync Link.source_name` is a Data field, not a Dynamic Link: a link would make Frappe refuse to
+  delete the Task or visit it points at.
+
+### Manual steps for Nik
+
+1. In Google Cloud Console, on the OAuth client that **Google Settings** uses: make sure
+   `https://<site>/api/method/frappe.integrations.google_oauth.callback` is an *Authorized redirect URI*
+   (the health panel shows the exact address; it is already there if Google Contacts, Mail or Indexing
+   was ever connected), that the **Google Calendar API** is enabled in that project, and that the consent
+   screen allows the `calendar.events` and `calendar.readonly` scopes.
+2. Open **Calendar Sync Settings** → *Google* → *Authorize with Google*, signed in to Google as the account
+   that owns the three calendars.
+3. *Pick calendars* (or paste the three calendar IDs), then *Sync* → *Preview* to see what would be written.
+4. Tick **Push committed work to Google Calendar** and save; a full repair is queued at once.
+
 ## [1.603.0] - 2026-10-12
 
 ### Added

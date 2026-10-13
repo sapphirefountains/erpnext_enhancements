@@ -25,6 +25,15 @@ What ``validate`` holds, because the engine trusts the row:
 * a timed block has both times and ends after it starts; an all-day block carries no times;
 * a day that has passed is allowed, with a warning: a block can be recorded after the fact.
 
+**Blocks read in from Google** (C4, v1.606.0, ``calendar_sync/time_off.py``) carry ``source``
+"Google" and the event's id. They are the calendar's, not ERPNext's: :meth:`_guard_imported`
+refuses an edit, and ``on_trash`` a delete, from anyone but the import itself (a System Manager may
+still delete one, to clean up after switching the import off; the next read brings back any whose
+event is still there). Nobody can turn a hand-made block into an imported one either, because the
+import never touches a block that is not ``source`` "Google". Every block made before the field
+existed reads "Planner" (the column's default, written into every row by the ALTER that adds it),
+and anything but "Google" counts as hand-made.
+
 The class name is the one Frappe derives (``doctype.replace(" ", "")``);
 ``tests/test_doctype_controller_names.py`` guards it.
 """
@@ -36,9 +45,30 @@ from frappe.utils import getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
 
+#: ``source`` of a block read in from the Company Holidays & Vacations calendar.
+GOOGLE = "Google"
+#: Set by ``calendar_sync.time_off`` while it writes (``frappe.flags``), or on the document.
+IMPORT_FLAG = "calendar_time_off_import"
+FROM_GOOGLE = (
+	"This block comes from the Company Holidays & Vacations calendar in Google. Change or delete the "
+	"event there; the planner follows within ten minutes."
+)
+
+
+def is_imported(doc):
+	return (getattr(doc, "source", None) or "") == GOOGLE
+
+
+def importing(doc):
+	return bool(
+		getattr(frappe.flags, IMPORT_FLAG, False)
+		or getattr(getattr(doc, "flags", None), "calendar_import", False)
+	)
+
 
 class PlannerBlock(Document):
 	def validate(self):
+		self._guard_imported()
 		self._check_person()
 		self._check_times()
 		self.note = (self.note or "").strip() or None
@@ -46,6 +76,22 @@ class PlannerBlock(Document):
 			frappe.msgprint(
 				_("This block is on a day that has already passed."), indicator="orange", alert=True
 			)
+
+	def _guard_imported(self):
+		"""Only the import writes an imported block, and only the import makes one."""
+		if importing(self):
+			return
+		before_save = getattr(self, "get_doc_before_save", None)
+		before = before_save() if callable(before_save) and not self.is_new() else None
+		if is_imported(self) or (before is not None and is_imported(before)):
+			frappe.throw(_(FROM_GOOGLE), title=_("Read-only block"))
+
+	def on_trash(self):
+		if not is_imported(self) or importing(self):
+			return
+		if "System Manager" in set(frappe.get_roles() or ()):
+			return
+		frappe.throw(_(FROM_GOOGLE), title=_("Read-only block"))
 
 	def _check_person(self):
 		if not self.resource:

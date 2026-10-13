@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "creation": "2026-10-12 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "applies_to",
+  "color_id"
+ ],
+ "fields": [
+  {
+   "columns": 4,
+   "description": "A value stream (the job's project type or Value Stream row), or Day Note / Unavailable.",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Applies to",
+   "options": "Design\nBuild\nService\nEvents\nDelivery\nDay Note\nUnavailable",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Google Calendar event color: 1 Lavender, 2 Sage, 3 Grape, 4 Flamingo, 5 Banana, 6 Tangerine, 7 Peacock, 8 Graphite, 9 Blueberry, 10 Basil, 11 Tomato.",
+   "fieldname": "color_id",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Google color",
+   "options": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11",
+   "reqd": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Sync Color",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -11,6 +11,9 @@
   "safety_instructions",
   "access_codes",
   "wrapup_instructions",
+  "site_notes_section",
+  "google_sites_links",
+  "special_instructions",
   "visit_crew_section",
   "default_crew",
   "visit_hours",
@@ -62,6 +65,23 @@
    "label": "Wrap-up Instructions"
   },
   {
+   "fieldname": "site_notes_section",
+   "fieldtype": "Section Break",
+   "label": "Site links and special instructions"
+  },
+  {
+   "description": "One link per line: the site's Google Sites pages. The first ones came from the old Maintenance Google calendar (calendar cutover, v1.607.0).",
+   "fieldname": "google_sites_links",
+   "fieldtype": "Small Text",
+   "label": "Google Sites links"
+  },
+  {
+   "description": "Anything a technician should know about this site. Internal: it may hold access details, so the calendar sync never puts it on a shared calendar.",
+   "fieldname": "special_instructions",
+   "fieldtype": "Text",
+   "label": "Special Instructions"
+  },
+  {
    "fieldname": "visit_crew_section",
    "fieldtype": "Section Break",
    "label": "Visit crew and length"
@@ -108,7 +128,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-09 14:00:00.000000",
+ "modified": "2026-10-13 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Profile",
