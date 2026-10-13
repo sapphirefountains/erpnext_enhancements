@@ -13,7 +13,11 @@ Things this module is careful about, some of which look like bugs:
 
 * **All-day ends are exclusive.** Google's ``end.date`` is the day *after* the last day, so a task
   from Mon 12 to Wed 14 is ``start 2026-10-12, end 2026-10-15``. :func:`event_times` is the only
-  place that knows it, and it is the seam C3 swaps for timed route slots.
+  place that knows it.
+* **Route stops are timed (C3, v1.606.0).** An item carrying ``timing`` (``timing.attach`` puts it
+  there for a stop on someone's route in the near window) becomes a ``dateTime`` event in the site's
+  time zone, and its description leads with "Leave by 7:35 am" when it is the first stop of the
+  timing person's day. Everything else stays all-day.
 * **Nothing secret goes on a shared calendar.** The description is built only from structured
   fields (hours, crew names, equipment labels, qualification names, weather flags). It never reads a
   task's description, a project's notes, a visit's notes, a Maintenance Profile's ``access_codes``
@@ -55,6 +59,10 @@ SEP = " · "
 CREW_SEP = " — "
 TITLE_MAX = 200
 NOTE_MAX = 600
+
+DIFFERS_NOTE = "(times differ by person)"
+DEFAULT_TIMEZONE = "America/Denver"
+MIN_TIMED_MINUTES = 15
 
 FOOTER = "Managed by ERPNext — edits made here are undone. Change it in the planner: {link}"
 
@@ -274,13 +282,47 @@ def content_hash(body, calendar_id):
 # ---------------------------------------------------------------------- the event
 
 
-def event_times(item):
-	"""``{"start", "end"}`` for Google: an all-day event from ``item["start"]`` to ``item["end"]``.
+def minutes_clock(minutes):
+	"""``455`` → ``"7:35 am"``: minutes after midnight as people read them (see :func:`clock`)."""
+	total = int(round(float(minutes or 0)))
+	return clock(f"{(total // 60) % 24:02d}:{total % 60:02d}")
 
-	**The C3 seam.** Timed route slots replace this one function: everything else takes its answer
-	as it is. Google's all-day ``end.date`` is exclusive, hence the day added. An end before the
-	start is treated as a one-day item.
+
+def leave_by_text(minutes):
+	"""``"Leave by 7:35 am"``; ``""`` without a time."""
+	if minutes is None or minutes == "":
+		return ""
+	return f"Leave by {minutes_clock(minutes)}"
+
+
+def _timed(day, minutes):
+	return datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(minutes=int(round(minutes)))
+
+
+def event_times(item):
+	"""``{"start", "end"}`` for Google.
+
+	With ``item["timing"]`` (C3: a route stop, see ``timing.attach``) a timed event, on site from the
+	route's arrival to its departure, as a local ``dateTime`` with the site's ``timeZone`` (Google
+	needs no offset when the zone is named). A slot shorter than :data:`MIN_TIMED_MINUTES` is
+	stretched to it, so Google never sees an end at or before the start.
+
+	Otherwise an all-day event from ``item["start"]`` to ``item["end"]``. Google's all-day
+	``end.date`` is exclusive, hence the day added. An end before the start is treated as a one-day
+	item.
 	"""
+	timing = item.get("timing")
+	if timing:
+		day = _date(timing.get("date"))
+		start = _timed(day, timing.get("start") or 0)
+		end = _timed(day, timing.get("end") or 0)
+		if end < start + datetime.timedelta(minutes=MIN_TIMED_MINUTES):
+			end = start + datetime.timedelta(minutes=MIN_TIMED_MINUTES)
+		zone = timing.get("tz") or DEFAULT_TIMEZONE
+		return {
+			"start": {"dateTime": start.isoformat(timespec="seconds"), "timeZone": zone},
+			"end": {"dateTime": end.isoformat(timespec="seconds"), "timeZone": zone},
+		}
 	start = _date(item.get("start"))
 	end = _date(item.get("end")) or start
 	if end < start:
@@ -333,6 +375,22 @@ def title_for(item):
 	return text[:TITLE_MAX]
 
 
+def timing_lines(item):
+	"""The C3 lines that lead a timed event's description: "Leave by 7:35 am" on the first stop of the
+	timing person's day, and whose route the times are when the crew's routes differ."""
+	timing = item.get("timing") or {}
+	if not timing:
+		return []
+	lines = []
+	if timing.get("leave_by") is not None:
+		lines.append(leave_by_text(timing["leave_by"]))
+	if timing.get("differs"):
+		who = timing.get("person")
+		route = f"{who}'s route" if who else "the lead's route"
+		lines.append(f"Times are {route} {DIFFERS_NOTE}")
+	return lines
+
+
 def description_for(item):
 	"""The event's description: structured facts only, then the managed-by line and planner link."""
 	kind = item.get("kind")
@@ -345,6 +403,7 @@ def description_for(item):
 			lines.append(note[:NOTE_MAX])
 		lines.append(f"For: {item.get('audience') or 'everyone'}")
 	else:
+		lines.extend(timing_lines(item))
 		if item.get("state") == STATE_FINISHED:
 			lines.append("Status: done")
 		elif kind == KIND_PROJECTED:

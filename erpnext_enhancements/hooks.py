@@ -1522,7 +1522,17 @@ scheduler_events = {
 		# collided with. Dormant: Travel Settings' Send Change Alerts has no default and
 		# reads 0 until it is ticked (Nik, 2026-09-27), and with nothing Pending a tick is
 		# one indexed query.
-		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
+		"*/5 * * * *": [
+			"erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts",
+			# Leave-by pings (calendar sync C3, v1.606.0): each person who ticked "Ping me at
+			# leave-by time" on their Planner Resource gets one notice before they must leave for
+			# the first stop of their day (bell, then a text, or an email). At most once per person
+			# per stop per day through a Planner Ping Log row claimed before sending, so a deploy's
+			# FLUSHDB cannot re-send. No Google request (cached legs and the estimate only). Dormant:
+			# Project Planner Settings' Leave-by pings defaults to off, and with it off a tick is
+			# one cached read. See project_enhancements/leave_by.py.
+			"erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings",
+		],
 	},
 	"daily": [
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release

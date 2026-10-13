@@ -1,0 +1,106 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:log_key",
+ "creation": "2026-10-13 12:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "log_key",
+  "user",
+  "ping_date",
+  "stop_ref",
+  "column_break_main",
+  "leave_by",
+  "sent_on",
+  "channels"
+ ],
+ "fields": [
+  {
+   "description": "user|date|stop. Unique, so a second leave-by ping for the same stop on the same day cannot be recorded, and so is never sent.",
+   "fieldname": "log_key",
+   "fieldtype": "Data",
+   "label": "Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "ping_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Day",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The first stop the ping was about: task:<name>, or visit:<record or projected key>.",
+   "fieldname": "stop_ref",
+   "fieldtype": "Data",
+   "label": "Stop",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "leave_by",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Leave by",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Claimed at",
+   "read_only": 1
+  },
+  {
+   "description": "What went out: bell, text, email. Blank when sending failed after the ping was claimed (it is not retried).",
+   "fieldname": "channels",
+   "fieldtype": "Data",
+   "label": "Sent by",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Planner Ping Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

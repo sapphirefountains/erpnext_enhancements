@@ -259,8 +259,31 @@ def _task_crew(name):
 		label = member.get("label") or info.get("resource_name") or member["resource"]
 		# An outside crew is a company: its whole name, not its first word.
 		first = payload.first_name(label) if info.get("resource_type") != "Subcontractor" else label
-		out.append({"name": label, "first": first, "lead": bool(member.get("is_lead"))})
+		# ``resource``: whose route times the event (C3, timing.candidates); ``hours``: the crew row's
+		# explicit hours (None for an even share), which decide a full-day task. Neither is shown.
+		out.append(
+			{
+				"name": label,
+				"first": first,
+				"lead": bool(member.get("is_lead")),
+				"resource": member["resource"],
+				"hours": member.get("hours"),
+			}
+		)
 	return out
+
+
+def task_is_full_day(row, crew):
+	"""True when the planner books the task as a whole day (C3: it stays all-day on the calendar).
+
+	The engine's rule (``crew_availability.allocate_task``): no estimate, no time slot, no rental
+	kind with default hours, and nobody on the crew with hours of their own.
+	"""
+	if _float(row.get("expected_time")) > 0 or ca.task_slot(row):
+		return False
+	if row.get("custom_rental_task_kind") in ca.RENTAL_KIND_HOURS:
+		return False
+	return not any(_float(member.get("hours")) > 0 for member in crew or [])
 
 
 def _credentials(name):
@@ -292,6 +315,7 @@ def task_item(name):
 	weather = []
 	if state == payload.STATE_ACTIVE and _float(row.get("custom_outdoor")):
 		weather = _weather(point, first, last)
+	crew = _task_crew(name)
 	return {
 		"doctype": TASK,
 		"name": name,
@@ -305,8 +329,9 @@ def task_item(name):
 			row.get("project_title") or project.get("project_name") or row.get("custom_rental_booking")
 		),
 		"label": row.get("subject") or name,
-		"crew": _task_crew(name),
+		"crew": crew,
 		"hours": row.get("expected_time"),
+		"full_day": task_is_full_day(row, crew),
 		"equipment": equipment,
 		"credentials": _credentials(name),
 		"weather": weather,
@@ -366,12 +391,24 @@ def visit_item(name):
 	project = _project_row(row.get("project")) if row.get("project") else {}
 	crew_rows = (crew_rows_for([name]) or {}).get(name) or []
 	names = _user_names([row.get("technician")] + [r.get("user") for r in crew_rows])
+	# ``user``: whose route times the event (C3, timing.candidates); never shown.
 	crew = []
 	if row.get("technician"):
-		crew.append({"name": names.get(row["technician"]) or row["technician"], "lead": True})
+		crew.append(
+			{
+				"name": names.get(row["technician"]) or row["technician"],
+				"lead": True,
+				"user": row["technician"],
+			}
+		)
 	for member in crew_rows:
 		if member.get("user") and member.get("user") != row.get("technician"):
-			crew.append({"name": member.get("full_name") or names.get(member["user"]) or member["user"]})
+			crew.append(
+				{
+					"name": member.get("full_name") or names.get(member["user"]) or member["user"],
+					"user": member["user"],
+				}
+			)
 	point, address = _locate("visit", name, row.get("project"))
 	return {
 		"doctype": VISIT,
@@ -431,9 +468,15 @@ def projected_items(start, end, today=None):
 		day = payload._date(entry.get("date"))
 		crew = []
 		if entry.get("technician"):
-			crew.append({"name": names.get(entry["technician"]) or entry["technician"], "lead": True})
+			crew.append(
+				{
+					"name": names.get(entry["technician"]) or entry["technician"],
+					"lead": True,
+					"user": entry["technician"],
+				}
+			)
 		for member in entry.get("crew") or []:
-			crew.append({"name": member.get("name") or member.get("user")})
+			crew.append({"name": member.get("name") or member.get("user"), "user": member.get("user")})
 		where = located.get(entry["key"]) or {}
 		out.append(
 			{

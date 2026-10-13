@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.606.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C3: **route stops get real times, and the first stop of a day says when to leave.** C2
+wrote every item as an all-day event, which tells a crew which day but not when, and the planner already
+knows when: its route view leaves the shop at the day start, drives each leg, works the booked hours and
+waits for a slotted stop. Nik's decisions of 2026-10-12, settled. Like C2 it does nothing while Calendar
+Sync Settings is off; the leave-by ping has its own switch and is off too.
+
+- **Timed events for route stops.** A single-day, firm task, visit or projected visit that is a stop on
+  someone's route that day becomes a timed event, on site from the route's arrival to its departure, in the
+  site's time zone (System Settings, else America/Denver). The times come from the planner's own engine
+  call and its own two passes (`project_enhancements/route_slots.py` runs `routing.route_times`,
+  `merge_unlocated`, `route_times` again, exactly as `api/project_planner.route_payload` does), and a test
+  compares the two stop by stop, so the calendar and the route view cannot disagree. **Times are computed
+  on read and never stored on the task or visit.** Drive padding (`pad_drive_time`) decides whether driving
+  counts against a person's hours; it does not move the clock, on the route view or here.
+- **What stays all-day:** multi-day tasks, full-day work (a task with no estimate, no slot, no rental kind
+  and no crew hours books the whole day; a full-day visit), day notes, blocks, pencils (the planner never
+  routes a pencil), a day beyond the near window, and a day whose route could not be worked out (logged once
+  an hour; the planner's own route view would show the same failure). The planner *does* route projected
+  contract visits, so they are timed, and stay tentative. A full-day task's description now says "Hours:
+  Full day" where it said nothing, a one-off update for those events.
+- **"Leave by 7:35 am"** leads the description of the first stop of the timing person's day: the arrival
+  less the drive, so a stop slotted for 10:00 says when to leave for it, not the day start. In the
+  description rather than the title, because the title is shared by a crew whose mornings may differ.
+- **One event per task, shared by its crew, timed from the lead's route** (a judgement call Nik can
+  revisit): no lead, the first crew member in order; a lead with no route that day (a travel day), the next
+  one who has one. When another crew member's slot differs the description says "Times are Austin's route
+  (times differ by person)". A visit's technician is its lead.
+- **A change re-times the whole day.** Moving one stop moves every other stop that person drives that day,
+  so an item job now collects the days it touched (the day it is on, and the day its event was on before:
+  a move or a cancellation) and queues `engine.run_day_job` for each, after commit, on a stable `job_id`
+  with `deduplicate`. A queued day job has not read anything yet, so it covers every later change; a
+  running one may have read too early, so one more (`::again`) is allowed; with both busy the nightly repair
+  is the backstop. A publish of thirty tasks on one day is thirty item jobs and one or two day jobs, never
+  thirty squared, and the day job reconciles against C2's content hash, so a stop whose times did not
+  change costs no Google call. Pencils that stay pencils, and far days, fan out nothing.
+- **Bounded Google Routes cost.** Only the **near window** is timed: Calendar Sync Settings
+  `timed_days_ahead`, default **14 days, today included** (0 makes every event all-day again). The nightly
+  repair, which still covers 14 days back to 180 ahead, prices the near window in **one** engine call and no
+  other day: **past days and finished work keep the times stored on their `Calendar Sync Link`** (new
+  `timing` field) while they are still on that day, so adding a ✓ to yesterday's job leaves its slot alone
+  and the past is never re-routed. Legs come from the Planner Drive Time cache, and Google is asked only for
+  a missing leg and only where the planner itself would (its `use_google_routes` switch and routes-down flag
+  apply). The preview asks Google nothing.
+- **Snap-back still holds**: a timed event somebody drags in Google is rewritten to ERPNext's times, and
+  a re-timed event changes the content hash while an unchanged one costs no call.
+- **Opt-in leave-by ping** (`project_enhancements/leave_by.py`, every five minutes). Google's reminders
+  cannot carry "leave by" to the crew: the Calendar API's reminders belong to the account that writes the
+  events, Nik's, so they would ping only him; the events keep no reminders. ERPNext sends it instead: each
+  person who ticks **Ping me at leave-by time** on their Planner Resource (default off) gets one notice,
+  **Ping this many minutes before leave-by** (Project Planner Settings, default 10) before they must leave
+  for the first stop of their day, while **Leave-by pings** (Project Planner Settings, default off) is on.
+  Same channels and rule as the change alerts: a bell notification, and a text, or an email when they have
+  no cell number. Never for a pencil, a day with no hours (a day off, a holiday, time off, an all-day
+  block), a travel day or a first stop with no location. **At most once per person per stop per day**: a
+  new `Planner Ping Log` row keyed `user|date|stop` (unique) is inserted and committed before anything is
+  sent, the `Planner Digest Log` pattern, because the deploy's `FLUSHDB` would erase a redis marker and
+  re-ping everyone. The ping does **not** follow the change alerts switch: that one governs messages
+  nobody asked for, and this one is asked for person by person. It asks Google nothing (cached legs and the
+  estimate only), because a five-minute cron is not where the planner itself would pay for a route.
+- **Settings defaults are materialized** (`patches/materialize_route_timing_settings.py`): a default never
+  reaches a Single's existing row, and a blank Int on the Settings form saves as 0, which would quietly
+  switch timing off or give pings no lead time. Never over a stored value; switches nothing on.
+
 ## [1.604.0] - 2026-10-12
 
 ### Added

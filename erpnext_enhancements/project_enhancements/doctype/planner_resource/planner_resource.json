@@ -18,6 +18,7 @@
   "home_team",
   "color",
   "is_active",
+  "ping_at_leave_by",
   "section_pattern",
   "work_patterns",
   "section_notes",
@@ -98,6 +99,13 @@
    "label": "Active"
   },
   {
+   "default": "0",
+   "description": "One notice before they must leave for the first stop of their day. Sent only while Project Planner Settings' Leave-by pings is on.",
+   "fieldname": "ping_at_leave_by",
+   "fieldtype": "Check",
+   "label": "Ping me at leave-by time"
+  },
+  {
    "fieldname": "section_pattern",
    "fieldtype": "Section Break",
    "label": "Work pattern"
@@ -123,7 +131,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-08 12:00:00.000000",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Planner Resource",
