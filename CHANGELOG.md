@@ -67,7 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (§11), the cancellation policy (§12) and arbitration with the jury waiver (§14.5). Owner: construction
   payments, interest and suspension (§3.2), change orders and concealed conditions (§3.4), unmarked utilities
   (§5.2), the liability limits (§11), termination costs (§12.1), the design license (§13.2), arbitration
-  (§14.3) and lien rights (§16.5).
+  (§14.3) and lien rights (§16.5). Nik: "only print initials for selected phases", so the owner's Phase 2
+  initials (§3.2, §3.4) print only when Construction & Installation is selected, and the design license
+  (§13.2, which turns on the design fees) only when Design & Engineering is. A contract without a phase never
+  asks for its initials, on paper or online. Both Electronic Signatures clauses (rental §15.4, owner §16.6)
+  now carry the maintenance agreement's sentence: each set of initials is made separately and acknowledges
+  the clause it sits beside.
 - **The Owner Contract can be e-signed.** Its SIGNATURES block was paper lines (`blank(30)`), and
   Send for Signature refuses a template with no `sig(`; it now has the rental agreement's signature block.
 

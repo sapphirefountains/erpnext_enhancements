@@ -332,7 +332,8 @@ class TestRender(unittest.TestCase):
 
     def test_initials_are_valid_unique_and_bounded(self):
         for key, path in (("rental", RENTAL), ("owner", OWNER)):
-            slots = initials.initial_slots(_render(path, _empty(key)))
+            phases = {k: _Doc(included=1) for k in ("design", "construction", "maintenance")}
+            slots = initials.initial_slots(_render(path, _empty(key), phases=phases))
             keys = [slot_key for slot_key, _label in slots]
             self.assertEqual(keys, EXPECTED_INITIALS[key])
             self.assertEqual(len(keys), len(set(keys)))
@@ -400,7 +401,31 @@ class TestLayout(unittest.TestCase):
             for line in _text(path).split("\n"):
                 if "initial(" in line:
                     self.assertRegex(line, r'^<p class="ct-(clause|sub)">', path.name)
-                    self.assertTrue(line.endswith(") }}</p>"), line[:80])
+                    self.assertTrue(line.endswith((") }}</p>", ") }}{% endif %}</p>")), line[:80])
+
+    def test_owner_phase_initials_print_only_for_selected_phases(self):
+        """Nik, 2026-10-13: "only print initials for selected phases"."""
+
+        def keys(*selected):
+            phases = {k: _Doc(included=1 if k in selected else 0) for k in ("design", "construction", "maintenance")}
+            return [k for k, _label in initials.initial_slots(_render(OWNER, _empty("owner"), phases=phases))]
+
+        general = ["utilities", "liability", "termination", "arbitration", "lien_rights"]
+        self.assertEqual(keys(), general)
+        self.assertEqual(keys("maintenance"), general)
+        self.assertEqual(
+            keys("construction"),
+            ["construction_payment", "change_orders", "utilities", "liability", "termination", "arbitration", "lien_rights"],
+        )
+        self.assertEqual(keys("design"), ["utilities", "liability", "termination", "design_license", "arbitration", "lien_rights"])
+        self.assertEqual(keys("design", "construction", "maintenance"), EXPECTED_INITIALS["owner"])
+
+    def test_both_say_each_set_of_initials_is_made_separately(self):
+        for path in (RENTAL, OWNER):
+            text = _text(path)
+            clause = text[text.index("<b>Electronic Signatures.</b>"):]
+            clause = clause[:clause.index("</p>")]
+            self.assertIn("each set of initials is made separately and acknowledges the clause it sits beside", clause)
 
 
 # --------------------------------------------------------------------------- an input for everything
