@@ -266,6 +266,87 @@ class TestTheErrorLogAlertCannotRecurse(unittest.TestCase):
             )
 
 
+class TestABulkWorkflowRefusalDoesNotPage(unittest.TestCase):
+    """v1.612.1. Frappe v16's `_bulk_workflow_action` calls `frappe.log_error` for
+    **every** document it cannot move, even when the reason is an ordinary
+    `frappe.throw` the user is already shown: the same loop collects the message and
+    `print_workflow_log` puts it in a realtime "Workflow Status" dialog, enqueued or
+    not. So Nik's test of the technician-signature gate (v1.610.0), a bulk Request
+    Review on 13 unsigned visits, filed 13 Error Logs titled "Workflow Request Review
+    threw an error for ..." and paged the Error Log Recipient role with a traceback
+    for a refusal that was working as designed.
+
+    The alert now declines a row only when all of these hold: Frappe's bulk action wrote
+    it (`reference_doctype` "Workflow", `method` "Workflow ..."); the traceback runs
+    through `frappe.utils.messages._raise_exception`, the frame every `frappe.throw`
+    and raising `msgprint` passes through; and the **last** line is a
+    `frappe.exceptions.*` class, so a real crash that follows a caught throw still
+    pages. A frame or title Frappe renames makes the clause stop matching, so it
+    fails toward paging, never toward silence. The Error Log row is still written;
+    only the email stops.
+    """
+
+    THROW_TAIL = (
+        '  File "apps/frappe/frappe/utils/messages.py", line 118, in msgprint\n'
+        "    _raise_exception()\n"
+        '  File "apps/frappe/frappe/utils/messages.py", line 59, in _raise_exception\n'
+        "    raise exc\n"
+        "      exc = The technician must sign the visit before it goes for review.\n"
+        "frappe.exceptions.ValidationError: The technician must sign the visit before it goes for review.\n"
+    )
+    CRASH_TAIL = (
+        '  File "apps/erpnext_enhancements/erpnext_enhancements/x.py", line 9, in validate\n'
+        "    self.thing.other\n"
+        "AttributeError: 'NoneType' object has no attribute 'other'\n"
+    )
+    BULK = {
+        "reference_doctype": "Workflow",
+        "reference_name": "Request Review",
+        "method": "Workflow Request Review threw an error for Sapphire Maintenance Record PRJ-00228-2026-V1",
+    }
+
+    def condition(self):
+        return next(d for d in fixture_docs() if d["name"] == "Error Log")["condition"]
+
+    def alerts(self, **doc):
+        return TestTheErrorLogAlertCannotRecurse.evaluate(self.condition(), doc)
+
+    def test_a_refusal_shown_on_screen_does_not_page(self):
+        error = "Traceback with variables (most recent call last):\n" + self.THROW_TAIL
+        self.assertFalse(self.alerts(**self.BULK, error=error))
+        self.assertFalse(self.alerts(**self.BULK, error=error.replace("\n", "\r\n")))
+
+    def test_a_crash_inside_a_bulk_action_still_pages(self):
+        self.assertTrue(self.alerts(**self.BULK, error="Traceback:\n" + self.CRASH_TAIL))
+
+    def test_a_crash_after_a_caught_throw_still_pages(self):
+        chained = (
+            self.THROW_TAIL
+            + "\nDuring handling of the above exception, another exception occurred:\n\n"
+            + self.CRASH_TAIL
+        )
+        self.assertTrue(self.alerts(**self.BULK, error=chained))
+
+    def test_a_throw_outside_a_bulk_action_still_pages(self):
+        self.assertTrue(
+            self.alerts(reference_doctype="Journal Entry", method="Some job", error=self.THROW_TAIL)
+        )
+
+    def test_a_missing_traceback_cannot_raise(self):
+        # An exception inside the condition would loop through evaluate_alert's own except.
+        for error in (None, "", "\n"):
+            self.assertTrue(self.alerts(**self.BULK, error=error), error)
+
+    def test_safe_eval_can_run_it(self):
+        """frappe's safe_eval refuses lambdas, walrus, `_`-prefixed and format attributes."""
+        tree = ast.parse(self.condition(), mode="eval")
+        for node in ast.walk(tree):
+            self.assertNotIsInstance(node, (ast.Lambda, ast.NamedExpr))
+            if isinstance(node, ast.Attribute):
+                self.assertFalse(node.attr.startswith("_"), node.attr)
+                self.assertNotIn(node.attr, {"format", "format_map"})
+
+
 class TestThePatchedSix(unittest.TestCase):
     def test_every_target_is_a_known_group(self):
         for name, addresses in patch_literal("REPOINT").items():
