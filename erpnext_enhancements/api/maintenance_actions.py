@@ -332,8 +332,13 @@ def create_visit(
 	template=None,
 	reason=None,
 	full_day=None,
+	draft=0,
 ):
 	"""Draft a Sapphire Maintenance Record for ``project`` on ``date``, as the scheduler would.
+
+	Refused in draft mode (``draft=1``, v1.601.0): draft mode holds back changes to visits that
+	exist, and a visit that does not exist yet has no record for a Planner Draft Change to hang on
+	(the Project Planner's rule for a new task, ``planner_actions.DRAFT_REFUSAL``).
 
 	* ``technician``: None is the site's default technician; ``""`` leaves the visit with nobody.
 	* ``crew``: None is the site's default crew; otherwise a JSON list of users or of ``{"user",
@@ -360,6 +365,10 @@ def create_visit(
 	it went over a conflict, ``conflicts``.
 	"""
 	mp._require_planner()
+	if mp._truthy(draft):
+		from erpnext_enhancements.api import maintenance_drafts
+
+		maintenance_drafts.refuse(maintenance_drafts.DRAFT_REFUSAL)
 	_require_create()
 	title, customer = _site(project)
 	if not given(date):
@@ -486,6 +495,10 @@ def _removal_problem(doc, modified):
 		return _("someone else has commented on it")
 	if frappe.db.exists("File", {"attached_to_doctype": DOCTYPE, "attached_to_name": name}):
 		return _("a file is attached to it")
+	from erpnext_enhancements.api import maintenance_drafts
+
+	if maintenance_drafts.has_open_draft(name):
+		return _("someone has a draft change of it")
 	return None
 
 

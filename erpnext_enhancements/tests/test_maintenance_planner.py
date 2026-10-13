@@ -1483,7 +1483,8 @@ class TestPlannerParity(unittest.TestCase):
 		self.assertTrue(
 			{"contract", "from_date", "to_date", "serial_no", "reason"} <= params(planner.move_projected)
 		)
-		self.assertEqual(params(planner.get_planner), {"start", "end"})
+		# draft (v1.601.0): Draft mode's overlay of the caller's unpublished visit drafts.
+		self.assertEqual(params(planner.get_planner), {"start", "end", "draft"})
 		# The page calls exactly these methods of its API (add_crew since v1.579.0: a chip dropped on
 		# a visit that has a technician adds a helper to its crew).
 		# (and, since Phase 6E, create_visit / remove_created_visit from api/maintenance_actions, which

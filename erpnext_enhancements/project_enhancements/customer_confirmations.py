@@ -12,7 +12,9 @@ planner and this planner"):
   template or group task. A Planner Draft never reaches here at all: drafting never saves the Task,
   and publishing does, which is the moment it becomes real;
 * a **maintenance visit** (Sapphire Maintenance Record, customer-facing by nature) whose
-  ``scheduled_visit_date`` is set or changes while it is a draft that has not been started.
+  ``scheduled_visit_date`` is set or changes while it is a draft that has not been started and is
+  firm: not a pencil (``tentative``, v1.601.0). Firming a pencilled visit up tells the customer.
+  A Maintenance Planner draft (v1.601.0) never reaches here either: only Publish saves the visit.
 
 **Behind a switch that stays off** (Nik: "Set a toggle for that feature, so we can fully flesh it
 out before we send our first email"). Project Planner Settings ``customer_date_confirmations``
@@ -123,8 +125,15 @@ def task_customer_date(task):
 
 
 def visit_customer_date(visit):
-	"""A draft visit's scheduled date, or None (submitted, cancelled, started or undated)."""
+	"""A draft visit's scheduled date, or None (submitted, cancelled, started, undated or a pencil).
+
+	A pencilled visit (``tentative``, v1.601.0) has no customer date, exactly as a pencil Task has
+	none (:func:`task_customer_date`): the customer is told when it is firmed up, which is then a
+	date that "changed" from nothing.
+	"""
 	if visit is None or cint(visit.get("docstatus") or 0) != 0 or visit.get("visit_date"):
+		return None
+	if engine.is_tentative_visit(visit):
 		return None
 	return as_date(visit.get("scheduled_visit_date"))
 
@@ -643,6 +652,8 @@ def preview(doctype, name):
 			notes.append(_("This task has no date yet."))
 		elif doc.get("status") in FINISHED_STATUSES:
 			notes.append(_("This task is finished."))
+	elif engine.is_tentative_visit(doc):
+		notes.append(_("This visit is pencilled in; the customer is told once it is firmed up."))
 	elif not day:
 		notes.append(_("Only a draft visit that has not been started, with a date, is confirmed."))
 	if day and stamp == day:

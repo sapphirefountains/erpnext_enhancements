@@ -41,6 +41,14 @@ carries the site's default crew, length and full-day flag from its Maintenance P
 person's day; :func:`add_crew` adds one helper. The record's on_update crew mirror
 (``sapphire_maintenance.visit_crew``) moves the assignments, so nothing here touches a crew ToDo.
 
+**Draft mode and pencil visits** (v1.601.0, C1). ``move_visit`` and ``add_crew`` take
+``draft=1``: the change goes into the caller's Planner Draft Change row instead of the record
+(``api/maintenance_drafts.py``), and Publish saves it through :func:`_apply_visit`, the same path a
+live move takes. ``get_planner(draft=1)`` shows the drafts. ``move_projected`` and *Add visit
+here* refuse in draft mode. A visit can be pencilled in (``tentative``, :func:`is_pencil`): the
+engine books it softly, it never asks for a reason, and nobody is assigned, texted or (as a
+customer) told its date until it is firmed up.
+
 The pure pieces (series, site names, which feature rows a move touches) take
 plain values so ``tests/test_maintenance_planner.py`` runs them without a bench.
 """
@@ -302,11 +310,16 @@ def _require_planner():
 
 
 @frappe.whitelist()
-def get_planner(start, end):
+def get_planner(start, end, draft=0):
 	"""Every card between ``start`` and ``end`` (inclusive), plus the unscheduled drafts.
 
 	Technician filtering happens in the browser: the whole schedule is a few
 	hundred cards at most, and switching people should not cost a round trip.
+
+	``draft=1`` (v1.601.0, draft mode) overlays the caller's unpublished visit drafts
+	(``api/maintenance_drafts.py``): a drafted visit's card shows the drafted day, people, length
+	and pencil flag with ``drafted: True``, the engine's day cells count it there, and ``drafts``
+	says how many there are. Without it the answer is exactly what it always was.
 	"""
 	_require_planner()
 	start, end = getdate(start), getdate(end)
@@ -319,17 +332,34 @@ def get_planner(start, end):
 	can_move_visits = bool(frappe.has_permission("Sapphire Maintenance Record", "write"))
 	can_move_projected = bool(frappe.has_permission("Sapphire Maintenance Contract", "write"))
 
+	overlay = None
+	if _truthy(draft):
+		from erpnext_enhancements.api import maintenance_drafts
+
+		overlay = maintenance_drafts.draft_overlay()
+
 	visits = [_visit_card(row, today, can_move_visits) for row in _records_between(start, end)]
 	unscheduled = [_visit_card(row, today, can_move_visits) for row in _unscheduled_drafts()]
 	_attach_crews(visits + unscheduled)
+	if overlay is not None:
+		visits, unscheduled = maintenance_drafts.with_drafts(
+			visits, unscheduled, overlay, start, end, today, can_move_visits
+		)
 	projected = _projections(start, end, today)
 	for card in projected:
 		card["movable"] = card["movable"] and can_move_projected
 
 	_decorate(visits + unscheduled + projected)
-	view = _project_view(_technicians(visits + unscheduled + projected), start, end)
+	view = _project_view(
+		_technicians(visits + unscheduled + projected),
+		start,
+		end,
+		visit_overrides=(overlay or {}).get("engine"),
+	)
 	_set_lead_hours(visits + unscheduled + projected, view["bookings"])
+	extra = {"drafts": maintenance_drafts.summary(overlay)} if overlay is not None else {}
 	return {
+		**extra,
 		"start": str(start),
 		"end": str(end),
 		"today": str(today),
@@ -378,13 +408,14 @@ def _project_bookings(technicians, start, end):
 	return _project_view(technicians, start, end)["bookings"]
 
 
-def _project_view(technicians, start, end):
+def _project_view(technicians, start, end, visit_overrides=None):
 	"""``{"technicians", "bookings"}``: :func:`_project_bookings` plus the people it was worked out for.
 
 	The technicians come back with the Planner Resource they map to (``resource``, ``group``,
 	``color``; None when they have none), and active Field resources that have a user and are not
 	technicians yet are appended (``helper: True``): people on a project team who help with visits.
-	Both come from the one engine call that provides the bookings.
+	Both come from the one engine call that provides the bookings. ``visit_overrides`` (draft mode,
+	v1.601.0) puts the caller's drafted visits in place of the stored ones for that call.
 	"""
 	people = [dict(t, resource=None, group=None, color=None) for t in technicians or []]
 	users = [t["user"] for t in people if t.get("user")]
@@ -393,7 +424,8 @@ def _project_view(technicians, start, end):
 	try:
 		from erpnext_enhancements.project_enhancements.crew_availability import availability
 
-		data = availability(start, end)
+		# Passed only with drafts, so the call (and any stand-in for it) is unchanged without them.
+		data = availability(start, end, **({"visit_overrides": visit_overrides} if visit_overrides else {}))
 		user_to_resource = data.get("user_to_resource") or {}
 		resources = {r.get("name"): r for r in data.get("resources") or []}
 		for person in people:
@@ -454,6 +486,8 @@ def _booking_cell(cell):
 				"project": b.get("project"),
 				"hours": b.get("hours"),
 				"slot": b.get("slot"),
+				# A pencil task is drawn as one (v1.601.0); the key is there only when it is.
+				**({"tentative": True} if b.get("tentative") else {}),
 			}
 			for b in cell.get("bookings") or []
 			if b.get("kind") in FOREIGN_BOOKING_KINDS
@@ -487,17 +521,48 @@ def _log_failure(title):
 		pass
 
 
+def has_tentative_column():
+	"""Whether the visit record has its pencil column (``tentative``, v1.601.0) yet.
+
+	The reads below are raw SQL, and a planner can load in the window between new code reaching the
+	workers and ``bench migrate`` adding the column; selecting it then would blank the calendar.
+	Never raises: a failed check answers False and every visit reads as firm.
+	"""
+	try:
+		return bool(frappe.db.has_column("Sapphire Maintenance Record", "tentative"))
+	except Exception:
+		return False
+
+
+def _tentative_select():
+	return "tentative" if has_tentative_column() else "0 AS tentative"
+
+
+def is_pencil(record):
+	"""True when a visit (record, doc, row or card) is pencilled in (``tentative``, v1.601.0).
+
+	A pencilled visit is soft-booked by the engine, never asks for a reason, assigns nobody, sends
+	the customer no date and is left out of the technician's 6 AM digest, as a pencil Task is."""
+	if record is None:
+		return False
+	value = record.get("tentative") if hasattr(record, "get") else getattr(record, "tentative", None)
+	try:
+		return bool(float(value or 0))
+	except (TypeError, ValueError):
+		return False
+
+
 def _records_between(start, end):
 	# Raw SQL for the date expression, after the role gate in _require_planner: every
 	# planner role sees every record (sapphire_maintenance.permissions).
 	return frappe.db.sql(
-		"""
+		f"""
 		SELECT * FROM (
 			SELECT
 				name, project, customer, maintenance_contract, serial_no, visit_label,
 				technician, scheduled_visit_date, visit_date, docstatus, workflow_state,
 				completion_percent, has_out_of_range_readings, modified,
-				planned_hours, full_day, clock_in_time, clock_out_time,
+				planned_hours, full_day, clock_in_time, clock_out_time, {_tentative_select()},
 				CASE
 					WHEN docstatus = 1 OR workflow_state = %(pending)s
 						THEN COALESCE(visit_date, scheduled_visit_date, DATE(modified))
@@ -517,12 +582,13 @@ def _records_between(start, end):
 
 def _unscheduled_drafts():
 	return frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			name, project, customer, maintenance_contract, serial_no, visit_label,
 			technician, scheduled_visit_date, visit_date, docstatus, workflow_state,
 			completion_percent, has_out_of_range_readings, modified,
-			planned_hours, full_day, clock_in_time, clock_out_time, NULL AS plan_date
+			planned_hours, full_day, clock_in_time, clock_out_time, {_tentative_select()},
+			NULL AS plan_date
 		FROM `tabSapphire Maintenance Record`
 		WHERE docstatus = 0
 			AND IFNULL(workflow_state, '') != %(pending)s
@@ -571,6 +637,8 @@ def _visit_card(row, today, can_move):
 		"full_day": bool(row.get("full_day")),
 		"hours": None,
 		"clocked_hours": _clocked_hours(row.get("clock_in_time"), row.get("clock_out_time")),
+		# v1.601.0: a pencilled visit (soft-booked, nobody assigned, nobody told).
+		"tentative": is_pencil(row),
 	}
 
 
@@ -869,6 +937,8 @@ def move_visit(
 	planned_hours=None,
 	full_day=None,
 	from_user=None,
+	tentative=None,
+	draft=0,
 ):
 	"""Reschedule an open draft visit, hand it to someone else, or change who is on it.
 
@@ -895,22 +965,99 @@ def move_visit(
 	"conflicts": {person: ["YYYY-MM-DD: Over by 2h"]}}``. Sent again with a ``reason`` it
 	saves and the reason goes on the visit's timeline.
 
+	``tentative`` (v1.601.0) pencils the visit in (1) or firms it up (0). A pencilled visit is
+	soft-booked, never conflicts and assigns nobody (see :func:`is_pencil`); firming one up checks
+	everyone on it, like a move.
+
+	``draft=1`` (v1.601.0, draft mode) changes nothing on the record: the change goes into the
+	caller's Planner Draft Change row for the visit (``maintenance_drafts.draft_move``) and is saved
+	through :func:`_apply_visit`, this very path, when they publish.
+
 	Returns ``{"name", "date", "technician", "crew": [{"user", "name", "hours"}],
-	"planned_hours", "full_day", "modified", "warnings"}``, plus ``conflicts`` when saved
-	over some.
+	"planned_hours", "full_day", "tentative", "modified", "warnings"}``, plus ``conflicts`` when
+	saved over some.
 	"""
 	_require_planner()
+	edits = {
+		"date": date,
+		"technician": technician,
+		"crew": crew,
+		"planned_hours": planned_hours,
+		"full_day": full_day,
+		"from_user": from_user,
+		"tentative": tentative,
+	}
+	if _truthy(draft):
+		from erpnext_enhancements.api import maintenance_drafts
+
+		return maintenance_drafts.draft_move(record, modified, **edits)
 	doc = frappe.get_doc("Sapphire Maintenance Record", record)
 	doc.check_permission("write")
 	_refuse_finished(doc)
 	_check_fresh(doc, modified)
+	return _apply_visit(doc, reason=reason, **edits)
 
+
+def _apply_visit(doc, reason=None, **edits):
+	"""Edit a visit (:func:`_edit_visit`), check the people it affects, and save it.
+
+	The one save path of :func:`move_visit` and of a published draft
+	(``maintenance_drafts.publish_drafts``), so a published draft is checked exactly like a drag.
+	Answers ``{"needs_reason": True, "conflicts"}`` unsaved when the change creates conflicts and
+	no ``reason`` came; otherwise :func:`_visit_result`.
+	"""
+	before = _hours_specs(doc)
+	edit = _edit_visit(doc, **edits)
+	conflicts = {}
+	after = _hours_specs(doc)
+	if edit["date_changed"] or edit["length_changed"] or edit["firmed"]:
+		affected = list(after)
+	else:
+		affected = [user for user, spec in after.items() if user not in before or before[user] != spec]
+	if edit["changed"] and affected and doc.scheduled_visit_date:
+		conflicts = _people_conflicts(doc, affected)
+		reason = (reason or "").strip()
+		if conflicts and not reason:
+			return {"needs_reason": True, "conflicts": conflicts}
+
+	warnings = []
+	if edit["changed"]:
+		warnings = _save_with_warnings(doc)
+		if edit["prior"] is not None:
+			_move_assignment(doc, edit["prior"])
+		if conflicts and reason:
+			_comment_conflict(doc, conflicts, reason)
+
+	result = _visit_result(doc, warnings)
+	if conflicts:
+		result["conflicts"] = conflicts
+	return result
+
+
+def _edit_visit(
+	doc,
+	date=None,
+	technician=None,
+	crew=None,
+	planned_hours=None,
+	full_day=None,
+	from_user=None,
+	tentative=None,
+):
+	"""Apply one planner change to a visit in memory; nothing is saved.
+
+	Shared by the live save (:func:`_apply_visit`) and draft mode (``maintenance_drafts``), so a
+	drafted change and a live one can never drift apart. Raises (``frappe.throw``) on what the
+	planner refuses: a started visit's date, a day that has passed, an inactive person, a helper
+	who is no longer on the visit. Returns ``{"changed", "date_changed", "length_changed",
+	"firmed", "prior"}``: ``prior`` is the technician replaced (``""`` for nobody), else None.
+	"""
 	from erpnext_enhancements.sapphire_maintenance.visit_crew import set_crew
 
-	before = _hours_specs(doc)
 	changed = False
 	date_changed = False
 	length_changed = False
+	firmed = False
 	if date:
 		target = getdate(date)
 		if doc.get("visit_date"):
@@ -970,34 +1117,26 @@ def move_visit(
 			doc.full_day = flag
 			changed = length_changed = True
 
-	conflicts = {}
-	after = _hours_specs(doc)
-	if date_changed or length_changed:
-		affected = list(after)
-	else:
-		affected = [user for user, spec in after.items() if user not in before or before[user] != spec]
-	if changed and affected and doc.scheduled_visit_date:
-		conflicts = _people_conflicts(doc, affected)
-		reason = (reason or "").strip()
-		if conflicts and not reason:
-			return {"needs_reason": True, "conflicts": conflicts}
+	if tentative is not None:
+		flag = 1 if _truthy(tentative) else 0
+		if flag != (1 if is_pencil(doc) else 0):
+			# doc.set, not an attribute: on a site migrated before the field existed this only
+			# carries a value the save ignores, and the planner offers no pencil there anyway.
+			doc.set("tentative", flag)
+			changed = True
+			firmed = not flag
 
-	warnings = []
-	if changed:
-		warnings = _save_with_warnings(doc)
-		if prior is not None:
-			_move_assignment(doc, prior)
-		if conflicts and reason:
-			_comment_conflict(doc, conflicts, reason)
-
-	result = _visit_result(doc, warnings)
-	if conflicts:
-		result["conflicts"] = conflicts
-	return result
+	return {
+		"changed": changed,
+		"date_changed": date_changed,
+		"length_changed": length_changed,
+		"firmed": firmed,
+		"prior": prior,
+	}
 
 
 @frappe.whitelist(methods=["POST"])
-def add_crew(record, user, modified=None, reason=None, hours=None):
+def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	"""Add a helper to a visit's crew (P1.8): a technician chip dropped on a visit.
 
 	Refuses a finished or started visit, and a projected one (it is not a record yet:
@@ -1005,6 +1144,10 @@ def add_crew(record, user, modified=None, reason=None, hours=None):
 	someone already on the crew changes nothing. The new person's day is checked like any
 	move: only a conflict this creates counts, and it answers ``needs_reason`` until sent
 	with a ``reason``. Their assignment comes from the record's on_update crew mirror.
+
+	``draft=1`` (v1.601.0): the visit's drafted crew grows instead and nothing is saved
+	(``maintenance_drafts.draft_add_crew``); publishing saves the whole drafted crew through
+	:func:`_apply_visit`, which checks the new person's day exactly as this does.
 
 	Returns the same shape as :func:`move_visit`.
 	"""
@@ -1018,6 +1161,10 @@ def add_crew(record, user, modified=None, reason=None, hours=None):
 				)
 			)
 		frappe.throw(_("Visit {0} was not found.").format(record))
+	if _truthy(draft):
+		from erpnext_enhancements.api import maintenance_drafts
+
+		return maintenance_drafts.draft_add_crew(record, user, modified, hours)
 	doc = frappe.get_doc("Sapphire Maintenance Record", record)
 	doc.check_permission("write")
 	_refuse_finished(doc)
@@ -1120,7 +1267,12 @@ def _hours_specs(doc):
 
 
 def _people_conflicts(doc, users):
-	"""Conflicts for putting this visit on each of ``users``' day, merged into one dict."""
+	"""Conflicts for putting this visit on each of ``users``' day, merged into one dict.
+
+	Always empty for a pencilled visit (v1.601.0): a pencil is soft-booked and never needs a
+	reason, the engine's rule for a pencil Task (``crew_availability.preview_conflicts``)."""
+	if is_pencil(doc):
+		return {}
 	specs = _hours_specs(doc)
 	planned = _positive(doc.get("planned_hours"))
 	full_day = bool(doc.get("full_day"))
@@ -1169,6 +1321,7 @@ def _visit_result(doc, warnings):
 		],
 		"planned_hours": _positive(doc.get("planned_hours")),
 		"full_day": bool(doc.get("full_day")),
+		"tentative": is_pencil(doc),
 		"modified": str(doc.modified),
 		"warnings": list(warnings or []),
 	}
@@ -1279,6 +1432,10 @@ def _move_assignment(doc, prior):
 
 	Best-effort, like the dispatcher's own (``maintenance_dispatch``): a missing
 	or duplicate assignment is logged, never raised into the move.
+
+	A pencilled visit assigns nobody (v1.601.0, as ``crew_sync`` does for a pencil Task): the new
+	technician is not assigned until the visit is firmed up, when the crew mirror
+	(``visit_crew.on_record_update``) assigns everyone on it. The old one still loses theirs.
 	"""
 	from frappe.desk.form.assign_to import remove
 
@@ -1296,13 +1453,17 @@ def _move_assignment(doc, prior):
 				reference_doctype=doc.doctype,
 				reference_name=doc.name,
 			)
-	if doc.technician:
+	if doc.technician and not is_pencil(doc):
 		assign_to_technician(doc.name, doc.technician)
 
 
 @frappe.whitelist()
-def move_projected(contract, from_date, to_date, serial_no=None, reason=None):
+def move_projected(contract, from_date, to_date, serial_no=None, reason=None, draft=0):
 	"""Move a contract's next (not yet drafted) visit to another day.
+
+	Refused in draft mode (``draft=1``, v1.601.0, ``maintenance_drafts.PROJECTED_REFUSAL``): it
+	rewrites the contract's feature rows and may draft a visit record on the spot, neither of which
+	a Planner Draft Change of an existing visit can hold back.
 
 	Rewrites ``next_visit_date`` on the feature rows :func:`rows_to_move` picks,
 	leaves a note on the contract's timeline, and drafts the visit at once when
@@ -1320,6 +1481,10 @@ def move_projected(contract, from_date, to_date, serial_no=None, reason=None):
 		``"conflicts"`` when the move was made over some.
 	"""
 	_require_planner()
+	if _truthy(draft):
+		from erpnext_enhancements.api import maintenance_drafts
+
+		maintenance_drafts.refuse(maintenance_drafts.PROJECTED_REFUSAL)
 	from erpnext_enhancements.tasks import MAINTENANCE_DRAFT_HORIZON_DAYS
 
 	doc = frappe.get_doc("Sapphire Maintenance Contract", contract)

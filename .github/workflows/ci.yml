@@ -794,6 +794,15 @@ jobs:
       # pure methods under node when node is on PATH.
       - name: Maintenance planner crews (page)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_planner_crews_page -v
+      # Maintenance Planner Draft mode, Publish and pencil visits (v1.601.0). A draft that saved the
+      # visit would hand out ToDos, texts and customer emails for a change still being tried; a
+      # Publish that overwrote a visit someone else saved since would silently undo their work; a
+      # Publish from one planner that touched the other's drafts would announce work nobody meant
+      # to commit. A pencilled visit that booked firm hours, asked for a reason, assigned anyone,
+      # texted anyone or emailed the customer would not be a pencil. Reuses the visit-crews suite's
+      # frappe stub in its own process (unittest classes, so a unittest step).
+      - name: Maintenance planner drafts and pencil visits
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_visit_drafts -v
       # The Project Planner books people by the hour, and its free-hours figure is the only
       # thing standing between a PM and sending one technician to two sites at once. Wrong
       # arithmetic here does not error: it reports Austin free on a Thursday he never works,

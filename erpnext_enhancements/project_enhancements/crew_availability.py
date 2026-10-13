@@ -55,7 +55,13 @@ Things this module is careful about, some of which look like bugs:
   ``conflicts`` count firm work only, so a pencil never asks anyone for a reason. When the pencil
   would push the day over, the cell gets a warning instead ("Pencilled work would put them over
   by 2h"). A pencil is not driven to either: routes and drive padding are worked out from firm
-  stops, so pencilled work never books driving hours.
+  stops, so pencilled work never books driving hours. **A pencilled maintenance visit**
+  (``Sapphire Maintenance Record.tentative``, v1.601.0) books exactly the same way: its bookings
+  carry ``"tentative": True`` for everyone on it, so both planners, the Conflict center and the
+  digests treat it as a pencil task without knowing it is a visit.
+* **Drafted visits** (v1.601.0): ``visit_overrides`` (:func:`_compute`, :func:`availability`)
+  replaces stored visits with the Maintenance Planner's unpublished drafts, the visit-side
+  counterpart of ``exclude`` / ``extra`` for tasks.
 
 * **Customer jobs only** (Nik, 2026-10-09). A task counts only when its project is a Design,
   Build, Service, Events/Rent or Delivery job, by ``project_type`` or by a value-stream row
@@ -221,6 +227,25 @@ def _float(value):
 def is_tentative(task):
 	"""True when the task is a pencil booking (``custom_tentative``, a Check: 1/0/None/"1")."""
 	return bool(_float((task or {}).get("custom_tentative")))
+
+
+def is_tentative_visit(visit):
+	"""True when a maintenance visit is pencilled in (``Sapphire Maintenance Record.tentative``,
+	v1.601.0). A row or doc read before the field existed has no key, which reads as firm."""
+	return bool(_float((visit or {}).get("tentative")))
+
+
+def visit_tentative_column():
+	"""Whether ``tabSapphire Maintenance Record`` has its ``tentative`` column yet.
+
+	The visit reads below are raw SQL, and a planner can load between a deploy's code reaching the
+	workers and ``bench migrate`` adding the column; selecting a missing column would blank every
+	planner. Never raises: a stub or a failed check answers False, which reads every visit as firm.
+	"""
+	try:
+		return bool(frappe.db.has_column("Sapphire Maintenance Record", "tentative"))
+	except Exception:
+		return False
 
 
 def is_planner_job(row):
@@ -1513,7 +1538,7 @@ def _read_visit_crews(names):
 	return out
 
 
-def _read_visits(users, start, end, settings):
+def _read_visits(users, start, end, settings, overrides=None):
 	"""``[{"user", "date", "ref", "label", "project", "hours", "slot", "estimated", "full_day"}]``.
 
 	Visit records on their plan date (the Maintenance Planner's own CASE: a finished visit sits on
@@ -1525,23 +1550,32 @@ def _read_visits(users, start, end, settings):
 	Hours per person follow :func:`visit_person_hours`; a clocked visit (clock in and out) books
 	its clocked length for the technician. An entry with ``hours`` None is a full-day booking,
 	which :func:`_compute` turns into that person's capacity.
+
+	A pencilled visit (``tentative``, v1.601.0) marks every entry ``"tentative": True``; the column
+	is selected only once it exists (:func:`visit_tentative_column`).
+
+	``overrides`` (v1.601.0, the Maintenance Planner's draft mode) is ``{record: row}``: each named
+	visit is read from its row instead of the database, wherever the stored one was. A row carries
+	the SQL's columns plus ``plan_date`` and ``crew`` (``[(user, hours)]``).
 	"""
 	from erpnext_enhancements.api import maintenance_planner as mp
 
 	if not users:
 		return []
 	wanted = set(users)
+	overrides = overrides or {}
 	visit_hours = settings.get("maintenance_visit_hours")
 	visit_hours = _float(
 		visit_hours if visit_hours is not None else DEFAULT_SETTINGS["maintenance_visit_hours"]
 	)
+	tentative = "r.tentative" if visit_tentative_column() else "0"
 	rows = []
 	for row in frappe.db.sql(
-		"""
+		f"""
 		SELECT * FROM (
 			SELECT
 				r.name, r.project, r.visit_label, r.technician, r.clock_in_time, r.clock_out_time,
-				r.planned_hours, r.full_day,
+				r.planned_hours, r.full_day, {tentative} AS tentative,
 				p.project_name AS project_title,
 				CASE
 					WHEN r.docstatus = 1 OR r.workflow_state = %(pending)s
@@ -1573,10 +1607,15 @@ def _read_visits(users, start, end, settings):
 		as_dict=True,
 	):
 		day = _as_date(row.get("plan_date"))
-		if day and start <= day <= end:
+		if day and start <= day <= end and row.get("name") not in overrides:
 			rows.append((row, day))
 
 	crews = _read_visit_crews({row.get("name") for row, _day in rows})
+	for name, row in sorted(overrides.items()):
+		day = _as_date((row or {}).get("plan_date"))
+		if day and start <= day <= end:
+			rows.append((dict(row, name=name), day))
+			crews[name] = list(row.get("crew") or [])
 	out = []
 	for row, day in rows:
 		people = [(row.get("technician"), None)] + list(crews.get(row.get("name")) or [])
@@ -1589,6 +1628,8 @@ def _read_visits(users, start, end, settings):
 			"label": f"{site} · {row.get('visit_label')}" if row.get("visit_label") else site,
 			"project": row.get("project"),
 		}
+		if is_tentative_visit(row):
+			base["tentative"] = True
 		entries = _visit_entries(
 			base,
 			people,
@@ -1802,7 +1843,15 @@ def block_notes(names, viewer=None):
 
 
 def _compute(
-	start, end, resources=None, exclude=(), extra=(), google=True, equipment=False, exclude_blocks=()
+	start,
+	end,
+	resources=None,
+	exclude=(),
+	extra=(),
+	google=True,
+	equipment=False,
+	exclude_blocks=(),
+	visit_overrides=None,
 ):
 	"""Everything :func:`availability` returns, plus what the Project Planner API reuses.
 
@@ -1820,6 +1869,9 @@ def _compute(
 	each block in range becomes a ``block`` booking (:func:`block_bookings`). ``blocks`` in the
 	answer is ``{name: {"resource", "user", "date", "all_day", "slot", "window", "modified"}}`` for
 	the blocks in range, without notes. ``exclude_blocks`` leaves blocks out by name.
+
+	``visit_overrides`` (v1.601.0) is :func:`_read_visits`' ``overrides``: visits as the
+	Maintenance Planner's drafts have them, in place of the stored ones.
 	"""
 	start, end = _as_date(start), _as_date(end)
 	settings = get_settings()
@@ -1897,7 +1949,11 @@ def _compute(
 					booking["tentative"] = True
 				bookings[(resource, day)].append(booking)
 
-	for visit in _read_visits(list(user_to_resource), start, end, settings) if user_to_resource else []:
+	# Passed only when there are drafts, so a caller's stand-in for _read_visits keeps its signature.
+	visit_args = {"overrides": visit_overrides} if visit_overrides else {}
+	for visit in (
+		_read_visits(list(user_to_resource), start, end, settings, **visit_args) if user_to_resource else []
+	):
 		resource = user_to_resource.get(visit["user"])
 		hours = visit["hours"]
 		if hours is None:
@@ -1915,6 +1971,8 @@ def _compute(
 		}
 		if visit.get("projected"):
 			booking["projected"] = dict(visit["projected"])
+		if visit.get("tentative"):
+			booking["tentative"] = True
 		bookings[(resource, visit["date"])].append(booking)
 
 	for trip in _read_travel(list(employee_to_resource), start, end) if employee_to_resource else []:
@@ -2083,15 +2141,17 @@ def _apply_routes(bookings, people, start, end, settings, google=True):
 	return routes
 
 
-def availability(start, end, resources=None, google=True):
+def availability(start, end, resources=None, google=True, visit_overrides=None):
 	"""Capacity, bookings, conflicts and warnings per Planner Resource per day.
 
 	See the module docstring for what counts. ``resources`` limits the answer to those Planner
 	Resource names. Callers apply their own role gate first: the task and visit reads are raw SQL.
 	``google=False`` never asks Google anything: legs come from the drive time cache or the
-	straight-line estimate, and the shop only from its cached coordinates.
+	straight-line estimate, and the shop only from its cached coordinates. ``visit_overrides``
+	(v1.601.0): drafted visits in place of the stored ones (:func:`_read_visits`).
 	"""
-	data = _compute(start, end, resources, google=google)
+	visit_args = {"visit_overrides": visit_overrides} if visit_overrides else {}
+	data = _compute(start, end, resources, google=google, **visit_args)
 	return {key: data[key] for key in ("resources", "days", "user_to_resource")}
 
 

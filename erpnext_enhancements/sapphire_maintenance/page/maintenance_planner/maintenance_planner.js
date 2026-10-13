@@ -312,6 +312,7 @@ class MaintenancePlanner {
 		this.init_phase6c();
 		this.init_phase6d();
 		this.init_phase6e();
+		this.init_phase_c1();
 		this.bind_drag();
 	}
 
@@ -517,7 +518,10 @@ class MaintenancePlanner {
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("mp-on", view === this.view));
 		this.$body.addClass("mp-loading");
 		return Promise.resolve(
-			frappe.call({ method: `${MP.api}.get_planner`, args: { start: mp_ymd(start), end: mp_ymd(end) } })
+			frappe.call({
+				method: `${MP.api}.get_planner`,
+				args: Object.assign({ start: mp_ymd(start), end: mp_ymd(end) }, this.c1_draft_args()),
+			})
 		)
 			.then((r) => {
 				if (token !== this.request) return;
@@ -593,6 +597,7 @@ class MaintenancePlanner {
 						label: item.label,
 						hours: item.hours,
 						slot: item.slot,
+						tentative: !!item.tentative,
 					});
 				});
 			});
@@ -705,8 +710,12 @@ class MaintenancePlanner {
 			])
 		);
 		if (cell.off) lines.push(cell.off);
+		// C1: pencilled tasks and visits are soft hours, as on the Project Planner.
+		if (Number(cell.soft_booked) > 0.01) {
+			lines.push(__("{0}h pencilled (tentative, not counted as booked)", [this.fmt_hours(cell.soft_booked)]));
+		}
 		(this.day_cards[`${user}|${ymd}`] || []).forEach((card) => {
-			const what = card.kind === "projected" ? __("projected visit") : __("visit");
+			const what = card.kind === "projected" ? __("projected visit") : card.tentative ? __("pencilled visit") : __("visit");
 			lines.push(`• ${card.site || card.project || card.name} (${what})`);
 		});
 		(cell.items || []).forEach((item) => {
@@ -819,6 +828,7 @@ class MaintenancePlanner {
 		this.render_phase6c();
 		this.render_phase6d();
 		this.render_phase6e();
+		this.render_phase_c1();
 	}
 
 	render_calendar(cards) {
@@ -1112,6 +1122,10 @@ class MaintenancePlanner {
 		if (card.overdue && card.kind === "visit") classes.push("mp-overdue");
 		if (card.movable) classes.push("mp-movable");
 		if (card.saving) classes.push("mp-saving");
+		// C1 (v1.601.0): a pencilled visit is hatched like the Project Planner's pencil cards, and an
+		// unpublished draft gets the dashed outline Draft mode uses there.
+		if (card.tentative) classes.push("mp-pencil");
+		if (card.drafted && this.draft_on) classes.push("mp-drafted");
 		return classes.join(" ");
 	}
 
@@ -1122,13 +1136,20 @@ class MaintenancePlanner {
 		if (card.project) sub.push(card.project);
 		sub.push(card.slot ? card.slot.join("–") : `${this.fmt_hours(card.hours)}h`);
 		const who = card.technician ? this.tech_name(card.technician) : "";
-		const tip = [card.label, sub.join(" · "), who, __("Read-only. Move it on the Project Planner.")]
+		const tip = [
+			card.label,
+			sub.join(" · "),
+			who,
+			card.tentative ? __("Pencil (tentative)") : "",
+			__("Read-only. Move it on the Project Planner."),
+		]
 			.filter(Boolean)
 			.join("\n");
 		// In a technician's row the row says who it is.
 		const badge = this.technician || this.view === "crew" ? "" : this.tech_badge(card.technician);
+		const pencil = card.tentative ? " mp-pencil" : "";
 		return `
-			<div class="mp-card mp-booking mp-bk-${kind}" data-key="${mp_esc(card.key)}" tabindex="0" title="${mp_esc(tip)}">
+			<div class="mp-card mp-booking mp-bk-${kind}${pencil}" data-key="${mp_esc(card.key)}" tabindex="0" title="${mp_esc(tip)}">
 				<div class="mp-card-top">
 					<span class="mp-card-title">${mp_esc(card.label || card.ref)}</span>
 					${badge}
@@ -1152,6 +1173,9 @@ class MaintenancePlanner {
 		if (!sub.length) sub.push(card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
 
 		const chips = [];
+		// C1: what the card is before anything else, as on the Project Planner's cards.
+		if (card.drafted && this.draft_on) chips.push(`<span class="mp-chip mp-draft-chip">${mp_esc(__("Draft"))}</span>`);
+		if (card.tentative) chips.push(`<span class="mp-chip mp-pencil-chip">${mp_esc(__("Pencil"))}</span>`);
 		if (card.kind === "projected") chips.push(card.movable ? __("Next visit") : __("Projected"));
 		if (card.status === "pending") chips.push(__("Pending review"));
 		if (card.status === "done") chips.push(__("Done"));
@@ -1186,6 +1210,8 @@ class MaintenancePlanner {
 			sub.join(" · "),
 			crew_line || who,
 			day_cell && this.is_off(day_cell) ? this.off_label(day_cell) : "",
+			card.tentative ? __("Pencil (tentative): soft hours, nobody assigned or told yet") : "",
+			card.drafted && this.draft_on ? __("Draft: not published yet") : "",
 		]
 			.filter(Boolean)
 			.join("\n");
@@ -1465,6 +1491,8 @@ class MaintenancePlanner {
 		}
 
 		const card = source.card;
+		// C1: Draft mode holds back changes to drafted visits only; a projected one moves its contract.
+		if (card.kind === "projected" && this.draft_on) return { refuse: __(MPC1.refusals.move_projected) };
 		if (target.date !== card.date && target.date < this.today()) {
 			return { refuse: __("Visits can only be moved to today or a later day.") };
 		}
@@ -1523,6 +1551,7 @@ class MaintenancePlanner {
 		before.crew = this.crew_rows(card);
 		before.planned_hours = Number(card.planned_hours) || 0;
 		before.full_day = card.full_day ? 1 : 0;
+		before.tentative = card.tentative ? 1 : 0;
 		return before;
 	}
 
@@ -1547,6 +1576,7 @@ class MaintenancePlanner {
 		}
 		if (change.planned_hours !== undefined) card.planned_hours = change.planned_hours || null;
 		if (change.full_day !== undefined) card.full_day = change.full_day ? 1 : 0;
+		if (change.tentative !== undefined) card.tentative = change.tentative ? 1 : 0;
 		card.saving = true;
 		this.render();
 		return this.save_move(card, change, before).finally(() => this.load());
@@ -1586,6 +1616,7 @@ class MaintenancePlanner {
 		// The crew goes as a JSON list of {user, hours} rows; Full day as 1 or 0.
 		if (visit && args.crew !== undefined) args.crew = JSON.stringify(args.crew);
 		if (visit && args.full_day !== undefined) args.full_day = args.full_day ? 1 : 0;
+		if (visit && args.tentative !== undefined) args.tentative = args.tentative ? 1 : 0;
 		const snapshot = visit
 			? {
 					kind: "visit",
@@ -1595,6 +1626,7 @@ class MaintenancePlanner {
 					crew: before.crew,
 					planned_hours: before.planned_hours,
 					full_day: before.full_day,
+					tentative: before.tentative,
 			  }
 			: {
 					kind: "projected",
@@ -1624,6 +1656,8 @@ class MaintenancePlanner {
 			message = change.technician
 				? __("{0} assigned to {1}", [site, this.tech_name(change.technician)])
 				: __("{0} is now unassigned", [site]);
+		} else if (change.tentative !== undefined && Object.keys(change).length === 1) {
+			message = change.tentative ? __("{0} is now pencilled in", [site]) : __("{0} is now firm", [site]);
 		} else {
 			message = __("{0} updated", [site]);
 		}
@@ -1638,6 +1672,9 @@ class MaintenancePlanner {
 	// Resolves with the result, or null when it was refused, backed out of or failed.
 	send(method, args, opts) {
 		opts = opts || {};
+		// C1 draft mode: a write it cannot hold back is refused here; the rest go with draft=1.
+		if (this.c1_refuse(method)) return Promise.resolve(null);
+		args = this.c1_with_draft(method, args);
 		return Promise.resolve(frappe.call({ method: MP.methods[method], args }))
 			.then((r) => {
 				const result = (r && r.message) || {};
@@ -1655,7 +1692,10 @@ class MaintenancePlanner {
 					);
 				}
 				let message = opts.message;
-				if (message && result.drafted) message += ". " + __("The visit is drafted and on the technician's list.");
+				if (message && result.drafted && !result.draft_saved) {
+					message += ". " + __("The visit is drafted and on the technician's list.");
+				}
+				if (message && result.draft_saved) message += ` (${__("draft, not published")})`;
 				let toasted = false;
 				if (opts.snapshot) {
 					// A projected visit moved into the drafting window becomes a record at once, and its
@@ -1802,6 +1842,9 @@ class MaintenancePlanner {
 		if (snap.full_day !== undefined && (!card || (card.full_day ? 1 : 0) !== snap.full_day)) {
 			args.full_day = snap.full_day;
 		}
+		if (snap.tentative !== undefined && (!card || (card.tentative ? 1 : 0) !== snap.tentative)) {
+			args.tentative = snap.tentative;
+		}
 		if (card) {
 			card.saving = true;
 			this.render();
@@ -1873,6 +1916,10 @@ class MaintenancePlanner {
 				: status[card.status]
 		);
 		add(__("Date"), card.date ? frappe.datetime.str_to_user(card.date) : __("Not scheduled"));
+		if (card.tentative) {
+			add(__("Pencil"), __("Tentative: soft hours, never a conflict; nobody is assigned, texted or told the date until it is firmed up."));
+		}
+		if (card.drafted && this.draft_on) add(__("Draft"), __("Changed in Draft mode and not published yet."));
 		// How that technician's day looks: free hours, a day off, anything wrong with it.
 		const cell = card.technician && card.date ? this.cell_of(card.technician, card.date) : null;
 		if (cell) {
@@ -1947,6 +1994,13 @@ class MaintenancePlanner {
 						label: __("Full day"),
 						default: card.full_day ? 1 : 0,
 						description: __("The visit takes each person's whole day."),
+					},
+					{
+						fieldtype: "Check",
+						fieldname: "tentative",
+						label: __("Tentative (pencil)"),
+						default: card.tentative ? 1 : 0,
+						description: __("Pencilled in: soft hours that never need a reason. Nobody is assigned, texted or told the date until it is firmed up."),
 					}
 				);
 			}
@@ -1969,6 +2023,8 @@ class MaintenancePlanner {
 					if (planned !== (Number(card.planned_hours) || 0)) change.planned_hours = planned;
 					const full_day = values.full_day ? 1 : 0;
 					if (full_day !== (card.full_day ? 1 : 0)) change.full_day = full_day;
+					const tentative = values.tentative ? 1 : 0;
+					if (tentative !== (card.tentative ? 1 : 0)) change.tentative = tentative;
 				}
 				if (!Object.keys(change).length) {
 					dialog.hide();
@@ -2773,8 +2829,9 @@ Object.assign(MaintenancePlanner.prototype, MP6A_METHODS);
 //                                            server (search_planner, planner="maintenance")
 //   - T, the arrows, 1 2 3, Ctrl/Cmd+Z, ?, Esc keyboard shortcuts, listed in the legend
 //
-// Left out on purpose: Duplicate, Split and Pencil (a visit has none of them) and resizing (no visit
-// spans several days). "Add visit here" was left out of 6B too; Phase 6E added it (its own block).
+// Left out on purpose: Duplicate and Split (a visit has neither) and resizing (no visit spans several
+// days). Pencil was left out of 6B because a visit had none; C1 (v1.601.0) added it, through
+// this.p6_menu_providers in its own block. "Add visit here" was left out too; Phase 6E added it.
 //
 // Nothing here picks a person: Assign to... lists the technicians who are free that day
 // (project_planner.who_is_free) and the planner clicks one. Every write is the page's own: move_visit
@@ -6119,11 +6176,18 @@ const MP6E_METHODS = {
 		if (!target || target.kind !== "cell" || !target.ymd) return [];
 		const can = !!(this.data && this.data.can_create_visits);
 		const past = target.ymd < this.today();
+		const drafting = !!this.draft_on;
 		return [
 			{
 				label: __("Add visit here…"),
-				hint: !can ? __("You cannot add visits") : past ? __("Not on a past day") : __("Double-click"),
-				disabled: !can || past,
+				hint: !can
+					? __("You cannot add visits")
+					: past
+					? __("Not on a past day")
+					: drafting
+					? __("Not in Draft mode")
+					: __("Double-click"),
+				disabled: !can || past || drafting,
 				on_click: () => this.p6e_add_visit(target),
 			},
 		];
@@ -6168,6 +6232,8 @@ const MP6E_METHODS = {
 	// The form. `target` is an empty spot ({ymd, user}) or null from the toolbar.
 	p6e_add_visit(target) {
 		if (!this.data) return null;
+		// C1: a visit that does not exist yet cannot be a draft; say so before the form opens.
+		if (this.c1_refuse && this.c1_refuse("create_visit")) return null;
 		if (!this.data.can_create_visits) {
 			frappe.show_alert({ message: __("You cannot add visits."), indicator: "orange" }, 5);
 			return null;
@@ -6347,3 +6413,298 @@ const MP6E_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
+
+// ====================================================================== C1: Draft mode and pencil visits
+//
+// The Project Planner's draft mode and pencil, on the Maintenance Planner (v1.601.0). A Google
+// Calendar sync that pushes only committed work comes next, so the two planners need the same line
+// between "trying things" and "the schedule".
+//
+//   - "Draft mode", a toolbar switch remembered per browser (ee_maintenance_planner_draft). While it
+//     is on, every visit write that send() makes (move_visit and add_crew: drags, the dialog, the
+//     right-click menu, the selection bar, the Conflict center's fixes, Undo) goes with draft=1 and
+//     lands on the planner's own Planner Draft Change rows (api/maintenance_drafts.py). Nobody's
+//     ToDos move, nobody is texted, no customer is emailed. get_planner(draft=1) shows the visits
+//     as drafted: a dashed outline and a "Draft" chip, and the free hours counted with them.
+//   - A bar along the bottom: "N unpublished change(s) · Publish · Discard" (and "Discard out-of-date"
+//     for a draft of a visit somebody else changed since). Publish asks once for a reason when the
+//     drafts conflict together (all or nothing), saves each through move_visit's own path, and
+//     tells each person whose visits moved. Task drafts are the Project Planner's: this bar never
+//     counts, publishes or discards them.
+//   - Refused in Draft mode, on the page before the server is asked (the server refuses too):
+//     Add visit (a visit that does not exist cannot be a draft) and moving a projected visit (it
+//     rewrites the contract's next visit date at once).
+//   - Pencil: "Pencil" / "Firm up" in a visit's right-click menu and "Tentative (pencil)" in its
+//     dialog (move_visit's tentative, drafted like anything else in Draft mode). A pencilled visit is
+//     hatched like a pencil task on the Project Planner: soft hours that never need a reason, nobody
+//     assigned, no 6 AM text, no customer date email until it is firmed up.
+//
+// Hooks into the class above, one line each: init_phase_c1 (constructor), c1_draft_args (load),
+// c1_refuse and c1_with_draft (send), render_phase_c1 (render), MPC1.refusals (plan_drop and
+// p6e_add_visit), plus the pencil and draft classes, chips and fields in kind_class, booking_html,
+// card_row_html, apply, snapshot_of, save_move, undo and open_card.
+
+const MPC1 = {
+	pref: "ee_maintenance_planner_draft",
+	api: "erpnext_enhancements.api.maintenance_drafts",
+	// The writes that go to the drafts while Draft mode is on.
+	draft_methods: ["move_visit", "add_crew"],
+	// The writes Draft mode cannot hold back (the server's maintenance_drafts.PROJECTED_REFUSAL and
+	// DRAFT_REFUSAL say the same).
+	refusals: {
+		move_projected:
+			"Draft mode holds back changes to drafted visits only. This visit is projected from its contract, and moving it changes the contract's next visit date at once. Turn Draft mode off to move it.",
+		create_visit:
+			"Draft mode holds back changes to visits that already exist; a new visit cannot be a draft. Turn Draft mode off to add it.",
+	},
+};
+
+const MPC1_STYLE = `
+.mp-card.mp-pencil{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
+.mp-chip.mp-pencil-chip{background:rgba(100,116,139,.2);color:var(--text-color);font-style:italic;}
+.mp-card.mp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
+.mp-chip.mp-draft-chip{background:rgba(36,144,239,.14);color:var(--primary,#2490ef);font-weight:600;}
+.mp-toolbar label.mp-draft-toggle.mp-draft-on{color:var(--primary,#2490ef);font-weight:600;}
+.mp-draft-bar{position:sticky;bottom:8px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;margin:10px 0;border:1px dashed var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:13px;}
+.mp-draft-text{font-weight:600;}
+.mp-draft-bar .mp-chip{font-size:11px;}
+`;
+
+const MPC1_METHODS = {
+	init_phase_c1() {
+		if (!document.getElementById("mp-style-c1")) {
+			$("<style id='mp-style-c1'>").text(MPC1_STYLE).appendTo(document.head);
+		}
+		this.draft_on = this.load_pref(MPC1.pref, "0") === "1";
+		this.$draft_toggle = $('<label class="mp-draft-toggle"></label>')
+			.attr("title", __("Keep your changes to yourself until you publish them"))
+			.toggleClass("mp-draft-on", this.draft_on);
+		$('<input type="checkbox">')
+			.prop("checked", this.draft_on)
+			.on("change", (e) => this.set_draft_mode(e.target.checked))
+			.appendTo(this.$draft_toggle);
+		this.$draft_toggle.append(document.createTextNode(__("Draft mode")));
+		if (this.$undo) this.$draft_toggle.insertBefore(this.$undo);
+		else this.$draft_toggle.appendTo(this.$body.find(".mp-toolbar").first());
+		this.$draft_bar = $('<div class="mp-draft-bar"></div>').hide().insertAfter(this.$hint);
+		this.p6_menu_providers = this.p6_menu_providers || [];
+		this.p6_menu_providers.push((target) => this.c1_menu_items(target));
+		this.p6_legend_providers = this.p6_legend_providers || [];
+		this.p6_legend_providers.push(() => this.c1_legend_sections());
+	},
+
+	// ------------------------------------------------------------------ draft mode
+
+	c1_draft_args() {
+		return this.draft_on ? { draft: 1 } : {};
+	},
+
+	c1_with_draft(method, args) {
+		return this.draft_on && MPC1.draft_methods.includes(method) ? Object.assign({}, args, { draft: 1 }) : args;
+	},
+
+	// True (and the planner told why) when Draft mode cannot hold this write back.
+	c1_refuse(method) {
+		const text = this.draft_on ? MPC1.refusals[method] : null;
+		if (!text) return false;
+		frappe.msgprint({ title: __("Not in Draft mode"), message: __(text), indicator: "orange" });
+		return true;
+	},
+
+	set_draft_mode(on) {
+		this.draft_on = !!on;
+		this.save_pref(MPC1.pref, this.draft_on ? "1" : "0");
+		this.$draft_toggle.toggleClass("mp-draft-on", this.draft_on);
+		// An undo recorded in one mode must not be replayed in the other.
+		this.undo_stack = [];
+		this.update_undo_button();
+		frappe.show_alert(
+			{
+				message: this.draft_on
+					? __("Draft mode: your changes to visits are kept for you until you publish them.")
+					: __("Draft mode off: changes save straight to the visits. Your unpublished drafts are kept."),
+				indicator: "blue",
+			},
+			7
+		);
+		this.load();
+	},
+
+	render_phase_c1() {
+		this.c1_render_bar();
+	},
+
+	c1_render_bar() {
+		const $bar = this.$draft_bar;
+		if (!$bar) return;
+		if (!this.draft_on || !this.data) {
+			$bar.hide().empty();
+			return;
+		}
+		const drafts = this.data.drafts || {};
+		const count = Number(drafts.count) || 0;
+		const stale = drafts.stale || [];
+		$bar.empty().show();
+		$('<span class="mp-draft-text"></span>')
+			.text(
+				count
+					? __("{0} unpublished change(s)", [count])
+					: __("Draft mode: nothing drafted yet. Your changes to visits stay yours until you publish them.")
+			)
+			.appendTo($bar);
+		if (stale.length) {
+			$('<span class="mp-chip mp-red"></span>')
+				.text(__("{0} out of date", [stale.length]))
+				.attr("title", stale.map((entry) => `${entry.subject || entry.visit}: ${entry.reason}`).join("\n"))
+				.appendTo($bar);
+		}
+		$('<span class="mp-spacer"></span>').appendTo($bar);
+		if (stale.length) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Discard out-of-date"))
+				.on("click", () => this.c1_discard(stale.map((entry) => entry.visit)))
+				.appendTo($bar);
+		}
+		if (count > stale.length) {
+			$('<button type="button" class="btn btn-primary btn-xs"></button>')
+				.text(__("Publish"))
+				.on("click", () => this.c1_publish())
+				.appendTo($bar);
+		}
+		if (count) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Discard"))
+				.on("click", () => this.c1_discard())
+				.appendTo($bar);
+		}
+	},
+
+	// Publish every visit draft. Conflicts across the batch come back as needs_reason; the same reason
+	// dialog as a drag asks once, and the batch is sent again with it (all or nothing).
+	c1_publish(reason) {
+		return Promise.resolve(
+			frappe.call({
+				method: `${MPC1.api}.publish_drafts`,
+				args: reason ? { reason } : {},
+				freeze: true,
+				freeze_message: __("Publishing your changes…"),
+			})
+		)
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.needs_reason) {
+					if (reason) {
+						frappe.msgprint(__("Nothing was published. Refresh the planner and try again."));
+						return null;
+					}
+					return this.ask_reason(result.conflicts || {}, "visit").then((given) =>
+						given ? this.c1_publish(given) : null
+					);
+				}
+				this.c1_show_publish_result(result);
+				this.undo_stack = [];
+				this.update_undo_button();
+				return this.load();
+			})
+			.catch(() => null);
+	},
+
+	c1_show_publish_result(result) {
+		const published = result.published || [];
+		const problems = [].concat(result.skipped || [], result.failed || []);
+		const told = Number(result.notified) || 0;
+		if (!problems.length) {
+			frappe.show_alert(
+				{ message: __("{0} change(s) published; {1} people told.", [published.length, told]), indicator: "green" },
+				8
+			);
+			return;
+		}
+		const list = problems
+			.map((entry) => `<li><b>${mp_esc(entry.subject || entry.visit)}</b>: ${mp_esc(entry.reason)}</li>`)
+			.join("");
+		frappe.msgprint({
+			title: __("Published {0} of {1}", [published.length, published.length + problems.length]),
+			message:
+				`<p>${mp_esc(__("{0} people were told about their changes.", [told]))}</p>` +
+				`<p>${mp_esc(__("Not published (still in your drafts):"))}</p><ul>${list}</ul>`,
+			indicator: "orange",
+		});
+	},
+
+	// Discard every visit draft, or only `visits` (the out-of-date ones). The visits stay as they are.
+	c1_discard(visits) {
+		const drafts = (this.data && this.data.drafts) || {};
+		const count = visits ? visits.length : Number(drafts.count) || 0;
+		frappe.confirm(__("Discard {0} unpublished change(s)? The visits stay as they are.", [count]), () =>
+			Promise.resolve(
+				frappe.call({
+					method: `${MPC1.api}.discard_drafts`,
+					args: visits ? { visits: JSON.stringify(visits) } : {},
+				})
+			)
+				.then((r) => {
+					const done = ((r && r.message) || {}).discarded || 0;
+					frappe.show_alert({ message: __("{0} draft(s) discarded", [done]), indicator: "blue" }, 5);
+					this.undo_stack = [];
+					this.update_undo_button();
+					return this.load();
+				})
+				.catch(() => null)
+		);
+	},
+
+	// ------------------------------------------------------------------ pencil
+
+	// "Pencil" or "Firm up" on a visit nobody has started. A normal write through apply(), so the reason
+	// prompt (firming up checks everyone on it), Undo and Draft mode all apply.
+	c1_menu_items(target) {
+		if (!target || target.kind !== "card" || !target.card || target.card.kind !== "visit") return [];
+		const card = target.card;
+		const can = !!(card.movable && this.data && this.data.can_move_visits);
+		const why = !(this.data && this.data.can_move_visits)
+			? __("You cannot move visits")
+			: card.started
+			? __("Started")
+			: card.status !== "draft"
+			? __("Finished")
+			: __("Read-only");
+		return [
+			card.tentative
+				? {
+						label: __("Firm up"),
+						hint: can ? __("Assign and tell everyone") : why,
+						disabled: !can,
+						on_click: () => this.apply(card, { tentative: 0 }),
+				  }
+				: {
+						label: __("Pencil"),
+						hint: can ? __("Make it tentative") : why,
+						disabled: !can,
+						on_click: () => this.apply(card, { tentative: 1 }),
+				  },
+		];
+	},
+
+	c1_legend_sections() {
+		const sample = (classes, title) =>
+			`<span class="mp-card ${classes}" style="display:inline-block;width:64px;padding:1px 5px;font-size:11px;">${mp_esc(__(title))}</span>`;
+		return [
+			{
+				title: __("Pencil and Draft mode"),
+				items: [
+					{
+						sample_html: sample("mp-pencil", "Visit"),
+						text: __("Pencil (tentative): soft hours that never need a reason; nobody is assigned, texted or told the date until you firm it up."),
+					},
+					{
+						sample_html: sample("mp-drafted", "Visit"),
+						text: __("Draft: a change kept to yourself until you publish it (Draft mode)."),
+					},
+				],
+			},
+		];
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPC1_METHODS);

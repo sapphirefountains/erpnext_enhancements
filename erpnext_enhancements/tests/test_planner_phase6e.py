@@ -95,12 +95,13 @@ def _strip(code):
 
 
 def _tail_block(code, marker):
-	"""A phase block: from its banner to the next phase's banner (the Project Planner has the T1 block
-	after this one), or to the end of the file."""
+	"""A phase block: from its banner to the next phase banner, or to the end of the file. (A later
+	block follows 6E's on both pages: the Maintenance Planner's C1 block, v1.601.0, and the Project
+	Planner's T1 block, v1.602.0.)"""
 	start = code.index(marker)
 	banner = "\n// ======================================================================"
 	end = code.find(banner, start + len(marker))
-	return code[start:] if end < 0 else code[start:end]
+	return code[start:] if end < 0 else code[start : end + 1]
 
 
 def _methods_of(block, table):
