@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.618.0] - 2026-10-13
+
+The visit form matches the maintenance agreement. Nik, 2026-10-13, after Valley Fair Mall's and
+Village at Day Dairy's agreements were brought into ERPNext (SF-MAINT-2026-0010 and -0018): "update the
+maintenance visit wizards and such so they'll match what's covered in the contract". Most of that was
+data (below). Two things a visit template could not say were code.
+
+### Added
+
+- **Checklist lines on set weekdays** (`Sapphire Section Item.days`, "On Days";
+  `sapphire_maintenance/visit_days.py`). Valley Fair Mall is visited every day, and its Exhibit A puts the
+  splash pad nozzle filters on Monday, the cartridge filters on Tuesday and Friday, the bowl fountain on
+  Wednesday and the weir wall on Thursday. A template could only list every line on every visit, so the
+  daily form carried eight "(weekly)" tasks the technician marked N/A six days in seven, and nothing said
+  which day each was due. A line with days now goes only on visits on those weekdays.
+  - `get_visit_payload` takes `visit_date` and leaves off a line set to other days. The wizard's first
+    open passes the day the work was done, else the day it was scheduled. The desk form does the same.
+    No date means today.
+  - The days are written any reasonable way ("friday & tue", "Mon/Thu") and stored one way ("Tue, Fri").
+  - A word that is not a day is refused on the Section, with its row. A misspelt day would otherwise be
+    a line on every visit, the opposite of what was meant. A value saved before this check that cannot
+    be read keeps its line on every visit rather than dropping work.
+- **"What the agreement covers"** on the Visit Wizard's Safety step (`render_agreement`; the dashboard
+  context's new `agreement`, from `sapphire_maintenance/agreement_scope.py`). Collapsed, with the schedule
+  and time window in its header. It shows:
+  - the startup and winterization targets, the services chosen and the custom plan (Exhibit A);
+  - that chemicals are billed on top, so every one goes on Chemicals Used;
+  - section 2.4's "Services NOT Included", headed "raise a follow-up for a quote".
+
+  Before this the wizard showed the gate code and key from the agreement and nothing else, so a
+  technician could not tell in-scope work from a free extra. Rates are left out. It appears only for a
+  maintenance agreement the user may read, and it never raises. The exclusions are checked word for word
+  against `templates/contracts/maintenance_services_agreement.html`.
+- `tests/test_visit_agreement_match.py` (bench-free, own CI step) covers both.
+
+### Changed (production data, AI Pending Actions confirmed by Nik)
+
+New reusable sections follow the agreement's numbering:
+- **Standard Service - Cleaning** and **Standard Service - Inspection** (2.1, the standard visit);
+- **Seasonal Startup - Checks** (2.2);
+- **Water Balance - Sanitizer & Alkalinity** and **Water Balance - Calcium Hardness**. These carry no
+  range: the water feature's Reading Range Overrides set it where the agreement names one.
+
+Valley Fair Mall (MNT-CON-2026-00007):
+- **Exhibit A's ranges**, on its water feature: pH 7.1-7.9 (7.5 ± 0.4), ORP 650-750, sanitizer
+  1-5 ppm, total alkalinity 100-120, calcium hardness 200-400. The daily and startup forms gained the
+  sanitizer, alkalinity and hardness readings.
+- **Winterization:** "equipment removal from the vault, and storage" is in the agreement. The pump
+  removal line was optional ("only if VFM requested") and is now required, with a line documenting where
+  the equipment is stored and its condition (2.3). The winterization drafted for 2026-10-09 had not been
+  opened, so it gets the new checklist.
+- **Spring startup:** equipment reinstalled from storage is now required, with the startup chemical
+  treatment and a full operational test (2.2).
+- **Restart date:** daily service restarts 2027-05-01. It said 2027-04-01, but the agreement runs May 1
+  to September 30.
+- Still to do: the daily form's weekday schedule. This release adds the field, and the lines get their
+  days once it is deployed.
+
+Village at Day Dairy (MNT-CON-2026-00002), whose agreement's Exhibit A is "N/A", so section 2.1 is the
+scope:
+- **Bi-weekly form:** pH & ORP, sanitizer and alkalinity readings, and the standard cleaning and
+  inspection lines beside its own netting and wall cleaning.
+- **Spring startup:** it fell back to the bi-weekly form. It now has its own form
+  ("Village at Day Dairy - Spring Startup"): pumps and the float sensor back in, flushed, filled and
+  balanced, power on at Breaker 7, and the 2.2 checks.
+
 ## [1.617.0] - 2026-10-13
 
 Form kit **P2-A** (ERPNext TASK-2026-02746; P2.1 02747, P2.2 02748, P2.4 02750). Nik, 2026-10-13: "let's

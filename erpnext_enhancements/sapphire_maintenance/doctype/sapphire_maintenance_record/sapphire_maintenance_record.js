@@ -334,6 +334,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 					maintenance_contract: frm.doc.maintenance_contract,
 					technician: frm.doc.technician,
 					visit_label: frm.doc.visit_label,
+					// Lines set to other weekdays stay off this visit (v1.618.0).
+					visit_date: frm.doc.visit_date || frm.doc.scheduled_visit_date,
 				},
 				callback: function (r) {
 					if (r.message) {

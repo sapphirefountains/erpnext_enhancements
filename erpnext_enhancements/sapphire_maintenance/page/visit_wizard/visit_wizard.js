@@ -128,6 +128,8 @@ const VZ_STYLE = `
 .vz-last-feature{font-weight:600;margin:10px 0 2px;}
 .vz-last-line{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--border-color);}
 .vz-last-bad{color:#b91c1c;font-weight:600;}
+.vz-scope-row{padding:5px 0;border-bottom:1px solid var(--border-color);}
+.vz-scope-row b{display:block;font-size:13px;font-weight:600;color:var(--text-muted);}
 .vz-location{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-muted);margin:2px 0 8px;}
 .vz-location a{color:var(--primary,#2490ef);font-weight:600;white-space:nowrap;}
 .vz-group-head{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin:16px 0 8px;}
@@ -3108,6 +3110,7 @@ class VisitWizard {
 		// Visit-type safety guidance from the form template (the site-specific
 		// text above stays prominent in the red banner, never collapsed).
 		this.render_help(this.template_meta.safety, __("Before you start"));
+		this.render_agreement();
 		this.render_last_visit();
 
 		const $ack = $(`
@@ -3128,6 +3131,54 @@ class VisitWizard {
 		this.$wrap.append($ack);
 		this.render_safety_brief();
 		this.render_report_incident();
+	}
+
+	// "What the agreement covers" (v1.618.0): the site's maintenance agreement, so the
+	// technician sees the schedule the client was promised, the custom plan (Exhibit A) this
+	// visit carries out, and the work the agreement leaves out, which is a follow-up for a
+	// quote rather than a free extra. Collapsed, with the schedule in its header. From the
+	// dashboard context (sapphire_maintenance/agreement_scope.py), which leaves out rates and
+	// sends nothing without a maintenance agreement the user may read. Read-only.
+	render_agreement() {
+		const scope = this.dashboard.agreement;
+		if (!scope || !scope.name) return;
+		const esc = (value) => frappe.utils.escape_html(String(value == null ? "" : value));
+		const row = (label, value) =>
+			value ? `<div class="vz-scope-row"><b>${esc(label)}</b>${vz_plain_html(value)}</div>` : "";
+		let body =
+			row(__("Visits"), scope.schedule) +
+			row(__("Days"), scope.preferred_days) +
+			row(__("Time window"), scope.time_window) +
+			row(__("Spring startup"), scope.startup) +
+			row(__("Winterization"), scope.winterization) +
+			row(__("Services chosen"), (scope.services || []).join("\n"));
+		if (scope.custom_plan) {
+			body += `<div class="vz-last-feature">${__("Custom plan (Exhibit A)")}</div><div>${vz_plain_html(
+				scope.custom_plan
+			)}</div>`;
+		}
+		if (scope.billed_on_top) {
+			body += `<div class="vz-last-feature">${__("Billed on top")}</div><div>${esc(scope.billed_on_top)}</div>`;
+		}
+		const left_out = scope.not_included || [];
+		if (left_out.length) {
+			body += `<div class="vz-last-feature">${__("Not included: raise a follow-up for a quote")}</div>${left_out
+				.map((text) => `<div>• ${esc(text)}</div>`)
+				.join("")}`;
+		}
+		const summary = [scope.schedule, scope.time_window].filter(Boolean).join(" · ");
+		const $card = $(`
+			<div class="vz-help vz-agreement">
+				<button type="button" class="vz-help-head">
+					<span>📄 ${__("What the agreement covers")}</span>
+					<span class="vz-last-summary">${esc(summary)}</span>
+					<span class="vz-help-caret">▸</span>
+				</button>
+				<div class="vz-help-body">${body}</div>
+			</div>
+		`);
+		$card.find(".vz-help-head").on("click", () => $card.toggleClass("vz-open"));
+		this.$wrap.append($card);
 	}
 
 	// "Last visit here" (v1.596.0, TASK-2026-02482): technicians used to start each visit

@@ -11,6 +11,9 @@ Record):
   * Water Chemistry       -> chemistry_readings rows (min/max target range)
   * Equipment Inspection  -> maintenance_results rows (Pass/Fail/Replace/Other)
   * Cleaning Tasks        -> cleaning_tasks rows (done / not done)
+
+Any line can name weekdays in ``days`` (v1.618.0): it then goes only on visits on those days,
+for an agreement's weekly schedule. See ``sapphire_maintenance/visit_days.py``.
 """
 
 import frappe
@@ -20,6 +23,7 @@ from frappe.model.document import Document
 
 class SapphireMaintenanceSection(Document):
 	def validate(self):
+		self.normalize_days()
 		if self.section_type == "Chemical Dosing":
 			for row in self.items:
 				if not row.item:
@@ -36,3 +40,22 @@ class SapphireMaintenanceSection(Document):
 							row.idx, row.min_value, row.max_value
 						)
 					)
+
+	def normalize_days(self):
+		"""Store each line's weekdays one way ("Tue, Fri"), and refuse a word that is not a day.
+
+		A line with days goes only on visits on those weekdays (``visit_days``). A misspelt day
+		would otherwise be a line that silently goes on every visit, the opposite of what was
+		meant, so it is refused here where it was typed.
+		"""
+		from erpnext_enhancements.sapphire_maintenance.visit_days import normalize_days
+
+		for row in self.items:
+			try:
+				row.days = normalize_days(row.get("days"))
+			except ValueError as error:
+				frappe.throw(
+					_('Row {0}: "{1}" is not a day of the week. Write the days like Mon, Tue, Fri.').format(
+						row.idx, error
+					)
+				)

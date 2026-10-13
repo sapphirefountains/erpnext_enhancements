@@ -2395,6 +2395,14 @@ jobs:
       # it installs its own frappe stub with an in-memory table. Needs jinja2 and node.
       - name: Visit client sign-off by email
         run: python -m unittest erpnext_enhancements.tests.test_visit_sign_off -v
+      # The visit form matches the maintenance agreement (v1.618.0): a checklist line set to
+      # weekdays goes only on visits on those days (Valley Fair Mall's Exhibit A schedule), a
+      # misspelt day is refused on the Section, and the Visit Wizard's "What the agreement
+      # covers" card gets the schedule, chosen services and Exhibit A with no rates, plus section
+      # 2.4's exclusions, checked word for word against the agreement template. Own step for its
+      # own frappe stub.
+      - name: Visit form matches the agreement (weekday lines, agreement card)
+        run: python -m unittest erpnext_enhancements.tests.test_visit_agreement_match -v
       # Visit numbers (v1.610.0): the visits named before v1.597.0 get PRJ-#####-YYYY-V### names
       # in the order they were done, after what each series has used; the old name is kept, the
       # calendar rows follow, the counter ends past them, and a failure is rolled back and logged,
