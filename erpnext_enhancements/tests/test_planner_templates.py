@@ -1240,7 +1240,10 @@ def _source(code, start, end):
 
 
 def _t3_block(code):
-	return code[code.index("// ====================================================================== T3:") :]
+	"""The T3 block, from its banner to its one Object.assign (T4's block follows it since v1.609.0)."""
+	start = code.index("// ====================================================================== T3:")
+	end = code.index("Object.assign(ProjectPlanner.prototype, PPT3_METHODS);", start)
+	return code[start : end + len("Object.assign(ProjectPlanner.prototype, PPT3_METHODS);")]
 
 
 PAGE_HARNESS = r"""
@@ -1629,7 +1632,8 @@ class TestPageSource(unittest.TestCase):
 		self.assertIn('__("Start from template…")', actions)
 		self.assertIn("this.t3_open_templates(state)", actions)
 		self.assertEqual(self.code.count("Object.assign(ProjectPlanner.prototype, PPT3_METHODS);"), 1)
-		self.assertTrue(self.code.rstrip().endswith("Object.assign(ProjectPlanner.prototype, PPT3_METHODS);"))
+		# The block ends at its one assign; a later block (T4) may follow it.
+		self.assertTrue(self.block.rstrip().endswith("Object.assign(ProjectPlanner.prototype, PPT3_METHODS);"))
 		self.assertIn("PPT1_PURE.checklists_for(state.checklists, built.new_phases)", self.code)
 
 	def test_reads_only_and_no_const_dialog(self):

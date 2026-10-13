@@ -994,6 +994,19 @@ jobs:
       # dialog is being constructed (the v1.602.1 trap). Reuses Phase 6B's fake site, so it is unittest.
       - name: Project planner phase templates and task bundles (T3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_templates -v
+      # Project Planner T4 (v1.609.0), the Build out grid's "AI draft…". The model is a fake: nothing here
+      # calls Gemini. Pins that the draft NEVER carries a person or a date (only subject, hours, phase,
+      # crew size and row:N dependencies survive, however the model spells the rest), that the answer is
+      # treated as untrusted (100-row cap, hours/crew/subject bounds, blank and repeated subjects, phases
+      # named like the house template, self/missing/looping dependencies dropped and counted), that it
+      # writes nothing, that the prompt holds the project, its Scope of Work and its open tasks but no
+      # customer name or contact (and scrubs emails and phone numbers out of free text), that AI off, a
+      # timeout, a non-JSON reply and an empty one are plain messages (no traceback, no prompt in the Error
+      # Log), and the grid's gate (roles, create, read, customer jobs only, per-user rate limit). Under
+      # node it builds the dialog through a stand-in that asks each get_data/get_query during construction
+      # and fills the grid. Reuses Phase 6B's fake site, so it is unittest.
+      - name: Project planner AI draft (task breakdown; T4)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_ai_draft -v
       # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
       # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
       # in working days) with calendar days the default and the choice remembered per device, and that

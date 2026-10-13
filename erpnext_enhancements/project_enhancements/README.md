@@ -75,6 +75,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 Related code outside this folder:
 - `api/planner_views.py` — the Phase 6A quick looks both planners open in a drawer: a person's week, everyone's day, a project, a maintenance site. Read-only and Google-free. See [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467).
 - `api/planner_actions.py` — the Phase 6B writes (duplicate, split, quick add, move several, the Undo of a new task) and the search box of both planners. See [Faster scheduling](#faster-scheduling-phase-6b--task-2026-02468).
+- `api/planner_ai_draft.py` — the Build out grid's **AI draft…** (T4, v1.609.0): one POST endpoint, `draft_task_breakdown`, that asks the app's Gemini client for a task breakdown and returns grid rows. It writes nothing and never picks a person or a day. See [AI draft](#ai-draft-a-task-breakdown-for-the-grid-t4-v1609).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
@@ -1563,6 +1564,38 @@ System Manager and Projects Manager (`patches/grant_project_template_editing.py`
    Project Template with *Planner Template Kind* = Bundle and its template Tasks.
 6. **When a seeded one is right**, set *Review Status* to *Reviewed*; the planner stops flagging it.
    Ticking *Disabled* on a template hides it from the planner.
+
+### AI draft: a task breakdown for the grid (T4, v1.609.0)
+
+Nik, 2026-10-12: the Build out grid can propose a task breakdown, which the planner edits and creates as
+usual. A footer action, **AI draft…** (`t4_actions`, the `PPT4` block at the end of `project_planner.js`),
+opens a dialog (*Describe the job*, optional; Append or Replace when the grid has tasks), shows a spinner,
+and fills the grid through `t1_set_rows`, the path Copy from project uses. Rows carry a quiet mark
+(`row.ai`, a coloured edge and a tooltip) and the status line says *AI draft — review before creating*.
+Server side it is one endpoint, [`api/planner_ai_draft.draft_task_breakdown`](../api/planner_ai_draft.py)
+(POST).
+
+- **It never picks crew and never picks dates, and it writes nothing.** The answer has five keys per
+  row, `subject`, `hours`, `phase`, `crew_size` (a number) and `needs` (`row:N`), and
+  `validate_breakdown` drops every other key the model sends. Nothing is inserted; the rows become tasks
+  only through `build_out_tasks` (or drafts, in Draft mode), like every other row.
+- **The answer is untrusted**: 100 rows at most, hours 0–400, crew size 0–50, subjects cut to 140, blank
+  and repeated subjects (also of tasks the project has) dropped, phases named like the house template
+  (`Phase 100`…`Phase 700`, the project's own spelling wins, no 800), and a dependency on itself, on a
+  missing row or round a loop loses the link, never the row; the answer's `note` says how many.
+- **Prompt inputs**, all read as the caller: project name, type, value streams, the customer's *type*,
+  description and notes fields, the Project Scope of Work (not superseded) with its criteria, open phases
+  and open task subjects, the grid's own subjects (Append), the planner's words. **Not read:** customer
+  name, contacts, addresses, emails, phones, project owner, crew and employee records; free text is
+  scrubbed of emails, links and phone numbers.
+- **Failure is a sentence** (`ok: false`, no rows): the Google service account not set up (there is no AI
+  on/off switch in this app), a timeout, another error, a reply that is not JSON, nothing new, or 20 drafts
+  in an hour. The Error Log gets the exception's class and a scrubbed message, never the prompt and never
+  `frappe.get_traceback()` (it renders locals, and the prompt is one).
+- **Gate**: the planner roles, Task create, Project read, customer jobs only. **Model**: the app's
+  `api/gemini.py` client, so its `MODEL_ID`; usage is an AI Model Usage row under `planner_task_breakdown`.
+- Tests: `tests/test_planner_ai_draft.py` (own `ci.yml` step; fake Gemini; nothing real is called).
+
 ## Calendar sync (C2, v1.604.0)
 
 When planners commit work, ERPNext pushes it **one way** to Sapphire's existing shared Google
