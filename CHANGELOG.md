@@ -111,6 +111,41 @@ asked for a parts-needed section. Nik's call: a follow-up list that can make an 
 - `test_print_style` and `test_visit_review_digest`: the report's table (escaped, "Whole site",
   before the photo) and the email's block.
 
+## [1.599.2] - 2026-10-12
+
+### Fixed
+
+- **The contract fold kept Hardware's site visit and left the other three drafts.**
+  - Switched back and forth on v1.599.1, the fold turned 4lpc1ncnah into the 19 October site
+    visit. It then named the other three drafts as linked to other records, so they stayed.
+  - The link: every draft under the maintenance workflow has an open Workflow Action.
+    `delete_doc` clears it in `on_trash` *before* its own link check. The fold checked links
+    before calling `delete_doc`, so it counted the draft's own Workflow Action as a link. That
+    makes every workflow draft look linked, and no fold could delete one.
+  - The check is now `delete_doc`'s own, less the dynamic links it clears first (Workflow
+    Action).
+- **A contract that already has a bare, upcoming site visit now folds its per-feature drafts
+  into it.** That covers a fold left half done, as Hardware's was, and a contract switched back
+  and forth. One somebody has started still takes nothing, so there is never a second site
+  visit.
+- Found in review:
+  - A bare site visit that takes nothing now says so, instead of "now covers every water
+    feature".
+  - A past-dated draft that is in review is reported as started, not as a missed visit.
+- Hardware needs one more switch to Per Feature and back once this is deployed. The three
+  drafts then fold into 4lpc1ncnah. Switch back in the same sitting: if the nightly scheduler
+  runs while the contract is Per Feature, it drafts East Courtyard again.
+
+### Tests
+
+- `test_visit_shape_fold` (26 tests) now gives every draft its open Workflow Action, as on
+  prod. It covers:
+  - Hardware's half-done fold finishing;
+  - a bare site visit taking the drafts planned like it, and saying so when it takes none;
+  - a started or overdue site visit taking none;
+  - a past-dated draft in review reported as started;
+  - a draft linked by more than its Workflow Action being left.
+
 ## [1.599.1] - 2026-10-12
 
 ### Fixed
