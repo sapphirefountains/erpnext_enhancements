@@ -79,7 +79,9 @@ CLIENT_SIGNATURE = re.compile(r"data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0
 
 #: The first visit day the technician's signature is required for (v1.614.0). Signatures came
 #: in with v1.610.0 on 2026-10-13, and a visit done before that day was done before anyone could
-#: sign it: those still waiting to go for review (Nik: "exemption is fine") go without one. A
+#: sign it: those still waiting to go for review (Nik: "exemption is fine") go without one. The
+#: visit must also have been *made* before that day (``creation``): ``visit_date`` is editable, and
+#: a visit made since and backdated is not one done before signatures existed. A
 #: visit with **no** ``visit_date`` is not exempt. It is a blank scheduler draft, which the move
 #: into review would date today (``_finish_on_review``), and on approval would roll its contract
 #: forward and make Stock Entries, a Timesheet and a draft invoice for a visit that never
@@ -215,10 +217,18 @@ class SapphireMaintenanceRecord(Document):
 		self.client_sign_off_method = CLIENT_SIGNED_ON_SITE
 
 	def _signature_exempt(self):
-		"""Done before signatures existed (:data:`TECHNICIAN_SIGNATURE_FROM`). Never a visit with
-		no date: that is a blank draft, and the date going for review would give it is today."""
+		"""Done before signatures existed (:data:`TECHNICIAN_SIGNATURE_FROM`): dated before that day
+		**and** made before it. ``visit_date`` alone is editable, so a visit made since could be
+		backdated past the gate (v1.614.0 review); ``creation`` cannot. Never a visit with no date:
+		that is a blank draft, and the date going for review would give it is today."""
 		visit_date = self.get("visit_date")
-		return bool(visit_date) and getdate(visit_date) < TECHNICIAN_SIGNATURE_FROM
+		created = self.get("creation")
+		return (
+			bool(visit_date)
+			and bool(created)
+			and getdate(visit_date) < TECHNICIAN_SIGNATURE_FROM
+			and getdate(created) < TECHNICIAN_SIGNATURE_FROM
+		)
 
 	def _settle_task_states(self):
 		"""A cleaning task is done, N/A, or neither, never both: done wins.

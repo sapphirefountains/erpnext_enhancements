@@ -10,8 +10,8 @@ site printed "Not signed on site" for good. Now the technician (at Finish) or an
 it from the visit form (:func:`can_send`) emails the client a link; the client opens
 ``/visit-sign-off``, reads the service report, types their name, signs and confirms the service
 was performed; and the signature, name and time land on the visit, which may be approved and
-submitted by then (``db_set`` on the four ``allow_on_submit`` fields, never a re-run of the submit
-pipeline). **The client's sign-off never blocks anything**: review, approval and billing go on
+submitted by then (``db_set`` on four fields that are deliberately **not** ``allow_on_submit``,
+never a re-run of the submit pipeline). **The client's sign-off never blocks anything**: review, approval and billing go on
 exactly as before, signed or not.
 
 The record of each link is a **Visit Sign-Off Request**. The threat model is the contract
@@ -64,8 +64,11 @@ LIVE_STATUSES = ("Sent", "Viewed")
 ON_SITE = "On site"
 BY_EMAIL = "By email"
 #: Who may send a link for any visit they can read. Everyone else must be the visit's technician
-#: or crew, or hold write permission on it (:func:`can_send`).
+#: or one of its crew (:func:`can_send`).
 SEND_ROLES = frozenset({"Maintenance Reviewer", "Maintenance Supervisor", "Projects Manager", "System Manager"})
+#: The workflow state a finished, unapproved visit waits in (the record's ``REVIEW_STATE``; not
+#: imported, so this module stays importable without the controller).
+REVIEW_STATE = "Pending Review"
 
 # base64url alphabet: token_urlsafe(32) is 43 characters. ``-`` and ``_`` must be allowed or the
 # shape guard refuses most real tokens (esign/tokens.py says why that is the easy bug to copy).
@@ -82,6 +85,7 @@ MAX_SIGNATURE_PIXELS = 4_000_000
 # a literal in the source could not be reviewed (esign/portal.py, same reason).
 _CONTROL_RANGES = ((0x00, 0x1F), (0x7F, 0x9F), (0x202A, 0x202E), (0x2066, 0x2069))
 CONTROL_CHARS_RE = re.compile("[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _CONTROL_RANGES) + "]")
+ANGLE_BRACKETS_RE = re.compile(r"[<>]")
 
 #: Every reason a link cannot sign, in one sentence: never says which.
 UNAVAILABLE = (
@@ -203,19 +207,33 @@ def _format_datetime(value):
 def can_send(visit, user=None):
 	"""Whether ``user`` may email this visit's client a sign-off link.
 
-	The technician on it or one of its crew, anyone holding :data:`SEND_ROLES` who can read it, or
-	anyone with write permission on it. Never for a canceled visit or one the client has signed.
+	The technician on it or one of its crew, or anyone holding :data:`SEND_ROLES`, who can read it.
+	**Not** anyone with write (v1.614.0 review): every Maintenance User has write on every visit,
+	so that would let any technician email any visit's report and photos to any address. And only
+	for a finished visit (:func:`finished`): a draft has nothing for the client to confirm.
+	Never for a canceled visit or one the client has signed.
 	"""
 	user = user or frappe.session.user
-	if visit.get("docstatus") == 2 or visit.get("client_sign_off"):
+	if not finished(visit) or visit.get("client_sign_off"):
 		return False
 	if user == "Guest" or not frappe.has_permission(VISIT, "read", doc=visit, user=user):
 		return False
 	if user == "Administrator" or SEND_ROLES & set(frappe.get_roles(user)):
 		return True
-	if user == visit.get("technician") or user in {row.get("user") for row in visit.get("crew") or []}:
+	return user == visit.get("technician") or user in {row.get("user") for row in visit.get("crew") or []}
+
+
+def finished(visit):
+	"""Whether the visit has left Draft: waiting for review, or submitted (v1.614.0 review).
+
+	A link asks the client to confirm "the service described above was performed", which an empty
+	or half-filled draft cannot honestly show. On a site with no workflow a draft has no
+	``workflow_state``, so there only a submitted visit counts. Finish sends its link after the
+	workflow has moved the visit on (``api.maintenance_visit.finish_visit``), so it passes this.
+	"""
+	if visit.get("docstatus") == 1:
 		return True
-	return bool(frappe.has_permission(VISIT, "write", doc=visit, user=user))
+	return visit.get("docstatus") == 0 and (visit.get("workflow_state") or "") == REVIEW_STATE
 
 
 def default_email(visit):
@@ -312,8 +330,20 @@ def send_after_finish(visit, email):
 		return {"sign_off_error": _("The visit was finished, but {0} is not an email address. Send the sign-off link from the visit form.").format(email)}
 	if visit.get("client_sign_off"):
 		return {}
+	if not finished(visit):
+		return {
+			"sign_off_error": _(
+				"The visit has not gone for review, so no sign-off link was sent. Send it from the "
+				"visit form once it has."
+			)
+		}
 	if not can_send(visit):
-		return {"sign_off_error": _("The visit was finished, but you may not email its client. Ask the office to send the sign-off link.")}
+		return {
+			"sign_off_error": _(
+				"The visit was finished, but only its technician or crew, or a maintenance reviewer, "
+				"can email the client. Ask the office to send the sign-off link."
+			)
+		}
 	frappe.db.savepoint("visit_sign_off")
 	try:
 		return {"sign_off": send_request(visit, recipient)}
@@ -444,9 +474,17 @@ def send_sign_off_request(record, email=None):
 		frappe.throw(_("This visit is canceled."), title=_("Cannot send"))
 	if visit.get("client_sign_off"):
 		frappe.throw(_("The client has already signed this visit off."), title=_("Already signed"))
+	if not finished(visit):
+		frappe.throw(
+			_("Finish the visit and send it for review before asking the client to sign it off."),
+			title=_("Visit not finished"),
+		)
 	if not can_send(visit):
 		frappe.throw(
-			_("Only the visit's technician or a maintenance reviewer can email the client."),
+			_(
+				"Only the visit's technician or crew, a Maintenance Reviewer or Supervisor, a Projects "
+				"Manager or a System Manager can email the client a sign-off link."
+			),
 			frappe.PermissionError,
 		)
 	return send_request(visit, email or default_email(visit))
@@ -532,9 +570,16 @@ def record_signature(request, signed_name, image):
 	"""Stamp the evidence on the request, then the signature on the visit.
 
 	Explicit assignment, field by field. The visit gets ``db_set``: it may be submitted by now,
-	and these four fields are ``allow_on_submit``; saving it would re-run validation and hooks a
-	client's signature has no business triggering. ``db_set`` also moves ``modified``, so a visit
-	form open since before the client signed refuses to save over it instead of blanking it.
+	and saving it would re-run validation and hooks a client's signature has no business
+	triggering. ``db_set`` writes through ``frappe.db.set_value`` and never asks whether a field is
+	``allow_on_submit``, so the four fields are **not** (v1.614.0 review): saving a submitted visit
+	runs ``before_update_after_submit``, not ``validate``, so the ``CLIENT_SIGNATURE`` check would
+	never see an edit, and anyone with write could have put markup in the ``<img src>`` or forged
+	"Signed by email by" someone. ``db_set`` also moves ``modified``, so a visit form open since
+	before the client signed refuses to save over it instead of blanking it.
+
+	``signed_name`` arrives already through :func:`clean_text` (no ``<`` or ``>``), and the same
+	value goes to the request and the visit.
 	"""
 	signed_at = now_datetime()
 	request.status = "Signed"
@@ -589,7 +634,14 @@ def expire_stale():
 
 
 def clean_text(value, limit=NAME_MAX):
-	return CONTROL_CHARS_RE.sub("", str(value or "")).strip()[:limit]
+	"""A guest's typed name, safe to store: no control or bidi characters, and no ``<`` or ``>``.
+
+	The name reaches the visit's ``client_signed_by`` through ``db_set``, which skips frappe's
+	``_sanitize_content``, and Report View renders a Data cell unescaped, so markup typed here would
+	be stored XSS on the Desk (v1.614.0 review). Angle brackets are no part of anyone's name.
+	"""
+	text = CONTROL_CHARS_RE.sub("", str(value or ""))
+	return ANGLE_BRACKETS_RE.sub("", text).strip()[:limit]
 
 
 def validated_signature_image(value):

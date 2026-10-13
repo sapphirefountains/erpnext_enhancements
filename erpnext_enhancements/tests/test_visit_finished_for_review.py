@@ -615,19 +615,27 @@ class TestVisitsFromBeforeSignatures(unittest.TestCase):
 	def test_the_cutoff_is_named_and_is_the_day_signatures_came_in(self):
 		self.assertEqual(record_module.TECHNICIAN_SIGNATURE_FROM, D(2026, 10, 13))
 
-	def test_a_visit_done_the_day_before_goes_unsigned(self):
-		doc = _send_for_review(_visit(technician_signature=None, visit_date="2026-10-12"))
+	def test_a_visit_done_and_made_the_day_before_goes_unsigned(self):
+		doc = _send_for_review(
+			_visit(technician_signature=None, visit_date="2026-10-12", creation="2026-10-12 07:30:00.000000")
+		)
 		self.assertEqual(doc.visit_date, "2026-10-12", "a date the technician chose is kept")
 
 	def test_a_blank_draft_is_still_refused(self):
 		with self.assertRaises(_Thrown) as caught:
-			_send_for_review(_visit(technician_signature=None, visit_date=None))
+			_send_for_review(_visit(technician_signature=None, visit_date=None, creation="2026-10-01 07:30:00"))
 		self.assertEqual(str(caught.exception), "The technician must sign the visit before it goes for review.")
 
 	def test_the_cutoff_day_and_after_are_refused(self):
 		for day in ("2026-10-13", "2026-10-14", D(2026, 10, 13)):
 			with self.subTest(day=day), self.assertRaises(_Thrown):
-				_send_for_review(_visit(technician_signature=None, visit_date=day))
+				_send_for_review(_visit(technician_signature=None, visit_date=day, creation="2026-10-01 07:30:00"))
+
+	def test_a_visit_made_since_and_backdated_is_refused(self):
+		"""``visit_date`` is editable; ``creation`` is not (v1.614.0 review)."""
+		for created in ("2026-10-13 09:00:00", DT(2026, 10, 14, 8, 0), None):
+			with self.subTest(created=created), self.assertRaises(_Thrown):
+				_send_for_review(_visit(technician_signature=None, visit_date="2026-10-10", creation=created))
 
 
 class TestTheClientSignsOnSite(unittest.TestCase):

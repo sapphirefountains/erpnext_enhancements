@@ -227,6 +227,8 @@ def _reset():
 				"PRJ-1-2026-V001": {
 					"name": "PRJ-1-2026-V001",
 					"docstatus": 0,
+					# Finished: a link goes only once the visit has left Draft (v1.614.0 review).
+					"workflow_state": "Pending Review",
 					"project": "PRJ-1",
 					"customer": "CUST-1",
 					"maintenance_contract": "SMC-1",
@@ -534,9 +536,62 @@ class TestWhoMaySend(unittest.TestCase):
 			so.send_sign_off_request("PRJ-1-2026-V001", "owner@myers.example.com")
 		self.assertEqual(STATE["mail"], [])
 
+	def test_write_permission_alone_is_not_enough(self):
+		"""v1.614.0 review: every Maintenance User has write on every visit, so a write fallback let
+		any technician email any visit's report and photos to any address."""
+		STATE["roles"]["dave@example.com"] = ["Maintenance User"]
+		STATE["perms"].add(("dave@example.com", "write"))
+		self.assertFalse(so.can_send(_visit(), "dave@example.com"))
+		STATE["user"] = "dave@example.com"
+		with self.assertRaises(_PermissionError) as caught:
+			so.send_sign_off_request("PRJ-1-2026-V001", "anyone@example.com")
+		self.assertIn("technician or crew", str(caught.exception))
+		self.assertEqual(STATE["mail"], [])
+		STATE["visits"]["PRJ-1-2026-V001"]["technician"] = "dave@example.com"
+		self.assertTrue(so.can_send(_visit(), "dave@example.com"), "on their own visit, yes")
+
+
+class TestOnlyAFinishedVisit(unittest.TestCase):
+	"""v1.614.0 review: a client confirms "the service described above was performed", so a link
+	goes only once the visit has left Draft."""
+
+	def setUp(self):
+		_reset()
+
+	def _set(self, docstatus, workflow_state):
+		STATE["visits"]["PRJ-1-2026-V001"].update(docstatus=docstatus, workflow_state=workflow_state)
+
+	def test_a_draft_is_refused(self):
+		for docstatus, state in ((0, "Draft"), (0, None), (0, "")):
+			with self.subTest(state=state):
+				self._set(docstatus, state)
+				self.assertFalse(so.finished(_visit()))
+				self.assertFalse(so.can_send(_visit(), "lisa@example.com"))
+		STATE["user"] = "lisa@example.com"
+		with self.assertRaises(_Thrown) as caught:
+			so.send_sign_off_request("PRJ-1-2026-V001", "owner@myers.example.com")
+		self.assertIn("send it for review", str(caught.exception))
+		out = so.send_after_finish(_visit(), "owner@myers.example.com")
+		self.assertIn("sign_off_error", out)
+		self.assertEqual((STATE["mail"], STATE["requests"]), ([], {}))
+
+	def test_waiting_for_review_or_approved_it_goes(self):
+		for docstatus, state in ((0, "Pending Review"), (1, "Approved"), (1, None)):
+			with self.subTest(docstatus=docstatus, state=state):
+				self._set(docstatus, state)
+				self.assertTrue(so.can_send(_visit(), "lisa@example.com"))
+
+	def test_the_form_hides_its_button_on_a_draft(self):
+		self._set(0, "Draft")
+		STATE["user"] = "lisa@example.com"
+		self.assertFalse(so.get_sign_off_status("PRJ-1-2026-V001")["can_send"])
+		self._set(0, "Pending Review")
+		self.assertTrue(so.get_sign_off_status("PRJ-1-2026-V001")["can_send"])
+
 
 class TestSendingAtFinish(unittest.TestCase):
-	"""The client's sign-off never blocks review: Finish's send never raises."""
+	"""The client's sign-off never blocks review: Finish's send never raises. It runs after the
+	workflow has moved the visit to Pending Review (or submitted it), which :func:`finished` takes."""
 
 	def setUp(self):
 		_reset()
@@ -593,10 +648,17 @@ class TestSigning(unittest.TestCase):
 		self.assertIn(("Sapphire Maintenance Record", "PRJ-1-2026-V001"), STATE["locked"])
 
 	def test_an_approved_visit_takes_it_too(self):
+		"""Through db_set, which writes with frappe.db.set_value and never asks whether a field is
+		allow_on_submit (frappe version-16 Document.db_set), so the four fields need not be: they
+		are not, and a save of the submitted visit cannot change them (v1.614.0 review)."""
 		_status, token = _send()
 		STATE["visits"]["PRJ-1-2026-V001"]["docstatus"] = 1
 		self.assertEqual(_sign(token), {"ok": True})
 		self.assertEqual(STATE["visits"]["PRJ-1-2026-V001"]["client_sign_off_method"], "By email")
+		written = set(STATE["db_set"][-1][1])
+		fields = {f["fieldname"]: f for f in json.loads(RECORD_JSON.read_text(encoding="utf-8"))["fields"]}
+		self.assertFalse([name for name in written if fields[name].get("allow_on_submit")])
+		self.assertEqual(STATE["saves"][-1]["status"], "Signed", "only the request is saved")
 
 	def test_signing_twice_is_already_not_an_error(self):
 		_status, token = _send()
@@ -650,6 +712,18 @@ class TestSigning(unittest.TestCase):
 		_status, token = _send()
 		_sign(token, signed_name="Jane" + chr(0x202E) + " Owner" + chr(7))
 		self.assertEqual(STATE["visits"]["PRJ-1-2026-V001"]["client_signed_by"], "Jane Owner")
+
+	def test_the_name_loses_angle_brackets_on_the_request_and_the_visit(self):
+		"""v1.614.0 review: db_set skips frappe's _sanitize_content and Report View renders a Data
+		cell unescaped, so markup in the typed name would be stored XSS on the Desk."""
+		status, token = _send()
+		self.assertEqual(_sign(token, signed_name='Jane <img src=x onerror="alert(1)"> Owner'), {"ok": True})
+		on_visit = STATE["visits"]["PRJ-1-2026-V001"]["client_signed_by"]
+		on_request = STATE["requests"][status["request"]]["signed_name"]
+		self.assertEqual(on_visit, on_request)
+		self.assertEqual(on_visit, 'Jane img src=x onerror="alert(1)" Owner')
+		self.assertNotRegex(on_visit, "[<>]")
+		self.assertEqual(so.clean_text("<<>>"), "", "nothing left is no name")
 
 	def test_the_signature_is_one_the_visit_accepts(self):
 		"""Re-encoded from its bytes, and matched by the record's own CLIENT_SIGNATURE."""
@@ -897,14 +971,33 @@ class TestTheShape(unittest.TestCase):
 		self.assertEqual(fields["status"]["options"].split("\n"), ["Sent", "Viewed", "Signed", "Expired", "Superseded"])
 		self.assertFalse(any(p.get("create") or p.get("write") for p in meta["permissions"]), "made by code only")
 
-	def test_the_visit_takes_a_signature_after_approval(self):
+	def test_no_client_sign_off_field_can_be_edited_after_submit(self):
+		"""v1.614.0 review. Saving a submitted visit runs before_update_after_submit, not validate,
+		so the CLIENT_SIGNATURE check never sees it: an allow_on_submit client_sign_off could be set
+		through frappe.client.set_value to a value that leaves the <img src>, and the other three
+		could forge "Signed by email by" anyone. The emailed path writes them with db_set, which
+		does not need allow_on_submit. no_copy: a duplicated visit is not signed."""
 		meta = json.loads(RECORD_JSON.read_text(encoding="utf-8"))
 		fields = {f["fieldname"]: f for f in meta["fields"]}
 		for name in ("client_sign_off", "client_sign_off_method", "client_signed_by", "client_signed_on"):
 			with self.subTest(field=name):
-				self.assertEqual(fields[name].get("allow_on_submit"), 1)
+				self.assertFalse(fields[name].get("allow_on_submit"), f"{name} must not be allow_on_submit")
+				self.assertEqual(fields[name].get("no_copy"), 1)
 				self.assertIn(name, meta["field_order"])
+		for name in ("client_sign_off_method", "client_signed_by", "client_signed_on"):
+			self.assertEqual(fields[name].get("read_only"), 1)
 		self.assertEqual(fields["client_sign_off_method"]["options"], "\nOn site\nBy email")
+
+	def test_every_signature_src_is_escaped(self):
+		"""The print format, the portal page: no signature reaches HTML unescaped."""
+		records = json.loads((APP / "fixtures" / "print_format.json").read_text(encoding="utf-8"))
+		html = next(r for r in records if r["name"] == "Maintenance Record Print")["html"]
+		portal = (RECORD_JSON.parent / "sapphire_maintenance_record.html").read_text(encoding="utf-8")
+		for label, source in (("print format", html), ("portal page", portal)):
+			for field in ("client_sign_off", "technician_signature"):
+				with self.subTest(where=label, field=field):
+					self.assertIn('src="{{ doc.' + field + ' | e }}"', source)
+					self.assertNotIn('src="{{ doc.' + field + ' }}"', source)
 
 	def test_finish_sends_after_the_visit_has_moved_on(self):
 		source = (APP / "api" / "maintenance_visit.py").read_text(encoding="utf-8")
