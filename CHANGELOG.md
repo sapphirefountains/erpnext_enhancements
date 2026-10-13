@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.604.0] - 2026-10-12
+
+### Added
+
+Calendar sync, C2: committed planner work pushed **one way** to Sapphire's shared Google Calendars, so
+the team sees the schedule there. Nik's decisions of 2026-10-12, settled: ERPNext is the only source of
+truth (two-way sync was withdrawn), the three target calendars already exist under his account, and the
+sync signs in as his account "for now". **It ships off**: nothing is queued and no Google call is made
+until a System Manager authorizes an account, fills in the calendars and ticks the switch.
+
+- **What syncs, as all-day events.** Project Planner tasks on customer jobs (the planners' own
+  `is_planner_job` rule, so an internal project never reaches a shared calendar), multi-day as one event
+  from `exp_start_date` to `exp_end_date` (Google's end date is exclusive, so the day after is sent); pencil
+  tasks as tentative with "✎ "; maintenance visits on the day the Maintenance Planner shows them, pencil
+  visits tentative; the Maintenance Planner's projected contract visits as tentative "(projected)" events;
+  day notes on the Projects calendar; unavailable blocks on Company Holidays & Vacations. Finished work
+  keeps its event with "✓ "; canceled or deleted work has its event removed. An undated task syncs nothing.
+- **Drafts never sync.** Both planners' drafts live in `Planner Draft Change` rows and never touch the
+  record until Publish, so the sync reads only saved records; no sync module names the draft doctype or
+  either overlay, and the test fails the build if one does.
+- **The event**: `"<site> · <subject or visit label> — <crew first names>"`, the stop's address, hours,
+  crew, equipment, qualifications needed, flagged weather from the existing `planner_weather` cache, and
+  "Managed by ERPNext — edits made here are undone. Change it in the planner: <link to that day>". Colored by
+  value stream (a small Settings table over sensible defaults). No attendees, ever.
+- **Nothing secret on a shared calendar.** The description is built only from structured fields, and the
+  readers never select a task description, project or visit notes, a Maintenance Profile's
+  `access_codes`, or a block's private note. Subjects, addresses and day notes pass through a scrubber that
+  drops any segment naming a gate, alarm, lockbox or keypad code, a code or PIN followed by digits, a
+  password or a combination.
+- **Re-drivable and idempotent.** Every event carries private extended properties (site, doctype, name,
+  kind) and a deterministic client-supplied id (`"erp"` + SHA-1, inside Google's base32hex alphabet), so a
+  job run twice, or after a lost job, inserts the same id, gets 409 and updates; that also restores an event
+  someone deleted. A new `Calendar Sync Link` doctype records each event's calendar, id, content hash and
+  the etag of our last write, so an unchanged record costs no Google call.
+- **Triggers**: `doc_events` on Task, Sapphire Maintenance Record, Sapphire Maintenance Contract, Planner
+  Day Note, Planner Block and Project enqueue one job per record per request, after commit, with a stable
+  `job_id`; a Planner publish that saves a task five times queues it once. Skipped during import, patch,
+  install and migrate; never raises into the save.
+- **Because the prod deploy FLUSHDBs redis**, which destroys queued jobs: a nightly full repair
+  (`daily_long`, 14 days back to 180 ahead, capped at 20 minutes) and a *Re-sync everything* button redo
+  whatever a lost job would have done.
+- **Snap-back** every 10 minutes: Google's incremental `events.list` per calendar with a stored
+  `syncToken`. An event with this site's properties that somebody edited is rewritten from ERPNext, one
+  deleted in Google is recreated, one whose source is gone is deleted. Events without our properties are
+  other people's and are never touched. Our own writes echoing back are recognised by etag, not by
+  comparing text, which Google may normalize (a comparison that never matched would rewrite the same event
+  every ten minutes forever). A 410 drops the token and lists in full.
+- **Calendar Sync Settings** (System Manager only): the switch, *Authorize with Google* (refresh token in a
+  Password field, connected account shown), *Pick calendars* from the account's own writable calendars,
+  the repair window, colors, a **dry-run Preview** for any range (no Google call, no write, works with the
+  switch off) and a **health panel**: account, a test token refresh, the redirect URI, last snap-back check,
+  last full repair and its counts, events by status, and the last ten errors.
+- Endpoints in `api/calendar_sync.py`, all System Manager only. The sync is
+  `project_enhancements/calendar_sync/` (`payload`, `sources`, `google_api`, `engine`, `triggers`); the
+  date seam C3's timed route slots will replace is the single function `payload.event_times`.
+- `tests/test_calendar_sync.py`, bench-free and its own CI step: the payload, the secrets rules, ids,
+  hashes, the snap-back decision table, colors, the readers' states, the master switch (no Google call from
+  any job, nothing queued), the dry run (no write), the triggers, the client's backoff and the wiring.
+
+### Why it is built this way
+
+- **OAuth as a person, not a service account.** Google Workspace caps sharing outside the domain at "See
+  all event details", so a service account can never be given edit rights on these calendars; a dedicated
+  account, domain-wide delegation and loosening sharing were all declined.
+- **Frappe's shared Google callback** (`/api/method/frappe.integrations.google_oauth.callback`, v16.31+)
+  with the callback named in the server-side state, so no route of ours has to be registered. Scopes are
+  `calendar.events` and `calendar.readonly` only, and `include_granted_scopes` is deliberately not sent: it
+  would hand the token every scope Nik's account ever granted this client.
+- **Not Frappe's own Google Calendar doctype.** Its three production rows stay disabled by decision, and the
+  v1.346.0 removal of the every-Task broadcast stands.
+- `requests` against the REST API, matching the QuickBooks and Stripe clients; no new dependency. Errors
+  carry an HTTP status and Google's short reason only, raised `from None`, so no token, secret or code
+  reaches an Error Log.
+- **Singles**: the sync writes its own state (sync tokens, last-run stamps) into Calendar Sync Settings, so
+  `materialize_defaults` runs before every such write and the patch `materialize_calendar_sync_settings`
+  runs it once at install. Otherwise the first write would blank `days_back` / `days_ahead` (CLAUDE.md).
+- `Calendar Sync Link.source_name` is a Data field, not a Dynamic Link: a link would make Frappe refuse to
+  delete the Task or visit it points at.
+
+### Manual steps for Nik
+
+1. In Google Cloud Console, on the OAuth client that **Google Settings** uses: make sure
+   `https://<site>/api/method/frappe.integrations.google_oauth.callback` is an *Authorized redirect URI*
+   (the health panel shows the exact address; it is already there if Google Contacts, Mail or Indexing
+   was ever connected), that the **Google Calendar API** is enabled in that project, and that the consent
+   screen allows the `calendar.events` and `calendar.readonly` scopes.
+2. Open **Calendar Sync Settings** → *Google* → *Authorize with Google*, signed in to Google as the account
+   that owns the three calendars.
+3. *Pick calendars* (or paste the three calendar IDs), then *Sync* → *Preview* to see what would be written.
+4. Tick **Push committed work to Google Calendar** and save; a full repair is queued at once.
+
 ## [1.602.1] - 2026-10-12
 
 ### Fixed

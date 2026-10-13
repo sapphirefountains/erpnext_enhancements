@@ -923,6 +923,18 @@ jobs:
       # setUpModule).
       - name: Project planner build out (grid, Needs tasks list, richer quick add; T1)
         run: python -m unittest erpnext_enhancements.tests.test_planner_build_out -v
+      # Calendar sync C2 (v1.604.0): committed planner work pushed ONE WAY to the shared Google
+      # Calendars. Pins the event (title, Google's exclusive all-day end, pencil and projected work
+      # tentative, finished work kept with a check mark, the managed-by line, no attendees); that no gate,
+      # alarm or lockbox code, PIN or password survives into an event and the readers never select a
+      # block's note or a profile's access codes; deterministic base32hex event ids; the content-hash
+      # skip; the snap-back decision table (other people's and another site's events never touched, our
+      # own write ignored by etag); color mapping; that no sync module reads Planner Draft Change; that the
+      # master switch off makes NO Google call from any job and queues nothing; that the preview writes
+      # nothing; that triggers enqueue once per record per request after commit and never raise; and the
+      # client's backoff, one 401 refresh and token-free errors. Own frappe and requests stubs, own step.
+      - name: Calendar sync (one-way push, snap-back, master switch, no secrets; C2)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_sync -v
       # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
       # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
       # in working days) with calendar days the default and the choice remembered per device, and that
