@@ -560,8 +560,57 @@ class TestVisitForms(unittest.TestCase):
 			},
 			rows,
 		)
+		self.assertEqual(rows[0]["visit"], "Regular visit: water features without their own form")
+		self.assertEqual(rows[0]["source"], "Default Form Template")
 		winter = next(r for r in rows if r["visit"].startswith("Winterization"))
-		self.assertTrue(winter["source"].startswith("No form of its own: each water feature's own form"))
+		self.assertEqual(
+			winter["source"],
+			"Default Form Template (no form of its own; a water feature's own form comes first)",
+		)
+
+	def test_a_default_no_visit_uses_says_so(self):
+		"""Every water feature has its own form, so the contract-level one opens nothing."""
+		self._contract(
+			default_template="Bi-Weekly Form",
+			covered_features=[
+				_Dict(serial_no="EAST", template="East Form"),
+				_Dict(serial_no="WEST", template="West Form"),
+			],
+		)
+		self.assertEqual(
+			contract_module.get_visit_forms("MNT-1")[0]["source"],
+			"Default Form Template; not used, since every water feature has its own form",
+		)
+
+	def test_a_contract_without_a_project_names_the_customers_form(self):
+		"""Review fix: the customer's template has no project either, and None == None."""
+		self._contract(project=None)
+		STATE["active"][("customer", "Wasatch")] = "Customer Form"
+		STATE["values"][("Sapphire Maintenance Template", "Customer Form")] = {"project": None}
+		self.assertEqual(
+			contract_module.get_visit_forms("MNT-1")[0],
+			{"visit": "Regular visit", "template": "Customer Form", "source": "The customer's active form"},
+		)
+
+	def test_two_seasonal_visits_with_one_label_are_not_both_their_own_form(self):
+		"""resolve_template takes the first with the label; the second must not claim its form."""
+		self._contract(
+			default_template="Bi-Weekly Form",
+			seasonal_startup=0,
+			winterization=1,
+			winterization_template="Winter A",
+			seasonal_visits=[
+				_Dict(visit_label="Winterization", target_month="November", template="Winter B")
+			],
+		)
+		rows = [r for r in contract_module.get_visit_forms("MNT-1") if r["visit"].startswith("Winterization")]
+		self.assertEqual(
+			[(r["template"], r["source"]) for r in rows],
+			[
+				("Winter A", "Its own form"),
+				("Winter A", "Another seasonal visit's form: two share the label Winterization"),
+			],
+		)
 
 	def test_a_blank_default_falls_back_to_the_projects_active_form(self):
 		self._contract()

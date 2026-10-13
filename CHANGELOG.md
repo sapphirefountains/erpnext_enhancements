@@ -28,13 +28,21 @@ the visit form match the maintenance agreement.
   the project's or the customer's Active template, or none (the visit opens with nothing to fill in).
   Before, finding out meant opening the template links one by one. The feature overrides sat in a
   collapsed row section, and a blank link's fallback was nowhere on screen.
-  - It resolves each row with `resolve_template`, the function a visit's first open uses, so it cannot
-    disagree with the visits. A seasonal visit with no form of its own says that each water feature's
-    form comes first, as `resolve_template` does.
+  - The contract-level rows are resolved with `resolve_template`, the function a visit's first open
+    uses, so they cannot disagree with the visits. A water feature's own form is its row's form, which
+    `resolve_template` takes first.
+  - The list says when the contract-level form serves only the water features without their own form,
+    and when every feature has one so it opens nothing.
+  - A seasonal visit with no form of its own says that a water feature's own form comes first, as
+    `resolve_template` does.
+  - Two seasonal visits sharing a label both get the first one's form, and the second says so rather
+    than claiming its own.
+  - A contract with no project names a customer's form as the customer's.
   - It reads the saved contract, needs read on it, and says so when the form has unsaved changes.
-- `tests/test_visit_agreement_match.py` covers both, with 8 more tests (30 in all): the real
-  `get_visit_forms` with its fallbacks and the permission check, the dashboard drawing the card with
-  every value escaped, and the button's escaping.
+- `tests/test_visit_agreement_match.py` covers both, with 11 more tests (33 in all):
+  - the real `get_visit_forms` with each fallback, no project, a shared label and the permission check;
+  - the dashboard drawing the card with every value escaped;
+  - the button's escaping.
 
 ## [1.619.1] - 2026-10-13
 
