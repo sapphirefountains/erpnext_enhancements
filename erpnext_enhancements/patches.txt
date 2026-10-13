@@ -1313,3 +1313,7 @@ erpnext_enhancements.patches.stamp_visit_date_on_pending_review
 # (sync tokens, last-run stamps). Write a tabSingles row for every declared default that has none, so the first
 # state write cannot blank days_back/days_ahead. Never over a stored value; switches nothing on; cannot raise.
 erpnext_enhancements.patches.materialize_calendar_sync_settings
+# Calendar time off in (C4, v1.607.0): Calendar Sync Settings gained Read time off from Google (default 0) and its
+# read state. Write a tabSingles row for each new field that has none, so the read's first state write cannot blank
+# the rest. Never over a stored value; switches nothing on; cannot raise.
+erpnext_enhancements.patches.materialize_calendar_time_off_settings

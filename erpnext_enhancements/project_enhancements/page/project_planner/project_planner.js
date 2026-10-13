@@ -8641,7 +8641,7 @@ const PP6D_METHODS = {
 			date: ymd,
 			resource,
 			person: resource,
-			editable: this.p6d_can_edit_block(resource),
+			editable: this.p6d_can_edit_block(resource) && !booking.from_google,
 		});
 	},
 
@@ -8664,7 +8664,7 @@ const PP6D_METHODS = {
 						resource: person.name,
 						person: person.name,
 						compact: month,
-						editable: this.p6d_can_edit_block(person.name),
+						editable: this.p6d_can_edit_block(person.name) && !booking.from_google,
 					})
 				);
 			});
@@ -8790,11 +8790,13 @@ const PP6D_METHODS = {
 		const resource = el.getAttribute("data-pk-block-resource");
 		const booking = this.p6d_blocks_of(resource, ymd).find((entry) => entry.ref === name);
 		if (!booking) return;
-		if (this.p6d_can_edit_block(resource)) {
+		// C4: a block read in from the Google vacations calendar changes in Google, never here.
+		if (this.p6d_can_edit_block(resource) && !booking.from_google) {
 			this.p6d_block_form({ block: this.p6d_block_of(booking, resource, ymd), resource, date: ymd });
 			return;
 		}
-		kit.toast(`${this.resource_label(resource)}: ${kit.blocks.block_text(booking)}`, { tone: "info" });
+		const where = booking.from_google ? ` (${__("from the Google vacations calendar: change it there")})` : "";
+		kit.toast(`${this.resource_label(resource)}: ${kit.blocks.block_text(booking)}${where}`, { tone: "info" });
 	},
 
 	// ------------------------------------------------------------------ blocks and notes

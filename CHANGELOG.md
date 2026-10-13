@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.607.0] - 2026-10-13
+
+### Added
+
+Calendar sync, C4: **time off read in from Google.** People already put their time off on the shared
+"Company Holidays & Vacations" calendar by hand ("Austin Off", "Clegg - ooo"); ERPNext now reads those
+events into the planners as Unavailable Planner Blocks, so whoever schedules work knows who is out. Nik's
+decisions of 2026-10-12, settled. It is the one thing ERPNext takes from Google: C2 still pushes
+everything else one way, out. **It ships off**: Calendar Sync Settings → *Read time off from Google*
+defaults to 0 and also needs C2's master switch, an authorized account and the calendar ID.
+
+- **Reading.** C2's client and account, `events.list` with `singleEvents=true` so a recurring event
+  arrives as its instances. Every 10 minutes from its own stored `syncToken` (C2's snap-back lists the
+  same calendar with a different query, and Google ties a token to its query, so the two cannot share
+  one); a 410 lists in full. Nightly (`daily_long`) the whole window is read again (C2's window, 14 days
+  back to 180 ahead), every review decision is re-applied and imported blocks whose event has gone are
+  removed, but only after a complete listing. That nightly read is what re-does anything the deploy's
+  `FLUSHDB` destroys. A redis `SET NX` keeps two reads from running at once, and a race between them
+  heals itself (two blocks for one person-day keep the first).
+- **Matching** (`calendar_sync/time_off_rules.py`, pure and tested). In order: ERPNext's own events are
+  never read; a deleted event removes its blocks; birthdays are skipped (Google's `birthday` event type,
+  "birthday", "bday", "b-day"); a planner's decision for the event id; a decision remembered for the
+  title; "Company holiday" is everyone; a first name, full name or alias **plus** a time-off word (off,
+  OOO, out, vacation, PTO, sick, leave, appointment, ...), as whole words, the longer name winning and a
+  shared first name settled by the event's creator; with no name, a time-off word and whoever created it
+  (creator, then organizer, never the calendar itself, by User → active Planner Resource); everything
+  else to review. A name **without** a time-off word ("Austin - Denver") is only a best guess on a review
+  row: the calendar also carries things like "Lunch with Austin". Planner Resource gains *Names on the
+  shared calendar* for aliases. Subcontractors and inactive people are never matched.
+- **Blocks follow the event.** One all-day or timed block per person per day (a timed event is cut at
+  midnight in the site's time zone; a piece that is the whole day is all day), with `source` "Google",
+  the event id and a private note "From Google Calendar: <title>". Each read creates, updates or deletes
+  only the difference, and only inside the window. **A block made in ERPNext is never read, changed or
+  deleted by the import**: every query filters on `source = "Google"`, and the update and delete paths
+  re-check the row.
+- **Imported blocks are read-only and never go back out (the loop guard).** C2 pushes Planner Blocks
+  out to this same calendar, so an imported block synced out would duplicate every hand-made Google
+  event. `sources.block_item` reads an imported block as gone, `refs_in_window` leaves it out and the
+  Planner Block trigger does not even queue it; and the import never reads an event carrying C2's private
+  properties (any site's, so staging's copies too) or C2's "Managed by ERPNext" footer. `PlannerBlock`
+  refuses any edit not made by the import (and a delete by anyone but a System Manager), nobody can turn
+  a hand-made block into an imported one, and both planners show it without the edit form ("from the
+  Google vacations calendar: change it there"). A wrong match is fixed where the truth lives: rename the
+  event in Google, or add an alias.
+- **"Company holiday" means everyone**: a block for every active staff resource (not subcontractors,
+  whom the availability engine gives no holidays either), except on a day their Holiday List, the one
+  the planners already read, already has as a holiday. The Holiday List itself is HR's (leave and payroll
+  read it) and is never written from a calendar title.
+- **Review list**: new doctype **Calendar Time Off Review**, one row per unclear event, with the reason
+  and a best guess. A planner (the Planner Block schedulers: System Manager, Projects Manager, Projects
+  User, Maintenance Supervisor) picks a person, *Everyone* or *Ignore*; the choice is kept for the event
+  id and, with *Same for this title*, for every event whose title matches without case, punctuation or
+  numbers. A decision applies from the event stored on the row, with no Google call, after commit; an
+  Open row whose event becomes clear or disappears is removed.
+- **Telling the planners.** New *Time off alerts* table on Calendar Sync Settings (new child doctype
+  Calendar Sync Alert Recipient; empty means whoever authorized the Google account). They get a bell
+  (Notification Log type Alert, the planners' own channel, never emailed) when new events wait for
+  review, and when newly imported time off lands on a day its person has firm bookings: the same check
+  the Conflict center makes for a hand-made block (`planner_blocks._conflicts_made`), **once per block**
+  (`Planner Block.time_off_alerted`; a block is one person's one day), and never for a day already past.
+  The conflict itself also shows in the Conflict center, as for any block.
+- **Preview** (*Time off → Preview time off*): what a full read would create, update and delete, and what
+  would wait for review. It has to read Google to know (one read-only listing) and **writes nothing**: no
+  block, no review row, no alert, no sync state. *Read time off now* queues the full read; the status
+  lines show the last check, the last full read, blocks read in and how many wait for review.
+
+### Changed
+
+- `Planner Block` gains `source` (Select Planner / Google, default Planner), `google_event_id` and
+  `time_off_alerted`. It is a normal doctype, so the `ALTER` that adds `source` writes "Planner" into
+  every existing row, and the import matches only "Google": existing blocks read as hand-made, which is
+  what they are. (Not a Single: no backfill patch is needed, and one keyed on emptiness would match
+  nothing.)
+- Calendar Sync Settings gains *Read time off from Google* (Check, default 0), *Time off alerts* and the
+  read's own state. Patch `materialize_calendar_time_off_settings` gives each new field its `tabSingles`
+  row (the v1.604.0 patch ran before they existed, and a patch never runs twice); `write_state` also
+  materializes before every state write. Ticking the switch with sync off, or with no calendar ID, is
+  refused; switching sync off while it is ticked still saves.
+- `api/planner_blocks.block_entry` and the engine's block bookings carry `from_google`; `can_edit` is
+  false for an imported block.
+
 ## [1.604.0] - 2026-10-12
 
 ### Added

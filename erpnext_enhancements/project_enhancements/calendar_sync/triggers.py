@@ -91,6 +91,10 @@ def on_change(doc, method=None):
 	try:
 		if _skip() or not _enabled():
 			return
+		if doc.doctype == "Planner Block" and (getattr(doc, "source", None) or "") == "Google":
+			# C4: read in from the vacations calendar, so already there. Never written back out
+			# (``sources.block_item`` reads it as gone too; this just saves the job).
+			return
 		queue_item(doc.doctype, doc.name)
 		if doc.doctype == "Sapphire Maintenance Record" and getattr(doc, "maintenance_contract", None):
 			queue_projections()

@@ -935,6 +935,14 @@ jobs:
       # client's backoff, one 401 refresh and token-free errors. Own frappe and requests stubs, own step.
       - name: Calendar sync (one-way push, snap-back, master switch, no secrets; C2)
         run: python -m unittest erpnext_enhancements.tests.test_calendar_sync -v
+      # Calendar time off in (C4, v1.607.0): the Company Holidays & Vacations calendar read into
+      # Unavailable Planner Blocks. Pins the title matching (names, aliases, OOO words, birthdays,
+      # "Company holiday"), the creator fallback, that ERPNext's own events are never read, that blocks
+      # follow their event and hand-made blocks are never touched, the loop guard (an imported block is
+      # never synced out and is read-only), the review list, one conflict alert per block, no read with
+      # any switch off, and a dry run that writes nothing. Own frappe and requests stubs, own step.
+      - name: Calendar time off in (Google -> Unavailable blocks, loop guard, review list; C4)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_time_off -v
       # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
       # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
       # in working days) with calendar days the default and the choice remembered per device, and that

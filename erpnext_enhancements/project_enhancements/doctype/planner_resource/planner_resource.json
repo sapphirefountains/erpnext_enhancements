@@ -21,6 +21,7 @@
   "section_pattern",
   "work_patterns",
   "section_notes",
+  "calendar_aliases",
   "notes"
  ],
  "fields": [
@@ -116,6 +117,12 @@
    "label": "Notes"
   },
   {
+   "description": "Other names this person goes by on the Company Holidays & Vacations calendar, one per line or comma-separated (\"AJ\", \"Smitty\"). Their first and full name are matched already. Used by the time-off read (C4).",
+   "fieldname": "calendar_aliases",
+   "fieldtype": "Small Text",
+   "label": "Names on the shared calendar"
+  },
+  {
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
@@ -123,7 +130,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-08 12:00:00.000000",
+ "modified": "2026-10-13 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Planner Resource",
