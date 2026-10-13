@@ -1513,7 +1513,8 @@ filter skid), Commissioning + hand-off), all *Needs review*. The content is
 `data/planner_templates.json`, derived from DOC-0041 Sapphire Cost Worksheet v1.0 by
 `scripts/derive_planner_templates.py` (its `source.interpretations` lists every judgement made: the two
 cost-code overrides, the defects not copied, the build order of 600 and 700). Every DOC-0041 v1.0 labor
-line has 1 in "# Units", so every labor task starts at **1 hour: a placeholder**.
+line has 1 in "# Units", the blank worksheet's placeholder rather than an estimate, so **the hours are
+blank: fill them in per template** (a 1-hour default would book every templated task as a 1-hour job).
 
 #### How to edit the templates and bundles
 
@@ -1522,7 +1523,9 @@ System Manager and Projects Manager (`patches/grant_project_template_editing.py`
 1. **Project Template** list → filter *Planner Template Kind* (Phase template or Bundle). Open one.
 2. **A task's hours, crew size, line or cost code:** click its row in the *Tasks* table to open the
    template Task, change *Expected Time* (default hours), *Crew Size*, *Template Line* or *Cost Code*,
-   and save. A subject edited on the Task shows in the planner straight away.
+   and save. A subject edited on the Task shows in the planner straight away. **Every seeded task's
+   hours are blank: fill them in per template**; until then the grid's Hours cell loads empty, showing
+   what still needs an estimate.
 3. **A phase's checklist, number or place in the sequence:** open the phase (a group template Task) and
    edit *Procurement Checklist* (one item per line), *Phase Number* or *Runs After Phases* (e.g. `500,
    600`).

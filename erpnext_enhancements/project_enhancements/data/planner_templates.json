@@ -9,6 +9,7 @@
    "Row 76: Programming Labor is coded 01 0120 (Superintendent) in DOC-0041; the catalog's line for it is 26 0900.16 Control Panel Build and Programming.",
    "Row 92: DOC-0041 repeats 'Exterior Fountains' under 13 1223, which is Interior Fountains.",
    "Phase 800 (800 PHASE: Maintenance (Ongoing Care)) left out: maintenance contracts own it.",
+   "Every labor line's '# Units' is 1, the blank worksheet's placeholder, so every task's default hours are left blank: fill them in per template.",
    "Phase 500's 'Merchanical' is spelled 'Mechanical'.",
    "Row 52 (Check Valves) has no '# Units'; it is a material, so it carries no hours.",
    "Stone (row 85) and the electrical rows 68 and 73 are Material in the catalog but are subcontracted scope by Nik's decision, so they are tasks.",
@@ -21,7 +22,7 @@
    "name": "Fountain build phases (DOC-0041)",
    "kind": "Phase template",
    "review_status": "Needs review",
-   "notes": "Seeded from DOC-0041 Sapphire Cost Worksheet v1.0 (scripts/derive_planner_templates.py). Labor lines and the subcontracted scope are tasks, one Project management task per phase; materials, equipment and expenses are each phase's procurement checklist. Cost codes are the corrected catalog's, never DOC-0041's. Every labor line's '# Units' in v1.0 is 1, so every labor task starts at 1 hour: set the real hours. Phase 800 Maintenance is left out.",
+   "notes": "Seeded from DOC-0041 Sapphire Cost Worksheet v1.0 (scripts/derive_planner_templates.py). Labor lines and the subcontracted scope are tasks, one Project management task per phase; materials, equipment and expenses are each phase's procurement checklist. Cost codes are the corrected catalog's, never DOC-0041's. Every labor line's '# Units' in v1.0 is 1 (a placeholder), so the hours are blank: fill them in per template. Phase 800 Maintenance is left out.",
    "phases": [
     {
      "number": 100,
@@ -35,7 +36,7 @@
      "tasks": [
       {
        "subject": "Design",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DESIGN",
        "waits_on": [],
@@ -43,7 +44,7 @@
       },
       {
        "subject": "Design Labor & Assistance",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DESIGN-ASSIST",
        "waits_on": [
@@ -53,7 +54,7 @@
       },
       {
        "subject": "Project management (100 Full System Overview)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -91,7 +92,7 @@
       },
       {
        "subject": "Preparation Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [
@@ -101,7 +102,7 @@
       },
       {
        "subject": "Project management (200 Groundwork & Prep)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -128,7 +129,7 @@
      "tasks": [
       {
        "subject": "Rough-in Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [],
@@ -136,7 +137,7 @@
       },
       {
        "subject": "Project management (300 Rough-in)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -174,7 +175,7 @@
       },
       {
        "subject": "Structural Vessel Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [
@@ -184,7 +185,7 @@
       },
       {
        "subject": "Project management (400 Structural Vessel)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -213,7 +214,7 @@
      "tasks": [
       {
        "subject": "Equipment Room Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [],
@@ -221,7 +222,7 @@
       },
       {
        "subject": "Project management (500 Mechanical Room)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -249,7 +250,7 @@
      "tasks": [
       {
        "subject": "Control Panel Build",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [],
@@ -257,7 +258,7 @@
       },
       {
        "subject": "Programming Labor",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "26 0900.16",
        "waits_on": [
@@ -287,7 +288,7 @@
       },
       {
        "subject": "Controls Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [
@@ -297,7 +298,7 @@
       },
       {
        "subject": "Project management (600 Controls & Electrical Integration)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],
@@ -372,7 +373,7 @@
       },
       {
        "subject": "Finishes Labor (Direct)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "LAB-DIRECT",
        "waits_on": [
@@ -382,7 +383,7 @@
       },
       {
        "subject": "Commissioning",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "13 0812",
        "waits_on": [
@@ -392,7 +393,7 @@
       },
       {
        "subject": "Training & Owner Hand-off (Training, Warranty, O&Ms)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Labor",
        "cost_code": "01 7900",
        "waits_on": [
@@ -402,7 +403,7 @@
       },
       {
        "subject": "Project management (700 Above Ground Features & Finishes)",
-       "hours": 1.0,
+       "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
        "waits_on": [],

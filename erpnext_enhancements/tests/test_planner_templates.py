@@ -280,11 +280,22 @@ class TestSeed(unittest.TestCase):
 		):
 			self.assertIn(scope, subjects, scope)
 
-	def test_labor_hours_come_from_the_units_and_subcontracts_have_none(self):
+	def test_no_task_has_default_hours_since_the_units_are_a_placeholder(self):
+		# DOC-0041 v1.0 has 1 in every "# Units" cell: the blank worksheet's placeholder, not an estimate.
+		# A 1-hour default would book every templated task as a 1-hour job; blank shows what needs one.
 		labor = [t for p in self.phases for t in p["tasks"] if t["line"] in ("Labor", "Project management")]
 		self.assertTrue(labor)
-		# DOC-0041 v1.0 has 1 in every "# Units" cell: a placeholder Nik corrects in the Desk.
-		self.assertEqual({t["hours"] for t in labor}, {1.0})
+		self.assertEqual({t["hours"] for t in labor}, {None})
+		self.assertEqual({t["hours"] for p in self.phases for t in p["tasks"]}, {None})
+		self.assertTrue(any("placeholder" in line for line in self.seed["source"]["interpretations"]))
+		self.assertIn("PLACEHOLDER_UNITS", DERIVE.read_text(encoding="utf-8"))
+
+	def test_the_grid_rows_carry_blank_hours(self):
+		t = tpl()
+		seed = self.seed
+		bundles = [t.structure_from_seed(b) for b in seed["templates"] if b["kind"] == "Bundle"]
+		plan = t.template_rows(t.structure_from_seed(phase_template(seed)), None, [(b, "") for b in bundles])
+		self.assertEqual({row["hours"] for row in plan["rows"]}, {0.0})
 
 	def test_the_phase_sequence(self):
 		self.assertEqual(
@@ -630,8 +641,10 @@ class TestSeedPatch(_SeededSite):
 		self.assertEqual(design["parent_task"], groups[0]["name"])
 		self.assertEqual(
 			(design["expected_time"], design["custom_template_line"], design["custom_cost_code"]),
-			(1.0, "Labor", "LAB-DESIGN-ASSIST"),
+			(0.0, "Labor", "LAB-DESIGN-ASSIST"),
 		)
+		# No template Task is seeded with hours: they are blank until someone fills them in.
+		self.assertEqual({t["expected_time"] for t in tasks if not t.get("is_group")}, {0.0})
 		self.assertIn(
 			{"parent": design["name"], "parenttype": "Task", "task": first["name"]},
 			self.frappe.tables["Task Depends On"],

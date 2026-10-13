@@ -21,7 +21,8 @@ What it takes from the workbook, and the rules (Nik, 2026-10-12):
 * **Tasks**: every labor line (the corrected code's ``cost_type`` is Labor), and the subcontracted
   scope Nik named (demolition, earthwork, concrete, waterproofing, tile, stone, paint, electrical),
   listed by row in :data:`SUBCONTRACT_TASK_ROWS`. The Project Management line becomes ONE PM task per
-  phase. A labor line's hours are its "# Units"; a subcontract task has none.
+  phase. A labor line's hours are its "# Units", unless every labor line reads 1 (the blank
+  worksheet's placeholder, as in v1.0): then all are left blank. A subcontract task has none.
 * **Everything else** (materials, equipment, expenses, subcontracts not on that list) goes on the
   phase's **procurement checklist**, never on the calendar.
 * Within a phase the tasks run in order (each waits on the previous), PM aside; the order is the
@@ -189,9 +190,12 @@ PHASE_NOTES = (
 	"Seeded from DOC-0041 Sapphire Cost Worksheet v1.0 (scripts/derive_planner_templates.py). Labor "
 	"lines and the subcontracted scope are tasks, one Project management task per phase; materials, "
 	"equipment and expenses are each phase's procurement checklist. Cost codes are the corrected "
-	"catalog's, never DOC-0041's. Every labor line's '# Units' in v1.0 is 1, so every labor task "
-	"starts at 1 hour: set the real hours. Phase 800 Maintenance is left out."
+	"catalog's, never DOC-0041's. Every labor line's '# Units' in v1.0 is 1 (a placeholder), so the "
+	"hours are blank: fill them in per template. Phase 800 Maintenance is left out."
 )
+#: "# Units" on every labor line of a worksheet nobody has priced yet. When ALL of them read this, they
+#: are the template's placeholder, not hours, and the seed leaves every default blank.
+PLACEHOLDER_UNITS = 1.0
 BUNDLE_NOTES = (
 	"A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and "
 	"the tasks run in order. Set Review status to Reviewed once it is right."
@@ -323,6 +327,16 @@ def derive(path):
 				"checklist": checklist,
 				"tasks": out_tasks,
 			}
+		)
+	# A uniform 1 in every labor line's "# Units" is the blank worksheet's placeholder, not an estimate:
+	# a 1-hour default would book every templated task as a 1-hour job. Blank shows what still needs one.
+	labor = [task for phase in phases for task in phase["tasks"] if task["line"] in (LINE_LABOR, LINE_PM)]
+	if labor and all(task["hours"] == PLACEHOLDER_UNITS for task in labor):
+		for task in labor:
+			task["hours"] = None
+		interpretations.append(
+			"Every labor line's '# Units' is 1, the blank worksheet's placeholder, so every task's default "
+			"hours are left blank: fill them in per template."
 		)
 	interpretations.append("Phase 500's 'Merchanical' is spelled 'Mechanical'.")
 	interpretations.append(

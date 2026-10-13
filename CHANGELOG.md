@@ -54,7 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Existing Hose Bib -> 22 1119; Programming Labor -> 26 0900.16). v1.0 defects not copied: phase 500's
   "Merchanical" (Mechanical Room), row 92's second "Exterior Fountains" (it is 13 1223, Interior
   Fountains), row 52's missing units (a material, so no hours). Every labor line's "# Units" in v1.0 is
-  1, so every labor task starts at 1 hour: a placeholder to correct. The bundles (Control panel design +
+  1, the blank worksheet's placeholder rather than an estimate, so **the hours are blank: fill them in
+  per template** (a 1-hour default would book every templated task as a 1-hour job; the derivation
+  leaves them all unset when every labor line reads 1, and says so). The bundles (Control panel design +
   build, Interior fountain, Splash pad, Lighting package, Equipment room (pump + filter skid),
   Commissioning + hand-off) are Nik's list drafted for him to correct: blank hours, tasks in order, and
   everything seeded is marked **Needs review** (the dialog says so) until he sets it to Reviewed.
