@@ -80,7 +80,10 @@ frappe.ui.form.on("Project Contract", {
 	},
 
 	refresh(frm) {
-		const signable = frm.doc.docstatus === 1 && frm.doc.status !== "Signed";
+		// Issuing, signing and sending are the Contract Manager's (v1.615.0); anyone who builds a
+		// draft still sees it, and the server checks every one of these again.
+		const manages = frappe.user.has_role(["System Manager", "Contract Manager"]);
+		const signable = frm.doc.docstatus === 1 && frm.doc.status !== "Signed" && manages;
 
 		// The step-by-step builder: the same contract, one part at a time, with the
 		// agreement previewed beside it and sign-here / send at the end.

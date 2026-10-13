@@ -26,7 +26,10 @@ from erpnext_enhancements.project_enhancements.esign.providers import (
 )
 from erpnext_enhancements.project_enhancements.esign.tokens import text_fingerprint
 
-SEND_ROLES = ("System Manager", "Projects Manager", "Sales Manager")
+#: Who may issue a signing link, resend or void one, or take a signature in person (v1.615.0):
+#: the Contract Manager role (Nik, 2026-10-13: "make a Contract Manager role for sales, Lisa, James
+#: and me", and Clegg). Building and saving a draft stays open to the wider project and sales roles.
+SEND_ROLES = ("System Manager", "Contract Manager")
 SENDABLE_CONTRACT_STATUSES = ("Draft", "Out for Signature")
 LIVE_REQUEST_STATUSES = ("Sent", "Viewed")
 # How long a link opened for in-person signing stays usable. It is meant for the table it

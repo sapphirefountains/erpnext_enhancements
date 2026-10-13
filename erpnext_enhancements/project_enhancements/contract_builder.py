@@ -169,8 +169,11 @@ PRINTED_ONLY_WHEN_SET = {"msa_expires_on", "sow_special_terms"}
 #: (``project_contract._render_context``): the maintenance plan and the owner phases.
 CONTEXT_TABLES = {"service_options": re.compile(r"\bservice_options\b"), "phases": re.compile(r"\bphases\b")}
 
-#: Roles that may issue a contract and take its signature (esign.api.SEND_ROLES).
-SIGN_ROLES = {"System Manager", "Projects Manager", "Sales Manager"}
+#: Roles that may issue a contract and take its signature (esign.api.SEND_ROLES). Since v1.615.0 the
+#: Contract Manager role: anyone with Projects Manager, Sales Manager or Sales User still builds and saves
+#: drafts, and asks a Contract Manager to issue them (:func:`ask_contract_manager`).
+SIGN_ROLES = {"System Manager", "Contract Manager"}
+CONTRACT_MANAGER = "Contract Manager"
 
 #: What each agreement calls the other side, for the walk's wording ("With the subcontractor",
 #: "the architect's signature"). Anything not listed is a client agreement.
@@ -722,6 +725,61 @@ def start_card_on_file(name):
 	return portal.begin_autopay(frappe.get_doc("Contract Signature Request", request.name))
 
 
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=20, seconds=3600, methods=["POST"])
+def ask_contract_manager(name, note=None):
+	"""Tell the Contract Managers a draft is ready to issue: a bell notification each.
+
+	For whoever built the draft without the role to issue it. Needs write on the draft, so only
+	someone working on it can send this; the note is escaped. Returns ``{"notified": n}``.
+	"""
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("write")
+	if doc.docstatus != 0:
+		frappe.throw(_("{0} has already been issued.").format(name))
+	managers = _contract_managers()
+	if not managers:
+		frappe.throw(
+			_("Nobody has the Contract Manager role yet. Ask a System Manager to give it to whoever issues contracts.")
+		)
+	who = frappe.utils.get_fullname(frappe.session.user)
+	subject = _("Contract ready to issue: {0}").format(doc.get("title") or name)
+	content = _("{0} has finished {1} and asks a Contract Manager to review and issue it.").format(
+		frappe.utils.escape_html(who), frappe.utils.escape_html(name)
+	)
+	if note:
+		content += "<br><br>" + frappe.utils.escape_html(str(note)[:1000])
+	for user in managers:
+		if user == frappe.session.user:
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "Notification Log",
+				"subject": subject,
+				"email_content": content,
+				"document_type": DOCTYPE,
+				"document_name": name,
+				"for_user": user,
+				"from_user": frappe.session.user,
+				"type": "Alert",
+			}
+		).insert(ignore_permissions=True)
+	doc.add_comment("Comment", _("Asked a Contract Manager to issue it."))
+	return {"notified": len([u for u in managers if u != frappe.session.user])}
+
+
+def _contract_managers():
+	"""Enabled users who hold the Contract Manager role, directly or through a profile."""
+	holders = frappe.get_all(
+		"Has Role", filters={"role": CONTRACT_MANAGER, "parenttype": "User"}, pluck="parent"
+	)
+	if not holders:
+		return []
+	return frappe.get_all(
+		"User", filters={"name": ["in", holders], "enabled": 1, "user_type": "System User"}, pluck="name"
+	)
+
+
 @frappe.whitelist()
 def get_signing_status(name):
 	"""Polled while the client signs on a device beside the page: has it been signed yet?"""
@@ -797,6 +855,12 @@ def _payload(doc):
 		"field_sections": field_sections,
 		"editable": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "write", doc=doc) else 0,
 		"can_issue": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "submit", doc=doc) else 0,
+		# Can build but not issue: offered "Let a Contract Manager know".
+		"can_ask": 1
+		if doc.docstatus == 0
+		and not frappe.has_permission(DOCTYPE, "submit", doc=doc)
+		and frappe.has_permission(DOCTYPE, "write", doc=doc)
+		else 0,
 		"can_sign_here": 1 if can_sign_here else 0,
 		"can_send": 1 if can_send else 0,
 		"signing": signing,

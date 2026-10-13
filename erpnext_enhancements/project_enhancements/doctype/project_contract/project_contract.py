@@ -278,6 +278,26 @@ class ProjectContract(Document):
 		self.status = "Void"
 		self._void_live_signature_requests()
 
+	def before_update_after_submit(self):
+		"""Only a Contract Manager (or System Manager) changes how an issued contract stands.
+
+		Building stays open to the project and sales roles, and their ``write`` permission reaches a
+		submitted contract's ``allow_on_submit`` fields too: Frappe 16 checks ``write`` for an update
+		after submit, not ``submit``. So "Mark as Signed" (status, signed by, signed on) is checked
+		here rather than left to DocPerm. Online signing sets ``frappe.flags.esign_executing`` and
+		runs as whoever signed, so it is not stopped.
+		"""
+		if frappe.flags.get("esign_executing"):
+			return
+		if not [field for field in ("status", "signed_by", "signed_on") if self.has_value_changed(field)]:
+			return
+		if set(frappe.get_roles()) & {"System Manager", "Contract Manager"}:
+			return
+		frappe.throw(
+			_("Only a Contract Manager can mark a contract signed or change how it stands."),
+			frappe.PermissionError,
+		)
+
 	def on_update_after_submit(self):
 		"""Retire any live signing link once the contract is Signed.
 

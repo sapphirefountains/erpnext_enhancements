@@ -2102,6 +2102,17 @@ class ContractBuilder {
 		} else if (data.can_issue && !this.can_sign_here()) {
 			button(__("Issue the contract"), "btn-primary", () => this.issue_only());
 		}
+		if (data.can_ask) {
+			// Builds but cannot issue (v1.615.0): a Contract Manager issues and takes the signature.
+			$main.append(
+				$('<div class="cb-notice is-info"></div>').text(
+					__("A Contract Manager issues this agreement and takes the {0}'s signature. When it reads right, let one know it is ready.", [
+						this.noun(),
+					])
+				)
+			);
+			button(__("Let a Contract Manager know"), "btn-primary", () => this.ask_contract_manager());
+		}
 		if (data.docstatus === 0 && data.editable) {
 			button(__("Save draft"), "btn-default", () => this.flush(true).catch(() => {}));
 		}
@@ -2115,6 +2126,33 @@ class ContractBuilder {
 				)
 			);
 		}
+	}
+
+	ask_contract_manager() {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Let a Contract Manager know"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `<p>${cb_esc(__("Every Contract Manager gets a notification with a link to this draft."))}</p>`,
+				},
+				{ fieldname: "note", fieldtype: "Small Text", label: __("Note (optional)") },
+			],
+			primary_action_label: __("Send"),
+			primary_action: (values) => {
+				dialog.hide();
+				this.flush()
+					.then(() => frappe.xcall(`${CB_API}ask_contract_manager`, { name: this.data.name, note: values.note }))
+					.then((result) => {
+						frappe.show_alert(
+							{ message: __("{0} Contract Manager(s) notified.", [(result && result.notified) || 0]), indicator: "green" },
+							6
+						);
+					})
+					.catch(() => {});
+			},
+		});
+		dialog.show();
 	}
 
 	confirm_issue_text() {

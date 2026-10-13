@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.615.0] - 2026-10-13
+
+### Added
+
+- **A Contract Manager role, and only a Contract Manager issues contracts.** Nik, 2026-10-13, on learning
+  that thirteen people (every holder of Projects Manager, which the Production Team and Design Team profiles
+  carry) could issue a binding agreement, take a client's signature on the spot, send signing links and edit
+  a template's legal wording: "make a Contract Manager role for sales, Lisa, James and me", then "Brian
+  should be included" and "and Clegg". Now:
+  - **Contract Manager** (and System Manager) issues (submits), cancels, amends and deletes a Project
+    Contract, takes or sends for its signature (`esign.api.SEND_ROLES`, `contract_builder.SIGN_ROLES`:
+    in-builder signing, the in-person tab, emailed links, resend and void), marks one signed on paper, and
+    edits a Contract Template's wording;
+  - Projects Manager, Sales Manager and Sales User still create and edit drafts, in the Contract Builder
+    or the form, and can **Let a Contract Manager know** a draft is ready
+    (`contract_builder.ask_contract_manager`: a bell notification to every enabled holder, with an optional
+    note; needs write on the draft);
+  - the form shows Send for Signature, Mark as Signed and the signature actions only to a Contract Manager.
+- `patches/seed_contract_manager_role` (**pre_model_sync**, so the role exists before the three doctypes
+  sync permission rows naming it) creates the role and a one-role **Contract Manager** Role Profile,
+  insert-only, granting it to nobody. On this site a user who has role profiles gets their roles rebuilt from
+  them on every save, so the profile is how such a user is given the role. Granted on prod on 2026-10-13
+  (AI Pending Actions confirmed by Nik): Brian Morisseau, Lisa Symanski and Clegg Mabey through the profile;
+  James Harris and Nikolas Bradshaw directly. Their other roles are unchanged.
+
+### Changed
+
+- Project Contract permissions: Projects Manager and Sales Manager lose submit, cancel, amend and delete;
+  Sales User loses submit, cancel and amend. Contract Template: Projects Manager is read-only. Contract
+  Signature Request: Contract Manager can read the evidence.
+
+### Security
+
+- **"Mark as Signed" is checked on the server** (`ProjectContract.before_update_after_submit`). Frappe 16
+  checks `write`, not `submit`, for an update after submit, so DocPerm alone would still have let anyone who
+  builds drafts set an issued contract's status, signed-by or signed-on. Online signing sets
+  `frappe.flags.esign_executing` and is not stopped.
+
 ## [1.614.0] - 2026-10-13
 
 ### Added
