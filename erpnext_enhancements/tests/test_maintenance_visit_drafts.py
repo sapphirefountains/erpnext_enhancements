@@ -282,7 +282,11 @@ class TestOwnRowsOnly(_Base):
 	def test_the_project_planner_asks_for_task_rows_only(self):
 		source = (base.APP / "api/project_planner.py").read_text(encoding="utf-8")
 		at = source.index("def _draft_rows(user=None):")
-		self.assertIn('"status": DRAFT, "task": ["is", "set"]', source[at : at + 900])
+		window = source[at : at + 2200]
+		self.assertIn('"status": DRAFT, "task": ["is", "set"]', window)
+		# v1.603.0: and its own New task rows, by kind; never a row that names a visit.
+		self.assertIn('"status": DRAFT, "kind": NEW_TASK', window)
+		self.assertNotIn('"visit"', window.split("def _has_kind_column")[0].split('"""', 2)[2])
 
 	def test_a_row_names_one_task_or_one_visit(self):
 		doctype = json.loads(

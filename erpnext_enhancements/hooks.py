@@ -2965,7 +2965,8 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # Planner Draft Change (v1.601.0) links a Task or, since then, a maintenance visit, and its rows are
 # kept as a record after Publish or Discard: without this a visit (or task) any planner had ever
 # drafted could never be deleted. A draft whose target is gone shows as "no longer exists" on the
-# planner and is discarded from there.
+# planner and is discarded from there. v1.603.0: a New task row also links its Project, and a
+# published one the Task it created (created_task); the same exemption covers both.
 ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
 
 portal_menu_items = [

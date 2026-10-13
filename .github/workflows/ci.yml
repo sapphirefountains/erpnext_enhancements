@@ -913,7 +913,7 @@ jobs:
       # by every row that typed the name, a typed name that is an open phase already being that phase,
       # dependencies only on a row or a plain task of the same project, a loop or a self-dependency
       # refused with the rows named (instead of ERPNext's bare "Circular Reference Error"), tasks made
-      # after what they wait on, customer jobs only, never in draft mode; that its Undo removes the lot
+      # after what they wait on, customer jobs only (and, since v1.603.0, as drafts in draft mode); that its Undo removes the lot
       # or nothing and never force-deletes a task that has since gained time, a file, a dependent or a
       # stranger's sub-task; that the Needs tasks list is ONE bound query using the planners' customer-
       # job rule; that the richer quick add (phase, dependencies, time slot, several crew, address,
@@ -935,6 +935,20 @@ jobs:
       # client's backoff, one 401 refresh and token-free errors. Own frappe and requests stubs, own step.
       - name: Calendar sync (one-way push, snap-back, master switch, no secrets; C2)
         run: python -m unittest erpnext_enhancements.tests.test_calendar_sync -v
+      # Project Planner T2 (v1.603.0), new tasks in Draft mode, Paste a list, Copy from project. Pins that
+      # quick add, duplicate and build out with draft=1 make the live call's checks and then keep a
+      # `New task` Planner Draft Change instead of a Task (nothing inserted or saved on tabTask: the
+      # invariant the Google Calendar sync relies on); that each planner reads only its own draft rows;
+      # that the engine counts a drafted new task as an extra and the planner draws it (tray for undated);
+      # that editing, Undo and Discard cover it; that Publish creates phases first and tasks after what
+      # they wait on through the live path, maps draft names to real ones, joins the one all-or-nothing
+      # conflict check, and reports (and keeps as a Draft) a task ERPNext refuses; that a split is still
+      # refused in draft mode; and that Copy from project copies subject, hours, phase, crew size and the
+      # dependencies between the copied rows and nothing personal. Under node it runs the pasted-list
+      # parser and builds every new dialog through a stand-in that asks each get_data/get_query while the
+      # dialog is being constructed, as Frappe does. Reuses Phase 6B's fake site, so it is unittest.
+      - name: Project planner drafted new tasks, paste a list, copy from project (T2)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_draft_new_tasks -v
       # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
       # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
       # in working days) with calendar days the default and the choice remembered per device, and that

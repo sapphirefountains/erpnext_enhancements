@@ -15,7 +15,8 @@ at once, and search with keyboard shortcuts. What this pins, because each part c
   mode and Undo apply to the new writes too; the ``planner_actions`` endpoints are reached through
   ``this.p6_send_modules``, never a side door.
 * **The new endpoints keep the planner's rules.** Overbooking answers ``needs_reason`` and writes
-  nothing; a new task cannot be a draft (refused, with a sentence); a rental crew task is refused;
+  nothing; a new task can be a draft except a split (v1.603.0, tests/test_planner_draft_new_tasks.py);
+  a rental crew task is refused;
   a split refuses a task with a timesheet or clocked time, shares hours by working days, makes the
   second half depend on the first, and is all or nothing inside a savepoint; a multi-task move is
   one conflict check and one reason; the Undo of a new task deletes it only when nothing has been
@@ -664,9 +665,6 @@ class TestDuplicate(_Writes):
 		with self.assertRaises(_Throw):
 			actions.duplicate_task("TASK-1")
 		_task()
-		with self.assertRaises(_Throw) as caught:
-			actions.duplicate_task("TASK-1", draft=1)
-		self.assertIn("Draft mode", str(caught.exception))
 		frappe.perms["create"] = False
 		with self.assertRaises(_PermissionError):
 			actions.duplicate_task("TASK-1")
@@ -967,7 +965,6 @@ class TestQuickAdd(_Writes):
 			dict(project="PRJ-1", subject="Dig", date=str(TUE), hours=401),
 			dict(project="PRJ-1", subject="Dig", date=str(TUE), resource="RES-3"),  # inactive
 			dict(project="PRJ-1", subject="Dig", date=str(TUE), resource="RES-99"),
-			dict(project="PRJ-1", subject="Dig", date=str(TUE), draft=1),
 		]
 		for kwargs in cases:
 			with self.assertRaises(_Throw, msg=str(kwargs)):
@@ -1573,9 +1570,13 @@ class TestPages(unittest.TestCase):
 		self.assertIn("disabled: true", item)
 		self.assertIn('__("Nothing free in {0} days"', self.pp_block)
 
-	def test_draft_mode_refuses_a_new_task_before_asking_the_server(self):
-		for name in ("p6b_duplicate", "p6b_duplicate_to", "p6b_split", "p6b_quick_add"):
-			self.assertIn("this.p6b_refuse_in_draft()", _method(self.pp_block, name), name)
+	def test_draft_mode_refuses_only_a_split_before_asking_the_server(self):
+		self.assertIn("this.p6b_refuse_in_draft()", _method(self.pp_block, "p6b_split"))
+		# v1.603.0: the other ways to add a task are drafted (draft=1), not refused.
+		for name in ("p6b_duplicate", "p6b_duplicate_to", "p6b_quick_add", "p6b_quick_add_save"):
+			self.assertNotIn("p6b_refuse_in_draft", _method(self.pp_block, name), name)
+		for name in ("p6b_duplicate", "p6b_quick_add_save"):
+			self.assertIn("this.draft_args()", _method(self.pp_block, name), name)
 		self.assertIn("if (!this.draft_on) return false;", _method(self.pp_block, "p6b_refuse_in_draft"))
 
 	def test_resize_is_pointer_events_and_never_a_move_or_a_rental(self):
@@ -2027,6 +2028,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 		today: () => "2026-10-09",
 		load_pref: (key, fallback) => fallback,
 		save_pref: () => null,
+		draft_args() { return this.draft_on ? { draft: 1 } : {}; },
 		load: () => null,
 		render: () => null,
 		open_card: () => null,
@@ -2092,21 +2094,33 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 	pp.p6b_undo({ p6b: "split", subject: "Dig", task: "TASK-NEW-2", modified: "m-2", restore: { task: "TASK-1", modified: "m-old", start: "2026-10-12", end: "2026-10-14", expected_time: 12, crew: [] } });
 	out.undo_other = pp.p6b_undo({ task: "TASK-1", start: "2026-10-12" });
 
-	// New tasks: refused in draft mode, otherwise through send with an Undo that deletes.
-	pp.draft_on = true;
-	out.dup_in_draft = pp.p6b_duplicate(card, null);
-	pp.draft_on = false;
+	// New tasks go through send with an Undo that deletes.
 	await pp.p6b_duplicate(card, "2026-10-19");
 	await pp.p6b_split_save(card, "2026-10-13");
 	await pp.p6b_quick_add_save({ hide: () => null }, { project: "PRJ-1", subject: " Fix ", date: "2026-10-13", hours: "3", resource: "RES-1", tentative: 1 });
 	out.quick_add_blank = pp.p6b_quick_add_save({ hide: () => null }, { project: "PRJ-1", subject: "  ", date: "2026-10-13" });
-	out.sent = sent;
+	out.sent = sent.slice();
 	out.committed = committed;
 	out.pushed = pushed.map(([snap, message]) => [snap, message]);
 	out.legend = pp.p6b_legend_sections().map((s) => s.title);
 	out.search_entries = pp.p6b_local_entries().map((e) => [e.kind, e.label]);
 	out.from_server = [pp.p6b_from_server({ kind: "task", name: "TASK-7", label: "Far", project_title: "Plaza", start: "2026-12-01", end: "2026-12-02" }), pp.p6b_from_server({ kind: "visit" })];
 	out.keys = ["today", "prev", "view3", "search"].map((action) => { pp.view = "route"; return pp.p6b_run_key(action); });
+
+	// v1.603.0, Draft mode: duplicate and quick add are sent with draft=1 (the server keeps a New task
+	// draft), a split is still refused here, and a drafted new task's card cannot be copied or split.
+	pp.view = "week";
+	const drafted_from = sent.length;
+	pp.draft_on = true;
+	await pp.p6b_duplicate(card, null);
+	await pp.p6b_quick_add_save({ hide: () => null }, { project: "PRJ-1", subject: "Fix", date: "2026-10-13" });
+	const alerts_before = alerts.length;
+	pp.p6b_split(card, { kind: "card" });
+	out.split_refused = [sent.length === drafted_from + 2, alerts.slice(alerts_before)];
+	out.drafted_sends = sent.slice(drafted_from).map(([method, args]) => [method, args.draft]);
+	out.new_card_items = labels_of(pp.p6b_card_items({ kind: "card", card: Object.assign({}, card, { new_task: true, drafted: true }), ymd: "2026-10-13" }));
+	out.cell_in_draft = labels_of(pp.p6b_cell_items({ kind: "cell", resource: "RES-1", ymd: "2026-10-13" }));
+	pp.draft_on = false;
 
 	// ------------------------------------------------------------ the Maintenance Planner
 	const msent = [];
@@ -2225,7 +2239,8 @@ class TestMethodsUnderNode(unittest.TestCase):
 				"Open project",
 			],
 		)
-		self.assertIn("Duplicate [off] (Not in Draft mode)", out["pp_items_draft"])
+		# v1.603.0: a new task can be a draft, a split cannot.
+		self.assertIn("Duplicate (Same days)", out["pp_items_draft"])
 		self.assertIn("Split across days… [off] (Not in Draft mode)", out["pp_items_draft"])
 		self.assertIn("Assign to…", out["pp_items_draft"])  # drafting an existing task is fine
 		rental = out["pp_items_rental"]
@@ -2311,9 +2326,20 @@ class TestMethodsUnderNode(unittest.TestCase):
 		)  # the newest one the page saw
 		self.assertFalse(self.out["undo_other"])
 
+	def test_draft_mode_drafts_a_new_task_and_refuses_only_a_split(self):
+		out = self.out
+		self.assertEqual(out["drafted_sends"], [["duplicate_task", 1], ["quick_add_task", 1]])
+		sent_nothing, said = out["split_refused"]
+		self.assertTrue(sent_nothing, "a split must not reach the server in draft mode")
+		self.assertTrue(any("split" in text and "cannot be a draft" in text for text in said), said)
+		self.assertIn("Add task here… (Kept as a draft)", out["cell_in_draft"])
+		new_card = out["new_card_items"]
+		for label in ("Duplicate", "Duplicate to…", "Split across days…", "Move to next free day"):
+			self.assertTrue(any(item.startswith(f"{label} [off] (") for item in new_card), (label, new_card))
+		self.assertIn("Assign to…", new_card)
+
 	def test_new_tasks_go_through_send_with_an_undo_that_deletes(self):
 		out = self.out
-		self.assertIsNone(out["dup_in_draft"])
 		creates = [
 			entry for entry in out["sent"] if entry[0] in ("duplicate_task", "split_task", "quick_add_task")
 		]
