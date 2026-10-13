@@ -50,7 +50,9 @@ CATALOG = REPO / "erpnext_enhancements" / "quality" / "cost_codes.py"
 PHASE_TEMPLATE = "Fountain build phases (DOC-0041)"
 EXCLUDED_PHASES = (800,)
 
-#: Phase titles: DOC-0041's, without the nicknames in brackets, and with "Merchanical" fixed.
+#: Each phase is named "Phase <number>" (the projects' own phase groups); these are DOC-0041's
+#: descriptive names, without the nicknames in brackets and with "Merchanical" fixed, kept as the
+#: phase's description and its label in the planner.
 PHASE_TITLES = {
 	100: "Full System Overview",
 	200: "Groundwork & Prep",
@@ -60,6 +62,19 @@ PHASE_TITLES = {
 	600: "Controls & Electrical Integration",
 	700: "Above Ground Features & Finishes",
 }
+
+#: Where the decision's phase meanings (ClaudeBrain, 2026-10-12) and DOC-0041's lines disagree. They
+#: agree on 200 (groundwork), 300 (rough-in), 500 (mechanical), 600 (controls, panels, power) and 700
+#: (finishes, start-up, training).
+VAULT_PHASE_NOTES = (
+	"Phase meanings checked against the decision: 200, 300, 500, 600 and 700 agree with DOC-0041.",
+	"Phase 100: the decision puts pre-con, submittals and SUB CONTRACTS (e.g. granite, glass) in 100; "
+	"DOC-0041's 100 holds only design, prototyping, expenses and travel. The seed keeps DOC-0041's lines "
+	"and files the subcontracted WORK (demolition, concrete, tile...) in the phase where it happens; "
+	"contracting those subs in Phase 100 is not a seeded task (add one if wanted).",
+	"Phase 400: the decision includes manifold frames and winter holds; DOC-0041 puts manifold materials "
+	"in 300's checklist and has no hold line. Neither is moved or added.",
+)
 
 #: What each phase waits on. 500 and 600 run side by side; 700 waits for both.
 RUNS_AFTER = {100: [], 200: [100], 300: [200], 400: [300], 500: [400], 600: [400], 700: [500, 600]}
@@ -252,7 +267,7 @@ def derive(path):
 				f"Phase {number} ({phase['heading']}) left out: maintenance contracts own it."
 			)
 			continue
-		title = f"{number} {PHASE_TITLES[number]}"
+		title = f"Phase {number}"
 		tasks, checklist, pm = [], [], None
 		for line in phase["lines"]:
 			row = line["row"]
@@ -323,6 +338,7 @@ def derive(path):
 			{
 				"number": number,
 				"title": title,
+				"name": PHASE_TITLES[number],
 				"runs_after": RUNS_AFTER[number],
 				"checklist": checklist,
 				"tasks": out_tasks,
@@ -347,8 +363,13 @@ def derive(path):
 		"scope by Nik's decision, so they are tasks."
 	)
 	interpretations.append(
-		"Phase titles drop DOC-0041's nicknames in brackets ('(The Big Picture)' and so on)."
+		"Phases are named 'Phase 100' ... 'Phase 700', the names Sapphire's projects already use for their "
+		"top-level phase groups (ClaudeBrain decision 2026-10-12, 'Project task trees use Phase 100-700 "
+		"top-level groups'), so a project's existing phase is matched by number and never duplicated. "
+		"DOC-0041's descriptive name (without its nickname in brackets, '(The Big Picture)' and so on) is "
+		"the phase's description and its label in the planner: 'Phase 100 — Full System Overview'."
 	)
+	interpretations.extend(VAULT_PHASE_NOTES)
 	interpretations.append(
 		"Phases 600 and 700 are put in build order (TASK_ORDER); the rest keep the sheet's order."
 	)

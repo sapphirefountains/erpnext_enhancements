@@ -203,7 +203,7 @@ class TestSeed(unittest.TestCase):
 		# Only the derivation note may name the misspelling it fixed.
 		self.assertNotIn("Merchanical", json.dumps(self.seed["templates"]))
 		self.assertTrue(any("Merchanical" in line for line in self.seed["source"]["interpretations"]))
-		self.assertEqual(self.phases[4]["title"], "500 Mechanical Room")
+		self.assertEqual(self.phases[4]["title"], "Phase 500")
 		finishes = self.phases[6]["checklist"]
 		self.assertEqual(sum("Exterior Fountains" in line for line in finishes), 1)
 		self.assertIn("Material: Interior Fountains (13 1223)", finishes)
@@ -313,7 +313,7 @@ class TestSeed(unittest.TestCase):
 			[
 				"Commissioning",
 				"Training & Owner Hand-off (Training, Warranty, O&Ms)",
-				"Project management (700 Above Ground Features & Finishes)",
+				"Project management (Phase 700)",
 			],
 		)
 
@@ -382,7 +382,7 @@ class TestSequence(unittest.TestCase):
 		# 200's first task (and its PM task) wait on 100's last task, never on 100's PM task.
 		self.assertEqual(needs_of(rows, "Site Demolition"), [f"row:{place['Design Labor & Assistance']}"])
 		self.assertEqual(
-			needs_of(rows, "Project management (200 Groundwork & Prep)"),
+			needs_of(rows, "Project management (Phase 200)"),
 			[f"row:{place['Design Labor & Assistance']}"],
 		)
 		self.assertEqual(
@@ -413,7 +413,7 @@ class TestSequence(unittest.TestCase):
 		place = by_subject(rows)
 		self.assertEqual(
 			{r["phase"] for r in rows},
-			{"100 Full System Overview", "300 Rough-in", "700 Above Ground Features & Finishes"},
+			{"Phase 100", "Phase 300", "Phase 700"},
 		)
 		self.assertEqual(
 			needs_of(rows, "Rough-in Labor (Direct)"), [f"row:{place['Design Labor & Assistance']}"]
@@ -456,8 +456,8 @@ class TestSequence(unittest.TestCase):
 
 	def test_the_checklists_are_the_picked_phases(self):
 		plan = tpl().template_rows(self.structure, ["300", "500"])
-		self.assertEqual(sorted(plan["checklists"]), ["300 Rough-in", "500 Mechanical Room"])
-		self.assertIn("Equipment: Pumps (22 5216)", plan["checklists"]["500 Mechanical Room"])
+		self.assertEqual(sorted(plan["checklists"]), ["Phase 300", "Phase 500"])
+		self.assertIn("Equipment: Pumps (22 5216)", plan["checklists"]["Phase 500"])
 
 	def test_the_data_wins_over_the_default_order(self):
 		t = tpl()
@@ -504,12 +504,10 @@ class TestBundles(unittest.TestCase):
 		lights = t.structure_from_seed(
 			next(b for b in seed["templates"] if b["name"].endswith("Lighting package"))
 		)
-		plan = t.template_rows(
-			structure, ["600"], [(panel, "600 Controls & Electrical Integration"), (lights, "Lighting")]
-		)
+		plan = t.template_rows(structure, ["600"], [(panel, "Phase 600"), (lights, "Lighting")])
 		rows = plan["rows"]
 		self.assertEqual(len(rows), 6 + 7 + 5)
-		self.assertEqual([r["phase"] for r in rows[6:13]], ["600 Controls & Electrical Integration"] * 7)
+		self.assertEqual([r["phase"] for r in rows[6:13]], ["Phase 600"] * 7)
 		self.assertEqual([r["phase"] for r in rows[13:]], ["Lighting"] * 5)
 		self.assertEqual(rows[6]["needs"], [])
 		self.assertEqual([r["needs"] for r in rows[7:13]], [[f"row:{n}"] for n in range(7, 13)])
@@ -887,7 +885,7 @@ class TestEndpoints(_SeededSite):
 					{"template": "Bundle: Control panel design + build", "phase": "Panels"},
 				]
 			),
-			bundle_phase="600 Controls & Electrical Integration",
+			bundle_phase="Phase 600",
 		)
 		rows = out["rows"]
 		self.assertEqual([r["phase"] for r in rows].count("Panels"), 7)
@@ -897,12 +895,8 @@ class TestEndpoints(_SeededSite):
 			[f"row:{by_subject(rows)['Structural Vessel Labor (Direct)']}"],
 		)
 		lighting = next(r for r in rows if r["subject"] == "Fixture schedule")
-		self.assertEqual(
-			(lighting["phase"], lighting["needs"]), ("600 Controls & Electrical Integration", [])
-		)
-		self.assertEqual(
-			sorted(out["checklists"]), ["400 Structural Vessel", "600 Controls & Electrical Integration"]
-		)
+		self.assertEqual((lighting["phase"], lighting["needs"]), ("Phase 600", []))
+		self.assertEqual(sorted(out["checklists"]), ["Phase 400", "Phase 600"])
 
 	def test_refusals(self):
 		a = api()
@@ -1032,7 +1026,8 @@ class TestBuildOutChecklists(_SeededSite):
 		)
 		phases = [row for row in self.frappe.inserted if row.get("is_group")]
 		self.assertEqual(len(phases), 1)
-		self.assertEqual(phases[0]["subject"], "500 mechanical room")
+		# A numbered phase the project lacks is made under its canonical name.
+		self.assertEqual(phases[0]["subject"], "Phase 500")
 		self.assertIn(
 			'<li data-list="unchecked">Equipment: Pumps &lt;x&gt; (22 5216)</li>', phases[0]["description"]
 		)
@@ -1086,15 +1081,155 @@ class TestBuildOutChecklists(_SeededSite):
 			"PRJ-1", json.dumps(rows), phase_checklists=json.dumps(plan["checklists"])
 		)
 		self.assertEqual(out["count"], 30)
-		self.assertEqual(len(out["phases"]), 6)  # 300 Rough-in is a phase PRJ-1 already has
+		# PRJ-1 already has its phase 300, spelled "300 Rough-in": matched by number, never made again.
+		self.assertEqual(
+			[p["subject"] for p in out["phases"]],
+			["Phase 100", "Phase 200", "Phase 400", "Phase 500", "Phase 600", "Phase 700"],
+		)
 		made = {row["subject"]: row for row in self.frappe.inserted if row.get("doctype") == "Task"}
-		self.assertIn('data-list="unchecked"', made["500 Mechanical Room"]["description"])
-		self.assertEqual(made["300 Rough-in"] if "300 Rough-in" in made else None, None)
+		self.assertIn('data-list="unchecked"', made["Phase 500"]["description"])
+		self.assertNotIn("Phase 300", made)
+		self.assertEqual(made["Rough-in Labor (Direct)"]["parent_task"], "TASK-P1")
+		groups = [row for row in self.frappe.inserted if row.get("is_group")]
+		self.assertEqual(len(groups), len({row["subject"] for row in groups}))
 		earthwork = made["Earthwork – Finish"]
 		self.assertEqual(
 			sorted(d["subject"] for d in earthwork["depends_on"]),
 			["Controls Labor (Direct)", "Equipment Room Labor (Direct)"],
 		)
+
+
+class TestPhasesByNumber(_SeededSite):
+	"""Decision 2026-10-12: a project's phases are "Phase 100" ... "Phase 700". A template phase, or any
+	phase typed in the grid, that starts with a phase number IS the project's open phase with that number,
+	whatever its spelling; with none, one new "Phase <number>"."""
+
+	def setUp(self):
+		super().setUp()
+		self.frappe.roles = ["Projects User"]
+		self.frappe.get_doc = base._get_doc
+		self.actions = base.actions
+
+	def project(self, *phases):
+		self.frappe.tables["Task"] = [
+			{
+				"name": name,
+				"project": "PRJ-1",
+				"subject": subject,
+				"status": status,
+				"is_group": 1,
+				"is_template": 0,
+				"exp_end_date": None,
+			}
+			for name, subject, status in phases
+		]
+
+	def build(self, rows):
+		return self.actions.build_out_tasks("PRJ-1", json.dumps(rows))
+
+	def groups(self):
+		return [row["subject"] for row in self.frappe.inserted if row.get("is_group")]
+
+	def parent_of(self, subject):
+		return next(r["parent_task"] for r in self.frappe.inserted if r.get("subject") == subject)
+
+	def test_the_one_helper(self):
+		t = tpl()
+		cases = {
+			"Phase 100": 100,
+			"phase 300 - design": 300,
+			"  PHASE300 x": 300,
+			"300 Rough-in": 300,
+			"700": 700,
+			"Phase 1000": None,
+			"Pumps": None,
+			"30 Rough-in": None,
+			"": None,
+			None: None,
+		}
+		self.assertEqual({text: t.phase_number(text) for text in cases}, cases)
+		self.assertIs(self.actions.phase_number, t.phase_number)
+		self.assertEqual(t.phase_name(300), "Phase 300")
+		self.assertEqual(
+			(t.phase_key("300 Rough-in"), t.phase_key("Phase 300"), t.phase_key(" Pumps ")),
+			("#300", "#300", "pumps"),
+		)
+		self.assertEqual(
+			t.phase_label("Phase 100", "Full System Overview"), "Phase 100 — Full System Overview"
+		)
+		self.assertEqual(t.phase_label("Phase 100", " phase 100 "), "Phase 100")
+		self.assertEqual(t.plain_text("<p>Full <b>System</b>\n Overview</p>"), "Full System Overview")
+
+	def test_an_existing_phase_300_is_reused(self):
+		self.project(("TASK-300", "Phase 300", "Open"))
+		self.build(
+			[
+				{"subject": "A", "phase": "Phase 300"},
+				{"subject": "B", "phase": "300 Rough-in"},
+				{"subject": "C", "phase": "phase 300 - pipe"},
+			]
+		)
+		self.assertEqual(self.groups(), [])
+		self.assertEqual({self.parent_of(s) for s in "ABC"}, {"TASK-300"})
+
+	def test_one_spelled_300_rough_in_is_reused_too(self):
+		self.project(("TASK-RI", "300 Rough-in", "Open"))
+		self.build([{"subject": "A", "phase": "Phase 300"}])
+		self.assertEqual((self.groups(), self.parent_of("A")), ([], "TASK-RI"))
+
+	def test_with_several_the_one_named_phase_300_wins_and_a_finished_one_never(self):
+		self.project(
+			("TASK-A", "300 Old", "Open"),
+			("TASK-Z", "Phase 300", "Open"),
+			("TASK-DONE", "Phase 500", "Completed"),
+		)
+		self.build([{"subject": "A", "phase": "300"}, {"subject": "B", "phase": "Phase 500"}])
+		self.assertEqual(self.parent_of("A"), "TASK-Z")
+		self.assertEqual(self.groups(), ["Phase 500"])
+
+	def test_no_phase_with_that_number_makes_one_phase_n_never_two(self):
+		self.project(("TASK-P", "Pumps", "Open"))
+		out = self.build(
+			[
+				{"subject": "A", "phase": "300 Rough-in"},
+				{"subject": "B", "phase": "Phase 300"},
+				{"subject": "C", "phase": "pumps"},
+			]
+		)
+		self.assertEqual(self.groups(), ["Phase 300"])
+		self.assertEqual([p["subject"] for p in out["phases"]], ["Phase 300"])
+		self.assertEqual(self.parent_of("A"), self.parent_of("B"))
+		self.assertEqual(self.parent_of("C"), "TASK-P")
+
+	def test_the_seed_phases_are_phase_100_to_700_with_their_names(self):
+		phases = phase_template()["phases"]
+		self.assertEqual([p["title"] for p in phases], [f"Phase {n}" for n in range(100, 800, 100)])
+		self.assertEqual(phases[0]["name"], "Full System Overview")
+		self.assertEqual(phases[4]["name"], "Mechanical Room")
+		notes = " ".join(load_seed()["source"]["interpretations"])
+		for needle in ("'Phase 100' ... 'Phase 700'", "2026-10-12", "Phase 100:", "Phase 400:"):
+			self.assertIn(needle, notes)
+		bad = load_seed()
+		phase_template(bad)["phases"][2]["title"] = "300 Rough-in"
+		self.assertIn("a phase is named 'Phase 300'", " ".join(tpl().seed_problems(bad)))
+
+	def test_the_patch_names_them_so_and_the_dialog_labels_them(self):
+		self.frappe.get_doc = self._get_doc
+		self.frappe.tables["Task"] = []
+		self.seed()
+		groups = [t for t in self.frappe.tables["Task"] if t.get("is_group")]
+		self.assertEqual([g["subject"] for g in groups], [f"Phase {n}" for n in range(100, 800, 100)])
+		self.assertEqual(groups[0]["description"], "Full System Overview")
+		(template,) = api().get_planner_templates()["phase_templates"]
+		self.assertEqual(template["phases"][0]["label"], "Phase 100 — Full System Overview")
+		self.assertEqual(template["phases"][4]["title"], "Phase 500")
+		# A phase Nik spells "300 Rough-in" in the Desk is still "Phase 300" on a project.
+		groups[2]["subject"], groups[2]["description"] = "300 Rough-in", None
+		groups[2]["custom_phase_number"] = None
+		phase = api().get_planner_templates()["phase_templates"][0]["phases"][2]
+		self.assertEqual((phase["title"], phase["label"]), ("Phase 300", "Phase 300 — Rough-in"))
+		rows = api().get_template_rows(template=PHASE_TEMPLATE, phases=json.dumps(["300"]))["rows"]
+		self.assertEqual({r["phase"] for r in rows}, {"Phase 300"})
 
 
 # ====================================================================== the page under node
@@ -1143,7 +1278,7 @@ class Dialog {
 const catalog = {
 	ready: true,
 	phase_templates: [{ name: "Phases", needs_review: true, phases: [
-		{ id: "100", title: "100 Overview" }, { id: "300", title: "300 Rough-in" }, { id: "500", title: "500 Mechanical Room" },
+		{ id: "100", title: "100 Overview", label: "Phase 100 — Full System Overview" }, { id: "300", title: "300 Rough-in" }, { id: "500", title: "500 Mechanical Room" },
 	] }],
 	bundles: [{ name: "Bundle: Lighting", tasks: 2, needs_review: true }, { name: "Bundle: Panel", tasks: 3, needs_review: false }],
 };
@@ -1217,7 +1352,14 @@ const filled = (state) => state.rows.map((row) => [row.subject, row.hours, row.p
 		P1.checklists_for({ "500 Mechanical Room": ["Pumps"], "300 Rough-in": ["Pipe"], "700 X": [] }, ["500 mechanical room", "700 X", "New"]),
 		P1.checklists_for(undefined, ["A"]),
 		P1.checklists_for({ A: ["x"] }, []),
+		P1.checklists_for({ "Phase 500": ["x"] }, ["500 Mech"]),
 	];
+	// Phases by number, as the server matches them (decision 2026-10-12).
+	const project_phases = [{ name: "T-A", subject: "300 Old" }, { name: "T-Z", subject: "Phase 300" }, { name: "T-P", subject: "Pumps" }];
+	out.match = ["300 Rough-in", "phase 300 - x", "Phase 500", "pumps", "Phase 1000"].map((text) => P1.phase_match(text, project_phases));
+	out.numbers = ["Phase 100", "300 Rough-in", "  PHASE300 x", "30 x", "Phase 1000", null].map((text) => P1.phase_number(text));
+	const sevens = ["Phase 700", "700 Finishes", "phase 700", "Lights"].map((phase, i) => Object.assign(P1.blank_row(`s${i}`), { subject: `T${i}`, phase }));
+	out.fresh = P1.rows_payload(sevens, project_phases).new_phases;
 
 	// ---- the dialog opens from a catalog read first, and its fields ask for their options while it is built
 	let page = make_page();
@@ -1325,7 +1467,7 @@ class TestPageUnderNode(unittest.TestCase):
 		self.assertEqual(
 			fields[2][3],
 			[
-				{"label": "100 Overview", "value": "100", "checked": 1},
+				{"label": "Phase 100 — Full System Overview", "value": "100", "checked": 1},
 				{"label": "300 Rough-in", "value": "300", "checked": 1},
 				{"label": "500 Mechanical Room", "value": "500", "checked": 1},
 			],
@@ -1377,8 +1519,27 @@ class TestPageUnderNode(unittest.TestCase):
 			["Not reviewed yet: Phases, Bundle: Lighting. Edit them in Project Template.", ""],
 		)
 
+	def test_phases_match_by_number_like_the_server(self):
+		self.assertEqual(
+			self.out["match"],
+			[
+				{"parent_task": "T-Z"},
+				{"parent_task": "T-Z"},
+				{"phase": "Phase 500"},
+				{"parent_task": "T-P"},
+				{"phase": "Phase 1000"},
+			],
+		)
+		self.assertEqual(self.out["numbers"], [100, 300, 300, None, None, None])
+		# Three spellings of 700 are ONE new phase (the button counts it once), Lights another.
+		self.assertEqual(self.out["fresh"], ["Phase 700", "Lights"])
+		self.assertEqual(self.out["checklists_for"][3], {"500 Mech": ["x"]})
+		source = PP_JS.read_text(encoding="utf-8")
+		self.assertIn(r"/^\s*(?:phase\s*)?(\d{3})\b/i", source)
+		self.assertEqual(tpl().PHASE_NUMBER.pattern, r"^\s*(?:phase\s*)?(\d{3})\b")
+
 	def test_checklists_go_only_to_the_phases_create_makes(self):
-		some, none_given, no_phases = self.out["checklists_for"]
+		some, none_given, no_phases, _by_number = self.out["checklists_for"]
 		self.assertEqual(some, {"500 mechanical room": ["Pumps"]})
 		self.assertIsNone(none_given)
 		self.assertIsNone(no_phases)

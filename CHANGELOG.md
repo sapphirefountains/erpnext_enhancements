@@ -90,6 +90,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     on both**: a phase's first tasks wait on the last tasks of the nearest PICKED phase(s) before it,
     walking through any that were not picked. **Phase 800 (Maintenance) is never offered**, whatever a
     template holds or a request asks: maintenance contracts own it.
+  - **Phases are `Phase 100` … `Phase 700`, matched by number.** Sapphire's projects already have
+    top-level phase groups named exactly that (ClaudeBrain decision 2026-10-12, the 10/1 schedule
+    import, PRJ-00597's tree), so the seeded phases carry those names and DOC-0041's descriptive name
+    goes in the phase's description and the dialog's label ("Phase 100 — Full System Overview").
+    `build_out_tasks` now resolves a phase name that starts with a three-digit number ("Phase 300",
+    "300 Rough-in", "phase 300 - design") to the project's OPEN phase with that number, whatever its
+    spelling (the one named exactly `Phase 300` first), and only with none makes ONE new `Phase 300`
+    for every row that named it, so loading a template onto a project that has its phases never makes a
+    second set. One helper, `planner_templates.phase_number` (re-exported as
+    `planner_actions.phase_number`), the same pattern as T4's `canonical_phase`; the grid's
+    `PPT1_PURE.phase_match` mirrors it. A name without a number matches as before.
   - **Materials are a procurement checklist on each phase, never calendar tasks.** A template phase
     keeps it in a new Task field, one item per line, so it is easy to edit; when the grid creates the
     phase, `build_out_tasks` (new optional `phase_checklists`) writes it into the NEW phase's

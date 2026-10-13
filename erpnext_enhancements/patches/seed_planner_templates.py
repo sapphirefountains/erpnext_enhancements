@@ -140,7 +140,10 @@ def create_template(template):
 		for phase in template.get("phases") or []:
 			group = _task(
 				{
+					# "Phase 300": the name a project's own phase group has (decision 2026-10-12); the
+					# descriptive name is its description, and the planner's label.
 					"subject": tpl.clean(phase.get("title")),
+					"description": tpl.clean(phase.get("name")),
 					"is_group": 1,
 					"custom_phase_number": int(phase["number"]),
 					"custom_phase_runs_after": tpl.format_runs_after(phase.get("runs_after")),
