@@ -1,8 +1,8 @@
 # Custom HTML Block — block sources (source of truth)
 
-This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. The blocks here are *Projects Dashboard*, *Task Dashboard*, *Morning Briefing*, and *Desk Shortcuts*.
+This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. There are 41 blocks here (one `<name>.{html,js,css}` triple each, registered in `setup/custom_html_blocks.py` `BLOCKS`): the original four — *Projects Dashboard*, *Task Dashboard*, *Morning Briefing* and *Desk Shortcuts* — plus *KPI Cockpit*, the per-viewer *My Training Dashboard* and *My Travel*, and the 34 department dashboard widgets described below.
 
-> ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** all four blocks from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append), and the Projects Dashboard leads ERPNext's **Projects** workspace (`PROJECTS_LAYOUT`, restored whenever an ERPNext upgrade puts that page back to stock; see [`setup/README.md`](../setup/README.md#erpnexts-projects-workspace-replaced-only-while-it-is-erpnexts)). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
+> ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** every block in `BLOCKS` from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append), and the Projects Dashboard leads ERPNext's **Projects** workspace (`PROJECTS_LAYOUT`, restored whenever an ERPNext upgrade puts that page back to stock; see [`setup/README.md`](../setup/README.md#erpnexts-projects-workspace-replaced-only-while-it-is-erpnexts)). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
 
 ## When a block script runs
 
@@ -119,7 +119,7 @@ Shortcut** row (no code change).
 
 ## Files — Department Dashboard widgets (v1.252.0)
 
-Each of the nine department dashboards under `kpi_dashboards/workspace/` used to carry a
+Each of the department dashboards under `kpi_dashboards/workspace/` (nine when this shipped, ten since v1.530.0) used to carry a
 single block: the KPI Cockpit. Finance was the exception, with six operational widgets.
 This adds four widgets to each of the other seven — Sales, Operations, Design, Production,
 Marketing, HR and Executive — so a dashboard shows what to *do*, not only how things went.
@@ -172,7 +172,7 @@ workspace JSONs. Each can drift silently: a placement naming an unseeded block r
 **empty div** with no error and no log line.
 
 The shared HTML/CSS shell (card → head → rows, plus pills, bars and stat tiles) is
-deliberately uniform across all 28 blocks; structural colours come from Frappe CSS variables
+deliberately uniform across all 34 department widgets; structural colours come from Frappe CSS variables
 so both themes work, and literal colours appear only where the colour *is* the meaning.
 
 ## Files — My Travel (the Travel hub, v1.554.0)
@@ -186,6 +186,6 @@ so both themes work, and literal colours appear only where the colour *is* the m
 Registered in `setup/custom_html_blocks.py` `BLOCKS` only. The Travel workspace JSON places it, as the
 [Travel README](../travel_management/README.md#the-travel-hub) explains.
 
-## Relationship to the desk Project Dashboard
+## Relationship to the retired Project Dashboard desk page
 
-This Custom HTML Block is a lighter, embeddable cousin of the full **Project Dashboard** desk page. It reuses the same server endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the same shared front-end helpers (`ColumnSelector`, the embeddable Gantt widget). For the full-featured, tabbed, realtime experience, see the desk page documented in the [Project Enhancements README](../project_enhancements/README.md).
+The Projects Dashboard block is now the **only** projects dashboard surface. The standalone **Project Dashboard** desk page (`/app/project-dashboard`) was retired in v1.159.8 and its `Page` record deleted by `patches/retire_project_dashboard_desk_page.py`. What survives of it is the server side: the block still calls the same whitelisted endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the shared front-end helpers (`ColumnSelector`, the embeddable Gantt widget). See the [Project Enhancements README](../project_enhancements/README.md) for those endpoints and the permission gate.
