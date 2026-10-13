@@ -82,6 +82,14 @@ frappe.ui.form.on("Project Contract", {
 	refresh(frm) {
 		const signable = frm.doc.docstatus === 1 && frm.doc.status !== "Signed";
 
+		// The step-by-step builder: the same contract, one part at a time, with the
+		// agreement previewed beside it and sign-here / send at the end.
+		if (!frm.is_new() && frm.doc.docstatus < 2) {
+			frm.add_custom_button(__("Open in Contract Builder"), () =>
+				frappe.set_route("contract-builder", frm.doc.name)
+			);
+		}
+
 		// Online signing. With the flag off this whole block is inert and the form
 		// is byte-identical to what it was before e-signature shipped.
 		if (signable && frappe.boot.ee_contract_esign) {

@@ -35,7 +35,10 @@ Sapphire Service Plan (master)                   one-pick contract preset: defau
 Sapphire Maintenance Contract (parent)           operational contract: who/what/when/how billed
 │   customer, project, service_plan, default_frequency (materializes onto blank feature rows in
 │   validate), project_contract (legal), sales_order (commercial), status, visit_shape (Per Feature |
-│   Per Site Visit), default_template, invoicing_frequency. The standard seasonal pair are FLAT fields:
+│   Per Site Visit), default_template, invoicing_frequency. Rates (v1.611.0, copied from the signed
+│   agreement): visit_rate (base rate per visit; chemicals bill on top), emergency_rate,
+│   after_hours_emergency_rate, payment_method, and renewal_increase_percent (all four money fields
+│   rise by it at each automatic renewal). The standard seasonal pair are FLAT fields:
 │   seasonal_startup/startup_month/startup_template (+ winterization trio) with hidden
 │   *_last_generated_year stamps — iter_seasonal_visits() unifies them with the custom rows below.
 ├── Sapphire Contract Feature (child, istable)     covered Serial No: frequency, last/next visit dates
@@ -219,7 +222,7 @@ The wizard's no-param picker shows two lists plus an always-present escape hatch
 
 - `create_timesheet` — labour = `clock_out − clock_in − paused_duration`; writes `total_labor_cost`. That field is at **permlevel 1**, readable by System Manager only (v1.542.0), because with the clock times it gives away the technician's burdened pay rate; it is written by `db_set`, which bypasses permlevel, and it is stripped with `apply_fieldlevel_read_permissions()` from the Visit Wizard bootstrap (`get_visit_bootstrap`) and from the `maintenance_visit_history` assistant tool, since `as_dict()` and `get_doc` apply no field-level permissions of their own.
 - `check_warranty_and_rma` — Fail/Replace rows grouped per in-warranty feature → one native **Warranty Claim** each + `warranty_rma_flag`.
-- `create_sales_invoice` — only when the contract bills **Per Visit**; draft SI from the fee item/services group (Settings) + consumed consumables, against the contract's Sales Order.
+- `create_sales_invoice` — only when the contract bills **Per Visit**; draft SI from the fee item/services group (Settings) + consumed consumables, against the contract's Sales Order. The base line bills at the contract's `visit_rate` when it is set (v1.611.0), ahead of the Sales Order line's rate or the price list.
 - `log_out_of_range_readings` — timeline Comment listing flagged readings.
 
 Next-visit dates roll forward via the `on_submit` doc-event [`api/maintenance_scheduling.py::update_next_visit_dates`](../api/README.md): contract feature rows are the source of truth, with the dates mirrored to the Sales Order Item custom fields for legacy reports.
@@ -406,7 +409,7 @@ With no approved visit to the site before this one, every surface says "First re
 - A chemistry reading of **0 means "not measured"** — Float fields can't distinguish blank from zero, so zero values are never flagged out-of-range; a true zero reading belongs in the row's notes.
 - Reading-range overrides on Serial No match section items **by label string**; renaming a reading label silently orphans its overrides.
 - The historical-visits panel is an **HTML field** rendered from `get_historical_visits` — not a stored child table.
-- Only one **Active** contract per project (validated); the scheduler auto-expires contracts past their `end_date`.
+- Only one **Active** contract per project (validated); the scheduler auto-expires contracts past their `end_date`, or auto-renews a fixed-term one (`api/maintenance_renewal.py`), raising `visit_rate`, `recurring_amount` and both emergency rates by `renewal_increase_percent`, compounded per term, with a comment and notices to Projects Manager and Accounts Manager (v1.611.0). A contract that existed before v1.611.0 has a blank percentage and renews at the same rates: it was agreed under the old "then-current rates" wording. A new contract starts at the standard 12%, or at its agreement's figure. Month-to-month contracts do not renew, so §9.3's anniversary increase is applied by hand.
 - A **Service Plan is a stamp, not a live link** — editing a plan later does *not* update contracts that already applied it. Re-pick the plan on a contract to re-stamp.
 - Feature-row **frequency is materialized** (visible on the row, the scheduler reads it directly). Changing the contract's Visit Frequency offers "apply to all rows"; there is no hidden inheritance at runtime.
 - The seasonal visit labels **"Seasonal Startup"** and **"Winterization"** are load-bearing strings (draft dedup + cadence-skip key on them) — constants in the contract controller, never reword.

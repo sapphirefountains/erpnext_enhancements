@@ -26,13 +26,18 @@
   "billing_section",
   "sales_order",
   "invoicing_frequency",
+  "visit_rate",
   "recurring_amount",
   "next_billing_date",
   "last_billed_on",
   "column_break_billing",
   "project_contract",
+  "payment_method",
+  "emergency_rate",
+  "after_hours_emergency_rate",
   "renewal_section",
   "auto_renew",
+  "renewal_increase_percent",
   "non_renewal_notice",
   "non_renewal_notice_date",
   "last_renewed_on",
@@ -202,6 +207,12 @@
    "options": "Per Visit\nMonthly\nQuarterly\nAnnually"
   },
   {
+   "description": "The agreement's base labor rate per visit. Chemicals are billed in addition. Rises by the Annual Increase at each automatic renewal, and a per-visit invoice bills at this rate when it is set.",
+   "fieldname": "visit_rate",
+   "fieldtype": "Currency",
+   "label": "Base Rate (per visit)"
+  },
+  {
    "depends_on": "eval:doc.invoicing_frequency && doc.invoicing_frequency != 'Per Visit'",
    "description": "Flat base billed each period (§4.2). Auto-filled from the linked agreement's Annual Fee ÷ cadence when blank; overridable. Rolled-up consumables from the period's visits are added on top.",
    "fieldname": "recurring_amount",
@@ -234,6 +245,25 @@
    "options": "Project Contract"
   },
   {
+   "description": "Copied from the signed agreement (§4.3). A card is optional; one method must be on file.",
+   "fieldname": "payment_method",
+   "fieldtype": "Select",
+   "label": "Payment Method on File",
+   "options": "\nCredit / Debit Card\nBank Account (ACH)\nInvoice (Check or Bank Transfer)\nOther"
+  },
+  {
+   "description": "Per hour, business hours (§8.2). Rises with the Annual Increase at renewal.",
+   "fieldname": "emergency_rate",
+   "fieldtype": "Currency",
+   "label": "Emergency Rate (per hour)"
+  },
+  {
+   "description": "Per hour, evenings, weekends and holidays (§8.2). Rises with the Annual Increase at renewal.",
+   "fieldname": "after_hours_emergency_rate",
+   "fieldtype": "Currency",
+   "label": "After-Hours Emergency Rate (per hour)"
+  },
+  {
    "collapsible": 1,
    "fieldname": "renewal_section",
    "fieldtype": "Section Break",
@@ -245,6 +275,13 @@
    "fieldname": "auto_renew",
    "fieldtype": "Check",
    "label": "Auto-Renew at Term End"
+  },
+  {
+   "depends_on": "auto_renew",
+   "description": "At each automatic renewal the base rate, the recurring amount and both emergency rates rise by this much (§9.2). A new contract starts at the standard 12%, or at its signed agreement's figure; 0 renews at the same rates. Contracts that existed before v1.611.0 were agreed under the old terms and are blank until someone sets one.",
+   "fieldname": "renewal_increase_percent",
+   "fieldtype": "Percent",
+   "label": "Annual Increase at Renewal (%)"
   },
   {
    "default": "0",
@@ -362,7 +399,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-11 12:00:00.000000",
+ "modified": "2026-10-13 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Contract",

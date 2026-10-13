@@ -32,6 +32,58 @@ RENEWAL_LEAD_DAYS = 30  # §4.5 / §9.2 notice window
 # terms carry no auto-renewal — all of those expire at their End Date instead.
 FIXED_YEAR_TERMS = ("One (1) Year", "Two (2) Years")
 
+# The contract's money fields that rise by its Annual Increase at each renewal (§9.2,
+# v1.611.0: "Auto renew with a 12% increase yoy on renew"). Chemicals and parts are not
+# here: §4.5 bills those at the then-current price list, not at a contract rate.
+ESCALATED_RATES = ("visit_rate", "recurring_amount", "emergency_rate", "after_hours_emergency_rate")
+
+
+def escalated_rates(row, percent, terms=1):
+    """``{field: new value}`` for each set rate after ``terms`` renewals at ``percent``.
+
+    ``row`` is read by attribute (a ``frappe._dict`` from ``get_all`` answers None for a
+    field it was not asked for).
+
+    Compounded per term, because a contract that lapsed for two years renews twice: the
+    agreement's increase applies to the rate "in effect during the term then ending".
+    Rounded to the cent. Empty when there is no increase, or nothing to increase — a
+    blank percentage is the pre-v1.611.0 "renew at the same rates" contract.
+    """
+    rate = flt(percent)
+    if rate <= 0 or terms <= 0:
+        return {}
+    factor = (1 + rate / 100.0) ** terms
+    return {
+        field: flt(flt(getattr(row, field, None)) * factor, 2)
+        for field in ESCALATED_RATES
+        if flt(getattr(row, field, None)) > 0
+    }
+
+
+def _rate_change_text(row, new_rates):
+    """The " Rates rose 12% (§9.2): base rate per visit $690.00 → $772.80; …" suffix for the
+    comment and both notices; empty when nothing changed."""
+    if not new_rates:
+        return ""
+    currency = frappe.defaults.get_global_default("currency")
+    labels = {
+        "visit_rate": _("base rate per visit"),
+        "recurring_amount": _("recurring amount"),
+        "emergency_rate": _("emergency rate"),
+        "after_hours_emergency_rate": _("after-hours emergency rate"),
+    }
+    parts = [
+        "{0} {1} → {2}".format(
+            labels[field],
+            fmt_money(flt(getattr(row, field, None)), currency=currency),
+            fmt_money(value, currency=currency),
+        )
+        for field, value in new_rates.items()
+    ]
+    return " " + _("Rates rose {0}% (§9.2): {1}.").format(
+        "{0:g}".format(flt(getattr(row, "renewal_increase_percent", None))), "; ".join(parts)
+    )
+
 
 def expire_or_renew_contracts(today=None):
     """Renew or expire Active contracts whose End Date has passed.
@@ -70,7 +122,8 @@ def expire_or_renew_contracts(today=None):
             ["end_date", "is", "set"],
             ["end_date", "<", today],
         ],
-        fields=["name", "end_date", "auto_renew", "non_renewal_notice", "initial_term", "customer"],
+        fields=["name", "end_date", "auto_renew", "non_renewal_notice", "initial_term", "customer",
+                "renewal_increase_percent", *ESCALATED_RATES],
     ):
         try:
             renewing = (
@@ -81,18 +134,23 @@ def expire_or_renew_contracts(today=None):
             )
             if renewing:
                 new_end = getdate(row.end_date)
+                terms = 0
                 while new_end < today:
                     new_end = add_years(new_end, 1)
+                    terms += 1
+                new_rates = escalated_rates(row, getattr(row, "renewal_increase_percent", None), terms)
                 # update_modified stays default (True): a stale contract form
                 # saved after this run is then caught by check_if_latest instead
                 # of silently reverting the renewal.
                 frappe.db.set_value(
                     "Sapphire Maintenance Contract",
                     row.name,
-                    {"end_date": new_end, "last_renewed_on": today},
+                    {"end_date": new_end, "last_renewed_on": today, **new_rates},
                 )
+                rate_note = _rate_change_text(row, new_rates)
                 _add_comment(
-                    row.name, _("Auto-renewed (§9.2): term extended to {0}.").format(formatdate(new_end))
+                    row.name,
+                    _("Auto-renewed (§9.2): term extended to {0}.").format(formatdate(new_end)) + rate_note,
                 )
                 _notify(
                     "Projects Manager",
@@ -101,9 +159,19 @@ def expire_or_renew_contracts(today=None):
                         "Contract {0} for {1} reached its term end and auto-renewed for another "
                         "one-year term (§9.2), now ending {2}. If the client intended not to renew, "
                         "set Non-Renewal Notice on the contract and expire it."
-                    ).format(row.name, row.customer, formatdate(new_end)),
+                    ).format(row.name, row.customer, formatdate(new_end)) + rate_note,
                     row.name,
                 )
+                if new_rates:
+                    # The people who bill it, as well as the people who run it: from today the
+                    # contract's rates are the increased ones.
+                    _notify(
+                        "Accounts Manager",
+                        _("Maintenance rates increased at renewal: {0} ({1})").format(row.name, row.customer),
+                        _("Contract {0} for {1} renewed on {2}.").format(row.name, row.customer, formatdate(today))
+                        + rate_note,
+                        row.name,
+                    )
             else:
                 frappe.db.set_value("Sapphire Maintenance Contract", row.name, "status", "Expired")
         except Exception:

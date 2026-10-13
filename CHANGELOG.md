@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.611.0] - 2026-10-13
+
+### Added
+
+- **Contract Builder** (`/desk/contract-builder`). Nik, 2026-10-13: every contract generator "should be
+  easy to fill out and preview … a walkthrough of the contract fields … so we can basically build it alone
+  or even with the client themselves … with a fully generated contract at the end and the digital
+  esignature capture we can do right there or send to a customer to have them sign at their pace." Any
+  contract type is filled in one step at a time, with the agreement previewed beside the form as it is
+  written, unsaved values included, through the same `get_contract_html` renderer as the Preview button and
+  the PDF. Each step is its own history entry, so Back and Forward walk the steps.
+  - **The steps are the doctype's own sections.** `project_enhancements/contract_builder.builder_steps`
+    keeps the Project Contract sections whose `depends_on` shows them for the contract's type, so a field
+    added to the doctype appears in the walk with nothing to change; only a title and one line of guidance
+    per step are hand-written (`STEP_COPY`). The maintenance plan's options and the owner contract's phases
+    show as tick-and-price cards rather than a grid.
+  - **It edits the real draft.** `save_builder` assigns only the fields the steps offer, one by one (never
+    `doc.update(payload)`), and saves on every step change, so validation, totals and the revision model
+    are the form's own.
+  - **The review step** lists every field the agreement prints that is still empty, read from the template's
+    own `doc.<field>` references, with a link back to the step that fills it, and ends in **Sign it here
+    now** or **Send it to them to sign**. A test asserts that every field the maintenance agreement prints
+    has a step.
+  - **Generate Contract** on Opportunity, Project and Supplier now opens the new draft in the builder, and
+    the Project Contract form has **Open in Contract Builder**.
+- **Signing in person** (`esign.api.start_in_person_signing`). "Sign it here now" issues the contract and
+  opens `/contract-sign` on a new tab of this device without emailing anything. It is the same request,
+  single-use token, page and evidence as an emailed link: the client re-types their address, the bot check
+  runs, the snapshot is hashed, and the executed copy is emailed to them. The request records
+  `signing_channel = In Person` and `presented_by`, the completion certificate prints "In person, on a
+  device presented by …", and the link lives 12 hours (`IN_PERSON_LINK_HOURS`). The builder polls
+  `get_signing_status` and moves to the executed copy when it is signed. It is a new tab, not a frame,
+  because the page can go on to Stripe to save a card and Stripe refuses to run in a frame. A resend always
+  turns the request back into an emailed one.
+- **Client initials beside the clauses that matter** (`esign/initials.py`). Nik: "Little initials over any
+  part that is something important for the client to know (each initial needs to be done as its own, not
+  copy paste the initial)." A template marks a clause with `{{ initial('renewal', '…') }}`; unsigned it
+  prints a blank box, and the box is deterministic, because execution's drift check re-renders and compares.
+  The signing page turns every box into its own pad, which starts empty each time, and blocks Sign until
+  each is done. The server requires exactly the boxes in the request's stored snapshot, never a caller's
+  list, checks each drawing like a drawn signature, and refuses two identical images, which only a copied
+  drawing can produce. The drawings are stored as read-only evidence (`initials_json`, `initials_count`;
+  added to the assistant tool's never-return list) and printed in their boxes in the executed copy.
+- **The maintenance agreement's terms, as fields.** On Project Contract: `emergency_rate` ($250 default),
+  `after_hours_emergency_rate` ($350), `emergency_minimum_hours` (1), `business_hours`,
+  `renewal_increase_percent` (12%), `payment_method` (required), `payment_method_notes`, `invoice_due_days`
+  (30), `access_notes` and `custom_plan_details` (Exhibit A). An **As-Needed / On-Call** plan option
+  (per hour, $180 seeded, the Hardware agreement's figure). On Sapphire Maintenance Contract:
+  `visit_rate`, `emergency_rate`, `after_hours_emergency_rate`, `payment_method` and
+  `renewal_increase_percent`, all copied from the signed agreement.
+- **The 12% increase happens at renewal.** `api/maintenance_renewal.expire_or_renew_contracts` raises
+  `visit_rate`, `recurring_amount` and both emergency rates by the contract's percentage when it auto-renews,
+  compounded per term for a contract that lapsed more than a year, and says so in the comment and in notices
+  to Projects Manager and Accounts Manager. The "Renewal Due" notice 30 days ahead now shows the base rate
+  and the increase.
+
+### Changed
+
+- **The Maintenance Services Agreement** (`templates/contracts/maintenance_services_agreement.html`, and the
+  live record through `patches/update_maintenance_agreement_terms`). Compared with the Hardware / Salt
+  Development agreement of 2026-09-30 and with Nik's decisions of 2026-10-13:
+  - **Standard Maintenance is the base rate plus chemicals, which are always billed in addition.** The old
+    text said chemicals were included (§2.1 and §5.1); the Word copy had already changed §2.1 to
+    "additional" but left §5.1 saying "included", so it contradicted itself. Both now say additional, the
+    plan line reads "base rate $690.00 per visit, plus chemicals", and a note under the annual total says it
+    counts base rates only.
+  - **§8.2 emergency calls**: $250/hr in business hours and $350/hr at any other time, minimum 1 hour,
+    printed from the contract instead of a blank (the Word copy said $180).
+  - **§9.2 automatic renewal with an annual increase**: every rate rises by the contract's percentage
+    (12% standard) unless Sapphire gives written notice of a smaller one; 0 prints "Rates carry over
+    unchanged". §4.5 now points at it instead of "annual adjustment with thirty days' notice", and §9.3 adds
+    the anniversary increase for month-to-month.
+  - **§4.3 any payment method on file**: "A credit card is not required." The client ticks card, bank
+    account (ACH), pay by invoice or other, and only the matching paragraph prints; §4.4 suspends for "no
+    valid payment method", not "no valid card". Exhibit B is now **Payment Authorization** and prints only
+    the chosen method's section: the card authorization (with the existing link / manual / both choice), an
+    ACH authorization, or the invoice billing contact and terms.
+  - Eight initials boxes: access (§3.3), payment (§4.3), chemicals (§5.1), emergency rates (§8.2), renewal
+    (§9.2), cancellation fee (§10.4), liability (§11) and arbitration (§14); §16.6 says what an initial means.
+  - The patch replaces the live body only when its SHA-256 is the v1.609.0 shipped body, which prod's was on
+    2026-10-13; a body edited on the site is logged and left alone, as the earlier template patches do.
+    Signed agreements print their stored executed copy and are untouched.
+- A per-visit Sales Invoice bills its base line at the contract's `visit_rate` when one is set, ahead of the
+  Sales Order line's rate or the price list (still off until the QuickBooks cutover).
+- The "save a card" offer after signing is withheld from a client who chose to pay by invoice, which agreed
+  to no automatic charge.
+- A new Sapphire Maintenance Contract starts at the standard 12% increase. The field has no JSON default
+  on purpose: on a normal doctype a default reaches every existing row through the `ALTER`, which would have
+  put an increase on the eighteen contracts agreed under the old "then-current rates" wording. Those stay
+  blank and renew at the same rates until someone sets a figure.
+
+### Fixed
+
+- The agreement printed "$690.00 per visit / visit" (the unit twice), and City / State / Zip and Access
+  Notes as blank lines whatever was entered (no field fed them). City / State / Zip is now part of the
+  two-line billing address; Access Notes has a field. The feature description keeps its line breaks.
+- Generating a Statement of Work failed on its first save: `validate_msa_gate` requires the MSA link and
+  `create_contract` never set it. It now links the supplier's signed MSA.
+- The "Maintenance Contract Renewal Due" email printed "�9.2" for "§9.2".
+
+### Notes
+
+- **Schema changes** (applied by `bench migrate`): new fields on Project Contract, Contract Signature
+  Request and Sapphire Maintenance Contract; a new desk Page (`contract-builder`). Normal-doctype defaults
+  ($250, $350, 1 hour, 12%, card, 30 days) reach existing Project Contract rows, which is intended: every
+  maintenance agreement on prod but one is an unsigned draft, and the signed one (SF-MAINT-2026-0001)
+  prints its stored executed copy.
+- Assumptions to confirm: business hours "Monday to Friday, 7:00 a.m. to 5:00 p.m." (the SOW template's
+  working hours); As-Needed at $180/hr; invoices due 30 days from their date. All are per-contract fields.
+- Still open: how chemicals are priced on an invoice. The agreement says "then-current prices, itemized";
+  the billing code still multiplies a dose ("1 cap full") by the item's price (see the Sapphire Maintenance
+  README). Invoicing stays off until that is decided.
+
 ## [1.609.0] - 2026-10-13
 
 ### Added

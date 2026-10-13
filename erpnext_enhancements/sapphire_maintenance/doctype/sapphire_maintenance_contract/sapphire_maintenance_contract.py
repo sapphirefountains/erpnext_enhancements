@@ -53,9 +53,18 @@ WINTERIZATION_LABEL = "Winterization"
 # blank leave End Date manual, and a blank End Date never auto-expires.
 INITIAL_TERM_YEARS = {"One (1) Year": 1, "Two (2) Years": 2}
 
+# The standard rate increase at each automatic renewal (§9.2, Nik 2026-10-13: "12%
+# increase yoy on renew (adjustable but that's the standard rate of increase yoy)").
+# A new contract starts here unless its signed agreement says otherwise; contracts that
+# existed before v1.611.0 were agreed under the old "then-current rates" wording and are
+# left blank, so nothing they signed changes under them.
+STANDARD_RENEWAL_INCREASE = 12
+
 
 class SapphireMaintenanceContract(Document):
 	def validate(self):
+		if self.is_new() and self.get("renewal_increase_percent") in (None, ""):
+			self.renewal_increase_percent = STANDARD_RENEWAL_INCREASE
 		self._check_single_active_contract()
 		self._materialize_feature_defaults()
 		self._derive_end_date()
@@ -538,6 +547,18 @@ def _apply_project_contract(doc, contract):
 		for row in doc.get("covered_features", []):
 			if not row.frequency:
 				row.frequency = doc.default_frequency
+
+	# The agreement's rates and its renewal increase (§4.3, §8.2, §9.2). Copied only where
+	# the agreement has a figure, so mapping a second time never blanks one set by hand.
+	options = {row.option_key: row for row in contract.get("service_options", [])}
+	standard = options.get("standard")
+	if standard and flt(standard.get("price")):
+		doc.visit_rate = flt(standard.get("price"))
+	for field in ("payment_method", "emergency_rate", "after_hours_emergency_rate"):
+		if contract.get(field):
+			doc.set(field, contract.get(field))
+	if contract.get("renewal_increase_percent") is not None:
+		doc.renewal_increase_percent = flt(contract.get("renewal_increase_percent"))
 
 	included = {row.option_key for row in contract.get("service_options", []) if row.included}
 	if "startup" in included or "package" in included:

@@ -1,0 +1,446 @@
+"""Contract Builder: a contract filled in one step at a time, then signed or sent.
+
+Nik, 2026-10-13: "the Maintenance Contract and all Contract generators should be easy
+to fill out and preview … an interface that is a walkthrough of the contract fields
+… so we can basically build it alone or even with the client themselves … with a
+fully generated contract at the end and the digital esignature capture we can do
+right there or send to a customer to have them sign at their pace."
+
+The desk page (``project_enhancements/page/contract_builder``) is the walkthrough;
+this module is everything it reads and writes. Three choices keep it from becoming
+a second contract system beside the one that exists:
+
+* **The steps are the doctype's own sections.** :func:`builder_steps` walks the
+  Project Contract meta and keeps the sections that apply to the contract's type,
+  exactly as the form's ``depends_on`` would show them. A field added to the
+  doctype appears in the builder with no change here; only the friendly title and
+  one line of guidance per step (:data:`STEP_COPY`) are written by hand.
+* **It edits a real Project Contract draft.** :func:`save_builder` assigns the
+  fields the steps expose and calls ``save()``, so validation, totals, the
+  revision model and the form all see the same document. No parallel draft store.
+* **Signing is the e-sign module's.** "Sign here" is
+  ``esign.api.start_in_person_signing`` and "Send to the client" is
+  ``esign.api.send_for_signature``; this module only issues (submits) the contract
+  first, because a contract must be submitted before it can be signed.
+
+The preview is ``project_contract.get_contract_html`` with the builder's unsaved
+values, the same renderer as the form's Preview button and the printed PDF.
+"""
+
+import json
+import re
+
+import frappe
+from frappe import _
+from frappe.utils import cint, flt
+
+from erpnext_enhancements.feature_flags import contract_esign_enabled, contract_esign_public_page_enabled
+
+DOCTYPE = "Project Contract"
+
+#: Fields the builder never shows: naming, workflow state, and values the controller
+#: stamps (party name, title, revision) or the signing flow records (signed by/on).
+SKIP_FIELDS = {
+	"naming_series",
+	"contract_template",
+	"template_key",
+	"status",
+	"revision",
+	"amended_from",
+	"title",
+	"party_display",
+	"signed_on",
+	"signed_by",
+}
+
+#: Sections the builder leaves to the review step: totals are computed, and the signing
+#: block is filled in by signing, not by typing.
+SKIP_SECTIONS = {"totals_section"}
+
+#: Child tables whose rows are a fixed menu (one row per plan option or phase). The page
+#: shows them as tick-and-price cards and never adds or removes rows.
+FIXED_ROW_TABLES = {"service_options", "phases"}
+
+LAYOUT_TYPES = {"Section Break", "Column Break", "Tab Break"}
+NO_VALUE_TYPES = LAYOUT_TYPES | {"HTML", "Button", "Heading", "Image", "Fold"}
+
+#: ``(title, guidance)`` per section, by fieldname; translated when a payload is built, not
+#: at import. A section with no entry here shows its own label and no guidance, so a new
+#: section is never missing from the walk.
+STEP_COPY = {
+	"parties_section": (
+		"Who it's with",
+		"The client or subcontractor, how to reach them, and where the work is. Most of this "
+		"comes from the project; check it reads right.",
+	),
+	"details_section": (
+		"The job",
+		"What the work is, in plain words, and about the property. This prints near the top of "
+		"the agreement.",
+	),
+	"maintenance_section": (
+		"Plan and schedule",
+		"Tick the services they want and set each price. Standard Maintenance is the base rate "
+		"per visit; chemicals are always billed on top.",
+	),
+	"maint_rates_section": (
+		"Rates and renewal",
+		"Emergency rates, business hours and the yearly increase at renewal. The standards are "
+		"$250 an hour, $350 an hour after hours, and 12%.",
+	),
+	"maint_fees_section": (
+		"Billing and payment",
+		"How often they are invoiced and how they pay. A card is optional, but one payment "
+		"method has to be on file.",
+	),
+	"rental_section": ("Rental dates and equipment", "When the rental runs and what goes out."),
+	"rental_fees_section": ("Rental fees", "Every charge on the rental. The total adds itself up."),
+	"owner_section": (
+		"Services",
+		"Which phases this contract covers, each with its fee and what is due at signing.",
+	),
+	"design_section": ("Design fees and timeline", ""),
+	"construction_section": ("Construction schedule", ""),
+	"milestones_section": ("Payment milestones", "When each payment falls due, and for what."),
+	"msa_section": ("Subcontractor tier", ""),
+	"section_msa_term": ("Term", ""),
+	"section_msa_rates": ("Rate schedule", ""),
+	"sow_section": ("The engagement", "Which master agreement it sits under, and the dates."),
+	"scope_section": ("Scope of work", "Pulled from the project's requests and deliverables; edit freely."),
+	"tm_section": ("Time and materials rates", "Only if any of the work is billed by the hour."),
+	"supervisor_section": ("Site supervisor", ""),
+}
+
+_TEMPLATE_KEY_EQ = re.compile(r"""doc\.template_key\s*==\s*["']([a-z_]+)["']""")
+
+
+# ---------------------------------------------------------------------------
+# Steps
+# ---------------------------------------------------------------------------
+
+
+def section_applies(depends_on, template_key):
+	"""Whether a section's ``depends_on`` shows it for this contract type.
+
+	Every section condition on Project Contract is an OR of ``doc.template_key=="x"``
+	tests, so that is all this reads; a condition that does not mention the template
+	key at all is left for the page to evaluate field by field, i.e. the section stays.
+	"""
+	if not depends_on or "template_key" not in depends_on:
+		return True
+	return template_key in set(_TEMPLATE_KEY_EQ.findall(depends_on))
+
+
+def _field_def(df, template_party_type=None):
+	"""The docfield as the page's FieldGroup wants it: only the keys that shape the control."""
+	out = {
+		key: df.get(key)
+		for key in (
+			"fieldname",
+			"fieldtype",
+			"label",
+			"options",
+			"description",
+			"depends_on",
+			"mandatory_depends_on",
+			"read_only_depends_on",
+			"reqd",
+			"read_only",
+			"precision",
+			"bold",
+		)
+		if df.get(key) not in (None, "", 0)
+	}
+	# A contract type that fixes its party type (everything but NDA / employee-contractor)
+	# shows it rather than offering a choice validate() would overwrite.
+	if df.get("fieldname") == "party_type" and template_party_type and template_party_type != "Any Party":
+		out["read_only"] = 1
+	return out
+
+
+def _child_fields(child_doctype):
+	meta = frappe.get_meta(child_doctype)
+	return [
+		_field_def(df)
+		| {"in_list_view": cint(df.get("in_list_view")), "hidden": cint(df.get("hidden"))}
+		for df in meta.fields
+		if df.fieldtype not in NO_VALUE_TYPES
+	]
+
+
+def builder_steps(template_key, template_party_type=None):
+	"""The walk for one contract type: ``[{key, title, intro, fields}]``, then the review.
+
+	Fields before the first section (the contract date) join the first step shown.
+	"""
+	meta = frappe.get_meta(DOCTYPE)
+	sections = [{"key": "_header", "label": "", "depends_on": None, "fields": []}]
+	for df in meta.fields:
+		if df.fieldtype == "Section Break":
+			sections.append({"key": df.fieldname, "label": df.label, "depends_on": df.depends_on, "fields": []})
+			continue
+		if df.fieldname in SKIP_FIELDS or cint(df.hidden) or df.fieldtype in ("Tab Break", "Button"):
+			continue
+		field = _field_def(df, template_party_type)
+		if df.fieldtype == "Table":
+			field["child_fields"] = _child_fields(df.options)
+			field["fixed_rows"] = 1 if df.fieldname in FIXED_ROW_TABLES else 0
+		sections[-1]["fields"].append(field)
+
+	# Only the header's values join the first step; its column layout belonged to the fields
+	# the builder skips.
+	header = [f for f in sections.pop(0)["fields"] if f["fieldtype"] not in LAYOUT_TYPES]
+	steps = []
+	for section in sections:
+		if section["key"] in SKIP_SECTIONS or not section_applies(section["depends_on"], template_key):
+			continue
+		if not any(
+			f["fieldtype"] not in LAYOUT_TYPES and section_applies(f.get("depends_on"), template_key)
+			for f in section["fields"]
+		):
+			continue
+		title, intro = STEP_COPY.get(section["key"], (section["label"] or "Details", ""))
+		steps.append(
+			{
+				"key": section["key"],
+				"title": _(title),
+				"intro": _(intro) if intro else "",
+				"fields": _tidy_columns(section["fields"]),
+			}
+		)
+
+	if steps and header:
+		steps[0]["fields"] = header + [{"fieldtype": "Column Break", "fieldname": "_header_break"}] + steps[0]["fields"]
+	return steps
+
+
+def _tidy_columns(fields):
+	"""Drop column breaks that would open an empty column: leading, trailing or doubled.
+
+	Skipped fields leave their layout behind (the header's break once its fields are gone),
+	and an empty column is a strange gap on a phone-width screen.
+	"""
+	out = []
+	for field in fields:
+		if field["fieldtype"] == "Column Break" and (not out or out[-1]["fieldtype"] == "Column Break"):
+			continue
+		out.append(field)
+	while out and out[-1]["fieldtype"] == "Column Break":
+		out.pop()
+	return out
+
+
+def _editable_fields(steps):
+	"""``{fieldname: child allowed fields or None}`` — what save_builder may assign."""
+	allowed = {}
+	for step in steps:
+		for field in step["fields"]:
+			if field["fieldtype"] in NO_VALUE_TYPES or cint(field.get("read_only")):
+				continue
+			if field["fieldtype"] == "Table":
+				allowed[field["fieldname"]] = [
+					child["fieldname"] for child in field.get("child_fields") or []
+				]
+			else:
+				allowed[field["fieldname"]] = None
+	return allowed
+
+
+# ---------------------------------------------------------------------------
+# What will print blank
+# ---------------------------------------------------------------------------
+
+
+def blanks(doc, steps):
+	"""Fields the agreement prints that are still empty, in walk order.
+
+	Read from the contract's own template body (``doc.<field>`` references), so it lists
+	what *this* agreement will show as a blank line, not every empty field on the form.
+	Advisory: the paper form still works with a blank, and some (a gate code) may
+	rightly stay empty.
+	"""
+	body = frappe.db.get_value("Contract Template", doc.get("contract_template"), "body") or ""
+	referenced = set(re.findall(r"\bdoc\.([a-z_][a-z0-9_]*)", body))
+	out = []
+	for index, step in enumerate(steps):
+		for field in step["fields"]:
+			name = field.get("fieldname")
+			if field["fieldtype"] in NO_VALUE_TYPES or name not in referenced:
+				continue
+			if field["fieldtype"] == "Table":
+				continue
+			value = doc.get(name)
+			if value in (None, "") or (field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)):
+				out.append({"fieldname": name, "label": _(field.get("label") or name), "step": index})
+	if doc.get("template_key") == "maintenance":
+		for row in doc.get("service_options") or []:
+			if cint(row.get("included")) and not flt(row.get("price")):
+				out.append(
+					{
+						"fieldname": "service_options",
+						"label": _("{0}: ticked but no price").format(row.get("option_label") or row.get("option_key")),
+						"step": _step_index(steps, "service_options"),
+					}
+				)
+	if not doc.get("contact_email"):
+		out.append(
+			{
+				"fieldname": "contact_email",
+				"label": _("Contact Email (needed to sign online; the signed copy is sent there)"),
+				"step": _step_index(steps, "contact_email"),
+			}
+		)
+	return out
+
+
+def _step_index(steps, fieldname):
+	for index, step in enumerate(steps):
+		if any(field.get("fieldname") == fieldname for field in step["fields"]):
+			return index
+	return 0
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@frappe.whitelist()
+def get_builder_start():
+	"""The start screen: the contract types on offer and the caller's open drafts."""
+	frappe.has_permission(DOCTYPE, "create", throw=True)
+	types = frappe.get_all(
+		"Contract Template",
+		filters={"enabled": 1},
+		fields=["name", "template_key", "title", "party_type", "description", "requires_msa"],
+		order_by="title asc",
+	)
+	drafts = frappe.get_list(
+		DOCTYPE,
+		filters={"docstatus": 0},
+		fields=["name", "title", "template_key", "party_display", "project", "modified"],
+		order_by="modified desc",
+		limit_page_length=12,
+	)
+	issued = frappe.get_list(
+		DOCTYPE,
+		filters={"docstatus": 1, "status": "Out for Signature"},
+		fields=["name", "title", "template_key", "party_display", "project", "modified"],
+		order_by="modified desc",
+		limit_page_length=12,
+	)
+	return {"types": types, "drafts": drafts, "awaiting": issued}
+
+
+@frappe.whitelist()
+def get_builder(name):
+	"""Everything the walk needs for one contract: its values, its steps and what it can do next."""
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("read")
+	return _payload(doc)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_builder(name, values):
+	"""Save the builder's values onto the draft and return the fresh payload.
+
+	Only fields the walk shows for this contract type are assigned, one by one — never
+	``doc.update(values)`` — so the payload cannot set a status, a signature or a field
+	the step does not offer. Child tables are rebuilt from the rows sent, keeping the
+	fields the child doctype defines. ``save()`` then runs the normal validation, so a
+	missing required value comes back as the usual message and nothing is half-saved.
+	"""
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("write")
+	if doc.docstatus != 0:
+		frappe.throw(
+			_("{0} has been issued, so it can no longer be edited here. Cancel and amend it from the form to change it.").format(name),
+			title=_("Already Issued"),
+		)
+	if isinstance(values, str):
+		values = json.loads(values or "{}")
+	if not isinstance(values, dict):
+		frappe.throw(_("Could not read the contract's values."))
+
+	template = frappe.db.get_value("Contract Template", doc.contract_template, ["party_type"], as_dict=True) or {}
+	allowed = _editable_fields(builder_steps(doc.get("template_key"), template.get("party_type")))
+	for fieldname, child_fields in allowed.items():
+		if fieldname not in values:
+			continue
+		if child_fields is None:
+			doc.set(fieldname, values.get(fieldname))
+			continue
+		rows = values.get(fieldname) or []
+		doc.set(fieldname, [])
+		for row in rows if isinstance(rows, list) else []:
+			if isinstance(row, dict):
+				doc.append(fieldname, {child: row.get(child) for child in child_fields if child in row})
+	doc.save()
+	return _payload(doc)
+
+
+@frappe.whitelist(methods=["POST"])
+def issue_contract(name):
+	"""Submit the draft so it can be signed. Returns the fresh payload.
+
+	Submitting locks the contract's data (status moves to Out for Signature in
+	``on_submit``); a change after this is a Cancel and Amend, which makes a new
+	numbered revision. The page asks before it calls this.
+	"""
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("submit")
+	if doc.docstatus == 0:
+		doc.submit()
+	elif doc.docstatus == 2:
+		frappe.throw(_("{0} was cancelled. Amend it to make a new revision.").format(name), title=_("Cancelled"))
+	return _payload(doc)
+
+
+@frappe.whitelist()
+def get_signing_status(name):
+	"""Polled while the client signs on a device beside the page: has it been signed yet?"""
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("read")
+	row = frappe.db.get_value(
+		"Contract Signature Request",
+		{"project_contract": name},
+		["name", "status", "signing_channel", "signed_on", "signed_name", "signer_email", "expires_on", "view_count"],
+		order_by="creation desc",
+		as_dict=True,
+	)
+	return {"contract_status": doc.status, "docstatus": doc.docstatus, "request": row or {}}
+
+
+def _payload(doc):
+	template = frappe.db.get_value(
+		"Contract Template", doc.contract_template, ["title", "party_type", "description"], as_dict=True
+	) or frappe._dict()
+	steps = builder_steps(doc.get("template_key"), template.get("party_type"))
+	esign_on = contract_esign_enabled()
+	can_sign = bool(
+		esign_on
+		and contract_esign_public_page_enabled()
+		and set(frappe.get_roles()) & {"System Manager", "Projects Manager", "Sales Manager"}
+		and frappe.has_permission(DOCTYPE, "submit", doc=doc)
+	)
+	maintenance_contract = None
+	if doc.get("template_key") == "maintenance" and doc.get("status") == "Signed":
+		maintenance_contract = frappe.db.get_value(
+			"Sapphire Maintenance Contract", {"project_contract": doc.name, "docstatus": ["<", 2]}, "name"
+		)
+	return {
+		"name": doc.name,
+		"title": doc.get("title") or doc.name,
+		"template_key": doc.get("template_key"),
+		"template_title": template.get("title") or doc.get("contract_template"),
+		"docstatus": doc.docstatus,
+		"status": doc.get("status"),
+		"doc": doc.as_dict(convert_dates_to_str=True, no_nulls=False),
+		"steps": steps,
+		"blanks": blanks(doc, steps),
+		"editable": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "write", doc=doc) else 0,
+		"can_issue": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "submit", doc=doc) else 0,
+		"can_sign": 1 if can_sign else 0,
+		"esign_enabled": 1 if esign_on else 0,
+		"maintenance_contract": maintenance_contract,
+	}

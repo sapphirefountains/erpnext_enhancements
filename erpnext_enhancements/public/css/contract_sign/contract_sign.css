@@ -233,3 +233,70 @@
 	margin-top: 0;
 	font-size: 1.05rem;
 }
+
+/* Signing in person (esign.api.start_in_person_signing): who is sitting with the client. */
+.cs-in-person {
+	margin: 8px 0 0;
+	padding: 10px 12px;
+	border-left: 4px solid #2563eb;
+	border-radius: 0 8px 8px 0;
+	background: #eff6ff;
+	font-size: 0.9375rem;
+}
+
+/* Initials boxes inside the agreement. The print CSS draws the box; these rules
+   only make it something to tap, and show which ones are still to do. */
+.contract-doc .ct-initial.is-pending {
+	cursor: pointer;
+	border-radius: 4px;
+	padding: 2px 4px;
+	background: #fef3c7;
+	outline: 2px solid #f59e0b;
+}
+.contract-doc .ct-initial.is-pending:focus {
+	outline-color: #2563eb;
+}
+.contract-doc .ct-initial.is-done {
+	cursor: pointer;
+}
+.contract-doc .ct-initial.is-flash {
+	animation: cs-flash 0.5s ease-in-out 3;
+}
+@keyframes cs-flash {
+	50% {
+		background: #fde68a;
+	}
+}
+.cs-initials-progress {
+	font-weight: 600;
+	margin: 8px 0;
+}
+
+/* The initials pad: an overlay over the page, never a separate screen. */
+.cs-initial-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	background: rgba(17, 24, 39, 0.55);
+}
+.cs-initial-modal[hidden] {
+	display: none;
+}
+.cs-initial-sheet {
+	width: 100%;
+	max-width: 420px;
+	padding: 20px;
+	border-radius: 12px;
+	background: #fff;
+}
+.cs-initial-sheet h3 {
+	margin: 0 0 4px;
+	font-size: 1.1rem;
+}
+.cs-initial-pad {
+	height: 140px;
+}

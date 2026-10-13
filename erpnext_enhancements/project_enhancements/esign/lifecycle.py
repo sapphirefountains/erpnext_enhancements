@@ -35,6 +35,7 @@ signature**: the stored ``agreement_html`` and its hash are the record, and
 ``tasks.retry_undelivered`` sweeps anything that did not land.
 """
 
+import json
 from dataclasses import dataclass, field
 
 import frappe
@@ -72,6 +73,9 @@ class SignatureEvidence:
 	provider_reference: str = ""
 	provider_status: str = ""
 	provider_payload: str = ""
+	# ``[{key, label, image, sha256}]``: one entry per initials box, each drawn separately
+	# (validated in portal._validated_initials). Empty for an agreement with no boxes.
+	initials: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +179,10 @@ def execute_contract(request, evidence):
 	request.signed_name = evidence.signed_name
 	request.signed_title = evidence.signed_title
 	request.signature_image = evidence.signature_image or None
+	# Stamped with the signature, before the re-render below, so initial() resolves each box
+	# to the client's drawing in the executed instrument exactly as sig() does.
+	request.initials_json = json.dumps(evidence.initials) if evidence.initials else None
+	request.initials_count = len(evidence.initials or [])
 	request.signed_on = signed_at
 	request.signed_at_utc = _utc_stamp()
 	request.signed_tz = _site_timezone()
@@ -278,6 +286,21 @@ def completion_certificate(request, contract=None):
 		(frappe._("IP address"), request.signer_ip_peer),
 		(frappe._("Reference"), request.name),
 	]
+	if request.get("signing_channel") == "In Person":
+		presenter = request.get("presented_by")
+		presenter_name = (frappe.db.get_value("User", presenter, "full_name") if presenter else None) or presenter
+		rows.insert(
+			4,
+			(frappe._("Where"), frappe._("In person, on a device presented by {0}").format(presenter_name or "")),
+		)
+	if request.get("initials_count"):
+		rows.insert(
+			4,
+			(
+				frappe._("Initials"),
+				frappe._("{0} clauses initialed, each drawn separately").format(request.initials_count),
+			),
+		)
 	cells = "".join(
 		f"<tr><td><b>{escape_html(str(label))}</b></td><td>{escape_html(str(value or ''))}</td></tr>"
 		for label, value in rows

@@ -19,6 +19,8 @@
   "first_sent_on",
   "sent_on",
   "sent_by",
+  "signing_channel",
+  "presented_by",
   "resend_count",
   "reminders_sent",
   "last_reminder_on",
@@ -49,6 +51,8 @@
   "signed_at_utc",
   "signed_tz",
   "signature_image",
+  "initials_json",
+  "initials_count",
   "countersign_section",
   "countersigned_by",
   "countersigned_title",
@@ -175,6 +179,23 @@
    "fieldname": "sent_by",
    "fieldtype": "Link",
    "label": "Sent By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Email Link",
+   "description": "How the signing link reached the signer: emailed to them, or opened by staff on a device handed to the client.",
+   "fieldname": "signing_channel",
+   "fieldtype": "Select",
+   "label": "Signing Channel",
+   "options": "Email Link\nIn Person",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.signing_channel==\"In Person\"",
+   "fieldname": "presented_by",
+   "fieldtype": "Link",
+   "label": "Presented In Person By",
    "options": "User",
    "read_only": 1
   },
@@ -369,6 +390,19 @@
    "fieldname": "signature_image",
    "fieldtype": "Signature",
    "label": "Signature Image",
+   "read_only": 1
+  },
+  {
+   "description": "Each clause the client initialed: its key, its label, the drawn initials and a SHA-256 of the image. Every set was drawn separately; the server refuses two identical images.",
+   "fieldname": "initials_json",
+   "fieldtype": "Long Text",
+   "label": "Initials",
+   "read_only": 1
+  },
+  {
+   "fieldname": "initials_count",
+   "fieldtype": "Int",
+   "label": "Clauses Initialed",
    "read_only": 1
   },
   {
@@ -614,7 +648,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-25 00:00:00.000000",
+ "modified": "2026-10-13 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Contract Signature Request",

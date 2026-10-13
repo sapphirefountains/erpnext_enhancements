@@ -52,7 +52,7 @@ TEMPLATES = [
 		"party_type": "Customer",
 		"requires_msa": 0,
 		"file": "maintenance_services_agreement.html",
-		"description": "Ongoing maintenance plan agreement. Payment authorization prints as a secure-link instruction and/or a blank card form - card data is never stored in ERPNext.",
+		"description": "Ongoing maintenance plan agreement: base rate per visit plus chemicals, emergency rates, an annual increase at renewal, any payment method on file, client initials on key clauses. Card data is never stored in ERPNext.",
 	},
 	# Retained originals — the Contract Comparison Report keeps these three in
 	# active use with no replacement in the revised suite.

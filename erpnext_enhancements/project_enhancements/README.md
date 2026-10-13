@@ -29,6 +29,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
+| `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement previewed beside the form and a review that lists what will print blank; ends in *Sign it here now* (in-person e-signature on this device) or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `get_builder`, `save_builder`, `issue_contract`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
@@ -338,8 +339,9 @@ Eight agreements generate inside ERPNext. The revised suite (Apr 2026): **MSA**
 Work — only creatable under a *Signed* MSA for the same Supplier; the gate lives in
 `ProjectContract.validate_msa_gate`), **Owner Contract** (phase-selectable
 Design/Construction/Maintenance), **Rental Agreement**, and **Maintenance Services
-Agreement** (payment authorization prints as a secure-link instruction and/or a blank
-card form — card data never enters ERPNext). Plus the three retained originals (per
+Agreement** (base rate plus chemicals, emergency rates, a 12% increase at renewal and any
+payment method on file since v1.611.0; a card authorization prints as a secure-link
+instruction and/or a blank card form — card data never enters ERPNext). Plus the three retained originals (per
 the Contract Comparison Report, no replacement in the revised suite): **Mutual NDA**
 (DOC-0033, party = Customer/Supplier/Employee picked per contract), **Architect
 Agreement** (DOC-0101, the architect engages Sapphire — party Customer; includes its
@@ -386,6 +388,52 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
   sanitised) and the executed PDF emailed after signing (`esign/lifecycle._print_wrapper`).
   Do not re-declare `.ct-*` rules anywhere else; all three copies that once existed had
   drifted into showing the customer a different document from the one staff printed.
+
+### Contract Builder, initials and signing in person (v1.611.0)
+
+Nik, 2026-10-13: every contract generator should be easy to fill out and preview, as a
+walkthrough you can do alone or with the client, ending in a full contract signed right there
+or sent for the client to sign in their own time.
+
+- **The walk** (`/desk/contract-builder/<contract>/<step>`, each step its own history entry).
+  `contract_builder.builder_steps` reads the Project Contract meta and keeps the sections whose
+  `depends_on` shows them for this contract's type, so a field added to the doctype appears
+  with nothing to change; only the step titles and one line of guidance (`STEP_COPY`) are
+  hand-written. Fixed-row tables (the maintenance plan's options, the owner contract's phases)
+  show as tick-and-price cards. The page saves onto the real draft on every step change
+  (`save_builder` assigns only the fields the steps offer, one by one), and the preview beside
+  it is `get_contract_html` over the values on screen. The review step lists every field the
+  agreement prints that is still empty, read from the template's own `doc.<field>` references.
+  "Generate Contract" now opens the new draft here; the form has *Open in Contract Builder*.
+- **Sign it here now** issues (submits) the contract, then `esign.api.start_in_person_signing`
+  makes a signing link without emailing it and opens `/contract-sign` in a new tab: a tab and
+  not a frame, because the page can go on to Stripe to save a card and Stripe refuses frames.
+  Everything else is the emailed flow: the client re-types their address, the bot check runs,
+  the snapshot is hashed, the signed copy is emailed to them. The request records
+  `signing_channel = In Person` and `presented_by`, the certificate prints both, and the link
+  lives `IN_PERSON_LINK_HOURS` (12). The builder polls `get_signing_status` and moves to the
+  executed copy when it is signed. *Send it to them* is the existing `send_for_signature`; a
+  resend always resets the channel to Email Link.
+- **Initials** (`esign/initials.py`). A template marks a clause with
+  `{{ initial('renewal', 'Automatic renewal and the annual rate increase') }}`. Unsigned, it
+  prints a blank box (deterministic, because execution's drift check re-renders and compares).
+  The signing page turns each box into its own pad, which starts empty every time; the server
+  requires exactly the boxes in the request's stored snapshot and refuses two identical
+  drawings ("each initial needs to be done as its own, not copy paste"). The drawings are
+  stored on the request (`initials_json`, `initials_count`, both read-only evidence, never
+  returned by the assistant tool) and printed in their boxes in the executed copy.
+- **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
+  which replaces the live body only when it is exactly the v1.609.0 shipped body):
+  Standard Maintenance is the base rate per visit plus chemicals, always billed in addition
+  (§2.1, §5.1); As-Needed is a plan option ($180/hr seeded); emergency calls are
+  `emergency_rate` ($250) in `business_hours` and `after_hours_emergency_rate` ($350) otherwise,
+  minimum `emergency_minimum_hours` (§8.2); every rate rises `renewal_increase_percent` (12%)
+  at each automatic renewal (§9.2, §4.5); and any `payment_method` satisfies §4.3 — card, bank
+  account (ACH), pay by invoice (`invoice_due_days`) or other — but one is required, and
+  Exhibit B prints only the chosen method's authorization. Eight clauses carry initials:
+  access (§3.3), payment (§4.3), chemicals (§5.1), emergency rates (§8.2), renewal (§9.2),
+  cancellation fee (§10.4), liability (§11) and arbitration (§14). The "save a card" offer
+  after signing is withheld from a client who chose to pay by invoice.
 
 ## Project Brief sections (v1.444.0)
 

@@ -41,6 +41,7 @@ SIGNING_EVIDENCE = (
     "agreement_html",
     "document_snapshot",
     "signature_image",
+    "initials_json",
     "signer_ip_claimed",
     "signer_ip_peer",
     "user_agent",

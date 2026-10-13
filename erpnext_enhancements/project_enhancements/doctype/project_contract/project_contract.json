@@ -118,11 +118,23 @@
   "winterization_month",
   "gate_code",
   "key_location",
+  "access_notes",
+  "maint_rates_section",
+  "emergency_rate",
+  "after_hours_emergency_rate",
+  "emergency_minimum_hours",
+  "column_break_mrates",
+  "business_hours",
+  "renewal_increase_percent",
+  "custom_plan_details",
   "maint_fees_section",
   "annual_maintenance_fee",
   "maintenance_deposit",
   "column_break_mfee",
   "invoicing_frequency",
+  "payment_method",
+  "payment_method_notes",
+  "invoice_due_days",
   "payment_section_choice",
   "totals_section",
   "total_due_at_signing",
@@ -847,6 +859,70 @@
   },
   {
    "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Anything a technician needs to get to the fountain: who lets them in, where to park, dogs, alarm.",
+   "fieldname": "access_notes",
+   "fieldtype": "Small Text",
+   "label": "Access Notes"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "maint_rates_section",
+   "fieldtype": "Section Break",
+   "label": "Rates & Renewal"
+  },
+  {
+   "default": "250",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Per hour, for an emergency call during business hours. The standard rate is $250.",
+   "fieldname": "emergency_rate",
+   "fieldtype": "Currency",
+   "label": "Emergency Rate (per hour)"
+  },
+  {
+   "default": "350",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Per hour, for an emergency call outside business hours, on a weekend or on a holiday. The standard rate is $350.",
+   "fieldname": "after_hours_emergency_rate",
+   "fieldtype": "Currency",
+   "label": "After-Hours Emergency Rate (per hour)"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "emergency_minimum_hours",
+   "fieldtype": "Float",
+   "label": "Emergency Minimum (hours)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "column_break_mrates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Monday to Friday, 7:00 a.m. to 5:00 p.m.",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Emergency calls outside these hours bill at the after-hours rate.",
+   "fieldname": "business_hours",
+   "fieldtype": "Data",
+   "label": "Business Hours"
+  },
+  {
+   "default": "12",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Every rate in the agreement rises by this much at each automatic renewal. The standard is 12%; 0 renews at the same rates.",
+   "fieldname": "renewal_increase_percent",
+   "fieldtype": "Percent",
+   "label": "Annual Increase at Renewal (%)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Anything agreed beyond the standard plans. When filled in, the Custom Plan box is ticked and this prints as Exhibit A.",
+   "fieldname": "custom_plan_details",
+   "fieldtype": "Small Text",
+   "label": "Custom Plan Details (Exhibit A)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
    "fieldname": "maint_fees_section",
    "fieldtype": "Section Break",
    "label": "Maintenance Fees & Payment"
@@ -876,12 +952,37 @@
    "options": "\nPer Visit\nMonthly\nQuarterly\nAnnually"
   },
   {
-   "default": "Payment Link",
+   "default": "Credit / Debit Card",
    "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "A card is optional, but every client must keep one payment method on file (§4.3).",
+   "fieldname": "payment_method",
+   "fieldtype": "Select",
+   "label": "Payment Method on File",
+   "mandatory_depends_on": "eval:doc.template_key==\"maintenance\"",
+   "options": "\nCredit / Debit Card\nBank Account (ACH)\nInvoice (Check or Bank Transfer)\nOther"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\" && doc.payment_method==\"Other\"",
+   "fieldname": "payment_method_notes",
+   "fieldtype": "Small Text",
+   "label": "Payment Method Details",
+   "mandatory_depends_on": "eval:doc.template_key==\"maintenance\" && doc.payment_method==\"Other\""
+  },
+  {
+   "default": "30",
+   "depends_on": "eval:doc.template_key==\"maintenance\" && (doc.payment_method==\"Invoice (Check or Bank Transfer)\" || doc.payment_method==\"Other\")",
+   "description": "Each invoice is due this many days after its date.",
+   "fieldname": "invoice_due_days",
+   "fieldtype": "Int",
+   "label": "Invoice Due (days)"
+  },
+  {
+   "default": "Payment Link",
+   "depends_on": "eval:doc.template_key==\"maintenance\" && (!doc.payment_method || doc.payment_method==\"Credit / Debit Card\")",
    "description": "Payment Link prints secure-link/QR instructions (card data never enters ERPNext); Manual prints a blank card form for handwritten entry on the signed copy.",
    "fieldname": "payment_section_choice",
    "fieldtype": "Select",
-   "label": "Payment Authorization Section",
+   "label": "Card Authorization (Exhibit B)",
    "options": "Payment Link\nManual Card Authorization\nBoth"
   },
   {
@@ -917,7 +1018,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-10-13 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Contract",

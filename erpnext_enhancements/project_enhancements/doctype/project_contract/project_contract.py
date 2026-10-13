@@ -75,16 +75,24 @@ MAINTENANCE_OPTIONS = [
 	("startup", "Seasonal Startup (Spring)"),
 	("winterization", "Winterization (Fall)"),
 	("package", "Seasonal Startup + Winterization Package"),
+	("as_needed", "As-Needed / On-Call Service"),
 ]
 
 # Per-option unit printed on the plan; standard's price seeds from the
-# maintenance fee Item Price, the rest are entered per contract.
+# maintenance fee Item Price, as-needed from the hourly rate below, the rest
+# are entered per contract.
 MAINTENANCE_OPTION_UNITS = {
 	"standard": "visit",
 	"startup": "event",
 	"winterization": "event",
 	"package": "year",
+	"as_needed": "hour",
 }
+
+# The as-needed hourly rate a new agreement starts from. $180 is what the
+# Hardware / Salt Development agreement of 2026-09-30 quoted; editable per
+# contract like every other price on the plan.
+AS_NEEDED_DEFAULT_RATE = 180
 
 # Visits per year by Project Contract visit_frequency (Custom/blank -> unknown).
 VISITS_PER_YEAR = {"Weekly": 52, "Bi-Weekly": 26, "Monthly": 12, "Quarterly": 4}
@@ -129,6 +137,8 @@ class ProjectContract(Document):
 
 	def validate(self):
 		self._fetch_template_props()
+		if self.get("template_key") == "maintenance" and not self.get("docstatus"):
+			_ensure_maintenance_options(self)
 		self._resolve_party_display()
 		self._stamp_revision()
 		self.validate_msa_gate()
@@ -413,7 +423,22 @@ def _multiline(value, width=80, lines=3):
 	return "<br>".join(_blank(width) for _ in range(lines))
 
 
+def _qty(value):
+	"""A count for the prose ("1", "1.5"), or None so ``fill()`` prints a blank line."""
+	if value in (None, "") or not flt(value):
+		return None
+	number = flt(value)
+	return str(int(number)) if number == int(number) else f"{number:g}"
+
+
+def _pct(value, width=6):
+	"""``12%`` (or ``12.5%``); a blank line followed by % when there is no figure."""
+	text = _qty(value)
+	return f"{text}%" if text else f"{_blank(width)}%"
+
+
 def _render_context(doc):
+	from erpnext_enhancements.project_enhancements.esign.initials import initial_markup, signed_initials
 	from erpnext_enhancements.project_enhancements.esign.render import (
 		signature_markup,
 		signed_signature_for,
@@ -427,9 +452,16 @@ def _render_context(doc):
 	# contract) sig() returns exactly what blank() does, so existing output is
 	# unchanged.
 	signature = signed_signature_for(doc)
+	initials = signed_initials(signature)
 
 	def _sig(party="client", width=30):
 		return signature_markup(signature, party=party, width=width, blank=_blank)
+
+	def _initial(key, label=""):
+		# The client's initials beside a clause that matters (§3.3, §4.3, §9.2 …): each one
+		# drawn separately on the signing page, printed in place once signed, and a blank
+		# box on paper. See esign/initials.py.
+		return initial_markup(initials, key, label)
 
 	return {
 		"doc": doc,
@@ -439,7 +471,10 @@ def _render_context(doc):
 		"money": _money,
 		"dt": _dt,
 		"multiline": _multiline,
+		"qty": _qty,
+		"pct": _pct,
 		"sig": _sig,
+		"initial": _initial,
 		# The countersignature (recorded, never required) lives on the signature
 		# record, not the contract — templates read it from here. Always a dict,
 		# so an unsigned render resolves to empty values and prints blanks.
@@ -881,19 +916,34 @@ def _seed_fixed_rows(doc):
 	if doc.template_key == "owner" and not doc.get("phases"):
 		for key, label in OWNER_PHASES:
 			doc.append("phases", {"phase_key": key, "phase_label": label, "included": 0})
-	if doc.template_key == "maintenance" and not doc.get("service_options"):
-		standard_rate = _maintenance_fee_rate()
-		for key, label in MAINTENANCE_OPTIONS:
-			doc.append(
-				"service_options",
-				{
-					"option_key": key,
-					"option_label": label,
-					"included": 0,
-					"unit": MAINTENANCE_OPTION_UNITS.get(key),
-					"price": standard_rate if key == "standard" else None,
-				},
-			)
+	if doc.template_key == "maintenance":
+		_ensure_maintenance_options(doc)
+
+
+def _ensure_maintenance_options(doc):
+	"""Give a maintenance agreement one row per plan option, adding only what is missing.
+
+	A draft made before an option existed (As-Needed arrived in v1.611.0), or one created
+	by hand with an empty table, would otherwise print that line with no way to tick or
+	price it. Rows already there are never touched, so a price someone typed survives.
+	"""
+	present = {row.get("option_key") for row in (doc.get("service_options") or [])}
+	missing = [(key, label) for key, label in MAINTENANCE_OPTIONS if key not in present]
+	if not missing:
+		return
+	standard_rate = _maintenance_fee_rate() if any(key == "standard" for key, _label in missing) else None
+	seeded_price = {"standard": standard_rate, "as_needed": AS_NEEDED_DEFAULT_RATE}
+	for key, label in missing:
+		doc.append(
+			"service_options",
+			{
+				"option_key": key,
+				"option_label": label,
+				"included": 0,
+				"unit": MAINTENANCE_OPTION_UNITS.get(key),
+				"price": seeded_price.get(key),
+			},
+		)
 
 
 def _prefill_from_opportunity(doc, opportunity):
@@ -1002,6 +1052,11 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	elif source_doctype == "Supplier" and source_name:
 		frappe.get_doc("Supplier", source_name).check_permission("read")
 		_prefill_from_supplier(doc, source_name)
+
+	# An SOW is issued under the supplier's signed MSA, and validate_msa_gate refuses to
+	# save one without it — so link it here rather than failing the very first insert.
+	if cint(template_doc.requires_msa) and doc.party and not doc.get("msa_contract"):
+		doc.msa_contract = get_signed_msa(doc.party)
 
 	# Party billing address when a party is known (Customer types from the
 	# source; Supplier for an SOW generated off a Project/Opportunity with the

@@ -151,7 +151,22 @@ def _boot(request, state, ref):
 		"disclosure_text": settings.get("contract_esign_disclosure_text") or "",
 		"company": frappe.defaults.get_global_default("company") or "Sapphire Fountains",
 		"autopay_resumable": _autopay_resumable(request) if state == "signed" else False,
+		# Opened at the table by a staff member (esign.api.start_in_person_signing): the page
+		# says who is sitting with the client and asks for the device back at the end. A
+		# first name and surname, nothing more — the same thing the client can see across the
+		# table.
+		"in_person": 1 if request and request.get("signing_channel") == "In Person" else 0,
+		"presented_by_name": _presenter_name(request),
 	}
+
+
+def _presenter_name(request):
+	try:
+		if not request or request.get("signing_channel") != "In Person" or not request.get("presented_by"):
+			return ""
+		return frappe.utils.get_fullname(request.presented_by) or ""
+	except Exception:
+		return ""
 
 
 def _autopay_resumable(request):
