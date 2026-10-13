@@ -3,7 +3,9 @@
 // Renders employees currently clocked in (open/paused Job Intervals) from
 // erpnext_enhancements.api.finance_dashboard.get_whos_working. Auto-refreshes so
 // the elapsed times stay live; the interval is stored on `window` and cleared on
-// re-run, so the workspace rendering the page again never stacks timers.
+// re-run, so the workspace rendering the page again never stacks timers. It only
+// fetches while the block is on screen (onScreen): leaving the workspace hides or
+// detaches the block but not its timer, which used to poll all day.
 //
 // Shadow-DOM sandbox: `root_element` is the shadow root. The workspace runs this
 // whole script again, with a fresh root, only when it renders the page: the first
@@ -16,6 +18,7 @@
 (function () {
     const MAX_ATTEMPTS = 50;
     const REFRESH_MS = 60000;
+    const TICK_MS = 15000;
     let attempts = 0;
 
     function getContainer() {
@@ -29,6 +32,15 @@
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
+    }
+
+    // Is this render's block actually on screen? `root_element` is a shadow root, so ask
+    // its host: isConnected is false once detached, and getClientRects() is empty under
+    // any display:none ancestor (a hidden workspace page). Fails open without a host.
+    function onScreen(container) {
+        const host = container && container.host;
+        if (!host) return true;
+        return Boolean(host.isConnected && host.getClientRects().length > 0);
     }
 
     function render(body, message) {
@@ -72,6 +84,8 @@
         // The refresh button, the timer and a return to the workspace can all ask while
         // an answer is on its way, so each ask takes a ticket and only the newest draws.
         function load() {
+            state.stale = false;
+            state.last = Date.now();
             const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
             const current = () => container.__ee_ticket === ticket;
             refresh.disabled = true;
@@ -89,10 +103,22 @@
                 });
         }
 
+        // A short heartbeat rather than one 60 s interval: off screen it only notes that a
+        // refresh is owed; on screen it loads when the minute is up or one is owed, so a
+        // block that comes back some other way catches up within TICK_MS.
+        function tick() {
+            if (document.hidden || !onScreen(container)) {
+                state.stale = true;
+                return;
+            }
+            if (state.stale || Date.now() - (state.last || 0) >= REFRESH_MS) load();
+        }
+
         refresh.addEventListener("click", load);
         load();
-        state.timer = setInterval(load, REFRESH_MS);
-        // The return helper runs the same load; the timer above is untouched by it.
+        state.timer = setInterval(tick, TICK_MS);
+        // The return helper runs the same load at once on an ordinary return and owns the
+        // only router handler; the heartbeat above is untouched by it.
         const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
         if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
     }
