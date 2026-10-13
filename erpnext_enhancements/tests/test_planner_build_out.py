@@ -1123,6 +1123,39 @@ const out = {};
 	out.backwards_slot = qa.p6b_quick_add_save(panel, Object.assign({}, base, { start_time: "09:00:00", end_time: "08:00:00" }));
 	out.slot_alerts = alerts.slice(out.slot_alert_before);
 	out.quick = created.map(([method, args]) => [method, args]);
+	// Opening the dialog (v1.602.1). Frappe builds the fields INSIDE p6b_panel, and a MultiSelectPills
+	// field calls its get_data right then, before p6b_panel returns: reading a `const panel` there
+	// threw "Cannot access 'panel' before initialization" and the dialog never opened. The stand-in
+	// does what Frappe does: every get_data and get_query is asked while the panel is being built,
+	// and again once it exists (as typing in a field would).
+	const asked = [];
+	ctx.frappe.db = { get_link_options: (doctype, txt, filters) => { asked.push([doctype, filters || null]); return Promise.resolve([]); } };
+	let built = null;
+	const opener = Object.assign(Object.create(ctx.B), {
+		data: { can_edit: true, projects: [{ name: "PRJ-1" }] },
+		project: "PRJ-1",
+		today: () => "2026-10-13",
+		resource_label: (name) => name,
+		p6b_refuse_in_draft: () => false,
+		p6b_panel: (opts) => {
+			const ask = () => opts.fields.forEach((df) => {
+				if (df.get_data) df.get_data("");
+				if (df.get_query) asked.push(["query:" + df.fieldname, df.get_query().filters]);
+			});
+			ask();
+			built = { ask, get_value: (name) => (name === "project" ? "PRJ-7" : null), set_primary_action: () => null, show: () => null };
+			return built;
+		},
+	});
+	try {
+		opener.p6b_quick_add({ kind: "cell", resource: "RES-1", ymd: "2026-10-13" });
+		out.open_error = null;
+	} catch (e) {
+		out.open_error = String(e && e.message ? e.message : e);
+	}
+	out.asked_while_building = asked.splice(0).filter(([what]) => what === "Task" || what === "query:parent_task");
+	if (built) built.ask();
+	out.asked_after = asked.filter(([what]) => what === "Task" || what === "query:parent_task");
 	process.stdout.write(JSON.stringify(out));
 })().catch((e) => {
 	process.stderr.write(String(e && e.stack ? e.stack : e));
@@ -1234,6 +1267,27 @@ class TestMethodsUnderNode(unittest.TestCase):
 			},
 		)
 		self.assertEqual(len(self.out["quick"]), 2)
+
+	def test_the_dialog_opens_while_its_fields_ask_for_their_options(self):
+		# v1.602.1: on production the dialog threw before it opened (a `const panel` read by
+		# Depends on's get_data while Frappe was still building the panel).
+		self.assertIsNone(self.out["open_error"])
+		# While the panel is being built the project is the planner's own; once it exists, the
+		# project chosen in the dialog.
+		self.assertEqual(
+			self.out["asked_while_building"],
+			[
+				["query:parent_task", {"project": "PRJ-1", "is_group": 1}],
+				["Task", {"project": "PRJ-1", "is_group": 0}],
+			],
+		)
+		self.assertEqual(
+			self.out["asked_after"],
+			[
+				["query:parent_task", {"project": "PRJ-7", "is_group": 1}],
+				["Task", {"project": "PRJ-7", "is_group": 0}],
+			],
+		)
 
 	def test_a_half_or_backwards_slot_is_said_before_asking_the_server(self):
 		self.assertIsNone(self.out["half_slot"])

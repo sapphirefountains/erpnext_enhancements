@@ -6179,7 +6179,13 @@ const PP6B_METHODS = {
 		if (!this.data || !this.data.can_edit || this.p6b_refuse_in_draft()) return;
 		// The project list is the planner's own: Active customer jobs (engine.PLANNER_PROJECT_TYPES).
 		const names = (this.data.projects || []).map((project) => project.name);
-		const panel = this.p6b_panel({
+		// v1.602.1: Phase and Depends on offer the chosen project's tasks. A MultiSelectPills field calls
+		// its get_data while the panel is still being built (autocomplete's make_input), before
+		// p6b_panel returns, so a `const panel` read there threw "Cannot access 'panel' before
+		// initialization" and the dialog never opened. Until it exists, the project is the planner's own.
+		let panel = null;
+		const chosen_project = () => (panel ? panel.get_value("project") : this.project) || "";
+		panel = this.p6b_panel({
 			title: __("Add a task"),
 			subtitle: [target.resource ? this.resource_label(target.resource) : "", target.ymd ? pp_when(target.ymd) : ""]
 				.filter(Boolean)
@@ -6221,15 +6227,14 @@ const PP6B_METHODS = {
 					label: __("Phase"),
 					options: "Task",
 					description: __("A phase (group task) of the same project."),
-					get_query: () => ({ filters: { project: panel.get_value("project") || "", is_group: 1 } }),
+					get_query: () => ({ filters: { project: chosen_project(), is_group: 1 } }),
 				},
 				{
 					fieldtype: "MultiSelectPills",
 					fieldname: "depends_on",
 					label: __("Depends on"),
 					description: __("Tasks of the same project that come first."),
-					get_data: (txt) =>
-						frappe.db.get_link_options("Task", txt, { project: panel.get_value("project") || "", is_group: 0 }),
+					get_data: (txt) => frappe.db.get_link_options("Task", txt, { project: chosen_project(), is_group: 0 }),
 				},
 				{ fieldtype: "Time", fieldname: "start_time", label: __("Starts at") },
 				{ fieldtype: "Time", fieldname: "end_time", label: __("Ends at"), description: __("A time slot on the date above; blank is an all-day task.") },

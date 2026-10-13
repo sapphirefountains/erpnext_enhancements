@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.602.1] - 2026-10-12
+
+### Fixed
+
+- **The Project Planner's quick add opens again.** In 1.602.0, double-clicking a day (or choosing
+  *Add task…*) threw `Cannot access 'panel' before initialization` in the console, and the dialog never
+  opened. The new *Depends on* field filters its options by the project chosen in the dialog, and read
+  it as `panel.get_value("project")`, where `panel` was the `const` that `p6b_panel(...)` was still
+  being assigned to. Frappe builds a field group's controls inside that call, and a
+  `MultiSelectPills` control asks its `get_data` for options at once (`ControlAutocomplete.make_input`
+  → `setup_awesomplete` → `get_awesomplete_settings` → `get_data`), not first on focus as a Link's
+  `get_query` does. So the callback ran in the `const`'s temporal dead zone. The project is now read
+  through `chosen_project()`, which uses the planner's own project until the panel exists and the
+  dialog's value after that. *Phase*'s `get_query` uses it too.
+  - None of the bench-free tests could catch it, because nothing built the dialog: the node harness
+    only called `p6b_quick_add_save` with values. `test_planner_build_out` now opens the dialog
+    through a stand-in `p6b_panel` that asks every `get_data` and `get_query` while it is being built,
+    as Frappe does. Against 1.602.0 that test fails with the production error, word for word.
+
 ## [1.602.0] - 2026-10-12
 
 ### Added
