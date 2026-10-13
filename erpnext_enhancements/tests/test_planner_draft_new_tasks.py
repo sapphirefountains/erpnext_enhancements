@@ -1862,8 +1862,11 @@ class TestDocsAndCi(unittest.TestCase):
 	def test_the_version_is_bumped_in_both_places_and_written_up(self):
 		init = (APP / "__init__.py").read_text(encoding="utf-8")
 		package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-		self.assertIn('__version__ = "1.603.0"', init)
-		self.assertEqual(package["version"], "1.603.0")
+		# Not pinned to 1.603.0: every later release bumps both, and this test must not break on them.
+		version = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', init)
+		self.assertIsNotNone(version)
+		self.assertGreaterEqual(tuple(int(part) for part in version.groups()), (1, 603, 0))
+		self.assertEqual(package["version"], ".".join(version.groups()))
 		changelog = CHANGELOG.read_text(encoding="utf-8")
 		self.assertIn("## [1.603.0] - 2026-10-12", changelog)
 		section = changelog[changelog.index("## [1.603.0]") :].split("\n## [", 1)[0]

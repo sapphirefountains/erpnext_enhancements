@@ -9985,6 +9985,11 @@ const PPT1_METHODS = {
 				this.t1_el("button", { type: "button", class: "t1-del", "data-t1-del": row.id, title: __("Remove this row"), "aria-label": label(__("Remove")), text: "×" })
 			),
 		]);
+		// A row the AI drafted (T4) carries a quiet mark until the planner edits it away or creates it.
+		if (row.ai) {
+			tr.classList.add("t4-ai");
+			tr.setAttribute("title", __("AI draft — review before creating"));
+		}
 		return tr;
 	},
 
@@ -10263,6 +10268,8 @@ const PPT1_METHODS = {
 		return [
 			{ label: __("Paste a list…"), title: __("Lines like “Pour slab, 8h” become rows"), on_click: () => this.t1_open_paste_list(state) },
 			{ label: __("Copy from project…"), title: __("Start from another project's tasks"), on_click: () => this.t1_open_copy(state) },
+			// T4's "AI draft…" (defined after this block; absent where only the T1 block is loaded).
+			...(this.t4_actions ? this.t4_actions(state) : []),
 			{ label: __("Add row"), title: __("A new row at the bottom"), on_click: () => state.rows && state.table && this.t1_add_row(state) },
 			{ label: PPT1_PURE.summary(count, phases), primary: true, title: __("Ctrl or Cmd + Enter"), on_click: () => this.t1_create(state) },
 		];
@@ -10355,3 +10362,166 @@ const PPT1_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPT1_METHODS);
+
+// ====================================================================== T4: AI-drafted task breakdown
+//
+// Nik, 2026-10-12: in the Build out grid, an "AI draft…" action proposes a task breakdown for the project,
+// which the planner then edits and creates as usual. This block only asks for it and fills the grid:
+//
+//   - AI draft…   a footer action of the grid (t4_actions, hooked into t1_actions). A small dialog takes an
+//                 optional "Describe the job" and, when the grid already has tasks, Append or Replace. It
+//                 shows a spinner while planner_ai_draft.draft_task_breakdown works (one server call, which
+//                 reads the project and asks the model), then fills the grid through t1_set_rows -- the very
+//                 path "Copy from project…" uses, so the AI's `row:N` dependencies land as the grid's own.
+//   - It writes nothing. The call only returns rows; nothing is a Task until the planner presses Create
+//     (or, in Draft mode, creates drafts). It returns no person and no date, so the rows have none.
+//   - Rows are marked quietly (a coloured edge and a tooltip, `row.ai`) and the status line says "AI draft —
+//     review before creating". If the AI cannot help (not set up, too slow, nothing to propose) the dialog
+//     stays open and says so in plain words; the grid is left as it was.
+//
+// Kept apart from the T1 block so it can be merged beside other build-out work: the only lines outside it
+// are `...this.t4_actions(state)` in t1_actions and the `row.ai` mark in t1_row_el.
+
+const PPT4 = {
+	actions: "erpnext_enhancements.api.planner_ai_draft",
+	brief_max: 1500,
+};
+
+const PPT4_STYLE = `
+.t4-ai td.t1-num{box-shadow:inset 3px 0 0 var(--primary,#2490ef);}
+.t4-status{margin:6px 0 0;font-size:12px;color:var(--text-muted);}
+.t4-status.t4-bad{color:#b91c1c;}
+.t4-spin{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-2px;border:2px solid var(--border-color,#d1d5db);border-top-color:var(--primary,#2490ef);border-radius:50%;animation:t4-turn .8s linear infinite;}
+@keyframes t4-turn{to{transform:rotate(360deg);}}
+`;
+
+// Pure helpers: no page, no frappe beyond __(). Run under node by tests/test_planner_ai_draft.py.
+const PPT4_PURE = {
+	// The subjects typed in the grid, so an Append is not offered what is already there.
+	typed_subjects(rows) {
+		return (rows || [])
+			.map((row) => PPT1_PURE.clean(row.subject))
+			.filter((subject) => subject)
+			.slice(0, PPT1.max_rows);
+	},
+	// The arguments of draft_task_breakdown. Replace tells the AI nothing of the grid (it is going away).
+	call_args(project, brief, rows, how, draft_args) {
+		const args = Object.assign({ project, brief: PPT1_PURE.clean(brief).slice(0, PPT4.brief_max) }, draft_args || {});
+		if (how !== "replace") args.grid_subjects = JSON.stringify(PPT4_PURE.typed_subjects(rows));
+		return args;
+	},
+	// What the grid is given from the server's answer: {rows, note}, or null when there is nothing to add.
+	plan_from(answer) {
+		if (!answer || !answer.ok || !Array.isArray(answer.rows) || !answer.rows.length) return null;
+		return { rows: answer.rows, note: answer.note || __("AI draft — review before creating."), count: answer.rows.length };
+	},
+	// The words under the dialog when the AI could not help.
+	failure(answer) {
+		return (answer && answer.message) || __("The AI draft could not be made. Try again, or build the tasks by hand.");
+	},
+};
+
+const PPT4_METHODS = {
+	t4_actions(state) {
+		return [
+			{
+				label: __("AI draft…"),
+				title: __("Ask the AI for a first list of tasks for this project. Nothing is created until you press Create."),
+				on_click: () => this.t4_open(state),
+			},
+		];
+	},
+
+	t4_style() {
+		if (!document.getElementById("pp-style-t4")) {
+			$("<style id='pp-style-t4'>").text(PPT4_STYLE).appendTo(document.head);
+		}
+	},
+
+	// The status line under the dialog's fields: `html` is already escaped text, `bad` colours it.
+	t4_say(dialog, html, bad) {
+		const field = dialog && dialog.fields_dict && dialog.fields_dict.t4_status;
+		if (field && field.$wrapper) field.$wrapper.html(`<div class="t4-status${bad ? " t4-bad" : ""}" aria-live="polite">${html}</div>`);
+	},
+
+	t4_busy(dialog, on) {
+		const button = dialog && dialog.get_primary_btn ? dialog.get_primary_btn() : null;
+		if (button && button.prop) button.prop("disabled", !!on);
+	},
+
+	t4_open(state) {
+		if (!state || !state.rows || !state.table || state.t4_busy) return null;
+		this.t4_style();
+		const has_rows = state.rows.some((row) => !PPT1_PURE.is_blank(row));
+		const fields = [
+			{
+				fieldtype: "HTML",
+				fieldname: "t4_help",
+				options: `<p class="text-muted small">${pp_esc(
+					__("Drafts a first list of tasks from what the project holds: its scope, notes and the tasks it already has. It only fills the grid; it never picks a person or a day, and nothing is created until you press Create.")
+				)}</p>`,
+			},
+			{ fieldtype: "Small Text", fieldname: "t4_brief", label: __("Describe the job (optional)"), description: __("A sentence or two: what is being built or fixed, and anything the notes leave out.") },
+		];
+		if (has_rows) {
+			fields.push({ fieldtype: "Select", fieldname: "t4_how", label: __("The grid already has tasks"), options: `Append\nReplace`, default: "Append" });
+		}
+		fields.push({ fieldtype: "HTML", fieldname: "t4_status", options: "" });
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("AI draft"),
+			fields,
+			primary_action_label: __("Draft tasks"),
+			primary_action: (values) => this.t4_run(state, dialog, values || {}),
+		});
+		dialog.show();
+		return dialog;
+	},
+
+	t4_run(state, dialog, values) {
+		if (state.t4_busy) return Promise.resolve(null);
+		// Replace (chosen, or nothing typed to keep) tells the AI nothing of the grid: it is going away.
+		const replacing = values.t4_how === "Replace" || !state.rows.some((row) => !PPT1_PURE.is_blank(row));
+		const how = replacing ? "replace" : "append";
+		const args = PPT4_PURE.call_args(state.project, values.t4_brief, state.rows, how, this.draft_args());
+		state.t4_busy = true;
+		this.t4_busy(dialog, true);
+		this.t4_say(dialog, `<span class="t4-spin"></span>${pp_esc(__("Drafting… this can take up to a minute."))}`, false);
+		return Promise.resolve(frappe.call({ method: `${PPT4.actions}.draft_task_breakdown`, args }))
+			.then((r) => {
+				const answer = (r && r.message) || null;
+				const plan = PPT4_PURE.plan_from(answer);
+				if (!plan) {
+					this.t4_say(dialog, pp_esc(PPT4_PURE.failure(answer)), true);
+					return null;
+				}
+				if (!state.handle || !state.handle.is_open()) return null;
+				if (dialog && dialog.hide) dialog.hide();
+				return this.t4_fill(state, plan, how);
+			})
+			.catch(() => {
+				this.t4_say(dialog, pp_esc(__("The AI draft could not be reached. Nothing was changed. Try again.")), true);
+				return null;
+			})
+			.finally(() => {
+				state.t4_busy = false;
+				this.t4_busy(dialog, false);
+			});
+	},
+
+	// Fill the grid with the drafted rows (the same path as "Copy from project…"), then mark them as the AI's.
+	t4_fill(state, plan, how) {
+		const before = new Set(state.rows.map((row) => row.id));
+		const rows = this.t1_set_rows(state, plan, how);
+		let first = -1;
+		rows.forEach((row, index) => {
+			if (before.has(row.id)) return;
+			row.ai = true;
+			if (first < 0) first = index;
+		});
+		this.t1_rebuild_rows(state, { row: Math.max(first, 0), col: "subject" });
+		return rows;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPT4_METHODS);

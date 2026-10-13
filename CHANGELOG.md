@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.609.0] - 2026-10-13
+
+### Added
+
+- **"AI draft…" in the Project Planner's Build out grid (T4).** Nik, 2026-10-12: the grid can propose a
+  task breakdown for the project, which the planner then edits and creates as usual. A footer action
+  opens a small dialog (an optional *Describe the job*, and Append or Replace when the grid already
+  has tasks), shows a spinner while it works, and fills the grid; the rows carry a quiet mark and the
+  status line says *AI draft — review before creating*. One new endpoint,
+  `api/planner_ai_draft.draft_task_breakdown` (POST), and a new T4 block in `project_planner.js`
+  (`PPT4`), kept apart from the T1 block; the only lines outside it are one in `t1_actions` and one in
+  `t1_row_el`.
+  - **It never picks crew and never picks dates.** The model's output has five keys per row and no
+    more: `subject`, `hours` (an estimate), `phase` (a name), `crew_size` (a number of people, not which)
+    and `depends_on` (`row:N` within the draft). `validate_breakdown` keeps those five and drops every
+    other key, so an assignee, crew member, employee or date the model sends anyway never leaves the
+    server (a test sends sixteen such keys). The prompt does not offer the model a person or the
+    calendar to begin with: no crew, no Planner Resource, no Employee is read.
+  - **It writes nothing.** The endpoint only returns rows; no Task, Planner Draft Change, comment or
+    queued job is created. The rows land in the grid and become tasks only through the same
+    `build_out_tasks` as every other row (or drafts, in Draft mode, T2). A test walks the module for any
+    write call.
+  - **The model's answer is untrusted.** At most 100 rows (the build-out maximum); hours bounded to
+    0–400, crew size to 0–50, a non-number is 0; a subject cut to 140 characters; a blank subject, a
+    repeat of another row and a repeat of a task the project already has are dropped. A dependency is
+    kept only if it names another row that is still there: a task waiting on itself, on a row that does
+    not exist, on text that is not `row:N`, or round a loop loses that link (never the row), and the
+    planner is told how many. Each link is added only if it closes no loop, so what survives always
+    builds in order. Phases read like the house template (`Phase 100` … `Phase 700`; `Phase 300 - rough-in`
+    becomes `Phase 300`; the project's own spelling of an open phase wins; phase 800 / maintenance is no
+    phase), with at most 25 new phases.
+  - **What the prompt knows**, all read as the caller: the project's name, type, value streams and the
+    customer's *type* (Company / Individual); its description, general scope description, notes and
+    scheduling notes; its `Project Scope of Work` (summary, inclusions, exclusions, assumptions and up to
+    25 acceptance criteria, locked first, superseded left out); its open phases and the subjects of its
+    open tasks (so the draft does not repeat them), and in Draft mode the caller's drafted ones; the
+    subjects already typed in the grid (Append only); and the planner's words (1,500 characters). **Left
+    out on purpose:** the customer's name, any contact, address, email or phone number, the project
+    owner, and every crew or employee record. Free-text fields are also scrubbed of tags, emails, links
+    and phone numbers, since a note is where "call Mrs Smith on 801…" gets written. A name typed into a
+    note stays: that cannot be told from a word.
+  - **The house phase vocabulary** is told to the model: Phase 100 pre-construction / design, 200 site
+    prep, 300 structure / shell, 400 plumbing rough-in and the vessel, 500 mechanical and 600 electrical
+    and controls (in parallel), 700 finishes / commissioning, no 800. There is no phase list in
+    `quality/cost_codes.py` (that is the MasterFormat cost-code catalogue); the names are the ClaudeBrain
+    decision "Project task trees use Phase 100–700" (2026-10-12) with the meanings from Nik's brief.
+  - **Failure is a sentence, never a traceback.** The Google service account not being set up (this
+    app has no AI on/off switch to follow: `ai_usage_tracking_enabled` only governs the usage row), a
+    timeout, any other error, a reply that is not the JSON asked for, a reply with nothing new, and too
+    many drafts this hour each return `ok: false`, no rows and a plain message; the dialog stays open
+    and the grid is left alone. The Error Log row carries the exception's class and a short scrubbed
+    message under a fixed title, written with keyword arguments; **`frappe.get_traceback()` is
+    deliberately not used, because Frappe renders local variables and the prompt is one.**
+  - **Gated as the grid is:** the planner roles, permission to create Tasks, to read the project and to
+    read Tasks, and a customer job only. Rate-limited to 20 drafts per person per hour (a fixed-window
+    counter in Redis, per user, because `@rate_limit` keys by IP and an office shares one; a cache that
+    cannot count lets the call through). The call is the app's own
+    `api.gemini.generate_content_with_vertex_ai`, so the model is that module's `MODEL_ID` (no id is
+    pinned here, so a retirement is changed in one place) and every call is an AI Model Usage row under
+    the feature `planner_task_breakdown`.
+  - **Tests.** `tests/test_planner_ai_draft.py`, its own `ci.yml` step (bench-free `unittest`, fake
+    Gemini, Phase 6B's fake site; no real model is called anywhere). Under node it builds the dialog
+    through a stand-in that asks every `get_data` / `get_query` while the dialog is being constructed
+    (the v1.602.0 "before initialization" bug), and fills the grid.
+
 ## [1.603.0] - 2026-10-12
 
 ### Added
