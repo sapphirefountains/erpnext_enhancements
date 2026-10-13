@@ -19,6 +19,7 @@
   "out_of_range_followup_days",
   "email_service_report_to_customer",
   "visit_review_emails",
+  "follow_up_opportunity_owner",
   "maintenance_invoicing_enabled",
   "auto_renew_maintenance_contracts",
   "recurring_maintenance_billing",
@@ -292,6 +293,13 @@
    "fieldtype": "Table",
    "label": "Visit Review Emails",
    "options": "Project Reminder Email"
+  },
+  {
+   "description": "Who owns the Opportunity made from a maintenance follow-up (Create Opportunity on the Visit Review page's follow-up list). Empty: whoever clicks it.",
+   "fieldname": "follow_up_opportunity_owner",
+   "fieldtype": "Link",
+   "label": "Follow-up Opportunity Owner",
+   "options": "User"
   },
   {
    "default": "0",
@@ -1468,7 +1476,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 14:00:00.000000",
+ "modified": "2026-10-12 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

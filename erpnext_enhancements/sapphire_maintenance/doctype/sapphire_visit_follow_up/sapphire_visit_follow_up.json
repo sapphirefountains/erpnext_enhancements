@@ -1,0 +1,84 @@
+{
+ "creation": "2026-10-12 18:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "serial_no",
+  "description",
+  "item",
+  "qty",
+  "told",
+  "photo",
+  "source_question",
+  "follow_up"
+ ],
+ "fields": [
+  {
+   "description": "On a site visit, the water feature it is for.",
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Water Feature",
+   "options": "Serial No"
+  },
+  {
+   "description": "What is needed, e.g. a new manifold for the east basin.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "What Is Needed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Part",
+   "options": "Item"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty"
+  },
+  {
+   "description": "Who at the site was told, e.g. the property manager.",
+   "fieldname": "told",
+   "fieldtype": "Data",
+   "label": "Told On Site"
+  },
+  {
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
+  },
+  {
+   "description": "The inspection answer it was raised from, if any.",
+   "fieldname": "source_question",
+   "fieldtype": "Data",
+   "label": "Raised From",
+   "read_only": 1
+  },
+  {
+   "description": "The tracked follow-up made when the visit was approved.",
+   "fieldname": "follow_up",
+   "fieldtype": "Link",
+   "label": "Tracked As",
+   "no_copy": 1,
+   "options": "Maintenance Follow-Up",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-10-12 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Visit Follow-Up",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

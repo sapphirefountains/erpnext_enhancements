@@ -958,6 +958,30 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         self.assertRegex(squashed, r"Clean cartridge filters</td> <td[^>]*>Not done</td> <td[^>]*>Pump off; told the manager</td>")
         self.assertRegex(squashed, r"Vacuum basin floor</td> <td[^>]*><span[^>]*>Done</span></td>")
 
+    def test_follow_ups_print_with_who_on_site_was_told(self):
+        """v1.600.0: what the site needs after today, before the fountain photo."""
+        out = self.render(
+            _record(
+                serial_no=None,
+                maintenance_contract="SMC-2026-0042",
+                follow_ups=[
+                    _Doc(serial_no="WF-0001", description="New <manifold>", item="MANIFOLD-2", qty=1.0, told="Property manager"),
+                    _Doc(serial_no=None, description="Come back for the lights", item=None, qty=0, told=None),
+                ],
+            ),
+            {"fountain_photo": "data:image/jpeg;base64,/9j/"},
+        )
+        squashed = re.sub(r"\s+", " ", out)
+        self.assertIn("Follow-ups and Parts Needed", out)
+        self.assertIn("New &lt;manifold&gt;", out)
+        self.assertNotIn("<manifold>", out)
+        self.assertIn("MANIFOLD-2 item_name", out)
+        self.assertIn(">Property manager</td>", squashed)
+        self.assertIn(">Whole site</td>", squashed)
+        self.assertNotIn("None", out)
+        self.assertLess(out.index("Follow-ups and Parts Needed"), out.index("The Fountain As We Left It"))
+        self.assertNotIn("Follow-ups and Parts Needed", self.render(_record()))
+
     def test_an_unsigned_record_says_so(self):
         out = self.render(_record(client_sign_off=None))
         self.assertIn("Not signed on site", out)

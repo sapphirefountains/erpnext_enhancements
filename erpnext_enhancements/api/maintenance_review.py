@@ -36,9 +36,9 @@ reviewer sees the queue but is offered no decision, because the workflow gives t
 
 import frappe
 from frappe import _
-from frappe.utils import cint, escape_html, get_datetime, getdate, nowdate
+from frappe.utils import cint, escape_html, get_datetime, get_url_to_form, getdate, nowdate
 
-from erpnext_enhancements.sapphire_maintenance import missed_visits, review_digest
+from erpnext_enhancements.sapphire_maintenance import follow_ups, missed_visits, review_digest, visit_report
 
 DOCTYPE = "Sapphire Maintenance Record"
 REVIEW_STATE = "Pending Review"
@@ -47,6 +47,8 @@ REVIEW_ROLES = frozenset({"Maintenance Reviewer", "Maintenance Supervisor", "Sys
 #: limit would read as an empty queue.
 QUEUE_LIMIT = 200
 NOTE_LIMIT = 2000
+#: The follow-up list: as generous, for the same reason.
+FOLLOW_UP_LIMIT = 500
 
 
 @frappe.whitelist()
@@ -161,6 +163,110 @@ def send_back_visit(record, note=None, modified=None):
 	return result
 
 
+# ---------------------------------------------------------------------- follow-ups (v1.600.0)
+
+
+@frappe.whitelist()
+def get_follow_ups(include_closed=0):
+	"""The Maintenance Follow-Ups still being worked (Open to Installed), oldest first, or with
+	``include_closed`` the invoiced and canceled ones too. D3 of Phase D: Lisa follows each one
+	"through until the new part is installed and invoiced"."""
+	_check_access()
+	statuses = follow_ups.STATUSES if cint(include_closed) else follow_ups.OPEN_STATUSES
+	rows = frappe.get_list(
+		follow_ups.DOCTYPE,
+		filters={"status": ["in", list(statuses)]},
+		fields=[
+			"name",
+			"status",
+			"title",
+			"description",
+			"item",
+			"qty",
+			"told",
+			"photo",
+			"customer",
+			"project",
+			"serial_no",
+			"visit",
+			"raised_by",
+			"raised_on",
+			"opportunity",
+			"modified",
+		],
+		order_by="creation asc",
+		limit_page_length=FOLLOW_UP_LIMIT,
+	)
+	names = _names(rows)
+	for row in rows:
+		row["site"] = names["Project"].get(row.get("project")) or row.get("customer") or ""
+		row["feature"] = (
+			visit_report.short_name(names["Serial No"].get(row.get("serial_no")))
+			or row.get("serial_no")
+			or ""
+		)
+		row["raised_by_name"] = names["User"].get(row.get("raised_by")) or row.get("raised_by") or ""
+		row["modified"] = str(row.get("modified"))
+	return {
+		"follow_ups": rows,
+		"statuses": list(follow_ups.STATUSES),
+		"can_make_opportunity": bool(frappe.has_permission("Opportunity", "create")),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def set_follow_up_status(name, status, modified=None):
+	"""Move a follow-up on (Open → Quoted → Ordered → Installed → Invoiced, or Canceled). Refused
+	when it changed since the list was drawn, like the visit decisions."""
+	_check_access()
+	if status not in follow_ups.STATUSES:
+		frappe.throw(_("{0} is not a follow-up status.").format(status))
+	doc = _get_follow_up(name)
+	doc.check_permission("write")
+	if not modified or get_datetime(modified) != get_datetime(doc.modified):
+		frappe.throw(_("This follow-up changed since the list was drawn. Reload it and try again."))
+	doc.status = status
+	doc.save()
+	return {"name": doc.name, "status": doc.status, "modified": str(doc.modified)}
+
+
+@frappe.whitelist(methods=["POST"])
+def make_follow_up_opportunity(name):
+	"""An Opportunity for the follow-up (``follow_ups.make_opportunity``), or the one it has."""
+	_check_access()
+	doc = _get_follow_up(name)
+	doc.check_permission("write")
+	opportunity = follow_ups.make_opportunity(doc.name)
+	return {"opportunity": opportunity, "url": get_url_to_form("Opportunity", opportunity)}
+
+
+def _get_follow_up(name):
+	if not name or not frappe.db.exists(follow_ups.DOCTYPE, name):
+		frappe.throw(_("Follow-up {0} was not found.").format(name), frappe.DoesNotExistError)
+	return frappe.get_doc(follow_ups.DOCTYPE, name)
+
+
+def _names(rows):
+	"""Display names for the follow-up list, one query per doctype."""
+	wanted = {
+		"Project": ("project", "project_name"),
+		"Serial No": ("serial_no", "item_name"),
+		"User": ("raised_by", "full_name"),
+	}
+	out = {}
+	for doctype, (key, field) in wanted.items():
+		keys = sorted({row.get(key) for row in rows if row.get(key)})
+		out[doctype] = (
+			{
+				row.name: row.get(field)
+				for row in frappe.get_all(doctype, filters={"name": ["in", keys]}, fields=["name", field])
+			}
+			if keys
+			else {}
+		)
+	return out
+
+
 # ---------------------------------------------------------------------- the queue
 
 
@@ -227,6 +333,7 @@ def _queue_row(doc, since, today):
 		"out_of_range": context.get("out_of_range") or [],
 		"unanswered": context.get("unanswered") or [],
 		"unexplained": context.get("unexplained") or [],
+		"follow_up_count": cint(context.get("follow_up_count")),
 		"photo_count": cint(context.get("photo_count")),
 		"first_visit": bool(context.get("first_visit")),
 	}

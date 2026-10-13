@@ -2225,6 +2225,11 @@ jobs:
       # Switching a contract to one visit for the site (v1.599.0, Hardware Apartments): the
       # untouched per-feature drafts fold into one site visit, the earliest kept and saved before
       # anything is deleted; a started or linked draft is left and named; only the switch does it.
+      # Follow-ups and parts needed (v1.600.0): tidied on the visit and kept on a feature it
+      # covers; one tracked Maintenance Follow-Up per row on approval, once; the Opportunity for
+      # the customer, owned by the setting's person, Service stream, the part as its item, once.
+      - name: Maintenance follow-ups (approval, tracking, Opportunity)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_follow_ups -v
       - name: Contract switched to one visit per site folds its drafts
         run: python -m unittest erpnext_enhancements.tests.test_visit_shape_fold -v
       - name: Visit report (names, contract year, charts, fountain photo)

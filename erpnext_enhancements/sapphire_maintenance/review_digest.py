@@ -332,6 +332,7 @@ def build_context(doc):
 		"out_of_range": out_of_range,
 		"unanswered": unanswered,
 		"unexplained": unexplained,
+		"follow_up_count": len(doc.get("follow_ups") or []),
 		"photo_count": sum(len(block["photos"]) for block in blocks) + (1 if fountain_photo else 0),
 		"first_visit": comparison["first_visit"],
 	}
@@ -443,6 +444,36 @@ def _blocks(doc, labels, comparison=None):
 				"rows": rows,
 				"photos": [],
 				"empty": _("None used."),
+			}
+		)
+
+	# Follow-ups and parts needed (v1.600.0): what the technician found needs doing, for the
+	# office to take on. Each becomes a tracked Maintenance Follow-Up when the visit is approved.
+	follow_ups = doc.get("follow_ups") or []
+	if follow_ups:
+		headers = [_("What is needed"), _("Part"), _("Told on site")] + (
+			[_("Water feature")] if named else []
+		)
+		rows, photos = [], []
+		for row in follow_ups:
+			part = row.get("item") or ""
+			if part and flt(row.get("qty")):
+				part = _("{0} × {1}").format(part, _number(row.get("qty")))
+			cells = [row.get("description") or "", part, row.get("told") or ""]
+			if named:
+				key = _feature_key(doc, row)
+				cells.append(labels.get(key) or key or _("Whole site"))
+			rows.append(cells)
+			link = _photo_link(row.get("photo"), (row.get("description") or "")[:40])
+			if link:
+				photos.append(link)
+		blocks.append(
+			{
+				"heading": _("Follow-ups and parts needed"),
+				"headers": headers,
+				"rows": rows,
+				"photos": photos,
+				"empty": None,
 			}
 		)
 	return blocks

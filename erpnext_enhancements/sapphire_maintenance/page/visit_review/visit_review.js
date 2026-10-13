@@ -4,8 +4,10 @@
 // System Managers (v1.595.0, TASK-2026-02473). Two screens, each its own history entry, so Back
 // and Forward move between them:
 //
-//   /desk/visit-review           the queue, oldest first, then the missed and unsent visits
-//   /desk/visit-review/<visit>   one visit: every answer, Approve & Submit, Send back
+//   /desk/visit-review              the queue, oldest first, then the missed and unsent visits
+//   /desk/visit-review/<visit>      one visit: every answer, Approve & Submit, Send back
+//   /desk/visit-review/follow-ups   follow-ups and parts needed, Open to Invoiced (v1.600.0):
+//                                   move each on, and make its Opportunity for sales in one click
 //
 // The answers are the review email's own context (review_digest.build_context), so the page
 // and the email cannot disagree; each reading carries its value at the site's previous
@@ -34,6 +36,9 @@ frappe.pages["visit-review"].on_page_show = function (wrapper) {
 };
 
 const VR_API = "erpnext_enhancements.api.maintenance_review.";
+// The follow-up list's place in the route. A visit is never named this: new ones are
+// PRJ-…-V###, older ones ten random letters and digits.
+const VR_FOLLOW_UPS = "follow-ups";
 
 const VR_STYLE = `
 .vr-wrap{max-width:900px;margin:0 auto;padding-bottom:96px;color:var(--text-color);}
@@ -69,6 +74,9 @@ const VR_STYLE = `
 .vr-photos{margin-top:6px;font-size:13px;}
 .vr-photos a{margin-right:12px;}
 .vr-notes{white-space:pre-wrap;font-size:14px;background:var(--control-bg);padding:10px 12px;border-radius:8px;}
+.vr-follow{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:8px;}
+.vr-follow-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
+.vr-follow-bar select{max-width:180px;}
 .vr-actions{position:sticky;bottom:0;background:var(--bg-color);border-top:1px solid var(--border-color);padding:10px 0;margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;z-index:2;}
 @media (max-width:640px){.vr-missed .vr-hide-sm{display:none;}.vr-kv td:first-child{width:45%;}}
 `;
@@ -93,6 +101,8 @@ class VisitReview {
 		page.add_menu_item(__("Missed Maintenance Visits report"), () =>
 			frappe.set_route("query-report", "Missed Maintenance Visits")
 		);
+		page.add_menu_item(__("Follow-ups and parts needed"), () => this.go(VR_FOLLOW_UPS));
+		this.include_closed = false; // the follow-up list: also invoiced and canceled ones
 	}
 
 	// ------------------------------------------------------------------ routing
@@ -104,7 +114,11 @@ class VisitReview {
 		if (route[0] !== "visit-review") return;
 		const name = route[1] ? String(route[1]) : "";
 		this.current = name;
-		if (name) {
+		if (name === VR_FOLLOW_UPS) {
+			// Not the queue: a visit opened from here goes back to the queue by route, not Back.
+			this.came_from_queue = false;
+			this.show_follow_ups();
+		} else if (name) {
 			this.show_visit(name);
 		} else {
 			this.came_from_queue = false;
@@ -153,7 +167,10 @@ class VisitReview {
 	render_queue(data) {
 		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
 		const waiting = data.waiting || [];
-		let html = `<div class="vr-head"><h4>${__("Waiting for review")} (${waiting.length})</h4>`;
+		let html = `<div class="vr-head"><span></span><a href="#" class="vr-to-follow-ups">${__(
+			"Follow-ups and parts needed"
+		)} →</a></div>`;
+		html += `<div class="vr-head"><h4>${__("Waiting for review")} (${waiting.length})</h4>`;
 		if (!data.can_review) {
 			html += `<span class="vr-muted">${__("You can see the queue. Approving needs the Maintenance Reviewer role.")}</span>`;
 		}
@@ -184,6 +201,13 @@ class VisitReview {
 					`<span class="vr-chip vr-orange">${__("Required, blank: {0}", [esc(row.unanswered.join(", "))])}</span>`
 				);
 			}
+			if (row.follow_up_count) {
+				chips.push(
+					`<span class="vr-chip vr-blue">${
+						row.follow_up_count === 1 ? __("1 follow-up") : __("{0} follow-ups", [row.follow_up_count])
+					}</span>`
+				);
+			}
 			if ((row.unexplained || []).length) {
 				chips.push(
 					`<span class="vr-chip vr-orange">${__("Not done, no reason: {0}", [esc(row.unexplained.join(", "))])}</span>`
@@ -210,6 +234,136 @@ class VisitReview {
 			this.came_from_queue = true;
 			this.go($(e.currentTarget).attr("data-visit"));
 		});
+		this.$body.find(".vr-to-follow-ups").on("click", (e) => {
+			e.preventDefault();
+			this.go(VR_FOLLOW_UPS);
+		});
+	}
+
+	// ------------------------------------------------------------------ follow-ups (v1.600.0)
+
+	// Lisa, 2026-10-12: "I can get it over to Brian and follow it through until the new part is
+	// installed and invoiced." Each follow-up a technician raised, from the visit's approval on.
+	show_follow_ups() {
+		this.page.set_title(__("Follow-ups and parts needed"));
+		this.loading();
+		frappe
+			.call({ method: VR_API + "get_follow_ups", args: { include_closed: this.include_closed ? 1 : 0 } })
+			.then((r) => {
+				if (this.current !== VR_FOLLOW_UPS) return; // moved on while this was loading
+				this.render_follow_ups(r.message || {});
+			})
+			.catch(() => {
+				this.$body.html(`<div class="vr-empty">${__("The follow-ups could not be loaded.")}</div>`);
+			});
+	}
+
+	render_follow_ups(data) {
+		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+		const rows = data.follow_ups || [];
+		const statuses = data.statuses || [];
+		let html = `<div class="vr-head"><h4>${
+			this.include_closed ? __("All follow-ups") : __("Open follow-ups")
+		} (${rows.length})</h4><label class="vr-muted"><input type="checkbox" class="vr-closed" ${
+			this.include_closed ? "checked" : ""
+		}> ${__("Show invoiced and canceled")}</label></div>`;
+		if (!rows.length) {
+			html += `<div class="vr-empty">${__(
+				"No follow-ups. A technician adds them at wrap-up in the Visit Wizard; each is listed here once its visit is approved."
+			)}</div>`;
+		}
+		rows.forEach((row) => {
+			const part = row.item ? (row.qty ? `${row.item} × ${row.qty}` : row.item) : "";
+			const where = [row.site, row.feature, part].filter(Boolean).join(" · ");
+			const raised = [
+				row.raised_by_name ? __("Raised by {0}", [row.raised_by_name]) : "",
+				row.raised_on ? frappe.datetime.str_to_user(row.raised_on) : "",
+				row.told ? __("told {0}", [row.told]) : "",
+			]
+				.filter(Boolean)
+				.join(", ");
+			// Only a file on this site: the photo is a URL a phone sent.
+			const photo = /^\/(private\/)?files\//.test(row.photo || "")
+				? `<a href="${encodeURI(row.photo)}" target="_blank" rel="noopener noreferrer">${__("Photo")}</a>`
+				: "";
+			const options = statuses
+				.map((status) => `<option value="${esc(status)}" ${status === row.status ? "selected" : ""}>${esc(__(status))}</option>`)
+				.join("");
+			const opportunity = row.opportunity
+				? `<a href="/desk/opportunity/${encodeURIComponent(row.opportunity)}">${__("Opportunity {0}", [esc(row.opportunity)])}</a>`
+				: data.can_make_opportunity
+					? `<button type="button" class="btn btn-xs btn-default vr-opportunity">${__("Create Opportunity")}</button>`
+					: "";
+			html += `
+				<div class="vr-follow" data-follow-up="${esc(row.name)}">
+					<div class="vr-title">${esc(row.description)}</div>
+					<div class="vr-sub">${esc(where)}</div>
+					<div class="vr-sub">${esc(raised)}</div>
+					<div class="vr-follow-bar">
+						<select class="form-control input-xs vr-status">${options}</select>
+						${opportunity}
+						${row.visit ? `<a href="#" class="vr-follow-visit" data-visit-link="${esc(row.visit)}">${__("The visit")}</a>` : ""}
+						${photo}
+						<a href="/desk/maintenance-follow-up/${encodeURIComponent(row.name)}">${__("Open")}</a>
+					</div>
+				</div>`;
+		});
+		this.$body.html(html);
+		const by_name = Object.fromEntries(rows.map((row) => [row.name, row]));
+		const row_of = (e) => by_name[$(e.currentTarget).closest("[data-follow-up]").attr("data-follow-up")];
+		this.$body.find(".vr-closed").on("change", (e) => {
+			this.include_closed = !!e.currentTarget.checked;
+			this.show_follow_ups();
+		});
+		this.$body.find(".vr-status").on("change", (e) => this.set_follow_up_status(row_of(e), e.currentTarget.value));
+		this.$body.find(".vr-opportunity").on("click", (e) => this.make_opportunity(row_of(e)));
+		this.$body.find(".vr-follow-visit").on("click", (e) => {
+			e.preventDefault();
+			this.go($(e.currentTarget).attr("data-visit-link"));
+		});
+	}
+
+	set_follow_up_status(row, status) {
+		if (!row) return;
+		frappe
+			.call({
+				method: VR_API + "set_follow_up_status",
+				args: { name: row.name, status, modified: row.modified },
+			})
+			.then((r) => {
+				const result = r.message || {};
+				row.status = result.status;
+				row.modified = result.modified;
+				frappe.show_alert({ message: __("{0} is now {1}.", [row.title || row.name, __(row.status)]), indicator: "green" });
+			})
+			// Refused (changed since, no permission): frappe has said why; show it as it is now.
+			.catch(() => this.show_follow_ups());
+	}
+
+	make_opportunity(row) {
+		if (!row) return;
+		frappe
+			.call({
+				method: VR_API + "make_follow_up_opportunity",
+				args: { name: row.name },
+				freeze: true,
+				freeze_message: __("Making the Opportunity…"),
+			})
+			.then((r) => {
+				const result = r.message || {};
+				frappe.show_alert(
+					{
+						message: __("Opportunity {0} made for {1}.", [
+							`<a href="${encodeURI(result.url || "")}">${frappe.utils.escape_html(result.opportunity || "")}</a>`,
+							frappe.utils.escape_html(row.site || ""),
+						]),
+						indicator: "green",
+					},
+					8
+				);
+				this.show_follow_ups();
+			})
+			.catch(() => this.show_follow_ups());
 	}
 
 	missed_html(data, esc) {

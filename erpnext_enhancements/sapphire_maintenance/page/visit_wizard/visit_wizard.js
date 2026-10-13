@@ -102,6 +102,12 @@ const VZ_STYLE = `
 .vz-na-btn.vz-on{background:#475569;border-color:#475569;color:#fff;}
 .vz-why input:placeholder-shown{border-color:#d97706;}
 .vz-why-task{font-size:14px;font-weight:600;margin-top:12px;}
+.vz-follow-up{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid var(--border-color);}
+.vz-follow-up:first-of-type{border-top:none;}
+.vz-follow-up-text{flex:1;font-size:14px;line-height:1.4;}
+.vz-follow-up-text small{display:block;color:var(--text-muted);font-size:12.5px;}
+.vz-add-btn{width:100%;margin-top:10px;min-height:46px;border-radius:10px;border:1px dashed var(--primary,#2490ef);background:none;color:var(--primary,#2490ef);font-size:15px;font-weight:600;cursor:pointer;}
+.vz-follow-btn{flex:0 0 auto;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;padding:0 10px;}
 .vz-banner{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:15px;line-height:1.45;}
 .vz-banner-red{background:#fde8e8;color:#b91c1c;}
 .vz-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
@@ -243,20 +249,60 @@ function vz_plain_html(value) {
 	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
 }
 
+// Rows added on this phone have no name until the server has them: consumables (v1.596.0)
+// and follow-ups (v1.600.0). Each carries its table as `_table`; a row kept on a phone before
+// v1.600.0 has none and is a consumable. Per table: the fields sent, the fields kept on the
+// phone, and whether a row on the server is this one, sent before but its answer lost.
+const VZ_ADDED = {
+	consumables: {
+		sent: ["item", "qty", "warehouse", "uom"],
+		kept: ["item", "item_name", "qty", "uom", "warehouse", "qty_step", "serial_no"],
+		// The server does not get a feature for a consumable added here.
+		same: (server, row) =>
+			server.item === row.item &&
+			vz_same(server.qty, row.qty) &&
+			vz_same(server.uom, row.uom) &&
+			(!server.serial_no || server.serial_no === row.serial_no),
+	},
+	follow_ups: {
+		sent: ["description", "item", "qty", "told", "serial_no", "source_question"],
+		kept: ["description", "item", "qty", "told", "serial_no", "source_question"],
+		// The server stores a blank qty as 0, and may rewrite a description's markup and
+		// spacing when it sanitizes Small Text, so both are compared as the server keeps them.
+		same: (server, row) =>
+			vz_loose_text(server.description) === vz_loose_text(row.description) &&
+			vz_same(server.item, row.item) &&
+			vz_same(server.qty || 0, row.qty || 0) &&
+			vz_same(server.serial_no, row.serial_no),
+	},
+};
+
+// Text as it survives the server's sanitizing: no tags or entities, spacing collapsed.
+function vz_loose_text(value) {
+	return String(value == null ? "" : value)
+		.replace(/<[^>]*>/g, "")
+		.replace(/&[#\w]+;/g, "")
+		.replace(/[<>&]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function vz_added_table(row) {
+	return row._table || "consumables";
+}
+
 // The save_visit patch for a batch of edits: changed parent fields, changed rows
-// by name, and consumables added here (no name yet — the server appends them).
+// by name, and rows added here (no name yet — the server appends them).
 function vz_patch(dirty, pending_added) {
 	const rows = {};
 	Object.entries(dirty.rows).forEach(([table, by_name]) => {
 		rows[table] = Object.entries(by_name).map(([name, changes]) => ({ name, ...changes }));
 	});
 	pending_added.forEach((row) => {
-		(rows.consumables = rows.consumables || []).push({
-			item: row.item,
-			qty: row.qty,
-			warehouse: row.warehouse,
-			uom: row.uom,
-		});
+		const table = vz_added_table(row);
+		const sent = {};
+		VZ_ADDED[table].sent.forEach((field) => (sent[field] = row[field]));
+		(rows[table] = rows[table] || []).push(sent);
 	});
 	return { fields: dirty.fields, rows };
 }
@@ -388,15 +434,12 @@ function vz_try_later(error) {
 
 // The consumables added here, as plain data the patch needs (and nothing that is not JSON).
 function vz_plain_added(rows) {
-	return rows.map((row) => ({
-		item: row.item,
-		item_name: row.item_name,
-		qty: row.qty,
-		uom: row.uom,
-		warehouse: row.warehouse,
-		qty_step: row.qty_step,
-		serial_no: row.serial_no,
-	}));
+	return rows.map((row) => {
+		const table = vz_added_table(row);
+		const plain = { _table: table };
+		VZ_ADDED[table].kept.forEach((field) => (plain[field] = row[field]));
+		return plain;
+	});
 }
 
 // The server's values from before each unsent change, for exactly the changes still unsent.
@@ -486,24 +529,26 @@ function vz_reconcile(entry, doc) {
 			return !partner;
 		});
 	});
-	// A consumable added here has no name until the server has it. On another version of
-	// the visit, a matching row may be one this phone sent whose answer was lost: one the
-	// phone did not know of when it kept the answers (`known`), for the same item, qty and
-	// unit, on no water feature or the same one (the server does not get a feature for a
-	// consumable added here).
-	const known = new Set(entry.known || []);
-	const unmatched = (doc.consumables || []).filter((row) => !known.has(row.name));
+	// A row added here (a consumable, a follow-up) has no name until the server has it. On
+	// another version of the visit, a matching row may be one this phone sent whose answer was
+	// lost: one the phone did not know of when it kept the answers (`known`, by table; a plain
+	// list, kept before v1.600.0, is the consumables), and the same by VZ_ADDED's rule.
+	const known_in = (table) => {
+		const known = entry.known || {};
+		if (Array.isArray(known)) return table === "consumables" ? known : [];
+		return known[table] || [];
+	};
+	const unmatched = {};
 	(entry.pending_added || []).forEach((row) => {
+		const table = vz_added_table(row);
 		if (!same_version) {
-			const index = unmatched.findIndex(
-				(server_row) =>
-					server_row.item === row.item &&
-					vz_same(server_row.qty, row.qty) &&
-					vz_same(server_row.uom, row.uom) &&
-					(!server_row.serial_no || server_row.serial_no === row.serial_no)
-			);
+			if (!unmatched[table]) {
+				const known = new Set(known_in(table));
+				unmatched[table] = (doc[table] || []).filter((server_row) => !known.has(server_row.name));
+			}
+			const index = unmatched[table].findIndex((server_row) => VZ_ADDED[table].same(server_row, row));
 			if (index >= 0) {
-				unmatched.splice(index, 1);
+				unmatched[table].splice(index, 1);
 				out.dropped += 1;
 				return;
 			}
@@ -1527,8 +1572,13 @@ class VisitWizard {
 			})
 			.then((r) => {
 				const state = r.message || {};
-				((state.added || {}).consumables || []).forEach((name, index) => {
-					if (added_local[index]) added_local[index].name = name;
+				// The server names appended rows per table, in patch order (vz_patch).
+				const by_table = {};
+				added_local.forEach((row) => (by_table[vz_added_table(row)] = by_table[vz_added_table(row)] || []).push(row));
+				Object.entries(state.added || {}).forEach(([table, names]) => {
+					names.forEach((name, index) => {
+						if ((by_table[table] || [])[index]) by_table[table][index].name = name;
+					});
 				});
 				delete this._inflight[doc.name];
 				this.rebase(doc.name, sent_dirty);
@@ -1722,7 +1772,8 @@ class VisitWizard {
 			});
 		});
 		parked.pending_added.forEach((row) => {
-			(this.doc.consumables = this.doc.consumables || []).push(row);
+			const table = vz_added_table(row);
+			(this.doc[table] = this.doc[table] || []).push(row);
 			this.pending_added.push(row);
 		});
 		if (this.has_dirty()) this.schedule_save();
@@ -1837,12 +1888,20 @@ class VisitWizard {
 			(on_screen && this.doc) || (this._parked[name] || {}).doc || (this._inflight[name] || {}).doc || null;
 		return {
 			dirty,
-			// A consumable the server has named is on it.
+			// A row the server has named is on it.
 			pending_added: added.filter((row) => !row.name),
 			held: this._held[name] || null,
 			modified: holder ? holder.modified : null,
-			// The consumables this phone knows by name: never taken for one it added (vz_reconcile).
-			known: holder ? (holder.consumables || []).map((row) => row.name).filter(Boolean) : [],
+			// The rows this phone knows by name, per table that takes added rows: never taken for
+			// one it added (vz_reconcile).
+			known: holder
+				? Object.fromEntries(
+						Object.keys(VZ_ADDED).map((table) => [
+							table,
+							(holder[table] || []).map((row) => row.name).filter(Boolean),
+						])
+					)
+				: {},
 		};
 	}
 
@@ -1895,7 +1954,8 @@ class VisitWizard {
 		plan.apply.forEach((change) => this.put_back(change));
 		plan.added.forEach((row) => {
 			const copy = { ...row };
-			(doc.consumables = doc.consumables || []).push(copy);
+			const table = vz_added_table(copy);
+			(doc[table] = doc[table] || []).push(copy);
 			this.pending_added.push(copy);
 		});
 		const back = plan.apply.length + plan.added.length;
@@ -3416,6 +3476,7 @@ class VisitWizard {
 				<div class="vz-row-extra" style="display:none;">
 					<input type="text" placeholder="${__("Details")}" value="">
 					<button type="button" class="vz-photo-btn ${this.photo_class("maintenance_results", row)}">📷</button>
+					<button type="button" class="vz-follow-btn" style="display:none;">＋ ${__("Follow-up")}</button>
 				</div>
 			</div>
 		`);
@@ -3427,6 +3488,8 @@ class VisitWizard {
 		const sync_extra = () => {
 			const show = row.selection && (negative(row.selection) || row.selection === "Other");
 			$extra.toggle(!!show || !!row.answer || !!row.other_details);
+			// A Fail or Replace is often a part to order (v1.600.0): one tap to a follow-up.
+			$extra.find(".vz-follow-btn").toggle(negative(row.selection) && this.doc.docstatus === 0);
 			$detail.attr(
 				"placeholder",
 				row.selection === "Other" ? __("What happened? (required)") : __("Notes")
@@ -3457,6 +3520,13 @@ class VisitWizard {
 			this.set_row("maintenance_results", row, field, event.target.value);
 		});
 		this.bind_photo($extra.find(".vz-photo-btn"), "maintenance_results", row);
+		$extra.find(".vz-follow-btn").on("click", () =>
+			this.add_follow_up({
+				description: [row.question, row.answer].filter(Boolean).join(": "),
+				source_question: row.question,
+				serial_no: row.serial_no,
+			})
+		);
 		sync_extra();
 		return $card;
 	}
@@ -3562,6 +3632,7 @@ class VisitWizard {
 		});
 		this.setup_dictation($notes_card);
 		this.$wrap.append($notes_card);
+		this.render_follow_ups();
 		this.render_fountain_photo();
 
 		const $sig_card = $(`
@@ -3609,6 +3680,112 @@ class VisitWizard {
 			$card.append($row);
 		});
 		this.$wrap.append($card);
+	}
+
+	// Follow-ups and parts needed (v1.600.0): what the site needs after today, for the office
+	// to take on. Lisa: "say Austin talked to someone and told them you need a new manifold,
+	// and then he adds it to the form with a follow up and then I can get it over to Brian".
+	// Each becomes a tracked Maintenance Follow-Up when the visit is approved. Added here they
+	// are kept on the phone like any answer until the server has them; a photo can be added
+	// once one has been saved (a photo is kept by the row's name).
+	render_follow_ups() {
+		const rows = this.doc.follow_ups || [];
+		const $card = $(`
+			<div class="vz-card">
+				<div class="vz-card-title">${__("Follow-ups and parts needed")}</div>
+				<div class="vz-card-sub">${__(
+					"Anything the site needs after today: a part to order, work to come back for. Say who on site you told. The office follows each one through."
+				)}</div>
+				<div class="vz-follow-ups"></div>
+			</div>
+		`);
+		const $list = $card.find(".vz-follow-ups");
+		rows.forEach((row) => {
+			const part = row.item ? (row.qty ? `${row.item} × ${row.qty}` : row.item) : "";
+			const where =
+				row.serial_no && this.features.length
+					? this.feature_names[row.serial_no] || row.serial_no
+					: "";
+			const details = [part, where, row.told ? __("Told: {0}", [row.told]) : ""].filter(Boolean).join(" · ");
+			const $row = $(`
+				<div class="vz-follow-up">
+					<div class="vz-follow-up-text">${frappe.utils.escape_html(row.description || "")}${
+						details ? `<small>${frappe.utils.escape_html(details)}</small>` : ""
+					}${row.name ? "" : `<small>${__("A photo can be added once it has saved.")}</small>`}</div>
+					${row.name ? `<button type="button" class="vz-photo-btn ${this.photo_class("follow_ups", row)}">📷</button>` : ""}
+				</div>
+			`);
+			if (row.name && this.doc.docstatus === 0) this.bind_photo($row.find(".vz-photo-btn"), "follow_ups", row);
+			$list.append($row);
+		});
+		if (this.doc.docstatus === 0) {
+			$(`<button type="button" class="vz-add-btn">＋ ${__("Add a follow-up")}</button>`)
+				.on("click", () => this.add_follow_up())
+				.appendTo($card);
+		}
+		this.$wrap.append($card);
+	}
+
+	// `from` prefills it from an inspection answer: its question, the details typed, and its
+	// water feature.
+	add_follow_up(from) {
+		from = from || {};
+		const features = this.features.map((serial) => ({ label: this.feature_names[serial] || serial, value: serial }));
+		const fields = [
+			{
+				fieldname: "description",
+				fieldtype: "Small Text",
+				label: __("What is needed"),
+				reqd: 1,
+				default: from.description || "",
+			},
+			{ fieldname: "item", fieldtype: "Link", label: __("Part (if you know it)"), options: "Item" },
+			{ fieldname: "qty", fieldtype: "Float", label: __("Qty") },
+			{
+				fieldname: "told",
+				fieldtype: "Data",
+				label: __("Who on site did you tell?"),
+				description: __("A name or a role, e.g. the property manager."),
+			},
+		];
+		if (features.length) {
+			fields.push({
+				fieldname: "serial_no",
+				fieldtype: "Select",
+				label: __("Water feature"),
+				options: [{ label: __("Whole site"), value: "" }, ...features],
+				default: from.serial_no || this.feature || "",
+			});
+		}
+		const dialog = new frappe.ui.Dialog({
+			title: __("Add a follow-up"),
+			fields,
+			primary_action_label: __("Add"),
+			primary_action: (values) => {
+				const description = (values.description || "").trim();
+				if (!description) return;
+				dialog.hide();
+				const row = {
+					_table: "follow_ups",
+					description,
+					item: values.item || null,
+					qty: values.qty ? Number(values.qty) : null,
+					told: (values.told || "").trim() || null,
+					serial_no: (features.length ? values.serial_no : from.serial_no) || null,
+					source_question: from.source_question || null,
+				};
+				(this.doc.follow_ups = this.doc.follow_ups || []).push(row);
+				this.pending_added.push(row);
+				this.journal(this.doc.name);
+				const doc = this.doc;
+				this.flush_save()
+					.catch(() => {})
+					.then(() => {
+						if (this.doc === doc) this.render();
+					});
+			},
+		});
+		dialog.show();
 	}
 
 	// The fountain as the technician leaves it (v1.597.0): Lisa asked for a picture of the
