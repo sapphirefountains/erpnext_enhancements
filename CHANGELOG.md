@@ -7,6 +7,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.613.0] - 2026-10-13
+
+### Added
+
+- **The Statement of Work gets an input for everything it prints.** Nik, 2026-10-13: "do the contract
+  builder and building for all contract types, not just the ones we have so far." The SOW was the most
+  blank-heavy agreement in the suite: 37 literal `[ ]` boxes and about thirty `___` / `blank()` lines
+  that nothing could fill. Every one Sapphire completes when preparing it now prints a Project Contract field
+  (all `sow_*`, all shown only for SOWs), so the Contract Builder walks a place to fill it:
+  - §1.2 **Project Type** and §1.3 **Feature Type**, each with its "Other" text, on the job step;
+  - §4.1 **Schedule Due (business days after signing)** and §4.3 **Liquidated Damages** (N/A or per
+    calendar day, with the daily rate) on the engagement step;
+  - §2.1's eleven **Included Services** plus an Other line, on a new *Included Services* step;
+  - §2.3 **Exclusions** and Section 6 **Company-Furnished Items** (None, or the items listed) on the
+    Scope of Work step. Choosing None prints no blank list lines;
+  - Section 3's **due dates** for each deliverable and an **Other Deliverable** row, on a new
+    *Deliverables* step;
+  - §5.1 **Compensation Type**, §5.3 **Retention (%)** and §5.5 **Invoices Submitted By (day of month)**,
+    on a new *Compensation* step;
+  - §8.1 **Site-Specific Safety Requirements**, §9.3 **Correction Period (business days)**, §9.4's six
+    fallback inspection boxes and Section 10 **Special Terms**, on a new *Safety, Quality & Special
+    Terms* step.
+  Checkboxes are bound per box, so an unticked box on a filled contract means "not included" rather than
+  "not filled in yet". The three single-choice lines (liquidated damages, Company-furnished items,
+  compensation type) are Selects with a blank first option, because a blank has to stay a third answer: an
+  empty draft must not tick "N/A" or "None" on the client's behalf. No new field has a default: the
+  agreement states none.
+- Both subcontractor agreements now print **Client Name on Agreement** (`agreement_party_name`) and **Billing
+  City / State / Zip** (`billing_city_state_zip`) the way the customer agreements do, and the MSA opens with
+  a Subcontractor Information table (name, address, contact, phone, email). The SOW's Parties table gains
+  the contact's phone and email; the email is where a signing link and the signed copy go.
+- **Subcontractor initials.** MSA: pay if paid (§4.2), the certificate of insurance as a condition of
+  starting work (§5.1), indemnity (§11.1), the liability cap and no damages for delay (§12), flow-down of
+  the prime contract (§13.1), the cost of a take-over (§14.2) and arbitration (§18.3), plus retainage
+  (§4.4) only when Tier 2 is selected, because §4.4 applies to Tier 2 alone. SOW: liquidated damages
+  (§4.3, unless N/A is chosen), retention (§5.3), correcting rejected work at no cost (§9.3), and the
+  Section 10 special terms only when there are some. The MSA's Electronic Signatures clause (§20.7) gains
+  the sentence that each set of initials is made separately and acknowledges the clause it sits beside;
+  the SOW had no electronic-signature language at all, so it gets a new §11 General Provisions with an
+  Electronic Signatures clause saying both things.
+- **A plain-language summary for each**, written to the subcontractor ("you" is the sub, "we" is
+  Sapphire). MSA: what it covers and which tier's sections apply, getting paid (pay if paid, 10 business
+  days, and Tier 2's retainage only for Tier 2), the insurance condition, the warranty and take-over,
+  delays and the liability cap, ending it and disputes. SOW: the job, what the sub furnishes (the ticked
+  services), the master agreement it sits under, the dates and schedule (and the daily liquidated damages
+  only when a rate is set), the price, retention and invoice day as filled in, the sub's part, and the
+  special terms when there are any. A figure the SOW leaves blank is never stated.
+- **Both can be e-signed.** Their SIGNATURES blocks were paper lines (`blank(30)`), and Send for Signature
+  refuses a template with no `sig(`; they now have the rental agreement's block, worded for the COMPANY
+  and the SUBCONTRACTOR.
+- **The Mutual NDA, the Architect Agreement and the Employee-Contractor Agreement get an input for
+  everything they print.** Nik, 2026-10-13: "do the contract builder and building for all contract types,
+  not just the ones we have so far. Style wise they should follow the same theme as the current Maintenance
+  Services Agreement." Every blank Sapphire types in now prints a Project Contract field, so the Contract
+  Builder walks a place to fill it:
+  - NDA: **Company's Entity Type** (`nda_entity_type`), the "a ____ with its principal place of business"
+    blank in the opening paragraph, which had no field at all; the principal place of business now joins
+    the address and its city/state/zip;
+  - architect: a new **Notices & Statement of Work** step (`architect_section`) for the notice
+    **Attention** line (`architect_notice_attention`, blank prints the Contact Person), **Sapphire Primary
+    Contact** and **Sapphire Contact Email** (`sapphire_contact`, `sapphire_contact_email`), and the embedded
+    Statement of Work's **Services Provided by Architect**, **Term** and **Payment and Payment Timing**
+    (`architect_services`, `architect_sow_term`, `architect_payment_terms`), which were headings with
+    nothing under them. Sapphire's own services print the Scope of Work, which the template always read
+    but whose step was shown only for a SOW; it is now shown for architect agreements too (not pre-filled
+    from the project there, as it is for a SOW);
+  - all three: **Client Name on Agreement** (`agreement_party_name`, NDA and architect) and **Billing City /
+    State / Zip** (`billing_city_state_zip`), printed as the maintenance agreement prints them.
+  No new field has a default: none of the agreements states one.
+- **Initials on all three**, beside the clauses that carry the other party's risk. NDA (the Company's
+  initials; the agreement is mutual): the use and export restrictions (§4.1), returning information and
+  ten-year confidentiality (§6.1), the ten-year term and injunctions without a bond (§7.1), costs and
+  attorneys' fees (§7.2) and Utah jurisdiction (§8.5). Architect: Sapphire's reliance on what the
+  Architect furnishes (§1.2), payment (§3.1), the limited warranty (§6.1), the liability limits (§7.1),
+  force majeure (§9.1) and governing law and venue (§10.7). Employee-Contractor: confidentiality (§3.2),
+  assignment of rights (§4.1), non-solicitation (§5.1) and non-competition (§5.2). Each agreement's general
+  provisions carry the Electronic Signatures clause with the maintenance agreement's sentence: each set of
+  initials is made separately and acknowledges the clause it sits beside. The NDA and the employee-contractor
+  agreement had no electronic-signature language, so the clause is new there.
+- **All three can be e-signed.** Their signature blocks were Word tab-stop tables and paper lines, and Send
+  for Signature refuses a template with no `sig(`; each now has the rental agreement's SIGNATURES block
+  (SAPPHIRE FOUNTAINS / COMPANY, ARCHITECT, EMPLOYEE-CONTRACTOR). The employee-contractor agreement gains a
+  Company signature line, which the Word copy did not have. The architect agreement's two signature tables
+  (one on the cover, one under its Statement of Work) become one block at the end, after the Statement of
+  Work it covers.
+- A plain-language summary for each (`contract_summary._nda`, `_architect`, `_employee_contractor`), built
+  from the contract's own purpose, project, owner, payment terms and date; the architect's names the
+  Statement of Work's payment terms when they are filled in and §3.1's customary-rates fallback when not.
+- **The Contract Builder speaks to whoever the agreement is with.** With every contract type now built in
+  the builder, "With the client" and "Client initials" were wrong for half of them. The walk names the
+  party each agreement is with (`contract_builder.PARTY_NOUNS`): "With the subcontractor" for the master
+  agreement and a Statement of Work, the architect, the employee-contractor, and "the other party" for the
+  mutual NDA. This covers the mode toggle, the hints, the initials pad, the signature box and the dialogs.
+  The caption under a blank initials box follows suit (`initials.INITIALS_CAPTIONS`): "Subcontractor
+  initials", "Architect initials" and so on. The customer agreements keep "Client initials" byte for byte,
+  so an issued maintenance, rental or owner agreement renders exactly as before.
+- Builder steps for the new sections: *Notices and Statement of Work* (architect), and *Included
+  services*, *Deliverables*, *Compensation* and *Safety, quality and special terms* (Statement of Work). The
+  *Scope of work* step's guidance no longer claims the scope is always pulled from the project, since the
+  architect agreement uses the same step.
+
+### Changed
+
+- **Both follow the maintenance agreement's theme**: the title block, `{{ summary() }}`, an information
+  table, then numbered sections in which every clause hangs its number (`ct-clause`) and titled clauses
+  lead in bold ("**Pay If Paid.**", "**No Damages for Delay.**", "**Exclusions.**"). The MSA §5.2 coverages
+  are a bulleted list and Exhibit B's guarantee paragraphs hang their numbers; the SOW's `<h2>`
+  sub-headings (2.1 Included Services, 2.2 Detailed Scope Description, 5.1 Compensation Type, 5.2
+  Compensation Schedule) are clauses in one number series, and its boxes are indented option lines. The
+  wording does not change beyond the bound blanks, the initials, the bold titles and the Electronic
+  Signatures sentence. §5.4's materials markup prints through `pct()`, so an unset markup is a blank line
+  followed by % rather than "0%".
+- The SOW keeps v1.461.0's §9.4 exactly: the project's contracted hold points from a locked Scope of Work
+  when there is one, and the inspection boxes (now field-bound) when there is not.
+- `patches/refresh_subcontractor_agreement_layout` brings both live templates up to date. Per template, the
+  body is replaced only when it is exactly one this repo shipped (SHA-256): the MSA's v1.5.0 body, which
+  prod's matched byte for byte on 2026-10-13, and the SOW's v1.5.0 or v1.461.0 body. **This is also what
+  finally brings the v1.461.0 Statement of Work to production.** That release reworked §9.4 (contracted
+  hold points in place of six checkboxes nobody ticks) in the repo file only, and because
+  `seed_contract_templates` is insert-only, prod still had the original v1.5.0 SOW body on 2026-10-13. A
+  site-edited body is logged and left alone, paper-signed contracts are frozen first, and nothing changes
+  while a signing link for that template is out (prod had no MSA or SOW contracts at all). No contract's
+  terms are reset. Never raises.
+- `tests/test_subcontractor_agreement_layout` (its own CI step) renders both templates empty and filled
+  (empty child tables included, and the SOW with and without contracted hold points), checks the clause
+  numbering, the bold titles and the CSS for every class used, the initials and when the conditional ones
+  print, the e-signature block and Electronic Signatures sentence, that every `doc.<field>` either prints
+  is shown for that type by its own and its section's `depends_on` and offered by a builder step, that
+  the only blanks left are the hand-completed ones, the summaries against the templates' fixed figures,
+  and that the patch replaces only the shipped bodies and never raises.
+
+The parts left blank on purpose are completed by hand: the SOW's "Accepted By" column (signed when each
+deliverable is accepted), and the MSA's Exhibit B Personal Guarantee (dated and completed by the guarantor)
+and Exhibit C Project Risk Register (kept per job, after signing).
+- **All three follow the maintenance agreement's theme**: the title block, the summary, an information
+  table for the parties, then numbered sections whose clauses hang their numbers (`ct-clause`), titled
+  clauses in bold, lettered sub-paragraphs (`ct-sub`) and bulleted lists (`ct-list`). The three were
+  converted from Word with their numbering lost, and their own wording says what it was, so that is the
+  numbering restored: the NDA's eight paragraphs are Sections 1–8 ("included in this Paragraph 6" and
+  "Subject to the last sentence of Section 6" land on the return-of-information clause again), and the
+  architect agreement's sections are 1–10 exactly as §4.1's survival list names them ("5 (License and
+  Ownership) … 10 (Miscellaneous)", "Section 3 (Payment)") and §7.1 calls itself "this Section 7". Its
+  Miscellaneous paragraph is split into titled clauses (Independent Contractors, Assignment, Notices …).
+  The employee-contractor agreement, which had no numbers, is numbered in order and its seven expectations
+  are a bulleted list. The notice addresses the architect agreement's §10.3 sends notices to ("the address
+  specified above") stay above it, in the information table. The wording does not change beyond the bound
+  blanks, the initials, the bold clause titles, the Electronic Signatures clause and the signature blocks'
+  lead-in lines.
+- `patches/refresh_general_agreement_layout` brings the three live templates up to date. Per template, the
+  body is replaced only when it is exactly the shipped body (SHA-256; prod's matched byte for byte on
+  2026-10-13); a site-edited body is logged and left alone, paper-signed contracts are frozen first, and
+  nothing changes while a signing link for that template is out (prod had no contracts of these types).
+  No contract's terms are reset. Never raises.
+- `tests/test_general_agreement_layout` (its own CI step) renders the three empty and filled, checks the
+  title block, the clause numbering and that the cross-references still point at the right sections, the
+  initials, the e-sign block and the Electronic Signatures sentence, that the summary's figures are in the
+  templates, and that every `doc.<field>` they print exists and is shown for that contract type by its own
+  and its section's `depends_on`.
+
+### Fixed
+
+- The architect agreement's opening recital was missing the parenthesis that opens ("“Project”").
+
 ## [1.612.1] - 2026-10-13
 
 ### Fixed
