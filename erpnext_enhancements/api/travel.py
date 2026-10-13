@@ -65,6 +65,7 @@ from erpnext_enhancements.travel_management.completeness import (
 	is_image_file,
 	receipt_urls,
 )
+from erpnext_enhancements.utils.normalize import phone_display
 
 # Calendar event colors per trip status (frappe palette names).
 STATUS_COLOR = {
@@ -1401,6 +1402,18 @@ _CONTACT_PHONE = ("custom_mobile_number", "custom_phone_number", "mobile_no", "p
 _CONTACT_EMAIL = ("custom_email", "email_id")
 _CONTACT_NAME = ("full_name", "first_name", "last_name")
 
+
+def _phone(value):
+	"""A phone the way a card shows it: ``(801) 555-0100``, never the stored ``+18015550100``.
+
+	Form kit P2-B stores every new or edited phone in E.164; the cards are read on a phone and
+	read aloud, so they show the Desk's form. A value no rule can read comes back as typed, and
+	``None`` stays ``None`` (a card line with no phone is left out, as before)."""
+	if not value:
+		return value
+	return phone_display(value)
+
+
 #: What a trip is for, and the field that names it.
 _SITE_TITLE = {
 	"Project": ("project_name",),
@@ -1477,7 +1490,7 @@ def _address_facts(address_name, cache=None):
 	if not address_name or not isinstance(address_name, str):
 		return None, None, None, None
 	text, lat, lng, row = _address_row(address_name, cache)
-	return text, lat, lng, _first_text(row, ("phone",))
+	return text, lat, lng, _phone(_first_text(row, ("phone",)))
 
 
 def _address_text(value, cache=None):
@@ -1518,7 +1531,7 @@ def _office_contact():
 		return None
 	return {
 		"label": values["travel_desk_label"] or _("Travel desk"),
-		"phone": values["travel_desk_phone"],
+		"phone": _phone(values["travel_desk_phone"]),
 		"email": values["travel_desk_email"],
 	}
 
@@ -1537,7 +1550,7 @@ def _booked_by_contact(doc):
 		phone = _first_text(_record("Employee", _employee_of_user(owner), ("cell_number",)), ("cell_number",))
 	return {
 		"name": _first_text(user, ("full_name",)) or owner,
-		"phone": phone,
+		"phone": _phone(phone),
 		"email": _first_text(user, ("email",)),
 	}
 
@@ -1554,7 +1567,7 @@ def _lead_contact(doc):
 	employee = _record("Employee", row.get("employee"), ("employee_name", "cell_number"))
 	return {
 		"name": _first_text(employee, ("employee_name",)) or row.get("employee_name") or row.get("employee"),
-		"phone": _first_text(employee, ("cell_number",)),
+		"phone": _phone(_first_text(employee, ("cell_number",))),
 	}
 
 
@@ -1570,7 +1583,7 @@ def _customer_contact(customer):
 	)
 	return {
 		"contact_name": _contact_name(contact),
-		"phone": _first_text(contact, _CONTACT_PHONE) or _first_text(record, ("mobile_no",)),
+		"phone": _phone(_first_text(contact, _CONTACT_PHONE) or _first_text(record, ("mobile_no",))),
 		"email": _first_text(contact, _CONTACT_EMAIL) or _first_text(record, ("email_id",)),
 		"address": _address_facts(record.get("customer_primary_address"))[0],
 	}
@@ -1586,7 +1599,7 @@ def _opportunity_contact(record):
 	)
 	found = {
 		"contact_name": _plain(record.get("contact_display")) or _contact_name(contact),
-		"phone": _first_text(record, ("contact_mobile", "phone")) or _first_text(contact, _CONTACT_PHONE),
+		"phone": _phone(_first_text(record, ("contact_mobile", "phone")) or _first_text(contact, _CONTACT_PHONE)),
 		"email": _first_text(record, ("contact_email",)) or _first_text(contact, _CONTACT_EMAIL),
 		"address": _address_facts(record.get("customer_address"))[0] or _plain(record.get("address_display")),
 	}
@@ -1618,7 +1631,7 @@ def _project_contact(record):
 	email of its own — so one person's name is never printed over another person's number."""
 	person = {
 		"contact_name": _first_text(record, _PROJECT_SITE_NAME),
-		"phone": _first_text(record, _PROJECT_SITE_PHONE),
+		"phone": _phone(_first_text(record, _PROJECT_SITE_PHONE)),
 		"email": _first_text(record, _PROJECT_SITE_EMAIL),
 	}
 	address = (
@@ -1696,7 +1709,7 @@ def _site_contact(doc):
 		)
 		found = {
 			"contact_name": _first_text(record, ("lead_name",)),
-			"phone": _first_text(record, ("mobile_no", "phone")),
+			"phone": _phone(_first_text(record, ("mobile_no", "phone"))),
 			"email": _first_text(record, ("email_id",)),
 			"address": None,
 		}
@@ -1705,7 +1718,7 @@ def _site_contact(doc):
 	return {
 		"label": _first_text(record, _SITE_TITLE[doctype]) or name,
 		"contact_name": found.get("contact_name"),
-		"phone": found.get("phone"),
+		"phone": _phone(found.get("phone")),
 		"email": found.get("email"),
 		"address": found.get("address"),
 	}

@@ -99,6 +99,26 @@ class TestCaseFile(unittest.TestCase):
             self.assertIn(shape, phones)
 
 
+    def test_the_production_rule_gaps_are_covered(self):
+        """Three shapes the dry run flagged on production (2026-10-13) that were rule gaps, not
+        bad data: a Unicode non-breaking hyphen or en dash or no-break space, a separator before
+        the extension marker, and a pasted ``tel:`` link. Each must keep a case in the file."""
+        phones = {c["in"]: c for c in CASES["phone"]}
+        for shape, stored in (
+            (" 801\u2011360\u20112977", "+18013602977"),
+            ("855\u2011444\u20119477", "+18554449477"),
+            ("801\u2013555\u20130100", "+18015550100"),
+            ("801\u00a0555\u00a00100", "+18015550100"),
+            ("801.566.7272,x5115", "+18015667272,5115"),
+            ("801-555-0100,123", "+18015550100,123"),
+            ("tel:+1(770)277-1120", "+17702771120"),
+        ):
+            with self.subTest(shape=shape):
+                self.assertIn(shape, phones)
+                self.assertEqual(phones[shape]["value"], stored)
+        # Parsing only: a value that still cannot be normalized keeps its Unicode characters.
+        self.assertEqual(n.phone("\u00a0555\u20110100").value, "\u00a0555\u20110100")
+
 class TestPythonCases(unittest.TestCase):
     def test_every_kind(self):
         for kind in KIND_KEYS:

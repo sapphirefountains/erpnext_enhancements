@@ -2757,7 +2757,7 @@ PERSONAL = {
 	},
 	"EMP-B": {"personal_email": "bo.home@example.net", "emergency_phone_number": "(801) 555-8822"},
 }
-PERSONAL_VALUES = [value for record in PERSONAL.values() for value in record.values()] + ["8015550102"]
+PERSONAL_VALUES = [value for record in PERSONAL.values() for value in record.values()] + ["8015550102", "(801) 555-0102"]
 PERSONAL_KEY_PARTS = (
 	"personal",
 	"emergency_",
@@ -2914,15 +2914,15 @@ class TestTripContacts(MoneyAssertions):
 				"emergency": "911",
 				"office": {
 					"label": "Sapphire travel desk",
-					"phone": "+1 801-555-0142",
+					"phone": "(801) 555-0142",
 					"email": "travel@sapphire.example",
 				},
-				"booked_by": {"name": "Olive Office", "phone": "801-555-0000", "email": "office@example.com"},
-				"lead": {"name": "Ann", "phone": "8015550101"},
+				"booked_by": {"name": "Olive Office", "phone": "(801) 555-0000", "email": "office@example.com"},
+				"lead": {"name": "Ann", "phone": "(801) 555-0101"},
 				"site": {
 					"label": "Harbor Fountain",
 					"contact_name": "Sam Site",
-					"phone": "208-555-0199",
+					"phone": "(208) 555-0199",
 					"email": "sam@harbor.example",
 					# One line, state and ZIP together, and no "United States": changed on purpose
 					# (2026-09-27) from "500 Harbor Way, Boise, ID, 83702, United States".
@@ -2950,7 +2950,7 @@ class TestTripContacts(MoneyAssertions):
 		# rest of the card is the same for everyone on the trip.
 		cy = travel._trip_contacts(self.doc, "EMP-C")
 		self.assertEqual(cy["hotels"], [])
-		self.assertEqual(cy["lead"], {"name": "Ann", "phone": "8015550101"})
+		self.assertEqual(cy["lead"], {"name": "Ann", "phone": "(801) 555-0101"})
 		# A room for the whole crew is everyone's.
 		doc = make_trip()
 		doc.accommodations.append(
@@ -3026,7 +3026,7 @@ class TestTripContacts(MoneyAssertions):
 					with mock.patch.object(frappe, "form_dict", _dict({"as": employee}), create=True):
 						self.assertNothingPersonal(travel.ee_trip_sheet(self.doc))
 				self.assertNothingPersonal(travel.ee_trip_sheet(self.doc))
-			self.assertEqual(views_payload["contacts"]["lead"], {"name": "Ann", "phone": "8015550101"})
+			self.assertEqual(views_payload["contacts"]["lead"], {"name": "Ann", "phone": "(801) 555-0101"})
 		# The itinerary email's contacts.
 		SITE.rendered.clear()
 		with mock.patch.object(travel, "_is_coordinator", return_value=False):
@@ -3083,7 +3083,7 @@ class TestTripContacts(MoneyAssertions):
 		with mock.patch.object(travel, "_site_contact", side_effect=KeyError("bug")):
 			card = travel._trip_contacts(self.doc)
 		self.assertIsNone(card["site"])
-		self.assertEqual(card["lead"], {"name": "Ann", "phone": "8015550101"})
+		self.assertEqual(card["lead"], {"name": "Ann", "phone": "(801) 555-0101"})
 		self.assertIn(("log_error", "Trip contacts"), SITE.side_effects)
 
 	def test_an_opportunity_its_own_contact_then_its_customers(self):
@@ -3105,7 +3105,7 @@ class TestTripContacts(MoneyAssertions):
 			{
 				"label": "Lobby fountain",
 				"contact_name": "Sam Site",
-				"phone": "208-555-0111",
+				"phone": "(208) 555-0111",
 				"email": "sam@harbor.example",  # the Contact's, as the Opportunity has none
 				"address": "77 Lake St, Boise, ID",
 			},
@@ -3137,7 +3137,7 @@ class TestTripContacts(MoneyAssertions):
 			{
 				"label": "Kim's Garden Co",
 				"contact_name": "Kim Lee",
-				"phone": "385-555-0100",
+				"phone": "(385) 555-0100",
 				"email": "kim@garden.example",
 				"address": None,
 			},
@@ -3158,7 +3158,7 @@ class TestTripContacts(MoneyAssertions):
 			site["address"], "4500 Fountain Blvd, Las Vegas, NV", "the site, not the billing office"
 		)
 		# Nobody of its own to reach: the customer's primary contact, whole.
-		self.assertEqual((site["contact_name"], site["phone"]), ("Sam Site", "208-555-0199"))
+		self.assertEqual((site["contact_name"], site["phone"]), ("Sam Site", "(208) 555-0199"))
 		directions = [url for row in views.contact_list({"site": site}) for url, _label in row["links"]]
 		self.assertEqual(directions, [views.maps_directions_url("4500 Fountain Blvd, Las Vegas, NV")])
 
@@ -3171,7 +3171,7 @@ class TestTripContacts(MoneyAssertions):
 			{
 				"label": "Harbor Fountain",
 				"contact_name": "Jo Super",
-				"phone": "702-555-0177",
+				"phone": "(702) 555-0177",
 				"email": None,
 				"address": "4500 Fountain Blvd, Las Vegas, NV",
 			},
@@ -3199,7 +3199,7 @@ class TestTripContacts(MoneyAssertions):
 			{
 				"label": "Lakeside",
 				"contact_name": "Lee Lake",
-				"phone": "435-555-0100",
+				"phone": "(435) 555-0100",
 				"email": "lee@lake.example",
 				"address": "9 Shore Rd, Provo, UT",
 			},
@@ -3254,7 +3254,7 @@ class TestTripContacts(MoneyAssertions):
 		doc.owner = "bo@example.com"
 		self.assertEqual(
 			travel._trip_contacts(doc)["booked_by"],
-			{"name": "Bo B", "phone": "8015550102", "email": "bo@example.com"},
+			{"name": "Bo B", "phone": "(801) 555-0102", "email": "bo@example.com"},
 		)
 
 	def test_a_hotel_with_no_address_is_searched_by_name(self):
@@ -3276,7 +3276,7 @@ class TestTripContacts(MoneyAssertions):
 			[(r["role"], r["name"], r["tel"]) for r in rows],
 			[
 				("Emergency", "Call 911", "tel:911"),
-				("Travel desk", "Sapphire travel desk", "tel:+18015550142"),
+				("Travel desk", "Sapphire travel desk", "tel:8015550142"),
 				("Booked by", "Olive Office", "tel:8015550000"),
 				("Trip lead", "Ann", "tel:8015550101"),
 				("Job site", "Sam Site", "tel:2085550199"),
@@ -4768,10 +4768,10 @@ class TestTravelHomeForTheCrew(HubAssertions):
 			[row["label"] for row in featured["contacts"]],
 			["Travel desk", "Trip lead", "Booked by", "Job site", "Hotel", "Emergency"],
 		)
-		self.assertEqual(contacts["Travel desk"]["phone_href"], "tel:+18015550142")
+		self.assertEqual(contacts["Travel desk"]["phone_href"], "tel:8015550142")
 		self.assertEqual(contacts["Travel desk"]["email_href"], "mailto:travel@sapphire.example")
 		self.assertEqual(
-			(contacts["Trip lead"]["name"], contacts["Trip lead"]["phone"]), ("Ann", "8015550101")
+			(contacts["Trip lead"]["name"], contacts["Trip lead"]["phone"]), ("Ann", "(801) 555-0101")
 		)
 		self.assertEqual(contacts["Booked by"]["email_href"], "mailto:office@example.com")
 		self.assertEqual(contacts["Job site"]["name"], "Sam Site")
@@ -4789,8 +4789,8 @@ class TestTravelHomeForTheCrew(HubAssertions):
 			answer["office"],
 			{
 				"label": "Sapphire travel desk",
-				"phone": "+1 801-555-0142",
-				"phone_href": "tel:+18015550142",
+				"phone": "(801) 555-0142",
+				"phone_href": "tel:8015550142",
 				"email": "travel@sapphire.example",
 				"email_href": "mailto:travel@sapphire.example",
 			},

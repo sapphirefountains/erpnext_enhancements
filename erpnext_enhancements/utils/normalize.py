@@ -78,11 +78,23 @@ def _digits(text):
 
 #: An extension at the end: ``x123``, ``x 123``, ``ext 123``, ``ext. 123``,
 #: ``extension 123``, ``#123``, ``,123``. One to six digits. The lookbehind keeps a word
-#: ending in x (``fax``) from reading as an extension marker.
+#: ending in x (``fax``) from reading as an extension marker. A ``,`` or ``;`` may come
+#: *before* a word marker too — production holds ``801.566.7272,x5115``.
 _EXTENSION = re.compile(
-	r"^(?P<main>.*?)\s*(?:,|#|(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*(?P<ext>[0-9]{1,6})\s*$",
+	r"^(?P<main>.*?)\s*(?:,|#|(?:[,;]\s*)?(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*(?P<ext>[0-9]{1,6})\s*$",
 	re.IGNORECASE | re.DOTALL,
 )
+
+#: Dashes and spaces that are not ASCII, as a word processor or a phone's autocorrect writes
+#: them: the hyphens and dashes U+2010 to U+2015 and the minus sign U+2212, and the no-break,
+#: narrow, fixed-width and ideographic spaces. Production holds ``855-444-9477`` typed with
+#: U+2011, the non-breaking hyphen. Mapped to ``-`` and a space for *parsing only*: a value
+#: that still cannot be normalized comes back exactly as typed.
+_UNICODE_DASHES = re.compile("[\u2010-\u2015\u2212]")
+_UNICODE_SPACES = re.compile("[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]")
+
+#: A ``tel:`` link pasted into the field (``tel:+1(770)277-1120``), with or without ``//``.
+_TEL_PREFIX = re.compile(r"^tel:(?://)?", re.IGNORECASE)
 
 #: An extension marker followed by more digits than :data:`_EXTENSION` will peel.
 _LONG_EXTENSION = re.compile(r"(?:#|(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*[0-9]{7,}\s*$", re.IGNORECASE)
@@ -128,12 +140,14 @@ def _not_nanp_reason(main):
 def phone(raw):
 	"""Normalize a phone number to E.164 (``+18015550100``, ``+18015550100,123``).
 
-	Peels an extension off the end first, then accepts an explicit ``+`` number (``+1``
+	Reads Unicode dashes and spaces as their ASCII forms and drops a leading ``tel:``, then
+	peels an extension off the end, then accepts an explicit ``+`` number (``+1``
 	must be followed by exactly ten digits; any other country code is kept as ``+`` and its
 	8–15 digits) or, without a ``+``, only a North American shape. Everything else is left
 	as typed with a reason.
 	"""
-	text = _as_text(raw).strip()
+	text = _UNICODE_SPACES.sub(" ", _UNICODE_DASHES.sub("-", _as_text(raw))).strip()
+	text = _TEL_PREFIX.sub("", text).strip()
 	if not text:
 		return _ok(raw, "")
 

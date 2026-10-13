@@ -360,7 +360,7 @@ def get_visit_bootstrap(record):
             maintenance_contract=doc.maintenance_contract,
             technician=doc.technician or frappe.session.user,
             visit_label=doc.visit_label,
-            # The day the work is done decides which weekday lines it gets (v1.618.0).
+            # The day the work is done decides which weekday lines it gets (v1.619.0).
             visit_date=doc.get("visit_date") or doc.get("scheduled_visit_date"),
         )
         appended = 0

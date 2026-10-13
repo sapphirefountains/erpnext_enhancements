@@ -262,6 +262,7 @@ matches each incoming call against them and builds the `<Dial>`.
 | File | Role |
 |---|---|
 | [`call_routing_match.py`](call_routing_match.py) | The decision, as a pure function. **Standard library only** |
+| [`call_routing_dial.py`](call_routing_dial.py) | `to_dialable`: `call_routing_match.to_e164` that refuses a stored extension. From form kit P2-B a phone with an extension is stored `+18015550100,12`, and `to_e164` keeps every digit after a `+`, so it would dial `+1801555010012`. Every ERPNext-side dial goes through this; Triton's copy of `to_e164` needs the same guard. Stdlib only |
 | [`call_routing.py`](call_routing.py) | The Frappe binding: read the records, compile them into dial legs, explain the result |
 | [`../api/telephony.py`](../api/README.md) | `get_telephony_routing` carries the compiled payload; `preview_call_routing` backs the "Test Routing" button |
 | [`../tests/data/call_routing_vectors.json`](../tests/data/call_routing_vectors.json) | Shared test vectors, committed identically in Triton |

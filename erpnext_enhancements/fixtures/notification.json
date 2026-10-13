@@ -39,7 +39,7 @@
   "message_type": "HTML",
   "condition_type": "Python",
   "enabled": 1,
-  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Lead\", doc.name),\n\t(\"Name\", doc.get(\"lead_name\")),\n\t(\"Company\", doc.get(\"company_name\")),\n\t(\"Email\", doc.get(\"email_id\")),\n\t(\"Phone\", doc.get(\"mobile_no\") or doc.get(\"phone\")),\n\t(\"Source\", doc.get(\"source\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the lead\") }}\n{% endset %}\n{{ ee_email(body, title=\"New lead: \" ~ (doc.get(\"lead_name\") or doc.name), eyebrow=\"Sales\") }}"
+  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Lead\", doc.name),\n\t(\"Name\", doc.get(\"lead_name\")),\n\t(\"Company\", doc.get(\"company_name\")),\n\t(\"Email\", doc.get(\"email_id\")),\n\t(\"Phone\", sf_phone(doc.get(\"mobile_no\") or doc.get(\"phone\"))),\n\t(\"Source\", doc.get(\"source\"))\n]) }}\n{{ ee_doc_button(doc, \"Open the lead\") }}\n{% endset %}\n{{ ee_email(body, title=\"New lead: \" ~ (doc.get(\"lead_name\") or doc.name), eyebrow=\"Sales\") }}"
  },
  {
   "doctype": "Notification",

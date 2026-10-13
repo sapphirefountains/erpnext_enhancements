@@ -22,6 +22,8 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, now_datetime
 
+from erpnext_enhancements.utils.normalize import phone_display
+
 #: What a customer may write on their own booking.
 SITE_PREP_FIELDS = (
 	"site_contact_name",
@@ -33,6 +35,16 @@ SITE_PREP_FIELDS = (
 	"site_prep_notes",
 )
 FIELD_MAX_LENGTH = 1000
+
+
+def _site_prep(doc):
+	"""The booking's site-prep values for the portal, the phone shown (801) 555-0100: it is
+	stored +18015550100 since form kit P2-B, and saving it back stores the same number."""
+	values = {field: doc.get(field) or "" for field in SITE_PREP_FIELDS}
+	values["site_contact_phone"] = phone_display(values["site_contact_phone"])
+	return values
+
+
 SURFACES = ("", "Grass", "Concrete", "Pavers", "Deck", "Indoor Floor", "Other")
 
 #: Bookings a customer sees. Canceled and Expired ones are not theirs to act on.
@@ -113,7 +125,7 @@ def booking_detail(name, user=None):
 		invoices=invoices,
 		agreement=agreement,
 		editable=doc.status in EDITABLE_STATUSES,
-		site_prep={field: doc.get(field) or "" for field in SITE_PREP_FIELDS},
+		site_prep=_site_prep(doc),
 		site_prep_updated_on=doc.site_prep_updated_on,
 	)
 

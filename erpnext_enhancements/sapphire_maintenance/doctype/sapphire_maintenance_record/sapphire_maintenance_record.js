@@ -336,7 +336,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		frm.trigger("rebuild_for_day");
 	},
 
-	// A checklist line can be set to weekdays (v1.618.0), so the visit's day decides which lines
+	// A checklist line can be set to weekdays (v1.619.0), so the visit's day decides which lines
 	// it gets. A paper visit keyed in project first and date second was built for today; when
 	// the day moves to another weekday, rebuild (silently while nothing is filled in, after
 	// asking otherwise). Only tables this form built: a visit opened with its rows already made
@@ -362,7 +362,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 					maintenance_contract: frm.doc.maintenance_contract,
 					technician: frm.doc.technician,
 					visit_label: frm.doc.visit_label,
-					// Lines set to other weekdays stay off this visit (v1.618.0).
+					// Lines set to other weekdays stay off this visit (v1.619.0).
 					visit_date: frm.doc.visit_date || frm.doc.scheduled_visit_date,
 				},
 				callback: function (r) {

@@ -1661,6 +1661,17 @@ jobs:
       # both registered and excluded.
       - name: Normalization field registry (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_normalize_fields -v
+      # Form kit P2-B, normalize on save (utils/normalize_hook.py, doc_events["*"]
+      # before_validate): writes only on a draft save, never on submit/update-after-submit/
+      # cancel; a value no rule can read is left as typed; the kill switch
+      # (site_config disable_value_normalization) stops it; it never raises. Own frappe stub.
+      - name: Normalize on save hook (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_normalize_hook -v
+      # The Desk shows a stored +18015550100 as (801) 555-0100 (public/js/normalize/
+      # desk_display.js): the formatter and control decisions run under node, the bundle
+      # imports the module, and boot honours the kill switch.
+      - name: Desk phone display (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_display -v
       # The dry-run report the cleanup is approved from: writes nothing, skips submitted
       # records, reads Singles through get_single_value, survives a missing table or
       # column. Own step: installs and removes its own frappe stub.
@@ -2395,7 +2406,7 @@ jobs:
       # it installs its own frappe stub with an in-memory table. Needs jinja2 and node.
       - name: Visit client sign-off by email
         run: python -m unittest erpnext_enhancements.tests.test_visit_sign_off -v
-      # The visit form matches the maintenance agreement (v1.618.0): a checklist line set to
+      # The visit form matches the maintenance agreement (v1.619.0): a checklist line set to
       # weekdays goes only on visits on those days (Valley Fair Mall's Exhibit A schedule), a
       # misspelt day is refused on the Section, and the Visit Wizard's "What the agreement
       # covers" card gets the schedule, chosen services and Exhibit A with no rates, plus section

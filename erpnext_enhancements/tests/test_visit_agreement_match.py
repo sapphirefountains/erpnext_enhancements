@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Bench-free tests: the visit form matches what the maintenance agreement covers (v1.618.0).
+"""Bench-free tests: the visit form matches what the maintenance agreement covers (v1.619.0).
 
 Valley Fair Mall's agreement (2026-10-02) has a daily visit with a weekly schedule in Exhibit A:
 the splash pad nozzle filters on Monday, the cartridge filters on Tuesday and Friday, and so

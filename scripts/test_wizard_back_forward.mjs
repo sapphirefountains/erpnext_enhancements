@@ -2415,7 +2415,7 @@ async function visitWizardKeptSuite() {
 
 	// The harness's escape_html passes text through, so escaping is pinned in Python
 	// (tests/test_visit_agreement_match.py); this drives the real card.
-	await test("What the agreement covers: schedule, Exhibit A and what is not included (v1.618.0)", async () => {
+	await test("What the agreement covers: schedule, Exhibit A and what is not included (v1.619.0)", async () => {
 		visitServer({ "MNT-1": visit() });
 		const bootstrap = server.handlers.get_visit_bootstrap;
 		const agreement = {

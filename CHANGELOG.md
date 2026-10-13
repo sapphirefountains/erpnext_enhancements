@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.618.0] - 2026-10-13
+## [1.619.0] - 2026-10-13
 
 The visit form matches the maintenance agreement. Nik, 2026-10-13, after Valley Fair Mall's and
 Village at Day Dairy's agreements were brought into ERPNext (SF-MAINT-2026-0010 and -0018): "update the
@@ -82,6 +82,101 @@ scope:
 - **Spring startup:** it fell back to the bi-weekly form. It now has its own form
   ("Village at Day Dairy - Spring Startup"): pumps and the float sensor back in, flushed, filled and
   balanced, power on at Breaker 7, and the 2.2 checks.
+
+## [1.618.0] - 2026-10-13
+
+Form kit **P2-B** (ERPNext TASK-2026-02749; parent TASK-2026-02746). From this release on, every new or
+edited phone, email, website and address part in a registered field is **stored the one way**. The Desk
+**shows** phones the way people read them, so nobody sees a raw `+18015550100` in a form, a list or a
+report. Existing values change only when their record is next saved. The bulk cleanup is P2-C, after Nik
+approves the Data Normalization Preview (TASK-2026-02751).
+
+### Added
+
+- **Normalize on save** (`utils/normalize_hook.py`, `doc_events["*"]["before_validate"]`).
+  - **Registered fields only.** For a doctype the registry doesn't name, it returns after one set
+    lookup.
+  - **Draft saves only.** It writes only when `docstatus` is 0 and `_action` is a save. Frappe v16
+    runs `before_validate` for save and submit only (`run_before_save_methods`); a submit arrives
+    with `docstatus` 1, and update-after-submit and cancel never reach it. **A submitted record is
+    never rewritten**: rewriting a field that isn't `allow_on_submit` would raise "Not allowed to
+    change … after submission".
+  - **What it writes:** only a value the rule is sure of. **A value no rule can read is left exactly
+    as typed, never rejected.**
+  - **It never raises.** It logs at most once per request, naming the doctype, field and exception
+    type, never the value.
+  - It skips while an app installs. Migrate, patch and import saves are normalized.
+- **Kill switch, live, no deploy:** `bench --site <site> set-config disable_value_normalization 1` turns
+  off the hook and the Desk display together. Site config is read per request, and boot stops shipping
+  the registry.
+- **The Desk shows phones as `(801) 555-0100`** (`public/js/normalize/desk_display.js`, imported by
+  `erpnext_enhancements.bundle.js`; the registry arrives as `frappe.boot.sf_normalize`).
+  - **Reading:** `frappe.form.formatters.Data` is wrapped, which covers read-only form fields, grid
+    cells, list view, report view and script reports. They all go through `frappe.format`, and
+    Phone, Read Only and Select fall back to it. A value in the exact stored North American shape
+    is shown formatted even with no registry match (script-report columns carry no parent), but
+    never on a Link or Select.
+  - **Editing:** `ControlData.format_for_input` and `.parse` are wrapped, for registered phone fields
+    only (filters are left alone). The input shows `(801) 555-0100`, the model gets `+18015550100`,
+    a value that can't be normalized is kept as typed, and the caret never jumps while someone
+    types.
+  - **Every wrapper fails open** to Frappe's own behaviour.
+  - Load order was checked in v16: `frappe.boot` is set in `desk.html` before any app include, and
+    frappe's own `form.bundle.js`/`controls.bundle.js` load before this app's bundles.
+- **`sf_phone`** Jinja global (`utils/value_display.py`), now used by:
+  - the New Lead Created notification;
+  - the Package Dispatch print format;
+  - the two fountain-move staff emails.
+
+  `phone_display` is now used for the contract-signing, visit sign-off and fountain-move contact
+  phones, customer confirmations, the water engineering packet, rental task text and the rental portal,
+  the planner contact card, the Desk contacts directory, and **every travel card** (Plan a Trip, the
+  itinerary and Travel Home).
+- **Three rule gaps found by the first prod dry run**, fixed in both languages (12 new shared cases):
+  - Unicode dashes and spaces: `801‑360‑2977` with non-breaking hyphens was rejected.
+  - A separator before the extension marker: `801.566.7272,x5115`.
+  - A `tel:` prefix.
+
+### Fixed (found by the consumer audit)
+
+- **Call routing would have dialed a stranger.** `call_routing_match.to_e164` trusts a leading `+`
+  and keeps every digit, so `+18015550100,12` became `+1801555010012`.
+  - `ai_governance/call_routing_dial.to_dialable` refuses a value with an extension, exactly as the
+    old `801-555-0100 x12` form was refused ("will not ring"). It is used for Employee cells, Phone
+    Number targets and the default forward number.
+  - `call_routing_match.py` itself is unchanged, because it is the contract copied into Triton.
+- **The planner's `tel:` link** drops a stored extension instead of running its digits into the
+  number.
+
+The rest of the audit found nothing that breaks:
+- caller ID (`_get_caller_info` matches the last ten digits);
+- `send_sms` (digit LIKE);
+- fountain-move matching;
+- every email lookup (v16 creates tables `utf8mb4_unicode_ci`, so lowercase still matches);
+- e-sign and sign-off email checks (casefolded).
+
+### Changed
+
+- **Travel cards' `tel:` links lose the `+1` on North American numbers** (`tel:8015550142`, was
+  `tel:+18015550142`). The cards now carry the shown form, and the three `tel:` builders (Python and
+  the two pages, held equal by `test_travel_planner`) keep a `+` only when it is written. It dials the
+  same number from any US phone; international numbers keep their `+`. The travel tests now expect
+  shown phones, and the crew-privacy check also looks for a personal cell in its shown form, so a leak
+  can't hide behind the reformatting.
+
+### Known gaps
+
+- **Triton** (separate repo) has the same extension bug in its copy of `to_e164`; caller lookup there
+  misses a number stored with an extension; click-to-call, SMS and the gateway pass a `,123` number to
+  Twilio raw. Voice Monitor, Voice Archive and the chat call card show ERPNext phones raw, so they will
+  show `+18015550100`. Filed as a follow-up.
+- **Expect save cascades.** Saving a Contact re-saves linked parties once, through the existing sync,
+  when their copied phone is still in the old form.
+- **Possible drift flag.** Re-saving a draft contract that is out for signature can raise the
+  non-blocking "agreement text changed" flag if its phone was stored the old way.
+- **The Desk wiring is tested under node against a stand-in for frappe, not in a browser.** Check it
+  live after deploy: type a phone into a Contact, edit it in a grid row, and look at a list and a
+  report.
 
 ## [1.617.0] - 2026-10-13
 

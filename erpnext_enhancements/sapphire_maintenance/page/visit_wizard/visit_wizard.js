@@ -3133,7 +3133,7 @@ class VisitWizard {
 		this.render_report_incident();
 	}
 
-	// "What the agreement covers" (v1.618.0): the site's maintenance agreement, so the
+	// "What the agreement covers" (v1.619.0): the site's maintenance agreement, so the
 	// technician sees the schedule the client was promised, the custom plan (Exhibit A) this
 	// visit carries out, and the work the agreement leaves out, which is a follow-up for a
 	// quote rather than a free extra. Collapsed, with the schedule in its header. From the

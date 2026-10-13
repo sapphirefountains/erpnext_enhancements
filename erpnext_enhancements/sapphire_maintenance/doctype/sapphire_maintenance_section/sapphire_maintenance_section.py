@@ -12,7 +12,7 @@ Record):
   * Equipment Inspection  -> maintenance_results rows (Pass/Fail/Replace/Other)
   * Cleaning Tasks        -> cleaning_tasks rows (done / not done)
 
-Any line can name weekdays in ``days`` (v1.618.0): it then goes only on visits on those days,
+Any line can name weekdays in ``days`` (v1.619.0): it then goes only on visits on those days,
 for an agreement's weekly schedule. See ``sapphire_maintenance/visit_days.py``.
 """
 

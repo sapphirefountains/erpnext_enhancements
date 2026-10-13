@@ -578,7 +578,7 @@ def get_visit_payload(
 	name/stock-UOM on consumables — one enrichment point serving the desk
 	form, the visit wizard, print and portal renders alike.
 
-	``visit_date`` is the day the checklist is for (v1.618.0; blank: today). A template line
+	``visit_date`` is the day the checklist is for (v1.619.0; blank: today). A template line
 	whose ``days`` names other weekdays is left off, so a daily site's Tuesday visit carries
 	the agreement's Tuesday tasks and not Monday's (``visit_days``).
 
@@ -781,7 +781,7 @@ def get_dashboard_context(project, serial_no=None, record=None):
 			"visits": last 3 submitted Sapphire Maintenance Records for the project,
 			"contract": Active Maintenance Contract context — gate code, key
 				location, preferred days/time from the linked Project Contract,
-			"agreement": what that agreement covers (``agreement_scope``, v1.618.0):
+			"agreement": what that agreement covers (``agreement_scope``, v1.619.0):
 				schedule, chosen services, Exhibit A, what is not included; {} without one,
 			"service_scope": the Project's Service stream Customer Requests and
 				Deliverables (free-text rows from the contract scope model),
@@ -833,7 +833,7 @@ def get_dashboard_context(project, serial_no=None, record=None):
 			)
 			if legal:
 				context['contract'].update(legal)
-			# What the agreement covers, for the Visit Wizard's card (v1.618.0). Never raises.
+			# What the agreement covers, for the Visit Wizard's card (v1.619.0). Never raises.
 			from erpnext_enhancements.sapphire_maintenance.agreement_scope import agreement_scope
 
 			context['agreement'] = agreement_scope(contract.project_contract)

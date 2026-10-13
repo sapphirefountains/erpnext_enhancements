@@ -37,6 +37,7 @@ from typing import Any
 import frappe
 from frappe.utils import cint, get_system_timezone, getdate, now_datetime
 
+from erpnext_enhancements.ai_governance import call_routing_dial as dial
 from erpnext_enhancements.ai_governance import call_routing_match as match
 
 # Imported rather than reimplemented: this must be the *same* identity string the desk
@@ -132,7 +133,7 @@ def _compile_targets(rule_name: str, targets: Any, warnings: list[str]) -> list[
 			if not emp:
 				warnings.append(f"{rule_name}: Employee {value} no longer exists")
 				continue
-			number = match.to_e164(emp.get("cell_number"))
+			number = dial.to_dialable(emp.get("cell_number"))
 			if not number:
 				warnings.append(
 					f"{rule_name}: {emp.get('employee_name') or value} has no usable Cell Number, "
@@ -150,7 +151,7 @@ def _compile_targets(rule_name: str, targets: Any, warnings: list[str]) -> list[
 			# existed — or written by a patch — is normalised again rather than trusted.
 			raw = (row.get("phone_number") or "").strip()
 			label = (row.get("phone_label") or "").strip() or raw
-			number = match.to_e164(raw)
+			number = dial.to_dialable(raw)
 			if not number:
 				warnings.append(
 					f"{rule_name}: {raw or 'a Phone Number target'} is not a dialable number, "
@@ -248,7 +249,7 @@ def get_routing_payload() -> dict[str, Any]:
 			"schema_version": match.SCHEMA_VERSION,
 			"paused": settings["paused"],
 			"timezone": get_system_timezone(),
-			"default_forward_number": match.to_e164(settings["default_forward_number"]),
+			"default_forward_number": dial.to_dialable(settings["default_forward_number"]),
 			"default_ring_seconds": settings["default_ring_seconds"],
 			"voicemail_message": settings["voicemail_message"],
 			"holidays": holiday_dates(settings["holiday_list"]),

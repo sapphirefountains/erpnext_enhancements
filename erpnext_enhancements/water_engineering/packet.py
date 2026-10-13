@@ -23,6 +23,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from erpnext_enhancements.utils.normalize import phone_display
 from erpnext_enhancements.water_engineering.engine import (
     circulation_schematic_svg,
     electrical_oneline_svg,
@@ -75,13 +76,13 @@ def we_title_block(design):
             "name": s.get("engineer_name"),
             "license": s.get("engineer_license"),
             "address": s.get("engineer_address"),
-            "phone": s.get("engineer_phone"),
+            "phone": phone_display(s.get("engineer_phone")),
             "stamp": s.get("engineer_stamp"),
         },
         "contractor": {
             "name": s.get("contractor_name") or "Sapphire Fountains",
             "address": s.get("contractor_address"),
-            "phone": s.get("contractor_phone"),
+            "phone": phone_display(s.get("contractor_phone")),
         },
         "project": {
             "name": project.get("project_name") or doc.get("design_title") or doc.name,

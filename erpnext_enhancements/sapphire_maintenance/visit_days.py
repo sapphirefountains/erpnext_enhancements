@@ -1,4 +1,4 @@
-"""Checklist lines done on set weekdays (v1.618.0).
+"""Checklist lines done on set weekdays (v1.619.0).
 
 A maintenance agreement can name a weekly schedule: Valley Fair Mall is visited every day,
 and its Exhibit A puts the splash pad nozzle filters on Monday, the cartridge filters on
