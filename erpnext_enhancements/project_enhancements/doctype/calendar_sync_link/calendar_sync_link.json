@@ -1,0 +1,176 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-12 12:00:00.000000",
+ "custom": 0,
+ "description": "One Google Calendar event that ERPNext owns: which record it shows, where it is, and the hash of what was last written, so an unchanged record costs no Google call.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_ref",
+  "source_doctype",
+  "source_name",
+  "source_key",
+  "kind",
+  "title",
+  "column_break_main",
+  "status",
+  "event_date",
+  "calendar_id",
+  "event_id",
+  "section_sync",
+  "content_hash",
+  "etag",
+  "last_synced",
+  "column_break_sync",
+  "last_error",
+  "error_count"
+ ],
+ "fields": [
+  {
+   "description": "doctype|name|key: one row per synced item.",
+   "fieldname": "source_ref",
+   "fieldtype": "Data",
+   "label": "Source reference",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Source DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "description": "The record's name. Data, not a Dynamic Link: a link would make Frappe refuse to delete the Task or visit it points at.",
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Source",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Only for a projected contract visit: contract|feature|date.",
+   "fieldname": "source_key",
+   "fieldtype": "Data",
+   "label": "Projection key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "options": "\nTask\nPencil Task\nVisit\nPencil Visit\nProjected Visit\nDay Note\nUnavailable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Event title",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Synced",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Synced\nDeleted\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "event_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Event date",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "calendar_id",
+   "fieldtype": "Data",
+   "label": "Calendar ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "event_id",
+   "fieldtype": "Data",
+   "label": "Google event ID",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "section_sync",
+   "fieldtype": "Section Break",
+   "label": "Last sync"
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content hash",
+   "read_only": 1
+  },
+  {
+   "description": "The etag of ERPNext's own last write: snap-back ignores an event that still carries it.",
+   "fieldname": "etag",
+   "fieldtype": "Data",
+   "label": "Google etag",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_synced",
+   "fieldtype": "Datetime",
+   "label": "Last synced",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sync",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_count",
+   "fieldtype": "Int",
+   "label": "Errors in a row",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Sync Link",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 0
+}

@@ -46,6 +46,10 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
 | `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
+| `calendar_sync/` | **Calendar sync** (C2, v1.604.0): committed planner work pushed one way to the shared Google Calendars, with snap-back. `payload.py` (pure: item → event body, ids, hashes, the snap-back table), `sources.py` (ERPNext → items), `google_api.py` (OAuth + Calendar REST), `engine.py` (reconcile, nightly repair, snap-back, preview, health), `triggers.py` (`doc_events`). See [Calendar sync](#calendar-sync-c2-v16040) | `engine.reconcile`, `run_item_job`, `run_full_repair`, `nightly_repair`, `snapback`, `plan`, `health`; `triggers.on_change`, `on_contract_change`, `on_project_change` | `doc_events` (Task, visit, contract, day note, block, Project); `scheduler_events`; `api/calendar_sync.py` |
+| `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
+| `doctype/calendar_sync_link/` | One Google event ERPNext owns: source (`doctype|name|key`, unique), calendar, event id, content hash, Google etag of our last write, last synced, last error | `CalendarSyncLink` | written only by `calendar_sync.engine` |
+| `doctype/calendar_sync_color/` | Child of Calendar Sync Settings: a value stream (or Day Note / Unavailable) and its Google `colorId` | `CalendarSyncColor` | `calendar_sync.engine.color_overrides` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
 | `doctype/planner_resource_work_pattern/` | Child table: hours for each weekday, optionally between two dates (a seasonal schedule) | `PlannerResourceWorkPattern` | child-table controller |
@@ -1459,6 +1463,109 @@ block, Phase 6B's menu and the T1 block. `tests/test_planner_draft_new_tasks.py`
   applied when it is published). The Needs tasks list still lists a project whose only tasks are drafts.
   Up to 300 unpublished new tasks per person.
 
+## Calendar sync (C2, v1.604.0)
+
+When planners commit work, ERPNext pushes it **one way** to Sapphire's existing shared Google
+Calendars so the team can see the schedule there. Nik's decisions of 2026-10-12, settled:
+
+- **ERPNext is the only source of truth.** Nothing ever flows from Google into ERPNext; two-way sync was
+  withdrawn. An edit made in Google is undone by snap-back (below).
+- **Three calendars that already exist**, owned by Nik's account, all America/Denver: **Projects** (firm
+  and pencil project tasks, day notes), **Maintenance** (visits, projected contract visits) and **Company
+  Holidays & Vacations** (unavailable blocks). Their IDs go in Calendar Sync Settings, typed or picked
+  from the account's own list (*Pick calendars*, which shows only calendars it can change).
+- **Identity: one Google account by OAuth, "for now"** (Nik's). A service account cannot do it: Workspace
+  caps sharing outside the domain at "See all event details". *Authorize with Google* uses the OAuth client
+  in **Google Settings** (Frappe's) and Frappe v16's shared callback,
+  `/api/method/frappe.integrations.google_oauth.callback` (v16.31+), with a server-side state naming our
+  callback (`api/calendar_sync.oauth_callback`, deliberately not whitelisted). Scopes:
+  `calendar.events` and `calendar.readonly`, nothing else, and **no `include_granted_scopes`** (it would
+  hand the token every scope the account ever granted the client). The refresh token is a Password field;
+  switching accounts is one more click. **This is not Frappe's own Google Calendar doctype sync**, whose
+  three production rows stay disabled by decision; and the v1.346.0 removal of the every-Task broadcast
+  stands (`tests/test_hooks_integrity.py`).
+- **Off by default**, with a dry-run **Preview** that lists what a full re-sync of a date range would
+  create, update or delete, calling no Google API and writing nothing.
+
+**What goes on a calendar** (all-day events in C2; C3 swaps in timed route slots through the one function
+`payload.event_times`):
+
+| Item | Calendar | Dates | Tentative | Removed when |
+|---|---|---|---|---|
+| Project Planner task on a customer job (`crew_availability.is_planner_job`, so never an internal project; rental crew tasks count, as on the planner) | Projects | `crew_availability.task_span`: `exp_start_date` → `exp_end_date` as one event (Google's end is exclusive), or a same-day slot's day | pencil (`custom_tentative`), "✎ " | Canceled, a template or group, undated, its project Canceled, deleted |
+| Maintenance visit | Maintenance | the Maintenance Planner's own day (scheduled while a draft; the visit date once done or in review) | pencil (`tentative`), "✎ " | canceled, unscheduled, deleted |
+| Projected contract visit (`api/maintenance_planner._projections` + `_decorate`) | Maintenance | the projected day | always, "(projected)" | no longer projected: drafted, moved, paused, ended, or the customer is on service hold |
+| Day note (`Planner Day Note`) | Projects | its date | no | deleted |
+| Unavailable block (`Planner Block`) | Company Holidays & Vacations | its date ("Austin — Unavailable 2 pm–4 pm") | no | deleted |
+
+Finished work (a task Completed or Invoiced, or on a Completed / Invoiced / Paid project; a visit
+submitted or in Pending Review) **keeps its event with "✓ "** in front.
+
+**Drafts never sync.** Both planners keep unpublished changes in `Planner Draft Change` rows and never
+touch the record until Publish, so reading saved records is exactly "committed work". No module of the
+sync names that doctype or either draft overlay, and the test fails the build if one starts to.
+
+**The event.** Title `"<site> · <subject or visit label> — <crew first names>"` (`short_site_name`; a
+subcontractor keeps its whole name). Location: the stop's address the way the route view finds it
+(`routing.locate`), else the project's (`workforce/sites.project_address_text`). Description: status,
+hours (and days), crew (lead marked), equipment (`custom_equipment`), qualifications needed
+(`custom_required_credentials`), flagged weather for outdoor tasks and visits from `planner_weather`
+(cached three hours per site, one Open-Meteo request for every uncached site, never raises), and always
+"Managed by ERPNext — edits made here are undone. Change it in the planner: <absolute link to that day's
+week on the Project or Maintenance Planner>". Color by value stream (Settings' color rows over the
+defaults: Design 3 Grape, Build 9 Blueberry, Service 10 Basil, Events 6 Tangerine, Delivery 5 Banana, Day
+Note and Unavailable 8 Graphite). **No attendees, ever** (`sendUpdates=none`), no reminders on the
+writing account, transparent.
+
+**Nothing secret.** These calendars are shared. The description is built only from structured fields;
+the readers never select a task description, project or visit notes, a Maintenance Profile's
+`access_codes` / safety or wrap-up instructions, or a block's `note` (private to the person and the
+schedulers). The free text that does show (a subject, an address, a day note) goes through
+`payload.scrub`, which drops any segment naming a gate, door, alarm, lockbox or keypad code, a code or
+PIN followed by digits, a password or a combination. That is defence in depth: a bare number in a
+subject cannot be told from a part number.
+
+**Identity, idempotency, re-drivability.**
+
+- Every event carries `extendedProperties.private` `{erpnext_site, erpnext_doctype, erpnext_name,
+  erpnext_kind[, erpnext_key]}` and a **deterministic client-supplied id**: `"erp"` + SHA-1 of site,
+  doctype, name and key in hex (base32hex-safe). A re-run inserts the same id, gets 409, and updates,
+  which also restores an event deleted in Google. An id Google refuses outright gets a `g<n>` suffix.
+- `Calendar Sync Link` holds one row per item (`source_ref` unique) with the content hash of what was
+  written: an unchanged item costs no Google call. A changed calendar ID moves the event.
+- **Triggers** (`calendar_sync/triggers.py`): `doc_events` on Task, Sapphire Maintenance Record (update,
+  submit, cancel, update after submit, trash), Sapphire Maintenance Contract (re-projects), Planner Day
+  Note, Planner Block, and Project (name, status, type or address changed). Each enqueues **once per record
+  per request** with `enqueue_after_commit=True` and a stable `job_id`, so a Planner publish
+  (`frappe.flags.planner_publishing`) that saves a task five times queues it once. Skipped in import,
+  patch, install, migrate and tests; never raises into the save; nothing while the switch is off.
+- **The deploy FLUSHDBs redis**, destroying queued jobs, so there is a **nightly full repair**
+  (`scheduler_events.daily_long`): every item in the window (Settings: 14 days back, 180 ahead) and every
+  live link in it, then the projections, removing projected events that are no longer projected. Capped at
+  20 minutes; what is left waits for the next run. **Re-sync everything** on the Settings page runs the same thing now.
+- **Snap-back** (every 10 minutes): `events.list` per calendar with the stored `syncToken` and deleted
+  events shown. An event carrying this site's properties that somebody changed is rewritten from ERPNext;
+  one deleted in Google is recreated; one whose source is gone is deleted; a stray copy is deleted. **Our own
+  write echoing back is recognised by the etag stored on the link**, not by comparing text (Google may
+  normalize text, and a comparison that never matches would rewrite the same event forever). Events without
+  our properties, or with another site's (staging), are other people's and are never touched. A 410
+  drops the token and lists in full. At most 300 fixes per run.
+- **Errors**: 429, 5xx and rate-limit 403s back off (up to four retries, honouring `Retry-After`); a 401
+  refreshes the token once. A failing item is marked Error on its link and logged once when it starts
+  failing. A refused refresh token stops the run and is logged once an hour. No error or log carries a
+  token, secret or code (`raise ... from None`, `log_error` with keywords).
+- **Health panel** (Settings): switch, Google Settings readiness, connected account, a test refresh
+  (*Test connection*), the redirect URI to register, the window, last snap-back check, last full repair and
+  its counts, events by status and kind, and the last ten errors.
+
+**Out of scope here** (later tasks): timed route slots and leave-by (C3), reading hand-made time off from
+the holidays calendar into the planner (C4), cutover and ending the old hand-made series (C5), the Triton
+dedupe (C6).
+
+`tests/test_calendar_sync.py` (bench-free, own CI step) pins the payload, the secrets rules, ids, hashes,
+the snap-back table, colors, the readers' states, the master switch, the dry run, the triggers, the
+client's backoff and the wiring.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
@@ -1467,6 +1574,7 @@ block, Phase 6B's menu and the T1 block. `tests/test_planner_draft_new_tasks.py`
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `scheduler_events.daily_long` → `planner_tracking.refresh_labor_forecasts` (the nightly refresh of the Labor line's stored `labor_forecast`, no Google calls, never saves the Project; Phase 4 follow-up).
+- Calendar sync (C2, v1.604.0): `doc_events` Task (`on_update`, `on_trash`), Sapphire Maintenance Record (`on_update`, `on_submit`, `on_cancel`, `on_update_after_submit`, `on_trash`), Planner Day Note and Planner Block (`on_update`, `on_trash`) → `calendar_sync.triggers.on_change`; Sapphire Maintenance Contract `on_update` → `on_contract_change`; Project `on_update` → `on_project_change`; `scheduler_events` `*/10` → `calendar_sync.engine.snapback`; `daily_long` → `calendar_sync.engine.nightly_repair`. All no-ops while Calendar Sync Settings is off.
 - `assistant_tools` → `crew_conflicts.CrewConflicts` (Phase 6D: the Conflict center's list, read-only, never a block's note). Personal blocks and day notes need no hook: the engine reads them, and the planners' reads and the three digests call `api/planner_blocks` directly.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.

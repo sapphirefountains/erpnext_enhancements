@@ -20,6 +20,15 @@ rather than a bug here. The service-account settings themselves are documented i
 Read-only. Nothing here creates, moves or deletes events. Consumers: `api/finance_calendar.py`
 and the Finance Calendar widget.
 
+## Not here: the planner calendar sync
+
+The **write** side, pushing committed planner work to the shared Projects, Maintenance and Company
+Holidays & Vacations calendars (v1.604.0), lives in
+[`project_enhancements/calendar_sync/`](../project_enhancements/calendar_sync/) and is documented in the
+[Project Enhancements README](../project_enhancements/README.md#calendar-sync-c2-v16040). It does **not**
+use the service account above: Workspace caps sharing outside the domain at "See all event details", so a
+service account could never edit those calendars. It signs in as one Google account through OAuth instead.
+
 ## Related
 
 - `google_drive/` — the Drive automation that owns the service-account settings
