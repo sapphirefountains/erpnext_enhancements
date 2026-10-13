@@ -477,7 +477,7 @@ class TestMaterializeDefaults(unittest.TestCase):
 
 	def test_a_never_saved_single_gets_every_default(self):
 		# Ten declared defaults, plus Phase 3B's two "Telling people" switches (both "0"), plus Phase
-		# 5's customer_date_confirmations ("0"; the phone number has no default), plus v1.606.0's
+		# 5's customer_date_confirmations ("0"; the phone number has no default), plus v1.605.0's
 		# leave_by_pings ("0") and leave_by_ping_minutes ("10").
 		self.assertEqual(self._run(stored=()), 15)
 		values = _db_writes[0][1]

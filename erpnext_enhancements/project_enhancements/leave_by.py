@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Leave-by pings (v1.606.0, calendar sync C3): "Leave by 7:35 am for Riverwalk".
+"""Leave-by pings (v1.605.0, calendar sync C3): "Leave by 7:35 am for Riverwalk".
 
 The shared Google Calendar events of C3 say "Leave by 7:35 am" on the first stop of a day, but
 Google's reminders cannot carry it to the crew: the Calendar API's reminders belong to the account

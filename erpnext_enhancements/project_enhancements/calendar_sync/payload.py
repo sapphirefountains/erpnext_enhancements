@@ -14,7 +14,7 @@ Things this module is careful about, some of which look like bugs:
 * **All-day ends are exclusive.** Google's ``end.date`` is the day *after* the last day, so a task
   from Mon 12 to Wed 14 is ``start 2026-10-12, end 2026-10-15``. :func:`event_times` is the only
   place that knows it.
-* **Route stops are timed (C3, v1.606.0).** An item carrying ``timing`` (``timing.attach`` puts it
+* **Route stops are timed (C3, v1.605.0).** An item carrying ``timing`` (``timing.attach`` puts it
   there for a stop on someone's route in the near window) becomes a ``dateTime`` event in the site's
   time zone, and its description leads with "Leave by 7:35 am" when it is the first stop of the
   timing person's day. Everything else stays all-day.

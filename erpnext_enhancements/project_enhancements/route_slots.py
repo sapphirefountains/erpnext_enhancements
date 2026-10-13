@@ -3,7 +3,7 @@
 
 """Clock times for every stop of a person's day, exactly as the planner's route view prints them.
 
-Calendar sync C3 (v1.606.0) and the leave-by ping both need "when is Austin on site at Riverwalk
+Calendar sync C3 (v1.605.0) and the leave-by ping both need "when is Austin on site at Riverwalk
 on Thursday, and when must he leave to get there". The planner already answers that on its route
 view (``api.project_planner.route_payload``): leave the shop at Project Planner Settings
 ``day_start_time``, drive each leg (the Planner Drive Time cache, Google Routes for a miss, else the

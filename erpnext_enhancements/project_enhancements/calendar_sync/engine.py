@@ -22,7 +22,7 @@ Three ways work reaches Google, all safe to run twice:
   event without our properties is somebody else's and is never touched. A 410 drops the token and
   lists in full.
 
-**Route times (C3, v1.606.0).** :func:`reconcile` runs every item through ``timing.attach``, which
+**Route times (C3, v1.605.0).** :func:`reconcile` runs every item through ``timing.attach``, which
 times a route stop in the near window from its lead's route (see ``timing.py``). Moving one stop
 re-times every other stop that person drives that day, so an item job collects the days it touched
 (``timing.fan_out_days``) and queues one :func:`run_day_job` per day, coalesced (:func:`queue_day`):

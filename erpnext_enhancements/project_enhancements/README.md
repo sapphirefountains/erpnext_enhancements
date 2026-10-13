@@ -47,7 +47,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
 | `calendar_sync/` | **Calendar sync** (C2, v1.604.0): committed planner work pushed one way to the shared Google Calendars, with snap-back. `payload.py` (pure: item → event body, ids, hashes, the snap-back table), `sources.py` (ERPNext → items), `google_api.py` (OAuth + Calendar REST), `engine.py` (reconcile, nightly repair, snap-back, preview, health), `triggers.py` (`doc_events`). See [Calendar sync](#calendar-sync-c2-v16040) | `engine.reconcile`, `run_item_job`, `run_full_repair`, `nightly_repair`, `snapback`, `plan`, `health`; `triggers.on_change`, `on_contract_change`, `on_project_change` | `doc_events` (Task, visit, contract, day note, block, Project); `scheduler_events`; `api/calendar_sync.py` |
-| `calendar_sync/timing.py` | **Calendar sync C3** (v1.606.0): which events are timed (a firm single-day route stop in the near window), the lead rule, past days and finished work keeping their stored times, the per-job route cache and the day fan-out. See [Route times and leave-by](#route-times-and-leave-by-c3-v16060) | `attach`, `pick`, `prime`, `load`, `fan_out_days`, `near_window` | `calendar_sync.engine.reconcile`, `run_item_job`, `run_day_job` |
+| `calendar_sync/timing.py` | **Calendar sync C3** (v1.605.0): which events are timed (a firm single-day route stop in the near window), the lead rule, past days and finished work keeping their stored times, the per-job route cache and the day fan-out. See [Route times and leave-by](#route-times-and-leave-by-c3-v16060) | `attach`, `pick`, `prime`, `load`, `fan_out_days`, `near_window` | `calendar_sync.engine.reconcile`, `run_item_job`, `run_day_job` |
 | `route_slots.py` | C3: the route view's own clock times for every stop of a person's day (`route_payload`'s two passes), keyed by stop; leave-by = arrival less the drive. Pure core, one engine call per range | `day_slots`, `stop_key`, `first_slot`, `compute` | `calendar_sync.timing`, `leave_by` |
 | `leave_by.py` | C3: the opt-in leave-by ping, every five minutes, **off until Project Planner Settings → *Leave-by pings*** and each person's *Ping me at leave-by time*. Bell, then text, else email; once per person per stop per day (`Planner Ping Log`); no Google request | `send_leave_by_pings`, `select`, `due`, `message` | `scheduler_events` cron `4-59/5` |
 | `doctype/planner_ping_log/` | `user|date|stop` claim (unique) that keeps a leave-by ping to once per person per stop per day across workers and deploys | `PlannerPingLog` | `leave_by` |
@@ -1074,9 +1074,10 @@ do to a drag.
   no file, no draft change. Otherwise it refuses with the reason. A split's Undo also puts the first half
   back (its old end, hours and crew) through `save_task`'s own path, and (Phase 6E) the tasks the split
   had moved onto the second half back onto the first.
-- **Draft mode.** A new task cannot be a draft: a `Planner Draft Change` is a pending change *of an
-  existing task*. So Duplicate, Split and quick add say so and do nothing while Draft mode is on (the
-  page refuses before it asks, and the server refuses too); `move_many` drafts each move properly.
+- **Draft mode.** Duplicate, quick add and the Build out grid are drafted since v1.603.0 (T2, below);
+  only a **split** is refused while Draft mode is on, because it changes a task that exists and creates
+  another at once (the page refuses before it asks, and the server refuses too); `move_many` drafts each
+  move properly.
 - **Search.** A box in the toolbar (`/` jumps to it): tasks (subject, name), projects (name, title) and
   people on screen first, then `search_planner` for tasks outside the range (customer jobs and open work
   only, nearest the week on screen first, at most 20). Arrow keys and Enter pick. A task goes to its
@@ -1371,8 +1372,8 @@ server is `api/planner_actions.py`.
   the project's own open tasks; a loop of rows, a row waiting on itself or on a row that was emptied
   is marked on the screen and refused by the server with the rows named. The button says what it will
   make ("Create 5 tasks and 2 phases"); blank rows are skipped. What was typed is kept per project in
-  `this.t1.drafts` so a Back that closes the panel does not lose it. Draft mode refuses it (a new task
-  has no task for a draft to hang on), as quick add does.
+  `this.t1.drafts` so a Back that closes the panel does not lose it. In Draft mode (v1.603.0) Create
+  sends `draft=1` and the rows are kept as drafts (T2, below).
   - **The tasks are undated and crewless**, so they appear in the Unscheduled tray, ready to drag onto
     days. Nobody and no day is picked: no conflict check runs.
   - **One request, all or nothing**: `build_out_tasks(project, rows)` checks every row first (a mistake
@@ -1420,6 +1421,51 @@ server is `api/planner_actions.py`.
 Hooks into the class and Phase 6A, one line each: `init_t1` (constructor), `t1_load_needs` (`load`),
 `t1_render_tray` (`render_trays`), `t1_undo` (`undo`, before `p6b_undo`) and `t1_project_actions`
 (`p6a_open_project`). `tests/test_planner_build_out.py` pins the server and the page.
+
+### New tasks in Draft mode, Paste a list and Copy from project (T2, v1.603.0)
+
+Nik, 2026-10-12: "build out a whole new schedule as a draft and publish it once." Publishing is also
+when work reaches Google Calendar (the sync follows saved Tasks), so **a drafted new task is never a
+Task**. Server: `api/project_planner.py` (the "T2" block) and `api/planner_actions.py`; page: the draft-mode
+block, Phase 6B's menu and the T1 block. `tests/test_planner_draft_new_tasks.py` pins it.
+
+- **The data model.** `Planner Draft Change` has a `kind`: `Change` (the default, and what every
+  existing row already is, since a normal doctype's new column default is written into every existing row
+  by the `ALTER`: no backfill patch) or `New task`. A `New task` row names neither a `task` nor a `visit`,
+  carries its `project`, and keeps in `payload` the Task it will become as a *spec* (`load_spec`: whitelisted
+  Task fields, crew, qualifications, equipment, `depends_on`, where it came from). The Project Planner
+  reads its `task` rows plus its own `New task` rows; the Maintenance Planner reads `visit` rows only.
+- **Drafting.** In Draft mode quick add, duplicate and build out send `draft=1`. The server runs the live
+  call's checks, builds the document through `task_from_spec` (the one function that builds a Task from a
+  spec, also used by the live calls and by Publish), and, instead of inserting it, keeps a `New task` row
+  and answers with a card named **`draft-new:<row>`**. A phase or prerequisite that is another drafted task
+  is written that way in the spec. Conflicts come back as warnings; drafting never asks for a reason.
+  Split stays refused.
+- **Showing and editing.** `get_planner(draft=1)` draws the card (dated ones on their day, undated ones in
+  the Unscheduled tray) with a "New" chip and counts it in the engine as an `extra`, so free hours and
+  conflicts include it. Drag, resize, pencil, re-crew and the multi-select move go through the usual
+  `save_task`/`add_crew`/`swap_crew`/`move_many` drafts and rewrite the spec. Its menu says "Not published
+  yet" for what needs a Task (duplicate, split, next free day), and its dialog offers no Task lookups. A
+  draft that can no longer be drawn (project no longer a customer job, a person gone, its phase or
+  prerequisite discarded) is "out of date" and cleared with *Discard out-of-date*.
+- **Undo and discard.** The Undo of a drafted create discards the row(s), refusing while another drafted
+  task is filed under or waits on one. *Discard* and *Discard out-of-date* cover `New task` rows.
+- **Publish.** The new tasks join the `Change` rows in the one all-or-nothing conflict check and the
+  per-person notices, then are created, phases first and each after what it waits on (`new_task_order`),
+  each in its own savepoint with `planner_publishing` up. One ERPNext refuses is reported and stays a
+  Draft (and so is what waits on it). Published rows record `created_task`.
+- **Paste a list.** A Build out footer action: lines like `Excavate basin, 16h`, `Pour slab - 8 hours`,
+  `• Pull wire (6 hrs)`, `3. Commission system`, `Electrical: Pull wire, 6h` become rows
+  (`PPT1_PURE.parse_lines`: bullets, checkboxes and numbers dropped, trailing hours read, `Phase: task`
+  sets the phase). The tab-separated spreadsheet paste is kept.
+- **Copy from project.** A Build out footer action: pick any project you can read; `get_copy_source`
+  returns its leaf tasks as rows (subject, hours, phase, crew size, dependencies as `row:N`), never dates,
+  people, notes or addresses; templates and canceled tasks are left out, finished ones kept, at most 100.
+  The grid is replaced when empty, otherwise you choose Append or Replace; then edit and Create as usual
+  (drafted in Draft mode), on the current project.
+- **Limits worth knowing.** A drafted task routes from its project's site (a custom task address is
+  applied when it is published). The Needs tasks list still lists a project whose only tasks are drafts.
+  Up to 300 unpublished new tasks per person.
 
 ## Calendar sync (C2, v1.604.0)
 
@@ -1524,7 +1570,7 @@ dedupe (C6).
 the snap-back table, colors, the readers' states, the master switch, the dry run, the triggers, the
 client's backoff and the wiring.
 
-### Route times and leave-by (C3, v1.606.0)
+### Route times and leave-by (C3, v1.605.0)
 
 C2 writes every item all-day. C3 gives **route stops real times** (Nik's decisions, 2026-10-12):
 
@@ -1579,8 +1625,8 @@ C2 writes every item all-day. C3 gives **route stops real times** (Nik's decisio
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `scheduler_events.daily_long` → `planner_tracking.refresh_labor_forecasts` (the nightly refresh of the Labor line's stored `labor_forecast`, no Google calls, never saves the Project; Phase 4 follow-up).
-- Calendar sync (C2, v1.604.0): `doc_events` Task (`on_update`, `on_trash`), Sapphire Maintenance Record (`on_update`, `on_submit`, `on_cancel`, `on_update_after_submit`, `on_trash`), Planner Day Note and Planner Block (`on_update`, `on_trash`) → `calendar_sync.triggers.on_change`; Sapphire Maintenance Contract `on_update` → `on_contract_change`; Project `on_update` → `on_project_change`; `scheduler_events` `*/10` → `calendar_sync.engine.snapback`; `daily_long` → `calendar_sync.engine.nightly_repair`. All no-ops while Calendar Sync Settings is off. C3 (v1.606.0) adds no `doc_events`: an item job queues `calendar_sync.engine.run_day_job` itself.
-- Leave-by pings (C3, v1.606.0): `scheduler_events` cron `4-59/5 * * * *` (its own key, every five minutes) → `leave_by.send_leave_by_pings`, a no-op while Project Planner Settings *Leave-by pings* is off.
+- Calendar sync (C2, v1.604.0): `doc_events` Task (`on_update`, `on_trash`), Sapphire Maintenance Record (`on_update`, `on_submit`, `on_cancel`, `on_update_after_submit`, `on_trash`), Planner Day Note and Planner Block (`on_update`, `on_trash`) → `calendar_sync.triggers.on_change`; Sapphire Maintenance Contract `on_update` → `on_contract_change`; Project `on_update` → `on_project_change`; `scheduler_events` `*/10` → `calendar_sync.engine.snapback`; `daily_long` → `calendar_sync.engine.nightly_repair`. All no-ops while Calendar Sync Settings is off. C3 (v1.605.0) adds no `doc_events`: an item job queues `calendar_sync.engine.run_day_job` itself.
+- Leave-by pings (C3, v1.605.0): `scheduler_events` cron `4-59/5 * * * *` (its own key, every five minutes) → `leave_by.send_leave_by_pings`, a no-op while Project Planner Settings *Leave-by pings* is off.
 - `assistant_tools` → `crew_conflicts.CrewConflicts` (Phase 6D: the Conflict center's list, read-only, never a block's note). Personal blocks and day notes need no hook: the engine reads them, and the planners' reads and the three digests call `api/planner_blocks` directly.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.

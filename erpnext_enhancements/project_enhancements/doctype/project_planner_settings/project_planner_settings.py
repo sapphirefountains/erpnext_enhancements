@@ -38,7 +38,7 @@ from frappe import _
 from frappe.model.document import Document
 
 SETTINGS_DOCTYPE = "Project Planner Settings"
-#: Leave-by pings (v1.606.0): the longest lead time a ping may have.
+#: Leave-by pings (v1.605.0): the longest lead time a ping may have.
 MAX_PING_MINUTES = 120
 
 HOUR_FIELDS = (
@@ -62,7 +62,7 @@ class ProjectPlannerSettings(Document):
 		minutes = self.get("long_drive_minutes")
 		if minutes not in (None, "") and float(minutes) < 0:
 			frappe.throw(_("{0} cannot be negative.").format(self.meta.get_label("long_drive_minutes")))
-		# v1.606.0 leave-by pings. None (no row yet) reads as the default 10; only nonsense is refused.
+		# v1.605.0 leave-by pings. None (no row yet) reads as the default 10; only nonsense is refused.
 		ping = self.get("leave_by_ping_minutes")
 		if ping not in (None, "") and not 0 <= float(ping) <= MAX_PING_MINUTES:
 			frappe.throw(

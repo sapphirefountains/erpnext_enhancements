@@ -1,4 +1,4 @@
-"""Give the v1.606.0 (calendar sync C3) Settings fields a ``tabSingles`` row where they have none.
+"""Give the v1.605.0 (calendar sync C3) Settings fields a ``tabSingles`` row where they have none.
 
 Three new fields on two Singles that may already have rows on a site:
 

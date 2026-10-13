@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Calendar sync C3 (v1.606.0): route stops get real times, a leave-by line, and an opt-in ping.
+"""Calendar sync C3 (v1.605.0): route stops get real times, a leave-by line, and an opt-in ping.
 
 What this pins, because each of these fails quietly:
 

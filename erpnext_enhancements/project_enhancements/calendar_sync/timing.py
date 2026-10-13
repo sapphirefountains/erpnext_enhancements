@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Calendar sync C3 (v1.606.0): give route stops real times, and a leave-by line.
+"""Calendar sync C3 (v1.605.0): give route stops real times, and a leave-by line.
 
 C2 writes every item as an all-day event. A task or visit that is a **stop on someone's route that
 day** now gets a timed event: on site from the route's arrival to its departure, exactly as the

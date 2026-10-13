@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Who has had their leave-by ping, for which stop, on which day (v1.606.0).
+"""Who has had their leave-by ping, for which stop, on which day (v1.605.0).
 
 ``project_enhancements.leave_by.send_leave_by_pings`` runs every five minutes and tells each
 opted-in person when they must leave for the first stop of their day. A text costs money and a

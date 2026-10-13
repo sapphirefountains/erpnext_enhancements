@@ -8,7 +8,7 @@
 * ``google_api.py`` - OAuth through Google Settings' client and the Calendar v3 REST calls.
 * ``engine.py``   - reconcile one item, the nightly repair, snap-back, the preview, health.
 * ``triggers.py`` - the ``doc_events`` that queue a sync after commit.
-* ``timing.py``   - C3 (v1.606.0): route stops in the near window get their route's times and a
+* ``timing.py``   - C3 (v1.605.0): route stops in the near window get their route's times and a
   leave-by line (``project_enhancements/route_slots.py`` does the planner's arithmetic). The opt-in
   leave-by ping is ``project_enhancements/leave_by.py``.
 
