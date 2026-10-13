@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.623.0] - 2026-10-13
+
+Custom pages, step 1 of 7 (TASK-2026-02802, step S1 = TASK-2026-02803). Nik picked the scope on
+2026-10-13 from two rounds of questions built from three read-only audits of the 29 Desk pages, the
+workspaces, the dashboard blocks and the www pages, coordinated with the form-kit and
+maintenance-agreement sessions working in the repo the same day. Step 1 is the set of fixes that needs
+no new framework; the shared page kit (`sf_kit`) is step 2.
+
+### Fixed
+
+- **Screens stop polling the server once you leave them** (S1.1). Desk is a single-page app: a page or
+  block you navigate away from stays alive, so its timers keep firing.
+  - The Home **Task Dashboard** block kept a 5-minute timer and a realtime handler for the life of the
+    browser tab, skipping only when the tab was hidden. Every user who had opened Home once queried all
+    day.
+  - The **Who's Working** block polled every 60 seconds unconditionally.
+  - The **Maintenance Day Board** cleared its 60-second timer on a `remove` event, which Desk pages never
+    fire, so it polled forever.
+
+  All three now refresh only while on screen (a block checks its shadow host is connected and laid out;
+  the day board checks it is the current route) and catch up when the user comes back. The day board
+  also shows "Loading…" and a load-failure line instead of a blank board, keeps data already showing on
+  a transient failure, and its white cards are readable in dark mode.
+- **Desk links stay in the Desk** (S1.3). On v16 the Desk lives at `/desk`, and an `/app/...` link is a
+  full page reload through the server's redirect; Back then reloads it again. About 90 links that render
+  inside the Desk move to `/desk/...` or `frappe.utils.get_form_link`: 25 dashboard blocks; page,
+  report and form scripts; the Desk-loaded `public/js`; and the URLs Integrations Health, the device
+  dashboard and the time-off sync hand to the Desk. The kiosk's Visit Wizard links use the wizard's own
+  path form, `/desk/visit-wizard/<visit>`. The **Desk Shortcuts** block now routes a `/desk` (or legacy
+  `/app`) URL in place instead of reloading.
+  - Left alone on purpose: links in emails, digests, SMS and calendar event bodies, OAuth redirects, AI
+    assistant results and www pages. A fresh load is a full load either way, and `/app` still redirects.
+  - **Known limit:** a dashboard block renders inside a shadow root, which Desk's link router cannot see
+    into, so a block's link is still a full load. It is now a direct load of `/desk/...` rather than a
+    redirect. Routing block clicks in place is part of the page kit (S2/S3).
+- **The child-task table escapes task subjects.** `get_child_tasks_html` interpolated each subject raw
+  into the Task form's HTML.
+- **QuickBooks Online Settings' "Link Existing Records" opens Record Matching** (S1.4), the page that
+  replaced the dashboard dialog the button was named for. It used to open the dashboard.
+- **The morning briefing email is sanitized** (S1.6). `email_style.markdown()` renders the AI-written
+  briefing through `frappe.utils.md_to_html`, which is markdown2 with no safe mode. The prompt carries
+  record text other people type (task subjects, comments), so raw HTML in it reached the inbox as live
+  markup. It now goes through frappe's nh3 `sanitize_html` with `always_sanitize`. The Desk copy needed
+  nothing: `frappe.markdown` has sanitized its own output since frappe v16.30.0, and prod runs 16.50.
+  The audit's suspicion of the Desk block was therefore wrong; the email was the real gap.
+
+### Added
+
+- **Pages you could not find are on their workspaces** (S1.4):
+  - **Stripe Payments** on Finance Hub. Until now its only way in was a button on its Settings form.
+  - **Contract Builder** on Operations Hub (Delivery) and Sales Hub (Won work), beside Project Contract.
+  - **Question Review** and **Glossary Review** in the Training workspace's Authoring card. They were
+    reachable only from the training rail.
+- **Sales Pipeline has a title.** The awesomebar indexes pages by title and the breadcrumb prints it, so
+  typing "Sales Pipeline" found nothing. A test now fails the build on any Page without one.
+- **Three CI guards:**
+  - `test_desk_links` replaces a six-page `/app` check with a scan of every page, report, form and
+    block script, the Desk-loaded `public/js` (minus a commented www-only list), the server modules whose
+    URLs the Desk draws, and every workspace shortcut and link.
+  - `test_page_polling_lifecycle` pins the three on-screen guards.
+  - `test_custom_pages_s1`: every Page has a title, every file the patch imports exists with a bumped
+    stamp, and nothing points at the retired page.
+
+### Changed
+
+- The hubs' dashboard shortcuts and the Projects Dashboard shortcut read `/desk/...`. A workspace URL
+  shortcut always opens a new tab in v16 (`shortcut_widget.js`), so `/app` only added a redirect there.
+
+### Removed
+
+- **Hierarchical Task View** (S1.2). It never loaded on v16: TreeView builds its own page and calls
+  `get_tree_nodes`, so `get_project_tasks_hierarchy` never ran; the `public/js` patch meant to redirect
+  it was never loaded; and the Python sort raised `TypeError` on a mix of dated and undated tasks. The
+  Project Planner covers browsing a project's tasks.
+- Dead code (S1.5): `get_context` in the QuickBooks Online dashboard and Stripe dashboard pages (v16
+  calls it only for a page `.html` template, and neither has one), and unused CSS in the Training Canvas
+  and the Water Engineering Wizard. Two candidates stay because tests pin them on purpose:
+  `quickbooks_record_matching.get_context` and Location Timeline's `LayerGroup.removeLayer`.
+
+### Docs
+
+- Location Timeline's comments describe its Google Maps code (they still described Leaflet, and one
+  block was leftover AI-prompt text).
+- The HTML-blocks README's counts (41 blocks, ten department dashboards) and its retired Project
+  Dashboard page; the moved workspace-sidebar doc links; the three sidebars missing from
+  `docs/workspace-sidebars.md`; the four routes missing from `www/README.md`; `/feedback`'s comments no
+  longer mention the retired `/chat`.
+
+### Migration
+
+`patches/custom_pages_s1_navigation.py`:
+- Force-imports the 11 edited workspaces and the Sales Pipeline page past `import_file`'s timestamp
+  gate. Every prod row carried exactly the repo's old stamp on 2026-10-13, so no hand edit is
+  overwritten.
+- Deletes the auto-made Task Enhancements sidebar row and any shortcut or link that points at the
+  retired page, then the Page itself, without `force`, so an unforeseen link makes it refuse and log
+  rather than dangle.
+- Moves the seeded `/app/projects` Desk Shortcut to `/desk/projects`.
+
+Each step logs its own failure, so the patch cannot raise; it is safe to run twice.
+
 ## [1.622.0] - 2026-10-13
 
 Form kit P4-A: the server engine for guided data entry (TASK-2026-02759, 02764). Nothing draws it yet;
