@@ -50,10 +50,12 @@ planner at all, so there was nothing to click.
   of sub-tasks, do not count. Each task comes off its phase's dependency list first, the waiting task is
   deleted before what it waits on, then the phases; `frappe.delete_doc` as the caller, never `force`.
 - **Needs tasks**, a tray under Unscheduled (collapsed with its count until opened): the Active
-  customer-job projects with no open task, each with a *Build out* button and a name that opens the
-  project's side panel. "No open task" means no leaf task that is not a template or finished, so a
-  project that is all phases, or all finished work, is listed too ("No tasks yet" or "All 4 tasks are
-  finished"). `planner_actions.get_projects_needing_tasks` is **one** bound query for all of them
+  customer-job projects with no task at all, each with a *Build out* button and a name that opens the
+  project's side panel. "No task at all" means no leaf task that is not a template or canceled, so a
+  project that is only phases is listed ("No tasks yet"). A project whose tasks are all finished is
+  deliberately left out (Nik, 2026-10-12, "Only no-task projects"): on production that was 304 Active
+  customer jobs, mostly stale ones nobody closed, against 17 with no task, and the 304 buried the 17.
+  `planner_actions.get_projects_needing_tasks` is **one** bound query for all of them
   (`needs_tasks_query`: `NOT EXISTS` over `tabTask`, the planners' own `planner_job_condition`), never
   a loop per project, and avoids Frappe 16's refusal of SQL functions as `get_all` field strings by
   using `frappe.db.sql`. The page applies its own project and project-manager filters, re-reads the list

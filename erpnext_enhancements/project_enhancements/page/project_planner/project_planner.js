@@ -9370,7 +9370,7 @@ Object.assign(ProjectPlanner.prototype, PP6E_METHODS);
 //                           (remove_built_out_tasks) takes the lot back, unless something has been
 //                           attached to one of them since. Opened from a project's side panel, the
 //                           Needs tasks tray, or a card's right-click menu.
-//   - Needs tasks           a tray of Active customer jobs that have no open task at all, each with a
+//   - Needs tasks           a tray of Active customer jobs that have no task at all, each with a
 //                           "Build out" button (get_projects_needing_tasks: one query). It follows
 //                           the page's project and manager filters.
 //   - Richer quick add      is part of Phase 6B's dialog above (p6b_quick_add): phase, depends on, a
@@ -9616,7 +9616,7 @@ const PPT1_METHODS = {
 					},
 					{
 						sample_html: "",
-						text: __("Needs tasks lists the active projects that have no open task yet; Build out starts their plan."),
+						text: __("Needs tasks lists the active projects that have no tasks yet; Build out starts their plan."),
 					},
 				],
 			},
@@ -9677,7 +9677,7 @@ const PPT1_METHODS = {
 					}
 				})
 				.appendTo($main);
-			const note = row.finished_tasks ? __("All {0} tasks are finished", [row.finished_tasks]) : __("No tasks yet");
+			const note = __("No tasks yet");
 			$('<span class="t1-tray-sub"></span>')
 				.text([row.name, row.pm, note].filter(Boolean).join(" · "))
 				.appendTo($main);

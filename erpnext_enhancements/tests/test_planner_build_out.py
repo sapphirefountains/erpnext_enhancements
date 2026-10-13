@@ -17,7 +17,7 @@ this pins, because each can fail quietly:
 * **Its Undo** (``remove_built_out_tasks``) removes the lot or nothing: anything attached since to
   any one of them (time, a file, someone else's comment, a changed field, a dependent that is not
   part of the build-out, a sub-task nobody here made) stops all of it. Never ``force``.
-* **The Needs tasks list** is ONE bound query for the Active customer jobs with no open task, using
+* **The Needs tasks list** is ONE bound query for the Active customer jobs with no task at all, using
   the planners' own customer-job rule.
 * **The richer quick add** takes a phase, dependencies, a time slot, several crew, an address, the
   two flags, a description and a crew size, all optional: leave them out and it is what it was.
@@ -190,14 +190,21 @@ class TestHelpers(unittest.TestCase):
 			"NOT EXISTS",
 			"IFNULL(t.is_group, 0) = 0",
 			"IFNULL(t.is_template, 0) = 0",
-			"NOT IN %(finished)s",
+			"NOT IN %(not_a_task)s",
 			"LIMIT %(limit)s",
 			"LEFT JOIN `tabEmployee` e ON e.name = p.custom_project_owner",
 			"%(planner_types)s",
 		):
 			self.assertIn(needle, sql)
 		self.assertEqual(values["active"], "Active")
-		self.assertIn("Completed", values["finished"])
+		# Only canceled work and templates are "not a task": a project whose tasks are all finished has
+		# had tasks, so it is NOT listed (Nik, 2026-10-12), and the query no longer tests finished at all.
+		self.assertEqual(tuple(values["not_a_task"]), ("Canceled", "Cancelled", "Template"))
+		for finished in ("Completed", "Invoiced"):
+			self.assertNotIn(finished, values["not_a_task"])
+		self.assertNotIn("finished", values)
+		self.assertNotIn("%(finished)s", sql)
+		self.assertNotIn("finished_tasks", sql)
 		self.assertEqual(values["limit"], a.NEEDS_TASKS_LIMIT)
 		self.assertIn("planner_types", values)
 		self.assertIn("planner_streams", values)
@@ -631,7 +638,6 @@ class TestBuildOutReads(_Site):
 					pm="Lisa",
 					project_type="Build",
 					planner_stream=0,
-					finished_tasks=0,
 					expected_start_date=base.D(2026, 11, 2),
 					expected_end_date=None,
 				),
@@ -641,7 +647,6 @@ class TestBuildOutReads(_Site):
 					pm=None,
 					project_type="Internal",
 					planner_stream=0,
-					finished_tasks=0,
 				),
 				_Doc(
 					name="PRJ-2",
@@ -649,7 +654,6 @@ class TestBuildOutReads(_Site):
 					pm=None,
 					project_type="Service",
 					planner_stream=0,
-					finished_tasks=5,
 				),
 			],
 		)[1]
@@ -665,7 +669,6 @@ class TestBuildOutReads(_Site):
 					"pm": "Lisa",
 					"expected_start": "2026-11-02",
 					"expected_end": None,
-					"finished_tasks": 0,
 				},
 				{
 					"name": "PRJ-2",
@@ -673,7 +676,6 @@ class TestBuildOutReads(_Site):
 					"pm": None,
 					"expected_start": None,
 					"expected_end": None,
-					"finished_tasks": 5,
 				},
 			],
 		)

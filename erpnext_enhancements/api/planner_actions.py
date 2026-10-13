@@ -92,6 +92,9 @@ DESCRIPTION_MAX = 4000
 CLOCK_FORMATS = ("%H:%M:%S", "%H:%M")
 #: How many projects the Needs tasks list answers with at most.
 NEEDS_TASKS_LIMIT = 200
+#: Task statuses that are not a task for the Needs tasks list: canceled work is no work. (Finished
+#: work is deliberately NOT here: a project whose tasks are all finished has had tasks.)
+NOT_A_TASK = ("Canceled", "Cancelled", "Template")
 #: How many open tasks the build-out grid offers as things to depend on.
 BUILD_OUT_CONTEXT_TASKS = 300
 
@@ -293,12 +296,13 @@ def deletion_order(names, depends):
 
 
 def needs_tasks_query(has_owner, limit=NEEDS_TASKS_LIMIT):
-	"""``(sql, values)``: the Active customer-job projects with no open task, in ONE statement.
+	"""``(sql, values)``: the Active customer-job projects with no task at all, in ONE statement.
 
-	"No open task" is no task that is a leaf (not a phase), not a template and not finished
-	(``crew_availability.FINISHED_STATUSES``): a project whose phases exist but whose work does not
-	needs tasks too, and one whose every task is finished is as empty to a planner as a new one.
-	``finished_tasks`` (a subquery on the same index) lets the page say which of the two it is.
+	"No task at all" is no task that is a leaf (not a phase), not a template and not canceled
+	(:data:`NOT_A_TASK`): a project whose phases exist but whose work does not is listed too. Projects
+	whose tasks are all finished are deliberately NOT listed (Nik, 2026-10-12, "Only no-task
+	projects"): on production that was 304 Active customer jobs against 17 with no task, mostly stale
+	jobs nobody closed, and the 304 buried the 17.
 	The customer-job rule is the planners' own (``crew_availability.planner_job_condition``), and
 	the page's PM filter reads ``pm`` (the project owner's Employee name, NULL before that custom
 	field exists). Newest project first. Everything bound; nothing client-supplied reaches it.
@@ -309,13 +313,7 @@ def needs_tasks_query(has_owner, limit=NEEDS_TASKS_LIMIT):
 	sql = f"""
 		SELECT p.name, p.project_name AS title, {owner} AS pm, p.customer,
 			p.expected_start_date, p.expected_end_date,
-			{type_expr} AS project_type, {stream} AS planner_stream,
-			(
-				SELECT COUNT(*) FROM `tabTask` d
-				WHERE d.project = p.name
-					AND IFNULL(d.is_group, 0) = 0
-					AND IFNULL(d.is_template, 0) = 0
-			) AS finished_tasks
+			{type_expr} AS project_type, {stream} AS planner_stream
 		FROM `tabProject` p
 		{join}
 		WHERE p.status = %(active)s
@@ -325,14 +323,14 @@ def needs_tasks_query(has_owner, limit=NEEDS_TASKS_LIMIT):
 				WHERE t.project = p.name
 					AND IFNULL(t.is_group, 0) = 0
 					AND IFNULL(t.is_template, 0) = 0
-					AND IFNULL(t.status, '') NOT IN %(finished)s
+					AND IFNULL(t.status, '') NOT IN %(not_a_task)s
 			)
 		ORDER BY p.creation DESC
 		LIMIT %(limit)s
 	"""
 	values = {
 		"active": pp.ACTIVE_PROJECT,
-		"finished": engine.FINISHED_STATUSES,
+		"not_a_task": NOT_A_TASK,
 		"limit": int(limit),
 		**engine.PLANNER_SQL_VALUES,
 	}
@@ -1350,12 +1348,11 @@ def get_build_out_context(project):
 
 @frappe.whitelist()
 def get_projects_needing_tasks():
-	"""The Needs tasks list: Active customer jobs with no open task, newest first.
+	"""The Needs tasks list: Active customer jobs with no task at all, newest first.
 
-	``{"projects": [{name, title, pm, expected_start, expected_end, finished_tasks}], "limit",
-	"can_create"}``. ONE query for all of them (:func:`needs_tasks_query`), however many projects
-	there are; the page applies its own project and PM filters. ``finished_tasks`` is how many tasks
-	the project has, all of them finished (0: it has never had any).
+	``{"projects": [{name, title, pm, expected_start, expected_end}], "limit", "can_create"}``.
+	ONE query for all of them (:func:`needs_tasks_query`), however many projects there are; the page
+	applies its own project and PM filters. A project whose tasks are all finished is not listed.
 	"""
 	pp._require_planner()
 	try:
@@ -1371,7 +1368,6 @@ def get_projects_needing_tasks():
 			"pm": row.get("pm"),
 			"expected_start": str(row["expected_start_date"]) if row.get("expected_start_date") else None,
 			"expected_end": str(row["expected_end_date"]) if row.get("expected_end_date") else None,
-			"finished_tasks": cint(row.get("finished_tasks")),
 		}
 		for row in rows or []
 		if engine.is_planner_job({"project": row.get("name"), **row})

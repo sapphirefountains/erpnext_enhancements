@@ -1389,9 +1389,11 @@ server is `api/planner_actions.py`.
     `t1_project_actions`), the Needs tasks tray, and a card's right-click menu (*Build out tasks for this
     project…*, a `p6_menu_providers` entry).
 - **Needs tasks** (tray, below Unscheduled; collapsed with its count until opened): the Active
-  customer-job projects with **no open task** (no leaf task that is not a template or finished: a
-  project whose phases exist but whose work does not counts, and so does one whose every task is
-  finished; the line says "No tasks yet" or "All 4 tasks are finished"), each with a *Build out* button
+  customer-job projects with **no task at all** (no leaf task that is not a template or canceled: a
+  project whose phases exist but whose work does not is listed; the line says "No tasks yet"). A
+  project whose tasks are all finished is **left out**, by Nik's decision (2026-10-12, "Only no-task
+  projects"): on production the first definition listed 304 stale Active customer jobs with every task
+  finished against 17 with no task, and buried the 17. Each row has a *Build out* button
   and the name that opens the project's side panel. `get_projects_needing_tasks` is **one** query for the
   lot (`needs_tasks_query`: `NOT EXISTS` over `tabTask`, the planners' own `planner_job_condition`, all
   bound, at most 200); the page re-reads it after a load at most every 15 seconds, and straight away
