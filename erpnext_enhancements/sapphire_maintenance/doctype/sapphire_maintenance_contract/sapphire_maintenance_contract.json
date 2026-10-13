@@ -278,7 +278,7 @@
   },
   {
    "depends_on": "auto_renew",
-   "description": "At each automatic renewal the base rate, the recurring amount and both emergency rates rise by this much (§9.2). A new contract starts at the standard 12%, or at its signed agreement's figure; 0 renews at the same rates. Contracts that existed before v1.611.0 were agreed under the old terms and are blank until someone sets one.",
+   "description": "At each automatic renewal the base rate, the recurring amount and both emergency rates rise by this much (§9.2). A contract made from a signed agreement takes its figure (12% is the standard). One with no agreement behind it starts at 0, since nothing signed allows an increase; set one by hand where it was agreed. 0 renews at the same rates, as every contract that existed before v1.611.0 does.",
    "fieldname": "renewal_increase_percent",
    "fieldtype": "Percent",
    "label": "Annual Increase at Renewal (%)"

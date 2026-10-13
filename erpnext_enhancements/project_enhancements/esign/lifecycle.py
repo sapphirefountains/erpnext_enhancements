@@ -242,7 +242,15 @@ def execute_contract(request, evidence):
 
 	# 5. Flip the contract. A REAL save — see the module docstring. This fires
 	#    on_update_after_submit -> autocreate_maintenance_contract_on_signed.
-	contract.save()
+	#    The flag tells that hook the save comes from the signing page, not from a desk
+	#    form: since in-person signing (v1.611.0) the session can be a logged-in staff
+	#    member, and a failure must still reach the contract owner rather than vanish into
+	#    a toast the signing page never shows.
+	frappe.flags.esign_executing = True
+	try:
+		contract.save()
+	finally:
+		frappe.flags.esign_executing = False
 
 	# Registered BEFORE the commit it rides on: enqueue_after_commit attaches the
 	# job to the next commit, so committing first would hand delivery to whatever

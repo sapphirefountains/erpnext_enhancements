@@ -414,6 +414,11 @@ or sent for the client to sign in their own time.
   lives `IN_PERSON_LINK_HOURS` (12). The builder polls `get_signing_status` and moves to the
   executed copy when it is signed. *Send it to them* is the existing `send_for_signature`; a
   resend always resets the channel to Email Link.
+- **Executed copies and template changes.** An e-signed contract prints the copy stored on its
+  Contract Signature Request; one marked signed on paper now stores its own (`executed_html`, frozen by
+  `freeze_executed_copy` in `on_update_after_submit`). A template patch freezes paper-signed contracts and
+  refuses to swap a body while a signing link for that template is out, because the executed copy is
+  re-rendered from the live template at signing.
 - **Initials** (`esign/initials.py`). A template marks a clause with
   `{{ initial('renewal', 'Automatic renewal and the annual rate increase') }}`. Unsigned, it
   prints a blank box (deterministic, because execution's drift check re-renders and compares).

@@ -31,7 +31,7 @@ frappe.pages["contract-builder"].on_page_load = function (wrapper) {
 		title: __("Contract Builder"),
 		single_column: true,
 	});
-	wrapper.contract_builder = new ContractBuilder(page);
+	wrapper.contract_builder = new ContractBuilder(page, wrapper);
 };
 
 frappe.pages["contract-builder"].on_page_show = function (wrapper) {
@@ -108,7 +108,7 @@ const CB_STYLE = `
 `;
 
 class ContractBuilder {
-	constructor(page) {
+	constructor(page, wrapper) {
 		this.page = page;
 		this.$root = $('<div class="cb-wrap"></div>').appendTo(page.body);
 		if (!document.getElementById("cb-style")) {
@@ -124,6 +124,19 @@ class ContractBuilder {
 		this.preview_seq = 0;
 		this.sign_url = null; // held in memory only: it is a bearer link, never put in the URL
 		this.poll = null;
+
+		// Leaving the builder by any other way (the sidebar, the awesome bar, a link) saves what
+		// was typed on the step, and closing or reloading the tab with unsaved values asks first.
+		$(wrapper).on("hide", () => {
+			this.stop_poll();
+			this.flush().catch(() => {});
+		});
+		window.addEventListener("beforeunload", (event) => {
+			if ((frappe.get_route() || [])[0] !== "contract-builder") return;
+			if (!this.data || !this.data.editable || !(this.dirty || this.tables_changed())) return;
+			event.preventDefault();
+			event.returnValue = "";
+		});
 	}
 
 	// ------------------------------------------------------------------ routing
@@ -157,8 +170,12 @@ class ContractBuilder {
 			.catch((error) => this.show_problem(error));
 	}
 
-	go(step) {
+	go(step, replace) {
+		if (replace) frappe.route_flags.replace_route = true;
 		frappe.set_route("contract-builder", this.data.name, step);
+		// Read by the router's push, which has already run; left set it would turn the next
+		// step into a replace (the rental planner's pattern).
+		delete frappe.route_flags.replace_route;
 	}
 
 	// Save, then move. A refused save keeps the user where they are: frappe has shown the reason.
@@ -183,23 +200,16 @@ class ContractBuilder {
 	show(step) {
 		const steps = this.data.steps || [];
 		if (!step) {
-			step = this.data.docstatus === 0 && steps.length ? steps[0].key : CB_REVIEW;
-			// The first visit to a contract lands on a step; keep that a replace, not a new entry,
-			// so Back from it leaves the builder rather than bouncing on a bare URL.
-			history.replaceState(null, "", this.route_url(step));
+			// The first visit to a contract lands on a step. A replace, not a new entry, so Back
+			// from it leaves the builder rather than bouncing on a bare URL; through the router,
+			// which renders the step when it lands (on_page_show).
+			return this.go(this.data.docstatus === 0 && steps.length ? steps[0].key : CB_REVIEW, true);
 		}
 		if (step === CB_SIGN) return this.render_sign();
 		if (step === CB_REVIEW) return this.render_review();
 		const index = steps.findIndex((s) => s.key === step);
-		if (index < 0) {
-			history.replaceState(null, "", this.route_url(CB_REVIEW));
-			return this.render_review();
-		}
+		if (index < 0) return this.go(CB_REVIEW, true);
 		return this.render_step(index);
-	}
-
-	route_url(step) {
-		return `/desk/contract-builder/${encodeURIComponent(this.data.name)}/${encodeURIComponent(step)}`;
 	}
 
 	show_problem(error) {
@@ -364,12 +374,18 @@ class ContractBuilder {
 			__("Review and sign"),
 			current === CB_REVIEW || current === CB_SIGN
 		).appendTo($steps);
-		$steps.append(
-			`<div style="margin-top:12px"><a class="cb-muted" href="${frappe.utils.get_form_link(
-				"Project Contract",
-				data.name
-			)}">${__("Open the full form")}</a></div>`
-		);
+		$('<div style="margin-top:12px"></div>')
+			.append(
+				$(`<a class="cb-muted" href="#"></a>`)
+					.text(__("Open the full form"))
+					.on("click", (event) => {
+						event.preventDefault();
+						this.flush()
+							.then(() => frappe.set_route("Form", "Project Contract", data.name))
+							.catch(() => {});
+					})
+			)
+			.appendTo($steps);
 		const $main = $('<div class="cb-main"></div>').appendTo($grid);
 		const $head = $('<div class="cb-head"></div>').appendTo($main);
 		$head.append($("<h3></h3>").text(data.template_title || ""));
@@ -480,8 +496,16 @@ class ContractBuilder {
 		}
 		if (df.fieldtype === "Table") {
 			const rows = (this.values[field.fieldname] || []).map((row) => Object.assign({}, row));
+			// A cell edit fires the child field's onchange, never the table's, so each column
+			// marks the step dirty itself; added and removed rows are caught by tables_changed().
+			const touched = () => {
+				if (this.loading) return;
+				this.dirty = true;
+				this.collect();
+				this.refresh_preview();
+			};
 			df.fields = (field.child_fields || []).map((child) =>
-				Object.assign({}, child, editable ? {} : { read_only: 1 })
+				Object.assign({}, child, editable ? { onchange: touched } : { read_only: 1 })
 			);
 			df.data = rows;
 			df.get_data = () => rows;
@@ -591,7 +615,27 @@ class ContractBuilder {
 
 	// -------------------------------------------------------------------- saving
 
+	// Rows added to or removed from a grid fire no change at all, so compare the step's tables
+	// with what was last saved.
+	tables_changed() {
+		if (!this.fg || !this.data) return false;
+		const step = this.data.steps[this.step_index];
+		if (!step) return false;
+		return step.fields.some((field) => {
+			if (field.fieldtype !== "Table" || field.fixed_rows) return false;
+			const control = this.fg.fields_dict[field.fieldname];
+			if (!control || !control.get_value) return false;
+			const names = (field.child_fields || []).map((child) => child.fieldname);
+			const shape = (rows) =>
+				JSON.stringify(
+					(rows || []).map((row) => names.map((name) => (row[name] === undefined ? null : row[name])))
+				);
+			return shape(control.get_value()) !== shape(this.data.doc[field.fieldname]);
+		});
+	}
+
 	flush(announce) {
+		if (this.data && this.data.editable && !this.dirty && this.tables_changed()) this.dirty = true;
 		if (!this.data || !this.dirty || !this.data.editable) {
 			if (announce) frappe.show_alert({ message: __("Saved"), indicator: "green" });
 			return Promise.resolve();
@@ -723,6 +767,19 @@ class ContractBuilder {
 			);
 			return;
 		}
+		const live = ["Sent", "Viewed"].includes((data.signature || {}).status) ? data.signature : null;
+		if (live) {
+			$actions.append(
+				$('<div class="cb-muted" style="flex-basis:100%"></div>').text(
+					live.signing_channel === "In Person"
+						? __("Open for signing on a device here.")
+						: __("Out for signature to {0}; {1}.", [
+								live.signer_email,
+								live.view_count ? __("they have opened it") : __("not opened yet"),
+						  ])
+				)
+			);
+		}
 		if (data.can_sign) {
 			button(__("Sign it here now"), "btn-primary", () => this.sign_here_dialog());
 			button(__("Send it to them to sign"), "btn-default", () => this.send_dialog());
@@ -769,7 +826,21 @@ class ContractBuilder {
 		);
 	}
 
+	live_emailed_link() {
+		const sig = this.data.signature || {};
+		return ["Sent", "Viewed"].includes(sig.status) && sig.signing_channel !== "In Person" ? sig : null;
+	}
+
 	sign_here_dialog() {
+		const emailed = this.live_emailed_link();
+		const replaces = emailed
+			? `<p class="text-warning">${frappe.utils.escape_html(
+					__(
+						"This replaces the signing link already emailed to {0}: that link stops working. If they would rather sign from the email, close this and leave it be.",
+						[emailed.signer_email]
+					)
+			  )}</p>`
+			: "";
 		const dialog = new frappe.ui.Dialog({
 			title: __("Sign it here now"),
 			fields: [
@@ -777,7 +848,9 @@ class ContractBuilder {
 					fieldtype: "HTML",
 					options: `<p>${__(
 						"The agreement opens on a new tab, ready to hand to the client. They re-type their email, initial each marked clause, and sign. Their signed copy is emailed to them."
-					)}</p><p class="text-muted">${frappe.utils.escape_html(this.confirm_issue_text())}</p>`,
+					)}</p><p class="text-muted">${__(
+						"This device stays signed in as you, so stay with them while they sign."
+					)}</p>${replaces}<p class="text-muted">${frappe.utils.escape_html(this.confirm_issue_text())}</p>`,
 				},
 				{
 					fieldname: "email",
@@ -794,6 +867,13 @@ class ContractBuilder {
 				// at the signing page once the link exists.
 				const tab = window.open("", "_blank");
 				if (tab) {
+					// The client holds this tab: it must not be able to reach back into the
+					// staff member's desk window through window.opener.
+					try {
+						tab.opener = null;
+					} catch (e) {
+						// Some browsers refuse the assignment; the tab still works.
+					}
 					tab.document.write(
 						`<p style="font-family:sans-serif;padding:24px">${__("Preparing the agreement…")}</p>`
 					);

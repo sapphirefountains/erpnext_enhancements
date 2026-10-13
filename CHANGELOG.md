@@ -54,11 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added to the assistant tool's never-return list) and printed in their boxes in the executed copy.
 - **"What you are agreeing to, in short."** Nik: "a summary that summarizes what they've agreed to in
   simple terms and language would be great." `project_enhancements/contract_summary.py` builds a
-  plain-language box from the contract's own figures (its plan and prices, chemicals extra, the yearly
-  estimate, emergency rates, start and term, the renewal increase, how they pay, their part, how to end it,
+  plain-language box from the contract's own figures (its plan and prices, chemicals extra, emergency
+  rates, start and term, the renewal increase, how they pay, their part, how to end it,
   the limits) and the template prints it right after the title with `{{ summary() }}`. Being in the body,
   it is on the signing page, in the builder's preview and in the signed copy; it ends by saying the full
-  agreement governs where the two differ. Maintenance, Rental and Owner agreements have one
+  agreement governs where the two differ. It never states a figure the agreement leaves blank (a plan
+  option with no price, an unset emergency minimum), and the Owner Contract's late-payment terms follow the
+  phases chosen. Maintenance, Rental and Owner agreements have one
   (`patches/add_contract_summaries` adds the line to the live Rental and Owner records, exact-match only);
   subcontractor agreements and the NDA do not. Every fixed figure a summary quotes is checked against its
   template's text by a test, so a clause changed in the repo cannot leave the summary saying the old thing.
@@ -105,10 +107,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sales Order line's rate or the price list (still off until the QuickBooks cutover).
 - The "save a card" offer after signing is withheld from a client who chose to pay by invoice, which agreed
   to no automatic charge.
-- A new Sapphire Maintenance Contract starts at the standard 12% increase. The field has no JSON default
-  on purpose: on a normal doctype a default reaches every existing row through the `ALTER`, which would have
-  put an increase on the eighteen contracts agreed under the old "then-current rates" wording. Those stay
-  blank and renew at the same rates until someone sets a figure.
+- A new Sapphire Maintenance Contract takes its signed agreement's renewal increase (12% is the
+  agreement's default); one made with no agreement behind it, from a Sales Order or a Project, starts at 0,
+  because nothing signed allows an increase, and someone sets a figure by hand where one was agreed. The
+  field has no JSON default on purpose: on a normal doctype a default reaches every existing row through
+  the `ALTER`, which would have put an increase on the eighteen contracts agreed under the old
+  "then-current rates" wording. Those read 0 and renew at the same rates.
+- **Agreements issued before this release keep the terms they were issued with.** The new Project Contract
+  fields' defaults ($250, $350, a 1-hour minimum, 12%) reach every existing row through the `ALTER`, and on
+  an agreement issued under the old wording they would have been copied into its operational contract and
+  raised its rates at renewal. `update_maintenance_agreement_terms` sets them back to 0 on every submitted
+  maintenance agreement (on prod, only SF-MAINT-2026-0001); drafts keep the new terms, since they will be
+  issued on the new template.
+- **A contract marked signed on paper now keeps an executed copy** (`Project Contract.executed_html`,
+  hidden, never copied to an amendment). It used to re-render from the live, site-editable template on
+  every print, so a template change rewrote what a signed contract said. "Mark as Signed" freezes the copy
+  in `on_update_after_submit`, the print, preview and Contracts tab read it like an e-signed one, and both
+  template patches freeze any paper-signed contract before they change a body. Found in review: on prod,
+  SF-MAINT-2026-0001 (Candi Wadsworth, signed on paper 2026-08-03) would have reprinted with the new terms.
+- **No template change while a signing link is out.** The executed copy is re-rendered from the live
+  template at signing, so a client signing an older link after the swap would have received terms they
+  were never shown. Both patches leave the body alone and log which requests are outstanding (none on prod
+  on 2026-10-13); run the patch again once they are signed or voided.
+- **Signing in person reaches the contract owner on a failure.** The signing tab runs in the staff
+  member's logged-in session, which made the operational-contract auto-draft treat it as a desk save and
+  put a failure into a toast the signing page never shows. `execute_contract` now flags its own save
+  (`frappe.flags.esign_executing`). The signing tab is opened without `window.opener`, the dialog says the
+  device stays signed in as the staff member, and it warns before replacing a link already emailed to the
+  client.
+- The rate-change notice now tells Accounts to set the contract's Base Rate (per visit), which per-visit
+  invoices bill at, rather than the Sales Order rate; and the renewal notice says so when a contract has no
+  Base Rate and still bills per visit at its Sales Order rate.
+- **Contract Builder fixes from review:** a cell edited in a grid (equipment, milestones, rate schedule)
+  fires no change on the table itself, so the step was not saved; columns now mark the step changed, and
+  added or removed rows are caught by comparing the tables on save. Leaving the builder by the sidebar or
+  any other link now saves the step, closing the tab with unsaved values asks first, and "Open the full
+  form" saves before it goes. The first step and a bad step are now replaced through the router
+  (`route_flags.replace_route`), not `history.replaceState`, which v16.51's shell-aware router could
+  misread.
 
 ### Fixed
 

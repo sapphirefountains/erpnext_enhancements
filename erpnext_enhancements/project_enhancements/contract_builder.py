@@ -428,9 +428,24 @@ def _payload(doc):
 		maintenance_contract = frappe.db.get_value(
 			"Sapphire Maintenance Contract", {"project_contract": doc.name, "docstatus": ["<", 2]}, "name"
 		)
+	# The latest signing request, so the page can say a link is out and warn before replacing an
+	# emailed one with an in-person one (which retires the emailed link).
+	signature = {}
+	if doc.docstatus == 1:
+		signature = (
+			frappe.db.get_value(
+				"Contract Signature Request",
+				{"project_contract": doc.name},
+				["status", "signing_channel", "signer_email", "view_count"],
+				order_by="creation desc",
+				as_dict=True,
+			)
+			or {}
+		)
 	return {
 		"name": doc.name,
 		"title": doc.get("title") or doc.name,
+		"signature": signature,
 		"template_key": doc.get("template_key"),
 		"template_title": template.get("title") or doc.get("contract_template"),
 		"docstatus": doc.docstatus,

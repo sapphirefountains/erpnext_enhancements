@@ -140,7 +140,8 @@
   "total_due_at_signing",
   "column_break_sign",
   "signed_on",
-  "signed_by"
+  "signed_by",
+  "executed_html"
  ],
  "fields": [
   {
@@ -1014,6 +1015,15 @@
    "fieldtype": "Data",
    "label": "Signed By (name)",
    "no_copy": 1
+  },
+  {
+   "description": "The agreement as it read when it was marked signed on paper, frozen so a later template edit cannot change what a signed contract prints. An e-signed contract keeps its executed copy on its Contract Signature Request instead.",
+   "fieldname": "executed_html",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Executed Copy (signed on paper)",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "is_submittable": 1,

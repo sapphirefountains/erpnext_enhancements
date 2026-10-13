@@ -97,8 +97,14 @@ def _number(value):
 
 
 def _hours(value):
-	number = flt(value) or 1
+	number = flt(value)
 	return f"{_number(number)} hour" if number == 1 else f"{_number(number)} hours"
+
+
+def _priced(text, row, suffix=""):
+	"""``text`` with "for $X{suffix}" when the option has a price; the agreement prints a blank
+	line for one without, so the summary never states a figure the agreement leaves out."""
+	return f"{text} for {_money(row.get('price'))}{suffix}" if flt(row.get("price")) else text
 
 
 def _join(parts):
@@ -130,16 +136,16 @@ def _maintenance(doc):
 		price = f" at a base rate of {_money(standard.get('price'))} per visit" if flt(standard.get("price")) else ""
 		plan.append(f"standard maintenance visits {how_often}{price}")
 	if "package" in chosen:
-		plan.append(f"spring startup and fall winterization for {_money(chosen['package'].get('price'))} a year")
+		plan.append(_priced("spring startup and fall winterization", chosen["package"], " a year"))
 	else:
 		if "startup" in chosen:
-			plan.append(f"a spring startup for {_money(chosen['startup'].get('price'))}")
+			plan.append(_priced("a spring startup", chosen["startup"]))
 		if "winterization" in chosen:
-			plan.append(f"a fall winterization for {_money(chosen['winterization'].get('price'))}")
+			plan.append(_priced("a fall winterization", chosen["winterization"]))
 	if "as_needed" in chosen:
-		plan.append(
-			f"extra service when you ask for it at {_money(chosen['as_needed'].get('price'))} an hour (1-hour minimum)"
-		)
+		as_needed = chosen["as_needed"]
+		rate = f" at {_money(as_needed.get('price'))} an hour" if flt(as_needed.get("price")) else ""
+		plan.append(f"extra service when you ask for it{rate} (1-hour minimum)")
 	if doc.get("custom_plan_details"):
 		plan.append("the custom plan in Exhibit A")
 	if plan:
@@ -153,13 +159,7 @@ def _maintenance(doc):
 			"current prices, and listed on each invoice.",
 		)
 	)
-	if flt(doc.get("annual_maintenance_fee")):
-		rows.append(
-			(
-				"About a year:",
-				f"{_money(doc.get('annual_maintenance_fee'))} in base rates, before chemicals, parts and any extra work.",
-			)
-		)
+	# No yearly estimate here (Nik, 2026-10-13: "remove the About a year from the summary").
 	# §5.2, §8.1
 	rows.append(
 		(
@@ -169,16 +169,22 @@ def _maintenance(doc):
 		)
 	)
 	# §8.2
-	if flt(doc.get("emergency_rate")) or flt(doc.get("after_hours_emergency_rate")):
+	# Only the rates and minimum the agreement actually prints: a blank in §8.2 stays out of here.
+	emergency = []
+	if flt(doc.get("emergency_rate")):
 		hours = f" ({_text(doc.get('business_hours'))})" if doc.get("business_hours") else ""
-		rows.append(
-			(
-				"Emergencies:",
-				f"{_money(doc.get('emergency_rate'))} an hour during business hours{hours} and "
-				f"{_money(doc.get('after_hours_emergency_rate'))} an hour at any other time, including weekends "
-				f"and holidays, with a {_hours(doc.get('emergency_minimum_hours'))} minimum per call.",
-			)
+		emergency.append(f"{_money(doc.get('emergency_rate'))} an hour during business hours{hours}")
+	if flt(doc.get("after_hours_emergency_rate")):
+		emergency.append(
+			f"{_money(doc.get('after_hours_emergency_rate'))} an hour at any other time, including weekends and holidays"
 		)
+	if emergency:
+		minimum = (
+			f", with a {_hours(doc.get('emergency_minimum_hours'))} minimum per call"
+			if flt(doc.get("emergency_minimum_hours"))
+			else ""
+		)
+		rows.append(("Emergencies:", _join(emergency) + minimum + "."))
 
 	rows.append(_maintenance_term(doc))
 	rows.append(_maintenance_payment(doc))
@@ -398,13 +404,21 @@ def _owner(doc):
 				"Maintenance Services Agreement.",
 			)
 		)
-	# §3.2, §5
+	# §5; the late-payment terms differ by phase, so only the chosen phases' are stated:
+	# interest in §3.2 (construction) and §4.4 (maintenance), a pause after 5 days' notice in
+	# §3.2, and a pause on design work for an overdue balance in §2.4.
+	late = []
+	if keys & {"construction", "maintenance"}:
+		late.append("Overdue amounts accrue 1.5% a month.")
+	if "construction" in keys:
+		late.append("We can pause construction for non-payment after 5 days' written notice.")
+	if "design" in keys:
+		late.append("We can pause design work while a design balance is overdue.")
 	rows.append(
 		(
 			"Your part:",
 			"site access on weekdays 7:00 AM to 5:00 PM, underground utilities marked, and power and water on "
-			"site. Overdue amounts accrue 1.5% a month, and we can pause work for non-payment after 5 days' "
-			"written notice.",
+			"site." + (" " + " ".join(late) if late else ""),
 		)
 	)
 	# §12.1, §11.1, §14

@@ -164,12 +164,23 @@ def expire_or_renew_contracts(today=None):
                 )
                 if new_rates:
                     # The people who bill it, as well as the people who run it: from today the
-                    # contract's rates are the increased ones.
+                    # contract's rates are the increased ones. A contract with no Base Rate still
+                    # bills per visit at its Sales Order rate, which this cannot raise.
+                    no_base = (
+                        " "
+                        + _(
+                            "It has no Base Rate (per visit), so per-visit invoices still use the Sales Order "
+                            "rate: raise that by the same {0}%."
+                        ).format("{0:g}".format(flt(getattr(row, "renewal_increase_percent", None))))
+                        if not flt(getattr(row, "visit_rate", None))
+                        else ""
+                    )
                     _notify(
                         "Accounts Manager",
                         _("Maintenance rates increased at renewal: {0} ({1})").format(row.name, row.customer),
                         _("Contract {0} for {1} renewed on {2}.").format(row.name, row.customer, formatdate(today))
-                        + rate_note,
+                        + rate_note
+                        + no_base,
                         row.name,
                     )
             else:
@@ -219,8 +230,9 @@ def send_rate_change_notices(today=None):
                 ),
                 _(
                     "Contract {0} for {1} has a scheduled per-visit rate change to {2}, effective {3} "
-                    "(§4.5). Send the client the required 30-day written notice and update the linked "
-                    "Sales Order rate on or after the effective date."
+                    "(§4.5). Send the client the required 30-day written notice, and on the effective date "
+                    "set the contract's Base Rate (per visit), which per-visit invoices bill at (v1.611.0); "
+                    "only a contract with no Base Rate still bills at its Sales Order rate."
                 ).format(
                     row.name, row.customer,
                     fmt_money(row.scheduled_rate, currency=currency),

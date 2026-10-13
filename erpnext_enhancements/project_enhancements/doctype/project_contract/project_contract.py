@@ -284,6 +284,26 @@ class ProjectContract(Document):
 		"""
 		if self.get("status") == "Signed":
 			self._void_live_signature_requests()
+			self.freeze_executed_copy()
+
+	def freeze_executed_copy(self):
+		"""Store the agreement as it reads now, for a contract signed on paper.
+
+		An e-signed contract already has its executed instrument on its Contract Signature
+		Request. One recorded with "Mark as Signed" had none, so it re-rendered from the live,
+		site-editable template on every print, and a template change rewrote what a signed
+		contract said. The review of v1.611.0 found the one this would have hit on prod:
+		SF-MAINT-2026-0001, marked signed on paper on 2026-08-03, whose reprint would have
+		gained the 2026-10-13 terms. ``update_maintenance_agreement_terms`` freezes contracts
+		like it before it swaps the template. Never raises: this runs inside the save that marks
+		the contract signed.
+		"""
+		try:
+			if self.get("executed_html") or _signed_request_html(self.get("name")):
+				return
+			self.db_set("executed_html", self.render_body(), update_modified=False)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Project Contract: freezing the executed copy failed")
 
 	def _void_live_signature_requests(self):
 		"""Kill any signing link still in flight.
@@ -363,10 +383,27 @@ class ProjectContract(Document):
 def _executed_html(name):
 	"""The stored executed instrument for a contract, or None.
 
+	The e-signed copy on its Contract Signature Request, else the copy frozen when it was
+	marked signed on paper (``executed_html``, v1.611.0).
+
 	Never raises — every caller is on a read path (print, preview, the Project
 	form's Contracts tab) and none of them may 500 because an evidence lookup
 	hiccupped; they fall back to a live render of the template instead.
 	"""
+	if not name:
+		return None
+	signed = _signed_request_html(name)
+	if signed:
+		return signed
+	try:
+		return frappe.db.get_value("Project Contract", name, "executed_html") or None
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: paper executed copy lookup failed")
+		return None
+
+
+def _signed_request_html(name):
+	"""The e-signed executed instrument (the Signed request's ``agreement_html``), or None."""
 	if not name:
 		return None
 	try:

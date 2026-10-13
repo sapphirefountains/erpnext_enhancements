@@ -33,11 +33,31 @@ def insert_summary(body, anchor):
 
 
 def execute():
+	from erpnext_enhancements.patches.update_maintenance_agreement_terms import (
+		freeze_contract_copies,
+		live_requests,
+	)
+
 	for key, anchor in ANCHORS.items():
 		try:
 			body = frappe.db.get_value("Contract Template", key, "body")
 			if body is None:
 				continue  # no such template on this site; the seed inserts the repo copy
+			# The same two guards as the maintenance terms patch: a contract signed on paper
+			# keeps what it said, and nobody is mid-signature when the text changes.
+			freeze_contract_copies(key)
+			pending = live_requests(key)
+			if pending and "summary(" not in body:
+				frappe.log_error(
+					title="Contract summary not added yet",
+					message=(
+						f"Contract Template '{key}' has signing links out ({', '.join(pending)}); the summary "
+						"was not added so nobody signs text they were not shown. Run "
+						"erpnext_enhancements.patches.add_contract_summaries.execute again once they are "
+						"signed or voided."
+					),
+				)
+				continue
 			new_body, changed = insert_summary(body, anchor)
 			if not changed:
 				if "summary(" not in (body or ""):

@@ -53,18 +53,10 @@ WINTERIZATION_LABEL = "Winterization"
 # blank leave End Date manual, and a blank End Date never auto-expires.
 INITIAL_TERM_YEARS = {"One (1) Year": 1, "Two (2) Years": 2}
 
-# The standard rate increase at each automatic renewal (§9.2, Nik 2026-10-13: "12%
-# increase yoy on renew (adjustable but that's the standard rate of increase yoy)").
-# A new contract starts here unless its signed agreement says otherwise; contracts that
-# existed before v1.611.0 were agreed under the old "then-current rates" wording and are
-# left blank, so nothing they signed changes under them.
-STANDARD_RENEWAL_INCREASE = 12
-
-
 class SapphireMaintenanceContract(Document):
 	def validate(self):
 		if self.is_new() and self.get("renewal_increase_percent") in (None, ""):
-			self.renewal_increase_percent = STANDARD_RENEWAL_INCREASE
+			self.renewal_increase_percent = _agreed_increase(self.get("project_contract"))
 		self._check_single_active_contract()
 		self._materialize_feature_defaults()
 		self._derive_end_date()
@@ -532,6 +524,21 @@ def _append_features_from_project_serials(doc, project):
 		existing.add(serial)
 
 
+def _agreed_increase(project_contract):
+	"""The renewal increase a new operational contract starts with: its agreement's, or 0.
+
+	§9.2 (Nik, 2026-10-13: "12% increase yoy on renew (adjustable but that's the standard
+	rate of increase yoy)") is a term of the signed agreement, where 12% is the default. A
+	contract made with no agreement behind it (from a Sales Order or a Project, for an
+	arrangement nobody signed) has nothing that allows an automatic increase, so it starts at 0
+	and someone sets a figure by hand where one was agreed. Agreements issued before v1.611.0
+	carry 0 too (``update_maintenance_agreement_terms.keep_issued_terms``).
+	"""
+	if not project_contract:
+		return 0
+	return flt(frappe.db.get_value("Project Contract", project_contract, "renewal_increase_percent"))
+
+
 def _apply_project_contract(doc, contract):
 	"""Copy the legal agreement's operational terms onto the contract doc."""
 	doc.project_contract = contract.name
@@ -596,7 +603,10 @@ def autocreate_maintenance_contract_on_signed(doc, method=None):
 	# render internal desk instructions into a customer's response. Staff get the
 	# toast; a Guest-path failure is escalated to the contract owner instead, so
 	# it still reaches a human.
-	is_desk_user = frappe.session.user not in ("Guest", None)
+	# In-person signing (v1.611.0) runs the signing page in a staff member's logged-in
+	# browser, so the session user alone no longer says where this came from; the
+	# signing flow flags its own save (esign/lifecycle.execute_contract).
+	is_desk_user = frappe.session.user not in ("Guest", None) and not frappe.flags.get("esign_executing")
 
 	# A savepoint so a failed mapping rolls back cleanly instead of poisoning the
 	# caller's transaction — the online-signing path commits straight afterwards.

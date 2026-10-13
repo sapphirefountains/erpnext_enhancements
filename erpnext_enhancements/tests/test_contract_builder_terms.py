@@ -438,7 +438,6 @@ class TestSummary(unittest.TestCase):
             "every two weeks at a base rate of $690.00 per visit",
             "$180.00 an hour (1-hour minimum)",
             "Chemicals are extra:",
-            "$17,940.00 in base rates, before chemicals",
             "$250.00 an hour during business hours (Monday to Friday, 7:00 a.m. to 5:00 p.m.)",
             "$350.00 an hour at any other time",
             "Starts 2026-10-01 for one year, then renews by itself every year",
@@ -449,6 +448,8 @@ class TestSummary(unittest.TestCase):
         ):
             self.assertIn(fact, html)
         self.assertNotIn("spring startup", html)  # not ticked, not summarized
+        self.assertNotIn("About a year", html)  # Nik asked for no yearly estimate
+        self.assertNotIn("$17,940.00", html)
 
     def test_follows_the_choices(self):
         self.assertIn("rates stay the same at renewal", self.maintenance(renewal_increase_percent=0))
@@ -459,6 +460,29 @@ class TestSummary(unittest.TestCase):
             self.maintenance(payment_method="Invoice (Check or Bank Transfer)", invoice_due_days=45),
         )
         self.assertIn("You choose in Section 4.3", self.maintenance(payment_method=""))
+
+    def test_never_states_a_figure_the_agreement_leaves_blank(self):
+        html = self.maintenance(
+            emergency_minimum_hours=0,
+            after_hours_emergency_rate=0,
+            service_options=[_Doc(option_key="startup", included=1, price=None)],
+        )
+        self.assertNotIn("$0.00", html)
+        self.assertNotIn("minimum per call", html)
+        self.assertIn("a spring startup.", html)
+        self.assertNotIn("at any other time", html)
+
+    def test_owner_late_payment_terms_follow_the_phases(self):
+        design_only = summary.summary_html(
+            _Doc(template_key="owner", phases=[_Doc(phase_key="design", included=1, fee=8000)])
+        )
+        self.assertNotIn("1.5% a month", design_only)
+        self.assertIn("pause design work", design_only)
+        build = summary.summary_html(
+            _Doc(template_key="owner", phases=[_Doc(phase_key="construction", included=1, fee=1)])
+        )
+        self.assertIn("1.5% a month", build)
+        self.assertIn("after 5 days' written notice", build)
 
     def test_is_deterministic_and_escaped(self):
         """The drift check re-renders and compares, and the site address is typed by staff."""
@@ -571,6 +595,87 @@ class TestTermsPatch(unittest.TestCase):
         patches = (APP / "patches.txt").read_text(encoding="utf-8")
         self.assertIn("erpnext_enhancements.patches.update_maintenance_agreement_terms", patches)
 
+    def run_patch(self, contracts, requests, live_body):
+        """Run the patch against a fake database; returns the writes it made and what it froze."""
+        stub = sys.modules["frappe"]
+        writes, frozen = [], []
+
+        def get_all(doctype, filters=None, pluck=None, **kwargs):
+            if doctype == "Project Contract":
+                return [
+                    c["name"]
+                    for c in contracts
+                    if all(c.get(k) == v for k, v in (filters or {}).items() if not isinstance(v, list))
+                ]
+            if doctype == "Contract Signature Request":
+                return [name for name, status in requests if status in ("Sent", "Viewed")]
+            return []
+
+        class _Contract:
+            def __init__(self, name):
+                self.name = name
+
+            def freeze_executed_copy(self):
+                frozen.append(self.name)
+
+        saved = (stub.get_all, stub.get_doc, stub.db, getattr(stub, "get_app_path", None))
+        stub.get_all = get_all
+        stub.get_doc = lambda doctype, name: _Contract(name)
+        stub.db = types.SimpleNamespace(
+            get_value=lambda *a, **k: live_body,
+            set_value=lambda doctype, name, *a, **k: writes.append((doctype, name, a)),
+            commit=lambda: None,
+        )
+        stub.get_app_path = lambda *parts: str(APP.joinpath(*parts[1:]))
+        try:
+            terms_patch.execute()
+        finally:
+            stub.get_all, stub.get_doc, stub.db, stub.get_app_path = saved
+        return writes, frozen
+
+    def test_freezes_paper_signed_and_keeps_issued_agreements_on_old_terms(self):
+        """SF-MAINT-2026-0001 was marked signed on paper: its reprint must not gain the new terms,
+        and its operational contract must not inherit a 12% increase it never agreed to."""
+        old_body = "the v1.609.0 body"
+        terms_patch.REPLACEABLE_BODY_SHA256.add(terms_patch.body_sha256(old_body))
+        try:
+            contracts = [
+                {"name": "SF-MAINT-2026-0001", "template_key": "maintenance", "docstatus": 1, "status": "Signed"},
+                {"name": "SF-MAINT-2026-0011", "template_key": "maintenance", "docstatus": 0, "status": "Draft"},
+            ]
+            writes, frozen = self.run_patch(contracts, [], old_body)
+        finally:
+            terms_patch.REPLACEABLE_BODY_SHA256.discard(terms_patch.body_sha256(old_body))
+        self.assertEqual(frozen, ["SF-MAINT-2026-0001"])
+        reset = [w for w in writes if w[0] == "Project Contract"]
+        self.assertEqual([w[1] for w in reset], ["SF-MAINT-2026-0001"])  # the draft keeps the new terms
+        self.assertEqual(reset[0][2][0]["renewal_increase_percent"], 0)
+        self.assertTrue(any(w[0] == "Contract Template" for w in writes), "the body was swapped")
+
+    def test_leaves_the_body_alone_while_a_link_is_out(self):
+        old_body = "the v1.609.0 body"
+        terms_patch.REPLACEABLE_BODY_SHA256.add(terms_patch.body_sha256(old_body))
+        try:
+            contracts = [
+                {"name": "SF-MAINT-2026-0030", "template_key": "maintenance", "docstatus": 1, "status": "Out for Signature"}
+            ]
+            writes, _frozen = self.run_patch(contracts, [("CSR-2026-00009", "Viewed")], old_body)
+        finally:
+            terms_patch.REPLACEABLE_BODY_SHA256.discard(terms_patch.body_sha256(old_body))
+        self.assertFalse(any(w[0] == "Contract Template" for w in writes))
+
+    def test_a_paper_signature_freezes_the_executed_copy(self):
+        source = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        hook = source[source.index("def on_update_after_submit"):source.index("def freeze_executed_copy")]
+        self.assertIn("self.freeze_executed_copy()", hook)
+        self.assertIn('frappe.db.get_value("Project Contract", name, "executed_html")', source)
+        field = next(
+            f for f in json.loads(PC_JSON.read_text(encoding="utf-8"))["fields"] if f["fieldname"] == "executed_html"
+        )
+        self.assertEqual(field.get("no_copy"), 1)  # an amendment is a new, unsigned revision
+
 
 # --------------------------------------------------------------------------- renewal increase
 
@@ -602,7 +707,8 @@ class TestRenewalIncrease(unittest.TestCase):
         source = (APP / "api" / "maintenance_renewal.py").read_text(encoding="utf-8")
         self.assertIn('"renewal_increase_percent", *ESCALATED_RATES', source)
 
-    def test_new_contracts_start_at_the_standard_and_old_ones_stay_blank(self):
+    def test_a_new_contract_takes_its_agreements_increase_or_none(self):
+        """An increase is a term of the signed agreement; with no agreement nothing allows one."""
         fields = {f["fieldname"]: f for f in json.loads(SMC_JSON.read_text(encoding="utf-8"))["fields"]}
         # No JSON default: on a normal doctype a default reaches every existing row through the
         # ALTER, which would put twelve percent on contracts signed under the old terms.
@@ -610,8 +716,23 @@ class TestRenewalIncrease(unittest.TestCase):
         controller = (
             APP / "sapphire_maintenance" / "doctype" / "sapphire_maintenance_contract" / "sapphire_maintenance_contract.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("STANDARD_RENEWAL_INCREASE = 12", controller)
-        self.assertIn('if self.is_new() and self.get("renewal_increase_percent") in (None, ""):', controller)
+        self.assertIn(
+            'self.renewal_increase_percent = _agreed_increase(self.get("project_contract"))', controller
+        )
+        body = controller[controller.index("def _agreed_increase("):controller.index("def _apply_project_contract(")]
+        self.assertIn("if not project_contract:\n\t\treturn 0", body)
+
+    def test_in_person_signing_is_treated_as_the_signing_page(self):
+        """A failed auto-draft must reach the owner even when the signer's tab is a staff session."""
+        lifecycle_src = (APP / "project_enhancements" / "esign" / "lifecycle.py").read_text(encoding="utf-8")
+        self.assertIn("frappe.flags.esign_executing = True", lifecycle_src)
+        self.assertLess(
+            lifecycle_src.index("frappe.flags.esign_executing = True"), lifecycle_src.index("		contract.save()")
+        )
+        controller = (
+            APP / "sapphire_maintenance" / "doctype" / "sapphire_maintenance_contract" / "sapphire_maintenance_contract.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('not frappe.flags.get("esign_executing")', controller)
 
 
 # --------------------------------------------------------------------------- builder
