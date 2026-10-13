@@ -5493,7 +5493,8 @@ const MP6D_METHODS = {
 					user: person.user,
 					resource: person.resource || "",
 					person: person.user,
-					editable: this.p6d_can_edit_block(person.user),
+					// C4: a block read in from the Google vacations calendar changes in Google only.
+					editable: this.p6d_can_edit_block(person.user) && !block.from_google,
 				},
 				extra
 			)
@@ -5594,7 +5595,7 @@ const MP6D_METHODS = {
 		if (!kit || !name) return;
 		const block = this.p6d_blocks_of(user, ymd).find((entry) => entry.ref === name);
 		if (!block) return;
-		if (this.p6d_can_edit_block(user)) {
+		if (this.p6d_can_edit_block(user) && !block.from_google) {
 			this.p6d_block_form({
 				block: { name, date: ymd, all_day: !!block.all_day, slot: block.slot || null },
 				user,
@@ -5602,7 +5603,8 @@ const MP6D_METHODS = {
 			});
 			return;
 		}
-		kit.toast(`${this.tech_name(user)}: ${kit.blocks.block_text(block)}`, { tone: "info" });
+		const where = block.from_google ? ` (${__("from the Google vacations calendar: change it there")})` : "";
+		kit.toast(`${this.tech_name(user)}: ${kit.blocks.block_text(block)}${where}`, { tone: "info" });
 	},
 
 	// ------------------------------------------------------------------ blocks and notes

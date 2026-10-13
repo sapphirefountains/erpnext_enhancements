@@ -923,6 +923,51 @@ jobs:
       # setUpModule).
       - name: Project planner build out (grid, Needs tasks list, richer quick add; T1)
         run: python -m unittest erpnext_enhancements.tests.test_planner_build_out -v
+      # Calendar cutover C5 (v1.607.0): retiring the hand-made recurring series on the shared Maintenance
+      # calendar. Pins that ERPNext's own events are never read as hand-made or patched; that a series
+      # keeps its RRULE and gives up its Google Sites links, its instructions without HTML and its codes;
+      # profile matching (by name, by street address, unmatched, ambiguous); that a rescan never clobbers
+      # an Approved/Applied/Ignored row or a profile picked by hand; that Apply appends and never
+      # overwrites, and fills a site address only when the project has none; that C2's event builder never
+      # reads the profile's codes or notes; RRULE rewriting (open, COUNT, existing UNTIL, EXDATE, RDATE,
+      # all-day and timed across DST); that the dry run writes nothing, confirm needs the dry run's token
+      # and the master switch; that Undo restores the originals; the System Manager gate; and, under node,
+      # that both new dialogs build through a stand-in that asks every get_data/get_query during
+      # construction. Own frappe stub and a fake Google client, so its own step.
+      - name: Calendar cutover (review list, apply, end series with dry run + undo; C5)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_cutover -v
+      # Calendar sync C2 (v1.604.0): committed planner work pushed ONE WAY to the shared Google
+      # Calendars. Pins the event (title, Google's exclusive all-day end, pencil and projected work
+      # tentative, finished work kept with a check mark, the managed-by line, no attendees); that no gate,
+      # alarm or lockbox code, PIN or password survives into an event and the readers never select a
+      # block's note or a profile's access codes; deterministic base32hex event ids; the content-hash
+      # skip; the snap-back decision table (other people's and another site's events never touched, our
+      # own write ignored by etag); color mapping; that no sync module reads Planner Draft Change; that the
+      # master switch off makes NO Google call from any job and queues nothing; that the preview writes
+      # nothing; that triggers enqueue once per record per request after commit and never raise; and the
+      # client's backoff, one 401 refresh and token-free errors. Own frappe and requests stubs, own step.
+      - name: Calendar sync (one-way push, snap-back, master switch, no secrets; C2)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_sync -v
+      # Calendar time off in (C4, v1.606.0): the Company Holidays & Vacations calendar read into
+      # Unavailable Planner Blocks. Pins the title matching (names, aliases, OOO words, birthdays,
+      # "Company holiday"), the creator fallback, that ERPNext's own events are never read, that blocks
+      # follow their event and hand-made blocks are never touched, the loop guard (an imported block is
+      # never synced out and is read-only), the review list, one conflict alert per block, no read with
+      # any switch off, and a dry run that writes nothing. Own frappe and requests stubs, own step.
+      - name: Calendar time off in (Google -> Unavailable blocks, loop guard, review list; C4)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_time_off -v
+      # Calendar sync C3 (v1.605.0): route stops get real times. Pins that the times are the route
+      # view's own (route_payload's two passes: day start, drive, hours, slot waits) and leave-by is the
+      # arrival less the drive; that a full-day task, a multi-day task, a pencil, a day past the near
+      # window and a failed route stay all-day (and the last ones never price a route), while a past day
+      # and finished work keep the times stored on their link; the "Leave by 7:35 am" line on the first
+      # stop only; the lead rule and "(times differ by person)"; that a publish of many tasks on one day
+      # queues ONE coalesced day job after commit, never N squared, and the day job hash-skips; that
+      # snap-back rewrites a timed event moved in Google; and the opt-in leave-by ping: first stop only,
+      # never a pencil or a day with no hours, once per stop per day through a DB row that survives a
+      # cache flush, no Google request, nothing at all with the switch off. Reuses C2's stubs; own step.
+      - name: Calendar route timing and leave-by pings (C3)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_route_timing -v
       # Project Planner T2 (v1.603.0), new tasks in Draft mode, Paste a list, Copy from project. Pins that
       # quick add, duplicate and build out with draft=1 make the live call's checks and then keep a
       # `New task` Planner Draft Change instead of a Task (nothing inserted or saved on tabTask: the

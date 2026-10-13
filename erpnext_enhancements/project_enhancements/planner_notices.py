@@ -307,7 +307,8 @@ def _bell(user, subject, lines, task=None, from_user=None, doctype="Task"):
 	).insert(ignore_permissions=True)
 
 
-def _email(user, subject, intro, lines, link, link_label, eyebrow=None):
+def _email(user, subject, intro, lines, link, link_label, eyebrow=None, title=None):
+	"""``title`` (v1.605.0, the leave-by ping) replaces the shell's "Your schedule changed"."""
 	from erpnext_enhancements import email_style
 
 	body = email_style.p(intro) + email_style.bullets(list(lines or []))
@@ -316,7 +317,9 @@ def _email(user, subject, intro, lines, link, link_label, eyebrow=None):
 	frappe.sendmail(
 		recipients=[email_of(user)],
 		subject=subject,
-		message=email_style.wrap(body, title=_("Your schedule changed"), eyebrow=_(eyebrow or "Project Planner")),
+		message=email_style.wrap(
+			body, title=title or _("Your schedule changed"), eyebrow=_(eyebrow or "Project Planner")
+		),
 	)
 
 

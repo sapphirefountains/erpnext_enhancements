@@ -1863,12 +1863,13 @@ class TestPageSource(unittest.TestCase):
 
 class TestDocsAndCi(unittest.TestCase):
 	def test_the_version_is_bumped_in_both_places_and_written_up(self):
+		# At least 1.603.0 and the same in both files: an exact pin would fail on the next release.
 		init = (APP / "__init__.py").read_text(encoding="utf-8")
 		package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-		# At least this release, and the two agree (v1.608.0: a pin on the exact number failed the next one).
-		version = re.search(r'__version__ = "([\d.]+)"', init).group(1)
-		self.assertEqual(package["version"], version)
-		self.assertGreaterEqual(tuple(int(part) for part in version.split(".")), (1, 603, 0))
+		version = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', init)
+		self.assertIsNotNone(version)
+		self.assertGreaterEqual(tuple(int(part) for part in version.groups()), (1, 603, 0))
+		self.assertEqual(package["version"], ".".join(version.groups()))
 		changelog = CHANGELOG.read_text(encoding="utf-8")
 		self.assertIn("## [1.603.0] - 2026-10-12", changelog)
 		section = changelog[changelog.index("## [1.603.0]") :].split("\n## [", 1)[0]

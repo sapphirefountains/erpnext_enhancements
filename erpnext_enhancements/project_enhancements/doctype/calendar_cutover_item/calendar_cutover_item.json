@@ -1,0 +1,339 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "CCI-.#####",
+ "creation": "2026-10-13 09:00:00.000000",
+ "custom": 0,
+ "description": "Calendar cutover (C5): one hand-made recurring series from the old Maintenance Google calendar, the Maintenance Profile it belongs to, and the Sites links, instructions, codes and address proposed for that profile. Nothing reaches a profile until a person approves the row.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "series_id",
+  "status",
+  "column_break_head",
+  "profile",
+  "project",
+  "match_quality",
+  "match_note",
+  "proposed_profile",
+  "section_proposal",
+  "proposed_links",
+  "proposed_instructions",
+  "column_break_proposal",
+  "proposed_access_codes",
+  "proposed_address",
+  "current_address",
+  "section_series",
+  "recurrence",
+  "first_date",
+  "all_day",
+  "time_zone",
+  "location",
+  "moved_occurrences",
+  "html_link",
+  "calendar_id",
+  "column_break_series",
+  "end_at_cutover",
+  "series_state",
+  "ended_for",
+  "gone_from_calendar",
+  "last_scanned",
+  "section_description",
+  "original_description",
+  "section_review",
+  "reviewed_by",
+  "reviewed_on",
+  "column_break_review",
+  "applied_by",
+  "applied_on",
+  "apply_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Series title",
+   "in_list_view": 1,
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "fieldname": "series_id",
+   "fieldtype": "Data",
+   "label": "Google series ID",
+   "length": 255,
+   "reqd": 1,
+   "unique": 1,
+   "description": "The id of the recurring series' master event on the Maintenance calendar.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nApproved\nApplied\nIgnored",
+   "default": "Pending",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Pending: not reviewed. Approved: copied to the profile by Apply approved. Applied: copied. Ignored: copy nothing. Changed with the Approve / Ignore buttons.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "profile",
+   "fieldtype": "Link",
+   "label": "Maintenance Profile",
+   "options": "Sapphire Maintenance Profile",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Where Apply approved writes. Change it if the proposal is wrong; a profile picked by hand is kept on a rescan."
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_quality",
+   "fieldtype": "Select",
+   "label": "Match",
+   "options": "\nMatched\nAmbiguous\nUnmatched\nChosen by hand",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_note",
+   "fieldtype": "Small Text",
+   "label": "Why this profile",
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposed_profile",
+   "fieldtype": "Link",
+   "label": "Proposed profile",
+   "options": "Sapphire Maintenance Profile",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_proposal",
+   "fieldtype": "Section Break",
+   "label": "What Apply approved copies to the profile",
+   "description": "Edit anything here before approving. Text is appended to the profile under a \"From the old Maintenance calendar\" header, never written over what is there."
+  },
+  {
+   "fieldname": "proposed_links",
+   "fieldtype": "Small Text",
+   "label": "Google Sites links",
+   "description": "One link per line. Added to the profile's Google Sites links, each only once."
+  },
+  {
+   "fieldname": "proposed_instructions",
+   "fieldtype": "Text",
+   "label": "Special instructions",
+   "description": "The series' description without its HTML and without the Sites links."
+  },
+  {
+   "fieldname": "column_break_proposal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "proposed_access_codes",
+   "fieldtype": "Small Text",
+   "label": "Access codes",
+   "description": "Gate, door, alarm and lockbox codes found in the description. Added to the profile's Access Codes when they fit its 140 characters, else kept in Special instructions. Internal: the calendar sync never puts a profile's text on a calendar."
+  },
+  {
+   "fieldname": "proposed_address",
+   "fieldtype": "Data",
+   "label": "Site address to fill in",
+   "length": 140,
+   "description": "Only proposed when the project has no Project Address of its own; Apply approved fills it only if it is still empty, and the site is geocoded from it. Codes are scrubbed out, because a project address becomes the location of its calendar events."
+  },
+  {
+   "fieldname": "current_address",
+   "fieldtype": "Small Text",
+   "label": "The project's address now",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_series",
+   "fieldtype": "Section Break",
+   "label": "The old series",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "recurrence",
+   "fieldtype": "Small Text",
+   "label": "Recurrence",
+   "description": "The series' RRULE (and any EXDATE / RDATE lines) as Google last showed it.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_date",
+   "fieldtype": "Date",
+   "label": "Series starts",
+   "read_only": 1
+  },
+  {
+   "fieldname": "all_day",
+   "fieldtype": "Check",
+   "label": "All-day",
+   "default": "0",
+   "read_only": 1
+  },
+  {
+   "fieldname": "time_zone",
+   "fieldtype": "Data",
+   "label": "Time zone",
+   "read_only": 1
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Small Text",
+   "label": "Location",
+   "read_only": 1
+  },
+  {
+   "fieldname": "moved_occurrences",
+   "fieldtype": "Int",
+   "label": "Moved or edited occurrences",
+   "description": "Occurrences somebody dragged or edited in Google. Ending the series does not delete them; check the ones after the cutover by hand.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "html_link",
+   "fieldtype": "Small Text",
+   "label": "Google Calendar link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "calendar_id",
+   "fieldtype": "Data",
+   "label": "Calendar ID",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_series",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "end_at_cutover",
+   "fieldtype": "Check",
+   "label": "End this series at cutover",
+   "default": "1",
+   "description": "Untick to leave this series running after the cutover. Ignore alone does not keep it running."
+  },
+  {
+   "fieldname": "series_state",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "Running\nEnded at cutover\nAlready ended",
+   "default": "Running",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "ended_for",
+   "fieldtype": "Date",
+   "label": "Ended for the cutover of",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gone_from_calendar",
+   "fieldtype": "Check",
+   "label": "No longer on the calendar",
+   "default": "0",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_scanned",
+   "fieldtype": "Datetime",
+   "label": "Last scanned",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_description",
+   "fieldtype": "Section Break",
+   "label": "The description as it was",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "original_description",
+   "fieldtype": "Text",
+   "label": "Description (without HTML)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_review",
+   "fieldtype": "Section Break",
+   "label": "Review",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "applied_by",
+   "fieldtype": "Link",
+   "label": "Applied by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applied_on",
+   "fieldtype": "Datetime",
+   "label": "Applied on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "apply_note",
+   "fieldtype": "Small Text",
+   "label": "What was written",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-13 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Cutover Item",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "title",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

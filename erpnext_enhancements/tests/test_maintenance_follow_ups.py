@@ -19,6 +19,7 @@ Maintenance Follow-Up controller.
 Run: python -m unittest erpnext_enhancements.tests.test_maintenance_follow_ups
 """
 
+import ast
 import sys
 import types
 import unittest
@@ -349,13 +350,23 @@ class TestOnApproval(unittest.TestCase):
 		)
 
 	def test_it_is_wired_to_approval_and_cancel(self):
-		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
-		events = hooks[hooks.index('"Sapphire Maintenance Record": {') :]
-		events = events[: events.index("],")]
-		self.assertIn('"erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_submit",', events)
-		self.assertIn(
-			'"on_cancel": "erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel",', events
+		# Read hooks.doc_events as data, not as text: an event's handler may be a string or a list,
+		# and another feature adding a handler (the calendar sync, v1.604.0, turned on_cancel into
+		# a list) must not break this.
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		doc_events = next(
+			ast.literal_eval(node.value)
+			for node in tree.body
+			if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "doc_events" for t in node.targets)
 		)
+		events = doc_events["Sapphire Maintenance Record"]
+
+		def handlers(event):
+			value = events.get(event) or []
+			return value if isinstance(value, list) else [value]
+
+		self.assertIn("erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_submit", handlers("on_submit"))
+		self.assertIn("erpnext_enhancements.sapphire_maintenance.follow_ups.on_visit_cancel", handlers("on_cancel"))
 
 	def test_cancel_cancels_the_ones_still_being_worked(self):
 		_tracked(name="MFU-A", visit="PRJ-00228-2026-V001", status="Ordered")

@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-13 09:00:00.000000",
+ "custom": 0,
+ "description": "Calendar cutover (C5): every change made to a hand-made series' recurrence on the Maintenance calendar, with the original rule, so Undo can put it back.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "action",
+  "result",
+  "undone",
+  "column_break_main",
+  "item",
+  "series_id",
+  "cutover_date",
+  "done_by",
+  "done_on",
+  "section_recurrence",
+  "before_recurrence",
+  "after_recurrence",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Series title",
+   "in_list_view": 1,
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "label": "Action",
+   "options": "End\nUndo",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Select",
+   "label": "Result",
+   "options": "Done\nFailed",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "undone",
+   "fieldtype": "Check",
+   "label": "Undone",
+   "default": "0",
+   "description": "An End that Undo has since reversed.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Cutover item",
+   "options": "Calendar Cutover Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "series_id",
+   "fieldtype": "Data",
+   "label": "Google series ID",
+   "length": 255,
+   "search_index": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "cutover_date",
+   "fieldtype": "Date",
+   "label": "Cutover date",
+   "in_list_view": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "done_by",
+   "fieldtype": "Link",
+   "label": "By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "done_on",
+   "fieldtype": "Datetime",
+   "label": "On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_recurrence",
+   "fieldtype": "Section Break",
+   "label": "Recurrence"
+  },
+  {
+   "fieldname": "before_recurrence",
+   "fieldtype": "Small Text",
+   "label": "Before",
+   "description": "JSON list of the recurrence lines before the change. Undo puts an End's Before back.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "after_recurrence",
+   "fieldtype": "Small Text",
+   "label": "After",
+   "description": "JSON list of the recurrence lines Google holds after the change.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-13 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Cutover Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 0
+}

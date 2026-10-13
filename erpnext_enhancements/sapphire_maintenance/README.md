@@ -61,7 +61,10 @@ Sapphire Maintenance Record (parent, submittable, route: maintenance-records)
                                                         warehouse, qty (prefilled 0), default_qty/qty_step
                                                         (wizard stepper hints)
 
-Sapphire Maintenance Profile          one per Project (unique): safety_instructions, access_codes
+Sapphire Maintenance Profile          one per Project (unique): safety_instructions, access_codes,
+                                      google_sites_links + special_instructions (v1.607.0; first
+                                      filled from the old Maintenance calendar by the calendar
+                                      cutover, appended only; internal, never on a calendar)
 Sapphire Reading Range Override       child table on Serial No (custom_reading_overrides):
                                       per-feature chemistry target ranges, matched by reading label
 ```

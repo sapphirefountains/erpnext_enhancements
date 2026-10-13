@@ -1308,6 +1308,23 @@ erpnext_enhancements.patches.seed_visit_review_emails
 # for review, as the new rule in SapphireMaintenanceRecord._finish_on_review would have. Blank
 # dates on Pending Review drafts only; set_value without touching modified; cannot raise.
 erpnext_enhancements.patches.stamp_visit_date_on_pending_review
+
+# Calendar sync (C2, v1.604.0): Calendar Sync Settings is a new Single the sync writes its own state into
+# (sync tokens, last-run stamps). Write a tabSingles row for every declared default that has none, so the first
+# state write cannot blank days_back/days_ahead. Never over a stored value; switches nothing on; cannot raise.
+erpnext_enhancements.patches.materialize_calendar_sync_settings
+
+# Calendar sync C3 (v1.605.0): route stops get real times and a leave-by line; opt-in leave-by pings. New Single fields
+# Calendar Sync Settings.timed_days_ahead (14), Project Planner Settings.leave_by_pings (0) and leave_by_ping_minutes (10).
+# A default never reaches a Single's existing row, so write a row for each that has none (never over a stored value).
+# Switches nothing on; cannot raise; safe twice.
+erpnext_enhancements.patches.materialize_route_timing_settings
+
+# Calendar time off in (C4, v1.606.0): Calendar Sync Settings gained Read time off from Google (default 0) and its
+# read state. Write a tabSingles row for each new field that has none, so the read's first state write cannot blank
+# the rest. Never over a stored value; switches nothing on; cannot raise.
+erpnext_enhancements.patches.materialize_calendar_time_off_settings
+
 # Project Planner T3 (v1.608.0): seed the phase template "Fountain build phases (DOC-0041)" (100-700, never
 # 800) and six starter task bundles as Project Templates of template Tasks, from
 # project_enhancements/data/planner_templates.json. Creates its custom fields first, from fixtures/custom_field.json
