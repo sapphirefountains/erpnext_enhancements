@@ -1138,7 +1138,8 @@ class TestConfirmationSending(unittest.TestCase):
 			"Highlands Plaza",
 			"Austin and Korben",
 			"1 Main St, Denver",
-			"303-555-0100",
+			# The company phone is shown the way people read it (form kit P2-B).
+			"(303) 555-0100",
 		):
 			self.assertIn(text, mail["message"])
 		wrap = email_style.calls[-1][2]

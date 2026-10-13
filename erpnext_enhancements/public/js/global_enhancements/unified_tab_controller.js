@@ -37,6 +37,19 @@
  */
 frappe.provide("erpnext_enhancements.unified_controller");
 
+// A phone the way people read it — (801) 555-0100 — through the normalize twin that
+// normalize/desk_display.js publishes; the value as stored when that is absent (the
+// disable_value_normalization kill switch) or throws. A function declaration, not a const:
+// this file is a doctype_js of several doctypes and may be evaluated more than once.
+function shown_phone(value) {
+	try {
+		const display = window.erpnext_enhancements?.normalize?.phone_display;
+		return display && value ? display(value) : value;
+	} catch (e) {
+		return value;
+	}
+}
+
 frappe.ui.form.on("Customer", {
 	refresh: (frm) => erpnext_enhancements.unified_controller.init(frm),
 });
@@ -383,7 +396,8 @@ erpnext_enhancements.unified_controller = {
 					const email_link = c.custom_email
 						? `<a href="mailto:${c.custom_email}">${c.custom_email}</a>`
 						: "";
-					const phone_link = phone ? `<a href="tel:${phone}">${phone}</a>` : "";
+					// Shown (801) 555-0100, dialed as stored (+18015550100): form kit P2-B.
+					const phone_link = phone ? `<a href="tel:${phone}">${shown_phone(phone)}</a>` : "";
 
 					const linked_to_links = (c.links || [])
 						.map((l) => {
@@ -712,7 +726,7 @@ erpnext_enhancements.unified_controller = {
 		const detail = [
 			contact.custom_title,
 			contact.custom_email,
-			contact.custom_phone_number || contact.custom_mobile_number,
+			shown_phone(contact.custom_phone_number || contact.custom_mobile_number),
 		]
 			.filter(Boolean)
 			.join(" · ");

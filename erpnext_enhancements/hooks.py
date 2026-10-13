@@ -513,6 +513,21 @@ override_doctype_class = {
 }
 
 doc_events = {
+	# Form kit P2-B: every new or edited phone, email, website and address part in a field the
+	# registry names (utils/normalize_fields.py) is stored in its one form -- +18015550100,
+	# lowercase email, https:// website, USPS state -- on the save that writes it. "*" because
+	# the registry spans ~40 doctypes; Frappe v16's Document.hook composes doc_events[doctype]
+	# and then doc_events["*"] for the same event, so this runs after any doctype-specific
+	# before_validate and returns on one set lookup for every doctype it does not cover.
+	# before_validate because it is the last event before validate on a save -- and Frappe runs
+	# it only for save and submit, never update-after-submit or cancel. The handler also checks
+	# docstatus 0 itself: a submitted record is never rewritten. A value it cannot normalize is
+	# left as typed, never rejected; it never raises. Kill switch, live, no deploy:
+	# `bench --site <site> set-config disable_value_normalization 1` (also turns off the Desk
+	# phone display, via boot). See docs/data-normalization.md.
+	"*": {
+		"before_validate": "erpnext_enhancements.utils.normalize_hook.normalize_doc",
+	},
 	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
 	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
 	# Completed returns it to service on the completion date, Cancelled returns it now.
@@ -1886,6 +1901,8 @@ scheduler_events = {
 # Ship per-session data to the desk client (frappe.boot.*).
 # Currently: the live-collab doctype allowlist (frappe.boot.collab_doctypes),
 # read from ERPNext Enhancements Settings — see boot.py and api/collab.py.
+# Also frappe.boot.sf_normalize (form kit P2-B): the phone fields the Desk shows as
+# (801) 555-0100, absent when site_config sets disable_value_normalization.
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
 # ---------------------------------------------------------------------------
@@ -2054,6 +2071,11 @@ jinja = {
 		"erpnext_enhancements.utils.date_display.sf_date",
 		"erpnext_enhancements.utils.date_display.sf_datetime",
 		"erpnext_enhancements.utils.date_display.sf_time",
+		# How a phone looks in the same places (form kit P2-B): `(801) 555-0100 x123` for a
+		# number stored `+18015550100,123`. A thin wrapper over normalize.phone_display, sf_
+		# prefixed and registered on its own like the three above. Notification bodies and
+		# email templates that print a registered phone field call it.
+		"erpnext_enhancements.utils.value_display.sf_phone",
 	],
 }
 

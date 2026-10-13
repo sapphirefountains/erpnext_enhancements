@@ -375,6 +375,10 @@ class TestPureHelpers(unittest.TestCase):
 		self.assertEqual(views.tel_number("(801) 555-1234"), "+18015551234")
 		self.assertEqual(views.tel_number("1-801-555-1234"), "+18015551234")
 		self.assertEqual(views.tel_number("+44 20 7946 0958"), "+442079460958")
+		# Stored the P2-B way: the extension is left off, never run into the number.
+		self.assertEqual(views.tel_number("+18015551234"), "+18015551234")
+		self.assertEqual(views.tel_number("+18015551234,12"), "+18015551234")
+		self.assertEqual(views.tel_number("801-555-1234 x12"), "+18015551234")
 		self.assertIsNone(views.tel_number("555"))
 		self.assertIsNone(views.tel_number(""))
 		self.assertIsNone(views.tel_number(None))
@@ -540,7 +544,7 @@ class TestPersonSchedule(unittest.TestCase):
 		answer = views.get_person_schedule(resource="RES-00001", start="2026-10-11", days=3)
 		self.assertEqual([d["off"] for d in answer["days"]], ["Not a work day", None, "Off"])
 		self.assertEqual(
-			answer["contact"], {"phone": "8015551234", "tel": "+18015551234", "email": "austin@sf.com"}
+			answer["contact"], {"phone": "(801) 555-1234", "tel": "+18015551234", "email": "austin@sf.com"}
 		)
 		monday = answer["days"][1]
 		self.assertEqual(monday["bookings"][0]["ref"], "TASK-1")

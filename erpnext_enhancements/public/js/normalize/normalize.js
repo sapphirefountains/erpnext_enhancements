@@ -7,8 +7,9 @@
 // changing it there (or the reverse) and that suite goes red. docs/data-normalization.md
 // is the prose version.
 //
-// An ES module with no dependencies and no DOM, so node can import it as it is. Not wired
-// into any bundle yet: the form-kit PR that formats Desk fields imports it.
+// An ES module with no dependencies and no DOM, so node can import it as it is. The Desk
+// reaches it through desk_display.js (form kit P2-B), which erpnext_enhancements.bundle.js
+// imports.
 //
 // Results are plain objects: { value, changed, ok, reason }. ok=false means a person must
 // look, and value is then the input exactly as given.
@@ -43,9 +44,15 @@ function strip(text) {
 // Phones
 
 const EXTENSION =
-	/^([\s\S]*?)\s*(?:,|#|(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*([0-9]{1,6})\s*$/i;
+	/^([\s\S]*?)\s*(?:,|#|(?:[,;]\s*)?(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*([0-9]{1,6})\s*$/i;
 const LONG_EXTENSION = /(?:#|(?<![A-Za-z])(?:extension|ext|x)[.:]?)\s*[0-9]{7,}\s*$/i;
 const NANP_SHAPE = /^(?:1[-. ]?)?\(?[0-9]{3}\)?[-. ]*[0-9]{3}[-. ]?[0-9]{4}$/;
+// Unicode dashes (U+2010 to U+2015, U+2212) and spaces (no-break, narrow, fixed-width,
+// ideographic) read as "-" and " " for parsing only; a not-ok value is still returned as typed.
+const UNICODE_DASHES = /[\u2010-\u2015\u2212]/g;
+const UNICODE_SPACES = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g;
+// A pasted tel: link, with or without //.
+const TEL_PREFIX = /^tel:(?:\/\/)?/i;
 const INTL_CHARS = /^[0-9\s().\-]+$/;
 
 export const PHONE_MAX_LENGTH = 20;
@@ -70,7 +77,9 @@ function two_numbers(main) {
 }
 
 export function phone(raw) {
-	const text = strip(as_text(raw));
+	const text = strip(
+		strip(as_text(raw).replace(UNICODE_DASHES, "-").replace(UNICODE_SPACES, " ")).replace(TEL_PREFIX, "")
+	);
 	if (!text) return ok(raw, "");
 
 	let main = text;

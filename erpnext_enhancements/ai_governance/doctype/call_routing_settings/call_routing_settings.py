@@ -21,6 +21,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint
 
+from erpnext_enhancements.ai_governance import call_routing_dial as dial
 from erpnext_enhancements.ai_governance import call_routing_match as match
 
 
@@ -32,7 +33,7 @@ class CallRoutingSettings(Document):
 
 		raw = (self.get("default_forward_number") or "").strip()
 		if raw:
-			normalised = match.to_e164(raw)
+			normalised = dial.to_dialable(raw)
 			if normalised:
 				# Stored in the dialable form so what the form shows is what Twilio is
 				# handed. Production stores Employee cell numbers as bare digits, and a

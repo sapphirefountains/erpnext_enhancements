@@ -23,6 +23,7 @@ from erpnext_enhancements.feature_flags import (
 	process_automation_enabled,
 	product_configurator_enabled,
 )
+from erpnext_enhancements.utils.normalize_hook import desk_registry
 
 
 def boot_session(bootinfo):
@@ -87,6 +88,12 @@ def boot_session(bootinfo):
 	``frappe.boot.ee_item_pickers`` carries the two settings the link pickers on the
 	Maintenance Record, Section and Contract forms and on the Sales Order form filter by:
 	the consumables Item Group and the water-feature Item. See :func:`_settings_for_forms`.
+
+	``frappe.boot.sf_normalize`` is the registry of phone fields the Desk shows as
+	``(801) 555-0100`` and normalizes as they are typed (form kit P2-B,
+	``public/js/normalize/desk_display.js``). Absent when site_config's
+	``disable_value_normalization`` is set, and the Desk then installs nothing. See
+	``utils.normalize_hook.desk_registry``.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -106,6 +113,9 @@ def boot_session(bootinfo):
 	pickers, locations = _settings_for_forms()
 	bootinfo.ee_item_pickers = pickers
 	bootinfo.ee_fountain_move_locations = locations if bootinfo.ee_fountain_move else []
+	normalize_registry = desk_registry()
+	if normalize_registry:
+		bootinfo.sf_normalize = normalize_registry
 
 
 def _settings_for_forms():

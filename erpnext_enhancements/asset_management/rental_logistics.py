@@ -34,6 +34,7 @@ from frappe import _
 from frappe.utils import add_days, cint, format_datetime, get_datetime, getdate, nowdate
 
 from erpnext_enhancements.asset_management import rental_rules as rules
+from erpnext_enhancements.utils.normalize import phone_display
 
 DELIVERY, SETUP, TAKEDOWN, CLEANING = "Delivery", "Setup", "Take-down", "Cleaning"
 TASK_KINDS = (DELIVERY, SETUP, TAKEDOWN, CLEANING)
@@ -117,7 +118,10 @@ def _description(kind, booking, when):
 			(_("Notes"), "site_prep_notes"),
 		):
 			if booking.get(field):
-				lines.append(f"<p>{esc(label)}: {esc(booking.get(field))}</p>")
+				value = booking.get(field)
+				if field == "site_contact_phone":
+					value = phone_display(value)  # stored +18015550100 since form kit P2-B
+				lines.append(f"<p>{esc(label)}: {esc(value)}</p>")
 	return "".join(lines)
 
 

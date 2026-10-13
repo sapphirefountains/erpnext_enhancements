@@ -43,6 +43,7 @@ from frappe.utils import cint, flt, today
 
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
 from erpnext_enhancements.project_enhancements import contract_style
+from erpnext_enhancements.utils.value_display import shown_if_stored_phone
 
 # Series include the generation year (SF-OC-2026-0001); frappe keys the
 # counter on the resolved prefix, so numbering restarts at 0001 each year.
@@ -469,7 +470,8 @@ def _fill(value, width=30):
 	"""A value, or a fillable blank line when empty — paper fallback stays usable."""
 	if value in (None, ""):
 		return _blank(width)
-	return _val(frappe.utils.escape_html(str(value)))
+	# A phone stored +18015550100 (form kit P2-B) prints (801) 555-0100; nothing else changes.
+	return _val(frappe.utils.escape_html(str(shown_if_stored_phone(value))))
 
 
 def _cb(checked):

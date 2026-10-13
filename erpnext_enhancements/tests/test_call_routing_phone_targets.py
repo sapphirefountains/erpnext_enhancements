@@ -195,6 +195,17 @@ class TestCompile(unittest.TestCase):
 		)
 
 
+	def test_a_stored_extension_is_dropped_never_dialed_as_one_number(self) -> None:
+		"""Form kit P2-B stores 801-555-0134 x12 as +18015550134,12. call_routing_match.to_e164
+		keeps every digit after a "+", so it would dial +1801555013412 -- somebody else. The
+		ERPNext side refuses it (call_routing_dial), as it refused 801-555-0134 x12 before."""
+		warnings: list[str] = []
+		out = call_routing._compile_targets(
+			"Everyone", [{"target_type": "Phone Number", "phone_number": "+18015550134,12"}], warnings
+		)
+		self.assertEqual(out, [])
+		self.assertEqual(len(warnings), 1)
+
 class TestRuleValidate(unittest.TestCase):
 	def test_numbers_are_stored_as_e164(self) -> None:
 		doc = _rule(_row("Phone Number", "801.555.0134"))
@@ -204,6 +215,11 @@ class TestRuleValidate(unittest.TestCase):
 	def test_a_non_number_refuses_the_save(self) -> None:
 		with self.assertRaises(_Thrown):
 			_rule(_row("Phone Number", "call Brian"))._normalise_phone_targets()
+
+	def test_a_number_with_an_extension_refuses_the_save(self) -> None:
+		for typed in ("+18015550134,12", "801-555-0134 x12"):
+			with self.subTest(typed=typed), self.assertRaises(_Thrown):
+				_rule(_row("Phone Number", typed))._normalise_phone_targets()
 
 	def test_a_blank_number_refuses_the_save(self) -> None:
 		with self.assertRaises(_Thrown):
