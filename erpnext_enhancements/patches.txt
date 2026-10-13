@@ -1319,3 +1319,8 @@ erpnext_enhancements.patches.materialize_calendar_sync_settings
 # A default never reaches a Single's existing row, so write a row for each that has none (never over a stored value).
 # Switches nothing on; cannot raise; safe twice.
 erpnext_enhancements.patches.materialize_route_timing_settings
+
+# Calendar time off in (C4, v1.606.0): Calendar Sync Settings gained Read time off from Google (default 0) and its
+# read state. Write a tabSingles row for each new field that has none, so the read's first state write cannot blank
+# the rest. Never over a stored value; switches nothing on; cannot raise.
+erpnext_enhancements.patches.materialize_calendar_time_off_settings

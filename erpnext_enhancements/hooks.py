@@ -1420,6 +1420,13 @@ scheduler_events = {
 			# without this site's private ERPNext properties are other people's and never touched.
 			# A no-op while Calendar Sync Settings is off. See calendar_sync/engine.py.
 			"erpnext_enhancements.project_enhancements.calendar_sync.engine.snapback",
+			# Calendar time off in (C4, v1.606.0): what changed on the Company Holidays & Vacations
+			# calendar since the last read (its own syncToken, singleEvents=true), as Unavailable
+			# Planner Blocks marked source "Google": a name plus off/OOO/out/vacation, "Company
+			# holiday" for everyone, birthdays skipped, the rest to Calendar Time Off Review. Never
+			# reads an event ERPNext wrote, never touches a hand-made block. A no-op unless Calendar
+			# Sync Settings is on AND "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+			"erpnext_enhancements.project_enhancements.calendar_sync.time_off.incremental_read",
 		],
 		# NOTE ON MINUTES, which outlived the entries that motivated it. Chat used to own
 		# :25, :50, :35, 03:10, 03:45, 04:25, 04:30 and 04:40 in this dict, chosen to sit
@@ -1722,6 +1729,11 @@ scheduler_events = {
 		# destroys queued sync jobs; this is what redoes them. Unchanged items cost no Google call (a
 		# content hash on Calendar Sync Link). Capped at 20 minutes. A no-op while the switch is off.
 		"erpnext_enhancements.project_enhancements.calendar_sync.engine.nightly_repair",
+		# Calendar time off in (C4, v1.606.0): the whole window of the Company Holidays & Vacations
+		# calendar read again, every review decision re-applied, and imported blocks whose event has
+		# gone removed (only after a complete listing). Redoes whatever the deploy's FLUSHDB lost.
+		# A no-op unless "Read time off from Google" is ticked. See calendar_sync/time_off.py.
+		"erpnext_enhancements.project_enhancements.calendar_sync.time_off.nightly_read",
 	],
 	"hourly": [
 		# training: drain Training Attempt progress still sitting in Redis from a

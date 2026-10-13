@@ -70,10 +70,13 @@ def block_entry(row, notes=None, viewer=None, schedule=False):
 	"""One block as the pages read it. ``note`` only when ``notes`` (from ``block_notes``) has it.
 
 	``{"name", "resource", "resource_label", "user", "date", "all_day", "from_time", "to_time",
-	"slot", "window", "hours", "label", "note", "own", "can_edit", "modified"}``: ``label`` is
-	always "Unavailable"; ``own`` is the viewer's own block; ``can_edit`` is own-or-scheduler.
+	"slot", "window", "hours", "label", "note", "own", "can_edit", "modified", "from_google"}``:
+	``label`` is always "Unavailable"; ``own`` is the viewer's own block; ``can_edit`` is
+	own-or-scheduler, and never for a block read in from the Google vacations calendar
+	(``from_google``, C4): that one changes in Google, and the controller refuses an edit anyway.
 	"""
 	row = row or {}
+	from_google = (row.get("source") or "") == "Google"
 	all_day = engine.is_all_day_block(row)
 	slot = None if all_day else engine.block_slot(row)
 	text = [engine._hhmm(slot[0]), engine._hhmm(slot[1])] if slot else None
@@ -93,8 +96,9 @@ def block_entry(row, notes=None, viewer=None, schedule=False):
 		"label": engine.UNAVAILABLE,
 		"note": (notes or {}).get(row.get("name")),
 		"own": own,
-		"can_edit": bool(schedule or own),
+		"can_edit": bool(schedule or own) and not from_google,
 		"modified": str(row.get("modified")) if row.get("modified") else None,
+		"from_google": from_google,
 	}
 
 
@@ -223,6 +227,14 @@ def _check_owner(owner):
 	frappe.throw(_("You can only block your own time."), frappe.PermissionError)
 
 
+def _has_source():
+	"""True once Planner Block has C4's ``source`` column (a site mid-migrate does not)."""
+	try:
+		return bool(frappe.db.has_column(BLOCK_DOCTYPE, "source"))
+	except Exception:
+		return False
+
+
 def _block_rows(start, end, resources=None):
 	"""Planner Block rows in ``start``..``end`` (optionally of ``resources``), without the note."""
 	if not _installed(BLOCK_DOCTYPE):
@@ -230,10 +242,13 @@ def _block_rows(start, end, resources=None):
 	filters = {"date": ["between", [start, end]]}
 	if resources is not None:
 		filters["resource"] = ["in", sorted({r for r in resources if r}) or ["__none__"]]
+	fields = [*engine.BLOCK_FIELDS, "resource_name"]
+	if _has_source():
+		fields.append("source")  # C4: a block read in from Google is not editable here
 	return frappe.get_all(
 		BLOCK_DOCTYPE,
 		filters=filters,
-		fields=[*engine.BLOCK_FIELDS, "resource_name"],
+		fields=fields,
 		order_by="date asc, name asc",
 		limit_page_length=0,
 	)

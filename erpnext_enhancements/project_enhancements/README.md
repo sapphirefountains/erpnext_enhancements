@@ -42,10 +42,12 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
-| `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day) | read by the engine (never the note) |
+| `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
 | `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
 | `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
 | `doctype/planner_digest_log/` | `user|date` claim (unique) that keeps the combined digest to once per person per day across workers and deploys | `PlannerDigestLog` | `planner_digest` |
+| `calendar_sync/` | **Calendar sync** (C2, v1.604.0): committed planner work pushed one way to the shared Google Calendars, with snap-back. `payload.py` (pure: item → event body, ids, hashes, the snap-back table), `sources.py` (ERPNext → items), `google_api.py` (OAuth + Calendar REST), `engine.py` (reconcile, nightly repair, snap-back, preview, health), `triggers.py` (`doc_events`). C4 (v1.606.0): `time_off_rules.py` (pure: who is off and when, from one vacations-calendar event) and `time_off.py` (read it into Unavailable Planner Blocks, the review list, alerts, the dry run). See [Calendar sync](#calendar-sync-c2-v16040) and [Time off in](#time-off-read-in-from-google-c4-v16070) | `engine.reconcile`, `run_item_job`, `run_full_repair`, `nightly_repair`, `snapback`, `plan`, `health`; `triggers.on_change`, `on_contract_change`, `on_project_change`; `time_off.incremental_read`, `nightly_read`, `apply_review`, `preview`; `time_off_rules.classify`, `event_days`, `diff_blocks` | `doc_events` (Task, visit, contract, day note, block, Project); `scheduler_events`; `api/calendar_sync.py` |
+| `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
 | `calendar_sync/` | **Calendar sync** (C2, v1.604.0): committed planner work pushed one way to the shared Google Calendars, with snap-back. `payload.py` (pure: item → event body, ids, hashes, the snap-back table), `sources.py` (ERPNext → items), `google_api.py` (OAuth + Calendar REST), `engine.py` (reconcile, nightly repair, snap-back, preview, health), `triggers.py` (`doc_events`). See [Calendar sync](#calendar-sync-c2-v16040) | `engine.reconcile`, `run_item_job`, `run_full_repair`, `nightly_repair`, `snapback`, `plan`, `health`; `triggers.on_change`, `on_contract_change`, `on_project_change` | `doc_events` (Task, visit, contract, day note, block, Project); `scheduler_events`; `api/calendar_sync.py` |
 | `calendar_sync/timing.py` | **Calendar sync C3** (v1.605.0): which events are timed (a firm single-day route stop in the near window), the lead rule, past days and finished work keeping their stored times, the per-job route cache and the day fan-out. See [Route times and leave-by](#route-times-and-leave-by-c3-v16060) | `attach`, `pick`, `prime`, `load`, `fan_out_days`, `near_window` | `calendar_sync.engine.reconcile`, `run_item_job`, `run_day_job` |
 | `route_slots.py` | C3: the route view's own clock times for every stop of a person's day (`route_payload`'s two passes), keyed by stop; leave-by = arrival less the drive. Pure core, one engine call per range | `day_slots`, `stop_key`, `first_slot`, `compute` | `calendar_sync.timing`, `leave_by` |
@@ -53,6 +55,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_ping_log/` | `user|date|stop` claim (unique) that keeps a leave-by ping to once per person per stop per day across workers and deploys | `PlannerPingLog` | `leave_by` |
 | `doctype/calendar_sync_settings/` | Single, System Manager only: the master switch (**off**), the Google account (refresh token in a Password field), the three calendar IDs, the repair window, the near window for timed route stops (`timed_days_ahead`, 14), colors per value stream, and the sync state. Its form has the health panel, *Authorize with Google*, *Pick calendars*, *Preview* and *Re-sync everything* | `CalendarSyncSettings`, `materialize_defaults` | `calendar_sync.engine`; `api/calendar_sync` |
 | `doctype/calendar_sync_link/` | One Google event ERPNext owns: source (`doctype|name|key`, unique), calendar, event id, content hash, Google etag of our last write, last synced, last error | `CalendarSyncLink` | written only by `calendar_sync.engine` |
+| `doctype/calendar_time_off_review/` | C4: an event on the vacations calendar the time-off read could not put on one person. `CTOR-.#####`, one per Google event id (unique). The schedulers pick a person, Everyone or Ignored, optionally for every event with the same title | `CalendarTimeOffReview` (queues `time_off.apply_review` after commit) | made by `calendar_sync.time_off` |
+| `doctype/calendar_sync_alert_recipient/` | C4: child of Calendar Sync Settings' *Time off alerts*: a user who gets the time-off bells | `CalendarSyncAlertRecipient` | `calendar_sync.time_off.recipients` |
 | `doctype/calendar_sync_color/` | Child of Calendar Sync Settings: a value stream (or Day Note / Unavailable) and its Google `colorId` | `CalendarSyncColor` | `calendar_sync.engine.color_overrides` |
 | `crew_sync.py` | Mirrors a Task's crew rows into ordinary assignments (ToDos), adding only people new to the crew and removing only people taken off it; tidies the crew table on validate | `on_task_update`, `validate_crew` | `doc_events["Task"]` `on_update` / `validate` |
 | `doctype/planner_resource/` | A bookable person or outside crew: Employee or Subcontractor, group (Field / PM / Design / Subcontractor), home team, and a weekly **work pattern** with optional date ranges. One active resource per employee | `PlannerResource` | Doctype controller; seeded by `patches/seed_planner_resources` |
@@ -1473,7 +1477,8 @@ When planners commit work, ERPNext pushes it **one way** to Sapphire's existing 
 Calendars so the team can see the schedule there. Nik's decisions of 2026-10-12, settled:
 
 - **ERPNext is the only source of truth.** Nothing ever flows from Google into ERPNext; two-way sync was
-  withdrawn. An edit made in Google is undone by snap-back (below).
+  withdrawn. (The one exception came later, by design: C4 reads people's own time off off the vacations
+  calendar, see [Time off in](#time-off-read-in-from-google-c4-v16070).) An edit made in Google is undone by snap-back (below).
 - **Three calendars that already exist**, owned by Nik's account, all America/Denver: **Projects** (firm
   and pencil project tasks, day notes), **Maintenance** (visits, projected contract visits) and **Company
   Holidays & Vacations** (unavailable blocks). Their IDs go in Calendar Sync Settings, typed or picked
@@ -1562,6 +1567,8 @@ subject cannot be told from a part number.
   (*Test connection*), the redirect URI to register, the window, last snap-back check, last full repair and
   its counts, events by status and kind, and the last ten errors.
 
+**Out of scope here** (later tasks): timed route slots and leave-by (C3), reading hand-made time off from
+the holidays calendar into the planner (C4, below), cutover and ending the old hand-made series (C5), the Triton
 **Out of scope here** (later tasks): timed route slots and leave-by (C3, below), reading hand-made time off from
 the holidays calendar into the planner (C4), cutover and ending the old hand-made series (C5), the Triton
 dedupe (C6).
@@ -1570,6 +1577,43 @@ dedupe (C6).
 the snap-back table, colors, the readers' states, the master switch, the dry run, the triggers, the
 client's backoff and the wiring.
 
+### Time off read in from Google (C4, v1.606.0)
+
+People already put their own time off on **Company Holidays & Vacations** by hand ("Austin Off", "Clegg -
+ooo"). `calendar_sync/time_off.py` reads those events into the planners as **Unavailable Planner Blocks**
+(Nik, 2026-10-12, settled). Off by default: Calendar Sync Settings → *Read time off from Google*, which
+also needs the master switch, an authorized account and the calendar ID.
+
+- **Reading**: C2's client, `events.list` with `singleEvents=true`. Every 10 minutes from its own
+  `syncToken` (`time_off_sync_token`; snap-back's query differs, and Google ties a token to its query);
+  nightly the whole window again, decisions re-applied, and imported blocks whose event has gone removed
+  (only after a complete listing). Re-drivable after the deploy's `FLUSHDB`.
+- **Matching** (`time_off_rules.py`, pure, read its docstring): ERPNext's own events (C2's private
+  properties, any site's, or its footer) are never read; birthdays skipped; a planner's decision (event
+  id, then title); "Company holiday" is everyone; a first name / full name / alias (*Names on the shared
+  calendar* on Planner Resource) **plus** a time-off word; with no name, a time-off word and the creator's
+  (then organizer's) address → User → active Planner Resource; anything else goes to review.
+- **Blocks**: one per person per day, all day or the slot (cut at midnight in the site's zone), `source`
+  "Google", `google_event_id`, a private note "From Google Calendar: <title>". Each read writes only the
+  difference, inside the window. **Hand-made blocks are never read, changed or deleted**: every query
+  filters `source = "Google"` and the update and delete paths re-check the row. `source` defaults to
+  "Planner" and is on a normal doctype, so every block that existed before v1.606.0 reads "Planner".
+- **Loop guard**: an imported block is never synced back out (`sources.block_item` reads it as gone,
+  `refs_in_window` skips it, `triggers.on_change` does not queue it), is read-only (`PlannerBlock`;
+  a System Manager may still delete one) and is shown on both planners without the edit form.
+- **Company holiday**: a block for every active staff resource (not subcontractors), except where their
+  Holiday List (what the engine already reads) already has the day. The Holiday List is never written.
+- **Review list** (`Calendar Time Off Review`): Assigned + person, Everyone, or Ignored; kept per event id,
+  and per title with *Same for this title*. Applied after commit from the event stored on the row.
+- **Alerts**: the *Time off alerts* users (else whoever authorized the account) get a bell when events
+  wait for review, and when newly imported time off lands on firm bookings, once per block
+  (`time_off_alerted`), by the Conflict center's own check (`planner_blocks._conflicts_made`).
+- **Preview** (*Time off → Preview time off*): one read-only listing; creates, updates, deletes and the
+  review list, with **no write anywhere**.
+
+`tests/test_calendar_time_off.py` (bench-free, own CI step) pins the matching, the creator fallback, that
+ERPNext's own events are ignored, block create/update/delete, hand-made blocks untouched, the loop guard,
+the review list, one alert per block, no read with a switch off, and a dry run that writes nothing.
 ### Route times and leave-by (C3, v1.605.0)
 
 C2 writes every item all-day. C3 gives **route stops real times** (Nik's decisions, 2026-10-12):
@@ -1625,6 +1669,8 @@ C2 writes every item all-day. C3 gives **route stops real times** (Nik's decisio
 - `scheduler_events.daily` → `routing.backfill_coordinates` (geocode task and venue addresses the routes need, v1.578.0).
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `scheduler_events.daily_long` → `planner_tracking.refresh_labor_forecasts` (the nightly refresh of the Labor line's stored `labor_forecast`, no Google calls, never saves the Project; Phase 4 follow-up).
+- Calendar sync (C2, v1.604.0): `doc_events` Task (`on_update`, `on_trash`), Sapphire Maintenance Record (`on_update`, `on_submit`, `on_cancel`, `on_update_after_submit`, `on_trash`), Planner Day Note and Planner Block (`on_update`, `on_trash`) → `calendar_sync.triggers.on_change`; Sapphire Maintenance Contract `on_update` → `on_contract_change`; Project `on_update` → `on_project_change`; `scheduler_events` `*/10` → `calendar_sync.engine.snapback`; `daily_long` → `calendar_sync.engine.nightly_repair`. All no-ops while Calendar Sync Settings is off.
+- Calendar time off in (C4, v1.606.0): `scheduler_events` `*/10` → `calendar_sync.time_off.incremental_read`; `daily_long` → `calendar_sync.time_off.nightly_read`. No-ops unless *Read time off from Google* is ticked. The Planner Block trigger skips imported blocks.
 - Calendar sync (C2, v1.604.0): `doc_events` Task (`on_update`, `on_trash`), Sapphire Maintenance Record (`on_update`, `on_submit`, `on_cancel`, `on_update_after_submit`, `on_trash`), Planner Day Note and Planner Block (`on_update`, `on_trash`) → `calendar_sync.triggers.on_change`; Sapphire Maintenance Contract `on_update` → `on_contract_change`; Project `on_update` → `on_project_change`; `scheduler_events` `*/10` → `calendar_sync.engine.snapback`; `daily_long` → `calendar_sync.engine.nightly_repair`. All no-ops while Calendar Sync Settings is off. C3 (v1.605.0) adds no `doc_events`: an item job queues `calendar_sync.engine.run_day_job` itself.
 - Leave-by pings (C3, v1.605.0): `scheduler_events` cron `4-59/5 * * * *` (its own key, every five minutes) → `leave_by.send_leave_by_pings`, a no-op while Project Planner Settings *Leave-by pings* is off.
 - `assistant_tools` → `crew_conflicts.CrewConflicts` (Phase 6D: the Conflict center's list, read-only, never a block's note). Personal blocks and day notes need no hook: the engine reads them, and the planners' reads and the three digests call `api/planner_blocks` directly.

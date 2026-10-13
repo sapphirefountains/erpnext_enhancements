@@ -1,0 +1,214 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "CTOR-.#####",
+ "creation": "2026-10-13 09:00:00.000000",
+ "custom": 0,
+ "description": "An event on the Company Holidays & Vacations calendar that the time-off read could not put on one person by itself. Pick the person, Everyone or Ignore; the choice is kept for this event, and for every event with the same title when ticked.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "resource",
+  "resource_name",
+  "remember_title",
+  "column_break_main",
+  "title",
+  "dates",
+  "reason",
+  "suggested_resource",
+  "section_event",
+  "event_id",
+  "creator",
+  "start_date",
+  "end_date",
+  "column_break_event",
+  "decided_by",
+  "decided_on",
+  "title_key",
+  "calendar_id",
+  "event_json"
+ ],
+ "fields": [
+  {
+   "default": "Open",
+   "description": "Assigned: an Unavailable block for the person on each day. Everyone: one for every active staff member (a company day off). Ignored: nothing.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Decision",
+   "options": "Open\nAssigned\nEveryone\nIgnored",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.status=='Assigned'",
+   "fieldname": "resource",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Person",
+   "mandatory_depends_on": "eval:doc.status=='Assigned'",
+   "options": "Planner Resource"
+  },
+  {
+   "depends_on": "eval:doc.status=='Assigned'",
+   "fetch_from": "resource.resource_name",
+   "fieldname": "resource_name",
+   "fieldtype": "Data",
+   "label": "Name",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.status!='Open'",
+   "description": "Do the same for every event with this title, now and later (compared without case, punctuation or numbers).",
+   "fieldname": "remember_title",
+   "fieldtype": "Check",
+   "label": "Same for this title"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Event",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dates",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "When",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Why it needs you",
+   "read_only": 1
+  },
+  {
+   "fieldname": "suggested_resource",
+   "fieldtype": "Link",
+   "label": "Best guess",
+   "options": "Planner Resource",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_event",
+   "fieldtype": "Section Break",
+   "label": "Google event"
+  },
+  {
+   "fieldname": "event_id",
+   "fieldtype": "Data",
+   "label": "Google event ID",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "creator",
+   "fieldtype": "Data",
+   "label": "Created by",
+   "read_only": 1
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "in_standard_filter": 1,
+   "label": "First day",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "Last day",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_event",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Decided by",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_on",
+   "fieldtype": "Datetime",
+   "label": "Decided on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title key",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "calendar_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Calendar ID",
+   "read_only": 1
+  },
+  {
+   "description": "The event as Google sent it (id, title, dates, creator), so a decision applies without asking Google again.",
+   "fieldname": "event_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Event",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Calendar Time Off Review",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects User",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

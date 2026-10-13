@@ -545,14 +545,25 @@ def day_note_item(name):
 #: What is read from a Planner Block. Never ``note``: it is private to the person and the
 #: schedulers (``crew_availability.block_notes`` is its only reader), and these are shared calendars.
 BLOCK_FIELDS = ("name", "resource", "resource_name", "date", "all_day", "from_time", "to_time")
+#: C4: a block read IN from the Company Holidays & Vacations calendar (``calendar_sync.time_off``).
+#: It already is an event there, made by a person; writing it out again would duplicate every
+#: hand-made Google event, and the import would then skip our copy (it carries our properties).
+GOOGLE_SOURCE = "Google"
+
+
+def is_imported_block(row):
+	"""True for a block the C4 import made. Never synced out: it is the calendar's own event."""
+	return ((row or {}).get("source") or "") == GOOGLE_SOURCE
 
 
 def block_item(name):
 	if not _table_exists(BLOCK):
 		return gone(BLOCK, name, kind=payload.KIND_BLOCK)
-	row = frappe.db.get_value(BLOCK, name, list(BLOCK_FIELDS), as_dict=True)
+	fields = list(BLOCK_FIELDS) + (["source"] if _has_column(BLOCK, "source") else [])
+	row = frappe.db.get_value(BLOCK, name, fields, as_dict=True)
 	day = payload._date(row.get("date")) if row else None
-	if not row or not day:
+	if not row or not day or is_imported_block(row):
+		# The loop guard: an imported block reads as gone, so it never gets an event.
 		return gone(BLOCK, name, kind=payload.KIND_BLOCK)
 	timed = not _float(row.get("all_day"))
 	return {
@@ -646,10 +657,18 @@ def refs_in_window(start, end):
 	for doctype in (DAY_NOTE, BLOCK):
 		if not _table_exists(doctype):
 			continue
-		for name in frappe.get_all(
-			doctype, filters={"date": ["between", [start, end]]}, pluck="name", limit_page_length=0
+		with_source = doctype == BLOCK and _has_column(BLOCK, "source")
+		for row in frappe.get_all(
+			doctype,
+			filters={"date": ["between", [start, end]]},
+			fields=["name", "source"] if with_source else ["name"],
+			limit_page_length=0,
 		):
-			refs.append((doctype, name))
+			# C4 loop guard: blocks read in from Google are not ours to write (filtered here in Python:
+			# a "!=" filter in SQL would also drop rows whose source is NULL).
+			if with_source and is_imported_block(row):
+				continue
+			refs.append((doctype, row.get("name")))
 	return refs
 
 

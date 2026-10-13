@@ -16,6 +16,9 @@ function is reachable by any signed-in user otherwise).
 * ``list_calendars`` lists the account's calendars it can write to, for *Pick calendars*.
 * ``health`` (``test=1`` also refreshes the token once), ``preview`` (the dry run: no Google call,
   no write) and ``resync_all`` (queues the full repair on the long queue, one at a time).
+* C4, time off read in: ``preview_time_off`` (the dry run: one read-only listing of the vacations
+  calendar, no write anywhere) and ``read_time_off_now`` (queues the full read). ``health`` carries
+  the read's state under ``time_off``.
 
 Nothing returned or logged carries a token, the client secret or the authorization code.
 """
@@ -23,7 +26,7 @@ Nothing returned or logged carries a token, the client secret or the authorizati
 import frappe
 from frappe import _
 
-from erpnext_enhancements.project_enhancements.calendar_sync import engine, google_api
+from erpnext_enhancements.project_enhancements.calendar_sync import engine, google_api, time_off
 
 ROLE = "System Manager"
 SETTINGS = "Calendar Sync Settings"
@@ -129,7 +132,32 @@ def list_calendars():
 @frappe.whitelist()
 def health(test=0):
 	_require_manager()
-	return engine.health(test=bool(frappe.utils.cint(test)))
+	out = engine.health(test=bool(frappe.utils.cint(test)))
+	out["time_off"] = time_off.health()
+	return out
+
+
+@frappe.whitelist()
+def preview_time_off(start=None, end=None):
+	"""C4's dry run: what reading the vacations calendar would create, update and delete, and what
+	would wait for review. Reads Google (read-only) and writes nothing anywhere."""
+	_require_manager()
+	return time_off.preview(start, end)
+
+
+@frappe.whitelist(methods=["POST"])
+def read_time_off_now():
+	"""Queue C4's full read of the window (the nightly one) now."""
+	_require_manager()
+	if not time_off.is_on():
+		frappe.throw(
+			_(
+				"Tick Read time off from Google (with sync on, an account authorized and the Company "
+				"Holidays & Vacations calendar ID filled in) first. The preview works while it is off."
+			)
+		)
+	time_off.queue_full_read()
+	return {"queued": True}
 
 
 @frappe.whitelist()
