@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.603.0] - 2026-10-12
+
+### Added
+
+- **New tasks can be drafted on the Project Planner.** Nik, 2026-10-12: "build out a whole new schedule
+  as a draft and publish it once." Until now Draft mode refused every new task, because a
+  `Planner Draft Change` was a pending change *of a task that exists*. Quick add, Duplicate and the
+  Build out grid now work in Draft mode (they send `draft=1`): the server makes the same checks as the
+  live call, with the same messages and the same row numbers, and then keeps the task-to-be as a
+  **`New task` draft row** instead of creating it.
+  - **A drafted new task is never a Task.** Publishing is also the moment work reaches Google Calendar
+    (the sync follows saved Tasks), so nothing may exist on `tabTask` before it: no assignment, digest,
+    change alert, conflict-center line or calendar event can come from a draft. A test pins that nothing
+    is inserted or saved on `tabTask` by drafting a quick add, a duplicate or a build out.
+  - **Data model.** `Planner Draft Change` gains `kind` (`Change`, the default, or `New task`), `project`
+    and `created_task`. It is a normal doctype, so the `ALTER` that adds `kind` writes `Change` into
+    every existing row: there is no backfill patch, and none is needed (the Single-doctype trap in
+    `CLAUDE.md` does not apply). `validate` holds the rules: a `Change` names exactly one task or visit
+    and no project; a `New task` names neither and needs its project. Its `payload` is the Task it will
+    become, as plain data (`load_spec`): the Task's fields, crew, qualifications, equipment and what it
+    waits on. Only whitelisted Task fields are ever applied, and the status is always Open.
+  - **Draft names.** A drafted task goes by `draft-new:<its row's name>` everywhere a task name goes: its
+    card, `save_task`, `add_crew`, `swap_crew`, `move_many`, the Undo and `discard_drafts`. A phase or a
+    prerequisite that is another drafted task is written the same way in the spec, and mapped to the
+    real Task when it is created. A `draft-new:` name sent to a live call is simply "not a task of that
+    project".
+  - **Which planner reads which rows.** The Project Planner reads its own `task` rows and its own `New
+    task` rows, never a visit's; the Maintenance Planner still asks for rows with a `visit`, so it never
+    sees a `New task` row. Asking for `kind` is guarded by `has_column`, so a request served between the
+    new code and `bench migrate` does not ask for a column that is not there.
+  - **Showing them.** `get_planner(draft=1)` draws a drafted new task as a card with a dashed outline
+    and a "New" chip: a dated one on its day, an undated one in the Unscheduled tray. The engine counts
+    it as an `extra` of `_compute` (never an `exclude`: there is nothing stored to hide), so free hours,
+    conflicts and the week's load include it. A drafted phase has no card but is counted in "N
+    unpublished changes". A draft whose project stopped being a customer job, whose person left the
+    planner, or whose phase or prerequisite was discarded is reported "out of date" and not drawn;
+    *Discard out-of-date* clears it.
+  - **Editing.** A drafted new task can be dragged, resized, pencilled and re-crewed through the same
+    `save_task`/`add_crew`/`swap_crew` draft path as any task, which rewrites its spec in place (never a
+    Task save). It can be selected with others and moved with `move_many`. It has no Task to open,
+    duplicate, split or look up yet, so those menu items say "Not published yet".
+  - **Undo** of a drafted quick add or duplicate (`remove_created_task`) and of a drafted build out
+    (`remove_built_out_tasks`) discards the rows. It refuses, discarding none, while another drafted task
+    is filed under or waits on one of them.
+  - **Publish** creates them in the same request as the other drafts, through the code path the live
+    calls use: one `task_from_spec` builds the Task document and one `_insert_doc` inserts it. The live
+    quick add, duplicate and build out now build their documents from the same spec, so a task
+    published from a draft is exactly the one the live call would have made. Phases are created first,
+    then the tasks, each after what it waits on (`new_task_order`, whatever order they were drafted
+    in), with `draft-new:` names mapped to the real names as they go. The new tasks join the existing
+    `Change` rows in the **one** whole-batch conflict check (all or nothing: one reason for the lot, put
+    on each new task's timeline; the conflict lines name a new task by its subject, not its draft
+    name) and in the per-person publish notices, where a new task is "You're on X", not "moved". Each
+    task is created in its own savepoint with `planner_publishing` up, so a task ERPNext refuses is
+    reported in `failed` and stays a Draft, never half created, and what waits on it is reported too.
+    Published rows record `created_task`. Changes to existing tasks publish exactly as before.
+  - **Build out grid in Draft mode.** A second drafted build out can file tasks under, or make them wait
+    on, the phases and tasks an earlier one drafted (`get_build_out_context(draft=1)` offers them, marked
+    `draft`), and typing a drafted phase's name again is that phase, not a second one.
+  - **Split stays refused in Draft mode.** It changes a task that exists and creates another at once,
+    which one draft row cannot hold. The sentence now says exactly that (`DRAFT_REFUSAL`), and the page
+    still refuses before it asks.
+- **Paste a list** (Build out grid). A footer action turns free-form lines into rows:
+  `Excavate basin, 16h`, `Pour slab - 8 hours`, `Set pumps 4h`, `• Pull wire (6 hrs)`,
+  `3. Commission system`, and `Electrical: Pull wire, 6h` (a phase before a colon). Bullets, checkboxes
+  and numbering are dropped, a trailing `4h` / `4 hrs` / `4 hours` (after a space, comma or dash, or in
+  brackets) or a bare number after a comma is the hours, blank lines and a line of nothing but hours are
+  skipped. The parser is `PPT1_PURE.parse_lines`, run under node against every one of those shapes. The
+  tab-separated spreadsheet paste is unchanged and shares its row filling.
+- **Copy from project…** (Build out grid). Starts the grid from any project the user can read (not only
+  customer jobs: it is a source of a plan). New `planner_actions.get_copy_source(project)` (GET) returns
+  the source's **leaf** tasks as grid rows: subject, hours (`expected_time`), phase (the parent group's
+  subject), crew size, and dependencies as `row:N` within the copied set (a dependency on anything not
+  copied is dropped and counted in the note). Templates and canceled tasks are left out, **finished tasks
+  are kept** (a finished job is the best template), in the project's own order (phase, then `lft`,
+  `idx`, creation), at most 100 rows with a `truncated` flag. Never copied: dates, people, crew rows,
+  assignments, status, timesheets, descriptions, addresses. Task read permission applies (`get_list`).
+  The grid replaces its rows when empty and otherwise asks Append or Replace; a copied task that waits
+  on several rows keeps all of them (the Depends on cell shows the first and says "Also waits on row(s)").
+  The tasks are created on the *current* project, or drafted there in Draft mode.
+
+### Changed
+
+- **`Draft mode` no longer greys out Duplicate, Add task here… and Build out.** Their menu hints,
+  `DRAFT_REFUSAL` and the Build out grid's intro changed with it; the Undo of a draft-mode create is a
+  discard instead of a delete.
+
+### Tests
+
+- `tests/test_planner_draft_new_tasks.py` (own CI step, unittest, on Phase 6B's fake site): the
+  doctype's `kind` rules; which planner reads which rows; drafting makes no Task and checks what the live
+  call checks (a case list run both ways must give the same message); the card, the overlay and the tray;
+  editing, moving and removing; publish order, reference mapping, the batch check, all or nothing, a
+  refused task, a discarded phase and the notices; `copy_plan` and `get_copy_source`; and, under node, the
+  pasted-list parser, the copied rows' dependencies, and every dialog this adds built through a stand-in
+  that asks each `get_data`/`get_query` while the dialog is being constructed (the 1.602.0 `const dialog`
+  bug) and again once it exists. Phase 6B's and the build-out suite's refusal tests now pin the new
+  behaviour: only a split is refused in Draft mode.
+
 ## [1.602.1] - 2026-10-12
 
 ### Fixed

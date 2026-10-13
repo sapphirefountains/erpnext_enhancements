@@ -951,7 +951,8 @@ def _current_crew(doc):
 	]
 	user_to_resource = {}
 	todo_users = []
-	if not rows:
+	# A drafted new task has no assignments to read: nothing exists to be assigned yet.
+	if not rows and not is_draft_ref(doc.get("name")):
 		todo_users = frappe.get_all(
 			"ToDo",
 			filters={"reference_type": "Task", "reference_name": doc.name, "status": "Open"},
@@ -2449,6 +2450,10 @@ def check_routes():
 
 DRAFT_DOCTYPE = "Planner Draft Change"
 DRAFT, PUBLISHED, DISCARDED = "Draft", "Published", "Discarded"
+#: ``Planner Draft Change.kind`` of a task that does not exist yet (v1.603.0), and the prefix of the
+#: name such a task goes by until it is published: ``draft-new:<its Draft row's name>``.
+NEW_TASK = "New task"
+DRAFT_REF = "draft-new:"
 #: The ``save_task`` arguments a Draft row may carry. Nothing else in a stored payload is applied.
 DRAFT_KEYS = ("start", "end", "expected_time", "crew_size", "crew", "credentials", "tentative", "equipment")
 DRAFT_LIMIT = 300
@@ -2648,12 +2653,17 @@ def _draft_rows(user=None):
 	"""``(rows, duplicates)``: the caller's Draft rows, one per task (the newest wins), oldest
 	first, and any older duplicate a racing double-save left behind.
 
-	Task rows only (``task`` set): since v1.601.0 the same doctype also holds the Maintenance
-	Planner's visit drafts (``visit`` set, ``api/maintenance_drafts.py``), which this planner
-	neither shows, publishes nor discards."""
+	Task rows (``task`` set) and, since v1.603.0, the caller's **New task** rows (``kind`` =
+	``New task``, no ``task``: a task that does not exist yet, see :func:`load_spec`), which come
+	after the task rows in the order they were drafted. Since v1.601.0 the same doctype also holds
+	the Maintenance Planner's visit drafts (``visit`` set, ``api/maintenance_drafts.py``), which
+	this planner neither shows, publishes nor discards (that planner's own reader asks for rows
+	with a ``visit``, so it never sees a New task row either). Only a New task row has a ``kind``
+	and a ``project`` in what comes back."""
+	owner = user or frappe.session.user
 	rows = frappe.get_all(
 		DRAFT_DOCTYPE,
-		filters={"owner": user or frappe.session.user, "status": DRAFT, "task": ["is", "set"]},
+		filters={"owner": owner, "status": DRAFT, "task": ["is", "set"]},
 		fields=["name", "task", "subject", "payload", "base_modified", "modified"],
 		order_by="creation asc",
 		limit_page_length=DRAFT_LIMIT,
@@ -2665,7 +2675,25 @@ def _draft_rows(user=None):
 			latest[row.get("task")] = row
 	keep = [latest[task] for task in dict.fromkeys(row.get("task") for row in rows)]
 	kept = {row.get("name") for row in keep}
-	return keep, [row for row in rows if row.get("name") not in kept]
+	duplicates = [row for row in rows if row.get("name") not in kept]
+	if _has_kind_column():
+		keep = keep + frappe.get_all(
+			DRAFT_DOCTYPE,
+			filters={"owner": owner, "status": DRAFT, "kind": NEW_TASK},
+			fields=["name", "kind", "project", "subject", "payload", "base_modified", "modified"],
+			order_by="creation asc",
+			limit_page_length=DRAFT_LIMIT,
+		)
+	return keep, duplicates
+
+
+def _has_kind_column():
+	"""Whether Planner Draft Change has its ``kind`` column yet (v1.603.0): a request served between
+	the new code and ``bench migrate`` must not ask for a column that is not there."""
+	try:
+		return bool(frappe.db.has_column(DRAFT_DOCTYPE, "kind"))
+	except Exception:
+		return False
 
 
 def _draft_edit(
@@ -2741,8 +2769,11 @@ def _draft_context(task, modified):
 	"""Load a task for drafting: as a save would, then with the caller's draft so far applied.
 
 	A Draft row whose task changed since it was drafted is not built on: the new draft starts from
-	the task as it is now, and the planner is told (``reset``).
+	the task as it is now, and the planner is told (``reset``). A drafted new task
+	(``draft-new:<row>``) is loaded from its Draft row instead (:func:`_new_context`).
 	"""
+	if is_draft_ref(task):
+		return _new_context(task, modified)
 	doc = _load(task, modified)
 	rows, duplicates = _draft_rows()
 	row = next((r for r in rows if r.get("task") == doc.name), None)
@@ -2797,6 +2828,8 @@ def _store_draft(
 	doc = context["doc"]
 	stored_state, stored_crew = context["stored"]
 	_draft_edit(doc, start, end, expected_time, crew_size, crew, credentials, tentative, equipment)
+	if context.get("new"):
+		return _store_new_edit(context, doc)
 	after_state, after_crew = _state(doc), _current_crew(doc)
 
 	recorded = {"start": start, "end": end}
@@ -2878,11 +2911,18 @@ def _write_draft(context, doc, payload, discard=False):
 def _draft_overlay():
 	"""The caller's drafts as the engine takes them: ``exclude`` (drafted task names), ``extra``
 	(``(state, crew)`` as drafted), ``drafted`` (per task, what the card must show) and ``stale``
-	(drafts that cannot be shown: the task changed since, or is gone)."""
+	(drafts that cannot be shown: the task changed since, or is gone).
+
+	v1.603.0: a drafted **new task** is in ``extra`` and ``drafted`` under its ``draft-new:`` name and
+	never in ``exclude`` (there is no stored task to hide), so the week's free hours and conflicts
+	count it; a drafted new **phase** has no days and no card, and is listed in ``phases`` so the
+	count of unpublished changes is the count of Draft rows."""
 	rows, _duplicates = _draft_rows()
-	overlay = {"exclude": set(), "extra": [], "drafted": {}, "stale": []}
+	overlay = {"exclude": set(), "extra": [], "drafted": {}, "stale": [], "phases": []}
 	docs = []
 	for row in rows:
+		if is_new_row(row):
+			continue
 		doc, problem = _drafted_doc(row)
 		if problem:
 			overlay["stale"].append(
@@ -2890,7 +2930,8 @@ def _draft_overlay():
 			)
 			continue
 		docs.append(doc)
-	titles = _project_titles(doc.get("project") for doc in docs)
+	news = _overlay_new_tasks(overlay, [row for row in rows if is_new_row(row)])
+	titles = _project_titles(doc.get("project") for doc in docs + [doc for doc, _spec in news])
 	for doc in docs:
 		state = _state(doc)
 		state["project_title"] = titles.get(doc.get("project")) if doc.get("project") else None
@@ -2900,6 +2941,17 @@ def _draft_overlay():
 			"credentials": [
 				row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])
 			]
+		}
+	for doc, spec in news:
+		state = _state(doc)
+		state["project_title"] = titles.get(doc.get("project")) if doc.get("project") else None
+		overlay["extra"].append((state, _current_crew(doc)))
+		overlay["drafted"][doc.name] = {
+			"credentials": [
+				row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])
+			],
+			"new": True,
+			"depends_on": spec_waits(spec),
 		}
 	return overlay
 
@@ -2914,6 +2966,10 @@ def _with_drafts(result, overlay, start, end):
 		if card["name"] in drafted:
 			card["drafted"] = True
 			card["credentials"] = list(drafted[card["name"]]["credentials"])
+			if drafted[card["name"]].get("new"):
+				# v1.603.0: a task that does not exist yet. Its predecessors, not read from the database.
+				card["new_task"] = True
+				card["depends_on"] = list(drafted[card["name"]].get("depends_on") or [])
 			if not card.get("start"):
 				tray.append(card)
 				continue
@@ -2925,8 +2981,9 @@ def _with_drafts(result, overlay, start, end):
 	result["unscheduled"] = [card for card in result["unscheduled"] if card["name"] not in drafted] + tray
 	result["needs_crew"] = [name for name in result["needs_crew"] if name in visible or name not in drafted]
 	result["drafts"] = {
-		"count": len(drafted) + len(overlay["stale"]),
+		"count": len(drafted) + len(overlay.get("phases") or []) + len(overlay["stale"]),
 		"tasks": sorted(drafted),
+		"phases": list(overlay.get("phases") or []),
 		"stale": overlay["stale"],
 	}
 	return result
@@ -2957,7 +3014,8 @@ def _batch_check(plans):
 	pairs = [(plan["before"], plan["after"]) for plan in plans]
 	resources, first, last = set(), None, None
 	for plan in plans:
-		for state, crew in (plan["before"], plan["after"]):
+		# A drafted new task has no "before": it is not stored anywhere yet.
+		for state, crew in [side for side in (plan["before"], plan["after"]) if side]:
 			span = engine.task_span(state)
 			if span:
 				first = span[0] if first is None else min(first, span[0])
@@ -3037,10 +3095,16 @@ def _notify_publish(saved):
 	"""One notice per person whose bookings moved (``planner_notices.send_publish_notices``)."""
 	from erpnext_enhancements.project_enhancements import planner_notices as notices
 
+	# A new task with no days (and a new phase, which has none) has nobody to tell yet.
+	saved = [
+		plan
+		for plan in saved
+		if plan.get("before") or (plan.get("after") and engine.task_span(plan["after"][0]))
+	]
 	resources = {
 		member.get("resource")
 		for plan in saved
-		for _state_, crew in (plan["before"], plan["after"])
+		for _state_, crew in [side for side in (plan["before"], plan["after"]) if side]
 		for member in crew or []
 	}
 	users = {name: row.get("user") for name, row in _resources(resources).items()}
@@ -3052,7 +3116,9 @@ def _notify_publish(saved):
 	window = notices.alert_window() if notices.setting("change_alerts") else None
 	out = {}
 	for plan in saved:
-		before, after = snap(*plan["before"]), snap(*plan["after"])
+		# A drafted new task is new to everyone on it ("You're on X: Thu Oct 15").
+		before = snap(*plan["before"]) if plan.get("before") else None
+		after = snap(*plan["after"])
 		urgent = notices.change_lines(before, after, window, long=True) if window else {}
 		for user, entries in notices.change_lines(before, after).items():
 			notice = out.setdefault(user, {"lines": [], "urgent": [], "task": plan["name"], "day": None})
@@ -3075,40 +3141,73 @@ def publish_drafts(reason=None):
 	* Otherwise every draft is saved through ``_apply`` (the same path as ``save_task``), its row
 	  marked Published, and each person whose days moved gets one notice.
 
+	**New tasks (v1.603.0).** The caller's New task rows are published in the same request: their
+	days and crews join the Change rows in the one conflict check (so a new task that overbooks
+	someone, alone or together with the moves, asks for the one reason), then each is created through
+	the code path the live quick add, duplicate and build out use (:func:`task_from_spec` and
+	:func:`_insert_doc`): the new phases first, then the tasks, each after what it waits on, with
+	``draft-new:`` names mapped to the Tasks they became. Each is created in its own savepoint, so one
+	that ERPNext refuses is reported in ``failed`` and stays a Draft, never half created, and never
+	stops the others (a task that waits on it is reported too, since it cannot be created without it).
+	Published rows record ``created_task``. Changes to existing tasks behave exactly as before.
+
 	Returns ``{"published": [{task, subject}], "skipped": [..], "failed": [..], "notified": n,
 	"conflicts": {..}}``; ``failed`` lists a task ERPNext refused (its own validation), which never
-	stops the others.
+	stops the others. A published new task has ``"new": True`` and the name of the Task created.
 	"""
 	_require_planner()
 	reason = (given(reason) or "").strip()
 	rows, _duplicates = _draft_rows()
-	plans, skipped = [], []
+	plans, news, skipped = [], [], []
+	valid = _valid_projects([row for row in rows if is_new_row(row)])
+	live = {draft_ref(row.get("name")) for row in rows if is_new_row(row)}
 	for row in rows:
-		plan, problem = _publish_plan(row)
+		if is_new_row(row):
+			plan, problem = _publish_new_plan(row, valid, live)
+			key = draft_ref(row.get("name"))
+		else:
+			plan, problem = _publish_plan(row)
+			key = row.get("task")
 		if problem:
-			skipped.append(
-				{"task": row.get("task"), "subject": row.get("subject") or row.get("task"), "reason": problem}
-			)
+			skipped.append({"task": key, "subject": row.get("subject") or key, "reason": problem})
+		elif is_new_row(row):
+			news.append(plan)
 		else:
 			plans.append(plan)
-	if not plans:
+	if not plans and not news:
 		return {"published": [], "skipped": skipped, "failed": [], "notified": 0, "conflicts": {}}
 
-	conflicts = _batch_check(plans)
+	checked = plans + [plan for plan in news if plan.get("after")]
+	conflicts = _name_new_tasks(_batch_check(checked), news) if checked else {}
 	if conflicts and not reason:
-		return {"needs_reason": True, "conflicts": conflicts, "skipped": skipped, "count": len(plans)}
+		return {
+			"needs_reason": True,
+			"conflicts": conflicts,
+			"skipped": skipped,
+			"count": len(plans) + len(news),
+		}
 
-	saved, failed = _apply_plans(plans, reason)
+	saved, failed = _apply_plans(plans, reason) if plans else ([], [])
+	created, failed_new = _create_new_tasks(news, reason, conflicts) if news else ([], [])
+	failed = failed + failed_new
 	now = frappe.utils.now_datetime()
-	for plan in saved:
+	for plan in saved + created:
 		draft = frappe.get_doc(DRAFT_DOCTYPE, plan["row"].get("name"))
 		draft.status = PUBLISHED
 		draft.published_on = now
 		draft.reason = reason or None
+		if plan.get("new"):
+			draft.created_task = plan["name"]
 		draft.save()
-	notified = _notify_publish(saved) if saved else 0
+	notified = _notify_publish(saved + created) if (saved or created) else 0
 	return {
-		"published": [{"task": plan["name"], "subject": plan["subject"]} for plan in saved],
+		"published": [
+			dict(
+				{"task": plan["name"], "subject": plan["subject"]},
+				**({"new": True} if plan.get("new") else {}),
+			)
+			for plan in saved + created
+		],
 		"skipped": skipped,
 		"failed": failed,
 		"notified": notified,
@@ -3118,20 +3217,529 @@ def publish_drafts(reason=None):
 
 @frappe.whitelist(methods=["POST"])
 def discard_drafts(tasks=None):
-	"""Discard the caller's drafts: all of them, or only those for ``tasks`` (a JSON list). The rows
-	are marked Discarded, not deleted. Returns ``{"discarded": n}``."""
+	"""Discard the caller's drafts: all of them, or only those for ``tasks`` (a JSON list; a drafted
+	new task is named ``draft-new:<row>``, as its card is). The rows are marked Discarded, not
+	deleted. Returns ``{"discarded": n}``."""
 	_require_planner()
 	wanted = parse_list(given(tasks))
 	rows, duplicates = _draft_rows()
 	count = 0
 	for row in rows + duplicates:
-		if wanted is not None and row.get("task") not in wanted:
+		key = draft_ref(row.get("name")) if is_new_row(row) else row.get("task")
+		if wanted is not None and key not in wanted:
 			continue
 		draft = frappe.get_doc(DRAFT_DOCTYPE, row.get("name"))
 		draft.status = DISCARDED
 		draft.save()
 		count += 1
 	return {"discarded": count}
+
+
+# ====================================================================== T2: new tasks in drafts
+#
+# v1.603.0. Nik, 2026-10-12: "build out a whole new schedule as a draft and publish it once".
+# Publishing is also the moment work reaches Google Calendar (the sync reads saved Tasks only), so a
+# drafted new task must NEVER be a Task before Publish. What this block keeps to:
+#
+# * **A drafted new task is one Planner Draft Change row** (``kind`` = ``New task``, no ``task``,
+#   no ``visit``, its ``project``) whose ``payload`` is a *spec*: the Task it will become, as plain
+#   data (:func:`load_spec`). The planner calls this ``draft-new:<row name>`` (:func:`draft_ref`)
+#   everywhere a task name goes, and never a real Task name, so nothing that reads Tasks can ever
+#   find one, and a ``draft-new:`` name sent to a live call is simply "not a task".
+# * **One code path creates a Task**: :func:`task_from_spec` builds the unsaved document and
+#   :func:`_insert_doc` inserts it. The live quick add, duplicate and build out (api/planner_actions)
+#   build their documents from the same spec, and Publish builds them from the stored one, so a task
+#   published from a draft is exactly the task the live call would have made.
+# * **References between new tasks are draft-side names** in the spec (``parent_task``, a
+#   ``depends_on`` row), mapped to the real names as Publish creates them: phases first, then the
+#   tasks, each after what it waits on (:func:`new_task_order`).
+# * **Editing a drafted new task** (a drag, a resize, a crew change) goes through the same
+#   ``save_task``/``add_crew``/``swap_crew`` draft path as any task, and rewrites its spec
+#   (:func:`_store_new_edit`); it is never a Task save.
+
+#: The Task fields a drafted new task may carry. Nothing else in a stored spec is applied, and its
+#: ``status`` is always Open and its ``doctype`` always Task (:func:`task_from_spec`).
+SPEC_VALUE_KEYS = (
+	"subject",
+	"project",
+	"is_group",
+	"parent_task",
+	"expected_time",
+	"exp_start_date",
+	"exp_end_date",
+	"custom_start_datetime",
+	"custom_end_datetime",
+	"custom_tentative",
+	"custom_crew_size",
+	"custom_outdoor",
+	"custom_customer_visit",
+	"custom_locationaddress_of_task",
+	"description",
+	"color",
+)
+#: What a planner edit (dates, hours, crew size, pencil) can change in a spec's ``values``.
+SPEC_EDIT_KEYS = (
+	"exp_start_date",
+	"exp_end_date",
+	"custom_start_datetime",
+	"custom_end_datetime",
+	"expected_time",
+	"custom_crew_size",
+	"custom_tentative",
+)
+
+
+def is_draft_ref(value):
+	"""Whether ``value`` is the name of a drafted new task (``draft-new:<Draft row>``)."""
+	return isinstance(value, str) and value.startswith(DRAFT_REF) and len(value) > len(DRAFT_REF)
+
+
+def draft_ref(row_name):
+	"""The name a drafted new task goes by: ``draft-new:`` and its Draft row's name."""
+	return f"{DRAFT_REF}{row_name}"
+
+
+def is_new_row(row):
+	"""Whether a Planner Draft Change row is a drafted new task (and not a change of one)."""
+	return (row or {}).get("kind") == NEW_TASK
+
+
+def load_spec(text):
+	"""A New task row's payload as a spec: ``{"op", "values", "crew", "keep_crew", "credentials",
+	"equipment", "depends_on", "source", "row"}``, known keys only; anything unreadable is a blank
+	spec (which :func:`task_from_spec` then cannot turn into a task: no subject).
+
+	* ``values``: the Task fields, :data:`SPEC_VALUE_KEYS` only.
+	* ``crew``: ``[{"resource", "hours", "is_lead"}]``, or None for "leave the crew alone".
+	* ``keep_crew``: resources that may stay on even if they are inactive now (a duplicate's source crew).
+	* ``credentials`` and ``equipment``: what ``save_task`` takes, or None for "leave alone".
+	* ``depends_on``: ``[{"task", "subject"}]``; ``task`` is a real task or another ``draft-new:`` name.
+	* ``op``, ``source``, ``row``: where it came from (``quick_add``, ``duplicate`` of ``source``, or
+	  ``build_out`` row ``row``), for people reading the row; nothing is decided from them.
+	"""
+	try:
+		value = json.loads(text) if isinstance(text, str) else (text or {})
+	except ValueError:
+		value = {}
+	if not isinstance(value, dict):
+		value = {}
+	raw = value.get("values") if isinstance(value.get("values"), dict) else {}
+	crew = value.get("crew")
+	credentials = value.get("credentials")
+	equipment = value.get("equipment")
+	return {
+		"op": str(value.get("op") or ""),
+		"values": {key: raw[key] for key in SPEC_VALUE_KEYS if key in raw},
+		"crew": crew_payload(crew) if isinstance(crew, list) else None,
+		"keep_crew": [str(name) for name in value.get("keep_crew") or [] if name],
+		"credentials": [str(c) for c in credentials if c] if isinstance(credentials, list) else None,
+		"equipment": [e for e in equipment if isinstance(e, dict)] if isinstance(equipment, list) else None,
+		"depends_on": [
+			{"task": str(row.get("task")), "subject": row.get("subject")}
+			for row in value.get("depends_on") or []
+			if isinstance(row, dict) and row.get("task")
+		],
+		"source": value.get("source") or None,
+		"row": value.get("row") if isinstance(value.get("row"), int) else None,
+	}
+
+
+def dump_spec(spec):
+	"""A spec as the text a Draft row's payload holds."""
+	return json.dumps(load_spec(spec), sort_keys=True, default=str)
+
+
+def spec_refs(spec):
+	"""The ``draft-new:`` names a spec points at: its phase and the tasks it waits on."""
+	refs = {row["task"] for row in spec.get("depends_on") or [] if is_draft_ref(row.get("task"))}
+	parent = (spec.get("values") or {}).get("parent_task")
+	if is_draft_ref(parent):
+		refs.add(parent)
+	return refs
+
+
+def spec_waits(spec):
+	"""What a drafted card says it waits on: real tasks by name, drafted ones by their subject."""
+	return [
+		(row.get("subject") or row["task"]) if is_draft_ref(row["task"]) else row["task"]
+		for row in spec.get("depends_on") or []
+	]
+
+
+def task_from_spec(spec, resolve=None, name=None):
+	"""The unsaved Task a spec describes. THE one place a Task is built from a spec: the live quick
+	add, duplicate and build out build theirs here, and Publish builds a drafted one here.
+
+	``resolve`` maps a ``draft-new:`` name to the real Task (Publish, as it creates them; left alone
+	the name stays, which is how a draft is read back for display). ``name`` is set on the document
+	(a draft's own name, so a lookup by it finds no assignments, comments or timesheets). A crew that
+	names an unknown person, or an inactive one who was not already on it, raises, as on a live add.
+	"""
+	resolve = resolve or (lambda ref: ref)
+	values = dict(spec.get("values") or {})
+	values["doctype"] = "Task"
+	values["status"] = "Open"
+	if values.get("parent_task"):
+		values["parent_task"] = resolve(values["parent_task"])
+	doc = frappe.get_doc(values)
+	for row in spec.get("depends_on") or []:
+		doc.append("depends_on", {"task": resolve(row.get("task")), "subject": row.get("subject")})
+	if spec.get("crew") is not None:
+		_set_crew(doc, spec["crew"], [{"resource": r} for r in spec.get("keep_crew") or []])
+	if spec.get("credentials") is not None:
+		doc.set("custom_required_credentials", [{"credential_type": c} for c in spec["credentials"]])
+	if spec.get("equipment"):
+		_set_equipment(doc, spec["equipment"])
+	if name:
+		doc.name = name
+	return doc
+
+
+def spec_from_doc(doc, spec):
+	"""``spec`` with what a planner's edit changed on its in-memory document (dates, hours, crew
+	size, pencil, crew, qualifications, equipment). What it waits on and where it came from stay."""
+	values = dict(spec.get("values") or {})
+	for key in SPEC_EDIT_KEYS:
+		value = doc.get(key)
+		values[key] = str(value) if isinstance(value, datetime.date) else value
+	out = dict(spec, values=values)
+	out["crew"] = crew_payload(_current_crew(doc))
+	out["credentials"] = [
+		row.get("credential_type")
+		for row in (doc.get("custom_required_credentials") or [])
+		if row.get("credential_type")
+	]
+	out["equipment"] = equipment_payload(doc.get("custom_equipment"))
+	return out
+
+
+def _insert_doc(doc):
+	"""``doc.insert()`` as the caller; what it said through msgprint comes back as warnings. The one
+	insert behind every new Task the planners make, drafted or live."""
+	log = _message_log()
+	mark = len(log) if log is not None else 0
+	doc.insert()
+	return _take_messages(log, mark)
+
+
+# ---------------------------------------------------------------------- T2: drafting a new task
+
+
+def require_draft_room(count):
+	"""Refuse a draft that would leave the caller with more Draft rows than the planner reads."""
+	rows, _duplicates = _draft_rows()
+	if sum(1 for row in rows if is_new_row(row)) + count > DRAFT_LIMIT:
+		frappe.throw(
+			_(
+				"You already have too many unpublished new tasks ({0} at most). Publish or discard some first."
+			).format(DRAFT_LIMIT),
+			title=_("Too many drafts"),
+		)
+
+
+def insert_new_draft(spec):
+	"""Keep a task that does not exist yet on the caller's Draft rows. Returns the inserted row.
+
+	Nothing here makes a Task: it is one ``Planner Draft Change`` (permission-checked, as the caller).
+	"""
+	values = spec.get("values") or {}
+	return frappe.get_doc(
+		{
+			"doctype": DRAFT_DOCTYPE,
+			"kind": NEW_TASK,
+			"project": values.get("project"),
+			"subject": values.get("subject"),
+			"status": DRAFT,
+			"payload": dump_spec(spec),
+		}
+	).insert()
+
+
+def _new_card(doc, spec):
+	"""The card of a drafted new task, from its in-memory document (named ``draft-new:<row>``)."""
+	card = _card(doc)
+	card["drafted"] = True
+	card["new_task"] = True
+	card["depends_on"] = spec_waits(spec)
+	card["modified"] = str(doc.get("modified"))
+	return card
+
+
+def conflict_warnings(conflicts):
+	"""Drafting never asks for a reason: the conflicts a draft would create come back as warnings."""
+	return [
+		_("Not published yet. {0}: {1}").format(label, ", ".join(messages))
+		for label, messages in (conflicts or {}).items()
+	]
+
+
+def store_new_draft(spec, doc, conflicts=None):
+	"""Draft a task that does not exist yet and answer as a live create does.
+
+	``doc`` is the unsaved document :func:`task_from_spec` made (so every check a live call makes has
+	been made on it already). Returns ``{"drafted": True, "name": "draft-new:<row>", "modified",
+	"card", "warnings", "conflicts"}``: no Task, no assignment, nothing anyone else can see.
+	"""
+	require_draft_room(1)
+	row = insert_new_draft(spec)
+	doc.name = draft_ref(row.get("name"))
+	doc.modified = row.get("modified")
+	return {
+		"drafted": True,
+		"name": doc.name,
+		"modified": str(row.get("modified")),
+		"warnings": conflict_warnings(conflicts),
+		"conflicts": conflicts or {},
+		"card": _new_card(doc, spec),
+	}
+
+
+def _new_drafted_doc(row):
+	"""``(doc, problem, spec)``: the Task a New task row would make, in memory, or why it cannot."""
+	ref = draft_ref(row.get("name"))
+	spec = load_spec(row.get("payload"))
+	if not (spec["values"].get("subject") and spec["values"].get("project")):
+		return None, _("The drafted task is unreadable."), spec
+	log, mark = _quiet_message_log()
+	try:
+		doc = task_from_spec(spec, name=ref)
+	except Exception as exc:
+		if log is not None:
+			del log[mark:]
+		return (
+			None,
+			_("Cannot be applied any more: {0}").format(frappe.utils.strip_html_tags(str(exc))[:300]),
+			spec,
+		)
+	doc.modified = row.get("modified")
+	return doc, None, spec
+
+
+def _new_context(ref, modified):
+	"""What :func:`_draft_context` returns for a drafted new task: its document built from its Draft
+	row, with the lock on the row's ``modified`` (the page holds the one it was last told)."""
+	_require_planner()
+	rows, _duplicates = _draft_rows()
+	row = next((r for r in rows if is_new_row(r) and draft_ref(r.get("name")) == ref), None)
+	if row is None:
+		frappe.throw(
+			_("This drafted task is not in your drafts any more. Refresh and try again."),
+			title=_("Task Out of Date"),
+		)
+	if not same_moment(row.get("modified"), modified):
+		frappe.throw(
+			_("This drafted task was changed since the planner loaded. Refresh and try again."),
+			title=_("Task Out of Date"),
+		)
+	if not frappe.has_permission("Task", "create"):
+		frappe.throw(_("You cannot create Tasks."), frappe.PermissionError)
+	doc, problem, spec = _new_drafted_doc(row)
+	if problem:
+		frappe.throw(problem)
+	return {
+		"doc": doc,
+		"row": row,
+		"payload": {},
+		"stored": (_state(doc), _current_crew(doc)),
+		"stored_rest": _draft_rest(doc),
+		"reset": False,
+		"duplicates": [],
+		"new": True,
+		"spec": spec,
+	}
+
+
+def _store_new_edit(context, doc):
+	"""The end of :func:`_store_draft` for a drafted new task: its spec rewritten from the edited
+	document and kept on its Draft row. Same answer as a draft of any task."""
+	stored_state, stored_crew = context["stored"]
+	after_state, after_crew = _state(doc), _current_crew(doc)
+	spec = spec_from_doc(doc, context["spec"])
+	conflicts = {}
+	if schedule_state(stored_state, stored_crew) != schedule_state(after_state, after_crew):
+		before = engine.preview_conflicts(stored_state, stored_crew) if engine.task_span(stored_state) else {}
+		conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
+	draft = frappe.get_doc(DRAFT_DOCTYPE, context["row"].get("name"))
+	draft.payload = dump_spec(spec)
+	draft.save()
+	doc.modified = draft.modified
+	return {
+		"drafted": True,
+		"name": doc.name,
+		"modified": str(draft.modified),
+		"warnings": conflict_warnings(conflicts),
+		"conflicts": conflicts,
+		"card": _new_card(doc, spec),
+	}
+
+
+def _valid_projects(rows):
+	"""Of the projects the New task ``rows`` name, the ones that are still customer jobs."""
+	names = {row.get("project") for row in rows if row.get("project")}
+	return engine.planner_projects(names) if names else set()
+
+
+def _overlay_new_tasks(overlay, rows):
+	"""``[(doc, spec)]`` for the New task rows the planner can draw as cards. A row that cannot be
+	(its project is no longer a customer job, a person on it is gone, the phase or task it waits on
+	was discarded) goes to ``overlay["stale"]``; a drafted phase has no card and goes to
+	``overlay["phases"]``."""
+	if not rows:
+		return []
+	live = {draft_ref(row.get("name")) for row in rows}
+	valid = _valid_projects(rows)
+	out = []
+	for row in rows:
+		ref = draft_ref(row.get("name"))
+		label = row.get("subject") or ref
+		doc, problem, spec = _new_drafted_doc(row)
+		if not problem and row.get("project") not in valid:
+			problem = _("The project is not a customer job any more.")
+		if not problem and spec_refs(spec) - live:
+			problem = _("The phase or task it waits on was discarded.")
+		if problem:
+			overlay["stale"].append({"task": ref, "subject": label, "reason": problem})
+		elif cint(spec["values"].get("is_group")):
+			overlay["phases"].append({"task": ref, "subject": label})
+		else:
+			out.append((doc, spec))
+	return out
+
+
+# ---------------------------------------------------------------------- T2: publishing new tasks
+
+
+def _publish_new_plan(row, valid, live):
+	"""``(plan, problem)`` for one New task row. ``valid`` is :func:`_valid_projects` and ``live`` the
+	names of the caller's drafted new tasks. A task that has days or people is checked with the batch
+	(``after``); a phase has neither (``after`` None)."""
+	doc, problem, spec = _new_drafted_doc(row)
+	if problem:
+		return None, problem
+	if row.get("project") not in valid:
+		return None, _("The project is not a customer job any more.")
+	if spec_refs(spec) - live:
+		return None, _("The phase or task it waits on was discarded.")
+	if not frappe.has_permission("Task", "create"):
+		return None, _("You cannot create Tasks.")
+	phase = bool(cint(spec["values"].get("is_group")))
+	ref = draft_ref(row.get("name"))
+	return {
+		"row": row,
+		"ref": ref,
+		"name": ref,
+		"new": True,
+		"phase": phase,
+		"spec": spec,
+		"subject": spec["values"].get("subject") or ref,
+		"before": None,
+		"after": None if phase else (_state(doc), _current_crew(doc)),
+	}, None
+
+
+def _name_new_tasks(conflicts, news):
+	"""``conflicts`` with each drafted task's ``draft-new:`` name replaced by "subject (new)"."""
+	if not conflicts or not news:
+		return conflicts
+	names = sorted(
+		((plan["ref"], _("{0} (new)").format(plan["subject"])) for plan in news),
+		key=lambda pair: -len(pair[0]),
+	)
+
+	def fix(line):
+		for ref, label in names:
+			line = line.replace(ref, label)
+		return line
+
+	return {key: [fix(line) for line in lines] for key, lines in conflicts.items()}
+
+
+def new_task_order(plans):
+	"""``(order, stuck)``: the new-task plans so that a phase comes before the tasks under it and a
+	task after what it waits on (among these plans), the drafted order otherwise. ``stuck`` are the
+	plans left over by a loop. A phase that is ready goes before a task that is."""
+	waits = {
+		plan["ref"]: {
+			r for r in spec_refs(plan["spec"]) if r != plan["ref"] and r in {p["ref"] for p in plans}
+		}
+		for plan in plans
+	}
+	done, order, remaining = set(), [], list(plans)
+	while remaining:
+		ready = [plan for plan in remaining if waits[plan["ref"]] <= done]
+		if not ready:
+			break
+		pick = next((plan for plan in ready if plan.get("phase")), ready[0])
+		order.append(pick)
+		done.add(pick["ref"])
+		remaining.remove(pick)
+	return order, remaining
+
+
+def _publish_new_one(plan, names, reason, conflicts):
+	"""Create one drafted task. ``("created", doc)`` or ``("failed", sentence)``, in its own
+	savepoint so a refusal undoes only it."""
+	log, mark = _quiet_message_log()
+	frappe.db.savepoint("planner_publish_new")
+	try:
+		doc = task_from_spec(plan["spec"], resolve=lambda ref: names.get(ref, ref))
+		doc.check_permission("create")
+		_insert_doc(doc)
+		if conflicts and reason:
+			doc.add_comment(
+				"Comment",
+				_("Published from the Project Planner over a conflict: {0}. Reason: {1}").format(
+					frappe.utils.escape_html(conflict_summary(conflicts)), frappe.utils.escape_html(reason)
+				),
+			)
+	except Exception as exc:
+		frappe.db.rollback(save_point="planner_publish_new")
+		if log is not None:
+			del log[mark:]
+		return "failed", _("Not created: {0}").format(frappe.utils.strip_html_tags(str(exc))[:300])
+	return "created", doc
+
+
+def _create_new_tasks(plans, reason, conflicts):
+	"""Create every drafted new task, phases first and each after what it waits on.
+	``(created, failed)``; a created plan carries the Task's name as ``name``."""
+	created, failed, names = [], [], {}
+	order, stuck = new_task_order(plans)
+	for plan in stuck:
+		failed.append(
+			{
+				"task": plan["ref"],
+				"subject": plan["subject"],
+				"reason": _("It waits on tasks that wait on it, round and round."),
+			}
+		)
+	frappe.flags.planner_publishing = True
+	try:
+		for plan in order:
+			missing = sorted(spec_refs(plan["spec"]) - set(names))
+			if missing:
+				failed.append(
+					{
+						"task": plan["ref"],
+						"subject": plan["subject"],
+						"reason": _(
+							"Its phase, or a task it waits on, was discarded or could not be created."
+						),
+					}
+				)
+				continue
+			status, value = _publish_new_one(plan, names, reason, conflicts)
+			if status == "failed":
+				failed.append({"task": plan["ref"], "subject": plan["subject"], "reason": value})
+				continue
+			names[plan["ref"]] = value.name
+			plan["name"] = value.name
+			if plan.get("after"):
+				plan["after"][0]["name"] = value.name
+			created.append(plan)
+	finally:
+		frappe.flags.planner_publishing = False
+	return created, failed
 
 
 # ---------------------------------------------------------------------- Phase 3B: people's days
