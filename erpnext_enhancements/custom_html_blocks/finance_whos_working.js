@@ -39,7 +39,8 @@
     // any display:none ancestor (a hidden workspace page). Fails open without a host.
     function onScreen(container) {
         const host = container && container.host;
-        if (!host) return true;
+        // No host, or one without layout APIs (a test double), fails open: polling as before.
+        if (!host || typeof host.getClientRects !== "function") return true;
         return Boolean(host.isConnected && host.getClientRects().length > 0);
     }
 
