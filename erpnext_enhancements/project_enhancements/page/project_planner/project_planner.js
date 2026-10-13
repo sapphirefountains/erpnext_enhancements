@@ -75,6 +75,10 @@ const PP = {
 	tray_limit: 60,
 	default_color: "#2563eb",
 	undo_reason: "Undo on the Project Planner",
+	// The route map's road line (draw_road): the most stops Google's Directions service takes
+	// between the two ends, and a latch set once the Routes library has failed on this page.
+	road_max_stops: 23,
+	routes_unavailable: false,
 };
 
 const pp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -3183,18 +3187,94 @@ class ProjectPlanner {
 					path.push({ lat: Number(stop.lat), lng: Number(stop.lng) });
 				});
 				if (start) path.push({ lat: Number(start.lat), lng: Number(start.lng) });
-				const line = new maps.Polyline({
-					path,
-					map,
-					strokeColor: PP.default_color,
-					strokeOpacity: 0.8,
-					strokeWeight: 4,
-				});
 				if (path.length > 1) map.fitBounds(bounds, 56);
 				else map.setZoom(14);
-				this.route_map = { map, info, markers, line };
+				this.route_map = { map, info, markers, lines: [] };
+				if (path.length > 1) {
+					this.draw_road(token, data, maps, path, $note).catch((err) =>
+						console.warn("[project-planner] the route line could not be drawn", err)
+					);
+				}
 			})
 			.catch(() => fail(__("The map could not be loaded, so only the list is shown.")));
+	}
+
+	// The road between the stops, not a straight line from pin to pin (v1.600.1). Google draws it
+	// in the browser on the map's own key, trying in turn:
+	//   1. the Routes library, when Travel Settings → "Use Routes API" says the key may call it;
+	//   2. the older Directions service, which every key that already draws the pick-up map has;
+	//   3. straight segments, with a one-line notice, so the map is never left without a line.
+	// The stops are already in the planner's driving order, so neither engine is asked to reorder
+	// them, and every time and mile in the list stays the server's: this changes only the line.
+	// A Routes failure is remembered for the page's life (PP.routes_unavailable): every re-draw
+	// would otherwise pay for another doomed request before falling back.
+	async draw_road(token, data, maps, path, $note) {
+		const state = this.route_map;
+		const stale = () => token !== this.request || this.route_map !== state;
+		const style = { strokeColor: PP.default_color, strokeOpacity: 0.8, strokeWeight: 4 };
+		const origin = path[0];
+		const destination = path[path.length - 1];
+		const middle = path.slice(1, -1);
+		// Directions takes 23 stops between the two ends; Routes documents 25. The smaller cap
+		// covers both rungs, and a day with more stops than that is drawn straight with the notice.
+		if (middle.length <= PP.road_max_stops) {
+			// Both engines live in the "routes" library; the map itself loaded only "maps". It comes
+			// through the shared loader like everything else. Loading a library is not a billable
+			// request, and a key without the Routes API still loads it.
+			let lib = maps;
+			try {
+				lib = await window.EEGoogleMaps.load({ apiKey: data.maps_key, libraries: ["routes"] });
+			} catch (err) {
+				lib = maps;
+			}
+			if (stale()) return;
+			const Route = lib.routes && lib.routes.Route;
+			if (Route && data.use_routes_api && !PP.routes_unavailable) {
+				try {
+					const response = await Route.computeRoutes({
+						origin,
+						destination,
+						intermediates: middle.map((point) => ({ location: point })),
+						travelMode: "DRIVING",
+						// Required: computeRoutes refuses a request without a field list. Never "*".
+						fields: ["path"],
+					});
+					if (stale()) return;
+					const route = response && response.routes && response.routes[0];
+					if (!route) throw new Error("computeRoutes returned no route");
+					// RoutePolylineOptions has two members; the stroke goes inside polylineOptions.
+					state.lines = route.createPolylines({ polylineOptions: Object.assign({ map: state.map }, style) });
+					return;
+				} catch (err) {
+					if (stale()) return;
+					PP.routes_unavailable = true;
+					console.warn("[project-planner] Routes could not draw the road, trying Directions", err);
+				}
+			}
+			try {
+				const Directions = lib.DirectionsService || maps.DirectionsService;
+				// No callback, so route() returns a Promise that rejects on any status but OK.
+				const result = await new Directions().route({
+					origin,
+					destination,
+					waypoints: middle.map((point) => ({ location: point, stopover: true })),
+					travelMode: "DRIVING",
+					optimizeWaypoints: false,
+				});
+				if (stale()) return;
+				const road = result && result.routes && result.routes[0] && result.routes[0].overview_path;
+				if (!road || !road.length) throw new Error("Directions returned no route");
+				state.lines = [new maps.Polyline(Object.assign({ path: road, map: state.map }, style))];
+				return;
+			} catch (err) {
+				if (stale()) return;
+				console.warn("[project-planner] Directions could not draw the road either", err);
+			}
+		}
+		state.lines = [new maps.Polyline(Object.assign({ path, map: state.map }, style))];
+		$note
+			.text(__("Google could not draw the roads, so the stops are joined by straight lines. The times and miles are still Google's."))
+			.show();
 	}
 
 	// Clicking a stop in the list shows it on the map.

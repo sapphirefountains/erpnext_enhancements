@@ -642,7 +642,10 @@ shop" is one setting), through each located task, rental crew task and maintenan
   (08:00); arriving early for a slot shows the wait instead of hiding it.
 - **The route view** (`/app/project-planner/route/<person>/<date>`, linked from both planners) shows the
   stops in driving order on a Google map, with arrival times, drive per leg and *Open in Google Maps*.
-  The map polyline is straight segments; the times are Google's.
+  The line on the map follows the roads (v1.600.1): the browser asks Google on the map's own key,
+  through the Routes library when Travel Settings → *Use Routes API* is on, else the Directions
+  service, and only if both fail joins the stops with straight segments and says so. The stops keep
+  the planner's order, and every time and mile stays the server's.
 - **Suggest dates** ranks the next 10 days (≤ 30) by the driving the task would add to each person's
   route (`insertion_cost`), among people with the free hours — the task's crew, else the Field
   group. It suggests **when**; it never picks a crew on its own (Nik declined that). "Book" saves the
