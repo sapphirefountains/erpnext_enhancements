@@ -159,6 +159,33 @@ class TestVisitWizardHistory(unittest.TestCase):
 		self.assertNotIn("pushState(", self.code)
 		self.assertIn("frappe.set_route(", self.code)
 
+	def test_the_desk_form_opens_the_wizard_in_the_desk(self):
+		"""The record form's button used to set window.location to /app/visit-wizard?record=..., a
+		full page reload, and Back reloaded again. It routes onto the visit's own address now."""
+		record_js = os.path.join(
+			APP_DIR,
+			"sapphire_maintenance",
+			"doctype",
+			"sapphire_maintenance_record",
+			"sapphire_maintenance_record.js",
+		)
+		with io.open(record_js, encoding="utf-8") as handle:
+			source = handle.read()
+		code = re.sub(r"(^|[^:\"'`])//[^\n]*", r"\1", re.sub(r"/\*.*?\*/", "", source, flags=re.S))
+		self.assertNotIn("window.location", code)
+		self.assertIn('frappe.set_route("visit-wizard", frm.doc.name)', code)
+
+	def test_icon_buttons_have_names(self):
+		"""A screen reader read the camera and the qty steppers as unnamed buttons."""
+		photo_buttons = re.findall(r"<button[^>]*vz-photo-btn[^>]*>", self.code)
+		self.assertEqual(len(photo_buttons), 5)
+		for button in photo_buttons:
+			self.assertIn('aria-label="${__("Photo")}"', button)
+		steppers = re.findall(r"<button[^>]*vz-step-btn[^>]*>", self.code)
+		self.assertEqual(len(steppers), 2)
+		for button in steppers:
+			self.assertRegex(button, r'aria-label="\$\{__\("(Less|More)"\)\}"')
+
 	def test_frappe_owns_history(self):
 		"""frappe's router already re-renders the route on popstate and fires
 		on_page_show; a listener of our own would handle every Back twice."""

@@ -1405,12 +1405,6 @@ class ContractBuilder {
 		return block;
 	}
 
-	// The text a set of initials is drawn beside: esign/initials.py clause_texts.
-	clause_text(span) {
-		const block = this.clause_block(span);
-		return block ? cb_owned_text(block) : "";
-	}
-
 	// Each initials box in the paper, drawn for what it is now: waiting for its clause to be filled
 	// in, ready to initial, or initialed. Initials whose clause changed since are dropped.
 	decorate() {

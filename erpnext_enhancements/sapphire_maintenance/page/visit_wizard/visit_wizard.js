@@ -710,10 +710,10 @@ function vz_photo_change(item, url) {
 	return { table: item.table || null, row: item.row || null, field: item.field || "photo", value: url };
 }
 
-// One key per photo taken: a retake while the first is still uploading must not share its
-// key, or deleting the uploaded first would delete the retake with it.
+// One key per photo taken, this prefix plus the time it was taken (take_photo): a retake while
+// the first is still uploading must not share its key, or deleting the uploaded first would
+// delete the retake with it.
 const vz_photo_prefix = (record, table, row) => `photo|${record}|${table}|${row}|`;
-const vz_photo_key = (record, table, row, at) => vz_photo_prefix(record, table, row) + at;
 const vz_finish_key = (record) => `finish|${record}`;
 
 // upload_file, as the page has always sent a photo: the file url, or a rejection. A
@@ -3564,7 +3564,7 @@ class VisitWizard {
 					placeholder="—" value="${row.reading_value || ""}">
 				<div class="vz-row-extra">
 					<input type="text" placeholder="${__("Notes")}" value="${frappe.utils.escape_html(row.notes || "")}">
-					<button type="button" class="vz-photo-btn ${this.photo_class("chemistry_readings", row)}">📷</button>
+					<button type="button" aria-label="${__("Photo")}" class="vz-photo-btn ${this.photo_class("chemistry_readings", row)}">📷</button>
 				</div>
 			</div>
 		`);
@@ -3605,9 +3605,9 @@ class VisitWizard {
 				<div class="vz-card-title">${frappe.utils.escape_html(title)}${frappe.utils.escape_html(unit)}</div>
 				${row.default_qty ? `<div class="vz-card-sub">${__("Usually {0}", [row.default_qty])}</div>` : ""}
 				<div class="vz-stepper">
-					<button type="button" class="vz-step-btn" data-dir="-1">−</button>
+					<button type="button" class="vz-step-btn" data-dir="-1" aria-label="${__("Less")}">−</button>
 					<div class="vz-qty">${row.qty || 0}</div>
-					<button type="button" class="vz-step-btn" data-dir="1">+</button>
+					<button type="button" class="vz-step-btn" data-dir="1" aria-label="${__("More")}">+</button>
 				</div>
 			</div>
 		`);
@@ -3704,7 +3704,7 @@ class VisitWizard {
 				<div class="vz-seg"></div>
 				<div class="vz-row-extra" style="display:none;">
 					<input type="text" placeholder="${__("Details")}" value="">
-					<button type="button" class="vz-photo-btn ${this.photo_class("maintenance_results", row)}">📷</button>
+					<button type="button" aria-label="${__("Photo")}" class="vz-photo-btn ${this.photo_class("maintenance_results", row)}">📷</button>
 					<button type="button" class="vz-follow-btn" style="display:none;">＋ ${__("Follow-up")}</button>
 				</div>
 			</div>
@@ -3782,7 +3782,7 @@ class VisitWizard {
 				</div>
 				<div class="vz-row-extra">
 					<input type="text" value="">
-					<button type="button" class="vz-photo-btn ${this.photo_class("cleaning_tasks", row)}">📷</button>
+					<button type="button" aria-label="${__("Photo")}" class="vz-photo-btn ${this.photo_class("cleaning_tasks", row)}">📷</button>
 				</div>
 			</div>
 		`);
@@ -4057,7 +4057,7 @@ class VisitWizard {
 					<div class="vz-follow-up-text">${frappe.utils.escape_html(row.description || "")}${
 						details ? `<small>${frappe.utils.escape_html(details)}</small>` : ""
 					}${row.name ? "" : `<small>${__("A photo can be added once it has saved.")}</small>`}</div>
-					${row.name ? `<button type="button" class="vz-photo-btn ${this.photo_class("follow_ups", row)}">📷</button>` : ""}
+					${row.name ? `<button type="button" aria-label="${__("Photo")}" class="vz-photo-btn ${this.photo_class("follow_ups", row)}">📷</button>` : ""}
 				</div>
 			`);
 			if (row.name && this.doc.docstatus === 0) this.bind_photo($row.find(".vz-photo-btn"), "follow_ups", row);
@@ -4144,7 +4144,7 @@ class VisitWizard {
 				<div class="vz-card-sub">${__("A photo of it running. It goes on the customer's visit report.")}</div>
 				${photo ? `<img class="vz-fountain-photo" src="${encodeURI(String(photo))}" alt="">` : ""}
 				<div style="margin-top:8px;">
-					<button type="button" class="vz-photo-btn ${this.photo_class(null, this.doc, "fountain_photo")}">📷</button>
+					<button type="button" aria-label="${__("Photo")}" class="vz-photo-btn ${this.photo_class(null, this.doc, "fountain_photo")}">📷</button>
 				</div>
 			</div>
 		`);
