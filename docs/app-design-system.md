@@ -235,6 +235,17 @@ Built in form kit P4 and P6, specified here so they come out the same everywhere
 | **Button** | `--sf-radius-control`. Primary: `--sf-primary` fill, `--sf-on-primary` label, at most one per panel. Secondary: transparent with a 2px `--sf-text` stroke. Hover changes colour only. |
 | **Toast** | Inverted: a `--sf-text-strong` ground with `--sf-surface` text, so it stands out in both themes (a navy toast would vanish against the dark page). One action. |
 
+## The guided-flow engine
+
+The components above are drawn by form kit P4's page; what the page *shows* comes from the
+server engine in [`erpnext_enhancements/form_kit/`](../erpnext_enhancements/form_kit/README.md)
+(P4-A). It walks a DocType's own form into steps (one per section, merged, ordered and
+introduced by a per-DocType config kept in code), decides per field and per user what is
+editable, read-only or not sent at all, saves one step at a time onto the real record with an
+optimistic lock, and measures how complete the record is for its stage. The page renders
+what it is given: a field's **hint** is its docfield description, and **help** is the hook for
+the (i) bubble's longer text (P4.3). Read that README before building a screen on it.
+
 ## Before you push
 
 ```bash

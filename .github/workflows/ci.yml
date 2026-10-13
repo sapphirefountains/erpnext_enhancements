@@ -1648,6 +1648,14 @@ jobs:
       # clears 4.5:1 and every boundary 3:1 in light AND dark. Reads files only, no stub.
       - name: App design tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_app_design_tokens -v
+      # Form kit P4-A, the guided-entry engine (form_kit/): an Opportunity's form walked into
+      # steps against the real v16 meta plus this app's custom fields and property setters
+      # (every field the form shows is in the flow), permissions per field as the Desk works
+      # them out (permlevel read/write, if-owner, read-only, set-only-once), the saver assigning
+      # only what the flow offers, the optimistic lock on modified, and the stage completeness
+      # lists. Own frappe stub, so its own step.
+      - name: Form kit engine (steps, saves, completeness)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
       # Form kit P2-A. The normalization library (utils/normalize.py) and its JavaScript
       # twin (public/js/normalize/normalize.js) run the SAME 163 cases from
       # tests/fixtures/normalize_cases.json, so the Desk and the server cannot disagree
