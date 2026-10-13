@@ -2131,6 +2131,7 @@ def route_payload(person, day, cell, route, settings, details, titles, maps, sho
 		"maps_url": routing.maps_url(shop, shop, located_points) if located_points else None,
 		"maps_key": (maps or {}).get("maps_key") or "",
 		"map_ids": (maps or {}).get("map_ids") or {"map_id_light": "", "map_id_dark": ""},
+		"use_routes_api": 1 if (maps or {}).get("use_routes_api") else 0,
 		"travel": travel,
 		"off": cell.get("off"),
 	}
@@ -2254,14 +2255,19 @@ def _project_titles(names):
 
 def _maps_config():
 	"""The browser Maps key and Map IDs (Travel Settings), as ``api.travel.get_maps_config``
-	hands any logged-in user: the key is referrer-restricted by design."""
-	out = {"maps_key": "", "map_ids": {"map_id_light": "", "map_id_dark": ""}}
+	hands any logged-in user: the key is referrer-restricted by design.
+
+	``use_routes_api`` is the same Travel Settings switch the pick-up map reads
+	(``api.pickup_routing._use_routes_api``): it says whether the browser key may call the Routes
+	library, which is what draws the road between the stops instead of a straight line."""
+	out = {"maps_key": "", "map_ids": {"map_id_light": "", "map_id_dark": ""}, "use_routes_api": 0}
 	try:
 		out["maps_key"] = frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or ""
 		out["map_ids"] = {
 			"map_id_light": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_light") or "",
 			"map_id_dark": frappe.db.get_single_value("Travel Settings", "google_maps_map_id_dark") or "",
 		}
+		out["use_routes_api"] = 1 if frappe.db.get_single_value("Travel Settings", "use_routes_api") else 0
 	except Exception:
 		pass
 	return out
