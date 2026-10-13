@@ -21,6 +21,15 @@ from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_reco
     get_visit_payload,
 )
 
+# A visit by its v1.610.0 name or the random one it had before (patches/rename_hash_named_visits.py).
+from erpnext_enhancements.sapphire_maintenance.visit_names import current_visit_name
+
+DOCTYPE = "Sapphire Maintenance Record"
+# The state a technician's Finish moves a visit into. Kept in step with the record's
+# REVIEW_STATE (not imported: several bench-free suites stub that module with only the two
+# functions above).
+REVIEW_STATE = "Pending Review"
+
 # Wizard-writable fields. Anything else in a patch is silently dropped — the
 # wizard never edits identity/scheduling fields, so the API doesn't accept
 # them either.
@@ -82,8 +91,23 @@ def open_regular_draft(contract):
     )
 
 
+@frappe.whitelist()
+def resolve_visit(name):
+    """The current name of visit ``name`` (its own or a ``legacy_name``) if the user may read it.
+
+    None for a visit that does not exist or that the user may not read, never an error: the
+    Visit Wizard asks this about names kept on a phone, where "not found" is an answer.
+    """
+    current = current_visit_name(name)
+    if not current or not frappe.has_permission(DOCTYPE, "read", doc=current):
+        return None
+    return current
+
+
 def _get_record(record):
-    doc = frappe.get_doc("Sapphire Maintenance Record", record)
+    # A visit renamed in v1.610.0 still opens, saves and finishes by its old name: a page
+    # loaded before the deploy, or a save kept on a phone, carries the old one.
+    doc = frappe.get_doc(DOCTYPE, current_visit_name(record) or record)
     doc.check_permission("read")
     return doc
 
@@ -594,8 +618,15 @@ def save_visit(record, patch, modified=None):
 
 
 @frappe.whitelist()
-def finish_visit(record, signature=None, modified=None):
+def finish_visit(record, signature=None, modified=None, technician_signature=None):
     """Finish the visit: sign off and advance it through the house workflow.
+
+    ``signature`` is the client's sign-off. ``technician_signature`` (v1.610.0) is the
+    technician's own, which the move into Pending Review requires (the record's
+    ``_finish_on_review``). It is taken only from someone finishing a visit that is not yet
+    waiting for review: a reviewer's Approve & Submit also comes through here, and must
+    never sign the visit as its technician. A visit signed earlier (sent back, finished
+    again) keeps its signature when none is sent.
 
     With the "Sapphire Maintenance Workflow" active this applies the first
     workflow action available to the session user from the record's current
@@ -616,8 +647,12 @@ def finish_visit(record, signature=None, modified=None):
         frappe.throw(_("This visit is already submitted."))
     _check_not_stale(doc, modified)
 
+    signing = technician_signature and (doc.get("workflow_state") or "") != REVIEW_STATE
+    if signing:
+        doc.technician_signature = technician_signature
     if signature:
         doc.client_sign_off = signature
+    if signature or signing:
         doc.save()
 
     from frappe.model.workflow import apply_workflow, get_workflow_name

@@ -562,7 +562,11 @@ class TestRegistration(unittest.TestCase):
 		file_events = _dict_get(_hooks_assignment("doc_events"), "File")
 		for event in ("before_insert", "before_validate"):
 			with self.subTest(event=event):
-				self.assertEqual(ast.literal_eval(_dict_get(file_events, event)), f"{FILES_MODULE}.force_private")
+				hooked = ast.literal_eval(_dict_get(file_events, event))
+				# v1.610.0 adds a second before_insert handler (a visit photo uploaded by a renamed
+				# visit's old name, sapphire_maintenance/visit_names.py); force_private stays first.
+				hooked = hooked if isinstance(hooked, list) else [hooked]
+				self.assertEqual(hooked[0], f"{FILES_MODULE}.force_private")
 		self.assertEqual(
 			ast.literal_eval(_dict_get(file_events, "after_insert")),
 			"erpnext_enhancements.google_drive.drive_sync.on_file_attached",

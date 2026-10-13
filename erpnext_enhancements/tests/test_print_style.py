@@ -794,6 +794,7 @@ def _stub_frappe():
     return types.SimpleNamespace(
         format=lambda v, opts=None: str(v),
         db=types.SimpleNamespace(get_value=lambda dt, name, field: f"{name} {field}"),
+        utils=types.SimpleNamespace(format_datetime=lambda value, fmt=None: f"[{value}]"),
     )
 
 
@@ -986,6 +987,32 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         out = self.render(_record(client_sign_off=None))
         self.assertIn("Not signed on site", out)
         self.assertNotIn("<img", out)
+
+    def test_the_technicians_signature_prints_with_who_signed_and_when(self):
+        """v1.610.0, Nik: "we need the technicians to sign the maintenance visits once they
+        complete it so the printed form has that." The signer, not the visit's technician: a
+        substitute covering the site signs as themselves."""
+        out = self.render(
+            _record(
+                technician_signature="data:image/png;base64,VEVDSA==",
+                technician_signed_by="korben@example.com",
+                technician_signed_on="2026-10-13 15:42:00",
+            )
+        )
+        tech = out[out.index(">TECHNICIAN</div>"):]
+        self.assertIn('<img src="data:image/png;base64,VEVDSA==" alt="Technician signature"', tech)
+        self.assertIn("korben@example.com full_name &middot; Sapphire Fountains", tech)
+        self.assertIn("Signed [2026-10-13 15:42:00]", tech)
+        self.assertNotIn('<div style="height:44px;"></div>', tech, "the image takes the blank line's place")
+        self.assertNotIn("None", out)
+
+    def test_unsigned_by_the_technician_keeps_the_blank_line(self):
+        out = self.render(_record())
+        tech = out[out.index(">TECHNICIAN</div>"):]
+        self.assertIn('<div style="height:44px;"></div>', tech)
+        self.assertIn("tech@example.com full_name &middot; Sapphire Fountains", tech)
+        self.assertNotIn("Signed", tech)
+        self.assertNotIn("Technician signature", out)
 
     def test_the_sparsest_record_still_renders(self):
         """Every table empty, every optional field blank — a record finalized straight

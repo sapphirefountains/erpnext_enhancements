@@ -132,8 +132,10 @@ def approve_visit(record, modified=None):
 
 	from frappe.model.workflow import apply_workflow
 
+	# The visit's own name from here on: `record` may be its pre-v1.610.0 name (_get).
+	name = doc.name
 	apply_workflow(doc, approve.get("action"))
-	return _after_decision(record)
+	return _after_decision(name)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -154,11 +156,14 @@ def send_back_visit(record, note=None, modified=None):
 
 	from frappe.model.workflow import apply_workflow
 
+	# The visit's own name from here on: `record` may be its pre-v1.610.0 name (_get), and
+	# get_doc by that name would raise after the workflow had moved, rolling the decision back.
+	name = doc.name
 	apply_workflow(doc, send_back.get("action"))
-	doc = frappe.get_doc(DOCTYPE, record)
+	doc = frappe.get_doc(DOCTYPE, name)
 	doc.add_comment("Comment", _("Sent back for changes: {0}").format(escape_html(note)))
 	emailed = review_digest.send_sent_back(doc, note, frappe.session.user)
-	result = _after_decision(record)
+	result = _after_decision(name)
 	result["emailed"] = emailed
 	return result
 
@@ -384,9 +389,16 @@ def _check_access():
 
 
 def _get(record):
-	if not record or not frappe.db.exists(DOCTYPE, record):
+	name = record if record and frappe.db.exists(DOCTYPE, record) else None
+	if record and not name:
+		# Renamed in v1.610.0 (patches/rename_hash_named_visits.py): a review email sent before
+		# then names the visit by its old random name. The page re-routes to the new one.
+		from erpnext_enhancements.sapphire_maintenance.visit_names import current_visit_name
+
+		name = current_visit_name(record)
+	if not name:
 		frappe.throw(_("Visit {0} was not found.").format(record), frappe.DoesNotExistError)
-	doc = frappe.get_doc(DOCTYPE, record)
+	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("read")
 	return doc
 

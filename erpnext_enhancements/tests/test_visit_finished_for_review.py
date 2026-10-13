@@ -18,7 +18,9 @@ Review. Pinned here, through the real ``validate`` and ``before_submit``:
 
 And, v1.597.0: the name a visit is given (``PRJ-00179-2026-V001``, the controller's ``autoname``)
 and the check that its fountain photo was taken on it. v1.598.0: a cleaning task's three states
-(done, N/A, not done with a reason) in the record's own rules.
+(done, N/A, not done with a reason) in the record's own rules. v1.610.0: the technician signs
+before the visit goes for review, the signature is stamped with who and when, and only a drawn
+image is taken into either signature field.
 
 Stubs a minimal ``frappe`` in ``setUpModule``; runs the real controller and patch.
 
@@ -79,9 +81,14 @@ class _Document:
 	def has_value_changed(self, field):
 		return field in self.__dict__.get("_changed", set())
 
+	def get_doc_before_save(self):
+		return self.__dict__.get("_before")
+
 
 TODAY = D(2026, 10, 12)
 NOW = DT(2026, 10, 12, 10, 30)
+#: A drawn signature as the wizard's pad and the Desk's Signature control send it.
+SIGNED = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 
 def _reset(today=TODAY, now=NOW):
@@ -295,6 +302,8 @@ def _visit(state="Draft", changed=("workflow_state",), **fields):
 		"chemistry_readings": [],
 		"maintenance_results": [],
 		"cleaning_tasks": [],
+		# Signed (v1.610.0): going for review needs it, and the other suites here are not about it.
+		"technician_signature": SIGNED,
 		"_changed": set(changed),
 	}
 	values.update(fields)
@@ -503,6 +512,95 @@ class TestTheReportNumber(unittest.TestCase):
 			).read_text(encoding="utf-8")
 		)
 		self.assertIn(meta.get("autoname") or "hash", ("hash", ""))
+
+
+class TestTheTechnicianSigns(unittest.TestCase):
+	"""v1.610.0. Nik, 2026-10-13: "we need the technicians to sign the maintenance visits once
+	they complete it so the printed form has that." Required on the move into review only."""
+
+	def setUp(self):
+		_reset()
+
+	def test_going_for_review_unsigned_is_refused(self):
+		with self.assertRaises(_Thrown) as caught:
+			_send_for_review(_visit(technician_signature=None))
+		self.assertEqual(str(caught.exception), "The technician must sign the visit before it goes for review.")
+
+	def test_signed_it_goes(self):
+		doc = _send_for_review(_visit())
+		self.assertEqual(doc.visit_date, D(2026, 10, 12))
+
+	def test_nothing_else_asks_for_it(self):
+		"""Visits already waiting, a reviewer's edit, Send Back, autosaves, and approval."""
+		cases = {
+			"an autosave of a draft": _visit(technician_signature=None, changed=()),
+			"a reviewer's edit while pending": _visit(state="Pending Review", technician_signature=None, changed=()),
+			"Send Back": _visit(state="Draft", technician_signature=None),
+			"a submitted visit": _visit(state="Pending Review", docstatus=1, technician_signature=None),
+		}
+		for label, doc in cases.items():
+			with self.subTest(label):
+				doc.validate()
+		approved = _visit(state="Pending Review", technician_signature=None, changed=())
+		approved.before_submit()
+
+	def test_a_new_signature_is_stamped_with_who_saved_it_and_when(self):
+		"""The session's user, not the visit's technician: a substitute signs as themselves."""
+		STATE["user"] = "korben@example.com"
+		doc = _visit(changed=("technician_signature",))
+		doc.validate()
+		self.assertEqual(
+			(doc.technician_signed_by, doc.technician_signed_on), ("korben@example.com", NOW)
+		)
+
+	def test_a_signature_left_as_it_was_keeps_its_stamp(self):
+		before = _Dict(technician_signed_by="austin@example.com", technician_signed_on=DT(2026, 10, 9, 7, 0))
+		STATE["user"] = "lisa@example.com"
+		doc = _visit(
+			state="Pending Review",
+			changed=(),
+			_before=before,
+			technician_signed_by="lisa@example.com",
+			technician_signed_on=NOW,
+		)
+		doc.validate()
+		self.assertEqual(
+			(doc.technician_signed_by, doc.technician_signed_on), ("austin@example.com", DT(2026, 10, 9, 7, 0))
+		)
+
+	def test_clearing_it_clears_the_stamp(self):
+		doc = _visit(
+			technician_signature="",
+			changed=("technician_signature",),
+			technician_signed_by="austin@example.com",
+			technician_signed_on=NOW,
+		)
+		doc.validate()
+		self.assertEqual((doc.technician_signed_by, doc.technician_signed_on), (None, None))
+
+	def test_only_a_drawn_image_is_taken(self):
+		"""Both fields are printed unescaped into an img src: nothing that can leave the attribute."""
+		bad = (
+			"https://example.com/sig.png",
+			'data:image/png;base64,AAAA" onerror="alert(1)',
+			"data:image/svg+xml;base64,PHN2Zz4=",
+			"data:text/html;base64,PHNjcmlwdD4=",
+			"javascript:alert(1)",
+		)
+		for value in bad:
+			with self.subTest(technician=value), self.assertRaises(_Thrown):
+				_visit(technician_signature=value, changed=("technician_signature",)).validate()
+			with self.subTest(client=value), self.assertRaises(_Thrown):
+				_visit(client_sign_off=value, changed=("client_sign_off",)).validate()
+		for value in (SIGNED, "data:image/jpeg;base64,/9j/4AAQ"):
+			with self.subTest(client=value):
+				_visit(client_sign_off=value, changed=("client_sign_off",)).validate()
+		with self.assertRaises(_Thrown):
+			_visit(technician_signature="data:image/jpeg;base64,/9j/4AAQ", changed=("technician_signature",)).validate()
+
+	def test_a_value_already_held_is_not_checked_again(self):
+		"""A visit is never made unsaveable by what it already holds."""
+		_visit(client_sign_off="data:legacy", technician_signature="data:legacy", changed=()).validate()
 
 
 class TestTheFountainPhoto(unittest.TestCase):

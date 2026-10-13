@@ -67,6 +67,8 @@ STARTED_FIELDS = (
 	"clock_out_time",
 	"safety_acknowledged",
 	"client_sign_off",
+	# The technician's signature (v1.610.0): signed, the visit is finished as far as they know.
+	"technician_signature",
 	"fountain_photo",
 	# Not started, but out in the world: an invoice made from it, or a morning digest that texted
 	# its link (the crew's digest stamps are checked in started()). The Planner's own undo
