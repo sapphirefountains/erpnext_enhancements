@@ -15,7 +15,9 @@ through the whole signing life:
    It is deterministic, because execution's drift check compares a fresh unsigned render
    with the snapshot.
 2. **Signing page**: ``contract_sign.js`` turns each box into its own drawing pad, which
-   starts empty every time.
+   starts empty every time. **Or the Contract Builder**, with the client beside you: each
+   box becomes a pad in the live preview as soon as its clause is filled in, and
+   :func:`stale_initials` refuses any drawn beside wording that changed afterwards.
 3. **Sign**: :func:`validate_initials` asks for exactly the boxes in the request's stored
    snapshot (:func:`initial_slots`), never the caller's list, and refuses two
    byte-identical drawings, which only a copied image can produce.
@@ -117,6 +119,103 @@ def initial_slots(html):
 	# open would execute a contract with its initials missing.
 	_Collector(convert_charrefs=True).feed(html or "")
 	return slots
+
+
+#: The elements a clause lives in, for :func:`clause_texts`. Kept in step with
+#: ``CB_BLOCKS`` in the Contract Builder page, which reads the same text off its preview.
+CLAUSE_BLOCKS = frozenset({"p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt"})
+
+
+def normalize_clause(text):
+	"""Whitespace-collapsed text, so a clause compares the same however it was laid out."""
+	return " ".join(str(text or "").split())
+
+
+def clause_texts(html):
+	"""``{key: clause text}`` for every blank initials box in a rendered agreement.
+
+	The clause is the text of the paragraph, list item or cell the box sits in, leaving out
+	the box itself and anything inside a nested block; a box alone on its own line (the
+	maintenance agreement's payment initials) takes the nearest non-empty block before it.
+
+	The Contract Builder lets a client initial clauses while the agreement is still being
+	filled in, then signs against the snapshot frozen at issue. It sends the text each
+	set of initials was drawn beside, and :func:`stale_initials` compares it with this, so
+	initials drawn beside wording that changed afterwards are never carried onto the
+	signed copy.
+	"""
+	blocks = []  # owned text per block, in document (open) order
+	stack = []  # indexes into blocks of the open block elements
+	where = {}  # key -> (index of its block or None, blocks seen before it)
+	state = {"initial_depth": 0}
+
+	class _Clauses(HTMLParser):
+		def handle_starttag(self, tag, attrs):
+			if state["initial_depth"]:
+				if tag == "span":
+					state["initial_depth"] += 1
+				return
+			if tag == "span":
+				values = dict(attrs)
+				key = values.get("data-initial")
+				classes = (values.get("class") or "").split()
+				if key and "ct-initial" in classes:
+					state["initial_depth"] = 1
+					if "is-signed" not in classes and key not in where and INITIAL_KEY_RE.match(key):
+						where[key] = (stack[-1] if stack else None, len(blocks))
+					return
+			if tag in CLAUSE_BLOCKS:
+				blocks.append([])
+				stack.append(len(blocks) - 1)
+
+		def handle_startendtag(self, tag, attrs):
+			# A self-closed tag opens nothing (``<br/>``); never a block or an initials box.
+			return
+
+		def handle_endtag(self, tag):
+			if state["initial_depth"]:
+				if tag == "span":
+					state["initial_depth"] -= 1
+				return
+			if tag in CLAUSE_BLOCKS and stack:
+				stack.pop()
+
+		def handle_data(self, data):
+			if state["initial_depth"] or not stack:
+				return
+			blocks[stack[-1]].append(data)
+
+	parser = _Clauses(convert_charrefs=True)
+	parser.feed(html or "")
+	parser.close()
+
+	texts = [normalize_clause("".join(parts)) for parts in blocks]
+	out = {}
+	for key, (index, seen) in where.items():
+		text = texts[index] if index is not None else ""
+		cursor = (index if index is not None else seen) - 1
+		while not text and cursor >= 0:
+			text = texts[cursor]
+			cursor -= 1
+		out[key] = text
+	return out
+
+
+def stale_initials(drawn, snapshot):
+	"""Keys of the initials whose clause in ``snapshot`` is not the text they were drawn beside.
+
+	``drawn`` is ``{key: {"image": …, "clause": text}}``. A key the snapshot does not ask
+	for is ignored here (``validate_initials`` only takes the snapshot's own keys).
+	"""
+	clauses = clause_texts(snapshot)
+	stale = []
+	for key, expected in clauses.items():
+		entry = drawn.get(key) if isinstance(drawn, dict) else None
+		if not isinstance(entry, dict) or not entry.get("image"):
+			continue
+		if normalize_clause(entry.get("clause")) != expected:
+			stale.append(key)
+	return stale
 
 
 def validate_initials(raw, snapshot, validate_image, clean_text=None):

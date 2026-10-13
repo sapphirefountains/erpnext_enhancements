@@ -231,10 +231,36 @@ def start_in_person_signing(project_contract, signer_email=None):
 
 	contract = frappe.get_doc("Project Contract", project_contract)
 	contract.check_permission("submit")
+	recipient = _valid_single_email(signer_email or contract.get("contact_email"))
+	request, result = open_in_person_request(contract, recipient)
+
+	contract.add_comment(
+		"Comment",
+		_("Opened for signing in person by {0} ({1}); the link works until {2}.").format(
+			escape_html(frappe.utils.get_fullname(frappe.session.user)),
+			escape_html(recipient),
+			frappe.utils.format_datetime(request.expires_on),
+		),
+	)
+	frappe.db.commit()
+	return {
+		"request": request.name,
+		"to": recipient,
+		"expires_on": request.expires_on,
+		"url": result["signing_url"],
+	}
+
+
+def open_in_person_request(contract, recipient):
+	"""The contract's live request, opened (or re-opened) for signing in person: ``(request, result)``.
+
+	Freezes the snapshot the signer will see and mints a fresh single-use token, reusing a
+	live request rather than adding a second one. Shared by the in-person signing tab
+	(:func:`start_in_person_signing`) and the Contract Builder's own signing
+	(:func:`sign_in_person`). Does not commit: each caller decides what the transaction is.
+	"""
 	_assert_sendable(contract)
 	_assert_template_can_show_a_signature(contract)
-
-	recipient = _valid_single_email(signer_email or contract.get("contact_email"))
 	body = contract.render_body()
 
 	existing = frappe.db.get_value(
@@ -284,22 +310,82 @@ def start_in_person_signing(project_contract, signer_email=None):
 	# Same edge as an emailed send, for the same reason: no document events here.
 	if contract.status == "Draft":
 		contract.db_set("status", "Out for Signature", update_modified=False)
+	return request, result
+
+
+def sign_in_person(contract, recipient, *, mode, signed_name, signed_title="", signature_image="", initials=None):
+	"""Execute ``contract`` with a signature captured in the Contract Builder, the client beside you.
+
+	Nik, 2026-10-13: "let them initial and sign as it gets filled out with information."
+	The client initials each clause in the builder's live preview as it is completed and
+	signs at the end, on the staff member's own signed-in device. This is the same
+	evidence path as the signing page, minus the two checks that exist because the signer
+	is somewhere else: the re-typed email address (the address here is where the signed
+	copy goes, entered at the table) and the bot check (the session is a staff login).
+	What replaces them is the request recording that it was signed in person and who
+	presented it, which the completion certificate prints, as it does for the in-person tab.
+
+	* The snapshot is frozen here, from the issued contract, exactly as for a link.
+	* ``initials`` is ``{key: {"image": PNG data URI, "clause": text}}``. Every box in the
+	  snapshot must be initialed, each set drawn separately (``validate_initials``, the
+	  signing page's own rule), and beside the wording the snapshot has: a clause that
+	  changed after its initials were drawn is returned in ``redo`` and nothing is signed.
+	* The contract row is re-read under a lock before execution, as on the signing page.
+
+	Returns ``{"ok": True, "request"}``, or ``{"ok": False, "error", "redo"}`` having signed
+	nothing. The caller owns the transaction: on a refusal it rolls back, so an issue made
+	in the same request is undone with it.
+	"""
+	from erpnext_enhancements.project_enhancements.esign import initials as initials_module
+	from erpnext_enhancements.project_enhancements.esign import lifecycle, portal
+	from erpnext_enhancements.project_enhancements.esign.lifecycle import SignatureEvidence
+
+	request, _result = open_in_person_request(contract, recipient)
+	drawn = initials if isinstance(initials, dict) else {}
+
+	redo = initials_module.stale_initials(drawn, request.document_snapshot)
+	if redo:
+		return {
+			"ok": False,
+			"redo": redo,
+			"error": _("The wording beside some initials changed after they were drawn. Please initial those clauses again."),
+		}
+	images = {key: (entry or {}).get("image") for key, entry in drawn.items() if isinstance(entry, dict)}
+	captured, error = portal._validated_initials(images, request.document_snapshot)
+	if error:
+		missing = [key for key, _label in initials_module.initial_slots(request.document_snapshot) if not images.get(key)]
+		return {"ok": False, "error": error, "redo": missing}
+
+	settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+	evidence = SignatureEvidence(
+		mode=mode,
+		signed_name=signed_name,
+		signed_title=signed_title,
+		signature_image=signature_image,
+		email_confirmed=0,
+		ip_claimed=frappe.local.request_ip,
+		ip_peer=getattr(getattr(frappe, "request", None), "remote_addr", None),
+		user_agent=frappe.get_request_header("User-Agent"),
+		consent_text=settings.get("contract_esign_consent_text") or "",
+		disclosure_text=settings.get("contract_esign_disclosure_text") or "",
+		provider_status="Signed",
+		initials=captured,
+	)
+
+	locked = frappe.db.get_value(
+		"Project Contract", contract.name, ["docstatus", "status"], as_dict=True, for_update=True
+	)
+	if not locked or locked.docstatus != 1 or locked.status not in lifecycle.SIGNABLE_CONTRACT_STATUSES:
+		return {"ok": False, "error": _("This agreement is no longer available to sign."), "redo": []}
 
 	contract.add_comment(
 		"Comment",
-		_("Opened for signing in person by {0} ({1}); the link works until {2}.").format(
-			escape_html(frappe.utils.get_fullname(frappe.session.user)),
-			escape_html(recipient),
-			frappe.utils.format_datetime(request.expires_on),
+		_("Signed in person in the Contract Builder, presented by {0}; the signed copy goes to {1}.").format(
+			escape_html(frappe.utils.get_fullname(frappe.session.user)), escape_html(recipient)
 		),
 	)
-	frappe.db.commit()
-	return {
-		"request": request.name,
-		"to": recipient,
-		"expires_on": request.expires_on,
-		"url": result["signing_url"],
-	}
+	lifecycle.execute_contract(request, evidence)
+	return {"ok": True, "request": request.name}
 
 
 @frappe.whitelist()

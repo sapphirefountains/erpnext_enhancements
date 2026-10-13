@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.612.0] - 2026-10-13
+
+### Added
+
+- **The client initials and signs in the Contract Builder, as the agreement fills in.** Nik, 2026-10-13, on
+  the first builder: "the interface is not good. Let's make the flow a lot better looking than that and
+  smoother transitions and highlighting where they are at in the agreement process as they go through it
+  and let them initial and sign as it gets filled out with information." A **With the client** toggle in
+  the builder's header turns the agreement beside the form into the signing surface:
+  - each initials box becomes a pad as soon as its clause has no blank left in it, with the clause quoted
+    above the pad; every set is drawn on an empty pad, a copied drawing is refused, and after each set the
+    agreement moves on to the next box;
+  - initials remember the wording they were drawn beside, and a clause that changes afterwards loses its
+    initials, with a note saying which;
+  - the last step takes the signature (typed or drawn, name, title, the email the signed copy goes to, and
+    the consent and disclosure text from Settings), shows it on the agreement's signature line as it is
+    captured, and **Sign & execute** issues and executes the contract in one go.
+- `contract_builder.sign_here` → `esign.api.sign_in_person`: issue and execute in one transaction, on the
+  signing page's own evidence path (`lifecycle.execute_contract`). It opens the in-person request
+  (`open_in_person_request`, now shared with *Hand them another device*), checks that every set of
+  initials was drawn beside the wording in the frozen snapshot (`initials.stale_initials` /
+  `clause_texts`, which read a clause exactly as the page does), validates them as the signing page does,
+  and re-reads the contract under a row lock. A refusal rolls the issue back too, so the contract stays an
+  editable draft, and names the clauses to initial again. The evidence records what happened rather than
+  what the signing page would have checked: `email_confirmed = 0` and no bot check, because the signer was
+  at the table with `presented_by`, which the certificate prints.
+- `contract_builder.start_card_on_file`: after signing in the builder, *Save a card on file now* opens the
+  Stripe enrolment the signing page offers (now `portal.begin_autopay`, shared by both) on its own tab,
+  since Stripe will not run inside the desk.
+
+- **The Rental Agreement and Owner Contract get an input for everything they print.** Nik, 2026-10-13,
+  after the maintenance agreement's rework: "do the rental and owner agreements the same way." Every blank
+  Sapphire types in when preparing either agreement now prints a Project Contract field, so the Contract
+  Builder walks a place to fill it:
+  - both: **Client Name on Agreement** (`agreement_party_name`) and **Billing City / State / Zip**
+    (`billing_city_state_zip`), printed exactly as the maintenance agreement prints them (the City / State /
+    Zip row only when it is set or there is no address);
+  - rental §3.2: **Balance Due (days before rental start)** (`balance_due_days`), the "___ days" the
+    remaining 50% is due before the Rental Start Date;
+  - owner: **Other Property Type** (`property_type_other`, now shown for owner contracts), §2.1's **Revision
+    Rounds per Design Phase** and **Additional Revisions (per hour)** (`design_revision_rounds`,
+    `additional_revision_rate`), and a **Construction Scope of Work** (`construction_scope`) that prints
+    in §3.1 and as Exhibit A instead of eleven blank lines;
+  - owner §4.2's maintenance plan, which was all blanks, now prints from the same Contract Service Option
+    rows and Visit Frequency as the maintenance agreement's Service Plan Selection ("26 visits per year",
+    each option ticked and priced). The rows are seeded for owner contracts too, and §4.3's Annual
+    Maintenance Fee, Deposit and Invoicing Frequency, which the owner contract always printed but whose
+    fields were shown only on maintenance agreements, can now be filled in. The annual fee derives from the
+    ticked options exactly as the maintenance agreement's does, and a fee typed in by hand is never
+    overwritten. Payment method and its card authorization stay the maintenance agreement's: the owner
+    contract does not print them.
+  No new field has a default: neither agreement states one. The parts completed by hand stay blank on
+  purpose: the rental's Exhibit A condition report and its delivery and return inspections are filled in on
+  site.
+- **Client initials on both**, eight each, beside the clauses that carry the client's risk or money.
+  Rental: overholding charges (§2.2), late interest and cancellation for non-payment (§3.4), deposit
+  deductions (§4.2), damage and loss (§8.1), indemnity and assumption of risk (§10.2), the liability limits
+  (§11), the cancellation policy (§12) and arbitration with the jury waiver (§14.5). Owner: construction
+  payments, interest and suspension (§3.2), change orders and concealed conditions (§3.4), unmarked utilities
+  (§5.2), the liability limits (§11), termination costs (§12.1), the design license (§13.2), arbitration
+  (§14.3) and lien rights (§16.5).
+- **The Owner Contract can be e-signed.** Its SIGNATURES block was paper lines (`blank(30)`), and
+  Send for Signature refuses a template with no `sig(`; it now has the rental agreement's signature block.
+
+### Changed
+
+- **The Contract Builder is redesigned.** The rail, the form and the agreement stay put while the work
+  moves through them:
+  - steps slide in from the side they lie on;
+  - the rail shows what is left to fill on each step;
+  - a progress bar counts the fields the agreement prints (`contract_builder.progress`);
+  - the form drops the doctype's column breaks for a responsive grid;
+  - the plan options and owner phases are tick-and-price cards that no longer overlap their labels.
+- The agreement:
+  - re-renders in place without losing its scroll;
+  - lights up the parts the current step fills in and scrolls to them, labelled with the step;
+  - brings a field's part into view when the field is focused;
+  - flashes a changed value where it lands.
+  `contract_builder.agreement_sections` reads which `<h1>` part mentions each field from the contract's
+  own template, so no list is kept by hand.
+- The review step is a checklist (what will print blank, initials done, a link already out) followed by
+  the signature, or by *Send it to them to sign* and *Hand them another device* (the in-person tab,
+  formerly *Sign it here now*). The start screen is redone with the same look.
+- Signing in the builder needs only e-signing switched on (`can_sign_here`). The public signing page is
+  needed only to send a link or open one on another device (`can_send`). Both replace the payload's
+  `can_sign`.
+- The preview, and only the preview (`_preview_doc` sets `flags.contract_preview`), wraps the unsigned
+  signature line in `ct-sig-line` so the builder can show the signature on it. Snapshots, prints and
+  execution's drift check render exactly as before.
+
+- **Both agreements follow the Word copy's layout**, as the maintenance agreement has since v1.611.1: every
+  numbered clause hangs its number (`ct-clause`), titled clauses lead in bold ("**Governing Law.**",
+  "**JURY TRIAL WAIVER.**", "**Lien Rights.**"), the owner §2.1 design items are a bulleted list, and the
+  §4.2 plan options sit on their own indented lines. The owner contract's `<h2>` sub-headings ("2.1 Design
+  Scope", "3.4 Change Orders" …) are titled clauses now, so its numbering is one series; the paragraphs
+  under §3.1 and §3.2 are indented beneath their clause. The wording does not change beyond the bound
+  blanks, the initials and the bold titles.
+- The plain-language summary names the rental's balance-due days when they are set, and an owner contract's
+  maintenance plan when Phase 3 is selected (without the maintenance agreement's "base rate" wording, which
+  the owner contract does not use).
+- `patches/refresh_rental_owner_agreement_layout` brings both live templates up to date. Per template, the
+  body is replaced only when it is exactly the v1.611.0 shipped body (SHA-256; prod's matched byte for byte
+  on 2026-10-13); a site-edited body is logged and left alone, paper-signed contracts are frozen first, and
+  nothing changes while a signing link for that template is out. No contract's terms are reset: every new
+  field is blank on existing contracts, so they print the blank line they printed before. Never raises.
+- `tests/test_rental_owner_agreement_layout` (its own CI step) renders both templates empty and filled,
+  checks the clause numbering, initials and e-sign block, and asserts for the rental, owner **and**
+  maintenance agreements that every `doc.<field>` they print exists and is shown for that contract type by
+  its own and its section's `depends_on`. That is the guarantee behind "an input for everything it prints":
+  a field the form hides for a type is a blank nobody can fill.
+
+### Fixed
+
+- In the first builder the plan's tick-and-price rows were squeezed into a half-width column, so the price
+  boxes overlapped the option names ("Standard M 690 Plan").
+
 ## [1.611.1] - 2026-10-13
 
 ### Changed

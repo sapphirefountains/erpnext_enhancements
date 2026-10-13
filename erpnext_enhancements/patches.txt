@@ -1349,3 +1349,8 @@ erpnext_enhancements.patches.add_contract_summaries
 # options. Replaces the live body only when it is exactly the v1.609.0 or v1.611.0 shipped body; freezes
 # paper-signed copies first and waits while a signing link is out. Does not touch any contract's terms. Cannot raise.
 erpnext_enhancements.patches.refresh_maintenance_agreement_layout
+# Rental + Owner agreement layout (v1.612.0): the maintenance agreement's treatment for both: numbered
+# clauses, field-bound blanks, client initials, and a sig() block so the owner contract can be e-signed.
+# Replaces each live body only when it is exactly the v1.611.0 shipped body; freezes paper-signed copies
+# first and waits while a signing link is out. Resets no terms. Cannot raise.
+erpnext_enhancements.patches.refresh_rental_owner_agreement_layout

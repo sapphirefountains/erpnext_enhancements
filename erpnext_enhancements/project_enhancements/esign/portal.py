@@ -442,9 +442,23 @@ def start_autopay(esign_sid=None):
 	session = _signed_session(esign_sid)
 	if not session:
 		return {"ok": False}
-
 	try:
 		request = frappe.get_doc("Contract Signature Request", session["request"])
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay setup failed")
+		return {"ok": False}
+	return begin_autopay(request)
+
+
+def begin_autopay(request):
+	"""Open a Stripe card-enrolment session for a signed request's customer: ``{"ok", "checkout_url"}``.
+
+	Shared by the signing page (:func:`start_autopay`, reached only from the session that
+	signed) and the Contract Builder (``contract_builder.start_card_on_file``, a staff member
+	at the table with the client who just signed). Every precondition is re-derived from
+	the request, never from the caller. Never raises.
+	"""
+	try:
 		if request.status != "Signed":
 			return {"ok": False}
 		# Re-derive the offer's own preconditions rather than trusting that the

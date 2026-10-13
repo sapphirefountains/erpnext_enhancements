@@ -18,23 +18,38 @@ a second contract system beside the one that exists:
 * **It edits a real Project Contract draft.** :func:`save_builder` assigns the
   fields the steps expose and calls ``save()``, so validation, totals, the
   revision model and the form all see the same document. No parallel draft store.
-* **Signing is the e-sign module's.** "Sign here" is
-  ``esign.api.start_in_person_signing`` and "Send to the client" is
+* **Signing is the e-sign module's.** Signing with the client beside you is
+  ``esign.api.sign_in_person`` (:func:`sign_here`), handing them another device is
+  ``esign.api.start_in_person_signing``, and "Send to the client" is
   ``esign.api.send_for_signature``; this module only issues (submits) the contract
   first, because a contract must be submitted before it can be signed.
+
+Nik, 2026-10-13, on the first version: "the interface is not good. Let's make the flow a
+lot better looking than that and smoother transitions and highlighting where they are at
+in the agreement process as they go through it and let them initial and sign as it gets
+filled out with information." So the payload also says where each field prints in the
+agreement (:func:`agreement_sections`), which the page uses to light up the part of the
+agreement the current step is filling in, and how far through the agreement is
+(:func:`progress`).
 
 The preview is ``project_contract.get_contract_html`` with the builder's unsaved
 values, the same renderer as the form's Preview button and the printed PDF.
 """
 
+import html
 import json
 import re
 
 import frappe
 from frappe import _
+from frappe.rate_limiter import rate_limit
 from frappe.utils import cint, flt
 
-from erpnext_enhancements.feature_flags import contract_esign_enabled, contract_esign_public_page_enabled
+from erpnext_enhancements.feature_flags import (
+	contract_esign_enabled,
+	contract_esign_public_page_enabled,
+	throw_if_contract_esign_disabled,
+)
 
 DOCTYPE = "Project Contract"
 
@@ -112,6 +127,15 @@ STEP_COPY = {
 }
 
 _TEMPLATE_KEY_EQ = re.compile(r"""doc\.template_key\s*==\s*["']([a-z_]+)["']""")
+_H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
+_DOC_FIELD = re.compile(r"\bdoc\.([a-z_][a-z0-9_]*)")
+
+#: Child tables a template reads through a render-context name rather than ``doc.<table>``
+#: (``project_contract._render_context``): the maintenance plan and the owner phases.
+CONTEXT_TABLES = {"service_options": re.compile(r"\bservice_options\b"), "phases": re.compile(r"\bphases\b")}
+
+#: Roles that may issue a contract and take its signature (esign.api.SEND_ROLES).
+SIGN_ROLES = {"System Manager", "Projects Manager", "Sales Manager"}
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +324,64 @@ def _step_index(steps, fieldname):
 	return 0
 
 
+def progress(doc, steps, body):
+	"""``{"filled", "total"}``: of the fields this agreement prints, how many have a value.
+
+	The same reading of the template as :func:`blanks` (``doc.<field>`` in its body), so the
+	bar fills as the blank lines in the preview disappear.
+	"""
+	referenced = set(_DOC_FIELD.findall(body or ""))
+	total = filled = 0
+	for step in steps:
+		for field in step["fields"]:
+			name = field.get("fieldname")
+			if field["fieldtype"] in NO_VALUE_TYPES or field["fieldtype"] == "Table" or name not in referenced:
+				continue
+			total += 1
+			value = doc.get(name)
+			empty = value in (None, "") or (
+				field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)
+			)
+			filled += 0 if empty else 1
+	return {"filled": filled, "total": total}
+
+
+def _heading_text(raw):
+	"""The words of an ``<h1>`` as the reader sees them; only the part before any Jinja.
+
+	A heading that varies (``EXHIBIT B – {% if … %}``) is matched on its fixed start.
+	"""
+	text = re.split(r"\{[{%#]", raw or "", maxsplit=1)[0]
+	text = re.sub(r"<[^>]+>", "", text)
+	return " ".join(html.unescape(text).split())
+
+
+def agreement_sections(body):
+	"""``(headings, {fieldname: [heading, ...]})`` read from a template body.
+
+	Each ``<h1>`` opens a part of the agreement ("CLIENT & PROPERTY INFORMATION",
+	"8. EMERGENCY SERVICE"); a field belongs to every part whose text mentions it. The page
+	matches the headings against its preview to highlight the parts the current step fills
+	in and scroll to them, so this is read from the template the contract actually uses
+	and needs no list kept by hand.
+	"""
+	parts = _H1.split(body or "")
+	headings, fields = [], {}
+	for index in range(1, len(parts), 2):
+		heading = _heading_text(parts[index])
+		if not heading:
+			continue
+		headings.append(heading)
+		segment = parts[index] + (parts[index + 1] if index + 1 < len(parts) else "")
+		names = set(_DOC_FIELD.findall(segment))
+		names |= {name for name, pattern in CONTEXT_TABLES.items() if pattern.search(segment)}
+		for name in sorted(names):
+			fields.setdefault(name, [])
+			if heading not in fields[name]:
+				fields[name].append(heading)
+	return headings, fields
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -396,6 +478,103 @@ def issue_contract(name):
 	return _payload(doc)
 
 
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=3600, methods=["POST"])
+def sign_here(
+	name,
+	signer_email=None,
+	signed_name=None,
+	signed_title=None,
+	signature_mode=None,
+	signature_image=None,
+	initials=None,
+	agree=None,
+):
+	"""Issue the contract (if it is still a draft) and execute it with the client's signature.
+
+	The client is beside the staff member, has initialed each clause in the builder's
+	preview as it was filled in, and has signed in the builder: ``esign.api.sign_in_person``
+	does the rest on the same evidence path as the signing page. Issuing and signing are
+	one transaction, so a refusal (initials drawn beside wording that has since changed, a
+	missing set) rolls the issue back too and the contract stays an editable draft.
+
+	``initials`` is JSON: ``{key: {"image": PNG data URI, "clause": text it was drawn beside}}``.
+	Returns ``{"ok": True, "payload", "autopay"}`` or ``{"ok": False, "error", "redo"}``.
+	"""
+	from erpnext_enhancements.project_enhancements.esign import api as esign_api
+	from erpnext_enhancements.project_enhancements.esign import portal
+
+	throw_if_contract_esign_disabled()
+	frappe.only_for(list(SIGN_ROLES))
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("submit")
+	if doc.docstatus == 2:
+		frappe.throw(_("{0} was cancelled. Amend it to make a new revision.").format(name), title=_("Cancelled"))
+
+	# The signer's own inputs, checked before anything is issued.
+	if not cint(agree):
+		frappe.throw(_("The client needs to tick the box to confirm they intend to sign."))
+	mode = signature_mode if signature_mode in ("Drawn", "Typed") else None
+	if not mode:
+		frappe.throw(_("Choose whether the signature is typed or drawn."))
+	signer = portal._clean_text(signed_name)
+	if not signer:
+		frappe.throw(_("Enter the client's full name as their signature."))
+	image = ""
+	if mode == "Drawn":
+		image = portal._validated_signature_image(signature_image)
+		if not image:
+			frappe.throw(_("Draw the signature in the box, or switch to typing it."))
+	recipient = esign_api._valid_single_email(signer_email or doc.get("contact_email"))
+	if isinstance(initials, str):
+		try:
+			initials = json.loads(initials or "{}")
+		except ValueError:
+			initials = {}
+
+	if doc.docstatus == 0:
+		doc.submit()
+	result = esign_api.sign_in_person(
+		doc,
+		recipient,
+		mode=mode,
+		signed_name=signer,
+		signed_title=portal._clean_text(signed_title),
+		signature_image=image,
+		initials=initials if isinstance(initials, dict) else {},
+	)
+	if not result.get("ok"):
+		# Nothing signed: undo the issue made above with everything else in this request.
+		frappe.db.rollback()
+		return {"ok": False, "error": result.get("error"), "redo": result.get("redo") or []}
+
+	request = frappe.get_doc("Contract Signature Request", result["request"])
+	return {
+		"ok": True,
+		"autopay": portal._autopay_offer(request),
+		"payload": _payload(frappe.get_doc(DOCTYPE, name)),
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def start_card_on_file(name):
+	"""After signing in the builder: open the card-on-file page the agreement promises.
+
+	The same enrolment the signing page offers (``esign.portal.begin_autopay``), for the
+	contract's latest signed request; every condition is re-checked there.
+	"""
+	from erpnext_enhancements.project_enhancements.esign import portal
+
+	frappe.only_for(list(SIGN_ROLES))
+	frappe.get_doc(DOCTYPE, name).check_permission("read")
+	request = frappe.db.get_value(
+		"Contract Signature Request", {"project_contract": name, "status": "Signed"}, "name", order_by="signed_on desc"
+	)
+	if not request:
+		return {"ok": False}
+	return portal.begin_autopay(frappe.get_doc("Contract Signature Request", request))
+
+
 @frappe.whitelist()
 def get_signing_status(name):
 	"""Polled while the client signs on a device beside the page: has it been signed yet?"""
@@ -416,13 +595,25 @@ def _payload(doc):
 		"Contract Template", doc.contract_template, ["title", "party_type", "description"], as_dict=True
 	) or frappe._dict()
 	steps = builder_steps(doc.get("template_key"), template.get("party_type"))
+	body = frappe.db.get_value("Contract Template", doc.get("contract_template"), "body") or ""
+	headings, field_sections = agreement_sections(body)
 	esign_on = contract_esign_enabled()
-	can_sign = bool(
+	# Signing here needs only e-signing switched on; handing the client another device or
+	# emailing them a link also needs the public signing page.
+	can_sign_here = bool(
 		esign_on
-		and contract_esign_public_page_enabled()
-		and set(frappe.get_roles()) & {"System Manager", "Projects Manager", "Sales Manager"}
+		and set(frappe.get_roles()) & SIGN_ROLES
 		and frappe.has_permission(DOCTYPE, "submit", doc=doc)
 	)
+	can_send = bool(can_sign_here and contract_esign_public_page_enabled())
+	signing = {}
+	if can_sign_here and doc.get("status") != "Signed":
+		settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+		signing = {
+			"consent_text": settings.get("contract_esign_consent_text") or "",
+			"disclosure_text": settings.get("contract_esign_disclosure_text") or "",
+			"presenter": frappe.utils.get_fullname(frappe.session.user),
+		}
 	maintenance_contract = None
 	if doc.get("template_key") == "maintenance" and doc.get("status") == "Signed":
 		maintenance_contract = frappe.db.get_value(
@@ -453,9 +644,14 @@ def _payload(doc):
 		"doc": doc.as_dict(convert_dates_to_str=True, no_nulls=False),
 		"steps": steps,
 		"blanks": blanks(doc, steps),
+		"progress": progress(doc, steps, body),
+		"headings": headings,
+		"field_sections": field_sections,
 		"editable": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "write", doc=doc) else 0,
 		"can_issue": 1 if doc.docstatus == 0 and frappe.has_permission(DOCTYPE, "submit", doc=doc) else 0,
-		"can_sign": 1 if can_sign else 0,
+		"can_sign_here": 1 if can_sign_here else 0,
+		"can_send": 1 if can_send else 0,
+		"signing": signing,
 		"esign_enabled": 1 if esign_on else 0,
 		"maintenance_contract": maintenance_contract,
 	}
