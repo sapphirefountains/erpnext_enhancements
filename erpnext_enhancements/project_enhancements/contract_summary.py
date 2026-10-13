@@ -133,6 +133,8 @@ def _maintenance(doc):
 	standard = chosen.get("standard")
 	if standard:
 		how_often = FREQUENCY_WORDS.get(doc.get("visit_frequency"), "on the agreed schedule")
+		if doc.get("visit_frequency") == "Custom" and doc.get("custom_visit_schedule"):
+			how_often = f"on a custom schedule ({_text(doc.get('custom_visit_schedule'))})"
 		price = f" at a base rate of {_money(standard.get('price'))} per visit" if flt(standard.get("price")) else ""
 		plan.append(f"standard maintenance visits {how_often}{price}")
 	if "package" in chosen:
@@ -236,6 +238,8 @@ def _maintenance_term(doc):
 			f"{start} and runs month to month. Either of us can end it with 30 days' written notice{yearly}.",
 		)
 	length = f" for {TERM_WORDS[term]}" if term in TERM_WORDS else ""
+	if term == "Other" and doc.get("initial_term_other"):
+		length = f" for {_text(doc.get('initial_term_other'))}"
 	return (
 		"How long:",
 		f"{start}{length}, then renews by itself every year unless either of us gives 30 days' written notice "

@@ -383,6 +383,44 @@ class TestMaintenanceTemplate(unittest.TestCase):
         self.assertNotIn("Card Number:", html)
         self.assertIn("Due within 30 days of the invoice date", html)
 
+    def test_everything_the_word_copy_fills_in_has_an_input(self):
+        """Nik: "the matching should come from inputted information. If we are missing check boxes or
+        fields or addresses or whatever, we need inputs for those so we can set them." Matching the
+        Hardware / Salt Development agreement of 2026-09-30 needs each of these."""
+        html = self.render(
+            agreement_party_name="Salt Development — Hardware Buildings",
+            billing_address="455 West 200 North",
+            billing_city_state_zip="Salt Lake City, UT 84103",
+            property_type="Other",
+            property_type_other="Mixed use",
+            visit_frequency="Custom",
+            custom_visit_schedule="Weekly in summer",
+            initial_term="Other",
+            initial_term_other="Six (6) months",
+        )
+        for text in (
+            "Salt Development — Hardware Buildings",
+            "<b>City / State / Zip:</b></td><td>Salt Lake City, UT 84103",
+            "Other: Mixed use",
+            "Custom: Weekly in summer",
+            "Other: Six (6) months",
+        ):
+            self.assertIn(text, html)
+        self.assertNotIn(">Salt Development</td>", html)  # the customer record's name is overridden
+
+    def test_city_state_zip_row_only_when_needed(self):
+        self.assertNotIn("City / State / Zip:", self.render(billing_address="455 W 200 N, Salt Lake City, UT 84103"))
+        self.assertIn("City / State / Zip:", self.render(billing_address=None))  # the paper form keeps its line
+
+    def test_no_printed_blank_lacks_an_input_except_the_card_form(self):
+        """Every blank() the template prints outside Exhibit B's card form must be a field's fallback;
+        the card form stays paper-only because card data never enters ERPNext."""
+        text = TEMPLATE.read_text(encoding="utf-8")
+        start = text.index("<h2>Credit Card Authorization</h2>")
+        card_form = text[start:text.index("<h2>Bank Account (ACH) Authorization</h2>", start)]
+        outside = text.replace(card_form, "")
+        self.assertEqual(re.findall(r"\{\{ blank\(\d*\) \}\}", outside), [])
+
     def test_the_summary_opens_the_agreement(self):
         html = self.render(
             visit_frequency="Bi-Weekly",

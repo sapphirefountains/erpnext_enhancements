@@ -149,8 +149,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The agreement printed "$690.00 per visit / visit" (the unit twice), and City / State / Zip and Access
-  Notes as blank lines whatever was entered (no field fed them). City / State / Zip is now part of the
-  two-line billing address; Access Notes has a field. The feature description keeps its line breaks.
+  Notes as blank lines whatever was entered (no field fed them). The feature description keeps its line
+  breaks.
+- **Everything the agreement prints now comes from an input.** Nik, matching the Hardware agreement to its
+  Word copy: "the matching should come from inputted information. If we are missing check boxes or fields
+  or addresses or whatever, we need inputs for those so we can set them." New fields: *Client Name on
+  Agreement* (the name as it should read, e.g. "Salt Development — Hardware Buildings", when it differs from
+  the customer record), *Billing City / State / Zip* (its own row again; shown when filled, or when there is
+  no billing address so the paper form keeps its line), *Other Property Type*, *Custom Visit Schedule* and
+  *Other Initial Term*, alongside Access Notes and the Custom Plan from earlier in this release. A test now
+  fails if the template prints a blank line with no field behind it, except Exhibit B's card form, which
+  stays paper-only because card data never enters ERPNext.
 - Generating a Statement of Work failed on its first save: `validate_msa_gate` requires the MSA link and
   `create_contract` never set it. It now links the supplier's signed MSA.
 - The "Maintenance Contract Renewal Due" email printed "�9.2" for "§9.2".
