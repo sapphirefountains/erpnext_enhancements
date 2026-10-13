@@ -1411,7 +1411,11 @@ class TestWiring(unittest.TestCase):
 class TestFieldsAndPatches(unittest.TestCase):
 	def test_the_task_fields_are_appended_to_the_fixture(self):
 		records = json.loads(CUSTOM_FIELDS.read_text(encoding="utf-8"))
-		tail = {r["name"]: r for r in records[-4:]}
+		# The four were appended together; later releases append after them (T3, v1.608.0), so they are
+		# found by name and must still sit side by side, in this order.
+		names = [r["name"] for r in records]
+		start = names.index("Task-custom_outdoor")
+		tail = {r["name"]: r for r in records[start : start + 4]}
 		self.assertEqual(
 			list(tail),
 			[

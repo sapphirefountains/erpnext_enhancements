@@ -40,6 +40,8 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
 | `planner_weather.py` | Phase 5 weather flags (v1.583.0): one Open-Meteo request per load for every uncached site, each point cached 3 hours; flags rain ≥ 60%, a low ≤ 32 °F and wind ≥ 25 mph (imperial units, asked of Open-Meteo directly) on tasks ticked *Outdoor work*. Never fails a read and never logs a request URL | `day_flags`, `forecasts`, `forecast_for_tasks`, `span_weather` | `api/project_planner` (`get_planner`, `get_route`, `suggest_dates`, `who_is_free`) |
 | `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
+| `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
+| `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
 | `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
@@ -1474,6 +1476,93 @@ block, Phase 6B's menu and the T1 block. `tests/test_planner_draft_new_tasks.py`
   applied when it is published). The Needs tasks list still lists a project whose only tasks are drafts.
   Up to 300 unpublished new tasks per person.
 
+### Phase templates and task bundles (T3, v1.608.0)
+
+Nik, 2026-10-12: start a job's plan from DOC-0041's phases instead of typing it, and keep reusable,
+composable **bundles** of tasks ("Control panel design + build" and its subtasks) to pick from. Server:
+`api/planner_templates.py` (two reads) and `planner_templates.py` here (the rules, pure); page: the **T3**
+block at the end of `project_planner.js` (`PPT3_PURE` / `PPT3_METHODS`, methods `t3_*`), reached from the
+Build out footer. `tests/test_planner_templates.py` pins it.
+
+- **Start from template…** (a Build out footer action). The dialog is built from a catalog read first
+  (`get_planner_templates`): a phase template with its phases ticked (pick the ones this job needs), any
+  number of bundles, and the phase the bundles go under (a phase of the grid or the project, or a new
+  name). `get_template_rows` answers rows in `get_copy_source`'s shape (subject, default hours, phase, crew
+  size, `row:N` dependencies), so they go in through Copy from project's own path: an empty grid is
+  replaced, otherwise **Append** or Replace. Then edit, and Create (or draft, in Draft mode) as usual.
+- **The sequence** (`planner_templates.template_rows`). Inside a phase or a bundle the tasks run in order,
+  each after the one before, unless the template's own dependencies say otherwise; a *Project
+  management* task runs alongside its phase (it waits on the phase before, nothing waits on it). A
+  phase's first tasks wait on the last tasks of the nearest **picked** phase(s) it runs after, walking
+  through any that were not picked. DOC-0041: 100 > 200 > 300 > 400, then 500 and 600 side by side, then
+  700, which waits on both. **Phase 800 is never offered**: maintenance contracts own it. Bundles come
+  after the phase rows, under the chosen phase, waiting on nothing outside themselves.
+- **Phases are `Phase 100` … `Phase 700`, matched by number** (ClaudeBrain decision 2026-10-12, "Project
+  task trees use Phase 100–700 top-level groups"; the 10/1 schedule import and PRJ-00597 already have
+  them). The rows' phase is `Phase 300`; the dialog shows "Phase 300 — Rough-in". In `build_out_tasks`
+  (and the grid's `PPT1_PURE.phase_match`, which mirrors it) a phase name starting with a three-digit
+  number ("Phase 300", "300 Rough-in", "phase 300 - design": `planner_templates.phase_number`, re-exported
+  as `planner_actions.phase_number`, the one helper) is the project's open phase with that number,
+  whatever its spelling (the one named exactly `Phase 300` first); with none, ONE new `Phase 300` is made.
+  So a template loaded onto a project that has its phases never makes a second set. Names without a
+  number match by name or subject, as before.
+- **Materials are not calendar tasks.** Each template phase has a **procurement checklist** (a Task field,
+  one item per line: materials, equipment, expenses, subcontracts nobody schedules). The grid keeps the
+  loaded phases' checklists in `state.checklists`, and Create sends those of the phases it will MAKE as
+  `build_out_tasks(phase_checklists=...)`, which writes each into the new phase's description as a tick
+  list (a Quill task list, items escaped). A phase the project already has is never written to. Why the
+  description: it is the phase's own, visible on its form and on print, and a tick list there can be
+  ticked off as things are ordered without any new doctype.
+- **Default hours** come from the template Task's *Expected Time*; a template row also carries its
+  `cost_code`, the seam T5 (hours from a live estimate, blocked) will use (`apply_estimate_hours`).
+
+**The data model: ERPNext Project Templates.** A template is a `Project Template` whose tasks are template
+Tasks (`is_template`, status *Template*). ERPNext's own model already holds the phases (a group template
+Task, its tasks under it as `parent_task`), the order (the template's task table) and dependencies (the
+Tasks' *Depends On*), so no custom doctype was needed. Custom fields (fixtures) carry the rest:
+
+| Field | On | What it is |
+|---|---|---|
+| *Planner Template Kind* (`custom_template_kind`) | Project Template | *Phase template* or *Bundle*. Blank: an ordinary ERPNext template, which the planner never offers (and the Create Project dialog offers only those). |
+| *Review Status* (`custom_review_status`) | Project Template | *Needs review* (the dialog says so) or *Reviewed*. |
+| *Template Notes* (`custom_template_notes`) | Project Template | Where it came from. |
+| *Template Line* (`custom_template_line`) | template Task | *Labor*, *Subcontract* or *Project management*. |
+| *Cost Code* (`custom_cost_code`) | template Task | The corrected catalog's code (`quality/cost_codes.py`), never a DOC-0041 one. |
+| *Phase Number*, *Runs After Phases*, *Procurement Checklist* | template phase (group Task) | 300; "500, 600" (blank: waits on nothing; when NO phase has one, each runs after the one above it); one item per line. |
+
+**Seeded** by `patches/seed_planner_templates.py` (insert-only by template name, never over an edit): the
+phase template **Fountain build phases (DOC-0041)** (`Phase 100`–`Phase 700`, 30 tasks) and six starter bundles
+(Control panel design + build, Interior fountain, Splash pad, Lighting package, Equipment room (pump +
+filter skid), Commissioning + hand-off), all *Needs review*. The content is
+`data/planner_templates.json`, derived from DOC-0041 Sapphire Cost Worksheet v1.0 by
+`scripts/derive_planner_templates.py` (its `source.interpretations` lists every judgement made: the two
+cost-code overrides, the defects not copied, the build order of 600 and 700). Every DOC-0041 v1.0 labor
+line has 1 in "# Units", the blank worksheet's placeholder rather than an estimate, so **the hours are
+blank: fill them in per template** (a 1-hour default would book every templated task as a 1-hour job).
+
+#### How to edit the templates and bundles
+
+System Manager and Projects Manager (`patches/grant_project_template_editing.py`) edit them in the Desk:
+
+1. **Project Template** list → filter *Planner Template Kind* (Phase template or Bundle). Open one.
+2. **A task's hours, crew size, line or cost code:** click its row in the *Tasks* table to open the
+   template Task, change *Expected Time* (default hours), *Crew Size*, *Template Line* or *Cost Code*,
+   and save. A subject edited on the Task shows in the planner straight away. **Every seeded task's
+   hours are blank: fill them in per template**; until then the grid's Hours cell loads empty, showing
+   what still needs an estimate.
+3. **A phase's checklist, number or place in the sequence:** open the phase (a group template Task) and
+   edit *Procurement Checklist* (one item per line), *Phase Number* or *Runs After Phases* (e.g. `500,
+   600`). **Keep a phase's subject `Phase <number>`** (`Phase 300`): that is the name of the phase on
+   every project, and how a project's existing phase is found. Its descriptive name ("Rough-in") goes
+   in the phase's *Description*; the planner shows it beside the number.
+4. **Order and dependencies:** the rows of the template's *Tasks* table are the order. To make tasks run
+   side by side instead of one after another, edit the template Tasks' *Depends On*: once any task of a
+   phase or bundle has a dependency on another of the same group, the planner uses exactly those.
+5. **Add a task:** create a Task with *Is Template* ticked (status *Template*), under the phase (*Parent
+   Task*) for a phase template, then add it to the template's *Tasks* table. **A new bundle:** a new
+   Project Template with *Planner Template Kind* = Bundle and its template Tasks.
+6. **When a seeded one is right**, set *Review Status* to *Reviewed*; the planner stops flagging it.
+   Ticking *Disabled* on a template hides it from the planner.
 ## Calendar sync (C2, v1.604.0)
 
 When planners commit work, ERPNext pushes it **one way** to Sapphire's existing shared Google

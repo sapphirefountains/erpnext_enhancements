@@ -9502,12 +9502,30 @@ const PPT1_PURE = {
 	},
 	// What the server will do with a typed phase: an existing open phase of that name (or subject, in
 	// any capitals) is that phase; anything else is a new one, spelt as typed.
+	// T3 (v1.608.0): a name starting with a phase number ("Phase 300", "300 Rough-in") is the project's
+	// open phase with that number (its "Phase 300" first), as api/planner_actions._plan_build_out does.
 	phase_match(text, phases) {
 		const typed = PPT1_PURE.clean(text);
 		if (!typed) return null;
 		const key = typed.toLowerCase();
-		const found = (phases || []).find((phase) => phase.name === typed || PPT1_PURE.clean(phase.subject).toLowerCase() === key);
+		let found = (phases || []).find((phase) => phase.name === typed || PPT1_PURE.clean(phase.subject).toLowerCase() === key);
+		const number = PPT1_PURE.phase_number(typed);
+		if (!found && number !== null) {
+			const same = (phases || []).filter((phase) => PPT1_PURE.phase_number(phase.subject) === number);
+			found = same.find((phase) => PPT1_PURE.clean(phase.subject).toLowerCase() === `phase ${number}`) || same[0];
+		}
 		return found ? { parent_task: found.name } : { phase: typed };
+	},
+	// The phase number a phase name starts with, or null: "Phase 300", "300 Rough-in", "phase 300 - design"
+	// (planner_templates.PHASE_NUMBER, the same pattern).
+	phase_number(text) {
+		const found = /^\s*(?:phase\s*)?(\d{3})\b/i.exec(String(text == null ? "" : text));
+		return found ? parseInt(found[1], 10) : null;
+	},
+	// How two phase names compare: by number when they have one, else by the name in any capitals.
+	phase_key(text) {
+		const number = PPT1_PURE.phase_number(text);
+		return number !== null ? `#${number}` : PPT1_PURE.clean(text).toLowerCase();
 	},
 	// The order rows can be created in: a row after the rows it waits on, else the grid's own order.
 	// {order, cycle}; with a loop `order` is null and `cycle` lists the rows (0-based) going round.
@@ -9563,7 +9581,7 @@ const PPT1_PURE = {
 			const phase = PPT1_PURE.phase_match(row.phase, phases);
 			if (phase) {
 				Object.assign(entry, phase);
-				if (phase.phase && !fresh.some((title) => title.toLowerCase() === phase.phase.toLowerCase())) fresh.push(phase.phase);
+				if (phase.phase && !fresh.some((title) => PPT1_PURE.phase_key(title) === PPT1_PURE.phase_key(phase.phase))) fresh.push(phase.phase);
 			}
 			const size = String(row.crew_size == null ? "" : row.crew_size).trim();
 			if (size) {
@@ -9674,6 +9692,19 @@ const PPT1_PURE = {
 			if (ids.length > 1) made[index].needs_more = ids.slice(1);
 		});
 		return made;
+	},
+	// The procurement checklists (T3) of the phases Create will MAKE, as build_out_tasks takes them:
+	// {phase as the grid spells it: [items]}, matched in any capitals; null when there are none. A
+	// checklist of a phase no row uses, or of one the project already has, is never sent.
+	checklists_for(checklists, new_phases) {
+		const known = {};
+		Object.keys(checklists || {}).forEach((title) => (known[PPT1_PURE.phase_key(title)] = checklists[title]));
+		const out = {};
+		(new_phases || []).forEach((title) => {
+			const lines = known[PPT1_PURE.phase_key(title)];
+			if (lines && lines.length) out[title] = lines;
+		});
+		return Object.keys(out).length ? out : null;
 	},
 	// "5 tasks and 2 phases" (the phases only when there are some).
 	counts(count, phases) {
@@ -9920,8 +9951,8 @@ const PPT1_METHODS = {
 			this.t1_el("p", {
 				class: "t1-intro",
 				text: this.draft_on
-					? __("One task per row. They are kept as drafts without dates, in the Unscheduled tray, and created when you publish. Enter moves to the next row; you can paste lines from a spreadsheet, paste a list, or copy another project's tasks.")
-					: __("One task per row. They are created without dates and appear in the Unscheduled tray. Enter moves to the next row; you can paste lines from a spreadsheet, paste a list, or copy another project's tasks."),
+					? __("One task per row. They are kept as drafts without dates, in the Unscheduled tray, and created when you publish. Enter moves to the next row; you can start from a template, paste lines from a spreadsheet, paste a list, or copy another project's tasks.")
+					: __("One task per row. They are created without dates and appear in the Unscheduled tray. Enter moves to the next row; you can start from a template, paste lines from a spreadsheet, paste a list, or copy another project's tasks."),
 			})
 		);
 		const heads = [
@@ -10248,6 +10279,8 @@ const PPT1_METHODS = {
 	t1_set_rows(state, plan, how) {
 		const copied = PPT1_PURE.copy_rows(plan.rows, () => this.t1_new_id());
 		const kept = how === "append" ? state.rows.filter((row) => !PPT1_PURE.is_blank(row)) : [];
+		// A template's phases bring their procurement checklists (T3); Replace drops the earlier ones.
+		if (plan.checklists) state.checklists = Object.assign({}, how === "append" ? state.checklists : {}, plan.checklists);
 		let rows = kept.concat(copied);
 		if (rows.length > PPT1.max_rows) {
 			frappe.show_alert({ message: __("The grid holds {0} tasks; the last {1} copied tasks were left out.", [PPT1.max_rows, rows.length - PPT1.max_rows]), indicator: "orange" }, 8);
@@ -10263,6 +10296,7 @@ const PPT1_METHODS = {
 	// The footer's buttons, with the count of what Create would make.
 	t1_actions(state, count, phases) {
 		return [
+			{ label: __("Start from template…"), title: __("Phases and task bundles kept as Project Templates"), on_click: () => this.t3_open_templates(state) },
 			{ label: __("Paste a list…"), title: __("Lines like “Pour slab, 8h” become rows"), on_click: () => this.t1_open_paste_list(state) },
 			{ label: __("Copy from project…"), title: __("Start from another project's tasks"), on_click: () => this.t1_open_copy(state) },
 			{ label: __("Add row"), title: __("A new row at the bottom"), on_click: () => state.rows && state.table && this.t1_add_row(state) },
@@ -10306,7 +10340,11 @@ const PPT1_METHODS = {
 		}
 		state.busy = true;
 		// draft=1 in Draft mode: the tasks are kept as drafts and created when the planner publishes.
-		return this.t1_send("build_out_tasks", Object.assign({ project: state.project, rows: JSON.stringify(built.rows) }, this.draft_args()), {})
+		const args = Object.assign({ project: state.project, rows: JSON.stringify(built.rows) }, this.draft_args());
+		// A new phase that came from a template takes its procurement checklist along (T3).
+		const checklists = PPT1_PURE.checklists_for(state.checklists, built.new_phases);
+		if (checklists) args.phase_checklists = JSON.stringify(checklists);
+		return this.t1_send("build_out_tasks", args, {})
 			.then((result) => {
 				state.busy = false;
 				if (!result || !result.tasks) {
@@ -10357,3 +10395,202 @@ const PPT1_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPT1_METHODS);
+
+// ====================================================================== T3: phase templates and task bundles
+//
+// Nik, 2026-10-12: start a job's plan from DOC-0041's phases instead of typing it, and keep reusable
+// bundles of tasks ("Control panel design + build" and its subtasks) to pick from and compose. Both
+// are ERPNext Project Templates, edited in the Desk (api/planner_templates.py,
+// project_enhancements/planner_templates.py).
+//
+//   - Start from template…  a Build out footer action (t1_actions). The dialog offers a phase template
+//                           with its phases ticked (800 is never offered: maintenance contracts own
+//                           it) and/or bundles, and the phase the bundles go under. get_template_rows
+//                           answers rows in get_copy_source's shape (subject, default hours, phase, crew
+//                           size, "row:N" dependencies), so they land through the same t1_apply_copy:
+//                           an empty grid is replaced, otherwise Append or Replace. Bundles can be added
+//                           to a grid that already has rows. Each phase's procurement checklist rides
+//                           in state.checklists, and t1_create sends the ones of the phases it makes.
+//
+// The catalog (get_planner_templates) is read BEFORE the dialog is built: a MultiSelectPills field asks
+// its get_data while Frappe is still constructing the dialog, so get_data reads `catalog`, never the
+// dialog (the v1.602.1 trap: a `const` read during its own construction throws).
+
+const PPT3 = {
+	templates: "erpnext_enhancements.api.planner_templates",
+};
+
+// Pure helpers: no page, no frappe beyond __() and pp_esc() (and PPT1_PURE.clean, the grid's own).
+// tests/test_planner_templates.py runs them under node.
+const PPT3_PURE = {
+	// A MultiSelectPills value (a list, or a comma list) as names, blanks and repeats dropped.
+	names(value) {
+		const list = Array.isArray(value) ? value : String(value == null ? "" : value).split(",");
+		const out = [];
+		list.forEach((item) => {
+			const name = PPT1_PURE.clean(item);
+			if (name && out.indexOf(name) < 0) out.push(name);
+		});
+		return out;
+	},
+	// The bundles a typed text matches, as MultiSelectPills options.
+	bundle_options(catalog, txt) {
+		const key = PPT1_PURE.clean(txt).toLowerCase();
+		return ((catalog && catalog.bundles) || [])
+			.filter((bundle) => !key || bundle.name.toLowerCase().indexOf(key) >= 0)
+			.map((bundle) => ({
+				value: bundle.name,
+				description: bundle.needs_review ? __("{0} tasks · needs review", [bundle.tasks]) : __("{0} tasks", [bundle.tasks]),
+			}));
+	},
+	// The phases the bundles may go under: the project's open phases, the phases typed in the grid, and
+	// the phase template's own; once each, in any capitals, and one per phase number (the project's own
+	// spelling first: "300 Rough-in" and "Phase 300" are the same phase).
+	phase_choices(phases, rows, catalog) {
+		const out = [];
+		const seen = new Set();
+		const add = (name) => {
+			const text = PPT1_PURE.clean(name);
+			const key = PPT1_PURE.phase_key(text);
+			if (text && !seen.has(key)) {
+				seen.add(key);
+				out.push(text);
+			}
+		};
+		(phases || []).forEach((phase) => add(phase.subject || phase.name));
+		(rows || []).forEach((row) => add(row.phase));
+		((catalog && catalog.phase_templates) || []).forEach((template) => (template.phases || []).forEach((phase) => add(phase.title)));
+		return out;
+	},
+	// The templates still marked "Needs review", for the dialog to say so.
+	review_note(catalog) {
+		const names = []
+			.concat((catalog && catalog.phase_templates) || [], (catalog && catalog.bundles) || [])
+			.filter((entry) => entry.needs_review)
+			.map((entry) => entry.name);
+		return names.length ? __("Not reviewed yet: {0}. Edit them in Project Template.", [names.join(", ")]) : "";
+	},
+	// The dialog's fields. One phase checklist per phase template, shown while that template is chosen.
+	fields(catalog, choices) {
+		const templates = (catalog && catalog.phase_templates) || [];
+		const bundles = (catalog && catalog.bundles) || [];
+		const help = [__("Pick the phases this job needs and/or bundles of tasks. The rows land in the grid for you to edit before you create them; phases run in order and each phase's tasks after the phase before.")];
+		const review = PPT3_PURE.review_note(catalog);
+		if (review) help.push(review);
+		const fields = [{ fieldtype: "HTML", fieldname: "t3_help", options: help.map((text) => `<p class="text-muted small">${pp_esc(text)}</p>`).join("") }];
+		if (templates.length) {
+			fields.push({
+				fieldtype: "Select",
+				fieldname: "t3_template",
+				label: __("Phase template"),
+				options: [""].concat(templates.map((template) => template.name)).join("\n"),
+				default: templates[0].name,
+				description: __("Blank: bundles only."),
+			});
+			templates.forEach((template, index) => {
+				fields.push({
+					fieldtype: "MultiCheck",
+					fieldname: `t3_phases_${index}`,
+					label: __("Phases"),
+					columns: 2,
+					depends_on: `eval:doc.t3_template==${JSON.stringify(template.name)}`,
+					options: (template.phases || []).map((phase) => ({ label: phase.label || phase.title, value: String(phase.id), checked: 1 })),
+				});
+			});
+		}
+		if (bundles.length) {
+			fields.push({
+				fieldtype: "MultiSelectPills",
+				fieldname: "t3_bundles",
+				label: __("Bundles"),
+				get_data: (txt) => PPT3_PURE.bundle_options(catalog, txt),
+			});
+			fields.push({
+				fieldtype: "Autocomplete",
+				fieldname: "t3_bundle_phase",
+				label: __("Put the bundles under the phase"),
+				options: choices || [],
+				ignore_validation: 1,
+				description: __("A phase of the grid or of the project, or a new name. Blank: no phase."),
+			});
+		}
+		return fields;
+	},
+	// The dialog's values as get_template_rows' arguments; null when nothing was picked.
+	request(values, catalog, project) {
+		const templates = (catalog && catalog.phase_templates) || [];
+		const name = PPT1_PURE.clean(values && values.t3_template);
+		const index = templates.findIndex((template) => template.name === name);
+		const args = {};
+		if (index >= 0) {
+			const ticked = values[`t3_phases_${index}`];
+			const ids = (Array.isArray(ticked) ? ticked : []).map((id) => String(id)).filter(Boolean);
+			if (ids.length) {
+				args.template = name;
+				args.phases = JSON.stringify(ids);
+			}
+		}
+		const bundles = PPT3_PURE.names(values && values.t3_bundles);
+		if (bundles.length) {
+			args.bundles = JSON.stringify(bundles);
+			const phase = PPT1_PURE.clean(values && values.t3_bundle_phase);
+			if (phase) args.bundle_phase = phase;
+		}
+		if (!args.template && !args.bundles) return null;
+		if (project) args.project = project;
+		return args;
+	},
+};
+
+const PPT3_METHODS = {
+	// Read the catalog first, then build the dialog from it.
+	t3_open_templates(state) {
+		if (!state || !state.rows || !state.table) return Promise.resolve(null);
+		return Promise.resolve(frappe.call({ method: `${PPT3.templates}.get_planner_templates` }))
+			.then((r) => {
+				const catalog = (r && r.message) || {};
+				if (!state.handle || !state.handle.is_open()) return null;
+				if (!(catalog.phase_templates || []).length && !(catalog.bundles || []).length) {
+					frappe.msgprint(__("There are no planner templates yet. A System Manager or Projects Manager makes them in Project Template, with a Planner Template Kind of Phase template or Bundle."));
+					return null;
+				}
+				return this.t3_dialog(state, catalog);
+			})
+			.catch(() => null);
+	},
+
+	t3_dialog(state, catalog) {
+		const choices = PPT3_PURE.phase_choices(state.phases, state.rows, catalog);
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("Start from template"),
+			fields: PPT3_PURE.fields(catalog, choices),
+			primary_action_label: __("Load tasks"),
+			primary_action: (values) => {
+				const args = PPT3_PURE.request(values, catalog, state.project);
+				if (!args) {
+					frappe.show_alert({ message: __("Tick at least one phase, or pick a bundle."), indicator: "orange" }, 5);
+					return;
+				}
+				if (dialog) dialog.hide();
+				this.t3_load(state, args);
+			},
+		});
+		dialog.show();
+		return dialog;
+	},
+
+	// The rows go in through Copy from project's own path: replaced when the grid is empty, otherwise
+	// Append or Replace; the phases' checklists with them.
+	t3_load(state, args) {
+		return Promise.resolve(frappe.call({ method: `${PPT3.templates}.get_template_rows`, args }))
+			.then((r) => {
+				const plan = (r && r.message) || {};
+				if (!state.handle || !state.handle.is_open() || !(plan.rows || []).length) return null;
+				return this.t1_apply_copy(state, plan);
+			})
+			.catch(() => null);
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPT3_METHODS);

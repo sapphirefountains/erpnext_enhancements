@@ -1324,3 +1324,12 @@ erpnext_enhancements.patches.materialize_route_timing_settings
 # read state. Write a tabSingles row for each new field that has none, so the read's first state write cannot blank
 # the rest. Never over a stored value; switches nothing on; cannot raise.
 erpnext_enhancements.patches.materialize_calendar_time_off_settings
+
+# Project Planner T3 (v1.608.0): seed the phase template "Fountain build phases (DOC-0041)" (100-700, never
+# 800) and six starter task bundles as Project Templates of template Tasks, from
+# project_enhancements/data/planner_templates.json. Creates its custom fields first, from fixtures/custom_field.json
+# (patches run before fixture sync). Insert-only by template name, one savepoint per template, cannot raise.
+erpnext_enhancements.patches.seed_planner_templates
+# Project Planner T3 (v1.608.0): Projects Manager may edit Project Templates (ERPNext gives it only select).
+# setup_custom_perms first, then widen or insert its level-0 row; only ever widens. Cannot raise, safe twice.
+erpnext_enhancements.patches.grant_project_template_editing

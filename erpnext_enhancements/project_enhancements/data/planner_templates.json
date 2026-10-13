@@ -1,0 +1,722 @@
+{
+ "source": {
+  "document": "DOC-0041 Sapphire Cost Worksheet",
+  "version": "1.0",
+  "derived_by": "scripts/derive_planner_templates.py",
+  "cost_codes": "erpnext_enhancements/quality/cost_codes.py (OLD_TO_NEW)",
+  "interpretations": [
+   "Row 53: Relocate Existing Hose Bib is coded 22 1150 (Manifold Materials) in DOC-0041; the catalog's own hose-bib line is old 22 1160, now 22 1119.",
+   "Row 76: Programming Labor is coded 01 0120 (Superintendent) in DOC-0041; the catalog's line for it is 26 0900.16 Control Panel Build and Programming.",
+   "Row 92: DOC-0041 repeats 'Exterior Fountains' under 13 1223, which is Interior Fountains.",
+   "Phase 800 (800 PHASE: Maintenance (Ongoing Care)) left out: maintenance contracts own it.",
+   "Every labor line's '# Units' is 1, the blank worksheet's placeholder, so every task's default hours are left blank: fill them in per template.",
+   "Phase 500's 'Merchanical' is spelled 'Mechanical'.",
+   "Row 52 (Check Valves) has no '# Units'; it is a material, so it carries no hours.",
+   "Stone (row 85) and the electrical rows 68 and 73 are Material in the catalog but are subcontracted scope by Nik's decision, so they are tasks.",
+   "Phases are named 'Phase 100' ... 'Phase 700', the names Sapphire's projects already use for their top-level phase groups (ClaudeBrain decision 2026-10-12, 'Project task trees use Phase 100-700 top-level groups'), so a project's existing phase is matched by number and never duplicated. DOC-0041's descriptive name (without its nickname in brackets, '(The Big Picture)' and so on) is the phase's description and its label in the planner: 'Phase 100 — Full System Overview'.",
+   "Phase meanings checked against the decision: 200, 300, 500, 600 and 700 agree with DOC-0041.",
+   "Phase 100: the decision puts pre-con, submittals and SUB CONTRACTS (e.g. granite, glass) in 100; DOC-0041's 100 holds only design, prototyping, expenses and travel. The seed keeps DOC-0041's lines and files the subcontracted WORK (demolition, concrete, tile...) in the phase where it happens; contracting those subs in Phase 100 is not a seeded task (add one if wanted).",
+   "Phase 400: the decision includes manifold frames and winter holds; DOC-0041 puts manifold materials in 300's checklist and has no hold line. Neither is moved or added.",
+   "Phases 600 and 700 are put in build order (TASK_ORDER); the rest keep the sheet's order."
+  ]
+ },
+ "templates": [
+  {
+   "name": "Fountain build phases (DOC-0041)",
+   "kind": "Phase template",
+   "review_status": "Needs review",
+   "notes": "Seeded from DOC-0041 Sapphire Cost Worksheet v1.0 (scripts/derive_planner_templates.py). Labor lines and the subcontracted scope are tasks, one Project management task per phase; materials, equipment and expenses are each phase's procurement checklist. Cost codes are the corrected catalog's, never DOC-0041's. Every labor line's '# Units' in v1.0 is 1 (a placeholder), so the hours are blank: fill them in per template. Phase 800 Maintenance is left out.",
+   "phases": [
+    {
+     "number": 100,
+     "title": "Phase 100",
+     "name": "Full System Overview",
+     "runs_after": [],
+     "checklist": [
+      "Material: Prototyping (Labor, Materials, & Equipment) (01 4339)",
+      "Expense: Expenses (Software, Hardware, etc.) (OH-EXPENSE)",
+      "Expense: Travel (Dependent on Location) (OH-TRAVEL)"
+     ],
+     "tasks": [
+      {
+       "subject": "Design",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DESIGN",
+       "waits_on": [],
+       "source_row": 12
+      },
+      {
+       "subject": "Design Labor & Assistance",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DESIGN-ASSIST",
+       "waits_on": [
+        "Design"
+       ],
+       "source_row": 17
+      },
+      {
+       "subject": "Project management (Phase 100)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 16
+      }
+     ]
+    },
+    {
+     "number": 200,
+     "title": "Phase 200",
+     "name": "Groundwork & Prep",
+     "runs_after": [
+      100
+     ],
+     "checklist": [
+      "Equipment: Construction Scaffolding and Platforms (01 5423)"
+     ],
+     "tasks": [
+      {
+       "subject": "Site Demolition",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "02 4113",
+       "waits_on": [],
+       "source_row": 21
+      },
+      {
+       "subject": "Earthwork",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "31 2300",
+       "waits_on": [
+        "Site Demolition"
+       ],
+       "source_row": 22
+      },
+      {
+       "subject": "Preparation Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [
+        "Earthwork"
+       ],
+       "source_row": 25
+      },
+      {
+       "subject": "Project management (Phase 200)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 24
+      }
+     ]
+    },
+    {
+     "number": 300,
+     "title": "Phase 300",
+     "name": "Rough-in",
+     "runs_after": [
+      200
+     ],
+     "checklist": [
+      "Material: Rough Water Distribution Materials (pipe & floor drains) (22 5213.13)",
+      "Material: Manifold Materials (22 5213.26)",
+      "Material: Temporary Construction Materials (01 5300)",
+      "Subcontract: Metal Fabrications (05 5000)",
+      "Material: Protecting Installed Construction (01 7600)",
+      "Material: Protection of Adjacent Construction (01 7133)",
+      "Material: Exterior Fountains (13 1213)",
+      "Material: Interior Fountains (13 1223)"
+     ],
+     "tasks": [
+      {
+       "subject": "Rough-in Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [],
+       "source_row": 38
+      },
+      {
+       "subject": "Project management (Phase 300)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 37
+      }
+     ]
+    },
+    {
+     "number": 400,
+     "title": "Phase 400",
+     "name": "Structural Vessel",
+     "runs_after": [
+      300
+     ],
+     "checklist": [
+      "Material: Rough Carpentry (06 1000)"
+     ],
+     "tasks": [
+      {
+       "subject": "Cast-In-Place Concrete",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "03 3000",
+       "waits_on": [],
+       "source_row": 42
+      },
+      {
+       "subject": "Waterproofing",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "07 1000",
+       "waits_on": [
+        "Cast-In-Place Concrete"
+       ],
+       "source_row": 44
+      },
+      {
+       "subject": "Structural Vessel Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [
+        "Waterproofing"
+       ],
+       "source_row": 46
+      },
+      {
+       "subject": "Project management (Phase 400)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 45
+      }
+     ]
+    },
+    {
+     "number": 500,
+     "title": "Phase 500",
+     "name": "Mechanical Room",
+     "runs_after": [
+      400
+     ],
+     "checklist": [
+      "Material: Water Distribution Materials (connecting equipment) (22 5213.13)",
+      "Material: Water Hammer Arrestors (22 5213.19)",
+      "Material: Check Valves (22 5213.23)",
+      "Subcontract: Relocate Existing Hose Bib (22 1119)",
+      "Equipment: Pumps (22 5216)",
+      "Equipment: Water filtration equipment (filter, skimmer, etc.) (22 5219)",
+      "Equipment: Chemical Controller (22 5219)",
+      "Equipment: Water Heater (22 5200)",
+      "Equipment: Water Chiller (23 6400)",
+      "Equipment: Emergency Eye Wash (installed) (22 4516)"
+     ],
+     "tasks": [
+      {
+       "subject": "Equipment Room Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [],
+       "source_row": 61
+      },
+      {
+       "subject": "Project management (Phase 500)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 60
+      }
+     ]
+    },
+    {
+     "number": 600,
+     "title": "Phase 600",
+     "name": "Controls & Electrical Integration",
+     "runs_after": [
+      400
+     ],
+     "checklist": [
+      "Material: Basic Electrical Materials and Methods (26 0500)",
+      "Material: Low-Voltage Materials and Methods (26 0519)",
+      "Material: Solenoid Valves (22 5223.16)",
+      "Material: General Lighting (26 5000)",
+      "Material: Special Purpose Lighting (26 5500)",
+      "Material: Underwater Lighting (26 5529)",
+      "Material: Communications (27 0000)",
+      "Material: Control Panel - Components (26 0900)",
+      "Material: Sound and Video (27 4000)"
+     ],
+     "tasks": [
+      {
+       "subject": "Control Panel Build",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [],
+       "source_row": 77
+      },
+      {
+       "subject": "Programming Labor",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "26 0900.16",
+       "waits_on": [
+        "Control Panel Build"
+       ],
+       "source_row": 76
+      },
+      {
+       "subject": "Transmission and Distribution",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "26 2000",
+       "waits_on": [
+        "Programming Labor"
+       ],
+       "source_row": 68
+      },
+      {
+       "subject": "Terminate all Electrical - High/Low voltage",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "26 2000",
+       "waits_on": [
+        "Transmission and Distribution"
+       ],
+       "source_row": 73
+      },
+      {
+       "subject": "Controls Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [
+        "Terminate all Electrical - High/Low voltage"
+       ],
+       "source_row": 79
+      },
+      {
+       "subject": "Project management (Phase 600)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 78
+      }
+     ]
+    },
+    {
+     "number": 700,
+     "title": "Phase 700",
+     "name": "Above Ground Features & Finishes",
+     "runs_after": [
+      500,
+      600
+     ],
+     "checklist": [
+      "Material: Precast Concrete (03 4000)",
+      "Subcontract: Wall Finishes (09 7000)",
+      "Material: Exterior Fountains (13 1213)",
+      "Material: Interior Fountains (13 1223)",
+      "Material: Nozzles (22 5213.29)",
+      "Material: Tiered Fountains and Sculpture (13 1200)",
+      "Material: Splash Pad Toys (13 1213.13)"
+     ],
+     "tasks": [
+      {
+       "subject": "Earthwork – Finish",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "31 2300",
+       "waits_on": [],
+       "source_row": 83
+      },
+      {
+       "subject": "Waterproofing",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "07 1000",
+       "waits_on": [
+        "Earthwork – Finish"
+       ],
+       "source_row": 86
+      },
+      {
+       "subject": "Stone",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "04 4000",
+       "waits_on": [
+        "Waterproofing"
+       ],
+       "source_row": 85
+      },
+      {
+       "subject": "Tile",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "09 3000",
+       "waits_on": [
+        "Stone"
+       ],
+       "source_row": 87
+      },
+      {
+       "subject": "Paints and Coatings",
+       "hours": null,
+       "line": "Subcontract",
+       "cost_code": "09 9000",
+       "waits_on": [
+        "Tile"
+       ],
+       "source_row": 89
+      },
+      {
+       "subject": "Finishes Labor (Direct)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "LAB-DIRECT",
+       "waits_on": [
+        "Paints and Coatings"
+       ],
+       "source_row": 98
+      },
+      {
+       "subject": "Commissioning",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "13 0812",
+       "waits_on": [
+        "Finishes Labor (Direct)"
+       ],
+       "source_row": 90
+      },
+      {
+       "subject": "Training & Owner Hand-off (Training, Warranty, O&Ms)",
+       "hours": null,
+       "line": "Labor",
+       "cost_code": "01 7900",
+       "waits_on": [
+        "Commissioning"
+       ],
+       "source_row": 93
+      },
+      {
+       "subject": "Project management (Phase 700)",
+       "hours": null,
+       "line": "Project management",
+       "cost_code": "LAB-PM",
+       "waits_on": [],
+       "source_row": 97
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Control panel design + build",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Panel design (schematic + BOM)",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Order components",
+     "hours": null,
+     "waits_on": [
+      "Panel design (schematic + BOM)"
+     ]
+    },
+    {
+     "subject": "Shop build",
+     "hours": null,
+     "waits_on": [
+      "Order components"
+     ]
+    },
+    {
+     "subject": "Bench test",
+     "hours": null,
+     "waits_on": [
+      "Shop build"
+     ]
+    },
+    {
+     "subject": "Program controller",
+     "hours": null,
+     "waits_on": [
+      "Bench test"
+     ]
+    },
+    {
+     "subject": "Install + terminate on site",
+     "hours": null,
+     "waits_on": [
+      "Program controller"
+     ]
+    },
+    {
+     "subject": "Commission + tune",
+     "hours": null,
+     "waits_on": [
+      "Install + terminate on site"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Interior fountain",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Shop drawings",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Order or fabricate unit",
+     "hours": null,
+     "waits_on": [
+      "Shop drawings"
+     ]
+    },
+    {
+     "subject": "Rough-in (supply, drain, power)",
+     "hours": null,
+     "waits_on": [
+      "Order or fabricate unit"
+     ]
+    },
+    {
+     "subject": "Set + level",
+     "hours": null,
+     "waits_on": [
+      "Rough-in (supply, drain, power)"
+     ]
+    },
+    {
+     "subject": "Connect + fill",
+     "hours": null,
+     "waits_on": [
+      "Set + level"
+     ]
+    },
+    {
+     "subject": "Commission",
+     "hours": null,
+     "waits_on": [
+      "Connect + fill"
+     ]
+    },
+    {
+     "subject": "Owner training",
+     "hours": null,
+     "waits_on": [
+      "Commission"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Splash pad",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Layout + stake",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Rough-in plumbing + drains",
+     "hours": null,
+     "waits_on": [
+      "Layout + stake"
+     ]
+    },
+    {
+     "subject": "Set nozzles and toys",
+     "hours": null,
+     "waits_on": [
+      "Rough-in plumbing + drains"
+     ]
+    },
+    {
+     "subject": "Controls + activation",
+     "hours": null,
+     "waits_on": [
+      "Set nozzles and toys"
+     ]
+    },
+    {
+     "subject": "Water test + commission",
+     "hours": null,
+     "waits_on": [
+      "Controls + activation"
+     ]
+    },
+    {
+     "subject": "Owner training",
+     "hours": null,
+     "waits_on": [
+      "Water test + commission"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Lighting package",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Fixture schedule",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Order fixtures",
+     "hours": null,
+     "waits_on": [
+      "Fixture schedule"
+     ]
+    },
+    {
+     "subject": "Install fixtures + conduit",
+     "hours": null,
+     "waits_on": [
+      "Order fixtures"
+     ]
+    },
+    {
+     "subject": "Terminate + test",
+     "hours": null,
+     "waits_on": [
+      "Install fixtures + conduit"
+     ]
+    },
+    {
+     "subject": "Program scenes",
+     "hours": null,
+     "waits_on": [
+      "Terminate + test"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Equipment room (pump + filter skid)",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Layout drawing",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Order equipment",
+     "hours": null,
+     "waits_on": [
+      "Layout drawing"
+     ]
+    },
+    {
+     "subject": "Set equipment",
+     "hours": null,
+     "waits_on": [
+      "Order equipment"
+     ]
+    },
+    {
+     "subject": "Pipe + valves",
+     "hours": null,
+     "waits_on": [
+      "Set equipment"
+     ]
+    },
+    {
+     "subject": "Electrical tie-in",
+     "hours": null,
+     "waits_on": [
+      "Pipe + valves"
+     ]
+    },
+    {
+     "subject": "Start-up + test",
+     "hours": null,
+     "waits_on": [
+      "Electrical tie-in"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bundle: Commissioning + hand-off",
+   "kind": "Bundle",
+   "review_status": "Needs review",
+   "notes": "A starter bundle drafted from Nik's list (2026-10-12) for him to correct: hours are blank and the tasks run in order. Set Review status to Reviewed once it is right.",
+   "tasks": [
+    {
+     "subject": "Pre-commission checklist",
+     "hours": null,
+     "waits_on": []
+    },
+    {
+     "subject": "Start-up",
+     "hours": null,
+     "waits_on": [
+      "Pre-commission checklist"
+     ]
+    },
+    {
+     "subject": "Water balance + chemistry",
+     "hours": null,
+     "waits_on": [
+      "Start-up"
+     ]
+    },
+    {
+     "subject": "Punch list",
+     "hours": null,
+     "waits_on": [
+      "Water balance + chemistry"
+     ]
+    },
+    {
+     "subject": "Owner training",
+     "hours": null,
+     "waits_on": [
+      "Punch list"
+     ]
+    },
+    {
+     "subject": "O&Ms + warranty",
+     "hours": null,
+     "waits_on": [
+      "Owner training"
+     ]
+    }
+   ]
+  }
+ ]
+}

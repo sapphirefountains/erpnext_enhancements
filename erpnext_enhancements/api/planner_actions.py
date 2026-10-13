@@ -23,7 +23,9 @@ needs the server is here:
   the Unscheduled tray. :func:`remove_built_out_tasks` is its Undo, and
   :func:`get_build_out_context` / :func:`get_projects_needing_tasks` are the reads behind the grid
   and the Needs tasks list. :func:`get_copy_source` (v1.603.0) reads another project's leaf tasks as
-  grid rows, the starting plan of "Copy from project...".
+  grid rows, the starting plan of "Copy from project...". "Start from template..." (T3, v1.608.0)
+  reads its rows from ``api/planner_templates.py`` and sends each new phase's procurement checklist
+  as ``phase_checklists``.
 * :func:`move_many` moves several tasks (and/or pencils or firms them) in one call: one conflict
   check for the lot, one reason, all or nothing, as ``shift_successors`` and ``copy_week`` do.
 * :func:`remove_created_task` is the Undo of a task the planner just created (a duplicate, a quick
@@ -66,6 +68,7 @@ from frappe.utils import cint, flt, getdate, nowdate
 
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.project_enhancements import crew_availability as engine
+from erpnext_enhancements.project_enhancements import planner_templates as templates
 from erpnext_enhancements.project_enhancements import planner_tracking
 
 #: The search box: at most this many results, people and projects first, at most this many of each.
@@ -106,6 +109,10 @@ NOT_A_TASK = ("Canceled", "Cancelled", "Template")
 CANCELED_STATUSES = ("Canceled", "Cancelled")
 #: How many open tasks the build-out grid offers as things to depend on.
 BUILD_OUT_CONTEXT_TASKS = 300
+#: THE reading of a phase name's number ("Phase 300", "300 Rough-in", "phase 300 - design" -> 300), shared
+#: with the templates (project_enhancements/planner_templates.py, pure): the build-out matches a
+#: project's open phase by it. Decision 2026-10-12: a project's phases are "Phase 100" ... "Phase 700".
+phase_number = templates.phase_number
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -1191,27 +1198,46 @@ def _plan_build_out(project, items, rows):
 	A typed phase name that is the name or the subject (any capitals) of an open phase of the project
 	is that phase, so typing "Pumps" twice never makes two; the same new name on several rows is ONE
 	new phase, spelt the way its first row spelt it.
+
+	T3 (v1.608.0): a phase name that starts with a three-digit phase number ("Phase 300", "300 Rough-in",
+	"phase 300 - design": :func:`phase_number`) is the project's OPEN phase with that number, whatever
+	its spelling (its "Phase 300" first, when it has several); with none, ONE new phase named
+	``Phase 300`` is made for every row that named 300 (decision 2026-10-12: projects' phases are
+	``Phase 100`` ... ``Phase 700``). A template loaded onto a project that has its phases never makes a
+	second set.
 	"""
 	open_phases = {
 		name: row for name, row in rows.items() if cint(row.get("is_group")) and not _is_finished(row)
 	}
-	by_subject = {}
-	for name, row in open_phases.items():
-		by_subject.setdefault(clean_text(row.get("subject")).casefold(), name)
+	by_subject, by_number = {}, {}
+	for name in sorted(open_phases):
+		subject = clean_text(open_phases[name].get("subject"))
+		by_subject.setdefault(subject.casefold(), name)
+		value = phase_number(subject)
+		if value is None:
+			continue
+		# Several open phases with one number: the one named exactly "Phase 300" wins, else the first.
+		canonical = subject.casefold() == templates.phase_name(value).casefold()
+		if value not in by_number or (canonical and not by_number[value][1]):
+			by_number[value] = (name, canonical)
+	by_number = {value: name for value, (name, _canonical) in by_number.items()}
 	phases, spelled, parents = [], {}, {}
 	for index, item in enumerate(items):
 		if item["parent"]:
 			_check_phase(item["parent"], rows, project, item["number"])
 			parents[index] = ("task", item["parent"])
 		elif item["phase"]:
-			key = item["phase"].casefold()
+			value = phase_number(item["phase"])
+			key = templates.phase_key(item["phase"])
 			if item["phase"] in open_phases:
 				parents[index] = ("task", item["phase"])
-			elif key in by_subject:
-				parents[index] = ("task", by_subject[key])
+			elif item["phase"].casefold() in by_subject:
+				parents[index] = ("task", by_subject[item["phase"].casefold()])
+			elif value is not None and value in by_number:
+				parents[index] = ("task", by_number[value])
 			else:
 				if key not in spelled:
-					spelled[key] = item["phase"]
+					spelled[key] = templates.phase_name(value) if value is not None else item["phase"]
 					phases.append(key)
 				parents[index] = ("new", key)
 	if len(phases) > BUILD_OUT_MAX_PHASES:
@@ -1255,6 +1281,33 @@ def _plan_build_out(project, items, rows):
 	}
 
 
+def _phase_checklists(value):
+	"""The grid's ``phase_checklists`` (T3, v1.608.0) as ``{phase name casefolded: [items]}``.
+
+	A JSON object of a phase name to its procurement checklist (a list of lines), as
+	``planner_templates.get_template_rows`` handed the page. At most one per new phase the grid may
+	make, items cleaned and capped (``planner_templates.checklist_lines``); anything else is refused.
+	"""
+	raw = pp.given(value)
+	if raw is None:
+		return {}
+	try:
+		data = json.loads(raw) if isinstance(raw, str) else raw
+	except ValueError:
+		data = None
+	if not isinstance(data, dict) or len(data) > BUILD_OUT_MAX_PHASES:
+		frappe.throw(_("The phase checklists could not be read. Reload the planner and try again."))
+	out = {}
+	for title, items in data.items():
+		if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+			frappe.throw(_("The phase checklists could not be read. Reload the planner and try again."))
+		lines = templates.checklist_lines("\n".join(items))
+		key = templates.phase_key(title)
+		if key and lines:
+			out[key] = lines
+	return out
+
+
 def _insert_row(doc, label):
 	"""``_insert`` with the row named when ERPNext refuses it. A permission error passes as it is."""
 	log = pp._message_log()
@@ -1274,7 +1327,7 @@ def _insert_row(doc, label):
 
 
 @frappe.whitelist(methods=["POST"])
-def build_out_tasks(project, rows, draft=0):
+def build_out_tasks(project, rows, draft=0, phase_checklists=None):
 	"""Create many undated Tasks on one customer job, in ONE request: the Build out grid.
 
 	``rows`` is a JSON list (at most 100) of ``{"subject", "hours", "parent_task", "phase",
@@ -1304,6 +1357,15 @@ def build_out_tasks(project, rows, draft=0):
 	``draft-new:`` names and ``"drafted": True``; nothing is a Task until Publish. A grid may also
 	name, as a phase or as something to wait on, a task an earlier drafted build-out made
 	(``get_build_out_context(draft=1)`` offers them).
+
+	T3 (v1.608.0): a ``phase`` starting with a phase number ("Phase 300", "300 Rough-in") is the
+	project's open phase with that number, else a new ``Phase 300`` (:func:`_plan_build_out`).
+
+	``phase_checklists`` (T3, v1.608.0): a JSON object of a phase name to its procurement checklist
+	(lines), from "Start from template...". A NEW phase of that name (any capitals, or the same phase
+	number) gets it as a tick
+	list in its description (``planner_templates.checklist_html``, every item escaped); an existing
+	phase is never written to, and a name no row uses is ignored.
 	"""
 	pp._require_planner()
 	drafting = bool(cint(pp.given(draft)))
@@ -1313,6 +1375,7 @@ def build_out_tasks(project, rows, draft=0):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
 	items = _build_rows(rows)
+	checklists = _phase_checklists(phase_checklists)
 	known = _project_task_rows(project, draft=drafting)
 	plan = _plan_build_out(project, items, known)
 	if drafting:
@@ -1323,6 +1386,8 @@ def build_out_tasks(project, rows, draft=0):
 	warnings, phase_names, made_phases = [], {}, []
 	for key, title in zip(plan["phase_keys"], plan["phases"], strict=True):
 		spec = {"op": "build_out", "values": {"subject": title, "project": project, "is_group": 1}}
+		if checklists.get(key):
+			spec["values"]["description"] = templates.checklist_html(checklists[key])
 		doc = pp.task_from_spec(spec)
 		doc.check_permission("create")
 		if drafting:
