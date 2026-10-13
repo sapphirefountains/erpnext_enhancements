@@ -1,115 +1,111 @@
 <h3><b>STATEMENT OF WORK</b></h3>
-<p>Issued Under Master Services Agreement</p>
+<p><b>Issued Under Master Services Agreement</b></p>
 <p><b>Sapphire Fountains, LLC</b></p>
-<p>85 W 300 S, Bountiful, UT 84010  |  www.sapphirefountains.com</p>
+<p>85 W 300 S, Bountiful, UT 84010</p>
+<p>www.sapphirefountains.com</p>
+{{ summary() }}
 <h1>SOW REFERENCE INFORMATION</h1>
 <table class="ct-table"><tr><td><b>SOW Number:</b></td><td><b>{{ doc.name }}</b></td></tr><tr><td><b>SOW Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr><tr><td><b>MSA Effective Date:</b></td><td>{{ dt(doc.msa_effective_date) }}</td></tr><tr><td><b>Project Name:</b></td><td>{{ fill(doc.project_title, 40) }}</td></tr><tr><td><b>Project Number:</b></td><td>{{ fill(doc.project, 24) }}</td></tr><tr><td><b>Project Site Address:</b></td><td>{{ multiline(doc.site_address, 45, 1) }}</td></tr></table>
 <h1>PARTIES</h1>
-<table class="ct-table"><tr><td><b>Company:</b></td><td>Sapphire Fountains, LLC, 85 W 300 S, Bountiful, UT 84010</td></tr><tr><td><b>Company Contact:</b></td><td>{{ fill(doc.company_contact, 45) }}</td></tr><tr><td><b>Subcontractor:</b></td><td>{{ fill(doc.party_display, 45) }}</td></tr><tr><td><b>Subcontractor Address:</b></td><td>{{ multiline(doc.billing_address, 45, 1) }}</td></tr><tr><td><b>Subcontractor Contact:</b></td><td>{{ fill(doc.contact_person, 45) }}</td></tr><tr><td><b>Subcontractor License #:</b></td><td>{{ fill(doc.subcontractor_license, 45) }}</td></tr></table>
+<table class="ct-table"><tr><td><b>Company:</b></td><td>Sapphire Fountains, LLC, 85 W 300 S, Bountiful, UT 84010</td></tr><tr><td><b>Company Contact:</b></td><td>{{ fill(doc.company_contact, 45) }}</td></tr><tr><td><b>Subcontractor:</b></td><td>{{ fill(doc.agreement_party_name or doc.party_display, 45) }}</td></tr><tr><td><b>Subcontractor Address:</b></td><td>{{ multiline(doc.billing_address, 45, 1) }}</td></tr>{% if doc.billing_city_state_zip or not doc.billing_address %}<tr><td><b>City / State / Zip:</b></td><td>{{ fill(doc.billing_city_state_zip, 30) }}</td></tr>{% endif %}<tr><td><b>Subcontractor Contact:</b></td><td>{{ fill(doc.contact_person, 45) }}</td></tr><tr><td><b>Contact Phone:</b></td><td>{{ fill(doc.contact_phone, 45) }}</td></tr><tr><td><b>Contact Email:</b></td><td>{{ fill(doc.contact_email, 45) }}</td></tr><tr><td><b>Subcontractor License #:</b></td><td>{{ fill(doc.subcontractor_license, 45) }}</td></tr></table>
 <p>This Statement of Work (&quot;SOW&quot;) is entered into pursuant to and incorporates by reference the Master Services Agreement between Sapphire Fountains, LLC (&quot;Company&quot;) and the Subcontractor identified above, dated as of the MSA Effective Date above. In the event of any conflict between this SOW and the MSA, the terms of this SOW shall control with respect to this engagement. All capitalized terms not defined herein have the meanings given in the MSA.</p>
 <h1>1. PROJECT OVERVIEW</h1>
-<p>1.1  Project Description:</p>
-<p>{{ multiline(doc.project_description, 90, 3) }}</p>
-<p>1.2  Project Type:  [ ] New Installation   [ ] Renovation / Retrofit   [ ] Repair   [ ] Maintenance   [ ] Other: {{ blank(30) }}</p>
-<p>1.3  Feature Type:  [ ] Commercial Fountain   [ ] Residential Fountain   [ ] Indoor Feature   [ ] Outdoor Feature   [ ] Pond / Water Garden   [ ] Other: {{ blank(30) }}</p>
+<p class="ct-clause"><span class="ct-num">1.1</span><b>Project Description:</b></p>
+<p class="ct-sub">{{ multiline(doc.project_description, 90, 3) }}</p>
+<p class="ct-clause"><span class="ct-num">1.2</span><b>Project Type:</b>  {{ cb(doc.sow_project_type=="New Installation") }} New Installation   {{ cb(doc.sow_project_type=="Renovation / Retrofit") }} Renovation / Retrofit   {{ cb(doc.sow_project_type=="Repair") }} Repair   {{ cb(doc.sow_project_type=="Maintenance") }} Maintenance   {{ cb(doc.sow_project_type=="Other") }} Other: {{ fill(doc.sow_project_type_other if doc.sow_project_type=="Other" else None, 30) }}</p>
+<p class="ct-clause"><span class="ct-num">1.3</span><b>Feature Type:</b>  {{ cb(doc.sow_feature_type=="Commercial Fountain") }} Commercial Fountain   {{ cb(doc.sow_feature_type=="Residential Fountain") }} Residential Fountain   {{ cb(doc.sow_feature_type=="Indoor Feature") }} Indoor Feature   {{ cb(doc.sow_feature_type=="Outdoor Feature") }} Outdoor Feature   {{ cb(doc.sow_feature_type=="Pond / Water Garden") }} Pond / Water Garden   {{ cb(doc.sow_feature_type=="Other") }} Other: {{ fill(doc.sow_feature_type_other if doc.sow_feature_type=="Other" else None, 30) }}</p>
 <h1>2. SCOPE OF SERVICES</h1>
 <p>Subcontractor shall furnish all labor, materials (unless Company-furnished), tools, equipment, and supervision necessary to complete the following services:</p>
-<h2>2.1  Included Services (check all that apply)</h2>
-<p>  [ ]  Site preparation and layout</p>
-<p>  [ ]  Excavation and grading</p>
-<p>  [ ]  Concrete / masonry work</p>
-<p>  [ ]  Plumbing / hydraulic installation</p>
-<p>  [ ]  Electrical rough-in / conduit</p>
-<p>  [ ]  Equipment installation (pumps, filters, lighting)</p>
-<p>  [ ]  Water feature / fountain assembly</p>
-<p>  [ ]  Tile / stone / decorative finish work</p>
-<p>  [ ]  Landscaping / planting</p>
-<p>  [ ]  System startup, testing, and commissioning</p>
-<p>  [ ]  Cleanup and debris removal</p>
-<p>  [ ]  Other: {{ blank(30) }}</p>
-<h2>2.2  Detailed Scope Description</h2>
-<p>Provide a detailed description of work, including specific tasks, materials to be used, quality standards, and any applicable drawings or specifications. Attach additional pages or reference drawings as needed.</p>
-{% if doc.scope_of_work %}<div>{{ doc.scope_of_work }}</div>{% else %}<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>{% endif %}
-<p>(Attach drawings, specifications, or cut sheets as Attachment 1 to this SOW.)</p>
-<h2>2.3  Exclusions</h2>
-<p>The following items are expressly excluded from this SOW and are either Owner-furnished, Company-furnished, or outside Subcontractor&#x27;s scope:</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
+<p class="ct-clause"><span class="ct-num">2.1</span><b>Included Services</b> (check all that apply)</p>
+<p class="ct-option">{{ cb(doc.sow_svc_site_prep) }}  Site preparation and layout</p>
+<p class="ct-option">{{ cb(doc.sow_svc_excavation) }}  Excavation and grading</p>
+<p class="ct-option">{{ cb(doc.sow_svc_concrete) }}  Concrete / masonry work</p>
+<p class="ct-option">{{ cb(doc.sow_svc_plumbing) }}  Plumbing / hydraulic installation</p>
+<p class="ct-option">{{ cb(doc.sow_svc_electrical) }}  Electrical rough-in / conduit</p>
+<p class="ct-option">{{ cb(doc.sow_svc_equipment) }}  Equipment installation (pumps, filters, lighting)</p>
+<p class="ct-option">{{ cb(doc.sow_svc_assembly) }}  Water feature / fountain assembly</p>
+<p class="ct-option">{{ cb(doc.sow_svc_finish) }}  Tile / stone / decorative finish work</p>
+<p class="ct-option">{{ cb(doc.sow_svc_landscaping) }}  Landscaping / planting</p>
+<p class="ct-option">{{ cb(doc.sow_svc_startup) }}  System startup, testing, and commissioning</p>
+<p class="ct-option">{{ cb(doc.sow_svc_cleanup) }}  Cleanup and debris removal</p>
+<p class="ct-option">{{ cb(doc.sow_svc_other) }}  Other: {{ fill(doc.sow_svc_other, 30) }}</p>
+<p class="ct-clause"><span class="ct-num">2.2</span><b>Detailed Scope Description</b></p>
+<p class="ct-sub">Provide a detailed description of work, including specific tasks, materials to be used, quality standards, and any applicable drawings or specifications. Attach additional pages or reference drawings as needed.</p>
+{% if doc.scope_of_work %}<div>{{ doc.scope_of_work }}</div>{% else %}<p class="ct-sub">{{ blank(30) }}</p>
+<p class="ct-sub">{{ blank(30) }}</p>
+<p class="ct-sub">{{ blank(30) }}</p>
+<p class="ct-sub">{{ blank(30) }}</p>
+<p class="ct-sub">{{ blank(30) }}</p>
+<p class="ct-sub">{{ blank(30) }}</p>{% endif %}
+<p class="ct-sub">(Attach drawings, specifications, or cut sheets as Attachment 1 to this SOW.)</p>
+<p class="ct-clause"><span class="ct-num">2.3</span><b>Exclusions.</b> The following items are expressly excluded from this SOW and are either Owner-furnished, Company-furnished, or outside Subcontractor&#x27;s scope:</p>
+<p class="ct-sub">{{ multiline(doc.sow_exclusions, 80, 2) }}</p>
 <h1>3. DELIVERABLES</h1>
 <p>Subcontractor shall provide the following deliverables upon completion of the Work or at the milestones indicated:</p>
-<table class="ct-table"><tr><td><b>Deliverable</b></td><td><b>Description / Standard</b></td><td><b>Due Date</b></td><td><b>Accepted By</b></td></tr><tr><td>Completed Work</td><td>Per scope in Section 2</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>As-built markups (if applicable)</td><td>Red-line drawings</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Equipment documentation</td><td>O&amp;M manuals, warranties</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Lien waiver / release</td><td>Conditional / unconditional</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Other: {{ blank(30) }}</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr></table>
+<table class="ct-table"><tr><td><b>Deliverable</b></td><td><b>Description / Standard</b></td><td><b>Due Date</b></td><td><b>Accepted By</b></td></tr><tr><td>Completed Work</td><td>Per scope in Section 2</td><td>{{ fill(doc.sow_due_completed_work, 18) }}</td><td>{{ blank(18) }}</td></tr><tr><td>As-built markups (if applicable)</td><td>Red-line drawings</td><td>{{ fill(doc.sow_due_as_builts, 18) }}</td><td>{{ blank(18) }}</td></tr><tr><td>Equipment documentation</td><td>O&amp;M manuals, warranties</td><td>{{ fill(doc.sow_due_equipment_docs, 18) }}</td><td>{{ blank(18) }}</td></tr><tr><td>Lien waiver / release</td><td>Conditional / unconditional</td><td>{{ fill(doc.sow_due_lien_waiver, 18) }}</td><td>{{ blank(18) }}</td></tr><tr><td>Other: {{ fill(doc.sow_other_deliverable, 20) }}</td><td>{{ fill(doc.sow_other_deliverable_standard, 20) }}</td><td>{{ fill(doc.sow_other_deliverable_due, 18) }}</td><td>{{ blank(18) }}</td></tr></table>
 <h1>4. PROJECT SCHEDULE</h1>
 <table class="ct-table"><tr><td><b>Mobilization / Start Date:</b></td><td>{{ dt(doc.mobilization_date) }}</td></tr><tr><td><b>Substantial Completion Date:</b></td><td>{{ dt(doc.substantial_completion_date) }}</td></tr><tr><td><b>Final Completion Date:</b></td><td>{{ dt(doc.final_completion_date) }}</td></tr><tr><td><b>Working Hours:</b></td><td>{{ fill(doc.working_hours, 45) }}</td></tr><tr><td><b>Site Access Notes:</b></td><td>{{ multiline(doc.site_access_notes, 45, 1) }}</td></tr></table>
-<p>4.1  Subcontractor shall submit a project schedule within ___ business days of SOW execution and update it weekly or upon request.</p>
-<p>4.2  Time is of the essence with respect to the Substantial Completion Date. Delays caused by Subcontractor may result in liquidated damages as specified in Section 4.3, if applicable.</p>
-<p>4.3  Liquidated Damages (if applicable):  [ ] N/A   [ ] {{ money(None) }} per calendar day beyond Substantial Completion Date.</p>
+<p class="ct-clause"><span class="ct-num">4.1</span>Subcontractor shall submit a project schedule within {{ fill(doc.sow_schedule_days or None, 4) }} business days of SOW execution and update it weekly or upon request.</p>
+<p class="ct-clause"><span class="ct-num">4.2</span>Time is of the essence with respect to the Substantial Completion Date. Delays caused by Subcontractor may result in liquidated damages as specified in Section 4.3, if applicable.</p>
+<p class="ct-clause"><span class="ct-num">4.3</span><b>Liquidated Damages</b> (if applicable):  {{ cb(doc.sow_liquidated_damages=="N/A") }} N/A   {{ cb(doc.sow_liquidated_damages=="Per Calendar Day") }} {{ money(doc.sow_liquidated_damages_rate if doc.sow_liquidated_damages=="Per Calendar Day" else None) }} per calendar day beyond Substantial Completion Date. {% if doc.sow_liquidated_damages == "Per Calendar Day" %}{{ initial('liquidated_damages', 'Liquidated damages for each day past the Substantial Completion Date') }}{% endif %}</p>
 <h1>5. COMPENSATION</h1>
-<h2>5.1  Compensation Type</h2>
-<p>[ ] Fixed Price (Lump Sum)     [ ] Time &amp; Materials     [ ] Unit Price     [ ] Cost Plus Fee</p>
-<h2>5.2  Compensation Schedule</h2>
+<p class="ct-clause"><span class="ct-num">5.1</span><b>Compensation Type</b></p>
+<p class="ct-option">{{ cb(doc.sow_compensation_type=="Fixed Price (Lump Sum)") }} Fixed Price (Lump Sum)     {{ cb(doc.sow_compensation_type=="Time & Materials") }} Time &amp; Materials     {{ cb(doc.sow_compensation_type=="Unit Price") }} Unit Price     {{ cb(doc.sow_compensation_type=="Cost Plus Fee") }} Cost Plus Fee</p>
+<p class="ct-clause"><span class="ct-num">5.2</span><b>Compensation Schedule</b></p>
 <table class="ct-table"><tr><td><b>Milestone / Phase</b></td><td><b>Description</b></td><td><b>Due Upon</b></td><td><b>Amount</b></td></tr>{% for m in doc.milestones %}<tr><td>{{ m.milestone }}</td><td>{{ fill(m.description, 24) }}</td><td>{{ fill(m.due_upon, 18) }}</td><td>{{ money(m.amount) }}</td></tr>{% endfor %}{% if not doc.milestones %}<tr><td>Mobilization Payment</td><td>Upon execution of SOW + mobilization</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Progress Payment #1</td><td>{{ blank(24) }}</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Substantial Completion</td><td>Upon Company acceptance</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Final Payment / Retention</td><td>Upon final completion + lien waiver</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr>{% endif %}<tr><td><b>TOTAL</b></td><td></td><td></td><td><b>{{ money(doc.milestones_total) }}</b></td></tr></table>
-<p>5.3  Retention: Company shall withhold ___% of each progress payment as retention. Retention shall be released upon Final Completion and delivery of final lien waiver.</p>
-<p>5.4  Time &amp; Materials Rate Schedule (if applicable):</p>
-<table class="ct-table"><tr><td><b>Journeyman / Lead Rate:</b></td><td>{{ money(doc.rate_journeyman) }} / hr</td></tr><tr><td><b>Apprentice / Helper Rate:</b></td><td>{{ money(doc.rate_apprentice) }} / hr</td></tr><tr><td><b>Equipment Rate:</b></td><td>{{ money(doc.rate_equipment) }} / hr (specify: {{ fill(doc.equipment_rate_note, 20) }})</td></tr><tr><td><b>Materials:</b></td><td>Cost + {{ fill(doc.materials_markup_percent, 4) }}% markup</td></tr><tr><td><b>Not-to-Exceed Amount:</b></td><td>{{ money(doc.not_to_exceed) }}</td></tr></table>
-<p>5.5  Invoices shall be submitted by the ___ of each month (or upon milestone completion) and include: SOW number, project name, description of work completed, hours worked (for T&amp;M), and supporting documentation. Payment terms are governed by the MSA.</p>
+<p class="ct-clause"><span class="ct-num">5.3</span><b>Retention:</b> Company shall withhold {{ pct(doc.sow_retention_percent) }} of each progress payment as retention. Retention shall be released upon Final Completion and delivery of final lien waiver. {{ initial('retention', 'Retention held back from each progress payment until Final Completion and your final lien waiver') }}</p>
+<p class="ct-clause"><span class="ct-num">5.4</span><b>Time &amp; Materials Rate Schedule</b> (if applicable):</p>
+<table class="ct-table"><tr><td><b>Journeyman / Lead Rate:</b></td><td>{{ money(doc.rate_journeyman) }} / hr</td></tr><tr><td><b>Apprentice / Helper Rate:</b></td><td>{{ money(doc.rate_apprentice) }} / hr</td></tr><tr><td><b>Equipment Rate:</b></td><td>{{ money(doc.rate_equipment) }} / hr (specify: {{ fill(doc.equipment_rate_note, 20) }})</td></tr><tr><td><b>Materials:</b></td><td>Cost + {{ pct(doc.materials_markup_percent, 4) }} markup</td></tr><tr><td><b>Not-to-Exceed Amount:</b></td><td>{{ money(doc.not_to_exceed) }}</td></tr></table>
+<p class="ct-clause"><span class="ct-num">5.5</span>Invoices shall be submitted by the {{ fill(doc.sow_invoice_day, 6) }} of each month (or upon milestone completion) and include: SOW number, project name, description of work completed, hours worked (for T&amp;M), and supporting documentation. Payment terms are governed by the MSA.</p>
 <h1>6. COMPANY-FURNISHED ITEMS</h1>
 <p>The following items will be furnished by Company to Subcontractor at no cost. Subcontractor is responsible for their proper handling, storage, and installation:</p>
-<p>[ ] None — all materials and equipment are Subcontractor-furnished</p>
-<p>[ ] Company-furnished items (list below):</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
+<p class="ct-option">{{ cb(doc.sow_company_furnished=="None") }} None — all materials and equipment are Subcontractor-furnished</p>
+<p class="ct-option">{{ cb(doc.sow_company_furnished=="Company-Furnished Items") }} Company-furnished items (list below):</p>
+{% if doc.sow_company_furnished != "None" %}<p class="ct-sub">{{ multiline(doc.sow_company_furnished_items, 80, 3) }}</p>{% endif %}
 <h1>7. SUBCONTRACTOR PERSONNEL</h1>
-<p>7.1  Subcontractor&#x27;s Project Lead / Foreman for this SOW:</p>
+<p class="ct-clause"><span class="ct-num">7.1</span>Subcontractor&#x27;s Project Lead / Foreman for this SOW:</p>
 <table class="ct-table"><tr><td><b>Name:</b></td><td>{{ fill(doc.supervisor_name, 45) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.supervisor_phone, 45) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.supervisor_email, 45) }}</td></tr><tr><td><b>License / Certification (if req&#x27;d):</b></td><td>{{ fill(doc.supervisor_license, 45) }}</td></tr></table>
-<p>7.2  Subcontractor shall not substitute key personnel without Company&#x27;s prior written consent.</p>
-<p>7.3  Company reserves the right to request removal of any Subcontractor employee from the project for cause (unsafe behavior, misconduct, or failure to meet quality standards).</p>
+<p class="ct-clause"><span class="ct-num">7.2</span>Subcontractor shall not substitute key personnel without Company&#x27;s prior written consent.</p>
+<p class="ct-clause"><span class="ct-num">7.3</span>Company reserves the right to request removal of any Subcontractor employee from the project for cause (unsafe behavior, misconduct, or failure to meet quality standards).</p>
 <h1>8. SAFETY AND SITE REQUIREMENTS</h1>
-<p>8.1  Subcontractor shall comply with all OSHA standards and the following site-specific safety requirements:</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>8.2  Subcontractor shall conduct a tailgate safety meeting at the start of each new phase of work and document attendance.</p>
-<p>8.3  Subcontractor shall maintain a clean and orderly work area and remove debris daily.</p>
-<p>8.4  Subcontractor shall provide Company with copies of any incident or near-miss reports within 24 hours of occurrence.</p>
+<p class="ct-clause"><span class="ct-num">8.1</span>Subcontractor shall comply with all OSHA standards and the following site-specific safety requirements:</p>
+<p class="ct-sub">{{ multiline(doc.sow_safety_requirements, 80, 2) }}</p>
+<p class="ct-clause"><span class="ct-num">8.2</span>Subcontractor shall conduct a tailgate safety meeting at the start of each new phase of work and document attendance.</p>
+<p class="ct-clause"><span class="ct-num">8.3</span>Subcontractor shall maintain a clean and orderly work area and remove debris daily.</p>
+<p class="ct-clause"><span class="ct-num">8.4</span>Subcontractor shall provide Company with copies of any incident or near-miss reports within 24 hours of occurrence.</p>
 <h1>9. QUALITY AND INSPECTIONS</h1>
-<p>9.1  Subcontractor shall perform the Work in accordance with the quality standards specified herein and in any referenced drawings or specifications.</p>
-<p>9.2  Company (or its representative) reserves the right to inspect the Work at any time. Subcontractor shall provide reasonable cooperation and access.</p>
-<p>9.3  Work that fails to meet the specified quality standards shall be corrected by Subcontractor at no additional cost within ___ business days of written notice.</p>
-<p>9.4  Required inspections / hold points:</p>
+<p class="ct-clause"><span class="ct-num">9.1</span>Subcontractor shall perform the Work in accordance with the quality standards specified herein and in any referenced drawings or specifications.</p>
+<p class="ct-clause"><span class="ct-num">9.2</span>Company (or its representative) reserves the right to inspect the Work at any time. Subcontractor shall provide reasonable cooperation and access.</p>
+<p class="ct-clause"><span class="ct-num">9.3</span>Work that fails to meet the specified quality standards shall be corrected by Subcontractor at no additional cost within {{ fill(doc.sow_correction_days or None, 4) }} business days of written notice. {{ initial('corrections', 'Correcting rejected work at no additional cost, within the days stated') }}</p>
+<p class="ct-clause"><span class="ct-num">9.4</span>Required inspections / hold points:</p>
 {% if hold_points %}
-<p>The following hold points are contracted for this project. Work shall not proceed past a hold point until it has been inspected and accepted. Each will be inspected against the standard stated.</p>
+<p class="ct-sub">The following hold points are contracted for this project. Work shall not proceed past a hold point until it has been inspected and accepted. Each will be inspected against the standard stated.</p>
 <table class="ct-table"><tr><td><b>Hold point</b></td><td><b>Accepted when</b></td><td><b>Verified by</b></td><td><b>Responsible</b></td></tr>
 {% for hp in hold_points %}<tr><td>{{ fill(hp.criterion, 34) }}</td><td>{{ fill(hp.pass_standard, 38) }}</td><td>{{ fill(hp.verification_method, 16) }}</td><td>{{ fill(hp.responsible_party, 16) }}</td></tr>
 {% endfor %}</table>
 {% else %}
-<p>(check all that apply)</p>
-<p>  [ ]  Pre-pour inspection (before concrete placement)</p>
-<p>  [ ]  Rough plumbing inspection</p>
-<p>  [ ]  Electrical rough-in inspection</p>
-<p>  [ ]  Equipment installation inspection</p>
-<p>  [ ]  Final completion / startup inspection</p>
-<p>  [ ]  Other: {{ blank(30) }}</p>
+<p class="ct-sub">(check all that apply)</p>
+<p class="ct-option">{{ cb(doc.sow_hold_pre_pour) }}  Pre-pour inspection (before concrete placement)</p>
+<p class="ct-option">{{ cb(doc.sow_hold_rough_plumbing) }}  Rough plumbing inspection</p>
+<p class="ct-option">{{ cb(doc.sow_hold_electrical) }}  Electrical rough-in inspection</p>
+<p class="ct-option">{{ cb(doc.sow_hold_equipment) }}  Equipment installation inspection</p>
+<p class="ct-option">{{ cb(doc.sow_hold_final) }}  Final completion / startup inspection</p>
+<p class="ct-option">{{ cb(doc.sow_hold_other) }}  Other: {{ fill(doc.sow_hold_other, 30) }}</p>
 {% endif %}
 <h1>10. SPECIAL TERMS</h1>
 <p>List any terms specific to this SOW that supplement or modify the MSA (e.g., unique warranty periods, specific insurance endorsements, special subcontractors, or owner-required provisions):</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
-<p>{{ blank(30) }}</p>
+<p class="ct-sub">{{ multiline(doc.sow_special_terms, 80, 4) }}{% if doc.sow_special_terms %} {{ initial('special_terms', 'The special terms in Section 10, which supplement or modify the MSA') }}{% endif %}</p>
+<h1>11. GENERAL PROVISIONS</h1>
+<p class="ct-clause"><span class="ct-num">11.1</span><b>Electronic Signatures.</b> This Statement of Work may be executed electronically, and such signatures are fully binding. Where this Statement of Work asks for Subcontractor&#x27;s initials, each set of initials is made separately and acknowledges the clause it sits beside.</p>
 <h1>SIGNATURES</h1>
 <p>This Statement of Work is hereby incorporated into and made part of the Master Services Agreement between the Parties. By signing below, the Parties agree to be bound by the terms of this SOW.</p>
 <p><b>Sapphire Fountains, LLC (Company)</b></p>
-<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
-<p>Print Name: {{ blank(30) }}</p>
-<p>Title: {{ blank(30) }}</p>
+<p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.countersigned_on, 30) }}</p>
+<p>Print Name: {{ fill(signature.countersigned_by) }}</p>
+<p>Title: {{ fill(signature.countersigned_title) }}</p>
 <p>(Authorized Representative of Sapphire Fountains, LLC)</p>
 <h3><b>SUBCONTRACTOR</b></h3>
-<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
-<p>Print Name: {{ blank(30) }}</p>
-<p>Title: {{ blank(30) }}</p>
+<p>Signature: {{ sig('client') }}    Date: {{ dt(doc.signed_on, 30) }}</p>
+<p>Print Name: {{ fill(doc.signed_by) }}</p>
+<p>Title: {{ fill(signature.signed_title) }}</p>
 <p>(Authorized Representative of Subcontractor)</p>

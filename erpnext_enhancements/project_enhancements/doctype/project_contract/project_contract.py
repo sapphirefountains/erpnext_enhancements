@@ -492,7 +492,11 @@ def _pct(value, width=6):
 
 def _render_context(doc):
 	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
-	from erpnext_enhancements.project_enhancements.esign.initials import initial_markup, signed_initials
+	from erpnext_enhancements.project_enhancements.esign.initials import (
+		INITIALS_CAPTIONS,
+		initial_markup,
+		signed_initials,
+	)
 	from erpnext_enhancements.project_enhancements.esign.render import (
 		signature_markup,
 		signed_signature_for,
@@ -521,7 +525,9 @@ def _render_context(doc):
 		# The client's initials beside a clause that matters (§3.3, §4.3, §9.2 …): each one
 		# drawn separately on the signing page, printed in place once signed, and a blank
 		# box on paper. See esign/initials.py.
-		return initial_markup(initials, key, label)
+		return initial_markup(
+			initials, key, label, caption=INITIALS_CAPTIONS.get(doc.get("template_key") or "")
+		)
 
 	def _summary():
 		# "What you are agreeing to, in short": this contract's own terms in plain words,

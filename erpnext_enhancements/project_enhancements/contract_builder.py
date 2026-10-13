@@ -118,11 +118,42 @@ STEP_COPY = {
 	"construction_section": ("Construction schedule", ""),
 	"milestones_section": ("Payment milestones", "When each payment falls due, and for what."),
 	"msa_section": ("Subcontractor tier", ""),
-	"section_msa_term": ("Term", ""),
-	"section_msa_rates": ("Rate schedule", ""),
+	"section_msa_term": (
+		"Term",
+		"How long the agreement runs from the day it is signed: twelve months unless you set another term, or an "
+		"end date of its own. It prints in the information table and Section 17.4.",
+	),
+	"section_msa_rates": (
+		"Rate schedule",
+		"The rates Statements of Work under this agreement are billed at (Exhibit D). Each SOW keeps its own copy "
+		"of the rates on the day it is issued; a later change here never rewrites one.",
+	),
 	"sow_section": ("The engagement", "Which master agreement it sits under, and the dates."),
-	"scope_section": ("Scope of work", "Pulled from the project's requests and deliverables; edit freely."),
+	"scope_section": (
+		"Scope of work",
+		"What the work covers. A Statement of Work starts from the project's requests and deliverables; edit "
+		"freely.",
+	),
+	"architect_section": (
+		"Notices and Statement of Work",
+		"Who notices go to on each side, and the Statement of Work: what the Architect provides, its term, and "
+		"how Sapphire is paid.",
+	),
+	"sow_services_section": ("Included services", "Tick each kind of work the subcontractor is doing on this job."),
+	"sow_deliverables_section": (
+		"Deliverables",
+		"When each deliverable is due. Accepted By is signed by hand when each one is accepted.",
+	),
+	"sow_compensation_section": (
+		"Compensation",
+		"How the work is priced, the retention held back, and when invoices are due.",
+	),
 	"tm_section": ("Time and materials rates", "Only if any of the work is billed by the hour."),
+	"sow_terms_section": (
+		"Safety, quality and special terms",
+		"Site safety rules, days to fix rejected work, the inspections when the project has no locked Scope of "
+		"Work, and any terms that change the master agreement for this job.",
+	),
 	"supervisor_section": ("Site supervisor", ""),
 }
 
@@ -130,12 +161,30 @@ _TEMPLATE_KEY_EQ = re.compile(r"""doc\.template_key\s*==\s*["']([a-z_]+)["']""")
 _H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
 _DOC_FIELD = re.compile(r"\bdoc\.([a-z_][a-z0-9_]*)")
 
+#: Fields an agreement prints only when they are filled in, so an empty one is not a blank line: the
+#: MSA's own end date (otherwise the term in months prints), a SOW's special terms.
+PRINTED_ONLY_WHEN_SET = {"msa_expires_on", "sow_special_terms"}
+
 #: Child tables a template reads through a render-context name rather than ``doc.<table>``
 #: (``project_contract._render_context``): the maintenance plan and the owner phases.
 CONTEXT_TABLES = {"service_options": re.compile(r"\bservice_options\b"), "phases": re.compile(r"\bphases\b")}
 
 #: Roles that may issue a contract and take its signature (esign.api.SEND_ROLES).
 SIGN_ROLES = {"System Manager", "Projects Manager", "Sales Manager"}
+
+#: What each agreement calls the other side, for the walk's wording ("With the subcontractor",
+#: "the architect's signature"). Anything not listed is a client agreement.
+PARTY_NOUNS = {
+	"msa": "subcontractor",
+	"sow": "subcontractor",
+	"architect": "architect",
+	"employee_contractor": "employee-contractor",
+	"nda": "company",
+}
+
+
+def party_noun(template_key):
+	return PARTY_NOUNS.get(template_key or "", "client")
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +323,86 @@ def _editable_fields(steps):
 # What will print blank
 # ---------------------------------------------------------------------------
 
+_CONDITION_TOKEN = re.compile(
+	r"""\s*(?:(?P<field>doc\.[a-z_][a-z0-9_]*)|(?P<text>"[^"\\]*"|'[^'\\]*')|(?P<op>===|!==|==|!=|&&|\|\||!|\(|\)))"""
+)
+
+
+class _Unreadable(Exception):
+	pass
+
+
+def shown(depends_on, doc):
+	"""Whether a field's ``depends_on`` shows it for ``doc``, as the form and the builder would.
+
+	Reads the shapes this doctype's conditions use (``doc.x=="v"``, ``!=``, ``&&``, ``||``,
+	``!``, parentheses, a bare ``doc.x`` or fieldname) with a small parser rather than ``eval``;
+	anything else counts as shown. So a field that only appears for one choice (Other Property
+	Type, the liquidated-damages rate) is not counted as a blank, or against progress, while
+	that choice is not made: the page would offer no place to fill it.
+	"""
+	if not depends_on:
+		return True
+	if not depends_on.startswith("eval:"):
+		return bool(doc.get(depends_on))
+	tokens = []
+	text, pos = depends_on[5:], 0
+	while text[pos:].strip():
+		match = _CONDITION_TOKEN.match(text, pos)
+		if not match:
+			return True
+		tokens.append(match)
+		pos = match.end()
+
+	def value(match):
+		if match.group("field"):
+			return doc.get(match.group("field")[4:])
+		if match.group("text"):
+			return match.group("text")[1:-1]
+		raise _Unreadable
+
+	def parse_or(i):
+		result, i = parse_and(i)
+		while i < len(tokens) and tokens[i].group("op") == "||":
+			right, i = parse_and(i + 1)
+			result = bool(result) or bool(right)
+		return result, i
+
+	def parse_and(i):
+		result, i = parse_unary(i)
+		while i < len(tokens) and tokens[i].group("op") == "&&":
+			right, i = parse_unary(i + 1)
+			result = bool(result) and bool(right)
+		return result, i
+
+	def parse_unary(i):
+		if i < len(tokens) and tokens[i].group("op") == "!":
+			result, i = parse_unary(i + 1)
+			return not result, i
+		if i < len(tokens) and tokens[i].group("op") == "(":
+			result, i = parse_or(i + 1)
+			if i >= len(tokens) or tokens[i].group("op") != ")":
+				raise _Unreadable
+			return result, i + 1
+		if i >= len(tokens):
+			raise _Unreadable
+		left = value(tokens[i])
+		i += 1
+		if i < len(tokens) and tokens[i].group("op") in ("==", "===", "!=", "!=="):
+			equal = tokens[i].group("op") in ("==", "===")
+			if i + 1 >= len(tokens):
+				raise _Unreadable
+			right = value(tokens[i + 1])
+			left_text = "" if left is None else str(left)
+			return (left_text == str(right)) == equal, i + 2
+		return left, i
+
+	try:
+		result, end = parse_or(0)
+	except _Unreadable:
+		return True
+	return bool(result) if end == len(tokens) else True
+
 
 def blanks(doc, steps):
 	"""Fields the agreement prints that are still empty, in walk order.
@@ -291,7 +420,9 @@ def blanks(doc, steps):
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or name not in referenced:
 				continue
-			if field["fieldtype"] == "Table":
+			if field["fieldtype"] == "Table" or not shown(field.get("depends_on"), doc):
+				continue
+			if name in PRINTED_ONLY_WHEN_SET:
 				continue
 			value = doc.get(name)
 			if value in (None, "") or (field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)):
@@ -336,6 +467,8 @@ def progress(doc, steps, body):
 		for field in step["fields"]:
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or field["fieldtype"] == "Table" or name not in referenced:
+				continue
+			if not shown(field.get("depends_on"), doc) or name in PRINTED_ONLY_WHEN_SET:
 				continue
 			total += 1
 			value = doc.get(name)
@@ -652,6 +785,7 @@ def _payload(doc):
 		"title": doc.get("title") or doc.name,
 		"signature": signature,
 		"template_key": doc.get("template_key"),
+		"party_noun": _(party_noun(doc.get("template_key"))),
 		"template_title": template.get("title") or doc.get("contract_template"),
 		"docstatus": doc.docstatus,
 		"status": doc.get("status"),

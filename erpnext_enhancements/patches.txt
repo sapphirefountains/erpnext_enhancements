@@ -1354,3 +1354,14 @@ erpnext_enhancements.patches.refresh_maintenance_agreement_layout
 # Replaces each live body only when it is exactly the v1.611.0 shipped body; freezes paper-signed copies
 # first and waits while a signing link is out. Resets no terms. Cannot raise.
 erpnext_enhancements.patches.refresh_rental_owner_agreement_layout
+# NDA + Architect + Employee-Contractor layout (v1.613.0): the maintenance agreement's theme for all three:
+# title block, summary, information table, numbered clauses, field-bound blanks, the other party's initials,
+# and a sig() block so each can be e-signed. Replaces each live body only when it is exactly the shipped body
+# (SHA-256); freezes paper-signed copies first and waits while a signing link is out. Resets no terms. Cannot raise.
+erpnext_enhancements.patches.refresh_general_agreement_layout
+# Master Subcontractor Agreement + Statement of Work layout (v1.613.0): the same theme for both, with an input
+# for every box and blank the SOW prints, subcontractor initials and a sig() block. Also what first brings the
+# v1.461.0 SOW (§9.4 hold points) to prod, which still had the v1.5.0 body. Replaces each live body only when it
+# is exactly a shipped body (SHA-256); freezes paper-signed copies first and waits while a signing link is out.
+# Resets no terms. Cannot raise.
+erpnext_enhancements.patches.refresh_subcontractor_agreement_layout
