@@ -642,6 +642,21 @@ def test_markdown_links_outrank_frappes_link_rule():
 	assert "font-weight:400 !important" in match.group(1)
 
 
+def test_markdown_bodies_are_sanitized():
+	"""email_style.markdown() renders the AI-written morning briefing, whose prompt
+	carries record text other people type, through markdown2 with no safe mode — raw
+	HTML in the source would reach the inbox as live markup. The output must go
+	through frappe's nh3 sanitizer, with always_sanitize so its "no tags found"
+	shortcut can never be what decides."""
+	src = _read(os.path.join(REPO_ROOT, APP), "email_style.py")
+	body = src[src.index("def markdown(") : src.index("def raw(")]
+	code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+	code = re.sub(r'"""[\s\S]*?"""', "", code)
+	assert "from frappe.utils.html_utils import sanitize_html" in code
+	assert "sanitize_html(html, always_sanitize=True)" in code
+	assert "md_to_html(" in code
+
+
 @pytest.mark.parametrize("rel,src", ALL_TEMPLATES, ids=_ids(ALL_TEMPLATES))
 def test_pre_always_wraps(rel, src):
 	"""frappe's .body-table is table-layout:fixed, so one long unbroken token —
