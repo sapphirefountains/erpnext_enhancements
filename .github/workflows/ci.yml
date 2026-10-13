@@ -923,6 +923,19 @@ jobs:
       # setUpModule).
       - name: Project planner build out (grid, Needs tasks list, richer quick add; T1)
         run: python -m unittest erpnext_enhancements.tests.test_planner_build_out -v
+      # Calendar cutover C5 (v1.607.0): retiring the hand-made recurring series on the shared Maintenance
+      # calendar. Pins that ERPNext's own events are never read as hand-made or patched; that a series
+      # keeps its RRULE and gives up its Google Sites links, its instructions without HTML and its codes;
+      # profile matching (by name, by street address, unmatched, ambiguous); that a rescan never clobbers
+      # an Approved/Applied/Ignored row or a profile picked by hand; that Apply appends and never
+      # overwrites, and fills a site address only when the project has none; that C2's event builder never
+      # reads the profile's codes or notes; RRULE rewriting (open, COUNT, existing UNTIL, EXDATE, RDATE,
+      # all-day and timed across DST); that the dry run writes nothing, confirm needs the dry run's token
+      # and the master switch; that Undo restores the originals; the System Manager gate; and, under node,
+      # that both new dialogs build through a stand-in that asks every get_data/get_query during
+      # construction. Own frappe stub and a fake Google client, so its own step.
+      - name: Calendar cutover (review list, apply, end series with dry run + undo; C5)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_cutover -v
       # Calendar sync C2 (v1.604.0): committed planner work pushed ONE WAY to the shared Google
       # Calendars. Pins the event (title, Google's exclusive all-day end, pencil and projected work
       # tentative, finished work kept with a check mark, the managed-by line, no attendees); that no gate,
