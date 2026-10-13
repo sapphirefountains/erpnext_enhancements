@@ -58,16 +58,20 @@ where four of the five doctypes belong, not because Supplier and Company are CRM
 
 import frappe
 
+from erpnext_enhancements.utils import normalize as _normalize
+
 #: Prefixes that mean "this is already a usable reference, leave it alone".
 #: ``/`` and ``#`` are relative links, which ``validate_url`` accepts outright; the two
 #: schemes are the ones people actually paste into a website field by mistake, and
 #: prefixing them would produce ``https://mailto:...`` — worse than what was typed.
-_EXEMPT_PREFIXES = ("/", "#", "mailto:", "tel:")
+#: The rule itself now lives in ``utils.normalize`` (form kit P2-A); these names stay so
+#: nothing that imported them breaks.
+_EXEMPT_PREFIXES = _normalize.WEBSITE_EXEMPT_PREFIXES
 
 #: The scheme added to a bare domain. https rather than http because every site this
 #: would be pointed at redirects to it anyway, and a stored http:// link is one more
 #: thing to fix later.
-_DEFAULT_SCHEME = "https://"
+_DEFAULT_SCHEME = _normalize.WEBSITE_DEFAULT_SCHEME
 
 
 def normalize_website(value):
@@ -77,17 +81,14 @@ def normalize_website(value):
 	the bench-free tests exercise the same decision. ``None`` means "leave the stored
 	value exactly as it is" — which is different from returning the value unchanged,
 	because the callers use it to decide whether anything was healed at all.
+
+	Delegates to :func:`utils.normalize.add_scheme`, the one copy of the rule. Deliberately
+	*not* to :func:`utils.normalize.website`, which also lowercases the host and refuses to
+	call ``N/A`` or an email address clean: this healer's job is to keep a record saveable,
+	and ``https://N/A`` is saveable where ``N/A`` is not. The dry-run report lists those
+	values for a person instead.
 	"""
-	if not isinstance(value, str):
-		return None
-
-	stripped = value.strip()
-	if not stripped:
-		return None
-	if "://" in stripped or stripped.startswith(_EXEMPT_PREFIXES):
-		return None
-
-	return _DEFAULT_SCHEME + stripped
+	return _normalize.add_scheme(value)
 
 
 def heal_url_fields(doc):

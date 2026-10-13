@@ -22,6 +22,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | `doctype/training_insight/…py` / `.js` | AI training example | (stub) |
 | `doctype/user_form_draft/…py` | Per-user autosaved form draft | (stub) |
 | `doctype/process_document/…py` | Mermaid.js process documentation (ported from a DB-only custom DocType in v0.8.0; form script: `public/js/process_document.js` — brand-themed preview + Visual Builder dialog since v1.12.0; chart content version-controlled in `setup/process_documents.py` and upserted on every migrate since v1.11.0) | (stub) |
+| `report/data_normalization_preview/` | **Data Normalization Preview** (System Manager): a dry run of the phone/email/website/address cleanup — every field in `utils/normalize_fields.py` through `utils/normalize.py`, listed as *Will change*, *Can't normalize — needs a person* or *Already clean*. Writes nothing; one SELECT per doctype; submitted/cancelled records are counted, never listed; Singles read with `get_single_value` and reported only. See [docs/data-normalization.md](../../docs/data-normalization.md) | `execute`, `collect` |
 | `page/ga4_dashboard/ga4_dashboard.js` | GA4 + GSC charts page | `on_page_load` |
 | `page/location_timeline/location_timeline.js` | Leaflet map replay of kiosk points | `on_page_load` |
 | `page/integrations_health/integrations_health.js` | Green/amber/red tiles for every external integration + scheduler/errors; data from [`api/integrations_health.py`](../api/README.md) | `on_page_load` |

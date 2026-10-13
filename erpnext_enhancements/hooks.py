@@ -634,6 +634,9 @@ doc_events = {
 			# the database's, never the form's -- a Desk save posts read-only fields back, and a stale
 			# stamp would let the sweep email the customer twice. Never raises.
 			"erpnext_enhancements.project_enhancements.customer_confirmations.keep_stamps",
+			# Form kit P2-A: the planner's start/end datetimes out of order warn once, never block.
+			# ERPNext's own exp_*/act_* pairs are already validated by core. See utils/date_pairs.py.
+			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 		],
 	},
 	"Project": {
@@ -661,7 +664,13 @@ doc_events = {
 		# `flags.ignore_validate` is set, which create_project_from_opportunity_background does.
 		# That path creates no budget lines, so there is nothing to roll up; every save that
 		# edits a budget line is an ordinary Desk save where validate runs.
-		"validate": "erpnext_enhancements.project_enhancements.budget_rollup.on_project_validate",
+		"validate": [
+			"erpnext_enhancements.project_enhancements.budget_rollup.on_project_validate",
+			# Form kit P2-A: the Requested Start/End Dates and the event schedule out of order warn
+			# once, never block. ERPNext's expected_*/actual_* pairs are validated by core.
+			# See utils/date_pairs.py.
+			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+		],
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
 			"erpnext_enhancements.status_alerts.stamp_payment_received_date",
@@ -814,6 +823,8 @@ doc_events = {
 	# Sync Settings is on; never raises. See project_enhancements/calendar_sync/triggers.py.
 	"Sapphire Maintenance Contract": {
 		"on_update": "erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_contract_change",
+		# Form kit P2-A: a contract that ends before it starts warns once, never blocks.
+		"validate": "erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 	},
 	# Calendar sync (C2, v1.604.0): day notes go to the Projects calendar and unavailable blocks to
 	# Company Holidays & Vacations (never the block's private note). Queued after commit; off unless
@@ -836,7 +847,12 @@ doc_events = {
 		# would change a document somebody has already signed. Only a KNOWN, past expiry can
 		# block -- "no expiry recorded" never does, because none of the sixteen live contracts
 		# has one and that is a gap in the record rather than a lapse.
-		"validate": "erpnext_enhancements.quality.msa_enforcement.on_contract_validate",
+		"validate": [
+			"erpnext_enhancements.quality.msa_enforcement.on_contract_validate",
+			# Form kit P2-A: rental end before start, and the Statement of Work's mobilization,
+			# substantial and final completion out of order, warn once and never block.
+			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+		],
 		# When a Maintenance Services Agreement is Signed, draft the operational
 		# Maintenance Contract (left as a draft; activation stays the human gate).
 		# Both signing paths: submitting an already-Signed draft (on_submit) and
@@ -861,6 +877,15 @@ doc_events = {
 	# traveler rows and clearing claim stamps on cancel/trash (dedupe guard)
 	"Travel Trip": {
 		"on_update": "erpnext_enhancements.travel_management.notifications.on_trip_update",
+	},
+	# Form kit P2-A: dates out of order warn once and never block (utils/date_pairs.py). Both
+	# doctypes had no date check at all; a cohort that ends before it starts, or a warranty that
+	# expires before the purchase, is a typo.
+	"Training Batch": {
+		"validate": "erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+	},
+	"Managed Device": {
+		"validate": "erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 	},
 	"Expense Claim": {
 		"on_update": "erpnext_enhancements.travel_management.integrations.sync_expense_claim_status",
@@ -999,6 +1024,9 @@ doc_events = {
 			# (lead_attribution_enabled + require_lead_source_on_lead) so it can
 			# be switched off from the UI without a deploy.
 			"erpnext_enhancements.crm_enhancements.attribution.enforce_source",
+			# Form kit P2-A: rental end before rental start warns once, never blocks.
+			# See utils/date_pairs.py.
+			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 		],
 	},
 	"Opportunity": {
@@ -1014,6 +1042,9 @@ doc_events = {
 			# on purpose). Fills blanks only — never overwrites.
 			"erpnext_enhancements.crm_enhancements.attribution.propagate_to_opportunity",
 			"erpnext_enhancements.crm_enhancements.attribution.enforce_source",
+			# Form kit P2-A: the Requested Start/End Dates and the event schedule (delivery, setup,
+			# event, take down) out of order warn once, never block. See utils/date_pairs.py.
+			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 		],
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
@@ -2015,6 +2046,14 @@ jinja = {
 		# writes the article's own pictures into the page, so the chrome PDF engine never has to fetch
 		# a private file over the network (it has no session in a job). kb_ prefix, for the reason above.
 		"erpnext_enhancements.knowledge_base.printing.kb_document",
+		# How a date or time looks on paper, in an email and in an SMS (docs/app-design-system.md,
+		# "Dates and times"): `10/14/2026` and `10/14/2026 2:00 PM`, whatever the Desk's own
+		# format is. Thin wrappers over utils/normalize.py, which imports no frappe. Individually
+		# and prefixed (sf_), for the reason the ee_/ps_ globals are. No existing format or
+		# template calls them yet.
+		"erpnext_enhancements.utils.date_display.sf_date",
+		"erpnext_enhancements.utils.date_display.sf_datetime",
+		"erpnext_enhancements.utils.date_display.sf_time",
 	],
 }
 

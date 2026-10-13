@@ -476,6 +476,18 @@ class TestFormatPhone(unittest.TestCase):
             with self.subTest(value):
                 self.assertEqual(ps.format_phone(value), "")
 
+    def test_the_stored_e164_form_prints_the_familiar_way(self):
+        """Form kit P2-A stores phones as E.164 with a comma before an extension. Print has
+        to keep reading them the way a person does once the stored values change."""
+        self.assertEqual(ps.format_phone("+18015550100"), "(801) 555-0100")
+        self.assertEqual(ps.format_phone("+18015550100,123"), "(801) 555-0100 x123")
+        self.assertEqual(ps.ps_phone("+18015550100,123"), "(801) 555-0100 x123")
+
+    def test_a_stored_international_number_prints_as_stored(self):
+        for value in ("+442079460958", "+6561234567", "+442079460958,12"):
+            with self.subTest(value):
+                self.assertEqual(ps.format_phone(value), value)
+
     def test_the_jinja_global_escapes(self):
         self.assertEqual(ps.ps_phone("8015550100"), "(801) 555-0100")
         self.assertEqual(ps.ps_phone("<b>call</b>"), "&lt;b&gt;call&lt;/b&gt;")

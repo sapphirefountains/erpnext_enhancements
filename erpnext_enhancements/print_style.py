@@ -63,6 +63,7 @@ from erpnext_enhancements.enhancements_core.company_contact import (
 	COMPANY_ADDRESS_HTML,
 	COMPANY_PHONE,
 )
+from erpnext_enhancements.utils import normalize
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(_HERE, "public", "fonts", "big_noodle_titling.woff2")
@@ -414,13 +415,6 @@ def plain_text(html):
 	return _WHITESPACE.sub(" ", text).strip()
 
 
-# A North American number as people write it: optional +1 / 1, an area code with or
-# without parentheses, then 3 + 4 digits, with spaces, dots or dashes between. Checked
-# against every phone-shaped value on production (2026-09-24), `(208)-283-2638`,
-# `954. 579-9476` and `1800 407 6657` included.
-_NANP_SHAPE = re.compile(r"(\+?1[-. ]?)?\(?\d{3}\)?[-. ]*\d{3}[-. ]?\d{4}")
-
-
 def format_phone(value):
 	"""A phone number for print: North American ten digits as ``(801) 555-0100``.
 
@@ -429,23 +423,24 @@ def format_phone(value):
 	leading ``1`` or ``+1`` is dropped for the same shape. Only a number already grouped
 	the North American way is reshaped; anything else — an international number (with or
 	without its ``+``: a Singapore contact here is stored ``65-688-000-88``, ten digits), an
-	extension, text — prints exactly as stored, because a reformat that guessed wrong
-	would print a number nobody can dial.
+	extension as somebody typed it, text — prints exactly as stored, because a reformat that
+	guessed wrong would print a number nobody can dial.
+
+	The rule is :func:`utils.normalize.phone_display`'s (form kit P2-A), so print, the Desk
+	and the stored E.164 form agree. Two things print keeps from before it: an extension is
+	reshaped only from the stored form (``+18015550100,123`` prints ``(801) 555-0100 x123``;
+	``801-555-0100 ext 12`` typed into a field prints as typed until it is stored), and an
+	international number prints as written rather than as its ``+<digits>`` form.
 	"""
 	text = str(value or "").strip()
 	if not text:
 		return ""
-	digits = re.sub(r"\D", "", text)
-	# A `+` that is not `+1` is another country's code, whatever the digit count:
-	# `+65 6123 4567` is ten digits, and would otherwise print as `(656) 123-4567`.
-	if text.startswith("+") and not digits.startswith("1"):
+	result = normalize.phone(text)
+	if not result.ok or not result.value.startswith("+1"):
 		return text
-	if _NANP_SHAPE.fullmatch(text):
-		if len(digits) == 11 and digits.startswith("1"):
-			digits = digits[1:]
-		if len(digits) == 10:
-			return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
-	return text
+	if "," in result.value and result.value != text:
+		return text
+	return normalize.phone_display(result.value)
 
 
 def qty_text(value):

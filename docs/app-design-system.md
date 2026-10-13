@@ -149,6 +149,55 @@ value-stream colours are retired by form kit P6.
 - **Capitals in buttons and eyebrows are typed into the copy, not applied with
   `text-transform`**, as on the website.
 
+## Dates and times
+
+Two styles, one for each place a date is read. Neither is picked per screen.
+
+- **The Desk shows `10/14/2026` and a 24-hour `14:00`.** These are the site's System Settings
+  (`date_format` `mm/dd/yyyy`, `time_format` `HH:mm`), set by
+  `patches/set_desk_date_and_time_format` from the old `mm-dd-yyyy` / `HH:mm:ss`. Frappe v16 offers
+  only `HH:mm:ss` and `HH:mm` for the Desk, so there is no 12-hour Desk time to choose. The patch
+  moves a field **only while it still holds the old value** and writes the global default as well
+  as the Single, because the Desk reads `tabDefaultValue`, not System Settings. Code that needs a
+  date for a screen uses `frappe.datetime.str_to_user` or `formatdate` and so follows the site
+  format; code that stores or compares a date keeps ISO `YYYY-MM-DD`.
+- **Print, email and SMS show `10/14/2026 2:00 PM`.** A date alone is `10/14/2026`; a time alone is
+  `2:00 PM`. The formatting is `format_date`, `format_datetime` and `format_time` in
+  `utils/normalize.py` (no frappe import), and a Print Format or a Notification body reaches them
+  through three Jinja globals: `sf_date(value)`, `sf_datetime(value)` and `sf_time(value)`
+  (`utils/date_display.py`). They are registered individually and prefixed, for the reason the
+  `ee_*` and `ps_*` globals are. No existing format calls them yet; move one over when you next
+  touch it.
+- **A start/end pair that runs backwards warns and never blocks.** An end date before its start is
+  usually a typo, and a hard stop would also stop someone halfway through an edit. The
+  `validate` hook `utils/date_pairs.warn_out_of_order` shows one orange "Check the dates" pop-up
+  naming both fields and their values in the print style, then lets the save go ahead. It speaks
+  **once per person per record per problem** (`utils/popup_once.py`: autosaving pages re-validate
+  constantly) and stays quiet in imports, installs, migrations, patches, background jobs and for
+  guests. A sequence is compared in order over the values that are set, so a blank setup time
+  does not hide a take-down before the event. Equal is in order.
+
+The registry is `date_pairs.PAIRS`, and each doctype in it has the hook in `hooks.py`
+(`tests/test_date_pairs.py` fails the build if one is missing, or names a field that does not
+exist). Registered today:
+
+| Doctype | Fields, in order |
+|---|---|
+| Opportunity, Project | Requested Start Date, Requested End Date |
+| Opportunity, Project | Delivery, Setup, Event, Take Down (Date Time) |
+| Lead | Rental Start Date, Rental End Date |
+| Task | Start Datetime, End Datetime (the planner's; core validates `exp_*` and `act_*`) |
+| Sapphire Maintenance Contract | Start Date, End Date |
+| Training Batch | Start Date, End Date |
+| Project Contract | Rental Start Date, Rental End Date; Mobilization, Substantial Completion, Final Completion |
+| Managed Device | Purchase Date, Warranty Expiry |
+
+**Register only a pair nothing validates.** ERPNext already refuses a Project's or Task's own
+start/end dates, and these controllers throw on theirs: Rental Booking, Travel Trip, Time Off
+Request, Work Restriction, Asset Booking, Asset Out of Service, Time Correction Request. Imported
+or generated pairs, child-table rows and flights (departure and arrival are local to different
+time zones) are left out for the reasons in the `date_pairs.py` docstring.
+
 ## Space and shape
 
 - **Space** follows the design system's steps, named by pixel value: `--sf-space-5`, `-10`,
@@ -191,6 +240,8 @@ Built in form kit P4 and P6, specified here so they come out the same everywhere
 ```bash
 python -m unittest erpnext_enhancements.tests.test_app_design_tokens -v
 python -m unittest erpnext_enhancements.tests.test_print_style -v
+python -m unittest erpnext_enhancements.tests.test_desk_date_format_patch -v
+python -m unittest erpnext_enhancements.tests.test_date_pairs -v
 ```
 
-Both are bench-free, and CI runs each in its own step.
+All are bench-free, and CI runs each in its own step.
