@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.622.0] - 2026-10-13
+
+Form kit P4-A: the server engine for guided data entry (TASK-2026-02759, 02764). Nothing draws it yet;
+the page is P4-B.
+
+### Added
+
+- **`form_kit/`, a DocType's form walked as a guided flow of steps.** It is a plain package, not a
+  Frappe module. `form_kit/README.md` gives the payload shapes.
+  - **`steps.flow_steps`** reads the meta the way the Desk lays the form out (tabs, sections) and
+    turns it into steps using a per-DocType config in code.
+    - Every field the form shows stays in the flow: Nik chose "keep showing everything". A section
+      no step claims becomes a step of its own, so a field added later appears with no code change.
+    - `tests/test_form_kit.py` compares the flow with the form field by field.
+  - **Permissions per field are the Desk's own.**
+    - Level 0 follows the document permission (sharing, if-owner and user permissions included).
+    - A higher permlevel follows the role rows.
+    - A field the user can only read comes back read-only. A level they cannot read is not sent at
+      all, neither the field nor its value.
+  - **`saver.create_record` makes the record real after step 1.** It inserts a draft from step 1's
+    fields, with the same defaults the Desk's New form gives. This was the P4 decision of 2026-10-13.
+  - **`saver.save_step` saves one step onto the record.**
+    - The editable fields are worked out again on the server and assigned one by one. A crafted key
+      such as `owner`, `docstatus` or a higher-permlevel field is ignored.
+    - Child rows are matched by `name`.
+    - Every save runs the normal validation, the normalize-on-save hook and Opportunity's own hooks.
+    - **Optimistic lock:** if `modified` has moved, nothing is written. It returns
+      `{"conflict": true, "server": ...}`, the shape the offline queue (P4.7) will replay against.
+  - **`completeness.stage_completeness`** measures a record against its stage's list. The
+    Opportunity lists come from prod fill rates (TASK-2026-02773). `completeness_for` measures up to
+    500 records for the board in one permission-checked list query plus one bound query per child
+    table.
+  - **Four whitelisted endpoints in `form_kit/api.py`.**
+    - Each one serves only the DocTypes in `form_kit.config.CONFIGS`, which is just Opportunity for
+      now.
+    - Writes are POST only and nothing is open to guests.
+    - `test_whitelist_placement` pins the endpoint surface.
+- **The Opportunity config:** basics → contact → scope → one scope step per value stream (shown only
+  while that stream is chosen) → schedule → Events schedule → budget → close → more → hand-off
+  (read-only, last).
+  - Step 1 asks for the account, name, value streams, owner and lead source. Lead source is
+    included because `enforce_source` requires it on new records.
+  - Ten HTML widgets that the form's JavaScript draws are skipped, each with its reason.
+- A "guided-flow engine" section in `docs/app-design-system.md`, and `tests/test_form_kit.py` (67
+  tests) in its own CI step. The tests are checked against a trimmed ERPNext v16.50.0 Opportunity
+  meta fixture plus this app's custom fields and property setters.
+
 ## [1.621.0] - 2026-10-13
 
 Form kit P2-C, part one: the one-time cleanup of stored contact values (TASK-2026-02752). Nik approved
