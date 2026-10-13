@@ -3307,6 +3307,21 @@ jobs:
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
+      # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
+      # an /app href is a full page reload through a redirect, and Back reloads again. Scans
+      # every page, report, form and block script, the Desk-loaded public/js, the server
+      # modules whose URLs a Desk page draws, and every workspace shortcut and link.
+      - name: Desk links stay in the Desk (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_links -v
+      # The Task Dashboard block, the Who's Working block and the Maintenance Day Board poll
+      # only while on screen; Desk pages are never removed, so a timer cleared on 'remove' ran
+      # all day for every user who had opened the screen once.
+      - name: Page polling stops off screen (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_page_polling_lifecycle -v
+      # Every Page has a title (the awesomebar indexes by it), the S1 patch covers every file
+      # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
+      - name: Custom pages S1 findability (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads
