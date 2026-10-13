@@ -787,14 +787,16 @@ class PingSending(unittest.TestCase):
 class Wiring(unittest.TestCase):
 	def test_ping_job_is_scheduled_every_five_minutes(self):
 		events = base._literal("scheduler_events")
-		self.assertIn(
-			"erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings",
-			events["cron"]["*/5 * * * *"],
+		self.assertEqual(
+			events["cron"]["4-59/5 * * * *"],
+			["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 		)
 		self.assertIn(
 			"erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts",
 			events["cron"]["*/5 * * * *"],
 		)
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		self.assertEqual(hooks.count('"4-59/5 * * * *"'), 1, "a repeated cron key replaces the first silently")
 
 	def _fields(self, doctype_dir):
 		meta = json.loads((DOCTYPES / doctype_dir / f"{doctype_dir}.json").read_text(encoding="utf-8"))
