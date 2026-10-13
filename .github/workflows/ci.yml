@@ -935,6 +935,18 @@ jobs:
       # client's backoff, one 401 refresh and token-free errors. Own frappe and requests stubs, own step.
       - name: Calendar sync (one-way push, snap-back, master switch, no secrets; C2)
         run: python -m unittest erpnext_enhancements.tests.test_calendar_sync -v
+      # Calendar sync C3 (v1.605.0): route stops get real times. Pins that the times are the route
+      # view's own (route_payload's two passes: day start, drive, hours, slot waits) and leave-by is the
+      # arrival less the drive; that a full-day task, a multi-day task, a pencil, a day past the near
+      # window and a failed route stay all-day (and the last ones never price a route), while a past day
+      # and finished work keep the times stored on their link; the "Leave by 7:35 am" line on the first
+      # stop only; the lead rule and "(times differ by person)"; that a publish of many tasks on one day
+      # queues ONE coalesced day job after commit, never N squared, and the day job hash-skips; that
+      # snap-back rewrites a timed event moved in Google; and the opt-in leave-by ping: first stop only,
+      # never a pencil or a day with no hours, once per stop per day through a DB row that survives a
+      # cache flush, no Google request, nothing at all with the switch off. Reuses C2's stubs; own step.
+      - name: Calendar route timing and leave-by pings (C3)
+        run: python -m unittest erpnext_enhancements.tests.test_calendar_route_timing -v
       # Project Planner T2 (v1.603.0), new tasks in Draft mode, Paste a list, Copy from project. Pins that
       # quick add, duplicate and build out with draft=1 make the live call's checks and then keep a
       # `New task` Planner Draft Change instead of a Task (nothing inserted or saved on tabTask: the

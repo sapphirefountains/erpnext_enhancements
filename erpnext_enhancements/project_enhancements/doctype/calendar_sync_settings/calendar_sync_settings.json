@@ -22,6 +22,7 @@
   "column_break_calendars",
   "days_back",
   "days_ahead",
+  "timed_days_ahead",
   "section_colors",
   "colors",
   "section_state",
@@ -131,6 +132,14 @@
    "non_negative": 1
   },
   {
+   "default": "14",
+   "description": "Route stops (a single-day task or visit on someone's route) get real times, with a leave-by line on the first stop of the day, from today for this many days. Later days stay all-day, so Google Routes is never asked about them. 0 makes every event all-day.",
+   "fieldname": "timed_days_ahead",
+   "fieldtype": "Int",
+   "label": "Timed route stops: days ahead (today included)",
+   "non_negative": 1
+  },
+  {
    "collapsible": 1,
    "description": "Defaults: Design 3 Grape, Build 9 Blueberry, Service 10 Basil, Events 6 Tangerine, Delivery 5 Banana, Day Note 8 Graphite, Unavailable 8 Graphite. A row here overrides one default.",
    "fieldname": "section_colors",
@@ -182,7 +191,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 12:00:00.000000",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Calendar Sync Settings",

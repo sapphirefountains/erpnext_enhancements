@@ -1523,6 +1523,17 @@ scheduler_events = {
 		# reads 0 until it is ticked (Nik, 2026-09-27), and with nothing Pending a tick is
 		# one indexed query.
 		"*/5 * * * *": ["erpnext_enhancements.travel_management.change_alerts.send_due_change_alerts"],
+		# Leave-by pings (calendar sync C3, v1.605.0): each person who ticked "Ping me at leave-by
+		# time" on their Planner Resource gets one notice before they must leave for the first stop
+		# of their day (bell, then a text, or an email). At most once per person per stop per day
+		# through a Planner Ping Log row claimed before sending, so a deploy's FLUSHDB cannot
+		# re-send; a tick may run up to 10 minutes late and still send. No Google request (cached
+		# legs and the estimate only). Its own key, every five minutes from :04, because a repeated
+		# key would silently replace the entry it collided with (and the travel line above is
+		# pinned verbatim by tests/test_trip_change_alerts.py). Dormant: Project Planner Settings'
+		# Leave-by pings defaults to off, and with it off a tick is one cached read. See
+		# project_enhancements/leave_by.py.
+		"4-59/5 * * * *": ["erpnext_enhancements.project_enhancements.leave_by.send_leave_by_pings"],
 	},
 	"daily": [
 		# event rentals (v1.564.0): remind whoever placed a hold before it lapses, then release

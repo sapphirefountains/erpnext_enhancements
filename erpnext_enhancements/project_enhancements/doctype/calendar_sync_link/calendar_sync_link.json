@@ -22,6 +22,7 @@
   "section_sync",
   "content_hash",
   "etag",
+  "timing",
   "last_synced",
   "column_break_sync",
   "last_error",
@@ -131,6 +132,13 @@
    "read_only": 1
   },
   {
+   "description": "The route times last written (C3), as JSON: date, start, end and leave-by in minutes after midnight. A past day and finished work keep these instead of being re-timed. Blank for an all-day event. Nothing is stored on the task or visit.",
+   "fieldname": "timing",
+   "fieldtype": "Small Text",
+   "label": "Route times written",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_synced",
    "fieldtype": "Datetime",
    "label": "Last synced",
@@ -154,7 +162,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-12 12:00:00.000000",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Calendar Sync Link",
