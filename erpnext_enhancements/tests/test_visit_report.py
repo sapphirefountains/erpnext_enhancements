@@ -452,7 +452,15 @@ class TestOnlyTheSavedVisit(unittest.TestCase):
 	"""A Jinja global is callable from any template, and v16's print view renders a document a
 	caller posts as JSON: only the name is taken from what it is handed."""
 
-	EMPTY = {"features": {}, "feature_lines": [], "contract_line": "", "charts": [], "fountain_photo": None}
+	EMPTY = {
+		"features": {},
+		"feature_lines": [],
+		"contract_line": "",
+		"charts": [],
+		"fountain_photo": None,
+		# v1.614.0: the day a sign-off link went to a client who has not signed.
+		"sign_off_sent": "",
+	}
 
 	def setUp(self):
 		_reset()

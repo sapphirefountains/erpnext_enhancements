@@ -1630,6 +1630,10 @@ scheduler_events = {
 		# recurring billing (§4.2): draft period invoices for Monthly/Quarterly/
 		# Annually contracts (base + rolled-up consumables), gated in Settings.
 		"erpnext_enhancements.api.maintenance_billing.generate_recurring_invoices",
+		# client sign-off by email (v1.614.0): write Expired on visit sign-off links past their
+		# fourteen days, so the list says what the page already does (the page and the sign
+		# endpoint read expiry from expires_on and never wait for this).
+		"erpnext_enhancements.sapphire_maintenance.sign_off.expire_stale",
 		# declined-card dunning: retry failed Stripe auto-charges on a schedule,
 		# email the customer, and on exhaustion disable autopay + service hold.
 		"erpnext_enhancements.stripe_payments.core.dunning.run_dunning_cycle",

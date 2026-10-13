@@ -603,6 +603,74 @@ class TestTheTechnicianSigns(unittest.TestCase):
 		_visit(client_sign_off="data:legacy", technician_signature="data:legacy", changed=()).validate()
 
 
+class TestVisitsFromBeforeSignatures(unittest.TestCase):
+	"""v1.614.0. Nik: "exemption is fine": a visit done before signatures existed (v1.610.0,
+	2026-10-13) goes for review without one. A blank scheduler draft does not: thirteen of them,
+	0% complete and undated, were sent for review in one bulk Request Review on 2026-10-13, and
+	the move would have dated them today and, on approval, rolled their contracts forward."""
+
+	def setUp(self):
+		_reset(today=D(2026, 10, 14), now=DT(2026, 10, 14, 9, 0))
+
+	def test_the_cutoff_is_named_and_is_the_day_signatures_came_in(self):
+		self.assertEqual(record_module.TECHNICIAN_SIGNATURE_FROM, D(2026, 10, 13))
+
+	def test_a_visit_done_the_day_before_goes_unsigned(self):
+		doc = _send_for_review(_visit(technician_signature=None, visit_date="2026-10-12"))
+		self.assertEqual(doc.visit_date, "2026-10-12", "a date the technician chose is kept")
+
+	def test_a_blank_draft_is_still_refused(self):
+		with self.assertRaises(_Thrown) as caught:
+			_send_for_review(_visit(technician_signature=None, visit_date=None))
+		self.assertEqual(str(caught.exception), "The technician must sign the visit before it goes for review.")
+
+	def test_the_cutoff_day_and_after_are_refused(self):
+		for day in ("2026-10-13", "2026-10-14", D(2026, 10, 13)):
+			with self.subTest(day=day), self.assertRaises(_Thrown):
+				_send_for_review(_visit(technician_signature=None, visit_date=day))
+
+
+class TestTheClientSignsOnSite(unittest.TestCase):
+	"""v1.614.0: a client signature drawn on site is stamped "On site" and the time, so the report
+	can tell it from one signed from an emailed link (which never passes through validate)."""
+
+	def setUp(self):
+		_reset()
+
+	def test_a_new_one_is_stamped_on_site_and_when(self):
+		doc = _visit(client_sign_off=SIGNED, changed=("client_sign_off",))
+		doc.validate()
+		self.assertEqual(
+			(doc.client_sign_off_method, doc.client_signed_on, doc.client_signed_by), ("On site", NOW, None)
+		)
+
+	def test_one_left_as_it_was_keeps_its_stamp(self):
+		"""An emailed sign-off, then a reviewer's save: still "By email", by whom it was."""
+		doc = _visit(
+			state="Pending Review",
+			changed=(),
+			client_sign_off=SIGNED,
+			client_sign_off_method="By email",
+			client_signed_by="Jane Owner",
+			client_signed_on=DT(2026, 10, 12, 18, 0),
+		)
+		doc.validate()
+		self.assertEqual(
+			(doc.client_sign_off_method, doc.client_signed_by, doc.client_signed_on),
+			("By email", "Jane Owner", DT(2026, 10, 12, 18, 0)),
+		)
+
+	def test_clearing_it_clears_the_stamp(self):
+		doc = _visit(
+			client_sign_off="",
+			changed=("client_sign_off",),
+			client_sign_off_method="On site",
+			client_signed_on=NOW,
+		)
+		doc.validate()
+		self.assertEqual((doc.client_sign_off_method, doc.client_signed_on, doc.client_signed_by), (None, None, None))
+
+
 class TestTheFountainPhoto(unittest.TestCase):
 	"""frappe's on_update hook attaches any unattached File an Attach field names, with no
 	permission check, and the customer's report inlines what is attached to the visit."""

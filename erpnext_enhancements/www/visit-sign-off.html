@@ -1,0 +1,186 @@
+{% extends "templates/web.html" %}
+{#
+  Public visit sign-off page (v1.614.0). Controller: www/visit_sign_off.py — note the
+  UNDERSCORE. Frappe maps this template's basename to a module name by replacing hyphens with
+  underscores, so a controller named visit-sign-off.py would never load and get_context would
+  silently never run.
+
+  referrer=no-referrer: the URL carries the link's token, which must not travel in a Referer
+  header anywhere. noindex: a client's service report is nobody else's business.
+
+  frappe's Jinja environment does not autoescape, so every value below is |e. The one exception
+  is report.photo, a data URI the controller built from a File attached to this visit
+  (visit_report.image_data_uri), escaped too since an attribute is still an attribute.
+#}
+
+{% block title %}{{ _("Sign off your service visit") }}{% endblock %}
+
+{% block head_include %}
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/visit_sign_off/visit_sign_off.css?v={{ deploy_version }}">
+{% endblock %}
+
+{% block page_content %}
+<div class="vs-page">
+
+	{% if state == "signable" %}
+	<header class="vs-header">
+		<p class="vs-eyebrow">{{ _("Service visit report") }}</p>
+		<h1>{{ report.site | e }}</h1>
+		<p class="vs-hint">{{ _("Please look over what was done, then sign at the bottom of the page.") }}</p>
+	</header>
+
+	<section class="vs-card" aria-label="{{ _('Visit') }}">
+		<dl class="vs-facts">
+			<div><dt>{{ _("Date") }}</dt><dd>{{ report.date | e }}</dd></div>
+			<div><dt>{{ _("Technician") }}</dt><dd>{{ report.technician | e }}</dd></div>
+			{% if report.account and report.account != report.site %}<div><dt>{{ _("Account") }}</dt><dd>{{ report.account | e }}</dd></div>{% endif %}
+			{% if report.features %}<div><dt>{{ _("Water feature") }}</dt><dd>{{ report.features | map("e") | join(", ") }}</dd></div>{% endif %}
+			<div><dt>{{ _("Report") }}</dt><dd>{{ report.number | e }}</dd></div>
+		</dl>
+	</section>
+
+	{% if report.readings %}
+	<section class="vs-card">
+		<h2>{{ _("Water chemistry") }}</h2>
+		{% if report.out_of_range %}<p class="vs-flag">{{ _("Some readings were outside their target range. The notes say what was done.") }}</p>{% endif %}
+		<table class="vs-table">
+			<thead><tr>{% if report.per_site %}<th>{{ _("Feature") }}</th>{% endif %}<th>{{ _("Reading") }}</th><th>{{ _("Value") }}</th><th>{{ _("Target") }}</th></tr></thead>
+			<tbody>
+			{% for row in report.readings %}
+				<tr{% if row.out_of_range %} class="vs-out"{% endif %}>
+					{% if report.per_site %}<td>{{ row.feature | e }}</td>{% endif %}
+					<td>{{ row.reading | e }}{% if row.notes %}<div class="vs-note">{{ row.notes | e }}</div>{% endif %}</td>
+					<td>{{ row.value | e }} {{ row.uom | e }}{% if row.out_of_range %} <span class="vs-badge">{{ _("Out of range") }}</span>{% endif %}</td>
+					<td>{{ row.range | e }}</td>
+				</tr>
+			{% endfor %}
+			</tbody>
+		</table>
+	</section>
+	{% endif %}
+
+	{% if report.tasks %}
+	<section class="vs-card">
+		<h2>{{ _("Work done") }}</h2>
+		<ul class="vs-list">
+		{% for row in report.tasks %}
+			<li><span class="vs-status vs-status-{{ row.tone }}">{{ row.status | e }}</span>
+				{% if row.feature %}<span class="vs-feature">{{ row.feature | e }}:</span>{% endif %} {{ row.task | e }}
+				{% if row.notes %}<div class="vs-note">{{ row.notes | e }}</div>{% endif %}</li>
+		{% endfor %}
+		</ul>
+	</section>
+	{% endif %}
+
+	{% if report.checks %}
+	<section class="vs-card">
+		<h2>{{ _("Checked") }}</h2>
+		<ul class="vs-list">
+		{% for row in report.checks %}
+			<li><span class="vs-status">{{ row.status | e }}</span>
+				{% if row.feature %}<span class="vs-feature">{{ row.feature | e }}:</span>{% endif %} {{ row.item | e }}
+				{% if row.notes %}<div class="vs-note">{{ row.notes | e }}</div>{% endif %}</li>
+		{% endfor %}
+		</ul>
+	</section>
+	{% endif %}
+
+	{% if report.chemicals %}
+	<section class="vs-card">
+		<h2>{{ _("Chemicals used") }}</h2>
+		<ul class="vs-list">
+		{% for row in report.chemicals %}<li>{{ row.item | e }} — {{ row.qty | e }} {{ row.uom | e }}</li>{% endfor %}
+		</ul>
+	</section>
+	{% endif %}
+
+	{% if report.notes %}
+	<section class="vs-card">
+		<h2>{{ _("Technician's notes") }}</h2>
+		<p class="vs-pre">{{ report.notes | e }}</p>
+	</section>
+	{% endif %}
+
+	{% if report.follow_ups %}
+	<section class="vs-card">
+		<h2>{{ _("Follow-ups and parts needed") }}</h2>
+		<ul class="vs-list">
+		{% for row in report.follow_ups %}<li><span class="vs-pre">{{ row.description | e }}</span>{% if row.told %}<div class="vs-note">{{ _("Told on site:") }} {{ row.told | e }}</div>{% endif %}</li>{% endfor %}
+		</ul>
+	</section>
+	{% endif %}
+
+	{% if report.photo %}
+	<section class="vs-card">
+		<h2>{{ _("The fountain as we left it") }}</h2>
+		<img class="vs-photo" src="{{ report.photo | e }}" alt="{{ _('The fountain as we left it') }}">
+	</section>
+	{% endif %}
+
+	<form class="vs-card vs-form" id="vs-form" novalidate>
+		<h2>{{ _("Sign off") }}</h2>
+		<label class="vs-label" for="vs-name">{{ _("Your full name") }}</label>
+		<input class="vs-input" id="vs-name" type="text" maxlength="140" autocomplete="name">
+
+		<label class="vs-label" for="vs-pad">{{ _("Your signature") }}</label>
+		<div class="vs-pad-wrap">
+			<canvas class="vs-pad" id="vs-pad" aria-label="{{ _('Signature pad') }}"></canvas>
+			<button type="button" class="vs-clear" id="vs-clear">{{ _("Clear") }}</button>
+		</div>
+
+		<label class="vs-check">
+			<input type="checkbox" id="vs-confirm">
+			<span>{{ _("I confirm the service described above was performed.") }}</span>
+		</label>
+
+		<p class="vs-error" id="vs-error" role="alert" hidden></p>
+		<button type="submit" class="vs-submit" id="vs-submit">{{ _("Sign") }}</button>
+		<p class="vs-hint">{{ _("This link works once and expires") }} {{ expires_on | e }}. {{ _("Something not right? Reply to the email, or call us on") }} {{ contact_phone | e }}.</p>
+	</form>
+
+	<div id="vs-done" class="vs-done" hidden role="status">
+		<h2>{{ _("Signed — thank you.") }}</h2>
+		<p>{{ _("Your sign-off is on the visit's report. There's nothing more to do.") }}</p>
+	</div>
+
+	{% elif state == "signed" %}
+	<div class="vs-notice">
+		<h1>{{ _("Already signed off") }}</h1>
+		<p>{{ _("This visit has been signed off. Thank you — there's nothing more to do.") }}</p>
+	</div>
+
+	{% elif state == "replaced" %}
+	<div class="vs-notice">
+		<h1>{{ _("This link has been replaced") }}</h1>
+		<p>{{ _("We sent a newer sign-off link for this visit. Please use the most recent email from us.") }}</p>
+		<p class="vs-hint">{{ _("Can't find it? Call us on") }} {{ contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "expired" %}
+	<div class="vs-notice">
+		<h1>{{ _("This link has expired") }}</h1>
+		<p>{{ _("Sign-off links work for two weeks. Reply to the email or call us on") }} {{ contact_phone | e }} {{ _("and we'll send a new one.") }}</p>
+	</div>
+
+	{% else %}
+	{# Unknown, malformed, or a canceled visit: rendered identically, so the page never
+	   confirms whether a token exists. #}
+	<div class="vs-notice">
+		<h1>{{ _("This link isn't available") }}</h1>
+		<p>{{ _("It may have expired, been replaced, or already been used.") }}</p>
+		<p class="vs-hint">{{ _("Please call us on") }} {{ contact_phone | e }} {{ _("and we'll sort it out.") }}</p>
+	</div>
+	{% endif %}
+
+	<noscript>
+		<p class="vs-notice">{{ _("Signing needs JavaScript. Please call us on") }} {{ contact_phone | e }}.</p>
+	</noscript>
+</div>
+
+<script>
+	window.VS_BOOT = {{ boot | tojson }};
+</script>
+<script src="/assets/erpnext_enhancements/js/visit_sign_off/visit_sign_off.js?v={{ deploy_version }}"></script>
+{% endblock %}

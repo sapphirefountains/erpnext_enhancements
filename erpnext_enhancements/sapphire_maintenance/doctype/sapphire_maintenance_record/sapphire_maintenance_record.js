@@ -218,6 +218,68 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		}
 
 		ee_setup_dictation(frm);
+
+		// The client's sign-off by email (v1.614.0): its status, and the button to send or
+		// re-send the link. Draft, waiting or approved alike: the client can sign after approval.
+		if (!frm.is_new() && frm.doc.docstatus !== 2) {
+			frm.trigger("render_sign_off");
+		}
+	},
+
+	render_sign_off: function (frm) {
+		const name = frm.doc.name;
+		frappe.call({
+			method: "erpnext_enhancements.sapphire_maintenance.sign_off.get_sign_off_status",
+			args: { record: name },
+			callback: (r) => {
+				if (frm.doc.name !== name) return;
+				const status = r.message || {};
+				const request = status.request;
+				if (frm.doc.client_sign_off || request) {
+					const live = request && ["Sent", "Viewed"].includes(request.status);
+					const color = frm.doc.client_sign_off ? "green" : live ? "blue" : "gray";
+					// Escaped: the summary carries the name the client typed on a public page.
+					frm.dashboard.add_indicator(
+						__("Client sign-off: {0}", [frappe.utils.escape_html(status.summary || "")]),
+						color
+					);
+				}
+				if (!status.can_send) return;
+				const live = request && ["Sent", "Viewed"].includes(request.status);
+				frm.add_custom_button(live ? __("Re-send Sign-off Link") : __("Email Client to Sign Off"), () => {
+					frappe.prompt(
+						[
+							{
+								fieldname: "email",
+								fieldtype: "Data",
+								options: "Email",
+								label: __("Client's email"),
+								reqd: 1,
+								default: (request && request.email) || status.default_email || "",
+								description: live
+									? __("A new link replaces the one already sent. The visit's review does not wait for it.")
+									: __("The client gets a link to read the service report and sign it off. The visit's review does not wait for it."),
+							},
+						],
+						(values) => {
+							frappe.call({
+								method: "erpnext_enhancements.sapphire_maintenance.sign_off.send_sign_off_request",
+								args: { record: name, email: values.email },
+								freeze: true,
+								freeze_message: __("Sending…"),
+								callback: (sent) => {
+									const to = (sent.message || {}).email || values.email;
+									frappe.show_alert({ message: __("Sign-off link emailed to {0}", [frappe.utils.escape_html(to)]), indicator: "green" });
+									frm.reload_doc();
+								},
+							});
+						},
+						__("Email the client to sign off"),
+						__("Send")
+					);
+				});
+			},
+		});
 	},
 
 	safety_acknowledged: function (frm) {

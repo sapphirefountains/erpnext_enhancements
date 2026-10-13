@@ -1,0 +1,22 @@
+{# A client's sign-off link for a maintenance visit (v1.614.0). Customer-facing.
+
+   A FRAGMENT: the letterhead, heading and footer come from email_style.render() in
+   sapphire_maintenance/sign_off.py (_email_request), on the Service pillar. No container
+   here: the shell owns the measure.
+
+   The ee.* text macros escape their argument. ee.button does not escape its URL, which is
+   server-built from get_url() and carries the link's token; it must not be entity-escaped or
+   the link breaks. #}
+{% import "erpnext_enhancements/templates/emails/_components.html" as ee %}
+
+{{ ee.p("Hello,") }}
+
+{{ ee.p((technician or "Your technician") ~ " has finished the service visit at " ~ site ~ " on " ~ visit_date ~ ". Please look over the service report and sign it off.") }}
+
+{{ ee.button(sign_off_url, "Review and sign off") }}
+
+{{ ee.note("It takes a minute: read the report, type your name and sign. The link works once and expires " ~ expires_on ~ ". If something in the report doesn't look right, just reply to this email.") }}
+
+{{ ee.button_fallback(sign_off_url) }}
+
+{{ ee.p("Thank you, " ~ company) }}

@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.614.0] - 2026-10-13
+
+### Added
+
+- **A client who wasn't on site can sign the visit off from an email.** Nik, 2026-10-13: "will
+  this signature requirement allow the tech to send it via email to the client to sign off? the
+  clients aren't always available to sign in person". It did not: the only client sign-off was
+  the pad on the Visit Wizard's Wrap-up, so a visit done while nobody was there printed "Not
+  signed on site" for good. Now:
+  - **At Finish.** Under the client's pad, *Client not here? Email them a link to sign off*
+    takes an address, prefilled from the last address this client was sent a link at, else the
+    maintenance agreement's contact (Project Contract `contact_email`), else the account's email
+    or primary contact. Finish sends it with the visit (`finish_visit`'s new `email_sign_off`),
+    and the server emails the link **after** the visit has moved on, in the same transaction and
+    inside a savepoint (`sign_off.send_after_finish`). So a bad address or a failed send comes
+    back as a message beside a visit that went for review anyway, and a Finish kept on the phone
+    without signal carries the address in its outbox item and sends it once, when the Finish
+    goes. The wizard checks the address is one before it finishes, with signal or without. A
+    signature drawn on the pad wins: nothing is emailed, and a link already out is retired.
+  - **From the visit form**, on a draft, waiting or approved visit: *Client sign-off: …* on the
+    dashboard (signed on site, signed by email by whom, emailed and not yet signed, opened, or
+    expired) and **Email Client to Sign Off** / **Re-send Sign-off Link**. Sending needs the
+    visit's technician or crew, Maintenance Reviewer, Maintenance Supervisor, Projects Manager or
+    System Manager with read on it, or write permission on it (`sign_off.can_send`); never a
+    canceled visit or one the client has signed.
+  - **The page**, `/visit-sign-off` (`www/visit-sign-off.html`, controller
+    `www/visit_sign_off.py`: underscores, or frappe never imports it): the service report (date,
+    site, technician, water chemistry with out-of-range readings flagged, work done, checks,
+    chemicals used, notes, follow-ups, the "fountain as we left it" photo), a typed name, a
+    signature pad (the contract page's: scaled for the screen, never erased by a resize, trimmed
+    to the ink), "I confirm the service described above was performed", and Sign. One screen and
+    no history entry: Sign swaps in a thank-you in place, so Back and Forward do what they did.
+    `noindex`, `referrer no-referrer`, never cached; the session's existing CSRF token is handed
+    to the script and never minted (a Guest has none). Expired, replaced and already-signed links
+    say so; unknown and malformed ones look identical.
+  - **Signing lands on the visit even after approval.** `client_sign_off` and three new fields,
+    `client_signed_by` (the typed name), `client_signed_on` and `client_sign_off_method` ("On
+    site" / "By email"), are `allow_on_submit` and are written with `db_set`: a client's signature
+    must not re-run validation or the submit pipeline (contract roll-forward, Stock Entry,
+    Timesheet, invoice), and `db_set` moves `modified`, so a form left open since cannot save a
+    blank over it. A pad signature is stamped "On site" and the time in `validate`. **The client's
+    sign-off never blocks review, approval or billing.**
+  - **The record of each link is a new doctype, Visit Sign-Off Request** (module Sapphire
+    Maintenance, made by code only, every field read-only evidence): visit, address, status
+    (Sent / Viewed / Signed / Expired / Superseded), sent / expires / first viewed / signed times,
+    view count, signed name, signature, signer IP and browser, sent by, and `token_hash`. The
+    threat model is the contract e-signature's, scaled to a sign-off that executes nothing and
+    moves no money (so no Turnstile and no re-typed address): the token is 256 bits and **only
+    its SHA-256 is stored**; a resend mints a new token on a new row and supersedes the live one;
+    links expire after 14 days (a daily `sign_off.expire_stale` writes the status the page already
+    reads from `expires_on`) and sign once; the guest endpoint `sign_visit` is POST-only, rate
+    limited, takes only the token (the parameter is `ref`, never `sid`, which frappe's session
+    pops), locks the request and the visit before writing, answers every dead link with the same
+    sentence, and assigns every field by name (never `doc.update(payload)`). Signing twice answers
+    "already", not an error.
+  - **The email** ("Please sign off today's service visit — <site>", or "your service visit on
+    <date>" for an earlier one) is built in the shell on the Service pillar, with one button,
+    `reference_doctype` the visit and replies to the Company's email.
+  - **The report and the digest say how the client signed**: "Signed on site <time>", "Signed by
+    email by <name> on <time>", or "Sent for sign-off <date>, not yet signed"
+    (`maintenance_report`'s new `sign_off_sent`). A signature from before this release has no time
+    recorded and keeps "Digitally captured on site" on the report and "Signed" in the digest.
+  - Known and accepted, as with the contract signing invite: the email body (and so the link) sits
+    in Email Queue until frappe clears it. The Visit Sign-Off Request never holds the token.
+
+### Changed
+
+- **A visit done before technician signatures existed goes for review without one.** v1.610.0
+  made the move into Pending Review need the technician's signature, which also caught visits
+  done before anyone could sign them. Nik: "exemption is fine". It is scoped to a **visit_date
+  before 2026-10-13** (`TECHNICIAN_SIGNATURE_FROM`), the day signatures came in, and not to the
+  absence of one: a visit with **no** `visit_date` is a blank scheduler draft, and the move would
+  date it today and, on approval, roll its contract forward and make Stock Entries, a Timesheet
+  and a draft invoice for a visit that never happened. That is not hypothetical: a bulk Request
+  Review on 2026-10-13 sent thirteen blank drafts (0% complete, undated), and the gate correctly
+  refused every one. Dated 2026-10-13 or later still needs the signature.
+
 ## [1.612.0] - 2026-10-13
 
 ### Added

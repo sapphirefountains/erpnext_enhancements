@@ -45,6 +45,7 @@ Whitelisted helpers used by the desk form's JS: ``get_visit_payload``
 ``get_dashboard_context`` (technician on-site briefing).
 """
 
+import datetime
 import re
 
 import frappe
@@ -75,6 +76,20 @@ REVIEW_STATE = "Pending Review"
 #: the other raster types a browser can export rather than refusing a signature already drawn.
 TECHNICIAN_SIGNATURE = re.compile(r"data:image/png;base64,[A-Za-z0-9+/]+={0,2}")
 CLIENT_SIGNATURE = re.compile(r"data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}")
+
+#: The first visit day the technician's signature is required for (v1.614.0). Signatures came
+#: in with v1.610.0 on 2026-10-13, and a visit done before that day was done before anyone could
+#: sign it: those still waiting to go for review (Nik: "exemption is fine") go without one. A
+#: visit with **no** ``visit_date`` is not exempt. It is a blank scheduler draft, which the move
+#: into review would date today (``_finish_on_review``), and on approval would roll its contract
+#: forward and make Stock Entries, a Timesheet and a draft invoice for a visit that never
+#: happened: thirteen of them, 0% complete, were sent for review in one bulk Request Review on
+#: 2026-10-13 and correctly refused.
+TECHNICIAN_SIGNATURE_FROM = datetime.date(2026, 10, 13)
+
+#: ``client_sign_off_method``: drawn on the wizard's pad or the form, or signed from an emailed
+#: link (``sapphire_maintenance/sign_off.py``, which writes "By email" with ``db_set``).
+CLIENT_SIGNED_ON_SITE = "On site"
 
 
 class SapphireMaintenanceRecord(Document):
@@ -163,6 +178,7 @@ class SapphireMaintenanceRecord(Document):
 				_("The client's sign-off must be a signature drawn on the visit."),
 				title=_("Signature not accepted"),
 			)
+		self._stamp_client_sign_off(client)
 		signature = self.get("technician_signature") or ""
 		if not signature:
 			self.technician_signed_by = None
@@ -181,6 +197,28 @@ class SapphireMaintenanceRecord(Document):
 			)
 		self.technician_signed_by = frappe.session.user
 		self.technician_signed_on = now_datetime()
+
+	def _stamp_client_sign_off(self, client):
+		"""A client signature drawn on site (the wizard's pad, or the form) is stamped "On site"
+		and the time (v1.614.0). One signed from an emailed link never passes through here: the
+		public page writes it with ``db_set`` (``sign_off.record_signature``), with the name the
+		client typed. A signature left as it was keeps its stamp; a cleared one clears it."""
+		if not self.has_value_changed("client_sign_off"):
+			return
+		if not client:
+			self.client_signed_by = None
+			self.client_signed_on = None
+			self.client_sign_off_method = None
+			return
+		self.client_signed_by = None
+		self.client_signed_on = now_datetime()
+		self.client_sign_off_method = CLIENT_SIGNED_ON_SITE
+
+	def _signature_exempt(self):
+		"""Done before signatures existed (:data:`TECHNICIAN_SIGNATURE_FROM`). Never a visit with
+		no date: that is a blank draft, and the date going for review would give it is today."""
+		visit_date = self.get("visit_date")
+		return bool(visit_date) and getdate(visit_date) < TECHNICIAN_SIGNATURE_FROM
 
 	def _settle_task_states(self):
 		"""A cleaning task is done, N/A, or neither, never both: done wins.
@@ -256,13 +294,14 @@ class SapphireMaintenanceRecord(Document):
 		one save every way of finishing passes through, the wizard's Finish and the form's
 		Request Review alike, so the check lives here and not in either. Only the move into
 		review asks for it. A visit already waiting, a reviewer's Approve & Submit and a site
-		with no workflow are not stopped.
+		with no workflow are not stopped. Since v1.614.0 a visit dated before signatures existed
+		is not stopped either (:meth:`_signature_exempt`); an undated one still is.
 		"""
 		if self.docstatus != 0 or (self.get("workflow_state") or "") != REVIEW_STATE:
 			return
 		if not self.has_value_changed("workflow_state"):
 			return
-		if not self.get("technician_signature"):
+		if not self.get("technician_signature") and not self._signature_exempt():
 			frappe.throw(
 				_("The technician must sign the visit before it goes for review."),
 				title=_("Technician signature needed"),

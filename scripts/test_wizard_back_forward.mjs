@@ -1177,6 +1177,54 @@ async function visitWizardSuite() {
 		assert.equal(server.sent("finish_visit")[0].args.technician_signature, null, "the one on the visit stands");
 	});
 
+	// v1.614.0, Nik: "the clients aren't always available to sign in person".
+	await test("the client not on site: Finish sends the address to email them a link, checked first", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		w._email_sign_off = { on: true, email: "nobody" };
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit").length, 0, "not an address: said before anything is sent");
+		assert.ok(ui.alerts.some((a) => /client's email address/.test(a)), ui.alerts.join(" | "));
+		w._email_sign_off.email = "owner@example.com";
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit")[0].args.email_sign_off, "owner@example.com");
+	});
+
+	await test("a client signature drawn on the pad wins: no link is emailed", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		w._email_sign_off = { on: true, email: "owner@example.com" };
+		w._pads.client_sign_off = { drawn: true, data: "data:image/png;base64,CLIENT", canvas: null };
+		w.finish();
+		await settle();
+		const args = server.sent("finish_visit")[0].args;
+		assert.equal(args.signature, "data:image/png;base64,CLIENT");
+		assert.equal(args.email_sign_off, null);
+	});
+
+	await test("not ticked, nothing is emailed", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		w._email_sign_off = { on: false, email: "owner@example.com" };
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit")[0].args.email_sign_off, null);
+	});
+
 	await test("a reviewer's Approve & Submit is never held for, and never sends, a technician's signature", async () => {
 		visitServer({ "MNT-1": visit({ workflow_state: "Pending Review", technician_signature: null }) });
 		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
@@ -1565,6 +1613,30 @@ async function visitWizardKeptSuite() {
 		await tick(600000);
 		assert.equal(p.net.uploads.length, 1);
 		assert.equal(server.sent("finish_visit").length - finishes, 1);
+	});
+
+	await test("a Finish kept with no signal keeps the client's sign-off address and sends it once", async () => {
+		const p = phone();
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		p.net.down = true;
+		server.fail.add("finish_visit");
+		w._email_sign_off = { on: true, email: "owner@example.com" };
+		w.finish();
+		await settle();
+		const kept = p.outbox().find((item) => item.kind === "finish");
+		assert.equal(kept && kept.email_sign_off, "owner@example.com", "kept with the Finish");
+		p.net.down = false;
+		server.fail.clear();
+		const finishes = server.sent("finish_visit").length;
+		browser.window.dispatch("online");
+		await settle();
+		const sent = server.sent("finish_visit").slice(finishes);
+		assert.equal(sent.length, 1, "the Finish sent once");
+		assert.equal(sent[0].args.email_sign_off, "owner@example.com");
 	});
 
 	await test("a Finish whose answer was lost is not sent twice", async () => {

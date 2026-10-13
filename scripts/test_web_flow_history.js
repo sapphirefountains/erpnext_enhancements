@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Browser Back / Forward on three customer and traveller web pages: `/pay-card`, `/itinerary`
- * and `/contract-sign`.
+ * Browser Back / Forward on four customer and traveller web pages: `/pay-card`, `/itinerary`,
+ * `/contract-sign` and `/visit-sign-off` (v1.614.0).
  *
  * Loads the REAL page scripts (the inline script of `www/pay-card.html`, rendered with stand-in
  * values; `public/js/travel/itinerary.js`; `public/js/contract_sign/contract_sign.js`) into a vm
@@ -162,8 +162,14 @@
  *     only while the server says it is unfinished and only with the link this tab was given
  *     (kept in sessionStorage under a fingerprint of the ref, never the ref);
  *   - a back-forward-cache restore re-enables "Save a card".
+ *   /visit-sign-off
+ *   - no history entry is ever added: signing swaps the form for a thank-you in place, and Back
+ *     from it leaves the page as it would have before Sign;
+ *   - Sign posts the ref, the typed name, the drawn PNG and the confirmation, and no `sid`;
+ *   - a refusal is said under the form and Sign works again; nothing is sent without a drawing
+ *     or the box ticked.
  *
- * Run: node scripts/test_web_flow_history.js [pay-card|itinerary|contract-sign]
+ * Run: node scripts/test_web_flow_history.js [pay-card|itinerary|contract-sign|visit-sign-off]
  */
 
 "use strict";
@@ -4195,9 +4201,182 @@ async function testContractSign() {
 	check("...with no reload and no history entry", [p.browser.reloads, p.browser.calls.length], [0, 0]);
 }
 
+// ---------------------------------------------------------------------------- /visit-sign-off
+
+// A canvas with just what visit_sign_off.js draws and reads: a size, a 2D context that remembers
+// whether anything was stroked, and an ink-bearing pixel at (5, 5) once it has been.
+function fakeCanvas(env, rect) {
+	const el = new El("canvas", env);
+	let inked = false;
+	el.getBoundingClientRect = () => Object.assign({ left: 0, top: 0 }, rect || { width: 300, height: 150 });
+	el.setPointerCapture = () => {};
+	el.getContext = () => ({
+		scale() {},
+		beginPath() {},
+		moveTo() {},
+		lineTo() {},
+		stroke() {
+			inked = true;
+		},
+		clearRect() {
+			inked = false;
+		},
+		drawImage() {},
+		getImageData(x, y, w, h) {
+			const data = new Uint8ClampedArray(w * h * 4);
+			if (inked) data[(5 * w + 5) * 4 + 3] = 255;
+			return { data };
+		},
+	});
+	el.toDataURL = () => "data:image/png;base64,SIGNED";
+	return el;
+}
+
+function loadVisitSignOff(state) {
+	const env = {};
+	const browser = makeBrowser("/visit-sign-off?ref=" + REF, { prevPath: "/mail" });
+	env.browser = browser;
+	const ids =
+		state === "signable"
+			? {
+					"vs-form": {},
+					"vs-name": { tag: "input", value: "Jane Owner" },
+					"vs-clear": { tag: "button" },
+					"vs-confirm": { tag: "input", checked: true },
+					"vs-error": { hidden: true },
+					"vs-submit": { tag: "button" },
+					"vs-done": { hidden: true },
+				}
+			: {};
+	const document = makeDocument(env, ids);
+	if (state === "signable") {
+		const pad = fakeCanvas(env);
+		pad.id = "vs-pad";
+		document.byId["vs-pad"] = pad;
+	}
+	const createElement = document.createElement;
+	document.createElement = (tag) => (tag === "canvas" ? fakeCanvas(env) : createElement(tag));
+	const posts = [];
+	const win = browser.window;
+	Object.assign(win, {
+		window: win,
+		document,
+		history: browser.history,
+		VS_BOOT: { state, ref: REF, csrf_token: "" },
+		fetch(u, o) {
+			return new Promise((resolve, reject) => {
+				posts.push({ method: u.split(".").pop(), body: JSON.parse(o.body), headers: o.headers, resolve, reject });
+			});
+		},
+		devicePixelRatio: 2,
+		console,
+		setTimeout,
+		clearTimeout,
+		Math,
+		JSON,
+		Date,
+		Uint8ClampedArray,
+	});
+	const source = fs.readFileSync(path.join(APP, "public", "js", "visit_sign_off", "visit_sign_off.js"), "utf8");
+	runInPage(source, win, "visit_sign_off.js");
+	document.dispatch("DOMContentLoaded");
+	const $ = (id) => document.byId[id];
+	return {
+		browser,
+		$,
+		posts,
+		draw() {
+			const pad = $("vs-pad");
+			pad.dispatch("pointerdown", { clientX: 10, clientY: 10, pointerId: 1 });
+			pad.dispatch("pointermove", { clientX: 40, clientY: 30, pointerId: 1 });
+			pad.dispatch("pointerup", { pointerId: 1 });
+		},
+		async answer(method, message) {
+			await flush();
+			const i = posts.findIndex((p) => p.method === method);
+			if (i === -1) {
+				check(`a ${method} call is waiting to be answered`, posts.map((p) => p.method), [method]);
+				return null;
+			}
+			const post = posts.splice(i, 1)[0];
+			post.resolve({ json: async () => ({ message }) });
+			await flush();
+			return post;
+		},
+	};
+}
+
+async function testVisitSignOff() {
+	console.log("/visit-sign-off");
+	const source = fs.readFileSync(path.join(APP, "public", "js", "visit_sign_off", "visit_sign_off.js"), "utf8");
+	const code = stripComments(source);
+	check("no history call, popstate or beforeunload anywhere", /pushState|replaceState|popstate|beforeunload/.test(code), false);
+	check("no reload", /location\.reload/.test(code), false);
+
+	// Sign: one POST carrying the ref and nothing that names a record; the form swaps in place.
+	let p = loadVisitSignOff("signable");
+	p.draw();
+	p.$("vs-form").dispatch("submit");
+	await flush();
+	const post = p.posts[0];
+	check("Sign posts sign_visit", post && post.method, "sign_visit");
+	check(
+		"...with the ref, the typed name, the drawn PNG and the confirmation",
+		post && [post.body.ref, post.body.signed_name, post.body.signature_image, post.body.confirmed],
+		[REF, "Jane Owner", "data:image/png;base64,SIGNED", 1]
+	);
+	check("...and no parameter named sid", post && Object.keys(post.body).includes("sid"), false);
+	check("no CSRF header when the server handed no token (a Guest)", post && "X-Frappe-CSRF-Token" in post.headers, false);
+	await p.answer("sign_visit", { ok: true });
+	check("signing swaps in place", [p.$("vs-form").hidden, p.$("vs-done").hidden], [true, false]);
+	check("...adding no history entry", p.browser.calls, []);
+
+	// Back from the thank-you leaves the page, as it did before Sign.
+	p.browser.back();
+	await p.browser.settle();
+	check("Back from the thank-you leaves the page", p.browser.left, ORIGIN + "/mail");
+
+	// A refusal says why, in place, and Sign works again.
+	p = loadVisitSignOff("signable");
+	p.draw();
+	p.$("vs-form").dispatch("submit");
+	await p.answer("sign_visit", { ok: false, error: "This sign-off link isn't available any more." });
+	check("a refusal is said under the form", [p.$("vs-error").hidden, p.$("vs-error").textContent], [false, "This sign-off link isn't available any more."]);
+	check("...and the form stays, with Sign enabled", [p.$("vs-form").hidden, p.$("vs-submit").disabled], [false, false]);
+
+	// Nothing is sent without a signature or the box.
+	p = loadVisitSignOff("signable");
+	p.$("vs-form").dispatch("submit");
+	await flush();
+	check("no drawing: nothing sent, and it says so", [p.posts.length, p.$("vs-error").textContent], [0, "Please sign in the box."]);
+	p.draw();
+	p.$("vs-confirm").checked = false;
+	p.$("vs-form").dispatch("submit");
+	await flush();
+	check("no tick: nothing sent", p.posts.length, 0);
+
+	// Clear empties the pad.
+	p = loadVisitSignOff("signable");
+	p.draw();
+	p.$("vs-clear").click();
+	p.$("vs-form").dispatch("submit");
+	await flush();
+	check("Clear means there is no signature to send", p.posts.length, 0);
+
+	// A notice page (expired, replaced, signed) wires nothing.
+	p = loadVisitSignOff("expired");
+	await flush();
+	check("a notice page posts nothing and adds no history", [p.posts.length, p.browser.calls.length], [0, 0]);
+}
+
 // ---------------------------------------------------------------------------- main
 
-const SUITES = { "pay-card": testPayCard, itinerary: testItinerary, "contract-sign": testContractSign };
+const SUITES = {
+	"pay-card": testPayCard,
+	itinerary: testItinerary,
+	"contract-sign": testContractSign,
+	"visit-sign-off": testVisitSignOff,
+};
 
 // A page promise that rejects with nothing to catch it is a flow left hanging — on /pay-card, Pay
 // on "Please wait…" for good. Counted as a failure, rather than crashing the run or passing unseen.

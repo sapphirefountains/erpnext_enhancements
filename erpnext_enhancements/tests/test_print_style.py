@@ -988,6 +988,27 @@ class TestMaintenanceRecordPrintFixture(unittest.TestCase):
         self.assertIn("Not signed on site", out)
         self.assertNotIn("<img", out)
 
+    def test_the_client_sign_off_says_how_it_was_signed(self):
+        """v1.614.0, Nik: "the clients aren't always available to sign in person". On site with
+        the time; by email with the name the client typed (escaped: a public page took it); and a
+        link sent but not signed yet."""
+        out = self.render(
+            _record(client_sign_off_method="On site", client_signed_on="2026-10-13 15:42:00")
+        )
+        self.assertIn("Signed on site [2026-10-13 15:42:00]", out)
+        out = self.render(
+            _record(
+                client_sign_off_method="By email",
+                client_signed_by="Jane <b>Owner</b>",
+                client_signed_on="2026-10-14 09:05:00",
+            )
+        )
+        self.assertIn("Signed by email by Jane &lt;b&gt;Owner&lt;/b&gt; on [2026-10-14 09:05:00]", out)
+        self.assertNotIn("<b>Owner</b>", out)
+        out = self.render(_record(client_sign_off=None), {"sign_off_sent": "10-13-2026"})
+        self.assertIn("Sent for sign-off 10-13-2026, not yet signed", out)
+        self.assertNotIn("Not signed on site", out)
+
     def test_the_technicians_signature_prints_with_who_signed_and_when(self):
         """v1.610.0, Nik: "we need the technicians to sign the maintenance visits once they
         complete it so the printed form has that." The signer, not the visit's technician: a

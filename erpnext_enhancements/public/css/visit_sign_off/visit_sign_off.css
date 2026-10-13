@@ -1,0 +1,242 @@
+/* Public visit sign-off page (/visit-sign-off, v1.614.0). Mobile-first: the client usually
+   opens the email on a phone. The look follows the contract signing page
+   (public/css/contract_sign/contract_sign.css): white cards, grey rules, one strong button. */
+
+.vs-page {
+	max-width: 720px;
+	margin: 0 auto;
+	padding: 16px 16px 64px;
+}
+
+.vs-header h1 {
+	font-size: 1.5rem;
+	margin: 0 0 4px;
+}
+.vs-eyebrow {
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #6b7280;
+	margin: 0 0 4px;
+}
+.vs-hint {
+	color: #6b7280;
+	font-size: 0.875rem;
+	margin: 4px 0;
+}
+
+.vs-card {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 16px;
+	margin: 16px 0;
+	background: #fff;
+}
+.vs-card h2 {
+	font-size: 1rem;
+	margin: 0 0 10px;
+}
+
+.vs-facts {
+	margin: 0;
+}
+.vs-facts div {
+	display: flex;
+	gap: 12px;
+	padding: 4px 0;
+	border-bottom: 1px solid #f3f4f6;
+}
+.vs-facts div:last-child {
+	border-bottom: 0;
+}
+.vs-facts dt {
+	flex: 0 0 120px;
+	color: #6b7280;
+	font-size: 0.875rem;
+}
+.vs-facts dd {
+	margin: 0;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+/* Scrolls inside its card on a narrow phone rather than widening the page. */
+.vs-table {
+	display: block;
+	overflow-x: auto;
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9375rem;
+}
+.vs-table th {
+	text-align: left;
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #6b7280;
+	border-bottom: 1px solid #d1d5db;
+	padding: 6px 8px 6px 0;
+}
+.vs-table td {
+	padding: 8px 8px 8px 0;
+	border-bottom: 1px solid #f3f4f6;
+	vertical-align: top;
+}
+.vs-out td {
+	color: #b91c1c;
+}
+.vs-badge {
+	display: inline-block;
+	font-size: 0.75rem;
+	font-weight: 600;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: #fef2f2;
+	color: #b91c1c;
+}
+.vs-flag {
+	margin: 0 0 8px;
+	font-size: 0.875rem;
+	color: #92400e;
+}
+
+.vs-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.vs-list li {
+	padding: 8px 0;
+	border-bottom: 1px solid #f3f4f6;
+}
+.vs-list li:last-child {
+	border-bottom: 0;
+}
+.vs-status {
+	display: inline-block;
+	min-width: 64px;
+	margin-right: 6px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #374151;
+}
+.vs-status-done {
+	color: #15803d;
+}
+.vs-status-not-done {
+	color: #b45309;
+}
+.vs-feature {
+	color: #6b7280;
+}
+.vs-note {
+	color: #4b5563;
+	font-size: 0.875rem;
+	margin-top: 2px;
+}
+.vs-pre {
+	white-space: pre-wrap;
+	margin: 0;
+}
+.vs-photo {
+	display: block;
+	max-width: 100%;
+	border-radius: 8px;
+}
+
+.vs-label {
+	display: block;
+	font-size: 0.875rem;
+	font-weight: 600;
+	margin: 12px 0 4px;
+}
+.vs-input {
+	width: 100%;
+	padding: 12px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	font: inherit;
+	/* 16px minimum stops iOS zooming the page on focus. */
+	font-size: 16px;
+}
+
+.vs-pad-wrap {
+	position: relative;
+}
+.vs-pad {
+	width: 100%;
+	height: 180px;
+	border: 1px dashed #9ca3af;
+	border-radius: 8px;
+	background: #fff;
+	display: block;
+	/* Without this the browser's scroll gesture fights every stroke on a phone. */
+	touch-action: none;
+}
+.vs-clear {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	padding: 4px 10px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	font-size: 0.8rem;
+	cursor: pointer;
+}
+
+.vs-check {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	margin: 16px 0;
+	font-size: 0.9375rem;
+}
+.vs-check input {
+	margin-top: 3px;
+	width: 20px;
+	height: 20px;
+	flex: none;
+}
+
+.vs-error {
+	color: #b91c1c;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+	padding: 10px 12px;
+	margin: 12px 0;
+}
+
+.vs-submit {
+	display: block;
+	width: 100%;
+	padding: 14px;
+	border: 0;
+	border-radius: 8px;
+	background: #00263e;
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+.vs-submit:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.vs-done,
+.vs-notice {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 24px;
+	margin: 24px 0;
+	background: #fff;
+	text-align: center;
+}
+.vs-done h2,
+.vs-notice h1 {
+	margin-top: 0;
+	font-size: 1.25rem;
+}
