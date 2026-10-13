@@ -1963,13 +1963,19 @@ class ProjectPlanner {
 		this.weather_lines(card).forEach((text) => add(__("Weather"), text));
 		if (!editable) add(__("Note"), __("This task is read-only here."));
 
-		const links = [["task", __("Open task")]];
+		// v1.603.0: a drafted new task is not a Task yet: there is no form to open, and the lookups
+		// below (suggestions, flags, history, print) all read the Task, so only the project is offered.
+		const fresh = !!card.new_task;
+		if (fresh) add(__("Draft"), __("New task: it is created when you publish your drafts."));
+		const links = fresh ? [] : [["task", __("Open task")]];
 		if (card.project) links.push(["project", __("Open project")]);
-		if (editable) links.push(["suggest", __("Suggest dates")]);
+		if (editable && !fresh) links.push(["suggest", __("Suggest dates")]);
 		if (editable && card.tentative) links.push(["firm", __("Firm up")]);
-		links.push(...this.phase5_links(card));
-		links.push(...this.p6a_links(card));
-		links.push(...this.p6c_links(card));
+		if (!fresh) {
+			links.push(...this.phase5_links(card));
+			links.push(...this.p6a_links(card));
+			links.push(...this.p6c_links(card));
+		}
 		const fields = [
 			{
 				fieldtype: "HTML",
@@ -3310,6 +3316,13 @@ class ProjectPlanner {
 // Phase 3A work on the same file merges cleanly. The hooks into the class above are one line each:
 // init_phase3b (constructor), my_week_target (route_target), show_my_week (handle_route),
 // draft_args (load), with_draft (send) and render_phase3b (render).
+//
+// v1.603.0: a NEW task can be a draft too. Quick add, duplicate and the build-out grid send draft=1 in
+// Draft mode and the server keeps the task-to-be as a "New task" Draft row, not a Task: it comes back
+// as a card named `draft-new:<row>` with `new_task: true`, drawn in its day (or in the Unscheduled
+// tray) with a "New" chip, and counted by the engine so free hours and conflicts include it. Dragging,
+// resizing, pencilling and re-crewing one go through the same save_task/add_crew/swap_crew drafts; an
+// Undo discards its row; Publish creates the Task. It has no Task to open, copy or split until then.
 
 const PP3B = {
 	my_week: "my-week",
@@ -3421,7 +3434,9 @@ const PP3B_METHODS = {
 			if (el.querySelector(".pp-draft-chip")) return;
 			const holder = el.querySelector(".pp-card-chips") || el.querySelector(".pp-card-sub");
 			if (holder) {
-				holder.insertAdjacentHTML("afterbegin", `<span class="pp-chip pp-draft-chip">${pp_esc(__("Draft"))}</span>`);
+				// A task that does not exist yet says so: "New" rather than a change to a task.
+				const label = card.new_task ? __("New") : __("Draft");
+				holder.insertAdjacentHTML("afterbegin", `<span class="pp-chip pp-draft-chip">${pp_esc(label)}</span>`);
 			}
 		});
 	},
@@ -3505,11 +3520,12 @@ const PP3B_METHODS = {
 		const published = result.published || [];
 		const problems = [].concat(result.skipped || [], result.failed || []);
 		const told = Number(result.notified) || 0;
+		const created = published.filter((entry) => entry.new).length;
 		if (!problems.length) {
-			frappe.show_alert(
-				{ message: __("{0} change(s) published; {1} people told.", [published.length, told]), indicator: "green" },
-				8
-			);
+			const message = created
+				? __("{0} change(s) published, {1} of them new tasks; {2} people told.", [published.length, created, told])
+				: __("{0} change(s) published; {1} people told.", [published.length, told]);
+			frappe.show_alert({ message, indicator: "green" }, 8);
 			return;
 		}
 		const list = problems
@@ -4361,6 +4377,8 @@ const PP5_METHODS = {
 	// ------------------------------------------------------------------ the card dialog
 
 	phase5_dialog_fields(card) {
+		// The two boxes are saved on the Task by set_task_flags; a drafted new task has no Task yet.
+		if (card.new_task) return [];
 		return [
 			{
 				fieldtype: "Check",
@@ -5249,8 +5267,9 @@ Object.assign(ProjectPlanner.prototype, PP6A_METHODS);
 // Nothing here picks a person: Assign to... lists who is free on the day (who_is_free) and the
 // planner clicks one ("suggest a crew" was declined). Every write goes through send(), so the reason
 // prompt, draft mode and Undo apply; the planner_actions endpoints are routed there through
-// this.p6_send_modules. A new task cannot be a draft, so duplicate, split and quick add say so in
-// draft mode instead of asking the server.
+// this.p6_send_modules. A new task can be a draft (v1.603.0: duplicate, quick add and the build-out
+// grid send draft=1 in Draft mode and the server keeps a "New task" Draft row); only a split cannot,
+// and says so in draft mode instead of asking the server.
 //
 // Hooks into the class above, one line each: init_phase6b (constructor), render_phase6b (render),
 // p6_send_modules (send), the grip check (drag_source), p6b_lift (lift), p6b_drop (drop), p6b_undo
@@ -5567,11 +5586,13 @@ const PP6B_METHODS = {
 		return panel && (typeof panel.is_open === "function" ? panel.is_open() : !!panel.display);
 	},
 
+	// A split changes a task that exists and creates another at once, which one draft row cannot hold.
+	// (Duplicate, quick add and the build-out grid are drafted: v1.603.0.)
 	p6b_refuse_in_draft() {
 		if (!this.draft_on) return false;
 		frappe.msgprint(
 			__(
-				"Draft mode holds back changes to tasks that already exist; a new task cannot be a draft. Turn Draft mode off to add it."
+				"Draft mode holds back changes to tasks that already exist, and a new task can be drafted; but a split changes a task and creates another at once, which cannot be a draft. Turn Draft mode off to split it."
 			)
 		);
 		return true;
@@ -5710,8 +5731,14 @@ const PP6B_METHODS = {
 			: card.rental_kind
 			? __("Follows its Rental Booking")
 			: __("Read-only here");
-		const creating = editable && !this.draft_on;
-		const create_why = !editable ? why : this.draft_on ? __("Not in Draft mode") : "";
+		// v1.603.0: a drafted new task is not a Task yet, so it cannot be copied or split, and the
+		// server has nothing to look up for "next free day".
+		const fresh = !!card.new_task;
+		const fresh_why = __("Not published yet");
+		const copying = editable && !fresh;
+		const copy_why = !editable ? why : fresh ? fresh_why : "";
+		const creating = editable && !this.draft_on && !fresh;
+		const create_why = !editable ? why : fresh ? fresh_why : this.draft_on ? __("Not in Draft mode") : "";
 		const end = card.end && card.start && card.end > card.start ? card.end : card.start;
 		const multi = !!(card.start && end > card.start);
 		const items = [
@@ -5722,7 +5749,7 @@ const PP6B_METHODS = {
 				disabled: !editable,
 				on_click: () => this.p6b_assign(card, target.ymd),
 			},
-			this.p6b_next_free_item(target, editable, why),
+			this.p6b_next_free_item(target, editable && !fresh, fresh ? fresh_why : why),
 			card.tentative
 				? { label: __("Firm up"), hint: editable ? "" : why, disabled: !editable, on_click: () => this.firm_up(card) }
 				: {
@@ -5733,11 +5760,11 @@ const PP6B_METHODS = {
 				  },
 			{
 				label: __("Duplicate"),
-				hint: create_why || __("Same days"),
-				disabled: !creating,
+				hint: copy_why || __("Same days"),
+				disabled: !copying,
 				on_click: () => this.p6b_duplicate(card, null),
 			},
-			{ label: __("Duplicate to…"), hint: create_why, disabled: !creating, on_click: () => this.p6b_duplicate_to(card) },
+			{ label: __("Duplicate to…"), hint: copy_why, disabled: !copying, on_click: () => this.p6b_duplicate_to(card) },
 			{
 				label: multi ? __("Split across days…") : __("Split in two…"),
 				hint: create_why || (card.start ? "" : __("No dates")),
@@ -5763,8 +5790,8 @@ const PP6B_METHODS = {
 		const items = [
 			{
 				label: __("Add task here…"),
-				hint: !can ? __("You cannot add tasks") : this.draft_on ? __("Not in Draft mode") : __("Double-click"),
-				disabled: !can || this.draft_on,
+				hint: !can ? __("You cannot add tasks") : this.draft_on ? __("Kept as a draft") : __("Double-click"),
+				disabled: !can,
 				on_click: () => this.p6b_quick_add(target),
 			},
 		];
@@ -6007,16 +6034,14 @@ const PP6B_METHODS = {
 	},
 
 	p6b_duplicate(card, date) {
-		if (this.p6b_refuse_in_draft()) return null;
 		const subject = card.subject || card.name;
-		const args = { task: card.name };
+		const args = Object.assign({ task: card.name }, this.draft_args());
 		if (date) args.date = date;
 		const message = date ? __("{0} duplicated to {1}", [subject, pp_when(date)]) : __("{0} duplicated", [subject]);
 		return this.p6b_create("duplicate_task", args, subject, message);
 	},
 
 	p6b_duplicate_to(card) {
-		if (this.p6b_refuse_in_draft()) return;
 		const panel = this.p6b_panel({
 			title: __("Duplicate to…"),
 			subtitle: card.subject || card.name,
@@ -6176,7 +6201,7 @@ const PP6B_METHODS = {
 	},
 
 	p6b_quick_add(target) {
-		if (!this.data || !this.data.can_edit || this.p6b_refuse_in_draft()) return;
+		if (!this.data || !this.data.can_edit) return;
 		// The project list is the planner's own: Active customer jobs (engine.PLANNER_PROJECT_TYPES).
 		const names = (this.data.projects || []).map((project) => project.name);
 		// v1.602.1: Phase and Depends on offer the chosen project's tasks. A MultiSelectPills field calls
@@ -6259,7 +6284,8 @@ const PP6B_METHODS = {
 	p6b_quick_add_save(panel, values) {
 		const subject = String(values.subject || "").trim();
 		if (!values.project || !subject || !values.date) return null;
-		const args = { project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 };
+		// draft=1 in Draft mode (v1.603.0): the task is kept as a draft, not created.
+		const args = Object.assign({ project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 }, this.draft_args());
 		if (Number(values.hours) > 0) args.hours = Number(values.hours);
 		if (values.resource) args.resource = values.resource;
 		// v1.602.0: only what was filled in is sent, so a plain add sends what it always sent.
@@ -9397,7 +9423,19 @@ Object.assign(ProjectPlanner.prototype, PP6E_METHODS);
 //
 // Back and Forward: the grid is a drawer of the planner kit, which owns its history entry (Back closes
 // it, Forward reopens it through `reopen`), and what was typed is kept per project in this.t1.drafts
-// so a Back that closes it does not lose the rows. Draft mode refuses it, like every new task.
+// so a Back that closes it does not lose the rows. In Draft mode (v1.603.0) Create sends draft=1: the
+// tasks are kept as drafts (cards named `draft-new:<row>` in the Unscheduled tray), nothing is created
+// until Publish, and its Undo discards them.
+//
+// Two ways to fill the grid besides typing and pasting from a spreadsheet (v1.603.0):
+//   - Paste a list          free-form lines ("Excavate basin, 16h", "Pour slab - 8 hours", "• Pull wire
+//                           (6 hrs)", "3. Commission system", "Electrical: Pull wire, 6h") are read by
+//                           PPT1_PURE.parse_lines into rows: a subject, hours, and a phase before a colon.
+//   - Copy from project...  get_copy_source returns another project's leaf tasks (any project the user
+//                           can read) as rows: subject, hours, phase, crew size and the dependencies
+//                           between them. Never dates, people, notes or addresses. The grid replaces
+//                           its rows when empty, otherwise asks Append or Replace, and the tasks are
+//                           created on THIS project like any others.
 //
 // Hooks into the class above, one line each: init_t1 (constructor), t1_load_needs (load),
 // t1_render_tray (render_trays), t1_undo (undo), and t1_project_actions in Phase 6A's
@@ -9437,6 +9475,7 @@ const PPT1_STYLE = `
 .t1-bad input,.t1-bad select{border-color:#dc2626;}
 .t1-del{border:none;background:transparent;color:var(--text-muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;}
 .t1-del:hover{color:#b91c1c;}
+.t1-more{margin-top:2px;font-size:11px;color:var(--text-muted);}
 .t1-status{margin:10px 0 0;font-size:12px;color:var(--text-muted);}
 .t1-problems{margin:6px 0 0;padding-left:18px;font-size:12px;color:#b91c1c;}
 .t1-tray-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border-color);}
@@ -9449,6 +9488,8 @@ const PPT1_STYLE = `
 // Pure helpers: no page, no frappe beyond __(). tests/test_planner_build_out.py runs them under node,
 // and checks build_order against the server's (api/planner_actions.build_order).
 const PPT1_PURE = {
+	// `needs_more` (a copy from another project only) holds the ids of the other rows a row waits on,
+	// beyond the one the Depends on cell shows.
 	blank_row(id, phase) {
 		return { id, subject: "", hours: "", phase: phase || "", needs: "", crew_size: "" };
 	},
@@ -9543,6 +9584,14 @@ const PPT1_PURE = {
 					entry.depends_on = [row.needs];
 				}
 			}
+			// The other rows a copied task waits on: a row that is gone is simply no longer waited on.
+			(row.needs_more || []).forEach((id) => {
+				const other = place[id];
+				if (!other || other === number) return;
+				entry.depends_on = (entry.depends_on || []).concat(`row:${other}`);
+				if (!waits[index]) waits[index] = new Set();
+				waits[index].add(other - 1);
+			});
 			return entry;
 		});
 		const sorted = PPT1_PURE.build_order(kept.length, waits);
@@ -9562,6 +9611,69 @@ const PPT1_PURE = {
 			const cell = (i) => String(cells[i] == null ? "" : cells[i]).trim();
 			return { subject: cell(0), hours: cell(1), phase: cell(2), crew_size: cell(3) };
 		});
+	},
+	// A pasted list as rows: one task per line. Reads "Excavate basin, 16h", "Pour slab - 8 hours",
+	// "Set pumps 4h", "• Pull wire (6 hrs)", "3. Commission system" and "Electrical: Pull wire, 6h".
+	//   - blank lines are skipped, and so is a line with no subject left;
+	//   - a bullet (• - * and friends), a checkbox ([ ] [x]) or a number (3.  3)  (3) ) is stripped;
+	//   - a trailing "4h", "4 hrs", "4 hours" (after a space, a comma, a dash or in brackets), or a bare
+	//     number after a comma ("Pull wire, 6"), is the hours, and is taken off the subject;
+	//   - "Phase: task" (a colon and a space) puts the task under that phase.
+	// Rows are {subject, hours, phase, crew_size}: hours as text, "" when none.
+	parse_lines(text) {
+		const unit = /(?:\s*[,;:\u2013\u2014-]\s*|\s+|\s*\(\s*)\(?\s*(\d+(?:\.\d+)?|\.\d+)\s*(?:h|hrs?|hours?)\s*\)?\s*$/i;
+		const bare = /\s*,\s*(\d+(?:\.\d+)?|\.\d+)\s*$/;
+		const out = [];
+		String(text == null ? "" : text)
+			.split(/\r?\n/)
+			.forEach((raw) => {
+				let line = PPT1_PURE.clean(raw);
+				line = line.replace(/^(?:[\u2022\u00b7\u25aa\u25ab\u25e6\u25cb\u25cf\u25a0\u25a1\u2023\u2043]|[-\u2013\u2014*+](?=\s))\s*/, "");
+				line = line.replace(/^\[[ xX\u2713]?\]\s*/, "");
+				line = line.replace(/^\(?\d+[.)]\s+/, "");
+				let hours = "";
+				const found = line.match(unit) || line.match(bare);
+				if (found && found.index > 0) {
+					hours = String(parseFloat(found[1]));
+					line = line.slice(0, found.index);
+				}
+				line = PPT1_PURE.clean(line);
+				// "8h" on a line of its own is hours with nothing to do: no task.
+				if (/^(?:\d+(?:\.\d+)?|\.\d+)\s*(?:h|hrs?|hours?)$/i.test(line)) return;
+				let phase = "";
+				const prefixed = line.match(/^([^:]{1,60}?):\s+(\S.*)$/);
+				if (prefixed && /[A-Za-z]/.test(prefixed[1]) && /[A-Za-z]/.test(prefixed[2])) {
+					phase = PPT1_PURE.clean(prefixed[1]);
+					line = PPT1_PURE.clean(prefixed[2]);
+				}
+				if (!line) return;
+				out.push({ subject: line, hours, phase, crew_size: "" });
+			});
+		return out;
+	},
+	// get_copy_source's rows as grid rows: new ids, hours and crew size as text, and each "row:N" (the
+	// N-th row copied, from 1) as the id of that row. The first dependency is the row's Depends on, the
+	// rest are kept in `needs_more`.
+	copy_rows(source, new_id) {
+		const list = source || [];
+		const made = list.map((row) =>
+			Object.assign(PPT1_PURE.blank_row(new_id(), row.phase || ""), {
+				subject: row.subject || "",
+				hours: Number(row.hours) > 0 ? String(Number(row.hours)) : "",
+				crew_size: Number(row.crew_size) > 0 ? String(Number(row.crew_size)) : "",
+			})
+		);
+		list.forEach((row, index) => {
+			const ids = (row.needs || [])
+				.map((token) => {
+					const target = made[parseInt(String(token).slice(4), 10) - 1];
+					return target ? target.id : null;
+				})
+				.filter((id) => id && id !== made[index].id);
+			if (ids.length) made[index].needs = `row:${ids[0]}`;
+			if (ids.length > 1) made[index].needs_more = ids.slice(1);
+		});
+		return made;
 	},
 	// "5 tasks and 2 phases" (the phases only when there are some).
 	counts(count, phases) {
@@ -9740,7 +9852,7 @@ const PPT1_METHODS = {
 	},
 
 	t1_open_build_out(project, title) {
-		if (!this.t1_can() || this.p6b_refuse_in_draft()) return null;
+		if (!this.t1_can()) return null;
 		const kit = this.p6b_kit();
 		if (!kit) {
 			frappe.msgprint(__("The side panel is still loading. Try again in a moment."));
@@ -9779,7 +9891,8 @@ const PPT1_METHODS = {
 				if (this.t1.grid === state) this.t1.grid = null;
 			},
 		});
-		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_build_out_context`, args: { project } }))
+		// In Draft mode the grid is also offered the phases and tasks an earlier drafted build-out made.
+		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_build_out_context`, args: Object.assign({ project }, this.draft_args()) }))
 			.then((r) => {
 				const context = (r && r.message) || {};
 				state.phases = context.phases || [];
@@ -9806,7 +9919,9 @@ const PPT1_METHODS = {
 		body.appendChild(
 			this.t1_el("p", {
 				class: "t1-intro",
-				text: __("One task per row. They are created without dates and appear in the Unscheduled tray. Enter moves to the next row; you can paste lines from a spreadsheet."),
+				text: this.draft_on
+					? __("One task per row. They are kept as drafts without dates, in the Unscheduled tray, and created when you publish. Enter moves to the next row; you can paste lines from a spreadsheet, paste a list, or copy another project's tasks.")
+					: __("One task per row. They are created without dates and appear in the Unscheduled tray. Enter moves to the next row; you can paste lines from a spreadsheet, paste a list, or copy another project's tasks."),
 			})
 		);
 		const heads = [
@@ -9907,12 +10022,27 @@ const PPT1_METHODS = {
 				const there = this.t1_el("optgroup", { label: __("Tasks the project already has") });
 				state.tasks.forEach((task) => {
 					const text = PPT1_PURE.clean(task.subject);
-					there.appendChild(this.t1_el("option", { value: task.name, text: `${text.length > 40 ? `${text.slice(0, 39)}…` : text} (${task.name})` }));
+					const shown = text.length > 40 ? `${text.slice(0, 39)}…` : text;
+					there.appendChild(this.t1_el("option", { value: task.name, text: task.draft ? __("{0} (drafted)", [shown]) : `${shown} (${task.name})` }));
 				});
 				select.appendChild(there);
 			}
 			select.value = row.needs || "";
 			if (select.value !== (row.needs || "")) row.needs = select.value;
+			// A copied task can wait on several rows; the cell shows the first, and says about the rest.
+			row.needs_more = (row.needs_more || []).filter((id) => live.has(id) && id !== row.id);
+			const places = row.needs_more.map((id) => rows.findIndex((other) => other.id === id) + 1);
+			const cell = select.parentNode;
+			let more = cell.querySelector(".t1-more");
+			if (places.length) {
+				if (!more) {
+					more = this.t1_el("div", { class: "t1-more" });
+					cell.appendChild(more);
+				}
+				more.textContent = __("Also waits on row(s) {0}", [places.join(", ")]);
+			} else if (more) {
+				more.remove();
+			}
 		});
 	},
 
@@ -9991,22 +10121,150 @@ const PPT1_METHODS = {
 		if (!lines) return;
 		e.preventDefault();
 		const at = Math.max(state.rows.findIndex((row) => row.id === el.getAttribute("data-t1-row")), 0);
-		// Pasted lines fill the rows from this one down; a row with something in it is not overwritten.
+		this.t1_fill_rows(state, lines, at);
+	},
+
+	// Rows from `at` down take the lines; a row with something in it is not overwritten, and the grid
+	// grows (to the most it holds). Shared by the spreadsheet paste and "Paste a list".
+	t1_fill_rows(state, lines, at) {
 		let index = at;
+		let left = 0;
 		lines.forEach((line) => {
 			while (index < state.rows.length && !PPT1_PURE.is_blank(state.rows[index])) index += 1;
-			if (index >= PPT1.max_rows) return;
+			if (index >= PPT1.max_rows) {
+				left += 1;
+				return;
+			}
 			const row = index < state.rows.length ? state.rows[index] : null;
 			if (row) Object.assign(row, line);
 			else state.rows.push(Object.assign(PPT1_PURE.blank_row(this.t1_new_id()), line));
 			index += 1;
 		});
+		if (left) {
+			frappe.show_alert({ message: __("The grid holds {0} tasks; {1} lines were left out.", [PPT1.max_rows, left]), indicator: "orange" }, 7);
+		}
+		state.note = "";
 		this.t1_rebuild_rows(state, { row: Math.min(index, state.rows.length - 1), col: "subject" });
+	},
+
+	// ------------------------------------------------------------------ paste a list
+
+	t1_open_paste_list(state) {
+		if (!state.rows || !state.table) return null;
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("Paste a list"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "t1_paste_help",
+					options: `<p class="text-muted small">${pp_esc(
+						__("One task per line. Bullets and numbers are dropped. Hours at the end (4h, 8 hrs, - 8 hours, (6 hrs) or , 6) go in the Hours column, and \"Electrical: Pull wire, 6h\" files the task under the phase Electrical.")
+					)}</p>`,
+				},
+				{ fieldtype: "Small Text", fieldname: "t1_list", label: __("The list"), reqd: 1 },
+			],
+			primary_action_label: __("Add to the grid"),
+			primary_action: (values) => {
+				const lines = PPT1_PURE.parse_lines((values && values.t1_list) || "");
+				if (!lines.length) {
+					frappe.show_alert({ message: __("Nothing to add: type one task per line."), indicator: "orange" }, 5);
+					return;
+				}
+				if (dialog) dialog.hide();
+				let at = state.rows.findIndex((row) => PPT1_PURE.is_blank(row));
+				if (at < 0) at = state.rows.length;
+				this.t1_fill_rows(state, lines, at);
+				frappe.show_alert({ message: __("{0} tasks added to the grid.", [lines.length]), indicator: "green" }, 4);
+			},
+		});
+		dialog.show();
+		return dialog;
+	},
+
+	// ------------------------------------------------------------------ copy from another project
+
+	t1_open_copy(state) {
+		if (!state.rows || !state.table) return null;
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("Copy from project"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "t1_copy_help",
+					options: `<p class="text-muted small">${pp_esc(
+						__("Starts the grid from another project's tasks: their names, hours, phases, crew sizes and what waits on what. Dates, people, notes and addresses are not copied. You can edit everything before you create.")
+					)}</p>`,
+				},
+				{ fieldtype: "Link", fieldname: "t1_source", label: __("Copy tasks from"), options: "Project", reqd: 1 },
+			],
+			primary_action_label: __("Load tasks"),
+			primary_action: (values) => {
+				const source = values && values.t1_source;
+				if (!source) return;
+				if (dialog) dialog.hide();
+				this.t1_load_copy(state, source);
+			},
+		});
+		dialog.show();
+		return dialog;
+	},
+
+	t1_load_copy(state, source) {
+		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_copy_source`, args: { project: source } }))
+			.then((r) => {
+				const plan = (r && r.message) || {};
+				if (!state.handle || !state.handle.is_open()) return null;
+				if (!(plan.rows || []).length) {
+					frappe.msgprint(__("{0} has no tasks to copy. {1}", [pp_esc(source), pp_esc(plan.note || "")]));
+					return null;
+				}
+				return this.t1_apply_copy(state, plan);
+			})
+			.catch(() => null);
+	},
+
+	// Replace the grid when it is empty; otherwise ask whether to add to it or replace it.
+	t1_apply_copy(state, plan) {
+		if (state.rows.every((row) => PPT1_PURE.is_blank(row))) return this.t1_set_rows(state, plan, "replace");
+		let dialog = null;
+		dialog = new frappe.ui.Dialog({
+			title: __("The grid already has tasks"),
+			fields: [
+				{ fieldtype: "HTML", fieldname: "t1_how_help", options: `<p>${pp_esc(__("Add the {0} copied tasks below what you typed, or replace what you typed?", [plan.count]))}</p>` },
+				{ fieldtype: "Select", fieldname: "t1_how", label: __("What to do"), options: `Append\nReplace`, default: "Append" },
+			],
+			primary_action_label: __("Load tasks"),
+			primary_action: (values) => {
+				if (dialog) dialog.hide();
+				this.t1_set_rows(state, plan, (values && values.t1_how) === "Replace" ? "replace" : "append");
+			},
+		});
+		dialog.show();
+		return dialog;
+	},
+
+	t1_set_rows(state, plan, how) {
+		const copied = PPT1_PURE.copy_rows(plan.rows, () => this.t1_new_id());
+		const kept = how === "append" ? state.rows.filter((row) => !PPT1_PURE.is_blank(row)) : [];
+		let rows = kept.concat(copied);
+		if (rows.length > PPT1.max_rows) {
+			frappe.show_alert({ message: __("The grid holds {0} tasks; the last {1} copied tasks were left out.", [PPT1.max_rows, rows.length - PPT1.max_rows]), indicator: "orange" }, 8);
+			rows = rows.slice(0, PPT1.max_rows);
+		}
+		state.rows = rows;
+		state.note = plan.note || "";
+		this.t1_rebuild_rows(state, { row: 0, col: "subject" });
+		if (plan.note) frappe.show_alert({ message: plan.note, indicator: "blue" }, 10);
+		return rows;
 	},
 
 	// The footer's buttons, with the count of what Create would make.
 	t1_actions(state, count, phases) {
 		return [
+			{ label: __("Paste a list…"), title: __("Lines like “Pour slab, 8h” become rows"), on_click: () => this.t1_open_paste_list(state) },
+			{ label: __("Copy from project…"), title: __("Start from another project's tasks"), on_click: () => this.t1_open_copy(state) },
 			{ label: __("Add row"), title: __("A new row at the bottom"), on_click: () => state.rows && state.table && this.t1_add_row(state) },
 			{ label: PPT1_PURE.summary(count, phases), primary: true, title: __("Ctrl or Cmd + Enter"), on_click: () => this.t1_create(state) },
 		];
@@ -10019,9 +10277,10 @@ const PPT1_METHODS = {
 		state.tbody.querySelectorAll("tr").forEach((tr) => tr.classList.toggle("t1-bad", built.cycle.indexOf(tr.getAttribute("data-t1-id")) >= 0));
 		while (state.problems.firstChild) state.problems.removeChild(state.problems.firstChild);
 		built.problems.forEach((text) => state.problems.appendChild(this.t1_el("li", { text })));
-		state.status.textContent = built.rows.length
+		const status = built.rows.length
 			? __("Ready to create {0}. Rows with nothing typed in them are skipped.", [PPT1_PURE.counts(built.rows.length, built.new_phases.length)])
 			: __("Type a subject on a row to begin.");
+		state.status.textContent = state.note ? `${status} ${state.note}` : status;
 		if (state.handle && state.handle.is_open() && !state.busy) {
 			state.handle.set_actions(this.t1_actions(state, built.rows.length, built.new_phases.length));
 		}
@@ -10032,7 +10291,6 @@ const PPT1_METHODS = {
 
 	t1_create(state) {
 		if (state.busy || !state.rows) return Promise.resolve(null);
-		if (this.p6b_refuse_in_draft()) return Promise.resolve(null);
 		// Drop the blank rows first, so the numbers in any message are the numbers on the screen.
 		state.rows = state.rows.filter((row) => !PPT1_PURE.is_blank(row));
 		if (!state.rows.length) state.rows.push(PPT1_PURE.blank_row(this.t1_new_id()));
@@ -10047,7 +10305,8 @@ const PPT1_METHODS = {
 			return Promise.resolve(null);
 		}
 		state.busy = true;
-		return this.t1_send("build_out_tasks", { project: state.project, rows: JSON.stringify(built.rows) }, {})
+		// draft=1 in Draft mode: the tasks are kept as drafts and created when the planner publishes.
+		return this.t1_send("build_out_tasks", Object.assign({ project: state.project, rows: JSON.stringify(built.rows) }, this.draft_args()), {})
 			.then((result) => {
 				state.busy = false;
 				if (!result || !result.tasks) {
@@ -10060,7 +10319,9 @@ const PPT1_METHODS = {
 					if (item.name && item.modified) this.modified[item.name] = item.modified;
 				});
 				const count = result.tasks.length;
-				const message = __("{0} tasks created on {1}. They are in the Unscheduled tray.", [count, state.label]);
+				const message = result.drafted
+					? __("{0} tasks drafted on {1}. They are in the Unscheduled tray as drafts; publish to create them.", [count, state.label])
+					: __("{0} tasks created on {1}. They are in the Unscheduled tray.", [count, state.label]);
 				const snapshot = {
 					t1: "built",
 					subject: count === 1 ? result.tasks[0].subject : __("{0} tasks", [count]),
