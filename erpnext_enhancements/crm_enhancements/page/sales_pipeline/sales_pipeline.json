@@ -4,7 +4,7 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-10-13 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "sales-pipeline",
@@ -14,5 +14,6 @@
  "script": null,
  "standard": "Yes",
  "style": null,
- "system_page": 0
+ "system_page": 0,
+ "title": "Sales Pipeline"
 }

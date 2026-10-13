@@ -14,7 +14,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Delivery",
-   "link_count": 6,
+   "link_count": 7,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -45,6 +45,17 @@
    "link_count": 0,
    "link_to": "Project Contract",
    "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Contract Builder",
+   "link_count": 0,
+   "link_to": "contract-builder",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link"
   },
@@ -263,7 +274,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 20:00:00.000000",
+ "modified": "2026-10-13 18:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Operations Hub",
@@ -338,7 +349,7 @@
   {
    "label": "Operations Dashboard",
    "type": "URL",
-   "url": "/app/operations-dashboard"
+   "url": "/desk/operations-dashboard"
   }
  ],
  "title": "Operations Hub",

@@ -1375,3 +1375,8 @@ erpnext_enhancements.patches.refresh_subcontractor_agreement_layout
 # Settings AND the global default (the Desk reads tabDefaultValue, not the Single) without saving the Single through
 # its controller, whose validate() enforces unrelated rules. Clears the cache. Cannot raise, safe twice.
 erpnext_enhancements.patches.set_desk_date_and_time_format
+# Custom pages S1 (v1.623.0, TASK-2026-02803): force-imports the 11 workspaces and the Sales Pipeline page this release
+# edits (hub dashboard shortcuts read /desk, Stripe Payments on Finance Hub, Contract Builder on Operations + Sales,
+# the two training review pages, a page title), retires the Hierarchical Task View page (its sidebar/shortcut rows,
+# then the Page, without force) and moves the seeded /app/projects Desk Shortcut to /desk. Cannot raise, safe twice.
+erpnext_enhancements.patches.custom_pages_s1_navigation

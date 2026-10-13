@@ -1,6 +1,8 @@
 # Task Enhancements
 
-Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to keep the task tree valid, adds an in-form descendant-task table, and ships a standalone **Hierarchical Task View** desk page that browses a project's tasks as a tree.
+Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to keep the task tree valid, and adds an in-form descendant-task table.
+
+> The standalone **Hierarchical Task View** desk page was retired in v1.623.0: Frappe v16's TreeView builds its own page and calls `get_tree_nodes`, so the page's data feed never ran and the tree never loaded. The Project Planner covers browsing a project's tasks. `patches/custom_pages_s1_navigation.py` deletes the Page record and every workspace or sidebar row that pointed at it.
 
 > Recurring-task generation is **not** here — it lives in the repo-root [`tasks.py`](../../erpnext_enhancements/tasks.py) (`generate_next_task`, wired via `Task` `on_update`).
 
@@ -10,8 +12,6 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 |---|---|---|
 | `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`before_save`, `on_update`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
 | `doctype/task/task.js` | Form script: render the child-task tree on refresh | `frappe.ui.form.on("Task", {refresh})`, `add_toggle_functionality` |
-| `page/hierarchical_task_view/hierarchical_task_view.py` | Desk-page tree data feed | whitelisted `get_project_tasks_hierarchy`, `format_tasks_for_tree` |
-| `page/hierarchical_task_view/hierarchical_task_view.js` | Desk page: project picker + TreeView | `on_page_load` |
 
 ## The Task override
 
@@ -27,7 +27,6 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 ## Data flow
 
 - **In-form child table:** `get_child_tasks_html` walks all descendants of a group task, batch-resolves assignees from ToDo rows, rebuilds the hierarchy in memory, and returns styled collapsible HTML into the form's `custom_child_tasks_table` HTML field. `task.js` renders it on refresh.
-- **Hierarchical Task View page:** `get_project_tasks_hierarchy` loads all tasks for a project in one query, links them by `parent_task`, sorts each level by `exp_start_date`, and returns the Frappe TreeView shape (`value`/`label`/`expandable`/`children`). The page JS (and `public/js/task_enhancements/task_enhancements.js`) patches `TreeView.get_tree_nodes` to source nodes from it.
 
 ## `hooks.py` touchpoints
 
@@ -40,5 +39,4 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 
 - `task.js` / `task.py` contain some left-in debug logging.
 - Descendant collection in `_get_all_descendants` is **one query per node** (not batched) — watch performance on very deep trees.
-- The `doctype/hierarchical_task_view/hierarchical_task_view.json` file is actually a **Page** definition duplicated from the `page/` folder, not a true DocType.
 - The `custom_child_tasks_table` HTML field is assumed to exist on Task but is not in the `fixtures` list.

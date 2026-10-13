@@ -18,7 +18,7 @@
 frappe.ui.form.on("QuickBooks Online Settings", {
 	refresh(frm) {
 		frm.add_custom_button(__("Dashboard"), () => frappe.set_route("quickbooks-online-dashboard"));
-		frm.add_custom_button(__("Link Existing Records"), () => frappe.set_route("quickbooks-online-dashboard"));
+		frm.add_custom_button(__("Link Existing Records"), () => frappe.set_route("quickbooks-record-matching"));
 		frm.add_custom_button(__("Connect QuickBooks"), () => {
 			frappe.call({
 				method: "erpnext_enhancements.quickbooks_online.core.api.start_oauth",
