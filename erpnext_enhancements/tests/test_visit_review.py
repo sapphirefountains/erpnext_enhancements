@@ -49,6 +49,7 @@ STUBBED = (
 	f"{PACKAGE}.missed_visits",
 	f"{PACKAGE}.follow_ups",
 	f"{PACKAGE}.visit_report",
+	f"{PACKAGE}.visit_names",
 	API,
 )
 
@@ -358,6 +359,11 @@ def setUpModule():
 	follow.make_opportunity = lambda name: STATE.setdefault("opportunities", []).append(name) or "CRM-OPP-1"
 	report = types.ModuleType(f"{PACKAGE}.visit_report")
 	report.short_name = lambda item_name: (item_name or "").split(" - ", 1)[-1]
+	# v1.610.0: a visit renamed from its random name is found by that name (legacy_name).
+	names = types.ModuleType(f"{PACKAGE}.visit_names")
+	names.current_visit_name = lambda name: next(
+		(v.name for v in STATE["visits"].values() if v.get("legacy_name") == name), None
+	)
 
 	sys.modules.update(
 		{
@@ -369,6 +375,7 @@ def setUpModule():
 			f"{PACKAGE}.missed_visits": missed,
 			f"{PACKAGE}.follow_ups": follow,
 			f"{PACKAGE}.visit_report": report,
+			f"{PACKAGE}.visit_names": names,
 		}
 	)
 	import erpnext_enhancements.api as api
@@ -379,6 +386,7 @@ def setUpModule():
 		("missed_visits", missed),
 		("follow_ups", follow),
 		("visit_report", report),
+		("visit_names", names),
 	):
 		_saved_attrs[attr] = vars(package).get(attr)
 		setattr(package, attr, module)
@@ -549,6 +557,15 @@ class TestOneVisit(_Base):
 	def test_an_unknown_visit_is_not_found(self):
 		with self.assertRaises(DoesNotExistError_):
 			review.get_review_visit("NOPE")
+
+	def test_an_old_name_finds_the_renamed_visit(self):
+		"""v1.610.0: a review email sent before the rename links /desk/visit-review/<old name>.
+		The answer names the visit as it is now, and the page re-routes to it."""
+		STATE["visits"]["OLD"]["legacy_name"] = "4lvpg04h6h"
+		data = review.get_review_visit("4lvpg04h6h")
+		self.assertEqual(data["name"], "OLD")
+		page = (APP / "sapphire_maintenance/page/visit_review/visit_review.js").read_text(encoding="utf-8")
+		self.assertIn("if (current && current !== name) {\n\t\t\t\t\tthis.go(current, true);", page)
 
 
 class TestApprove(_Base):

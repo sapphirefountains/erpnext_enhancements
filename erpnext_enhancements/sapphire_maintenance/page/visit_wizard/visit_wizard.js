@@ -139,6 +139,9 @@ const VZ_STYLE = `
 .vz-textarea{width:100%;min-height:110px;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
 .vz-date{width:100%;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:17px;min-height:48px;}
 .vz-sig{width:100%;height:160px;border:1px dashed var(--border-color);border-radius:10px;background:var(--card-bg);touch-action:none;}
+.vz-tech-sig.vz-sig-missing .vz-sig{border:2px solid #d97706;}
+.vz-sig-needed{color:#b45309;font-size:14px;font-weight:600;margin-top:6px;}
+.vz-sig-img{display:block;max-width:100%;max-height:120px;margin-top:8px;background:#fff;border-radius:8px;}
 .vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:15px;cursor:pointer;padding:6px 0;}
 .vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;color:var(--text-color);}
 .vz-pick-card:active{border-color:var(--primary,#2490ef);}
@@ -315,6 +318,31 @@ function vz_patch(dirty, pending_added) {
 function vz_refused(error) {
 	const status = (error && error.status) || 0;
 	return status >= 400 && status < 500 && ![401, 408, 429].includes(status);
+}
+
+// What the server said when it turned a call down (frappe.throw's message), as plain text, or
+// "". A call made in the background is `silent`, so frappe shows nothing: a Finish refused
+// there is said with these words (v1.610.0: a Finish kept on a phone before the technician's
+// signature was required is refused with "The technician must sign the visit before it goes
+// for review."). Escape it before it goes into markup.
+function vz_server_message(error) {
+	let messages = [];
+	try {
+		messages = JSON.parse(((error || {}).responseJSON || {})._server_messages || "[]");
+	} catch (e) {
+		return "";
+	}
+	return (Array.isArray(messages) ? messages : [])
+		.map((message) => {
+			try {
+				const parsed = typeof message === "string" ? JSON.parse(message) : message;
+				return String((parsed && parsed.message) || "");
+			} catch (e) {
+				return String(message || "");
+			}
+		})
+		.filter(Boolean)
+		.join(" ");
 }
 
 // Two batches of unsaved edits as one; `top` wins wherever both touched a field.
@@ -790,9 +818,9 @@ class VisitWizard {
 		this._save_state = null;
 		this._loading = null;
 		this._load_target = null;
-		this._signature_drawn = false;
-		this._signature_data = null;
-		this._signature_canvas = null;
+		// The Wrap-up's two signature pads, by the field each fills (setup_signature): the
+		// client's sign-off and, since v1.610.0, the technician's own.
+		this._pads = {};
 		// Kept answers waiting on the technician's choice (render_choice) for the visit on
 		// screen; the answers themselves are held per visit in this._held.
 		this._choice = null;
@@ -1341,6 +1369,21 @@ class VisitWizard {
 				}
 				const data = r.message || {};
 				this._loading = null;
+				// An old name (v1.610.0 renamed the random names from before v1.597.0): the
+				// server found the visit by it and answered with the new one. What this phone kept
+				// moves to the new name, and the address is corrected in place, so Back still goes
+				// where it went and the visit loads under its own name.
+				const renamed = (data.record || {}).name;
+				if (renamed && renamed !== name) {
+					const held = parked;
+					parked = null;
+					return this.move_kept(name, renamed).then(() => {
+						if (held) this.park({ ...held.doc, name: renamed }, held.dirty, held.pending_added, { soon: true });
+						if (ticket !== this._paint_seq) return;
+						const want = this._load_target || {};
+						this.push_route({ record: renamed, step: want.step || "", feature: want.feature || "" }, true);
+					});
+				}
 				this.doc = data.record;
 				this.dashboard = data.dashboard || {};
 				this.section_meta = data.sections || {};
@@ -1796,7 +1839,11 @@ class VisitWizard {
 		}
 		if (finish.refused) {
 			frappe.msgprint(
-				__("Finishing this visit was turned down by the server. Fix what it asked for and tap Finish again.")
+				finish.reason
+					? __("Finishing this visit was turned down by the server: {0} Fix that and tap Finish again.", [
+							frappe.utils.escape_html(finish.reason),
+						])
+					: __("Finishing this visit was turned down by the server. Fix what it asked for and tap Finish again.")
 			);
 		} else if (finish.blocked && !this._choice) {
 			frappe.msgprint(__("This visit's Finish was not sent. Check its answers, then tap Finish again."));
@@ -2062,7 +2109,7 @@ class VisitWizard {
 		// A Finish held back for this choice (sync_record) goes now, with what was chosen.
 		const finish = this._finish[name];
 		if (finish && finish.blocked && !finish.refused) {
-			this.keep_finish(this.doc, finish.signature);
+			this.keep_finish(this.doc, finish.signature, finish.technician_signature);
 			return;
 		}
 		this.render();
@@ -2085,10 +2132,11 @@ class VisitWizard {
 	}
 
 	// A Finish with no signal (finish() could not reach the server): keep it, with the
-	// signature, on this phone. The visit's answers are kept with it; from here the copy on
-	// the phone is the visit's, and sync_stored sends the answers, then the photos, then the
-	// Finish, when signal returns. Nothing is handed over unless the phone holds all of it.
-	keep_finish(doc, signature) {
+	// signatures (the client's, and the technician's since v1.610.0), on this phone. The
+	// visit's answers are kept with it; from here the copy on the phone is the visit's, and
+	// sync_stored sends the answers, then the photos, then the Finish, when signal returns.
+	// Nothing is handed over unless the phone holds all of it.
+	keep_finish(doc, signature, technician_signature) {
 		const name = doc.name;
 		const cannot = () =>
 			frappe.msgprint(
@@ -2102,7 +2150,14 @@ class VisitWizard {
 		return Promise.resolve(this._saving[name]).then(() => {
 			const unsent = this.unsent(name);
 			if (!this.journal(name) && !vz_unsent_empty(unsent)) return cannot();
-			const item = { key: vz_finish_key(name), kind: "finish", record: name, signature: signature || null, at: Date.now() };
+			const item = {
+				key: vz_finish_key(name),
+				kind: "finish",
+				record: name,
+				signature: signature || null,
+				technician_signature: technician_signature || null,
+				at: Date.now(),
+			};
 			return this.set_finish(item).then(
 				(kept) => {
 					if (!kept) {
@@ -2268,6 +2323,19 @@ class VisitWizard {
 			(r) => {
 				const data = (r && r.message) || {};
 				const doc = data.record || {};
+				// Renamed on the server (v1.610.0): the server found the visit by its old name and
+				// answered with the new one. What was kept moves to the new name and is sent there.
+				if (doc.name && doc.name !== name) {
+					return this.move_kept(name, doc.name).then(() => {
+						if (!this.sync_ready(doc.name)) return null;
+						return vz_outbox_items().then((all) =>
+							this.sync_record(
+								doc.name,
+								all.filter((item) => item.record === doc.name)
+							)
+						);
+					});
+				}
 				// An answer without the visit is no answer: never read as "submitted".
 				if (doc.name !== name) return Promise.reject(new Error(`no state for ${name}`));
 				let modified = (data.state || {}).modified || doc.modified;
@@ -2329,13 +2397,21 @@ class VisitWizard {
 						return frappe
 							.call({
 								method: "erpnext_enhancements.api.maintenance_visit.finish_visit",
-								args: { record: name, signature: finish.signature, modified },
+								args: {
+									record: name,
+									signature: finish.signature,
+									technician_signature: finish.technician_signature || null,
+									modified,
+								},
 								silent: true,
 							})
 							.then(
 								(done) => this.finish_sent(name, (done && done.message) || {}),
 								(error) => {
 									if (vz_try_later(error)) return Promise.reject(error);
+									// What the server said, kept with the Finish and said when it is opened: a
+									// Finish kept before v1.610.0 has no technician's signature, and is refused.
+									const reason = vz_server_message(error);
 									// Answered with an error. Most likely it went through already and its
 									// answer was lost: the visit says which.
 									return read().then((again) => {
@@ -2346,12 +2422,17 @@ class VisitWizard {
 										) {
 											return this.finish_sent(name, state);
 										}
-										return this.set_finish({ ...finish, refused: 1 }).then(() =>
+										return this.set_finish({ ...finish, refused: 1, reason }).then(() =>
 											frappe.show_alert({
-												message: __(
-													"Finishing {0} was turned down by the server. Open that visit and finish it again.",
-													[name]
-												),
+												message: reason
+													? __("Finishing {0} was turned down by the server: {1} Open that visit and finish it again.", [
+															name,
+															frappe.utils.escape_html(reason),
+														])
+													: __(
+															"Finishing {0} was turned down by the server. Open that visit and finish it again.",
+															[name]
+														),
 												indicator: "red",
 											})
 										);
@@ -2412,6 +2493,55 @@ class VisitWizard {
 			finish || this._finish[name] ? this.drop_finish(name) : null,
 			...photos.map((item) => vz_outbox_delete(item.key)),
 		]);
+	}
+
+	// A visit renamed on the server (v1.610.0: the random names from before v1.597.0 became
+	// PRJ-…-V###, the old one kept as its legacy_name). Everything this phone kept under the old
+	// name (answers, photos, a Finish, and what this page holds for it) moves to the new name,
+	// so it is sent to that visit instead of being reported as deleted. Kept answers already
+	// under the new name are not overwritten: the old ones then stay, and are listed.
+	move_kept(old, current) {
+		if (!old || !current || old === current) return Promise.resolve();
+		const rekey = (key) => {
+			const parts = String(key).split("|");
+			if (parts[1] === old) parts[1] = current;
+			return parts.join("|");
+		};
+		const entry = vz_unsent_read(old);
+		if (entry && !vz_unsent_read(current) && vz_unsent_write(current, { ...entry, record: current })) {
+			vz_unsent_write(old, null);
+		}
+		[this._held, this._base, this._parked].forEach((by_name) => {
+			if (!(old in by_name) || current in by_name) return;
+			by_name[current] = by_name[old];
+			delete by_name[old];
+		});
+		const parked = this._parked[current];
+		if (parked && parked.doc && parked.doc.name === old) {
+			parked.doc = { ...parked.doc, name: current };
+			clearTimeout(parked.timer);
+			parked.timer = setTimeout(() => this.send_parked(current), 0);
+		}
+		[this._handed, this._needs_you, this._photo_again].forEach((names) => {
+			if (names.delete(old)) names.add(current);
+		});
+		this._photo_waiting = new Set([...this._photo_waiting].map(rekey));
+		return vz_outbox_items().then((items) =>
+			Promise.all(
+				items
+					.filter((item) => item.record === old)
+					.map((item) => {
+						const moved = { ...item, key: rekey(item.key), record: current };
+						return vz_outbox_put(moved)
+							.then(() => vz_outbox_delete(item.key))
+							.then(() => {
+								if (moved.kind !== "finish") return;
+								delete this._finish[old];
+								this._finish[current] = moved;
+							});
+					})
+			)
+		);
 	}
 
 	// Throw away what this phone kept for a visit, at the technician's word (the list's
@@ -3634,6 +3764,7 @@ class VisitWizard {
 		this.$wrap.append($notes_card);
 		this.render_follow_ups();
 		this.render_fountain_photo();
+		this.render_technician_signature();
 
 		const $sig_card = $(`
 			<div class="vz-card">
@@ -3643,8 +3774,69 @@ class VisitWizard {
 				<button type="button" class="vz-link-btn">${__("Clear signature")}</button>
 			</div>
 		`);
-		this.setup_signature($sig_card);
+		this.setup_signature($sig_card, "client_sign_off");
 		this.$wrap.append($sig_card);
+	}
+
+	// The technician signs the visit they are finishing (v1.610.0). Nik, 2026-10-13: "we need
+	// the technicians to sign the maintenance visits once they complete it so the printed form
+	// has that." Signed by whoever finishes it, so a substitute covering the site signs as
+	// themselves; the server stamps the signer and the time. Required to send the visit for
+	// review (finish_now asks, and the server refuses without it). A visit already waiting
+	// for review, or submitted, shows the signature it has: a reviewer never signs here.
+	render_technician_signature() {
+		const doc = this.doc;
+		const signing = this.technician_finishing();
+		const full_name = (user) => {
+			if (user === frappe.session.user) return frappe.session.user_fullname || user;
+			const info = frappe.user_info ? frappe.user_info(user) : null;
+			return (info && info.fullname) || user;
+		};
+		const signed_by = doc.technician_signed_by
+			? __("Signed by {0}", [full_name(doc.technician_signed_by)]) +
+				(doc.technician_signed_on ? ` · ${frappe.datetime.str_to_user(doc.technician_signed_on)}` : "")
+			: "";
+		const me = frappe.session.user_fullname || frappe.session.user;
+		const $card = $(`
+			<div class="vz-card vz-tech-sig">
+				<div class="vz-card-title">${__("Technician signature")}</div>
+				<div class="vz-card-sub">${
+					signing
+						? frappe.utils.escape_html(__("Signing as {0}. Sign to finish the visit.", [me]))
+						: frappe.utils.escape_html(signed_by || __("Not signed."))
+				}</div>
+				${
+					signing
+						? `<canvas class="vz-sig"></canvas>
+							<div class="vz-sig-needed" style="display:none;">${__("Sign here before you finish the visit.")}</div>
+							<button type="button" class="vz-link-btn">${__("Clear signature")}</button>`
+						: doc.technician_signature
+							? `<img class="vz-sig-img" src="${encodeURI(String(doc.technician_signature))}" alt="">`
+							: ""
+				}
+			</div>
+		`);
+		if (signing) this.setup_signature($card, "technician_signature");
+		this.$wrap.append($card);
+	}
+
+	// Finishing sends the visit for review (or, with no workflow, submits it): the technician's
+	// Finish, which needs their signature. Not a reviewer's Approve & Submit.
+	technician_finishing() {
+		return !!this.doc && this.doc.docstatus === 0 && this.doc.workflow_state !== "Pending Review";
+	}
+
+	// A technician finishing with no signature drawn and none on the visit already.
+	missing_technician_signature() {
+		return this.technician_finishing() && !this.pad_value("technician_signature") && !this.doc.technician_signature;
+	}
+
+	// What a pad holds for Finish to send: a signature drawn on this visit, else nothing (one
+	// already on the visit is not sent again).
+	pad_value(field) {
+		const pad = this._pads[field];
+		if (!pad || !pad.drawn) return null;
+		return pad.data || (pad.canvas ? pad.canvas.toDataURL("image/png") : null);
 	}
 
 	// Every cleaning task left not done, with nothing said about why (v1.598.0): the
@@ -3875,15 +4067,19 @@ class VisitWizard {
 		});
 	}
 
+	// One signature pad, for `field` (client_sign_off, or technician_signature since v1.610.0):
+	// each pad's state is its own (this._pads[field]), so the two never share a drawing.
+	//
 	// The canvas is rebuilt every time Wrap-up renders — leaving the step and
 	// coming back, now also by Back and Forward. A signature drawn this visit is
 	// kept as a data URL (on pointerup) and drawn back into the new canvas;
 	// before, the flag outlived the drawing, and Finish sent a blank image as
 	// the client's signature.
-	setup_signature($card) {
+	setup_signature($card, field) {
 		const canvas = $card.find("canvas")[0];
+		const pad = (this._pads[field] = this._pads[field] || { drawn: false, data: null, canvas: null });
 		const resize = () => {
-			const data = this._signature_drawn ? this._signature_data || canvas.toDataURL() : null;
+			const data = pad.drawn ? pad.data || canvas.toDataURL() : null;
 			canvas.width = canvas.offsetWidth;
 			canvas.height = canvas.offsetHeight;
 			if (data) {
@@ -3916,29 +4112,42 @@ class VisitWizard {
 			const { x, y } = point(event);
 			context.lineTo(x, y);
 			context.stroke();
-			this._signature_drawn = true;
+			pad.drawn = true;
 		});
 		const lift = () => {
-			if (drawing && this._signature_drawn) this._signature_data = canvas.toDataURL("image/png");
+			if (drawing && pad.drawn) {
+				pad.data = canvas.toDataURL("image/png");
+				$card.removeClass("vz-sig-missing").find(".vz-sig-needed").hide();
+			}
 			drawing = false;
 		};
 		canvas.addEventListener("pointerup", lift);
 		canvas.addEventListener("pointercancel", lift);
 		$card.find(".vz-link-btn").on("click", () => {
 			context.clearRect(0, 0, canvas.width, canvas.height);
-			this._signature_drawn = false;
-			this._signature_data = null;
+			pad.drawn = false;
+			pad.data = null;
 		});
-		this._signature_canvas = canvas;
+		pad.canvas = canvas;
 
-		if (this.doc.client_sign_off && !this._signature_drawn) {
+		if (this.doc[field] && !pad.drawn) {
 			const image = new Image();
 			image.onload = () => {
 				context.drawImage(image, 0, 0, canvas.width || canvas.offsetWidth, canvas.height || canvas.offsetHeight);
 			};
-			image.src = this.doc.client_sign_off;
-			this._signature_drawn = false; // existing signature isn't re-sent
+			image.src = this.doc[field];
+			pad.drawn = false; // existing signature isn't re-sent
 		}
+	}
+
+	// Finish without the technician's signature: say so on the pad and bring it into view. The
+	// server would refuse the visit for review without it (_finish_on_review).
+	ask_technician_signature() {
+		const $card = this.$wrap.find(".vz-tech-sig");
+		$card.addClass("vz-sig-missing").find(".vz-sig-needed").show();
+		const el = $card[0];
+		if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+		frappe.show_alert({ message: __("Sign the visit before you finish it."), indicator: "orange" });
 	}
 
 	// ----- photos -----------------------------------------------------------
@@ -3962,6 +4171,12 @@ class VisitWizard {
 	// A last nudge before Finish, never a block: the visit still goes for review, where the
 	// email names each task left not done with no reason.
 	finish() {
+		// The signature first (v1.610.0): a block, unlike the nudge below, so it is asked before
+		// the technician has said "Finish anyway".
+		if (this.missing_technician_signature()) {
+			this.ask_technician_signature();
+			return;
+		}
 		const unexplained = (this.doc.cleaning_tasks || []).filter((row) => vz_task_unexplained(row));
 		if (!unexplained.length || this.doc.workflow_state === "Pending Review") return this.finish_now();
 		frappe.confirm(
@@ -3974,16 +4189,21 @@ class VisitWizard {
 	}
 
 	finish_now() {
-		const signature = this._signature_drawn
-			? this._signature_data ||
-				(this._signature_canvas ? this._signature_canvas.toDataURL("image/png") : null)
-			: null;
+		const signature = this.pad_value("client_sign_off");
+		// The technician's own signature (v1.610.0), sent only by a technician finishing: a
+		// reviewer's Approve & Submit never signs as the technician (the server ignores it then
+		// too). One already on the visit, from before it was sent back, still counts.
+		if (this.missing_technician_signature()) {
+			this.ask_technician_signature();
+			return;
+		}
+		const technician_signature = this.technician_finishing() ? this.pad_value("technician_signature") : null;
 		const doc = this.doc;
 		this.flush_save()
 			.then(() =>
 				frappe.call({
 					method: "erpnext_enhancements.api.maintenance_visit.finish_visit",
-					args: { record: doc.name, signature, modified: doc.modified },
+					args: { record: doc.name, signature, technician_signature, modified: doc.modified },
 					freeze: true,
 					freeze_message: __("Finishing visit…"),
 				})
@@ -4028,7 +4248,7 @@ class VisitWizard {
 				// A refused finish showed the server's own message (a required item, the
 				// visit out of date) and stays as it was. No answer at all is no signal:
 				// the Finish is kept on this phone and sent when there is (v1.596.0).
-				if (error && vz_try_later(error)) this.keep_finish(doc, signature);
+				if (error && vz_try_later(error)) this.keep_finish(doc, signature, technician_signature);
 			});
 	}
 }

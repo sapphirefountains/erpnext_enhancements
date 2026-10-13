@@ -2326,6 +2326,12 @@ jobs:
       # visits already waiting.
       - name: Visit finished for review (dated and clocked out then)
         run: python -m unittest erpnext_enhancements.tests.test_visit_finished_for_review -v
+      # Visit numbers (v1.610.0): the visits named before v1.597.0 get PRJ-#####-YYYY-V### names
+      # in the order they were done, after what each series has used; the old name is kept, the
+      # calendar rows follow, the counter ends past them, and a failure is rolled back and logged,
+      # never raised. Own step for its own frappe stub.
+      - name: Hash-named visits renamed into the visit numbers
+        run: python -m unittest erpnext_enhancements.tests.test_rename_hash_named_visits -v
       # The customer's visit report (v1.597.0, Lisa's review of the first one): water features
       # by name, the contract with the visit's calendar year, a chart per reading over recent
       # visits, and the "fountain as we left it" photo inlined. Never raises: a part that fails

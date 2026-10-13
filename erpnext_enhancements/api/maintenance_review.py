@@ -384,9 +384,16 @@ def _check_access():
 
 
 def _get(record):
-	if not record or not frappe.db.exists(DOCTYPE, record):
+	name = record if record and frappe.db.exists(DOCTYPE, record) else None
+	if record and not name:
+		# Renamed in v1.610.0 (patches/rename_hash_named_visits.py): a review email sent before
+		# then names the visit by its old random name. The page re-routes to the new one.
+		from erpnext_enhancements.sapphire_maintenance.visit_names import current_visit_name
+
+		name = current_visit_name(record)
+	if not name:
 		frappe.throw(_("Visit {0} was not found.").format(record), frappe.DoesNotExistError)
-	doc = frappe.get_doc(DOCTYPE, record)
+	doc = frappe.get_doc(DOCTYPE, name)
 	doc.check_permission("read")
 	return doc
 

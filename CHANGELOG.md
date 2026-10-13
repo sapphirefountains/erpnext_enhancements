@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.610.0] - 2026-10-13
+
+### Added
+
+- **The technician signs the maintenance visit, and the customer's report prints it.** Nik,
+  2026-10-13: "we need the technicians to sign the maintenance visits once they complete it so the
+  printed form has that." Three fields on Sapphire Maintenance Record, just before the client's
+  sign-off: `technician_signature` (Signature), `technician_signed_by` (User) and
+  `technician_signed_on`, the last two read-only and stamped by `validate` (`_check_signatures`)
+  whenever a new signature is saved: the session's user, not the visit's `technician`, so a
+  substitute covering the site signs as themselves. A signature left as it was keeps its stamp (a
+  reviewer's later save is not a signing), and a cleared one clears it. All three are `no_copy`.
+  - **Required to send the visit for review.** `_finish_on_review`, the one save every way of
+    finishing passes through (the wizard's Finish and the form's Request Review alike), now refuses
+    the move into Pending Review without it: *The technician must sign the visit before it goes for
+    review.* Nothing else asks for it: not a visit already waiting, not a reviewer's edit or Send
+    Back, not Approve & Submit, and not a site with no workflow. The 17 drafts on prod waiting or
+    not are unaffected until someone sends one for review.
+  - **Visit Wizard.** The Wrap-up has a *Technician signature* card above the client's
+    ("Signing as <name>"). Finish asks for it first, before the "tasks not done — finish anyway?"
+    nudge, with an inline line on the pad and the pad scrolled into view. A visit signed before it
+    was sent back finishes again without re-signing. A reviewer opening a visit already in review
+    sees the signature it has, with no pad. The two pads are one parameterized `setup_signature`
+    with state per field (`this._pads`), so the client's drawing can never be sent as the
+    technician's. `finish_visit` takes `technician_signature` and sets it before the save that
+    precedes `apply_workflow`, only while the visit is not yet in review: a reviewer's Approve &
+    Submit goes through the same endpoint and never signs as the technician. The signature rides
+    every finish path: `finish_now`, a Finish kept on the phone with no signal (`keep_finish`, the
+    outbox item, the background sender's replay) and one held back for a choice.
+  - **A Finish kept on a phone before this release has no technician's signature and is
+    refused.** The background sender used to report any refusal as a bare "turned down"; it now
+    keeps the server's own words with the kept Finish (`vz_server_message`) and says them in the
+    alert and again when the visit is opened, so the technician is told to sign rather than left
+    guessing.
+  - **Print.** "Maintenance Record Print" (`fixtures/print_format.json`, edited in place, every
+    other key kept) puts the signature in the TECHNICIAN cell, sized like the client's, with the
+    signer's full name and the time under it; unsigned, the blank line stays. The value is already a
+    data URI, so the session-less finalize PDF prints it without inlining. The portal page
+    (`sapphire_maintenance_record.html`) shows it beside the client's sign-off.
+  - **Both signature fields take only a drawn image.** They are printed unescaped into an
+    `<img src>`, so a value that is not a base64 image data URI (`data:image/png;base64,…` for the
+    technician; png, jpeg, webp or gif for the client) is refused when it changes. A stored value is
+    never re-checked, so no visit becomes unsaveable.
+  - `visit_shape.STARTED_FIELDS` counts a technician's signature as started, so a signed
+    per-feature draft is never folded away.
+
+### Changed
+
+- **The visits named before v1.597.0 get their PRJ-#####-YYYY-V### numbers.** v1.597.0 named every
+  new visit after its project, year and number (`PRJ-00179-2026-V001`, from Lisa's review of the
+  first customer report) and deliberately left the existing visits their random names, because
+  review emails and links named them. No visit was created after it shipped, so on 2026-10-13 all 20
+  visits on prod (17 drafts, 3 submitted) still showed IDs like `4lvpg04h6h`, and Nik: "I'm still
+  seeing the old record numbers (4lvpg04h6h) instead of PRJ-#####-V### or something similar". So
+  `patches/rename_hash_named_visits.py` renames them, and the old-links concern is answered by
+  keeping the old name and resolving it rather than by leaving the name alone.
+  - **Numbers.** Each visit goes into the series its own autoname would have used: the project and
+    the year of the visit's day (its date, else its scheduled date, else the day it was created,
+    `visit_compare.visit_day`), numbered in the order the visits were done, after whatever the
+    series has used (its `tabSeries` counter, or the highest name already in the scheme). Each
+    series' counter is then raised to the highest number given out
+    (`INSERT … ON DUPLICATE KEY UPDATE current = GREATEST(COALESCE(current, 0), …)`; the key is
+    `PRJ-00179-2026-V`, what `make_autoname("PRJ-00179-2026-V.###")` counts in), so the next visit
+    created never collides. Visits already in the scheme, with no project, or whose project name
+    cannot lead a series are left alone, so the patch is safe to run twice.
+  - **What follows a rename.** `frappe.rename_doc` carries every Link to the visit, the Dynamic
+    Links (comments, ToDos, Workflow Actions, communications, shares), attachments, versions and
+    the child rows, and leaves "renamed from" on the timeline. It does not touch the calendar sync,
+    which keeps the visit's name in two Data fields: the nightly repair would have read the old row
+    as a vanished visit and deleted its Google event. The patch rewrites each Calendar Sync Link
+    row (`source_name`, and the name segment of the unique `source_ref`), keeps its `event_id` (the
+    same Google event) and blanks `content_hash`, so the next sync writes the event again with the
+    new name in it.
+  - **Old names still work where we route them.** The old name is kept in a new read-only,
+    indexed field, **Previous Number** (`legacy_name`), which is also the doctype's search field:
+    typing the old ID in a Link search finds the visit. `sapphire_maintenance/visit_names.py`
+    (`current_visit_name`) looks a visit up by either name, and the Visit Wizard's endpoints
+    (bootstrap, state, save, finish) and the Visit Review page's take either. Done on the server
+    rather than by a second call from the page because frappe v16 answers a 404 with a "Not found"
+    dialog even on a `silent` call. A new whitelisted `resolve_visit(name)` is the
+    permission-checked form. The Visit Wizard, opened on an old name, corrects the address in place
+    (Back still goes where it went) and moves what the phone kept under the old name (answers in
+    localStorage, photos and a Finish in IndexedDB, and what the page holds) onto the new one
+    (`move_kept`); the background sender does the same when the server answers an old name with a
+    new one, so nothing is reported as "deleted". The Visit Review page re-routes an old name from a
+    review email to the new one, in place.
+  - **What does not follow.** A link to the Desk form by an old name (`/app/sapphire-maintenance-record/4lvpg04h6h`)
+    shows "not found": search for the old ID instead. The old name stays in text already written:
+    emails sent, notification logs, and free-text notes.
+  - **How it runs.** Synchronously inside the migrate, one savepoint per visit (a visit that fails
+    is rolled back whole, logged under "rename_hash_named_visits" and keeps its old name; the rest
+    carry on), and never raises: a patch that raises aborts `bench migrate`, which on this repo is
+    the deploy. Nothing is enqueued (`rebuild_search=False`), because the deploy flushes the job
+    queue straight after the migrate. `rename_doc` is called with `force=True` (the doctype has no
+    `allow_rename`) and without `ignore_permissions`, which Frappe 16.30's `frappe.rename_doc` does
+    not take and which wedged every migrate on 2026-08-07 (`tests/test_uom_cleanup.py` checks every
+    call site). Registered at the end of `[post_model_sync]`, after the field exists.
+- The `autoname` docstring and the module README say what changed and why, in place of "visits
+  named before v1.597.0 keep theirs".
+
+### Tests
+
+- New bench-free suite `tests/test_rename_hash_named_visits.py` (own `frappe` stub, own CI step):
+  numbering by the visit's day across years, starting after the counter or a name already in the
+  scheme, a four-digit number past 999, the counter ending at the highest number, everything left
+  alone that should be, a second run doing nothing, the calendar rows keeping their Google event,
+  the `rename_doc` keywords, a failure rolled back whole (including one after the rename itself)
+  while the rest go on, and never raising.
+- `test_visit_finished_for_review`: going for review unsigned is refused and nothing else is, the
+  stamp is the saver and the time, kept when unchanged and cleared with the signature, and only a
+  drawn image is taken. `test_maintenance_visit_crews`: `finish_visit` signs before the workflow
+  moves the visit, never for a reviewer, and the endpoints and `resolve_visit` take an old name.
+  `test_visit_review`: an old name finds the renamed visit. `test_print_style` renders the signed
+  and unsigned TECHNICIAN cell; `test_visit_report` pins the template and portal uses;
+  `test_visit_shape_fold` counts a signature as started.
+- `scripts/test_wizard_back_forward.mjs` (run by `test_visit_wizard_markup`): Finish asks for the
+  technician's signature first and sends both pads separately; a visit already signed finishes;
+  a reviewer is never held or signed for; the Wrap-up card; an old name in the address opens the
+  renamed visit in place with Back intact; a kept Finish carries the signature; a pre-release kept
+  Finish is refused with the server's words; and answers, a photo and a Finish kept under an old
+  name reach the renamed visit, whether the visit is opened or sent in the background.
+
 ## [1.609.0] - 2026-10-13
 
 ### Added

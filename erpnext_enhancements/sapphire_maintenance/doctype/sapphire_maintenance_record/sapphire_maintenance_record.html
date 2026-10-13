@@ -203,15 +203,29 @@
     </div>
     {% endif %}
 
-    <!-- Client Sign-off -->
-    {% if doc.client_sign_off %}
+    <!-- Signatures: the technician's (v1.610.0) beside the client's sign-off -->
+    {% if doc.client_sign_off or doc.technician_signature %}
     <div class="mt-12 pt-8 border-t border-gray-200">
-        <div class="flex flex-col items-center md:items-end">
-            <p class="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Client Sign-off</p>
-            <div class="border-2 border-gray-300 rounded p-2 bg-white inline-block">
-                <img src="{{ doc.client_sign_off }}" class="max-h-24" alt="Client Signature">
+        <div class="flex flex-col md:flex-row gap-8 items-center md:items-start md:justify-end">
+            {% if doc.technician_signature %}
+            {% set signed_by = (frappe.db.get_value("User", doc.technician_signed_by, "full_name") if doc.technician_signed_by else "") or doc.technician_signed_by or "" %}
+            <div class="flex flex-col items-center md:items-end">
+                <p class="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Technician</p>
+                <div class="border-2 border-gray-300 rounded p-2 bg-white inline-block">
+                    <img src="{{ doc.technician_signature | e }}" class="max-h-24" alt="Technician Signature">
+                </div>
+                <p class="mt-2 text-xs text-gray-400 italic">{{ signed_by | e }}{% if signed_by %} &middot; {% endif %}Sapphire Fountains{% if doc.technician_signed_on %} &middot; {{ frappe.utils.format_datetime(doc.technician_signed_on) | e }}{% endif %}</p>
             </div>
-            <p class="mt-2 text-xs text-gray-400 italic">Digitally captured on site.</p>
+            {% endif %}
+            {% if doc.client_sign_off %}
+            <div class="flex flex-col items-center md:items-end">
+                <p class="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Client Sign-off</p>
+                <div class="border-2 border-gray-300 rounded p-2 bg-white inline-block">
+                    <img src="{{ doc.client_sign_off | e }}" class="max-h-24" alt="Client Signature">
+                </div>
+                <p class="mt-2 text-xs text-gray-400 italic">Digitally captured on site.</p>
+            </div>
+            {% endif %}
         </div>
     </div>
     {% endif %}

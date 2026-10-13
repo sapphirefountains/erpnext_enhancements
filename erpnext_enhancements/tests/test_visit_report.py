@@ -517,9 +517,21 @@ class TestTheWiring(unittest.TestCase):
 			"mr.features.get(row.serial_no)",
 			"mr.charts",
 			"mr.fountain_photo",
+			# v1.610.0: the technician's signature, with who signed and when. A data URI already,
+			# so the session-less finalize PDF prints it without inlining anything.
+			'<img src="{{ doc.technician_signature | e }}"',
+			"doc.technician_signed_by",
+			"frappe.utils.format_datetime(doc.technician_signed_on)",
 		):
 			with self.subTest(use=use):
 				self.assertIn(use, html)
+
+	def test_the_portal_page_shows_both_signatures(self):
+		portal = (
+			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.html"
+		).read_text(encoding="utf-8")
+		self.assertIn('<img src="{{ doc.technician_signature | e }}"', portal)
+		self.assertIn('<img src="{{ doc.client_sign_off | e }}"', portal)
 
 
 if __name__ == "__main__":

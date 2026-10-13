@@ -468,6 +468,7 @@ class TestWhatIsLeft(unittest.TestCase):
 			"date": {"visit_date": "2026-10-18"},
 			"review": {"workflow_state": "Pending Review"},
 			"photo": {"fountain_photo": "/private/files/f.jpg"},
+			"technician signed": {"technician_signature": "data:image/png;base64,iVBORw0KGgo="},
 			"attachment": {"_file": True},
 			"invoice": {"sales_invoice": "ACC-SINV-2026-00001"},
 			"digest texted": {"dispatch_digest_sent_on": "2026-10-19"},

@@ -707,7 +707,12 @@ function visitServer(records, sections) {
 		return {
 			record: rec,
 			sections: sections || {},
-			state: { modified: rec.modified, docstatus: rec.docstatus, completion_percent: 10 },
+			state: {
+				modified: rec.modified,
+				docstatus: rec.docstatus,
+				workflow_state: rec.workflow_state,
+				completion_percent: 10,
+			},
 		};
 	};
 	// The background sender's read-only look at a visit (v1.596.0).
@@ -746,9 +751,23 @@ function visitServer(records, sections) {
 	return db;
 }
 
+// The server after v1.610.0 renamed a visit: it answers to the old name too, with the new one
+// (api.maintenance_visit.current_visit_name), as the wizard's endpoints do.
+function renameVisit(db, old, now) {
+	db[now] = { ...db[old], name: now };
+	delete db[old];
+	["get_visit_bootstrap", "get_visit_state", "save_visit", "finish_visit"].forEach((method) => {
+		const handler = server.handlers[method];
+		server.handlers[method] = (args) => handler({ ...args, record: args.record === old ? now : args.record });
+	});
+}
+
 function visit(extra) {
 	return {
 		safety_acknowledged: 1,
+		// Signed by the technician already (v1.610.0 requires it to finish): the suites below are
+		// about other things. The signature tests pass technician_signature: null.
+		technician_signature: "data:image/png;base64,SIGNEDBEFORE",
 		chemistry_readings: [
 			{ name: "r1", serial_no: "SN-A", reading: "pH" },
 			{ name: "r2", serial_no: "SN-B", reading: "pH" },
@@ -1105,13 +1124,114 @@ async function visitWizardSuite() {
 		const w = wizard();
 		w.go(w.steps.length - 1);
 		await settle();
-		w._signature_drawn = true;
-		w._signature_data = "data:image/png;base64,SIGNED";
+		w._pads.client_sign_off = { drawn: true, data: "data:image/png;base64,SIGNED", canvas: null };
 		await back();
 		await forward();
 		w.finish();
 		await settle();
 		assert.equal(server.sent("finish_visit")[0].args.signature, "data:image/png;base64,SIGNED");
+		assert.equal(
+			server.sent("finish_visit")[0].args.technician_signature,
+			null,
+			"the pads are separate: the client's drawing is not the technician's"
+		);
+	});
+
+	await test("Finish asks for the technician's signature first, then sends it with the client's", async () => {
+		visitServer({ "MNT-1": visit({ technician_signature: null }) });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		const asked = [];
+		F.confirm = (message, yes) => {
+			asked.push(message);
+			yes();
+		};
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit").length, 0, "not sent unsigned");
+		assert.equal(server.sent("save_visit").length, 0);
+		assert.deepEqual(asked, [], "asked for the signature before 'Finish anyway?'");
+		assert.ok(ui.alerts.includes("Sign the visit before you finish it."), ui.alerts.join(" | "));
+		w._pads.technician_signature = { drawn: true, data: "data:image/png;base64,TECH", canvas: null };
+		w._pads.client_sign_off = { drawn: true, data: "data:image/png;base64,CLIENT", canvas: null };
+		w.finish();
+		await settle();
+		const args = server.sent("finish_visit")[0].args;
+		assert.equal(args.technician_signature, "data:image/png;base64,TECH");
+		assert.equal(args.signature, "data:image/png;base64,CLIENT");
+	});
+
+	await test("a visit signed before it was sent back finishes again without signing again", async () => {
+		visitServer({ "MNT-1": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit").length, 1);
+		assert.equal(server.sent("finish_visit")[0].args.technician_signature, null, "the one on the visit stands");
+	});
+
+	await test("a reviewer's Approve & Submit is never held for, and never sends, a technician's signature", async () => {
+		visitServer({ "MNT-1": visit({ workflow_state: "Pending Review", technician_signature: null }) });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		w.go(w.steps.length - 1);
+		await settle();
+		w._pads.technician_signature = { drawn: true, data: "data:image/png;base64,REVIEWER", canvas: null };
+		w.finish();
+		await settle();
+		assert.equal(server.sent("finish_visit").length, 1);
+		assert.equal(server.sent("finish_visit")[0].args.technician_signature, null);
+	});
+
+	await test("Wrap-up: a pad to sign as yourself while finishing; the signature it has once it is waiting", async () => {
+		visitServer({ "MNT-1": visit({ technician_signature: null }) });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		F.session = { user: "austin@example.com", user_fullname: "Austin Healey" };
+		const w = wizard();
+		const pads = [];
+		w.setup_signature = (_card, field) => pads.push(field); // the canvas itself needs a DOM
+		let html = drawn(() => w.render_technician_signature()).join("\n");
+		assert.ok(html.includes("Technician signature"), html);
+		assert.ok(html.includes("Signing as Austin Healey."), html);
+		assert.ok(html.includes('<canvas class="vz-sig">'), "a pad to sign on");
+		assert.deepEqual(pads, ["technician_signature"], "its own pad, not the client's");
+		w.doc.workflow_state = "Pending Review";
+		w.doc.technician_signature = "data:image/png;base64,TECH";
+		w.doc.technician_signed_by = "korben@example.com";
+		F.session = { user: "lisa@example.com", user_fullname: "Lisa Symanski" };
+		html = drawn(() => w.render_technician_signature()).join("\n");
+		assert.ok(!html.includes("<canvas"), "a reviewer gets no pad");
+		assert.ok(html.includes('src="data:image/png;base64,TECH"'), html);
+		assert.ok(html.includes("Signed by korben@example.com"), html);
+		assert.ok(!html.includes("Lisa"), "the reviewer is not named as the signer");
+		assert.deepEqual(pads, ["technician_signature"], "no second pad");
+	});
+
+	await test("an old visit name (renamed in v1.610.0) opens the visit under its new name, in place", async () => {
+		const db = visitServer({ "4lvpg04h6h": visit() });
+		renameVisit(db, "4lvpg04h6h", "PRJ-00179-2026-V001");
+		boot("visit-wizard", "/desk/todo");
+		await settle();
+		F.set_route("visit-wizard", "4lvpg04h6h", "readings");
+		await settle();
+		assert.equal(last().record, "PRJ-00179-2026-V001");
+		assert.equal(last().step, "readings");
+		assert.equal(url(), "/desk/visit-wizard/PRJ-00179-2026-V001/readings/SN-A");
+		assert.equal(browser.hist.length, 2, browser.hist.urls().join(" | "));
+		assert.deepEqual(ui.msgprints, [], "no 'not found'");
+		await back();
+		assert.equal(url(), "/desk/todo", "Back leaves for where it came from");
+		await forward();
+		assert.equal(last().record, "PRJ-00179-2026-V001");
 	});
 
 	await test("?record= arriving in route_options is consumed: a later plain visit shows the list", async () => {
@@ -1312,6 +1432,11 @@ function phone() {
 		},
 		outbox() {
 			return [...(databases.get("vz-outbox") || new Map()).values()];
+		},
+		// Something an earlier version of the page left in the outbox.
+		put(item) {
+			if (!databases.has("vz-outbox")) databases.set("vz-outbox", new Map());
+			databases.get("vz-outbox").set(item.key, item);
 		},
 	};
 }
@@ -2208,6 +2333,127 @@ async function visitWizardKeptSuite() {
 		assert.ok(drawn(() => wizard().render_last_visit()).join("").includes("First recorded visit"));
 		wizard().dashboard.last_visit = null;
 		assert.deepEqual(drawn(() => wizard().render_last_visit()), [], "nothing from an older server");
+	});
+
+	await test("a Finish kept with no signal keeps the technician's signature and sends it", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit({ technician_signature: null }) });
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		server.fail.add("save_visit");
+		server.fail.add("finish_visit");
+		w._pads.technician_signature = { drawn: true, data: "data:image/png;base64,TECH", canvas: null };
+		w.set_field("visit_notes", "All done");
+		w.finish();
+		await settle();
+		const kept = p.outbox().find((item) => item.kind === "finish");
+		assert.equal(kept.technician_signature, "data:image/png;base64,TECH");
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		server.fail.clear();
+		await settle();
+		const sent = server.sent("finish_visit").pop();
+		assert.equal(sent.args.technician_signature, "data:image/png;base64,TECH");
+		assert.equal(db["MNT-1"].docstatus, 1);
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("a Finish kept before the signature was required is turned down, and says why", async () => {
+		const p = phone();
+		const db = visitServer({ "MNT-1": visit({ technician_signature: null }) });
+		const finish = server.handlers.finish_visit;
+		const why = "The technician must sign the visit before it goes for review.";
+		server.handlers.finish_visit = (args) =>
+			args.technician_signature || db[args.record].technician_signature ? finish(args) : new Error(why);
+		// What a v1.609.0 page kept: no technician_signature in it at all.
+		p.put({ key: "finish|MNT-1", kind: "finish", record: "MNT-1", signature: null, at: 1 });
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await settle();
+		assert.equal(server.sent("finish_visit").length, 1);
+		assert.equal(db["MNT-1"].docstatus, 0);
+		assert.ok(
+			ui.alerts.some((a) => a.includes("Finishing MNT-1 was turned down by the server: " + why)),
+			ui.alerts.join(" | ")
+		);
+		const kept = p.outbox().find((item) => item.kind === "finish");
+		assert.equal(kept.refused, 1);
+		assert.equal(kept.reason, why);
+		// Opened, it says so again, with the reason; signed, it finishes.
+		F.set_route("visit-wizard", "MNT-1", "wrapup");
+		await settle();
+		assert.ok(ui.msgprints.some((m) => m.includes(why)), ui.msgprints.join(" | "));
+		const w = wizard();
+		w._pads.technician_signature = { drawn: true, data: "data:image/png;base64,TECH", canvas: null };
+		w.finish();
+		await settle();
+		assert.equal(db["MNT-1"].docstatus, 1);
+		assert.deepEqual(p.outbox(), []);
+	});
+
+	await test("answers, a photo and a Finish kept under a visit's old name go to it after the rename", async () => {
+		const p = phone();
+		const db = visitServer({ "4lvpg04h6h": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/4lvpg04h6h/wrapup");
+		p.install();
+		await settle();
+		const w = wizard();
+		p.net.down = true;
+		server.fail.add("save_visit");
+		server.fail.add("finish_visit");
+		w.take_photo("chemistry_readings", w.doc.chemistry_readings[0], new Blob(["jpeg"]), $stub("btn"));
+		await settle();
+		w.set_field("visit_notes", "All done");
+		w._pads.technician_signature = { drawn: true, data: "data:image/png;base64,TECH", canvas: null };
+		w.finish();
+		await settle();
+		assert.ok(p.kept("4lvpg04h6h"));
+		assert.equal(p.outbox().length, 2);
+
+		// The deploy renames the visit; the phone opens the visit list with signal.
+		renameVisit(db, "4lvpg04h6h", "PRJ-00179-2026-V001");
+		p.net.down = false;
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await settle();
+		const now = db["PRJ-00179-2026-V001"];
+		assert.equal(now.docstatus, 1, "finished");
+		assert.equal(now.visit_notes, "All done");
+		assert.equal(now.chemistry_readings[0].photo, "/private/files/PRJ-00179-2026-V001-1.jpg");
+		assert.equal(p.net.uploads[0].docname, "PRJ-00179-2026-V001", "the photo is attached to the visit as named now");
+		assert.equal(server.sent("finish_visit").pop().args.technician_signature, "data:image/png;base64,TECH");
+		assert.deepEqual(p.outbox(), []);
+		assert.equal(p.kept("4lvpg04h6h"), null);
+		assert.equal(p.kept("PRJ-00179-2026-V001"), null);
+		assert.ok(!ui.alerts.some((a) => /could not be read/.test(a)), ui.alerts.join(" | "));
+	});
+
+	await test("a visit opened by its old name takes what the phone kept under that name with it", async () => {
+		const p = phone();
+		const db = visitServer({ "4lvpg04h6h": visit() });
+		boot("visit-wizard", "/desk/visit-wizard/4lvpg04h6h/readings");
+		p.install();
+		await settle();
+		server.fail.add("save_visit");
+		wizard().set_field("visit_notes", "Skimmed");
+		await tick(5000);
+		assert.ok(p.kept("4lvpg04h6h"));
+		renameVisit(db, "4lvpg04h6h", "PRJ-00179-2026-V001");
+		server.fail.clear();
+		boot("visit-wizard", "/desk/visit-wizard/4lvpg04h6h/readings");
+		p.install();
+		await settle();
+		assert.equal(url(), "/desk/visit-wizard/PRJ-00179-2026-V001/readings/SN-A");
+		assert.equal(browser.hist.length, 1, "corrected in place");
+		assert.equal(wizard().doc.name, "PRJ-00179-2026-V001");
+		assert.equal(wizard().doc.visit_notes, "Skimmed", "the kept answer is back on screen");
+		await tick(5000);
+		assert.equal(db["PRJ-00179-2026-V001"].visit_notes, "Skimmed");
+		assert.equal(p.kept("4lvpg04h6h"), null);
+		assert.equal(p.kept("PRJ-00179-2026-V001"), null);
 	});
 
 	globalThis.fetch = realFetch;

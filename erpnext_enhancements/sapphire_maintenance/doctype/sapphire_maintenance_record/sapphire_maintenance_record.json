@@ -7,9 +7,11 @@
  "has_web_view": 1,
  "allow_guest_to_view": 0,
  "route": "maintenance-records",
+ "search_fields": "legacy_name",
  "field_order": [
   "customer",
   "project",
+  "legacy_name",
   "maintenance_contract",
   "serial_no",
   "template",
@@ -43,6 +45,9 @@
   "has_out_of_range_readings",
   "sales_invoice",
   "workflow_state",
+  "technician_signature",
+  "technician_signed_by",
+  "technician_signed_on",
   "client_sign_off"
  ],
  "fields": [
@@ -59,6 +64,15 @@
    "in_list_view": 1,
    "label": "Project",
    "options": "Project"
+  },
+  {
+   "description": "The visit's name before v1.610.0 numbered it PRJ-#####-YYYY-V###: the random ID it was created with, which older review emails and links still use. Search for it to find the visit.",
+   "fieldname": "legacy_name",
+   "fieldtype": "Data",
+   "label": "Previous Number",
+   "no_copy": 1,
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "description": "The Active contract for the Project. Empty serial_no + a Per Site Visit contract = one form covering all covered features.",
@@ -283,12 +297,35 @@
    "read_only": 1
   },
   {
+   "description": "The technician who finished the visit signs it (the Visit Wizard's Wrap-up). Required to send the visit for review; printed on the customer's report.",
+   "fieldname": "technician_signature",
+   "fieldtype": "Signature",
+   "label": "Technician Signature",
+   "no_copy": 1
+  },
+  {
+   "description": "Who signed as the technician: stamped when the signature is saved.",
+   "fieldname": "technician_signed_by",
+   "fieldtype": "Link",
+   "label": "Technician Signed By",
+   "no_copy": 1,
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "technician_signed_on",
+   "fieldtype": "Datetime",
+   "label": "Technician Signed On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "client_sign_off",
    "fieldtype": "Signature",
    "label": "Client Sign-off"
   }
  ],
- "modified": "2026-10-12 20:00:00.000000",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Record",
