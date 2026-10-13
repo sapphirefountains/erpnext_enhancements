@@ -1677,6 +1677,13 @@ jobs:
       # column. Own step: installs and removes its own frappe stub.
       - name: Data Normalization Preview report (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_data_normalization_preview -v
+      # Form kit P2-C, the one-time cleanup of stored values (utils/normalize_cleanup.py, run by
+      # patches/normalize_stored_values.py): writes exactly the report's "Will change" rows and
+      # nothing else, never blanks a value, keeps an edit made while it runs, saves the undo file
+      # before the first write (and writes nothing without one), leaves counts but no values on
+      # the report, and neither it nor the patch can raise. Own frappe stub.
+      - name: Normalization cleanup patch (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_normalize_cleanup -v
       # The patch moving the Desk to mm/dd/yyyy and HH:mm: only old values change, both the
       # Single and the global default the boot payload reads are written, and it can never
       # raise (a raising patch aborts bench migrate, which is the deploy). Own frappe stub.

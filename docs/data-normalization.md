@@ -16,6 +16,7 @@ The rules live in one place each:
 | [`tests/fixtures/normalize_cases.json`](../erpnext_enhancements/tests/fixtures/normalize_cases.json) | The shared cases. `tests/test_normalize.py` runs every one through both and compares them field by field |
 | [`utils/normalize_fields.py`](../erpnext_enhancements/utils/normalize_fields.py) | Which fields the rules may touch, and which they must not |
 | *Data Normalization Preview* report | The dry run: what the cleanup would change, and what needs a person |
+| [`utils/normalize_cleanup.py`](../erpnext_enhancements/utils/normalize_cleanup.py) | P2-C: the one-time cleanup of stored values, run by the patch `normalize_stored_values` |
 
 ## The one rule above the others
 
@@ -163,11 +164,42 @@ link to their parent document.
    new or edited value is stored normalized; an existing value changes only when its record is
    saved.
 3. **P2-C:** the one-time cleanup, run only after the product owner has read the preview and
-   approved it, with the same rules and the same exclusions.
+   approved it, with the same rules and the same exclusions — below. Approved 2026-10-13
+   (TASK-2026-02751), no exceptions.
 4. **Only after the cleanup** are fields re-typed `Phone`, `Email` or `URL`. Frappe v16 validates
    a typed Data field on **every save**, so typing a field before its data is clean freezes every
    record holding a bad value — edits to anything else on it fail. That is exactly how a website
-   field once froze 408 records.
+   field once froze 408 records. The cleanup does not make every field clean: the 84 values the
+   rules cannot read stay as typed. So typing is a separate change, decided field by field from
+   the report after the cleanup has run, and a field still holding a *Can't normalize* value is
+   not typed until a person has fixed it.
+
+## The cleanup (P2-C)
+
+`utils/normalize_cleanup.run`, run once on deploy by the patch `normalize_stored_values`. **It
+writes exactly the report's *Will change* rows** — its plan *is* the report's `collect()`, asked
+for write targets — so what was approved is what runs.
+
+| It leaves alone | Why |
+|---|---|
+| every *Can't normalize* value | The rules cannot read it; it stays exactly as typed for a person |
+| a submitted or cancelled record, and every Single | The report's own rules: history is not rewritten, and writing one field of a never-saved Single blanks the rest |
+| a value whose normalized form would be blank | A blank in a mandatory field (an address line) makes the record unsaveable. None existed on prod on 2026-10-13 |
+| a value edited between the read and the write | Re-read and compared exactly, in Python: SQL equality would ignore a trailing space (PAD SPACE). The edit wins, and the save hook normalized it |
+
+It writes with `frappe.db.set_value(..., update_modified=False)`: no controller and no
+validation, so no record can fail half-way; `modified` is untouched, so no open form reports a
+conflict. The parent's cached document is cleared for a child row. One commit per table.
+
+**Before the first write** it saves a private undo file, `data-normalization-undo-<stamp>.json`,
+attached to nothing, so only Administrator and server code can read it. It lists every planned
+change's before and after; if it cannot be saved, nothing is written. To put the old values back
+(only where a value still holds what the cleanup wrote):
+`bench --site <site> execute erpnext_enhancements.utils.normalize_cleanup.undo --args "['<file name>']"`.
+
+**Afterwards** the counts per field — never a value — are left as a comment on the *Data
+Normalization Preview* report, and printed in the migrate log. It never raises, a second run plans
+nothing, and the kill switch stops it.
 
 ## Normalize on save (P2-B)
 

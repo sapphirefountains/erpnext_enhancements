@@ -83,11 +83,17 @@ def get_columns():
 	]
 
 
-def collect(doctype=None, kind=None):
+def collect(doctype=None, kind=None, targets=False):
 	"""Every registered value with its verdict, and the counts per status.
 
 	``doctype``/``kind`` narrow the walk to registry entries; a doctype the registry does not
 	cover yields nothing. Rows come back sorted by doctype, field and record.
+
+	``targets=True`` is for the cleanup (``utils/normalize_cleanup.py``), which writes exactly
+	what this report lists: each table row then also carries ``_target``, the
+	``(table, row name, fieldname, parent doctype, parent name)`` the value lives in. A Single's
+	row never gets one, because the bulk cleanup never writes a Single. The report itself
+	never asks for them, so what it sends the browser is unchanged.
 	"""
 	counts = {STATUS_CHANGE: 0, STATUS_STUCK: 0, STATUS_CLEAN: 0, STATUS_SUBMITTED: 0}
 	rows = []
@@ -102,14 +108,14 @@ def collect(doctype=None, kind=None):
 		if dt in registry.SINGLES:
 			_scan_single(dt, wanted, rows)
 		else:
-			_scan_table(dt, wanted, rows, counts)
+			_scan_table(dt, wanted, rows, counts, targets)
 	for row in rows:
 		counts[row["status"]] += 1
 	rows.sort(key=lambda r: (r["doctype"], r["field"], r["record"]))
 	return rows, counts
 
 
-def _scan_table(dt, fields, rows, counts):
+def _scan_table(dt, fields, rows, counts, targets=False):
 	if not frappe.db.table_exists(dt):
 		return
 	present = [f for f in fields if _has_column(dt, f)]
@@ -142,7 +148,8 @@ def _scan_table(dt, fields, rows, counts):
 		name = (record.get("parent") or record.get("name")) if child else record.get("name")
 		for fieldname in present:
 			label = f"{dt}.{fieldname}" if child else fieldname
-			_add(rows, parent_dt, name, label, fields[fieldname], record.get(fieldname), country)
+			target = (dt, record.get("name"), fieldname, parent_dt, name) if targets else None
+			_add(rows, parent_dt, name, label, fields[fieldname], record.get(fieldname), country, target)
 
 
 def _scan_single(dt, fields, rows):
@@ -162,7 +169,7 @@ def _scan_single(dt, fields, rows):
 		_add(rows, dt, dt, fieldname, kind, raw, None)
 
 
-def _add(rows, doctype, record, field, kind, raw, country):
+def _add(rows, doctype, record, field, kind, raw, country, target=None):
 	if raw is None or raw == "":
 		return
 	result = normalize.normalize(kind, raw, country)
@@ -172,18 +179,19 @@ def _add(rows, doctype, record, field, kind, raw, country):
 		status = STATUS_CHANGE
 	else:
 		status = STATUS_CLEAN
-	rows.append(
-		{
-			"doctype": doctype,
-			"record": record,
-			"field": field,
-			"kind": kind,
-			"current": str(raw),
-			"normalized": result.value if result.ok else "",
-			"status": status,
-			"reason": result.reason,
-		}
-	)
+	row = {
+		"doctype": doctype,
+		"record": record,
+		"field": field,
+		"kind": kind,
+		"current": str(raw),
+		"normalized": result.value if result.ok else "",
+		"status": status,
+		"reason": result.reason,
+	}
+	if target:
+		row["_target"] = target
+	rows.append(row)
 
 
 def _has_column(dt, fieldname):
