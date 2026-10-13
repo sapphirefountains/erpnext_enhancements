@@ -29,7 +29,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) **plus the Scope-tab task-tree export**: `_flatten_task_tree` reads the whole project in one `get_list` and links it in memory, because the on-screen grid loads children one level at a time and a file built from that would omit every branch the user did not expand | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, `get_project_task_tree`, `export_project_tasks`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
 | `print_data.py` | Pre-computed rows for the two Project Print Formats, including each Gantt bar's `left_pct`/`width_pct`. Computed in Python because the print sandbox has no date arithmetic to derive them per row, and a Print Format renders **server-side with no JavaScript**, so the browser SVG renderer cannot help | `project_schedule_rows`, `project_task_rows` | `jinja.methods` in `hooks.py` (callable from any Print Format / web template) |
 | `setup_print_formats.py` | Ships the **Project Schedule** (task tree + HTML/CSS Gantt bars) and **Project Task List** formats, idempotently upserted so template edits deploy on the next migrate | `ensure_project_print_formats` | `after_migrate` (above `ensure_chrome_pdf_generator`, which must see them) |
-| `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement previewed beside the form and a review that lists what will print blank; ends in *Sign it here now* (in-person e-signature on this device) or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `get_builder`, `save_builder`, `issue_contract`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
+| `page/contract_builder/`, `contract_builder.py` | **Contract Builder** desk page (v1.611.0): any contract type filled in one step at a time, the steps being the Project Contract's own sections for that type, with the agreement beside the form lighting up the part being filled in (v1.612.0); "With the client" mode has the client initial each clause in the agreement as it is filled in and sign at the end, executed in the builder (`sign_here`); or *Send it to them to sign*. See [Contract Builder](#contract-builder-initials-and-signing-in-person-v16110) | `builder_steps`, `agreement_sections`, `progress`, `get_builder`, `save_builder`, `issue_contract`, `sign_here`, `start_card_on_file`, `get_signing_status`; `ContractBuilder` (JS) | Page; Generate Contract opens new drafts in it |
 | `page/project_planner/` | **Project Planner** desk page (v1.577.0): month, week and crew-timeline views of project Tasks, a *Resources available* panel, Needs crew and Unscheduled trays, drag to reschedule or to add a person. Phase 6A (`PP6A_METHODS`): a click on a name, a date or a project opens a side drawer over the calendar, and a card's editor is a side panel. Phase 6C (`PP6C_METHODS`): Color by, highlight a project, saved views, the team strip, tap to move and Print. See [Project Planner](#project-planner-v15770), [Quick looks](#quick-looks-and-polish-phase-6a--task-2026-02467) and [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469) | `ProjectPlanner` (JS) | Page; backend [`api/project_planner.py`](../api/project_planner.py), [`api/planner_views.py`](../api/planner_views.py) and [`api/planner_views_prefs.py`](../api/planner_views_prefs.py) |
 | `crew_availability.py` | The availability engine **both planners share**: capacity per Planner Resource per day (work pattern, holidays, approved time off, all-day personal blocks) against everything that uses it (project tasks, rental crew tasks, maintenance visits, travel, timed personal blocks), with conflicts and work-restriction warnings | `availability`, `preview_conflicts`, `block_notes` (the only reader of a block's note, per viewer); pure `pattern_hours`, `day_capacity`, `task_span`, `task_slot`, `allocate_task`, `day_conflicts`, `day_conflict_details`, `equipment_findings`, `block_bookings`, `next_free_day`, `span_for_estimate`, `resolve_crew` | Called by `api/project_planner.py`, `api/maintenance_planner.py`, `api/planner_blocks.py` and `api/planner_conflicts.py` |
 | `routing.py` | Daily routes and drive time (v1.578.0): where each booking is (task address → project site; rental venue; visit site), the shop's coordinates (geocoded once, cached in Settings), drive times from **Google Routes** (`computeRouteMatrix`, cached in `Planner Drive Time`) with a straight-line estimate whenever Google is off or refuses, stop ordering (time slots are anchors, the rest by cheapest insertion + 2-opt), arrival times, insertion cost for date suggestions, and a daily coordinate backfill | `plan_routes`, `drive_matrix`, `start_point`, `routes_status`, `backfill_coordinates`; pure `order_stops`, `route_times`, `insertion_cost`, `haversine_km`, `estimate_minutes`, `pair_key` | Called by `crew_availability` and `api/project_planner.py`; `scheduler_events.daily` → `backfill_coordinates` |
@@ -405,7 +405,37 @@ or sent for the client to sign in their own time.
   it is `get_contract_html` over the values on screen. The review step lists every field the
   agreement prints that is still empty, read from the template's own `doc.<field>` references.
   "Generate Contract" now opens the new draft here; the form has *Open in Contract Builder*.
-- **Sign it here now** issues (submits) the contract, then `esign.api.start_in_person_signing`
+- **The page, v1.612.0.** Nik, on the first version: "the interface is not good … smoother
+  transitions and highlighting where they are at in the agreement process as they go through it
+  and let them initial and sign as it gets filled out with information." Three panes that stay
+  put: the steps (each with what is left to fill, and a progress bar over the fields the
+  agreement prints, `contract_builder.progress`), the step's form (it slides between steps; the
+  doctype's column breaks are dropped for a responsive grid), and the agreement. The agreement is
+  cut into one `<section>` per `<h1>` and the parts the step fills in are lit up and scrolled to
+  (`contract_builder.agreement_sections` reads which `<h1>` parts mention each `doc.<field>`, from
+  the contract's own template); focusing a field brings its part into view, and a value that
+  changes flashes where it lands. The preview re-renders in place, keeping its scroll.
+- **With the client** (a toggle in the header, remembered per tab): each initials box in the
+  agreement becomes a pad once its clause has no blank left in it, quoting the clause above the
+  pad, and moves on to the next box after each set. The review step takes the signature (typed or
+  drawn, the name, title, the email the signed copy goes to, the consent and disclosure text from
+  Settings), shows it on the signature line as it is captured, and **Sign & execute** calls
+  `contract_builder.sign_here`: issue and execute in one transaction through
+  `esign.api.sign_in_person`, which opens the in-person request (`open_in_person_request`, shared
+  with the tab flow below), checks every set of initials was drawn beside the wording now in the
+  frozen snapshot (`initials.stale_initials`, reading the clause text the same way the page does:
+  `CLAUSE_BLOCKS` = `CB_BLOCKS`), validates them as the signing page does, locks the contract row and
+  runs `lifecycle.execute_contract`. A refusal rolls the issue back and names the clauses to
+  initial again. The evidence records `email_confirmed = 0` and no bot check, because neither
+  happened: identity is the presenter's, recorded as `presented_by` and printed on the
+  certificate. Initials drawn beside a clause that changes afterwards are dropped on the page too.
+  After signing, *Save a card on file now* opens the same Stripe enrolment the signing page offers
+  (`portal.begin_autopay`, via `start_card_on_file`) on its own tab. Signing here needs only
+  e-signing switched on (`can_sign_here`); the public page is needed only to send or hand over a
+  link (`can_send`). The preview (only the preview: `_preview_doc` sets
+  `flags.contract_preview`) wraps the unsigned signature line in `ct-sig-line`, so a snapshot and
+  its drift check are unchanged.
+- **Hand them another device** (was *Sign it here now*) issues (submits) the contract, then `esign.api.start_in_person_signing`
   makes a signing link without emailing it and opens `/contract-sign` in a new tab: a tab and
   not a frame, because the page can go on to Stripe to save a card and Stripe refuses frames.
   Everything else is the emailed flow: the client re-types their address, the bot check runs,
@@ -445,6 +475,23 @@ or sent for the client to sign in their own time.
   access (§3.3), payment (§4.3), chemicals (§5.1), emergency rates (§8.2), renewal (§9.2),
   cancellation fee (§10.4), liability (§11) and arbitration (§14). The "save a card" offer
   after signing is withheld from a client who chose to pay by invoice.
+- **The rental and owner agreements, the same way** (template +
+  `patches/refresh_rental_owner_agreement_layout`, which replaces each live body only when it is
+  exactly the v1.611.0 shipped one). Both use the Word-copy markup (`ct-clause` with a hanging
+  `ct-num`, bold clause titles, `ct-list`, `ct-option`, `ct-sub`; the owner contract's old `<h2>`
+  sub-headings are titled clauses now, one number series). Every typed blank prints a field:
+  `agreement_party_name` and `billing_city_state_zip` (both, as maintenance), rental §3.2
+  `balance_due_days`; owner `property_type_other`, §2.1 `design_revision_rounds` /
+  `additional_revision_rate`, §3.1 and Exhibit A `construction_scope`, and §4.2 the same
+  `service_options` rows and `visit_frequency` as the maintenance agreement (seeded for owner
+  contracts too; §4.3's annual fee derives from them the same way and never overwrites a typed
+  one). What stays blank is completed by hand: the rental Exhibit A condition report and the
+  delivery/return inspections. Eight initials each — rental: overholding, late payment, deposit
+  deductions, damage, risk, liability, cancellation, arbitration; owner: construction payments,
+  change orders, utilities, liability, termination, design license, arbitration, lien rights — and
+  the owner contract now has the `sig()` block, so it can be e-signed.
+  `tests/test_rental_owner_agreement_layout` asserts every `doc.<field>` the three customer
+  agreements print is shown for that type by its own and its section's `depends_on`.
 
 ## Project Brief sections (v1.444.0)
 

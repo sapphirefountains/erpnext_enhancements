@@ -137,7 +137,7 @@ class ProjectContract(Document):
 
 	def validate(self):
 		self._fetch_template_props()
-		if self.get("template_key") == "maintenance" and not self.get("docstatus"):
+		if self.get("template_key") in PLAN_OPTION_KEYS and not self.get("docstatus"):
 			_ensure_maintenance_options(self)
 		self._resolve_party_display()
 		self._stamp_revision()
@@ -228,6 +228,9 @@ class ProjectContract(Document):
 				+ flt(self.get("design_development_fee"))
 				+ flt(self.get("construction_documents_fee"))
 			)
+			# §4.2 prints the same plan menu as the maintenance agreement, so §4.3's Annual
+			# Maintenance Fee derives the same way, and a typed-in fee is kept the same way.
+			self._compute_maintenance_annual_fee()
 		elif self.get("template_key") == "rental":
 			self.total_rental_amount = (
 				flt(self.get("base_rental_fee"))
@@ -263,8 +266,13 @@ class ProjectContract(Document):
 		self.annual_maintenance_fee = computed if computed is not None else 0
 
 	def on_submit(self):
+		# db_set, not a plain assignment: v16's _save writes the row (db_update) BEFORE
+		# run_post_save_methods calls on_submit, so an assignment here never reached the
+		# database. Every issued contract sat at "Draft" until a link was sent, which kept
+		# it out of the builder's "Waiting for a signature" list and made the builder's
+		# own Sign & execute (issue, then sign, in one request) refuse it as unsignable.
 		if self.get("status") == "Draft":
-			self.status = "Out for Signature"
+			self.db_set("status", "Out for Signature", update_modified=False)
 
 	def on_cancel(self):
 		self.status = "Void"
@@ -501,7 +509,13 @@ def _render_context(doc):
 	initials = signed_initials(signature)
 
 	def _sig(party="client", width=30):
-		return signature_markup(signature, party=party, width=width, blank=_blank)
+		markup = signature_markup(signature, party=party, width=width, blank=_blank)
+		if doc.flags.get("contract_preview") and not signature:
+			# Only on a preview (``_preview_doc``), never the snapshot a signer is sent or a
+			# print: marks the line so the Contract Builder can show the client's signature
+			# on it as it is captured. Leaves execution's drift check comparing like with like.
+			return f'<span class="ct-sig-line" data-sig="{frappe.utils.escape_html(str(party))}">{markup}</span>'
+		return markup
 
 	def _initial(key, label=""):
 		# The client's initials beside a clause that matters (§3.3, §4.3, §9.2 …): each one
@@ -680,6 +694,7 @@ def _preview_doc(payload):
 	payload = dict(payload)
 	payload["doctype"] = "Project Contract"
 	doc = frappe.get_doc(payload)
+	doc.flags.contract_preview = True
 
 	# template_key is stamped on save, so a draft whose Contract Type was just
 	# changed still carries the old one — and it picks the template's whole
@@ -968,16 +983,22 @@ def _seed_fixed_rows(doc):
 	if doc.template_key == "owner" and not doc.get("phases"):
 		for key, label in OWNER_PHASES:
 			doc.append("phases", {"phase_key": key, "phase_label": label, "included": 0})
-	if doc.template_key == "maintenance":
+	if doc.template_key in PLAN_OPTION_KEYS:
 		_ensure_maintenance_options(doc)
 
 
-def _ensure_maintenance_options(doc):
-	"""Give a maintenance agreement one row per plan option, adding only what is missing.
+#: Contract types that print the maintenance plan menu: the Maintenance Services Agreement
+#: (Service Plan Selection) and the Owner Contract (§4.2, Phase 3).
+PLAN_OPTION_KEYS = ("maintenance", "owner")
 
-	A draft made before an option existed (As-Needed arrived in v1.611.0), or one created
-	by hand with an empty table, would otherwise print that line with no way to tick or
-	price it. Rows already there are never touched, so a price someone typed survives.
+
+def _ensure_maintenance_options(doc):
+	"""Give a maintenance agreement or owner contract one row per plan option, adding only what is missing.
+
+	A draft made before an option existed (As-Needed arrived in v1.611.0; an owner contract
+	had no rows before its §4.2 was bound to them), or one created by hand with an empty
+	table, would otherwise print that line with no way to tick or price it. Rows already
+	there are never touched, so a price someone typed survives.
 	"""
 	present = {row.get("option_key") for row in (doc.get("service_options") or [])}
 	missing = [(key, label) for key, label in MAINTENANCE_OPTIONS if key not in present]

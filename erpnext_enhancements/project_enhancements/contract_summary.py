@@ -129,25 +129,7 @@ def _maintenance(doc):
 		rows.append(("Where:", f"the water features at {site}."))
 
 	# Service Plan Selection, §3.1
-	plan = []
-	standard = chosen.get("standard")
-	if standard:
-		how_often = FREQUENCY_WORDS.get(doc.get("visit_frequency"), "on the agreed schedule")
-		if doc.get("visit_frequency") == "Custom" and doc.get("custom_visit_schedule"):
-			how_often = f"on a custom schedule ({_text(doc.get('custom_visit_schedule'))})"
-		price = f" at a base rate of {_money(standard.get('price'))} per visit" if flt(standard.get("price")) else ""
-		plan.append(f"standard maintenance visits {how_often}{price}")
-	if "package" in chosen:
-		plan.append(_priced("spring startup and fall winterization", chosen["package"], " a year"))
-	else:
-		if "startup" in chosen:
-			plan.append(_priced("a spring startup", chosen["startup"]))
-		if "winterization" in chosen:
-			plan.append(_priced("a fall winterization", chosen["winterization"]))
-	if "as_needed" in chosen:
-		as_needed = chosen["as_needed"]
-		rate = f" at {_money(as_needed.get('price'))} an hour" if flt(as_needed.get("price")) else ""
-		plan.append(f"extra service when you ask for it{rate} (1-hour minimum)")
+	plan = _plan(doc, chosen, rate_words="a base rate of ")
 	if doc.get("custom_plan_details"):
 		plan.append("the custom plan in Exhibit A")
 	if plan:
@@ -217,6 +199,36 @@ def _maintenance(doc):
 		)
 	)
 	return rows
+
+
+def _plan(doc, chosen, rate_words="", custom_words=None):
+	"""The ticked plan options in words: the maintenance agreement's Service Plan Selection and
+	the owner contract's §4.2 print the same menu from the same rows."""
+	plan = []
+	standard = chosen.get("standard")
+	if standard:
+		how_often = FREQUENCY_WORDS.get(doc.get("visit_frequency"), "on the agreed schedule")
+		if doc.get("visit_frequency") == "Custom":
+			if doc.get("custom_visit_schedule"):
+				how_often = f"on a custom schedule ({_text(doc.get('custom_visit_schedule'))})"
+			elif custom_words:
+				how_often = custom_words
+		price = (
+			f" at {rate_words}{_money(standard.get('price'))} per visit" if flt(standard.get("price")) else ""
+		)
+		plan.append(f"standard maintenance visits {how_often}{price}")
+	if "package" in chosen:
+		plan.append(_priced("spring startup and fall winterization", chosen["package"], " a year"))
+	else:
+		if "startup" in chosen:
+			plan.append(_priced("a spring startup", chosen["startup"]))
+		if "winterization" in chosen:
+			plan.append(_priced("a fall winterization", chosen["winterization"]))
+	if "as_needed" in chosen:
+		as_needed = chosen["as_needed"]
+		rate = f" at {_money(as_needed.get('price'))} an hour" if flt(as_needed.get("price")) else ""
+		plan.append(f"extra service when you ask for it{rate} (1-hour minimum)")
+	return plan
 
 
 def _maintenance_term(doc):
@@ -306,12 +318,17 @@ def _rental(doc):
 	if flt(doc.get("security_deposit")):
 		money.append(f"plus a {_money(doc.get('security_deposit'))} security deposit")
 	due = f" ({_money(doc.get('total_due_at_signing'))})" if flt(doc.get("total_due_at_signing")) else ""
+	# §3.2 prints the days as a blank line when none are set, so the summary names them only when set.
+	days = cint(doc.get("balance_due_days"))
+	rest = "the rest before the rental starts"
+	if days > 0:
+		rest = f"the rest {days} day{'' if days == 1 else 's'} before the rental starts"
 	rows.append(
 		(
 			"Cost:",
 			(_join(money) + ". " if money else "")
-			+ f"Half the rental and the whole deposit are due when you sign{due}; the rest before the rental "
-			"starts. Card payments carry a 3% fee, and late payments accrue 1.5% a month.",
+			+ f"Half the rental and the whole deposit are due when you sign{due}; {rest}. Card payments carry a "
+			"3% fee, and late payments accrue 1.5% a month.",
 		)
 	)
 	# §4.2
@@ -399,15 +416,19 @@ def _owner(doc):
 				"completion.",
 			)
 		)
-	# §4.1, §4.4
+	# §4.1, §4.2, §4.4
 	if "maintenance" in keys:
-		rows.append(
-			(
-				"Maintenance:",
-				"renews every year unless either of us gives 30 days' written notice, and follows our "
-				"Maintenance Services Agreement.",
-			)
+		options = {row.get("option_key"): row for row in (doc.get("service_options") or [])}
+		plan = _plan(
+			doc,
+			{key: row for key, row in options.items() if cint(row.get("included"))},
+			custom_words="on the agreed schedule",
 		)
+		renews = (
+			"renews every year unless either of us gives 30 days' written notice, and follows our "
+			"Maintenance Services Agreement."
+		)
+		rows.append(("Maintenance:", f"{_join(plan)}. It {renews}" if plan else renews))
 	# §5; the late-payment terms differ by phase, so only the chosen phases' are stated:
 	# interest in §3.2 (construction) and §4.4 (maintenance), a pause after 5 days' notice in
 	# §3.2, and a pause on design work for an overdue balance in §2.4.

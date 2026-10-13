@@ -89,7 +89,10 @@
   "concept_days",
   "design_development_days",
   "construction_documents_days",
+  "design_revision_rounds",
+  "additional_revision_rate",
   "construction_section",
+  "construction_scope",
   "construction_start_days",
   "anticipated_completion_date",
   "milestones_section",
@@ -109,6 +112,7 @@
   "other_fee",
   "total_rental_amount",
   "security_deposit",
+  "balance_due_days",
   "maintenance_section",
   "service_options",
   "agreement_start_date",
@@ -247,7 +251,7 @@
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\"",
    "description": "The client's name as it should read on the agreement, when it differs from the customer record (e.g. \"Salt Development — Hardware Buildings\"). Blank prints the customer's name.",
    "fieldname": "agreement_party_name",
    "fieldtype": "Data",
@@ -291,7 +295,7 @@
    "label": "Billing / Mailing Address"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"rental\" || doc.template_key==\"owner\"",
    "description": "Printed as its own row under the billing address. Leave blank when the address above already includes it.",
    "fieldname": "billing_city_state_zip",
    "fieldtype": "Data",
@@ -329,7 +333,7 @@
    "options": "\nResidential\nCommercial\nMunicipal\nOther"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\" && doc.property_type==\"Other\"",
+   "depends_on": "eval:(doc.template_key==\"maintenance\" || doc.template_key==\"owner\") && doc.property_type==\"Other\"",
    "fieldname": "property_type_other",
    "fieldtype": "Data",
    "label": "Other Property Type"
@@ -685,11 +689,32 @@
    "label": "Construction Documents (calendar days)"
   },
   {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "description": "§2.1: rounds of revisions included in each design phase.",
+   "fieldname": "design_revision_rounds",
+   "fieldtype": "Int",
+   "label": "Revision Rounds per Design Phase"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "description": "§2.1: the hourly rate for revisions beyond the included rounds.",
+   "fieldname": "additional_revision_rate",
+   "fieldtype": "Currency",
+   "label": "Additional Revisions (per hour)"
+  },
+  {
    "collapsible": 1,
    "depends_on": "eval:doc.template_key==\"owner\"",
    "fieldname": "construction_section",
    "fieldtype": "Section Break",
    "label": "Construction Schedule"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "description": "What is being built and installed. Prints in §3.1 and as Exhibit A; anything not described is excluded from the construction scope.",
+   "fieldname": "construction_scope",
+   "fieldtype": "Small Text",
+   "label": "Construction Scope of Work"
   },
   {
    "depends_on": "eval:doc.template_key==\"owner\"",
@@ -809,13 +834,20 @@
    "label": "Security Deposit"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "description": "§3.2: the remaining 50% of the rental is due this many days before the Rental Start Date.",
+   "fieldname": "balance_due_days",
+   "fieldtype": "Int",
+   "label": "Balance Due (days before rental start)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "maintenance_section",
    "fieldtype": "Section Break",
    "label": "Maintenance Plan"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "service_options",
    "fieldtype": "Table",
    "label": "Service Plan Selection",
@@ -844,19 +876,19 @@
    "mandatory_depends_on": "eval:doc.template_key==\"maintenance\" && doc.initial_term==\"Other\""
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "visit_frequency",
    "fieldtype": "Select",
    "label": "Visit Frequency",
    "options": "\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nCustom"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\" && doc.visit_frequency==\"Custom\"",
-   "description": "e.g. \"Weekly May to September, monthly otherwise\". Prints after Custom in §3.1.",
+   "depends_on": "eval:(doc.template_key==\"maintenance\" || doc.template_key==\"owner\") && doc.visit_frequency==\"Custom\"",
+   "description": "e.g. \"Weekly May to September, monthly otherwise\". Prints after Custom in §3.1 (the owner contract prints it in §4.2).",
    "fieldname": "custom_visit_schedule",
    "fieldtype": "Data",
    "label": "Custom Visit Schedule",
-   "mandatory_depends_on": "eval:doc.template_key==\"maintenance\" && doc.visit_frequency==\"Custom\""
+   "mandatory_depends_on": "eval:(doc.template_key==\"maintenance\" || doc.template_key==\"owner\") && doc.visit_frequency==\"Custom\""
   },
   {
    "depends_on": "eval:doc.template_key==\"maintenance\"",
@@ -964,30 +996,30 @@
    "label": "Custom Plan Details (Exhibit A)"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "maint_fees_section",
    "fieldtype": "Section Break",
    "label": "Maintenance Fees & Payment"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "annual_maintenance_fee",
    "fieldtype": "Currency",
    "label": "Annual Maintenance Fee"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "maintenance_deposit",
    "fieldtype": "Currency",
    "label": "Maintenance Deposit (due at signing)"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "column_break_mfee",
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "depends_on": "eval:doc.template_key==\"maintenance\" || doc.template_key==\"owner\"",
    "fieldname": "invoicing_frequency",
    "fieldtype": "Select",
    "label": "Invoicing Frequency",
@@ -1069,7 +1101,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-13 12:00:00.000000",
+ "modified": "2026-10-13 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Contract",

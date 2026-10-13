@@ -122,8 +122,13 @@ def _install_frappe_stub():
         setattr(utils, name, lambda *a, **k: None)
     frappe.utils = utils
 
+    rate_limiter = types.ModuleType("frappe.rate_limiter")
+    rate_limiter.rate_limit = lambda *a, **k: (lambda fn: fn)
+    frappe.rate_limiter = rate_limiter
+
     sys.modules["frappe"] = frappe
     sys.modules["frappe.utils"] = utils
+    sys.modules["frappe.rate_limiter"] = rate_limiter
 
 
 def setUpModule():
@@ -154,6 +159,7 @@ def setUpModule():
 def tearDownModule():
     sys.modules.pop("frappe", None)
     sys.modules.pop("frappe.utils", None)
+    sys.modules.pop("frappe.rate_limiter", None)
 
 
 def _png(seed):
@@ -853,7 +859,16 @@ class TestBuilderSteps(unittest.TestCase):
         self.assertEqual(self.keys("rental"), ["parties_section", "details_section", "rental_section", "rental_fees_section"])
         self.assertEqual(
             self.keys("owner"),
-            ["parties_section", "details_section", "owner_section", "design_section", "construction_section", "milestones_section"],
+            [
+                "parties_section",
+                "details_section",
+                "owner_section",
+                "design_section",
+                "construction_section",
+                "milestones_section",
+                "maintenance_section",
+                "maint_fees_section",
+            ],
         )
         self.assertIn("scope_section", self.keys("sow", "Supplier"))
         self.assertIn("section_msa_rates", self.keys("msa", "Supplier"))
@@ -918,6 +933,172 @@ class TestBuilderSteps(unittest.TestCase):
                 self.fail("contract_builder must assign fields one by one, never doc.update(payload)")
 
 
+# --------------------------------------------------------------------------- builder v2 (v1.612.0)
+
+
+class TestInitialsClauses(unittest.TestCase):
+    """Initials drawn in the builder carry the wording they were drawn beside; the server
+    compares it with the issued snapshot before anything is signed."""
+
+    def box(self, key):
+        return initials.initial_markup({}, key, key.title())
+
+    def test_the_clause_is_the_block_around_the_box(self):
+        html = (
+            '<h1>9. TERM</h1><p class="ct-clause"><span class="ct-num">9.2</span><b>Renewal.</b> Rates rise '
+            f'<span class="ct-val">12%</span> a year.&nbsp; {self.box("renewal")}</p>'
+            f"<ul><li>One item {self.box('item')}</li></ul>"
+        )
+        clauses = initials.clause_texts(html)
+        self.assertEqual(clauses["renewal"], "9.2Renewal. Rates rise 12% a year.")
+        self.assertEqual(clauses["item"], "One item")
+        self.assertNotIn("Client initials", clauses["renewal"])
+
+    def test_a_box_on_its_own_line_takes_the_clause_before_it(self):
+        html = f'<p class="ct-sub">(c) Invoice within 30 days.</p><p class="ct-sub">{self.box("payment")}</p>'
+        self.assertEqual(initials.clause_texts(html)["payment"], "(c) Invoice within 30 days.")
+
+    def test_a_signed_box_is_not_asked_for(self):
+        signed = initials.initial_markup({"renewal": _png("r")}, "renewal")
+        self.assertEqual(initials.clause_texts(f"<p>Text {signed}</p>"), {})
+
+    def test_changed_wording_is_stale_and_unchanged_is_not(self):
+        snapshot = f"<p>Rates rise 12% a year. {self.box('renewal')}</p><p>Thirty days. {self.box('cancel')}</p>"
+        drawn = {
+            "renewal": {"image": _png("a"), "clause": "Rates rise 10% a year."},
+            "cancel": {"image": _png("b"), "clause": "  Thirty   days. "},
+        }
+        self.assertEqual(initials.stale_initials(drawn, snapshot), ["renewal"])
+        self.assertEqual(initials.stale_initials({}, snapshot), [])  # nothing drawn: validate_initials says so
+
+    def test_the_page_reads_the_same_blocks(self):
+        js = (APP / "project_enhancements" / "page" / "contract_builder" / "contract_builder.js").read_text(encoding="utf-8")
+        blocks = re.search(r'const CB_BLOCKS = "([^"]+)";', js).group(1).split(",")
+        self.assertEqual(set(blocks), set(initials.CLAUSE_BLOCKS))
+
+
+class TestBuilderSections(unittest.TestCase):
+    def test_fields_map_to_the_parts_of_the_agreement_they_print_in(self):
+        headings, fields = builder.agreement_sections(TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn("CLIENT & PROPERTY INFORMATION", headings)
+        self.assertIn("CLIENT & PROPERTY INFORMATION", fields["site_address"])
+        self.assertIn("8. ADDITIONAL / REPAIR SERVICES", fields["emergency_rate"])
+        self.assertTrue(fields["service_options"])  # read through the render context, not doc.
+        self.assertEqual(len(headings), len(set(headings)))
+
+    def test_a_heading_with_jinja_matches_on_its_fixed_start(self):
+        headings, fields = builder.agreement_sections(
+            "<h1>EXHIBIT B – {% if doc.x %}CARD{% endif %}</h1><p>{{ fill(doc.x) }}</p><h1>{{ doc.y }}</h1><p>{{ doc.z }}</p>"
+        )
+        self.assertEqual(headings, ["EXHIBIT B –"])
+        self.assertEqual(fields, {"x": ["EXHIBIT B –"]})
+
+    def test_progress_counts_what_the_agreement_prints(self):
+        steps = builder.builder_steps("maintenance", "Customer")
+        body = TEMPLATE.read_text(encoding="utf-8")
+        empty = builder.progress({}, steps, body)
+        self.assertGreater(empty["total"], 10)
+        self.assertEqual(empty["filled"], 0)
+        some = builder.progress({"site_address": "1 Main", "emergency_rate": 250, "visit_rate": 0}, steps, body)
+        self.assertEqual(some["filled"], 2)
+
+
+class TestSignHere(unittest.TestCase):
+    """The builder's own signing: issue and execute in one transaction, refusals undo the issue."""
+
+    def setUp(self):
+        self.source = (APP / "project_enhancements" / "contract_builder.py").read_text(encoding="utf-8")
+        tree = ast.parse(self.source)
+        self.fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+    def segment(self, name):
+        return ast.get_source_segment(self.source, self.fns[name])
+
+    def test_whitelist_is_outermost(self):
+        def name(node):
+            target = node.func if isinstance(node, ast.Call) else node
+            return getattr(target, "attr", None) or getattr(target, "id", None)
+
+        self.assertEqual([name(d) for d in self.fns["sign_here"].decorator_list], ["whitelist", "rate_limit"])
+        self.assertEqual([name(d) for d in self.fns["start_card_on_file"].decorator_list], ["whitelist"])
+
+    def test_the_signer_is_checked_before_anything_is_issued(self):
+        body = self.segment("sign_here")
+        submit = body.index("doc.submit()")
+        for check in ("cint(agree)", "_clean_text(signed_name)", "_validated_signature_image", "_valid_single_email"):
+            self.assertLess(body.index(check), submit, check)
+        self.assertIn("frappe.only_for(", body)
+        self.assertIn('check_permission("submit")', body)
+        self.assertIn("throw_if_contract_esign_disabled()", body)
+
+    def test_a_refusal_rolls_the_issue_back(self):
+        body = self.segment("sign_here")
+        self.assertLess(body.index("esign_api.sign_in_person("), body.index("frappe.db.rollback()"))
+
+    def test_signing_reads_back_what_issuing_wrote(self):
+        """Review of #1228: v16 writes the row before on_submit runs, so on_submit's status never
+        reached the database and the builder's issue-then-sign was refused every time."""
+        body = self.segment("sign_here")
+        self.assertIn("doc.submit()\n\t\t# Read back", body)
+        self.assertGreater(body.find("doc = frappe.get_doc(DOCTYPE, name)", body.index("doc.submit()")), 0)
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        on_submit = controller[controller.index("def on_submit(self):"):controller.index("def on_cancel(self):")]
+        self.assertIn('self.db_set("status", "Out for Signature", update_modified=False)', on_submit)
+
+    def test_the_card_offer_respects_the_clients_answer(self):
+        body = self.segment("start_card_on_file")
+        self.assertIn("throw_if_contract_esign_disabled()", body)
+        self.assertIn('request.signing_channel != "In Person"', body)
+        self.assertIn('request.autopay_outcome == "Declined"', body)
+
+    def test_a_refusal_names_every_box_to_redo(self):
+        box = lambda key: initials.initial_markup({}, key, key)  # noqa: E731
+        snapshot = "".join(f"<p>Clause {key}. {box(key)}</p>" for key in ("a", "b", "c", "d"))
+        supplied = {"a": _png("one"), "b": "data:image/gif;base64,AAAA", "c": _png("one")}
+        self.assertEqual(initials.initials_to_redo(supplied, snapshot, _accept), ["b", "c", "d"])
+        self.assertEqual(initials.initials_to_redo({}, "<p>none</p>", _accept), [])
+
+    def test_execution_goes_through_the_signing_pages_evidence_path(self):
+        api_src = (APP / "project_enhancements" / "esign" / "api.py").read_text(encoding="utf-8")
+        tree = ast.parse(api_src)
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sign_in_person")
+        body = ast.get_source_segment(api_src, fn)
+        # The contract row is locked first, in the signing page's order, so a client signing an
+        # emailed link at the same moment cannot deadlock with the builder.
+        order = [
+            "for_update=True",
+            "open_in_person_request(",
+            "stale_initials(",
+            "_validated_initials(",
+            "lifecycle.execute_contract(request, evidence)",
+        ]
+        positions = [body.index(step) for step in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("email_confirmed=0", body)  # recorded honestly: no re-typed address at the table
+
+    def test_the_preview_marks_the_signature_line_and_the_snapshot_does_not(self):
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("doc.flags.contract_preview = True", controller)
+        sig = controller[controller.index("def _sig("):controller.index("def _initial(")]
+        self.assertIn('doc.flags.get("contract_preview") and not signature', sig)
+
+    def test_the_page_sends_each_initials_clause_and_never_its_history(self):
+        js = (APP / "project_enhancements" / "page" / "contract_builder" / "contract_builder.js").read_text(encoding="utf-8")
+        self.assertIn("initials[box.key] = { image: drawn.image, clause: drawn.clause };", js)
+        self.assertIn("`${CB_API}sign_here`", js)
+        # Every set of initials starts from an empty pad, and a copied drawing is refused.
+        self.assertIn("requestAnimationFrame(() => pad.reset());", js)
+        self.assertIn("Each set of initials has to be drawn separately.", js)
+        # Nik: "auto scroll to the next and the next".
+        self.assertIn("this.advance_from(box);", js)
+        self.assertNotIn("history.pushState", js)
+        self.assertNotIn("history.replaceState", js)
+
+
 # --------------------------------------------------------------------------- schema + wiring
 
 
@@ -944,9 +1125,15 @@ class TestSchema(unittest.TestCase):
         fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "start_in_person_signing")
         body = ast.get_source_segment(source, fn)
         self.assertNotIn("_email_invite", body)
-        self.assertIn('request.signing_channel = "In Person"', body)
-        self.assertIn("request.presented_by = frappe.session.user", body)
-        self.assertIn("IN_PERSON_LINK_HOURS", body)
+        self.assertIn("open_in_person_request(contract, recipient)", body)
+        # The request itself is opened by the helper the builder's own signing shares.
+        opener = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "open_in_person_request")
+        opened = ast.get_source_segment(source, opener)
+        self.assertNotIn("_email_invite", opened)
+        self.assertNotIn("frappe.db.commit()", opened)  # each caller owns its transaction
+        self.assertIn('request.signing_channel = "In Person"', opened)
+        self.assertIn("request.presented_by = frappe.session.user", opened)
+        self.assertIn("IN_PERSON_LINK_HOURS", opened)
         def decorator_name(node):
             target = node.func if isinstance(node, ast.Call) else node
             return getattr(target, "attr", None) or getattr(target, "id", None)
