@@ -1,0 +1,215 @@
+/*
+ * Sapphire app design tokens: the Sapphire Fountains Design System, translated from the website
+ * to the Desk's own screens. Form kit P1 (TASK-2026-02742 / 02744). The guide is
+ * docs/app-design-system.md; tests/test_app_design_tokens.py holds this file to it.
+ *
+ * Global (hooks.py app_include_css) because it is nothing but custom properties and @font-face:
+ * no selector here styles an element, so the Desk looks exactly as it did until a screen opts in
+ * by reading a --sf-* variable. A font only downloads when something renders in it.
+ *
+ * Two layers:
+ *   1. the palette, by the design system's own token names, plus four values the system lacks
+ *      (two neutral greys, and the 2016 guide's red and yellow for status fills);
+ *   2. semantic tokens (--sf-bg, --sf-text, --sf-field-border ...) that screens actually use.
+ *      Only this layer changes with the theme.
+ *
+ * Theme: the Desk sets data-theme="light" or "dark" on <html> (frappe v16 theme_switcher.js
+ * resolves "automatic" to one of the two), so dark mode follows each person's Desk setting. A web
+ * page with no data-theme follows the device instead (the @media block, which must stay identical
+ * to the [data-theme="dark"] block; the test checks it). Dark is the brand's single-palette dark
+ * decided on 2026-09-19: navy-900 page, navy-800 cards, off-white text, and fields that stay white.
+ *
+ * Contrast is measured in the test, in both themes, for every pairing the guide names. The values
+ * that look odd are there for contrast:
+ *   - border-300, not the system's border-100, edges a field: border-100 is 1.4:1 on white;
+ *   - the primary button's label is navy-900, not off-white: off-white on fresh-blue is 2.8:1;
+ *   - a pillar chip is filled with the pillar's closing stop: off-white on teal is 1.8:1.
+ */
+
+/* The fonts, served by raw path: a font file's content never changes, so the one-year immutable
+   /assets cache cannot serve a stale copy (design_review.bundle.css and project_brief.js load the
+   display face the same way). A face downloads only when something renders in it.
+
+   The display face is the same file print_style inlines into every PDF.
+
+   Lato, the brand's body face: Google Fonts' "latin" subset of Lato v25 (U+0000-00FF and the
+   common punctuation), regular and bold, under the SIL Open Font License 1.1 (fonts/LATO_OFL.txt).
+   Text outside the subset falls back to the next face in --sf-font-sans; italics are synthesized. */
+@font-face {
+	font-family: "Big Noodle Titling";
+	src: url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") format("woff2");
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Lato";
+	src: url("/assets/erpnext_enhancements/fonts/lato_regular.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: "Lato";
+	src: url("/assets/erpnext_enhancements/fonts/lato_bold.woff2") format("woff2");
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+:root {
+	/* ---- Palette: the design system's tokens, by name. Never themed. ---- */
+	--sf-deep-sea-blue: #00263e;
+	--sf-bahama-blue: #00609c;
+	--sf-fresh-blue: #00a0df;
+	--sf-fresh-blue-deep: #005779;
+	--sf-violet: #b14fc5;
+	--sf-violet-deep: #55265f;
+	--sf-teal: #62cbc9;
+	--sf-teal-deep: #316564;
+	--sf-navy-900: #00111c;
+	--sf-navy-800: #002136;
+	--sf-sky-200: #99bfd7;
+	--sf-off-white: #f8f8f8;
+	--sf-white: #ffffff;
+	--sf-ink-900: #151515;
+	--sf-ink-700: #363636;
+	--sf-border-100: #dadbdd;
+
+	/* ---- App additions: values the system has no token for. ---- */
+	/* Muted text on white and off-white: 6.3:1 and 6.0:1. The system's only greys are body inks. */
+	--sf-ink-500: #5c6066;
+	/* A field's edge: 3.7:1 on white, the 3:1 the system's own FormField notes ask for. */
+	--sf-border-300: #80858b;
+	/* Status fills, from the 2016 brand guide's supportive set (the system says to take status
+	   colours from there rather than invent one). Fills carry a label; neither is ever text. */
+	--sf-red: #bd2e2b;
+	--sf-yellow: #ffb819;
+
+	/* ---- Pillars. `open` is the gradient's first stop and the flat colour; `deep` is the closing
+	   stop, the only one safe under small text. Equal to print_style.PILLARS (tested). ---- */
+	--sf-pillar-design: var(--sf-violet);
+	--sf-pillar-design-deep: var(--sf-violet-deep);
+	--sf-pillar-build: var(--sf-bahama-blue);
+	--sf-pillar-build-deep: var(--sf-navy-800);
+	--sf-pillar-service: var(--sf-fresh-blue);
+	--sf-pillar-service-deep: var(--sf-fresh-blue-deep);
+	--sf-pillar-rent: var(--sf-teal);
+	--sf-pillar-rent-deep: var(--sf-teal-deep);
+	--sf-pillar-neutral: var(--sf-deep-sea-blue);
+	--sf-pillar-neutral-deep: var(--sf-bahama-blue);
+	--sf-gradient-design: linear-gradient(90deg, #b14fc5 0%, #55265f 100%);
+	--sf-gradient-build: linear-gradient(90deg, #00609c 0%, #002136 100%);
+	--sf-gradient-service: linear-gradient(90deg, #00a0df 0%, #005779 100%);
+	--sf-gradient-rent: linear-gradient(90deg, #62cbc9 0%, #316564 100%);
+	--sf-gradient-neutral: linear-gradient(90deg, #00263e 0%, #00111c 100%);
+	/* The navy head band: the system's dark band, top to bottom. */
+	--sf-gradient-band: linear-gradient(#00263e, #00111c);
+
+	/* ---- Type. The display face sets titles only, never body, buttons or labels. ---- */
+	--sf-font-sans: Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--sf-font-display: "Big Noodle Titling", "Oswald", "Arial Narrow", Arial, sans-serif;
+	--sf-text-xs: 12px;
+	--sf-text-sm: 13px;
+	--sf-text-md: 15px;
+	--sf-text-lg: 18px;
+	/* 16px is the floor for a text input on a phone: iOS zooms the page into anything smaller. */
+	--sf-text-input: 16px;
+	--sf-display-sm: 22px;
+	--sf-display-md: 28px;
+	--sf-display-lg: 40px;
+	--sf-leading-body: 1.5;
+	--sf-leading-display: 1;
+	--sf-weight-regular: 400;
+	--sf-weight-bold: 700;
+
+	/* ---- Space: the system's steps, named by their pixel value. ---- */
+	--sf-space-5: 5px;
+	--sf-space-10: 10px;
+	--sf-space-15: 15px;
+	--sf-space-20: 20px;
+	--sf-space-30: 30px;
+	--sf-space-40: 40px;
+	--sf-space-60: 60px;
+
+	/* ---- Shape. Structure is square; only controls round; chips are pills. No shadows. ---- */
+	--sf-radius-none: 0;
+	--sf-radius-control: 10px;
+	--sf-radius-pill: 150px;
+	--sf-radius-circle: 50%;
+	--sf-border-hairline: 1px;
+	--sf-border-control: 2px;
+
+	/* ---- Motion and touch. ---- */
+	--sf-duration: 200ms;
+	--sf-ease: ease;
+	--sf-touch-min: 44px;
+	--sf-phone-max: 767px;
+
+	/* ---- Semantic tokens, light theme. Screens read these, not the palette. ---- */
+	--sf-bg: var(--sf-off-white);
+	--sf-surface: var(--sf-white);
+	--sf-text: var(--sf-ink-700);
+	--sf-text-strong: var(--sf-ink-900);
+	--sf-text-muted: var(--sf-ink-500);
+	--sf-heading: var(--sf-bahama-blue);
+	--sf-eyebrow: var(--sf-bahama-blue);
+	--sf-link: var(--sf-bahama-blue);
+	--sf-rule: var(--sf-border-100);
+	--sf-label: var(--sf-ink-900);
+	--sf-hint: var(--sf-ink-500);
+	--sf-field-bg: var(--sf-white);
+	--sf-field-text: var(--sf-ink-900);
+	--sf-field-border: var(--sf-border-300);
+	--sf-focus: var(--sf-bahama-blue);
+	--sf-primary: var(--sf-fresh-blue);
+	--sf-on-primary: var(--sf-navy-900);
+	--sf-band: var(--sf-gradient-band);
+	--sf-band-top: var(--sf-deep-sea-blue);
+	--sf-band-bottom: var(--sf-navy-900);
+	--sf-on-band: var(--sf-off-white);
+	--sf-on-band-muted: var(--sf-sky-200);
+	--sf-on-pillar: var(--sf-off-white);
+	--sf-danger: var(--sf-red);
+	--sf-on-danger: var(--sf-off-white);
+	--sf-warn: var(--sf-yellow);
+	--sf-on-warn: var(--sf-navy-900);
+}
+
+/* Dark, from the Desk's theme setting. */
+:root[data-theme="dark"] {
+	--sf-bg: var(--sf-navy-900);
+	--sf-surface: var(--sf-navy-800);
+	--sf-text: var(--sf-off-white);
+	--sf-text-strong: var(--sf-off-white);
+	--sf-text-muted: var(--sf-sky-200);
+	--sf-heading: var(--sf-off-white);
+	--sf-eyebrow: var(--sf-sky-200);
+	--sf-link: var(--sf-sky-200);
+	/* bahama-blue rather than the 2026-09-19 note's deep-sea-blue: deep-sea-blue on a navy-800
+	   card is 1.06:1, a rule nobody can see. */
+	--sf-rule: var(--sf-bahama-blue);
+	--sf-label: var(--sf-off-white);
+	--sf-hint: var(--sf-sky-200);
+	--sf-focus: var(--sf-fresh-blue);
+}
+
+/* Dark, from the device, on a page that sets no data-theme. Keep identical to the block above. */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme]) {
+		--sf-bg: var(--sf-navy-900);
+		--sf-surface: var(--sf-navy-800);
+		--sf-text: var(--sf-off-white);
+		--sf-text-strong: var(--sf-off-white);
+		--sf-text-muted: var(--sf-sky-200);
+		--sf-heading: var(--sf-off-white);
+		--sf-eyebrow: var(--sf-sky-200);
+		--sf-link: var(--sf-sky-200);
+		--sf-rule: var(--sf-bahama-blue);
+		--sf-label: var(--sf-off-white);
+		--sf-hint: var(--sf-sky-200);
+		--sf-focus: var(--sf-fresh-blue);
+	}
+}

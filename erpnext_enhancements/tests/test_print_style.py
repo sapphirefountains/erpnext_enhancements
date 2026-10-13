@@ -1107,6 +1107,22 @@ class TestProjectBriefClientCopy(unittest.TestCase):
         for stream in ("Design", "Build", "Products", "Service", "Events"):
             self.assertRegex(self.JS, rf'{stream}: "(design|build|service|rent)"')
 
+    def test_the_stream_map_matches_print_style(self):
+        """`print_style.STREAM_PILLAR` is the one record of which pillar a value stream
+        takes (form kit P1.2). The brief's copy must agree on every stream it names, and a
+        stream mapped to no pillar must be absent, so the brief's NEUTRAL_PILLAR fallback
+        draws it."""
+        match = re.search(r"const STREAM_PILLAR = \{([^}]*)\};", self.JS)
+        self.assertIsNotNone(match, "no STREAM_PILLAR in project_brief.js")
+        copy = dict(re.findall(r'(\w+): "(\w+)"', match.group(1)))
+        for stream, key in ps.STREAM_PILLAR.items():
+            with self.subTest(stream):
+                if key is None:
+                    self.assertNotIn(stream, copy)
+                else:
+                    self.assertEqual(copy.get(stream), key)
+        self.assertLessEqual(set(copy), set(ps.STREAM_PILLAR), "the brief maps a stream print_style doesn't know")
+
     def test_it_loads_the_repo_assets(self):
         self.assertIn("/assets/erpnext_enhancements/images/fountain_move/logo.svg", self.JS)
         self.assertIn("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2", self.JS)

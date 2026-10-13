@@ -38,7 +38,9 @@
  * browser. These four records are a COPY of print_style.PILLARS — the brief is
  * built client-side and cannot read the Python module, and
  * tests/test_print_style.py holds the two in agreement. The pillar is the job's
- * leading stream; a job outside the five streams takes the brand's dark band.
+ * leading stream; a job outside the six streams takes the brand's dark band.
+ * STREAM_PILLAR is likewise a copy of print_style.STREAM_PILLAR (Products and
+ * Delivery are drawn as Build; Nik, 2026-10-13, for Delivery).
  *
  * Raw /assets paths, deliberately: both files are immutable by content (the
  * wordmark SVG the contracts inline, the design system's woff2), so the 1-year
@@ -51,7 +53,14 @@ const PILLARS = {
 	rent: { name: "RENT", open: "#62cbc9", end: "#316564", deep: "#316564" },
 };
 const NEUTRAL_PILLAR = { name: "", open: "#00263e", end: "#00111c", deep: "#00609c" };
-const STREAM_PILLAR = { Design: "design", Build: "build", Products: "build", Service: "service", Events: "rent" };
+const STREAM_PILLAR = {
+	Design: "design",
+	Build: "build",
+	Products: "build",
+	Delivery: "build",
+	Service: "service",
+	Events: "rent",
+};
 const LOGO_URL = window.location.origin + "/assets/erpnext_enhancements/images/fountain_move/logo.svg";
 const FONT_URL = window.location.origin + "/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2";
 

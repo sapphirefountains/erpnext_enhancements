@@ -20,6 +20,7 @@ anything.
 | [PRODUCT_CONFIGURATOR.md](PRODUCT_CONFIGURATOR.md) | The configure-to-order product model and its pricing rules |
 | [FLEET_VEHICLE_MAINTENANCE.md](FLEET_VEHICLE_MAINTENANCE.md) | Fleet vehicle maintenance scheduling |
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
+| [app-design-system.md](app-design-system.md) | The design system for the Desk's own screens: the `--sf-*` tokens in light and dark, pillars and value streams, type, shape, phone rules, and the form kit's components |
 | [email-design-system.md](email-design-system.md) | The one email layout, its components and palette, how to add an email, and an inventory of every email the app sends |
 | [print-design-system.md](print-design-system.md) | The chrome every printed document shares — the pillar stripe, wordmark, display face — how a format composes it, and why the font is a data URI |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |

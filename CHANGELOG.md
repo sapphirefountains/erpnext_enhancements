@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.616.0] - 2026-10-13
+
+### Added
+
+- **App design tokens: the Sapphire Fountains Design System for the Desk's own screens** (form kit P1;
+  ERPNext TASK-2026-02742, P1.1 02744 and P1.2 02745). Nik, 2026-10-13, planning one form-filling kit for
+  Opportunity and then many doctypes: "Use the Sapphire Fountains Design System to help with UI colors and
+  such", a navy head band over a light body, "and make it theme aware". Print and email already had their
+  translations of the system ([print-design-system.md](docs/print-design-system.md),
+  [email-design-system.md](docs/email-design-system.md)); no Desk screen did. The Contract Builder, both
+  planners and the wizards each drew rounded cards, shadows and generic blue/green/amber hex values of their
+  own. Now:
+  - `public/css/sf_tokens.bundle.css`, loaded on every Desk page (`app_include_css`), holds `--sf-*`
+    custom properties and the `@font-face` rules for the brand's two faces, and **nothing that styles an
+    element**. The Desk
+    looks exactly as it did until a screen reads a variable. Two layers: the system's palette by its own
+    token names, and semantic tokens (`--sf-bg`, `--sf-text`, `--sf-field-border`, `--sf-focus`,
+    `--sf-on-primary`...) that screens use;
+  - **light and dark follow each person's Desk theme** (`<html data-theme>`, which frappe v16 resolves from
+    Automatic), and a page with no `data-theme` follows the device. Dark is the single-palette dark settled
+    on 2026-09-19: navy-900 page, navy-800 cards, off-white text, fields stay white. One departure: dark
+    rules are bahama-blue, because deep-sea-blue on a navy-800 card is 1.06:1;
+  - four values the system has no token for, each documented: `ink-500` `#5c6066` for muted text,
+    `border-300` `#80858b` for a field's edge (the system's border-100 is 1.4:1 on white, and its own
+    FormField notes ask for 3:1), and the 2016 guide's red and yellow as status fills, as print uses them;
+  - **Lato, the brand's body face, is vendored.** `public/fonts/lato_regular.woff2` (400) and
+    `lato_bold.woff2` (700) are Google Fonts' Lato v25 "latin" subset, about 23 KB each, downloaded from
+    fonts.gstatic.com with Nik's OK. They ship with their SIL Open Font License 1.1
+    (`public/fonts/LATO_OFL.txt`, from google/fonts). `--sf-font-sans` names Lato first. Until now no
+    browser surface had it, and the stacks that named it fell through to the system sans;
+  - `print_style.STREAM_PILLAR` is the one record of which pillar each value stream takes. Products is
+    Build (as the project brief has always drawn it), **Delivery is Build** (Nik, 2026-10-13: "make
+    Delivery Build"), and Events is Rent. `project_brief.js` gains the Delivery entry, and
+    `test_print_style` now holds its copy to the record. **Visible change:** a Project whose leading
+    stream or type is Delivery now prints its brief with the Build stripe instead of the neutral navy band;
+  - [docs/app-design-system.md](docs/app-design-system.md) is the guide: tokens in both themes, pillars and
+    streams, type (the display face for titles only; inputs never under 16px, or iOS zooms), square
+    structure, no shadows, phone rules, and the specs of the components the form kit builds next (head
+    band, step rail, field, help bubble, card, chip, button, toast).
+- `tests/test_app_design_tokens.py` (bench-free, own CI step) fails the build if:
+  - the file grows a rule that styles anything;
+  - a hex value is neither a design-system token nor a documented addition;
+  - the palette or a pillar stop drifts from `print_style`;
+  - the device-dark block differs from the Desk-dark one;
+  - any text pairing the guide names falls under 4.5:1, or a boundary or focus ring under 3:1, in light
+    or in dark;
+  - a declared font file is missing, isn't a woff2, or Lato's licence is gone.
+
+  Each check was proven to fail by breaking the file on purpose.
+
 ## [1.615.0] - 2026-10-13
 
 ### Added
