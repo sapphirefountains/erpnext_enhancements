@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.619.1] - 2026-10-13
+
+Small fixes from an audit of the custom pages (the custom-pages brainstorm, 2026-10-13), done after
+v1.619.0 because they touch the same files.
+
+### Fixed
+
+- **Open Visit Wizard on the visit record no longer reloads the whole Desk.** The button set
+  `window.location` to `/app/visit-wizard?record=…`. That was a full page load through the server's
+  `/app` → `/desk` redirect, and Back reloaded the form again. It routes with
+  `frappe.set_route("visit-wizard", frm.doc.name)` now: the visit's own address
+  (`/desk/visit-wizard/<visit>`), one history entry, and Back returns to the form. The kiosk's links
+  still open the wizard in a new tab and are unchanged.
+- **The Visit Wizard's icon-only buttons have names.** A screen reader announced the five 📷 photo buttons
+  and the Chemicals Used − / + steppers as unnamed buttons. They carry `aria-label`s now: "Photo",
+  "Less" and "More", translated.
+
+### Removed
+
+- Dead code: `vz_photo_key` in the Visit Wizard (photo keys are built in `take_photo` from
+  `vz_photo_prefix`) and `clause_text` in the Contract Builder (nothing called it).
+
+### Checked, unchanged
+
+- The wizard's nine `.catch(() => {})` calls lose no failure:
+  - Eight are on `flush_save` (two of them after a dialog adds a chemical or a follow-up). It keeps
+    the edits, shows "NOT SAVED" or "Saved on this phone", retries or parks the save, and only then
+    rethrows for callers that wait on it.
+  - One is on the photo run. There a photo with no signal stays kept with its button amber, and a
+    refused photo gets its own red alert (`photo_refused`).
+
 ## [1.619.0] - 2026-10-13
 
 The visit form matches the maintenance agreement. Nik, 2026-10-13, after Valley Fair Mall's and

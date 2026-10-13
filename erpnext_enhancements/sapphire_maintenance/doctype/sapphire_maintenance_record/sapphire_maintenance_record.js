@@ -219,8 +219,10 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 
 		// The guided touch-first flow for techs — same record, no grids.
 		if (!frm.is_new() && frm.doc.docstatus === 0) {
+			// In the desk, onto the visit's own address (/desk/visit-wizard/<visit>): one history
+			// entry, so Back returns to this form. A hand-built /app/... link reloaded the whole page.
 			frm.add_custom_button(__("Open Visit Wizard"), () => {
-				window.location.href = "/app/visit-wizard?record=" + encodeURIComponent(frm.doc.name);
+				frappe.set_route("visit-wizard", frm.doc.name);
 			});
 		}
 
