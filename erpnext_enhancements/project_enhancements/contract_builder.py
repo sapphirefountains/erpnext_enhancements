@@ -167,7 +167,7 @@ PARTY_NOUNS = {
 	"sow": "subcontractor",
 	"architect": "architect",
 	"employee_contractor": "employee-contractor",
-	"nda": "other party",
+	"nda": "company",
 }
 
 
@@ -311,6 +311,86 @@ def _editable_fields(steps):
 # What will print blank
 # ---------------------------------------------------------------------------
 
+_CONDITION_TOKEN = re.compile(
+	r"""\s*(?:(?P<field>doc\.[a-z_][a-z0-9_]*)|(?P<text>"[^"\\]*"|'[^'\\]*')|(?P<op>===|!==|==|!=|&&|\|\||!|\(|\)))"""
+)
+
+
+class _Unreadable(Exception):
+	pass
+
+
+def shown(depends_on, doc):
+	"""Whether a field's ``depends_on`` shows it for ``doc``, as the form and the builder would.
+
+	Reads the shapes this doctype's conditions use (``doc.x=="v"``, ``!=``, ``&&``, ``||``,
+	``!``, parentheses, a bare ``doc.x`` or fieldname) with a small parser rather than ``eval``;
+	anything else counts as shown. So a field that only appears for one choice (Other Property
+	Type, the liquidated-damages rate) is not counted as a blank, or against progress, while
+	that choice is not made: the page would offer no place to fill it.
+	"""
+	if not depends_on:
+		return True
+	if not depends_on.startswith("eval:"):
+		return bool(doc.get(depends_on))
+	tokens = []
+	text, pos = depends_on[5:], 0
+	while text[pos:].strip():
+		match = _CONDITION_TOKEN.match(text, pos)
+		if not match:
+			return True
+		tokens.append(match)
+		pos = match.end()
+
+	def value(match):
+		if match.group("field"):
+			return doc.get(match.group("field")[4:])
+		if match.group("text"):
+			return match.group("text")[1:-1]
+		raise _Unreadable
+
+	def parse_or(i):
+		result, i = parse_and(i)
+		while i < len(tokens) and tokens[i].group("op") == "||":
+			right, i = parse_and(i + 1)
+			result = bool(result) or bool(right)
+		return result, i
+
+	def parse_and(i):
+		result, i = parse_unary(i)
+		while i < len(tokens) and tokens[i].group("op") == "&&":
+			right, i = parse_unary(i + 1)
+			result = bool(result) and bool(right)
+		return result, i
+
+	def parse_unary(i):
+		if i < len(tokens) and tokens[i].group("op") == "!":
+			result, i = parse_unary(i + 1)
+			return not result, i
+		if i < len(tokens) and tokens[i].group("op") == "(":
+			result, i = parse_or(i + 1)
+			if i >= len(tokens) or tokens[i].group("op") != ")":
+				raise _Unreadable
+			return result, i + 1
+		if i >= len(tokens):
+			raise _Unreadable
+		left = value(tokens[i])
+		i += 1
+		if i < len(tokens) and tokens[i].group("op") in ("==", "===", "!=", "!=="):
+			equal = tokens[i].group("op") in ("==", "===")
+			if i + 1 >= len(tokens):
+				raise _Unreadable
+			right = value(tokens[i + 1])
+			left_text = "" if left is None else str(left)
+			return (left_text == str(right)) == equal, i + 2
+		return left, i
+
+	try:
+		result, end = parse_or(0)
+	except _Unreadable:
+		return True
+	return bool(result) if end == len(tokens) else True
+
 
 def blanks(doc, steps):
 	"""Fields the agreement prints that are still empty, in walk order.
@@ -328,7 +408,7 @@ def blanks(doc, steps):
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or name not in referenced:
 				continue
-			if field["fieldtype"] == "Table":
+			if field["fieldtype"] == "Table" or not shown(field.get("depends_on"), doc):
 				continue
 			value = doc.get(name)
 			if value in (None, "") or (field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)):
@@ -373,6 +453,8 @@ def progress(doc, steps, body):
 		for field in step["fields"]:
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or field["fieldtype"] == "Table" or name not in referenced:
+				continue
+			if not shown(field.get("depends_on"), doc):
 				continue
 			total += 1
 			value = doc.get(name)

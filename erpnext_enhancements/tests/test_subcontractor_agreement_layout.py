@@ -443,7 +443,12 @@ class TestRender(unittest.TestCase):
         self.assertEqual(tier_2, MSA_INITIALS[:1] + ["retainage"] + MSA_INITIALS[1:])
 
     def test_sow_initials(self):
-        self.assertEqual(_keys(_render(SOW, _empty("sow"))), SOW_INITIALS)
+        # Review of #1230: a blank choice is not "liquidated damages apply"; only a chosen daily rate is
+        # initialed, so nobody initials an amount-less clause.
+        self.assertEqual(_keys(_render(SOW, _empty("sow"))), SOW_INITIALS[1:])
+        self.assertEqual(
+            _keys(_render(SOW, _Doc(_empty("sow"), sow_liquidated_damages="Per Calendar Day"))), SOW_INITIALS
+        )
         # No liquidated damages: nothing to initial in §4.3. Special terms: initialled when there are some.
         no_damages = _Doc(_empty("sow"), sow_liquidated_damages="N/A", sow_special_terms="Night work allowed")
         self.assertEqual(_keys(_render(SOW, no_damages)), ["retention", "corrections", "special_terms"])

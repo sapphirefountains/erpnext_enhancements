@@ -633,7 +633,8 @@ class ContractBuilder {
 	// (contract_builder.PARTY_NOUNS). The mode is still called "client" internally.
 	noun(capital) {
 		const noun = (this.data && this.data.party_noun) || __("client");
-		return capital ? noun.charAt(0).toUpperCase() + noun.slice(1) : noun;
+		// "Employee-Contractor initials", as the agreement's own caption (initials.INITIALS_CAPTIONS) reads.
+		return capital ? noun.replace(/(^|[\s-])(\w)/g, (m, sep, ch) => sep + ch.toUpperCase()) : noun;
 	}
 
 	// -------------------------------------------------------------- start screen

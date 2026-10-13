@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compensation type) are Selects with a blank first option, because a blank has to stay a third answer: an
   empty draft must not tick "N/A" or "None" on the client's behalf. No new field has a default: the
   agreement states none.
-- Both subcontractor agreements now print **Client Name on Agreement** (`agreement_party_name`) and **Billing
+- Both subcontractor agreements now print **Name on Agreement** (formerly *Client Name on Agreement*) (`agreement_party_name`) and **Billing
   City / State / Zip** (`billing_city_state_zip`) the way the customer agreements do, and the MSA opens with
   a Subcontractor Information table (name, address, contact, phone, email). The SOW's Parties table gains
   the contact's phone and email; the email is where a signing link and the signed copy go.
@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starting work (§5.1), indemnity (§11.1), the liability cap and no damages for delay (§12), flow-down of
   the prime contract (§13.1), the cost of a take-over (§14.2) and arbitration (§18.3), plus retainage
   (§4.4) only when Tier 2 is selected, because §4.4 applies to Tier 2 alone. SOW: liquidated damages
-  (§4.3, unless N/A is chosen), retention (§5.3), correcting rejected work at no cost (§9.3), and the
+  (§4.3, only when a daily rate is chosen), retention (§5.3), correcting rejected work at no cost (§9.3), and the
   Section 10 special terms only when there are some. The MSA's Electronic Signatures clause (§20.7) gains
   the sentence that each set of initials is made separately and acknowledges the clause it sits beside;
   the SOW had no electronic-signature language at all, so it gets a new §11 General Provisions with an
@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     nothing under them. Sapphire's own services print the Scope of Work, which the template always read
     but whose step was shown only for a SOW; it is now shown for architect agreements too (not pre-filled
     from the project there, as it is for a SOW);
-  - all three: **Client Name on Agreement** (`agreement_party_name`, NDA and architect) and **Billing City /
+  - all three: **Name on Agreement** (`agreement_party_name`, NDA and architect) and **Billing City /
     State / Zip** (`billing_city_state_zip`), printed as the maintenance agreement prints them.
   No new field has a default: none of the agreements states one.
 - **Initials on all three**, beside the clauses that carry the other party's risk. NDA (the Company's
@@ -98,7 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Contract Builder speaks to whoever the agreement is with.** With every contract type now built in
   the builder, "With the client" and "Client initials" were wrong for half of them. The walk names the
   party each agreement is with (`contract_builder.PARTY_NOUNS`): "With the subcontractor" for the master
-  agreement and a Statement of Work, the architect, the employee-contractor, and "the other party" for the
+  agreement and a Statement of Work, the architect, the employee-contractor, and "the company" (the NDA's own word) for the
   mutual NDA. This covers the mode toggle, the hints, the initials pad, the signature box and the dialogs.
   The caption under a blank initials box follows suit (`initials.INITIALS_CAPTIONS`): "Subcontractor
   initials", "Architect initials" and so on. The customer agreements keep "Client initials" byte for byte,
@@ -168,6 +168,14 @@ and Exhibit C Project Risk Register (kept per job, after signing).
 
 ### Fixed
 
+- **A field shown only for one choice no longer counts as a blank.** The builder's "will print as blank
+  lines" list and its progress bar counted every field the agreement mentions, including ones the page hides
+  until a choice is made (Other Property Type, the liquidated-damages rate, the Company-furnished items), so
+  the bar could never reach 100% and the list linked to fields the step did not show.
+  `contract_builder.shown` now reads each field's `depends_on` (a small parser for the shapes this doctype
+  uses, never `eval`; anything it cannot read counts as shown).
+- `agreement_party_name` is labelled **Name on Agreement**: it is shared by every agreement now, and
+  "Client" was wrong for a subcontractor, an architect or the NDA's company.
 - The architect agreement's opening recital was missing the parenthesis that opens ("“Project”").
 
 ## [1.612.1] - 2026-10-13

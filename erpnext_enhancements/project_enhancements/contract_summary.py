@@ -465,7 +465,8 @@ def _owner(doc):
 
 def _nda(doc):
 	# Mutual: "each of us" is Sapphire and the Company alike.
-	purpose = _text(doc.get("nda_purpose")) or "a proposed business relationship"
+	# The agreement reads "in connection with a <purpose>", and the field is entered without the article.
+	purpose = f"a {_text(doc.get('nda_purpose'))}" if doc.get("nda_purpose") else "a proposed business relationship"
 	effective = f" ({_date(doc.get('contract_date'))})" if doc.get("contract_date") else ""
 	return [
 		# Recitals, §1, §2, §3

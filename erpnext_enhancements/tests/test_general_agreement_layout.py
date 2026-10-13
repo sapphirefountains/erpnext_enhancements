@@ -593,7 +593,7 @@ class TestSummary(unittest.TestCase):
         self.assertIn("in connection with a proposed business relationship:", bare)
         self.assertIn("until ten years after the Effective Date.", bare)
         filled = summary.summary_html(_Doc(template_key="nda", nda_purpose="joint design", contract_date="2026-10-13"))
-        self.assertIn("in connection with joint design:", filled)
+        self.assertIn("in connection with a joint design:", filled)
         self.assertIn("until ten years after the Effective Date (2026-10-13).", filled)
 
     def test_the_architect_summary_follows_the_statement_of_work(self):
