@@ -395,8 +395,8 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
 (create, write) and can *Let a Contract Manager know* (`contract_builder.ask_contract_manager`, a bell
 notification to every holder). Only **Contract Manager** (and System Manager) issues, cancels,
 amends or deletes a contract, takes or sends for a signature (`esign.api.SEND_ROLES`,
-`contract_builder.SIGN_ROLES`), marks one signed on paper (checked in `before_update_after_submit`,
-because Frappe 16 checks `write`, not `submit`, for an update after submit) and edits a Contract
+`contract_builder.SIGN_ROLES`), marks one signed on paper (DocPerm: Frappe 16 needs `submit` for an update after submit; plus a
+check in `before_update_after_submit` for `submit` granted through a document Share) and edits a Contract
 Template's wording. The role and a one-role "Contract Manager" Role Profile are seeded by
 `patches/seed_contract_manager_role` (pre_model_sync, grants nothing); a user who already has role
 profiles gets the role by adding that profile, since their roles are rebuilt from profiles on save.

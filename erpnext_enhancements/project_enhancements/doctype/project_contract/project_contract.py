@@ -281,11 +281,12 @@ class ProjectContract(Document):
 	def before_update_after_submit(self):
 		"""Only a Contract Manager (or System Manager) changes how an issued contract stands.
 
-		Building stays open to the project and sales roles, and their ``write`` permission reaches a
-		submitted contract's ``allow_on_submit`` fields too: Frappe 16 checks ``write`` for an update
-		after submit, not ``submit``. So "Mark as Signed" (status, signed by, signed on) is checked
-		here rather than left to DocPerm. Online signing sets ``frappe.flags.esign_executing`` and
-		runs as whoever signed, so it is not stopped.
+		Defence in depth. Frappe 16 already needs ``submit`` for an update after submit
+		(``Document.check_docstatus_transition``), and since v1.615.0 only these two roles hold it
+		on Project Contract, so DocPerm alone stops "Mark as Signed" (status, signed by, signed on)
+		for anyone who builds drafts. What this adds is the case DocPerm does not: a user given
+		``submit`` on one contract through a document Share. Online signing sets
+		``frappe.flags.esign_executing`` and runs as whoever signed, so it is not stopped.
 		"""
 		if frappe.flags.get("esign_executing"):
 			return

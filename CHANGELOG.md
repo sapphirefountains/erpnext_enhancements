@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   insert-only, granting it to nobody. On this site a user who has role profiles gets their roles rebuilt from
   them on every save, so the profile is how such a user is given the role. Granted on prod on 2026-10-13
   (AI Pending Actions confirmed by Nik): Brian Morisseau, Lisa Symanski and Clegg Mabey through the profile;
-  James Harris and Nikolas Bradshaw directly. Their other roles are unchanged.
+  James Harris and Nikolas Bradshaw, who hold no role profiles, directly. Their other roles are unchanged.
+  Projects Manager and Sales Manager also lose delete, so discarding a draft is a Contract Manager's call.
 
 ### Changed
 
@@ -40,10 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **"Mark as Signed" is checked on the server** (`ProjectContract.before_update_after_submit`). Frappe 16
-  checks `write`, not `submit`, for an update after submit, so DocPerm alone would still have let anyone who
-  builds drafts set an issued contract's status, signed-by or signed-on. Online signing sets
-  `frappe.flags.esign_executing` and is not stopped.
+- **"Mark as Signed" is also checked on the server** (`ProjectContract.before_update_after_submit`), as
+  defence in depth. Frappe 16 needs `submit` for an update after submit
+  (`Document.check_docstatus_transition`), so the DocPerm change above already stops a draft-builder from
+  setting an issued contract's status, signed-by or signed-on; the check also covers `submit` granted on
+  one contract through a document Share. Online signing sets `frappe.flags.esign_executing` and is not
+  stopped.
+- The "ready to issue" notification escapes the contract title (the bell renders it as HTML), refuses
+  when there is nobody else to tell, and records the timeline comment only when someone was told.
 
 ## [1.614.0] - 2026-10-13
 

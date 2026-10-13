@@ -2104,7 +2104,7 @@ class ContractBuilder {
 		}
 		if (data.can_ask) {
 			// Builds but cannot issue (v1.615.0): a Contract Manager issues and takes the signature.
-			$main.append(
+			$actions.before(
 				$('<div class="cb-notice is-info"></div>').text(
 					__("A Contract Manager issues this agreement and takes the {0}'s signature. When it reads right, let one know it is ready.", [
 						this.noun(),

@@ -1013,8 +1013,8 @@ class TestContractManagerRole(unittest.TestCase):
         self.assertTrue(evidence["Contract Manager"].get("read"))
 
     def test_marking_signed_on_paper_is_checked_on_the_server(self):
-        """Frappe 16 checks write, not submit, for an update after submit, so DocPerm alone would let a
-        draft-builder mark an issued contract signed."""
+        """Defence in depth: Frappe 16 needs submit for an update after submit, which DocPerm now gives
+        only a Contract Manager; the server check also covers submit granted through a document Share."""
         controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
             encoding="utf-8"
         )

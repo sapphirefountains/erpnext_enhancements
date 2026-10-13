@@ -742,16 +742,18 @@ def ask_contract_manager(name, note=None):
 		frappe.throw(
 			_("Nobody has the Contract Manager role yet. Ask a System Manager to give it to whoever issues contracts.")
 		)
+	recipients = [user for user in managers if user != frappe.session.user]
+	if not recipients:
+		frappe.throw(_("You are the only Contract Manager, so there is nobody else to tell."))
 	who = frappe.utils.get_fullname(frappe.session.user)
-	subject = _("Contract ready to issue: {0}").format(doc.get("title") or name)
+	# Escaped: the bell renders a Notification Log's title (copied from the subject) as HTML.
+	subject = _("Contract ready to issue: {0}").format(frappe.utils.escape_html(doc.get("title") or name))
 	content = _("{0} has finished {1} and asks a Contract Manager to review and issue it.").format(
 		frappe.utils.escape_html(who), frappe.utils.escape_html(name)
 	)
 	if note:
 		content += "<br><br>" + frappe.utils.escape_html(str(note)[:1000])
-	for user in managers:
-		if user == frappe.session.user:
-			continue
+	for user in recipients:
 		frappe.get_doc(
 			{
 				"doctype": "Notification Log",
@@ -765,7 +767,7 @@ def ask_contract_manager(name, note=None):
 			}
 		).insert(ignore_permissions=True)
 	doc.add_comment("Comment", _("Asked a Contract Manager to issue it."))
-	return {"notified": len([u for u in managers if u != frappe.session.user])}
+	return {"notified": len(recipients)}
 
 
 def _contract_managers():
