@@ -105,6 +105,21 @@ PILLARS = {
 }
 NEUTRAL = {"name": "", "open": DEEP_SEA_BLUE, "deep": BAHAMA_BLUE}
 
+# Each Value Stream's pillar. A job is filed under value streams, and the brand has
+# four pillars, so two streams borrow one: Products is Build's (the project brief
+# has always drawn it that way) and Events is Rent's. Delivery is None — the
+# neutral band — until Nik picks a pillar for it (form kit P1.2, TASK-2026-02745).
+# The app tokens (sf_tokens.bundle.css) and project_brief.js are held to this by
+# tests/test_app_design_tokens.py and tests/test_print_style.py.
+STREAM_PILLAR = {
+	"Design": "design",
+	"Build": "build",
+	"Products": "build",
+	"Service": "service",
+	"Events": "rent",
+	"Delivery": None,
+}
+
 
 def pillar(key):
 	"""The pillar record for ``key`` — ``None`` or an unknown key is the neutral band."""
