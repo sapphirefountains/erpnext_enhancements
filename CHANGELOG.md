@@ -24,15 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into it.** That covers a fold left half done, as Hardware's was, and a contract switched back
   and forth. One somebody has started still takes nothing, so there is never a second site
   visit.
+- Found in review:
+  - A bare site visit that takes nothing now says so, instead of "now covers every water
+    feature".
+  - A past-dated draft that is in review is reported as started, not as a missed visit.
 - Hardware needs one more switch to Per Feature and back once this is deployed. The three
-  drafts then fold into 4lpc1ncnah.
+  drafts then fold into 4lpc1ncnah. Switch back in the same sitting: if the nightly scheduler
+  runs while the contract is Per Feature, it drafts East Courtyard again.
 
 ### Tests
 
-- `test_visit_shape_fold` (23 tests) now gives every draft its open Workflow Action, as on
-  prod. It reproduces Hardware's half-done fold finishing, a bare site visit taking the drafts
-  planned like it, a started one taking none, and a draft linked by more than its Workflow
-  Action being left.
+- `test_visit_shape_fold` (26 tests) now gives every draft its open Workflow Action, as on
+  prod. It covers:
+  - Hardware's half-done fold finishing;
+  - a bare site visit taking the drafts planned like it, and saying so when it takes none;
+  - a started or overdue site visit taking none;
+  - a past-dated draft in review reported as started;
+  - a draft linked by more than its Workflow Action being left.
 
 ## [1.599.1] - 2026-10-12
 

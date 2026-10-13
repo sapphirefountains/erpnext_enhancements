@@ -519,6 +519,31 @@ class TestWhatIsLeft(unittest.TestCase):
 			STATE["set_values"][0][1:], ("TODO-a", "status", "Cancelled"), "no conversion: it is one"
 		)
 
+	def test_an_overdue_site_visit_takes_nothing(self):
+		_draft("site", None, day="2026-10-05")
+		_draft("a", "SN-A")
+		result = _fold()
+		self.assertEqual((result["site_visit"], result["beside"], result["kept"]), ("site", ["a"], None))
+		self.assertEqual(STATE["deleted"], [])
+
+	def test_a_bare_site_visit_that_takes_nothing_says_so(self):
+		"""Not "now covers every water feature", which reads as if something happened."""
+		_draft("site", None)
+		_draft("a", "SN-A", day="2026-10-26")
+		result = _fold()
+		self.assertEqual((result["kept"], result["removed"], result["different"]), ("site", [], ["a"]))
+		message = shape.describe(result)
+		self.assertIn(
+			"This contract's site visit site was already open; nothing was folded into it.", message
+		)
+		self.assertNotIn("now covers", message)
+
+	def test_a_past_dated_draft_in_review_is_started_not_missed(self):
+		_draft("in_review", "SN-A", day="2026-10-05", workflow_state="Pending Review")
+		_draft("b", "SN-B")
+		result = _fold()
+		self.assertEqual((result["started"], result["overdue"]), (["in_review"], []))
+
 	def test_a_draft_linked_by_more_than_its_workflow_action_is_left(self):
 		STATE["dyn_linked"].add("b")
 		_draft("a", "SN-A")

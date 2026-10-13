@@ -142,15 +142,17 @@ def fold_feature_drafts(contract_name):
 
 	bare = []
 	for doc in (frappe.get_doc(DOCTYPE, name) for name in names):
-		if overdue(doc):
-			result["overdue"].append(doc.name)
-		elif started(doc):
+		# Started first: a past-dated draft in review is somebody's work, not a missed visit.
+		if started(doc):
 			result["started"].append(doc.name)
+		elif overdue(doc):
+			result["overdue"].append(doc.name)
 		else:
 			bare.append(doc)
 	if existing:
 		# The contract's site visit is already there and bare: the drafts fold into it.
 		keep, rest = existing, bare
+		result["existing"] = True
 	elif bare:
 		keep, rest = bare[0], bare[1:]
 		# In place, one field: no save hooks on the kept draft (module docstring).
@@ -306,7 +308,13 @@ def describe(result):
 			).format(result["site_visit"], names("beside"))
 		)
 		return "<br>".join(frappe.utils.escape_html(line) for line in lines)
-	if result.get("kept"):
+	if result.get("kept") and result.get("existing") and not result.get("removed"):
+		lines.append(
+			_("This contract's site visit {0} was already open; nothing was folded into it.").format(
+				result["kept"]
+			)
+		)
+	elif result.get("kept"):
 		when = formatdate(result["date"]) if result.get("date") else _("its next date")
 		lines.append(
 			_("Visit {0} on {1} now covers every water feature on this contract.").format(
