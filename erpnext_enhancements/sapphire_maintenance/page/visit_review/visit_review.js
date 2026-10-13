@@ -36,8 +36,9 @@ frappe.pages["visit-review"].on_page_show = function (wrapper) {
 };
 
 const VR_API = "erpnext_enhancements.api.maintenance_review.";
-// The follow-up list's place in the route. A visit is never named this: new ones are
-// PRJ-…-V###, older ones ten random letters and digits.
+// The follow-up list's place in the route. A visit is never named this: they are PRJ-…-V###
+// (the random ten-character names from before v1.597.0 were renamed in v1.610.0, and an old
+// one in a link is re-routed to the new name by show_visit).
 const VR_FOLLOW_UPS = "follow-ups";
 
 const VR_STYLE = `
@@ -410,6 +411,14 @@ class VisitReview {
 			.call({ method: VR_API + "get_review_visit", args: { record: name } })
 			.then((r) => {
 				if (this.current !== name) return;
+				// An old name (a review email sent before v1.610.0 renamed the visit): the server
+				// found it by legacy_name. This entry is put right in place, not stacked, so Back
+				// still goes where it went.
+				const current = (r.message || {}).name;
+				if (current && current !== name) {
+					this.go(current, true);
+					return;
+				}
 				this.visit = r.message;
 				this.render_visit(r.message);
 			})

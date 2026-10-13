@@ -27,7 +27,9 @@ Lifecycle / wiring:
     (blank ``visit_date`` -> today) and closes its clock from the kiosk
     interval (``_finish_on_review``, v1.595.1), so an approval days later
     neither rolls the schedule from the approval day nor takes a later
-    interval as the clock-out.
+    interval as the clock-out. Since v1.610.0 that save also needs the
+    technician's signature (``technician_signature``), which ``validate``
+    stamps with who signed and when (``_check_signatures``).
   * ``on_submit`` enqueues the background worker
     ``api.maintenance_workflow.process_maintenance_submission`` (Stock Entry,
     Timesheet, Warranty Claim, Sales Invoice). The next-visit scheduling
@@ -48,7 +50,7 @@ import re
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt, getdate, nowdate
+from frappe.utils import flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.sapphire_maintenance.task_rules import task_answered
 
@@ -64,6 +66,15 @@ PROJECT_IN_NAME = re.compile(r"[\w\- ]{1,60}")
 #: The workflow state a technician's Finish (or the form's Request Review) moves a visit into.
 #: Kept in step with ``review_digest.REVIEW_STATE`` and the workflow fixture.
 REVIEW_STATE = "Pending Review"
+
+#: What a signature field may hold (v1.610.0). Both signatures are printed straight into an
+#: ``<img src="...">`` on the customer's report and the portal page, unescaped, so a value is a
+#: drawn image and nothing else: a data URI whose payload is base64, which has no quote or angle
+#: bracket to break out of the attribute with. The wizard's pad and the Desk's Signature control
+#: both draw PNG. The client's pad has been in use since before this check, so it also takes
+#: the other raster types a browser can export rather than refusing a signature already drawn.
+TECHNICIAN_SIGNATURE = re.compile(r"data:image/png;base64,[A-Za-z0-9+/]+={0,2}")
+CLIENT_SIGNATURE = re.compile(r"data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}")
 
 
 class SapphireMaintenanceRecord(Document):
@@ -94,8 +105,16 @@ class SapphireMaintenanceRecord(Document):
 		named it would be worse.
 
 		A visit with no project keeps Frappe's random name, and so does one whose project
-		name could not lead a naming series (:data:`PROJECT_IN_NAME`). Visits named before
-		v1.597.0 keep theirs, because review emails and links name them.
+		name could not lead a naming series (:data:`PROJECT_IN_NAME`).
+
+		Visits named before v1.597.0 were at first left with their random names, because
+		review emails and links name them. Nik, 2026-10-13, still seeing ``4lvpg04h6h`` a day
+		later (no visit had been created since, so every visit on screen was an old one), had
+		them renamed: ``patches/rename_hash_named_visits.py`` numbers them into this scheme in
+		the order they were done, keeps the old name in ``legacy_name``, and moves this series
+		past them. The Visit Wizard and Visit Review pages, and the wizard's endpoints, still
+		open a visit by its old name (``sapphire_maintenance.visit_names``); a link to the Desk
+		form by an old name does not.
 		"""
 		project = self.get("project") or ""
 		if not PROJECT_IN_NAME.fullmatch(project):
@@ -119,8 +138,49 @@ class SapphireMaintenanceRecord(Document):
 
 		check_follow_ups(self)
 		self._autofill_clock_in()
+		self._check_signatures()
 		self._finish_on_review()
 		self._check_fountain_photo()
+
+	def _check_signatures(self):
+		"""Accept only a drawn signature, and stamp who signed for the technician and when.
+
+		Nik, 2026-10-13: "we need the technicians to sign the maintenance visits once they
+		complete it so the printed form has that." The technician signs on the wizard's
+		Wrap-up (or in the form's field) and the report prints the signature with the signer's
+		name and the time. The stamp is whoever's session saved the new signature, not the
+		visit's ``technician``: a substitute covering the site signs as themselves. A
+		signature left as it was keeps its stamp (a reviewer's later save is not a signing);
+		a cleared one clears it.
+
+		Both signature fields are printed unescaped into an ``<img src>``, so each must be a
+		drawn image (:data:`TECHNICIAN_SIGNATURE`, :data:`CLIENT_SIGNATURE`). Only a changed
+		value is checked, so a visit is never made unsaveable by what it already holds.
+		"""
+		client = self.get("client_sign_off") or ""
+		if client and self.has_value_changed("client_sign_off") and not CLIENT_SIGNATURE.fullmatch(client):
+			frappe.throw(
+				_("The client's sign-off must be a signature drawn on the visit."),
+				title=_("Signature not accepted"),
+			)
+		signature = self.get("technician_signature") or ""
+		if not signature:
+			self.technician_signed_by = None
+			self.technician_signed_on = None
+			return
+		if not self.has_value_changed("technician_signature"):
+			before = self.get_doc_before_save()
+			if before is not None:
+				self.technician_signed_by = before.get("technician_signed_by")
+				self.technician_signed_on = before.get("technician_signed_on")
+			return
+		if not TECHNICIAN_SIGNATURE.fullmatch(signature):
+			frappe.throw(
+				_("The technician's signature must be drawn on the visit."),
+				title=_("Signature not accepted"),
+			)
+		self.technician_signed_by = frappe.session.user
+		self.technician_signed_on = now_datetime()
 
 	def _settle_task_states(self):
 		"""A cleaning task is done, N/A, or neither, never both: done wins.
@@ -191,11 +251,22 @@ class SapphireMaintenanceRecord(Document):
 		is still this visit's; at approval the visit is dated in the past and
 		``_autofill_clock_out`` leaves it alone (:meth:`_is_backfill`). A visit sent back and
 		sent again keeps the date it was first given.
+
+		And since v1.610.0 the technician signs first (:meth:`_check_signatures`): this is the
+		one save every way of finishing passes through, the wizard's Finish and the form's
+		Request Review alike, so the check lives here and not in either. Only the move into
+		review asks for it. A visit already waiting, a reviewer's Approve & Submit and a site
+		with no workflow are not stopped.
 		"""
 		if self.docstatus != 0 or (self.get("workflow_state") or "") != REVIEW_STATE:
 			return
 		if not self.has_value_changed("workflow_state"):
 			return
+		if not self.get("technician_signature"):
+			frappe.throw(
+				_("The technician must sign the visit before it goes for review."),
+				title=_("Technician signature needed"),
+			)
 		if not self.get("visit_date"):
 			self.visit_date = getdate(nowdate())
 		self._autofill_clock_out()

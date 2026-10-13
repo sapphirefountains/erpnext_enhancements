@@ -24,6 +24,8 @@ What each section pins, and how it would fail otherwise:
   for the technician. Projected visits carry the profile's crew.
 * **The planner** shows crews on cards, checks every affected person's day on a move, swaps only
   the dragged helper, and refuses to add a helper to a finished, started or projected visit.
+* **(v1.610.0) The wizard's endpoints** take the technician's signature on Finish (never a
+  reviewer's on Approve & Submit) and answer to a visit's pre-v1.610.0 name as well as its own.
 
 Bench-free: it installs its own ``frappe`` stub, runs the real modules, and restores ``sys.modules``.
 
@@ -1466,6 +1468,146 @@ class TestFillingInAnEarlierDay(unittest.TestCase):
 		source = (APP / "sapphire_maintenance/page/visit_wizard/visit_wizard.js").read_text(encoding="utf-8")
 		self.assertIn('this.set_field("visit_date"', source)
 		self.assertIn("visit_date", visit.ALLOWED_PARENT_FIELDS)
+
+
+SIGNED = "data:image/png;base64,iVBORw0KGgo="
+
+
+def _finishable(**values):
+	"""A draft visit with what finish_visit's answer (``_wizard_state``) reads."""
+	return _record(completion_percent=0, has_out_of_range_readings=0, **values)
+
+
+class TestFinishTakesTheTechniciansSignature(unittest.TestCase):
+	"""v1.610.0: the wizard's Finish carries the technician's signature, set on the visit before
+	the workflow moves it into review (where the record requires it). A reviewer's Approve &
+	Submit passes through the same endpoint and never signs as the technician."""
+
+	def setUp(self):
+		_reset()
+		self.applied = []
+		workflow = types.ModuleType("frappe.model.workflow")
+		workflow.get_workflow_name = lambda doctype: "Sapphire Maintenance Workflow"
+
+		def apply_workflow(doc, action):
+			self.applied.append((dict(doc), action))
+			return doc
+
+		workflow.apply_workflow = apply_workflow
+		model = types.ModuleType("frappe.model")
+		model.workflow = workflow
+		modules = mock.patch.dict(sys.modules, {"frappe.model": model, "frappe.model.workflow": workflow})
+		modules.start()
+		self.addCleanup(modules.stop)
+		actions = mock.patch.object(
+			visit, "_workflow_actions", lambda doc: ([{"action": "Go"}], [{"action": "Go"}])
+		)
+		actions.start()
+		self.addCleanup(actions.stop)
+
+	def test_a_technician_finishing_signs_before_the_workflow_moves_it(self):
+		_finishable()
+		visit.finish_visit("SMR-1", modified="2026-10-12 09:00:00", technician_signature=SIGNED)
+		self.assertEqual(frappe.saved[-1]["technician_signature"], SIGNED)
+		self.assertEqual(self.applied[0][0]["technician_signature"], SIGNED, "saved before apply_workflow")
+		self.assertEqual(self.applied[0][1], "Go")
+
+	def test_with_the_clients_signature_too_it_is_one_save(self):
+		_finishable()
+		visit.finish_visit("SMR-1", signature=SIGNED, technician_signature=SIGNED)
+		self.assertEqual(len(frappe.saved), 1)
+		self.assertEqual((frappe.saved[0]["client_sign_off"], frappe.saved[0]["technician_signature"]), (SIGNED, SIGNED))
+
+	def test_a_reviewer_approving_never_signs_as_the_technician(self):
+		doc = _finishable(workflow_state="Pending Review")
+		frappe.session.user = LISA
+		visit.finish_visit("SMR-1", technician_signature=SIGNED)
+		self.assertNotIn("technician_signature", doc)
+		self.assertEqual(frappe.saved, [], "nothing to save before the approval")
+		self.assertEqual(len(self.applied), 1)
+
+	def test_without_one_the_visit_keeps_what_it_has(self):
+		doc = _finishable(technician_signature="data:image/png;base64,EARLIER")
+		visit.finish_visit("SMR-1")
+		self.assertEqual(doc["technician_signature"], "data:image/png;base64,EARLIER")
+		self.assertEqual(frappe.saved, [])
+
+
+class TestAVisitByItsOldName(unittest.TestCase):
+	"""v1.610.0 renamed the visits created before v1.597.0 (patches/rename_hash_named_visits.py).
+	Their old names are in review emails, kiosk links and the work kept on phones."""
+
+	def setUp(self):
+		_reset()
+		self.doc = _record(
+			name="PRJ-00179-2026-V001",
+			legacy_name="4lvpg04h6h",
+			completion_percent=0,
+			has_out_of_range_readings=0,
+		)
+		frappe.tables[RECORD] = [{"name": "PRJ-00179-2026-V001", "legacy_name": "4lvpg04h6h"}]
+
+	def test_the_current_name_for_either(self):
+		self.assertEqual(visit.current_visit_name("PRJ-00179-2026-V001"), "PRJ-00179-2026-V001")
+		self.assertEqual(visit.current_visit_name("4lvpg04h6h"), "PRJ-00179-2026-V001")
+		self.assertIsNone(visit.current_visit_name("nosuchname"))
+		self.assertIsNone(visit.current_visit_name(""))
+		self.assertIsNone(visit.current_visit_name(None))
+
+	def test_resolve_visit_answers_only_what_the_user_may_read(self):
+		self.assertEqual(visit.resolve_visit("4lvpg04h6h"), "PRJ-00179-2026-V001")
+		self.assertIsNone(visit.resolve_visit("nosuchname"))
+		frappe.has_permission = lambda *a, **k: False
+		self.assertIsNone(visit.resolve_visit("4lvpg04h6h"))
+
+	def test_the_wizards_endpoints_take_the_old_name(self):
+		"""A page loaded before the deploy, or a save kept on a phone, still lands, and the answer
+		names the visit as it is now (the wizard moves what it kept on seeing that)."""
+		state = visit.save_visit("4lvpg04h6h", json.dumps({"fields": {"visit_notes": "kept on a phone"}}))
+		self.assertEqual(self.doc["visit_notes"], "kept on a phone")
+		self.assertEqual(state["name"], "PRJ-00179-2026-V001")
+
+	def test_a_photo_uploaded_by_the_old_name_is_attached_to_the_visit(self):
+		"""A wizard page left open across the deploy uploads with docname=<old name>; v16's
+		upload_file lets it through. The File's before_insert moves it to the visit."""
+		from erpnext_enhancements.sapphire_maintenance import visit_names
+
+		photo = _Doc(attached_to_doctype=RECORD, attached_to_name="4lvpg04h6h")
+		visit_names.attach_to_current_name(photo, "before_insert")
+		self.assertEqual(photo["attached_to_name"], "PRJ-00179-2026-V001")
+		for untouched in (
+			_Doc(attached_to_doctype=RECORD, attached_to_name="PRJ-00179-2026-V001"),
+			_Doc(attached_to_doctype=RECORD, attached_to_name="nosuchname"),
+			_Doc(attached_to_doctype="Task", attached_to_name="4lvpg04h6h"),
+			_Doc(attached_to_doctype=None, attached_to_name=None),
+		):
+			before = dict(untouched)
+			visit_names.attach_to_current_name(untouched, "before_insert")
+			self.assertEqual(dict(untouched), before)
+
+	def test_the_file_hook_never_stops_an_upload(self):
+		from erpnext_enhancements.sapphire_maintenance import visit_names
+
+		def boom(*args, **kwargs):
+			raise RuntimeError("database gone")
+
+		photo = _Doc(attached_to_doctype=RECORD, attached_to_name="4lvpg04h6h")
+		with mock.patch.object(frappe.db, "exists", boom):
+			visit_names.attach_to_current_name(photo, "before_insert")
+		self.assertEqual(photo["attached_to_name"], "4lvpg04h6h")
+		self.assertTrue(frappe.errors)
+
+	def test_the_file_hook_is_wired(self):
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		block = hooks[hooks.index('\t"File": {\n') :]
+		block = block[: block.index("\n\t},\n")]
+		self.assertIn('"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name"', block)
+		self.assertIn('"before_insert": [', block)
+
+	def test_a_legacy_lookup_is_never_ordered_by_creation(self):
+		visit.current_visit_name("4lvpg04h6h")
+		source = (APP / "sapphire_maintenance/visit_names.py").read_text(encoding="utf-8")
+		self.assertIn('{"legacy_name": name}, "name", order_by=None', source)
 
 
 if __name__ == "__main__":

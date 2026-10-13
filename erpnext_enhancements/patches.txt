@@ -1333,6 +1333,10 @@ erpnext_enhancements.patches.seed_planner_templates
 # Project Planner T3 (v1.608.0): Projects Manager may edit Project Templates (ERPNext gives it only select).
 # setup_custom_perms first, then widen or insert its level-0 row; only ever widens. Cannot raise, safe twice.
 erpnext_enhancements.patches.grant_project_template_editing
+# Visit numbers (v1.610.0): the visits named before v1.597.0 get their PRJ-#####-YYYY-V### names, in
+# the order they were done; the old name goes in legacy_name (the field exists by now), calendar rows
+# follow, and each series' counter is raised past them. One savepoint per visit, synchronous, never raises.
+erpnext_enhancements.patches.rename_hash_named_visits
 # Maintenance agreement terms (v1.611.0): base rate + chemicals, $250/$350 emergency rates, 12% increase
 # at renewal, any payment method on file, client initials. Replaces the live body only when it is exactly
 # the v1.609.0 shipped body (SHA-256); a site-edited body is logged and left alone. Cannot raise.

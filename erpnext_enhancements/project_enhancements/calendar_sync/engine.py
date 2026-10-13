@@ -631,6 +631,20 @@ def nightly_repair():
 # ---------------------------------------------------------------------- snap-back
 
 
+def _current_visit_name(name):
+	"""A visit's name now, for the name an event's private properties carry.
+
+	v1.610.0 renamed the visits created before v1.597.0 (``patches/rename_hash_named_visits.py``).
+	Their events keep the old name in ``erpnext_name`` until the next sync rewrites them, and an
+	edit made in Google before then would otherwise look up a visit that is gone and delete the
+	event. The rename patch already moved the Calendar Sync Link to the new name, so the event
+	is matched to it and rewritten instead.
+	"""
+	from erpnext_enhancements.sapphire_maintenance.visit_names import current_visit_name
+
+	return current_visit_name(name) or name
+
+
 def _expected_id(item, link):
 	if link is not None and link.get("event_id"):
 		return link.get("event_id")
@@ -649,6 +663,8 @@ def handle_event(event, calendar_id, doc, client, cache):
 	)
 	if doctype not in sources.SOURCE_DOCTYPES or not name:
 		return payload.IGNORE
+	if doctype == sources.VISIT:
+		name = _current_visit_name(name)
 	ref = payload.source_ref(doctype, name, key)
 	if ref not in cache:
 		cache[ref] = sources.item_for(doctype, name, key)
