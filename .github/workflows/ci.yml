@@ -937,6 +937,18 @@ jobs:
       # dialog is being constructed, as Frappe does. Reuses Phase 6B's fake site, so it is unittest.
       - name: Project planner drafted new tasks, paste a list, copy from project (T2)
         run: python -m unittest erpnext_enhancements.tests.test_planner_draft_new_tasks -v
+      # Project Planner T3 (v1.608.0), phase templates and task bundles. Pins that the seed JSON is DOC-0041
+      # corrected (phases 100-700 only, no "Merchanical", no second "Exterior Fountains", only the
+      # corrected catalog's cost codes, one PM task per phase, materials on each phase's checklist and
+      # never tasks, the six starter bundles marked Needs review); the sequence (in order inside a phase
+      # or bundle, PM aside; 500 and 600 both after 400 and 700 after both; an unpicked phase walked
+      # through; 800 never offered); that the endpoints read back what the patch writes and compose
+      # bundles after the phases; that build_out_tasks writes a checklist only into a phase it creates;
+      # and that the seed patch is idempotent, never overwrites, rolls a refused template back whole and
+      # never raises. Under node it opens the dialog through a stand-in that asks get_data while the
+      # dialog is being constructed (the v1.602.1 trap). Reuses Phase 6B's fake site, so it is unittest.
+      - name: Project planner phase templates and task bundles (T3)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_templates -v
       # Planner Phase 6E, four follow-ups (Nik, 2026-10-09). Pins that a multi-select move can count
       # working days (Monday to Friday, a weekend landing goes to the Monday, each task keeps its length
       # in working days) with calendar days the default and the choice remembered per device, and that

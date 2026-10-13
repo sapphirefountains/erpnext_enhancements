@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.608.0] - 2026-10-13
+
+### Added
+
+- **Start from template… on the Project Planner's Build out grid (T3).** Nik, 2026-10-12: start a
+  job's plan from DOC-0041's phases instead of typing it, and keep reusable, composable **bundles** of
+  tasks ("Control panel design + build" and its subtasks) rather than one monolith. A new footer action
+  opens a dialog with the phase template (its phases ticked; pick the ones this job needs) and/or any
+  number of bundles, and the phase the bundles go under. The rows land in the grid, subject, default
+  hours, phase, crew size and dependencies as `row:N`, through Copy from project's own path (an empty
+  grid is replaced, otherwise Append or Replace, so bundles can be added to a grid that has rows). The
+  planner edits them, then Create runs as usual, or drafts them in Draft mode (T2).
+  - **The sequence.** Inside a phase or a bundle the tasks run in order, each waiting on the one before,
+    unless the template's own dependencies say otherwise; the Project management task runs alongside
+    its phase. Phases run 100 > 200 > 300 > 400, then **500 and 600 side by side, then 700, which waits
+    on both**: a phase's first tasks wait on the last tasks of the nearest PICKED phase(s) before it,
+    walking through any that were not picked. **Phase 800 (Maintenance) is never offered**, whatever a
+    template holds or a request asks: maintenance contracts own it.
+  - **Materials are a procurement checklist on each phase, never calendar tasks.** A template phase
+    keeps it in a new Task field, one item per line, so it is easy to edit; when the grid creates the
+    phase, `build_out_tasks` (new optional `phase_checklists`) writes it into the NEW phase's
+    description as a Quill tick list (`<ol><li data-list="unchecked">`, what v16's Text Editor stores
+    and Frappe's sanitizer keeps), every item escaped. A phase the project already has is never written
+    to.
+  - **Endpoints.** `api/planner_templates.py`: `get_planner_templates` (the dialog's catalog) and
+    `get_template_rows` (the picked phases and bundles as grid rows, in `get_copy_source`'s shape, plus
+    each phase's checklist). Planner roles only, read-only, at most 100 rows. The rules are pure
+    (`project_enhancements/planner_templates.py`). T5's seam: every row carries its corrected
+    `cost_code`, and `apply_estimate_hours` will put a live estimate's hours in by code (nothing calls
+    it with any yet; the hours are the template's).
+- **The templates are ERPNext Project Templates, edited in the Desk.** A phase is a group template Task
+  (`is_template`); its tasks sit under it. New fields: on Project Template, *Planner Template Kind*
+  (Phase template / Bundle; blank is an ordinary ERPNext template the planner never offers), *Review
+  Status* (Needs review / Reviewed) and *Template Notes*; on Task, shown on template Tasks only, a
+  *Planner Template* section with *Template Line* (Labor / Subcontract / Project management), *Cost
+  Code*, and on a template phase *Phase Number*, *Runs After Phases* ("500, 600") and *Procurement
+  Checklist*. ERPNext's own model holds phases, order and dependencies; a custom doctype was not needed.
+- **Seeded: "Fountain build phases (DOC-0041)" and six starter bundles** (patch `seed_planner_templates`),
+  from `project_enhancements/data/planner_templates.json`, which `scripts/derive_planner_templates.py`
+  derives from DOC-0041 Sapphire Cost Worksheet v1.0 (nothing parses a spreadsheet at migrate time).
+  Labor lines and the subcontracted scope Nik named (demolition, earthwork, concrete, waterproofing,
+  tile, stone, paint, electrical) are tasks, with ONE Project management task per phase; everything else
+  is the phase's checklist. **Cost codes are the corrected catalog's (`quality/cost_codes.OLD_TO_NEW`),
+  never DOC-0041's**, except two lines whose DOC-0041 code was wrong in the old catalog too (Relocate
+  Existing Hose Bib -> 22 1119; Programming Labor -> 26 0900.16). v1.0 defects not copied: phase 500's
+  "Merchanical" (Mechanical Room), row 92's second "Exterior Fountains" (it is 13 1223, Interior
+  Fountains), row 52's missing units (a material, so no hours). Every labor line's "# Units" in v1.0 is
+  1, so every labor task starts at 1 hour: a placeholder to correct. The bundles (Control panel design +
+  build, Interior fountain, Splash pad, Lighting package, Equipment room (pump + filter skid),
+  Commissioning + hand-off) are Nik's list drafted for him to correct: blank hours, tasks in order, and
+  everything seeded is marked **Needs review** (the dialog says so) until he sets it to Reviewed.
+  - The patch is insert-only by template name (an existing template is never touched, a deleted one stays
+    deleted), creates its custom fields first from `fixtures/custom_field.json` (patches run before
+    fixture sync), seeds each template inside its own savepoint so a refused one is rolled back whole,
+    and cannot raise (`log_error(title=..., message=...)`): a raising patch aborts `bench migrate`, which
+    is the deploy.
+- **Projects Manager can edit Project Templates** (patch `grant_project_template_editing`). ERPNext v16
+  gives Projects Manager only *select* on Project Template; this widens its level-0 row to read, write,
+  create and delete, after `setup_custom_perms` so a site with no Custom DocPerm rows keeps its standard
+  ones. Only ever widens.
+
+### Changed
+
+- **The Create Project dialog (from an Opportunity) no longer offers the planner's templates.** ERPNext's
+  `copy_from_template` would copy every task in, all dated the project's first day; they are loaded per
+  job from the Build out grid instead (`custom_template_kind` "is not set").
+- `tests/test_planner_draft_new_tasks.py` no longer pins the exact version (it failed the next release)
+  and reads `build_out_tasks`'s arguments as built first.
+
 ## [1.603.0] - 2026-10-12
 
 ### Added

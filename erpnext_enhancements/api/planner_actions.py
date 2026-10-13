@@ -23,7 +23,9 @@ needs the server is here:
   the Unscheduled tray. :func:`remove_built_out_tasks` is its Undo, and
   :func:`get_build_out_context` / :func:`get_projects_needing_tasks` are the reads behind the grid
   and the Needs tasks list. :func:`get_copy_source` (v1.603.0) reads another project's leaf tasks as
-  grid rows, the starting plan of "Copy from project...".
+  grid rows, the starting plan of "Copy from project...". "Start from template..." (T3, v1.608.0)
+  reads its rows from ``api/planner_templates.py`` and sends each new phase's procurement checklist
+  as ``phase_checklists``.
 * :func:`move_many` moves several tasks (and/or pencils or firms them) in one call: one conflict
   check for the lot, one reason, all or nothing, as ``shift_successors`` and ``copy_week`` do.
 * :func:`remove_created_task` is the Undo of a task the planner just created (a duplicate, a quick
@@ -66,6 +68,7 @@ from frappe.utils import cint, flt, getdate, nowdate
 
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.project_enhancements import crew_availability as engine
+from erpnext_enhancements.project_enhancements import planner_templates as templates
 from erpnext_enhancements.project_enhancements import planner_tracking
 
 #: The search box: at most this many results, people and projects first, at most this many of each.
@@ -1255,6 +1258,33 @@ def _plan_build_out(project, items, rows):
 	}
 
 
+def _phase_checklists(value):
+	"""The grid's ``phase_checklists`` (T3, v1.608.0) as ``{phase name casefolded: [items]}``.
+
+	A JSON object of a phase name to its procurement checklist (a list of lines), as
+	``planner_templates.get_template_rows`` handed the page. At most one per new phase the grid may
+	make, items cleaned and capped (``planner_templates.checklist_lines``); anything else is refused.
+	"""
+	raw = pp.given(value)
+	if raw is None:
+		return {}
+	try:
+		data = json.loads(raw) if isinstance(raw, str) else raw
+	except ValueError:
+		data = None
+	if not isinstance(data, dict) or len(data) > BUILD_OUT_MAX_PHASES:
+		frappe.throw(_("The phase checklists could not be read. Reload the planner and try again."))
+	out = {}
+	for title, items in data.items():
+		if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+			frappe.throw(_("The phase checklists could not be read. Reload the planner and try again."))
+		lines = templates.checklist_lines("\n".join(items))
+		key = clean_text(title).casefold()
+		if key and lines:
+			out[key] = lines
+	return out
+
+
 def _insert_row(doc, label):
 	"""``_insert`` with the row named when ERPNext refuses it. A permission error passes as it is."""
 	log = pp._message_log()
@@ -1274,7 +1304,7 @@ def _insert_row(doc, label):
 
 
 @frappe.whitelist(methods=["POST"])
-def build_out_tasks(project, rows, draft=0):
+def build_out_tasks(project, rows, draft=0, phase_checklists=None):
 	"""Create many undated Tasks on one customer job, in ONE request: the Build out grid.
 
 	``rows`` is a JSON list (at most 100) of ``{"subject", "hours", "parent_task", "phase",
@@ -1304,6 +1334,11 @@ def build_out_tasks(project, rows, draft=0):
 	``draft-new:`` names and ``"drafted": True``; nothing is a Task until Publish. A grid may also
 	name, as a phase or as something to wait on, a task an earlier drafted build-out made
 	(``get_build_out_context(draft=1)`` offers them).
+
+	``phase_checklists`` (T3, v1.608.0): a JSON object of a phase name to its procurement checklist
+	(lines), from "Start from template...". A NEW phase of that name (any capitals) gets it as a tick
+	list in its description (``planner_templates.checklist_html``, every item escaped); an existing
+	phase is never written to, and a name no row uses is ignored.
 	"""
 	pp._require_planner()
 	drafting = bool(cint(pp.given(draft)))
@@ -1313,6 +1348,7 @@ def build_out_tasks(project, rows, draft=0):
 		frappe.throw(_("Pick the project to build out."))
 	_require_customer_job(project)
 	items = _build_rows(rows)
+	checklists = _phase_checklists(phase_checklists)
 	known = _project_task_rows(project, draft=drafting)
 	plan = _plan_build_out(project, items, known)
 	if drafting:
@@ -1323,6 +1359,8 @@ def build_out_tasks(project, rows, draft=0):
 	warnings, phase_names, made_phases = [], {}, []
 	for key, title in zip(plan["phase_keys"], plan["phases"], strict=True):
 		spec = {"op": "build_out", "values": {"subject": title, "project": project, "is_group": 1}}
+		if checklists.get(key):
+			spec["values"]["description"] = templates.checklist_html(checklists[key])
 		doc = pp.task_from_spec(spec)
 		doc.check_permission("create")
 		if drafting:

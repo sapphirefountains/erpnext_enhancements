@@ -1815,8 +1815,11 @@ class TestPageSource(unittest.TestCase):
 	def test_the_page_sends_draft_one_for_the_three_creating_calls(self):
 		self.assertIn("this.draft_args()", self._method("p6b_duplicate"))
 		self.assertIn("this.draft_args()", self._method("p6b_quick_add_save"))
+		# v1.608.0 (T3) builds the arguments first, to add a template's phase checklists.
 		self.assertRegex(
-			self.bare, r'this\.t1_send\("build_out_tasks", Object\.assign\(\{[^}]*\}, this\.draft_args\(\)\)'
+			self.bare,
+			r"const args = Object\.assign\(\{[^}]*\}, this\.draft_args\(\)\);[^;]*;[^;]*;\s*"
+			r'return this\.t1_send\("build_out_tasks", args, \{\}\)',
 		)
 
 	def _method(self, name):
@@ -1862,8 +1865,10 @@ class TestDocsAndCi(unittest.TestCase):
 	def test_the_version_is_bumped_in_both_places_and_written_up(self):
 		init = (APP / "__init__.py").read_text(encoding="utf-8")
 		package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
-		self.assertIn('__version__ = "1.603.0"', init)
-		self.assertEqual(package["version"], "1.603.0")
+		# At least this release, and the two agree (v1.608.0: a pin on the exact number failed the next one).
+		version = re.search(r'__version__ = "([\d.]+)"', init).group(1)
+		self.assertEqual(package["version"], version)
+		self.assertGreaterEqual(tuple(int(part) for part in version.split(".")), (1, 603, 0))
 		changelog = CHANGELOG.read_text(encoding="utf-8")
 		self.assertIn("## [1.603.0] - 2026-10-12", changelog)
 		section = changelog[changelog.index("## [1.603.0]") :].split("\n## [", 1)[0]

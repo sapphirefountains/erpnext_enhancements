@@ -1308,3 +1308,11 @@ erpnext_enhancements.patches.seed_visit_review_emails
 # for review, as the new rule in SapphireMaintenanceRecord._finish_on_review would have. Blank
 # dates on Pending Review drafts only; set_value without touching modified; cannot raise.
 erpnext_enhancements.patches.stamp_visit_date_on_pending_review
+# Project Planner T3 (v1.608.0): seed the phase template "Fountain build phases (DOC-0041)" (100-700, never
+# 800) and six starter task bundles as Project Templates of template Tasks, from
+# project_enhancements/data/planner_templates.json. Creates its custom fields first, from fixtures/custom_field.json
+# (patches run before fixture sync). Insert-only by template name, one savepoint per template, cannot raise.
+erpnext_enhancements.patches.seed_planner_templates
+# Project Planner T3 (v1.608.0): Projects Manager may edit Project Templates (ERPNext gives it only select).
+# setup_custom_perms first, then widen or insert its level-0 row; only ever widens. Cannot raise, safe twice.
+erpnext_enhancements.patches.grant_project_template_editing
