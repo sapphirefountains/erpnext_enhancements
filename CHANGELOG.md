@@ -84,6 +84,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Review on 2026-10-13 sent thirteen blank drafts (0% complete, undated), and the gate correctly
   refused every one. Dated 2026-10-13 or later still needs the signature.
 
+## [1.612.1] - 2026-10-13
+
+### Fixed
+
+- **A bulk workflow action no longer pages the Error Log Recipient when it refuses a document the
+  ordinary way.** Nik, 2026-10-13, testing the technician-signature gate (v1.610.0): a bulk *Request
+  Review* on 13 Sapphire Maintenance Records was refused, as designed, and an `[Error]` email arrived
+  with the traceback. Frappe v16's `_bulk_workflow_action` (`frappe/model/workflow.py`) calls
+  `frappe.log_error` for **every** document it cannot move, even when the reason is a `frappe.throw`
+  that `print_workflow_log` already shows the user in its realtime *Workflow Status* dialog, enqueued
+  or not. So each refusal became an Error Log titled "Workflow Request Review threw an error for …",
+  and the `Error Log` Notification fired on it. That is upstream behaviour, not something this app can
+  change at the source, so the alert's `condition` now declines the row only when all of these hold:
+  - Frappe's bulk action wrote it (`reference_doctype` "Workflow", `method` "Workflow …");
+  - the traceback runs through `frappe.utils.messages._raise_exception`, the frame every
+    `frappe.throw` and raising `msgprint` passes through;
+  - the traceback's **last** line is a `frappe.exceptions.*` class, so a real crash that follows a
+    caught throw still pages.
+
+  Anything else, including a genuine exception inside a bulk action, still pages. If Frappe renames
+  that frame or the title, the clause stops matching and the alert goes back to paging, never to
+  silence. The Error Log rows are still written, so the Error Log list still shows the refusals.
+- The refusal itself was correct. All 13 visits were blank scheduler drafts: 0% complete,
+  no visit date, no clock-in, and 9 of them scheduled between Oct 19 and Oct 30. Sending them to
+  review would have stamped Oct 13 as each one's visit date (`_finish_on_review`). Approving them would
+  then have rolled their contracts forward from that date and created a Stock Entry, a Timesheet and a
+  draft Sales Invoice for each.
+  Nothing on prod was changed to investigate this.
+- `tests/test_notification_recipients.py` pins the cases: a refusal is silent (LF and CRLF), while a
+  crash, a crash after a caught throw, a throw outside a bulk action and a missing traceback all
+  page. It also checks that the condition uses nothing frappe's `safe_eval` refuses.
+
 ## [1.612.0] - 2026-10-13
 
 ### Added
