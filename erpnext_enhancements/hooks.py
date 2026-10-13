@@ -756,7 +756,8 @@ doc_events = {
 		# only for someone newly on the crew, removes one only for someone who was on it before
 		# this save (and is not now the technician: a Visit Wizard claim swaps the two), never
 		# touches a sidebar assignee, skips submitted/cancelled visits. Best effort; never raises.
-		# See sapphire_maintenance/visit_crew.py.
+		# A pencilled visit (`tentative`, v1.601.0) assigns nobody; firming it up assigns the
+		# technician and the whole crew at once. See sapphire_maintenance/visit_crew.py.
 		"on_update": [
 			"erpnext_enhancements.sapphire_maintenance.visit_crew.on_record_update",
 			# Project Planner Phase 5 (P5.4): a draft visit's scheduled date set or moved -> one email
@@ -2902,7 +2903,11 @@ default_log_clearing_doctypes = {"Notification Log": 90}
 # delete_doc refuses to delete a document any non-canceled row links to (check_if_doc_is_linked,
 # after on_trash): without this, a trip that had ever sent a change alert could not be deleted.
 # An alert left behind is harmless: the sender skips one whose trip is gone.
-ignore_links_on_delete = ["User Form Draft", "Trip Change Alert"]
+# Planner Draft Change (v1.601.0) links a Task or, since then, a maintenance visit, and its rows are
+# kept as a record after Publish or Discard: without this a visit (or task) any planner had ever
+# drafted could never be deleted. A draft whose target is gone shows as "no longer exists" on the
+# planner and is discarded from there.
+ignore_links_on_delete = ["User Form Draft", "Trip Change Alert", "Planner Draft Change"]
 
 portal_menu_items = [
 	# The Training entry left in v1.429.2. Courses are taken in the Desk now, and

@@ -1602,10 +1602,22 @@ class TestWiring(unittest.TestCase):
 			self.assertEqual(data.get("in_create"), 1)
 		fields = {f["fieldname"]: f for f in draft["fields"]}
 		self.assertEqual(fields["status"]["options"], "Draft\nPublished\nDiscarded")
-		self.assertEqual((fields["task"]["options"], fields["task"]["reqd"]), ("Task", 1))
+		# v1.601.0: a row names a Task (Project Planner) or a visit (Maintenance Planner), so `task` is
+		# no longer mandatory; the controller's validate holds "exactly one of the two".
+		self.assertEqual((fields["task"]["options"], fields["task"].get("reqd")), ("Task", None))
+		self.assertEqual(fields["visit"]["options"], "Sapphire Maintenance Record")
 		roles = {p["role"]: p for p in draft["permissions"]}
-		self.assertEqual(set(roles), {"System Manager", "Projects Manager", "Projects User"})
-		for role in ("Projects Manager", "Projects User"):
+		self.assertEqual(
+			set(roles),
+			{
+				"System Manager",
+				"Projects Manager",
+				"Projects User",
+				"Maintenance Supervisor",
+				"Maintenance User",
+			},
+		)
+		for role in ("Projects Manager", "Projects User", "Maintenance Supervisor", "Maintenance User"):
 			self.assertEqual(roles[role].get("if_owner"), 1, role)
 			self.assertTrue(roles[role]["create"] and roles[role]["read"], role)
 		self.assertEqual(log["autoname"], "field:log_key")

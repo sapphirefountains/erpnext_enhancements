@@ -208,6 +208,7 @@ const PP_STYLE = `
 .pp-fcard.pp-k-visit{border-left-color:#64748b;}
 .pp-fcard.pp-k-rental{border-left-color:#d97706;background:rgba(217,119,6,.08);}
 .pp-fcard.pp-k-travel{border-left-color:#a16207;background:rgba(234,179,8,.10);}
+.pp-fcard.pp-tentative{background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);font-style:italic;}
 .pp-fcard-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
 .pp-fcard-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pp-crew{display:grid;grid-template-columns:160px repeat(7,minmax(118px,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);min-width:980px;}
@@ -1187,12 +1188,15 @@ class ProjectPlanner {
 				</div>`;
 		}
 		if (!this.show_foreign) return "";
+		// v1.601.0: a pencilled maintenance visit is hatched, like a pencil task.
+		const pencil = booking.tentative ? " pp-tentative" : "";
+		const sub = [hours, booking.tentative ? __("Pencil") : ""].filter(Boolean).join(" · ");
 		return `
-			<div class="pp-fcard pp-k-${pp_esc(booking.kind || "other")}" data-ref="${pp_esc(booking.ref || "")}"
+			<div class="pp-fcard pp-k-${pp_esc(booking.kind || "other")}${pencil}" data-ref="${pp_esc(booking.ref || "")}"
 				data-kind="${pp_esc(booking.kind || "")}" data-date="${pp_esc(ymd)}" tabindex="0"
-				title="${pp_esc([booking.label, hours].filter(Boolean).join("\n"))}">
+				title="${pp_esc([booking.label, sub].filter(Boolean).join("\n"))}">
 				<div class="pp-fcard-title">${pp_esc(booking.label || booking.ref)}</div>
-				<div class="pp-fcard-sub">${pp_esc(hours)}</div>
+				<div class="pp-fcard-sub">${pp_esc(sub)}</div>
 			</div>`;
 	}
 
@@ -1353,11 +1357,18 @@ class ProjectPlanner {
 	foreign_html(item) {
 		const kinds = { visit: __("Maintenance"), rental: __("Rental"), travel: __("Travel") };
 		const who = item.resource ? this.resource_label(item.resource) : "";
-		const sub = [kinds[item.kind] || item.kind, who, item.hours ? `${pp_hours(item.hours)}h` : ""]
+		// v1.601.0: a pencilled maintenance visit is hatched and says so, like a pencil task.
+		const sub = [
+			kinds[item.kind] || item.kind,
+			who,
+			item.hours ? `${pp_hours(item.hours)}h` : "",
+			item.tentative ? __("Pencil") : "",
+		]
 			.filter(Boolean)
 			.join(" · ");
+		const pencil = item.tentative ? " pp-tentative" : "";
 		return `
-			<div class="pp-fcard pp-k-${pp_esc(item.kind || "other")}" data-fkey="${pp_esc(item.key)}" tabindex="0"
+			<div class="pp-fcard pp-k-${pp_esc(item.kind || "other")}${pencil}" data-fkey="${pp_esc(item.key)}" tabindex="0"
 				title="${pp_esc([item.label, sub].filter(Boolean).join("\n"))}">
 				<div class="pp-fcard-title">${pp_esc(item.label || item.ref)}</div>
 				<div class="pp-fcard-sub">${pp_esc(sub)}</div>
