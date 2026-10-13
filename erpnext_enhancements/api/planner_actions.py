@@ -109,6 +109,10 @@ NOT_A_TASK = ("Canceled", "Cancelled", "Template")
 CANCELED_STATUSES = ("Canceled", "Cancelled")
 #: How many open tasks the build-out grid offers as things to depend on.
 BUILD_OUT_CONTEXT_TASKS = 300
+#: THE reading of a phase name's number ("Phase 300", "300 Rough-in", "phase 300 - design" -> 300), shared
+#: with the templates (project_enhancements/planner_templates.py, pure): the build-out matches a
+#: project's open phase by it. Decision 2026-10-12: a project's phases are "Phase 100" ... "Phase 700".
+phase_number = templates.phase_number
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -1194,27 +1198,46 @@ def _plan_build_out(project, items, rows):
 	A typed phase name that is the name or the subject (any capitals) of an open phase of the project
 	is that phase, so typing "Pumps" twice never makes two; the same new name on several rows is ONE
 	new phase, spelt the way its first row spelt it.
+
+	T3 (v1.608.0): a phase name that starts with a three-digit phase number ("Phase 300", "300 Rough-in",
+	"phase 300 - design": :func:`phase_number`) is the project's OPEN phase with that number, whatever
+	its spelling (its "Phase 300" first, when it has several); with none, ONE new phase named
+	``Phase 300`` is made for every row that named 300 (decision 2026-10-12: projects' phases are
+	``Phase 100`` ... ``Phase 700``). A template loaded onto a project that has its phases never makes a
+	second set.
 	"""
 	open_phases = {
 		name: row for name, row in rows.items() if cint(row.get("is_group")) and not _is_finished(row)
 	}
-	by_subject = {}
-	for name, row in open_phases.items():
-		by_subject.setdefault(clean_text(row.get("subject")).casefold(), name)
+	by_subject, by_number = {}, {}
+	for name in sorted(open_phases):
+		subject = clean_text(open_phases[name].get("subject"))
+		by_subject.setdefault(subject.casefold(), name)
+		value = phase_number(subject)
+		if value is None:
+			continue
+		# Several open phases with one number: the one named exactly "Phase 300" wins, else the first.
+		canonical = subject.casefold() == templates.phase_name(value).casefold()
+		if value not in by_number or (canonical and not by_number[value][1]):
+			by_number[value] = (name, canonical)
+	by_number = {value: name for value, (name, _canonical) in by_number.items()}
 	phases, spelled, parents = [], {}, {}
 	for index, item in enumerate(items):
 		if item["parent"]:
 			_check_phase(item["parent"], rows, project, item["number"])
 			parents[index] = ("task", item["parent"])
 		elif item["phase"]:
-			key = item["phase"].casefold()
+			value = phase_number(item["phase"])
+			key = templates.phase_key(item["phase"])
 			if item["phase"] in open_phases:
 				parents[index] = ("task", item["phase"])
-			elif key in by_subject:
-				parents[index] = ("task", by_subject[key])
+			elif item["phase"].casefold() in by_subject:
+				parents[index] = ("task", by_subject[item["phase"].casefold()])
+			elif value is not None and value in by_number:
+				parents[index] = ("task", by_number[value])
 			else:
 				if key not in spelled:
-					spelled[key] = item["phase"]
+					spelled[key] = templates.phase_name(value) if value is not None else item["phase"]
 					phases.append(key)
 				parents[index] = ("new", key)
 	if len(phases) > BUILD_OUT_MAX_PHASES:
@@ -1279,7 +1302,7 @@ def _phase_checklists(value):
 		if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
 			frappe.throw(_("The phase checklists could not be read. Reload the planner and try again."))
 		lines = templates.checklist_lines("\n".join(items))
-		key = clean_text(title).casefold()
+		key = templates.phase_key(title)
 		if key and lines:
 			out[key] = lines
 	return out
@@ -1335,8 +1358,12 @@ def build_out_tasks(project, rows, draft=0, phase_checklists=None):
 	name, as a phase or as something to wait on, a task an earlier drafted build-out made
 	(``get_build_out_context(draft=1)`` offers them).
 
+	T3 (v1.608.0): a ``phase`` starting with a phase number ("Phase 300", "300 Rough-in") is the
+	project's open phase with that number, else a new ``Phase 300`` (:func:`_plan_build_out`).
+
 	``phase_checklists`` (T3, v1.608.0): a JSON object of a phase name to its procurement checklist
-	(lines), from "Start from template...". A NEW phase of that name (any capitals) gets it as a tick
+	(lines), from "Start from template...". A NEW phase of that name (any capitals, or the same phase
+	number) gets it as a tick
 	list in its description (``planner_templates.checklist_html``, every item escaped); an existing
 	phase is never written to, and a name no row uses is ignored.
 	"""

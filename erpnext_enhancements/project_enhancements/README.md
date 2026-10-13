@@ -1497,6 +1497,15 @@ Build out footer. `tests/test_planner_templates.py` pins it.
   through any that were not picked. DOC-0041: 100 > 200 > 300 > 400, then 500 and 600 side by side, then
   700, which waits on both. **Phase 800 is never offered**: maintenance contracts own it. Bundles come
   after the phase rows, under the chosen phase, waiting on nothing outside themselves.
+- **Phases are `Phase 100` … `Phase 700`, matched by number** (ClaudeBrain decision 2026-10-12, "Project
+  task trees use Phase 100–700 top-level groups"; the 10/1 schedule import and PRJ-00597 already have
+  them). The rows' phase is `Phase 300`; the dialog shows "Phase 300 — Rough-in". In `build_out_tasks`
+  (and the grid's `PPT1_PURE.phase_match`, which mirrors it) a phase name starting with a three-digit
+  number ("Phase 300", "300 Rough-in", "phase 300 - design": `planner_templates.phase_number`, re-exported
+  as `planner_actions.phase_number`, the one helper) is the project's open phase with that number,
+  whatever its spelling (the one named exactly `Phase 300` first); with none, ONE new `Phase 300` is made.
+  So a template loaded onto a project that has its phases never makes a second set. Names without a
+  number match by name or subject, as before.
 - **Materials are not calendar tasks.** Each template phase has a **procurement checklist** (a Task field,
   one item per line: materials, equipment, expenses, subcontracts nobody schedules). The grid keeps the
   loaded phases' checklists in `state.checklists`, and Create sends those of the phases it will MAKE as
@@ -1522,7 +1531,7 @@ Tasks' *Depends On*), so no custom doctype was needed. Custom fields (fixtures) 
 | *Phase Number*, *Runs After Phases*, *Procurement Checklist* | template phase (group Task) | 300; "500, 600" (blank: waits on nothing; when NO phase has one, each runs after the one above it); one item per line. |
 
 **Seeded** by `patches/seed_planner_templates.py` (insert-only by template name, never over an edit): the
-phase template **Fountain build phases (DOC-0041)** (phases 100–700, 30 tasks) and six starter bundles
+phase template **Fountain build phases (DOC-0041)** (`Phase 100`–`Phase 700`, 30 tasks) and six starter bundles
 (Control panel design + build, Interior fountain, Splash pad, Lighting package, Equipment room (pump +
 filter skid), Commissioning + hand-off), all *Needs review*. The content is
 `data/planner_templates.json`, derived from DOC-0041 Sapphire Cost Worksheet v1.0 by
@@ -1543,7 +1552,9 @@ System Manager and Projects Manager (`patches/grant_project_template_editing.py`
    what still needs an estimate.
 3. **A phase's checklist, number or place in the sequence:** open the phase (a group template Task) and
    edit *Procurement Checklist* (one item per line), *Phase Number* or *Runs After Phases* (e.g. `500,
-   600`).
+   600`). **Keep a phase's subject `Phase <number>`** (`Phase 300`): that is the name of the phase on
+   every project, and how a project's existing phase is found. Its descriptive name ("Rough-in") goes
+   in the phase's *Description*; the planner shows it beside the number.
 4. **Order and dependencies:** the rows of the template's *Tasks* table are the order. To make tasks run
    side by side instead of one after another, edit the template Tasks' *Depends On*: once any task of a
    phase or bundle has a dependency on another of the same group, the planner uses exactly those.

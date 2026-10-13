@@ -9502,12 +9502,30 @@ const PPT1_PURE = {
 	},
 	// What the server will do with a typed phase: an existing open phase of that name (or subject, in
 	// any capitals) is that phase; anything else is a new one, spelt as typed.
+	// T3 (v1.608.0): a name starting with a phase number ("Phase 300", "300 Rough-in") is the project's
+	// open phase with that number (its "Phase 300" first), as api/planner_actions._plan_build_out does.
 	phase_match(text, phases) {
 		const typed = PPT1_PURE.clean(text);
 		if (!typed) return null;
 		const key = typed.toLowerCase();
-		const found = (phases || []).find((phase) => phase.name === typed || PPT1_PURE.clean(phase.subject).toLowerCase() === key);
+		let found = (phases || []).find((phase) => phase.name === typed || PPT1_PURE.clean(phase.subject).toLowerCase() === key);
+		const number = PPT1_PURE.phase_number(typed);
+		if (!found && number !== null) {
+			const same = (phases || []).filter((phase) => PPT1_PURE.phase_number(phase.subject) === number);
+			found = same.find((phase) => PPT1_PURE.clean(phase.subject).toLowerCase() === `phase ${number}`) || same[0];
+		}
 		return found ? { parent_task: found.name } : { phase: typed };
+	},
+	// The phase number a phase name starts with, or null: "Phase 300", "300 Rough-in", "phase 300 - design"
+	// (planner_templates.PHASE_NUMBER, the same pattern).
+	phase_number(text) {
+		const found = /^\s*(?:phase\s*)?(\d{3})\b/i.exec(String(text == null ? "" : text));
+		return found ? parseInt(found[1], 10) : null;
+	},
+	// How two phase names compare: by number when they have one, else by the name in any capitals.
+	phase_key(text) {
+		const number = PPT1_PURE.phase_number(text);
+		return number !== null ? `#${number}` : PPT1_PURE.clean(text).toLowerCase();
 	},
 	// The order rows can be created in: a row after the rows it waits on, else the grid's own order.
 	// {order, cycle}; with a loop `order` is null and `cycle` lists the rows (0-based) going round.
@@ -9563,7 +9581,7 @@ const PPT1_PURE = {
 			const phase = PPT1_PURE.phase_match(row.phase, phases);
 			if (phase) {
 				Object.assign(entry, phase);
-				if (phase.phase && !fresh.some((title) => title.toLowerCase() === phase.phase.toLowerCase())) fresh.push(phase.phase);
+				if (phase.phase && !fresh.some((title) => PPT1_PURE.phase_key(title) === PPT1_PURE.phase_key(phase.phase))) fresh.push(phase.phase);
 			}
 			const size = String(row.crew_size == null ? "" : row.crew_size).trim();
 			if (size) {
@@ -9680,10 +9698,10 @@ const PPT1_PURE = {
 	// checklist of a phase no row uses, or of one the project already has, is never sent.
 	checklists_for(checklists, new_phases) {
 		const known = {};
-		Object.keys(checklists || {}).forEach((title) => (known[PPT1_PURE.clean(title).toLowerCase()] = checklists[title]));
+		Object.keys(checklists || {}).forEach((title) => (known[PPT1_PURE.phase_key(title)] = checklists[title]));
 		const out = {};
 		(new_phases || []).forEach((title) => {
-			const lines = known[PPT1_PURE.clean(title).toLowerCase()];
+			const lines = known[PPT1_PURE.phase_key(title)];
 			if (lines && lines.length) out[title] = lines;
 		});
 		return Object.keys(out).length ? out : null;
@@ -10426,14 +10444,16 @@ const PPT3_PURE = {
 			}));
 	},
 	// The phases the bundles may go under: the project's open phases, the phases typed in the grid, and
-	// the phase template's own; once each, in any capitals.
+	// the phase template's own; once each, in any capitals, and one per phase number (the project's own
+	// spelling first: "300 Rough-in" and "Phase 300" are the same phase).
 	phase_choices(phases, rows, catalog) {
 		const out = [];
 		const seen = new Set();
 		const add = (name) => {
 			const text = PPT1_PURE.clean(name);
-			if (text && !seen.has(text.toLowerCase())) {
-				seen.add(text.toLowerCase());
+			const key = PPT1_PURE.phase_key(text);
+			if (text && !seen.has(key)) {
+				seen.add(key);
 				out.push(text);
 			}
 		};
@@ -10474,7 +10494,7 @@ const PPT3_PURE = {
 					label: __("Phases"),
 					columns: 2,
 					depends_on: `eval:doc.t3_template==${JSON.stringify(template.name)}`,
-					options: (template.phases || []).map((phase) => ({ label: phase.title, value: String(phase.id), checked: 1 })),
+					options: (template.phases || []).map((phase) => ({ label: phase.label || phase.title, value: String(phase.id), checked: 1 })),
 				});
 			});
 		}

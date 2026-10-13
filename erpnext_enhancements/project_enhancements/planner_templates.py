@@ -12,9 +12,12 @@ ERPNext's model has no place for:
 * ``Project Template.custom_template_kind``: *Phase template* or *Bundle* (blank: an ordinary ERPNext
   project template, which the planner never offers). ``custom_review_status``: *Needs review* until
   Nik has corrected a seeded one. ``custom_template_notes``: where it came from.
-* A phase is a **group** template Task with ``custom_phase_number`` (300), ``custom_phase_runs_after``
-  ("500, 600": the phases it waits on) and ``custom_procurement_checklist`` (one item per line: the
-  materials, equipment and expenses to line up, which are never calendar tasks).
+* A phase is a **group** template Task named ``Phase 300`` (the name a project's own phase group has,
+  decision 2026-10-12; its descriptive name is its description), with ``custom_phase_number`` (300),
+  ``custom_phase_runs_after`` ("500, 600": the phases it waits on) and ``custom_procurement_checklist``
+  (one item per line: the materials, equipment and expenses to line up, which are never calendar
+  tasks). :func:`phase_number` is THE reading of a phase name's number, which the build-out uses to
+  find a project's existing phase.
 * A task is a template Task under its phase with its default hours (``expected_time``), crew size,
   ``custom_template_line`` (Labor, Subcontract or Project management) and ``custom_cost_code`` (the
   corrected catalog's code: the seam T5 will use to put an estimate's hours in).
@@ -44,6 +47,7 @@ import html
 import itertools
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 PHASE_TEMPLATE = "Phase template"
@@ -95,10 +99,61 @@ def number(value):
 	return out if out > 0 else None
 
 
-def phase_number_of(subject):
-	"""The number a phase's subject starts with ("300 Rough-in" -> 300), or None."""
-	found = re.match(r"^\s*(\d{1,6})\b", str(subject or ""))
+#: A phase name that starts with a three-digit phase number: "Phase 300", "300 Rough-in",
+#: "phase 300 - design". The same pattern as T4's ``planner_ai_draft.canonical_phase``.
+PHASE_NUMBER = re.compile(r"^\s*(?:phase\s*)?(\d{3})\b", re.IGNORECASE)
+
+
+def phase_number(text):
+	"""The phase number a phase name starts with, as an int, or None.
+
+	THE one reading of a phase's number (decision 2026-10-12, "Project task trees use Phase 100-700
+	top-level groups"): a project's phases are named ``Phase 100`` ... ``Phase 700``, and a phase typed
+	or loaded under any spelling that starts with its number is that phase. ``build_out_tasks`` matches a
+	project's open phase by it, so a template never makes a second set of phase groups."""
+	found = PHASE_NUMBER.match(str(text or ""))
 	return int(found.group(1)) if found else None
+
+
+def phase_name(value):
+	"""The canonical name of phase ``value`` (a number): ``Phase 300``."""
+	return f"Phase {int(value)}"
+
+
+def phase_key(text):
+	"""How two phase names are compared: by number when the name has one ("#300"), else by the name in
+	any capitals."""
+	value = phase_number(text)
+	return f"#{value}" if value is not None else clean(text).casefold()
+
+
+def phase_label(title, name=None):
+	"""A phase as the dialog lists it: "Phase 100 — Full System Overview" (just the title without a
+	descriptive name, or when the name only repeats it)."""
+	title, name = clean(title), clean(name)
+	if not name or name.casefold() == title.casefold():
+		return title
+	return f"{title} — {name}"
+
+
+class _Text(HTMLParser):
+	def __init__(self):
+		super().__init__()
+		self.parts = []
+
+	def handle_data(self, data):
+		self.parts.append(data)
+
+
+def plain_text(value):
+	"""The text of a (Text Editor) description, tags dropped, for a label. Read, never rewritten."""
+	parser = _Text()
+	try:
+		parser.feed(str(value or ""))
+		parser.close()
+	except Exception:
+		return clean(value)
+	return clean(" ".join(parser.parts))
 
 
 def parse_runs_after(text):
@@ -182,6 +237,8 @@ def seed_problems(seed):
 			if template.get("kind") == PHASE_TEMPLATE:
 				if number(phase.get("number")) is None:
 					problems.append(f"{label}: a phase needs a number.")
+				elif clean(phase.get("title")) != phase_name(number(phase.get("number"))):
+					problems.append(f"{label}: a phase is named 'Phase {phase.get('number')}'.")
 				if number(phase.get("number")) in EXCLUDED_PHASES:
 					problems.append(f"{label}: phase {phase.get('number')} is never seeded.")
 				for other in phase.get("runs_after") or []:
@@ -218,11 +275,13 @@ def structure_from_seed(template):
 		return {"kind": BUNDLE, "tasks": [_seed_task(task) for task in template.get("tasks") or []]}
 	phases = []
 	for phase in template.get("phases") or []:
+		title = clean(phase.get("title"))
 		phases.append(
 			{
 				"id": str(number(phase.get("number"))),
 				"number": number(phase.get("number")),
-				"title": clean(phase.get("title")),
+				"title": title,
+				"label": phase_label(title, phase.get("name")),
 				"runs_after": [str(value) for value in phase.get("runs_after") or []],
 				"checklist": checklist_lines("\n".join(phase.get("checklist") or [])),
 				"tasks": [_seed_task(task) for task in phase.get("tasks") or []],
@@ -277,18 +336,24 @@ def structure_from_tasks(kind, tasks, depends):
 	groups = [task for task in tasks if _flag(task.get("is_group"))]
 	phases, ids = [], {}
 	for group in groups:
-		value = number(group.get("custom_phase_number")) or phase_number_of(group.get("subject"))
+		subject = clean(group.get("subject"))
+		value = number(group.get("custom_phase_number")) or phase_number(subject)
 		ident = str(value) if value else str(group.get("name"))
 		if ident in ids.values():
 			ident = str(group.get("name"))
 		ids[group.get("name")] = ident
 		members = [task for task in leaves if task.get("parent_task") == group.get("name")]
 		names = {task.get("name") for task in members}
+		# A numbered phase is always "Phase <number>" on a project (decision 2026-10-12); what else its
+		# subject or description says is its descriptive name, shown beside it in the dialog.
+		title = phase_name(value) if value else (subject or str(group.get("name")))
+		rest = PHASE_NUMBER.sub("", subject, count=1).strip(" -:–—") if value else ""
 		phases.append(
 			{
 				"id": ident,
 				"number": value,
-				"title": clean(group.get("subject")) or str(group.get("name")),
+				"title": title,
+				"label": phase_label(title, plain_text(group.get("description"))[:80] or rest),
 				"runs_after": [str(n) for n in parse_runs_after(group.get("custom_phase_runs_after"))],
 				"checklist": checklist_lines(group.get("custom_procurement_checklist")),
 				"tasks": [
@@ -335,12 +400,15 @@ def _task(row, waits_on):
 
 
 def offered_phases(structure):
-	"""The phases a planner may tick: ``[{"id", "number", "title", "tasks", "checklist"}]``, never 800."""
+	"""The phases a planner may tick: ``[{"id", "number", "title", "label", "tasks", "checklist"}]``,
+	never 800. ``title`` is the phase's name on a project ("Phase 100"); ``label`` adds its descriptive
+	name for the dialog ("Phase 100 — Full System Overview")."""
 	return [
 		{
 			"id": phase["id"],
 			"number": phase["number"],
 			"title": phase["title"],
+			"label": phase.get("label") or phase["title"],
 			"tasks": len(phase["tasks"]),
 			"checklist": len(phase["checklist"]),
 		}

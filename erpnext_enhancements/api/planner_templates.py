@@ -26,7 +26,7 @@ from erpnext_enhancements.project_enhancements import planner_templates as tpl
 TEMPLATE_DOCTYPE = "Project Template"
 TEMPLATE_ROW = "Project Template Task"
 #: The Task fields a template reads; the custom ones only once their columns exist.
-TASK_FIELDS = ("name", "subject", "is_group", "parent_task", "expected_time")
+TASK_FIELDS = ("name", "subject", "is_group", "parent_task", "expected_time", "description")
 TASK_CUSTOM_FIELDS = (
 	"custom_crew_size",
 	"custom_phase_number",

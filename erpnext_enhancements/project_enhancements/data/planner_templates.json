@@ -13,7 +13,10 @@
    "Phase 500's 'Merchanical' is spelled 'Mechanical'.",
    "Row 52 (Check Valves) has no '# Units'; it is a material, so it carries no hours.",
    "Stone (row 85) and the electrical rows 68 and 73 are Material in the catalog but are subcontracted scope by Nik's decision, so they are tasks.",
-   "Phase titles drop DOC-0041's nicknames in brackets ('(The Big Picture)' and so on).",
+   "Phases are named 'Phase 100' ... 'Phase 700', the names Sapphire's projects already use for their top-level phase groups (ClaudeBrain decision 2026-10-12, 'Project task trees use Phase 100-700 top-level groups'), so a project's existing phase is matched by number and never duplicated. DOC-0041's descriptive name (without its nickname in brackets, '(The Big Picture)' and so on) is the phase's description and its label in the planner: 'Phase 100 — Full System Overview'.",
+   "Phase meanings checked against the decision: 200, 300, 500, 600 and 700 agree with DOC-0041.",
+   "Phase 100: the decision puts pre-con, submittals and SUB CONTRACTS (e.g. granite, glass) in 100; DOC-0041's 100 holds only design, prototyping, expenses and travel. The seed keeps DOC-0041's lines and files the subcontracted WORK (demolition, concrete, tile...) in the phase where it happens; contracting those subs in Phase 100 is not a seeded task (add one if wanted).",
+   "Phase 400: the decision includes manifold frames and winter holds; DOC-0041 puts manifold materials in 300's checklist and has no hold line. Neither is moved or added.",
    "Phases 600 and 700 are put in build order (TASK_ORDER); the rest keep the sheet's order."
   ]
  },
@@ -26,7 +29,8 @@
    "phases": [
     {
      "number": 100,
-     "title": "100 Full System Overview",
+     "title": "Phase 100",
+     "name": "Full System Overview",
      "runs_after": [],
      "checklist": [
       "Material: Prototyping (Labor, Materials, & Equipment) (01 4339)",
@@ -53,7 +57,7 @@
        "source_row": 17
       },
       {
-       "subject": "Project management (100 Full System Overview)",
+       "subject": "Project management (Phase 100)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -64,7 +68,8 @@
     },
     {
      "number": 200,
-     "title": "200 Groundwork & Prep",
+     "title": "Phase 200",
+     "name": "Groundwork & Prep",
      "runs_after": [
       100
      ],
@@ -101,7 +106,7 @@
        "source_row": 25
       },
       {
-       "subject": "Project management (200 Groundwork & Prep)",
+       "subject": "Project management (Phase 200)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -112,7 +117,8 @@
     },
     {
      "number": 300,
-     "title": "300 Rough-in",
+     "title": "Phase 300",
+     "name": "Rough-in",
      "runs_after": [
       200
      ],
@@ -136,7 +142,7 @@
        "source_row": 38
       },
       {
-       "subject": "Project management (300 Rough-in)",
+       "subject": "Project management (Phase 300)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -147,7 +153,8 @@
     },
     {
      "number": 400,
-     "title": "400 Structural Vessel",
+     "title": "Phase 400",
+     "name": "Structural Vessel",
      "runs_after": [
       300
      ],
@@ -184,7 +191,7 @@
        "source_row": 46
       },
       {
-       "subject": "Project management (400 Structural Vessel)",
+       "subject": "Project management (Phase 400)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -195,7 +202,8 @@
     },
     {
      "number": 500,
-     "title": "500 Mechanical Room",
+     "title": "Phase 500",
+     "name": "Mechanical Room",
      "runs_after": [
       400
      ],
@@ -221,7 +229,7 @@
        "source_row": 61
       },
       {
-       "subject": "Project management (500 Mechanical Room)",
+       "subject": "Project management (Phase 500)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -232,7 +240,8 @@
     },
     {
      "number": 600,
-     "title": "600 Controls & Electrical Integration",
+     "title": "Phase 600",
+     "name": "Controls & Electrical Integration",
      "runs_after": [
       400
      ],
@@ -297,7 +306,7 @@
        "source_row": 79
       },
       {
-       "subject": "Project management (600 Controls & Electrical Integration)",
+       "subject": "Project management (Phase 600)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
@@ -308,7 +317,8 @@
     },
     {
      "number": 700,
-     "title": "700 Above Ground Features & Finishes",
+     "title": "Phase 700",
+     "name": "Above Ground Features & Finishes",
      "runs_after": [
       500,
       600
@@ -402,7 +412,7 @@
        "source_row": 93
       },
       {
-       "subject": "Project management (700 Above Ground Features & Finishes)",
+       "subject": "Project management (Phase 700)",
        "hours": null,
        "line": "Project management",
        "cost_code": "LAB-PM",
