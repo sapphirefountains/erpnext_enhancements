@@ -1,4 +1,4 @@
-"""Give C4's new Calendar Sync Settings fields (v1.607.0) their ``tabSingles`` rows.
+"""Give C4's new Calendar Sync Settings fields (v1.606.0) their ``tabSingles`` rows.
 
 ``materialize_calendar_sync_settings`` (v1.604.0) ran once, before these fields existed, and a patch
 never runs twice. A Single's new field gets no row from ``bench migrate`` (CLAUDE.md), and the

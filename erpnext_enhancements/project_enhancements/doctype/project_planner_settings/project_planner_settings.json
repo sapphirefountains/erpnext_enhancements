@@ -27,6 +27,8 @@
   "combined_morning_digest",
   "column_break_notices",
   "change_alerts",
+  "leave_by_pings",
+  "leave_by_ping_minutes",
   "section_customers",
   "customer_date_confirmations",
   "column_break_customers",
@@ -167,6 +169,22 @@
    "label": "Alert people when their next 48 hours change"
   },
   {
+   "default": "0",
+   "description": "Each person who ticks Ping me at leave-by time on their Planner Resource gets one notice before they must leave for the first stop of their day (a bell notification, and a text, or an email when they have no cell number). Never for a pencil, a day off or a block. Independent of the change alerts above.",
+   "fieldname": "leave_by_pings",
+   "fieldtype": "Check",
+   "label": "Leave-by pings"
+  },
+  {
+   "default": "10",
+   "depends_on": "leave_by_pings",
+   "description": "How long before the leave-by time the ping goes out (0 to 120).",
+   "fieldname": "leave_by_ping_minutes",
+   "fieldtype": "Int",
+   "label": "Ping this many minutes before leave-by",
+   "non_negative": 1
+  },
+  {
    "fieldname": "section_customers",
    "fieldtype": "Section Break",
    "label": "Telling customers"
@@ -193,7 +211,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-09 16:00:00.000000",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Planner Settings",

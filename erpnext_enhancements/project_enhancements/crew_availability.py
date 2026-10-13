@@ -644,7 +644,7 @@ def block_booking(row, minutes, hours):
 		"estimated": False,
 		"all_day": minutes is None,
 		"window": block_window(slot),
-		# C4 (v1.607.0): read in from the Google vacations calendar, so read-only on the planners.
+		# C4 (v1.606.0): read in from the Google vacations calendar, so read-only on the planners.
 		"from_google": (row.get("source") or "") == "Google",
 	}
 
@@ -1758,7 +1758,7 @@ def _read_blocks(people, start, end, exclude=()):
 		return {}
 	fields = list(BLOCK_FIELDS)
 	try:
-		# C4 (v1.607.0): whether a block was read in from Google, once the column exists.
+		# C4 (v1.606.0): whether a block was read in from Google, once the column exists.
 		if frappe.db.has_column(BLOCK_DOCTYPE, "source"):
 			fields.append("source")
 	except Exception:

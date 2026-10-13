@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Calendar time off in (C4, v1.607.0): the Company Holidays & Vacations calendar read into
+"""Calendar time off in (C4, v1.606.0): the Company Holidays & Vacations calendar read into
 Unavailable Planner Blocks.
 
 What this pins, because each of these fails quietly:

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""An event on the Company Holidays & Vacations calendar that needs a planner (C4, v1.607.0).
+"""An event on the Company Holidays & Vacations calendar that needs a planner (C4, v1.606.0).
 
 The time-off read (``calendar_sync/time_off.py``) makes one row per Google event it could not put
 on one person by itself: no name in the title, a name with no time-off word, a first name two people

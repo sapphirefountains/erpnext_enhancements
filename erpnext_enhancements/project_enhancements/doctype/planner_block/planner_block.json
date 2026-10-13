@@ -114,7 +114,7 @@
   },
   {
    "default": "Planner",
-   "description": "Planner: made in ERPNext. Google: read in from the Company Holidays & Vacations calendar by the calendar sync (C4); read-only here, change the event in Google. Every block made before v1.607.0 reads Planner.",
+   "description": "Planner: made in ERPNext. Google: read in from the Company Holidays & Vacations calendar by the calendar sync (C4); read-only here, change the event in Google. Every block made before v1.606.0 reads Planner.",
    "fieldname": "source",
    "fieldtype": "Select",
    "in_standard_filter": 1,

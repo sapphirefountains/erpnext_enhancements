@@ -25,7 +25,7 @@ What ``validate`` holds, because the engine trusts the row:
 * a timed block has both times and ends after it starts; an all-day block carries no times;
 * a day that has passed is allowed, with a warning: a block can be recorded after the fact.
 
-**Blocks read in from Google** (C4, v1.607.0, ``calendar_sync/time_off.py``) carry ``source``
+**Blocks read in from Google** (C4, v1.606.0, ``calendar_sync/time_off.py``) carry ``source``
 "Google" and the event's id. They are the calendar's, not ERPNext's: :meth:`_guard_imported`
 refuses an edit, and ``on_trash`` a delete, from anyone but the import itself (a System Manager may
 still delete one, to clean up after switching the import off; the next read brings back any whose

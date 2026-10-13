@@ -22,6 +22,7 @@
   "column_break_calendars",
   "days_back",
   "days_ahead",
+  "timed_days_ahead",
   "section_time_off",
   "read_time_off",
   "time_off_health_html",
@@ -142,6 +143,14 @@
    "non_negative": 1
   },
   {
+   "default": "14",
+   "description": "Route stops (a single-day task or visit on someone's route) get real times, with a leave-by line on the first stop of the day, from today for this many days. Later days stay all-day, so Google Routes is never asked about them. 0 makes every event all-day.",
+   "fieldname": "timed_days_ahead",
+   "fieldtype": "Int",
+   "label": "Timed route stops: days ahead (today included)",
+   "non_negative": 1
+  },
+  {
    "description": "Read the time off people put on the Company Holidays & Vacations calendar by hand (\"Austin Off\", \"Clegg - ooo\") into the planners as Unavailable blocks. Needs the switch above on, an authorized account and the Company Holidays & Vacations calendar ID.",
    "fieldname": "section_time_off",
    "fieldtype": "Section Break",
@@ -258,7 +267,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-13 09:00:00.000000",
+ "modified": "2026-10-13 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Calendar Sync Settings",
