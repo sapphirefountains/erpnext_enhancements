@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.620.0] - 2026-10-13
+
+Two of the follow-ups Nik picked from the custom-pages brainstorm (2026-10-13), after v1.619.0 made
+the visit form match the maintenance agreement.
+
+### Added
+
+- **"What the agreement covers" on the Maintenance Record desk form.** The dashboard now shows the card
+  the Visit Wizard shows on its Safety step (`ee_agreement_html`, from the dashboard context's
+  `agreement`). Whoever reviews or keys in a visit sees the same schedule, Exhibit A and exclusions the
+  technician saw. It is collapsed, its values are escaped, and it reads no rate field.
+- **Visit Forms** on the Maintenance Contract form (`get_visit_forms`, `ee_show_visit_forms`). One table
+  lists which form each kind of visit opens with:
+  - the regular visit;
+  - each water feature with a form of its own;
+  - each seasonal visit, with its month.
+
+  Each row links the template and says where it comes from: the Default Form Template, its own form,
+  the project's or the customer's Active template, or none (the visit opens with nothing to fill in).
+  Before, finding out meant opening the template links one by one. The feature overrides sat in a
+  collapsed row section, and a blank link's fallback was nowhere on screen.
+  - The contract-level rows are resolved with `resolve_template`, the function a visit's first open
+    uses, so they cannot disagree with the visits. A water feature's own form is its row's form, which
+    `resolve_template` takes first.
+  - The list says when the contract-level form serves only the water features without their own form,
+    and when every feature has one so it opens nothing.
+  - A seasonal visit with no form of its own says that a water feature's own form comes first, as
+    `resolve_template` does.
+  - Two seasonal visits sharing a label both get the first one's form, and the second says so rather
+    than claiming its own.
+  - A contract with no project names a customer's form as the customer's.
+  - It reads the saved contract, needs read on it, and says so when the form has unsaved changes.
+- `tests/test_visit_agreement_match.py` covers both, with 11 more tests (33 in all):
+  - the real `get_visit_forms` with each fallback, no project, a shared label and the permission check;
+  - the dashboard drawing the card with every value escaped;
+  - the button's escaping.
+
 ## [1.619.1] - 2026-10-13
 
 Small fixes from an audit of the custom pages (the custom-pages brainstorm, 2026-10-13), done after

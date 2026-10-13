@@ -128,6 +128,45 @@ function ee_sparkline(points, min_value, max_value) {
 	);
 }
 
+// "What the agreement covers" (v1.620.0): the Visit Wizard's Safety-step card (v1.619.0) on the
+// desk form too, so whoever reviews or keys in a visit sees the schedule, Exhibit A and the
+// exclusions the technician saw. From get_dashboard_context's `agreement` (agreement_scope.py:
+// no rate field; nothing without a maintenance agreement the user may read). Collapsed.
+function ee_agreement_html(scope) {
+	if (!scope || !scope.name) return "";
+	const text = (v) => frappe.utils.escape_html(v == null ? "" : String(v)).replace(/\n/g, "<br>");
+	const row = (label, value) =>
+		value ? `<p class="mt-1"><span class="font-bold">${text(label)}:</span> ${text(value)}</p>` : "";
+	let body =
+		row(__("Visits"), scope.schedule) +
+		row(__("Days"), scope.preferred_days) +
+		row(__("Time window"), scope.time_window) +
+		row(__("Spring startup"), scope.startup) +
+		row(__("Winterization"), scope.winterization) +
+		row(__("Services chosen"), (scope.services || []).join(", "));
+	if (scope.custom_plan) {
+		body += `<p class="mt-2 font-bold">${__("Custom plan (Exhibit A)")}</p><p>${text(scope.custom_plan)}</p>`;
+	}
+	if (scope.billed_on_top) {
+		body += `<p class="mt-2">${text(scope.billed_on_top)}</p>`;
+	}
+	const left_out = scope.not_included || [];
+	if (left_out.length) {
+		body += `<p class="mt-2 font-bold">${__("Not included: raise a follow-up for a quote")}</p><ul class="list-disc list-inside">${left_out
+			.map((line) => `<li>${text(line)}</li>`)
+			.join("")}</ul>`;
+	}
+	const summary = [scope.schedule, scope.time_window].filter(Boolean).join(" · ");
+	return `
+		<details class="p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-md">
+			<summary class="text-sm font-bold text-amber-800" style="cursor:pointer">
+				${__("What the agreement covers")}${summary ? ` <span class="font-normal">· ${text(summary)}</span>` : ""}
+			</summary>
+			<div class="mt-2 text-sm text-amber-900">${body}</div>
+		</details>
+	`;
+}
+
 // "Compared with last visit" (v1.595.0): each reading on this visit beside its value at the
 // site's previous approved visit, from get_dashboard_context's `compared`, which reads
 // visit_compare.py, as the review email and the Visit Review page do.
@@ -513,6 +552,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 									</div>
 								</div>
 							</div>
+
+							${ee_agreement_html(ctx.agreement)}
 
 							${compared_html}
 

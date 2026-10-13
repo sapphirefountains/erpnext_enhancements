@@ -330,6 +330,91 @@ def iter_seasonal_visits(contract):
 
 
 @frappe.whitelist()
+def get_visit_forms(contract):
+	"""Which visit form each kind of visit on this contract opens with (v1.620.0).
+
+	For the form's **Visit Forms** button. Before it, finding out meant opening the default,
+	startup and winterization template links one by one, the feature rows' overrides were in a
+	collapsed row section, and a blank link's fallback (the project's or the customer's Active
+	template) was nowhere on screen. The contract-level rows are resolved with
+	``resolve_template``, the function a visit's first open uses; a water feature's own form is
+	its row's ``template``, which ``resolve_template`` takes first. So this list cannot disagree
+	with what a visit actually gets.
+
+	Returns:
+		list[dict]: {visit, template (or None), source}, the regular visit first, then each
+		water feature with its own form, then each seasonal visit with its target month.
+	"""
+	from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+		resolve_template,
+	)
+
+	doc = frappe.get_doc("Sapphire Maintenance Contract", contract)
+	doc.check_permission("read")
+
+	def form_source(template):
+		"""Where a form named by nothing more specific comes from."""
+		if not template:
+			return _("No form: the visit opens with nothing to fill in")
+		if template == doc.default_template:
+			return _("Default Form Template")
+		# A contract may have no project; a customer's template has none either.
+		if doc.project and frappe.db.get_value("Sapphire Maintenance Template", template, "project") == doc.project:
+			return _("The project's active form")
+		return _("The customer's active form")
+
+	featured = [row for row in doc.covered_features if row.template]
+	regular = resolve_template(project=doc.project, customer=doc.customer, contract=doc)
+	regular_row = {"visit": _("Regular visit"), "template": regular, "source": form_source(regular)}
+	if featured:
+		regular_row["visit"] = _("Regular visit: water features without their own form")
+		if len(featured) == len(doc.covered_features):
+			regular_row["source"] = _("{0}; not used, since every water feature has its own form").format(
+				regular_row["source"]
+			)
+	rows = [regular_row]
+	names = {}
+	serials = [row.serial_no for row in featured if row.serial_no]
+	if serials:
+		names = dict(
+			frappe.get_all(
+				"Serial No", filters={"name": ["in", serials]}, fields=["name", "item_name"], as_list=True
+			)
+		)
+	for row in featured:
+		rows.append(
+			{
+				"visit": _("Regular visit: {0}").format(names.get(row.serial_no) or row.serial_no),
+				"template": row.template,
+				"source": _("This water feature's own form"),
+			}
+		)
+	for visit in iter_seasonal_visits(doc):
+		template = resolve_template(
+			project=doc.project, customer=doc.customer, contract=doc, visit_label=visit["label"]
+		)
+		if visit["template"] and template == visit["template"]:
+			source = _("Its own form")
+		elif visit["template"]:
+			# resolve_template takes the first seasonal visit with this label and a form.
+			source = _("Another seasonal visit's form: two share the label {0}").format(visit["label"])
+		elif featured:
+			# resolve_template takes a feature's own form before anything on the contract.
+			source = _("{0} (no form of its own; a water feature's own form comes first)").format(
+				form_source(template)
+			)
+		elif template:
+			source = _("{0} (no form of its own)").format(form_source(template))
+		else:
+			source = form_source(template)
+		label = visit["label"]
+		if visit["target_month"]:
+			label = _("{0} ({1})").format(label, _(visit["target_month"]))
+		rows.append({"visit": label, "template": template, "source": source})
+	return rows
+
+
+@frappe.whitelist()
 def get_project_water_features(project):
 	"""The project's water features, for the contract form's batch-add dialog.
 
