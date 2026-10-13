@@ -23,6 +23,7 @@ anything.
 | [app-design-system.md](app-design-system.md) | The design system for the Desk's own screens: the `--sf-*` tokens in light and dark, pillars and value streams, type, shape, phone rules, and the form kit's components |
 | [email-design-system.md](email-design-system.md) | The one email layout, its components and palette, how to add an email, and an inventory of every email the app sends |
 | [print-design-system.md](print-design-system.md) | The chrome every printed document shares — the pillar stripe, wordmark, display face — how a format composes it, and why the font is a data URI |
+| [data-normalization.md](data-normalization.md) | How phones, emails, websites, addresses and dates are stored and shown (E.164 with a comma extension, `(801) 555-0100 x123`, `10/14/2026 2:00 PM`), the conservative phone rule, the field registry and its exclusions, the dry-run report, and why fields are typed Phone/Email/URL only after the cleanup |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
 | [lead-triage-runbook.md](lead-triage-runbook.md) | Why every enquiry starts as a Lead, the Lead → Opportunity qualification path (and what happens to attribution), triage ownership, and the speed-to-lead SLA |

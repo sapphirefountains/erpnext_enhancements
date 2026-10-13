@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.617.0] - 2026-10-13
+
+Form kit **P2-A** (ERPNext TASK-2026-02746; P2.1 02747, P2.2 02748, P2.4 02750). Nik, 2026-10-13: "let's
+make scripts or something to normalize phone entry and email entry and website entry and other bits of
+information. Dates and times too", so that forms, reports and print collect and show the same information
+the same way. Prod shows why. Of the 827 Contact mobiles that are set, 563 read `801-555-0100`, 194
+`(801) 555-0100`, 47 are bare digits, 2 are E.164 and 21 are something else. Every report and print
+format was cleaning that up on its own: `print_style` had a phone formatter, call routing another, and
+party matching a third. This release adds the rules and the dry run. **No stored value changes yet**
+except the Desk's two format settings:
+- P2-B normalizes on save, together with the Desk display, so nobody sees a raw `+1801…` in a form.
+- P2-C is the cleanup, after Nik approves the report (TASK-2026-02751).
+
+### Added
+
+- **`utils/normalize.py`, one rule per kind.** It is pure and frappe-free, because `print_style` imports
+  it. **A value no rule can fix is left exactly as typed and reported, never guessed and never
+  rejected.** [docs/data-normalization.md](docs/data-normalization.md) has every rule with examples.
+  - **Phone, stored:** E.164, `+18015550100`. An extension is stored after a comma, `+18015550100,123`,
+    the dial pause a phone understands. It isn't `x` because Frappe v16's Phone validation
+    (`([0-9\ \+\_\-\,\.\*\#\(\)]){1,20}$`) has no letters and stops at 20 characters, so an `x` would
+    make the record unsaveable the day the field is typed Phone.
+  - **Phone, shown:** `(801) 555-0100 x123`.
+  - **Phone, conservative:** without a `+`, only North American shapes are accepted. Prod holds a
+    Singapore number stored as `65-688-000-88`, which a digit count would have turned into
+    `(656) 880-0088`. Two numbers in one field, seven digits, letters and a `(0)` trunk prefix are
+    all reported instead.
+  - **Email:** trimmed, lowercased, `mailto:` dropped. Two addresses in one field, or `Name <a@b>`,
+    is reported.
+  - **Website:** the existing `https://` rule plus a lowercased host. `N/A` and the like are reported.
+  - **Address parts:** a two-letter state, a 5- or 9-digit ZIP, and lines and names with doubled
+    spaces and trailing commas trimmed. All checked in Python, because MariaDB's PAD SPACE hides
+    trailing spaces from SQL.
+  - **Dates:** `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM`.
+- **`public/js/normalize/normalize.js`, the browser twin.** An ES module, not bundled yet (P2-B wires
+  it). `tests/fixtures/normalize_cases.json` holds 163 cases, and both languages must pass every one
+  of them. The JavaScript runs under node in CI.
+- **`utils/normalize_fields.py`, the registry of which fields hold a phone, email, website, address
+  part or name.** 119 fields on 36 doctypes (56 phone, 41 email, 11 website, 11 address part or name),
+  curated from prod metadata. 40 exclusions, each with its
+  reason in the code: transaction snapshot copies, mail headers, derived matching keys, non-website
+  URLs, other apps' internals. The rule is that the save hook and the cleanup never touch a submitted
+  or cancelled record, and the cleanup never writes a Single.
+- **The Data Normalization Preview report** (Enhancements Core, System Manager only), a dry run that
+  writes nothing.
+  - Each row shows record, field, current value, normalized value, and either "Will change" or
+    "Can't normalize — needs a person" with the reason. Submitted records are counted but never
+    listed.
+  - It runs one query per doctype. Identifiers come only from the registry. A missing table or
+    column is skipped.
+  - **This is the list Nik approves the cleanup from (TASK-2026-02751).**
+- **The Desk moves to `10/14/2026` dates and `14:00` times** (`patches/set_desk_date_and_time_format`).
+  Nik chose `mm/dd/yyyy` with the seconds dropped. Desk times stay 24-hour, because Frappe v16 offers
+  only `HH:mm:ss` and `HH:mm`.
+  - **It writes two places.** The patch writes the System Settings Single **and** the global default,
+    because the boot payload the Desk reads comes from `tabDefaultValue`, not the Single; writing only
+    `tabSingles` would change nothing anyone sees.
+  - **It doesn't save the Single through its controller.** System Settings' `validate` enforces
+    unrelated rules, and a patch that raises aborts the deploy.
+  - It changes a value only while it still holds the old one, and it never raises. Prod (checked
+    2026-10-13) has only the global default, with no Language or per-user overrides.
+  - A search found no code that depends on the old `10-14-2026` shape. The only visible effect beyond
+    the Desk is that dates the server formats into email text now read with slashes.
+- **Print, email and SMS dates have Jinja globals:** `sf_date`, `sf_datetime` and `sf_time`
+  (`utils/date_display.py`), giving `10/14/2026 2:00 PM` whatever the Desk's format is. No existing
+  format calls them yet.
+- **Start/end dates out of order warn once and never block** (`utils/date_pairs.py`, a `validate` hook).
+  It is the same rule as the planners, and Nik chose it.
+  - **Covered:** Opportunity and Project (requested start/end, and the delivery → setup → event →
+    take-down schedule); Lead's rental window; Task's planner start/end; Sapphire Maintenance
+    Contract; Training Batch; Project Contract (rental window, and mobilization → substantial → final
+    completion); Managed Device (purchase → warranty).
+  - **Left out:** anything core or this app already validates and throws on: Project's and Task's
+    expected/actual dates, Rental Booking, Travel Trip, Time Off, Asset Booking and others.
+  - Out of a web request (jobs, imports, migrations, patches) it stays silent, so a job never uses up
+    the pop-up a person's next save is owed.
+
+### Changed
+
+- `print_style.format_phone` goes through the new rules for North American numbers, so print keeps
+  reading `(801) 555-0100` once phones are stored as `+18015550100`, including `+18015550100,123` →
+  `(801) 555-0100 x123`. Typed extensions and international numbers still print as typed (pinned by
+  the existing print tests).
+- `website_cleanup.normalize_website` delegates to the new rule, with its contract unchanged.
+
+### Kept on purpose
+
+- **`call_routing_match.to_e164` is unchanged.** The file is copied byte-for-byte into Triton, must
+  stay stdlib-only, and is pinned by shared vectors. A test now asserts it agrees with
+  `normalize.phone` wherever the new rule can normalize. It is looser on the Singapore shape;
+  tightening it means changing both repos.
+- **`utils/phone.normalize_phone`, the exact-match key for party matching, is unchanged.** A test
+  holds it to the new rule's ten national digits.
+
+### Date-kind inventory (no change)
+
+Task's `exp_start_date`/`exp_end_date` are Datetime in v16, but 2,874 of 2,875 values are midnight. They
+are stock fields that Gantt and the planners read, and the planners carry real times in
+`custom_start_datetime`/`custom_end_datetime`. So the kit will display them as dates, and their kind stays
+as is. The Events schedule genuinely uses its times. Details are on TASK-2026-02748.
+
 ## [1.616.0] - 2026-10-13
 
 ### Added

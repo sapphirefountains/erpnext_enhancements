@@ -1370,3 +1370,8 @@ erpnext_enhancements.patches.refresh_general_agreement_layout
 # is exactly a shipped body (SHA-256); freezes paper-signed copies first and waits while a signing link is out.
 # Resets no terms. Cannot raise.
 erpnext_enhancements.patches.refresh_subcontractor_agreement_layout
+# Form kit P2-A (v1.617.0): the Desk's date format mm-dd-yyyy -> mm/dd/yyyy and time format HH:mm:ss -> HH:mm, so a
+# date reads 10/14/2026 and a time 14:00. Changes a field only while it still holds the old value. Writes System
+# Settings AND the global default (the Desk reads tabDefaultValue, not the Single) without saving the Single through
+# its controller, whose validate() enforces unrelated rules. Clears the cache. Cannot raise, safe twice.
+erpnext_enhancements.patches.set_desk_date_and_time_format

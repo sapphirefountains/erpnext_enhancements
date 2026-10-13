@@ -1,0 +1,924 @@
+{
+ "_readme": "Shared by utils/normalize.py and public/js/normalize/normalize.js; tests/test_normalize.py runs every case through both. 'in' is the raw value, 'value'/'ok' the expected Result, 'display' (phones) what phone_display shows, 'country' (state/zip) the record's country.",
+ "phone": [
+  {
+   "in": "8015550100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "801-555-0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "801.555.0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "(801) 555-0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "(801)555-0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "1-801-555-0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "1 801 555 0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "18015550100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "+1 801 555 0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "+18015550100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "+1-8012680093",
+   "value": "+18012680093",
+   "ok": true,
+   "display": "(801) 268-0093"
+  },
+  {
+   "in": "+1 (801)-555-0100",
+   "value": "+18015550100",
+   "ok": true,
+   "display": "(801) 555-0100"
+  },
+  {
+   "in": "786-5361357",
+   "value": "+17865361357",
+   "ok": true,
+   "display": "(786) 536-1357"
+  },
+  {
+   "in": "888) 885-0228",
+   "value": "+18888850228",
+   "ok": true,
+   "display": "(888) 885-0228"
+  },
+  {
+   "in": "954. 579-9476",
+   "value": "+19545799476",
+   "ok": true,
+   "display": "(954) 579-9476"
+  },
+  {
+   "in": "1800 407 6657",
+   "value": "+18004076657",
+   "ok": true,
+   "display": "(800) 407-6657"
+  },
+  {
+   "in": "(208)-283-2638",
+   "value": "+12082832638",
+   "ok": true,
+   "display": "(208) 283-2638"
+  },
+  {
+   "in": "\t8016826997 ",
+   "value": "+18016826997",
+   "ok": true,
+   "display": "(801) 682-6997"
+  },
+  {
+   "in": "+44 20 7946 0958",
+   "value": "+442079460958",
+   "ok": true,
+   "display": "+442079460958"
+  },
+  {
+   "in": "+442079460958",
+   "value": "+442079460958",
+   "ok": true,
+   "display": "+442079460958"
+  },
+  {
+   "in": "+65 6123 4567",
+   "value": "+6561234567",
+   "ok": true,
+   "display": "+6561234567"
+  },
+  {
+   "in": "+44 (0)20 7946 0958",
+   "value": "+44 (0)20 7946 0958",
+   "ok": false,
+   "display": "+44 (0)20 7946 0958"
+  },
+  {
+   "in": "65-688-000-88",
+   "value": "65-688-000-88",
+   "ok": false,
+   "display": "65-688-000-88"
+  },
+  {
+   "in": "44 20 7946 0958",
+   "value": "44 20 7946 0958",
+   "ok": false,
+   "display": "44 20 7946 0958"
+  },
+  {
+   "in": "852-2345-6789",
+   "value": "852-2345-6789",
+   "ok": false,
+   "display": "852-2345-6789"
+  },
+  {
+   "in": "555-0100",
+   "value": "555-0100",
+   "ok": false,
+   "display": "555-0100"
+  },
+  {
+   "in": "5550100",
+   "value": "5550100",
+   "ok": false,
+   "display": "5550100"
+  },
+  {
+   "in": "1-800-FLOWERS",
+   "value": "1-800-FLOWERS",
+   "ok": false,
+   "display": "1-800-FLOWERS"
+  },
+  {
+   "in": "801-555-FUNS",
+   "value": "801-555-FUNS",
+   "ok": false,
+   "display": "801-555-FUNS"
+  },
+  {
+   "in": "801-555-0100 / 801-555-0101",
+   "value": "801-555-0100 / 801-555-0101",
+   "ok": false,
+   "display": "801-555-0100 / 801-555-0101"
+  },
+  {
+   "in": "801-555-0100, 801-555-0101",
+   "value": "801-555-0100, 801-555-0101",
+   "ok": false,
+   "display": "801-555-0100, 801-555-0101"
+  },
+  {
+   "in": "8015550100 or 8015550101",
+   "value": "8015550100 or 8015550101",
+   "ok": false,
+   "display": "8015550100 or 8015550101"
+  },
+  {
+   "in": "801-555-0100 x123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 x 123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 X123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 ext 123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 ext. 123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 Ext.123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 extension 123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100 #123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "801-555-0100,123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "+18015550100,123",
+   "value": "+18015550100,123",
+   "ok": true,
+   "display": "(801) 555-0100 x123"
+  },
+  {
+   "in": "(801) 555-0100 x1234567",
+   "value": "(801) 555-0100 x1234567",
+   "ok": false,
+   "display": "(801) 555-0100 x1234567"
+  },
+  {
+   "in": "+4930123456789 x123456",
+   "value": "+4930123456789 x123456",
+   "ok": false,
+   "display": "+4930123456789 x123456"
+  },
+  {
+   "in": "+442079460958 ext 123456",
+   "value": "+442079460958,123456",
+   "ok": true,
+   "display": "+442079460958 x123456"
+  },
+  {
+   "in": "+1 801 555 010",
+   "value": "+1 801 555 010",
+   "ok": false,
+   "display": "+1 801 555 010"
+  },
+  {
+   "in": "+1 801 555 01000",
+   "value": "+1 801 555 01000",
+   "ok": false,
+   "display": "+1 801 555 01000"
+  },
+  {
+   "in": "(101) 555-0100",
+   "value": "(101) 555-0100",
+   "ok": false,
+   "display": "(101) 555-0100"
+  },
+  {
+   "in": "0015550100",
+   "value": "0015550100",
+   "ok": false,
+   "display": "0015550100"
+  },
+  {
+   "in": "1015550100",
+   "value": "1015550100",
+   "ok": false,
+   "display": "1015550100"
+  },
+  {
+   "in": "28015550100",
+   "value": "28015550100",
+   "ok": false,
+   "display": "28015550100"
+  },
+  {
+   "in": "801-555-010",
+   "value": "801-555-010",
+   "ok": false,
+   "display": "801-555-010"
+  },
+  {
+   "in": "ext. 204",
+   "value": "ext. 204",
+   "ok": false,
+   "display": "ext. 204"
+  },
+  {
+   "in": "555",
+   "value": "555",
+   "ok": false,
+   "display": "555"
+  },
+  {
+   "in": "+1234567",
+   "value": "+1234567",
+   "ok": false,
+   "display": "+1234567"
+  },
+  {
+   "in": "+44 20 79",
+   "value": "+44 20 79",
+   "ok": false,
+   "display": "+44 20 79"
+  },
+  {
+   "in": "",
+   "value": "",
+   "ok": true,
+   "display": ""
+  },
+  {
+   "in": "   ",
+   "value": "",
+   "ok": true,
+   "display": ""
+  },
+  {
+   "in": null,
+   "value": "",
+   "ok": true,
+   "display": ""
+  },
+  {
+   "in": "Front desk",
+   "value": "Front desk",
+   "ok": false,
+   "display": "Front desk"
+  },
+  {
+   "in": "+1 800 FLOWERS",
+   "value": "+1 800 FLOWERS",
+   "ok": false,
+   "display": "+1 800 FLOWERS"
+  }
+ ],
+ "email": [
+  {
+   "in": "sales@sapphirefountains.com",
+   "value": "sales@sapphirefountains.com",
+   "ok": true
+  },
+  {
+   "in": "Sales@SapphireFountains.COM",
+   "value": "sales@sapphirefountains.com",
+   "ok": true
+  },
+  {
+   "in": "  nik@example.com  ",
+   "value": "nik@example.com",
+   "ok": true
+  },
+  {
+   "in": "mailto:Nik@Example.com",
+   "value": "nik@example.com",
+   "ok": true
+  },
+  {
+   "in": "MAILTO:nik@example.com",
+   "value": "nik@example.com",
+   "ok": true
+  },
+  {
+   "in": "a@b.com; c@d.com",
+   "value": "a@b.com; c@d.com",
+   "ok": false
+  },
+  {
+   "in": "a@b.com, c@d.com",
+   "value": "a@b.com, c@d.com",
+   "ok": false
+  },
+  {
+   "in": "a@b.com c@d.com",
+   "value": "a@b.com c@d.com",
+   "ok": false
+  },
+  {
+   "in": "a@b.com,",
+   "value": "a@b.com",
+   "ok": true
+  },
+  {
+   "in": "Nik Bradshaw <nik@example.com>",
+   "value": "Nik Bradshaw <nik@example.com>",
+   "ok": false
+  },
+  {
+   "in": "nik@example",
+   "value": "nik@example",
+   "ok": false
+  },
+  {
+   "in": "nik example@x.com",
+   "value": "nik example@x.com",
+   "ok": false
+  },
+  {
+   "in": "not an email",
+   "value": "not an email",
+   "ok": false
+  },
+  {
+   "in": "nik@@example.com",
+   "value": "nik@@example.com",
+   "ok": false
+  },
+  {
+   "in": "",
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": null,
+   "value": "",
+   "ok": true
+  }
+ ],
+ "website": [
+  {
+   "in": "example.com",
+   "value": "https://example.com",
+   "ok": true
+  },
+  {
+   "in": "www.SaltDev.com",
+   "value": "https://www.saltdev.com",
+   "ok": true
+  },
+  {
+   "in": "https://example.com",
+   "value": "https://example.com",
+   "ok": true
+  },
+  {
+   "in": "HTTPS://Example.COM/Path?Q=One",
+   "value": "https://example.com/Path?Q=One",
+   "ok": true
+  },
+  {
+   "in": "http://WWW.Example.com:8080/A/B",
+   "value": "http://www.example.com:8080/A/B",
+   "ok": true
+  },
+  {
+   "in": "slcolibrary.org/Viridian",
+   "value": "https://slcolibrary.org/Viridian",
+   "ok": true
+  },
+  {
+   "in": "mailto:sales@example.com",
+   "value": "mailto:sales@example.com",
+   "ok": true
+  },
+  {
+   "in": "tel:+18015550100",
+   "value": "tel:+18015550100",
+   "ok": true
+  },
+  {
+   "in": "/careers",
+   "value": "/careers",
+   "ok": true
+  },
+  {
+   "in": "#top",
+   "value": "#top",
+   "ok": true
+  },
+  {
+   "in": "N/A",
+   "value": "N/A",
+   "ok": false
+  },
+  {
+   "in": "djohns929@gmail.com",
+   "value": "djohns929@gmail.com",
+   "ok": false
+  },
+  {
+   "in": "www.example.com www.other.com",
+   "value": "www.example.com www.other.com",
+   "ok": false
+  },
+  {
+   "in": "  example.com  ",
+   "value": "https://example.com",
+   "ok": true
+  },
+  {
+   "in": "",
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": null,
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": "ftp://Files.Example.com/X",
+   "value": "ftp://files.example.com/X",
+   "ok": true
+  }
+ ],
+ "text": [
+  {
+   "in": "  Salt Lake City  ",
+   "value": "Salt Lake City",
+   "ok": true
+  },
+  {
+   "in": "Salt Lake City, ",
+   "value": "Salt Lake City",
+   "ok": true
+  },
+  {
+   "in": "123  Main\tStreet",
+   "value": "123 Main Street",
+   "ok": true
+  },
+  {
+   "in": "Suite 4,,",
+   "value": "Suite 4",
+   "ok": true
+  },
+  {
+   "in": "line one\nline two",
+   "value": "line one line two",
+   "ok": true
+  },
+  {
+   "in": "",
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": "   ",
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": null,
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": "Already clean",
+   "value": "Already clean",
+   "ok": true
+  }
+ ],
+ "state": [
+  {
+   "in": "Utah",
+   "country": null,
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": "utah",
+   "country": "United States",
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": "UT",
+   "country": "United States",
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": "ut",
+   "country": null,
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": "U.T.",
+   "country": null,
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": " New  York ",
+   "country": "United States",
+   "value": "NY",
+   "ok": true
+  },
+  {
+   "in": "new york",
+   "country": null,
+   "value": "NY",
+   "ok": true
+  },
+  {
+   "in": "District of Columbia",
+   "country": null,
+   "value": "DC",
+   "ok": true
+  },
+  {
+   "in": "Washington, D.C.",
+   "country": null,
+   "value": "DC",
+   "ok": true
+  },
+  {
+   "in": "Puerto Rico",
+   "country": null,
+   "value": "PR",
+   "ok": true
+  },
+  {
+   "in": "guam",
+   "country": null,
+   "value": "GU",
+   "ok": true
+  },
+  {
+   "in": "U.S. Virgin Islands",
+   "country": null,
+   "value": "VI",
+   "ok": true
+  },
+  {
+   "in": "Deseret",
+   "country": null,
+   "value": "Deseret",
+   "ok": false
+  },
+  {
+   "in": "Ontario",
+   "country": "Canada",
+   "value": "Ontario",
+   "ok": true
+  },
+  {
+   "in": "  British  Columbia, ",
+   "country": "Canada",
+   "value": "British Columbia",
+   "ok": true
+  },
+  {
+   "in": "ON",
+   "country": "Canada",
+   "value": "ON",
+   "ok": true
+  },
+  {
+   "in": "",
+   "country": null,
+   "value": "",
+   "ok": true
+  },
+  {
+   "in": "Utah",
+   "country": "USA",
+   "value": "UT",
+   "ok": true
+  },
+  {
+   "in": "Calif.",
+   "country": null,
+   "value": "Calif.",
+   "ok": false
+  }
+ ],
+ "zip": [
+  {
+   "in": "84010",
+   "country": null,
+   "value": "84010",
+   "ok": true
+  },
+  {
+   "in": "84010-1234",
+   "country": null,
+   "value": "84010-1234",
+   "ok": true
+  },
+  {
+   "in": "840101234",
+   "country": null,
+   "value": "84010-1234",
+   "ok": true
+  },
+  {
+   "in": "84010 1234",
+   "country": "United States",
+   "value": "84010-1234",
+   "ok": true
+  },
+  {
+   "in": " 84010 ",
+   "country": null,
+   "value": "84010",
+   "ok": true
+  },
+  {
+   "in": "4010",
+   "country": null,
+   "value": "4010",
+   "ok": false
+  },
+  {
+   "in": "8401",
+   "country": null,
+   "value": "8401",
+   "ok": false
+  },
+  {
+   "in": "84010-12",
+   "country": null,
+   "value": "84010-12",
+   "ok": false
+  },
+  {
+   "in": "ABC12",
+   "country": null,
+   "value": "ABC12",
+   "ok": false
+  },
+  {
+   "in": "SW1A 1AA",
+   "country": "United Kingdom",
+   "value": "SW1A 1AA",
+   "ok": true
+  },
+  {
+   "in": "  M5V  3L9 ",
+   "country": "Canada",
+   "value": "M5V 3L9",
+   "ok": true
+  },
+  {
+   "in": "",
+   "country": null,
+   "value": "",
+   "ok": true
+  }
+ ],
+ "dates": [
+  {
+   "fn": "format_date",
+   "in": "2026-10-14",
+   "out": "10/14/2026"
+  },
+  {
+   "fn": "format_date",
+   "in": "2026-10-14 14:05:00",
+   "out": "10/14/2026"
+  },
+  {
+   "fn": "format_date",
+   "in": "2026-01-05",
+   "out": "01/05/2026"
+  },
+  {
+   "fn": "format_date",
+   "in": "2026-10-14T00:00:00",
+   "out": "10/14/2026"
+  },
+  {
+   "fn": "format_date",
+   "in": "2026-02-30",
+   "out": "2026-02-30"
+  },
+  {
+   "fn": "format_date",
+   "in": "not a date",
+   "out": "not a date"
+  },
+  {
+   "fn": "format_date",
+   "in": "",
+   "out": ""
+  },
+  {
+   "fn": "format_date",
+   "in": null,
+   "out": ""
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 14:05:00",
+   "out": "10/14/2026 2:05 PM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 00:00:00",
+   "out": "10/14/2026 12:00 AM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 12:00:00",
+   "out": "10/14/2026 12:00 PM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 09:07:59",
+   "out": "10/14/2026 9:07 AM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 23:59:59.999999",
+   "out": "10/14/2026 11:59 PM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14T13:30:00",
+   "out": "10/14/2026 1:30 PM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 12:30",
+   "out": "10/14/2026 12:30 PM"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14",
+   "out": "10/14/2026"
+  },
+  {
+   "fn": "format_datetime",
+   "in": "2026-10-14 25:00:00",
+   "out": "2026-10-14 25:00:00"
+  },
+  {
+   "fn": "format_datetime",
+   "in": null,
+   "out": ""
+  },
+  {
+   "fn": "format_time",
+   "in": "14:05:00",
+   "out": "2:05 PM"
+  },
+  {
+   "fn": "format_time",
+   "in": "00:00:00",
+   "out": "12:00 AM"
+  },
+  {
+   "fn": "format_time",
+   "in": "12:00:00",
+   "out": "12:00 PM"
+  },
+  {
+   "fn": "format_time",
+   "in": "9:05:00",
+   "out": "9:05 AM"
+  },
+  {
+   "fn": "format_time",
+   "in": "09:05",
+   "out": "9:05 AM"
+  },
+  {
+   "fn": "format_time",
+   "in": "23:59:59.123456",
+   "out": "11:59 PM"
+  },
+  {
+   "fn": "format_time",
+   "in": "1 day, 2:00:00",
+   "out": "2:00 AM"
+  },
+  {
+   "fn": "format_time",
+   "in": "2026-10-14 14:05:00",
+   "out": "2:05 PM"
+  },
+  {
+   "fn": "format_time",
+   "in": "24:00:00",
+   "out": "24:00:00"
+  },
+  {
+   "fn": "format_time",
+   "in": "noon",
+   "out": "noon"
+  },
+  {
+   "fn": "format_time",
+   "in": "",
+   "out": ""
+  }
+ ]
+}

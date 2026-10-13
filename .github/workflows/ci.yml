@@ -1648,6 +1648,34 @@ jobs:
       # clears 4.5:1 and every boundary 3:1 in light AND dark. Reads files only, no stub.
       - name: App design tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_app_design_tokens -v
+      # Form kit P2-A. The normalization library (utils/normalize.py) and its JavaScript
+      # twin (public/js/normalize/normalize.js) run the SAME 163 cases from
+      # tests/fixtures/normalize_cases.json, so the Desk and the server cannot disagree
+      # about what a phone, email, website, address part or date looks like. The JS half
+      # runs under node (it skips cleanly without node; the ubuntu runner ships node, which is
+      # how the planner kit's node harness runs in this job too).
+      - name: Normalization library + JS twin (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_normalize -v
+      # Which fields hold a phone, email, website or address part (utils/normalize_fields.py):
+      # every custom field it names exists in the fixtures or an app doctype, and nothing is
+      # both registered and excluded.
+      - name: Normalization field registry (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_normalize_fields -v
+      # The dry-run report the cleanup is approved from: writes nothing, skips submitted
+      # records, reads Singles through get_single_value, survives a missing table or
+      # column. Own step: installs and removes its own frappe stub.
+      - name: Data Normalization Preview report (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_data_normalization_preview -v
+      # The patch moving the Desk to mm/dd/yyyy and HH:mm: only old values change, both the
+      # Single and the global default the boot payload reads are written, and it can never
+      # raise (a raising patch aborts bench migrate, which is the deploy). Own frappe stub.
+      - name: Desk date/time format patch (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_desk_date_format_patch -v
+      # Start/end pairs out of order warn once per person per record and never block; every
+      # registered doctype has its validate hook, every registered field exists, and nothing
+      # core already validates is registered twice. Own frappe stub.
+      - name: Date-pair warnings (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_date_pairs -v
       # What a print format cannot find for itself (print_lookup.py): the party block walks
       # the document -> its Contact -> its Address -> the party record, reading this app's
       # custom phone/email fields that ERPNext never copies onto a document, and never asks
