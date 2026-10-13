@@ -1055,7 +1055,17 @@ doc_events = {
 		# enforced on the server, so its owner could otherwise detach an article's image and
 		# then delete it) unless KB code sets flags.kb_action. before_validate runs even
 		# under flags.ignore_validate. See knowledge_base/files.py.
-		"before_insert": "erpnext_enhancements.knowledge_base.files.force_private",
+		#
+		# sapphire_maintenance (v1.610.0): a File attached to a Sapphire Maintenance Record by its
+		# pre-rename random name (a Visit Wizard page left open across the deploy uploads with
+		# the old name, and v16 upload_file lets it through) is attached to the visit's current
+		# name instead, or the customer's report would never inline the photo and reviewers could
+		# not open it. Only when no visit has the name and one has it as legacy_name; returns at
+		# once for any other File; never raises. See sapphire_maintenance/visit_names.py.
+		"before_insert": [
+			"erpnext_enhancements.knowledge_base.files.force_private",
+			"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name",
+		],
 		"before_validate": "erpnext_enhancements.knowledge_base.files.force_private",
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)

@@ -66,11 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Numbers.** Each visit goes into the series its own autoname would have used: the project and
     the year of the visit's day (its date, else its scheduled date, else the day it was created,
     `visit_compare.visit_day`), numbered in the order the visits were done, after whatever the
-    series has used (its `tabSeries` counter, or the highest name already in the scheme). Each
-    series' counter is then raised to the highest number given out
-    (`INSERT … ON DUPLICATE KEY UPDATE current = GREATEST(COALESCE(current, 0), …)`; the key is
-    `PRJ-00179-2026-V`, what `make_autoname("PRJ-00179-2026-V.###")` counts in), so the next visit
-    created never collides. Visits already in the scheme, with no project, or whose project name
+    series has used (its `tabSeries` counter, or the highest name already in the scheme). With
+    each rename, inside that visit's savepoint, the series' counter is raised to at least the
+    number given out (`INSERT … ON DUPLICATE KEY UPDATE current = GREATEST(COALESCE(current, 0), …)`;
+    the key is `PRJ-00179-2026-V`, what `make_autoname("PRJ-00179-2026-V.###")` counts in), so the
+    next visit created never collides. Raising it once at the end, as review of #1225 found, would
+    have let a failure in between leave renamed visits behind an unmoved counter with the patch
+    recorded as done, and the next scheduler draft for that project would have been V001 again. Visits already in the scheme, with no project, or whose project name
     cannot lead a series are left alone, so the patch is safe to run twice.
   - **What follows a rename.** `frappe.rename_doc` carries every Link to the visit, the Dynamic
     Links (comments, ToDos, Workflow Actions, communications, shares), attachments, versions and
@@ -79,10 +81,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     as a vanished visit and deleted its Google event. The patch rewrites each Calendar Sync Link
     row (`source_name`, and the name segment of the unique `source_ref`), keeps its `event_id` (the
     same Google event) and blanks `content_hash`, so the next sync writes the event again with the
-    new name in it.
+    new name in it. Until it does, the event's private properties still carry the old name, so
+    snap-back (`calendar_sync/engine.handle_event`) maps a visit's name through `legacy_name` before
+    it looks the visit up: an edit made in Google meanwhile is rewritten, not taken for a deleted
+    visit and deleted.
+  - **Photos uploaded by an old name land on the visit.** A Visit Wizard page left open across the
+    deploy still holds the old name and uploads with it, and v16's `upload_file` lets that through
+    (its write check falls back to a new document's when the name does not exist), so the File
+    would be attached to a name no visit has: the customer's report inlines only a File attached to
+    the visit, and `File.has_permission` refuses reviewers one whose visit cannot be loaded, while
+    `save_visit`, resolving the old name, put the photo's URL on the visit. A new File
+    `before_insert` hook (`visit_names.attach_to_current_name`, after the knowledge base's) rewrites
+    `attached_to_name` to the visit's current name, only for this doctype, only when no visit has
+    the name and one has it as `legacy_name`; it never raises. The patch also re-points any File
+    already attached by an old name (`repoint_files`, one `UPDATE … JOIN` on `legacy_name`).
+    **Technicians: reload the Visit Wizard after this deploy.** A page left open keeps working
+    (every endpoint takes the old name), but reloading it picks up the new names and the signature.
   - **Old names still work where we route them.** The old name is kept in a new read-only,
-    indexed field, **Previous Number** (`legacy_name`), which is also the doctype's search field:
-    typing the old ID in a Link search finds the visit. `sapphire_maintenance/visit_names.py`
+    indexed field, **Previous Number** (`legacy_name`). It is the doctype's `search_fields`, so
+    typing the old ID in a Link field's search finds the visit, and a standard filter on the list
+    (`in_standard_filter`). It is not in the awesome bar or global search. `sapphire_maintenance/visit_names.py`
     (`current_visit_name`) looks a visit up by either name, and the Visit Wizard's endpoints
     (bootstrap, state, save, finish) and the Visit Review page's take either. Done on the server
     rather than by a second call from the page because frappe v16 answers a 404 with a "Not found"
@@ -91,10 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (Back still goes where it went) and moves what the phone kept under the old name (answers in
     localStorage, photos and a Finish in IndexedDB, and what the page holds) onto the new one
     (`move_kept`); the background sender does the same when the server answers an old name with a
-    new one, so nothing is reported as "deleted". The Visit Review page re-routes an old name from a
-    review email to the new one, in place.
+    new one, so nothing is reported as "deleted". Answers kept under both names (the visit opened
+    by its new name before the old name's turned up) are merged into one entry, the new name's
+    winning and each field keeping its earliest server value (`vz_merge_kept`); left as two, the
+    old name stayed listed and was read again on every retry for ever. The Visit Review page
+    re-routes an old name from a review email to the new one, in place, and its Approve & Submit
+    and Send Back act on and answer with the visit's own name: Send Back re-read the visit by the
+    name it was asked for after the workflow had moved it, which raised and rolled the decision
+    back.
   - **What does not follow.** A link to the Desk form by an old name (`/app/sapphire-maintenance-record/4lvpg04h6h`)
-    shows "not found": search for the old ID instead. The old name stays in text already written:
+    shows "not found": search for the old ID in a Link field, or filter the list by Previous Number. The old name stays in text already written:
     emails sent, notification logs, and free-text notes.
   - **How it runs.** Synchronously inside the migrate, one savepoint per visit (a visit that fails
     is rolled back whole, logged under "rename_hash_named_visits" and keeps its old name; the rest
@@ -111,23 +135,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New bench-free suite `tests/test_rename_hash_named_visits.py` (own `frappe` stub, own CI step):
   numbering by the visit's day across years, starting after the counter or a name already in the
-  scheme, a four-digit number past 999, the counter ending at the highest number, everything left
-  alone that should be, a second run doing nothing, the calendar rows keeping their Google event,
-  the `rename_doc` keywords, a failure rolled back whole (including one after the rename itself)
-  while the rest go on, and never raising.
+  scheme, a four-digit number past 999, each rename raising its counter before the next one (and
+  a counter that cannot be raised undoing its rename), everything left alone that should be, a
+  second run doing nothing, the calendar rows keeping their Google event, Files attached by an old
+  name re-pointed (also on a run with nothing left to rename), the `rename_doc` keywords, a failure
+  rolled back whole (including one after the rename itself) while the rest go on, and never
+  raising. `test_calendar_sync`: an event a renamed visit's old name is still on, edited in Google,
+  is rewritten and not deleted.
 - `test_visit_finished_for_review`: going for review unsigned is refused and nothing else is, the
   stamp is the saver and the time, kept when unchanged and cleared with the signature, and only a
   drawn image is taken. `test_maintenance_visit_crews`: `finish_visit` signs before the workflow
-  moves the visit, never for a reviewer, and the endpoints and `resolve_visit` take an old name.
-  `test_visit_review`: an old name finds the renamed visit. `test_print_style` renders the signed
+  moves the visit, never for a reviewer, and the endpoints and `resolve_visit` take an old name;
+  the File hook attaches a photo uploaded by an old name to the visit, touches nothing else, never
+  raises, and is wired. `test_visit_review`: an old name finds the renamed visit, and Approve and
+  Send Back by an old name act on and answer with the visit's own name. `test_print_style` renders the signed
   and unsigned TECHNICIAN cell; `test_visit_report` pins the template and portal uses;
   `test_visit_shape_fold` counts a signature as started.
 - `scripts/test_wizard_back_forward.mjs` (run by `test_visit_wizard_markup`): Finish asks for the
   technician's signature first and sends both pads separately; a visit already signed finishes;
   a reviewer is never held or signed for; the Wrap-up card; an old name in the address opens the
   renamed visit in place with Back intact; a kept Finish carries the signature; a pre-release kept
-  Finish is refused with the server's words; and answers, a photo and a Finish kept under an old
-  name reach the renamed visit, whether the visit is opened or sent in the background.
+  Finish is refused with the server's words; answers, a photo and a Finish kept under an old
+  name reach the renamed visit, whether the visit is opened or sent in the background; and
+  answers kept under both names become one entry, sent once, with no endless retry of the old
+  name.
 
 ## [1.609.0] - 2026-10-13
 

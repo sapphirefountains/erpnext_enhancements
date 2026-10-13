@@ -1074,6 +1074,40 @@ class Snapback(EngineCase):
 		self.assertEqual(tokens[self.CAL], "tok-new")
 		self.assertNotIn("abc123", json.dumps(self.google.calls))
 
+	def test_a_renamed_visits_event_edited_in_google_is_rewritten_not_deleted(self):
+		"""v1.610.0 renamed the visits created before v1.597.0. The patch moved each Calendar Sync
+		Link to the new name, but the event still says erpnext_name=<old> until the next sync
+		rewrites it. An edit made in Google first must find the visit by its old name."""
+		visit = _task(doctype="Sapphire Maintenance Record", name="PRJ-00179-2026-V001", kind="visit")
+		engine.reconcile(visit, client=self.google)
+		link = self.link()
+		event = dict(self.google.events[(self.CAL, link["event_id"])], etag='"edited"', summary="Moved")
+		event["extendedProperties"] = {
+			"private": dict(event["extendedProperties"]["private"], erpnext_name="4lvpg04h6h")
+		}
+		self.google.pages[self.CAL] = [{"items": [event], "nextSyncToken": "tok"}]
+		self.google.calls.clear()
+		asked = []
+
+		def item_for(doctype, name, key=None):
+			asked.append(name)
+			if name == "PRJ-00179-2026-V001":
+				return visit
+			return {"doctype": doctype, "name": name, "state": "gone"}
+
+		with (
+			mock.patch.object(sources, "item_for", side_effect=item_for),
+			mock.patch(
+				"erpnext_enhancements.sapphire_maintenance.visit_names.current_visit_name",
+				side_effect=lambda name: "PRJ-00179-2026-V001" if name == "4lvpg04h6h" else None,
+			),
+		):
+			engine.snapback()
+		writes = [c for c in self.google.calls if c[0] in ("insert", "update", "delete")]
+		self.assertEqual(writes, [("update", self.CAL, link["event_id"])])
+		self.assertEqual(asked, ["PRJ-00179-2026-V001"])
+		self.assertEqual(self.link()["status"], "Synced")
+
 	def test_source_gone_deletes_and_410_lists_in_full(self):
 		engine.reconcile(_task(), client=self.google)
 		link = self.link()

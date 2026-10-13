@@ -1433,6 +1433,12 @@ function phone() {
 		outbox() {
 			return [...(databases.get("vz-outbox") || new Map()).values()];
 		},
+		// Answers kept for `name`, as the page writes them (and the list of names it keeps).
+		keep(name, entry) {
+			local.set(`vz-unsent:${name}`, JSON.stringify(entry));
+			const names = JSON.parse(local.get("vz-unsent-index") || "[]").filter((other) => other !== name);
+			local.set("vz-unsent-index", JSON.stringify([...names, name]));
+		},
 		// Something an earlier version of the page left in the outbox.
 		put(item) {
 			if (!databases.has("vz-outbox")) databases.set("vz-outbox", new Map());
@@ -2429,6 +2435,33 @@ async function visitWizardKeptSuite() {
 		assert.equal(p.kept("4lvpg04h6h"), null);
 		assert.equal(p.kept("PRJ-00179-2026-V001"), null);
 		assert.ok(!ui.alerts.some((a) => /could not be read/.test(a)), ui.alerts.join(" | "));
+	});
+
+	await test("answers kept under both a visit's old and new names become one, sent once, and the old name stops", async () => {
+		const p = phone();
+		const db = visitServer({ "4lvpg04h6h": visit() });
+		renameVisit(db, "4lvpg04h6h", "PRJ-00179-2026-V001");
+		const kept = (fields, base) => ({
+			modified: "4lvpg04h6h@1",
+			dirty: { fields, rows: {} },
+			pending_added: [],
+			base: { fields: base, rows: {} },
+			known: {},
+			at: 1,
+		});
+		p.keep("4lvpg04h6h", { record: "4lvpg04h6h", ...kept({ visit_notes: "old", visit_date: "2026-10-12" }, { visit_notes: null, visit_date: null }) });
+		p.keep("PRJ-00179-2026-V001", { record: "PRJ-00179-2026-V001", ...kept({ visit_notes: "new" }, { visit_notes: "old" }) });
+		boot("visit-wizard", "/desk/visit-wizard");
+		p.install();
+		await settle();
+		await tick(600000);
+		const now = db["PRJ-00179-2026-V001"];
+		assert.equal(now.visit_notes, "new", "the new name's answer wins");
+		assert.equal(now.visit_date, "2026-10-12", "the old name's other answers are not lost");
+		assert.equal(p.kept("4lvpg04h6h"), null);
+		assert.equal(p.kept("PRJ-00179-2026-V001"), null);
+		assert.equal(server.sent("save_visit").length, 1, "one save");
+		assert.ok(server.sent("get_visit_state").length <= 3, `read ${server.sent("get_visit_state").length} times: no loop`);
 	});
 
 	await test("a visit opened by its old name takes what the phone kept under that name with it", async () => {

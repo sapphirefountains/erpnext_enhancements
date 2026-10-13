@@ -66,9 +66,10 @@
    "options": "Project"
   },
   {
-   "description": "The visit's name before v1.610.0 numbered it PRJ-#####-YYYY-V###: the random ID it was created with, which older review emails and links still use. Search for it to find the visit.",
+   "description": "The visit's name before v1.610.0 numbered it PRJ-#####-YYYY-V###: the random ID it was created with, which older review emails and links still use. Find the visit by it in a Link field's search, or with the list's Previous Number filter.",
    "fieldname": "legacy_name",
    "fieldtype": "Data",
+   "in_standard_filter": 1,
    "label": "Previous Number",
    "no_copy": 1,
    "read_only": 1,

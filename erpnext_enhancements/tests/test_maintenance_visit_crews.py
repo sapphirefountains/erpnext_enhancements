@@ -1567,6 +1567,43 @@ class TestAVisitByItsOldName(unittest.TestCase):
 		self.assertEqual(self.doc["visit_notes"], "kept on a phone")
 		self.assertEqual(state["name"], "PRJ-00179-2026-V001")
 
+	def test_a_photo_uploaded_by_the_old_name_is_attached_to_the_visit(self):
+		"""A wizard page left open across the deploy uploads with docname=<old name>; v16's
+		upload_file lets it through. The File's before_insert moves it to the visit."""
+		from erpnext_enhancements.sapphire_maintenance import visit_names
+
+		photo = _Doc(attached_to_doctype=RECORD, attached_to_name="4lvpg04h6h")
+		visit_names.attach_to_current_name(photo, "before_insert")
+		self.assertEqual(photo["attached_to_name"], "PRJ-00179-2026-V001")
+		for untouched in (
+			_Doc(attached_to_doctype=RECORD, attached_to_name="PRJ-00179-2026-V001"),
+			_Doc(attached_to_doctype=RECORD, attached_to_name="nosuchname"),
+			_Doc(attached_to_doctype="Task", attached_to_name="4lvpg04h6h"),
+			_Doc(attached_to_doctype=None, attached_to_name=None),
+		):
+			before = dict(untouched)
+			visit_names.attach_to_current_name(untouched, "before_insert")
+			self.assertEqual(dict(untouched), before)
+
+	def test_the_file_hook_never_stops_an_upload(self):
+		from erpnext_enhancements.sapphire_maintenance import visit_names
+
+		def boom(*args, **kwargs):
+			raise RuntimeError("database gone")
+
+		photo = _Doc(attached_to_doctype=RECORD, attached_to_name="4lvpg04h6h")
+		with mock.patch.object(frappe.db, "exists", boom):
+			visit_names.attach_to_current_name(photo, "before_insert")
+		self.assertEqual(photo["attached_to_name"], "4lvpg04h6h")
+		self.assertTrue(frappe.errors)
+
+	def test_the_file_hook_is_wired(self):
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		block = hooks[hooks.index('\t"File": {\n') :]
+		block = block[: block.index("\n\t},\n")]
+		self.assertIn('"erpnext_enhancements.sapphire_maintenance.visit_names.attach_to_current_name"', block)
+		self.assertIn('"before_insert": [', block)
+
 	def test_a_legacy_lookup_is_never_ordered_by_creation(self):
 		visit.current_visit_name("4lvpg04h6h")
 		source = (APP / "sapphire_maintenance/visit_names.py").read_text(encoding="utf-8")

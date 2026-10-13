@@ -15,8 +15,9 @@ order they were done (that day, then creation), starting after whatever the key 
 already: its ``tabSeries`` counter, or the highest number a visit already named in the scheme
 carries, whichever is higher. ``make_autoname("PRJ-00179-2026-V.###")`` keys ``tabSeries`` on
 ``PRJ-00179-2026-V`` (``parse_naming_series`` joins the parts before the ``#`` part and
-``getseries`` pads with ``%03d``), so at the end each key's counter is raised to the highest
-number given out, and the next visit created takes the number after it instead of colliding.
+``getseries`` pads with ``%03d``), so as each visit is renamed its key's counter is raised to at
+least its number, in the same savepoint, and the next visit created takes the number after it
+instead of colliding.
 
 **Skipped:** a visit already in the scheme (so the patch is safe to run twice), one with no
 project, and one whose project name could not lead a series (``PROJECT_IN_NAME``). Each keeps
@@ -36,9 +37,13 @@ and leaves a "renamed from" comment on the timeline. It does **not** touch:
 * The old name written into text: review emails already sent, the kiosk's links, and the
   answers a technician's phone is still holding. The old name is kept in ``legacy_name``, and
   the Visit Wizard and Visit Review pages and the wizard's endpoints open a visit by it
-  (``sapphire_maintenance.visit_names.current_visit_name``); the wizard moves what a phone kept onto the
-  new name. A link to the **Desk form** by an old name still shows "not found": search for the
-  old ID instead (``legacy_name`` is a search field).
+  (``sapphire_maintenance.visit_names.current_visit_name``); the wizard moves what a phone
+  kept onto the new name. A link to the **Desk form** by an old name still shows "not found":
+  search for the old ID in a Link field, or filter the list by Previous Number.
+* Files attached by the old name after the rename (a wizard page left open across the deploy
+  uploads with the name it loaded). ``visit_names.attach_to_current_name`` (a File
+  ``before_insert`` hook) re-points new ones, and :func:`repoint_files` here re-points any
+  already there.
 
 Synchronous, in the migrate: a deploy flushes the job queue straight after ``bench migrate``,
 so anything enqueued here would be lost. ``rebuild_search=False`` for the same reason (it
@@ -90,22 +95,17 @@ def rename_all():
 		for row in rows
 		if not NEW_STYLE.search(row.name or "") and PROJECT_IN_NAME.fullmatch(row.project or "")
 	]
-	if not wanted:
-		return []
-	keys = {series_key(row) for row in wanted}
-	counters = used_numbers([row.name for row in rows], keys)
-	for key in keys:
-		counters[key] = max(counters.get(key, 0), series_current(key))
-
 	renamed = []
-	highest = {}
-	for old, new, key in plan(wanted, counters):
-		if rename_one(old, new):
-			renamed.append((old, new))
-			highest[key] = max(highest.get(key, 0), number_of(new))
-			print(f"rename_hash_named_visits: {old} -> {new}")
-	for key, number in highest.items():
-		raise_series(key, number)
+	if wanted:
+		keys = {series_key(row) for row in wanted}
+		counters = used_numbers([row.name for row in rows], keys)
+		for key in keys:
+			counters[key] = max(counters.get(key, 0), series_current(key))
+		for old, new, key in plan(wanted, counters):
+			if rename_one(old, new, key):
+				renamed.append((old, new))
+				print(f"rename_hash_named_visits: {old} -> {new}")
+	repoint_files()
 	frappe.db.commit()
 	return renamed
 
@@ -171,8 +171,15 @@ def raise_series(key, number):
 	)
 
 
-def rename_one(old, new):
-	"""Rename one visit, keep its old name, and move its calendar rows. True when it was renamed."""
+def rename_one(old, new, key):
+	"""Rename one visit, keep its old name, move its calendar rows and raise its series' counter,
+	all in one savepoint. True when it was renamed.
+
+	The counter is raised here, with the rename, and not once at the end: a failure between the
+	two would leave renamed visits behind a counter that never moved and the patch recorded as
+	done, and the next visit drafted for that project and year would be given V001 again and
+	stop the nightly scheduler on a duplicate name.
+	"""
 	if frappe.db.exists(DOCTYPE, new):
 		frappe.log_error(
 			title=LOG_TITLE,
@@ -184,6 +191,7 @@ def rename_one(old, new):
 		frappe.rename_doc(DOCTYPE, old, new, force=True, show_alert=False, rebuild_search=False)
 		frappe.db.set_value(DOCTYPE, new, "legacy_name", old, update_modified=False)
 		move_calendar_links(old, new)
+		raise_series(key, number_of(new))
 	except Exception:
 		frappe.db.rollback(save_point=SAVEPOINT)
 		frappe.log_error(
@@ -217,3 +225,23 @@ def move_calendar_links(old, new):
 			{"source_name": new, "source_ref": rewrite_ref(link.source_ref, old, new), "content_hash": ""},
 			update_modified=False,
 		)
+
+
+def repoint_files():
+	"""Files attached to a visit by its old name, onto the name it has now.
+
+	``rename_doc`` moves the Files a visit has when it is renamed. This catches any attached by
+	the old name since (a Visit Wizard page left open across the deploy uploads with the name it
+	loaded; ``visit_names.attach_to_current_name`` handles them from now on), and it covers every
+	visit with a ``legacy_name``, not only this run's. A failure is logged, not raised.
+	"""
+	try:
+		frappe.db.sql(
+			"""UPDATE `tabFile` f
+			JOIN `tabSapphire Maintenance Record` v ON v.`legacy_name` = f.`attached_to_name`
+			SET f.`attached_to_name` = v.`name`
+			WHERE f.`attached_to_doctype` = %s AND COALESCE(v.`legacy_name`, '') != ''""",
+			(DOCTYPE,),
+		)
+	except Exception:
+		frappe.log_error(title=LOG_TITLE, message="Files were not re-pointed.\n\n" + frappe.get_traceback())

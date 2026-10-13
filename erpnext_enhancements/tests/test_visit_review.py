@@ -633,6 +633,26 @@ class TestSendBack(_Base):
 			review.send_back_visit("OLD", note="fix", modified="2026-10-11 09:00:00")
 
 
+class TestDecidedByAnOldName(_Base):
+	"""v1.610.0: a decision made on a visit opened by its pre-rename name acts on, and answers
+	with, the visit's own name. Re-reading it by the old name after the workflow moved would
+	raise and roll the decision back."""
+
+	def setUp(self):
+		super().setUp()
+		STATE["visits"]["OLD"]["legacy_name"] = "4lvpg04h6h"
+
+	def test_approve(self):
+		result = review.approve_visit("4lvpg04h6h", modified="2026-10-12 09:00:00")
+		self.assertEqual(STATE["applied"], [("OLD", "Approve & Submit", "lisa@example.com")])
+		self.assertEqual((result["name"], result["state"], result["next"]), ("OLD", "Final/Submitted", "NEW"))
+
+	def test_send_back(self):
+		result = review.send_back_visit("4lvpg04h6h", note="pH off", modified="2026-10-12 09:00:00")
+		self.assertEqual(STATE["comments"], [("OLD", "Comment", "Sent back for changes: pH off")])
+		self.assertEqual((result["name"], result["state"], result["next"]), ("OLD", "Draft", "NEW"))
+
+
 class TestTheWiring(unittest.TestCase):
 	def _json(self, rel):
 		return json.loads((APP / rel).read_text(encoding="utf-8"))

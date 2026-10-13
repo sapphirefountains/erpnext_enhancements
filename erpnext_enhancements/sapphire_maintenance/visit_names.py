@@ -35,3 +35,31 @@ def current_visit_name(name):
 		return None
 	# order_by=None: get_value's default orders by creation, and returns the newest match.
 	return frappe.db.get_value(DOCTYPE, {"legacy_name": name}, "name", order_by=None) or None
+
+
+def attach_to_current_name(doc, method=None):
+	"""``File`` ``before_insert``: a photo uploaded to a visit by its old name lands on the visit.
+
+	A Visit Wizard page left open across the v1.610.0 deploy still holds the old name and
+	uploads with ``docname=<old name>``. v16's ``upload_file`` lets that through (its write check
+	falls back to a new doc's when the name does not exist), so the File would be attached to a
+	name no visit has: the customer's report inlines only a File attached to the visit
+	(``visit_report.image_data_uri``), and ``File.has_permission`` refuses reviewers a File whose
+	visit cannot be loaded. ``save_visit`` resolves the old name, so the photo's URL would be on
+	the visit while its File pointed nowhere.
+
+	So the name is rewritten here, only for this doctype, only when no visit has it and one has
+	it as its ``legacy_name``. Runs before ``File.validate``. Runs on every File, so it returns
+	at once for anything else, and it never raises: an upload must not fail over this.
+	"""
+	try:
+		if (getattr(doc, "attached_to_doctype", None) or "") != DOCTYPE:
+			return
+		name = getattr(doc, "attached_to_name", None) or ""
+		if not name:
+			return
+		current = current_visit_name(name)
+		if current and current != name:
+			doc.attached_to_name = current
+	except Exception:
+		frappe.log_error(title="Visit photo attached by an old name", message=frappe.get_traceback())

@@ -586,6 +586,25 @@ function vz_reconcile(entry, doc) {
 	return out;
 }
 
+// Two kept entries for one visit as one (v1.610.0: answers kept under a visit's old name and
+// under its new one): `newer`'s answers win where both changed a field, and each field keeps the
+// earliest server value from before it was changed (`base`), which is what vz_reconcile compares
+// with. The older entry's version stands, so a server that has moved on since is reconciled.
+function vz_merge_kept(older, newer) {
+	const empty = () => ({ fields: {}, rows: {} });
+	const held = older.held || newer.held ? vz_merge_dirty(older.held || empty(), newer.held || empty()) : null;
+	return {
+		...newer,
+		record: newer.record,
+		modified: older.modified || newer.modified || null,
+		dirty: vz_merge_dirty(older.dirty || empty(), newer.dirty || empty()),
+		pending_added: (older.pending_added || []).concat(newer.pending_added || []),
+		held,
+		base: vz_merge_dirty(newer.base || empty(), older.base || empty()),
+		known: newer.known || older.known || {},
+	};
+}
+
 // One change ({table, row, field, value}; table null for a field on the visit itself) into
 // a {fields, rows} batch of edits.
 function vz_put_change(dirty, change) {
@@ -2499,7 +2518,7 @@ class VisitWizard {
 	// PRJ-…-V###, the old one kept as its legacy_name). Everything this phone kept under the old
 	// name (answers, photos, a Finish, and what this page holds for it) moves to the new name,
 	// so it is sent to that visit instead of being reported as deleted. Kept answers already
-	// under the new name are not overwritten: the old ones then stay, and are listed.
+	// under the new name are merged with the old ones (vz_merge_kept), the new name's winning.
 	move_kept(old, current) {
 		if (!old || !current || old === current) return Promise.resolve();
 		const rekey = (key) => {
@@ -2507,9 +2526,14 @@ class VisitWizard {
 			if (parts[1] === old) parts[1] = current;
 			return parts.join("|");
 		};
+		// Answers already kept under the new name too (opened by it, then the old name's turned
+		// up): one entry, the old one underneath. Left as two, the old name would stay listed and
+		// be read again on every retry, for ever.
 		const entry = vz_unsent_read(old);
-		if (entry && !vz_unsent_read(current) && vz_unsent_write(current, { ...entry, record: current })) {
-			vz_unsent_write(old, null);
+		if (entry) {
+			const there = vz_unsent_read(current);
+			const moved = there ? vz_merge_kept(entry, there) : { ...entry, record: current };
+			if (vz_unsent_write(current, moved)) vz_unsent_write(old, null);
 		}
 		[this._held, this._base, this._parked].forEach((by_name) => {
 			if (!(old in by_name) || current in by_name) return;

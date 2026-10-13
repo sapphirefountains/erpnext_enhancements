@@ -87,6 +87,8 @@ def _reset():
 			"commits": 0,
 			"fail": set(),
 			"fail_get_all": False,
+			"fail_series": False,
+			"files": [],
 		}
 	)
 
@@ -150,7 +152,18 @@ def _sql(query, values=None, **kwargs):
 		assert "`tabSeries`" in query
 		(key,) = values
 		return [(STATE["series"][key],)] if key in STATE["series"] else []
+	if query.strip().upper().startswith("UPDATE"):
+		# repoint_files: a File attached by a visit's old name goes to the name it has now.
+		assert "`tabFile`" in query and "v.`legacy_name` = f.`attached_to_name`" in query, query
+		assert values == (DOCTYPE,)
+		current = {r.legacy_name: name for name, r in STATE["records"].items() if r.get("legacy_name")}
+		for row in STATE["files"]:
+			if row["attached_to_doctype"] == DOCTYPE and row["attached_to_name"] in current:
+				row["attached_to_name"] = current[row["attached_to_name"]]
+		return []
 	assert "INSERT INTO `tabSeries`" in query and "ON DUPLICATE KEY UPDATE" in query, query
+	if STATE["fail_series"]:
+		raise _Boom("tabSeries locked")
 	assert "GREATEST(COALESCE(`current`, 0), %s)" in query, "a NULL counter must not stay NULL"
 	key, number, again = values
 	assert number == again
@@ -178,6 +191,7 @@ def _rename_doc(
 	rebuild_search=True,
 ):
 	"""Frappe 16.30's ``frappe.rename_doc``: these keywords and no others (no ignore_permissions)."""
+	STATE.setdefault("series_at_rename", []).append(dict(STATE["series"]))
 	STATE["renames"].append(
 		{
 			"doctype": doctype,
@@ -198,13 +212,13 @@ def _rename_doc(
 
 def _savepoint(name):
 	STATE["savepoints"].append(name)
-	STATE["snapshot"] = copy.deepcopy((STATE["records"], STATE["links"]))
+	STATE["snapshot"] = copy.deepcopy((STATE["records"], STATE["links"], STATE["series"]))
 
 
 def _rollback(save_point=None):
 	assert save_point, "only ever back to the savepoint, never the whole transaction"
 	STATE["rollbacks"].append(save_point)
-	STATE["records"], STATE["links"] = STATE["snapshot"]
+	STATE["records"], STATE["links"], STATE["series"] = STATE["snapshot"]
 
 
 def _commit():
@@ -426,6 +440,59 @@ class TestWhatFollowsTheRename(unittest.TestCase):
 		self.assertEqual(patch.rewrite_ref(None, "old", "new"), "")
 
 
+class TestTheCounterMovesWithEachRename(unittest.TestCase):
+	"""Raised once at the end, a failure in between would leave renamed visits behind a counter
+	that never moved, the patch recorded as done, and the next autoname a duplicate V001."""
+
+	def setUp(self):
+		_reset()
+
+	def test_each_rename_raises_its_counter_before_the_next_one(self):
+		_visit("a", "PRJ-1", DT(2026, 9, 1), visit_date="2026-09-01")
+		_visit("b", "PRJ-1", DT(2026, 9, 2), visit_date="2026-09-02")
+		_run()
+		self.assertEqual(STATE["series_at_rename"], [{}, {"PRJ-1-2026-V": 1}])
+		self.assertEqual(STATE["series"], {"PRJ-1-2026-V": 2})
+
+	def test_a_counter_that_cannot_be_raised_undoes_the_rename(self):
+		_visit("a", "PRJ-1", DT(2026, 9, 1), visit_date="2026-09-01")
+		_link("CSL-1", "a")
+		STATE["fail_series"] = True
+		self.assertEqual(_run(), {})
+		self.assertIn("a", STATE["records"])
+		self.assertEqual(STATE["links"]["CSL-1"].source_name, "a")
+		self.assertEqual(STATE["rollbacks"], ["rename_hash_named_visit"])
+
+
+class TestTheFiles(unittest.TestCase):
+	"""A File attached by a visit's old name (a wizard page left open across the deploy) is
+	moved to the name the visit has now, or the report never inlines the photo."""
+
+	def setUp(self):
+		_reset()
+
+	def _file(self, attached_to_name, doctype=DOCTYPE):
+		row = {"attached_to_doctype": doctype, "attached_to_name": attached_to_name}
+		STATE["files"].append(row)
+		return row
+
+	def test_files_by_the_old_name_follow_the_visit(self):
+		_visit("4lvpg04h6h", "PRJ-00179", DT(2026, 9, 1), visit_date="2026-10-06")
+		photo = self._file("4lvpg04h6h")
+		other = self._file("4lvpg04h6h", doctype="Task")
+		_run()
+		self.assertEqual(photo["attached_to_name"], "PRJ-00179-2026-V001")
+		self.assertEqual(other["attached_to_name"], "4lvpg04h6h", "another doctype's File is not touched")
+
+	def test_it_runs_when_there_is_nothing_left_to_rename(self):
+		_visit("PRJ-1-2026-V001", "PRJ-1", DT(2026, 9, 1))
+		STATE["records"]["PRJ-1-2026-V001"].legacy_name = "oldname123"
+		photo = self._file("oldname123")
+		_run()
+		self.assertEqual(photo["attached_to_name"], "PRJ-1-2026-V001")
+		self.assertEqual(STATE["renames"], [])
+
+
 class TestItNeverRaises(unittest.TestCase):
 	def setUp(self):
 		_reset()
@@ -495,6 +562,7 @@ class TestTheWiring(unittest.TestCase):
 		self.assertEqual(fields["legacy_name"]["fieldtype"], "Data")
 		self.assertEqual(fields["legacy_name"]["read_only"], 1)
 		self.assertEqual(fields["legacy_name"]["search_index"], 1)
+		self.assertEqual(fields["legacy_name"]["in_standard_filter"], 1, "the list filters by it")
 		self.assertIn("legacy_name", [f.strip() for f in meta["search_fields"].split(",")])
 		self.assertIn("legacy_name", meta["field_order"])
 

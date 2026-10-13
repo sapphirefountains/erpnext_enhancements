@@ -1683,7 +1683,10 @@ subject cannot be told from a part number.
   write echoing back is recognised by the etag stored on the link**, not by comparing text (Google may
   normalize text, and a comparison that never matches would rewrite the same event forever). Events without
   our properties, or with another site's (staging), are other people's and are never touched. A 410
-  drops the token and lists in full. At most 300 fixes per run.
+  drops the token and lists in full. At most 300 fixes per run. A maintenance visit's name in an event is
+  read through `sapphire_maintenance/visit_names.current_visit_name` (v1.610.0): the visits renamed from
+  their random names keep the old name in their events until the next sync rewrites them, and an edit
+  made in Google meanwhile would otherwise find no visit and delete the event.
 - **Errors**: 429, 5xx and rate-limit 403s back off (up to four retries, honouring `Retry-After`); a 401
   refreshes the token once. A failing item is marked Error on its link and logged once when it starts
   failing. A refused refresh token stops the run and is logged once an hour. No error or log carries a

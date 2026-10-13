@@ -132,8 +132,10 @@ def approve_visit(record, modified=None):
 
 	from frappe.model.workflow import apply_workflow
 
+	# The visit's own name from here on: `record` may be its pre-v1.610.0 name (_get).
+	name = doc.name
 	apply_workflow(doc, approve.get("action"))
-	return _after_decision(record)
+	return _after_decision(name)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -154,11 +156,14 @@ def send_back_visit(record, note=None, modified=None):
 
 	from frappe.model.workflow import apply_workflow
 
+	# The visit's own name from here on: `record` may be its pre-v1.610.0 name (_get), and
+	# get_doc by that name would raise after the workflow had moved, rolling the decision back.
+	name = doc.name
 	apply_workflow(doc, send_back.get("action"))
-	doc = frappe.get_doc(DOCTYPE, record)
+	doc = frappe.get_doc(DOCTYPE, name)
 	doc.add_comment("Comment", _("Sent back for changes: {0}").format(escape_html(note)))
 	emailed = review_digest.send_sent_back(doc, note, frappe.session.user)
-	result = _after_decision(record)
+	result = _after_decision(name)
 	result["emailed"] = emailed
 	return result
 
