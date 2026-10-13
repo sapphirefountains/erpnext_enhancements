@@ -629,6 +629,14 @@ class ContractBuilder {
 		return this.mode === "client" && this.can_sign_here();
 	}
 
+	// What this agreement calls the other side: "client", "subcontractor", "architect" …
+	// (contract_builder.PARTY_NOUNS). The mode is still called "client" internally.
+	noun(capital) {
+		const noun = (this.data && this.data.party_noun) || __("client");
+		// "Employee-Contractor initials", as the agreement's own caption (initials.INITIALS_CAPTIONS) reads.
+		return capital ? noun.replace(/(^|[\s-])(\w)/g, (m, sep, ch) => sep + ch.toUpperCase()) : noun;
+	}
+
 	// -------------------------------------------------------------- start screen
 
 	show_start() {
@@ -642,7 +650,7 @@ class ContractBuilder {
 				<div class="cb-start-hero">
 					<h2>${__("Build an agreement")}</h2>
 					<p>${__(
-						"Pick the kind of agreement. The builder walks you through each part with the finished agreement beside you, lighting up the part you are filling in. On your own, or with the client: they can initial each clause as it is filled in and sign at the end, right here, or get it by email to sign in their own time."
+						"Pick the kind of agreement. The builder walks you through each part with the finished agreement beside you, lighting up the part you are filling in. On your own, or with the other side at the table (the client, subcontractor, architect …): they can initial each clause as it is filled in and sign at the end, right here, or get it by email to sign in their own time."
 					)}</p>
 				</div>`);
 			$wrap.append(`<div class="cb-section-title">${__("Start a new one")}</div>`);
@@ -802,7 +810,7 @@ class ContractBuilder {
 						<span class="cb-save" aria-live="polite"><i></i><span></span></span>
 						<div class="cb-mode" role="group" aria-label="${__("Who is filling it in")}">
 							<button type="button" data-mode="prepare">${__("Preparing it")}</button>
-							<button type="button" data-mode="client">${__("With the client")}</button>
+							<button type="button" data-mode="client">${__("With the {0}", [this.noun()])}</button>
 						</div>
 					</div>
 					<div class="cb-progress">
@@ -846,7 +854,7 @@ class ContractBuilder {
 		const data = this.data;
 		const $s = this.$shell;
 		$s.find(".cb-eyebrow").first().text(`${data.template_title || ""} · ${data.name}`);
-		$s.find(".cb-who-name").text(this.values.party_display || this.values.party || __("No client yet"));
+		$s.find(".cb-who-name").text(this.values.party_display || this.values.party || __("No {0} yet", [this.noun()]));
 		const status = data.status || (data.docstatus === 0 ? "Draft" : "");
 		const colour = { Signed: "cb-green", "Out for Signature": "cb-blue", Void: "cb-orange" }[status] || "";
 		$s.find(".cb-status").html("").append($(`<span class="cb-chip ${colour}"></span>`).text(__(status)));
@@ -939,7 +947,7 @@ class ContractBuilder {
 		if (this.live()) {
 			frappe.show_alert(
 				{
-					message: __("With the client: each initials box lights up in the agreement as its clause is filled in."),
+					message: __("With the {0}: each initials box lights up in the agreement as its clause is filled in.", [this.noun()]),
 					indicator: "blue",
 				},
 				6
@@ -1452,7 +1460,7 @@ class ContractBuilder {
 		if (box.state === "done") {
 			const img = document.createElement("img");
 			img.src = this.initials[box.key].image;
-			img.alt = __("Client initials");
+			img.alt = __("{0} initials", [this.noun(true)]);
 			el.appendChild(img);
 		} else {
 			el.textContent = box.state === "ready" ? (live ? __("Initial here") : __("Initials")) : __("Fill in first");
@@ -1487,7 +1495,7 @@ class ContractBuilder {
 		let text = "";
 		if (this.data.status === "Signed") text = __("Signed");
 		else if (this.live() && total) text = __("{0} of {1} clauses initialed", [done, total]);
-		else if (total) text = __("{0} clauses for the client to initial", [total]);
+		else if (total) text = __("{0} clauses for the {1} to initial", [total, this.noun()]);
 		this.$shell.find(".cb-doc-status").text(text);
 	}
 
@@ -1502,14 +1510,14 @@ class ContractBuilder {
 		const ready = left.filter((box) => box.state === "ready");
 		const $note = $('<div class="cb-notice is-info cb-hint-row"></div>').appendTo($hint);
 		if (!left.length) {
-			$note.removeClass("is-info").addClass("is-ok").text(__("The client has initialed every clause in this part."));
+			$note.removeClass("is-info").addClass("is-ok").text(__("The {0} has initialed every clause in this part.", [this.noun()]));
 			return;
 		}
 		$note.append(
 			$("<span></span>").text(
 				ready.length
-					? __("{0} clause(s) in this part are ready for the client's initials.", [ready.length])
-					: __("{0} clause(s) here need the client's initials once they are filled in.", [left.length])
+					? __("{0} clause(s) in this part are ready for the {1}'s initials.", [ready.length, this.noun()])
+					: __("{0} clause(s) here need the {1}'s initials once they are filled in.", [left.length, this.noun()])
 			)
 		);
 		if (ready.length) {
@@ -1535,7 +1543,7 @@ class ContractBuilder {
 		this.close_modal();
 		const $modal = $(`<div class="cb-modal" role="dialog" aria-modal="true">
 			<div class="cb-sheet">
-				<div class="cb-eyebrow">${__("Client initials")}</div>
+				<div class="cb-eyebrow">${__("{0} initials", [this.noun(true)])}</div>
 				<h3></h3>
 				<div class="cb-quote"></div>
 				<div class="cb-padbox is-short"><canvas aria-label="${__("Initials pad")}"></canvas>
@@ -1695,10 +1703,10 @@ class ContractBuilder {
 			.find(".cb-lede")
 			.text(
 				signed
-					? __("The agreement is executed. The signed copy is on the right, and the client has been emailed theirs.")
+					? __("The agreement is executed. The signed copy is on the right, and the {0} has been emailed theirs.", [this.noun()])
 					: this.live()
-					? __("Read it through together on the right. When every clause is initialed, the client signs below.")
-					: __("Read it through on the right, then sign it with the client here or send it to them.")
+					? __("Read it through together on the right. When every clause is initialed, the {0} signs below.", [this.noun()])
+					: __("Read it through on the right, then sign it with the {0} here or send it to them.", [this.noun()])
 			);
 		this.swap_stage($panel, dir);
 		this.render_review_checks();
@@ -1761,7 +1769,7 @@ class ContractBuilder {
 					false,
 					__("{0} will print as blank lines", [blanks.length]),
 					$("<div></div>")
-						.text(__("Fine for anything the client fills in by hand; otherwise go back and fill them in."))
+						.text(__("Fine for anything the {0} fills in by hand; otherwise go back and fill them in.", [this.noun()]))
 						.append($ul)
 				);
 			} else {
@@ -1819,7 +1827,7 @@ class ContractBuilder {
 		const signing = data.signing || {};
 		const sig = this.sig;
 		const $box = $(`<div class="cb-signbox">
-			<h3>${__("The client's signature")}</h3>
+			<h3>${__("The {0}'s signature", [this.noun()])}</h3>
 			<p class="cb-lede" style="font-size:13px"></p>
 			<div class="cb-form-grid">
 				<div><label for="cb-sig-name">${__("Full name")}</label><input id="cb-sig-name" class="form-control" maxlength="140" autocomplete="off"></div>
@@ -1839,8 +1847,9 @@ class ContractBuilder {
 		$box
 			.find(".cb-lede")
 			.text(
-				__("Presented in person by {0}. Issuing and signing happen together: the terms lock the moment the client signs.", [
+				__("Presented in person by {0}. Issuing and signing happen together: the terms lock the moment the {1} signs.", [
 					signing.presenter || frappe.session.user_fullname || "",
+					this.noun(),
 				])
 			);
 		$box.find(".cb-disclosure div").text(signing.disclosure_text || "");
@@ -2016,7 +2025,7 @@ class ContractBuilder {
 		$done.find("h2").text(__("Signed and executed"));
 		$done.find("p").text(
 			__("{0} signed {1}. Their copy is on its way to them by email.", [
-				this.values.signed_by || this.values.party_display || __("The client"),
+				this.values.signed_by || this.values.party_display || __("The {0}", [this.noun()]),
 				data.name,
 			])
 		);
@@ -2085,7 +2094,7 @@ class ContractBuilder {
 		const button = (label, cls, handler) =>
 			$(`<button class="btn ${cls}"></button>`).text(label).on("click", handler).appendTo($actions);
 		if (this.can_sign_here()) {
-			button(__("Sign it here with the client"), "btn-primary cb-big", () => this.set_mode("client"));
+			button(__("Sign it here with the {0}", [this.noun()]), "btn-primary cb-big", () => this.set_mode("client"));
 		}
 		if (data.can_send) {
 			button(__("Send it to them to sign"), this.can_sign_here() ? "btn-default" : "btn-primary", () => this.send_dialog());
@@ -2160,7 +2169,7 @@ class ContractBuilder {
 					fieldname: "email",
 					fieldtype: "Data",
 					options: "Email",
-					label: __("Client's email"),
+					label: __("{0}'s email", [this.noun(true)]),
 					default: this.values.contact_email,
 					reqd: 1,
 				},
@@ -2256,7 +2265,7 @@ class ContractBuilder {
 		this.ensure_shell();
 		this.fg = null;
 		this.view = CB_SIGN;
-		const party = this.values.party_display || this.values.party || __("the client");
+		const party = this.values.party_display || this.values.party || __("the {0}", [this.noun()]);
 		const $panel = $('<section><div class="cb-panel-body"></div></section>');
 		const $body = $panel.find(".cb-panel-body");
 		this.swap_stage($panel, dir);

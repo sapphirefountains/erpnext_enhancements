@@ -1818,6 +1818,19 @@ jobs:
       # live-template patch that replaces only the shipped v1.611.0 bodies. Needs jinja2.
       - name: Rental + owner agreement layout and inputs
         run: python -m unittest erpnext_enhancements.tests.test_rental_owner_agreement_layout -v
+      # Own step, same stub shape as the one above. The NDA, architect and employee-contractor
+      # agreements given the same theme: title block, summary, numbered clauses whose cross-references
+      # still hold, an input for every doc.<field> they print, initials, the sig() block, and the
+      # live-template patch that replaces only the shipped bodies. Needs jinja2.
+      - name: NDA + architect + employee-contractor layout and inputs
+        run: python -m unittest erpnext_enhancements.tests.test_general_agreement_layout -v
+      # Own step, same stub shape as the one above. The Master Subcontractor Agreement and Statement
+      # of Work given the same theme: numbered clauses, an input for every doc.<field> and box they
+      # print, subcontractor initials (Tier 2 and optional ones only when they apply), the sig()
+      # block, the SOW's hold-point table and fallback, and the live-template patch that replaces
+      # only the shipped bodies (prod's SOW is still v1.5.0). Needs jinja2.
+      - name: Subcontractor agreement (MSA + SOW) layout and inputs
+        run: python -m unittest erpnext_enhancements.tests.test_subcontractor_agreement_layout -v
       # Own step for the same reason as the suites above: its frappe stub points
       # get_app_path at the repo so the real logo.svg is read. Guards the print
       # format fixture too — the footer's #footer-html / .page / .topage hooks

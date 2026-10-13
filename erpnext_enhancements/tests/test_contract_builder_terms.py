@@ -534,7 +534,7 @@ class TestSummary(unittest.TestCase):
         html = self.maintenance(site_address="<script>x</script>")
         self.assertNotIn("<script>", html)
 
-    def test_rental_and_owner_have_one_and_the_rest_do_not(self):
+    def test_every_contract_type_has_one(self):
         rental = summary.summary_html(
             _Doc(
                 template_key="rental",
@@ -559,8 +559,11 @@ class TestSummary(unittest.TestCase):
         self.assertIn("construction and installation ($50,000.00)", owner)
         self.assertIn("signed Change Order", owner)
         self.assertNotIn("Design:", owner)
+        # Since v1.613.0 every contract type has one (Nik: "do the contract builder and building for all
+        # contract types"); an unknown type still has none.
         for key in ("msa", "sow", "nda", "architect", "employee_contractor"):
-            self.assertEqual(summary.summary_html(_Doc(template_key=key)), "", key)
+            self.assertIn("where the two differ, the agreement governs", summary.summary_html(_Doc(template_key=key)), key)
+        self.assertEqual(summary.summary_html(_Doc(template_key="no_such_type")), "")
 
     def test_every_fixed_figure_it_quotes_is_in_the_agreement(self):
         """The summary restates clauses; this catches a clause changed in the repo template without
@@ -977,6 +980,62 @@ class TestInitialsClauses(unittest.TestCase):
         self.assertEqual(set(blocks), set(initials.CLAUSE_BLOCKS))
 
 
+class TestShownFields(unittest.TestCase):
+    """Review of #1230: a field only shown for one choice is not a blank while that choice is not made."""
+
+    def test_the_conditions_this_doctype_uses(self):
+        doc = {"template_key": "sow", "sow_project_type": "Commercial", "payment_method": "Invoice (Check or Bank Transfer)"}
+        self.assertTrue(builder.shown('eval:doc.template_key=="sow"', doc))
+        self.assertFalse(builder.shown('eval:doc.template_key=="sow" && doc.sow_project_type=="Other"', doc))
+        self.assertTrue(builder.shown('eval:doc.template_key=="sow" && doc.sow_project_type!="Other"', doc))
+        self.assertTrue(
+            builder.shown(
+                'eval:doc.template_key=="maintenance" || (doc.template_key=="sow" && (doc.payment_method=="Invoice (Check or Bank Transfer)" || doc.payment_method=="Other"))',
+                doc,
+            )
+        )
+        self.assertFalse(builder.shown('eval:doc.template_key=="sow" && (!doc.payment_method)', doc))
+        self.assertTrue(builder.shown("eval:!doc.missing", doc))
+        self.assertFalse(builder.shown("missing", doc))
+        self.assertTrue(builder.shown(None, doc))
+        # Anything it cannot read counts as shown, never as hidden.
+        self.assertTrue(builder.shown("eval:(doc.phases||[]).some(p => p.included)", doc))
+        self.assertTrue(builder.shown('eval:doc.template_key=="sow" &&', doc))
+
+    def test_hidden_fields_are_neither_blanks_nor_progress(self):
+        steps = builder.builder_steps("maintenance", "Customer")
+        body = TEMPLATE.read_text(encoding="utf-8")
+        plain = builder.progress({"template_key": "maintenance", "property_type": "Commercial"}, steps, body)
+        other = builder.progress({"template_key": "maintenance", "property_type": "Other"}, steps, body)
+        self.assertEqual(other["total"], plain["total"] + 1)  # Other Property Type appears only for Other
+
+
+class TestPartyWording(unittest.TestCase):
+    """Nik, 2026-10-13: the builder for every contract type, so "With the client" and "Client
+    initials" must name the party each agreement is actually with."""
+
+    def test_each_agreement_names_its_own_party(self):
+        self.assertEqual(builder.party_noun("maintenance"), "client")
+        self.assertEqual(builder.party_noun("rental"), "client")
+        self.assertEqual(builder.party_noun("msa"), "subcontractor")
+        self.assertEqual(builder.party_noun("sow"), "subcontractor")
+        self.assertEqual(builder.party_noun("architect"), "architect")
+        # The builder and the printed caption call the NDA's other side the same thing.
+        self.assertEqual(builder.party_noun("nda"), "company")
+        self.assertEqual(initials.INITIALS_CAPTIONS["nda"], "Company initials")
+        self.assertEqual(builder.party_noun(None), "client")
+
+    def test_customer_agreements_keep_their_caption_byte_for_byte(self):
+        """The unsigned box is part of every snapshot: the customer agreements' must not change."""
+        self.assertIn(">Client initials<", initials.initial_markup({}, "renewal", "Renewal"))
+        self.assertNotIn("maintenance", initials.INITIALS_CAPTIONS)
+        self.assertIn(">Subcontractor initials<", initials.initial_markup({}, "k", "L", caption="Subcontractor initials"))
+        controller = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('caption=INITIALS_CAPTIONS.get(doc.get("template_key") or "")', controller)
+
+
 class TestBuilderSections(unittest.TestCase):
     def test_fields_map_to_the_parts_of_the_agreement_they_print_in(self):
         headings, fields = builder.agreement_sections(TEMPLATE.read_text(encoding="utf-8"))
@@ -996,10 +1055,12 @@ class TestBuilderSections(unittest.TestCase):
     def test_progress_counts_what_the_agreement_prints(self):
         steps = builder.builder_steps("maintenance", "Customer")
         body = TEMPLATE.read_text(encoding="utf-8")
-        empty = builder.progress({}, steps, body)
+        empty = builder.progress({"template_key": "maintenance"}, steps, body)
         self.assertGreater(empty["total"], 10)
         self.assertEqual(empty["filled"], 0)
-        some = builder.progress({"site_address": "1 Main", "emergency_rate": 250, "visit_rate": 0}, steps, body)
+        some = builder.progress(
+            {"template_key": "maintenance", "site_address": "1 Main", "emergency_rate": 250, "visit_rate": 0}, steps, body
+        )
         self.assertEqual(some["filled"], 2)
 
 

@@ -109,11 +109,10 @@ def letterhead_html(pillar=None):
 	"""The branded header block that opens every agreement.
 
 	The print design system's letterhead, minus the address: the pillar stripe,
-	the wordmark, and an eyebrow naming the pillar. No address, because six of
-	the eight shipped templates already open with their own company/address
-	block, and duplicating it under the wordmark would read as a mistake. The two
-	that do not (the architect agreement and the NDA) carry Sapphire's address in
-	their body text.
+	the wordmark, and an eyebrow naming the pillar. No address, because every
+	shipped template opens with its own title and company/address block (the
+	architect agreement and the NDA too, since v1.613.0), and duplicating it under
+	the wordmark would read as a mistake.
 
 	The ``@font-face`` for the display face rides inside the block as an inline
 	``<style>``: the block is chrome, emitted outside the signed snapshot, so the

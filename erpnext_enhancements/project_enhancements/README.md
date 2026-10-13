@@ -459,8 +459,8 @@ or sent for the client to sign in their own time.
   returned by the assistant tool) and printed in their boxes in the executed copy.
 - **The plain-language summary** (`contract_summary.py`, `{{ summary() }}` after each customer
   agreement's title): "What you are agreeing to, in short", built from this contract's own figures, part
-  of the signed body, ending with "where the two differ, the agreement governs". Maintenance, Rental and
-  Owner only. Each sentence restates a clause of the shipped template; change both together (a test
+  of the signed body, ending with "where the two differ, the agreement governs". Every contract type since v1.613.0
+  (Maintenance, Rental and Owner first). Each sentence restates a clause of the shipped template; change both together (a test
   checks the quoted figures against the template text). The signing page scrolls to the next initials
   box after each one, then to the signature.
 - **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
@@ -492,6 +492,40 @@ or sent for the client to sign in their own time.
   the owner contract now has the `sig()` block, so it can be e-signed.
   `tests/test_rental_owner_agreement_layout` asserts every `doc.<field>` the three customer
   agreements print is shown for that type by its own and its section's `depends_on`.
+- **The NDA, Architect and Employee-Contractor agreements, the same theme** (v1.613.0; templates +
+  `patches/refresh_general_agreement_layout`, which replaces each live body only when it is exactly
+  the shipped one). Each opens with the title block, `{{ summary() }}` and an information table, then
+  numbered `<h1>` sections of `ct-clause` clauses. The Word numbering lost in conversion is restored
+  from the documents' own cross-references (NDA "Paragraph 6"; architect "Sections 5 … and 10"), so
+  those references still land; the employee-contractor agreement is numbered in order and its
+  expectations are a `ct-list`. New inputs: `nda_entity_type` (the NDA's "a ____ with its principal
+  place of business"), and an architect step (`architect_section`) for the notice Attention line,
+  Sapphire's contact and email, and the embedded Statement of Work's Architect services, term and
+  payment terms; `agreement_party_name`, `billing_city_state_zip` and the Scope of Work step are
+  shown for these types too. Initials — NDA (the Company's): obligations, return, remedies,
+  attorneys' fees, jurisdiction; architect: reliance on its information, payment, warranty,
+  liability, force majeure, venue; employee-contractor: confidentiality, assignment,
+  non-solicitation, non-compete. Each now has the `sig()` block, so it can be e-signed.
+  `tests/test_general_agreement_layout` pins all of it.
+- **The Master Subcontractor Agreement and Statement of Work, the same theme** (v1.613.0; templates
+  + `patches/refresh_subcontractor_agreement_layout`, which replaces each live body only when it is
+  exactly a shipped one — prod's SOW was still the v1.5.0 body, so this is also what first brings
+  v1.461.0's §9.4 hold-point table there). Title block, `{{ summary() }}` (written to the
+  subcontractor: "you" is the sub, "we" is Sapphire), an information table, `ct-clause` clauses
+  (the MSA's §5.2 coverages a `ct-list`, the SOW's old `<h2>` sub-headings clauses in one series,
+  and a new SOW §11 General Provisions holding its Electronic Signatures clause). Every SOW box and
+  typed blank prints a `sow_*` field: §1.2/§1.3 project and feature type (details step), §4.1
+  schedule days and §4.3 liquidated damages (`sow_section`), §2.1 services (`sow_services_section`),
+  §2.3 exclusions and Section 6 Company-furnished items (`scope_section`), Section 3 due dates
+  (`sow_deliverables_section`), §5.1 type, §5.3 retention and §5.5 invoice day
+  (`sow_compensation_section`), and §8.1 safety, §9.3 correction days, the §9.4 fallback boxes and
+  Section 10 special terms (`sow_terms_section`); `agreement_party_name` and
+  `billing_city_state_zip` are shown for both. Left blank on purpose: SOW "Accepted By" (signed on
+  acceptance), the MSA's Exhibit B guarantee (completed by the guarantor) and Exhibit C risk register
+  (kept per job). Initials — MSA: pay if paid, insurance, indemnity, liability and delay, flow-down,
+  take-over, arbitration, plus Tier 2's retainage; SOW: liquidated damages (unless N/A), retention,
+  corrections, and special terms when there are any. Both have the `sig()` block, so both can be
+  e-signed. `tests/test_subcontractor_agreement_layout` pins all of it.
 
 ## Project Brief sections (v1.444.0)
 

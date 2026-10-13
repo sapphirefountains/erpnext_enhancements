@@ -47,7 +47,17 @@ MAX_INITIALS = 20
 PNG_PREFIX = "data:image/png;base64,"
 
 
-def initial_markup(initials, key, label=""):
+#: The caption under a blank initials box, per template key; "Client initials" otherwise.
+INITIALS_CAPTIONS = {
+	"msa": "Subcontractor initials",
+	"sow": "Subcontractor initials",
+	"architect": "Architect initials",
+	"employee_contractor": "Employee-Contractor initials",
+	"nda": "Company initials",
+}
+
+
+def initial_markup(initials, key, label="", caption=None):
 	"""One initials box for clause ``key``: the client's drawn initials once signed, else a blank box.
 
 	A key that is not ``[a-z0-9_]`` renders nothing at all rather than an unmatchable box:
@@ -62,13 +72,13 @@ def initial_markup(initials, key, label=""):
 	if image:
 		return (
 			f'<span class="ct-initial is-signed" data-initial="{key}">'
-			f'<img class="ct-initial-img" src="{escape(image)}" alt="{escape(frappe._("Client initials"))}">'
+			f'<img class="ct-initial-img" src="{escape(image)}" alt="{escape(frappe._(caption or "Client initials"))}">'
 			"</span>"
 		)
 	return (
 		f'<span class="ct-initial" data-initial="{key}" data-label="{escape(str(label or ""))}">'
 		'<span class="ct-initial-box">&nbsp;</span>'
-		f'<span class="ct-initial-label">{escape(frappe._("Client initials"))}</span>'
+		f'<span class="ct-initial-label">{escape(frappe._(caption or "Client initials"))}</span>'
 		"</span>"
 	)
 
