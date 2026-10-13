@@ -1,4 +1,4 @@
-"""Backend for the Maintenance Planner desk page (``/app/maintenance-planner``).
+"""Backend for the Maintenance Planner desk page (``/desk/maintenance-planner``).
 
 The planner is a month/week calendar of maintenance visits that people move by
 dragging cards. :func:`get_planner` feeds it three kinds of card:

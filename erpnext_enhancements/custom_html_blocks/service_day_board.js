@@ -79,7 +79,7 @@
                 const meta = [v.technician, v.customer].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="odb-row">
-                        <a class="odb-name" href="/app/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${esc(v.title)}</a>
+                        <a class="odb-name" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${esc(v.title)}</a>
                         ${flag}
                         <span class="odb-meta">${meta}</span>
                         <span class="odb-bar" title="${esc(pct + "%")}"><span class="odb-fill ${fill}" style="width:${pct}%"></span></span>

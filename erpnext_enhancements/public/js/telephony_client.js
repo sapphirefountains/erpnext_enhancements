@@ -574,7 +574,7 @@ erpnext_enhancements.telephony = {
         }
 
         const customer_link = notice.customer
-            ? `<a href="/app/customer/${encodeURIComponent(notice.customer)}">${esc(notice.customer)}</a>`
+            ? `<a href="/desk/customer/${encodeURIComponent(notice.customer)}">${esc(notice.customer)}</a>`
             : '';
         const context_html = (notice.context || []).length
             ? `<div class="tcp-context">${notice.context.map(esc).join('<br>')}</div>`

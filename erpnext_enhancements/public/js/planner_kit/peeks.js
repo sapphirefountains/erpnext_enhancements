@@ -7,7 +7,7 @@
  *     owner, push,                                // as for drawer.open
  *     can_drag: (booking, day, person, data) => bool,   // only what the page owns (its tasks,
  *                                                       // its visits); data: the drawer's answer
- *     on_full_route: (resource, ymd) => ...,      // the route view, /app/project-planner/route/...
+ *     on_full_route: (resource, ymd) => ...,      // the route view, /desk/project-planner/route/...
  *   });
  *   planner_kit.peeks.day({ date, group, owner, push, can_drag, person_key, on_person, on_week, only });
  *   // person_key(person): what identifies a person to the page (a resource, or a user);

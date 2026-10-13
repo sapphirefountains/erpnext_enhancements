@@ -1,5 +1,5 @@
 /**
- * Desk page: Device Fleet Dashboard (route /app/device-fleet-dashboard).
+ * Desk page: Device Fleet Dashboard (route /desk/device-fleet-dashboard).
  *
  * A green/amber/red snapshot of the managed-device fleet — status mix,
  * compliance split, stale self-attestations, warranty expiries, platform /

@@ -78,7 +78,7 @@
                 const tone = d.idle_days >= 30 ? "ssd-bad" : "ssd-warn";
                 return `
                     <div class="ssd-row">
-                        <a class="ssd-name" href="/app/opportunity/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="ssd-name" href="/desk/opportunity/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         ${stage}
                         <span class="ssd-meta">${meta}</span>
                         <span class="ssd-age ${tone}">${esc(__("{0}d idle", [d.idle_days]))}</span>

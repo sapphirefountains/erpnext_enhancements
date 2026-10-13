@@ -49,14 +49,14 @@
         body.innerHTML = jobs
             .map((j) => {
                 const opp = j.opportunity
-                    ? `<a class="fnj-opp" href="/app/opportunity/${encodeURIComponent(j.opportunity)}">${esc(j.opportunity)}</a>`
+                    ? `<a class="fnj-opp" href="/desk/opportunity/${encodeURIComponent(j.opportunity)}">${esc(j.opportunity)}</a>`
                     : "";
                 const meta = [esc(j.customer || ""), esc(j.owner || ""), esc(ageLabel(j.age_days))]
                     .filter(Boolean)
                     .join(" · ");
                 return `
                     <div class="fnj-item">
-                        <a class="fnj-name" href="/app/project/${encodeURIComponent(j.name)}">${esc(j.project_name)}</a>
+                        <a class="fnj-name" href="/desk/project/${encodeURIComponent(j.name)}">${esc(j.project_name)}</a>
                         <div class="fnj-meta">${meta}</div>
                         ${opp ? `<div class="fnj-meta">${__("from")} ${opp}</div>` : ""}
                     </div>`;

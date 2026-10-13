@@ -28,7 +28,7 @@ frappe.ui.form.on('Employee', {
 						(r) => `
 						<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-color);">
 							<div>
-								<a href="/app/managed-device/${encodeURIComponent(r.name)}"><b>${esc(r.device_name || r.name)}</b></a>
+								<a href="/desk/managed-device/${encodeURIComponent(r.name)}"><b>${esc(r.device_name || r.name)}</b></a>
 								<div style="font-size:12px;color:var(--text-muted);">${esc(r.platform || '')} ${esc(r.device_type || '')} · ${esc(r.status)}</div>
 							</div>
 							<span style="font-size:12px;font-weight:600;color:${compColor(r.compliance_status)};">${esc(r.compliance_status || 'Unknown')}</span>

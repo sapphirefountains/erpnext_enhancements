@@ -1,5 +1,5 @@
 /**
- * Desk page: Integrations Health (route /app/integrations-health).
+ * Desk page: Integrations Health (route /desk/integrations-health).
  *
  * One ops screen for every external service this app depends on — QuickBooks,
  * Google Drive, Telephony (Triton/Twilio), AI drafting (Gemini), Analytics

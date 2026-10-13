@@ -64,7 +64,7 @@ frappe.provide("erpnext_enhancements.crm");
 						indicator: "orange",
 						message:
 							frappe.utils.escape_html(state.gate_message) +
-							`<p><a href="/app/opportunity/${encodeURIComponent(opportunity_name)}">${__(
+							`<p><a href="/desk/opportunity/${encodeURIComponent(opportunity_name)}">${__(
 								"Open the opportunity"
 							)}</a></p>`,
 					});

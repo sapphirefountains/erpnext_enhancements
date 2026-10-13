@@ -1,5 +1,5 @@
 /**
- * Desk page: Drive Link Manager (route /app/drive-link-manager).
+ * Desk page: Drive Link Manager (route /desk/drive-link-manager).
  *
  * System-Manager-only dashboard for bulk-linking existing Google Drive folders
  * to ERPNext records (Customer / Project / Opportunity) before the two-way sync
@@ -226,7 +226,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 		const linked = c.status === 'Linked';
 		const route = ROUTE[c.reference_doctype] || 'app';
 		const rec = `<div class="dlm-rec-label">${esc(c.record_label || c.reference_name)}</div>
-			<div class="dlm-rec-sub"><a href="/app/${esc(route)}/${encodeURIComponent(c.reference_name)}" target="_blank">${esc(c.reference_name)}</a>${c.context ? ' · ' + esc(c.context) : ''}</div>`;
+			<div class="dlm-rec-sub"><a href="/desk/${esc(route)}/${encodeURIComponent(c.reference_name)}" target="_blank">${esc(c.reference_name)}</a>${c.context ? ' · ' + esc(c.context) : ''}</div>`;
 
 		const tier = c.match_tier || 'None';
 		const score = Math.round(c.score || 0);

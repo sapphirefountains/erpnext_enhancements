@@ -311,7 +311,7 @@
 	function poChipsHtml(stop) {
 		return (stop.purchase_orders || [])
 			.map((po) => {
-				const href = '/app/purchase-order/' + encodeURIComponent(po.name);
+				const href = '/desk/purchase-order/' + encodeURIComponent(po.name);
 				const title = [po.status, po.date].filter(Boolean).join(' · ');
 				return (
 					'<a class="ee-pickroute-po" href="' + href + '" title="' + esc(title) + '"' +
@@ -884,7 +884,7 @@
 
 		unroutableRowHtml(stop) {
 			const href = stop.supplier
-				? '/app/supplier/' + encodeURIComponent(stop.supplier)
+				? '/desk/supplier/' + encodeURIComponent(stop.supplier)
 				: null;
 			return (
 				'<div class="ee-pickroute-stop is-unroutable">' +

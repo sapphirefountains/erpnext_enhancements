@@ -98,7 +98,7 @@
                   .map(
                       (d) => `
                     <div class="ofh-row">
-                        <a class="ofh-name" href="/app/managed-device/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="ofh-name" href="/desk/managed-device/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         <span class="ofh-meta">${esc(d.compliance)}</span>
                         <span class="ofh-age ofh-warn">${esc(__("{0}d", [d.days]))}</span>
                     </div>`

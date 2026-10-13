@@ -70,7 +70,7 @@
                 const meta = [l.company, l.owner, l.source].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="stl-row">
-                        <a class="stl-name" href="/app/lead/${encodeURIComponent(l.name)}">${esc(l.title)}</a>
+                        <a class="stl-name" href="/desk/lead/${encodeURIComponent(l.name)}">${esc(l.title)}</a>
                         <span class="stl-meta">${meta}</span>
                         <span class="stl-age ${waitClass(l.hours_waiting)}">${esc(waitLabel(l.hours_waiting))}</span>
                     </div>`;

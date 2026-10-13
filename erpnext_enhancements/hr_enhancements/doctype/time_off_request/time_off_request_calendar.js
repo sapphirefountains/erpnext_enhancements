@@ -3,7 +3,7 @@
 //
 // "Who is out that week" — the half of Nik's PTO ask that is not the approval
 // flow, and the half dispatch actually opens. Frappe's own calendar view, so it
-// costs a config object rather than a page: /app/time-off-request/view/calendar.
+// costs a config object rather than a page: /desk/time-off-request/view/calendar.
 //
 // Colour carries the status, and only Approved is green. A Requested day is not a
 // day off yet, and a calendar that showed it as one would have somebody scheduling

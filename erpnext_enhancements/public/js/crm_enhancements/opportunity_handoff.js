@@ -415,7 +415,7 @@
 			.then((data) => {
 				const rows = (data && data.steps) || [];
 				const proj = (data && data.project) || f.project;
-				const link = `<a href="/app/project/${encodeURIComponent(proj)}">${frappe.utils.escape_html(
+				const link = `<a href="/desk/project/${encodeURIComponent(proj)}">${frappe.utils.escape_html(
 					proj
 				)}</a>`;
 				if (!rows.length) {

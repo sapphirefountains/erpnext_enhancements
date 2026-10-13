@@ -81,7 +81,7 @@
                 const meta = [p.customer, money(p.amount)].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="pwa-row">
-                        <a class="pwa-name" href="/app/project/${encodeURIComponent(p.name)}">${esc(p.title)}</a>
+                        <a class="pwa-name" href="/desk/project/${encodeURIComponent(p.name)}">${esc(p.title)}</a>
                         ${late}
                         <span class="pwa-meta">${meta}</span>
                         <span class="pwa-bar" title="${esc(pct + "%")}"><span class="pwa-fill ${fill}" style="width:${pct}%"></span></span>

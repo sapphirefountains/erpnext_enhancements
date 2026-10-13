@@ -36,7 +36,7 @@
     }
 
     function bankFormUrl(bank) {
-        return `/app/bank/${encodeURIComponent(bank)}`;
+        return `/desk/bank/${encodeURIComponent(bank)}`;
     }
 
     function renderAccount(a) {
@@ -97,8 +97,8 @@
         }
         if (message.paused) {
             body.innerHTML = `<div class="fbb-reconnect">${esc(message.status_message || __("Plaid is paused after a configuration error."))}
-                <a href="/app/plaid-settings">${__("Check the native Plaid Settings")}</a>
-                <a href="/app/plaid-banking-settings">${__("Plaid Banking Settings → Test Connection")}</a></div>`;
+                <a href="/desk/plaid-settings">${__("Check the native Plaid Settings")}</a>
+                <a href="/desk/plaid-banking-settings">${__("Plaid Banking Settings → Test Connection")}</a></div>`;
             return;
         }
         const banks = message.banks || [];
@@ -107,7 +107,7 @@
                 message.status === "Connected"
                     ? __("No balances cached yet — press Refresh.")
                     : __("No bank is linked. Link one in the native Plaid Settings (ERPNext Integrations).");
-            body.innerHTML = `<div class="fbb-muted">${reason} <a href="/app/plaid-settings">${__("Open Plaid Settings")}</a></div>`;
+            body.innerHTML = `<div class="fbb-muted">${reason} <a href="/desk/plaid-settings">${__("Open Plaid Settings")}</a></div>`;
             return;
         }
 

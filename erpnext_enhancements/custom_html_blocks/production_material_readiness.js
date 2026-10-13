@@ -85,7 +85,7 @@
                     .join(" · ");
                 return `
                     <div class="pmr-row">
-                        <a class="pmr-name" href="/app/material-request/${encodeURIComponent(r.name)}">${esc(r.name)}</a>
+                        <a class="pmr-name" href="/desk/material-request/${encodeURIComponent(r.name)}">${esc(r.name)}</a>
                         ${late}
                         <span class="pmr-meta">${meta}</span>
                         <span class="pmr-age">${esc(r.needed_by || "")}</span>

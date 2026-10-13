@@ -87,7 +87,7 @@
                 const tone = d.age_days >= 60 ? "dwb-bad" : d.age_days >= 30 ? "dwb-warn" : "";
                 return `
                     <div class="dwb-row">
-                        <a class="dwb-name" href="/app/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="dwb-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         ${blockers}
                         <span class="dwb-meta">${meta}</span>
                         <span class="dwb-bar" title="${esc(pct + "%")}"><span class="dwb-fill ${fill}" style="width:${pct}%"></span></span>

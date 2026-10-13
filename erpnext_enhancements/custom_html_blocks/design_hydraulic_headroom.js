@@ -89,7 +89,7 @@
                     .join(" · ");
                 return `
                     <div class="dhh-row">
-                        <a class="dhh-name" href="/app/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="dhh-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         <span class="dhh-meta">${meta}</span>
                         <span class="dhh-bar"><span class="dhh-fill ${fill}" style="width:${width}%"></span></span>
                         <span class="dhh-age ${tone}">${esc(label)}</span>

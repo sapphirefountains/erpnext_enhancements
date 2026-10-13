@@ -86,7 +86,7 @@
                 const tone = d.waiting_days >= 7 ? "shb-bad" : d.waiting_days >= 3 ? "shb-warn" : "";
                 return `
                     <div class="shb-row">
-                        <a class="shb-name" href="/app/opportunity/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="shb-name" href="/desk/opportunity/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         <span class="shb-meta">${meta}</span>
                         <span class="shb-age ${tone}">${esc(__("{0}d", [d.waiting_days]))}</span>
                     </div>`;

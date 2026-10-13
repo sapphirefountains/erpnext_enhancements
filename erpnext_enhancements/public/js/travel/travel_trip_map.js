@@ -87,7 +87,7 @@
 			'<b>' + esc(poi.label) + '</b><br>' +
 			(poi.category ? esc(poi.category) + '<br>' : '') +
 			(dates ? dates + '<br>' : '') +
-			'<a href="/app/travel-poi/' + encodeURIComponent(poi.poi) + '">' + __('Open POI') + '</a>' +
+			'<a href="/desk/travel-poi/' + encodeURIComponent(poi.poi) + '">' + __('Open POI') + '</a>' +
 			' &middot; <a href="' + gmaps + '" target="_blank" rel="noopener">' + __('Directions') + '</a>' +
 			'</div>'
 		);

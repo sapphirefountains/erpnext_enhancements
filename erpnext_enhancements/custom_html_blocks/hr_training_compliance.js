@@ -79,7 +79,7 @@
                 const meta = [a.learner, a.status].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="htc-row">
-                        <a class="htc-name" href="/app/training-assignment/${encodeURIComponent(a.name)}">${esc(a.course)}</a>
+                        <a class="htc-name" href="/desk/training-assignment/${encodeURIComponent(a.name)}">${esc(a.course)}</a>
                         <span class="htc-pill ${tone}">${esc(label)}</span>
                         <span class="htc-meta">${meta}</span>
                         <span class="htc-age">${esc(a.due_date || "")}</span>

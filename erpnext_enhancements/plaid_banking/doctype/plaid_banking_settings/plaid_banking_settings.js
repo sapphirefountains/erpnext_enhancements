@@ -3,13 +3,13 @@
  *
  * This form owns the Bank Balances widget only. Linking a bank is the NATIVE
  * ERPNext flow and does not happen here:
- *  - /app/plaid-settings (ERPNext Integrations): enter Client ID + Secret, pick
+ *  - /desk/plaid-settings (ERPNext Integrations): enter Client ID + Secret, pick
  *    the Environment, tick Enabled, save. "Link a new bank account" opens Plaid
  *    Link; on success it asks for a Company, then creates or updates the Bank
  *    record (storing the access token on Bank.plaid_access_token) and creates a
  *    Bank Account named "<Plaid account name> - <Bank>" for every account the
  *    user shared -- plus a new GL Account for any it does not find.
- *  - /app/bank/<name>: "Refresh Plaid Link" (shown once the Bank holds a token)
+ *  - /desk/bank/<name>: "Refresh Plaid Link" (shown once the Bank holds a token)
  *    re-authenticates that one institution in Link update mode.
  *
  * Buttons here delegate to whitelisted methods under
@@ -138,8 +138,8 @@ frappe.ui.form.on("Plaid Banking Settings", {
 			__(
 				"Linking happens in the native {0}: enter the client id / secret, choose the environment, tick Enabled, then use <b>Link a new bank account</b>. Re-authenticate a bank from its own {1} form (<b>Refresh Plaid Link</b>). This page only switches the Bank Balances widget on and maps the linked Plaid accounts onto the existing company Bank Accounts.",
 				[
-					`<a href="/app/plaid-settings">${__("Plaid Settings")}</a>`,
-					`<a href="/app/bank">${__("Bank")}</a>`,
+					`<a href="/desk/plaid-settings">${__("Plaid Settings")}</a>`,
+					`<a href="/desk/bank">${__("Bank")}</a>`,
 				],
 			),
 			"blue",
