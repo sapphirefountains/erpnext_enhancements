@@ -392,10 +392,23 @@ def _summary(doc, labels, site, visit_date, technician_name, completion):
 			(_("On site"), _on_site(doc)),
 			(_("Completed"), completion),
 			(_("Safety and PPE acknowledged"), _("Yes") if cint(doc.get("safety_acknowledged")) else _("No")),
-			(_("Client sign-off"), _("Signed") if doc.get("client_sign_off") else _("Not signed")),
+			(_("Client sign-off"), _client_sign_off(doc)),
 		]
 	)
 	return rows
+
+
+def _client_sign_off(doc):
+	"""How the client signed off, or where the emailed link stands (v1.614.0): "Signed on site
+	<time>", "Signed by email by <name> on <time>", "Emailed to <address> on <time>, not signed
+	yet". The bare Signed / Not signed when anything about that cannot be read: the digest is
+	never lost over this line."""
+	try:
+		from erpnext_enhancements.sapphire_maintenance.sign_off import describe, latest_request
+
+		return describe(doc, None if doc.get("client_sign_off") else latest_request(doc.name))
+	except Exception:
+		return _("Signed") if doc.get("client_sign_off") else _("Not signed")
 
 
 def _blocks(doc, labels, comparison=None):

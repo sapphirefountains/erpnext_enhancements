@@ -142,6 +142,10 @@ const VZ_STYLE = `
 .vz-tech-sig.vz-sig-missing .vz-sig{border:2px solid #d97706;}
 .vz-sig-needed{color:#b45309;font-size:14px;font-weight:600;margin-top:6px;}
 .vz-sig-img{display:block;max-width:100%;max-height:120px;margin-top:8px;background:#fff;border-radius:8px;}
+.vz-sign-off-email-toggle{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:15px;cursor:pointer;}
+.vz-sign-off-email-toggle input{width:22px;height:22px;flex:0 0 22px;}
+.vz-email{width:100%;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:17px;min-height:48px;}
+.vz-sign-off-sent{margin-top:8px;}
 .vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:15px;cursor:pointer;padding:6px 0;}
 .vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;color:var(--text-color);}
 .vz-pick-card:active{border-color:var(--primary,#2490ef);}
@@ -819,6 +823,10 @@ class VisitWizard {
 		this.section_meta = {};
 		this.template_meta = {};
 		this.feature_names = {};
+		// v1.614.0: the client sign-off by email — the address to prefill and the link already
+		// out (from the bootstrap), and the technician's choice on this visit (render_sign_off_email).
+		this.sign_off = {};
+		this._email_sign_off = { on: false, email: null };
 		this.steps = [];
 		this.step_index = 0;
 		this.features = [];
@@ -1408,6 +1416,7 @@ class VisitWizard {
 				this.section_meta = data.sections || {};
 				this.template_meta = data.template_meta || {};
 				this.feature_names = data.features || {};
+				this.sign_off = data.sign_off || {};
 				this.apply_state(data.state);
 				// What this phone kept for the visit (v1.596.0). Written from everything
 				// this page held for it, parked edits and an unanswered choice included, so
@@ -2128,7 +2137,7 @@ class VisitWizard {
 		// A Finish held back for this choice (sync_record) goes now, with what was chosen.
 		const finish = this._finish[name];
 		if (finish && finish.blocked && !finish.refused) {
-			this.keep_finish(this.doc, finish.signature, finish.technician_signature);
+			this.keep_finish(this.doc, finish.signature, finish.technician_signature, finish.email_sign_off);
 			return;
 		}
 		this.render();
@@ -2154,8 +2163,9 @@ class VisitWizard {
 	// signatures (the client's, and the technician's since v1.610.0), on this phone. The
 	// visit's answers are kept with it; from here the copy on the phone is the visit's, and
 	// sync_stored sends the answers, then the photos, then the Finish, when signal returns.
-	// Nothing is handed over unless the phone holds all of it.
-	keep_finish(doc, signature, technician_signature) {
+	// Nothing is handed over unless the phone holds all of it. The client's sign-off address
+	// (v1.614.0) is kept with it, so the email goes when the Finish does, once.
+	keep_finish(doc, signature, technician_signature, email_sign_off) {
 		const name = doc.name;
 		const cannot = () =>
 			frappe.msgprint(
@@ -2175,6 +2185,7 @@ class VisitWizard {
 				record: name,
 				signature: signature || null,
 				technician_signature: technician_signature || null,
+				email_sign_off: email_sign_off || null,
 				at: Date.now(),
 			};
 			return this.set_finish(item).then(
@@ -2420,6 +2431,7 @@ class VisitWizard {
 									record: name,
 									signature: finish.signature,
 									technician_signature: finish.technician_signature || null,
+									email_sign_off: finish.email_sign_off || null,
 									modified,
 								},
 								silent: true,
@@ -2476,8 +2488,20 @@ class VisitWizard {
 		return work;
 	}
 
+	// A sign-off email that could not go with the Finish (v1.614.0): the visit went anyway, so
+	// this is said, not raised. Sent, it is on the done screen (finish_now) or needs no word.
+	say_sign_off_sent(state) {
+		if (!state || !state.sign_off_error) return;
+		frappe.msgprint({
+			title: __("Sign-off email not sent"),
+			message: frappe.utils.escape_html(state.sign_off_error),
+			indicator: "orange",
+		});
+	}
+
 	// The Finish went through (now, or before, with its answer lost).
 	finish_sent(name, state) {
+		this.say_sign_off_sent(state);
 		const submitted = state.docstatus === 1;
 		frappe.show_alert({
 			message: submitted ? __("Visit {0} submitted.", [name]) : __("Visit {0} sent for review.", [name]),
@@ -3799,7 +3823,61 @@ class VisitWizard {
 			</div>
 		`);
 		this.setup_signature($sig_card, "client_sign_off");
+		this.render_sign_off_email($sig_card);
 		this.$wrap.append($sig_card);
+	}
+
+	// The client isn't on site (v1.614.0). Nik, 2026-10-13: "will this signature requirement
+	// allow the tech to send it via email to the client to sign off? the clients aren't always
+	// available to sign in person". Ticked, Finish sends the address with the visit, and the
+	// server emails the link once the visit has gone for review (finish_visit's
+	// email_sign_off), so a Finish kept on the phone without signal sends it when it goes. It
+	// never holds the visit up: the client's sign-off is not needed for review or approval. A
+	// signature drawn on the pad above wins, and nothing is emailed.
+	render_sign_off_email($card) {
+		const doc = this.doc;
+		if (!doc || doc.docstatus !== 0 || doc.client_sign_off) return;
+		const choice = this._email_sign_off;
+		if (choice.email === null) choice.email = this.sign_off.default_email || "";
+		const request = this.sign_off.request;
+		const out = request && ["Sent", "Viewed"].includes(request.status);
+		const sent_args = out
+			? [frappe.utils.escape_html(request.email || ""), frappe.datetime.str_to_user(request.sent_on)]
+			: [];
+		const sent = !out
+			? ""
+			: request.status === "Viewed"
+				? __("A sign-off link was emailed to {0} on {1}, and the client has opened it.", sent_args)
+				: __("A sign-off link was emailed to {0} on {1}.", sent_args);
+		const $block = $(`
+			<div class="vz-sign-off-email-block">
+				${sent ? `<div class="vz-card-sub vz-sign-off-sent">${sent}</div>` : ""}
+				<label class="vz-sign-off-email-toggle">
+					<input type="checkbox" ${choice.on ? "checked" : ""}>
+					<span>${out ? __("Email a new link to sign off (replaces the one sent)") : __("Client not here? Email them a link to sign off")}</span>
+				</label>
+				<div class="vz-sign-off-email" style="${choice.on ? "" : "display:none;"}">
+					<input class="vz-email" type="email" inputmode="email" autocomplete="off" placeholder="${__("client@example.com")}">
+					<div class="vz-card-sub">${__("Sent when you finish. The visit goes for review either way.")}</div>
+				</div>
+			</div>
+		`);
+		$block.find(".vz-email").val(choice.email);
+		$block.find(".vz-sign-off-email-toggle input").on("change", (event) => {
+			choice.on = !!event.target.checked;
+			$block.find(".vz-sign-off-email").toggle(choice.on);
+		});
+		$block.find(".vz-email").on("input change", (event) => {
+			choice.email = String(event.target.value || "").trim();
+		});
+		$card.append($block);
+	}
+
+	// The address Finish sends, or null: not ticked, or the client signed on the pad.
+	email_sign_off_value() {
+		const choice = this._email_sign_off;
+		if (!choice.on || this.pad_value("client_sign_off") || (this.doc && this.doc.client_sign_off)) return null;
+		return String(choice.email || "").trim();
 	}
 
 	// The technician signs the visit they are finishing (v1.610.0). Nik, 2026-10-13: "we need
@@ -4222,12 +4300,21 @@ class VisitWizard {
 			return;
 		}
 		const technician_signature = this.technician_finishing() ? this.pad_value("technician_signature") : null;
+		// The client's sign-off by email (v1.614.0): an address that cannot be one is said here,
+		// with signal or without, rather than discovered after the visit has gone.
+		const email_sign_off = this.email_sign_off_value();
+		if (email_sign_off !== null && !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email_sign_off)) {
+			frappe.show_alert({ message: __("Enter the client's email address, or untick Email them a link."), indicator: "orange" });
+			const el = this.$wrap.find(".vz-email")[0];
+			if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+			return;
+		}
 		const doc = this.doc;
 		this.flush_save()
 			.then(() =>
 				frappe.call({
 					method: "erpnext_enhancements.api.maintenance_visit.finish_visit",
-					args: { record: doc.name, signature, technician_signature, modified: doc.modified },
+					args: { record: doc.name, signature, technician_signature, email_sign_off, modified: doc.modified },
 					freeze: true,
 					freeze_message: __("Finishing visit…"),
 				})
@@ -4243,6 +4330,7 @@ class VisitWizard {
 				if (state.workflow_state !== undefined) doc.workflow_state = state.workflow_state;
 				// A Finish kept on this phone earlier (turned down, or held for a choice) is done.
 				if (this._finish[doc.name]) this.drop_finish(doc.name);
+				this.say_sign_off_sent(state);
 				// Left for another screen while it finished: say so, paint nothing.
 				if (doc !== this.doc) {
 					frappe.show_alert({
@@ -4251,6 +4339,11 @@ class VisitWizard {
 					});
 					return;
 				}
+				const emailed = state.sign_off
+					? `<p class="vz-muted">${__("A link to sign off was emailed to {0}.", [
+							frappe.utils.escape_html(state.sign_off.email || ""),
+					  ])}</p>`
+					: "";
 				this.$wrap.empty().append(`
 					<div class="vz-done-screen">
 						<div class="vz-done-icon">${submitted ? "✅" : "📨"}</div>
@@ -4260,6 +4353,7 @@ class VisitWizard {
 								? __("Stock, time and billing entries are being generated.")
 								: __("A reviewer will approve and submit this visit.")
 						}</p>
+						${emailed}
 					</div>
 				`);
 				// A new entry for the list, so Back from it returns to this visit
@@ -4272,7 +4366,7 @@ class VisitWizard {
 				// A refused finish showed the server's own message (a required item, the
 				// visit out of date) and stays as it was. No answer at all is no signal:
 				// the Finish is kept on this phone and sent when there is (v1.596.0).
-				if (error && vz_try_later(error)) this.keep_finish(doc, signature, technician_signature);
+				if (error && vz_try_later(error)) this.keep_finish(doc, signature, technician_signature, email_sign_off);
 			});
 	}
 }

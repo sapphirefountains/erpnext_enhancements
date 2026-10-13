@@ -53,6 +53,8 @@ NEVER = (
 	"pay-card.html",
 	"stripe-return.html",
 	"contract-sign.html",
+	# v1.614.0: a client's service report and a signing token in the URL, like contract-sign.
+	"visit-sign-off.html",
 	"fountain-move.html",
 	"training_certificate.html",
 	"wall.html",

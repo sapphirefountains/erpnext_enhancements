@@ -61,9 +61,18 @@ def maintenance_report(doc):
 	"""Everything the visit report prints that the record does not hold itself.
 
 	``{"features": {serial: name}, "feature_lines": [name, ...], "contract_line": str,
-	"charts": [svg markup], "fountain_photo": data URI or None}``. Never raises.
+	"charts": [svg markup], "fountain_photo": data URI or None, "sign_off_sent": date or ""}``.
+	``sign_off_sent`` (v1.614.0) is the day a sign-off link was emailed to a client who has not
+	signed yet, for "Sent for sign-off <date>, not yet signed". Never raises.
 	"""
-	report = {"features": {}, "feature_lines": [], "contract_line": "", "charts": [], "fountain_photo": None}
+	report = {
+		"features": {},
+		"feature_lines": [],
+		"contract_line": "",
+		"charts": [],
+		"fountain_photo": None,
+		"sign_off_sent": "",
+	}
 	try:
 		doc = _saved(doc)
 	except Exception:
@@ -90,7 +99,27 @@ def maintenance_report(doc):
 		report["fountain_photo"] = image_data_uri(doc.get("fountain_photo"), doc.name)
 	except Exception:
 		_log("fountain photo")
+	try:
+		report["sign_off_sent"] = sign_off_sent(doc)
+	except Exception:
+		_log("sign-off")
 	return report
+
+
+def sign_off_sent(doc):
+	"""The day the newest sign-off link went to a client who has not signed, or ""."""
+	if doc.get("client_sign_off"):
+		return ""
+	rows = frappe.get_all(
+		"Visit Sign-Off Request",
+		filters={"visit": doc.name, "status": ["in", ["Sent", "Viewed", "Expired"]]},
+		fields=["sent_on"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if not rows or not rows[0].get("sent_on"):
+		return ""
+	return frappe.utils.formatdate(rows[0].get("sent_on"))
 
 
 def _saved(doc):

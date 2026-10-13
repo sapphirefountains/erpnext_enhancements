@@ -1,0 +1,238 @@
+{
+ "actions": [],
+ "autoname": "VSR-.YYYY.-.#####",
+ "creation": "2026-10-13 18:00:00.000000",
+ "description": "A link emailed to a client to sign off a maintenance visit they were not there to sign in person (v1.614.0). Made by sapphire_maintenance/sign_off.py, never by hand: every field is evidence and read-only.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "visit",
+  "status",
+  "email",
+  "customer",
+  "column_break_sent",
+  "sent_by",
+  "sent_on",
+  "expires_on",
+  "first_viewed_on",
+  "view_count",
+  "evidence_section",
+  "signed_name",
+  "signed_on",
+  "confirmed",
+  "signer_ip",
+  "user_agent",
+  "column_break_signature",
+  "signature_image",
+  "token_section",
+  "token_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "visit",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Visit",
+   "options": "Sapphire Maintenance Record",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Sent",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Sent\nViewed\nSigned\nExpired\nSuperseded",
+   "read_only": 1
+  },
+  {
+   "description": "The one address the link was sent to.",
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sent To",
+   "options": "Email",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Account",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sent",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_by",
+   "fieldtype": "Link",
+   "label": "Sent By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Sent On",
+   "read_only": 1
+  },
+  {
+   "description": "Fourteen days after it was sent. An expired link cannot sign; send a new one from the visit.",
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_viewed_on",
+   "fieldtype": "Datetime",
+   "label": "First Viewed On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "view_count",
+   "fieldtype": "Int",
+   "label": "Times Viewed",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.status==\"Signed\"",
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Signature"
+  },
+  {
+   "description": "The name the client typed beside their signature.",
+   "fieldname": "signed_name",
+   "fieldtype": "Data",
+   "label": "Signed Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signed_on",
+   "fieldtype": "Datetime",
+   "label": "Signed On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The client ticked \"I confirm the service described above was performed\".",
+   "fieldname": "confirmed",
+   "fieldtype": "Check",
+   "label": "Confirmed Service Performed",
+   "read_only": 1
+  },
+  {
+   "description": "The address the signature came from, as the server saw it.",
+   "fieldname": "signer_ip",
+   "fieldtype": "Data",
+   "label": "Signer IP",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user_agent",
+   "fieldtype": "Small Text",
+   "label": "Signer Browser",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_signature",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "signature_image",
+   "fieldtype": "Signature",
+   "label": "Signature",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "token_section",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "Link"
+  },
+  {
+   "description": "SHA-256 of the link's token. The token itself is never stored: it is in the email and nowhere else.",
+   "fieldname": "token_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Token Hash",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Visit Sign-Off Request",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "read": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "search_fields": "visit,email",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Blue",
+   "title": "Sent"
+  },
+  {
+   "color": "Orange",
+   "title": "Viewed"
+  },
+  {
+   "color": "Green",
+   "title": "Signed"
+  },
+  {
+   "color": "Gray",
+   "title": "Expired"
+  },
+  {
+   "color": "Gray",
+   "title": "Superseded"
+  }
+ ],
+ "track_changes": 1
+}

@@ -2353,6 +2353,14 @@ jobs:
       # visits already waiting.
       - name: Visit finished for review (dated and clocked out then)
         run: python -m unittest erpnext_enhancements.tests.test_visit_finished_for_review -v
+      # The client's sign-off by email (v1.614.0): the link's token (256 bits, only its SHA-256
+      # stored, superseded on resend, fourteen days, single use), the guest Sign (token only,
+      # uniform failure copy, evidence assigned field by field, db_set onto an approved visit),
+      # who may send, Finish's send never raising, the page's controller and template, and the
+      # page's real script in node (scripts/test_web_flow_history.js visit-sign-off). Own step:
+      # it installs its own frappe stub with an in-memory table. Needs jinja2 and node.
+      - name: Visit client sign-off by email
+        run: python -m unittest erpnext_enhancements.tests.test_visit_sign_off -v
       # Visit numbers (v1.610.0): the visits named before v1.597.0 get PRJ-#####-YYYY-V### names
       # in the order they were done, after what each series has used; the old name is kept, the
       # calendar rows follow, the counter ends past them, and a failure is rolled back and logged,

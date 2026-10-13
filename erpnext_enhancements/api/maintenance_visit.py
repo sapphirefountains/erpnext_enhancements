@@ -399,7 +399,21 @@ def get_visit_bootstrap(record):
         "template_meta": _template_meta(doc.get("template")),
         "features": _feature_names(doc),
         "state": _wizard_state(doc),
+        # v1.614.0: the address the Wrap-up's "Email the client to sign off" prefills, and the
+        # link already out, if any. Never raises.
+        "sign_off": _sign_off_context(doc),
     }
+
+
+def _sign_off_context(doc):
+    """Never raises: the visit opens without its sign-off prefill rather than not at all."""
+    try:
+        from erpnext_enhancements.sapphire_maintenance.sign_off import wizard_context
+
+        return wizard_context(doc)
+    except Exception:
+        frappe.log_error(title="Visit sign-off: wizard context failed", message=frappe.get_traceback())
+        return {"default_email": "", "request": None}
 
 
 def _feature_names(doc):
@@ -618,7 +632,7 @@ def save_visit(record, patch, modified=None):
 
 
 @frappe.whitelist()
-def finish_visit(record, signature=None, modified=None, technician_signature=None):
+def finish_visit(record, signature=None, modified=None, technician_signature=None, email_sign_off=None):
     """Finish the visit: sign off and advance it through the house workflow.
 
     ``signature`` is the client's sign-off. ``technician_signature`` (v1.610.0) is the
@@ -627,6 +641,14 @@ def finish_visit(record, signature=None, modified=None, technician_signature=Non
     waiting for review: a reviewer's Approve & Submit also comes through here, and must
     never sign the visit as its technician. A visit signed earlier (sent back, finished
     again) keeps its signature when none is sent.
+
+    ``email_sign_off`` (v1.614.0) is the address to email the client a sign-off link at,
+    when they were not there to sign. It is sent **after** the visit has moved on, in the
+    same transaction (so a Finish kept on the phone and sent later sends it then, once), and
+    it never stops the Finish: a bad address or a failed send comes back as
+    ``sign_off_error`` beside a visit that went for review anyway
+    (``sapphire_maintenance.sign_off.send_after_finish``). A client signature drawn on site
+    wins: then nothing is emailed.
 
     With the "Sapphire Maintenance Workflow" active this applies the first
     workflow action available to the session user from the record's current
@@ -673,7 +695,25 @@ def finish_visit(record, signature=None, modified=None, technician_signature=Non
     else:
         doc.submit()
 
-    return _wizard_state(doc)
+    state = _wizard_state(doc)
+    if signature:
+        # Signed on site: a link emailed earlier is done with (it could not sign over this
+        # signature anyway; sign_off.sign_visit checks).
+        _retire_sign_off_links(doc.name)
+    elif email_sign_off:
+        from erpnext_enhancements.sapphire_maintenance.sign_off import send_after_finish
+
+        state.update(send_after_finish(doc, email_sign_off))
+    return state
+
+
+def _retire_sign_off_links(name):
+    try:
+        from erpnext_enhancements.sapphire_maintenance.sign_off import retire_live
+
+        retire_live(name)
+    except Exception:
+        frappe.log_error(title="Visit sign-off: retiring links failed", message=frappe.get_traceback())
 
 
 def _workflow_actions(doc):
