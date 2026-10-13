@@ -95,6 +95,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A plain-language summary for each (`contract_summary._nda`, `_architect`, `_employee_contractor`), built
   from the contract's own purpose, project, owner, payment terms and date; the architect's names the
   Statement of Work's payment terms when they are filled in and §3.1's customary-rates fallback when not.
+- **The Master Subcontractor Agreement prints its term and its rate schedule.** Nik: "yes print them".
+  The MSA had a term (`msa_term_months`, twelve months by default), an end date of its own
+  (`msa_expires_on`) and a rate schedule (`rate_schedule`) since v1.461.0, and they drove enforcement: an
+  expired MSA refuses new Statements of Work, and each SOW freezes the rates it was issued with. But the
+  agreement the subcontractor signed never said any of it. Now:
+  - the information table shows the **Agreement Term**;
+  - **§17.4 Term**: the term in months from the Effective Date, or through the agreement's own end date when
+    one is set (it wins, as `quality.msa.expires_on` decides), unless terminated earlier; no new SOW after it
+    ends, and an SOW issued before then is finished under it;
+  - **§4.6 Rate Schedule**: work an SOW prices by the hour, day, unit or equipment, or at a markup, is billed
+    at Exhibit D's rates unless the SOW states its own, each within its effective dates, and Exhibit D changes
+    only by a written amendment that never alters an SOW already issued;
+  - **Exhibit D – Rate Schedule**: classification (with its notes), type, rate (a markup as a percentage),
+    per, effective dates and overtime multiple; four paper lines when the schedule is empty.
+  The summary says how long it runs and where its rates come from. The builder's *Term* and *Rate schedule*
+  steps say what they print. The MSA's own end date is printed only when set, so the builder does not list
+  it (or a SOW's special terms) as a blank line (`contract_builder.PRINTED_ONLY_WHEN_SET`). The Statement of
+  Work's "Master Services Agreement" wording is kept, as Nik decided.
 - **The Contract Builder speaks to whoever the agreement is with.** With every contract type now built in
   the builder, "With the client" and "Client initials" were wrong for half of them. The walk names the
   party each agreement is with (`contract_builder.PARTY_NOUNS`): "With the subcontractor" for the master

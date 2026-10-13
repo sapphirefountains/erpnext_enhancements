@@ -118,8 +118,16 @@ STEP_COPY = {
 	"construction_section": ("Construction schedule", ""),
 	"milestones_section": ("Payment milestones", "When each payment falls due, and for what."),
 	"msa_section": ("Subcontractor tier", ""),
-	"section_msa_term": ("Term", ""),
-	"section_msa_rates": ("Rate schedule", ""),
+	"section_msa_term": (
+		"Term",
+		"How long the agreement runs from the day it is signed: twelve months unless you set another term, or an "
+		"end date of its own. It prints in the information table and Section 17.4.",
+	),
+	"section_msa_rates": (
+		"Rate schedule",
+		"The rates Statements of Work under this agreement are billed at (Exhibit D). Each SOW keeps its own copy "
+		"of the rates on the day it is issued; a later change here never rewrites one.",
+	),
 	"sow_section": ("The engagement", "Which master agreement it sits under, and the dates."),
 	"scope_section": (
 		"Scope of work",
@@ -152,6 +160,10 @@ STEP_COPY = {
 _TEMPLATE_KEY_EQ = re.compile(r"""doc\.template_key\s*==\s*["']([a-z_]+)["']""")
 _H1 = re.compile(r"<h1[^>]*>(.*?)</h1>", re.S | re.I)
 _DOC_FIELD = re.compile(r"\bdoc\.([a-z_][a-z0-9_]*)")
+
+#: Fields an agreement prints only when they are filled in, so an empty one is not a blank line: the
+#: MSA's own end date (otherwise the term in months prints), a SOW's special terms.
+PRINTED_ONLY_WHEN_SET = {"msa_expires_on", "sow_special_terms"}
 
 #: Child tables a template reads through a render-context name rather than ``doc.<table>``
 #: (``project_contract._render_context``): the maintenance plan and the owner phases.
@@ -410,6 +422,8 @@ def blanks(doc, steps):
 				continue
 			if field["fieldtype"] == "Table" or not shown(field.get("depends_on"), doc):
 				continue
+			if name in PRINTED_ONLY_WHEN_SET:
+				continue
 			value = doc.get(name)
 			if value in (None, "") or (field["fieldtype"] in ("Currency", "Float", "Int", "Percent") and not flt(value)):
 				out.append({"fieldname": name, "label": _(field.get("label") or name), "step": index})
@@ -454,7 +468,7 @@ def progress(doc, steps, body):
 			name = field.get("fieldname")
 			if field["fieldtype"] in NO_VALUE_TYPES or field["fieldtype"] == "Table" or name not in referenced:
 				continue
-			if not shown(field.get("depends_on"), doc):
+			if not shown(field.get("depends_on"), doc) or name in PRINTED_ONLY_WHEN_SET:
 				continue
 			total += 1
 			value = doc.get(name)

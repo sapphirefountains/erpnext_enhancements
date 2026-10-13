@@ -660,7 +660,9 @@ def _msa(doc):
 			"Getting paid:",
 			"we pay what each Statement of Work sets, within 10 business days of being paid for your work by the "
 			"project owner, and only once we have been: you carry the risk of the owner not paying (pay if paid). "
-			f"Dispute an invoice in writing within 10 days.{retainage}",
+			f"Dispute an invoice in writing within 10 days.{retainage} Work priced by the hour, day, unit or "
+			"piece of equipment uses the rates in Exhibit D unless the Statement of Work sets its own, and they "
+			"change only by a written amendment we both sign.",
 		)
 	)
 	# §5.1, §6.1, §20.8
@@ -690,11 +692,16 @@ def _msa(doc):
 			"before the claim.",
 		)
 	)
-	# §17.1, §18
+	# §17.4, §17.1, §18
+	if doc.get("msa_expires_on"):
+		runs = f"this agreement runs until {_date(doc.get('msa_expires_on'))}"
+	else:
+		runs = f"this agreement runs for {_number(doc.get('msa_term_months')) or '12'} months from the day we both sign it"
 	rows.append(
 		(
-			"Ending it, and disputes:",
-			"either of us can end this agreement, or any Statement of Work, with 30 days' written notice. Disputes "
+			"How long, ending it, and disputes:",
+			f"{runs}, and a Statement of Work issued before it ends is finished under it. Either of us can end "
+			"this agreement, or any Statement of Work, sooner with 30 days' written notice. Disputes "
 			"go to negotiation, then mediation, then binding arbitration in Salt Lake City, where the winner's "
 			"attorney fees are paid by the other side.",
 		)

@@ -480,6 +480,52 @@ class TestRender(unittest.TestCase):
 # --------------------------------------------------------------------------- layout
 
 
+class TestMsaTermAndRates(unittest.TestCase):
+    """Nik, 2026-10-13: "yes print them": the MSA's term and rate schedule, which it never printed."""
+
+    def test_the_term_prints_in_months_or_as_its_own_end_date(self):
+        default = _render(MSA, _empty("msa"))
+        self.assertIn("<b>Term.</b> This Agreement remains in effect 12 months from the Effective Date", default)
+        self.assertIn("<b>Agreement Term:</b></td><td>12 months from the Effective Date (Section 17.4)", default)
+        months = _render(MSA, _Doc(_empty("msa"), msa_term_months=24))
+        self.assertIn("remains in effect 24 months from the Effective Date", months)
+        dated = _render(MSA, _Doc(_empty("msa"), msa_term_months=24, msa_expires_on="2027-12-31"))
+        self.assertIn("remains in effect from the Effective Date through 2027-12-31", dated)
+        self.assertIn("<b>Agreement Term:</b></td><td>Through 2027-12-31 (Section 17.4)", dated)
+        self.assertNotIn("24 months", dated)  # an end date of its own wins, as quality.msa.expires_on decides
+
+    def test_exhibit_d_lists_the_rates(self):
+        rows = [
+            _Doc(classification="Journeyman", rate_type="Hourly", rate=95, uom="hour", overtime_multiplier=1.5,
+                 effective_from="2026-10-01", effective_to=None, notes="Includes truck"),
+            _Doc(classification="Materials", rate_type="Markup %", rate=15, uom=None, overtime_multiplier=None,
+                 effective_from=None, effective_to=None, notes=None),
+        ]
+        html = _render(MSA, _Doc(_empty("msa"), rate_schedule=rows))
+        exhibit = html[html.index("EXHIBIT D"):html.index("<h1>SIGNATURES</h1>")]
+        self.assertIn("Journeyman", exhibit)
+        self.assertIn("$95.00", exhibit)
+        self.assertIn("From 2026-10-01", exhibit)
+        self.assertIn("1.5 &times; rate", exhibit)
+        self.assertIn("Includes truck", exhibit)
+        self.assertIn("15%", exhibit)  # a markup is a percentage, not dollars
+        self.assertIn("The whole term", exhibit)
+        empty = _render(MSA, _empty("msa"))
+        blank_exhibit = empty[empty.index("EXHIBIT D"):empty.index("<h1>SIGNATURES</h1>")]
+        self.assertEqual(blank_exhibit.count("<tr>"), 5)  # the header and four paper lines
+
+    def test_section_4_6_points_at_exhibit_d(self):
+        text = _text(MSA)
+        self.assertIn("<b>Rate Schedule.</b>", text)
+        self.assertIn("rates in Exhibit D", text)
+        self.assertIn("does not alter an SOW already issued", text)
+
+    def test_notes_are_escaped(self):
+        rows = [_Doc(classification="X", rate_type="Hourly", rate=1, notes="<script>x</script>")]
+        html = _render(MSA, _Doc(_empty("msa"), rate_schedule=rows))
+        self.assertNotIn("<script>x</script>", html)
+
+
 class TestLayout(unittest.TestCase):
     def test_title_block_summary_and_information_table(self):
         for path, title in ((MSA, "MASTER SUBCONTRACTOR AGREEMENT"), (SOW, "STATEMENT OF WORK")):
@@ -497,7 +543,7 @@ class TestLayout(unittest.TestCase):
             self.assertTrue(lines[7].startswith('<table class="ct-table"><tr><td><b>'), path.name)
 
     def test_every_numbered_clause_hangs_its_number_in_order(self):
-        for path, count in ((MSA, 72), (SOW, 26)):
+        for path, count in ((MSA, 74), (SOW, 26)):
             text = _text(path)
             self.assertEqual(re.findall(r"<p>\s*\d+\.\d*\s", text), [], path.name)
             self.assertEqual(re.findall(r"<h2>\s*\d", text), [], path.name)
