@@ -41,6 +41,13 @@ function ee_tables_pristine(frm) {
 	);
 }
 
+// The weekday (0-6) the checklist is built for: the day done, else scheduled, else today. The
+// server's checklist_day reads the same two fields in the same order (visit_days.py).
+function ee_payload_weekday(frm) {
+	const day = frm.doc.visit_date || frm.doc.scheduled_visit_date || frappe.datetime.get_today();
+	return frappe.datetime.str_to_obj(day).getDay();
+}
+
 function ee_apply_payload(frm, payload) {
 	const mapping = {
 		maintenance_results: payload.results,
@@ -321,11 +328,32 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		frm.trigger("render_dashboard");
 	},
 
+	visit_date: function (frm) {
+		frm.trigger("rebuild_for_day");
+	},
+
+	scheduled_visit_date: function (frm) {
+		frm.trigger("rebuild_for_day");
+	},
+
+	// A checklist line can be set to weekdays (v1.618.0), so the visit's day decides which lines
+	// it gets. A paper visit keyed in project first and date second was built for today; when
+	// the day moves to another weekday, rebuild (silently while nothing is filled in, after
+	// asking otherwise). Only tables this form built: a visit opened with its rows already made
+	// (by the Visit Wizard, or saved earlier) keeps them when a reviewer corrects its date.
+	rebuild_for_day: function (frm) {
+		if (frm.doc.docstatus !== 0 || frm._ee_payload_weekday === undefined) return;
+		if (ee_payload_weekday(frm) !== frm._ee_payload_weekday) {
+			frm.trigger("populate_from_template");
+		}
+	},
+
 	populate_from_template: function (frm) {
 		if (frm.doc.docstatus !== 0) return;
 		if (!frm.doc.project && !frm.doc.maintenance_contract) return;
 
 		const fill = () => {
+			frm._ee_payload_weekday = ee_payload_weekday(frm);
 			frappe.call({
 				method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_visit_payload",
 				args: {

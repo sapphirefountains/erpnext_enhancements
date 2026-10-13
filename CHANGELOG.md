@@ -23,9 +23,14 @@ data (below). Two things a visit template could not say were code.
   daily form carried eight "(weekly)" tasks the technician marked N/A six days in seven, and nothing said
   which day each was due. A line with days now goes only on visits on those weekdays.
   - `get_visit_payload` takes `visit_date` and leaves off a line set to other days. The wizard's first
-    open passes the day the work was done, else the day it was scheduled. The desk form does the same.
-    No date means today.
-  - The days are written any reasonable way ("friday & tue", "Mon/Thu") and stored one way ("Tue, Fri").
+    open passes the day the work was done, else the day it was scheduled. No date means today.
+  - The desk form passes the same. It also rebuilds the tables it built when Visit Date or Scheduled
+    Visit Date moves to another weekday (`rebuild_for_day`): silently while nothing is filled in, and
+    after asking otherwise. A paper visit keyed in project first and date second was otherwise built
+    for today's weekday. A visit opened with its rows already made keeps them when a reviewer corrects
+    its date.
+  - The days are written any reasonable way ("friday & tue", "Mon/Thu", "Mon-Fri", "weekends") and
+    stored one way ("Tue, Fri"). All seven days is stored blank, meaning every visit.
   - A word that is not a day is refused on the Section, with its row. A misspelt day would otherwise be
     a line on every visit, the opposite of what was meant. A value saved before this check that cannot
     be read keeps its line on every visit rather than dropping work.
@@ -37,9 +42,14 @@ data (below). Two things a visit template could not say were code.
   - section 2.4's "Services NOT Included", headed "raise a follow-up for a quote".
 
   Before this the wizard showed the gate code and key from the agreement and nothing else, so a
-  technician could not tell in-scope work from a free extra. Rates are left out. It appears only for a
-  maintenance agreement the user may read, and it never raises. The exclusions are checked word for word
-  against `templates/contracts/maintenance_services_agreement.html`.
+  technician could not tell in-scope work from a free extra.
+  - No rate field is read. Exhibit A is shown as written, and a custom plan's text can name its price
+    (Valley Fair Mall's and Day Dairy's begin with the monthly fee). Employees can already read that on
+    the agreement.
+  - It appears only for a maintenance agreement the user may read, and it never raises.
+  - The exclusions are the current standard section 2.4, checked word for word against
+    `templates/contracts/maintenance_services_agreement.html`. An agreement signed on an older wording
+    is not re-read.
 - `tests/test_visit_agreement_match.py` (bench-free, own CI step) covers both.
 
 ### Changed (production data, AI Pending Actions confirmed by Nik)

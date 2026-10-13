@@ -213,6 +213,27 @@ class TestVisitDays(unittest.TestCase):
 		):
 			self.assertEqual(visit_days.normalize_days(text), expected, text)
 
+	def test_ranges_and_group_words(self):
+		for text, expected in (
+			("Mon-Fri", "Mon, Tue, Wed, Thu, Fri"),
+			("mon - wed, sat", "Mon, Tue, Wed, Sat"),
+			("Mon to Wed", "Mon, Tue, Wed"),
+			("Sat-Mon", "Mon, Sat, Sun"),
+			("weekends", "Sat, Sun"),
+			("weekdays", "Mon, Tue, Wed, Thu, Fri"),
+			# All seven is every visit, stored blank.
+			("daily", ""),
+			("every day", ""),
+			("Mon-Sun", ""),
+		):
+			self.assertEqual(visit_days.normalize_days(text), expected, text)
+		with self.assertRaises(ValueError):
+			visit_days.parse_days("Mon-Fry")
+
+	def test_a_day_that_is_not_a_date_keeps_the_line(self):
+		"""v16's getdate returns None for "0000-00-00"; the visit must still open."""
+		self.assertTrue(visit_days.scheduled_on("Tue", None))
+
 	def test_a_word_that_is_not_a_day_is_refused_and_named(self):
 		with self.assertRaises(ValueError) as caught:
 			visit_days.parse_days("Mon, Fryday")
@@ -231,9 +252,9 @@ class TestVisitDays(unittest.TestCase):
 
 	def test_the_visit_day_is_done_on_then_scheduled_then_today(self):
 		_reset()
-		self.assertEqual(visit_days.visit_day("2026-10-12", "2026-10-09"), D(2026, 10, 12))
-		self.assertEqual(visit_days.visit_day(None, "2026-10-09"), D(2026, 10, 9))
-		self.assertEqual(visit_days.visit_day(), TODAY)
+		self.assertEqual(visit_days.checklist_day("2026-10-12", "2026-10-09"), D(2026, 10, 12))
+		self.assertEqual(visit_days.checklist_day(None, "2026-10-09"), D(2026, 10, 9))
+		self.assertEqual(visit_days.checklist_day(), TODAY)
 
 
 class TestSectionDays(unittest.TestCase):
@@ -326,6 +347,28 @@ class TestPayloadByWeekday(unittest.TestCase):
 			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"
 		).read_text(encoding="utf-8")
 		self.assertIn("visit_date: frm.doc.visit_date || frm.doc.scheduled_visit_date", desk)
+
+	def test_the_desk_form_rebuilds_what_it_built_when_the_weekday_moves(self):
+		"""A paper visit keyed in project first and date second must not keep today's lines."""
+		desk = (
+			APP / "sapphire_maintenance/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"
+		).read_text(encoding="utf-8")
+		for field in ("visit_date", "scheduled_visit_date"):
+			start = desk.index(f"\t{field}: function (frm) {{")
+			self.assertIn('frm.trigger("rebuild_for_day")', desk[start : desk.index("\t},", start)])
+		start = desk.index("\trebuild_for_day: function (frm) {")
+		body = desk[start : desk.index("\n\t},", start)]
+		# Only tables this form built (a weekday was recorded), and only on another weekday.
+		self.assertIn("frm._ee_payload_weekday === undefined) return;", body)
+		self.assertIn("ee_payload_weekday(frm) !== frm._ee_payload_weekday", body)
+		self.assertIn('frm.trigger("populate_from_template")', body)
+		start = desk.index("\tpopulate_from_template: function (frm) {")
+		fill = desk[start : desk.index("frappe.call({", start)]
+		self.assertIn("frm._ee_payload_weekday = ee_payload_weekday(frm);", fill)
+		# The same fields, in the same order, as the server's checklist_day.
+		self.assertIn(
+			"frm.doc.visit_date || frm.doc.scheduled_visit_date || frappe.datetime.get_today()", desk
+		)
 
 
 class TestAgreementScope(unittest.TestCase):

@@ -80,7 +80,7 @@
   },
   {
    "columns": 1,
-   "description": "Leave blank for every visit. Otherwise only visits on these weekdays get this line, e.g. Tue, Fri, for an agreement's weekly schedule.",
+   "description": "Leave blank for every visit. Otherwise only visits on these weekdays get this line, e.g. Tue, Fri or Mon-Fri, for an agreement's weekly schedule.",
    "fieldname": "days",
    "fieldtype": "Data",
    "in_list_view": 1,

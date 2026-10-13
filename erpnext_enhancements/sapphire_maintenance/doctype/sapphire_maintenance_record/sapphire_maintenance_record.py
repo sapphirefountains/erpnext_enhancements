@@ -54,7 +54,7 @@ from frappe.model.document import Document
 from frappe.utils import flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.sapphire_maintenance.task_rules import task_answered
-from erpnext_enhancements.sapphire_maintenance.visit_days import scheduled_on, visit_day
+from erpnext_enhancements.sapphire_maintenance.visit_days import checklist_day, scheduled_on
 
 #: A project name that can lead a visit's name. v16's make_autoname refuses a series outside
 #: ``^[\w\- /.#{}]+$`` (``NamingSeries.validate``); ``.``, ``#`` and braces are series syntax
@@ -623,7 +623,7 @@ def get_visit_payload(
 
 	customer = contract.customer if contract else None
 	payload = {"template": None, "results": [], "readings": [], "tasks": [], "consumables": []}
-	weekday = visit_day(visit_date)
+	weekday = checklist_day(visit_date)
 	template_cache = {}
 	item_cache = {}
 

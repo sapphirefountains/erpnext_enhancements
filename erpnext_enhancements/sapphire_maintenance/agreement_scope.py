@@ -7,14 +7,16 @@ out, or the work the agreement leaves out. Out-of-scope work done for free, and 
 work skipped, both start there. ``agreement_scope`` gathers that for the wizard's collapsed
 "What the agreement covers" card.
 
-Only for a maintenance agreement (``template_key == "maintenance"``) the user may read. Rates
-are left out: the card is about the work. Never raises; the visit opens without the card
-rather than not at all.
+Only for a maintenance agreement (``template_key == "maintenance"``) the user may read. No
+rate field is read: the card is about the work. Exhibit A is shown as written, so a custom
+plan whose text names its price shows it (an Employee can read the agreement anyway). Never
+raises; the visit opens without the card rather than not at all.
 """
 
 import frappe
 
-#: Section 2.4 "Services NOT Included" of ``templates/contracts/maintenance_services_agreement.html``.
+#: Section 2.4 "Services NOT Included" of ``templates/contracts/maintenance_services_agreement.html``,
+#: the current standard wording; an agreement signed on an older wording is not re-read.
 #: ``tests/test_visit_agreement_match.py`` fails the build when a line here stops matching it.
 NOT_INCLUDED = (
 	"Structural repairs, major equipment replacement, or resurfacing",

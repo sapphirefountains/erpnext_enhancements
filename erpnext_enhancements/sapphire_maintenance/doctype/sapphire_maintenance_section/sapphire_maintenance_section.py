@@ -55,7 +55,7 @@ class SapphireMaintenanceSection(Document):
 				row.days = normalize_days(row.get("days"))
 			except ValueError as error:
 				frappe.throw(
-					_('Row {0}: "{1}" is not a day of the week. Write the days like Mon, Tue, Fri.').format(
+					_('Row {0}: "{1}" is not a day of the week. Write the days like Tue, Fri or Mon-Fri.').format(
 						row.idx, error
 					)
 				)
