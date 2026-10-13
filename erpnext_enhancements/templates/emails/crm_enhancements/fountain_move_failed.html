@@ -19,7 +19,7 @@
 {% endif %}
 
 {{ ee.kv([
-	("Contact", req.email ~ " · " ~ req.phone),
+	("Contact", req.email ~ " · " ~ sf_phone(req.phone)),
 	("Purchased at", req.purchase_location)
 ]) }}
 

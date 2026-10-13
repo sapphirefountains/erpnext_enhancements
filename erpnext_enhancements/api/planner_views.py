@@ -52,6 +52,7 @@ from frappe.utils import cint, flt, getdate, nowdate
 from erpnext_enhancements.api import maintenance_planner as mp
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.project_enhancements import crew_availability as engine
+from erpnext_enhancements.utils.normalize import phone_display
 
 #: Everyone who can open either planner: both pages call the person, day and project reads.
 VIEW_ROLES = frozenset(pp.PLANNER_ROLES | mp.PLANNER_ROLES)
@@ -122,10 +123,13 @@ def tel_number(raw):
 	Employee cell numbers on this site are sparse and often bare digits ("8015551234"), so ten digits
 	are taken as a US number and eleven starting with 1 as one with its country code. Anything else
 	keeps a leading "+" when it had one, and a number shorter than seven digits is no number.
+	An extension is left off rather than run into the number: from form kit P2-B a phone is stored
+	``+18015551234,12``, and its fourteen digits would dial somebody else.
 	"""
 	text = str(raw or "").strip()
 	if not text:
 		return None
+	text = re.split(r"ext|x|#|;|,", text, maxsplit=1, flags=re.I)[0].strip()
 	plus = text.startswith("+")
 	digits = re.sub(r"\D", "", text)
 	if len(digits) == 10 and not plus:
@@ -346,7 +350,8 @@ def _contact(person):
 		phone = phone or row.get("mobile_no") or None
 		email = email or clean_email(row.get("email_id"))
 	tel = tel_number(phone)
-	return {"phone": str(phone).strip() if tel else None, "tel": tel, "email": email}
+	# Shown the way people read it, (801) 555-1234: the number is stored +18015551234 (P2-B).
+	return {"phone": phone_display(str(phone).strip()) if tel else None, "tel": tel, "email": email}
 
 
 def _resource_map():

@@ -22,7 +22,7 @@
 {% endif %}
 
 {{ ee.kv([
-	("Phone", req.phone),
+	("Phone", sf_phone(req.phone)),
 	("Destination", req.address_line1 ~ ", " ~ req.city ~ " " ~ req.state ~ " " ~ req.pincode),
 	("Purchased at", req.purchase_location)
 ]) }}

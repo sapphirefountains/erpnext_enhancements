@@ -64,6 +64,13 @@ import "./global_enhancements/field_description_icons.js";
 // the body class, swaps an editable Data <input> for a <textarea>, and shows the
 // remainder of a still-clipped cell on hover.
 import "./global_enhancements/field_text_wrap.js";
+// Form kit P2-B: phones show as (801) 555-0100 on every read surface (forms, grids, lists,
+// report views, script reports) and a registered phone field normalizes what is typed into it,
+// while the server stores +18015550100 (utils/normalize_hook.py). Wraps the Data formatter and
+// ControlData.format_for_input/parse, failing open; installs nothing when frappe.boot has no
+// sf_normalize (the disable_value_normalization kill switch). An ES module: it imports the
+// rules from normalize/normalize.js, the twin tests/test_normalize.py holds to the Python.
+import "./normalize/desk_display.js";
 // Show the activity feed on the first tab only. Frappe renders the timeline into
 // `.form-footer`, a SIBLING of the tab panes, so it follows you onto every tab and
 // pushes the thing you came for off the screen. One shared script rather than a

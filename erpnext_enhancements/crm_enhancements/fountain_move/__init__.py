@@ -254,7 +254,10 @@ def get_contact_phone():
 		if company:
 			configured = frappe.db.get_value("Company", company, "phone_no")
 			if configured and str(configured).strip():
-				return str(configured).strip()
+				# Stored in E.164 since form kit P2-B; shown the way people read it.
+				from erpnext_enhancements.utils.normalize import phone_display
+
+				return phone_display(str(configured).strip())
 	except Exception:
 		pass
 	return CONTACT_PHONE

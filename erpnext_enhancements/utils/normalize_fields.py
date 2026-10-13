@@ -11,8 +11,8 @@ this site the fieldtype says almost nothing: most phone and email fields are pla
 contact values at all. It was derived from production DocField and Custom Field metadata on
 2026-10-13 and every exclusion below carries its reason.
 
-**The rules every consumer follows** (the dry-run report now; the save hook in P2-B and the
-cleanup in P2-C later):
+**The rules every consumer follows** (the dry-run report, the save hook
+``utils/normalize_hook.py``, and the cleanup in P2-C later):
 
 * **A record with ``docstatus`` 1 or 2 is never touched.** A submitted or cancelled document
   is a record of what was true when it was submitted; rewriting a field on it is editing
@@ -183,6 +183,21 @@ CHILD_TABLES = frozenset(
 		"Prospect Lead",
 	}
 )
+
+#: Which parent doctypes hold each registered child table. The save hook
+#: (``utils/normalize_hook.py``) runs on the parent's save — a child row never gets a
+#: ``before_validate`` of its own — and reads this to know, without loading any meta, which
+#: parents can carry a registered row. ``tests/test_normalize_hook.py`` checks it against the
+#: Table fields of this app's doctypes and fixtures; Contact's and Prospect's are frappe's and
+#: ERPNext's own.
+CHILD_TABLE_PARENTS = {
+	"Call Routing Target": ("Call Routing Rule",),
+	"Contact Email": ("Contact",),
+	"Contact Phone": ("Contact",),
+	"Hand-Off Attendee Role": ("ERPNext Enhancements Settings",),
+	"Project Reminder Email": ("ERPNext Enhancements Settings",),
+	"Prospect Lead": ("Prospect",),
+}
 
 #: The doctypes whose ``state``/``zip`` fields read the record's own ``country``.
 COUNTRY_FIELD = {"Address": "country"}

@@ -69,6 +69,7 @@ from frappe import _
 from frappe.utils import cint
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
+from erpnext_enhancements.utils.normalize import phone_display
 
 SETTINGS = "Project Planner Settings"
 TOGGLE = "customer_date_confirmations"
@@ -250,10 +251,11 @@ def _default_company():
 
 
 def _phone(company):
+	# Both are registered phones, stored +18015550100 since form kit P2-B: shown (801) 555-0100.
 	phone = (_setting(PHONE_SETTING) or "").strip()
-	if phone:
-		return phone
-	return (_value("Company", company, "phone_no") or "").strip() if company else ""
+	if not phone and company:
+		phone = (_value("Company", company, "phone_no") or "").strip()
+	return phone_display(phone)
 
 
 def _valid_email(value):

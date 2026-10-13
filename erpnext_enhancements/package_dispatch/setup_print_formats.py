@@ -45,7 +45,7 @@ SHEET_HTML = """
       {% if doc.address_line2 %}<div>{{ doc.address_line2 }}</div>{% endif %}
       <div>{{ doc.city or "" }}{% if doc.state %}, {{ doc.state }}{% endif %} {{ doc.pincode or "" }}</div>
       {% if doc.country %}<div>{{ doc.country }}</div>{% endif %}
-      {% if doc.recipient_phone %}<div style="margin-top:4px; color:#555;">☎ {{ doc.recipient_phone }}</div>{% endif %}
+      {% if doc.recipient_phone %}<div style="margin-top:4px; color:#555;">☎ {{ sf_phone(doc.recipient_phone) }}</div>{% endif %}
     </div>
     <div style="width:38%; border:1px solid #cfe0ff; background:#f4f8ff; border-radius:4px; padding:8px 12px;">
       <div style="color:#777; text-transform:uppercase; font-size:10px; letter-spacing:.04em; margin-bottom:4px;">Declared Value</div>

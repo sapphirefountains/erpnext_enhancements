@@ -26,6 +26,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint
 
+from erpnext_enhancements.ai_governance import call_routing_dial as dial
 from erpnext_enhancements.ai_governance import call_routing_match as match
 
 #: Which DocType a target's Dynamic Link points at. Types absent from this map resolve
@@ -98,7 +99,7 @@ class CallRoutingRule(Document):
 			if (row.target_type or "").strip() != PHONE_NUMBER:
 				continue
 			raw = (row.phone_number or "").strip()
-			number = match.to_e164(raw)
+			number = dial.to_dialable(raw)
 			if not number:
 				frappe.throw(
 					_("Row {0}: {1} is not a phone number Twilio can dial.").format(
@@ -158,7 +159,7 @@ class CallRoutingRule(Document):
 					frappe.db.get_value("Employee", row.target_value, ["employee_name", "cell_number"])
 					or (None, None)
 				)
-				if match.to_e164(cell):
+				if dial.to_dialable(cell):
 					reachable += 1
 				else:
 					problems.append(
