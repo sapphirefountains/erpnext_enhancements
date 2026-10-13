@@ -796,7 +796,9 @@ class Wiring(unittest.TestCase):
 			events["cron"]["*/5 * * * *"],
 		)
 		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
-		self.assertEqual(hooks.count('"4-59/5 * * * *"'), 1, "a repeated cron key replaces the first silently")
+		self.assertEqual(
+			hooks.count('"4-59/5 * * * *"'), 1, "a repeated cron key replaces the first silently"
+		)
 
 	def _fields(self, doctype_dir):
 		meta = json.loads((DOCTYPES / doctype_dir / f"{doctype_dir}.json").read_text(encoding="utf-8"))
