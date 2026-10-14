@@ -3,7 +3,7 @@
  *
  * The page's own stylesheet, so Frappe's page loader sends it with the page (getpage) and an
  * edit reaches every device on the next deploy. It used to be public/css/workforce/
- * location_timeline.css, pulled in by frappe.require of a raw /assets path (v1.650.0 moved it).
+ * location_timeline.css, pulled in by frappe.require of a raw /assets path (v1.652.0 moved it).
  * Page CSS is appended to <head> once and never removed, so it is GLOBAL: every selector here
  * starts with an lt- class. tests/test_s3_page_css.py holds it to that.
  *

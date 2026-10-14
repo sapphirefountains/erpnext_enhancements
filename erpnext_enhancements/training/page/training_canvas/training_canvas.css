@@ -14,7 +14,7 @@
  * rule without it would style every page visited after this one
  * (tests/test_s3_page_css.py).
  *
- * THE CHROME IS ON THE APP'S --sf-* TOKENS (docs/app-design-system.md; v1.650.0,
+ * THE CHROME IS ON THE APP'S --sf-* TOKENS (docs/app-design-system.md; v1.652.0,
  * S3.4b). It used to read the learner's Aurora palette (--tr-*) with a literal
  * fallback beside every read, plus a handful of Frappe colours. The learner render
  * inside the sheet still takes player.css, because the author must see what a
@@ -1451,11 +1451,11 @@
    for the same reason it does on the learner rail: written as 991 it leaves a
    fractional gap that browser zoom lands in routinely.
 
-   v1.650.0: this comment used to be split in two. The home-screen section (v1.489.0) was
+   v1.652.0: this comment used to be split in two. The home-screen section (v1.489.0) was
    pasted into its middle, and CSS comments do not nest, so the comment ended at that
    section's own closing marker and this paragraph sat in the stylesheet as a selector. A
    rule whose selector is invalid is dropped whole, and the rule it swallowed was the
-   tablet block below: from v1.489.0 to v1.650.0 none of it applied. The tests that pinned
+   tablet block below: from v1.489.0 to v1.652.0 none of it applied. The tests that pinned
    the breakpoint read the text and passed. tests/test_s3_page_css.py now fails the build on
    a comment that opens inside another one. */
 @media (max-width: 991.98px) {

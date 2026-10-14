@@ -221,7 +221,7 @@ class TestTheMapFollowsTheDeskTheme(unittest.TestCase):
 
     def test_the_stylesheet_reads_the_app_tokens(self):
         """The app's --sf-* tokens follow the desk's data-theme (sf_tokens.bundle.css), so the
-        page needs no theme block of its own. Since v1.650.0 they replace the desk variables
+        page needs no theme block of its own. Since v1.652.0 they replace the desk variables
         this used to read; tests/test_s3_page_css.py holds the rest of the file to them."""
         css = _text(PAGE_CSS)
         for var in ("--sf-bg", "--sf-surface", "--sf-rule", "--sf-text", "--sf-text-muted"):
@@ -258,7 +258,7 @@ class TestAssetsLoadThroughFrappeRequireWithBarePaths(unittest.TestCase):
         self.assertNotIn("?v=", body)
 
     def test_the_stylesheet_comes_with_the_page(self):
-        """Since v1.650.0 the stylesheet is the page's own .css, which Frappe's page loader
+        """Since v1.652.0 the stylesheet is the page's own .css, which Frappe's page loader
         sends with the page; the script requires none. It used to be a raw /assets path in
         frappe.require, a second request behind a frappe.dom.freeze()."""
         body = _js(PAGE_JS)

@@ -68,7 +68,7 @@ class TestLocationTimelineMap(unittest.TestCase):
         self.assertNotIn('.leaflet-', self.css_content)
 
     def test_no_versioned_asset_paths(self):
-        # The stylesheet is the page's own .css since v1.650.0, so there is no ASSETS list
+        # The stylesheet is the page's own .css since v1.652.0, so there is no ASSETS list
         # left; whatever the page loads must still carry no ?v= of its own.
         clean_js = self.strip_comments(self.js_content)
         self.assertNotIn('const ASSETS = [', clean_js)

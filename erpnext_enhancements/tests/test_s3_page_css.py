@@ -1,4 +1,4 @@
-"""Custom pages S3.4a/b (v1.646.0, v1.650.0, TASK-2026-02823): page CSS out of JS, on the tokens.
+"""Custom pages S3.4a/b (v1.646.0, v1.652.0, TASK-2026-02823): page CSS out of JS, on the tokens.
 
 Five Desk pages used to style themselves from JS: a ``<style>`` block in a markup string, a
 ``QW_STYLE`` constant appended to the page, or inline ``style="color: ..."`` attributes. Their
@@ -8,7 +8,7 @@ on ``version-16``, through ``desk_page.getpage``), so an edit is never served st
 one-year immutable ``/assets`` cache. And the colours are the app's ``--sf-*`` tokens
 (``docs/app-design-system.md``), which follow the Desk's light or dark theme.
 
-S3.4b (v1.650.0) adds four more: Question Review and the Course Canvas, which already had
+S3.4b (v1.652.0) adds four more: Question Review and the Course Canvas, which already had
 their own ``.css`` but painted it in Frappe's palette and the learner's Aurora palette; the
 Sales Pipeline TV board; and the Location Timeline, whose stylesheet lived in
 ``public/css/workforce/`` and came in by ``frappe.require`` of a raw ``/assets`` path.

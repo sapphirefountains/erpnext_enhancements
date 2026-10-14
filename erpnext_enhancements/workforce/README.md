@@ -125,7 +125,7 @@ single styler instead of thousands of Marker objects -- which is the reason Leaf
 renderer was there in the first place.
 
 The stylesheet is the page's own `location_timeline.css`, which Frappe's page loader sends with
-the page, on the app's `--sf-*` tokens (v1.650.0; it used to be `public/css/workforce/`, pulled
+the page, on the app's `--sf-*` tokens (v1.652.0; it used to be `public/css/workforce/`, pulled
 in by `frappe.require`). Page CSS stays in `<head>` for the session, so every selector starts
 with an `lt-` class; `tests/test_s3_page_css.py` holds it to that and to the tokens. Opened pre-filled via `frappe.route_options {employee, from_date, to_date}` from the
 Job Interval form's **View on Timeline** button and the Employee form's **Location Timeline**

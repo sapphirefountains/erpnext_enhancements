@@ -8,7 +8,7 @@
  * both directions between the learner stylesheet and the four player scripts, and a
  * stray one fails the build.
  *
- * EVERY COLOUR IS AN --sf-* TOKEN (docs/app-design-system.md; v1.650.0, S3.4b). There is
+ * EVERY COLOUR IS AN --sf-* TOKEN (docs/app-design-system.md; v1.652.0, S3.4b). There is
  * not one theme selector in this file and there must not be: the desk stamps its own light
  * and dark on the document root and the tokens switch on it, so the console follows it for
  * free. training_insights.css makes exactly this bargain. This page also does NOT pull the

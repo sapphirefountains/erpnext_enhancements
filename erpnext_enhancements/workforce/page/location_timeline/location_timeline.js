@@ -26,7 +26,7 @@
 // location_timeline.css beside this file, which Frappe's page loader sends with the
 // page (getpage), so it needs no loading here at all. It used to live in
 // public/css/workforce/ and come in through frappe.require of a raw /assets path
-// (moved in v1.650.0, S3.4b): one more request, behind a frappe.dom.freeze(), for a
+// (moved in v1.652.0, S3.4b): one more request, behind a frappe.dom.freeze(), for a
 // file the page loader delivers for nothing.
 //
 // Every server string that reaches innerHTML, a tooltip or a popup goes through
