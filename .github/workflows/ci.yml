@@ -3612,6 +3612,14 @@ jobs:
       # carry their word, 44px controls, and the itinerary worker keeps the tokens offline.
       - name: Custom pages S3.5a www apps on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_www_app_tokens -v
+      # S6a: the customer portal (/pay, /pay-card, /rentals, /rent-a-fountain), presentation only.
+      # Each template links the tokens through bundled_asset before sf_portal.bundle.css, after the
+      # light pin, and uses the shared nav bar (no Desk links; jinja2 renders it signed in and as a
+      # guest); the CSS has no literal colour, no shadow, token radii, one 767px breakpoint, 44px
+      # controls and 16px fields; every page script is pinned byte for byte by SHA-256, every
+      # selector it reads is still in the markup, field names are unchanged, every field is labelled.
+      - name: Custom pages S6a customer portal polish (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_customer_portal_polish -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads
