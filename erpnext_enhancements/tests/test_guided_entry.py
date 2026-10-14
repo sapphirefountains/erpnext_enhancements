@@ -963,15 +963,9 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(j["key"], "ge-unsent:ae@example.com:Opportunity/CRM-OPP-1")
 		# A shared phone: another person's copy of the same record is a different entry.
 		self.assertNotEqual(j["other_user"], j["key"])
-		self.assertEqual(
-			j["entry"]["base"],
-			{
-				"custom_opportunity_summary": "Pond",
-				"opportunity_amount": 4000,
-				"territory": "Idaho",
-				"status": "Qualification",
-			},
-		)
+		self.assertEqual(j["entry"]["base"], {
+			"custom_opportunity_summary": "Pond", "opportunity_amount": 4000, "territory": "Idaho", "status": "Qualification"
+		})
 		self.assertEqual((j["entry"]["modified"], j["entry"]["at"]), ("m1", 1000))
 		self.assertIsNone(j["empty"])
 		self.assertEqual(j["no_base"]["base"], {"a": None})
@@ -979,16 +973,12 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_reconcile_never_overwrites_a_newer_server_edit(self):
 		r = self.out["journal"]["reconciled"]
-		self.assertEqual(
-			r["reapply"], {"custom_opportunity_summary": "Pond, 3 pumps", "status": "Needs Analysis"}
-		)
+		self.assertEqual(r["reapply"], {"custom_opportunity_summary": "Pond, 3 pumps", "status": "Needs Analysis"})
 		self.assertEqual(r["drop"], ["opportunity_amount"])
 		self.assertEqual(r["conflicts"], [{"fieldname": "territory", "mine": "Utah", "theirs": "Nevada"}])
 		rows = self.out["journal"]["reconciled_rows"]
 		self.assertEqual(rows["reapply"], {"t": [{"c": "a"}, {"c": "b"}]})
-		self.assertEqual(
-			self.out["journal"]["reconciled_nothing"], {"reapply": {}, "drop": [], "conflicts": []}
-		)
+		self.assertEqual(self.out["journal"]["reconciled_nothing"], {"reapply": {}, "drop": [], "conflicts": []})
 
 	def test_a_record_not_created_yet_is_kept_once_per_doctype(self):
 		j = self.out["journal"]
@@ -999,8 +989,7 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_only_the_networks_failures_wait_for_signal(self):
 		self.assertEqual(
-			self.out["journal"]["try_later"],
-			[True, True, True, True, True, True, False, False, False, False, True],
+			self.out["journal"]["try_later"], [True, True, True, True, True, True, False, False, False, False, True]
 		)
 
 	# ---- where a record opens (P5.2). Nik, 2026-10-13: "I want these guided setups to be the
@@ -1008,9 +997,7 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_opening_an_existing_record_opens_on_the_guided_page(self):
 		o = self.out["opening"]
-		self.assertEqual(
-			o["existing"], {"route": ["guided-entry", "Opportunity", "CRM-OPP-1"], "prefill": None}
-		)
+		self.assertEqual(o["existing"], {"route": ["guided-entry", "Opportunity", "CRM-OPP-1"], "prefill": None})
 		self.assertEqual(o["slash_name"]["route"], ["guided-entry", "Opportunity", "A/B"])
 		self.assertEqual(o["bare_hash"], o["existing"])
 
@@ -1024,20 +1011,8 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_opening_the_form_stays_when_it_should(self):
 		o = self.out["opening"]
-		for key in (
-			"other_doctype",
-			"list_route",
-			"no_name",
-			"not_array",
-			"no_ctx",
-			"page_closed",
-			"hash",
-			"full_form",
-			"renamed",
-			"mapped_left",
-			"mapped_table",
-			"from_link",
-		):
+		for key in ("other_doctype", "list_route", "no_name", "not_array", "no_ctx", "page_closed", "hash",
+				"full_form", "renamed", "mapped_left", "mapped_table", "from_link"):
 			with self.subTest(case=key):
 				self.assertIsNone(o[key])
 		self.assertIsNotNone(o["full_form_other"])
@@ -1052,23 +1027,16 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(o["mapped"], expected)
 		self.assertEqual(o["zero_kept"]["prefill"], dict(expected["prefill"], custom_flag=0))
 		self.assertEqual(
-			o["new_with_options"],
-			{
-				"route": ["guided-entry", "Opportunity", "new"],
-				"prefill": {"party_name": "CUST-9", "lead": "L-1"},
-			},
+			o["new_with_options"], {"route": ["guided-entry", "Opportunity", "new"], "prefill": {"party_name": "CUST-9", "lead": "L-1"}}
 		)
 		# Zeros are not values, and accepted tables come along as their own columns.
-		prod = dict(
-			expected["prefill"], custom_value_stream=[{"value_stream": "Design"}, {"value_stream": "Build"}]
-		)
+		prod = dict(expected["prefill"], custom_value_stream=[{"value_stream": "Design"}, {"value_stream": "Build"}])
 		self.assertEqual(o["mapped_prod"], {"route": expected["route"], "prefill": prod})
 
 	def test_opening_carry_over_tells_defaults_from_values(self):
 		o = self.out["opening"]
 		self.assertEqual(
-			o["carry"],
-			{"prefill": {"party_name": "CUST-1", "customer_address": "ADDR-1"}, "left": ["contact_person"]},
+			o["carry"], {"prefill": {"party_name": "CUST-1", "customer_address": "ADDR-1"}, "left": ["contact_person"]}
 		)
 		self.assertEqual(o["carry_nothing"], {"prefill": {}, "left": []})
 
@@ -1150,9 +1118,7 @@ class TestThePage(unittest.TestCase):
 		for match in re.finditer(r'GE_API \+ "(\w+)"[\s\S]*?\{ quiet: true(?:, method: "GET")? \}', code):
 			with self.subTest(method=match.group(1)):
 				is_get = 'method: "GET"' in match.group(0)
-				self.assertEqual(
-					is_get, match.group(1) in ("get_flow", "my_records", "find_created", "record_notes")
-				)
+				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records", "find_created", "record_notes"))
 
 	def test_steps_move_with_set_route(self):
 		code = _page_code()
@@ -1246,23 +1212,21 @@ class TestTheEntryPoint(unittest.TestCase):
 
 
 class TestPhoneFixesFromTheLiveCheck(unittest.TestCase):
-	"""Found on prod at 375px on 2026-10-13: the Triton button covered Next, and Frappe's form
-	padding set the fields 30px in from the step title."""
+    """Found on prod at 375px on 2026-10-13: the Triton button covered Next, and Frappe's form
+    padding set the fields 30px in from the step title."""
 
-	def test_the_assistant_button_lifts_only_while_the_page_shows(self):
-		js = (APP / "enhancements_core" / "page" / "guided_entry" / "guided_entry.js").read_text(
-			encoding="utf-8"
-		)
-		self.assertIn('const GE_BODY_CLASS = "ge-page-active";', js)
-		self.assertIn("document.body.classList.add(GE_BODY_CLASS);", js)
-		self.assertIn("document.body.classList.remove(GE_BODY_CLASS);", js)
-		css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
-		self.assertIn("body.ge-page-active .triton-fab", css)
+    def test_the_assistant_button_lifts_only_while_the_page_shows(self):
+        js = (APP / "enhancements_core" / "page" / "guided_entry" / "guided_entry.js").read_text(encoding="utf-8")
+        self.assertIn('const GE_BODY_CLASS = "ge-page-active";', js)
+        self.assertIn("document.body.classList.add(GE_BODY_CLASS);", js)
+        self.assertIn("document.body.classList.remove(GE_BODY_CLASS);", js)
+        css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
+        self.assertIn("body.ge-page-active .triton-fab", css)
 
-	def test_phone_fields_use_the_full_width(self):
-		css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
-		phone = css[css.index("@media (max-width: 767px)") :]
-		self.assertIn(".ge-fields .form-section .form-column {\n\t\tpadding-left: 0;", phone)
+    def test_phone_fields_use_the_full_width(self):
+        css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
+        phone = css[css.index("@media (max-width: 767px)") :]
+        self.assertIn(".ge-fields .form-section .form-column {\n\t\tpadding-left: 0;", phone)
 
 
 class TestTheDefaultIsWired(unittest.TestCase):
@@ -1360,9 +1324,7 @@ class TestNoSignal(unittest.TestCase):
 		code = _page_code()
 		self.assertIn("const plan = this.kit.reconcile(entry, this.flow.values);", code)
 		self.assertIn("const kept = this.is_new ? null : this.restore_kept();", code)
-		self.assertIn(
-			"this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }", code
-		)
+		self.assertIn("this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }", code)
 
 	def test_signal_coming_back_sends_what_waited(self):
 		code = _page_code()
@@ -1373,11 +1335,7 @@ class TestNoSignal(unittest.TestCase):
 	def test_storage_is_always_guarded_and_closing_warns_only_when_needed(self):
 		code = _page_code()
 		self.assertEqual(code.count("window.localStorage"), 1)
-		for name in (
-			"function ge_storage() {",
-			"function ge_read_kept(key) {",
-			"function ge_write_kept(key, entry) {",
-		):
+		for name in ("function ge_storage() {", "function ge_read_kept(key) {", "function ge_write_kept(key, entry) {"):
 			body = code[code.index(name) :]
 			body = body[: body.index("\n}\n")]
 			with self.subTest(function=name):
@@ -1403,15 +1361,9 @@ class TestNoSignal(unittest.TestCase):
 	def test_an_older_queues_waiting_values_come_over_on_a_reload(self):
 		code = _page_code()
 		restore = code[code.index("restore_kept() {") :]
-		self.assertIn(
-			"old.forEach((queue) => Object.keys(queue.pending()).forEach((fieldname) => queue.discard(fieldname)));",
-			restore,
-		)
+		self.assertIn("old.forEach((queue) => Object.keys(queue.pending()).forEach((fieldname) => queue.discard(fieldname)));", restore)
 		# Through the same reconcile, so a newer server edit is still asked about.
-		self.assertLess(
-			restore.index("entry = { unsent, base:"),
-			restore.index("this.kit.reconcile(entry, this.flow.values)"),
-		)
+		self.assertLess(restore.index("entry = { unsent, base:"), restore.index("this.kit.reconcile(entry, this.flow.values)"))
 
 	def test_typing_after_a_restore_reaches_the_record_found_for_it(self):
 		code = _page_code()
@@ -1457,9 +1409,7 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 	def test_nothing_unsaved_is_dropped_by_a_reload_or_declare_lost(self):
 		code = _page_code()
 		reload = code[code.index("reload_record() {") :]
-		self.assertLess(
-			reload.index("this.queue.has_unsaved()) return;"), reload.index("this.load(doctype, name, step)")
-		)
+		self.assertLess(reload.index("this.queue.has_unsaved()) return;"), reload.index("this.load(doctype, name, step)"))
 		declare = code[code.index("declare_lost(dialog, values) {") :]
 		self.assertLess(declare.index("this.queue.has_unsaved()"), declare.index('GE_API + "declare_lost"'))
 
@@ -1527,7 +1477,7 @@ class TestTheCommentsAreShown(unittest.TestCase):
 			"mount_comments() {",
 			"load_notes($notes) {",
 			"render_notes($notes, data) {",
-			"add_note(text) {",
+			"add_note(text, $notes) {",
 		):
 			with self.subTest(method=method):
 				body = editor[editor.index(method) :]
@@ -1582,15 +1532,18 @@ class TestTheCommentsAreShown(unittest.TestCase):
 		code = _code(EDITOR_JS)
 		self.assertIn('GE_API + "record_notes", { doctype, name }, { quiet: true, method: "GET" }', code)
 		self.assertIn('$(\'<div class="ge-note-text"></div>\').text(note.text || "")', code)
-		add = code[code.index("add_note(text) {") :]
+		add = code[code.index("add_note(text, $notes) {") :]
 		add = add[: add.index("\n\t}\n")]
 		self.assertIn("frappe.utils\n\t\t\t.escape_html(text)", add)
-		self.assertLess(add.index("this.save_before_moving()"), add.index('"run_doc_method"'))
+		self.assertLess(add.index("this.save_before_moving()"), add.index('"frappe.handler.run_doc_method"'))
 		self.assertIn(
 			'{ dt: this.doctype, dn: this.name, method: "add_note", args: JSON.stringify({ note: html }) }',
 			add,
 		)
-		self.assertIn("this.reload_record();", add)
+		# Only the list is drawn again, where the person is looking; the page is not reloaded.
+		self.assertIn("if ($notes) this.load_notes($notes);", add)
+		self.assertNotIn("this.reload_record()", add)
+		self.assertIn("this.add_note(text, $notes)", code)
 
 
 if __name__ == "__main__":

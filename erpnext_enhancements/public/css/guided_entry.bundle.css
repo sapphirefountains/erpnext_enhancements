@@ -241,6 +241,10 @@
 	min-width: 0;
 	overflow-wrap: anywhere;
 }
+.ge-comments-body img {
+	max-width: 100%;
+	height: auto;
+}
 .ge-notes + .ge-comments-app {
 	margin-top: var(--sf-space-20);
 	padding-top: var(--sf-space-20);

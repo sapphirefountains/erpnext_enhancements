@@ -251,8 +251,9 @@ the steps, the guided page always and the side panel on every edit, and the shar
   deals on prod), newest first, through `record_notes` (GET; the registry check and read on the
   record; plain text only, written with `.text()`). Whether a DocType has them is decided by its
   meta, never by its name. Adding one runs the DocType's own `add_note` through `run_doc_method`,
-  after what is queued has saved, then loads the record again so the next save carries the new
-  `modified`.
+  after what is queued has saved, then draws only the Notes list again (no page reload). The
+  record's `modified` moves, but the notes table is in no step, so the next step save's conflict
+  check settles it without asking (`save_queue` `split_conflict`).
 - **Comments**: the Desk's own Comments App (`public/js/comments.js`), mounted with a stand-in
   `frm` that carries only `doc.doctype`, `doc.name` and the wrapper, which is all it reads. It reads
   and writes the native Comment rows the form timeline shows, so a comment is the same on both.

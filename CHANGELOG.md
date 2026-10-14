@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       checks the registry and read on the record. It returns plain text only (the note's HTML
       with its tags taken out), which the page writes with `.text()`.
     - **Adding:** "Add note" runs the DocType's own `add_note` (ERPNext's CRMNote mixin) through
-      `run_doc_method`. Queued edits save first, and the record is loaded again after, so the next
-      save carries the new `modified` instead of reporting the note as someone else's change.
+      `frappe.handler.run_doc_method`. Queued edits save first; then only the Notes list is drawn
+      again, where the person is looking, and the page is not reloaded. The record's `modified`
+      moves, but the notes table is in no step, so the next step save's conflict check settles it
+      without asking (`save_queue` `split_conflict`).
   - **Comments:** the Desk's own Comments App (`public/js/comments.js`), mounted with a stand-in
     `frm` that carries only what it reads (`doc.doctype`, `doc.name` and the wrapper). It reads and
     writes the same native Comment rows as the form's timeline.

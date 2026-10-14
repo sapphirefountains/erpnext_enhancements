@@ -219,7 +219,7 @@ export class RecordEditor {
 				const text = String($text.val() || "").trim();
 				if (!text || $add.prop("disabled")) return;
 				$add.prop("disabled", true);
-				this.add_note(text)
+				this.add_note(text, $notes)
 					.then(() => $text.val(""))
 					.catch((err) => {
 						this.sf.toast((err && err.message) || __("The note was not added."), { tone: "warning" });
@@ -248,9 +248,11 @@ export class RecordEditor {
 	}
 
 	// ERPNext's own Add Note (the CRMNote mixin's whitelisted `add_note`, which appends and saves the
-	// record). What is queued goes first, and the record is loaded again after, so the next save
-	// carries the new `modified` rather than reporting the note as someone else's change.
-	add_note(text) {
+	// record). What is queued goes first. Then only the Notes list is drawn again, where the person
+	// is looking: the page is not reloaded. The record's `modified` has moved, but the notes table is
+	// in no step, so the next step save's conflict check settles it without asking (save_queue
+	// split_conflict), as it does for any change to a field the page does not show.
+	add_note(text, $notes) {
 		const html = frappe.utils
 			.escape_html(text)
 			.split(/\r?\n/)
@@ -259,14 +261,14 @@ export class RecordEditor {
 		return this.save_before_moving()
 			.then(() =>
 				this.sf.call(
-					"run_doc_method",
+					"frappe.handler.run_doc_method",
 					{ dt: this.doctype, dn: this.name, method: "add_note", args: JSON.stringify({ note: html }) },
 					{ quiet: true }
 				)
 			)
 			.then(() => {
 				this.sf.toast(__("Note added."), { tone: "success", timeout: 3000 });
-				this.reload_record();
+				if ($notes) this.load_notes($notes);
 			});
 	}
 
