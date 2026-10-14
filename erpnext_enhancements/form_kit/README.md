@@ -177,6 +177,28 @@ returns the same result or conflict shape. `get_flow` sends `lost` (the status t
 page's Set as Lost dialog, and the two child DocTypes), `distinct` (fields the page warns should
 not share a value) and `clears` (a field whose change empties others).
 
+## No signal (P4.7)
+
+The guided page keeps working when the signal drops while it is open. What has not reached the
+server is kept on the phone: one localStorage entry per record (`ge-unsent:<DocType>/<name>`, the
+unsent values, each field's server value from before the change, and `modified`), and step 1 of a
+record not created yet (`ge-new:<DocType>`, with the create's `client_id`). The rules are
+`public/js/form_kit/journal.js`, run under node by `test_guided_entry`:
+
+- **Opening the record again** puts kept values back by the server's current value: still the old
+  one, the kept value is saved; already the kept one, it is dropped; anything else, the person
+  chooses (the conflict chooser).
+- **A failed save** that is the network's doing (`try_later`: no answer, 408, 425, 429, 502–504,
+  or a 5xx without an exception type) waits for the signal: the browser's `online` event, and every
+  20 s.
+- **`create_record(..., client_id)`** answers a resend with the record the first attempt made,
+  remembered per user in the cache after the insert commits (31 days). The deploy's FLUSHDB forgets
+  the ids, which costs at worst the duplicate this exists to prevent; the capture panel's
+  `submit_capture` makes the same trade.
+
+Opening ERPNext from cold with no connection is a separate problem: see
+`docs/offline-cold-start-spike.md` (P4.8).
+
 ## Where a record opens
 
 Nik, 2026-10-13: "I want these guided setups to be the default for new and existing documents of
