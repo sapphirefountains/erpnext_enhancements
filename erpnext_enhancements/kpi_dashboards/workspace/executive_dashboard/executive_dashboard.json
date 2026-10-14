@@ -1,9 +1,13 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_executive_scorecard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Scorecard\", \"col\": 12}}, {\"id\": \"ee_chb_executive_cash_runway\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Cash Runway\", \"col\": 12}}, {\"id\": \"ee_chb_executive_bookings_backlog\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Bookings Backlog\", \"col\": 12}}, {\"id\": \"ee_chb_executive_risk_queue\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Risk Queue\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_executive_scorecard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Scorecard\", \"col\": 12}}, {\"id\": \"ee_chb_executive_cash_runway\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Cash Runway\", \"col\": 12}}, {\"id\": \"ee_chb_executive_bookings_backlog\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Bookings Backlog\", \"col\": 12}}, {\"id\": \"ee_chb_executive_risk_queue\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Risk Queue\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Dashboard Hub Links",
+   "label": "Dashboard Hub Links"
+  },
   {
    "custom_block_name": "Executive Scorecard",
    "label": "Executive Scorecard"
@@ -33,7 +37,7 @@
  "is_standard": 1,
  "label": "Executive Dashboard",
  "links": [],
- "modified": "2026-07-10 12:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Executive Dashboard",

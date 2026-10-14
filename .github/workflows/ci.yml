@@ -3473,6 +3473,13 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
+      # Custom pages S4a (v1.665.0). Hubs link their dashboards and every dashboard's Dashboard
+      # Hub Links block leads back along the same pairs; Operations links Stock Scan; the
+      # Morning Briefing workspace shows the briefing; the kiosk is linked at /kiosk; GA4 and
+      # the Day Board admit their hubs' roles; the patch never raises. Installs its own frappe
+      # stub for the patch and the endpoint, so it gets its own step.
+      - name: Custom pages S4a hub and dashboard links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s4a_hub_links -v
       # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
       # which the page loader sends with the page (never stale from the immutable /assets
       # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,

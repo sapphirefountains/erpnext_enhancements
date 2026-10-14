@@ -36,6 +36,7 @@ BLOCK_SOURCES = APP / "custom_html_blocks"
 WORKSPACES = APP / "kpi_dashboards" / "workspace"
 
 KPI_COCKPIT = "KPI Cockpit"
+DASHBOARD_HUB_LINKS = "Dashboard Hub Links"
 
 # department -> the api module whose feeds serve that department's widgets.
 FEED_MODULES = {
@@ -168,6 +169,9 @@ class DashboardWidgetWiring(unittest.TestCase):
 				if KPI_COCKPIT in (self.placement.get(workspace) or ()) or path.parent.parent.parent.name == "kpi_dashboards":
 					if KPI_COCKPIT not in expected:
 						expected = expected + [KPI_COCKPIT]
+				# Every department dashboard opens with the way back to its hub (v1.665.0).
+				if path.parent.parent.parent.name == "kpi_dashboards":
+					expected = [DASHBOARD_HUB_LINKS, *expected]
 
 				content = json.loads(doc.get("content") or "[]")
 				placed = [

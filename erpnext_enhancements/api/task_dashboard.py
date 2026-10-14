@@ -420,3 +420,100 @@ def get_wall_dashboard_data():
 	data["kpi"] = _wall_kpi_block()
 	data["deploy_version"] = get_deploy_version()
 	return data
+
+
+# --- My Priority Tasks (the "Home Dashboard Tasks" block) ----------------------------------
+#
+# A block somebody made on the site in 2025-12 and placed on the Projects workspace and the
+# Executive Hub. It lived only in the database until v1.665.0, when its source came into
+# custom_html_blocks/my_priority_tasks.* and its two client-side get_list calls came here.
+# Unlike everything above, it is about the person looking at it: their own open tasks, the
+# company's top-ranked projects first.
+
+#: How many of the viewer's open tasks are read. The old block asked for 1000 and drew 50 at a
+#: time. On prod on 2026-10-14 the busiest person had 153 open assigned tasks, so this is a
+#: ceiling with room to spare, not a page; the block still draws them 50 at a time.
+MY_TASKS_LIMIT = 500
+
+#: Task priority -> sort weight, as the old block had it. Anything else sorts last.
+TASK_PRIORITY_WEIGHT = {"Urgent": 1, "High": 2, "Medium": 3, "Low": 4}
+
+#: The rank a task gets when its project has no usable company priority.
+UNRANKED = 9999
+
+
+def my_task_sort_key(task):
+	"""Company rank first, then the project (a project's tasks stay together), then the task's
+	own urgency: the order the old block's "Sorting Logic" tooltip promised."""
+	return (
+		task.get("rank") or UNRANKED,
+		task.get("project") or "",
+		TASK_PRIORITY_WEIGHT.get(task.get("priority"), 5),
+	)
+
+
+def company_rank(value):
+	"""A project's ``custom_company_priority`` as a usable rank, or 0.
+
+	The field is a Select whose options are "1" to "30" and then words ("Not Assigned",
+	"Maintenance", ...), so it is text: a word or a blank is no rank, not rank 0.
+	"""
+	rank = cint(value) if str(value or "").strip().isdigit() else 0
+	return rank if 0 < rank <= MAX_COMPANY_PRIORITY else 0
+
+
+@frappe.whitelist()
+def get_my_priority_tasks():
+	"""The session user's own open tasks, top company priority first.
+
+	The tasks are read with ``frappe.get_list``, so the viewer sees exactly the tasks they
+	could open, as the old block's client-side ``get_list`` did. A task is the viewer's when
+	their user id appears in its ``_assign`` list, matched with the JSON quotes so one id
+	cannot match inside another.
+
+	The projects are read with ``frappe.get_all``, and only the projects those tasks already
+	name: a Project's name and rank are what put the viewer's own tasks in order, and the
+	Employee user-permission cascade on Project (see the module docstring) would otherwise
+	leave most people's tasks unranked.
+	"""
+	user = frappe.session.user
+	tasks = frappe.get_list(
+		"Task",
+		filters=[
+			["status", "not in", CLOSED_TASK_STATUSES],
+			["_assign", "like", f'%"{user}"%'],
+		],
+		fields=["name", "subject", "priority", "status", "exp_end_date", "project"],
+		order_by="modified desc",
+		limit_page_length=MY_TASKS_LIMIT,
+	)
+
+	project_ids = sorted({t.project for t in tasks if t.project})
+	projects = {}
+	if project_ids:
+		projects = {
+			p.name: p
+			for p in frappe.get_all(
+				"Project",
+				filters={"name": ("in", project_ids)},
+				fields=["name", "project_name", "custom_company_priority"],
+			)
+		}
+
+	rows = []
+	for task in tasks:
+		project = projects.get(task.project)
+		rows.append(
+			{
+				"name": task.name,
+				"subject": task.subject or task.name,
+				"priority": task.priority or "",
+				"status": task.status or "",
+				"exp_end_date": str(task.exp_end_date) if task.exp_end_date else "",
+				"project": task.project or "",
+				"project_name": (project.project_name or "") if project else "",
+				"rank": company_rank(project.custom_company_priority) if project else 0,
+			}
+		)
+	rows.sort(key=my_task_sort_key)
+	return rows

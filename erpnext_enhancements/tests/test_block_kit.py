@@ -80,11 +80,18 @@ ON_KIT = (
 	"task_dashboard",
 	"training_my_dashboard",
 	"travel_home",
+	# The site-made "Home Dashboard Tasks", on the kit from the day it came into the repo
+	# (v1.665.0).
+	"my_priority_tasks",
 )
 
 #: Blocks not converted yet, and why. Move one to ON_KIT in the change that converts it.
 NOT_YET = {
 	"desk_shortcuts": "Asks the server nothing and builds its tiles with createElement: no panel, no escape.",
+	"dashboard_hub_links": (
+		"Asks the server nothing: it reads frappe.workspaces and builds its links with createElement, "
+		"so it has no panel to draw and nothing to escape."
+	),
 }
 
 #: What a converted block must not contain, and why.

@@ -60,6 +60,16 @@ BLOCKS = [
 	("Projects Dashboard", "projects_dashboard"),
 	("Task Dashboard", "task_dashboard"),
 	("Morning Briefing", "morning_briefing"),
+	# "My Priority Tasks": the viewer's own open tasks, top company priority first. Made on
+	# the site in 2025-12 under this name and placed on the Projects workspace and the
+	# Executive Hub; its source came into the repo in v1.665.0, so from then on the seeder
+	# overwrites the site copy like every other block here. The name is kept because both
+	# placements join on it.
+	("Home Dashboard Tasks", "my_priority_tasks"),
+	# The links back from each department dashboard to its hub, drawn only for a hub the
+	# viewer can open (a URL shortcut would be a dead tile for most of a dashboard's
+	# viewers). First on every KPI_DEPARTMENT_DASHBOARDS workspace, see below.
+	("Dashboard Hub Links", "dashboard_hub_links"),
 	# KPI Cockpit has its own "KPI Dashboards" workspace (its fixture); it is
 	# additionally surfaced on Home and each department dashboard below, where the
 	# block auto-locks to a department by route (role-gated per department).
@@ -119,8 +129,9 @@ HOME_WORKSPACE = "Home"
 # edit, so the 2026-10-06 upgrade re-imported it and the page went back to ERPNext's
 # onboarding, chart and number cards. A re-import writes no Version. This is the layout
 # from the last edit before that (2026-06-12), in order. "Home Dashboard Tasks" (My
-# Priority Tasks) is a block made on the site, not seeded here: it is placed only where
-# it exists, and never created.
+# Priority Tasks) was made on the site; it has been seeded from the repo since v1.665.0,
+# and the layout still places only the blocks that exist, so a seed that failed leaves a
+# gap rather than an empty div.
 PROJECTS_WORKSPACE = "Projects"
 PROJECTS_DASHBOARD = "Projects Dashboard"
 PROJECTS_LAYOUT = (
@@ -140,6 +151,11 @@ PROJECTS_STOCK_FILE = ("projects", "workspace", "projects", "projects.json")
 # backstop that restores a block if a site's workspace lost it. Keep this tuple
 # in sync with those workspace names.
 KPI_COCKPIT = "KPI Cockpit"
+
+# The way back to a dashboard's hub (custom_html_blocks/dashboard_hub_links.js). Every
+# KPI_DEPARTMENT_DASHBOARDS JSON carries it as its first block; like the Cockpit, the
+# append below only restores it where a site's workspace lost it, and then at the end.
+DASHBOARD_HUB_LINKS = "Dashboard Hub Links"
 KPI_DEPARTMENT_DASHBOARDS = (
 	"Finance Dashboard",
 	"Sales Dashboard",
@@ -204,6 +220,9 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 	# The learner workspace. One block, and no KPI Cockpit beside it: this page is
 	# for the person looking at it, not for reading the business.
 	"My Training": ("My Training Dashboard",),
+	# The briefing itself, on the workspace named after it (v1.665.0). Until then the
+	# page held a /wall link and two lists only a System Manager could open.
+	"Morning Briefing": ("Morning Briefing",),
 	"HR Dashboard": (
 		"HR Training Compliance",
 		"HR Time Capture",
@@ -296,6 +315,13 @@ def sync_custom_html_blocks():
 	if KPI_COCKPIT in synced:
 		for workspace in (HOME_WORKSPACE, *KPI_DEPARTMENT_DASHBOARDS):
 			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
+				changed = True
+
+	# The links back to the hubs, on every department dashboard (the JSONs put them
+	# first; this only restores one a site lost).
+	if DASHBOARD_HUB_LINKS in synced:
+		for workspace in KPI_DEPARTMENT_DASHBOARDS:
+			if _append_custom_blocks(workspace, [DASHBOARD_HUB_LINKS]):
 				changed = True
 
 	# Department operational widgets — each placed only on its own workspace, in

@@ -1418,3 +1418,11 @@ erpnext_enhancements.patches.backfill_opportunity_project_links
 # the supplier import's minute (2025-10-03 09:39) to the one Supplier named X, unless a Customer shares the name (listed). The link is a bare Dynamic Link db_insert, no
 # Address save, no hooks, modified untouched. Everything else is left alone. Cannot raise; tally adds up. Safe twice.
 erpnext_enhancements.patches.cleanup_orphan_import_addresses
+# Custom pages S4a (v1.665.0, TASK-2026-02806): force-imports the 16 workspaces, 2 pages and 1 report this release
+# edits (Dashboard Hub Links first on every department dashboard; Product/Service dashboard links on the Design,
+# Operations, Production and Support hubs; Stock Scan + an Inventory card on Operations; Product Dashboard content;
+# the briefing on the Morning Briefing workspace; /kiosk instead of the time-kiosk redirect page; GA4 admits the
+# Marketing roles, the Day Board Maintenance Manager; Top Company Priority Projects becomes standard). Then moves the
+# seeded Time Kiosk Desk Shortcut and the Workforce sidebar's Time Kiosk item to /kiosk and drops the sidebar's
+# URL-less "Kiosk PWA" item. Cannot raise, safe twice.
+erpnext_enhancements.patches.custom_pages_s4a_hub_links
