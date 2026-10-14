@@ -147,6 +147,129 @@ export class RecordEditor {
 		window.open(`/login?redirect-to=${encodeURIComponent(here)}`, "_blank", "noopener");
 	}
 
+	// The record's notes and comments, under the steps (Nik, 2026-10-14: "I can't see comments which
+	// are extremely important"). The guided page replaced the Desk form, and with it the two places an
+	// Opportunity's history lives:
+	// - its Notes tab, ERPNext's `notes` table of CRM Note (1,049 notes on 235 deals on prod), read
+	//   through form_kit.api.record_notes and added with the DocType's own `add_note`;
+	// - its timeline comments, the native Comment rows, shown by the same Comments App the Desk forms
+	//   mount (public/js/comments.js, loaded globally with Vue), so a comment added here is on the form
+	//   and the reverse.
+	// The shell draws an empty `.ge-comments` section; a new record has neither yet, so it stays hidden.
+	mount_comments() {
+		const $box = this.$root ? this.$root.find(".ge-comments") : $();
+		if (!$box.length) return;
+		if (this.is_new || !this.name) {
+			$box.empty().prop("hidden", true);
+			return;
+		}
+		$box.empty().prop("hidden", false);
+		const $notes = $('<div class="ge-notes" hidden></div>').appendTo($box);
+		this.load_notes($notes);
+		const render = window.erpnext_enhancements && window.erpnext_enhancements.render_comments_app;
+		if (typeof render !== "function" || typeof window.Vue === "undefined") return;
+		const $comments = $('<div class="ge-comments-app"></div>').appendTo($box);
+		$('<h2 class="ge-comments-title"></h2>').text(__("Comments")).appendTo($comments);
+		const $mount = $('<div class="ge-comments-body"></div>').appendTo($comments);
+		// render_comments_app reads only frm.doc.doctype, frm.doc.name and the field's wrapper.
+		const host = {
+			doc: { doctype: this.doctype, name: this.name },
+			fields_dict: { ge_comments: { wrapper: $mount[0] } },
+		};
+		try {
+			render(host, "ge_comments");
+		} catch (e) {
+			console.error("Comments could not be shown", e);
+			$comments.remove();
+		}
+	}
+
+	// The Notes list, newest first, with an Add box when the caller may write. A DocType without a
+	// `notes` table answers has_notes: false and the block stays hidden.
+	load_notes($notes) {
+		const doctype = this.doctype;
+		const name = this.name;
+		this.sf
+			.call(GE_API + "record_notes", { doctype, name }, { quiet: true, method: "GET" })
+			.then((data) => {
+				if (this.doctype !== doctype || this.name !== name || !data || !data.has_notes) return;
+				this.render_notes($notes, data);
+			})
+			.catch(() => {
+				// Not worth a notice over the steps: the Desk form still has them ("Open form").
+			});
+	}
+
+	render_notes($notes, data) {
+		$notes.empty().prop("hidden", false);
+		const notes = data.notes || [];
+		$('<h2 class="ge-comments-title"></h2>')
+			.text(notes.length ? __("Notes ({0})", [data.total || notes.length]) : __("Notes"))
+			.appendTo($notes);
+		if (data.can_add) {
+			const $form = $('<form class="ge-note-add"></form>').appendTo($notes);
+			const $text = $('<textarea class="form-control ge-note-input" rows="3"></textarea>')
+				.attr({ placeholder: __("Add a note"), "aria-label": __("Add a note") })
+				.appendTo($form);
+			const $add = $('<button type="submit" class="sf-btn sf-btn--secondary ge-note-save"></button>')
+				.text(__("Add note"))
+				.appendTo($form);
+			$form.on("submit", (event) => {
+				event.preventDefault();
+				const text = String($text.val() || "").trim();
+				if (!text || $add.prop("disabled")) return;
+				$add.prop("disabled", true);
+				this.add_note(text)
+					.then(() => $text.val(""))
+					.catch((err) => {
+						this.sf.toast((err && err.message) || __("The note was not added."), { tone: "warning" });
+					})
+					.finally(() => $add.prop("disabled", false));
+			});
+		}
+		if (!notes.length) {
+			$('<p class="ge-muted ge-notes-empty"></p>').text(__("No notes yet.")).appendTo($notes);
+			return;
+		}
+		const $list = $('<ol class="ge-notes-list"></ol>').appendTo($notes);
+		notes.forEach((note) => {
+			const $item = $('<li class="ge-note"></li>').appendTo($list);
+			const when = note.added_on ? frappe.datetime.str_to_user(note.added_on) : "";
+			$('<div class="ge-note-meta"></div>')
+				.text([note.added_by, when].filter(Boolean).join(" · "))
+				.appendTo($item);
+			$('<div class="ge-note-text"></div>').text(note.text || "").appendTo($item);
+		});
+		if ((data.total || 0) > notes.length) {
+			$('<p class="ge-muted"></p>')
+				.text(__("The newest {0} of {1}; the form has the rest.", [notes.length, data.total]))
+				.appendTo($notes);
+		}
+	}
+
+	// ERPNext's own Add Note (the CRMNote mixin's whitelisted `add_note`, which appends and saves the
+	// record). What is queued goes first, and the record is loaded again after, so the next save
+	// carries the new `modified` rather than reporting the note as someone else's change.
+	add_note(text) {
+		const html = frappe.utils
+			.escape_html(text)
+			.split(/\r?\n/)
+			.map((line) => `<p>${line || "<br>"}</p>`)
+			.join("");
+		return this.save_before_moving()
+			.then(() =>
+				this.sf.call(
+					"run_doc_method",
+					{ dt: this.doctype, dn: this.name, method: "add_note", args: JSON.stringify({ note: html }) },
+					{ quiet: true }
+				)
+			)
+			.then(() => {
+				this.sf.toast(__("Note added."), { tone: "success", timeout: 3000 });
+				this.reload_record();
+			});
+	}
+
 	// The step whose fields are on screen. A shell that draws fields the flow has in no single step
 	// (the side panel's required fields on a move, its quick add) sets `step_override`.
 	current_step() {

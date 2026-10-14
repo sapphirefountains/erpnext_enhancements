@@ -12,6 +12,9 @@ trip one, and each save is an ordinary permission-checked document save.
 Payload shapes are documented in ``form_kit/README.md``.
 """
 
+import html
+import re
+
 import frappe
 from frappe import _
 from frappe.utils import escape_html
@@ -285,4 +288,64 @@ def my_records(doctype):
 			for record in records
 		],
 		"limit": MINE_LIMIT,
+	}
+
+
+#: The notes block lists at most this many, newest first; the Desk form's Notes tab has the rest.
+NOTES_LIMIT = 200
+
+
+def _note_text(value):
+	"""A CRM Note's HTML (a Text Editor) as plain text with its line breaks, for ``.text()``."""
+	text = re.sub(r"(?i)<br\s*/?>|</p\s*>|</div\s*>|</li\s*>", "\n", value or "")
+	text = html.unescape(frappe.utils.strip_html_tags(text)).replace("\xa0", " ")
+	text = re.sub(r"[ \t]+\n", "\n", text)
+	return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+@frappe.whitelist(methods=["GET"])
+def record_notes(doctype, name):
+	"""A record's CRM Notes (ERPNext's Notes tab), for the guided page and the side panel.
+
+	Nik, 2026-10-14: "I can't see comments which are extremely important." The guided page replaced
+	the Desk form, and an Opportunity's history is mostly here (1,049 notes on 235 deals on prod).
+
+	``{"has_notes", "notes": [{"name", "text", "added_by", "added_on"}], "total", "can_add"}``,
+	newest first. ``has_notes`` is false for a DocType without a ``notes`` table of CRM Note. ``text``
+	is plain text (the note's HTML with its tags taken out), so the page writes it with ``.text()``.
+	``can_add`` is write permission on the record and the DocType's own ``add_note``, which the page
+	calls through ``run_doc_method`` (ERPNext's CRMNote mixin; it appends a row and saves).
+	"""
+	_require_configured(doctype)
+	if not isinstance(name, str) or not name:
+		frappe.throw(_("Which record?"), title=_("Not Found"))
+	field = frappe.get_meta(doctype).get_field("notes")
+	if not field or field.fieldtype != "Table" or field.options != "CRM Note":
+		return {"has_notes": False, "notes": [], "total": 0, "can_add": False}
+	doc = frappe.get_doc(doctype, name)
+	doc.check_permission("read")
+	rows = sorted(
+		doc.get("notes") or [],
+		key=lambda row: str(row.get("added_on") or row.get("creation") or ""),
+		reverse=True,
+	)
+	shown = rows[:NOTES_LIMIT]
+	people = {}
+	for row in shown:
+		user = row.get("added_by")
+		if user and user not in people:
+			people[user] = frappe.utils.get_fullname(user) or user
+	return {
+		"has_notes": True,
+		"notes": [
+			{
+				"name": row.get("name"),
+				"text": _note_text(row.get("note")),
+				"added_by": people.get(row.get("added_by"), row.get("added_by") or ""),
+				"added_on": str(row.get("added_on") or ""),
+			}
+			for row in shown
+		],
+		"total": len(rows),
+		"can_add": bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None)),
 	}

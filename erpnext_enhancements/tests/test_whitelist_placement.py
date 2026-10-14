@@ -224,6 +224,9 @@ EXACT_SURFACE = {
         # on the DocType and on the account, the account kind against the Party block, and reads
         # every Contact and Address through get_list (tested in test_form_kit_party).
         "party_details",
+        # v1.678.2: the guided page's Notes block, GET. Checks the registry and read on the
+        # record; returns plain text only (tested in test_guided_entry).
+        "record_notes",
     },
     # The Opportunity board (form kit P6). Part C (v1.675.0) added bulk_update, which changes many
     # deals at once and so must check write permission and the `modified` lock deal by deal, through

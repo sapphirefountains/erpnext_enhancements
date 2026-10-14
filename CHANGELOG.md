@@ -98,6 +98,33 @@ byte-for-byte what it was, and a test now pins each one by SHA-256.
   be in the markup, the form field names must be unchanged, every field must have a label, and an
   inline style is allowed only where it is state.
 
+## [1.678.2] - 2026-10-14
+
+### Fixed
+- **An Opportunity's notes and comments are back on the guided page, and on the board's side
+  panel.** Nik, 2026-10-14: "I can't see comments which are extremely important." Since v1.644.0
+  the guided page has been the default way to open an Opportunity. It replaced the Desk form, and
+  with it the form's Notes tab and timeline, where a deal's history lives. Both now sit under the
+  steps, on every step, for any saved record:
+  - **Notes:** ERPNext's `notes` table of CRM Note, the Opportunity's Notes tab. On prod that is
+    1,049 notes on 235 deals, against 45 timeline comments.
+    - **Reading:** listed newest first through the new GET `form_kit.api.record_notes`, which
+      checks the registry and read on the record. It returns plain text only (the note's HTML
+      with its tags taken out), which the page writes with `.text()`.
+    - **Adding:** "Add note" runs the DocType's own `add_note` (ERPNext's CRMNote mixin) through
+      `run_doc_method`. Queued edits save first, and the record is loaded again after, so the next
+      save carries the new `modified` instead of reporting the note as someone else's change.
+  - **Comments:** the Desk's own Comments App (`public/js/comments.js`), mounted with a stand-in
+    `frm` that carries only what it reads (`doc.doctype`, `doc.name` and the wrapper). It reads and
+    writes the same native Comment rows as the form's timeline.
+- **The same goes for every DocType given a guided view, now and later** (Nik: "We need the
+  comments visible for every doctype we are making the views for now and in the future"). It all
+  lives in the shared record editor, and whether a DocType has notes is read from its meta, never
+  its name. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if the editor singles a
+  DocType out, if either shell stops drawing the section, or if the Comments App starts reading
+  more of `frm` than the stand-in carries. `form_kit/README.md` "Notes and comments" states the
+  rule.
+
 ## [1.678.1] - 2026-10-14
 
 ### Fixed
