@@ -40,6 +40,13 @@ outcome is visible in the Desk and in SQL rather than only in a deploy log.
 Never raises: a patch that raises aborts ``bench migrate``, which on this repo is the deploy.
 Safe twice: the rules are stable (normalizing a stored value changes nothing), so a second run
 plans nothing. The kill switch (``disable_value_normalization`` in site_config) stops it.
+
+**Proposed fixes (P2-C, part two)** go through :func:`apply_fixes`, the report's *Apply checked
+fixes* button: the same undo file, the same exact re-read before each write, the same comment —
+but only for the rows a System Manager ticked, and only with the fix the server works out again
+from ``utils/normalize_fixes.py`` at that moment. The browser sends which rows, never what to
+write. A fix that moves a value (an email out of a phone field) writes the other field only if
+it is still as empty, or as equal, as when the fix was proposed; otherwise the whole row is left.
 """
 
 import json
@@ -83,7 +90,9 @@ def run():
 		if not changes:
 			_record(summary)
 			return summary
-		undo_file = _save_undo_file(changes)
+		undo_file = _save_undo_file(
+			[_entry(row["_target"], row["current"], row["normalized"]) for row in changes]
+		)
 		if not undo_file:
 			summary["stopped"] = "the undo file could not be saved, so nothing was written"
 			_log(summary["stopped"])
@@ -134,6 +143,79 @@ def undo(file_name):
 	return result
 
 
+@frappe.whitelist(methods=["POST"])
+def apply_fixes(keys):
+	"""Apply the proposed fixes for the rows a System Manager ticked on the report.
+
+	``keys`` is a JSON list of ``[table, row name, field]``, the rows' ``fix_key``. Each fix is
+	worked out again here; a key with no fix now (the value was edited, or fixed by hand) is
+	counted in ``not_offered`` and left. Returns the summary counts. Raises only for a caller who
+	is not a System Manager; everything after that is counted, never raised.
+	"""
+	frappe.only_for("System Manager")
+	summary = _summary()
+	summary["not_offered"] = 0
+	try:
+		if isinstance(keys, str):
+			keys = json.loads(keys or "[]")
+		wanted = {tuple(key) for key in keys or [] if isinstance(key, list | tuple) and len(key) == 3}
+		if normalize_hook.is_disabled():
+			summary["stopped"] = f"{normalize_hook.KILL_SWITCH} is set in site_config"
+			return summary
+		rows, _counts = preview.collect(targets=True)
+		chosen = [row for row in rows if row.get("_fix") and tuple(row["_target"][:3]) in wanted]
+		summary["planned"] = len(chosen)
+		summary["not_offered"] = len(wanted) - len(chosen)
+		if not chosen:
+			return summary
+		entries = []
+		for row in chosen:
+			fix = row["_fix"]
+			entries.append(_entry(row["_target"], row["current"], fix.value))
+			for field, value in fix.also.items():
+				entries.append(_entry(row["_target"], row["_also_before"].get(field), value, field))
+		undo_file = _save_undo_file(entries, written_by="apply_fixes")
+		if not undo_file:
+			summary["stopped"] = "the undo file could not be saved, so nothing was written"
+			_log(summary["stopped"])
+			return summary
+		summary["undo_file"] = undo_file
+		for row in chosen:
+			_apply_fix(row, summary)
+		frappe.db.commit()
+		_record(summary, heading="Proposed fixes applied.")
+	except Exception as exc:
+		summary["stopped"] = f"stopped part-way: {type(exc).__name__}"
+		_log(summary["stopped"])
+	return summary
+
+
+def _apply_fix(row, summary):
+	"""Write one ticked fix, and the value it moves, only if all of it is still as proposed."""
+	table, name, fieldname, parent_doctype, parent = row["_target"]
+	fix = row["_fix"]
+	try:
+		if frappe.db.get_value(table, name, fieldname) != row["current"]:
+			summary["edited_since"] += 1
+			return
+		for field, before in row["_also_before"].items():
+			if (frappe.db.get_value(table, name, field) or "") != (before or ""):
+				summary["edited_since"] += 1
+				return
+		frappe.db.set_value(table, name, fieldname, fix.value, update_modified=False)
+		for field, value in fix.also.items():
+			frappe.db.set_value(table, name, field, value, update_modified=False)
+		if parent_doctype != table:
+			frappe.clear_document_cache(parent_doctype, parent)
+		summary["written"] += 1
+		key = f"{table}.{fieldname}"
+		summary["by_field"][key] = summary["by_field"].get(key, 0) + 1
+	except Exception as exc:
+		summary["failed"] += 1
+		if summary["failed"] == 1:
+			_log(f"{table}.{fieldname}: {type(exc).__name__}; later failures are only counted")
+
+
 def _summary():
 	return {
 		"planned": 0,
@@ -173,26 +255,28 @@ def _apply(row, summary):
 			_log(f"{table}.{fieldname}: {type(exc).__name__}; later failures are only counted")
 
 
-def _save_undo_file(changes):
-	"""Save every planned change's before and after; returns the file name, or None."""
+def _entry(target, before, after, field=None):
+	table, name, fieldname, parent_doctype, parent = target
+	return {
+		"doctype": table,
+		"name": name,
+		"field": field or fieldname,
+		"parent_doctype": parent_doctype,
+		"parent": parent,
+		"before": before,
+		"after": after,
+	}
+
+
+def _save_undo_file(entries, written_by="run"):
+	"""Save every planned write's before and after; returns the file name, or None."""
 	try:
 		stamp = frappe.utils.now_datetime().strftime("%Y%m%d-%H%M%S")
 		file_name = f"{UNDO_PREFIX}{stamp}.json"
 		content = {
-			"written_by": "erpnext_enhancements.utils.normalize_cleanup.run",
+			"written_by": f"erpnext_enhancements.utils.normalize_cleanup.{written_by}",
 			"undo_with": "erpnext_enhancements.utils.normalize_cleanup.undo",
-			"changes": [
-				{
-					"doctype": row["_target"][0],
-					"name": row["_target"][1],
-					"field": row["_target"][2],
-					"parent_doctype": row["_target"][3],
-					"parent": row["_target"][4],
-					"before": row["current"],
-					"after": row["normalized"],
-				}
-				for row in changes
-			],
+			"changes": entries,
 		}
 		saved = frappe.get_doc(
 			{
@@ -210,11 +294,10 @@ def _save_undo_file(changes):
 		return None
 
 
-def _record(summary):
+def _record(summary, heading="Normalization cleanup ran."):
 	"""The outcome as a comment on the report: counts per field, never a value."""
 	lines = [
-		f"<b>Normalization cleanup ran.</b> {summary['written']} values rewritten of "
-		f"{summary['planned']} planned.",
+		f"<b>{heading}</b> {summary['written']} values rewritten of {summary['planned']} planned.",
 	]
 	if summary["edited_since"]:
 		lines.append(f"{summary['edited_since']} were edited while it ran and kept their new value.")
