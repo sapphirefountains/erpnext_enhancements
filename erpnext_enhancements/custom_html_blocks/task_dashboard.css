@@ -3,8 +3,9 @@
  * Runs inside the block's shadow root. Structural colors come from Frappe's
  * CSS custom properties (custom properties inherit through shadow boundaries,
  * so Frappe Light and Timeless Night both render correctly without any
- * [data-theme] selector); only semantic priority/overdue accents are literal,
- * chosen to read on both themes. */
+ * [data-theme] selector). Status accents (overdue, urgent, the projects
+ * panel's green) come from the app's --sf-* tokens, which inherit the same way;
+ * only the rest of the priority scale and the panel accents are literal. */
 
 .tdb-root {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -98,10 +99,10 @@
     color: var(--heading-color, inherit);
 }
 
-.tdb-overdue .tdb-panel-head { border-top: 3px solid #dc2626; }
+.tdb-overdue .tdb-panel-head { border-top: 3px solid var(--sf-danger); }
 .tdb-today .tdb-panel-head   { border-top: 3px solid #2490ef; }
 .tdb-events .tdb-panel-head  { border-top: 3px solid #8b5cf6; }
-.tdb-projects .tdb-panel-head{ border-top: 3px solid #16a34a; }
+.tdb-projects .tdb-panel-head{ border-top: 3px solid var(--sf-good); }
 
 .tdb-panel-hint {
     font-size: 11px;
@@ -156,8 +157,8 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: #16a34a;
-    color: #fff;
+    background: var(--sf-good);
+    color: var(--sf-on-good);
     font-weight: 800;
     font-size: 13px;
 }
@@ -212,7 +213,7 @@
 .tdb-pct-bar > span {
     display: block;
     height: 100%;
-    background: #16a34a;
+    background: var(--sf-good);
 }
 
 /* --- Task rows (overdue + today) --- */
@@ -230,7 +231,7 @@
 
 .tdb-task:hover { border-color: var(--text-muted, #888); }
 
-.tdb-task.prio-urgent { border-left-color: #dc2626; }
+.tdb-task.prio-urgent { border-left-color: var(--sf-danger); }
 .tdb-task.prio-high   { border-left-color: #ea580c; }
 .tdb-task.prio-medium { border-left-color: #ca8a04; }
 .tdb-task.prio-low    { border-left-color: #64748b; }
@@ -252,8 +253,8 @@
     flex-shrink: 0;
     font-size: 10px;
     font-weight: 800;
-    color: #dc2626;
-    border: 1px solid #dc2626;
+    color: var(--sf-danger);
+    border: 1px solid var(--sf-danger);
     border-radius: 9px;
     padding: 0 7px;
     white-space: nowrap;
@@ -267,7 +268,7 @@
     margin-top: 2px;
 }
 
-.tdb-no-project { color: #dc2626; font-weight: 700; }
+.tdb-no-project { color: var(--sf-danger); font-weight: 700; }
 
 .tdb-rank { color: #ca8a04; font-size: 10px; margin-left: 5px; }
 

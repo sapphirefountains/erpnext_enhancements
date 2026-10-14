@@ -60,6 +60,39 @@ fetches data and does neither, and on any block comment that claims the old life
 block against a stand-in desk and checks that leaving asks the server nothing and coming back
 really asks it again.
 
+**A block that polls asks the helper whether it is on screen.** Leaving the workspace hides a
+block (`display:none` on an ancestor) or, once the page renders again, detaches it, and its
+timers keep firing. `workspace_blocks.onScreen(root)` asks the shadow root's host: false once it
+has left the document or has no client rects, and **true whenever it cannot tell** (no host, no
+layout APIs, an exception), so a block it cannot judge polls as before. The Task Dashboard and
+Who's Working skip a timed or realtime fetch while it says false. Each asks through a guard that
+answers true when the helper or the function is missing (a device holding an older bundle);
+until v1.641.0 each carried its own copy of the check. `tests/test_page_polling_lifecycle.py`
+pins the one copy and the guards, and the node harness runs both blocks' poll timers shown,
+hidden, and hidden on an older bundle.
+
+## Status colours come from the `--sf-*` tokens
+
+Good, watch and bad are read from the app's design tokens
+([`public/css/sf_tokens.bundle.css`](../public/css/sf_tokens.bundle.css),
+[`docs/app-design-system.md`](../../docs/app-design-system.md)), never written as literals. The
+tokens are custom properties on `:root`, so they inherit into every block's shadow root the way
+Frappe's own variables do, and one file sets every block's status colours in both themes.
+
+| Use | Write |
+|---|---|
+| status text: good, bad | `var(--sf-good)`, `var(--sf-danger)` |
+| status text: watch | `color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))`. `--sf-warn` is a yellow *fill*, 1.7:1 on white; mixed with the theme's strongest text it is 5.3:1 on a white card and 13:1 on a dark one |
+| a fill: a bar, a badge, a stripe | `var(--sf-good)` / `var(--sf-warn)` / `var(--sf-danger)`, with `var(--sf-on-good)` / `--sf-on-warn` / `--sf-on-danger` for a label on it |
+| a light tint behind a pill or a notice | `color-mix(in srgb, var(--sf-danger) 12%, transparent)` (the edge at 35%) |
+
+My Travel is the exception that proves it: it uses Frappe's theme-aware indicator pairs
+(`--bg-green` / `--text-on-green` ...), and only their fallbacks are tokens.
+`tests/test_block_status_tokens.py` fails the build on any of the old literal status hexes (or
+their `rgba()` tints) in a block's `.css` or `.js`, and on a `var(--sf-...)` the token file does
+not define. Categorical colours (project types, the priority scale, the panel accents, the Desk
+Shortcuts palette) are not statuses and stay literal.
+
 ## Files — Projects Dashboard
 
 | File | Role |
@@ -84,7 +117,7 @@ event (debounced) plus a 5-minute kiosk fallback; timers/subscriptions are store
 |---|---|
 | `task_dashboard.html` | Panel skeleton: header with live clock, Top-10 projects rail (left), Overdue / Today / Calendar stack (right). |
 | `task_dashboard.js` | Block-sandbox script: fetch + render, clock, guarded realtime/interval refresh. |
-| `task_dashboard.css` | Shadow-root styles. Structural colors from Frappe CSS variables (they pierce the shadow boundary, so both themes work); literal accents only for priority/overdue semantics. |
+| `task_dashboard.css` | Shadow-root styles. Structural colors from Frappe CSS variables (they pierce the shadow boundary, so both themes work); overdue and urgent from the `--sf-*` status tokens; the rest of the priority scale and the panel accents literal. |
 
 **Install:** `bench migrate` creates the block and auto-places it on **Home**
 (via `sync_custom_html_blocks`). To show it on another workspace too, edit that
@@ -173,7 +206,8 @@ workspace JSONs. Each can drift silently: a placement naming an unseeded block r
 
 The shared HTML/CSS shell (card → head → rows, plus pills, bars and stat tiles) is
 deliberately uniform across all 34 department widgets; structural colours come from Frappe CSS variables
-so both themes work, and literal colours appear only where the colour *is* the meaning.
+so both themes work, and where the colour *is* the meaning (good / watch / bad) it comes from the
+`--sf-*` status tokens (see [Status colours](#status-colours-come-from-the---sf--tokens)).
 
 ## Files — My Travel (the Travel hub, v1.554.0)
 

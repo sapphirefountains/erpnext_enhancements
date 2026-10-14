@@ -1,7 +1,8 @@
 /* Fleet & Device Health — Operations Dashboard widget.
    Structural colours come from Frappe CSS variables (they pierce the shadow
-   boundary, so both themes work); literal colours appear only where the colour
-   IS the meaning — good / watch / bad. */
+   boundary, so both themes work); status colours, where the colour IS the
+   meaning (good / watch / bad), come from the app's --sf-* tokens, which
+   pierce it the same way. */
 
 .ofh-card {
     font-size: var(--text-md);
@@ -92,15 +93,15 @@
 }
 
 .ofh-good {
-    color: #1e7e51;
+    color: var(--sf-good);
 }
 
 .ofh-warn {
-    color: #b7791f;
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .ofh-bad {
-    color: #c0392b;
+    color: var(--sf-danger);
     font-weight: 600;
 }
 
@@ -129,21 +130,21 @@
 }
 
 .ofh-pill-bad {
-    background: rgba(192, 57, 43, 0.12);
-    border-color: rgba(192, 57, 43, 0.35);
-    color: #c0392b;
+    background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
+    border-color: color-mix(in srgb, var(--sf-danger) 35%, transparent);
+    color: var(--sf-danger);
 }
 
 .ofh-pill-warn {
-    background: rgba(183, 121, 31, 0.12);
-    border-color: rgba(183, 121, 31, 0.35);
-    color: #b7791f;
+    background: color-mix(in srgb, var(--sf-warn) 12%, transparent);
+    border-color: color-mix(in srgb, var(--sf-warn) 35%, transparent);
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .ofh-pill-good {
-    background: rgba(30, 126, 81, 0.12);
-    border-color: rgba(30, 126, 81, 0.35);
-    color: #1e7e51;
+    background: color-mix(in srgb, var(--sf-good) 12%, transparent);
+    border-color: color-mix(in srgb, var(--sf-good) 35%, transparent);
+    color: var(--sf-good);
 }
 
 .ofh-tiles {

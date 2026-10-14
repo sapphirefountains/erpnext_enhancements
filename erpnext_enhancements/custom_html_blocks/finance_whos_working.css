@@ -74,8 +74,8 @@
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #f0ad4e;
-    border: 1px solid #f0ad4e;
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+    border: 1px solid color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
     border-radius: 4px;
     padding: 0 4px;
 }

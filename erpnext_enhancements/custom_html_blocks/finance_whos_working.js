@@ -34,14 +34,13 @@
         }
     }
 
-    // Is this render's block actually on screen? `root_element` is a shadow root, so ask
-    // its host: isConnected is false once detached, and getClientRects() is empty under
-    // any display:none ancestor (a hidden workspace page). Fails open without a host.
+    // Is this render's block actually on screen? The shared helper asks the shadow root's
+    // host: detached, or no client rects under a display:none ancestor (a hidden workspace
+    // page). A device whose bundle predates the helper fails open (true): polling as before.
     function onScreen(container) {
-        const host = container && container.host;
-        // No host, or one without layout APIs (a test double), fails open: polling as before.
-        if (!host || typeof host.getClientRects !== "function") return true;
-        return Boolean(host.isConnected && host.getClientRects().length > 0);
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (!blocks || typeof blocks.onScreen !== "function") return true;
+        return blocks.onScreen(container);
     }
 
     function render(body, message) {
