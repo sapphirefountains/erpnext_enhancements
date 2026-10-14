@@ -1,0 +1,3094 @@
+/* Project Planner: the page's stylesheet (custom pages S3.4d, v1.664.0, TASK-2026-02823).
+ *
+ * It used to be eleven <style> elements the script wrote into <head> (PP_STYLE, PP3B_STYLE ...
+ * PPT4_STYLE). Frappe's page loader sends this file with the page instead, and appends it to
+ * <head> once for the rest of the session, so every selector here starts with one of the page's
+ * own class families: pp-, p6b- and p6e- (the planner's Phase 6B and 6E pieces), t1- (Build out)
+ * and t4- (AI draft). The Maintenance Planner's are all mp-, and nothing else in the app uses
+ * these; tests/test_s3_page_css.py holds the second. The sections below keep the order the
+ * eleven blocks were written in, so the cascade between them is unchanged.
+ *
+ * Colors are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's light
+ * or dark theme. Status is the three status tokens: a fill is the token with its --sf-on-* label
+ * and its --sf-chip-edge-* edge; status as text is mixed half and half with --sf-text-strong, so
+ * it reads on a white card and a navy one (plain yellow is 1.7:1 on white and is never text); a
+ * tinted ground is the token over the card. A load is green up to 75% booked, warn up to 100%,
+ * danger over.
+ *
+ * Two colors are data, not design: a task's own color (the card's left edge, a timeline bar)
+ * and a planner resource's color (a person's dot and crew badge). Both come from records people
+ * edit, so the script hands them over as one custom property in the element's style attribute,
+ * style="--pp-color: #hex" (pp_color() lets only a plain hex value through; a resource with no
+ * color gets an hsl() hashed from its name), and this file paints with var(--pp-color). "Color
+ * by" (Phase 6C) does the same with --pp-p6c-c, set through style.setProperty.
+ *
+ * Structure is square: sections, grids, cards, the stop list, trays and bars. Controls (the
+ * view switch, the toggles, a day number) round at --sf-radius-control or are pills, chips and
+ * badges are pills, a person's dot is a circle. Nothing has a shadow: a ring is an outline (inset
+ * with a negative offset where it marks a cell), and a floating bar has a 2px edge.
+ *
+ * One phone breakpoint, 767px. The crew, week and Resources grids keep their headings in view
+ * while they scroll; that is written for every width and switched off again on a phone, as the
+ * old min-width: 761px block did. On a touch screen (pointer: coarse) the controls and cards are
+ * 44px tall, --sf-touch-min. */
+
+/* ======================================================================================== */
+/* The page: toolbar, Resources available, the calendar, the crew view, trays, routes and    */
+/* the heatmap (PP_STYLE).                                                                  */
+/* ======================================================================================== */
+
+/* overflow-x: clip keeps a wide grid from scrolling the whole page sideways (the old 1024px
+ * block); it does not make a scroll container, so the sticky headings still stick, and the
+ * fixed bars and the drag ghost are outside it. */
+.pp-wrap {
+	padding-bottom: 48px;
+	color: var(--sf-text);
+	max-width: 100%;
+	overflow-x: clip;
+}
+
+/* Read aloud, never drawn: the word beside a color that would otherwise say it alone. */
+.pp-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.pp-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin: 4px 0 10px;
+}
+
+.pp-title {
+	font-weight: 600;
+	font-size: 16px;
+	margin: 0 6px;
+	min-width: 150px;
+	color: var(--sf-text-strong);
+}
+
+.pp-seg {
+	display: inline-flex;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+
+.pp-seg button {
+	border: none;
+	background: var(--sf-surface);
+	padding: 4px 12px;
+	font-size: 13px;
+	color: var(--sf-text);
+}
+
+.pp-seg button + button {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+/* The view on screen: the primary fill and the weight, so it is never color alone. */
+.pp-seg button.pp-on {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pp-seg button:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pp-spacer {
+	flex: 1 1 auto;
+}
+
+.pp-toolbar select {
+	width: auto;
+	max-width: 200px;
+}
+
+.pp-toolbar label {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin: 0;
+	font-size: 13px;
+	font-weight: normal;
+}
+
+/* The toolbar's selects and search are Bootstrap .form-control fields. Bootstrap's own
+ * .form-control:focus (0,2,0) would outrank a plain field rule and turn them grey while in use,
+ * so the focused field has its own rule, under the page at (0,4,0). Fields stay white, square,
+ * with a 1px field edge, in both themes. */
+.pp-wrap .pp-toolbar .form-control,
+.pp-wrap .pp-toolbar .form-control:focus {
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.pp-wrap .pp-toolbar .form-control:focus {
+	border-color: var(--sf-focus);
+	outline: 1px solid var(--sf-focus);
+}
+
+.pp-undo.pp-empty {
+	opacity: 0.55;
+}
+
+.pp-section {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 10px;
+}
+
+.pp-section-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	font-weight: 600;
+}
+
+.pp-section-head .btn {
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.pp-scroll {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.pp-res-grid {
+	display: grid;
+	min-width: 0;
+}
+
+.pp-res-grid > div {
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-res-head {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	padding: 3px 4px;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.pp-res-head.pp-today {
+	color: var(--sf-link);
+	font-weight: 700;
+}
+
+.pp-person {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 8px;
+	font-size: 12px;
+	min-width: 0;
+	cursor: grab;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+	position: sticky;
+	left: 0;
+	background: var(--sf-surface);
+	z-index: 1;
+}
+
+.pp-person:hover {
+	background: var(--sf-bg);
+}
+
+.pp-person-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pp-person-group {
+	font-size: 10px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+}
+
+/* A person's own color, which is data: --pp-color is set on the element by the script. */
+.pp-dot {
+	flex: 0 0 auto;
+	width: 10px;
+	height: 10px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--pp-color, var(--sf-text-muted));
+}
+
+.pp-avail {
+	padding: 3px 4px;
+	font-size: 11px;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-avail-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* A person-day's load: firm hours solid in the load's status, pencilled hours hatched. */
+.pp-bar {
+	position: relative;
+	height: 4px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-text-muted) 18%, var(--sf-surface));
+	overflow: hidden;
+}
+
+.pp-bar i {
+	display: block;
+	height: 100%;
+}
+
+.pp-bar b {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	background-image: repeating-linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--sf-text-muted) 85%, transparent) 0 2px,
+		transparent 2px 4px
+	);
+}
+
+.pp-green .pp-bar i {
+	background: var(--sf-good);
+}
+
+.pp-amber .pp-bar i {
+	background: var(--sf-warn);
+}
+
+.pp-red .pp-bar i {
+	background: var(--sf-danger);
+}
+
+.pp-red .pp-avail-text,
+.pp-red .pp-cap-text {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.pp-offday {
+	background: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 14%, transparent) 6px 8px
+	);
+	color: var(--sf-text-muted);
+}
+
+/* A conflict on a person-day (over their hours, double-booked, a day off): a danger ring inside
+ * the cell. Pencilled hours that would go over: a warn ring. The cell's text and tooltip say
+ * which. */
+.pp-conflict {
+	outline: 2px solid var(--sf-danger);
+	outline-offset: -2px;
+}
+
+.pp-softover {
+	outline: 2px solid color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	outline-offset: -2px;
+}
+
+/* The month's one-line cells: the load as a tint, and its word for a screen reader (.pp-sr). */
+.pp-mini {
+	padding: 0;
+	min-height: 22px;
+}
+
+.pp-mini.pp-green {
+	background: color-mix(in srgb, var(--sf-good) 22%, var(--sf-surface));
+}
+
+.pp-mini.pp-amber {
+	background: color-mix(in srgb, var(--sf-warn) 28%, var(--sf-surface));
+}
+
+.pp-mini.pp-red {
+	background: color-mix(in srgb, var(--sf-danger) 38%, var(--sf-surface));
+}
+
+.pp-mini.pp-idle {
+	background: transparent;
+}
+
+.pp-mini.pp-soft-mini {
+	background-image: repeating-linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--sf-text-muted) 50%, transparent) 0 2px,
+		transparent 2px 5px
+	);
+}
+
+.pp-tray {
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	padding: 8px 10px;
+	margin-bottom: 10px;
+}
+
+.pp-tray h5 {
+	margin: 0 0 6px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.pp-tray h5 .btn {
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.pp-tray-cards {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.pp-tray .pp-card {
+	width: 230px;
+}
+
+.pp-grid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	overflow: hidden;
+	background: var(--sf-surface);
+}
+
+.pp-dow {
+	padding: 6px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.pp-day {
+	min-height: 118px;
+	padding: 4px;
+	border-right: var(--sf-border-hairline) solid var(--sf-rule);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.pp-day:nth-child(7n) {
+	border-right: none;
+}
+
+.pp-week .pp-day {
+	min-height: 380px;
+}
+
+.pp-week .pp-dow {
+	display: none;
+}
+
+.pp-day-head {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 4px;
+	padding: 0 2px;
+}
+
+.pp-day-num {
+	border-radius: var(--sf-radius-pill);
+	padding: 0 6px;
+	cursor: pointer;
+}
+
+.pp-day-num:hover {
+	background: var(--sf-bg);
+}
+
+/* S3.6 (v1.656.0): a day number, a crew date head and the title take keyboard focus. */
+.pp-day-num:focus-visible,
+.pp-crew-head:focus-visible,
+.pp-title:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+/* Today: the primary fill and the weight. */
+.pp-day.pp-today .pp-day-num {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pp-day.pp-out {
+	background: var(--sf-bg);
+}
+
+.pp-day.pp-out .pp-day-head {
+	opacity: 0.55;
+}
+
+.pp-day.pp-past .pp-day-head {
+	opacity: 0.6;
+}
+
+.pp-day-free {
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+/* Where a dragged card would land. A day in the past says so with a dashed warn ring. */
+.pp-over {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+	background: color-mix(in srgb, var(--sf-focus) 8%, var(--sf-surface));
+}
+
+.pp-over-past {
+	outline: 2px dashed color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	outline-offset: -2px;
+	background: color-mix(in srgb, var(--sf-warn) 8%, var(--sf-surface));
+}
+
+/* A task card. Its left edge is the task's own color, which is data (--pp-color, set by the
+ * script); a task with none is drawn in PP.default_color. */
+.pp-card {
+	position: relative;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--pp-color, var(--sf-pillar-build));
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	padding: 3px 6px;
+	font-size: 12px;
+	line-height: 1.3;
+	cursor: pointer;
+	min-width: 0;
+}
+
+.pp-card:hover {
+	background-color: color-mix(in srgb, var(--sf-focus) 6%, var(--sf-surface));
+}
+
+.pp-card:focus {
+	outline: none;
+}
+
+/* Keyboard focus on a card is a ring drawn inside it, on ::after, not an outline. A card's
+ * outline carries its state (selected, being moved, drafted, a drop target), and one element has
+ * one outline: a focus outline lost to a later state rule, and would have hidden the state if it
+ * had won. On its own channel both show at once, whatever the order of the rules. */
+.pp-card:focus-visible::after {
+	content: "";
+	position: absolute;
+	inset: 1px;
+	border: 2px solid var(--sf-focus);
+	pointer-events: none;
+}
+
+.pp-card.pp-movable {
+	cursor: grab;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.pp-card.pp-over {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pp-card-top {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.pp-card-title {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--sf-text-strong);
+}
+
+.pp-card-sub {
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11px;
+}
+
+.pp-card-chips {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-card-chips:empty {
+	display: none;
+}
+
+.pp-badges {
+	display: inline-flex;
+	flex: 0 0 auto;
+}
+
+/* A crew member's initials on the person's own color (data, --pp-color). The label is
+ * off-white, the fill colors are picked dark enough for it. */
+.pp-badge {
+	width: 20px;
+	height: 20px;
+	border-radius: var(--sf-radius-circle);
+	font-size: 9px;
+	font-weight: 700;
+	background: var(--pp-color, var(--sf-text-muted));
+	color: var(--sf-on-pillar);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: var(--sf-border-hairline) solid var(--sf-surface);
+	margin-left: -4px;
+}
+
+.pp-badge:first-child {
+	margin-left: 0;
+}
+
+.pp-badge.pp-more {
+	background: var(--sf-text-muted);
+	color: var(--sf-surface);
+}
+
+/* The crew lead is ringed (the legend says so). */
+.pp-badge.pp-lead {
+	outline: 2px solid var(--sf-text-strong);
+	outline-offset: 0;
+}
+
+.pp-chip {
+	display: inline-block;
+	font-size: 10px;
+	border-radius: var(--sf-radius-pill);
+	padding: 0 6px;
+	margin-right: 3px;
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+}
+
+.pp-chip.pp-red {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pp-chip.pp-amber {
+	background: color-mix(in srgb, var(--sf-warn) 16%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.pp-chip.pp-pencil {
+	background: color-mix(in srgb, var(--sf-text-muted) 20%, var(--sf-surface));
+	color: var(--sf-text);
+	font-style: italic;
+}
+
+/* A pencilled (tentative) task: dashed and hatched, its chip says "Pencil". */
+.pp-card.pp-tentative {
+	border-top-style: dashed;
+	border-right-style: dashed;
+	border-bottom-style: dashed;
+	background-color: var(--sf-surface);
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 16%, transparent) 6px 8px
+	);
+}
+
+.pp-firm-row {
+	margin-top: 3px;
+}
+
+.pp-card.pp-overdue {
+	border-left-color: var(--sf-danger) !important;
+}
+
+.pp-card.pp-saving {
+	opacity: 0.55;
+	pointer-events: none;
+}
+
+.pp-card.pp-dragging {
+	opacity: 0.3;
+}
+
+.pp-card.pp-dim {
+	opacity: 0.45;
+}
+
+/* Bookings from the other planners (read-only here): a maintenance visit on the Service
+ * pillar's edge, a rental on Rent's, travel on Neutral's, each on a quiet ground. The edges are
+ * the chip-edge tokens, which stay visible on a dark card. */
+.pp-fcard {
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	border-left: 4px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
+	padding: 3px 6px;
+	font-size: 11px;
+	line-height: 1.3;
+	color: var(--sf-text-muted);
+	cursor: pointer;
+	min-width: 0;
+}
+
+.pp-fcard.pp-k-visit {
+	border-left-color: var(--sf-chip-edge-service);
+}
+
+.pp-fcard.pp-k-rental {
+	border-left-color: var(--sf-chip-edge-rent);
+	background: color-mix(in srgb, var(--sf-pillar-rent) 10%, var(--sf-surface));
+}
+
+.pp-fcard.pp-k-travel {
+	border-left-color: var(--sf-chip-edge-neutral);
+	background: color-mix(in srgb, var(--sf-chip-edge-neutral) 8%, var(--sf-surface));
+}
+
+.pp-fcard.pp-tentative {
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 16%, transparent) 6px 8px
+	);
+	font-style: italic;
+}
+
+.pp-fcard-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+}
+
+.pp-fcard-sub {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-crew {
+	display: grid;
+	grid-template-columns: 160px repeat(7, minmax(118px, 1fr));
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	min-width: 980px;
+}
+
+.pp-crew > div {
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-crew-head {
+	padding: 6px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+	cursor: pointer;
+	border-top: none !important;
+}
+
+.pp-crew-head.pp-today {
+	color: var(--sf-link);
+}
+
+.pp-crew-corner {
+	border-top: none !important;
+}
+
+.pp-crew .pp-person {
+	align-items: flex-start;
+	flex-direction: column;
+	gap: 0;
+	padding: 6px 8px;
+}
+
+.pp-cell {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	min-height: 64px;
+}
+
+.pp-cell.pp-past {
+	background: color-mix(in srgb, var(--sf-bg) 60%, var(--sf-surface));
+}
+
+.pp-cap {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	font-size: 11px;
+}
+
+.pp-cap-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--sf-text-muted);
+}
+
+.pp-cell .pp-card,
+.pp-cell .pp-fcard {
+	font-size: 11px;
+	padding: 2px 5px;
+}
+
+/* The card under a finger or the pointer while it is dragged. A 2px focus edge, not a drop
+ * shadow, lifts it off the grid. */
+.pp-ghost {
+	position: fixed;
+	z-index: 1100;
+	pointer-events: none;
+	outline: 2px solid var(--sf-focus);
+	transform: rotate(2deg);
+	opacity: 0.96;
+	margin: 0;
+}
+
+body.pp-drag-active,
+body.pp-drag-active * {
+	cursor: grabbing !important;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.pp-loading .pp-grid,
+.pp-loading .pp-tray,
+.pp-loading .pp-crew,
+.pp-loading .pp-res-grid {
+	opacity: 0.6;
+}
+
+.pp-hint {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin-top: 8px;
+}
+
+.pp-summary {
+	width: 100%;
+	font-size: 13px;
+	margin-bottom: 6px;
+}
+
+.pp-summary th {
+	color: var(--sf-text-muted);
+	font-weight: normal;
+	padding: 3px 10px 3px 0;
+	vertical-align: top;
+	white-space: nowrap;
+	width: 1%;
+}
+
+.pp-summary td {
+	padding: 3px 0;
+}
+
+.pp-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 8px 0 2px;
+}
+
+.pp-why {
+	margin: 6px 0;
+}
+
+.pp-why ul {
+	margin: 2px 0 0;
+	padding-left: 18px;
+}
+
+.pp-empty-note {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	padding: 8px 10px;
+}
+
+.pp-drive {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 3px;
+	font-size: 10px;
+	color: var(--sf-text-muted);
+	min-width: 0;
+}
+
+.pp-drive-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-route {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	cursor: pointer;
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
+	padding: 0 3px;
+}
+
+.pp-route:hover,
+.pp-route:focus {
+	color: var(--sf-link);
+	background: var(--sf-bg);
+	outline: none;
+}
+
+.pp-route:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pp-route svg {
+	width: 12px;
+	height: 12px;
+	flex: 0 0 auto;
+}
+
+.pp-suggest-row {
+	margin-top: 3px;
+}
+
+/* ---- One person's driving day ------------------------------------------------------------ */
+
+.pp-route-view {
+	padding-bottom: 24px;
+}
+
+.pp-route-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 4px 0 6px;
+}
+
+.pp-route-title {
+	font-weight: 600;
+	font-size: 16px;
+	margin: 0 6px;
+	color: var(--sf-text-strong);
+}
+
+.pp-route-totals {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	margin: 0 0 10px;
+}
+
+.pp-route-note {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	padding: 6px 10px;
+	margin-bottom: 10px;
+}
+
+.pp-route-cols {
+	display: grid;
+	grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+	gap: 12px;
+	align-items: start;
+}
+
+.pp-stops {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+}
+
+.pp-stop {
+	display: flex;
+	gap: 10px;
+	padding: 8px 10px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 13px;
+}
+
+.pp-stop:first-child {
+	border-top: none;
+}
+
+/* A stop's number and the shop's "S". The map's markers read the same two tokens through
+ * pp_token_color(), so the list and the map cannot drift apart. */
+.pp-stop-num {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-bahama-blue);
+	color: var(--sf-white);
+	font-size: 12px;
+	font-weight: 700;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.pp-stop-num.pp-shop {
+	background: var(--sf-green);
+}
+
+.pp-stop-body {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.pp-stop-time {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pp-stop-label {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pp-stop-sub {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pp-stop-leg {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+}
+
+.pp-stop-link {
+	cursor: pointer;
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.pp-stop.pp-unlocated {
+	background: var(--sf-bg);
+}
+
+.pp-stop.pp-unlocated .pp-stop-num {
+	background: var(--sf-text-muted);
+	color: var(--sf-surface);
+}
+
+.pp-stop.pp-unlocated .pp-stop-label,
+.pp-stop.pp-unlocated .pp-stop-sub {
+	color: var(--sf-text-muted);
+}
+
+.pp-stop-missing {
+	font-size: 12px;
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	margin-top: 2px;
+}
+
+.pp-route-cols.pp-nomap {
+	grid-template-columns: minmax(0, 640px);
+}
+
+.pp-map {
+	height: 460px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	overflow: hidden;
+	background: var(--sf-bg);
+}
+
+/* ---- Suggest dates ----------------------------------------------------------------------- */
+
+.pp-sug {
+	width: 100%;
+	font-size: 13px;
+	border-collapse: collapse;
+}
+
+.pp-sug td {
+	padding: 6px 8px 6px 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	vertical-align: top;
+}
+
+.pp-sug tr:first-child td {
+	border-top: none;
+}
+
+.pp-sug-when {
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.pp-sug-reason {
+	color: var(--sf-text-muted);
+	font-size: 12px;
+}
+
+/* ---- The heatmap: eight weeks of load per person ----------------------------------------- */
+
+.pp-hm-scroll {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.pp-hm {
+	display: grid;
+	min-width: 640px;
+}
+
+.pp-hm > div {
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 2px;
+	min-width: 0;
+}
+
+.pp-hm > .pp-hm-head {
+	border-top: none;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	text-align: center;
+	white-space: nowrap;
+	padding: 5px 2px;
+}
+
+.pp-hm > .pp-hm-head.pp-today {
+	color: var(--sf-link);
+	font-weight: 700;
+}
+
+.pp-hm > .pp-hm-name {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	padding: 2px 8px;
+	min-width: 0;
+	position: sticky;
+	left: 0;
+	background: var(--sf-surface);
+	z-index: 1;
+}
+
+.pp-hm-name span {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* A week's cell shows its percentage; the tint repeats it. */
+.pp-hm-cell {
+	border-radius: var(--sf-radius-none);
+	padding: 4px 6px;
+	min-height: 46px;
+	cursor: pointer;
+	font-size: 11px;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	min-width: 0;
+	overflow: hidden;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	color: var(--sf-text);
+}
+
+.pp-hm-cell:hover {
+	border-color: var(--sf-focus);
+}
+
+.pp-hm-cell:focus {
+	outline: none;
+}
+
+.pp-hm-cell:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pp-hm-cell.pp-green {
+	background: color-mix(in srgb, var(--sf-good) 22%, var(--sf-surface));
+}
+
+.pp-hm-cell.pp-amber {
+	background: color-mix(in srgb, var(--sf-warn) 28%, var(--sf-surface));
+}
+
+.pp-hm-cell.pp-red {
+	background: color-mix(in srgb, var(--sf-danger) 38%, var(--sf-surface));
+}
+
+.pp-hm-cell.pp-idle {
+	background: transparent;
+	color: var(--sf-text-muted);
+}
+
+.pp-hm-pct {
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.pp-hm-sub {
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-hm-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin: 8px 0 0;
+}
+
+.pp-hm-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.pp-hm-key i {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.pp-hm-key i.pp-green {
+	background: color-mix(in srgb, var(--sf-good) 35%, var(--sf-surface));
+}
+
+.pp-hm-key i.pp-amber {
+	background: color-mix(in srgb, var(--sf-warn) 40%, var(--sf-surface));
+}
+
+.pp-hm-key i.pp-red {
+	background: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-surface));
+}
+
+.pp-hm-key i.pp-soft-key {
+	background-image: repeating-linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--sf-text-muted) 85%, transparent) 0 2px,
+		transparent 2px 4px
+	);
+}
+
+/* ---- The Overdue tray -------------------------------------------------------------------- */
+
+/* A 4px danger bar, which still shows on a navy card where a red hairline (2.8:1) would not. */
+.pp-od {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--sf-danger);
+	border-radius: var(--sf-radius-none);
+	padding: 8px 10px;
+	margin-bottom: 10px;
+}
+
+.pp-od h5 {
+	margin: 0;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.pp-od h5 .btn {
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.pp-od-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin: 8px 0 2px;
+}
+
+.pp-od-count {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pp-od-list {
+	max-height: 360px;
+	overflow-y: auto;
+}
+
+.pp-od-project {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+	font-size: 12px;
+	margin: 8px 0 3px;
+}
+
+.pp-od-project input,
+.pp-od-card input {
+	flex: 0 0 auto;
+	margin: 0;
+}
+
+.pp-od-card {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--sf-danger);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	padding: 3px 8px;
+	font-size: 12px;
+	margin-bottom: 3px;
+	cursor: grab;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+	min-width: 0;
+}
+
+.pp-od-card.pp-dragging {
+	opacity: 0.3;
+}
+
+.pp-od-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.pp-od-subject {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-od-sub {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-od-end {
+	font-size: 11px;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	white-space: nowrap;
+}
+
+/* ---- Copy week --------------------------------------------------------------------------- */
+
+.pp-copy-list {
+	max-height: 300px;
+	overflow-y: auto;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 4px 8px;
+}
+
+.pp-copy-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 3px 0;
+	font-size: 13px;
+}
+
+.pp-copy-row input {
+	margin-top: 3px;
+	flex: 0 0 auto;
+}
+
+.pp-copy-sub {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pp-copy-table {
+	width: 100%;
+	font-size: 13px;
+	border-collapse: collapse;
+}
+
+.pp-copy-table td {
+	padding: 4px 8px 4px 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	vertical-align: top;
+}
+
+.pp-copy-table tr:first-child td {
+	border-top: none;
+}
+
+@media (max-width: 767px) {
+	.pp-hm {
+		min-width: 560px;
+	}
+
+	.pp-hm-cell {
+		padding: 3px 4px;
+	}
+
+	.pp-od-card {
+		flex-wrap: wrap;
+	}
+
+	.pp-title {
+		min-width: 0;
+		width: 100%;
+		order: -1;
+		margin: 0;
+	}
+
+	.pp-toolbar select {
+		max-width: none;
+		flex: 1 1 40%;
+	}
+
+	/* 16px in a field, so iOS does not zoom the page into it. */
+	.pp-wrap .pp-toolbar .form-control {
+		font-size: var(--sf-text-input);
+	}
+
+	.pp-spacer {
+		display: none;
+	}
+
+	.pp-day {
+		min-height: 84px;
+		padding: 2px;
+	}
+
+	.pp-month .pp-card {
+		padding: 1px 3px;
+		font-size: 10px;
+		border-left-width: 3px;
+	}
+
+	.pp-month .pp-card-sub,
+	.pp-month .pp-badges,
+	.pp-month .pp-card-chips,
+	.pp-month .pp-fcard-sub {
+		display: none;
+	}
+
+	.pp-week .pp-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.pp-week .pp-day {
+		min-height: 0;
+		border-right: none;
+	}
+
+	.pp-tray .pp-card {
+		width: 100%;
+	}
+
+	.pp-crew {
+		grid-template-columns: 110px repeat(7, minmax(104px, 1fr));
+		min-width: 840px;
+	}
+
+	.pp-route-cols {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.pp-map {
+		height: 320px;
+	}
+
+	.pp-route-title {
+		min-width: 0;
+		width: 100%;
+		order: -1;
+		margin: 0;
+	}
+
+	.pp-sug td {
+		display: block;
+		border-top: none;
+		padding: 2px 0;
+	}
+
+	.pp-sug tr {
+		display: block;
+		border-top: var(--sf-border-hairline) solid var(--sf-rule);
+		padding: 6px 0;
+	}
+
+	.pp-sug tr:first-child {
+		border-top: none;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 3B: Draft mode and My week (PP3B_STYLE).                                           */
+/* ======================================================================================== */
+
+/* A change kept back in Draft mode: a dashed focus ring, and a "Draft" chip on the card. */
+.pp-card.pp-drafted {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pp-chip.pp-draft-chip {
+	background: color-mix(in srgb, var(--sf-focus) 14%, var(--sf-surface));
+	color: var(--sf-link);
+	font-weight: 600;
+}
+
+.pp-draft-toggle.pp-draft-on {
+	color: var(--sf-link);
+	font-weight: 600;
+}
+
+.pp-draft-bar {
+	position: sticky;
+	bottom: 8px;
+	z-index: 5;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	margin: 10px 0;
+	border: var(--sf-border-control) dashed var(--sf-focus);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	font-size: 13px;
+}
+
+.pp-draft-text {
+	font-weight: 600;
+}
+
+.pp-my-week {
+	max-width: 720px;
+	padding-bottom: 24px;
+}
+
+.pp-mw-title {
+	font-weight: 600;
+	font-size: 16px;
+	margin: 0 6px;
+	color: var(--sf-text-strong);
+}
+
+.pp-mw-day {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 10px;
+	overflow: hidden;
+}
+
+.pp-mw-day-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 10px;
+	font-weight: 600;
+	font-size: 13px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-mw-day-head.pp-mw-today {
+	color: var(--sf-link);
+}
+
+.pp-mw-day-head .pp-spacer {
+	flex: 1 1 auto;
+}
+
+.pp-mw-item {
+	padding: 8px 10px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.pp-mw-item:first-of-type {
+	border-top: none;
+}
+
+.pp-mw-time {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	font-weight: 600;
+}
+
+.pp-mw-label {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pp-mw-sub {
+	font-size: 13px;
+	color: var(--sf-text-muted);
+}
+
+.pp-mw-addr {
+	display: inline-block;
+	font-size: 13px;
+	padding: 2px 0;
+}
+
+.pp-mw-notes {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+	white-space: pre-wrap;
+}
+
+.pp-mw-empty {
+	padding: 8px 10px;
+	font-size: 13px;
+	color: var(--sf-text-muted);
+}
+
+@media (max-width: 767px) {
+	.pp-mw-title {
+		width: 100%;
+		order: -1;
+		margin: 0;
+	}
+
+	.pp-mw-item {
+		font-size: 15px;
+	}
+
+	/* An address is a link a thumb has to hit. */
+	.pp-mw-addr {
+		padding: 6px 0;
+		min-height: var(--sf-touch-min);
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 4: vehicles and assets, Running over, the labor forecast (PP4_STYLE).              */
+/* ======================================================================================== */
+
+.pp-chip.pp-equip {
+	background: color-mix(in srgb, var(--sf-pillar-build) 12%, var(--sf-surface));
+	color: var(--sf-text);
+}
+
+/* A toggle in the toolbar (Running over, Tap to move): a control, pressed or not. */
+.pp-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	padding: 3px 11px;
+	font-size: 13px;
+	color: var(--sf-text);
+}
+
+.pp-toggle:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.pp-toggle.pp-on {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	border-color: var(--sf-chip-edge-danger);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.pp-forecast {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 16px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	padding: 8px 12px;
+	margin-bottom: 10px;
+	font-size: 13px;
+}
+
+.pp-forecast-note {
+	flex: 1 1 100%;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pp-forecast .btn {
+	margin-left: auto;
+}
+
+.pp-fc-table {
+	width: 100%;
+	font-size: 13px;
+	border-collapse: collapse;
+}
+
+.pp-fc-table th {
+	color: var(--sf-text-muted);
+	font-weight: normal;
+	text-align: right;
+	padding: 3px 0 3px 12px;
+	white-space: nowrap;
+}
+
+.pp-fc-table td {
+	padding: 4px 0 4px 12px;
+	text-align: right;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	white-space: nowrap;
+}
+
+.pp-fc-table th:first-child,
+.pp-fc-table td:first-child {
+	text-align: left;
+	padding-left: 0;
+	white-space: normal;
+}
+
+.pp-actual-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pp-crew-group {
+	grid-column: 1 / -1;
+	padding: 5px 8px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	background: var(--sf-bg);
+}
+
+.pp-equip-name {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 6px 8px;
+	font-size: 12px;
+	min-width: 0;
+	position: sticky;
+	left: 0;
+	background: var(--sf-surface);
+	z-index: 1;
+}
+
+.pp-equip-name b {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-equip-sub {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pp-ecell {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	min-height: 40px;
+}
+
+.pp-ecell.pp-unavailable {
+	background: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 14%, transparent) 6px 8px
+	);
+}
+
+.pp-ecard {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	padding: 2px 5px;
+	font-size: 11px;
+	line-height: 1.3;
+	cursor: pointer;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-ecard:hover {
+	background-color: color-mix(in srgb, var(--sf-focus) 6%, var(--sf-surface));
+}
+
+.pp-ecard:focus {
+	outline: none;
+}
+
+.pp-ecard:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+/* Two tasks on one vehicle on one day, or a vehicle in the shop: a danger edge and ring. */
+.pp-ecard.pp-clash {
+	border-left-color: var(--sf-danger);
+	outline: 1px solid var(--sf-danger);
+	outline-offset: -1px;
+}
+
+@media (max-width: 767px) {
+	.pp-forecast {
+		padding: 6px 10px;
+	}
+
+	.pp-forecast .btn {
+		margin-left: 0;
+	}
+
+	.pp-equip-name {
+		padding: 4px 6px;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 5: weather and the customer's confirmation (PP5_STYLE).                            */
+/* ======================================================================================== */
+
+.pp-chip.pp-weather {
+	background: color-mix(in srgb, var(--sf-pillar-service) 14%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	font-weight: 600;
+}
+
+.pp-p5-meta {
+	font-size: 13px;
+	margin-bottom: 4px;
+}
+
+.pp-p5-notes {
+	margin: 6px 0 10px;
+	padding-left: 18px;
+	font-size: 13px;
+	color: var(--sf-text-muted);
+}
+
+/* The email preview: an email is light whatever the Desk theme is. */
+.pp-p5-frame {
+	display: block;
+	width: 100%;
+	min-height: 460px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-white);
+}
+
+@media (max-width: 767px) {
+	.pp-p5-frame {
+		min-height: 340px;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 6A: quick looks, the legend and hints, sticky headings (PP6A_STYLE).                */
+/* ======================================================================================== */
+
+.pp-p6a-hints {
+	display: flex;
+	flex-direction: column;
+}
+
+.pp-p6a-help {
+	font-weight: 700;
+	min-width: 30px;
+}
+
+.pp-p6a-name {
+	cursor: pointer;
+}
+
+.pp-p6a-name:hover .pp-person-name,
+.pp-route-title.pp-p6a-name:hover {
+	text-decoration: underline;
+}
+
+.pp-p6a-proj {
+	cursor: pointer;
+	border-radius: var(--sf-radius-none);
+}
+
+.pp-p6a-proj:hover {
+	text-decoration: underline;
+	color: var(--sf-text-strong);
+}
+
+.pp-badge[data-pk-person] {
+	cursor: pointer;
+}
+
+.pp-day-num[data-pp6a-day],
+.pp-crew-head[data-pp6a-day],
+.pp-res-head[data-pp6a-day] {
+	cursor: pointer;
+}
+
+.pp-res-head[data-pp6a-day]:hover,
+.pp-crew-head[data-pp6a-day]:hover {
+	color: var(--sf-link);
+}
+
+.pp-route-title {
+	cursor: pointer;
+}
+
+.pp-p6a-sample {
+	display: inline-block;
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+/* The legend's sample cards and badges: the page's own classes, so they look like the real ones. */
+.pp-p6a-sample-card {
+	display: inline-block;
+	width: 100px;
+	font-size: 11px;
+	padding: 1px 6px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--sf-pillar-build);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6a-sample-card.pp-overdue {
+	border-left-color: var(--sf-danger);
+}
+
+.pp-p6a-sample-card.pp-drafted {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pp-p6a-sample-card.pp-tentative {
+	border-top-style: dashed;
+	border-right-style: dashed;
+	border-bottom-style: dashed;
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 16%, transparent) 6px 8px
+	);
+}
+
+.pp-badge.pp-p6a-sample-badge {
+	background: var(--sf-pillar-build);
+}
+
+.pp-badge.pp-p6a-sample-lead {
+	background: var(--sf-pillar-rent-deep);
+}
+
+.pp-p6a-bar {
+	display: inline-block;
+	width: 90px;
+}
+
+.pp-p6a-bar .pp-bar {
+	display: block;
+}
+
+.pp-p6a-row {
+	cursor: pointer;
+}
+
+.pp-p6a-row:hover {
+	background: var(--sf-bg);
+}
+
+.pp-p6a-initials {
+	display: inline-flex;
+	gap: 2px;
+	margin-left: 4px;
+	vertical-align: middle;
+}
+
+.pp-p6a-initials .pp-badge {
+	width: 16px;
+	height: 16px;
+	font-size: 8px;
+	margin-left: 0;
+}
+
+.pp-p6a-forecast {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 14px;
+	font-size: 13px;
+	padding: 6px 10px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	margin-bottom: 6px;
+}
+
+.pp-p6a-forecast-note {
+	flex: 1 1 100%;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+/* A project's timeline bar in the quick look (planner_kit's .pk-tl-bar) takes the task's own
+ * color, which is data (--pp-color, set by the script). A pencilled or running-over bar keeps
+ * the kit's own fill. */
+.pk-tl-bar.pp-tl-colored {
+	background: var(--pp-color);
+}
+
+/* The crew, week and Resources grids keep their headings in view while they scroll. */
+.pp-crew-view .pp-scroll {
+	max-height: calc(100vh - 150px);
+	overflow: auto;
+}
+
+.pp-crew-view .pp-crew-head,
+.pp-crew-view .pp-crew-corner {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--sf-surface);
+}
+
+.pp-crew-view .pp-crew-corner {
+	left: 0;
+	z-index: 4;
+}
+
+.pp-week .pp-grid {
+	max-height: calc(100vh - 150px);
+	overflow: auto;
+}
+
+.pp-week .pp-day-head {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--sf-surface);
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
+.pp-week .pp-day.pp-out .pp-day-head {
+	background: var(--sf-bg);
+}
+
+.pp-res .pp-scroll {
+	max-height: 46vh;
+	overflow: auto;
+}
+
+.pp-res .pp-res-head {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--sf-surface);
+}
+
+.pp-res .pp-res-grid > .pp-res-head:first-child {
+	left: 0;
+	z-index: 3;
+}
+
+/* A phone scrolls the page instead (these were a min-width: 761px block): the grids grow to
+ * their content and their headings scroll with them, as before. */
+@media (max-width: 767px) {
+	.pp-crew-view .pp-scroll,
+	.pp-res .pp-scroll {
+		max-height: none;
+		overflow-y: visible;
+	}
+
+	.pp-crew-view .pp-crew-head,
+	.pp-crew-view .pp-crew-corner,
+	.pp-res .pp-res-head {
+		position: static;
+		background: none;
+	}
+
+	.pp-week .pp-grid {
+		max-height: none;
+		overflow: hidden;
+	}
+
+	.pp-week .pp-day-head,
+	.pp-week .pp-day.pp-out .pp-day-head {
+		position: static;
+		background: none;
+		padding-top: 0;
+		padding-bottom: 0;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 6B: select several, resize, search, quick add (PP6B_STYLE).                        */
+/* ======================================================================================== */
+
+/* Selected cards: a violet ring, a count badge, and the bar that says how many. */
+.pp-card.p6b-selected {
+	outline: 2px solid var(--sf-violet);
+	outline-offset: 1px;
+}
+
+.p6b-bar {
+	position: fixed;
+	left: 50%;
+	bottom: 72px;
+	transform: translateX(-50%);
+	z-index: 1020;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 8px;
+	max-width: calc(100vw - 24px);
+	padding: 6px 10px;
+	border: var(--sf-border-control) solid var(--sf-violet);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 13px;
+}
+
+.p6b-bar-count {
+	font-weight: 600;
+}
+
+.p6b-bar-note {
+	flex: 1 1 100%;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.p6b-count {
+	position: absolute;
+	top: -9px;
+	right: -9px;
+	min-width: 20px;
+	height: 20px;
+	padding: 0 5px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-chip-edge-design);
+	background: var(--sf-pillar-design-deep);
+	color: var(--sf-on-pillar);
+	font-size: 11px;
+	font-weight: 700;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* The resize grips at a card's two ends. */
+.p6b-grip {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 9px;
+	cursor: ew-resize;
+	touch-action: none;
+	z-index: 2;
+}
+
+.p6b-grip-l {
+	left: -4px;
+}
+
+.p6b-grip-r {
+	right: -4px;
+}
+
+.p6b-grip::after {
+	content: "";
+	position: absolute;
+	top: 25%;
+	bottom: 25%;
+	left: 3px;
+	width: 3px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-muted);
+	opacity: 0;
+}
+
+.pp-card:hover .p6b-grip::after,
+.p6b-grip:focus::after {
+	opacity: 0.55;
+}
+
+/* The days a resize would cover. */
+.p6b-span {
+	background: color-mix(in srgb, var(--sf-violet) 10%, var(--sf-surface));
+	outline: 2px solid var(--sf-violet);
+	outline-offset: -2px;
+}
+
+/* The new dates beside the pointer while resizing: inverted, like a toast. */
+.p6b-span-label {
+	position: fixed;
+	z-index: 1100;
+	pointer-events: none;
+	padding: 3px 8px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+body.p6b-resizing,
+body.p6b-resizing * {
+	cursor: ew-resize !important;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* A card a search result jumped to: its ring blinks three times. */
+.pp-card.p6b-flash {
+	animation: p6b-flash 0.8s ease-in-out 3;
+}
+
+@keyframes p6b-flash {
+	0%,
+	100% {
+		outline: 4px solid transparent;
+	}
+
+	50% {
+		outline: 4px solid var(--sf-focus);
+	}
+}
+
+.p6b-search-wrap {
+	position: relative;
+	display: inline-block;
+}
+
+.pp-toolbar input.p6b-search {
+	width: 210px;
+}
+
+.p6b-results {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	z-index: 1030;
+	margin-top: 4px;
+	min-width: 300px;
+	max-width: min(420px, calc(100vw - 24px));
+	max-height: 60vh;
+	overflow-y: auto;
+	padding: 4px 0;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+}
+
+.p6b-result {
+	display: flex;
+	flex-direction: column;
+	padding: 5px 10px;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.p6b-result.p6b-active,
+.p6b-result:hover {
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+}
+
+.p6b-result-kind {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-text-muted);
+}
+
+.p6b-result-label {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--sf-text-strong);
+}
+
+.p6b-result-sub {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.p6b-results-note {
+	padding: 4px 10px;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.p6b-modes {
+	margin: 4px 0 8px;
+}
+
+.p6b-modes label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 2px 0;
+	font-weight: normal;
+}
+
+.p6b-pick {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin-bottom: 4px;
+	padding: 6px 8px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	text-align: left;
+	cursor: pointer;
+}
+
+.p6b-pick:hover,
+.p6b-pick:focus {
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+	outline: none;
+}
+
+.p6b-pick:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.p6b-pick-busy {
+	border-style: dashed;
+}
+
+.p6b-pick-why {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.p6b-kbd {
+	display: inline-block;
+	min-width: 18px;
+	margin-right: 3px;
+	padding: 0 5px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-bottom-width: 2px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
+	color: var(--sf-text-strong);
+	font-size: 11px;
+	font-family: inherit;
+	text-align: center;
+}
+
+.p6b-legend-grip {
+	display: inline-block;
+	position: relative;
+	width: 46px;
+	height: 16px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 4px solid var(--sf-pillar-build);
+	border-radius: var(--sf-radius-none);
+}
+
+.p6b-legend-grip::after {
+	content: "";
+	position: absolute;
+	top: 3px;
+	bottom: 3px;
+	right: 2px;
+	width: 3px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-muted);
+}
+
+@media (max-width: 767px) {
+	.p6b-search-wrap {
+		flex: 1 1 100%;
+	}
+
+	.pp-toolbar input.p6b-search {
+		width: 100%;
+	}
+
+	.pp-week .p6b-grip {
+		display: none;
+	}
+
+	.p6b-bar {
+		bottom: 64px;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 6C: Color by, highlight, the team strip, tap to move, saved views (PP6C_STYLE).    */
+/* ======================================================================================== */
+
+.pp-p6c-color {
+	max-width: 190px;
+}
+
+/* The "Highlighting ..." pill, with its X. */
+.pp-p6c-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 340px;
+	border: var(--sf-border-hairline) solid var(--sf-focus);
+	border-radius: var(--sf-radius-pill);
+	padding: 1px 2px 1px 10px;
+	font-size: 12px;
+	background: color-mix(in srgb, var(--sf-focus) 8%, var(--sf-surface));
+	color: var(--sf-text);
+}
+
+.pp-p6c-pill-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6c-pill-x {
+	border: none;
+	background: none;
+	color: inherit;
+	font-size: 15px;
+	line-height: 1;
+	padding: 2px 7px;
+	cursor: pointer;
+	border-radius: var(--sf-radius-pill);
+}
+
+.pp-p6c-pill-x:hover,
+.pp-p6c-pill-x:focus {
+	background: var(--sf-bg);
+	outline: none;
+}
+
+.pp-p6c-pill-x:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+/* Tap to move, on: a tint, the focus edge and the weight (it is also aria-pressed). */
+.pp-p6c-tap.pp-p6c-on {
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
+	border-color: var(--sf-focus);
+	color: var(--sf-link);
+	font-weight: 600;
+}
+
+.pp-p6c-key {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 3px 12px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin: -2px 0 8px;
+}
+
+.pp-p6c-key-title {
+	font-weight: 600;
+}
+
+.pp-p6c-key-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 240px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6c-key-item[data-p6c-hi] {
+	cursor: pointer;
+	border-radius: var(--sf-radius-none);
+}
+
+.pp-p6c-key-item[data-p6c-hi]:hover {
+	color: var(--sf-text-strong);
+	text-decoration: underline;
+}
+
+/* A key's swatch: the color it stands for is data (--pp-color, set by the script). */
+.pp-p6c-swatch {
+	flex: 0 0 auto;
+	display: inline-block;
+	width: 16px;
+	height: 11px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-left: 4px solid var(--pp-color, var(--sf-field-border));
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+}
+
+/* Color by: the card's edge is the chosen color (data, --pp-p6c-c, set by the script). */
+.pp-card.pp-p6c-colored {
+	border-left-color: var(--pp-p6c-c) !important;
+}
+
+.pp-p6c-on .pp-card:not(.pp-p6c-hi),
+.pp-p6c-on .pp-fcard,
+.pp-p6c-on .pp-ecard {
+	opacity: 0.22;
+}
+
+/* A highlighted card stands out by a tint (the rest are faded to 0.22). Not an outline, which
+ * would outrank (0,3,0) the selection, moving and drafted rings and hide them. */
+.pp-p6c-on .pp-card.pp-p6c-hi {
+	background-color: color-mix(in srgb, var(--sf-focus) 14%, var(--sf-surface));
+}
+
+/* The team strip over the calendar: each day's free hours, its load as a word and a tint. */
+.pp-p6c-strip {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 6px;
+	overflow: hidden;
+}
+
+.pp-p6c-sday {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	padding: 3px 6px;
+	font-size: 11px;
+	cursor: pointer;
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-p6c-strip .pp-p6c-sday:first-child {
+	border-left: none;
+}
+
+.pp-p6c-sday:hover,
+.pp-p6c-sday:focus {
+	background-color: var(--sf-bg);
+	outline: none;
+}
+
+.pp-p6c-sday:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pp-p6c-slabel {
+	font-size: 10px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6c-stext {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6c-sday.pp-red {
+	background-color: color-mix(in srgb, var(--sf-danger) 10%, var(--sf-surface));
+}
+
+.pp-p6c-sday.pp-red .pp-p6c-stext {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pp-p6c-sday.pp-amber .pp-p6c-stext {
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.pp-p6c-scorner {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 1px;
+	padding: 3px 8px;
+	font-size: 11px;
+	min-width: 0;
+	position: sticky;
+	left: 0;
+	background: var(--sf-surface);
+	z-index: 1;
+}
+
+.pp-p6c-scorner span {
+	font-size: 10px;
+	color: var(--sf-text-muted);
+}
+
+.pp-crew > .pp-p6c-sday {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+/* Tap to move: the bar at the bottom while a card is picked up. */
+.pp-p6c-movebar {
+	position: fixed;
+	left: 50%;
+	bottom: 16px;
+	transform: translateX(-50%);
+	z-index: 1024;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	max-width: min(640px, calc(100vw - 24px));
+	padding: 8px 10px 8px 14px;
+	border: var(--sf-border-control) solid var(--sf-focus);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 13px;
+}
+
+.pp-p6c-movebar-text {
+	flex: 1 1 220px;
+	min-width: 0;
+}
+
+.pp-p6c-movebar-hint {
+	display: block;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pp-card.pp-p6c-moving,
+.pp-od-card.pp-p6c-moving {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pp-p6c-armed .pp-day,
+.pp-p6c-armed .pp-cell {
+	cursor: copy;
+}
+
+.pp-p6c-views-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.pp-p6c-views-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-p6c-views-row:first-child {
+	border-top: none;
+}
+
+.pp-p6c-views-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.pp-p6c-views-name {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pp-p6c-views-sub {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+/* On a touch screen every control and card is a 44px target. */
+@media (pointer: coarse) {
+	.pp-toolbar .btn,
+	.pp-toolbar select,
+	.pp-toolbar .pp-toggle,
+	.pp-toolbar label,
+	.pp-seg button {
+		min-height: var(--sf-touch-min);
+	}
+
+	.pp-week .pp-card,
+	.pp-crew .pp-card,
+	.pp-tray .pp-card {
+		min-height: var(--sf-touch-min);
+	}
+
+	.pp-day-num {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sf-touch-min);
+		padding: 0 10px;
+	}
+
+	/* A month cell is about 53px wide on a phone, beside the day's "free" text: its number keeps
+	 * the 44px height as a tall, narrow hit area instead of a wide one. */
+	.pp-month .pp-day-num {
+		justify-content: center;
+		min-width: 32px;
+		padding: 0 4px;
+	}
+
+	.pp-p6c-sday {
+		min-height: var(--sf-touch-min);
+	}
+
+	.pp-p6c-pill-x {
+		min-width: var(--sf-touch-min);
+		min-height: var(--sf-touch-min);
+	}
+
+	.pp-p6c-movebar .btn {
+		min-height: var(--sf-touch-min);
+		min-width: 64px;
+	}
+
+	.pp-p6c-views-row .btn {
+		min-height: var(--sf-touch-min);
+	}
+}
+
+@media (max-width: 767px) {
+	.pp-p6c-pill {
+		max-width: 100%;
+	}
+
+	.pp-p6c-movebar {
+		left: 12px;
+		right: 12px;
+		bottom: calc(12px + env(safe-area-inset-bottom));
+		transform: none;
+		max-width: none;
+	}
+
+	.pp-p6c-sday {
+		padding: 2px 3px;
+	}
+
+	.pp-p6c-key-item {
+		max-width: 160px;
+	}
+}
+
+/* ======================================================================================== */
+/* Phase 6D: the Conflict center button, day notes and blocks (PP6D_STYLE).                 */
+/* ======================================================================================== */
+
+.pp-p6d-conflicts.pp-p6d-hot {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	border-color: var(--sf-chip-edge-danger);
+	font-weight: 600;
+}
+
+.pp-chip.pp-p6d-link {
+	cursor: pointer;
+	text-decoration: underline dotted;
+}
+
+.pp-day > .pk-notes,
+.pp-day > .pk-notes-mark {
+	margin: 0 2px;
+}
+
+.pp-p6d-crew-notes {
+	border-left: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 3px 4px;
+	min-width: 0;
+}
+
+.pp-p6d-crew-corner {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	border-left: none;
+	background: var(--sf-surface);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-text-muted);
+	padding: 4px 8px;
+}
+
+.pp-p6d-mw {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 6px 10px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-p6d-mw .pk-block {
+	font-size: 13px;
+	padding: 6px 8px;
+}
+
+@media (max-width: 767px) {
+	.pp-p6d-mw-btn {
+		padding: 4px 10px;
+		font-size: 13px;
+		min-height: var(--sf-touch-min);
+	}
+}
+
+/* ======================================================================================== */
+/* Build out: the task grid (PPT1_STYLE).                                                   */
+/* ======================================================================================== */
+
+.t1-wrap {
+	padding: 2px 0 8px;
+}
+
+.t1-intro {
+	margin: 0 0 8px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.t1-scroll {
+	overflow-x: auto;
+}
+
+.t1-grid {
+	width: 100%;
+	min-width: 700px;
+	border-collapse: collapse;
+}
+
+.t1-grid th {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-text-muted);
+	text-align: left;
+	padding: 2px 4px;
+	white-space: nowrap;
+}
+
+.t1-grid td {
+	padding: 2px 3px;
+	vertical-align: middle;
+}
+
+.t1-num {
+	width: 28px;
+	text-align: right;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.t1-grid input,
+.t1-grid select {
+	width: 100%;
+	min-width: 0;
+}
+
+/* The grid's cells are Bootstrap .form-control fields: white, square and edged in both themes.
+ * Bootstrap's .form-control:focus (0,2,0) is answered by the focused field's own rule (0,3,0). */
+.t1-grid .form-control,
+.t1-grid .form-control:focus {
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.t1-grid .form-control:focus {
+	border-color: var(--sf-focus);
+	outline: 1px solid var(--sf-focus);
+}
+
+.t1-c-subject {
+	width: 32%;
+}
+
+.t1-c-hours {
+	width: 70px;
+}
+
+.t1-c-phase {
+	width: 20%;
+}
+
+.t1-c-needs {
+	width: 26%;
+}
+
+.t1-c-crew_size {
+	width: 64px;
+}
+
+.t1-c-del {
+	width: 30px;
+}
+
+/* A row with a problem: a danger edge on its fields, focused or not; the list under the grid
+ * says what the problem is. */
+.t1-bad input,
+.t1-bad select,
+.t1-grid .t1-bad .form-control,
+.t1-grid .t1-bad .form-control:focus {
+	border-color: var(--sf-danger);
+}
+
+.t1-del {
+	border: none;
+	background: transparent;
+	color: var(--sf-text-muted);
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 2px 6px;
+}
+
+.t1-del:hover {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.t1-del:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.t1-more {
+	margin-top: 2px;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.t1-status {
+	margin: 10px 0 0;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.t1-problems {
+	margin: 6px 0 0;
+	padding-left: 18px;
+	font-size: 12px;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.t1-tray-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.t1-tray-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.t1-tray-title {
+	font-weight: 600;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	display: block;
+}
+
+.t1-tray-title:hover {
+	text-decoration: underline;
+}
+
+.t1-tray-sub {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+/* ======================================================================================== */
+/* Phase 6E: Move by calendar or working days (PP6E_STYLE).                                 */
+/* ======================================================================================== */
+
+.p6e-switch {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.p6e-switch-label {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.p6e-opt {
+	border-color: var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+}
+
+/* The unit in use: the primary fill and the weight. */
+.p6e-opt.p6e-on {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* ======================================================================================== */
+/* AI draft (PPT4_STYLE).                                                                   */
+/* ======================================================================================== */
+
+/* A row the AI wrote: a 3px focus bar down its number cell, painted as a background image so
+ * the cell keeps its size. Its tooltip says "AI draft". */
+.t4-ai td.t1-num {
+	background-image: linear-gradient(var(--sf-focus), var(--sf-focus));
+	background-size: 3px 100%;
+	background-repeat: no-repeat;
+}
+
+.t4-status {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.t4-status.t4-bad {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.t4-spin {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	margin-right: 6px;
+	vertical-align: -2px;
+	border: 2px solid var(--sf-rule);
+	border-top-color: var(--sf-focus);
+	border-radius: var(--sf-radius-circle);
+	animation: t4-turn 0.8s linear infinite;
+}
+
+@keyframes t4-turn {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* Nothing moves for someone who asked for less motion; the spinner's words still say "Drafting". */
+@media (prefers-reduced-motion: reduce) {
+	.t4-spin,
+	.pp-card.p6b-flash {
+		animation: none;
+	}
+}
