@@ -268,7 +268,8 @@ function vz_plain_html(value) {
 // phone, and whether a row on the server is this one, sent before but its answer lost.
 const VZ_ADDED = {
 	consumables: {
-		sent: ["item", "qty", "warehouse", "uom"],
+		// serial_no since v1.635.0: the feature tab it was added on (null on Whole site).
+		sent: ["item", "qty", "warehouse", "uom", "serial_no"],
 		kept: ["item", "item_name", "qty", "uom", "warehouse", "qty_step", "serial_no"],
 		// The server does not get a feature for a consumable added here.
 		same: (server, row) =>
@@ -1451,6 +1452,7 @@ class VisitWizard {
 				const want = this._load_target || {};
 				this.step_index = this.clamp_step(this.step_for(want.step));
 				if (want.feature && this.features.includes(want.feature)) this.feature = want.feature;
+				else this.feature = this.tab_with_rows(this.step_index, this.feature);
 				this.render();
 				this.sync_route(true);
 			})
@@ -1517,18 +1519,39 @@ class VisitWizard {
 		// Per Site Visit records tag every row with its water feature; one
 		// header serial (or untagged rows) means no tab strip. A form ticked Once per
 		// Site Visit (v1.634.0) leaves its rows untagged: with tagged rows beside them
-		// they get a Whole site tab of their own, first, or they would show on no tab.
+		// they get a Whole site tab of their own, or they would show on no tab.
+		//
+		// v1.635.0 (review of v1.634.0): only a template's untagged rows (they carry a
+		// `section`) add the tab where there is one feature. A chemical added in the wizard
+		// was saved untagged until then, and one of those made a single-fountain site
+		// visit sprout tabs after a reload. And Whole site comes LAST: first, it was the
+		// tab every step opened on, empty on the steps where the site form had nothing.
 		const serials = new Set();
 		let untagged = false;
+		let site_form = false;
 		["chemistry_readings", "consumables", "maintenance_results", "cleaning_tasks"].forEach((table) => {
 			(this.doc[table] || []).forEach((row) => {
-				if (row.serial_no) serials.add(row.serial_no);
-				else untagged = true;
+				if (row.serial_no) {
+					serials.add(row.serial_no);
+				} else {
+					untagged = true;
+					if (row.section) site_form = true;
+				}
 			});
 		});
-		const tabbed = !this.doc.serial_no && (serials.size > 1 || (serials.size && untagged));
-		this.features = tabbed ? (untagged ? [VZ_SITE] : []).concat(Array.from(serials)) : [];
+		const tabbed = !this.doc.serial_no && (serials.size > 1 || (serials.size > 0 && site_form));
+		this.features = tabbed ? Array.from(serials).concat(untagged ? [VZ_SITE] : []) : [];
 		this.feature = this.features[0] || null;
+	}
+
+	// The tab to show on a step: `feature` when it has rows there, else the first tab that
+	// does. A step change (Next, Back, the dots, opening a visit) never lands on an empty tab
+	// when another has work; a tab chosen by hand or named in the address is kept.
+	tab_with_rows(index, feature) {
+		const table = (this.steps[index] || {}).table;
+		if (!table || !this.features.length) return feature;
+		const has = (tab) => (this.doc[table] || []).some((row) => (row.serial_no || VZ_SITE) === tab);
+		return has(feature) ? feature : this.features.find(has) || feature;
 	}
 
 	rows(table) {
@@ -2963,8 +2986,11 @@ class VisitWizard {
 		options = options || {};
 		if (!this.doc) return;
 		const target = this.clamp_step(index, !options.from_route);
-		const feature =
-			options.feature && this.features.includes(options.feature) ? options.feature : this.feature;
+		let feature = options.feature && this.features.includes(options.feature) ? options.feature : this.feature;
+		// A new step with no tab named: not onto a tab with nothing to do there (v1.635.0).
+		if (!options.feature && !options.from_route && target !== this.step_index) {
+			feature = this.tab_with_rows(target, feature);
+		}
 		if (target !== this.step_index || feature !== this.feature) {
 			this.commit_input();
 			this.flush_save().catch(() => {});

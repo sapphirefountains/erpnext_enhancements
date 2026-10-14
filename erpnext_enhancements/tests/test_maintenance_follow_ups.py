@@ -256,6 +256,31 @@ class TestOnTheVisit(unittest.TestCase):
 		with self.assertRaises(_Thrown):
 			follow_ups.check_follow_ups(_visit([{"description": "x", "qty": -1}]))
 
+	def test_a_chemical_keeps_the_feature_tab_it_was_added_on(self):
+		"""v1.635.0: the wizard sends a chemical's feature; one the visit does not cover is
+		cleared, not refused, so the quantity entered is never lost."""
+		visit = _visit(
+			[],
+			consumables=[
+				_Dict(item="ACID", qty=1, serial_no="SN-EAST"),
+				_Dict(item="ACID", qty=1, serial_no="SN-ELSEWHERE"),
+				_Dict(item="ACID", qty=1, serial_no=None),
+				_Dict(item="CHLORINE", qty=0, section="Chemical Dosing", serial_no="SN-WEST"),
+			],
+		)
+		follow_ups.check_consumable_features(visit)
+		self.assertEqual([row.serial_no for row in visit.consumables], ["SN-EAST", None, None, "SN-WEST"])
+
+	def test_a_per_feature_visit_keeps_its_own_feature(self):
+		visit = _visit(
+			[],
+			serial_no="SN-NORTH",
+			chemistry_readings=[],
+			consumables=[_Dict(item="ACID", qty=1, serial_no="SN-NORTH")],
+		)
+		follow_ups.check_consumable_features(visit)
+		self.assertEqual(visit.consumables[0].serial_no, "SN-NORTH")
+
 
 class TestOnApproval(unittest.TestCase):
 	def setUp(self):
