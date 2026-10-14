@@ -3470,6 +3470,14 @@ jobs:
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
+      # S3.5a: the /review and /itinerary staff web apps on the tokens. Each template links
+      # sf_tokens.bundle.css through bundled_asset before its own stylesheet (the tokens are Desk-only
+      # app_include_css, and never web_include_css); no literal colour or Frappe palette variable, every
+      # --sf-* defined, own names on :root only, no shadow, token radii, the phone breakpoint, no status
+      # fill as text, dark mode on the tokens' own data-theme / prefers-color-scheme switch, verdicts
+      # carry their word, 44px controls, and the itinerary worker keeps the tokens offline.
+      - name: Custom pages S3.5a www apps on the tokens (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_www_app_tokens -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads

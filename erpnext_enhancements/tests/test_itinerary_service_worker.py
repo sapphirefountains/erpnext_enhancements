@@ -327,6 +327,28 @@ class TestOnlyRealAnswersFromThisSiteAreKept(unittest.TestCase):
 		self.assertIn("PRECACHE_PATHS.has(url.pathname)", fetch)
 		self.assertIn("isFilePath(url.pathname)", fetch)
 
+	def test_the_tokens_address_is_only_this_sites_tokens_bundle(self):
+		"""The page names the tokens stylesheet in the worker's address; the worker accepts only
+		this site's content-hashed sf_tokens bundle, never another site or another file."""
+		code = _code()
+		self.assertIn(
+			r"const TOKENS_PATH = /^\/assets\/erpnext_enhancements\/dist\/css(?:-rtl)?\/sf_tokens\.bundle\.[\w-]+\.css$/;",
+			code,
+		)
+		self.assertIn("const TOKENS = tokensPath(new URL(self.location.href).searchParams.get('tokens'));", code)
+		body = _function("tokensPath")
+		self.assertIn("url.origin !== self.location.origin || url.search || url.hash", body)
+		self.assertIn("TOKENS_PATH.test(url.pathname)", body)
+		self.assertIn("if (TOKENS) assets.push(", _handler("install"))
+		self.assertIn("PRECACHE_PATHS.has(url.pathname) || TOKENS_PATH.test(url.pathname)", _handler("fetch"))
+
+	def test_the_page_names_the_tokens_in_the_workers_address(self):
+		_args = re.findall(r"serviceWorker\.register\(([^;]*)\)", _code(PAGE_JS))[0]
+		self.assertIn("+ tokens,", _args)
+		fn = _function("registerWorker", PAGE_JS)
+		self.assertIn("'&tokens=' + encodeURIComponent(window.ITIN_TOKENS_CSS)", fn)
+		self.assertIn("window.ITIN_TOKENS_CSS = {{ bundled_asset('sf_tokens.bundle.css') | tojson }};", _read(SHELL))
+
 	def test_ignore_search_is_only_for_its_own_two_assets(self):
 		"""`ignoreSearch` reduces a ?v= token to decoration (the kiosk worker's v1.229.0 lesson). Here
 		it is used once, inside shellAsset, which only the PRECACHE_PATHS branch calls, and only on
@@ -546,6 +568,10 @@ const ORIGIN = "https://erp.example.com";
 // Offline markers (itinerary_offline.key_for): 64 hex characters.
 const PAT_KEY = "0123456789abcdef".repeat(4);
 const SAM_KEY = "fedcba9876543210".repeat(4);
+// The design tokens' stylesheet as bundled_asset names it (content-hashed), this build's and an
+// earlier build's.
+const TOKENS = "/assets/erpnext_enhancements/dist/css/sf_tokens.bundle.AB12CD34.css";
+const OLD_TOKENS = "/assets/erpnext_enhancements/dist/css/sf_tokens.bundle.OLD99999.css";
 const seen = {};
 
 class FakeResponse {
@@ -611,7 +637,7 @@ const net = {
 	},
 };
 const self = {
-	location: { href: ORIGIN + "/itinerary-sw.js?v=200", origin: ORIGIN },
+	location: { href: ORIGIN + "/itinerary-sw.js?v=200&tokens=" + encodeURIComponent(TOKENS), origin: ORIGIN },
 	listeners: {},
 	addEventListener(type, fn) { this.listeners[type] = fn; },
 	skipWaiting() {},
@@ -635,6 +661,7 @@ const settle = () => new Promise((r) => setTimeout(r, 5));
 (async () => {
 	net.pages["/assets/erpnext_enhancements/css/travel/itinerary.css"] = { body: "css" };
 	net.pages["/assets/erpnext_enhancements/js/travel/itinerary.js"] = { body: "js" };
+	net.pages[TOKENS] = { body: "tokens" };
 	net.pages["/private/files/pass.png"] = { body: "PASS" };
 	net.pages["/private/files/conf.pdf"] = { body: "CONF" };
 	await (await caches.open("itinerary-shell-100")).put("/itinerary", new FakeResponse("OLD PAGE"));
@@ -647,6 +674,10 @@ const settle = () => new Promise((r) => setTimeout(r, 5));
 	await fire("activate", {});
 	seen.after_activate = names();
 	seen.page_carried = await kept("itinerary-shell-200", "/itinerary");
+	seen.tokens_precached = await kept("itinerary-shell-200", TOKENS);
+	// A page kept before a deploy names the earlier build's tokens, which this build no longer
+	// serves (404): this deploy's copy answers.
+	seen.online_old_tokens = (await get(OLD_TOKENS)).body;
 
 	// Not a marker (an email, Guest, nothing): no files cache is touched or opened.
 	await fire("message", { data: { type: "user", key: "pat@example.com" } });
@@ -700,6 +731,8 @@ const settle = () => new Promise((r) => setTimeout(r, 5));
 	net.online = false;
 	seen.offline_page = (await get("/itinerary?trip=T9&as=crew&view=docs", { mode: "navigate" })).body;
 	seen.offline_script = (await get("/assets/erpnext_enhancements/js/travel/itinerary.js?v=100")).body;
+	seen.offline_tokens = (await get(TOKENS)).body;
+	seen.offline_old_tokens = (await get(OLD_TOKENS)).body;
 	seen.offline_file = (await get("/private/files/pass.png")).body;
 	try { await get("/private/files/never.png"); seen.offline_unkept = "answered"; } catch (e) { seen.offline_unkept = e.name; }
 	seen.other_request = (await get("/assets/frappe/dist/css/website.bundle.css")) === undefined ? "passed through" : "answered";
@@ -782,6 +815,16 @@ class TestTheWorkerRuns(unittest.TestCase):
 		self.assertEqual(self.seen["offline_script"], "js")
 		self.assertEqual(self.seen["offline_file"], "PASS")
 		self.assertEqual(self.seen["offline_unkept"], "TypeError")
+
+	def test_the_design_tokens_are_kept_for_the_offline_page(self):
+		"""S3.5a (v1.659.0): itinerary.css paints in the --sf-* tokens, whose stylesheet is a
+		content-hashed bundle the page names in the worker's address (&tokens=). Installed with the
+		shell, it answers offline, and for an earlier build's address too, so the kept page keeps
+		its colours."""
+		self.assertEqual(self.seen["tokens_precached"], "tokens")
+		self.assertEqual(self.seen["online_old_tokens"], "tokens")
+		self.assertEqual(self.seen["offline_tokens"], "tokens")
+		self.assertEqual(self.seen["offline_old_tokens"], "tokens")
 
 	def test_nothing_else_is_answered(self):
 		self.assertEqual(self.seen["other_request"], "passed through")
