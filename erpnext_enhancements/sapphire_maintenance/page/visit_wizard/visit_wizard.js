@@ -254,6 +254,10 @@ function vz_required_chip(table, row) {
 		: `<span class="vz-chip vz-chip-req">${__("Required")}</span>`;
 }
 
+// The Whole site tab's key (v1.634.0): rows of a form ticked Once per Site Visit carry no
+// serial_no. Not "" because an empty feature reads as "no tab" in the route and in go().
+const VZ_SITE = "whole-site";
+
 function vz_plain_html(value) {
 	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
 }
@@ -264,7 +268,8 @@ function vz_plain_html(value) {
 // phone, and whether a row on the server is this one, sent before but its answer lost.
 const VZ_ADDED = {
 	consumables: {
-		sent: ["item", "qty", "warehouse", "uom"],
+		// serial_no since v1.635.0: the feature tab it was added on (null on Whole site).
+		sent: ["item", "qty", "warehouse", "uom", "serial_no"],
 		kept: ["item", "item_name", "qty", "uom", "warehouse", "qty_step", "serial_no"],
 		// The server does not get a feature for a consumable added here.
 		same: (server, row) =>
@@ -1447,6 +1452,7 @@ class VisitWizard {
 				const want = this._load_target || {};
 				this.step_index = this.clamp_step(this.step_for(want.step));
 				if (want.feature && this.features.includes(want.feature)) this.feature = want.feature;
+				else this.feature = this.tab_with_rows(this.step_index, this.feature);
 				this.render();
 				this.sync_route(true);
 			})
@@ -1511,18 +1517,52 @@ class VisitWizard {
 
 	build_features() {
 		// Per Site Visit records tag every row with its water feature; one
-		// header serial (or untagged rows) means no tab strip.
+		// header serial (or untagged rows) means no tab strip. A form ticked Once per
+		// Site Visit (v1.634.0) leaves its rows untagged: with tagged rows beside them
+		// they get a Whole site tab of their own, or they would show on no tab.
+		//
+		// v1.635.0 (review of v1.634.0): only a template's untagged rows (they carry a
+		// `section`) add the tab where there is one feature. A chemical added in the wizard
+		// was saved untagged until then, and one of those made a single-fountain site
+		// visit sprout tabs after a reload. And Whole site comes LAST: first, it was the
+		// tab every step opened on, empty on the steps where the site form had nothing.
 		const serials = new Set();
+		let untagged = false;
+		let site_form = false;
 		["chemistry_readings", "consumables", "maintenance_results", "cleaning_tasks"].forEach((table) => {
-			(this.doc[table] || []).forEach((row) => row.serial_no && serials.add(row.serial_no));
+			(this.doc[table] || []).forEach((row) => {
+				if (row.serial_no) {
+					serials.add(row.serial_no);
+				} else {
+					untagged = true;
+					if (row.section) site_form = true;
+				}
+			});
 		});
-		this.features = !this.doc.serial_no && serials.size > 1 ? Array.from(serials) : [];
+		const tabbed = !this.doc.serial_no && (serials.size > 1 || (serials.size > 0 && site_form));
+		this.features = tabbed ? Array.from(serials).concat(untagged ? [VZ_SITE] : []) : [];
 		this.feature = this.features[0] || null;
+	}
+
+	// The tab to show on a step: `feature` when it has rows there, else the first tab that
+	// does. A step change (Next, Back, the dots, opening a visit) never lands on an empty tab
+	// when another has work; a tab chosen by hand or named in the address is kept.
+	tab_with_rows(index, feature) {
+		const table = (this.steps[index] || {}).table;
+		if (!table || !this.features.length) return feature;
+		const has = (tab) => (this.doc[table] || []).some((row) => (row.serial_no || VZ_SITE) === tab);
+		return has(feature) ? feature : this.features.find(has) || feature;
 	}
 
 	rows(table) {
 		const rows = this.doc[table] || [];
-		return this.features.length ? rows.filter((row) => row.serial_no === this.feature) : rows;
+		return this.features.length ? rows.filter((row) => (row.serial_no || VZ_SITE) === this.feature) : rows;
+	}
+
+	// The water feature the tab on screen stands for: null on the Whole site tab and
+	// when there are no tabs, so a row added there is not tagged with the sentinel.
+	feature_serial() {
+		return this.feature && this.feature !== VZ_SITE ? this.feature : null;
 	}
 
 	// ----- dirty tracking + autosave --------------------------------------
@@ -2882,11 +2922,11 @@ class VisitWizard {
 		const table = this.steps[this.step_index].table;
 		this.features.forEach((serial) => {
 			const active = serial === this.feature;
-			const label = (this.feature_names || {})[serial] || serial;
+			const label = serial === VZ_SITE ? __("Whole site") : (this.feature_names || {})[serial] || serial;
 			// Outstanding required rows for this feature on this step, so a tab
 			// that still needs work says so before you leave the site.
 			const left = (this.doc[table] || []).filter(
-				(row) => row.serial_no === serial && row.is_mandatory && !vz_row_answered(table, row)
+				(row) => (row.serial_no || VZ_SITE) === serial && row.is_mandatory && !vz_row_answered(table, row)
 			).length;
 			$(`<button type="button" role="tab" aria-selected="${active}" class="vz-tab ${active ? "vz-active" : ""}">
 					${frappe.utils.escape_html(label)}${left ? ` <span class="vz-chip vz-chip-req">${left}</span>` : ""}
@@ -2946,8 +2986,11 @@ class VisitWizard {
 		options = options || {};
 		if (!this.doc) return;
 		const target = this.clamp_step(index, !options.from_route);
-		const feature =
-			options.feature && this.features.includes(options.feature) ? options.feature : this.feature;
+		let feature = options.feature && this.features.includes(options.feature) ? options.feature : this.feature;
+		// A new step with no tab named: not onto a tab with nothing to do there (v1.635.0).
+		if (!options.feature && !options.from_route && target !== this.step_index) {
+			feature = this.tab_with_rows(target, feature);
+		}
 		if (target !== this.step_index || feature !== this.feature) {
 			this.commit_input();
 			this.flush_save().catch(() => {});
@@ -3671,7 +3714,7 @@ class VisitWizard {
 					qty: values.qty,
 					uom: (values.uom || "").trim() || null,
 					qty_step: 1,
-					serial_no: this.feature,
+					serial_no: this.feature_serial(),
 				};
 				this.doc.consumables.push(row);
 				this.pending_added.push(row);
@@ -4075,7 +4118,10 @@ class VisitWizard {
 	// water feature.
 	add_follow_up(from) {
 		from = from || {};
-		const features = this.features.map((serial) => ({ label: this.feature_names[serial] || serial, value: serial }));
+		// The Whole site tab is the select's own "Whole site" option, not a feature.
+		const features = this.features
+			.filter((serial) => serial !== VZ_SITE)
+			.map((serial) => ({ label: this.feature_names[serial] || serial, value: serial }));
 		const fields = [
 			{
 				fieldname: "description",
@@ -4099,7 +4145,7 @@ class VisitWizard {
 				fieldtype: "Select",
 				label: __("Water feature"),
 				options: [{ label: __("Whole site"), value: "" }, ...features],
-				default: from.serial_no || this.feature || "",
+				default: from.serial_no || this.feature_serial() || "",
 			});
 		}
 		const dialog = new frappe.ui.Dialog({

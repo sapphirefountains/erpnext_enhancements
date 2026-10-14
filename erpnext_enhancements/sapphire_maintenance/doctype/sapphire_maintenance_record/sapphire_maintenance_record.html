@@ -82,7 +82,7 @@
                 <tbody class="divide-y divide-gray-200 bg-white">
                     {% for row in doc.chemistry_readings %}
                     <tr>
-                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or _('Whole site') }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.reading }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm">
                             <span class="{% if row.out_of_range %}font-bold text-red-700{% else %}text-gray-700{% endif %}">
@@ -119,7 +119,7 @@
                 <tbody class="divide-y divide-gray-200 bg-white">
                     {% for row in doc.cleaning_tasks %}
                     <tr>
-                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or _('Whole site') }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.task }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
@@ -152,7 +152,7 @@
                 <tbody class="divide-y divide-gray-200 bg-white">
                     {% for row in doc.maintenance_results %}
                     <tr>
-                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or _('Whole site') }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.question }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
@@ -192,7 +192,7 @@
                 <tbody class="divide-y divide-gray-200 bg-white">
                     {% for item in used_consumables %}
                     <tr>
-                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ item.serial_no or '' }}</td>{% endif %}
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ item.serial_no or _('Whole site') }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ item.item }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ item.qty }}</td>
                     </tr>

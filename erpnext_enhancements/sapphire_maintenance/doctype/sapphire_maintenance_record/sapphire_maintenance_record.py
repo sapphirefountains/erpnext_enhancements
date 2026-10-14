@@ -152,9 +152,13 @@ class SapphireMaintenanceRecord(Document):
 		self.completion_percent = compute_completion_percent(self)
 		self._settle_task_states()
 		# Follow-ups and parts needed (v1.600.0): tidied, and kept on a feature this visit covers.
-		from erpnext_enhancements.sapphire_maintenance.follow_ups import check_follow_ups
+		from erpnext_enhancements.sapphire_maintenance.follow_ups import (
+			check_consumable_features,
+			check_follow_ups,
+		)
 
 		check_follow_ups(self)
+		check_consumable_features(self)
 		self._autofill_clock_in()
 		self._check_signatures()
 		self._finish_on_review()
@@ -582,6 +586,12 @@ def get_visit_payload(
 	whose ``days`` names other weekdays is left off, so a daily site's Tuesday visit carries
 	the agreement's Tuesday tasks and not Monday's (``visit_days``).
 
+	A template ticked **Once per Site Visit** (``site_wide``, v1.634.0) is instantiated once on
+	a Per Site Visit, its rows untagged (no ``serial_no``: the Whole site tab), however many
+	water features resolve to it. Hardware's and Sanctuary's seasonal forms name each
+	fountain's steps themselves, and every feature used to get the whole list: seven copies of
+	the courtyard heaters and the East Wall drain at Hardware, thirteen at Sanctuary.
+
 	Returns:
 		dict: {
 			"template":    the resolved template name (of the first feature),
@@ -607,7 +617,9 @@ def get_visit_payload(
 
 	# Which water features does this visit cover?
 	features = []
-	if contract and contract.visit_shape == "Per Site Visit" and not serial_no:
+	per_site = bool(contract and contract.visit_shape == "Per Site Visit" and not serial_no)
+	site_wide_done = set()
+	if per_site:
 		features = [
 			{"serial_no": row.serial_no, "template": row.template, "default_warehouse": row.default_warehouse}
 			for row in contract.covered_features
@@ -648,18 +660,24 @@ def get_visit_payload(
 
 		if template_name not in template_cache:
 			template = frappe.get_doc("Sapphire Maintenance Template", template_name)
-			template_cache[template_name] = [
-				frappe.get_doc("Sapphire Maintenance Section", row.section)
-				for row in template.sections
-			]
-		sections = template_cache[template_name]
+			template_cache[template_name] = (
+				[frappe.get_doc("Sapphire Maintenance Section", row.section) for row in template.sections],
+				bool(template.get("site_wide")),
+			)
+		sections, site_wide = template_cache[template_name]
 
 		feature_serial = feature["serial_no"]
+		# Once per Site Visit (v1.634.0): one untagged copy for the site, not one per feature.
+		if site_wide and per_site:
+			if template_name in site_wide_done:
+				continue
+			site_wide_done.add(template_name)
+			feature_serial = None
 		overrides = _reading_overrides(feature_serial)
 		# Bake only the feature's on-site store (tech-independent). Since v1.594.0
 		# no stock moves on approval, so this records where a chemical is kept
 		# rather than where an issue will be drawn from.
-		warehouse = feature.get("default_warehouse")
+		warehouse = feature.get("default_warehouse") if feature_serial else None
 
 		for section in sections:
 			if section.disabled:

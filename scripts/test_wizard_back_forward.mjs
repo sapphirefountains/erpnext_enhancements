@@ -894,6 +894,82 @@ async function visitWizardSuite() {
 		assert.equal(last().step, "readings");
 	});
 
+	await test("a form filled in once per site gets a Whole site tab beside the features' tabs (v1.634.0)", async () => {
+		// Hardware's winterization names each fountain's steps itself: its rows carry no feature.
+		visitServer({
+			"MNT-1": visit({
+				cleaning_tasks: [
+					{ name: "t1", serial_no: null, task: "East Courtyard - heater on" },
+					{ name: "t2", serial_no: null, task: "East Wall - drained" },
+				],
+			}),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks");
+		await settle();
+		const w = wizard();
+		// Last (v1.635.0), and opened on because it is the tab with this step's rows.
+		assert.deepEqual(w.features, ["SN-A", "SN-B", "whole-site"]);
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/tasks/whole-site");
+		assert.deepEqual(
+			w.rows("cleaning_tasks").map((row) => row.name),
+			["t1", "t2"],
+			"the untagged rows are on the Whole site tab"
+		);
+		assert.equal(w.feature_serial(), null, "a row added on the Whole site tab is not tagged");
+		w.go(w.step_index, { feature: "SN-A" });
+		await settle();
+		assert.deepEqual(w.rows("cleaning_tasks"), []);
+		assert.deepEqual(w.rows("chemistry_readings").map((row) => row.name), ["r1"]);
+		await back();
+		assert.equal(last().feature, "whole-site");
+	});
+
+	await test("a step change never lands on a tab with nothing to do there (v1.635.0)", async () => {
+		visitServer({
+			"MNT-1": visit({
+				cleaning_tasks: [{ name: "t1", serial_no: null, section: "Site Winterization", task: "Heater on" }],
+			}),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/readings/SN-B");
+		await settle();
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/readings/SN-B", "a tab named in the address is kept");
+		press("vz-nav Next");
+		await settle();
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/tasks/whole-site", "SN-B has no tasks; Whole site has");
+		await back();
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/readings/SN-B", "Back restores the tab it came from");
+	});
+
+	await test("a chemical added on a one-fountain site visit does not sprout tabs (v1.635.0)", async () => {
+		// Review of v1.634.0: an added chemical was saved untagged, and an untagged row beside one
+		// feature's rows made a Whole site tab. Only a site-wide form's rows (they have a section) do.
+		visitServer({
+			"MNT-1": visit({
+				chemistry_readings: [{ name: "r1", serial_no: "SN-A", reading: "pH" }],
+				consumables: [{ name: "c9", serial_no: null, item: "Acid" }],
+				cleaning_tasks: [{ name: "t1", serial_no: "SN-A", task: "Skim" }],
+			}),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks");
+		await settle();
+		assert.deepEqual(wizard().features, []);
+		assert.deepEqual(wizard().rows("consumables").map((row) => row.name), ["c9"]);
+	});
+
+	await test("a visit whose rows are all for the whole site has no tabs", async () => {
+		visitServer({
+			"MNT-1": visit({
+				chemistry_readings: [{ name: "r1", serial_no: null, reading: "pH" }],
+				consumables: [],
+				cleaning_tasks: [{ name: "t1", serial_no: null, task: "Heater on" }],
+			}),
+		});
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1/tasks");
+		await settle();
+		assert.deepEqual(wizard().features, []);
+		assert.equal(url(), "/desk/visit-wizard/MNT-1/tasks");
+	});
+
 	await test("the wizard's own Back button steps back through history: Next, Back, Next piles nothing up", async () => {
 		visitServer({ "MNT-1": visit() });
 		boot("visit-wizard", "/desk/visit-wizard/MNT-1");

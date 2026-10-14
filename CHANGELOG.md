@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.635.0] - 2026-10-13
+
+### Fixed
+
+Review of v1.634.0 (Once per Site Visit). That PR merged before the review finished, so these fixes
+follow it.
+
+- **The Whole site tab no longer opens empty.** It came first in the strip and every step opened on it,
+  including steps where the site-wide form had nothing, such as Water Chemistry beside a site-wide
+  cleaning list.
+  - It now comes last.
+  - A step change with no tab named (Next, Back, the step dots, opening a visit) moves to the first tab
+    with rows on that step (`tab_with_rows`).
+  - A tab chosen by hand or named in the address is kept, and Back restores it.
+- **A chemical added in the wizard no longer makes tabs appear on a one-fountain site visit.**
+  - The cause: the wizard's save list had no `serial_no` for consumables, so an added chemical was
+    saved untagged. In v1.634.0 one untagged row beside one feature's rows made a Whole site tab after
+    a reload.
+  - Only a template's untagged rows (they carry a `section`) add that tab now.
+  - A chemical added on a feature tab keeps that feature: `serial_no` is wizard-writable on consumables,
+    the wizard sends it, and `follow_ups.check_consumable_features` (from the record's `validate`)
+    clears one the visit does not cover rather than refusing the save.
+  - On a several-fountain visit, a chemical added before this, untagged, now shows on the Whole site
+    tab, where it showed on no tab before.
+- **The portal view labels an untagged row "Whole site"**, as the review email does. It printed a blank
+  cell. v1.634.0's changelog said the portal and the customer report already did; only the email did,
+  and the report lists the covered features only.
+- Tests:
+  - `test_wizard_back_forward.mjs`: two more tests (no empty tab on a step change; no tabs from an added
+    chemical on a one-fountain visit), and the Whole site tab test updated for its new place.
+  - `test_maintenance_follow_ups`: two more tests (a chemical keeps a covered feature, a foreign one is
+    cleared, a Per Feature visit keeps its own).
+
+## [1.634.0] - 2026-10-13
+
+### Fixed
+
+- **A site-wide checklist is filled in once on a site visit, not once on every water feature's tab.**
+  On a Per Site Visit, every covered feature resolves its form. A seasonal visit resolves the contract's
+  seasonal form for all of them, so each feature's tab got the whole list. That is right for 4th West,
+  where each courtyard fountain is drained the same way. It is wrong where the form names each fountain's
+  steps itself.
+  - Hardware's winterization (drafted for 2026-10-24) would have put the courtyard heaters and the East
+    Wall drain on all seven tabs, lobbies included: about 35 extra required lines to answer N/A.
+    Sanctuary's changeovers would have done the same on thirteen tabs. No such visit had been opened yet.
+  - A Sapphire Maintenance Template now has **Once per Site Visit** (`site_wide`). `get_visit_payload`
+    instantiates a ticked form once on a site visit, with its rows untagged (no `serial_no`) and no
+    feature's chemical store. A Per Feature visit is unaffected.
+  - The Visit Wizard shows untagged rows on a **Whole site** tab, first, when tagged rows sit beside
+    them (`VZ_SITE`). With every row untagged it shows no tabs, as before. Before this, untagged rows on
+    a tabbed visit showed on no tab at all.
+    - A chemical or follow-up added on the Whole site tab is untagged (`feature_serial`).
+    - The follow-up dialog does not list the tab twice.
+  - The review email, the customer report and the portal already label untagged rows "Whole site".
+  - Tests: four in `tests/test_visit_agreement_match.py` (the payload, once and per fountain, a Per
+    Feature visit, and no store on the site copy). Two in `scripts/test_wizard_back_forward.mjs` (the
+    Whole site tab with its rows, route and Back, and no tabs when everything is site-wide).
+
 ## [1.633.0] - 2026-10-13
 
 Two follow-ups from Nik's Opportunity field review (2026-10-13, TASK-2026-02771) that change behavior, so they
