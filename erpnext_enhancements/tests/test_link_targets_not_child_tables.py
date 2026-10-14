@@ -72,7 +72,7 @@ class TestLinkTargetsAreNotChildTables(unittest.TestCase):
 		roles = {p["role"]: p for p in data["permissions"]}
 		self.assertTrue(roles["Desk User"].get("read") and roles["Desk User"].get("select"))
 		self.assertFalse(roles["Desk User"].get("write") or roles["Desk User"].get("create"))
-		for role in ("System Manager", "Sales Manager", "Marketing Manager"):
+		for role in ("System Manager", "Sales Manager"):
 			with self.subTest(role=role):
 				self.assertTrue(roles[role].get("create") and roles[role].get("write"))
 

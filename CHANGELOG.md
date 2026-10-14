@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Fix:** `Lead Source` is a standalone list again. It is named by the source itself
     (`autoname: Prompt`, as the existing records are) and has Quick Entry.
     - **Every Desk user** (v16's `Desk User`) may read and pick from it.
-    - **System Manager, Sales Manager and Marketing Manager** may add, edit and remove sources.
+    - **System Manager and Sales Manager** may add, edit and remove sources. Marketing Manager
+      is left out on purpose: `test_marketing_approval` pins that role to the publishing surface.
     - **On migrate**, the DocType sync adds the list columns a standalone table needs
       (`_user_tags`, `_comments`, `_assign`, `_liked_by`; v16 `DBTable.get_columns_from_docfields`)
       and leaves the old `parent*` columns in place, unused.
