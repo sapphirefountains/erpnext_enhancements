@@ -2035,6 +2035,13 @@ jobs:
       # sf_tokens.bundle.css does not define. Reads files only; no frappe stub.
       - name: Block status colours from tokens
         run: python -m unittest erpnext_enhancements.tests.test_block_status_tokens -v
+      # Blocks on sf_kit (v1.649.0) get the kit and the "newest answer draws" ticket from
+      # workspace_block_return.js (blocks.kit / blocks.ticket). Fails when a converted block
+      # brings back its own escape, ticket counter, muted() helper, -pill markup or hand-written
+      # loading / error / switched-off markup, or loses its guard for an older bundle; and when
+      # a seeded block is in neither list. Comments stripped; reads files only; no frappe stub.
+      - name: Blocks on sf_kit (no per-block shell)
+        run: python -m unittest erpnext_enhancements.tests.test_block_kit -v
       # frappe 16.50 draws module sidebars from `Sidebar` and no longer reads `Workspace
       # Sidebar`, so the hidden "Project" link came back on the 2026-10-06 upgrade (v1.576.1).
       # Replays production's Projects sidebar rows: only ERPNext's own row is flagged hidden,

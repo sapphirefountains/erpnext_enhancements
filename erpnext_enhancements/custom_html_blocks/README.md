@@ -71,6 +71,83 @@ until v1.641.0 each carried its own copy of the check. `tests/test_page_polling_
 pins the one copy and the guards, and the node harness runs both blocks' poll timers shown,
 hidden, and hidden on an older bundle.
 
+## Panels, chips and escaping come from sf_kit
+
+Since v1.649.0 the 34 department dashboard widgets draw their shell from
+[sf_kit](../../docs/app-design-system.md#sf_kit-the-shared-page-pieces) instead of each
+carrying a copy: no block has its own escape, `muted()` helper, ticket counter or `-pill`
+markup any more. Two more helpers on `workspace_blocks`, in the same
+`workspace_block_return.js`, hand it over:
+
+```js
+const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+if (blocks && blocks.kit && blocks.ticket) {
+	blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+	return;
+}
+// A bundle cached from before the helpers: plain text, and every answer draws.
+const words = {
+	loading: __("Loading…"),
+	empty: __("Nothing to show"),
+	error: __("Could not load"),
+	"no-access": __("No access"),
+};
+const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+const escape = frappe.utils.escape_html;
+startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+```
+
+- **`blocks.kit(root)`** returns a Promise of the kit. It calls
+  `frappe.require(["sf_kit.bundle.js"])` once per page load (memoized; the bundle name, so it
+  resolves to the content-hashed file), adopts `sf_kit.CSS` into that root's
+  `adoptedStyleSheets` once per root (a page stylesheet does not cross the shadow boundary; the
+  `--sf-*` tokens do, so the panels follow the theme), and resolves `window.sf_kit`. It never
+  rejects and never leaves a block undrawn. v16's `frappe.require` calls back even when the
+  script failed to load (`assets.js`: `script.onerror = resolve`), and marks the path executed
+  either way, so a second require never fetches it again: when the kit is not there after the
+  callback it never will be, and `kit()` resolves a **stand-in** instead, with `esc`, a
+  `state.render` that writes the title and body as plain text and adds a plain button for
+  `on_action` (labelled `action_label`, or "Try again"), and a `chip` that is its escaped word.
+  The button matters: Weather and Astrology have no refresh button, so without it a failed
+  call could never be retried while the kit is missing.
+  A ten-second wait resolves it too, in case a callback never comes.
+- **`blocks.ticket(root)`** is the ticket the blocks each wrote by hand: every call takes the
+  next number on the root, and the function it returns says whether that number is still the
+  newest. `const current = ticket(container);` at the top of a load, then
+  `if (current()) render(...)` when the answer lands.
+- **The fallback rule.** The global bundle is cached on an open Desk, so a block can meet a
+  bundle from before these helpers. Every converted block keeps the guard above: without
+  `blocks.kit` it draws through a small stand-in of its own: plain text, the panel's title or
+  else a short translated word for its kind ("Loading…", "Nothing to show", "Could not load",
+  "No access"), and no ticket. It is ugly on purpose and only has to draw, not throw.
+
+**Escape what you join.** A row's fields joined into one line (`[d.customer, d.owner].join(" · ")`)
+go into `innerHTML` like anything else: `.map(sf.esc)` before the join, or `sf.esc(...)` on each
+field that is text when another item is markup already. `tests/test_block_kit.py` fails on a
+joined list carrying a bare row or `message` field.
+
+What a converted block draws:
+
+| Case | Draw |
+|---|---|
+| first load | `sf.state.render(body, "loading")` (the Finance widgets that blanked on every load still do) |
+| switched off, or nothing to show | `sf.state.render(body, "empty", { title })`, the block's own sentence |
+| the call failed | `sf.state.render(body, "error", { title, on_action: load })`, a "Try again" that loads again |
+| a 403 | `sf.state.render(body, "no-access")` |
+| a status label | `sf.chip(label, tone)`, the tones from `sf_kit/chip.js` (`danger`, `warn`, `good`, or neutral) |
+
+The calls still go through `frappe.call`, so its own dialogs and the request counting in the
+node harness are unchanged; the 403 is read from the jqXHR's `status`. A switched-off notice
+is an *empty* panel, not an error: the widget works, nobody has turned it on.
+`tests/test_block_kit.py` fails the build when a converted block grows any of its old copies
+back or loses the guard, and makes every seeded block either sit on the kit or say why not.
+Still waiting, as a follow-up of the same task: the KPI Cockpit, Morning Briefing, Task
+Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk Shortcuts asks the
+server nothing and has no panel to convert. `scripts/test_workspace_block_return.mjs` runs
+every converted block on the real `sf_kit.bundle.js`: a 500 draws the error panel and its Try
+again asks again, a 403 draws no access, an empty answer the empty panel, and on an older
+bundle the block still draws.
+
 ## Status colours come from the `--sf-*` tokens
 
 Good, watch and bad are read from the app's design tokens

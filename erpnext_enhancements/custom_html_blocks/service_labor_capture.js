@@ -21,17 +21,33 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#olc-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,57 +67,59 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="olc-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#olc-body");
         const count = container.querySelector("#olc-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Labor Capture Gaps is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Labor Capture Gaps is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const visits = message.visits || [];
         count.textContent = visits.length ? __("{0} in {1}d", [visits.length, message.lookback_days]) : "";
         if (!visits.length) {
-            body.innerHTML = muted(__("Every completed visit carries labour. Nothing is leaking."));
+            sf.state.render(body, "empty", {
+                title: __("Every completed visit carries labour. Nothing is leaking."),
+            });
             return;
         }
 
         body.innerHTML = visits
             .map((v) => {
-                const meta = [v.customer, v.technician].filter(Boolean).map(esc).join(" · ");
+                const meta = [v.customer, v.technician].filter(Boolean).map(sf.esc).join(" · ");
                 return `
                     <div class="olc-row">
-                        <a class="olc-name" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${esc(v.title)}</a>
+                        <a class="olc-name" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${sf.esc(v.title)}</a>
                         <span class="olc-meta">${meta}</span>
-                        <span class="olc-age">${esc(v.visit_date || "")}</span>
+                        <span class="olc-age">${sf.esc(v.visit_date || "")}</span>
                     </div>`;
             })
             .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#olc-body");
         const refresh = container.querySelector("#olc-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load labour gaps."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load labour gaps.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -109,6 +127,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no
