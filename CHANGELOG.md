@@ -133,6 +133,15 @@ reports move first; the rest move as they are touched.
 - **Docs**: `docs/app-design-system.md` gains "The report face". The `public/`, `crm_enhancements/`
   and `kpi_dashboards/` READMEs describe it.
 
+## [1.654.1] - 2026-10-13
+
+### Fixed
+
+- **The "Printed" date on the Project Schedule and Project Task List formats** now goes through `ps_date` like every other print date (form kit P3.4, v1.650.0).
+  - v1.650.0 missed it because its argument, `frappe.utils.nowdate()`, has parentheses of its own. That stopped both the rewrite and `test_print_style`'s check at the first `)`.
+  - It printed the same date, so nothing looked wrong. The check was wrong, though, and this one was found by querying the rebuilt formats on prod after the deploy.
+  - The check now bans any date fieldtype literal in a print template, and any `formatdate(` call, however it is nested.
+
 ## [1.654.0] - 2026-10-13
 
 Form kit P6, part A (ERPNext TASK-2026-02774, "New Opportunity board"): **a new Opportunity board
