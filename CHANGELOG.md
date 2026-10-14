@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.645.0] - 2026-10-13
+## [1.648.0] - 2026-10-13
 
 Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.
 
