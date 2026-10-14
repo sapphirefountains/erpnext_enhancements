@@ -14519,7 +14519,7 @@
   "columns": 0,
   "default": "0",
   "depends_on": null,
-  "description": "Set automatically every night: created before 2025-08-01, and nobody has commented, attached a file, assigned it, emailed about it or changed its status in the last 90 days. Historical deals are left out of the won-without-project warnings and the sales KPIs.",
+  "description": "Set nightly on old deals nobody is working; kept out of project warnings and sales KPIs",
   "docstatus": 0,
   "doctype": "Custom Field",
   "dt": "Opportunity",
