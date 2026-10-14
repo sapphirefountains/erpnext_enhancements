@@ -31,6 +31,7 @@ from erpnext_enhancements.crm_enhancements.handoff import (
 	billing_terms,
 	throw_if_handoff_missing,
 )
+from erpnext_enhancements.crm_enhancements.project_copy import SITE_AND_BUDGET, copy_site_and_budget
 
 
 @frappe.whitelist()
@@ -78,5 +79,13 @@ def make_project(source_name, target_doc=None):
 		target.set(FIRST_INVOICE_PERCENTAGE_FIELD, terms["first_invoice_percentage"])
 	if terms["billing_email"]:
 		target.set(BILLING_EMAIL_FIELD, terms["billing_email"])
+
+	# The job site, the billing address and the budget, as the background creator copies them
+	# (crm_enhancements/project_copy.py). Only fields this site has are read.
+	meta = frappe.get_meta("Opportunity")
+	fields = [fieldname for fieldname in SITE_AND_BUDGET if meta.has_field(fieldname)]
+	if fields:
+		source = frappe.db.get_value("Opportunity", source_name, fields, as_dict=True) or {}
+		copy_site_and_budget(source, target)
 
 	return target

@@ -259,13 +259,18 @@ frappe.provide("erpnext_enhancements.crm");
 			});
 		};
 
+		// Set from handoff_state before asking: a deal still on a Lead gets a warning above the
+		// question (Nik, 2026-10-13), since its Project would take the Lead as its customer.
+		let lead_warning = "";
+
 		const ask = function (question, on_yes) {
-			const message =
+			const body =
 				opts.mode === "transition"
 					? `${question}<p class="text-muted" style="margin-top:8px;">${__(
 							"No returns this opportunity to its previous status."
 						)}</p>`
 					: question;
+			const message = lead_warning + body;
 			const d = frappe.confirm(message, on_yes, on_no);
 			// Also release the guard if the dialog is closed via Esc/X (no button).
 			if (d) {
@@ -308,6 +313,13 @@ frappe.provide("erpnext_enhancements.crm");
 				if (state && state.is_historical) {
 					done();
 					return;
+				}
+				if (state && state.on_lead) {
+					lead_warning = `<p class="text-warning" style="margin-bottom:8px;"><b>${__(
+						"This deal is still on a Lead."
+					)}</b> ${__(
+						"Convert the Lead to an Account and set Opportunity From to Account before the hand-off: a Project made from a Lead gets the Lead as its customer, which fails, and no Google Drive folder is made."
+					)}</p>`;
 				}
 				const needs_meeting =
 					state && state.available && state.enabled && state.gate_applies && !state.held && !state.event;
