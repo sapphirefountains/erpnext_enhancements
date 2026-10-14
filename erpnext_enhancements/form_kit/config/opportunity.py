@@ -111,6 +111,8 @@ CONFIG = {
 		"notes_html": "ERPNext's CRM notes widget.",
 		# Fields the Desk form keeps that the flow leaves out (Nik's review, 2026-10-13).
 		"language": "Nik, 2026-10-13: not needed in the flow; it stays on the Desk form.",
+		# frappe.new_doc fills it with the one option there is, so a new record still gets its ID.
+		"naming_series": "Nik, 2026-10-13: one series that never changes; it stays on the Desk form.",
 		"conversion_rate": _COMPANY_CURRENCY,
 		"base_opportunity_amount": _COMPANY_CURRENCY,
 		**{fieldname: _ATTRIBUTION for fieldname in ATTRIBUTION_FIELDS},

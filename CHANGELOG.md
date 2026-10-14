@@ -44,9 +44,24 @@ Address rows two imports left behind. Approved 2026-10-13.
   / linked / link_skipped_ambiguous / link_skipped_no_supplier / failed`) is checked to add up. Every
   row left for a person goes to the console and one Error Log. A missing table makes it a no-op, and it
   is safe twice. Expected on prod: about 154 deleted, 194 linked, 4 listed.
-- `tests/test_address_orphan_cleanup.py` (33 bench-free tests) runs it against a stub and has its own
+- `tests/test_address_orphan_cleanup.py` (34 bench-free tests) runs it against a stub and has its own
   CI step. Static guards cover: no `force`, no `save()`, keyword `log_error`, and no record name or
   email address in the patch.
+
+## [1.637.2] - 2026-10-13
+
+### Changed
+
+- **The Guided Entry page no longer shows Series** (Nik, 2026-10-13: "it doesn't change").
+  - The Opportunity has one naming series, and it is fixed once the deal exists, so on every step
+    it was a field nobody could change.
+  - It is now in the flow's `skip_fields` (`form_kit/config/opportunity.py`). A deal created from
+    step 1 still gets its series from `frappe.new_doc`, the same as the Desk's New form, and a
+    series sent to the create endpoint is ignored.
+  - The Desk form still shows Series, with its (i) help.
+  - `test_form_kit` checks that the series is in no step, new or saved, and that a created deal
+    gets `CRM-OPP-.YYYY.-`. The set-only-once test, which used Series because it was the form's
+    only set-only-once field, now marks a different field the same way.
 
 ## [1.637.1] - 2026-10-13
 
