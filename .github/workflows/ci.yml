@@ -2038,6 +2038,13 @@ jobs:
       # own Contact/Address dialogs once made ours step aside on prod, and as 16.36.1.
       - name: New Contact / New Address obey the user, Link Existing links one record (bench-free, node)
         run: node scripts/test_contact_quick_entry.mjs
+      # ER-2026-520743 (v1.695.0): a new record made from a grid keeps what was typed. "Add multiple"
+      # -> "Create a new X" opened a blank record (frappe's LinkSelector calls new_doc with no values)
+      # and now carries the search text and adds the record to the grid; "Create a new Item" from a
+      # buying grid row carries the row's name, description, units and price, but not a row still
+      # holding another Item. Runs the real files against a stub of the v16 pieces they hook.
+      - name: New records from a grid keep what was typed (bench-free, node)
+        run: node scripts/test_new_item_prefill.mjs
       # Same audit: the Contact "Account" field mirrored the first Customer link, so a supplier's
       # employee took the first fanned-out Customer as their employer, and clearing it promoted the
       # next one. Also AddressLinkGuard: a staff-created linkless Address is never filed under the

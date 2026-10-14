@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.695.0] - 2026-10-14
+
+### Added
+- **A new record made from a grid keeps what was typed** (ER-2026-520743, TASK-2026-02052 and
+  02053; Nik, 2026-10-14: "Desk form now + P8.2", meaning the guided Purchase Order flow will do
+  the same for its own lines later).
+  - **"Add multiple" → "Create a new Item" opens the Item with the search text as its code**, and
+    once it is saved from Quick Entry it is added to the grid, asking for the quantity the way picking
+    a search result does. Frappe's `LinkSelector` (v16 `form/link_selector.js`) draws that button
+    inside its search callback and calls `frappe.new_doc(doctype)` with no values, so the code just
+    searched for was dropped. There is no option to set, so a capture-phase listener on the dialog
+    (`global_enhancements/link_selector_create.js`) takes the click first and makes the same call
+    with `name_field`, the route option Frappe's own Link control uses, plus the doctype's `field:`
+    autoname field by name. It works for every LinkSelector, not only Items, and does nothing when
+    the search box is empty.
+  - **"Create a new Item" from a row of a buying document carries the row along**: its item name,
+    description, unit and price. This covers Material Request, Request for Quotation, Supplier
+    Quotation, Purchase Order, Purchase Receipt and Purchase Invoice. The code was already carried:
+    the Link control passes the typed text as `name_field`, which `get_new_doc` writes into Item's
+    `field:item_code`. The rest of the row was not. The values go through the framework's own hook,
+    the item_code docfield's `get_route_options_for_new_doc`, which ERPNext uses the same way for
+    Quality Inspection and Batch (`buying/new_item_prefill.js`, rules in `buying/new_item_values.js`).
+  - **Careful about:**
+    - **A row that still holds another Item gives only the typed code.** Its name, description and
+      unit were fetched from that other Item and would describe the wrong part.
+    - **A name that only repeats the code is left out**, because the naming guard refuses it.
+    - **An empty Text Editor (`<div><br></div>`) is not a description.**
+    - **The hook is set again on every `onload` and `refresh`**, because the docfield copy is
+      per-document and a saved new order gets a new name.
+    - **A hook already on the field runs first and its values win.**
+    - **Anything that throws leaves "Create a new" exactly as Frappe has it.**
+  - **`frappe._from_link` is cleared before "Add multiple" opens its Quick Entry.** A Link
+    control's "Create a new" that was cancelled leaves it set, and `QuickEntryForm.process_after_insert`
+    would then write the new record into that stale link field instead of the grid.
+  - **For the form kit:** the route options also carry `uom`, `rate` and the order's `supplier`.
+    These are not Item fields, so the Desk drops them (`get_new_doc` copies only fields the doctype
+    has), but the guided Item flow reads `frappe.route_options` itself for its supplier-and-price
+    step.
+  - **Tests:** `scripts/test_new_item_prefill.mjs` runs all three files against a stub of the v16
+    pieces they hook, as a new CI step.
+
 ## [1.694.0] - 2026-10-14
 
 ### Added
