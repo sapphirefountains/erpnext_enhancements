@@ -319,8 +319,8 @@ def _section_break(section):
 
 def flow_steps(doctype, doc=None, user=None):
 	"""The guided flow for ``doctype``: ``[{key, title, intro, tab, applies, active, read_only,
-	final, link, create, fields}]``, for ``user`` (default: the session user) on ``doc`` (None,
-	or an unsaved document, for a record not yet created).
+	final, link, create, extension, more, fields}]``, for ``user`` (default: the session user) on
+	``doc`` (None, or an unsaved document, for a record not yet created).
 
 	``fields`` are field definitions (:func:`field_def`) with Section Break and Column Break
 	entries for layout; a Section Break carries the section's own ``depends_on``.
@@ -335,6 +335,10 @@ def flow_steps(doctype, doc=None, user=None):
 	create = create_fieldnames(meta, config)
 	forced = set(config.get("show_hidden") or {}) | set(create)
 	read_only_names = set(config.get("read_only_fields") or {})
+	# Editable while the record is being created, read-only once it exists (an Item's code is its
+	# name: it changes by renaming the Item, never by typing over it).
+	if not access["is_new"]:
+		read_only_names |= set(config.get("once_fields") or {})
 	specs = list(config["steps"])
 
 	# Every create field lives in step 1: moved there from wherever the meta put it.
@@ -402,13 +406,18 @@ def flow_steps(doctype, doc=None, user=None):
 			items.extend(defs(body(section), read_only, mark_create))
 		built.append((spec, tab, _tidy(items)))
 
+	# A section no step claims is walked as a step of its own. When the config has "more" steps
+	# (past the core of the flow), such a section is one of those too: it is something the form
+	# shows that nobody placed, so it never lands between the core steps.
+	any_more = any(spec.get("more") for spec in specs)
 	extra = []
 	for section in sections:
 		if section["key"] in claimed:
 			continue
 		items = [_section_break(section), *defs(body(section), False)]
 		title = section["label"] or section["tab"]["label"] or doctype
-		extra.append(({"key": section["key"], "title": title, "intro": ""}, section["tab"], _tidy(items)))
+		spec = {"key": section["key"], "title": title, "intro": "", "more": any_more}
+		extra.append((spec, section["tab"], _tidy(items)))
 
 	if built and built[-1][0].get("final"):
 		ordered = built[:-1] + extra + built[-1:]
@@ -432,6 +441,9 @@ def flow_steps(doctype, doc=None, user=None):
 				"final": 1 if spec.get("final") else 0,
 				"link": spec.get("link"),
 				"create": 1 if spec is first else 0,
+				# The block the DocType's page extension draws above the fields (config docstring).
+				"extension": spec.get("extension") or None,
+				"more": 1 if spec.get("more") else 0,
 				"fields": fields,
 			}
 		)

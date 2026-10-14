@@ -76,6 +76,256 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the shared directory rules
   under node and `record_info` against a frappe stub.
 
+## [1.684.0] - 2026-10-14
+
+### Added
+- **A saved record on the guided page is laid out the way each person chooses** (Nik, 2026-10-14:
+  "once a document has been created via the flow, the presentation could be better ... Let's make
+  it somewhat flexible and customizable by the user and their preferences"). A **View** button (a
+  gear) in a saved record's band opens the settings, applied as they change, with *Reset to
+  defaults*. A new record's setup flow is unchanged, and so is the rest of the walk its step 1
+  starts, until the person leaves the record. Settings, per DocType, first value the default:
+  - **Layout**: *One page* (Nik's default: "all sections on one page, but leave the ability for tabs
+    to be used and visible"; every step a section under its Desk tab, the tab bar a sticky jump menu
+    with scroll-spy, sections collapse), *Tabs* (one tab at a time; a tab is a route, so Back and
+    Forward walk the tabs and Next/Back move between them), *Step by step* (the setup flow's page).
+  - **Where the steps sit** (left, right, top; always top on a phone), **Summary** (right, left,
+    hidden; it folds above the form on a phone and tablet), **Notes and comments** (below the form,
+    side column, or collapsed behind a "Notes and comments (N)" bar), **Record tools** (the
+    `.ge-tools` block another change fills: side column, below, collapsed).
+  - **Focus mode** (only the form and its nav; the button in the band, or F), **text size** (normal,
+    large, larger) and **high contrast** for a phone in the sun (both through the CSS tokens only),
+    **spacing** (comfortable, compact), **field hints** (under each field, or only in the (i), which
+    then holds the hint), and **only fields with a value**.
+  - **Pinned sections** (drawn first in One page and Tabs, marked in the nav, pinned from the
+    section's head), **where a record opens** (where the person left it, which the page remembers per
+    record for the last 50; the first section; or a chosen one), **fields and sections put away**
+    per person, **summary fields** (up to 12 of the record's fields instead of the standard summary),
+    and **saved views** (named presets such as "Phone").
+  - **Shortcuts**, none of them while typing except Save, and none over the browser's or the Desk's:
+    J and K next and previous section, Ctrl/Cmd+S save now, C notes and comments, V view settings,
+    F focus mode, ? the list (which links to the Desk's own).
+  - **A first-time pop-up** says what can be changed, with *Open view settings* and *Got it*: once
+    per person, remembered on the server the moment it shows, never on a new record's setup flow.
+- **Opportunity board: Card fields.** A picker in the filter bar chooses what each card shows beside
+  its title (account, value streams, owner, amount, probability, close date, days in stage,
+  completeness), saved with the board's own views as the text key `card`. A view that never chose,
+  or was saved before this, shows the card exactly as before.
+- `planner_views_prefs.get_guided_view` (GET), `save_guided_view`, `remember_guided_section` and
+  `mark_guided_intro_seen` (POST). Each acts only on the caller's own `__UserSettings` row (`Guided
+  Entry`, key `guided_view`), written straight to the table: frappe's own user settings live only in
+  Redis until a sync, and every deploy flushes Redis, so a choice saved minutes before a merge would
+  vanish. Everything is cleaned on the way in and again on the way out (unknown keys dropped, unknown
+  values back to their defaults, every list capped); a DocType the guided page does not serve is
+  refused, and read on it is checked. One person's choices never change anyone else's page.
+
+### Changed
+- **The guided page's fields, tightened, in every layout and in the board's side panel** (Nik's
+  review of the Events schedule step, 2026-10-14: "the layouts and such need to be tightened up").
+  The (i) stays on its label's line, so the inputs of a row start level (it wrapped alone under
+  two of four labels); a form's columns wrap at about 240px (four on a wide stage, two on a medium
+  one, one on a phone) instead of four squeezed ones, in the DocType's own order; inputs are the
+  Desk's height (38px, 44px on a phone) with their own ground and a visible edge in light and dark
+  (an empty Datetime read as a dark nothing); text boxes start at three lines and grow with what
+  they hold up to 320px (Frappe draws Text at 300px and Small Text at 150px whatever they hold); a
+  hint is clamped to two lines, with the whole of a longer one in the (i); the Datetime time-zone
+  line shows only when the person's zone differs from the site's (v16's `ControlDatetime` writes it
+  under every Datetime unless `hide_timezone`); and Frappe's 15px section and 15px column padding no
+  longer push every field 30px in from the step title.
+- **One renderer, several FieldGroups.** One page and Tabs draw one `frappe.ui.FieldGroup` per step,
+  held together by `form_kit/field_groups.js`, so the editor's collect, save queue, conflict chooser,
+  phone journal, help, Party component and `focus_field` work across every section on screen
+  (`shown_steps()`); `collect_step` redraws the chrome once for the lot instead of once per field.
+  The side panel is unchanged: still step by step, no settings.
+- `guided_entry.bundle.js` is version 4 (3 was v1.683.0's step blocks) and `opportunity_board.bundle.js`
+  version 2, so a tab still holding an older bundle takes the new one.
+- **The guided Item flow (v1.683.0) stays step by step.** Its steps draw blocks of their own (the name
+  builder, supplier, stock, asset), which hold one step's state at a time, and it ends at its core
+  steps with Done and More details, which only Step by step has. So a DocType with step blocks keeps
+  that layout whatever the person chose (`view.js effective_view(..., steps_only)`, the settings
+  panel says why), and every other choice (where the steps sit, summary, notes, focus, text size,
+  contrast, pins, where it opens, hidden fields) still applies. A saved Item still opens on its Desk
+  form; the guided view is the Guided button's. For safety the editor also keeps the blocks of
+  sections drawn together (no `leave` between them) and tells a block of a change with the step that
+  draws the field.
+- **Review of #1299.**
+  - What the person put away is worked out again on every refresh: after a save brings a new
+    completeness, and after a status change. A hidden field the stage now needs comes back at once,
+    and the hidden count stays true. "Only fields with a value" keeps a snapshot of the fields that
+    were empty when it was turned on (or the section drawn), so a field emptied while typing never
+    vanishes under the cursor.
+  - One page and Tabs read values back only from sections that apply and show
+    (`editor.js collect_steps`, the shell's `step_visible`). A control whose value does not
+    round-trip, such as a Select with no blank option, could otherwise queue a change nobody made.
+  - With hints put away (or in focus mode), a Datetime whose zone differs from the site's gets the
+    (i), which carries the zone.
+  - The Record tools choice shows only once something has mounted into `.ge-tools`.
+  - The first-time pop-up waits until neither the chooser for kept changes, a conflict, a dialog
+    (the Closed Won nudge) nor the page's own shortcuts list is showing.
+  - A field the person is typing in is never put away from under them: a field shown only because
+    the stage needed it, typed in and autosaved, used to vanish (focus and keystrokes with it) when
+    the save took it off the stage's list. A field or section holding the cursor stays, and a field
+    the person changes stays in view for the rest of the visit, under their list and under "only
+    fields with a value" alike.
+
+## [1.683.0] - 2026-10-14
+
+Form kit P8.1 (TASK-2026-02790, under P8 "Procurement flows"): **a guided Item flow.** A buyer can
+add a part named the POL-0602 way, with its supplier, last price, bin, reorder rule and bin label,
+from a phone or a desk, without opening the Item form; a fixed-asset item lands with its Asset, so
+the two never come apart (the inline Item the old Asset form offered vanished from its own field,
+ER-2026-420503). **It is not where an Item opens.** Parker and Clegg use the Item form daily and
+nobody has reviewed this flow yet, so an Item still opens in its form; the flow is reached from the
+form's new *Guided* button, the guided page's start screen, or `/desk/guided-entry/Item/new`.
+
+### Added
+
+- **The Item flow** (`form_kit/config/item.py`), walked by the generic guided page like Opportunity.
+  It walks the whole Item form: every field the form shows is in exactly one step (held by
+  `test_form_kit`, against ERPNext v16's real `item.json` merged with this app's fields and
+  Property Setters). Five core steps, then the rest of the form as "more" steps:
+  - **Name & code** (creates the Item). The **code helper** picks the family: the vendor's part
+    number as printed (a comma dropped, per SOP §6), `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`,
+    `PDT-####` or `SRV-###`. A PDT or SRV number comes from a block the person chooses: the
+    blocks in use, each with its lowest free number, plus the first block nobody uses yet
+    (`inventory_enhancements/item_flow_rules.code_blocks`, on `item_naming_rules`' occupancy, so a
+    number held only by trailing text or a `(deleted)` tombstone stays taken and the five-digit
+    QuickBooks family never lands on a four-digit slot). Never `MAX()+1`, and never number 0.
+    The **name builder** has a box per POL-0602 segment (CATEGORY, SUB-CATEGORY, KEY FEATURE,
+    MATERIAL, SIZE, RATING, PACKAGING), each offering what the catalog already uses in that
+    position, narrowed by the CATEGORY chosen; Appendix A leads the CATEGORY list. The name is
+    assembled in capitals with one comma and one space between segments. The **naming check**
+    runs as you type: it is Stock Scan's own quick-Item preview (`stock_scan.preview_new_item`, the
+    guard's exact `blocking_findings` call), so the only refusals shown are the guard's two (a
+    duplicate code, a name that is just the code), and they hold back *Create and continue*;
+    every other finding, a STOP included, is advice.
+  - **Description.**
+  - **Supplier & price**: the supplier, their part number, the purchase link (Item Supplier's
+    `purchase_url`, the per-supplier link `api/procurement.py` already stores), whether reorders go
+    to them (the company's default supplier), and the last price paid (an Item Price on the buying
+    list, for that supplier, in the stock unit), so a purchase order can offer them.
+  - **Stock & bin** (stock items): the bin (the company's default warehouse), its reorder level and
+    quantity (a Purchase reorder rule), and *Print the bin label*, which opens Stock Scan's own
+    `/warehouse-labels?w=<bin>`. It says so when automatic reordering is off in Stock Settings.
+  - **Fixed asset** (fixed-asset items): creates the draft Asset (the Item's name and category,
+    location, purchase date, cost, *Available for event rental*), listing any already made.
+- **`api/item_flow.py`**: `naming_options`, `preview_item`, `code_blocks`, `get_setup` (reads,
+  GET) and `save_supplier`, `save_stock`, `create_asset` (writes, POST). Every write checks its
+  own DocType permission first (Item write; Item Price create or write before anything is written;
+  Asset create) and saves without `ignore_permissions`; every refusal comes before a write, in
+  words. **Nothing is made twice on a resend**: rows and the price are keyed on what they are
+  about, so a second identical request changes nothing and saves nothing; the Asset carries the
+  page's id in a new hidden, unique, no-copy `Asset.custom_guided_client_id`, a resend from the
+  same person returns the first Asset, and a resend racing the first insert collides on the index
+  and reads the winner after a rollback (the P4.7 pattern).
+- **`Item.custom_guided_client_id`** (hidden, unique, no-copy) and `create.client_id_field` on the
+  Item config, so a create resent by P4.7's no-signal queue returns the Item the first attempt
+  made instead of being refused as a duplicate code.
+- **Field help for the core steps** (`form_kit/help_text/item.json`): a hint and an explanation
+  for each of their 21 fields, the hint also the field's description, through 19 new
+  `Item-<field>-description` Property Setters and the descriptions of `custom_sku` and
+  `custom_item_identifier`. So the Item form shows the same lines, and its (i) tooltips the
+  explanations. The "more" steps keep ERPNext's own descriptions until their help is written and
+  reviewed.
+- **The guided page's extension point** (`public/js/form_kit/extensions.js`). A config step can
+  name a block (`extension`), which the DocType's extension draws above the step's fields. The
+  record editor both shells run (`public/js/form_kit/ui/editor.js`, v1.675.0) mounts it, so the
+  guided page and the Opportunity board's side panel draw a block the same way: it knows only
+  `render`, `on_change`, `before_create` and `leave`, lends the block the record's values,
+  `set_value`, `save_first` and `record_changed`, and catches a block that throws so the fields
+  always show. Each shell picks the DocType's extension when a record opens (`open_extension`) and
+  drops it on reset; the guided page alone adds Done after the core steps and *More details*.
+  `guided_entry.bundle.js` goes to version 3, so a tab still holding version 2 (no
+  `extension_for`) takes the new kit. The Item blocks are `public/js/guided_item/`; their decisions (the name
+  assembly, the code families, refusals versus advice, the blocks' starting values) are pure
+  modules run under node by the new `test_guided_item`.
+- **"More" steps** (config `more`): past the core of a flow, Next on the last core step offers
+  Done, with *More details* under the step and every step still in the rail. A section nobody
+  placed is a "more" step too when the config has any.
+- **`open_by_default`** in a config (default True): `frappe.boot.sf_guided` now carries `default`
+  per DocType, and `guided_default.js` takes over where records open only for the defaults
+  (`opening.js` `opens_by_default`); `sf_guided.has_flow` answers for the Guided button. The start
+  screen lists a non-default flow only for people who can create one, and its New starts on the
+  guided page directly.
+- **A Guided button on the Item form** (`public/js/item.js`), for people who may open the guided
+  page: this Item on the guided page, or step 1 of a new one.
+- **Item Manager may open the guided page** (the Page's roles), the role that creates Items.
+- Completeness for Item: a non-stock item wants its code, name, group, unit and a supplier; a stock
+  item also a reorder level. `stages.labels` names a stage whose value is not words.
+- **Notes and comments on a saved Item** (v1.678.2's rule: every guided DocType). They come from
+  the shared editor with nothing Item-specific: the Desk's Comments App under the steps, and no
+  Notes list, because Item has no `notes` table of CRM Note (`record_notes` answers `has_notes:
+  false` rather than refusing; `test_form_kit TestItemNotesAndComments`).
+- Tests: `test_item_flow` (new, own stub: the blocks and both occupancy traps, every permission,
+  idempotency, the racing resend), `test_guided_item` (new, node: the pure modules, the page's
+  bundle, the wiring), and `test_form_kit` now builds the real Item meta
+  (`tests/fixtures/form_kit/erpnext_v16_item.json`, trimmed from ERPNext `v16.50.0`) and holds the
+  Item flow to the engine's rules. Both new suites have their own CI steps.
+
+### Changed
+
+- `api.stock_scan.check_new_item` answers through `preview_new_item`, which the guided Item flow
+  shares behind its own permission check (Item create, not Stock Scan's roles). Same answer.
+- `boot._guided_doctypes` tries each DocType on its own, so one broken flow no longer empties
+  `frappe.boot.sf_guided` and with it Opportunity's default.
+- **The default now follows what a person may do with the records.** `sf_guided` carries
+  `default` (a saved record opens on the guided page) only for someone with write permission on
+  the DocType, and `default_new` (a New does) only for someone with create permission, both on
+  top of `open_by_default`. Without it, letting Item Managers onto the guided page would have
+  taken deals off the form for an Item Manager who can read Opportunities but holds no Sales role.
+  A person who may only read keeps the form; the flow is still there to open on purpose.
+- **The Desk Item form changes for everyone, not only guided users.** The 19 new `description`
+  Property Setters and the two custom-field descriptions replace the descriptions the Item form
+  shows under those fields (and in Quick Entry and grids), and because Item now has a help file,
+  the form's (i) tooltips on those fields show the longer explanation too.
+- `create_record` also settles a resend racing the first insert when it collides on the primary
+  key (`DuplicateEntryError`) rather than on the id's unique index: an Item is named by its code,
+  so its primary key is hit first. Same rollback and re-read.
+- Config `once_fields`: editable while the record is created, read-only once it exists. Item
+  Code is one, so a saved Item's code is never typed over in the flow (it changes by renaming).
+
+### Fixed (from the review of #1270, before merge)
+
+- Picking a supplier that has no Item Supplier row yet cleared nothing: the previous supplier's
+  part number, link and price stayed in the boxes and were saved for the new one, with a new
+  Item Price at the old price. The boxes now hold the picked supplier's own details or nothing,
+  and "Reorders go to this supplier" starts ticked only when the Item has no default supplier yet
+  or the picked one already is it.
+- The price shown for a supplier could be a stale one: the rows were read newest first into a
+  dict, which kept the oldest, across units. Now only the stock unit's price, the newest per
+  supplier. A save sends a price only when it was changed in the box.
+- Moving an Item to another bin left the old bin's Purchase reorder rule behind. It moves with the
+  item now; when the new bin already has its own rule the old one is kept and the page says so.
+- The page catches a block's `before_create` that throws, as it does `render`, `on_change` and
+  `leave`.
+
+### Fixed (second review of #1270)
+
+- **`Item.custom_guided_client_id` is in the Item layout.** v1.682.0 (#1297, merged first)
+  regenerated `Item-main-field_order` and added `test_layout_field_order_coverage`, which fails on a
+  field the array leaves out. The field sits after `custom_item_identifier` in
+  `scripts/layout/specs/item.json`, and only that Property Setter's value was rewritten, by the
+  generator's own build_universe, expand_layout and lint against ERPNext `origin/version-16`
+  `item.json` and its `dump_fixture`. The generator still refuses a full write while
+  `property_setter.json` is not name-sorted. The test that pinned the stale layout
+  (`test_the_fields_the_stale_layout_moved_are_named_where_they_belong`) now holds the corrected one:
+  Default Unit of Measure, Maintain Stock and the asset ticks in Details, and Maintenance Billing
+  holding only its own two fields. The steps still name those fields, so a section that moves again
+  cannot move a field between steps.
+- A tab still holding `sf_form_kit` v2 (loaded before the deploy) no longer calls the editor's
+  `open_extension` or the kit's `opens_by_default` without checking that they exist, as `ends_core`
+  already did. It gets no blocks and lists every flow, as before.
+- The Item blocks read a server message's HTML in an inert document (`DOMParser`) rather than a
+  created `div`, whose `innerHTML` runs an `<img onerror>` even when it is never attached.
+- `item_flow_rules` refuses `nan` and `inf` as a price, reorder level, reorder quantity or purchase
+  amount. `float()` accepts them, and NaN passes every `< 0` check.
+
+### Checked, not changed
+
+- **Item Manager on the guided page's roles adds no one.** All 15 people who hold Item Manager on
+  production already hold Sales User, which the Page already listed (reviewed 2026-10-14). The role
+  is kept so the page stays open to an Item Manager who is not in Sales.
+
 ## [1.682.1] - 2026-10-14
 
 ### Fixed

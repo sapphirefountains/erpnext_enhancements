@@ -6,6 +6,7 @@
   "item_code",
   "custom_sku",
   "custom_item_identifier",
+  "custom_guided_client_id",
   "item_name",
   "item_group",
   "stock_uom",

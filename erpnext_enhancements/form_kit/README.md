@@ -31,6 +31,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
+| `config/item.py` | Item (P8.1): the core steps with their blocks, the `more` steps, `open_by_default: False` |
 | `blocks.py` | The information blocks (P3.1): Party, Site, Schedule window, Scope by pillar, Money, Crew, with their fields per DocType and their three faces. JavaScript twin: `public/js/info_blocks/blocks.js`. See *Information blocks* below |
 
 ## How the steps are built
@@ -271,9 +272,10 @@ Activities tab, its dashboard's connections, the Contact & Address directory and
 guided page and the side panel bring all of it back for any saved record, in `public/js/form_kit/
 ui/record_tools.js` (`RecordTools`), which the editor mounts with the comments (`mount_tools`, called
 from `mount_comments`). The shells only draw an empty `<section class="ge-tools">`: the guided page
-as a fourth child of `.ge-layout` (desktop: under the summary in its column; below 1024px: after the
-step), the side panel under its notes and comments. The tools add an **Actions** button beside the
-shell's own head button (`.ge-band-actions`, `.fk-head-row`).
+inside the view settings' `.ge-block--tools`, which each person places beside the step, below it,
+or collapsed behind its "Record tools" bar (`apply_view`, *View settings* below); the side panel
+under its notes and comments. The tools add an **Actions** button beside the shell's own head
+button (`.ge-band-actions`, `.fk-head-row`).
 
 | Tool | What it shows and does | Code path it reuses |
 |---|---|---|
@@ -314,6 +316,70 @@ New Task and New Event run frappe's `InteractionComposer`, which also reads the 
 (its file list and its post-insert `reload_doc`). On these pages `cur_frm` is whatever form was open
 last, so it is set to null while the composer is open and until its insert has called back, then
 put back. `tests/test_guided_record_tools.py`.
+
+## View settings (v1.684.0)
+
+**Nik, 2026-10-14:** "once a document has been created via the flow, the presentation could be
+better ... Let's make it somewhat flexible and customizable by the user and their preferences", with
+"all sections on one page, but leave the ability for tabs to be used and visible" as the default for
+a saved record, and "Preferences should be saved to their instance and not change it for everyone
+else's views." A **View** button (a gear) in a saved record's band opens the settings, applied as
+they change; a person's first saved record shows a short pop-up about them, once.
+
+**A layout is a presentation of the flow, never a different form.** Every layout draws the same
+steps with the same fields and the same controls through the editor's one renderer
+(`render_fields`), with the same save queue, conflicts, phone journal, completeness, help, Party
+component and notes and comments. One page and Tabs draw one FieldGroup per step, held together by
+`public/js/form_kit/field_groups.js` (`FieldGroups`: one `fields_dict` for them all, and every
+step's `refresh_dependency`), so `collect_step`, `collect_tables`, `field_changed`, `show_value`,
+the conflict chooser and `focus_field` work across all of them; `shown_steps()` is "the steps on
+screen" and `current_step()` stays "the step in view" (scroll-spy, or the section being typed in).
+
+| Setting | Values (first is the default) |
+|---|---|
+| Layout | One page (every step a section, under its Desk tab; the tab bar a sticky jump menu with scroll-spy; sections collapse) · Tabs (one tab at a time; a tab is a route) · Step by step (the setup flow's page) |
+| Where the steps sit | left · right · top (always top on a phone) |
+| Summary | right · left · hidden (folds above the form on a phone) |
+| Notes and comments | below the form · side column · collapsed behind a "Notes and comments (N)" bar |
+| Record tools (`.ge-tools`) | side column · below the form · collapsed |
+| Focus mode | off · on (only the form and its nav; notes and tools behind their bars) |
+| Text size, contrast, spacing | normal/large/larger · normal/high · comfortable/compact (CSS tokens only) |
+| Field hints | under each field · only in the (i) (which then holds the hint) |
+| Fields | all · only fields with a value (never hides a required field, or one the stage still needs) |
+
+Besides those: **pinned sections** (drawn first in One page and Tabs, marked in the nav); **where a
+record opens** (where the person left it, the first section, or a chosen one); **fields and sections
+put away** per person (never a required field that is empty, never one in `completeness.missing`;
+the bar over the form counts them, with "Show hidden"); **summary fields** (up to 12 of the record's
+fields instead of the DocType's summary); **saved views** (named presets of the settings) and
+**Reset to defaults**; and **shortcuts**, none of which fire while typing except Save: J/K next and
+previous section, Ctrl/Cmd+S save now, C notes and comments, V view settings, F focus mode, ? the list.
+
+- **Routes.** Step by step and Tabs are routes (a step, or a tab's first step), so Back and Forward
+  walk them. One page is one screen, the record's own address; scrolling is not a history entry.
+  Reload opens where the person left off (`remember_guided_section`, sent as a beacon on leaving).
+- **A new record's setup flow is always step by step** (`view.js SETUP_VIEW`), and so is the rest of
+  the walk its step 1 starts, until the person leaves the record or changes a setting.
+- **The store.** The person's own `__UserSettings` row under `Guided Entry`, key `guided_view`, through
+  `api/planner_views_prefs.py`, written straight to the table (never frappe's Redis-only user
+  settings, which the deploy flushes): `get_guided_view()` GET; `save_guided_view(doctype, data)`
+  POST, replacing only the parts sent; `remember_guided_section(doctype, name, step)` POST, the last
+  50 records; `mark_guided_intro_seen()` POST. A DocType outside `CONFIGS` is refused and read on it
+  is checked. Everything is cleaned on the way in and out (`GUIDED_SCHEMA`, `GUIDED_MAX`; the page's
+  twin is `view.js`, held equal by `tests/test_guided_view_settings.py`).
+- **The board's cards** (`opportunity_board`): a "Card fields" picker in the filter bar, saved with
+  the board's own views as the text key `card` (`board.js card_parts`). A view that never chose shows
+  the card as it always was.
+- **The side panel stays step by step** with no settings: it is narrow, and it shares only the
+  tightened field styles.
+- **A DocType with step blocks stays step by step** (form kit P8.1, the Item flow): its blocks hold one
+  step's state at a time and its flow ends at Done and More details, which only Step by step has
+  (`view.js effective_view` `steps_only`, from `has_extension`). Every other setting applies.
+- **Field styles, every layout and the side panel.** The (i) stays on its label's line; a form's
+  columns wrap at about 240px (four, two, one); inputs at the Desk's height with an edge in both
+  themes, 44px on a phone; text boxes start at three lines and grow to 320px (`fit_text`); hints
+  clamp to two lines (a longer one is whole in the (i)); the Datetime time-zone line only when the
+  user's zone is not the site's (`df.hide_timezone`); the fields' left edge on the step title's.
 
 ## No signal (P4.7)
 
@@ -363,8 +429,17 @@ configured DocType's records open there; the form is the fallback. `public/js/gu
   `#hash`), a record just saved from the full form, and an unsaved record the Desk holds that the
   guided page cannot take whole. One it can take (the Customer mapping) opens on step 1 with its
   values. The rules are `public/js/form_kit/opening.js`, run under node by `test_guided_entry`.
-- `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts. site_config
-  `disable_guided_default` empties it, and every record opens in the form again.
+- `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts and whether its records
+  open on the guided page: `default` for a saved record, only for someone with write permission on
+  the DocType, and `default_new` for a New, only with create permission. A person who may only read
+  keeps the form. site_config `disable_guided_default` empties it, and every record opens in the
+  form again.
+- **Not every flow is the default** (P8.1). A config with `open_by_default: False` (Item) keeps
+  the form as where its records open: `default` is 0, `guided_default.js` sets no create route and
+  redirects nothing (`opening.js` `opens_by_default`), and the flow is reached on purpose, by the
+  form's *Guided* button (`sf_guided.has_flow`), the guided page's start screen (listed only for
+  people who can create one) and `/desk/guided-entry/<DocType>/new`. Absent, the key is True, so
+  Opportunity is unchanged.
 
 ## Completeness
 
@@ -535,6 +610,58 @@ Decisions, for review:
   Contact and Address through `frappe.get_list` with `distinct` (a record linked twice to one party,
   as the Zoho import left some, is counted once), so user permissions and sharing decide what is
   offered. Writes nothing.
+
+## Blocks and "more" steps (P8.1)
+
+Some steps need more than the form's own fields. A config step names a block with `extension`;
+`flow_steps` passes it through, and the record editor both shells run (`form_kit/ui/editor.js`,
+*One editor, two shells* above) asks the DocType's extension (`public/js/form_kit/extensions.js`, a
+registry by DocType) to draw it above the step's fields (`mount_extension`, at the end of
+`render_fields`). Each shell picks the extension when a record opens (`open_extension(doctype)` in
+its `load`) and drops it on `reset`, so the guided page and the side panel draw a block the same
+way. The editor knows only that interface, never what the block is: `render(name, $box, ctx)`,
+`on_change(fieldname, value, ctx)`, `before_create()` (a sentence that holds step 1 back, or "")
+and `leave()`. `ctx` lends the record's values, `set_value` (into a field the page then saves),
+`save_first` (send what the page holds) and `record_changed` (take the record's new version after
+the block wrote through its own endpoint). A block that throws is caught; the fields still show.
+Whatever a block creates beyond the record goes through its own whitelisted endpoints, each
+checking its own permission, never through `save_step`.
+
+A step with `more: True` is past the core of the flow: Next on the last core step offers Done,
+and the rest stays a tap away (the rail, and *More details* under the step). Nothing is hidden.
+That part is the guided page's own footer and rail (`ends_core`); the side panel's step picker
+lists every step as before.
+A section no step claims becomes a `more` step too when the config has any, so it never lands
+between the core steps. `config.check` holds `more` steps after the core ones.
+
+## The Item flow (P8.1)
+
+TASK-2026-02790: a correctly named stock item with its supplier, price and reorder level, its bin
+label printed, from a phone or a desk, without opening the Item form; a fixed-asset item lands
+with its Asset. `config/item.py` walks the whole Item form (every field it shows is in one step,
+held by `test_form_kit`); its core steps and their blocks (`public/js/guided_item/`):
+
+| Step | Block | What it writes, and how |
+|---|---|---|
+| Name & code (creates the Item) | `item_naming`: the code helper (vendor part number as printed, `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`, `PDT-####` and `SRV-###` from a block the person chooses) and the name builder (POL-0602's seven segments, pick lists from the catalog narrowed by the CATEGORY), with the naming guard's own preview | Item Code and Item Name, into the step's own fields |
+| Description | — | the form's fields |
+| Supplier & price | `item_supplier` | `api.item_flow.save_supplier`: the Item Supplier row (part number, `purchase_url`), the company's default supplier, the Item Price on the buying list for that supplier |
+| Stock & bin (stock items) | `item_stock` | `save_stock`: the company's default warehouse and its Purchase reorder rule; *Print the bin label* opens `/warehouse-labels?w=<bin>`, Stock Scan's own label page |
+| Fixed asset (fixed assets) | `item_asset` | `create_asset`: a draft Asset (category, location, purchase date, cost, `custom_rentable`), idempotent on the page's id in `Asset.custom_guided_client_id` |
+
+The preview is `api.item_flow.preview_item`, which is Stock Scan's `preview_new_item`: only the
+guard's two findings (a duplicate code, a name that is just the code) are shown as refusals, and
+only while the guard is in force; everything else is advice. The next PDT/SRV number is
+`item_flow_rules.code_blocks`: the blocks in use with each one's lowest free number, plus the first
+unused block, never `MAX()+1`. The help file covers the core steps' fields; the `more` steps keep
+ERPNext's own descriptions until their help is written and reviewed.
+
+The Item itself is created by `create_record` and can never be created twice: it is named by its
+code, and its `create.client_id_field` (`Item.custom_guided_client_id`, hidden and unique, as on
+Opportunity) makes a resent create return the Item the first attempt made rather than a duplicate
+code refusal. Item is
+not where an Item opens yet (`open_by_default: False`), and the guided page's roles include
+*Item Manager*, the role that creates Items.
 
 ## Adding a DocType
 

@@ -759,8 +759,11 @@ class TestTheStyles(unittest.TestCase):
 	def test_the_section_is_styled_with_tokens(self):
 		css = _text(CSS)
 		block = css[css.index("/* ---- The record tools (v1.686.0") :]
-		self.assertIn(".ge-tools {", block)
-		self.assertIn(".ge-tools[hidden] {", block)
+		# The box is the view settings' one `.ge-tools` rule; where it sits is theirs (apply_view).
+		self.assertEqual(css.count("\n.ge-tools {"), 1)
+		self.assertIn(".ge-tools[hidden] {", css)
+		self.assertNotIn(".ge-layout > .ge-tools", css, "placement belongs to the view settings")
+		self.assertNotIn("grid-row: 1 / span 2", block)
 		self.assertIn("min-height: var(--sf-touch-min);", block)
 		self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,8}\b", block), "tokens only")
 		self.assertIsNone(re.search(r"\brgba?\(", block), "tokens only")

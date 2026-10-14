@@ -22,6 +22,12 @@ exist on production (``field_order`` names them) but no file in this repo create
 built meta does not have them; Custom DocPerms are not applied (the fixtures have none for
 Opportunity).
 
+Since P8.1 it builds the Item the same way (``build_item_metas``: ERPNext's ``item.json`` and its
+child tables trimmed into ``tests/fixtures/form_kit/erpnext_v16_item.json``, the Item Custom Fields,
+the pump and provenance fields the app creates in code, the Item Property Setters with the
+``field_order``), so the Item flow is held to the same rules: every field the form shows in one
+step, every hint of the core steps equal to the field's description.
+
 Stubs ``frappe`` in ``setUpModule`` (never at import), with an in-memory store of Opportunities.
 
 Run: python -m unittest erpnext_enhancements.tests.test_form_kit
@@ -229,6 +235,66 @@ def build_metas(permission_rows=None, field_overrides=None, extra_fields=None):
     for name, path in APP_CHILD_DOCTYPES.items():
         data = json.loads((APP / path).read_text(encoding="utf-8"))
         metas[name] = FakeMeta(name, data["fields"], istable=1)
+    metas.update(build_item_metas())
+    return metas
+
+
+# --------------------------------------------------------------------------- the Item meta (P8.1)
+
+ITEM_FIXTURE = APP / "tests" / "fixtures" / "form_kit" / "erpnext_v16_item.json"
+PUMP_SETUP = APP / "water_engineering" / "setup.py"
+CONFIGURATOR_SETUP = APP / "product_configurator" / "setup.py"
+APP_ITEM_CHILDREN = {"Pump Curve Point": "water_engineering/doctype/pump_curve_point/pump_curve_point.json"}
+
+
+def _code_item_fields(path):
+    """The Item fields an app module creates in code (``create_custom_fields({"Item": [...]})``)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+            if "Item" in keys:
+                return ast.literal_eval(node.values[keys.index("Item")])
+    return []
+
+
+def build_item_metas():
+    """``{doctype: FakeMeta}``: the merged Item, built as Opportunity's is, and its children.
+
+    ERPNext's ``item.json`` (+ its child tables) at ``origin/version-16``, trimmed into
+    ``tests/fixtures/form_kit/erpnext_v16_item.json``; this app's Item Custom Fields; the pump fields
+    ``water_engineering/setup.py`` and the provenance link ``product_configurator/setup.py`` create
+    on every migrate; the Item Property Setters, ``field_order`` included, then v16's sort.
+    """
+    erpnext = json.loads(ITEM_FIXTURE.read_text(encoding="utf-8"))["doctypes"]
+    fields = [dict(f) for f in erpnext["Item"]["fields"]]
+    customs = [c for c in json.loads(CUSTOM_FIELDS.read_text(encoding="utf-8")) if c["dt"] == "Item"]
+    code = _code_item_fields(PUMP_SETUP) + _code_item_fields(CONFIGURATOR_SETUP)
+    for custom in customs + code:
+        record = {k: v for k, v in custom.items() if v is not None and k not in ("doctype", "dt", "name", "module")}
+        record["is_custom_field"] = 1
+        fields.append(record)
+    doctype_props = {}
+    for ps in json.loads(PROPERTY_SETTERS.read_text(encoding="utf-8")):
+        if ps.get("doc_type") != "Item":
+            continue
+        value = ps.get("value")
+        if ps["property"] in CHECK_PROPERTIES or ps.get("property_type") in ("Check", "Int"):
+            value = int(value or 0)
+        if ps.get("doctype_or_field") == "DocType":
+            doctype_props[ps["property"]] = value
+        elif ps.get("doctype_or_field") == "DocField":
+            for f in fields:
+                if f["fieldname"] == ps.get("field_name"):
+                    f[ps["property"]] = value
+                    break
+    ordered = _sort_fields(fields, doctype_props.get("field_order"))
+    metas = {"Item": FakeMeta("Item", ordered, list(erpnext["Item"]["permissions"]))}
+    for name, data in erpnext.items():
+        if name != "Item":
+            metas[name] = FakeMeta(name, data["fields"], istable=1)
+    for name, path in APP_ITEM_CHILDREN.items():
+        metas[name] = FakeMeta(name, json.loads((APP / path).read_text(encoding="utf-8"))["fields"], istable=1)
     return metas
 
 
@@ -336,6 +402,9 @@ class FakeDoc:
             raise FRAPPE.UniqueValidationError("Duplicate entry for custom_guided_client_id")
         if STATE.get("unique_fail"):
             raise FRAPPE.UniqueValidationError(f"Duplicate entry for {STATE['unique_fail']}")
+        if STATE.get("primary_key_fail"):
+            # An Item is named by its code: a racing resend hits the primary key before the id's index.
+            raise FRAPPE.DuplicateEntryError("Duplicate entry for PRIMARY")
         STATE["seq"] += 1
         self._d["name"] = f"CRM-OPP-2026-{STATE['seq']:05d}"
         self._d["docstatus"] = 0
@@ -563,6 +632,7 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["snapshot_hides"] = set()
     STATE["rollbacks"] = 0
     STATE["unique_fail"] = None
+    STATE["primary_key_fail"] = False
     FRAPPE.session.user = user
 
 
@@ -717,7 +787,7 @@ class TestConfigSchema(unittest.TestCase):
         self.assertIn("has no intro", problems)
 
     def test_only_listed_doctypes_are_configured(self):
-        self.assertEqual(set(config.CONFIGS), {"Opportunity"})
+        self.assertEqual(set(config.CONFIGS), {"Opportunity", "Item"})
         for doctype, cfg in config.CONFIGS.items():
             self.assertEqual(cfg["doctype"], doctype)
 
@@ -1425,6 +1495,22 @@ class TestCreateIsNeverRepeated(unittest.TestCase):
         self.assertEqual(STATE["rollbacks"], 1)
         self.assertEqual(STATE["inserts"], [first["name"]])
 
+    def test_a_resend_racing_on_the_primary_key_returns_the_first_too(self):
+        """Review of #1270: an Item is named by its code, so the racing resend collides on the
+        primary key (DuplicateEntryError) before the id's unique index; same rollback, same read."""
+        first = self._create()
+        STATE["snapshot_hides"] = {first["name"]}
+        STATE["primary_key_fail"] = True
+        again = self._create()
+        self.assertEqual((again["name"], again["deduped"]), (first["name"], 1))
+        self.assertEqual(STATE["rollbacks"], 1)
+
+    def test_a_primary_key_collision_without_the_id_is_raised(self):
+        STATE["primary_key_fail"] = True
+        with self.assertRaises(FRAPPE.DuplicateEntryError):
+            self._create()
+        self.assertEqual(STATE["rollbacks"], 1)
+
     def test_a_record_that_is_gone_is_made_again(self):
         first = self._create()
         del STATE["db"][first["name"]]
@@ -1578,10 +1664,69 @@ class TestGuidedBoot(unittest.TestCase):
 
     def test_lists_each_configured_doctype_with_what_a_new_record_accepts(self):
         out = self._run({})
-        self.assertEqual(set(out), {"Opportunity"})
+        self.assertEqual(set(out), {"Opportunity", "Item"})
         self.assertIn("contact_person", out["Opportunity"]["accepts"])
         self.assertIn("party_name", out["Opportunity"]["accepts"])
         self.assertEqual(out["Opportunity"]["accepts"], sorted(out["Opportunity"]["accepts"]))
+
+    def test_opportunity_still_opens_on_the_guided_page_and_item_does_not(self):
+        """P8.1: Parker and Clegg use the Item form daily and nobody has reviewed the Item flow, so
+        an Item keeps opening in the form; Opportunity is the default it has been since v1.640.0."""
+        out = self._run({})
+        self.assertEqual((out["Opportunity"]["default"], out["Opportunity"]["default_new"]), (1, 1))
+        self.assertEqual((out["Item"]["default"], out["Item"]["default_new"]), (0, 0))
+        self.assertNotIn("open_by_default", config.CONFIGS["Opportunity"], "absent means True")
+        self.assertIs(config.CONFIGS["Item"]["open_by_default"], False)
+        self.assertTrue(config.opens_by_default({}))
+        self.assertFalse(config.opens_by_default({"open_by_default": False}))
+
+    def _run_as(self, denied):
+        """``_run`` with ``(doctype, ptype)`` pairs in ``denied`` refused, everything else allowed."""
+        original = FRAPPE.has_permission
+
+        def has_permission(doctype=None, ptype="read", doc=None, user=None, throw=False, **kwargs):
+            allowed = (doctype, ptype) not in denied
+            if throw and not allowed:
+                raise FRAPPE.PermissionError(f"No permission for {doctype}")
+            return allowed
+
+        FRAPPE.has_permission = has_permission
+        try:
+            return self._run({})
+        finally:
+            FRAPPE.has_permission = original
+
+    def test_a_person_who_may_only_read_keeps_the_form(self):
+        """Review of #1270: Item Manager can open the guided page now (for the Item flow), and an
+        Item Manager who reads deals but holds no Sales role must not have them taken off the form.
+        The default follows write (a saved record) and create (a New), on top of open_by_default."""
+        reader = self._run_as({("Opportunity", "write"), ("Opportunity", "create")})
+        self.assertEqual((reader["Opportunity"]["default"], reader["Opportunity"]["default_new"]), (0, 0))
+        self.assertIn("Opportunity", reader, "the flow is still there to open on purpose")
+        writer_only = self._run_as({("Opportunity", "create")})
+        self.assertEqual((writer_only["Opportunity"]["default"], writer_only["Opportunity"]["default_new"]), (1, 0))
+        creator_only = self._run_as({("Opportunity", "write")})
+        self.assertEqual((creator_only["Opportunity"]["default"], creator_only["Opportunity"]["default_new"]), (0, 1))
+        # Item is never the default, whatever the person may do with Items.
+        for denied in (set(), {("Item", "write")}, {("Item", "write"), ("Item", "create")}):
+            with self.subTest(denied=denied):
+                out = self._run_as(denied)
+                self.assertEqual((out["Item"]["default"], out["Item"]["default_new"]), (0, 0))
+
+    def test_one_broken_flow_leaves_the_others(self):
+        original = steps.flow_steps
+
+        def broken(doctype, doc=None, user=None):
+            if doctype == "Item":
+                raise RuntimeError("a broken Item config")
+            return original(doctype, doc, user)
+
+        steps.flow_steps = broken
+        try:
+            out = self._run({})
+        finally:
+            steps.flow_steps = original
+        self.assertEqual(set(out), {"Opportunity"})
 
     def test_the_kill_switch_and_no_read_permission_leave_it_empty(self):
         self.assertEqual(self._run({"disable_guided_default": 1}), {})
@@ -2071,6 +2216,321 @@ class TestFieldHelp(unittest.TestCase):
     def test_boot_lists_the_doctypes_with_help(self):
         boot = (APP / "boot.py").read_text(encoding="utf-8")
         self.assertIn("bootinfo.sf_field_help = _field_help_doctypes()", boot)
+
+
+# --------------------------------------------------------------------------- the Item flow (P8.1)
+
+
+ITEM_HELP_FILE = APP / "form_kit" / "help_text" / "item.json"
+#: The core of the Item flow: the steps a buyer adding a part walks before Done. Their fields have
+#: hints and help; the "more" steps fall back to ERPNext's own descriptions (item.json's _scope).
+ITEM_CORE = ["basics", "description", "supplier", "stock", "asset"]
+
+
+class TestItemConfig(unittest.TestCase):
+    def setUp(self):
+        _reset()
+        self.metas = STATE["metas"]
+        self.meta = self.metas["Item"]
+        self.cfg = config.CONFIGS["Item"]
+        self.names = {df.fieldname for df in self.meta.fields}
+
+    def test_the_config_is_structurally_sound(self):
+        self.assertEqual(config.check(self.cfg), [])
+        self.assertEqual(self.cfg["doctype"], "Item")
+
+    def test_every_configured_fieldname_and_section_exists(self):
+        named = list(self.cfg["skip_fields"]) + list(self.cfg["once_fields"]) + self.cfg["create"]["fields"]
+        named += [name for names in self.cfg["clears"].items() for name in [names[0], *names[1]]]
+        named += [self.cfg["mine"]["owner_field"], self.cfg["mine"]["title_field"], *self.cfg["mine"]["detail_fields"]]
+        named.append(self.cfg["mine"]["open"]["field"])
+        for step in self.cfg["steps"]:
+            named += step.get("fields") or []
+            if step.get("applies"):
+                named.append(step["applies"]["field"])
+        for requirements in self.cfg["stages"]["lists"].values():
+            for requirement in requirements:
+                named += config.requirement_fieldnames(requirement)
+        for fieldname in named:
+            with self.subTest(fieldname=fieldname):
+                self.assertTrue(fieldname in self.names or fieldname == "owner", fieldname)
+        keys = {section["key"] for section in steps.sections_of(self.meta)}
+        for step in self.cfg["steps"]:
+            for section in step.get("sections") or []:
+                with self.subTest(section=section):
+                    self.assertIn(section, keys)
+
+    def test_every_html_field_without_content_is_skipped_with_a_reason(self):
+        for df in self.meta.fields:
+            if df.fieldtype == "HTML" and not (df.get("options") or "").strip():
+                with self.subTest(fieldname=df.fieldname):
+                    self.assertTrue(self.cfg["skip_fields"].get(df.fieldname))
+
+    def test_table_requirements_point_at_real_columns(self):
+        for requirements in self.cfg["stages"]["lists"].values():
+            for requirement in requirements:
+                if requirement.get("row_field"):
+                    child = self.meta.get_field(requirement["field"]).options
+                    self.assertIsNotNone(self.metas[child].get_field(requirement["row_field"]))
+
+    def test_intros_are_one_plain_sentence(self):
+        for step in self.cfg["steps"]:
+            with self.subTest(step=step["key"]):
+                intro = step["intro"]
+                self.assertTrue(intro.endswith("."), intro)
+                self.assertEqual(len(re.findall(r"[.!?](\s|$)", intro)), 1, intro)
+                self.assertNotRegex(intro, r"\b(colour|organis|cancell|behaviour|catalogue)", intro)
+
+    def test_a_resent_create_finds_the_item_the_first_one_made(self):
+        """P4.7's create id, on a hidden unique column of Item: without it a resend after a lost
+        answer would be refused as a duplicate code (safe, but it reads as an error)."""
+        fieldname = self.cfg["create"]["client_id_field"]
+        df = self.meta.get_field(fieldname)
+        self.assertEqual((df.fieldtype, int(df.hidden), int(df.unique), int(df.no_copy)), ("Data", 1, 1, 1))
+        self.assertNotIn(fieldname, _all_values(steps.flow_steps("Item", None)))
+
+    def test_the_core_comes_first_and_the_rest_is_more(self):
+        keys = [step["key"] for step in self.cfg["steps"]]
+        self.assertEqual(keys[: len(ITEM_CORE)], ITEM_CORE)
+        for step in self.cfg["steps"]:
+            with self.subTest(step=step["key"]):
+                self.assertEqual(bool(step.get("more")), step["key"] not in ITEM_CORE)
+
+    def test_each_block_is_named_on_its_step(self):
+        blocks = {step["key"]: step.get("extension") for step in self.cfg["steps"] if step.get("extension")}
+        self.assertEqual(
+            blocks,
+            {"basics": "item_naming", "supplier": "item_supplier", "stock": "item_stock", "asset": "item_asset"},
+        )
+        extension = (APP / "public" / "js" / "guided_item" / "extension.js").read_text(encoding="utf-8")
+        for name in blocks.values():
+            self.assertIn(f"{name}: () =>", extension, f"extension.js draws {name}")
+
+    def test_the_schema_check_holds_the_new_keys_to_their_shape(self):
+        broken = copy.deepcopy(self.cfg)
+        broken["steps"][0]["more"] = True
+        broken["steps"][1]["extension"] = ""
+        broken["steps"][6]["more"] = False
+        broken["open_by_default"] = "no"
+        broken["stages"]["labels"][5] = "Nothing"
+        broken["stages"]["colour"] = 1
+        problems = " ".join(config.check(broken))
+        for expected in (
+            "cannot be a 'more' step",
+            "extension needs a name",
+            "must all come after the core",
+            "open_by_default must be True or False",
+            "stages.labels names 5",
+            "unknown stages keys",
+        ):
+            self.assertIn(expected, problems)
+
+
+class TestItemSteps(unittest.TestCase):
+    def setUp(self):
+        _reset()
+        self.cfg = config.CONFIGS["Item"]
+        self.flow = steps.flow_steps("Item", None)
+
+    def test_every_field_the_form_shows_is_in_exactly_one_step(self):
+        meta = STATE["metas"]["Item"]
+        shown = _desk_visible(meta, {"skip_fields": self.cfg["skip_fields"], "show_hidden": {}})
+        offered = [name for name in _all_values(self.flow) if meta.get_field(name).fieldtype != "HTML"]
+        self.assertEqual(len(offered), len(set(offered)), "a field is in two steps")
+        self.assertEqual(sorted(offered), sorted(shown))
+        # The one HTML field shown is ERPNext's static units help, which has content of its own.
+        html = [name for name in _all_values(self.flow) if meta.get_field(name).fieldtype == "HTML"]
+        self.assertEqual(html, ["uom_help_html"])
+
+    def test_steps_follow_the_config_with_their_blocks_and_flags(self):
+        self.assertEqual([step["key"] for step in self.flow], [step["key"] for step in self.cfg["steps"]])
+        naming = _step(self.flow, "basics")
+        self.assertEqual(naming["extension"], "item_naming")
+        self.assertEqual(naming["more"], 0)
+        self.assertEqual(_step(self.flow, "units")["more"], 1)
+        self.assertIsNone(_step(self.flow, "description")["extension"])
+
+    def test_step_one_asks_what_an_item_needs_and_the_order_a_buyer_thinks_in(self):
+        basics = _step(self.flow, "basics")
+        created = [field["fieldname"] for field in basics["fields"] if field.get("create")]
+        self.assertEqual(created, self.cfg["create"]["fields"])
+        self.assertEqual(
+            _value_names(basics),
+            [
+                "item_code",
+                "custom_sku",
+                "custom_item_identifier",
+                "item_name",
+                "item_group",
+                "stock_uom",
+                "is_stock_item",
+                "is_fixed_asset",
+                "asset_category",
+            ],
+        )
+        # Every editable field of step 1 is a create field: the insert takes only those.
+        for field in basics["fields"]:
+            if field["fieldtype"] not in steps.LAYOUT_TYPES and not field.get("read_only"):
+                self.assertTrue(field.get("create"), field["fieldname"])
+
+    def test_the_regenerated_layout_keeps_the_item_fields_in_details(self):
+        """v1.682.0 (#1297) regenerated the Item field_order, which had predated the Safety Data and
+        Maintenance Billing sections: v16 had sorted those two in after item_group, so Default Unit
+        of Measure, Maintain Stock and the asset ticks sat under Maintenance Billing. They are back
+        in Details, each new section holds only its own fields, and the steps still name the fields
+        they show, so a section moving again cannot move a field between steps."""
+        meta = STATE["metas"]["Item"]
+        section_of = {df.fieldname: section["key"] for section in steps.sections_of(meta) for df in section["fields"]}
+        moved = ("stock_uom", "is_stock_item", "is_fixed_asset", "asset_category", "custom_guided_client_id")
+        for fieldname in moved:
+            with self.subTest(fieldname=fieldname):
+                self.assertEqual(section_of[fieldname], "details")
+        self.assertEqual(
+            [fieldname for fieldname, key in section_of.items() if key == "custom_maintenance_billing_section"],
+            ["custom_maintenance_billing", "custom_price_per_dose"],
+        )
+        self.assertIn("stock_uom", _value_names(_step(self.flow, "basics")))
+        self.assertEqual(
+            _value_names(_step(self.flow, "chemical")),
+            [
+                "custom_is_chemical",
+                "custom_sds_document",
+                "custom_hazard_summary",
+                "custom_sds_reviewed_on",
+                "custom_maintenance_billing",
+                "custom_price_per_dose",
+            ],
+        )
+
+    def test_the_code_is_typed_once_and_read_only_on_a_saved_item(self):
+        """Review of #1270: the block says a saved Item's code changes only by renaming it."""
+        new = _field(self.flow, "item_code")
+        self.assertEqual((new["read_only"], new.get("create")), (0, 1))
+        STATE["db"]["LG-505025"] = {"name": "LG-505025", "item_code": "LG-505025", "docstatus": 0}
+        saved = steps.flow_steps("Item", FakeDoc("Item", dict(STATE["db"]["LG-505025"])))
+        self.assertEqual(_field(saved, "item_code")["read_only"], 1)
+        self.assertNotIn("item_code", steps.editable_fields(saved), "the saver never assigns it either")
+        self.assertEqual(_field(saved, "item_name")["read_only"], 0)
+
+    def test_which_steps_apply_follows_the_item(self):
+        rules = {step["key"]: step["applies"] for step in self.flow if step["applies"]}
+        self.assertEqual(rules["stock"], {"field": "is_stock_item", "in": [1]})
+        self.assertEqual(rules["asset"], {"field": "is_fixed_asset", "in": [1]})
+        self.assertEqual(rules["pump"], {"field": "item_group", "in": ["Pumps"]})
+        self.assertEqual(rules["sales"], {"field": "is_sales_item", "in": [1]})
+        stocked = {"is_stock_item": 1, "is_fixed_asset": 0, "is_sales_item": 1}
+        asset = {"is_stock_item": 0, "is_fixed_asset": 1, "is_sales_item": 0}
+        self.assertTrue(steps.applies(rules["stock"], stocked))
+        self.assertFalse(steps.applies(rules["asset"], stocked))
+        self.assertTrue(steps.applies(rules["asset"], asset))
+        self.assertFalse(steps.applies(rules["accounting"], asset))
+        self.assertTrue(steps.applies(rules["accounting"], {"is_fixed_asset": None}))
+
+    def test_a_section_nobody_placed_is_a_more_step(self):
+        """A section added to the Item later is walked, after the core, never between its steps."""
+        metas = build_metas()
+        item = metas["Item"]
+        item.fields.append(_DF({"fieldname": "custom_survey_section", "fieldtype": "Section Break", "label": "Survey"}))
+        item.fields.append(_DF({"fieldname": "custom_survey_notes", "fieldtype": "Small Text", "label": "Notes"}))
+        _reset(metas)
+        flow = steps.flow_steps("Item", None)
+        survey = _step(flow, "custom_survey_section")
+        self.assertEqual(survey["more"], 1)
+        self.assertGreater([s["key"] for s in flow].index("custom_survey_section"), [s["key"] for s in flow].index("asset"))
+        # Opportunity has no "more" steps, so its unplaced sections stay ordinary steps.
+        _reset()
+        self.assertTrue(all(step["more"] == 0 for step in steps.flow_steps("Opportunity", _doc(_seed()))))
+
+
+class TestItemCompleteness(unittest.TestCase):
+    def setUp(self):
+        _reset()
+
+    def _measure(self, **values):
+        base = {
+            "item_code": "LG-505025",
+            "item_name": "PUMP, SUBMERSIBLE, 1200 GPH",
+            "item_group": "Pumps",
+            "stock_uom": "Unit",
+            "supplier_items": [{"supplier": "Little Giant"}],
+            "is_stock_item": 0,
+        }
+        base.update(values)
+        return completeness.stage_completeness("Item", base)
+
+    def test_a_non_stock_item_needs_its_names_unit_and_a_supplier(self):
+        result = self._measure()
+        self.assertEqual((result["stage"], result["done"], result["total"]), ("Non-stock item", 5, 5))
+        missing = self._measure(supplier_items=[{"supplier": ""}])["missing"]
+        self.assertEqual(missing, [{"fieldname": "supplier_items", "label": "A supplier"}])
+
+    def test_a_stock_item_also_needs_a_reorder_level(self):
+        result = self._measure(is_stock_item=1)
+        self.assertEqual((result["stage"], result["total"]), ("Stock item", 6))
+        self.assertEqual(result["missing"], [{"fieldname": "reorder_levels", "label": "A reorder level"}])
+        done = self._measure(is_stock_item=1, reorder_levels=[{"warehouse": "Bin A1 - SF", "warehouse_reorder_level": 4}])
+        self.assertEqual(done["missing"], [])
+
+    def test_opportunity_stages_keep_their_own_names(self):
+        result = completeness.stage_completeness("Opportunity", _opp(status="Closed"))
+        self.assertEqual(result["stage"], "Closed")
+
+
+class TestItemFieldHelp(unittest.TestCase):
+    def setUp(self):
+        _reset()
+        self.help = json.loads(ITEM_HELP_FILE.read_text(encoding="utf-8"))
+        self.flow = steps.flow_steps("Item", None)
+
+    def test_the_file_covers_exactly_the_core_steps_fields(self):
+        core = [name for step in self.flow if step["key"] in ITEM_CORE for name in _value_names(step)]
+        self.assertEqual(sorted(self.help["fields"]), sorted(core))
+        self.assertEqual(self.help["doctype"], "Item")
+        for entry in self.help["fields"].values():
+            self.assertEqual(set(entry), {"hint", "help"})
+
+    def test_every_hint_is_the_fields_description(self):
+        meta = STATE["metas"]["Item"]
+        for fieldname, entry in self.help["fields"].items():
+            with self.subTest(fieldname=fieldname):
+                self.assertEqual(meta.get_field(fieldname).get("description"), entry["hint"])
+
+    def test_every_field_has_a_hint_and_an_explanation_within_bounds(self):
+        for fieldname, entry in self.help["fields"].items():
+            with self.subTest(fieldname=fieldname):
+                self.assertTrue(entry["hint"].strip())
+                self.assertTrue(entry["help"].strip())
+                self.assertLessEqual(len(entry["hint"]), 90)
+                self.assertLessEqual(len(entry["help"]), 350)
+                self.assertNotIn("—", entry["hint"] + entry["help"])
+                self.assertNotRegex(entry["hint"] + entry["help"], r"\b(colour|catalogue|organis|labelled|cancelled)")
+
+    def test_the_flow_sends_the_hints_and_the_more_steps_keep_erpnexts(self):
+        name = _field(self.flow, "item_name")
+        self.assertEqual(name["hint"], self.help["fields"]["item_name"]["hint"])
+        self.assertTrue(name["help"])
+        valuation = _field(self.flow, "valuation_method")
+        self.assertIsNone(valuation["help"])
+        self.assertTrue(valuation["hint"].startswith("Serialized items"), "ERPNext's own description")
+
+    def test_the_item_form_gets_the_explanations_too(self):
+        out = api.get_field_help("Item")
+        self.assertEqual(out["fields"]["item_code"]["anchor"], "basics")
+        self.assertEqual(out["fields"]["reorder_levels"]["anchor"], "stock")
+
+
+class TestItemNotesAndComments(unittest.TestCase):
+    """v1.678.2: notes and comments show for every guided DocType. A saved Item gets the Comments
+    App from the shared editor; record_notes answers it, with no Notes list, rather than refusing."""
+
+    def setUp(self):
+        _reset()
+
+    def test_a_saved_item_has_no_notes_list_and_is_not_refused(self):
+        item = {"doctype": "Item", "name": "LG-505025", "item_code": "LG-505025", "docstatus": 0}
+        FakeDoc("Item", item)._store()
+        out = api.record_notes("Item", "LG-505025")
+        self.assertEqual(out, {"has_notes": False, "notes": [], "total": 0, "can_add": False})
 
 
 if __name__ == "__main__":

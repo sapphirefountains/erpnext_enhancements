@@ -7,19 +7,97 @@
  * --sf-radius-control. The navy head band sits over a light body and both follow the Desk theme.
  *
  * Widths:
- *   >= 1024px  rail | step | live summary
- *   768-1023   the rail becomes a strip over the step; no summary
+ *   >= 1024px  rail | step | live summary, arranged by the person's view settings (v1.684.0):
+ *              the shell carries data-ge-nav (left | right | top) and data-ge-aside (right | left |
+ *              none), and the grid below places the three from them
+ *   768-1023   the rail becomes a strip over the step; the summary folds above the form
  *   <  768     phone: one column (a form's column breaks stack), 16px inputs, 44px targets,
  *              a sticky footer above the safe area
+ *
+ * View settings (v1.684.0, form_kit/view.js): every choice is an attribute on .ge-app, never an
+ * inline style: data-ge-layout, -nav, -aside, -summary, -notes, -tools, -density, -hints, -fields,
+ * -text, -contrast, -focus, -setup. Text size and contrast work by overriding the tokens below.
  */
 
 .ge-app {
 	--ge-gap: var(--sf-space-20);
+	/* An input reads as one in both themes: its own ground and a visible edge (v1.684.0). */
+	--ge-field-bg: var(--sf-field-bg);
+	--ge-field-border: var(--sf-field-border);
+	--ge-field-text: var(--sf-field-text);
+	--ge-input-height: 38px;
+	--ge-field-gap: var(--sf-space-10);
+	--ge-stage-pad: var(--sf-space-20);
+	/* Under the Desk's sticky page head. */
+	--ge-sticky: 72px;
 	background: var(--sf-bg);
 	color: var(--sf-text);
 	font-family: var(--sf-font-sans);
 	line-height: var(--sf-leading-body);
 	min-height: 60vh;
+}
+:root[data-theme="dark"] .ge-app,
+:root[data-theme="dark"] .fk-panel {
+	--ge-field-bg: var(--sf-navy-900);
+	--ge-field-border: var(--sf-sky-200);
+	--ge-field-text: var(--sf-off-white);
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme]) .ge-app,
+	:root:not([data-theme]) .fk-panel {
+		--ge-field-bg: var(--sf-navy-900);
+		--ge-field-border: var(--sf-sky-200);
+		--ge-field-text: var(--sf-off-white);
+	}
+}
+.fk-panel {
+	--ge-field-bg: var(--sf-field-bg);
+	--ge-field-border: var(--sf-field-border);
+	--ge-field-text: var(--sf-field-text);
+	--ge-input-height: 38px;
+	--ge-field-gap: var(--sf-space-10);
+}
+
+/* Text size: the type tokens, and Frappe's own, larger (for a phone in the sun). */
+.ge-app[data-ge-text="large"] {
+	--sf-text-xs: 13px;
+	--sf-text-sm: 15px;
+	--sf-text-md: 17px;
+	--sf-text-lg: 20px;
+	--sf-text-input: 18px;
+	--text-xs: 13px;
+	--text-sm: 15px;
+	--text-md: 16px;
+	--text-base: 17px;
+	--text-lg: 19px;
+	--ge-input-height: 42px;
+}
+.ge-app[data-ge-text="larger"] {
+	--sf-text-xs: 15px;
+	--sf-text-sm: 17px;
+	--sf-text-md: 19px;
+	--sf-text-lg: 22px;
+	--sf-text-input: 20px;
+	--text-xs: 15px;
+	--text-sm: 17px;
+	--text-md: 18px;
+	--text-base: 19px;
+	--text-lg: 21px;
+	--ge-input-height: 46px;
+}
+/* High contrast: muted text and hints at full strength, rules and field edges as strong as text. */
+.ge-app[data-ge-contrast="high"] {
+	--sf-text-muted: var(--sf-text-strong);
+	--sf-hint: var(--sf-text-strong);
+	--sf-label: var(--sf-text-strong);
+	--sf-rule: var(--sf-text);
+	--ge-field-border: var(--sf-text-strong);
+	--text-muted: var(--sf-text-strong);
+	--text-light: var(--sf-text-strong);
+	--border-color: var(--sf-text);
+}
+.ge-app[data-ge-contrast="high"] .ge-fields .form-control {
+	border-width: var(--sf-border-control);
 }
 
 /* ---- Head band ---- */
@@ -90,21 +168,114 @@
 .ge-stripe--rent { background: var(--sf-gradient-rent); }
 .ge-stripe--neutral { background: var(--sf-gradient-neutral); }
 
-/* ---- Three columns ---- */
+/* ---- Three columns, placed by the view settings (v1.684.0) ----
+   The default (and a new record's setup flow): rail | step | side column. */
 .ge-layout {
 	display: grid;
 	grid-template-columns: 240px minmax(0, 1fr) 300px;
+	grid-template-areas: "nav main aside";
 	gap: var(--ge-gap);
 	align-items: start;
 	padding: var(--sf-space-20);
+}
+.ge-rail {
+	grid-area: nav;
+}
+.ge-main {
+	grid-area: main;
+}
+.ge-aside {
+	grid-area: aside;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-15);
+	min-width: 0;
+	position: sticky;
+	top: var(--ge-sticky);
+}
+.ge-app[data-ge-nav="left"][data-ge-aside="left"] .ge-layout {
+	grid-template-columns: 240px 300px minmax(0, 1fr);
+	grid-template-areas: "nav aside main";
+}
+.ge-app[data-ge-nav="left"][data-ge-aside="none"] .ge-layout {
+	grid-template-columns: 240px minmax(0, 1fr);
+	grid-template-areas: "nav main";
+}
+.ge-app[data-ge-nav="right"][data-ge-aside="right"] .ge-layout {
+	grid-template-columns: minmax(0, 1fr) 300px 240px;
+	grid-template-areas: "main aside nav";
+}
+.ge-app[data-ge-nav="right"][data-ge-aside="left"] .ge-layout {
+	grid-template-columns: 300px minmax(0, 1fr) 240px;
+	grid-template-areas: "aside main nav";
+}
+.ge-app[data-ge-nav="right"][data-ge-aside="none"] .ge-layout {
+	grid-template-columns: minmax(0, 1fr) 240px;
+	grid-template-areas: "main nav";
+}
+.ge-app[data-ge-nav="top"][data-ge-aside="right"] .ge-layout {
+	grid-template-columns: minmax(0, 1fr) 300px;
+	grid-template-areas: "nav nav" "main aside";
+}
+.ge-app[data-ge-nav="top"][data-ge-aside="left"] .ge-layout {
+	grid-template-columns: 300px minmax(0, 1fr);
+	grid-template-areas: "nav nav" "aside main";
+}
+.ge-app[data-ge-nav="top"][data-ge-aside="none"] .ge-layout {
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-areas: "nav" "main";
+}
+.ge-app[data-ge-aside="none"] .ge-aside {
+	display: none;
+}
+.ge-app[data-ge-summary="hidden"] .ge-summary {
+	display: none;
+}
+/* The side column sticks while it holds only the summary. With the record tools or the notes in
+   it as well (data-ge-aside-blocks, set by the page when one of them has something to show) it
+   scrolls with the page, so a long thread is never cut off. */
+.ge-app[data-ge-aside-blocks="1"] .ge-aside {
+	position: static;
 }
 
 /* ---- Step rail ---- */
 .ge-rail {
 	position: sticky;
-	top: 72px;
+	top: var(--ge-sticky);
 	background: var(--sf-surface);
 	border: 1px solid var(--sf-rule);
+}
+/* Along the top: a strip that stays in view, the current step or tab underlined. */
+.ge-app[data-ge-nav="top"] .ge-rail {
+	top: var(--ge-sticky);
+	z-index: 4;
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+.ge-app[data-ge-nav="top"] .ge-rail ol {
+	display: flex;
+	padding: 0;
+}
+.ge-app[data-ge-nav="top"] .ge-rail-item {
+	flex: none;
+}
+.ge-app[data-ge-nav="top"] .ge-rail-item.is-off {
+	display: none;
+}
+.ge-app[data-ge-nav="top"] .ge-rail-step {
+	border-left: 0;
+	border-bottom: 3px solid transparent;
+	white-space: nowrap;
+}
+.ge-app[data-ge-nav="top"] .ge-rail-item.is-current .ge-rail-step {
+	border-bottom-color: var(--sf-focus);
+}
+.ge-app[data-ge-nav="right"] .ge-rail-step {
+	border-left: 0;
+	border-right: 3px solid transparent;
+}
+.ge-app[data-ge-nav="right"] .ge-rail-item.is-current .ge-rail-step {
+	border-right-color: var(--sf-focus);
 }
 .ge-rail ol {
 	list-style: none;
@@ -181,7 +352,13 @@
 .ge-stage {
 	background: var(--sf-surface);
 	border: 1px solid var(--sf-rule);
-	padding: var(--sf-space-20);
+	padding: var(--ge-stage-pad) var(--ge-stage-pad) var(--sf-space-10);
+}
+/* One page and Tabs draw sections, each its own card: the stage itself is only the ground. */
+.ge-stage.ge-stage--sections {
+	background: transparent;
+	border: 0;
+	padding: 0;
 }
 .ge-step-eyebrow {
 	color: var(--sf-eyebrow);
@@ -210,7 +387,7 @@
 	max-width: 70ch;
 }
 .ge-step-head {
-	margin-bottom: var(--sf-space-20);
+	margin-bottom: var(--sf-space-15);
 }
 .ge-readonly-note {
 	margin: 0 0 var(--sf-space-15);
@@ -301,18 +478,86 @@
 	border-left-width: 4px;
 }
 
-/* Fields: the label above, 16px text (iOS zooms into anything smaller), the hint under it. */
+/* Fields: the label above, 16px text (iOS zooms into anything smaller), the hint under it.
+   v1.684.0 tightened all of it, for every step in every layout and in the side panel (Nik's review
+   of the Events schedule step, 2026-10-14): the (i) kept on the label's line, columns that wrap at
+   240px instead of four squeezed ones, inputs at the Desk's height with a visible edge, text boxes
+   that start small and grow, hints clamped to two lines, a tighter rhythm, and the fields' left
+   edge on the step title's. */
 .ge-fields .control-label,
 .ge-fields .ge-list-label {
 	color: var(--sf-label);
 	font-size: var(--sf-text-sm);
 	font-weight: var(--sf-weight-bold);
+	margin-bottom: 2px;
+}
+/* The label and its (i) share a line: the label wraps inside its own box and the (i) stays beside
+   it, so the inputs of one row start at one height. */
+.ge-fields .form-group > .clearfix,
+.ge-fields .ge-list > .clearfix {
+	display: flex;
+	align-items: flex-start;
+	flex-wrap: nowrap;
+	gap: 2px;
+	min-height: 20px;
+}
+.ge-fields .form-group > .clearfix::before,
+.ge-fields .form-group > .clearfix::after,
+.ge-fields .ge-list > .clearfix::before,
+.ge-fields .ge-list > .clearfix::after {
+	display: none;
+}
+.ge-fields .form-group > .clearfix > .control-label,
+.ge-fields .ge-list > .clearfix > .ge-list-label {
+	flex: 0 1 auto;
+	min-width: 0;
+	padding-right: 0;
+}
+.ge-fields .form-group > .clearfix > .ge-help-btn,
+.ge-fields .ge-list > .clearfix > .ge-help-btn {
+	flex: none;
+}
+/* A Check's (i) sits after its label too, on the same line; its hint goes under both. */
+.ge-fields .checkbox {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: 2px;
+}
+.ge-fields .checkbox > label {
+	flex: 0 1 auto;
+	min-width: 0;
+	margin-bottom: 0;
+}
+.ge-fields .checkbox > .ge-help-btn {
+	flex: none;
+}
+.ge-fields .checkbox > .help-box {
+	flex: 0 0 100%;
 }
 .ge-fields .form-control,
 .ge-fields .ge-list-input {
 	font-size: var(--sf-text-input);
-	min-height: var(--sf-touch-min);
+	min-height: var(--ge-input-height);
 	border-radius: var(--sf-radius-none);
+	background: var(--ge-field-bg);
+	color: var(--ge-field-text);
+	border: var(--sf-border-hairline) solid var(--ge-field-border);
+}
+.ge-fields input.form-control,
+.ge-fields select.form-control {
+	height: auto;
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+/* Text boxes start at about three lines and grow with what they hold (editor.js fit_text). */
+.ge-fields textarea.form-control {
+	min-height: 84px;
+	max-height: 320px;
+	resize: vertical;
+}
+.ge-fields .ql-editor {
+	min-height: 120px;
 }
 .ge-fields .form-control:focus,
 .ge-fields .ge-list-input:focus {
@@ -322,12 +567,96 @@
 .ge-fields .help-box {
 	color: var(--sf-hint);
 	font-size: var(--sf-text-sm);
+	line-height: 1.35;
+	margin: 2px 0 0;
+	/* Two lines at most: a longer hint is whole in the (i) beside the label (editor.js wants_help). */
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.ge-fields .help-box:empty {
+	display: none;
+}
+.ge-fields .frappe-control {
+	margin-bottom: var(--ge-field-gap);
+}
+.ge-fields .form-group {
+	margin-bottom: 0;
 }
 .ge-fields .form-section .section-head {
 	font-family: var(--sf-font-display);
 	font-size: var(--sf-display-sm);
 	font-weight: var(--sf-weight-regular);
 	color: var(--sf-heading);
+	margin: 0 0 var(--sf-space-5);
+	padding: 0;
+}
+/* The fields' left edge on the step title's: none of Frappe's form padding (15px on the section,
+   15px on each column), and no extra space above a section's body. */
+.ge-fields .form-section,
+.ge-fields .form-section .form-column {
+	padding-left: 0;
+	padding-right: 0;
+}
+.ge-fields .form-section {
+	padding-top: 0;
+	padding-bottom: 0;
+	margin: 0 0 var(--sf-space-10);
+	border: 0;
+}
+/* The DocType's columns, kept in order, wrapping at about 240px: four on a wide stage, two on a
+   medium one, one on a phone. */
+.ge-fields .form-section .section-body {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+	column-gap: var(--sf-space-20);
+	row-gap: 0;
+	margin: 0;
+	padding: 0;
+}
+.ge-fields .form-section .section-body > .form-column {
+	width: auto;
+	max-width: none;
+	flex: none;
+	min-width: 0;
+}
+/* Put away by the person's view (view settings): drawn and holding its value, just not shown. */
+.ge-fields .frappe-control.ge-away,
+.ge-fields .form-section.ge-away-section {
+	display: none;
+}
+.ge-fields .frappe-control.ge-revealed {
+	outline: 1px dashed var(--sf-rule);
+	outline-offset: 4px;
+}
+.ge-app[data-ge-hints="hidden"] .ge-fields .help-box,
+.ge-app[data-ge-hints="hidden"] .ge-fields .ge-list-hint {
+	display: none;
+}
+
+/* Compact: the same fields, closer together. */
+.ge-app[data-ge-density="compact"] {
+	--ge-gap: var(--sf-space-10);
+	--ge-field-gap: var(--sf-space-5);
+	--ge-stage-pad: var(--sf-space-10);
+	--ge-input-height: 34px;
+}
+.ge-app[data-ge-density="compact"] .ge-step-head {
+	margin-bottom: var(--sf-space-10);
+}
+.ge-app[data-ge-density="compact"] .ge-fields .form-section {
+	margin-bottom: var(--sf-space-5);
+}
+.ge-app[data-ge-density="compact"] .ge-rail-step {
+	min-height: 36px;
+	padding: var(--sf-space-5) var(--sf-space-10);
+}
+.ge-app[data-ge-density="compact"] .ge-section-head {
+	padding: var(--sf-space-5) var(--sf-space-10);
+}
+.ge-app[data-ge-density="compact"] .ge-section-body {
+	padding: var(--sf-space-5) var(--sf-space-10) var(--sf-space-10);
 }
 
 /* The (i) beside a label: a 44px hit area around a 16px mark. */
@@ -509,13 +838,13 @@
 	margin-top: var(--sf-space-10);
 }
 
-/* ---- Live summary ---- */
-.ge-summary {
-	position: sticky;
-	top: 72px;
-}
+/* ---- Live summary (it sits in the side column, .ge-aside, which sticks) ---- */
 .ge-sum-card {
 	padding: var(--sf-space-15) var(--sf-space-20);
+}
+/* The fold-away title shows only on a narrow screen (below). */
+.ge-sum-toggle {
+	display: none;
 }
 .ge-sum-list {
 	margin: 0;
@@ -711,18 +1040,622 @@ body.ge-page-active .triton-fab {
 	margin-top: var(--sf-space-5);
 }
 
-/* ---- Tablet: the rail becomes a strip; the summary goes ---- */
+/* ==================================================================== view settings (v1.684.0) */
+
+/* ---- One page and Tabs: tab groups, and a section per step ---- */
+.ge-group + .ge-group {
+	margin-top: var(--sf-space-20);
+}
+.ge-group-title {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-heading);
+	scroll-margin-top: 140px;
+}
+.ge-group-title:focus {
+	outline: none;
+}
+.ge-group-title:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ge-group[hidden],
+.ge-section[hidden] {
+	display: none;
+}
+.ge-section {
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	scroll-margin-top: 140px;
+}
+.ge-section + .ge-section {
+	margin-top: var(--sf-space-10);
+}
+.ge-section.ge-revealed {
+	border-style: dashed;
+}
+.ge-section-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	padding: var(--sf-space-5) var(--sf-space-10) var(--sf-space-5) var(--sf-space-5);
+}
+.ge-section-heading {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+	font-size: inherit;
+}
+.ge-section-toggle {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: 0;
+	background: transparent;
+	color: var(--sf-heading);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.ge-section-toggle:focus-visible,
+.ge-pin:focus-visible,
+.ge-block-bar:focus-visible,
+.ge-sum-toggle:focus-visible,
+.ge-settings-close:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+.ge-section-title {
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ge-section-meta {
+	margin-left: auto;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	white-space: nowrap;
+}
+.ge-section-chevron {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-right: 2px solid currentColor;
+	border-bottom: 2px solid currentColor;
+	transform: rotate(45deg);
+	margin: 0 var(--sf-space-5) 4px 0;
+	transition: transform var(--sf-duration) var(--sf-ease);
+}
+.ge-section.is-collapsed .ge-section-chevron {
+	transform: rotate(-45deg);
+	margin-bottom: 0;
+}
+.ge-section-body {
+	padding: 0 var(--sf-space-20) var(--sf-space-10);
+}
+.ge-section-body[hidden] {
+	display: none;
+}
+.ge-section-body > .ge-step-intro {
+	margin: 0 0 var(--sf-space-10);
+}
+.ge-section-empty {
+	margin: 0 0 var(--sf-space-10);
+}
+.ge-section-empty[hidden] {
+	display: none;
+}
+
+/* Pins: on a section's head, in the rail and the tab bar. */
+.ge-pin {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--sf-touch-min);
+	height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-text-muted);
+	cursor: pointer;
+}
+.ge-pin[aria-pressed="true"] {
+	color: var(--sf-link);
+}
+.ge-pin-mark {
+	display: inline-flex;
+	vertical-align: middle;
+	margin-left: var(--sf-space-5);
+	color: var(--sf-link);
+}
+.ge-group-title .ge-pin-mark {
+	margin-left: 0;
+}
+.ge-rail-mark--pin {
+	border-color: transparent;
+	color: var(--sf-link);
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ---- The bar over the form: only fields with a value, and what the person put away ---- */
+.ge-viewbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	margin-bottom: var(--sf-space-10);
+}
+.ge-viewbar[hidden] {
+	display: none;
+}
+.ge-viewbar-btn {
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-sm);
+}
+.ge-viewbar-btn[aria-pressed="true"] {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+}
+.ge-viewbar-note {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+/* ---- Notes and comments, and the record tools: placed blocks, collapsible behind a bar ---- */
+.ge-block[hidden],
+.ge-block-bar[hidden],
+.ge-tools[hidden] {
+	display: none;
+}
+.ge-block {
+	margin-top: var(--sf-space-15);
+	min-width: 0;
+}
+.ge-aside > .ge-block {
+	margin-top: 0;
+}
+.ge-block > .ge-comments,
+.ge-aside .ge-comments {
+	margin-top: 0;
+}
+.ge-block-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	color: var(--sf-heading);
+	font: inherit;
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+.ge-block-bar::after {
+	content: "";
+	width: 8px;
+	height: 8px;
+	border-right: 2px solid currentColor;
+	border-bottom: 2px solid currentColor;
+	transform: rotate(45deg);
+}
+.ge-block-bar[aria-expanded="true"]::after {
+	transform: rotate(-135deg);
+}
+.ge-block.is-collapsed > .ge-comments,
+.ge-block.is-collapsed > .ge-tools {
+	display: none;
+}
+.ge-block.is-collapsible:not(.is-collapsed) > .ge-block-bar {
+	border-bottom: 0;
+}
+.ge-tools {
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	padding: var(--sf-space-15);
+	min-width: 0;
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+}
+/* A comment in a narrow side column: its author over its text, not beside it. */
+.ge-aside .comment-item {
+	flex-direction: column;
+}
+.ge-aside .comment-sidebar {
+	width: auto !important;
+	min-width: 0 !important;
+	margin-right: 0 !important;
+}
+
+/* ---- The band's View and Focus buttons ---- */
+.ge-view-btn,
+.ge-focus-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+}
+.ge-band .ge-focus-btn[aria-pressed="true"] {
+	font-weight: var(--sf-weight-bold);
+	text-decoration: none;
+	border: 1px solid var(--sf-on-band);
+}
+
+/* ---- The settings panel: a drawer at the side, the page still visible beside it ---- */
+.ge-settings {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1030;
+	width: min(400px, 100vw);
+	display: flex;
+	flex-direction: column;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border-left: 1px solid var(--sf-rule);
+	font-family: var(--sf-font-sans);
+}
+.ge-settings[hidden] {
+	display: none;
+}
+.ge-settings-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-bottom: 1px solid var(--sf-rule);
+}
+.ge-settings-title {
+	flex: 1 1 auto;
+	margin: 0;
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+.ge-settings-title:focus {
+	outline: none;
+}
+.ge-settings-close {
+	width: var(--sf-touch-min);
+	height: var(--sf-touch-min);
+	border: 0;
+	background: transparent;
+	color: var(--sf-text);
+	font-size: var(--sf-text-lg);
+	cursor: pointer;
+}
+.ge-settings-back {
+	min-height: var(--sf-touch-min);
+}
+.ge-settings-body {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: var(--sf-space-10) var(--sf-space-15) calc(var(--sf-space-20) + env(safe-area-inset-bottom, 0px));
+}
+.ge-set-note,
+.ge-set-hint {
+	margin: 0 0 var(--sf-space-10);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ge-set-hint {
+	margin: var(--sf-space-5) 0 0;
+}
+.ge-set-group {
+	margin: 0 0 var(--sf-space-15);
+	padding: 0;
+	border: 0;
+	min-width: 0;
+}
+.ge-set-legend {
+	display: block;
+	margin: 0 0 var(--sf-space-5);
+	padding: 0;
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-set-options {
+	display: flex;
+	flex-wrap: wrap;
+	border: 1px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+.ge-set-option {
+	position: relative;
+	flex: 1 1 0;
+	min-width: 0;
+	margin: 0;
+	cursor: pointer;
+}
+.ge-set-option + .ge-set-option {
+	border-left: 1px solid var(--sf-field-border);
+}
+.ge-set-option input {
+	position: absolute;
+	opacity: 0;
+	inset: 0;
+	margin: 0;
+	cursor: pointer;
+}
+.ge-set-option-text {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-5);
+	color: var(--sf-text);
+	font-size: var(--sf-text-sm);
+	text-align: center;
+}
+.ge-set-option input:checked + .ge-set-option-text {
+	background: var(--sf-focus);
+	color: var(--sf-surface);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-set-option input:focus-visible + .ge-set-option-text {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -4px;
+}
+.ge-set-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-5);
+}
+.ge-set-row .form-control,
+.ge-set-select {
+	flex: 1 1 160px;
+	min-width: 0;
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-input);
+	background: var(--ge-field-bg);
+	color: var(--ge-field-text);
+	border: 1px solid var(--ge-field-border);
+}
+.ge-set-row .sf-btn,
+.ge-set-actions .sf-btn,
+.ge-set-showall,
+.ge-set-sumreset {
+	min-height: var(--sf-touch-min);
+}
+.ge-set-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--sf-space-5);
+	margin-top: var(--sf-space-10);
+}
+.ge-set-sections {
+	list-style: none;
+	margin: var(--sf-space-10) 0 0;
+	padding: 0;
+}
+.ge-set-section {
+	padding: var(--sf-space-5) 0;
+	border-top: 1px solid var(--sf-rule);
+}
+.ge-set-section-title {
+	flex: 1 1 140px;
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ge-set-pin {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+}
+.ge-set-pin[aria-pressed="true"] {
+	color: var(--sf-link);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-set-check {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin: 0;
+	font-weight: var(--sf-weight-regular);
+	cursor: pointer;
+}
+.ge-set-check input {
+	width: 20px;
+	height: 20px;
+	margin: 0;
+	flex: none;
+}
+.ge-set-why {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ge-set-fields > summary {
+	min-height: var(--sf-touch-min);
+	display: flex;
+	align-items: center;
+	color: var(--sf-link);
+	cursor: pointer;
+}
+.ge-set-fields > .ge-set-check {
+	padding-left: var(--sf-space-15);
+}
+
+/* ---- Pop-ups: the first-time explanation and the shortcuts ---- */
+.ge-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 1040;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--sf-space-15);
+	background: color-mix(in srgb, var(--sf-navy-900) 55%, transparent);
+}
+.ge-overlay-box {
+	width: min(520px, 100%);
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
+	padding: var(--sf-space-20);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border: 1px solid var(--sf-rule);
+	font-family: var(--sf-font-sans);
+}
+.ge-overlay-title {
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+.ge-overlay-text {
+	margin: 0 0 var(--sf-space-10);
+}
+.ge-overlay-list {
+	margin: 0 0 var(--sf-space-15);
+	padding-left: var(--sf-space-20);
+}
+.ge-overlay-list li + li {
+	margin-top: var(--sf-space-5);
+}
+.ge-overlay-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+}
+.ge-overlay-actions .sf-btn {
+	min-height: var(--sf-touch-min);
+}
+.ge-keys {
+	margin: 0 0 var(--sf-space-15);
+}
+.ge-keys-row {
+	display: grid;
+	grid-template-columns: 120px minmax(0, 1fr);
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) 0;
+	border-bottom: 1px solid var(--sf-rule);
+}
+.ge-keys-row dt {
+	font-weight: var(--sf-weight-regular);
+}
+.ge-keys-row dd {
+	margin: 0;
+}
+.ge-keys kbd {
+	display: inline-block;
+	padding: 2px var(--sf-space-5);
+	border: 1px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-bg);
+	color: var(--sf-text-strong);
+	font-family: inherit;
+	font-size: var(--sf-text-sm);
+}
+
+/* ---- Tablet: the rail becomes a strip; the summary folds above the form ---- */
 @media (max-width: 1023px) {
-	.ge-layout {
-		grid-template-columns: minmax(0, 1fr);
-	}
-	.ge-summary {
-		display: none;
+	.ge-layout,
+	.ge-app[data-ge-nav] .ge-layout {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		grid-template-columns: none;
 	}
 	.ge-rail {
-		position: static;
+		order: 0;
+	}
+	.ge-aside,
+	.ge-app[data-ge-aside] .ge-aside {
+		display: contents;
+	}
+	.ge-app[data-ge-aside="none"] .ge-aside > .ge-block {
+		display: none;
+	}
+	.ge-summary {
+		order: 1;
+	}
+	.ge-main {
+		order: 2;
+	}
+	.ge-aside > .ge-block {
+		order: 3;
+	}
+	/* A new record's setup flow keeps its tablet look: no summary until the record exists. */
+	.ge-app[data-ge-setup="1"] .ge-summary {
+		display: none;
+	}
+	.ge-sum-card {
+		padding: 0;
+	}
+	.ge-sum-title {
+		display: none;
+	}
+	.ge-sum-toggle {
+		display: flex;
+		align-items: center;
+		gap: var(--sf-space-10);
+		width: 100%;
+		min-height: var(--sf-touch-min);
+		padding: 0 var(--sf-space-15);
+		border: 0;
+		background: transparent;
+		color: var(--sf-heading);
+		font: inherit;
+		font-weight: var(--sf-weight-bold);
+		text-align: left;
+		cursor: pointer;
+	}
+	.ge-sum-toggle-meta {
+		margin-left: auto;
+		color: var(--sf-text-muted);
+		font-weight: var(--sf-weight-regular);
+		font-size: var(--sf-text-sm);
+	}
+	.ge-sum-body {
+		display: none;
+		padding: 0 var(--sf-space-15) var(--sf-space-15);
+	}
+	.ge-summary.is-open .ge-sum-body {
+		display: block;
+	}
+	.ge-rail,
+	.ge-app[data-ge-nav] .ge-rail {
+		position: sticky;
+		top: 64px;
+		z-index: 4;
 		overflow-x: auto;
 		-webkit-overflow-scrolling: touch;
+	}
+	.ge-app[data-ge-setup="1"] .ge-rail {
+		position: static;
 	}
 	.ge-rail ol {
 		display: flex;
@@ -734,17 +1667,153 @@ body.ge-page-active .triton-fab {
 	.ge-rail-item.is-off {
 		display: none;
 	}
-	.ge-rail-step {
+	.ge-rail-step,
+	.ge-app[data-ge-nav] .ge-rail-step {
 		border-left: 0;
+		border-right: 0;
 		border-bottom: 3px solid transparent;
 		white-space: nowrap;
 	}
-	.ge-rail-item.is-current .ge-rail-step {
+	.ge-rail-item.is-current .ge-rail-step,
+	.ge-app[data-ge-nav] .ge-rail-item.is-current .ge-rail-step {
 		border-bottom-color: var(--sf-focus);
 	}
 }
 
 /* ---- Phone ---- */
+/* ---- A step's block (form kit P8.1, public/js/form_kit/extensions.js) ----
+   Drawn above the step's fields by the DocType's extension; the Item flow's are public/js/guided_item/.
+   Every control is full width with 16px text and 44px targets, so the same blocks work on a phone. */
+.ge-ext {
+	display: grid;
+	gap: var(--sf-space-15);
+	margin-bottom: var(--sf-space-20);
+}
+.ge-more {
+	margin-top: var(--sf-space-20);
+	min-height: var(--sf-touch-min);
+}
+.gi-card {
+	padding: var(--sf-space-15);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.gi-title {
+	margin: 0 0 var(--sf-space-10);
+}
+.gi-field {
+	margin-bottom: var(--sf-space-10);
+}
+.gi-label {
+	display: block;
+	margin-bottom: var(--sf-space-5);
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.gi-input {
+	font-size: var(--sf-text-input);
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-control);
+}
+.gi-hint,
+.gi-note {
+	margin: var(--sf-space-5) 0 0;
+	color: var(--sf-hint);
+	font-size: var(--sf-text-sm);
+}
+.gi-note {
+	color: var(--sf-text-muted);
+}
+.gi-families,
+.gi-block-list,
+.gi-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-10);
+}
+.gi-family,
+.gi-block {
+	min-height: var(--sf-touch-min);
+}
+.gi-family.is-on,
+.gi-block.is-on {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+.gi-segments {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+	gap: 0 var(--sf-space-15);
+}
+.gi-assembled {
+	margin: var(--sf-space-5) 0 0;
+	padding: var(--sf-space-10);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-bg);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.gi-problem,
+.gi-error {
+	margin: var(--sf-space-5) 0 0;
+	color: var(--sf-danger);
+}
+.gi-problem:empty,
+.gi-error:empty {
+	display: none;
+}
+.gi-refusals {
+	border-left: 4px solid var(--sf-danger);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	margin-bottom: var(--sf-space-10);
+	background: var(--sf-bg);
+}
+.gi-refusal-head,
+.gi-advice-head {
+	margin: 0 0 var(--sf-space-5);
+	font-weight: var(--sf-weight-bold);
+}
+.gi-refusal {
+	margin: 0 0 var(--sf-space-5);
+}
+.gi-advice,
+.gi-similar,
+.gi-rows {
+	margin: 0 0 var(--sf-space-10);
+	padding-left: var(--sf-space-20);
+}
+.gi-advice li,
+.gi-similar li,
+.gi-rows li {
+	margin-bottom: var(--sf-space-5);
+	overflow-wrap: anywhere;
+}
+.gi-exists,
+.gi-ok {
+	margin: 0 0 var(--sf-space-10);
+}
+.gi-row-text {
+	color: var(--sf-text);
+}
+.gi-tick {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin: 0 0 var(--sf-space-10);
+	font-weight: var(--sf-weight-regular);
+}
+.gi-form[hidden] {
+	display: none;
+}
+.gi-actions .sf-btn,
+.gi-form > .sf-btn {
+	min-height: var(--sf-touch-min);
+}
+
 @media (max-width: 767px) {
 	.ge-band {
 		padding: var(--sf-space-15);
@@ -756,17 +1825,42 @@ body.ge-page-active .triton-fab {
 		padding: var(--sf-space-10) 0;
 		gap: var(--sf-space-10);
 	}
+	.ge-app,
+	.fk-panel {
+		/* 44px targets on a phone, compact or not. */
+		--ge-input-height: var(--sf-touch-min);
+	}
 	.ge-stage {
 		padding: var(--sf-space-15);
 		border-left: 0;
 		border-right: 0;
 	}
+	.ge-section {
+		border-left: 0;
+		border-right: 0;
+	}
+	.ge-section-body {
+		padding: 0 var(--sf-space-15) var(--sf-space-10);
+	}
+	.ge-group-title {
+		padding: 0 var(--sf-space-15);
+	}
+	.ge-viewbar {
+		padding: 0 var(--sf-space-10);
+	}
 	.ge-rail {
 		border-left: 0;
 		border-right: 0;
 	}
+	.ge-app[data-ge-density="compact"] .ge-rail-step {
+		min-height: var(--sf-touch-min);
+	}
 	.ge-rail-meta {
 		display: none;
+	}
+	.ge-settings {
+		width: 100vw;
+		border-left: 0;
 	}
 	/* One column: a form's column breaks stack. */
 	.ge-fields .form-section .section-body,
@@ -955,44 +2049,20 @@ body.ge-page-active .triton-fab {
 
 /* ---- The record tools (v1.686.0, form_kit/ui/record_tools.js) ----
  * The Desk form's sidebar, timeline, dashboard and toolbar for a saved record: assigned to, follow,
- * tags, shared with, attachments, activity, people and places, connections. The guided page draws
- * the section as a fourth child of .ge-layout: on a desktop it sits in the summary's column, under
- * the summary (the rail and the step span both rows, and the second row takes what the step needs,
- * so the summary's row stays the summary's height); below 1024px the layout is one column and it
- * follows the step. The side panel draws it under the notes and comments. Tokens only. */
-@media (min-width: 1024px) {
-	.ge-layout {
-		grid-template-rows: auto 1fr;
-	}
-	.ge-layout > .ge-rail,
-	.ge-layout > .ge-main {
-		grid-row: 1 / span 2;
-	}
-	.ge-layout > .ge-summary {
-		grid-column: 3;
-		grid-row: 1;
-	}
-	.ge-layout > .ge-tools {
-		grid-column: 3;
-		grid-row: 2;
-	}
-}
-.ge-tools {
-	min-width: 0;
-	background: var(--sf-surface);
-	border: 1px solid var(--sf-rule);
-	padding: var(--sf-space-15);
-	color: var(--sf-text);
-	overflow-wrap: anywhere;
-}
-.ge-tools[hidden] {
-	display: none;
-}
+ * tags, shared with, attachments, activity, people and places, connections. Where the section sits
+ * is the view settings' (v1.684.0): the guided page draws it in .ge-block--tools, placed beside or
+ * below the step and collapsible behind its bar (the `.ge-tools` box itself is the one rule under
+ * "Notes and comments, and the record tools" above). The side panel draws it under the notes and
+ * comments. Here only what is inside it. Tokens only. */
 .fk-panel .ge-tools {
 	padding: var(--sf-space-15) 0 0;
 	border: 0;
 	border-top: var(--sf-border-hairline) solid var(--sf-rule);
 	background: transparent;
+}
+/* Behind the view settings' bar ("Record tools"), the section's own heading would say it twice. */
+.ge-block.is-collapsible > .ge-tools > .ge-tools-title {
+	display: none;
 }
 .ge-tools-title {
 	margin: 0 0 var(--sf-space-10);
@@ -1257,11 +2327,4 @@ body.ge-page-active .triton-fab {
 }
 .ge-tools-actions {
 	min-height: var(--sf-touch-min);
-}
-
-@media (max-width: 767px) {
-	.ge-layout > .ge-tools {
-		border-left: 0;
-		border-right: 0;
-	}
 }

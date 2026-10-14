@@ -810,8 +810,34 @@ class OpportunityBoard {
 						<label class="ob-field"><span class="ob-visually-hidden">${esc(__("Saved views"))}</span><select data-saved-view>${views}</select></label>
 						${naming}${remove}
 					</div>
+					<div class="ob-filter-row">${this.card_fields_html()}</div>
 				</div>
 			</section>`;
+	}
+
+	// v1.684.0: which parts a card shows beside its title, saved with the view like the filters.
+	card_fields_html() {
+		const esc = this.sf.esc;
+		const shown = new Set(this.card_parts());
+		const names = {
+			account: __("Account"),
+			streams: __("Value streams"),
+			owner: __("Owner"),
+			amount: __("Amount"),
+			probability: __("Probability"),
+			close: __("Close date"),
+			age: __("Days in stage"),
+			meter: __("Completeness"),
+		};
+		const boxes = this.kit.CARD_PARTS.map(
+			(part) =>
+				`<label class="ob-card-part"><input type="checkbox" data-card-part="${esc(part)}"${
+					shown.has(part) ? " checked" : ""
+				}><span>${esc(names[part] || part)}</span></label>`
+		).join("");
+		return `<details class="ob-card-fields"${this.card_fields_open ? " open" : ""}><summary data-card-fields>${esc(
+			__("Card fields")
+		)}</summary>${boxes}</details>`;
 	}
 
 	// The count and value the filters show, beside the board's layout switch.
@@ -1094,22 +1120,33 @@ class OpportunityBoard {
 		const close = deal.expected_closing
 			? __("Closes {0}", [frappe.datetime.str_to_user(deal.expected_closing)])
 			: __("No close date");
+		// v1.684.0: the parts this person shows on a card (the card as it always was, by default).
+		const parts = new Set(this.card_parts());
 		const account =
-			deal.account && deal.account !== deal.title ? `<span class="ob-card-account">${esc(deal.account)}</span>` : "";
+			parts.has("account") && deal.account && deal.account !== deal.title
+				? `<span class="ob-card-account">${esc(deal.account)}</span>`
+				: "";
+		const owner = parts.has("owner") && deal.owner_name ? `<span class="ob-card-owner">${esc(deal.owner_name)}</span>` : "";
+		const facts = [
+			parts.has("amount") ? amount : "",
+			parts.has("probability") ? `<span class="ob-card-probability">${esc(`${this.kit.probability_of(deal)}%`)}</span>` : "",
+			parts.has("close") ? `<span class="ob-close">${esc(close)}</span>` : "",
+		].join("");
+		const foot = (parts.has("age") ? this.age_html(deal) : "") + (parts.has("meter") ? this.meter_html(deal) : "");
 		return `
 			<article class="${classes.join(" ")}" data-name="${esc(deal.name)}">
 				<div class="ob-band" aria-hidden="true">${band}</div>
 				<div class="ob-card-body">
 					<div class="ob-card-top">${this.pick_html(deal)}
 					<button type="button" class="ob-card-open" data-open="${esc(deal.name)}">
-						<span class="ob-card-title">${esc(deal.title)}</span>${account}
+						<span class="ob-card-title">${esc(deal.title)}</span>${account}${owner}
 					</button></div>
-					${chips ? `<div class="ob-chips">${chips}</div>` : ""}${also_html}${this.snooze_mark_html(deal)}${
+					${chips && parts.has("streams") ? `<div class="ob-chips">${chips}</div>` : ""}${also_html}${this.snooze_mark_html(deal)}${
 						gated_to ? `<div class="ob-chips">${this.sf.chip(__("Moving to {0}…", [gated_to.label]), "warn")}</div>` : ""
 					}
-					<div class="ob-facts">${amount}<span class="ob-close">${esc(close)}</span></div>
+					${facts ? `<div class="ob-facts">${facts}</div>` : ""}
 					<div class="ob-foot">
-						${this.age_html(deal)}${this.meter_html(deal)}
+						${foot}
 						<button type="button" class="ob-move" data-move="${esc(deal.name)}" aria-label="${esc(
 							__("Move or snooze {0}", [deal.title])
 						)}">${esc(__("Move"))}</button>
@@ -1945,6 +1982,17 @@ class OpportunityBoard {
 			this.set_filters({ [el.getAttribute("data-filter")]: el.value });
 		} else if (el.matches("[data-saved-view]")) {
 			this.apply_named_view(el.value);
+		} else if (el.matches("[data-card-part]")) {
+			const part = el.getAttribute("data-card-part");
+			const parts = this.card_parts().filter((p) => p !== part);
+			if (el.checked) parts.push(part);
+			this.card = this.kit.card_parts(this.kit.card_text(parts));
+			this.card_fields_open = true;
+			this.current_view = "";
+			this.remember();
+			this.render();
+			const again = this.$root[0].querySelector(`[data-card-part="${part}"]`);
+			if (again) again.focus();
 		}
 	}
 
@@ -1996,8 +2044,15 @@ class OpportunityBoard {
 				layout: this.layout,
 				sort: this.sort.sort,
 				desc: this.sort.desc,
+				card: this.kit.card_text(this.card_parts()),
 			})
 		);
+	}
+
+	// What each card shows beside its title (v1.684.0, board.js card_parts): today's card unless the
+	// person changed it.
+	card_parts() {
+		return this.card || this.kit.DEFAULT_CARD.slice();
 	}
 
 	// A view's filters, sort and layout on the page; with `navigate`, its view too (a new history
@@ -2012,6 +2067,8 @@ class OpportunityBoard {
 			desc: s.desc === undefined ? this.kit.DEFAULT_SORT.desc : !!s.desc,
 		};
 		if (s.layout && take_layout) this.layout = s.layout;
+		// A view saved before cards could be chosen shows the card as it always was.
+		this.card = this.kit.card_parts(s.card);
 		if (navigate) {
 			const moved = this.go({ view: s.view || "board", layout: this.layout, stage: "", panel: "" });
 			if (!moved) this.render();

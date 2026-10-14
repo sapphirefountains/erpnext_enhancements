@@ -280,10 +280,44 @@
 	font-weight: var(--sf-weight-bold);
 	overflow-wrap: anywhere;
 }
-.ob-card-account {
+.ob-card-account,
+.ob-card-owner {
 	color: var(--sf-text-muted);
 	font-size: var(--sf-text-sm);
 	overflow-wrap: anywhere;
+}
+/* v1.684.0: the parts a person chose for their cards (board.js CARD_PARTS). */
+.ob-card-owner {
+	display: block;
+}
+.ob-card-probability {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ob-card-fields {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+}
+.ob-card-fields > summary {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	color: var(--sf-link);
+	cursor: pointer;
+}
+.ob-card-fields[open] > summary {
+	flex-basis: 100%;
+}
+.ob-card-part {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+	margin: 0;
+	font-weight: var(--sf-weight-regular);
+	cursor: pointer;
 }
 .ob-chips {
 	display: flex;

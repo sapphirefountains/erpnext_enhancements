@@ -15,6 +15,9 @@
  *   - step 1's create (create_record, with the create's client_id), Set as Lost, `distinct`, `clears`
  *   - the Party entry component (./party.js, P3.2, v1.677.0) on the account, contact and address
  *     fields: "+ New" inline and linked to the account, re-suggested when the account changes
+ *   - a DocType's step blocks (form kit P8.1, ../extensions.js; the Item flow's name builder and its
+ *     supplier, stock and asset blocks): mounted above a step's fields when the step names an
+ *     `extension`, told of each change, asked before a create; a block that throws stays in its box
  *
  * What it asks of the shell that hosts it (the "host" methods; the guided page and the side panel
  * each define their own):
@@ -25,7 +28,9 @@
  *                                 still_here }; return nothing
  *   show_created(doctype, name)   a kept start turned out to exist on the server: open it
  *   still_new(doctype)            is the shell still on the "new" screen of this DocType
- * and the DOM it draws into, under this.$root: .ge-notices, .ge-conflict-slot, .ge-saveline.
+ * and the DOM it draws into, under this.$root: .ge-notices, .ge-conflict-slot, .ge-saveline. A
+ * shell's load() also calls open_extension(doctype) (P8.1), so a step that names a block can draw
+ * it, and its reset() drops it (leave_extension, then this.ext = null).
  *
  * Two ways in:
  *   - class SidePanel extends RecordEditor (an ES module: ./side_panel.js)
@@ -39,9 +44,19 @@
 
 import { PartyEntry } from "./party.js";
 import { RecordTools } from "./record_tools.js";
+import { FieldGroups } from "../field_groups.js";
 
 export const GE_API = "erpnext_enhancements.form_kit.api.";
 export const GE_LIST_SUFFIX = "__ge_list";
+// A text box starts at about three lines and grows with what it holds, up to this (v1.684.0): Frappe
+// draws Text at 300px and Small Text at 150px whatever they hold, which stretched a short note into a
+// tall empty box and pushed every field under it down the page.
+export const GE_TEXT_MIN = 84;
+export const GE_TEXT_MAX = 320;
+const GE_TEXT_TYPES = ["Small Text", "Text", "Long Text", "Code", "JSON"];
+// A hint longer than this is clamped to two lines under its field; the (i) beside the label then
+// holds all of it, so nothing written there is out of reach.
+export const GE_HINT_CLAMP = 110;
 const GE_INFO_ICON =
 	'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" focusable="false">' +
 	'<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4"/>' +
@@ -140,6 +155,10 @@ export class RecordEditor {
 		return false;
 	}
 
+	// v1.684.0: before a field is focused (the summary's checklist, a create's missing field), the
+	// shell may have to bring it into view first (a collapsed section, a field put away).
+	before_focus() {}
+
 	// v16's own login path. In a new tab, so nothing typed here is lost: the Desk that boots there
 	// broadcasts its new CSRF token to this tab (desk.js setup_broadcast_listeners). P4.4: here rather
 	// than on the guided page, so the side panel's "Sign in" (refresh_notices) works too.
@@ -219,6 +238,9 @@ export class RecordEditor {
 	render_notes($notes, data) {
 		$notes.empty().prop("hidden", false);
 		const notes = data.notes || [];
+		// v1.684.0: the guided page counts them on its "Notes and comments (N)" bar.
+		this.notes_total = data.total || notes.length;
+		if (typeof this.comments_changed === "function") this.comments_changed();
 		$('<h2 class="ge-comments-title"></h2>')
 			.text(notes.length ? __("Notes ({0})", [data.total || notes.length]) : __("Notes"))
 			.appendTo($notes);
@@ -293,6 +315,48 @@ export class RecordEditor {
 	current_step() {
 		if (this.step_override) return this.step_override;
 		return this.flow ? this.kit.find_step(this.flow.steps, this.step_key) : null;
+	}
+
+	// Every step whose fields are on screen (v1.684.0). One step at a time that is current_step();
+	// the guided page's One page and Tabs layouts draw several, one FieldGroup each (`this.fg` is
+	// then a ../field_groups.js FieldGroups). Reading values back goes through collect_steps(),
+	// which leaves out the sections nobody can see.
+	shown_steps() {
+		if (this.fg && this.fg.multi) return this.fg.steps();
+		const step = this.current_step();
+		return step ? [step] : [];
+	}
+
+	// The steps whose fields are read back into the record (collect_step, collect_tables): those on
+	// screen, less, in One page and Tabs, a section that does not apply or that the shell is not
+	// showing (step_visible). Their controls exist but nobody can see them, and a control whose value
+	// does not round-trip (a Select with no blank option reads back its first option for null) would
+	// otherwise queue a change the person never made: a layout must stay only a presentation.
+	collect_steps() {
+		const steps = this.shown_steps();
+		if (!(this.fg && this.fg.multi)) return steps;
+		return steps.filter((step) => this.kit.step_active(step, this.values) && this.step_visible(step));
+	}
+
+	// Host hook (v1.684.0): is this drawn step's section showing. The guided page answers for its
+	// sections; a shell that draws one step at a time has nothing hidden.
+	step_visible() {
+		return true;
+	}
+
+	// Several steps on screen at once from here: render_fields adds each one's FieldGroup to the set.
+	begin_groups() {
+		this.fg = new FieldGroups();
+		return this.fg;
+	}
+
+	// The step a field is drawn in, or the current one.
+	field_step(fieldname) {
+		if (this.fg && this.fg.multi) {
+			const step = this.fg.step_of(fieldname, GE_LIST_SUFFIX);
+			if (step) return step;
+		}
+		return this.current_step();
 	}
 
 	// The record as the server now has it, after what is queued has gone.
@@ -469,11 +533,19 @@ export class RecordEditor {
 	// One step's fields, drawn into $fields: the FieldGroup and the values it starts with, the text
 	// lists, the help, and the grids' listeners. P4.4: the guided page and the side panel both draw
 	// a step with this; each draws its own head around it.
+	//
+	// v1.684.0: when the shell draws several steps at once (begin_groups), each step's FieldGroup joins
+	// the set in `this.fg` instead of replacing it, and everything below (the help, the Party
+	// component, the text lists) finds its controls through the set's one fields_dict.
 	render_fields(step, $fields, editable) {
+		// P8.1: whatever block the last step drew is going away with it. Not between the sections of
+		// one page (v1.684.0): they stay on screen together, so the blocks drawn so far stay too.
+		if (!(this.fg && this.fg.multi && this.fg.steps().length)) this.leave_extension();
 		const dfs = (step.fields || []).map((field) => this.control_def(field, step, editable));
-		this.fg = new frappe.ui.FieldGroup({ fields: dfs, body: $fields[0], no_submit_on_enter: true });
-		this.fg.make();
-		const fg = this.fg;
+		const fg = new frappe.ui.FieldGroup({ fields: dfs, body: $fields[0], no_submit_on_enter: true });
+		fg.make();
+		if (this.fg && this.fg.multi) this.fg.add(step, fg);
+		else this.fg = fg;
 		const initial = {};
 		(step.fields || []).forEach((field) => {
 			if (this.kit.is_layout(field) || this.kit.text_list_column(field)) return;
@@ -485,13 +557,17 @@ export class RecordEditor {
 		});
 		fg.set_values(initial).then(() => {
 			Object.keys(initial).forEach((fieldname) => this.suppress.delete(fieldname));
-			if (this.fg === fg) fg.refresh_dependency();
+			if (this.fg === fg || (this.fg && this.fg.multi && this.fg.owns(fg))) {
+				fg.refresh_dependency();
+				this.fit_texts($fields);
+			}
 		});
 		(step.fields || []).forEach((field) => {
 			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
 		});
-		this.decorate_controls(step);
+		this.decorate_controls(step, fg);
 		this.party_entry().decorate(step, editable);
+		this.mount_extension(step, $fields);
 		// A grid says nothing when a row is removed or moved, and a cell edit may not reach the
 		// table's own onchange: read the grids again after either (delete_rows runs in 0.1 s steps).
 		$fields.on("click", ".grid-remove-rows, .grid-delete-row, .grid-add-row, .grid-move-row", () =>
@@ -500,6 +576,23 @@ export class RecordEditor {
 		$fields.on("change", ".form-grid input, .form-grid textarea, .form-grid select", () =>
 			setTimeout(() => this.collect_tables(), 0)
 		);
+		// A text box grows with what is typed in it (fit_text), up to GE_TEXT_MAX.
+		$fields.on("input", "textarea.form-control:not(.ge-list-input)", (event) => this.fit_text(event.currentTarget));
+		return fg;
+	}
+
+	// Every text box under $box at its content's height, between GE_TEXT_MIN and GE_TEXT_MAX. One that
+	// is not laid out yet (in a collapsed section) keeps the minimum and is fitted when it shows.
+	fit_texts($box) {
+		($box || this.$root).find("textarea.form-control:not(.ge-list-input)").each((i, el) => this.fit_text(el));
+	}
+
+	fit_text(el) {
+		if (!el || !el.style || $(el).closest(".form-grid").length) return;
+		el.style.height = "auto";
+		const height = Math.min(Math.max(el.scrollHeight + 2, GE_TEXT_MIN), GE_TEXT_MAX);
+		el.style.height = `${height}px`;
+		el.style.overflowY = el.scrollHeight + 2 > GE_TEXT_MAX ? "auto" : "hidden";
 	}
 
 	render_saveline() {
@@ -591,6 +684,12 @@ export class RecordEditor {
 			df.on_add_row = () => setTimeout(() => this.table_touched(fieldname), 0);
 			return df;
 		}
+		if (field.fieldtype === "Datetime" && this.same_time_zone()) {
+			// v16's ControlDatetime writes the user's time zone under every Datetime ("America/Denver"),
+			// on its own line under the hint. It is information only when it differs from the site's,
+			// which is the zone a stored value is in; the same as the site's, it is noise (v1.684.0).
+			df.hide_timezone = 1;
+		}
 		if (field.fieldtype === "Dynamic Link") {
 			df.get_options = () => this.current(field.options);
 		}
@@ -632,16 +731,48 @@ export class RecordEditor {
 		return Object.assign({}, this.values);
 	}
 
-	// inputmode per field, the (i) beside each label that has longer help.
-	decorate_controls(step) {
+	// Whether the user's time zone is the site's (v16 boot.time_zone {system, user}). Unknown: false,
+	// so the zone line stays, as Frappe draws it.
+	same_time_zone() {
+		try {
+			const zone = frappe.boot && frappe.boot.time_zone;
+			if (zone && zone.user && zone.system) return zone.user === zone.system;
+			if (frappe.datetime && typeof frappe.datetime.is_system_time_zone === "function") {
+				return !!frappe.datetime.is_system_time_zone();
+			}
+		} catch (e) {
+			// Falls through: keep the line.
+		}
+		return false;
+	}
+
+	// Whether a field gets the (i): its longer help, or a hint that is clamped under the field (long),
+	// or put away altogether (the guided page's "hints hidden"; `hints_hidden`). The (i) then holds
+	// the hint too, so it is never out of reach.
+	wants_help(field) {
+		if (!field) return false;
+		if (field.help) return true;
+		// The time-zone line lives in the hint's box: put away with the hints, the (i) carries it.
+		if (this.hints_hidden && field.fieldtype === "Datetime" && !this.same_time_zone()) return true;
+		const hint = String(field.hint || "");
+		return !!hint && (!!this.hints_hidden || hint.length > GE_HINT_CLAMP);
+	}
+
+	// inputmode per field, the (i) beside each label that has longer help, a text box's starting rows.
+	decorate_controls(step, fg) {
 		const registry = frappe.boot && frappe.boot.sf_normalize;
+		const group = fg || this.fg;
 		(step.fields || []).forEach((field) => {
 			if (this.kit.is_layout(field)) return;
-			const control = this.fg.fields_dict[field.fieldname];
+			const control = group.fields_dict[field.fieldname];
 			if (!control) return;
 			const mode = this.kit.inputmode_for(control.df, registry, this.doctype);
 			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
-			if (field.help) this.add_help(control.$wrapper, field, step);
+			if (GE_TEXT_TYPES.includes(field.fieldtype) && control.$input && control.$input.is("textarea")) {
+				control.$input.attr("rows", 3);
+				this.fit_text(control.$input[0]);
+			}
+			if (this.wants_help(field)) this.add_help(control.$wrapper, field, step);
 		});
 	}
 
@@ -655,7 +786,16 @@ export class RecordEditor {
 			.attr("aria-label", __("More about {0}", [label]))
 			.html(GE_INFO_ICON);
 		const $panel = $('<div class="ge-help-panel" hidden></div>').attr("id", id);
-		$('<p class="ge-help-text"></p>').text(field.help).appendTo($panel);
+		// v1.684.0: the hint as well, when it is put away (hints hidden) or clamped to two lines.
+		const hint = String(field.hint || "");
+		if (hint && (this.hints_hidden || hint.length > GE_HINT_CLAMP)) {
+			$('<p class="ge-help-text ge-help-hint"></p>').text(hint).appendTo($panel);
+		}
+		if (this.hints_hidden && field.fieldtype === "Datetime" && !this.same_time_zone()) {
+			const zone = frappe.boot && frappe.boot.time_zone ? frappe.boot.time_zone.user : "";
+			if (zone) $('<p class="ge-help-text ge-help-zone"></p>').text(zone).appendTo($panel);
+		}
+		if (field.help) $('<p class="ge-help-text"></p>').text(field.help).appendTo($panel);
 		const article = this.flow.help_article;
 		if (article) {
 			const href = `${frappe.utils.get_form_link("Knowledge Article", article)}#${encodeURIComponent(field.anchor || step.key)}`;
@@ -688,12 +828,81 @@ export class RecordEditor {
 
 	focus_field(fieldname) {
 		if (!fieldname || !this.fg) return;
+		this.before_focus(fieldname);
 		const control = this.fg.fields_dict[fieldname] || this.fg.fields_dict[fieldname + GE_LIST_SUFFIX];
 		if (!control || !control.$wrapper) return;
 		const el = control.$wrapper[0];
 		if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
 		const $input = control.$wrapper.find("input, textarea, select, button").filter(":visible").first();
 		if ($input.length) $input.trigger("focus");
+	}
+
+	// ------------------------------------------------------------------ extensions (P8.1)
+
+	// The DocType's extension (../extensions.js), fresh for each record a shell opens: null when it
+	// has none (Opportunity). The shells call this from load(); the one it replaces is left first.
+	open_extension(doctype) {
+		this.leave_extension();
+		this.ext = this.kit && this.kit.extension_for ? this.kit.extension_for(doctype) : null;
+	}
+
+	// The step's block, above its fields, when the config names one and the DocType's extension
+	// draws it. Anything the block throws stays in the block: the fields below always show.
+	mount_extension(step, $fields) {
+		if (!this.ext || !step || !step.extension || typeof this.ext.render !== "function") return;
+		const $box = $('<div class="ge-ext"></div>').attr("data-extension", step.extension).insertBefore($fields);
+		try {
+			this.ext.render(step.extension, $box, this.ext_context(step));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+			$box.remove();
+		}
+	}
+
+	leave_extension() {
+		if (!this.ext || typeof this.ext.leave !== "function") return;
+		try {
+			this.ext.leave();
+		} catch (e) {
+			// A block that cannot tidy up has nothing left to say.
+		}
+	}
+
+	ext_notify(fieldname, value) {
+		if (!this.ext || typeof this.ext.on_change !== "function") return;
+		try {
+			// The step that draws the field (v1.684.0: several may be on screen), else the current one.
+			this.ext.on_change(fieldname, value, this.ext_context(this.field_step(fieldname) || this.current_step()));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
+	}
+
+	// What the editor lends a block (../extensions.js documents it). The record is read when called,
+	// never captured, so a block outliving a step cannot write to another record.
+	ext_context(step) {
+		const doctype = this.doctype;
+		const name = this.name;
+		const same = () => this.doctype === doctype && this.name === name;
+		return {
+			doctype,
+			name,
+			is_new: this.is_new,
+			step,
+			sf: this.sf,
+			kit: this.kit,
+			can_write: !!(this.flow && this.flow.can_write) && !(step && step.read_only),
+			values: () => (same() ? Object.assign({}, this.values) : {}),
+			set_value: (fieldname, value) => {
+				if (!same() || this.kit.same_value(value, this.values[fieldname])) return;
+				this.set_value_local(fieldname, value);
+				this.show_value(fieldname, value);
+			},
+			save_first: () => (same() ? this.save_before_moving() : Promise.reject(new Error(__("The record changed.")))),
+			record_changed: () => {
+				if (same() && !this.is_new) this.refresh_from_server();
+			},
+		};
 	}
 
 	// ------------------------------------------------------------------ the text-list table
@@ -756,7 +965,7 @@ export class RecordEditor {
 				.appendTo($box);
 		}
 		$(control.wrapper).empty().append($box);
-		if (field.help) this.add_help($(control.wrapper), field, this.current_step() || {});
+		if (this.wants_help(field)) this.add_help($(control.wrapper), field, this.field_step(field.fieldname) || {});
 	}
 
 	grow(el) {
@@ -821,8 +1030,10 @@ export class RecordEditor {
 			});
 			this.refresh_distinct();
 			this.party_entry().changed(fieldname, before, value);
+			this.ext_notify(fieldname, value);
 		}
-		this.fg.refresh_dependency();
+		if (this.batching) this.batch_dirty = true;
+		else this.fg.refresh_dependency();
 	}
 
 	refresh_distinct() {
@@ -841,12 +1052,13 @@ export class RecordEditor {
 	// Grids say nothing when a row is removed or moved: compare them with what is held.
 	collect_tables() {
 		if (!this.fg || !this.flow) return;
-		const step = this.current_step();
-		((step && step.fields) || []).forEach((field) => {
-			if (field.fieldtype === "Table" && !field.read_only && !this.kit.text_list_column(field)) {
-				this.table_touched(field.fieldname);
-			}
-		});
+		this.collect_steps().forEach((step) =>
+			((step && step.fields) || []).forEach((field) => {
+				if (field.fieldtype === "Table" && !field.read_only && !this.kit.text_list_column(field)) {
+					this.table_touched(field.fieldname);
+				}
+			})
+		);
 	}
 
 	// Everything on the step into this.values (a Back or Forward has no tap to blur the field
@@ -855,12 +1067,26 @@ export class RecordEditor {
 		if (!this.fg || !this.flow) return;
 		const active = document.activeElement;
 		if (active && this.$root[0].contains(active) && typeof active.blur === "function") active.blur();
-		const step = this.current_step();
-		((step && step.fields) || []).forEach((field) => {
-			if (this.kit.is_layout(field) || field.read_only || this.kit.text_list_column(field)) return;
-			if (field.fieldtype === "Table") return;
-			this.field_changed(field.fieldname);
-		});
+		// One redraw and one depends_on pass for the lot, not one per field: with every section on
+		// screen (v1.684.0) that is some seventy fields.
+		this.batching = true;
+		this.batch_dirty = false;
+		try {
+			this.collect_steps().forEach((step) =>
+				((step && step.fields) || []).forEach((field) => {
+					if (this.kit.is_layout(field) || field.read_only || this.kit.text_list_column(field)) return;
+					if (field.fieldtype === "Table") return;
+					this.field_changed(field.fieldname);
+				})
+			);
+		} finally {
+			this.batching = false;
+		}
+		if (this.batch_dirty) {
+			this.batch_dirty = false;
+			if (this.fg) this.fg.refresh_dependency();
+			this.refresh_chrome();
+		}
 		this.collect_tables();
 	}
 
@@ -868,7 +1094,10 @@ export class RecordEditor {
 	// the queue when it is back to it. `quiet_chrome` skips the rail redraw while typing in a list.
 	set_value_local(fieldname, value, quiet_chrome) {
 		const before_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
+		const edited = !this.kit.same_value(value, this.values[fieldname]);
 		this.values[fieldname] = value;
+		// v1.684.0: the shell hears of a real change (collect_step re-reads unchanged values too).
+		if (edited && typeof this.on_field_edited === "function") this.on_field_edited(fieldname);
 		if (this.is_new) {
 			this.new_dirty = true;
 			this.write_new_journal();
@@ -882,7 +1111,8 @@ export class RecordEditor {
 			this.write_journal(this.doctype, this.name);
 		}
 		const after_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
-		if (!quiet_chrome || before_active !== after_active) this.refresh_chrome();
+		if (this.batching) this.batch_dirty = true;
+		else if (!quiet_chrome || before_active !== after_active) this.refresh_chrome();
 		else this.render_saveline();
 	}
 
@@ -907,10 +1137,11 @@ export class RecordEditor {
 		}
 		if (focused && this.kit.same_value(control.get_value(), value)) return;
 		this.suppress.add(fieldname);
-		Promise.resolve(control.set_value(ge_clone(value))).then(
-			() => this.suppress.delete(fieldname),
-			() => this.suppress.delete(fieldname)
-		);
+		const done = () => {
+			this.suppress.delete(fieldname);
+			if (control.$input && control.$input.is && control.$input.is("textarea")) this.fit_text(control.$input[0]);
+		};
+		Promise.resolve(control.set_value(ge_clone(value))).then(done, done);
 	}
 
 	// ------------------------------------------------------------------ no signal (P4.7)
@@ -1380,6 +1611,19 @@ export class RecordEditor {
 		if (this.creating || !this.flow) return;
 		this.collect_step();
 		const step = (this.flow.steps || []).find((s) => s.create) || this.flow.steps[0];
+		// The step's block may know the insert would be refused (the Item flow's naming guard, P8.1).
+		let held = "";
+		try {
+			held = this.ext && typeof this.ext.before_create === "function" ? this.ext.before_create() : "";
+		} catch (e) {
+			// A block that cannot answer holds nothing back: the server still checks the insert.
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
+		if (held) {
+			this.notice = { kind: "create", title: __("Not created yet"), body: held };
+			this.refresh_notices();
+			return;
+		}
 		const missing = this.kit.missing_required(step.fields, this.values);
 		if (missing.length) {
 			this.notice = {
