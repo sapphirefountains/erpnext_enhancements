@@ -440,6 +440,12 @@ jobs:
       # Lead Source was one from 2026-06-09 to v1.678.1, and nobody could pick a lead source.
       - name: No Link points at a child table
         run: python -m unittest erpnext_enhancements.tests.test_link_targets_not_child_tables -v
+      # Pure filesystem too. A custom field left out of a generator-owned field_order (the seven
+      # procurement forms) is placed by its insert_after, and a Section Break placed that way splits
+      # the section it lands in: Item's Default UOM and Maintain Stock sat under "Maintenance
+      # Billing" on prod until v1.682.0.
+      - name: Every custom field is in its form's field_order
+        run: python -m unittest erpnext_enhancements.tests.test_layout_field_order_coverage -v
       # Whether the nightly offsite backup ships the file archives is one membership
       # test -- `include_files = backup_type in FULL_TYPES`. Drop the scheduled type out
       # of that tuple and the run silently reverts to database-only: it still succeeds,
