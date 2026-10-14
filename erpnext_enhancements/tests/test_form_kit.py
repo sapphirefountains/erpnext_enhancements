@@ -1734,7 +1734,7 @@ class TestEndpoints(unittest.TestCase):
                 "distinct",
                 "clears",
                 "lost",
-                # Form kit P6.6 (v1.670.0): what a move into Closed Won must carry.
+                # Form kit P6.6 (v1.672.0): what a move into Closed Won must carry.
                 "won",
             },
         )
@@ -1753,7 +1753,7 @@ class TestEndpoints(unittest.TestCase):
         self.assertEqual(payload["steps"][0]["create"], 1)
 
     def test_the_moves_and_quick_add_the_side_panel_reads(self):
-        """Form kit P6.6 / P6.7 (v1.670.0): ``won`` names fields the flow offers on a saved record,
+        """Form kit P6.6 / P6.7 (v1.672.0): ``won`` names fields the flow offers on a saved record,
         and ``quick`` (new records only) asks for fields step 1 shows, filling the rest itself."""
         name = _seed()
         saved = api.get_flow("Opportunity", name)

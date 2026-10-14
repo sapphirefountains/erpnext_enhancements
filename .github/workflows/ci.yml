@@ -1740,7 +1740,7 @@ jobs:
       # validation blocks it), and saved views in the planners' own store. Own frappe stub.
       - name: Opportunity board part B (views, attention, snooze, saved views)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
-      # Form kit P4.4 / P6.6 / P6.7 (v1.670.0): the side panel's pure decisions and the save
+      # Form kit P4.4 / P6.6 / P6.7 (v1.672.0): the side panel's pure decisions and the save
       # queue's manual mode under node (a move's required fields wait for the commit), the board's
       # panel routes, quick add and bulk selection, bulk_update taking every deal through the
       # single-change save with its own lock and savepoint, and the guided page and the side panel

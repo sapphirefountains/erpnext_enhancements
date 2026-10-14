@@ -221,7 +221,7 @@ EXACT_SURFACE = {
         "declare_lost",
         "find_created",
     },
-    # The Opportunity board (form kit P6). Part C (v1.670.0) added bulk_update, which changes many
+    # The Opportunity board (form kit P6). Part C (v1.672.0) added bulk_update, which changes many
     # deals at once and so must check write permission and the `modified` lock deal by deal, through
     # the form kit's own save path (tested in test_opportunity_board_panel). `_bulk_plan`,
     # `_bulk_apply`, `_saved` and `_refusal` sit directly above it and must never be exposed.

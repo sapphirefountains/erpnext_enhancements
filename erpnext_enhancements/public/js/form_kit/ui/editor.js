@@ -3,7 +3,7 @@
  *
  * One renderer, one save queue, one conflict chooser and one offline journal, shared by the guided
  * page (enhancements_core/page/guided_entry) and the side panel (./side_panel.js, the planner kit's
- * drawer over a list or board). Everything here was the guided page's own code until v1.670.0; it
+ * drawer over a list or board). Everything here was the guided page's own code until v1.672.0; it
  * moved here unchanged except where a second shell needed a seam, each marked "P4.4" below.
  *
  * What it owns, for one record at a time:
@@ -1236,7 +1236,7 @@ export class RecordEditor {
 		});
 		// P4.4: create_record assigns only step 1's "create" fields. Anything else the step shows that
 		// the person changed (the summary, a close date) goes with the create as prefill too, which the
-		// server takes for any field the flow lets them write; before v1.670.0 it was dropped.
+		// server takes for any field the flow lets them write; before v1.672.0 it was dropped.
 		const extra = this.kit.create_extras(step, values, (this.flow && this.flow.values) || {});
 		const doctype = this.doctype;
 		const started_with = this.started_with;

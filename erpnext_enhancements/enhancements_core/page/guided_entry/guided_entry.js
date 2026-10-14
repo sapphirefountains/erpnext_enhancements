@@ -52,7 +52,7 @@
 // attempt made, if it arrived after all. Closing the tab warns only when the phone could not keep
 // something (storage refused).
 //
-// THE RECORD EDITOR (P4.4, v1.670.0). Drawing a step's fields, the save queue, conflicts, the phone's
+// THE RECORD EDITOR (P4.4, v1.672.0). Drawing a step's fields, the save queue, conflicts, the phone's
 // journal, step 1's create and Set as Lost are public/js/form_kit/ui/editor.js, which the side panel
 // (form_kit/ui/side_panel.js, over the Opportunity board) runs too: one renderer, not two. This file
 // keeps what only the page has (its routes, the band, rail, summary and footer, the start screen) and

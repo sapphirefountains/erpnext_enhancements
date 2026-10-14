@@ -60,7 +60,7 @@ def _code(path):
 
 def _page_code():
 	"""The guided page as it runs: its own script and the record editor mixed onto it (form kit P4.4,
-	v1.670.0: the fields, the save queue, conflicts, the journal and step 1's create moved to
+	v1.672.0: the fields, the save queue, conflicts, the journal and step 1's create moved to
 	public/js/form_kit/ui/editor.js, which the side panel runs too). A check on what the page does
 	reads both; what moved is held to the same lines it was held to before."""
 	return _code(PAGE_JS) + "\n" + _code(EDITOR_JS)
@@ -1152,7 +1152,7 @@ class TestThePage(unittest.TestCase):
 		decorate = icons[icons.index("function decorate(control)") :]
 		decorate = decorate[: decorate.index("\n\t}\n")]
 		self.assertIn("if (control.df.ee_desc_inline) return;", decorate)
-		# Set where the fields are drawn: the record editor both shells run (P4.4, v1.670.0).
+		# Set where the fields are drawn: the record editor both shells run (P4.4, v1.672.0).
 		self.assertIn("df.ee_desc_inline = 1;", _code(EDITOR_JS))
 		# Nothing else in the app sets it.
 		for path in APP.rglob("*.js"):
