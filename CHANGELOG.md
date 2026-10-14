@@ -48,6 +48,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Tests:** `scripts/test_new_item_prefill.mjs` runs all three files against a stub of the v16
     pieces they hook, as a new CI step.
 
+## [1.688.0] - 2026-10-14
+
+### Added
+- **The Opportunity board has Closed Won and Lost columns.** Nik, 2026-10-14: "I don't see a Closed
+  Won column or Lost column. Put Lost last and On Hold second to last." The columns now run: the open
+  stages, Closed Won, On Hold, Lost (`opportunity_board._stages`; the move panel lists them in the
+  same order).
+  - The two columns hold the deals closed in the **last 90 days** (`CLOSED_DAYS`), not every deal
+    ever closed. That was 24 won and 15 lost on 2026-10-14, of 104 and 89 (plus 577 historical,
+    left out as everywhere on the board).
+  - `get_board` reads them with a second `frappe.get_list` (the caller's permissions apply) and
+    sends them as `closed`, apart from `deals`. So no open total, forecast tile, table row,
+    timeline entry, attention count, selection or bulk action ever includes a closed deal.
+  - The SQL filter is `modified` within the window, because a stage change always saves the deal.
+    The stage date (`custom_stage_changed_on`, else `modified`) then decides in Python, exactly as
+    the card shows it.
+  - A closed card shows "Won <date>" or "Lost <date>" in place of its age and expected close. It
+    opens in the side panel on a click and has no Move, no drag and no select box. Dropping an open
+    card on either column still asks for that stage's required fields first, as before; once saved,
+    the deal is at the top of its closing column at once (`close_deal`), not off the board until
+    the refresh.
+  - A closed deal is never shown as snoozed, and "Closing this month" reads the month it closed.
+  - With a filter that leaves no open deal (say "My deals" for someone whose recent deals are all
+    won), the closing columns still show.
+  - The SQL orders recent closes by `custom_stage_changed_on` first, so a mass edit of old closed
+    deals cannot crowd the recent ones past the 500-row cap.
+  - A drag's edge-scroll uses the Desk's scroller and stops above the closing drop bar, so scrolling
+    never means hovering a "Drop here" zone.
+  - The filters narrow the closing columns too. Rows by value stream show a row's recent closes in
+    its Closed Won and Lost cells; the row's own count and total stay open deals only.
+
+### Changed
+- **Every board column is the same width, and the board scrolls sideways when they do not fit.**
+  Nik: "Make the Kanban columns uniform width, and scroll horizontally if not all columns fit on the
+  page." Columns are `minmax(280px, 1fr)` each (`--ob-col-min`). A folded On Hold no longer takes a
+  narrow column of its own (the per-column `--ob-template` is gone).
+- **The board no longer makes the page as long as its longest column.** Nik: "we see every
+  Opportunity so the scrolling is way long." Every column used to stretch to the tallest: 3,989px
+  on prod, with the sideways scrollbar at the very bottom of the page.
+  - On a wide screen the board now sits in a box the height of the screen under the sticky page
+    head. The box scrolls sideways, and each column scrolls on its own.
+  - The page measures the sticky head and whatever follows the board against what really scrolls
+    (`set_fit` into `--ob-fit-h`), after every draw and on resize while the board is showing. On
+    Frappe v16 that is the Desk's `.main-section`, never the window: `window.scrollY` stays 0 there,
+    so a window-based measurement is wrong. Scrolled to its end, the page shows the board filling
+    the screen exactly.
+  - **A redraw keeps where the board was scrolled** (`scroll_marker` / `restore_scroll`): sideways,
+    down the rows, and down each column. Clicking a card, a save in the side panel and every
+    realtime refresh redraw the board, and each used to snap it back to its first column. Focus is
+    restored with `preventScroll` so it cannot undo that.
+  - By value stream, the rows scroll inside the same box under column heads that stay put. A drag
+    near the box's top or bottom edge scrolls it.
+  - A phone keeps its one-stage page; Closed Won and Lost are tabs there like any stage.
+- **Filter bar:** the saved views and "Card fields" share one row instead of two.
+- The board bundle's `VERSION` goes to 3, so a tab still holding the previous kit takes this one.
+
 ## [1.687.0] - 2026-10-14
 
 ### Changed
