@@ -4,7 +4,8 @@
 // Stripe Payments dashboard: connection/config readiness, status counts and a
 // recent-payments table. All data comes from the operator-gated RPC
 // erpnext_enhancements.stripe_payments.core.api.get_dashboard_status. Its loading, empty, error
-// and no-access panels, its toast and its server call come from sf_kit (v1.645.0).
+// and no-access panels, its toast and its server call come from sf_kit (v1.645.0), and so do its
+// tiles and status chips (v1.649.0): every status shows its word, and its colour is a kit token.
 frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -29,10 +30,6 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		});
 	});
 
-	function esc(v) {
-		return frappe.utils.escape_html(v == null ? "" : String(v));
-	}
-
 	// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
 	// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of
 	// plain text), so the dashboard carries on. A Desk opened before the deploy that added the
@@ -55,7 +52,8 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 			if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __("Try again")).on("click", o.on_action).appendTo($el);
 		};
 		const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
-		return { esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
+		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+		return { esc, call, state: { render }, chip: esc, tiles: { html: () => "" }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
 	}
 
 	// A dashboard that never loaded: no access on a 403, a way back in when the session has
@@ -83,44 +81,49 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		}
 	}
 
-	function statusColor(status) {
-		return (
-			{ Paid: "green", Processing: "orange", "Link Sent": "blue", Failed: "red", Expired: "gray", Refunded: "purple" }[
-				status
-			] || "gray"
-		);
+	// What each payment status means; how it looks is the kit's (v1.649.0). Link Sent, Expired and
+	// Refunded are neither good nor bad news, so they are neutral chips with their word.
+	const STATUS_TONE = { Paid: "good", Processing: "warn", Failed: "danger" };
+	const PAYMENT_STATUSES = ["Paid", "Processing", "Link Sent", "Failed", "Expired", "Refunded"];
+
+	// A yes/no setting as a word in a status chip: the word is the meaning, the colour repeats it.
+	function setting(label, on, words, off_tone) {
+		return { label, value: on ? words[0] : words[1], tone: on ? "good" : off_tone };
 	}
 
-	function render(data) {
+	// The connection and its settings as one tile, and a tile per payment status: sf_kit draws both,
+	// escapes every value, and gives each status a chip that says its word. The recent payments
+	// table's status column is a kit chip too.
+	function render(sf, data) {
+		const esc = sf.esc;
 		const s = data.settings || {};
 		const c = data.counts || {};
 		const connected = s.status === "Connected";
 
-		const config = [
-			[__("Environment"), s.environment],
-			[__("Enabled"), s.enabled ? __("Yes") : __("No")],
-			[__("Secret key"), s.has_secret_key ? "✓" : "✗"],
-			[__("Webhook secret"), s.has_webhook_secret ? "✓" : "✗"],
-			[__("Deposit account"), s.deposit_account || "—"],
-			[__("Card mode"), s.card_mode_of_payment || "—"],
-			[__("ACH mode"), s.ach_mode_of_payment || (s.enable_ach ? "—" : __("disabled"))],
-			[__("Last webhook"), s.last_webhook_at ? frappe.datetime.str_to_user(s.last_webhook_at) : "—"],
-		]
-			.map(
-				([k, v]) =>
-					`<div class="col-sm-3" style="margin-bottom:8px;"><div class="text-muted small">${k}</div><div>${esc(v)}</div></div>`,
-			)
-			.join("");
+		const connection = {
+			key: "connection",
+			title: __("Connection"),
+			tone: connected ? "good" : "warn",
+			status_label: s.status || __("Not Configured"),
+			detail: s.status_message,
+			metrics: [
+				{ label: __("Environment"), value: s.environment || "—" },
+				setting(__("Enabled"), s.enabled, [__("Yes"), __("No")], "warn"),
+				setting(__("Secret key"), s.has_secret_key, [__("Set"), __("Missing")], "danger"),
+				setting(__("Webhook secret"), s.has_webhook_secret, [__("Set"), __("Missing")], "danger"),
+				{ label: __("Deposit account"), value: s.deposit_account || "—" },
+				{ label: __("Card mode"), value: s.card_mode_of_payment || "—" },
+				{ label: __("ACH mode"), value: s.ach_mode_of_payment || (s.enable_ach ? "—" : __("disabled")) },
+				{ label: __("Last webhook"), value: s.last_webhook_at ? frappe.datetime.str_to_user(s.last_webhook_at) : "—" },
+			],
+		};
 
-		const tiles = ["Paid", "Processing", "Link Sent", "Failed", "Expired", "Refunded"]
-			.map(
-				(k) =>
-					`<div class="col-sm-2"><div class="card" style="padding:10px;text-align:center;">
-						<div style="font-size:22px;font-weight:600;">${c[k] || 0}</div>
-						<div class="indicator-pill ${statusColor(k)}">${__(k)}</div>
-					</div></div>`,
-			)
-			.join("");
+		const counts = PAYMENT_STATUSES.map((k) => ({
+			key: k,
+			tone: STATUS_TONE[k] || "neutral",
+			status_label: __(k),
+			value: c[k] || 0,
+		}));
 
 		const rows = (data.recent || [])
 			.map(
@@ -128,23 +131,20 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 				<td><a href="/desk/stripe-payment/${encodeURIComponent(r.name)}">${esc(r.name)}</a></td>
 				<td>${esc(r.customer)}</td>
 				<td>${r.sales_invoice ? `<a href="/desk/sales-invoice/${encodeURIComponent(r.sales_invoice)}">${esc(r.sales_invoice)}</a>` : "—"}</td>
-				<td class="text-right">${format_currency(r.amount, r.currency)}</td>
+				<td class="text-right">${esc(format_currency(r.amount, r.currency))}</td>
 				<td>${esc(r.payment_method_type || "—")}</td>
-				<td><span class="indicator-pill ${statusColor(r.status)}">${esc(r.status)}</span></td>
+				<td>${sf.chip(r.status, STATUS_TONE[r.status] || "neutral")}</td>
 				<td>${r.payment_entry ? `<a href="/desk/payment-entry/${encodeURIComponent(r.payment_entry)}">${esc(r.payment_entry)}</a>` : "—"}</td>
 			</tr>`,
 			)
 			.join("");
 
 		$body.html(`
-			<div class="alert ${connected ? "alert-success" : "alert-warning"}" style="margin-bottom:16px;">
-				<b>${esc(s.status || "Not Configured")}</b>${s.status_message ? " — " + esc(s.status_message) : ""}
-			</div>
-			<div class="row">${config}</div>
-			<h5 style="margin-top:16px;">${__("Payments")}</h5>
-			<div class="row">${tiles}</div>
-			<h5 style="margin-top:16px;">${__("Recent Payments")}</h5>
-			<table class="table table-bordered" style="background:var(--card-bg);">
+			${sf.tiles.html([connection])}
+			<h5 style="margin: var(--sf-space-20) 0 var(--sf-space-10);">${__("Payments")}</h5>
+			${sf.tiles.html(counts)}
+			<h5 style="margin: var(--sf-space-20) 0 var(--sf-space-10);">${__("Recent Payments")}</h5>
+			<table class="table table-bordered">
 				<thead><tr>
 					<th>${__("Payment")}</th><th>${__("Customer")}</th><th>${__("Invoice")}</th>
 					<th class="text-right">${__("Amount")}</th><th>${__("Method")}</th><th>${__("Status")}</th><th>${__("Payment Entry")}</th>
@@ -165,7 +165,7 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 				(message) => {
 					if (message) {
 						loaded = true;
-						render(message);
+						render(sf, message);
 					} else if (!loaded) {
 						sf.state.render($body, "empty", {
 							title: __("No dashboard data came back."),

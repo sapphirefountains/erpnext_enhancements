@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.649.0] - 2026-10-13
+
+Custom pages, step 3.2 (TASK-2026-02821): the four health dashboards share one tile renderer,
+`sf_kit.tiles`. Integrations Health, the Device Fleet Dashboard, the QuickBooks Online dashboard and
+the Stripe dashboard each drew their own tiles and status colours, and three of them marked a status
+with a coloured dot or pill and nothing else.
+
+### Added
+
+- **`public/js/health_board.bundle.js`, the one health dashboard.**
+  `window.sf_health_board.mount(page, opts)` asks the server for its health checks and draws them on
+  `sf_kit` tiles. It shows the S3.1 states: the kit's loading panel, then on a failed first load
+  either the error panel with Try again, the no-access panel on a 403, or the signed-out panel with
+  Reload. A Refresh that fails while tiles are showing keeps them and says so in a toast, and a reply
+  that lands after a newer Refresh is dropped. Calls go on the kit's quiet path, so frappe shows no
+  dialog. `tile(check)` maps the shape that `api/integrations_health.py` and `api/device_dashboard.py`
+  both send: the label is the title, the headline and notes are the detail line, and the status and
+  metric tones and the link routes go to the kit unchanged. The bundle gets the kit from
+  `window.sf_kit_ready()` and carries none of its own. Only the two health pages load it, through
+  `frappe.require`.
+- **A tile metric can carry a status tone** (`sf_kit/tiles.js`). `danger` / `warn` / `good`, or
+  `red` / `amber` / `green`, draws the metric's value as a chip of that tone, so the value is the word
+  and the colour only repeats it. Any other tone leaves the value as plain text. The kit bundle's
+  `VERSION` is now 3.
+- **The loader's stand-in has `chip` and `tiles.html`.** With no kit there is no kit stylesheet
+  either, so a chip is its word and a tile is a line of escaped words: title, status, value and
+  detail.
+
+### Changed
+
+- **The Device Fleet Dashboard is a thin caller of the health board.** It was a copy of Integrations
+  Health with its class prefix changed (`dfd-` for `ih-`), complete with its own inline stylesheet
+  and colour map. It is now a page title, a Device Console button and one `mount` call.
+- **Integrations Health** draws every integration through the board. The scheduler and the 24-hour
+  error digest became kit tiles too: a disabled scheduler is a "disabled" chip, and the failures and
+  top errors are metric rows. The Drive tile's **Test connection** button sits in the kit's Drive tile
+  and runs on the quiet path. Each check's result is a Pass / Fail / Not set up chip, replacing a
+  green or red tick, and a failed test says so in the tile instead of a dialog.
+- **QuickBooks Online dashboard:** its four status boxes are kit tiles. The connection is a chip that
+  says its status (Connected is good, Syncing warn, Failed danger, anything else a neutral chip with
+  its word), and the failed-log count carries a chip as well. The tiles show "—" until the status
+  arrives. The S3.1 states, the loader use and the resync poll's 4xx/5xx rules are unchanged.
+- **Stripe dashboard:**
+  - The connection banner (a Bootstrap alert, green or amber) and the eight-setting grid became one
+    kit tile. Its chip is the connection status, and the ✓ / ✗ on the secret key and webhook secret
+    became Set / Missing chips.
+  - The six count boxes are kit tiles. Each one is a chip with the status word above its count.
+  - The recent-payments table shows each status as a kit chip.
+  - `statusColor`, the map from payment status to Frappe indicator colour, is gone. The amount
+    column is escaped like every other cell.
+- **The QuickBooks dashboard's CSS no longer ships on every Desk page.**
+  `public/css/quickbooks_online/qbo_dashboard.css` was imported by `desk_addons.bundle.scss`, so
+  every Desk page downloaded it. It is now the page's own `quickbooks_online_dashboard.css`, which
+  `getpage` sends with the page. Once appended to `<head>` that CSS is global, so every selector is
+  scoped under `.qbo-dashboard`. Nothing else used its classes, which the test checks. It follows the
+  app design rules: square edges, `--sf-*` colours and one 767px breakpoint. The status-box rules
+  went with the boxes. The Record Matching page's sheet stays in the bundle.
+
+### Tests
+
+- **`tests/test_s3_health_tiles.py`** (new CI step). It fails the build if any of the four pages or
+  the board:
+  - keeps a status-colour map or a literal colour. This covers hex values, Frappe palette variables,
+    indicator classes, alert colours, inline backgrounds and colour names as map values;
+  - builds tile markup by hand;
+  - writes a status map whose values are not kit tones. A page may say what a status means, never
+    what it looks like.
+
+  It also checks that the Device Fleet page stays a thin caller and that the board keeps the S3.1
+  states. For the QuickBooks stylesheet, it checks that the old file is out of the bundle, that every
+  selector is scoped, and that it follows the design rules.
+- **`scripts/test_s3_page_states.mjs`** now runs both health pages against the real kit:
+  - first-load states, Refresh, stale replies, the stand-in and the Drive test;
+  - the QuickBooks and Stripe tiles: chips with their words, escaped server strings, links through
+    `safe_href`, and no hand-drawn colour.
+- **`scripts/test_sf_kit.mjs`** covers metric tones.
+
 ## [1.648.0] - 2026-10-13
 
 Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.

@@ -1100,6 +1100,37 @@ await test("malformed tile data costs that part, never the grid", () => {
 	assert.equal(tiles_html(null), '<div class="sf-tiles"></div>');
 });
 
+await test("a metric with a status tone is a chip of its value; any other tone is plain text", () => {
+	const html = tiles_html([
+		{
+			title: "A",
+			metrics: [
+				{ label: "Failed", value: 3, tone: "red" },
+				{ label: "Token", value: "<soon>", tone: "amber" },
+				{ label: "Zero", value: 0, tone: "green" },
+				{ label: "Good", value: "ok", tone: "good" },
+				{ label: "Blank", tone: "danger" },
+				{ label: "Neutral", value: 4, tone: "neutral" },
+				{ label: "Pillar", value: 5, tone: "build" },
+				{ label: "Bogus", value: 6, tone: 'x" onclick="y' },
+				{ label: "None", value: 7 },
+			],
+		},
+	]);
+	assert.match(html, /<dt>Failed<\/dt><dd><span class="sf-chip sf-chip--danger">3<\/span><\/dd>/);
+	assert.match(html, /<dt>Token<\/dt><dd><span class="sf-chip sf-chip--warn">&lt;soon&gt;<\/span><\/dd>/);
+	assert.match(html, /<dt>Zero<\/dt><dd><span class="sf-chip sf-chip--good">0<\/span><\/dd>/);
+	assert.match(html, /<dt>Good<\/dt><dd><span class="sf-chip sf-chip--good">ok<\/span><\/dd>/);
+	assert.match(html, /<dt>Blank<\/dt><dd><span class="sf-chip sf-chip--danger">—<\/span><\/dd>/);
+	assert.match(html, /<dt>Neutral<\/dt><dd>4<\/dd>/);
+	assert.match(html, /<dt>Pillar<\/dt><dd>5<\/dd>/);
+	assert.match(html, /<dt>Bogus<\/dt><dd>6<\/dd>/);
+	assert.match(html, /<dt>None<\/dt><dd>7<\/dd>/);
+	assert.doesNotMatch(html, /<soon>|onclick/);
+	// No chip without a word, and the tile's own chip is unaffected by its metrics.
+	assert.doesNotMatch(html, /sf-tile-head"><h3 class="sf-tile-title">A<\/h3><span/);
+});
+
 await test("a tile with no title draws no empty heading", () => {
 	assert.doesNotMatch(tiles_html([{ status: "red" }]), /<h3/);
 	assert.match(tiles_html([{ status: "red" }]), /<div class="sf-tile-head"><span class="sf-chip sf-chip--danger">Failing<\/span><\/div>/);
@@ -1397,7 +1428,7 @@ await test("the bundle installs window.sf_kit once, bound to the page, and injec
 		await import(url(path.join(JS, "sf_kit.bundle.js")));
 		const sf = globalThis.window.sf_kit;
 		assert.ok(sf, "window.sf_kit was not installed");
-		assert.equal(sf.version, 2);
+		assert.equal(sf.version, 3);
 		for (const name of ["esc", "t", "call", "chip", "state", "card", "tiles", "toast", "create_toast", "CSS"]) {
 			assert.ok(name in sf, `window.sf_kit.${name} is missing`);
 		}

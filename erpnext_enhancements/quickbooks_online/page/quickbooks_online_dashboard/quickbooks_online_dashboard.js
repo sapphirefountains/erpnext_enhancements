@@ -5,8 +5,10 @@
  * controls to the whitelisted RPC endpoints under
  * erpnext_enhancements.quickbooks_online.core.api:
  *
- *  - Status tiles (connection, environment, realm id, failed-log count) and a
- *    recent-sync-logs list, populated from `get_dashboard_status` (refresh()).
+ *  - Status tiles (connection, environment, realm id, failed-log count), drawn by
+ *    sf_kit's tiles (renderTiles(), v1.649.0), and a recent-sync-logs list, populated
+ *    from `get_dashboard_status` (refresh()). Its styles are this page's own
+ *    quickbooks_online_dashboard.css, sent with the page, every rule under .qbo-dashboard.
  *  - Per-entity panel: enter a QuickBooks ID and "Sync" a single entity via
  *    `sync_entity` (syncEntity()).
  *  - Toolbar/page actions:
@@ -50,24 +52,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 
 	const root = $(`
 		<div class="qbo-dashboard">
-			<div class="qbo-status-grid">
-				<div class="qbo-status-item">
-					<div class="qbo-label">${__("Connection")}</div>
-					<div class="qbo-value" data-field="status">-</div>
-				</div>
-				<div class="qbo-status-item">
-					<div class="qbo-label">${__("Environment")}</div>
-					<div class="qbo-value" data-field="environment">-</div>
-				</div>
-				<div class="qbo-status-item">
-					<div class="qbo-label">${__("Realm ID")}</div>
-					<div class="qbo-value" data-field="realm_id">-</div>
-				</div>
-				<div class="qbo-status-item">
-					<div class="qbo-label">${__("Failed Logs")}</div>
-					<div class="qbo-value" data-field="failed_records">0</div>
-				</div>
-			</div>
+			<div class="qbo-tiles"></div>
 			<div class="qbo-toolbar">
 				<button class="btn btn-default" data-action="connect">${__("Connect QuickBooks")}</button>
 					<button class="btn btn-default" data-action="disconnect">${__("Disconnect QuickBooks")}</button>
@@ -128,7 +113,8 @@ function qboBareKit() {
 		if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __("Try again")).on("click", o.on_action).appendTo($el);
 	};
 	const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
-	return { esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
+	const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+	return { esc, call, state: { render }, chip: esc, tiles: { html: () => "" }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
 }
 
 // The dashboard on screen, for the resync poll: a lapsed session ends the poll with the same
@@ -185,19 +171,16 @@ function renderEntities(root) {
 	});
 }
 
-// Loaded once, on the way in: the tiles keep their "-" and the log list carries the state.
+// Loaded once, on the way in: the tiles show "—" until it answers, and the log list carries the state.
 function refresh(root) {
 	qboKit().then((sf) => {
 		const list = root.find(".qbo-log-list");
+		renderTiles(sf, root, null);
 		sf.state.render(list, "loading", { title: __("Loading QuickBooks status…") });
 		sf.call("erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status", {}, { quiet: true }).then(
 			(message) => {
 				const data = message || {};
-				const settings = data.settings || {};
-				root.find("[data-field='status']").text(settings.status || "-");
-				root.find("[data-field='environment']").text(settings.environment || "-");
-				root.find("[data-field='realm_id']").text(settings.realm_id || "-");
-				root.find("[data-field='failed_records']").text(data.failed_records || 0);
+				renderTiles(sf, root, data);
 				renderLogs(sf, root, data.latest_logs || []);
 			},
 			(err) => {
@@ -219,6 +202,31 @@ function refresh(root) {
 			},
 		);
 	});
+}
+
+// What a connection status means; how it looks is the kit's (v1.649.0). The same reading as
+// api/integrations_health.py's QuickBooks tile. Any other status is a neutral chip with its word.
+const QBO_CONNECTION_TONE = { Connected: "good", Syncing: "warn", Failed: "danger" };
+
+// The four status tiles, drawn by sf_kit (v1.649.0): the connection is a chip that says its
+// status, the failed-log count a chip in the danger or good tone, and every value is escaped by
+// the kit. `data` is null before the status has loaded.
+function renderTiles(sf, root, data) {
+	const settings = (data && data.settings) || {};
+	const status = data ? String(settings.status || "").trim() : "";
+	const failed = data ? Number(data.failed_records) || 0 : null;
+	root.find(".qbo-tiles").html(
+		sf.tiles.html([
+			status
+				? { key: "status", title: __("Connection"), tone: QBO_CONNECTION_TONE[status] || "neutral", status_label: status }
+				: { key: "status", title: __("Connection"), value: "—" },
+			{ key: "environment", title: __("Environment"), value: settings.environment || "—" },
+			{ key: "realm_id", title: __("Realm ID"), value: settings.realm_id || "—" },
+			failed === null
+				? { key: "failed_records", title: __("Failed Logs"), value: "—" }
+				: { key: "failed_records", title: __("Failed Logs"), value: failed, tone: failed ? "danger" : "good" },
+		]),
+	);
 }
 
 // Every value in a row is the server's, so every one goes through the kit's escape (v1.645.0).

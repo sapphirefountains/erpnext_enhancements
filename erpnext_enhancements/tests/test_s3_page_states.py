@@ -150,7 +150,8 @@ class TestTheSharedLoader(unittest.TestCase):
 		stand_in = self.code[
 			self.code.index("function plain_kit() {") : self.code.index("window.sf_kit_ready")
 		]
-		for piece in ("esc:", "call:", "state: {", "render(el, kind, opts) {", "toast:"):
+		# chip and tiles since S3.2 (v1.649.0): the four dashboards draw their tiles through them.
+		for piece in ("esc:", "call:", "state: {", "render(el, kind, opts) {", "toast:", "chip:", "tiles: { html:"):
 			with self.subTest(piece=piece):
 				self.assertIn(piece, stand_in)
 		# A failed call rejects in the kit's own shape, read by rejection() below.

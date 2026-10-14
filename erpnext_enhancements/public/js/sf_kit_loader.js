@@ -80,10 +80,21 @@
 		return { status, message, exc_type, session_expired: expired };
 	}
 
-	// The kit's shape without the kit: what a page uses of it (esc, call, state.render, toast).
+	// The kit's shape without the kit: what a page uses of it (esc, call, state.render, toast, chip,
+	// tiles.html). A chip is its word, and a tile a line of text (title, status word, value,
+	// detail): with no kit there is no kit stylesheet either, so markup shaped like the kit's would
+	// draw as an unstyled jumble. The words carry the meaning, so nothing a page says is lost.
 	function plain_kit() {
+		const escape = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+		const filled = (v) => v != null && typeof v !== "object" && String(v).trim() !== "";
+		const line = (item) =>
+			item && typeof item === "object"
+				? `<p>${[item.title, item.status_label, item.value, item.detail].filter(filled).map(escape).join(" · ")}</p>`
+				: "";
 		return {
-			esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
+			esc: escape,
+			chip: (label) => escape(label),
+			tiles: { html: (items) => `<div>${(Array.isArray(items) ? items : []).map(line).join("")}</div>` },
 			call: (method, args, opts) =>
 				Promise.resolve(
 					frappe.call({
