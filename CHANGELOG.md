@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.677.2] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open closes only the dialog, for real this time.** v1.677.1
+  shipped the wrong cause and changed nothing on prod: Back still closed the New Contact dialog
+  and left the step.
+  - **The cause:** v16's `QuickEntryForm` *is* the frappe Dialog (`extends frappe.ui.Dialog`; its
+    `.dialog` is itself), so the entry never needed unwrapping. What stopped it was timing.
+    `make_quick_entry`'s promise resolves while the modal is still animating in, and
+    `Dialog.display` turns true only on `shown.bs.modal`. `PartyEntry.track` read
+    `display === false` at that moment as "the full form opened instead" and returned before
+    joining the planner kit's history guard.
+  - **The fix:** it now joins once the dialog has shown (`shown.bs.modal`), or at once if it is
+    already showing. A quick entry that routed to the full form never shows, so it never joins.
+  - **Measured on prod before the change:** the resolved entry had `display: false`, which was
+    `true` 1.5 s later. Registering the shown dialog with `planner_kit.guard` by hand made Back
+    close only the dialog, and Cancel stay on the step.
+  - **Corrected below:** the v1.677.1 entry's explanation is wrong; `dialog_of` stays as a
+    harmless normalizer.
+
 ## [1.677.1] - 2026-10-14
 
 ### Fixed
