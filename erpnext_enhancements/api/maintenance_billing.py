@@ -44,6 +44,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, add_years, cint, flt, formatdate, getdate, nowdate
 
+from erpnext_enhancements.sapphire_maintenance import chemical_billing
+
 RECURRING_FREQUENCIES = ("Monthly", "Quarterly", "Annually")
 PERIODS_PER_YEAR = {"Monthly": 12, "Quarterly": 4, "Annually": 1}
 #: The cadence a billing season applies to (Monthly only; see the module docstring).
@@ -290,26 +292,14 @@ def _append_unbilled_consumables(invoice, contract, period_end):
         pluck="name",
     )
     for record in records:
-        for row in frappe.get_all(
+        rows = frappe.get_all(
             "Sapphire Maintenance Consumable",
             filters={"parent": record, "parenttype": "Sapphire Maintenance Record"},
-            fields=["item", "qty"],
-        ):
-            if not row.item or flt(row.qty) <= 0:
-                continue
-            invoice.append(
-                "items",
-                {
-                    "item_code": row.item,
-                    "qty": flt(row.qty),
-                    "rate": frappe.db.get_value(
-                        "Item Price",
-                        {"item_code": row.item, "price_list": "Standard Selling"},
-                        "price_list_rate",
-                    )
-                    or 0,
-                },
-            )
+            fields=["name", "item", "qty", "uom", "bill_as", "containers"],
+        )
+        # Per dose, whole container or not at all, as the reviewer chose (v1.627.0).
+        for line in chemical_billing.invoice_lines(rows, visit=record):
+            invoice.append("items", line)
     return records
 
 

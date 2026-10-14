@@ -38,7 +38,13 @@ import frappe
 from frappe import _
 from frappe.utils import cint, escape_html, get_datetime, get_url_to_form, getdate, nowdate
 
-from erpnext_enhancements.sapphire_maintenance import follow_ups, missed_visits, review_digest, visit_report
+from erpnext_enhancements.sapphire_maintenance import (
+	chemical_billing,
+	follow_ups,
+	missed_visits,
+	review_digest,
+	visit_report,
+)
 
 DOCTYPE = "Sapphire Maintenance Record"
 REVIEW_STATE = "Pending Review"
@@ -112,6 +118,8 @@ def get_review_visit(record):
 				"first_visit",
 			)
 		},
+		# How each chemical bills, chosen on approval (v1.627.0).
+		"chemicals": chemical_billing.review_rows(doc),
 		"position": index + 1 if index >= 0 else None,
 		"total": len(names),
 		"next": _after(names, index) if index >= 0 else (others[0] if others else None),
@@ -120,8 +128,13 @@ def get_review_visit(record):
 
 
 @frappe.whitelist(methods=["POST"])
-def approve_visit(record, modified=None):
-	"""Approve & Submit, as the reviewer. The approval chain runs on submit, as from the form."""
+def approve_visit(record, modified=None, chemicals=None):
+	"""Approve & Submit, as the reviewer. The approval chain runs on submit, as from the form.
+
+	``chemicals`` (v1.627.0): how each chemical bills, [{row, bill_as, containers}], from the
+	page. Written to the rows before the workflow runs, because ``apply_workflow`` reloads the
+	visit from the database, and the invoice drafted on submit reads them.
+	"""
 	_check_access()
 	doc = _get(record)
 	_check_waiting(doc)
@@ -129,6 +142,14 @@ def approve_visit(record, modified=None):
 	approve, _send_back, blocked = _actions(doc)
 	if not approve:
 		frappe.throw(blocked or _("You cannot approve visits."), frappe.PermissionError)
+
+	for row, (bill_as, containers) in chemical_billing.checked_choices(doc.get("consumables"), chemicals).items():
+		frappe.db.set_value(
+			"Sapphire Maintenance Consumable",
+			row,
+			{"bill_as": bill_as, "containers": containers},
+			update_modified=False,
+		)
 
 	from frappe.model.workflow import apply_workflow
 
