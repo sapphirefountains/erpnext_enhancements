@@ -1060,6 +1060,10 @@ doc_events = {
 			# Form kit P2-A: the Requested Start/End Dates and the event schedule (delivery, setup,
 			# event, take down) out of order warn once, never block. See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
+			# Form kit P5.5: entering a stage sets the stage's default probability (Sales Activity
+			# Settings) unless the probability was set by hand; typing one marks it so. Does nothing
+			# without the custom field or the table; never raises.
+			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
 		],
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",

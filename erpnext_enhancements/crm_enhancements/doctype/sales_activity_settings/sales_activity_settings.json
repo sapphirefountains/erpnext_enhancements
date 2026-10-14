@@ -6,20 +6,34 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "inactivity_threshold"
+  "inactivity_threshold",
+  "forecast_section",
+  "stage_probabilities"
  ],
  "fields": [
   {
    "fieldname": "inactivity_threshold",
    "fieldtype": "Int",
    "label": "Inactivity Notification Threshold (Days)"
+  },
+  {
+   "description": "When an Opportunity moves to a stage listed here, its Probability becomes that stage's number, unless someone typed the probability on that deal (it is then marked Probability Set by Hand and kept). A stage not listed leaves the probability as it is. On Hold deals stay out of the forecast whatever their probability.",
+   "fieldname": "forecast_section",
+   "fieldtype": "Section Break",
+   "label": "Forecast Probability by Stage"
+  },
+  {
+   "fieldname": "stage_probabilities",
+   "fieldtype": "Table",
+   "label": "Stage Probabilities",
+   "options": "Opportunity Stage Probability"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-09 21:30:00.000000",
+ "modified": "2026-10-13 19:00:00.000000",
  "modified_by": "nikolas.bradshaw@sapphirefountains.com",
  "module": "CRM Enhancements",
  "name": "Sales Activity Settings",

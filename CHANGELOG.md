@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.627.0] - 2026-10-13
+
+Form kit P5.5 (TASK-2026-02772): a default forecast probability for each Opportunity stage, which Sales
+can override per deal. These are Nik's numbers of 2026-10-13: Qualification 10%, Needs Analysis 25%,
+Proposal/Price Quote 50%, Negotiation/Review 75%.
+
+### Added
+
+- **A Forecast Probability by Stage table in Sales Activity Settings** (`stage_probabilities`, rows of
+  the new child doctype Opportunity Stage Probability).
+  - Validation: one row per stage, values from 0 to 100.
+  - The stage is `Opportunity.status`. ERPNext's `sales_stage` reads "Prospecting" on nearly every
+    deal here and is not used.
+  - On Hold has no row: it stays out of the forecast, so a deal's probability is left alone while it
+    is on hold.
+- **Probability Set by Hand** (`custom_probability_by_hand`), a check on Opportunity just after
+  Probability. The rule runs on every save (`crm_enhancements.opportunity_probability`,
+  Opportunity `validate`):
+  - **Entering a stage** takes that stage's default.
+  - **Typing a probability** (in the Desk, by import or through the API) ticks the box, and a later
+    stage change keeps the typed number. Changing the stage and the probability in one save counts
+    as typing it.
+  - **Unticking the box** puts the deal back on its stage's default at once.
+  - **A new deal** takes its stage's default unless it arrives with a probability other than
+    ERPNext's field default of 100.
+  - **Safeguards:** with no field or an empty table the rule does nothing, it never raises, and an
+    unexpected error is logged once per request.
+  - The field is created in code (`patches/add_opportunity_probability_by_hand`), like the
+    procurement fields. The backfill writes it on the same migrate, and patches run before fixtures
+    sync. The Opportunity `field_order` places it after `probability`; the lesson from v1.625.1 is
+    that a field missing from that hand-kept list lands somewhere unpredictable.
+- **`patches/seed_opportunity_stage_probabilities`** writes the four rows into an empty table only.
+  It inserts the child rows without saving the Single: writing part of a never-saved Single blanks
+  its other fields.
+- **`patches/backfill_opportunity_probability`** applies the dry run reviewed on TASK-2026-02772:
+  - **37 open deals move to their stage default.** They sat at exactly 100, ERPNext's field default,
+    and their version history shows no one ever typed it: Qualification 12, Needs Analysis 18,
+    Proposal/Price Quote 1, Negotiation/Review 6.
+  - **10 deals keep their number and are marked Set by Hand.** These are the 2 open deals and 8 On
+    Hold deals at any other value (20%–90%, mostly from the Zoho import).
+  - **Left as they are:** On Hold at 100, Closed Won and Lost.
+  - Writes use `update_modified=False`. It cannot raise and is safe to run twice.
+- `tests/test_opportunity_probability.py` (31 tests) gets its own CI step. `test_form_kit` gains the
+  code-owned field and checks its definition against the module's.
+
 ## [1.626.0] - 2026-10-13
 
 Custom pages, step 2 of 7 (TASK-2026-02804; subtasks 02816–02819): `sf_kit`, the shared page pieces,

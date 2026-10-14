@@ -1681,6 +1681,12 @@ jobs:
       # lists. Own frappe stub, so its own step.
       - name: Form kit engine (steps, saves, completeness)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
+      # Form kit P5.5, the default forecast probability per Opportunity stage
+      # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
+      # its default unless the probability was set by hand; the seed never saves the Single; the
+      # backfill moves only deals at ERPNext's default 100; nothing can raise. Own frappe stub.
+      - name: Opportunity stage probability (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_probability -v
       # Form kit P2-A. The normalization library (utils/normalize.py) and its JavaScript
       # twin (public/js/normalize/normalize.js) run the SAME 163 cases from
       # tests/fixtures/normalize_cases.json, so the Desk and the server cannot disagree

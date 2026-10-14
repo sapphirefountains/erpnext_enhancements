@@ -1386,3 +1386,11 @@ erpnext_enhancements.patches.normalize_stored_values
 # the two training review pages, a page title), retires the Hierarchical Task View page (its sidebar/shortcut rows,
 # then the Page, without force) and moves the seeded /app/projects Desk Shortcut to /desk. Cannot raise, safe twice.
 erpnext_enhancements.patches.custom_pages_s1_navigation
+# Form kit P5.5 (v1.627.0): a default forecast probability per Opportunity stage, Sales can override. Three steps,
+# in this order: create the Probability Set by Hand check (code-owned: the backfill writes it before fixtures sync);
+# seed Sales Activity Settings' stage table (10/25/50/75, Nik 2026-10-13) only when empty, inserting child rows
+# without saving the Single; move open deals sitting at ERPNext's default 100 to their stage default and mark the
+# rest set by hand (the dry run approved on TASK-2026-02772). update_modified=False. Each cannot raise, safe twice.
+erpnext_enhancements.patches.add_opportunity_probability_by_hand
+erpnext_enhancements.patches.seed_opportunity_stage_probabilities
+erpnext_enhancements.patches.backfill_opportunity_probability
