@@ -5,13 +5,15 @@
  * under plain node. Everything a person typed (a task subject, a site name, a note) goes through
  * `escape` before it becomes HTML; a color goes through `safe_color` before it reaches a style
  * attribute, because colors come from records people edit too.
+ *
+ * `escape` is sf_kit's `esc` (public/js/sf_kit/esc.js), the one escaping helper every custom page
+ * shares, under the name the planner modules already import. The planner suites that run this
+ * file as plain script text put sf_kit/esc.js in front of it.
  */
 
-const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
+import { esc } from "../sf_kit/esc.js";
 
-export function escape(value) {
-	return (value === null || value === undefined ? "" : String(value)).replace(/[&<>"'`]/g, (ch) => ENTITIES[ch]);
-}
+export const escape = esc;
 
 // Only a plain hex value goes into a style attribute.
 export function safe_color(value, fallback) {

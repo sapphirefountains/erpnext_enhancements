@@ -55,6 +55,8 @@ PP_JS = APP / "project_enhancements/page/project_planner/project_planner.js"
 MP_JS = APP / "sapphire_maintenance/page/maintenance_planner/maintenance_planner.js"
 KIT_DIR = APP / "public/js/planner_kit"
 BIG_PICTURE = KIT_DIR / "big_picture.js"
+# planner_kit/escape.js re-exports this file's esc as `escape`, so the plain-script harness loads it first.
+SF_ESC = APP / "public/js/sf_kit/esc.js"
 BUNDLE = APP / "public/js/planner_kit.bundle.js"
 CI = REPO_ROOT / ".github/workflows/ci.yml"
 API_README = APP / "api/README.md"
@@ -1224,7 +1226,11 @@ class TestUnderNode(unittest.TestCase):
 			raise unittest.SkipTest("node is not on PATH")
 		cls.node = node
 		payload = {
-			"kit": _module_source(KIT_DIR / "escape.js") + "\n" + _module_source(BIG_PICTURE),
+			"kit": _module_source(SF_ESC)
+			+ "\n"
+			+ _module_source(KIT_DIR / "escape.js")
+			+ "\n"
+			+ _module_source(BIG_PICTURE),
 			"pp": PP_JS.read_text(encoding="utf-8"),
 			"mp": MP_JS.read_text(encoding="utf-8"),
 			"hash_keys": HASH_KEYS,

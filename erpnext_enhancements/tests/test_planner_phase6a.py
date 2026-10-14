@@ -56,6 +56,8 @@ VIEWS = APP / "api/planner_views.py"
 PP_JS = APP / "project_enhancements/page/project_planner/project_planner.js"
 MP_JS = APP / "sapphire_maintenance/page/maintenance_planner/maintenance_planner.js"
 KIT_DIR = APP / "public/js/planner_kit"
+# planner_kit/escape.js re-exports this file's esc as `escape`, so the plain-script harness loads it first.
+SF_ESC = APP / "public/js/sf_kit/esc.js"
 BUNDLE = APP / "public/js/planner_kit.bundle.js"
 HOOKS = APP / "hooks.py"
 CI = REPO_ROOT / ".github/workflows/ci.yml"
@@ -1238,7 +1240,8 @@ class TestPages(unittest.TestCase):
 
 def _kit_source():
 	"""The kit's pure modules as one plain script: imports dropped, `export` taken off."""
-	parts = []
+	sf_esc = SF_ESC.read_text(encoding="utf-8")
+	parts = [re.sub(r"^export (const|function|class) ", r"\1 ", sf_esc, flags=re.M)]
 	for name in ("escape", "history", "legend", "peeks"):
 		text = (KIT_DIR / f"{name}.js").read_text(encoding="utf-8")
 		text = re.sub(r"^import .*?;\s*$", "", text, flags=re.M)

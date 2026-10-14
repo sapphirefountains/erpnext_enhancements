@@ -1,0 +1,392 @@
+/*
+ * sf_kit: the kit's stylesheet as text, for a Custom HTML Block. A block renders inside a shadow
+ * root, which a page's stylesheet does not reach (the --sf-* tokens still do: custom properties
+ * inherit across the boundary). So a block adopts this text into its own root:
+ *
+ *   const sheet = new CSSStyleSheet();
+ *   sheet.replaceSync(sf_kit.CSS);
+ *   root_element.adoptedStyleSheets = [...root_element.adoptedStyleSheets, sheet];
+ *
+ * A Desk page does not use this: it loads public/css/sf_kit.bundle.css with frappe.require, and
+ * the bundle never injects CSS from JS.
+ *
+ * The .css file is the source and this is a copy of it, character for character, because that is
+ * the simplest thing that works under both builds: frappe's esbuild gives a .css import from JS
+ * no text loader, and a stylesheet generated from JS would not be a bundle frappe.require can
+ * load. tests/test_sf_kit.py and scripts/test_sf_kit.mjs fail when the two differ. To change a
+ * rule, edit sf_kit.bundle.css and paste the whole file between the backticks below.
+ */
+
+export const CSS = `/*
+ * sf_kit: the shared page pieces, styled from the app design tokens (sf_tokens.bundle.css, global)
+ * by docs/app-design-system.md. Loaded only by a page that uses the kit:
+ *   frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ...)
+ *
+ * public/js/sf_kit/styles.js exports this same text as CSS, for a Custom HTML Block to adopt into
+ * its shadow root (a stylesheet does not cross the shadow boundary; the --sf-* tokens do). This
+ * file is the source; tests/test_sf_kit.py fails the build when the two differ, so edit here and
+ * paste the whole file between the backticks there. No backslash, backtick or dollar-brace in
+ * this file, so the paste is exact.
+ *
+ * The rules the test holds: every colour is a --sf-* token (or transparent / currentColor), no
+ * shadow, radii only from --sf-radius-*, every class sf-, and the only media queries are the phone
+ * width and reduced motion.
+ */
+
+/* ---- State panel: loading, empty, error, no access. Page content, never an overlay. ---- */
+.sf-state {
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-40) var(--sf-space-20);
+	text-align: center;
+	font-family: var(--sf-font-sans);
+	color: var(--sf-text);
+}
+.sf-state-title {
+	margin: 0;
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	line-height: var(--sf-leading-body);
+	color: var(--sf-text-strong);
+}
+.sf-state-body {
+	margin: 0;
+	max-width: 520px;
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+	color: var(--sf-text-muted);
+}
+.sf-state-spinner {
+	box-sizing: border-box;
+	width: 28px;
+	height: 28px;
+	border: var(--sf-border-control) solid var(--sf-rule);
+	border-top-color: var(--sf-focus);
+	border-radius: var(--sf-radius-circle);
+	animation: sf-spin 900ms linear infinite;
+}
+@keyframes sf-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.sf-state-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1;
+}
+.sf-state-action {
+	margin-top: var(--sf-space-5);
+}
+
+/* ---- Chip: a pill with a word. Pillar: closing-stop fill, opening-stop edge. ---- */
+.sf-chip {
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+	padding: 1px var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-pillar-neutral);
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-pillar-neutral-deep);
+	color: var(--sf-on-pillar);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	line-height: var(--sf-leading-body);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	vertical-align: middle;
+}
+.sf-chip--design {
+	background: var(--sf-pillar-design-deep);
+	border-color: var(--sf-pillar-design);
+}
+.sf-chip--build {
+	background: var(--sf-pillar-build-deep);
+	border-color: var(--sf-pillar-build);
+}
+.sf-chip--service {
+	background: var(--sf-pillar-service-deep);
+	border-color: var(--sf-pillar-service);
+}
+.sf-chip--rent {
+	background: var(--sf-pillar-rent-deep);
+	border-color: var(--sf-pillar-rent);
+}
+.sf-chip--danger {
+	background: var(--sf-danger);
+	border-color: var(--sf-danger);
+	color: var(--sf-on-danger);
+}
+.sf-chip--warn {
+	background: var(--sf-warn);
+	border-color: var(--sf-warn);
+	color: var(--sf-on-warn);
+}
+.sf-chip--good {
+	background: var(--sf-good);
+	border-color: var(--sf-good);
+	color: var(--sf-on-good);
+}
+
+/* ---- Card: square, surface, hairline, no shadow; a pillar card leads with its closing stop. ---- */
+.sf-card {
+	box-sizing: border-box;
+	min-width: 0;
+	padding: var(--sf-space-15) var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+}
+.sf-card--pillar-design {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-design-deep);
+}
+.sf-card--pillar-build {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-build-deep);
+}
+.sf-card--pillar-service {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-service-deep);
+}
+.sf-card--pillar-rent {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-rent-deep);
+}
+.sf-card--pillar-neutral {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-neutral-deep);
+}
+.sf-card-title {
+	margin: 0 0 var(--sf-space-10);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+/* ---- Buttons. Hover changes colour only; focus is a visible 2px ring. ---- */
+.sf-btn {
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-20);
+	border: var(--sf-border-control) solid transparent;
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1.2;
+	text-transform: none;
+	text-decoration: none;
+	cursor: pointer;
+	transition: background-color var(--sf-duration) var(--sf-ease), border-color var(--sf-duration) var(--sf-ease), color var(--sf-duration) var(--sf-ease);
+}
+.sf-btn:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.sf-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+.sf-btn--primary {
+	border-color: var(--sf-primary);
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+.sf-btn--primary:not(:disabled):hover {
+	border-color: color-mix(in srgb, var(--sf-primary) 85%, var(--sf-text-strong));
+	background: color-mix(in srgb, var(--sf-primary) 85%, var(--sf-text-strong));
+}
+.sf-btn--secondary {
+	border-color: var(--sf-text);
+	color: var(--sf-text);
+}
+.sf-btn--secondary:not(:disabled):hover {
+	background: color-mix(in srgb, var(--sf-text) 10%, transparent);
+}
+.sf-btn--quiet {
+	padding: 0 var(--sf-space-10);
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+.sf-btn--quiet:not(:disabled):hover {
+	background: color-mix(in srgb, var(--sf-link) 10%, transparent);
+}
+
+/* ---- Toast: inverted, so it stands out on the light page and the dark one alike. ---- */
+.sf-toast {
+	position: fixed;
+	left: 50%;
+	bottom: var(--sf-space-20);
+	transform: translateX(-50%);
+	z-index: 1046;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	max-width: min(560px, calc(100vw - 24px));
+	min-height: var(--sf-touch-min);
+	padding: 0 0 0 var(--sf-space-15);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+}
+.sf-toast-success {
+	border-left: var(--sf-space-5) solid var(--sf-good);
+}
+.sf-toast-warning {
+	border-left: var(--sf-space-5) solid var(--sf-warn);
+}
+.sf-toast-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: var(--sf-space-10) 0;
+}
+.sf-toast-action,
+.sf-toast-close {
+	box-sizing: border-box;
+	min-height: var(--sf-touch-min);
+	border: 0;
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: inherit;
+	font-family: inherit;
+	cursor: pointer;
+}
+.sf-toast-action {
+	padding: 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+}
+.sf-toast-close {
+	min-width: var(--sf-touch-min);
+	font-size: var(--sf-text-lg);
+	line-height: 1;
+}
+.sf-toast-action:hover,
+.sf-toast-close:hover {
+	background: color-mix(in srgb, currentColor 15%, transparent);
+}
+/* The page's focus colour can sit too close to the inverted ground; the toast's own text colour
+   always clears it. */
+.sf-toast-action:focus-visible,
+.sf-toast-close:focus-visible {
+	outline: var(--sf-border-control) solid currentColor;
+	outline-offset: -4px;
+}
+
+/* ---- Tiles: a health-style grid of cards, each with a status chip. ---- */
+.sf-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+	gap: var(--sf-space-15);
+}
+.sf-tile {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+.sf-tile-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+}
+.sf-tile-title {
+	margin: 0;
+	min-width: 0;
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+	overflow-wrap: anywhere;
+}
+.sf-tile-value {
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1.1;
+	color: var(--sf-text-strong);
+}
+.sf-tile-detail {
+	margin: 0;
+	color: var(--sf-text-muted);
+}
+.sf-tile-metrics {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	margin: 0;
+}
+.sf-tile-metric {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	padding-bottom: var(--sf-space-5);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.sf-tile-metric dt {
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-text-muted);
+}
+.sf-tile-metric dd {
+	margin: 0;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+	text-align: right;
+}
+.sf-tile-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5) var(--sf-space-15);
+}
+.sf-tile-link {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+.sf-tile-link--plain {
+	color: var(--sf-text-muted);
+	text-decoration: none;
+}
+
+/* ---- Phones: the toast spans the width above the home indicator. ---- */
+@media (max-width: 767px) {
+	.sf-toast {
+		left: var(--sf-space-10);
+		right: var(--sf-space-10);
+		bottom: calc(var(--sf-space-10) + env(safe-area-inset-bottom));
+		transform: none;
+		max-width: none;
+	}
+}
+
+/* ---- Reduced motion: nothing turns or fades; "Loading" still says what is happening. ---- */
+@media (prefers-reduced-motion: reduce) {
+	.sf-state-spinner {
+		animation: none;
+	}
+	.sf-btn {
+		transition: none;
+	}
+}
+`;

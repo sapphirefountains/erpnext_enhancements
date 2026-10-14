@@ -1648,6 +1648,17 @@ jobs:
       # clears 4.5:1 and every boundary 3:1 in light AND dark. Reads files only, no stub.
       - name: App design tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_app_design_tokens -v
+      # sf_kit, the shared page pieces every custom page and Custom HTML Block draws from (state
+      # panels, chips, cards, buttons, toasts, status tiles, esc, call). The node step runs every
+      # primitive: call() settles once for each reply v16's request.js can give (200, 417, 500,
+      # network, no callback at all), escaping, the one action button, and planner_kit's toast
+      # markup byte for byte against what it drew before it moved into the kit. The unittest step
+      # holds the stylesheet to the guide (tokens only, no shadow, two media queries, sf- classes),
+      # the shadow-root copy in styles.js to the .css, and the bundle out of app_include_*.
+      - name: sf_kit page pieces (every primitive, node)
+        run: node scripts/test_sf_kit.mjs
+      - name: sf_kit page pieces (stylesheet rules + wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_sf_kit -v
       # Form kit P4-A, the guided-entry engine (form_kit/): an Opportunity's form walked into
       # steps against the real v16 meta plus this app's custom fields and property setters
       # (every field the form shows is in the flow), permissions per field as the Desk works
