@@ -46,11 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     checks, `save(ignore_permissions=True)`, the realtime publish and the `(board, updated_cards)`
     return mirror frappe's, and the stored values are read in one `IN` query instead of one `get_value`
     per card (the Opportunity board sends 800+ names). Every Kanban board on the site goes through it.
-  - **The first board open after this deploys removes 00178's stale entry.** Until then, every open
-    sends the email again. The data the flips changed on 00178 is not restored by this release: its
-    `probability` is 25 and its `custom_stage_changed_on` is 2026-10-13 21:09 (the win was
-    2026-10-12 16:17:57). `custom_date_closed_won` (10-12) and the hand-off deadlines were never
-    touched.
+  - **00178 was repaired by hand on prod on 2026-10-13, before this release.** Its stale entry was
+    removed from the board's Needs Analysis order (no Opportunity is now listed under a column that
+    is not its status), and its `probability` (25 → 100) and `custom_stage_changed_on`
+    (2026-10-13 21:09 → 2026-10-12 16:17:57, the win) were put back. `custom_probability_by_hand`,
+    which the probability rule ticks on any probability change, was unticked in a second save. None
+    of those saves sent an email. `custom_date_closed_won` (10-12) and the hand-off deadlines were
+    never touched by the flips. On another board the first open after this deploys prunes any stale
+    entry the same way.
   - **Not done: a once-per-deal guard on the notification itself.** The obvious one is a condition
     reading the won date from before the save. That fails as a Notification condition.
     `Notification.validate_condition` evaluates it against `new_doc(...).as_dict()`, a plain dict, so
