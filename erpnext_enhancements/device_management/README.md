@@ -19,7 +19,7 @@ and remote lock/wipe.
 | `tasks.py` | Daily nudges — warranty lead-time (to Device Managers) and stale attestation (to the holder). Stamp-first / at-most-once. |
 | `setup.py` | `after_migrate` — adds the Employee "Assigned Devices" panel field (insert-only). |
 | `page/device_console/` | Mobile-first scan → check-in/out/transfer/repair/lost, and enroll-on-unknown-scan. |
-| `page/device_fleet_dashboard/` | Green/amber/red fleet snapshot (status, compliance, attestation, warranty). |
+| `page/device_fleet_dashboard/` | Fleet snapshot (status, compliance, attestation, warranty). A thin caller of the shared health board (`public/js/health_board.bundle.js`, v1.651.0), the same one Integrations Health uses: sf_kit tiles, each status a chip with its word. |
 
 API lives at the top level alongside the other feature APIs:
 - `api/device_management.py` — scan resolution + lifecycle + self-service attestation.

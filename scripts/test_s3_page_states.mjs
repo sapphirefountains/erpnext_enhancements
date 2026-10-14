@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Custom pages S3.1 (v1.645.0): four Desk pages run against the REAL sf_kit.
+ * Custom pages S3.1 (v1.645.0): four Desk pages run against the REAL sf_kit (six since S3.2).
  *
  * The Maintenance Day Board, the Stripe and QuickBooks dashboards and the Water Engineering Wizard
  * are loaded into a vm context the way the Desk loads them: the global bundle's loader
@@ -25,6 +25,14 @@
  *   - with no loader and no kit (an old Desk tab whose kit file is gone), each page still says what
  *     failed and retries; and the loader's own stand-in reads a lapsed session as the kit does.
  *
+ * S3.2 (v1.651.0, TASK-2026-02821) adds the tiles. Integrations Health and the Device Fleet
+ * Dashboard join through the shared health board (public/js/health_board.bundle.js, run in the
+ * page's context as the Desk's script tag would): the same first-load states, a Refresh that fails
+ * keeps the tiles, a stale reply is dropped, and the Drive test answers in its tile. On all four
+ * dashboards every tile is the kit's, every status a chip that says its word (a toned metric
+ * included), every server string escaped, links through the kit's safe_href rule, and no
+ * hand-drawn colour or tile markup survives; on the loader's stand-in a tile is a line of words.
+ *
  * jQuery is a small stand-in over plain objects (each remembers its markup, text, value and
  * handlers); the kit only needs innerHTML and querySelector on the element it is handed.
  *
@@ -40,11 +48,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(HERE, "..", "erpnext_enhancements");
 const LOADER = path.join(APP, "public", "js", "sf_kit_loader.js");
 const BUNDLE = path.join(APP, "public", "js", "sf_kit.bundle.js");
+const HEALTH_BOARD = path.join(APP, "public", "js", "health_board.bundle.js");
 const PAGES = {
 	"maintenance-day-board": "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js",
 	"stripe-payments-dashboard": "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
 	"quickbooks-online-dashboard": "quickbooks_online/page/quickbooks_online_dashboard/quickbooks_online_dashboard.js",
 	"water-engineering-wizard": "water_engineering/page/water_engineering_wizard/water_engineering_wizard.js",
+	"integrations-health": "integration_hub/page/integrations_health/integrations_health.js",
+	"device-fleet-dashboard": "device_management/page/device_fleet_dashboard/device_fleet_dashboard.js",
 };
 
 let checks = 0;
@@ -312,7 +323,12 @@ function openPage(name, options) {
 
 	const body = new El("page-body");
 	const page = new Proxy(
-		{ body, main: body },
+		{
+			body,
+			main: body,
+			// The page's Refresh, so a test can press it.
+			set_primary_action: (label, fn) => (world.primary = fn),
+		},
 		{
 			get(target, key) {
 				if (key in target) return target[key];
@@ -357,6 +373,13 @@ function openPage(name, options) {
 		// callback runs. Another copy of the module per page, as each page load evaluates it afresh.
 		// `kit: false`: the file failed to load, and v16 runs the callback anyway.
 		require(paths, cb) {
+			// The shared health board (S3.2) is a plain script: run it in the page's context, as the
+			// Desk's <script> tag would. `board: false`: it failed to load, and v16 runs cb anyway.
+			if (paths.includes("health_board.bundle.js")) {
+				if (opts.board !== false) vm.runInContext(fs.readFileSync(HEALTH_BOARD, "utf8"), ctx, { filename: HEALTH_BOARD });
+				Promise.resolve().then(() => cb && cb());
+				return;
+			}
 			if (opts.kit === false) {
 				Promise.resolve().then(() => cb && cb());
 				return;
@@ -464,7 +487,7 @@ const FIRST = {
 		host: (p) => p.part("stripe-dashboard"),
 		failed: "Could not load the Stripe Payments dashboard.",
 		refused: "You do not have access to the Stripe Payments dashboard.",
-		drawn: "alert-success",
+		drawn: 'sf-chip sf-chip--good">Connected<',
 	},
 	"quickbooks-online-dashboard": {
 		method: "get_dashboard_status",
@@ -483,7 +506,32 @@ const FIRST = {
 		refused: "You do not have access to Water Feature Designs.",
 		drawn: "we-wrap",
 	},
+	// S3.2 (v1.651.0): the two health pages are drawn by the shared board. It has no no-loader
+	// fallback of the S3.1 kind (`board_only`): see "without the loader" below.
+	"integrations-health": {
+		method: "get_health",
+		ok: { generated_at: "2026-10-13 09:00:00", integrations: [], scheduler: {}, errors: {} },
+		host: (p) => boardContent(p),
+		failed: "Could not load the integration status.",
+		refused: "You do not have access to Integrations Health.",
+		drawn: '<div class="sf-tiles">',
+		board_only: true,
+	},
+	"device-fleet-dashboard": {
+		method: "get_fleet_health",
+		ok: { generated_at: "2026-10-13 09:00:00", total: 0, tiles: [] },
+		host: (p) => boardContent(p),
+		failed: "Could not load the fleet status.",
+		refused: "You do not have access to the Device Fleet Dashboard.",
+		drawn: '<div class="sf-tiles">',
+		board_only: true,
+	},
 };
+
+// The health board's parts: its root under the page body, then the meta line and the content.
+const boardRoot = (p) => p.part("sf-health-board");
+const boardMeta = (p) => boardRoot(p).children.find((c) => c.markup.includes("sf-health-meta"));
+const boardContent = (p) => boardRoot(p).children.find((c) => c.markup.includes("sf-health-content"));
 
 for (const [name, spec] of Object.entries(FIRST)) {
 	test(`${name}: a 500 draws the kit's error panel, and Try again asks again in place`, async () => {
@@ -701,7 +749,7 @@ const pressButton = async (host) => {
 	await settle();
 };
 
-for (const [name, spec] of Object.entries(FIRST)) {
+for (const [name, spec] of Object.entries(FIRST).filter(([, s]) => !s.board_only)) {
 	test(`${name}: no loader and no kit (an old Desk tab after a deploy) still says what failed`, async () => {
 		const p = openPage(name, { loader: false, kit: false, respond: Object.assign({ [spec.method]: SERVER_ERROR }, spec.extra) });
 		await settle();
@@ -737,6 +785,300 @@ test("Loader stand-in: rejects in the kit's shape, expiry read as the kit reads 
 	check("a 403 once v16 has deleted the user_id cookie", (await failure(REFUSED, "sid=Guest")).session_expired, true);
 	check("a 500", await failure(SERVER_ERROR, "sid=abc; user_id=tester%40example.com"), { status: 500, message: "", exc_type: "Exception", session_expired: false });
 	check("a dropped connection", (await failure(NETWORK_DOWN)).status, 0);
+});
+
+// ------------------------------------------------------------------ S3.2: the tiles (v1.651.0)
+
+// One tile's markup out of a grid, by its data-key.
+function section(html, key) {
+	const at = html.indexOf(`data-key="${key}"`);
+	if (at < 0) return "";
+	const end = html.indexOf("</section>", at);
+	return html.slice(at, end);
+}
+
+// Markup a page must never draw: a hand-built status colour, or the tile classes it used to own.
+const HAND_DRAWN = /style="background|indicator-pill|alert-(success|warning|danger)|#[0-9a-fA-F]{6}\b|ih-card|dfd-card|qbo-status-item|ih-dot|dfd-dot|mini-dot/;
+
+const HEALTH = {
+	generated_at: "2026-10-13 09:00:00",
+	integrations: [
+		{
+			key: "quickbooks",
+			label: "QuickBooks <b>Online</b>",
+			status: "red",
+			headline: "Failed",
+			notes: ["Reconnect <script>x()</script>"],
+			metrics: [
+				{ label: "Failed syncs (7d)", value: 3, tone: "red" },
+				{ label: "Last CDC poll", value: "<2 h ago>", tone: "amber" },
+				{ label: "Plain", value: 9, tone: "neutral" },
+			],
+			links: [
+				{ label: "Settings", route: "/desk/quickbooks-online-settings" },
+				{ label: "Evil", route: "javascript:alert(1)" },
+				{ label: "Old", route: "/app/quickbooks-sync-log" },
+			],
+			actions: [],
+		},
+		{ key: "drive", label: "Google Drive", status: "green", headline: "Configured", metrics: [{ label: "Failed (24h)", value: 0, tone: "green" }], links: [], actions: ["drive_test"] },
+		{ key: "ga4", label: "Analytics", status: "neutral", headline: "Not configured", notes: ["Add the GA4 property ID."], metrics: [], links: [] },
+	],
+	scheduler: { status: "red", enabled: false, app_job_count: 12, failed_24h: 2, recent_failures: [{ job: "erpnext_enhancements.x<y>", when: "2 h ago" }] },
+	errors: { status: "amber", total_24h: 4, top: [{ title: "Boom <i>", count: 4 }] },
+};
+
+test("Integrations Health: every tile is the kit's, every status a chip with its word, every string escaped", async () => {
+	const p = openPage("integrations-health", { respond: { get_health: HEALTH } });
+	await settle();
+	const html = boardContent(p).innerHTML;
+	check("asked quietly, not through frappe.call", [count(p.world.sent, "get_health"), count(p.world.frappe_calls, "get_health")], [1, 0]);
+	check("one kit grid of five tiles", [html.startsWith('<div class="sf-tiles">'), (html.match(/<section class="sf-card sf-tile"/g) || []).length], [true, 5]);
+	check("the meta line", boardMeta(p).textContent, "As of 2026-10-13 09:00:00");
+	check("no raw server markup", /<b>Online|<script>|<y>|<i>/.test(html), false);
+	check("the title, escaped", html.includes("QuickBooks &lt;b&gt;Online&lt;/b&gt;"), true);
+	check("a red tile is a Failing chip", section(html, "quickbooks").includes('<span class="sf-chip sf-chip--danger">Failing</span>'), true);
+	check("a green tile is a Healthy chip", section(html, "drive").includes('<span class="sf-chip sf-chip--good">Healthy</span>'), true);
+	check("a neutral tile has no chip, not a grey dot", section(html, "ga4").includes("sf-chip"), false);
+	check(
+		"a toned metric is a chip of its value; a neutral one is text",
+		[
+			html.includes('<dt>Failed syncs (7d)</dt><dd><span class="sf-chip sf-chip--danger">3</span></dd>'),
+			html.includes('<dt>Last CDC poll</dt><dd><span class="sf-chip sf-chip--warn">&lt;2 h ago&gt;</span></dd>'),
+			html.includes("<dt>Plain</dt><dd>9</dd>"),
+		],
+		[true, true, true]
+	);
+	check(
+		"the headline and notes are the detail line",
+		[html.includes("Failed. Reconnect &lt;script&gt;x()&lt;/script&gt;"), html.includes("Not configured. Add the GA4 property ID.")],
+		[true, true]
+	);
+	check(
+		"links go through the kit's safe_href rule",
+		[
+			html.includes('<a class="sf-tile-link" href="/desk/quickbooks-online-settings">Settings</a>'),
+			html.includes('<span class="sf-tile-link sf-tile-link--plain">Evil</span>'),
+			html.includes('<span class="sf-tile-link sf-tile-link--plain">Old</span>'),
+			/javascript:|href="\/app\//.test(html),
+		],
+		[true, true, true, false]
+	);
+	const scheduler = section(html, "scheduler");
+	check(
+		"the scheduler tile",
+		[
+			scheduler.includes('sf-chip--danger">Failing<'),
+			scheduler.includes('<dt>Scheduler</dt><dd><span class="sf-chip sf-chip--danger">disabled</span></dd>'),
+			scheduler.includes("The Frappe scheduler is disabled"),
+			scheduler.includes("erpnext_enhancements.x&lt;y&gt;"),
+		],
+		[true, true, true, true]
+	);
+	const errors = section(html, "errors");
+	check("the error digest tile", [errors.includes('sf-chip--warn">Needs attention<'), errors.includes("<dt>Boom &lt;i&gt;</dt><dd>4</dd>")], [true, true]);
+	check("no hand-drawn colour or tile markup", HAND_DRAWN.test(html), false);
+	check("frappe put up no dialog", p.world.dialogs, []);
+});
+
+test("Device Fleet Dashboard: the same board draws the fleet's tiles", async () => {
+	const fleet = {
+		generated_at: "2026-10-13 09:00:00",
+		total: 5,
+		tiles: [
+			{ key: "fleet", label: "Fleet", status: "red", headline: "4 active · 5 total", metrics: [{ label: "Lost/Stolen", value: 1, tone: "red" }, { label: "In Stock", value: 2, tone: "neutral" }], links: [{ label: "All devices", route: "/desk/managed-device" }] },
+			{ key: "platforms", label: "Platforms <x>", status: "neutral", headline: "2 in use", metrics: [{ label: "iOS", value: 3 }] },
+		],
+	};
+	const p = openPage("device-fleet-dashboard", { respond: { get_fleet_health: fleet } });
+	await settle();
+	const html = boardContent(p).innerHTML;
+	check("the meta line", boardMeta(p).textContent, "5 devices · as of 2026-10-13 09:00:00");
+	check("two kit tiles", (html.match(/<section class="sf-card sf-tile"/g) || []).length, 2);
+	check("the red tile's chip says so", section(html, "fleet").includes('sf-chip--danger">Failing<'), true);
+	check("the lost device is a chip of its count", html.includes('<dt>Lost/Stolen</dt><dd><span class="sf-chip sf-chip--danger">1</span></dd>'), true);
+	check("the detail line", html.includes('<p class="sf-tile-detail">4 active · 5 total</p>'), true);
+	check("the link", html.includes('href="/desk/managed-device">All devices</a>'), true);
+	check("escaped", [html.includes("Platforms &lt;x&gt;"), html.includes("<x>")], [true, false]);
+	check("no hand-drawn colour or tile markup", HAND_DRAWN.test(html), false);
+});
+
+test("Health board: a Refresh that fails keeps the tiles and says so once", async () => {
+	const p = openPage("integrations-health", { respond: { get_health: HEALTH } });
+	await settle();
+	const content = boardContent(p);
+	p.world.respond.get_health = SERVER_ERROR;
+	p.world.primary();
+	await settle();
+	check("the tiles stay", content.innerHTML.includes('data-key="quickbooks"'), true);
+	check("a toast", p.world.toasts, ["Could not refresh. Showing what was last loaded."]);
+	check("loading was drawn on the first load only", content.history.filter((h) => h.includes("sf-state--loading")).length, 1);
+	p.world.respond.get_health = SIGNED_OUT;
+	p.world.primary();
+	await settle();
+	check("a lapsed session says so, tiles kept", [p.world.toasts[1], content.innerHTML.includes('data-key="quickbooks"')], ["You have been signed out. Reload the page to sign in again.", true]);
+});
+
+test("Health board: a reply that lands after a newer Refresh is dropped", async () => {
+	const first = deferred();
+	const p = openPage("device-fleet-dashboard", { respond: { get_fleet_health: () => first.promise } });
+	await settle();
+	p.world.respond.get_fleet_health = { total: 1, tiles: [{ key: "new", label: "New" }] };
+	p.world.primary();
+	await settle();
+	first.answer({ total: 9, tiles: [{ key: "old", label: "Old" }] });
+	await settle();
+	const html = boardContent(p).innerHTML;
+	check("the newer reply is on screen", [html.includes('data-key="new"'), html.includes('data-key="old"')], [true, false]);
+});
+
+test("Health board: on the loader's stand-in, each tile is a line of text with its words", async () => {
+	const p = openPage("integrations-health", { kit: false, respond: { get_health: HEALTH } });
+	await settle();
+	const html = boardContent(p).innerHTML;
+	check("asked through frappe.call", count(p.world.frappe_calls, "get_health"), 1);
+	check("a line per tile", (html.match(/<p>/g) || []).length, 5);
+	check("title, status word, detail and metric", html.includes("<p>Google Drive · Healthy · Configured · Failed (24h): 0</p>"), true);
+	check(
+		"a red tile still says Failing, with its metrics and link labels",
+		html.includes("Failing · Failed. Reconnect &lt;script&gt;x()&lt;/script&gt; · Failed syncs (7d): 3 · Last CDC poll: &lt;2 h ago&gt; · Plain: 9 · Settings · Evil · Old</p>"),
+		true
+	);
+	check("a neutral tile has no word", html.includes("<p>Analytics · Not configured. Add the GA4 property ID.</p>"), true);
+	check("escaped", [html.includes("QuickBooks &lt;b&gt;Online&lt;/b&gt;"), html.includes("<b>")], [true, false]);
+});
+
+test("QuickBooks and Stripe: with no loader and no kit, the tiles are lines of words, statuses included", async () => {
+	const qbo = openPage("quickbooks-online-dashboard", {
+		loader: false,
+		kit: false,
+		respond: { get_dashboard_status: { settings: { status: "Connected", realm_id: "<9130>" }, failed_records: 2, latest_logs: [] } },
+	});
+	await settle();
+	const tiles = qbo.part("qbo-dashboard").found[".qbo-tiles"].innerHTML;
+	check("QuickBooks: the connection and the tone-only failed count both say their word", [tiles.includes("<p>Connection · Connected</p>"), tiles.includes("<p>Failed Logs · Failing · 2</p>"), tiles.includes("&lt;9130&gt;")], [true, true, true]);
+	const stripe = openPage("stripe-payments-dashboard", {
+		loader: false,
+		kit: false,
+		respond: { get_dashboard_status: { settings: { status: "Connected", has_secret_key: 0 }, counts: { Paid: 3 }, recent: [] } },
+	});
+	await settle();
+	const html = stripe.part("stripe-dashboard").innerHTML;
+	check("Stripe: the connection tile with its metrics, and a count tile", [html.includes("<p>Connection · Connected · Environment: — · Enabled: No · Secret key: Missing"), html.includes("<p>Paid · 3</p>")], [true, true]);
+});
+
+test("Health board: without the loader, or without the board, the page says so in a line", async () => {
+	const noLoader = openPage("device-fleet-dashboard", { loader: false, respond: { get_fleet_health: {} } });
+	await settle();
+	check("no loader", boardContent(noLoader).textContent, "This page could not load. Reload the page to try again.");
+	check("and asked nothing", noLoader.world.sent, []);
+	const noBoard = openPage("integrations-health", { board: false, respond: { get_health: HEALTH } });
+	await settle();
+	check("no board", noBoard.body.textContent, "This page could not load. Reload the page to try again.");
+});
+
+test("Integrations Health: the Drive test answers in the Drive tile, each check a chip with its word", async () => {
+	const p = openPage("integrations-health", {
+		respond: {
+			get_health: HEALTH,
+			run_drive_test: { checks: [{ check: "Credentials", ok: true }, { check: "Folder <root>", ok: false, detail: "403" }, { check: "Shared drive", ok: null }] },
+		},
+	});
+	await settle();
+	// The board finds the Drive tile by its key and the page appends the test to it.
+	const tile = boardContent(p).found[".sf-tile"];
+	const box = tile.children.find((c) => c.markup.includes("ih-drive-test"));
+	check("the test is in the tile", !!box, true);
+	const button = box.children.find((c) => c.markup.includes("<button"));
+	const out = box.children.find((c) => c.markup.includes("ih-drive-result"));
+	check("its label", button.textContent, "Test connection");
+	button.handlers.click.forEach((h) => h.fn({ preventDefault() {} }));
+	await settle();
+	check("asked quietly", [count(p.world.sent, "run_drive_test"), count(p.world.frappe_calls, "run_drive_test")], [1, 0]);
+	check(
+		"pass, fail and not set up, as chips with words",
+		[
+			out.innerHTML.includes('<span class="sf-chip sf-chip--good">Pass</span> Credentials'),
+			out.innerHTML.includes('<span class="sf-chip sf-chip--danger">Fail</span> Folder &lt;root&gt; — 403'),
+			out.innerHTML.includes('<span class="sf-chip sf-chip--neutral">Not set up</span> Shared drive'),
+		],
+		[true, true, true]
+	);
+	check("the button is back", button.textContent, "Test connection");
+	p.world.respond.run_drive_test = SERVER_ERROR;
+	button.handlers.click.forEach((h) => h.fn({ preventDefault() {} }));
+	await settle();
+	check("a failed test says so in the tile", out.innerHTML.includes('sf-chip--danger">Failed</span> The server could not finish this request.'), true);
+	check("frappe put up no dialog", p.world.dialogs, []);
+});
+
+test("QuickBooks: the status tiles are the kit's, the connection a chip that says its status", async () => {
+	const answer = deferred();
+	const p = openPage("quickbooks-online-dashboard", { respond: { get_dashboard_status: () => answer.promise } });
+	await settle();
+	const tiles = p.part("qbo-dashboard").found[".qbo-tiles"];
+	check("before the answer, four tiles of dashes and no chip", [(tiles.innerHTML.match(/sf-tile"/g) || []).length, tiles.innerHTML.includes("sf-chip"), (tiles.innerHTML.match(/>—</g) || []).length], [4, false, 4]);
+	answer.answer({ settings: { status: "Connected", environment: "production", realm_id: "<9130>" }, failed_records: 2, latest_logs: [] });
+	await settle();
+	const html = tiles.innerHTML;
+	check("the connection chip", section(html, "status").includes('<span class="sf-chip sf-chip--good">Connected</span>'), true);
+	check("the realm id, escaped", [html.includes("&lt;9130&gt;"), html.includes("<9130>")], [true, false]);
+	check("failed logs: a value and a chip", [section(html, "failed_records").includes('<div class="sf-tile-value">2</div>'), section(html, "failed_records").includes('sf-chip--danger">Failing<')], [true, true]);
+	check("no hand-drawn colour or tile markup", HAND_DRAWN.test(html), false);
+});
+
+test("QuickBooks: an unknown connection status is a neutral chip with its word", async () => {
+	const p = openPage("quickbooks-online-dashboard", { respond: { get_dashboard_status: { settings: { status: "Disconnected" }, failed_records: 0, latest_logs: [] } } });
+	await settle();
+	const html = p.part("qbo-dashboard").found[".qbo-tiles"].innerHTML;
+	check("neutral, worded", section(html, "status").includes('<span class="sf-chip sf-chip--neutral">Disconnected</span>'), true);
+	check("no failures is good news", section(html, "failed_records").includes('sf-chip--good">Healthy<'), true);
+});
+
+test("Stripe: the connection and counts are kit tiles, every status a chip with its word", async () => {
+	const p = openPage("stripe-payments-dashboard", {
+		respond: {
+			get_dashboard_status: {
+				settings: { status: "Pending <b>", status_message: "Add the <secret>", environment: "Test", enabled: 1, has_secret_key: 0, has_webhook_secret: 1 },
+				counts: { Paid: 3, Failed: 1 },
+				recent: [
+					{ name: "SP-1", customer: "<Acme>", status: "Failed", amount: 5, currency: "USD" },
+					{ name: "SP-2", customer: "Beta", status: "Link Sent", amount: 6, currency: "USD" },
+				],
+			},
+		},
+	});
+	await settle();
+	const html = p.part("stripe-dashboard").innerHTML;
+	check("two kit grids", (html.match(/<div class="sf-tiles">/g) || []).length, 2);
+	const connection = section(html, "connection");
+	check(
+		"the connection tile",
+		[
+			connection.includes('<span class="sf-chip sf-chip--warn">Pending &lt;b&gt;</span>'),
+			connection.includes("Add the &lt;secret&gt;"),
+			connection.includes('<dt>Secret key</dt><dd><span class="sf-chip sf-chip--danger">Missing</span></dd>'),
+			connection.includes('<dt>Webhook secret</dt><dd><span class="sf-chip sf-chip--good">Set</span></dd>'),
+		],
+		[true, true, true, true]
+	);
+	check(
+		"a tile per status: its word in a chip, then its count",
+		[
+			section(html, "Paid").includes('<span class="sf-chip sf-chip--good">Paid</span></div><div class="sf-tile-value">3</div>'),
+			section(html, "Failed").includes('<span class="sf-chip sf-chip--danger">Failed</span></div><div class="sf-tile-value">1</div>'),
+			section(html, "Link Sent").includes('<span class="sf-chip sf-chip--neutral">Link Sent</span></div><div class="sf-tile-value">0</div>'),
+			(html.match(/<section class="sf-card sf-tile"/g) || []).length,
+		],
+		[true, true, true, 7]
+	);
+	check(
+		"the recent payments' statuses are chips",
+		[html.includes('<td><span class="sf-chip sf-chip--danger">Failed</span></td>'), html.includes('<td><span class="sf-chip sf-chip--neutral">Link Sent</span></td>')],
+		[true, true]
+	);
+	check("escaped", [html.includes("&lt;Acme&gt;"), /<Acme>|<secret>|Pending <b>/.test(html)], [true, false]);
+	check("no hand-drawn colour or tile markup", HAND_DRAWN.test(html), false);
 });
 
 // ------------------------------------------------------------------ run

@@ -85,7 +85,7 @@ _CERTIFICATE_HTML = (
 		"TRAINING &middot; CERTIFICATE OF COMPLETION",
 		"Certificate of Completion",
 		'<span style="' + ps.STRONG + '">{{ doc.name | e }}</span><br>'
-		'{{ frappe.format(doc.issued_on, {"fieldtype": "Date"}) }}',
+		'{{ ps_date(doc.issued_on) }}',
 	)
 	+ '<div style="page-break-inside:avoid;">\n'
 	+ _BADGE
@@ -117,10 +117,10 @@ _CERTIFICATE_HTML = (
     </div>
 """
 	+ ps.facts_open()
-	+ ps.fact("ISSUED", '{{ frappe.format(doc.issued_on, {"fieldtype": "Date"}) }}')
+	+ ps.fact("ISSUED", '{{ ps_date(doc.issued_on) }}')
 	+ ps.fact(
 		"VALID UNTIL",
-		'{%- if doc.expires_on -%}{{ frappe.format(doc.expires_on, {"fieldtype": "Date"}) }}'
+		'{%- if doc.expires_on -%}{{ ps_date(doc.expires_on) }}'
 		"{%- else -%}Does not expire{%- endif -%}",
 	)
 	+ ps.fact("CERTIFICATE", "{{ doc.name | e }}")
