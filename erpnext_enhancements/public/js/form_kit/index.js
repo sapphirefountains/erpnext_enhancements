@@ -40,3 +40,17 @@ export { STATES, create_save_queue } from "./save_queue.js";
 export { STREAM_PILLAR, SUMMARY, pillar_for, streams_of, lead_pillar, summary_model } from "./summary.js";
 export { is_new_name, full_form_key, carry_over, redirect_for, split_prefill, opens_by_default } from "./opening.js";
 export { register_extension, extension_for, has_extension } from "./extensions.js";
+export {
+	JOURNAL_PREFIX,
+	JOURNAL_MAX_AGE_MS,
+	NEW_PREFIX,
+	journal_key,
+	new_key,
+	new_key_prefix,
+	stale_entry,
+	usable_new,
+	try_later,
+	make_entry,
+	usable_entry,
+	reconcile,
+} from "./journal.js";

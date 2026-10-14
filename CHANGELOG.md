@@ -7,6 +7,322 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.649.0] - 2026-10-13
+
+Form kit P8.1 (TASK-2026-02790, under P8 "Procurement flows"): **a guided Item flow.** A buyer can
+add a part named the POL-0602 way, with its supplier, last price, bin, reorder rule and bin label,
+from a phone or a desk, without opening the Item form; a fixed-asset item lands with its Asset, so
+the two never come apart (the inline Item the old Asset form offered vanished from its own field,
+ER-2026-420503). **It is not where an Item opens.** Parker and Clegg use the Item form daily and
+nobody has reviewed this flow yet, so an Item still opens in its form; the flow is reached from the
+form's new *Guided* button, the guided page's start screen, or `/desk/guided-entry/Item/new`.
+
+### Added
+
+- **The Item flow** (`form_kit/config/item.py`), walked by the generic guided page like Opportunity.
+  It walks the whole Item form: every field the form shows is in exactly one step (held by
+  `test_form_kit`, against ERPNext v16's real `item.json` merged with this app's fields and
+  Property Setters). Five core steps, then the rest of the form as "more" steps:
+  - **Name & code** (creates the Item). The **code helper** picks the family: the vendor's part
+    number as printed (a comma dropped, per SOP §6), `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`,
+    `PDT-####` or `SRV-###`. A PDT or SRV number comes from a block the person chooses: the
+    blocks in use, each with its lowest free number, plus the first block nobody uses yet
+    (`inventory_enhancements/item_flow_rules.code_blocks`, on `item_naming_rules`' occupancy, so a
+    number held only by trailing text or a `(deleted)` tombstone stays taken and the five-digit
+    QuickBooks family never lands on a four-digit slot). Never `MAX()+1`, and never number 0.
+    The **name builder** has a box per POL-0602 segment (CATEGORY, SUB-CATEGORY, KEY FEATURE,
+    MATERIAL, SIZE, RATING, PACKAGING), each offering what the catalog already uses in that
+    position, narrowed by the CATEGORY chosen; Appendix A leads the CATEGORY list. The name is
+    assembled in capitals with one comma and one space between segments. The **naming check**
+    runs as you type: it is Stock Scan's own quick-Item preview (`stock_scan.preview_new_item`, the
+    guard's exact `blocking_findings` call), so the only refusals shown are the guard's two (a
+    duplicate code, a name that is just the code), and they hold back *Create and continue*;
+    every other finding, a STOP included, is advice.
+  - **Description.**
+  - **Supplier & price**: the supplier, their part number, the purchase link (Item Supplier's
+    `purchase_url`, the per-supplier link `api/procurement.py` already stores), whether reorders go
+    to them (the company's default supplier), and the last price paid (an Item Price on the buying
+    list, for that supplier, in the stock unit), so a purchase order can offer them.
+  - **Stock & bin** (stock items): the bin (the company's default warehouse), its reorder level and
+    quantity (a Purchase reorder rule), and *Print the bin label*, which opens Stock Scan's own
+    `/warehouse-labels?w=<bin>`. It says so when automatic reordering is off in Stock Settings.
+  - **Fixed asset** (fixed-asset items): creates the draft Asset (the Item's name and category,
+    location, purchase date, cost, *Available for event rental*), listing any already made.
+- **`api/item_flow.py`**: `naming_options`, `preview_item`, `code_blocks`, `get_setup` (reads,
+  GET) and `save_supplier`, `save_stock`, `create_asset` (writes, POST). Every write checks its
+  own DocType permission first (Item write; Item Price create or write before anything is written;
+  Asset create) and saves without `ignore_permissions`; every refusal comes before a write, in
+  words. **Nothing is made twice on a resend**: rows and the price are keyed on what they are
+  about, so a second identical request changes nothing and saves nothing; the Asset carries the
+  page's id in a new hidden, unique, no-copy `Asset.custom_guided_client_id`, a resend from the
+  same person returns the first Asset, and a resend racing the first insert collides on the index
+  and reads the winner after a rollback (the P4.7 pattern).
+- **`Item.custom_guided_client_id`** (hidden, unique, no-copy) and `create.client_id_field` on the
+  Item config, so a create resent by P4.7's no-signal queue returns the Item the first attempt
+  made instead of being refused as a duplicate code.
+- **Field help for the core steps** (`form_kit/help_text/item.json`): a hint and an explanation
+  for each of their 21 fields, the hint also the field's description, through 19 new
+  `Item-<field>-description` Property Setters and the descriptions of `custom_sku` and
+  `custom_item_identifier`. So the Item form shows the same lines, and its (i) tooltips the
+  explanations. The "more" steps keep ERPNext's own descriptions until their help is written and
+  reviewed.
+- **The guided page's extension point** (`public/js/form_kit/extensions.js`). A config step can
+  name a block (`extension`), which the DocType's extension draws above the step's fields; the page
+  knows only `render`, `on_change`, `before_create` and `leave`, lends the block the record's
+  values, `set_value`, `save_first` and `record_changed`, and catches a block that throws so the
+  fields always show. The Item blocks are `public/js/guided_item/`; their decisions (the name
+  assembly, the code families, refusals versus advice, the blocks' starting values) are pure
+  modules run under node by the new `test_guided_item`.
+- **"More" steps** (config `more`): past the core of a flow, Next on the last core step offers
+  Done, with *More details* under the step and every step still in the rail. A section nobody
+  placed is a "more" step too when the config has any.
+- **`open_by_default`** in a config (default True): `frappe.boot.sf_guided` now carries `default`
+  per DocType, and `guided_default.js` takes over where records open only for the defaults
+  (`opening.js` `opens_by_default`); `sf_guided.has_flow` answers for the Guided button. The start
+  screen lists a non-default flow only for people who can create one, and its New starts on the
+  guided page directly.
+- **A Guided button on the Item form** (`public/js/item.js`), for people who may open the guided
+  page: this Item on the guided page, or step 1 of a new one.
+- **Item Manager may open the guided page** (the Page's roles), the role that creates Items.
+- Completeness for Item: a non-stock item wants its code, name, group, unit and a supplier; a stock
+  item also a reorder level. `stages.labels` names a stage whose value is not words.
+- Tests: `test_item_flow` (new, own stub: the blocks and both occupancy traps, every permission,
+  idempotency, the racing resend), `test_guided_item` (new, node: the pure modules, the page's
+  bundle, the wiring), and `test_form_kit` now builds the real Item meta
+  (`tests/fixtures/form_kit/erpnext_v16_item.json`, trimmed from ERPNext `v16.50.0`) and holds the
+  Item flow to the engine's rules. Both new suites have their own CI steps.
+
+### Changed
+
+- `api.stock_scan.check_new_item` answers through `preview_new_item`, which the guided Item flow
+  shares behind its own permission check (Item create, not Stock Scan's roles). Same answer.
+- `boot._guided_doctypes` tries each DocType on its own, so one broken flow no longer empties
+  `frappe.boot.sf_guided` and with it Opportunity's default.
+
+### Found, not changed
+
+- **The Item form's layout is stale for two sections.** The `Item-main-field_order` Property
+  Setter (`scripts/layout/specs/item.json`) predates the Safety Data and Maintenance Billing
+  sections, and v16's `Meta.sort_fields` inserts a custom Section Break straight after its
+  `insert_after` field when the next field has the same type. So on production Default Unit of
+  Measure, Maintain Stock and the fixed-asset ticks sit under the *Maintenance Billing* heading.
+  The Item flow names those fields rather than relying on sections, so it is right either way;
+  re-running the layout generator would fix the form, and is a layout change for review.
+
+Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.
+
+### Added
+
+- **Nothing typed is lost to a dropped signal, a reload, a crash, or the phone closing the browser.**
+  - What has not reached the server is kept on the phone: one localStorage entry per record, with the server's value from before each change and the record's `modified`.
+  - It is the Visit Wizard's journal (v1.596.0), as a form-kit service: the pure rules are in `public/js/form_kit/journal.js`, and the page owns the storage and the timers.
+- **Opening the record again puts kept changes back,** decided by the server's current value:
+  - unchanged since, the change goes back on and is saved;
+  - already there (a save that landed and lost its answer), it is dropped;
+  - changed by someone else, the person chooses, with the same side-by-side chooser as any conflict.
+  - A newer edit on the server is never overwritten without saying so.
+- **A save that fails for want of signal** (no answer, or a 408, 429, 502, 503 or 504) reads "Saved on this phone — sends when there is signal" rather than "Not saved".
+  - It is retried when the browser reports the signal back, and every 20 seconds until one gets through.
+  - Tapping the line retries now. A refusal by the server (a validation, a permission) still says so as before.
+- **A new deal can be started without signal, and is never created twice.**
+  - Step 1 is kept on the phone as it is typed, with an id for the create.
+  - A create that cannot be sent waits for the signal and is sent again with the same id.
+  - `create_record` stores the id on the record it makes, in a new hidden, unique, no-copy field `custom_guided_client_id` (config `create.client_id_field`). It answers a resend from the same user with that record, marked `deduped`, because the first attempt may have arrived with its answer lost. The page then saves whatever step 1 holds that differs.
+  - The id lives in the database, not the cache, which the deploy flushes several times a day. The unique index also settles a resend that races the first insert. It waits for that insert and collides. Its own snapshot predates the winner's commit, so the transaction is rolled back, which also returns the naming-series number it took, and a fresh read finds the winner.
+  - New endpoint `find_created` (GET): a page that puts back a kept start first asks whether that create arrived after all, and opens the record if it did.
+  - A start kept from before is put back on the next New, with *Start over*. Each start is its own entry, so two tabs never overwrite each other. Switching to the full form drops the phone's copy, since the form holds it from there.
+- **Kept copies are per person.** Keys carry the signed-in user, so on a shared phone nobody sees or saves another's changes. Entries older than 30 days are swept when the page loads.
+- **Kept values the server has since changed differently** wait on the person's choice, and the phone keeps them until then, so closing the app before choosing loses nothing. Changes typed while a conflict is open are kept too. A kept change to a field the person can no longer edit is reported, not silently dropped.
+- **Reloading a record keeps changes still waiting to send.** This covers a reload by Set as Lost, by the hand-off prompt, or by Back while there was no signal. The changes come over to the reloaded page, through the same check against the server.
+- **Typing after a restore is kept.** If a kept start's create turns out to have arrived after all, the record opens, and step 1 as it stands now is saved onto it.
+- **Start over** drops every start kept for that DocType, rather than bringing back the next-oldest.
+- **Closing the tab warns only when the phone could not keep something:** storage refused, as in a private window or with site data blocked. This is tracked per entry.
+- `docs/offline-cold-start-spike.md`: the P4.8 finding.
+  - It recommends a service worker scoped to the guided page only, built like `/itinerary`'s.
+  - The proof gate: does Desk's own boot reach the page offline? A 1–2 day proof on real phones decides.
+  - Size: about 6–9 days after that. The fallback is a standalone page.
+- Three independent review passes over this change; every finding is fixed here.
+- Tests:
+  - `test_guided_entry` runs the journal rules under node (reconcile, try-later, keys, entry shapes and ages) and checks the page wiring.
+  - `test_form_kit` holds `create_record`'s client id:
+    - a resend returns the first record, marked `deduped`;
+    - a resend racing the first insert returns it after a rollback;
+    - a record that is gone is made again;
+    - another user's is never returned;
+    - another unique collision is raised;
+    - an id of the wrong shape is ignored;
+    - `find_created` answers only for the caller.
+
+## [1.646.0] - 2026-10-13
+
+### Changed
+
+- **Five Desk pages keep their CSS in their own `.css` file and draw it from the `--sf-*` tokens**
+  (custom pages S3.4a, ERPNext TASK-2026-02823): Drive Link Manager, GA4 Dashboard, Inspection
+  Wizard, Training Insights and Glossary Review.
+  - **Why the files moved.** Drive Link Manager and GA4 Dashboard wrote a `<style>` block into their
+    markup string, and the Inspection Wizard appended a 60-line `QW_STYLE` constant to the page. A
+    page's own `<page>.css` is the better home: frappe reads it beside the page's JS and sends it with
+    the page itself (`Page.load_assets` in `frappe/core/doctype/page/page.py`, through
+    `desk_page.getpage`; checked on `version-16`), so an edit reaches a phone on its next open rather
+    than waiting out a cached copy, and the styles can be read and linted as CSS. The injection code
+    is gone, and so are the inline `style="color: ..."` attributes the Drive Link Manager painted its
+    confidence and status colours with: they are tone classes now.
+  - **Why the colours changed.** The pages mixed Frappe's palette (`--green-500`, `--red-500`) with
+    literal hexes (`#dc2626`, `#e03636`, `#fde8e8`), so "failed" was a different red on each screen and
+    the literal ones ignored the dark theme. They now read the app's tokens, which follow the Desk's
+    light or dark setting: square cards on `--sf-surface` with a `--sf-rule` hairline and no shadow,
+    status from `--sf-good` / `--sf-warn` / `--sf-danger` with their `--sf-on-*` labels, radii from
+    `--sf-radius-*`, and one phone breakpoint at 767px. Status *text* mixes its token 50% with
+    `--sf-text-strong`, so it reads on a white card and a navy one; `--sf-warn` is a yellow fill and
+    is never text on its own. Fields are white with 16px text in both themes, so iOS no longer zooms
+    into the Inspection Wizard's note box or the Glossary Review's text areas (both were 15px or less).
+    The Inspection Wizard is Build work, so the section on screen is a Build pillar chip with a 4px
+    `--sf-primary` bar under it. The bar matters in the dark theme, where the chip's navy-800 fill
+    is the same colour as every other tab's `--sf-surface`, and on a failing section, whose danger
+    edge replaces the chip's. Its nav bar and sticky tabs keep Frappe's `--bg-color` on purpose,
+    because they sit over the Desk's own page ground and have to match it. The Glossary Review's
+    collision cards are edged in `--sf-chip-edge-neutral`, not the flat neutral pillar colour, which
+    is 1.06:1 on a dark-theme card.
+  - **Statuses that were colour alone now carry a word.** A failing section's tab says "failing" beside
+    its red edge; a measurement out of range says "Out of range" on its range line (shown only while
+    the line is marked, so typing a new value clears the word and the line's red together, while the
+    input's red edge waits for the server's verdict as before); a row with a photo attached shows a
+    tick; the Drive Link Manager's status is a pill with its word on the fill; the Glossary Review's
+    current tab has a bar under it, not just a change of ground.
+  - **Every selector is namespaced to its page.** A Desk page's CSS is appended to `<head>` once and
+    stays for the session, so Training Insights' bare `td.is-bad` would have reddened any cell with
+    that class on any page opened afterwards; it is `.ti-table td.is-bad` now.
+  - **Layout on phones.** GA4's two-column grid becomes one column, the Drive Link Manager's table
+    scrolls inside its own box instead of pushing the page sideways, and Training Insights shows its
+    tiles two to a row.
+  - Behaviour is otherwise unchanged. GA4's chart series colours are still literal in its JS:
+    `frappe.Chart` takes them as values, so moving them onto the tokens is a separate change.
+
+### Fixed
+
+- **Glossary Review loaded the shared Training rail's stylesheet and script with no version**, so
+  every load asked for `desk_nav.css?v=` and `desk_nav.js?v=`: one unchanging URL for files that
+  `/assets` serves immutable for a year. A device that had cached them never saw an edit again (the
+  "works on desktop, phones still broken" bug in CLAUDE.md). `TR.loadAssets` refuses a path with no
+  `?v=` at all, but an empty token passed its guard. The page now passes the deploy version, as
+  Training Insights, Question Review, the learner page and the authoring canvas already did, and its
+  load ends in a `catch` so a failed rail can never cost the page. Question Review was checked and
+  already passed the version.
+
+### Added
+
+- **`tests/test_s3_page_css.py`** (bench-free, its own CI step). Fails the build if any of the five
+  pages writes a `<style>` from JS or paints a colour inline, through a jQuery `.css(...)` colour
+  write or an `attr("style", ...)` again; loses its `.css`; puts a literal colour (hex, `rgb()`,
+  `hsl()`, a named colour such as `white`) or a Frappe palette variable (`--red-500`, `--bg-orange`,
+  `--text-on-red`; not the structural `--bg-color`) in it; writes a selector whose first compound
+  does not carry the page's prefix or wrapper; reads a `var(--sf-...)` that `sf_tokens.bundle.css`
+  does not define (it would resolve to nothing, silently); declares a custom property of its own; or
+  uses a shadow, a radius that is not a token, or a breakpoint other than 767px. It also holds every
+  Training page's `TR.loadAssets` call to passing a version. The namespace and palette checks fail
+  on the files as they were; no page ever had a named colour or a jQuery colour write, so those two
+  checks are proven against samples inside the suite instead.
+
+## [1.645.0] - 2026-10-13
+
+Custom pages, step 3.1 (TASK-2026-02820): the seven Desk pages that sat on "Loading…" or went blank
+when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto the kit built in steps
+2 (v1.626.0) and its follow-up (v1.632.0).
+
+### Added
+
+- **`window.sf_kit_ready()`**, one loader for `sf_kit` on any Desk page (`public/js/sf_kit_loader.js`,
+  imported by the global bundle right after `workspace_block_return`). It returns one memoized promise
+  per Desk load that resolves to `window.sf_kit`, or to a plain stand-in (frappe.call, a line of text,
+  `show_alert`) when the kit never arrived. v16's `frappe.require` runs its callback even when a file
+  fails to load, so "the callback ran" is not "the kit is here", and the loader checks. It never
+  rejects. The kit itself stays a page-loaded bundle. The seven pages below call it instead of each
+  carrying its own forty-line loader and stand-in. A page guards with
+  `typeof window.sf_kit_ready === "function"` and otherwise asks `frappe.require` for the kit itself:
+  a Desk opened before this deploy still has the old global bundle while the page script arrives fresh.
+  If that tab's old kit file is gone too (old hashed bundles do not survive a deploy), the page gets a
+  bare stand-in of a few lines: the title as text, a button, frappe.call and `show_alert`. Before, it
+  received `undefined`, threw on its first `state.render` and went blank, the very hang this release fixes.
+- **Note:** the first time a Desk loads the kit, frappe shows its freeze overlay while the two files
+  load. That overlay comes from `frappe.require` itself and is expected. Later pages resolve at once.
+
+### Fixed
+
+- **Loading, error, empty and no-access states** on the Rental Planner, the Maintenance Day Board, the
+  Stripe and QuickBooks dashboards, the Water Engineering Wizard, the Device Console and the Inventory
+  Scanner Audit. A failed first load shows an error with **Try again**, which re-runs the same load
+  (the same date range on the Rental Planner). An empty result says what to do, a 403 shows the
+  no-access panel, and an expired session shows a Reload panel, because the quiet path never shows
+  frappe's sign-in dialog. The Rental Planner no longer hangs on "Loading the fleet…".
+- **Background refreshes are quiet.** These go through `call(..., {quiet: true})`: the Maintenance Day
+  Board's loads (its 60-second timer included), the QuickBooks status load and resync-preview poll,
+  and the start-up loads on the Water wizard and both scanner pages. A wall screen no longer stacks
+  frappe dialogs on a 5xx (v1.623.0's `silent` only quieted a `frappe.throw`). A refresh that fails
+  over data already showing keeps the data, with a toast.
+- **The Day Board's timer never blanks the screen.** It draws the loading panel only on the first
+  attempt, or when someone presses Try again. A failed tick used to redraw "Loading" over the error
+  panel every minute until the first success. A refresh that fails over a board keeps it, toasts once
+  per run of failures and keeps an "as of" line, which stays visible after the toast fades on a wall
+  screen. A 403 or a lapsed session stops the timer, since asking every minute cannot change that
+  answer. The next show of the page tries once and starts the timer again.
+- **The QuickBooks resync poll retries only what can pass.** A network failure (status 0) or a 5xx is
+  retried as an attempt. A 4xx stops the poll with a toast that gives the server's reason. Before, it
+  polled a refusal or a missing Sync Log every 3 s for up to 30 minutes. A lapsed session stops it and
+  draws the same signed-out panel the status load uses.
+- **The Water wizard drops a stale design reply.** If you picked one design and then another before
+  the first answered, the first reply or its error could overwrite the second. A reply is now drawn
+  only while the picker still shows the design it was asked for, and picking "Select a design…"
+  clears a load still in flight. The design picker's options are built with jQuery `val()`/`text()`
+  rather than as markup, so a design name with a quote in it no longer breaks its `<option>`.
+- **The Inventory Scanner Audit's start-up has its own slot.** Its loading panel, its error and a
+  Try again used to draw where the count's lines go. A clerk who had started counting while it loaded
+  could see those lines painted over. A late start-up reply also no longer replaces a session started
+  in the meantime.
+- **The loader's stand-in reports a lapsed session.** It used to reject every failure with
+  `session_expired: false` and no words. So on the stand-in path the Day Board kept polling after a
+  401, and frappe's own session dialog stacked up every minute. It now reads expiry the way
+  `sf_kit/call.js` does: a 401, exc_type `SessionExpired` or `AuthenticationError` (in the body or in
+  a server message), the body's `session_expired` flag, or a 403 to a signed-in page whose `user_id`
+  cookie v16 has already deleted. It also takes `exc_type` and the server's words as plain text from
+  the reply. The kit itself is not imported: this is the code that runs when the kit could not load.
+- **A late Scanner Audit start-up no longer brings back a cancelled count.** The start-up reply only
+  checked for a missing session. A clerk who started a count and cancelled it while the start-up was
+  in flight got the closed count back. Starting, cancelling and finishing now bump a counter, and a
+  start-up reply asked for before the last bump leaves the session alone.
+- **A 403 on a Day Board refresh says access is gone.** Over a board already showing, the toast and the
+  "as of" line now say "You no longer have access to the Day Board." rather than "Could not refresh…",
+  since the timer has stopped too.
+- **QuickBooks sync-log rows are escaped**, including their `data-route` attribute; they were
+  interpolated raw.
+- Button actions (QuickBooks actions, Stripe's Test Connection, the Rental Planner's wizard steps, every
+  scan and action on the scanner pages) keep frappe.call's normal dialogs, which is what a person who
+  just clicked expects.
+
+### Tests
+
+- `tests/test_s3_page_states.py` (35, own CI step). It checks that every page goes through the shared
+  loader, carries no copy of its stand-in, and never hands the page `undefined` when there is neither
+  loader nor kit. It checks the loader too: memoized, falling back when the
+  kit is missing, the stand-in's shape and its reading of a lapsed session, and its import line in the
+  global bundle. Every page needs
+  loading and error paths with a retry. It also pins each review fix above and that QuickBooks log rows
+  are escaped. It runs the new node harness.
+- **`scripts/test_s3_page_states.mjs`** (28 scenarios, 105 checks) loads the Day Board and the Stripe,
+  QuickBooks and Water pages with the REAL `sf_kit.bundle.js` and the real loader. Every panel comes
+  from the kit's own `state.render` and every failure is the kit's own rejection, so a page that reads
+  the kit wrong fails. Each page is run through a 500 with Try again, a 403 and a lapsed session,
+  plus each review fix above. Each page also runs with no loader and no kit, the old-tab case, and
+  must still say what failed and retry. The loader's stand-in runs alone: a 401 stops the Day Board's
+  timer, and its rejections are checked for a 401, an AuthenticationError message, a 403 with the
+  server's words, a 403 after the cookie is gone, a 500 and a dropped connection.
+- The rental-planner and desk-page-history node harnesses now run the real loader. Each gains
+  real-kit scenarios: the Rental Planner's 500 with Try again and its 403, the Device Console's 500
+  with Try again, and the Scanner Audit's 403, lapsed session, late start-up over a started count, and
+  late start-up after a count was started and cancelled.
+  The harnesses keep their stand-in scenarios, and the Device Console and the Scanner Audit keep every
+  Back/Forward assertion.
+
 ## [1.644.0] - 2026-10-13
 
 Form kit P5.2 and P4.5 (TASK-2026-02742): **the guided page is where an Opportunity opens, new or

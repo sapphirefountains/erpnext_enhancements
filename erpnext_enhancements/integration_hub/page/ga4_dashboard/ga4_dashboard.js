@@ -14,6 +14,9 @@
  * strings are escaped with frappe.utils.escape_html before injection.
  *
  * Backed by the GA4 Settings Single doctype (property IDs + credentials).
+ *
+ * Styles live in ga4_dashboard.css beside this file (the page loader ships it
+ * with the page), on the app's --sf-* tokens.
  */
 frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 	var page = frappe.ui.make_app_page({
@@ -26,49 +29,13 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 	// work seamlessly when overriding with make_app_page and clearing the wrapper.
 	var dashboard_html = `
 		<div class="ga4-dashboard-wrapper">
-			<div id="ga4-loading" class="text-center" style="padding: 20px;">
+			<div id="ga4-loading" class="text-center">
 				<p>Loading Dashboard Data...</p>
 			</div>
-			<div id="ga4-dashboard-grid" style="display: none; padding: 15px;">
-				<style>
-					.ga4-grid-container {
-						display: grid;
-						grid-template-columns: 1fr 1fr;
-						grid-gap: 20px;
-					}
-					.ga4-grid-item-full {
-						grid-column: 1 / -1;
-					}
-					.ga4-chart-box {
-						background: var(--card-bg);
-						border: 1px solid var(--border-color);
-						border-radius: var(--border-radius);
-						padding: 15px;
-					}
-					.ga4-section-title {
-						margin-top: 20px;
-						margin-bottom: 10px;
-						font-size: 1.2em;
-						font-weight: bold;
-						grid-column: 1 / -1;
-					}
-					.gsc-table {
-						width: 100%;
-						border-collapse: collapse;
-						margin-top: 10px;
-					}
-					.gsc-table th, .gsc-table td {
-						border: 1px solid var(--border-color);
-						padding: 8px;
-						text-align: left;
-					}
-					.gsc-table th {
-						background-color: var(--table-bg);
-					}
-				</style>
+			<div id="ga4-dashboard-grid" style="display: none;">
 				<div class="ga4-grid-container">
 					<div class="ga4-section-title">Google Analytics 4</div>
-					<div id="ga4-error-container" class="ga4-grid-item-full text-danger" style="display: none; padding: 15px; border: 1px solid #ffb8b8; background-color: #fff0f0; border-radius: 4px;"></div>
+					<div id="ga4-error-container" class="ga4-grid-item-full ga4-error" style="display: none;"></div>
 					<div class="ga4-grid-item-full ga4-chart-box" id="ga4-traffic-chart-box">
 						<div id="ga4-traffic-chart"></div>
 					</div>
@@ -90,7 +57,7 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 					</div>
 
 					<div class="ga4-section-title">Search Performance</div>
-					<div id="gsc-error-container" class="ga4-grid-item-full text-danger" style="display: none; padding: 15px; border: 1px solid #ffb8b8; background-color: #fff0f0; border-radius: 4px;"></div>
+					<div id="gsc-error-container" class="ga4-grid-item-full ga4-error" style="display: none;"></div>
 					<div class="ga4-grid-item-full ga4-chart-box" id="gsc-timeline-chart-box">
 						<div id="gsc-timeline-chart"></div>
 					</div>
@@ -300,7 +267,7 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 
 		})
 		.catch(error => {
-			page.main.find('#ga4-loading').html('<p class="text-danger">Failed to load Dashboard Data. Check console for details.</p>');
+			page.main.find('#ga4-loading').html('<p class="ga4-failed">Failed to load Dashboard Data. Check console for details.</p>');
 			console.error("Dashboard Load Error:", error);
 		});
 };

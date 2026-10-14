@@ -219,6 +219,7 @@ EXACT_SURFACE = {
         # the registry and the caller's permission, tested in test_form_kit.
         "my_records",
         "declare_lost",
+        "find_created",
     },
     # The guided Item flow's own reads and writes (form kit P8.1). Each checks its DocType
     # permission before it writes, tested in test_item_flow; a new one has to be listed here.

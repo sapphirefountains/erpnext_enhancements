@@ -178,6 +178,37 @@ returns the same result or conflict shape. `get_flow` sends `lost` (the status t
 page's Set as Lost dialog, and the two child DocTypes), `distinct` (fields the page warns should
 not share a value) and `clears` (a field whose change empties others).
 
+## No signal (P4.7)
+
+The guided page keeps working when the signal drops while it is open. What has not reached the
+server is kept on the phone, in localStorage:
+
+- one entry per person and record (`ge-unsent:<user>:<DocType>/<name>`): the unsent values of every
+  queue still holding the record, each field's server value from before the change, and `modified`;
+- one entry per record not created yet (`ge-new:<user>:<DocType>:<client_id>`): step 1 as typed.
+
+Keys carry the user, so on a shared phone nobody sees or saves another person's copy. Entries past
+30 days are swept when the page loads. The rules are `public/js/form_kit/journal.js`, run under
+node by `test_guided_entry`:
+
+- **Opening the record again** puts kept values back by the server's current value: still the old
+  one, the kept value is saved; already the kept one, it is dropped; anything else, the person
+  chooses (the conflict chooser), and the phone keeps their value until they have. A kept change to
+  a field they can no longer edit is reported, not silently dropped.
+- **A failed save** that is the network's doing (`try_later`: no answer, 408, 425, 429, 502–504,
+  or a 5xx without an exception type) waits for the signal: the browser's `online` event, and every
+  20 s.
+- **`create_record(..., client_id)`** stores the id on the record (the config's
+  `create.client_id_field`; on Opportunity the hidden, unique, no-copy `custom_guided_client_id`)
+  and answers a resend from the same user with that record, marked `deduped` (the page then saves
+  whatever step 1 holds that differs). In the database, not the cache: the deploy flushes the cache
+  several times a day. The unique index settles a resend racing the first insert: it waits,
+  collides, and a locking read returns the winner. `find_created(doctype, client_id)`, GET, lets a
+  page that put back a kept start ask whether that create arrived after all.
+
+Opening ERPNext from cold with no connection is a separate problem: see
+`docs/offline-cold-start-spike.md` (P4.8).
+
 ## Where a record opens
 
 Nik, 2026-10-13: "I want these guided setups to be the default for new and existing documents of
@@ -287,7 +318,9 @@ unused block, never `MAX()+1`. The help file covers the core steps' fields; the 
 ERPNext's own descriptions until their help is written and reviewed.
 
 The Item itself is created by `create_record` and can never be created twice: it is named by its
-code, so a resent create is refused as a duplicate code rather than making a second Item. Item is
+code, and its `create.client_id_field` (`Item.custom_guided_client_id`, hidden and unique, as on
+Opportunity) makes a resent create return the Item the first attempt made rather than a duplicate
+code refusal. Item is
 not where an Item opens yet (`open_by_default: False`), and the guided page's roles include
 *Item Manager*, the role that creates Items.
 

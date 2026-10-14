@@ -1325,7 +1325,7 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		self.assertNotRegex(code, r"fields\s*=\s*\[[^\]]*\b(count|sum|max|min|avg)\s*\(", re.I)
 
 	def test_check_new_item_previews_with_the_guards_exact_call(self):
-		# The answer is preview_new_item's (shared with the guided Item flow, v1.645.0); the
+		# The answer is preview_new_item's (shared with the guided Item flow, v1.649.0); the
 		# endpoint keeps Stock Scan's role gate in front of it.
 		self.assertIn(
 			"return preview_new_item(item_code, item_name, item_group, stock_uom)",

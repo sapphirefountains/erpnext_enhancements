@@ -1,0 +1,266 @@
+/* Drive Link Manager (/desk/drive-link-manager).
+ *
+ * This file used to be a <style> block written into the page from a JS string. It lives
+ * here now because Frappe's page loader reads <page>.css next to the page's JS and sends
+ * it with the page itself (Page.load_assets, through getpage), so an edit reaches every
+ * device on its next open instead of waiting out a cached copy.
+ *
+ * Colours are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's
+ * light or dark theme on their own. Confidence and status are drawn from the three status
+ * tokens: High / Linked are good, Medium is warn, Low / Failed are danger. The word is
+ * always printed beside the colour (the tier label, the status pill, the count's label), so
+ * the colour repeats the meaning and never carries it alone. Warn is a yellow fill, never
+ * text: status text mixes its token with the theme's strongest text so it reads on either
+ * ground. */
+
+.drive-link-manager {
+	padding: var(--sf-space-10) 4px var(--sf-space-40);
+	color: var(--sf-text);
+}
+
+.dlm-meta {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	margin: 0 6px 12px;
+}
+
+.dlm-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin: 0 6px 14px;
+}
+
+.dlm-toolbar .dlm-spacer {
+	flex: 1 1 auto;
+}
+
+.dlm-toolbar select {
+	width: auto;
+	min-width: 130px;
+}
+
+.dlm-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 14px;
+	margin: 0 6px 14px;
+	font-size: var(--sf-text-sm);
+}
+
+.dlm-chip {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--sf-text-muted);
+}
+
+.dlm-chip b {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.dlm-dot {
+	width: 9px;
+	height: 9px;
+	border-radius: var(--sf-radius-circle);
+	flex: 0 0 auto;
+}
+
+.dlm-group-title {
+	font-weight: var(--sf-weight-bold);
+	font-size: var(--sf-text-sm);
+	margin: 18px 6px 8px;
+	color: var(--sf-heading);
+}
+
+.dlm-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--sf-text-sm);
+	background: var(--sf-surface);
+}
+
+.dlm-table th {
+	text-align: left;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-muted);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 6px 8px;
+	font-size: var(--sf-text-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.dlm-table td {
+	padding: 8px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	vertical-align: middle;
+}
+
+.dlm-rec-label {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.dlm-rec-sub {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+}
+
+.dlm-rec-sub a {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.dlm-match {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.dlm-match-label {
+	color: var(--sf-text-strong);
+	word-break: break-word;
+}
+
+/* The score meter. Square, like every other structure on the page. */
+.dlm-bar {
+	height: 5px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-rule);
+	overflow: hidden;
+	max-width: 180px;
+}
+
+.dlm-bar > span {
+	display: block;
+	height: 100%;
+}
+
+.dlm-tier {
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+
+.dlm-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 220px;
+}
+
+.dlm-controls select {
+	width: 100%;
+}
+
+.dlm-create-note {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+}
+
+/* The status pill: a Chip from the design system, the word on its own fill. */
+.dlm-status {
+	display: inline-block;
+	padding: 1px 8px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-pill);
+	color: var(--sf-text-muted);
+	font-weight: var(--sf-weight-bold);
+	white-space: nowrap;
+}
+
+.dlm-status.dlm-tone-good {
+	background: var(--sf-good);
+	border-color: var(--sf-chip-edge-good);
+	color: var(--sf-on-good);
+}
+
+.dlm-status.dlm-tone-danger {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+}
+
+.dlm-conflict {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-size: var(--sf-text-xs);
+	margin-top: 3px;
+}
+
+.dlm-empty,
+.dlm-loading {
+	color: var(--sf-text-muted);
+	padding: var(--sf-space-40);
+	text-align: center;
+}
+
+.dlm-row-linked {
+	opacity: 0.62;
+}
+
+.dlm-apply-count {
+	font-weight: var(--sf-weight-bold);
+}
+
+/* Fills: the count dots and the score meter. */
+.dlm-fill-good {
+	background: var(--sf-good);
+}
+
+.dlm-fill-warn {
+	background: var(--sf-warn);
+}
+
+.dlm-fill-danger {
+	background: var(--sf-danger);
+}
+
+.dlm-fill-none {
+	background: var(--sf-text-muted);
+}
+
+/* Text: the tier label under the meter. */
+.dlm-text-good {
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.dlm-text-warn {
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.dlm-text-danger {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.dlm-text-none {
+	color: var(--sf-text-muted);
+}
+
+/* The Search Drive dialog's result rows. The dialog is outside the page wrapper, so these
+ * are not scoped under .drive-link-manager. */
+.dlm-search-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: 6px 0;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+@media (max-width: 767px) {
+	/* Four columns do not fit a phone: the table scrolls inside its own box rather than
+	 * pushing the page sideways. */
+	.drive-link-manager .dlm-content {
+		overflow-x: auto;
+	}
+
+	.drive-link-manager .dlm-table {
+		min-width: 640px;
+	}
+
+	.drive-link-manager .dlm-toolbar select {
+		flex: 1 1 100%;
+	}
+}

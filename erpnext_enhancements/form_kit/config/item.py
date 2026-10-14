@@ -73,6 +73,9 @@ CONFIG = {
 			"is_fixed_asset",
 			"asset_category",
 		],
+		# The guided page's id for the create (form kit P4.7): a create resent after a lost answer
+		# returns the Item the first attempt made instead of being refused as a duplicate code.
+		"client_id_field": "custom_guided_client_id",
 	},
 	# item.js: a fixed asset is never a stock item (Item.validate_fixed_asset refuses one), and
 	# ticking it makes Maintain Stock read-only and unticked. The other way round, a stock item is

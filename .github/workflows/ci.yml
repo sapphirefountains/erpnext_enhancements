@@ -3440,10 +3440,28 @@ jobs:
       # all day for every user who had opened the screen once.
       - name: Page polling stops off screen (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_page_polling_lifecycle -v
+      # Custom pages S3.1 (v1.645.0). Seven pages that sat on "Loading" or went blank when a call
+      # failed now draw loading / empty / error / no-access from sf_kit, retry a failed first
+      # load in place, and refresh in the background on the quiet path (the Day Board's timer
+      # no longer stacks a frappe dialog per 5xx). All seven get the kit from one shared loader,
+      # window.sf_kit_ready (public/js/sf_kit_loader.js). This step also runs
+      # scripts/test_s3_page_states.mjs, four of the pages against the REAL sf_kit bundle; the
+      # other three run against it in the two history harnesses.
+      - name: Custom pages S3.1 page states (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s3_page_states -v
       # Every Page has a title (the awesomebar indexes by it), the S1 patch covers every file
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
+      # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
+      # which the page loader sends with the page (never stale from the immutable /assets
+      # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
+      # .css() or attr("style") colour, no literal or named colour or Frappe palette variable,
+      # every selector namespaced to its page (page CSS stays in <head> all session), no
+      # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
+      # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
+      - name: Custom pages S3.4a page CSS on the tokens (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads
