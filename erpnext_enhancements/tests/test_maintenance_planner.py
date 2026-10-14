@@ -46,6 +46,22 @@ if str(REPO_ROOT) not in sys.path:
 
 APP = Path(__file__).resolve().parents[1]
 PAGE_DIR = APP / "sapphire_maintenance/page/maintenance_planner"
+
+
+def _without_filter_writer(code):
+	"""The page with its one history write cut out: write_filter_url (S5c, v1.676.0) puts the
+	Technician filter into the entry on screen, in place, and watch_filter_url re-runs it after a
+	popstate. Neither pushes; tests/test_planner_url_filters.py holds them. Everything else still
+	moves only by frappe.set_route."""
+	for method in ("\twrite_filter_url() {", "\twatch_filter_url() {"):
+		start = code.index(method)
+		end = code.index("\n\t}\n", start)
+		if "pushState" in code[start:end]:
+			raise AssertionError(f"{method.strip()} pushes a history entry")
+		code = code[:start] + code[end:]
+	return code
+
+
 WORKSPACE = APP / "sapphire_maintenance/workspace/sapphire_maintenance/sapphire_maintenance.json"
 
 D = datetime.date
@@ -836,6 +852,7 @@ class TestProjectBookings(unittest.TestCase):
 		self.assertIn('frappe.set_route("Form", "Task", card.ref)', code)
 		self.assertIn('frappe.set_route("Form", "Travel Trip", card.ref)', code)
 		# Back and Forward stay with frappe.set_route.
+		code = _without_filter_writer(code)
 		self.assertNotIn("pushState", code)
 		self.assertNotIn("replaceState", code)
 
@@ -1295,8 +1312,10 @@ class TestPlannerParity(unittest.TestCase):
 		self.assertIn("/crew/2026-10-05", code)
 		# One week, whichever of week and crew is showing.
 		self.assertIn('if (this.view !== "month") {', self._body("range() {", "range_days() {"))
-		# Views change only through frappe.set_route, so Back and Forward step through them.
-		self.assertIn("frappe.set_route(MP.route, view, anchor)", code)
+		# Views change only through frappe.set_route, so Back and Forward step through them; the
+		# Technician filter rides along (S5c, v1.676.0).
+		self.assertIn("frappe.set_route(MP.route, view, anchor, this.filter_options())", code)
+		code = _without_filter_writer(code)
 		for forbidden in ("pushState", "replaceState", "location.hash", "window.location"):
 			self.assertNotIn(forbidden, code)
 
@@ -1512,9 +1531,10 @@ class TestWiring(unittest.TestCase):
 
 	def test_the_page_moves_by_route_and_never_by_its_own_history(self):
 		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
+		self.assertIn("frappe.set_route(MP.route, view, anchor, this.filter_options())", code)
+		code = _without_filter_writer(code)
 		self.assertNotIn("pushState", code)
 		self.assertNotIn("replaceState", code)
-		self.assertIn("frappe.set_route(MP.route, view, anchor)", code)
 		self.assertIn("on_page_show", code)
 		for method in ("get_planner", "move_visit", "move_projected"):
 			self.assertIn(f"${{MP.api}}.{method}", code)

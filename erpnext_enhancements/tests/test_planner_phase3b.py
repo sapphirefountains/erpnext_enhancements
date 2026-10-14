@@ -1703,14 +1703,18 @@ class TestPage(unittest.TestCase):
 
 	def test_my_week_is_a_route(self):
 		self.assertIn('my_week: "my-week"', self.block)
-		self.assertIn("frappe.set_route(PP.route, PP3B.my_week, ymd)", self.block)
+		# Carrying the planner's filters, as every planner route does (S5c, v1.676.0).
+		self.assertIn("frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options())", self.block)
 		self.assertIn("${PP.api}.get_my_week", self.block)
 		self.assertIn("this.go_route(data.resource, entry.date)", self.block)
 		self.assertRegex(self.block, r"step = \(sign\) => this\.go_my_week\(")
-		# The page's one history write (S5b, v1.667.0) is take_route_project's in-place removal of a
-		# form link's ?project=, checked in tests/test_form_page_links.py.
-		start = self.bare.index("\ttake_route_project() {")
-		bare = self.bare[:start] + self.bare[self.bare.index("\n\t}\n", start) :]
+		# The page's one history write (S5c, v1.676.0) is write_filter_url's in-place rewrite of the
+		# filters in the address (watch_filter_url re-runs it after a popstate), checked in
+		# tests/test_planner_url_filters.py.
+		bare = self.bare
+		for method in ("\twrite_filter_url() {", "\twatch_filter_url() {"):
+			start = bare.index(method)
+			bare = bare[:start] + bare[bare.index("\n\t}\n", start) :]
 		for forbidden in ("pushState", "replaceState", "window.location", "location.href", "history."):
 			self.assertNotIn(forbidden, bare)
 
