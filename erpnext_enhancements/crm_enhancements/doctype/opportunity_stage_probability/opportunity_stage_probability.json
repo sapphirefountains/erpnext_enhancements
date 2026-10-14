@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 0,
+ "creation": "2026-10-13 19:00:00.000000",
+ "description": "One Opportunity stage and the forecast probability a deal takes when it enters that stage (Sales Activity Settings, form kit P5.5).",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "stage",
+  "probability"
+ ],
+ "fields": [
+  {
+   "columns": 6,
+   "fieldname": "stage",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Stage",
+   "options": "Qualification\nNeeds Analysis\nProposal/Price Quote\nNegotiation/Review\nClosed Won\nLost\nOn Hold",
+   "reqd": 1
+  },
+  {
+   "columns": 4,
+   "fieldname": "probability",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Probability (%)",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-13 19:00:00.000000",
+ "modified_by": "nikolas.bradshaw@sapphirefountains.com",
+ "module": "CRM Enhancements",
+ "name": "Opportunity Stage Probability",
+ "owner": "nikolas.bradshaw@sapphirefountains.com",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
