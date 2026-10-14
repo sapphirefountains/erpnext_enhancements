@@ -139,8 +139,18 @@ the Desk, so modes switched in place had no entries and Back left the page. The 
 mode as well as routing, and the router's show then finds it set: `setMode` returns early on
 the mode it is in, so the show cannot redraw the previous trail over one that is loading.
 `onShow` reads the route only once `init()` has settled, so a Back pressed while the map was
-still loading is not lost. A reload keeps Live. The filters are not in the URL, because
-`route_options` never reach it on v16, so a reloaded Trail still starts empty.
+still loading is not lost. A reload keeps Live.
+
+**The trail is in the address too** (v1.662.0):
+`/desk/location-timeline?employee=…&from_date=YYYY-MM-DD&to_date=YYYY-MM-DD`, and the bare address
+is no one's trail. Each trail the manager picks (a person, a date, Load) is an entry, so Back
+returns to the one before and a reload or a pasted link opens the same trail. Before v16.50 the
+router pushes a `set_route`'s path without its query, so the page writes the address itself
+(`writeAddress`: `pushState` for a picked trail, `replaceState` to correct the entry on screen)
+and reads it back only through `frappe.route_options`, where the router copies the query on every
+route change. A Live row routes with the trail in its options, and the Trail button carries the
+trail in the pickers, so Back and Forward onto a trail already drawn reload nothing. A date that is
+not a real calendar day is today.
 
 One thing worth knowing about the "not permitted" state: a `PermissionError` arrives as HTTP
 403, and frappe's handler calls the error callback with **no argument**, so `frappe.xcall`
