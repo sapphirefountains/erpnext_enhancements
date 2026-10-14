@@ -1759,6 +1759,14 @@ jobs:
       # Desk form's buttons call the same shared code.
       - name: Guided record tools (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_record_tools -v
+      # v1.685.0, the guided page's inputs are the form's: every set_query in ERPNext's form script
+      # (version-16, trimmed into a fixture) and in every script this app runs on the form, for each
+      # guided DocType (Opportunity, Item), is mirrored in the config's `queries` or waived with a
+      # reason; the relabel and the Closed Won requirement match the scripts; under node, Ctrl/Cmd+S
+      # binds once per editor and every Item condition lands where the Desk puts it. Imports only
+      # the config, no frappe stub.
+      - name: Form kit inputs match the form (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_inputs -v
       # v1.684.0, the guided page's view settings: each person's layout (One page, Tabs, Step by
       # step), nav, summary, notes, record tools, density, hints, text size, contrast, focus mode,
       # pins, landing, hidden fields, summary fields, presets and shortcuts, as pure decisions under

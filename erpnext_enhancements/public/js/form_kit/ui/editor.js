@@ -15,6 +15,10 @@
  *   - step 1's create (create_record, with the create's client_id), Set as Lost, `distinct`, `clears`
  *   - the Party entry component (./party.js, P3.2, v1.677.0) on the account, contact and address
  *     fields: "+ New" inline and linked to the account, re-suggested when the account changes
+ *   - the inputs the form's scripts shape, which a FieldGroup with no frm never gets (v1.685.0):
+ *     each Link's set_query (the config's `queries`, control_def), mandatory_depends_on and
+ *     read_only_depends_on (apply_condition), a label another field sets (relabel), and Ctrl/Cmd+S
+ *     (save_now, through the host page's save_action)
  *   - a DocType's step blocks (form kit P8.1, ../extensions.js; the Item flow's name builder and its
  *     supplier, stock and asset blocks): mounted above a step's fields when the step names an
  *     `extension`, told of each change, asked before a create; a block that throws stays in its box
@@ -48,6 +52,9 @@ import { FieldGroups } from "../field_groups.js";
 
 export const GE_API = "erpnext_enhancements.form_kit.api.";
 export const GE_LIST_SUFFIX = "__ge_list";
+// What each kind of condition means when its expression cannot be read (editor.condition): show
+// the field, but never make it required or read-only by accident.
+export const CONDITION_FALLBACK = { depends_on: true, mandatory_depends_on: false, read_only_depends_on: false };
 // A text box starts at about three lines and grows with what it holds, up to this (v1.684.0): Frappe
 // draws Text at 300px and Small Text at 150px whatever they hold, which stretched a short note into a
 // tall empty box and pushed every field under it down the page.
@@ -133,6 +140,37 @@ export function ge_client_id() {
 		// Falls through to the timestamp-and-random id.
 	}
 	return `ge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// Ctrl/Cmd+S on `host` (a Desk page's wrapper) saves `editor` while it shows (v1.685.0; see
+// RecordEditor.save_now). frappe's Ctrl+S ends in frappe.container.page.save_action, so the page gets
+// one save_action, made once, that saves every editor bound to it that is showing (a side panel open
+// over a page that has its own editor saves both: Ctrl+S saves what is on screen), and otherwise
+// falls back to the save_action the page had before. Binding the same editor again (every load)
+// changes nothing, so showing the page again never binds the key twice.
+export function ge_bind_save_key(host, editor) {
+	if (!host || !editor) return false;
+	if (!Array.isArray(host.fk_save_editors)) {
+		const editors = [];
+		const before = typeof host.save_action === "function" ? host.save_action : null;
+		host.fk_save_editors = editors;
+		host.save_action = function (...args) {
+			let saved = false;
+			editors.forEach((each) => {
+				let showing = false;
+				try {
+					showing = !!each.showing();
+				} catch (e) {
+					showing = false;
+				}
+				if (showing && each.save_now() !== false) saved = true;
+			});
+			if (!saved && before) return before.apply(this, args);
+		};
+	}
+	if (host.fk_save_editors.includes(editor)) return false;
+	host.fk_save_editors.push(editor);
+	return true;
 }
 
 export class RecordEditor {
@@ -492,6 +530,7 @@ export class RecordEditor {
 		this.queue = this.is_new ? null : this.make_queue(flow.modified);
 		if (this.is_new && !this.client_id) this.client_id = ge_client_id();
 		this.party_entry().reset();
+		this.bind_save_key();
 	}
 
 	// P3.2: the Party entry component (./party.js), one per editor: the account, contact and
@@ -542,7 +581,20 @@ export class RecordEditor {
 		// one page (v1.684.0): they stay on screen together, so the blocks drawn so far stay too.
 		if (!(this.fg && this.fg.multi && this.fg.steps().length)) this.leave_extension();
 		const dfs = (step.fields || []).map((field) => this.control_def(field, step, editable));
-		const fg = new frappe.ui.FieldGroup({ fields: dfs, body: $fields[0], no_submit_on_enter: true });
+		const editor = this;
+		const fg = new frappe.ui.FieldGroup({
+			fields: dfs,
+			body: $fields[0],
+			no_submit_on_enter: true,
+			// v1.685.0: v16's Layout.set_dependant_property applies mandatory_depends_on and
+			// read_only_depends_on only for a form, a dialog or a web form; a plain FieldGroup skips
+			// them in silence, so Closed Won's ranks never showed as required. Applied here instead,
+			// on each step's own group (One page and Tabs refresh every group on each change:
+			// FieldGroups.refresh_dependency).
+			set_dependant_property(condition, fieldname, property) {
+				editor.apply_condition(this, condition, fieldname, property);
+			},
+		});
 		fg.make();
 		if (this.fg && this.fg.multi) this.fg.add(step, fg);
 		else this.fg = fg;
@@ -555,12 +607,8 @@ export class RecordEditor {
 				this.suppress.add(field.fieldname);
 			}
 		});
-		fg.set_values(initial).then(() => {
-			Object.keys(initial).forEach((fieldname) => this.suppress.delete(fieldname));
-			if (this.fg === fg || (this.fg && this.fg.multi && this.fg.owns(fg))) {
-				fg.refresh_dependency();
-				this.fit_texts($fields);
-			}
+		this.set_initial_values(fg, initial).then((shown) => {
+			if (shown) this.fit_texts($fields);
 		});
 		(step.fields || []).forEach((field) => {
 			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
@@ -643,16 +691,22 @@ export class RecordEditor {
 		// FieldGroup.make() writes a field's `default` over the values it is given on a new record;
 		// the defaults are already in get_flow's values.
 		delete df.default;
-		["depends_on", "mandatory_depends_on", "read_only_depends_on"].forEach((key) => {
-			if (df[key]) df[key] = this.condition(df[key]);
+		Object.keys(CONDITION_FALLBACK).forEach((key) => {
+			if (df[key]) df[key] = this.condition(df[key], CONDITION_FALLBACK[key]);
 		});
 		if (kit.is_layout(field)) return df;
 
 		const read_only = !editable || !!field.read_only;
 		if (read_only) df.read_only = 1;
+		// What the field is without its conditions: a condition adds "required" or "read-only" to it,
+		// never takes either away (apply_condition).
+		df.fk_reqd = df.reqd ? 1 : 0;
+		df.fk_read_only = df.read_only ? 1 : 0;
 		df.parent = this.doctype;
 		df.description = field.hint || "";
 		df.ee_desc_inline = 1;
+		const label_from = (this.flow && this.flow.label_from) || {};
+		if (label_from[field.fieldname]) df.label = kit.label_for(field, label_from, this.values);
 
 		if (kit.text_list_column(field)) {
 			// Drawn by render_text_list into this placeholder.
@@ -673,8 +727,25 @@ export class RecordEditor {
 				delete out.hint;
 				delete out.help;
 				delete out.default;
+				// A grid cell searches with its child DocType as reference_doctype, as on the Desk (where
+				// the cell's control has the row's doctype): a FieldGroup grid's rows carry none, so the
+				// cell is given it when it is made (base_input calls df.on_make for grid cells too), and
+				// search_link can honor the column's ignore_user_permissions.
+				const child_doctype = field.options;
+				out.on_make = (control) => {
+					if (control && typeof control.get_reference_doctype === "function") {
+						control.get_reference_doctype = () => child_doctype;
+					}
+				};
 				if (read_only) out.read_only = 1;
 				else out.onchange = () => this.table_touched(fieldname);
+				// v1.685.0: the form's query for this column ("table.field" in the config's `queries`).
+				// A grid cell's control calls get_query with its row (link.js set_custom_query, no frm).
+				const column_query = ((this.flow && this.flow.queries) || {})[`${fieldname}.${child.fieldname}`];
+				if (column_query && (child.fieldtype === "Link" || child.fieldtype === "Dynamic Link")) {
+					out.get_query = (row) =>
+						kit.resolve_query(column_query, Object.assign(this.query_ctx(), { row: row || {} })) || {};
+				}
 				return out;
 			});
 			df.data = ge_clone(this.values[fieldname] || []);
@@ -693,21 +764,106 @@ export class RecordEditor {
 		if (field.fieldtype === "Dynamic Link") {
 			df.get_options = () => this.current(field.options);
 		}
-		if (field.fieldtype === "Link" && kit.PARTY_QUERIES[field.options]) {
-			// Only Contact and Address: any other Link keeps its own filters untouched.
-			df.get_query = () => kit.link_query(field, kit.party_of(this.flow.steps, this.current_values())) || {};
+		const query = ((this.flow && this.flow.queries) || {})[field.fieldname];
+		if (query && (field.fieldtype === "Link" || field.fieldtype === "Dynamic Link")) {
+			// v1.685.0: the form scripts' set_query for this field (the config's `queries`). The
+			// docfield's own link_filters still apply on top, in the control, as on the form.
+			df.get_query = () => kit.resolve_query(query, this.query_ctx()) || {};
+		} else if (field.fieldtype === "Link" && kit.PARTY_QUERIES[field.options]) {
+			// A Contact or Address with no query of its own: the record's and its party's, as the
+			// Desk's directory offers them. Any other Link keeps its own filters untouched.
+			const ctx = () => this.query_ctx();
+			df.get_query = () => kit.link_query(field, ctx().party, ctx().directory) || {};
 		}
 		df.onchange = () => this.field_changed(field.fieldname);
 		return df;
 	}
 
+	// What a query reads (fields.js resolve_query): the values on screen over what get_flow sent
+	// for the fields the flow does not show, the live party, and the directory's link sources.
+	query_ctx() {
+		const context = (this.flow && this.flow.query_context) || {};
+		const values = Object.assign({}, context.fields || {}, this.current_values());
+		return {
+			values,
+			party: this.kit.party_of((this.flow && this.flow.steps) || [], values),
+			directory: this.is_new ? [] : context.directory || [],
+		};
+	}
+
+	// A mandatory_depends_on or read_only_depends_on, for the FieldGroup (see render_fields). The
+	// condition adds to what the field already is: a field read-only by permission stays read-only,
+	// and one required by its docfield stays required.
+	apply_condition(fg, condition, fieldname, property) {
+		const control = fg && fg.fields_dict && fg.fields_dict[fieldname];
+		if (!control || !control.df || (property !== "reqd" && property !== "read_only")) return;
+		const base = property === "reqd" ? control.df.fk_reqd : control.df.fk_read_only;
+		const value = base || fg.evaluate_depends_on_value(condition) ? 1 : 0;
+		if ((control.df[property] ? 1 : 0) === value) return;
+		control.df[property] = value;
+		control.refresh();
+	}
+
+	// The fields whose label is `fieldname`'s value (the config's label_from), relabeled on screen.
+	relabel(fieldname) {
+		const label_from = (this.flow && this.flow.label_from) || {};
+		Object.keys(label_from).forEach((target) => {
+			if (label_from[target] !== fieldname || !this.fg) return;
+			const control = this.fg.fields_dict[target];
+			const def = this.defs[target];
+			if (!control || !def || typeof control.set_label !== "function") return;
+			control.set_label(this.kit.label_for(def, label_from, this.values));
+		});
+	}
+
+	// ------------------------------------------------------------------ Ctrl/Cmd+S (v1.685.0)
+	// frappe's own Ctrl+S (keyboard.js) blurs the field and then runs frappe.app.trigger_primary_action:
+	// an open dialog's primary button, else a visible form's Save, else the current page's
+	// `save_action`. The guided page had none, so Ctrl+S only blurred and the change waited out the
+	// queue's 2.5 s. Each editor adds itself to its host page's save_action once (bind_save_key from
+	// take_flow): the guided page's own wrapper, or the list or board page a side panel opens over.
+	// A dialog keeps Ctrl+S for itself, as on the form, and on any other page nothing changes.
+
+	save_key_host() {
+		if (this.wrapper) return this.wrapper;
+		return (window.frappe && frappe.container && frappe.container.page) || null;
+	}
+
+	bind_save_key() {
+		ge_bind_save_key(this.save_key_host(), this);
+	}
+
+	// Save now what this editor holds: the step's inputs, then the queue flushed (a new record is
+	// created, as the form's Ctrl+S inserts). False when there is nothing it can do, so the page's
+	// earlier save_action gets the key.
+	save_now() {
+		if (!this.flow) return false;
+		if (this.is_new) {
+			this.create();
+			return true;
+		}
+		if (!this.queue || this.queue.manual) return false;
+		this.collect_step();
+		this.queue.flush().catch(() => {
+			// The reason is on screen: the saving line, a refusal notice or the conflict chooser.
+		});
+		return true;
+	}
+
 	// depends_on is written against the whole record (doc.status, doc.custom_value_stream ...),
 	// but a FieldGroup only knows the fields of this one step: evaluate it against the record's
 	// values with the step's live inputs laid over them.
-	condition(expression) {
+	//
+	// `fallback` is what a condition that cannot be read means (CONDITION_FALLBACK): a depends_on
+	// shows the field, never hiding one by accident; a mandatory_depends_on or read_only_depends_on
+	// adds nothing, never making a field required or read-only by accident (v1.685.0).
+	condition(expression, fallback = true) {
 		if (typeof expression !== "string") return expression;
 		return (step_values) => {
-			const doc = Object.assign({}, this.values, step_values || {});
+			// What the form's doc also carries that the values do not: a condition such as
+			// `eval:doc.__islocal && doc.is_sales_item` (Item's Standard Selling Rate) reads it.
+			const own = { doctype: this.doctype, name: this.name, __islocal: this.is_new ? 1 : undefined };
+			const doc = Object.assign(own, this.values, step_values || {});
 			try {
 				if (expression.startsWith("eval:")) {
 					return frappe.utils.eval(expression.slice(5), { doc, parent: doc });
@@ -715,8 +871,7 @@ export class RecordEditor {
 				const value = doc[expression];
 				return Array.isArray(value) ? value.length > 0 : !!value;
 			} catch (e) {
-				// A condition that cannot be read shows the field: never hide one by accident.
-				return true;
+				return fallback;
 			}
 		};
 	}
@@ -768,12 +923,80 @@ export class RecordEditor {
 			if (!control) return;
 			const mode = this.kit.inputmode_for(control.df, registry, this.doctype);
 			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
+			this.set_link_reference(control);
 			if (GE_TEXT_TYPES.includes(field.fieldtype) && control.$input && control.$input.is("textarea")) {
 				control.$input.attr("rows", 3);
 				this.fit_text(control.$input[0]);
 			}
 			if (this.wants_help(field)) this.add_help(control.$wrapper, field, step);
 		});
+	}
+
+	// A step's starting values, each on its own, and each field listened to again once its own value
+	// has settled (v1.685.0). They went through fg.set_values, whose Promise.all waits for every
+	// control: v16's Table MultiSelect rejects a value while it is read-only or hidden (it has no
+	// input area to draw its pills in), FieldGroup.set_value then never resolves, and every field of
+	// the step stayed in `suppress`, so field_changed ignored it. On the Close step that was the
+	// status and the three ranks: nothing typed there was saved.
+	//
+	// Review of #1300:
+	//   - The conditions are refreshed as each value lands (one pass per tick), not after the slowest
+	//     one: a Link whose check never answers must not hold back Closed Won's asterisks.
+	//   - A field is listened to again only while this very control is still on screen: a slow first
+	//     draw must not take the field of the next draw (a quick step change, a redraw) off `suppress`.
+	//   - A value shown on load is not checked: v16's Link would run validate_link_and_fetch with the
+	//     query's filters and raise "X did not match any results" for a stored value the filters no
+	//     longer allow (a disabled account). The Desk form never checks a value it loads, either.
+	set_initial_values(fg, initial) {
+		const shown = () => this.fg === fg || !!(this.fg && this.fg.multi && this.fg.owns(fg));
+		let queued = false;
+		const refresh = () => {
+			if (queued) return;
+			queued = true;
+			setTimeout(() => {
+				queued = false;
+				if (shown()) fg.refresh_dependency();
+			}, 0);
+		};
+		const settled = Object.keys(initial).map((fieldname) => {
+			const control = fg.fields_dict[fieldname];
+			const value = initial[fieldname];
+			return Promise.resolve()
+				.then(() => {
+					if (!control) return null;
+					control._validated = true; // link.js validate(): no lookup for a loaded value
+					return control.set_value(value);
+				})
+				.then(() => control && control.set_input && control.set_input(value))
+				.catch(() => {
+					// The control keeps what it could show; the value is still this.values'.
+				})
+				.then(() => {
+					if (control) delete control._validated;
+					// Another draw's control for the same field is that draw's to release; a field no longer
+					// on screen at all is released here, so it is not left ignored when drawn again.
+					const now = this.fg && this.fg.fields_dict ? this.fg.fields_dict[fieldname] : undefined;
+					if (now === control || !now) this.suppress.delete(fieldname);
+					refresh();
+				});
+		});
+		// Resolves true while the group is still on screen (alone, or one of One page's / Tabs' set).
+		return Promise.all(settled).then(() => {
+			const on_screen = shown();
+			if (on_screen) fg.refresh_dependency();
+			return on_screen;
+		});
+	}
+
+	// v1.685.0: a Link searches with the record's DocType as its reference_doctype, as on the form
+	// (link.js get_reference_doctype reads the control's doctype, which a FieldGroup leaves unset).
+	// search_link needs it with link_fieldname to honor the docfield's ignore_user_permissions; without
+	// it the flag is dropped and an error logged on every search. Only the method is replaced: giving
+	// the control a doctype would also move its display status onto frappe.perm.
+	set_link_reference(control) {
+		if (!control || typeof control.get_reference_doctype !== "function" || !this.doctype) return;
+		const doctype = this.doctype;
+		control.get_reference_doctype = () => doctype;
 	}
 
 	add_help($wrapper, field, step) {
@@ -1012,6 +1235,12 @@ export class RecordEditor {
 		if (!this.fg || this.suppress.has(fieldname)) return;
 		const control = this.fg.fields_dict[fieldname];
 		if (!control || !control.get_value) return;
+		// Only a field the person can change on screen says what it holds. v16's get_value() of a
+		// control that is not "Write" (read-only by a read_only_depends_on, hidden by a depends_on) is
+		// `this.value || undefined`, so a 0 reads back blank: a saved stock Item's Is Fixed Asset (read-
+		// only while Maintain Stock is ticked) came back null, was queued, and `clears` then unticked
+		// Maintain Stock and saved it (review of #1300). Such a field keeps the record's value.
+		if (typeof control.get_status === "function" && control.get_status() !== "Write") return;
 		let value = control.get_value();
 		if (value === undefined) value = null;
 		const def = this.defs[fieldname];
@@ -1029,6 +1258,7 @@ export class RecordEditor {
 				this.show_value(cleared, null);
 			});
 			this.refresh_distinct();
+			this.relabel(fieldname);
 			this.party_entry().changed(fieldname, before, value);
 			this.ext_notify(fieldname, value);
 		}

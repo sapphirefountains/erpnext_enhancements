@@ -1886,6 +1886,80 @@ class TestCompletenessBatch(unittest.TestCase):
 # --------------------------------------------------------------------------- the endpoints
 
 
+class TestTheInputsAreTheForms(unittest.TestCase):
+    """v1.685.0 (Nik, 2026-10-14: "the inputs should be the same"): what the form's controls read
+    from the docfield and the form's scripts reaches the guided page's controls too.
+    tests/test_form_kit_inputs.py holds the config to the scripts themselves."""
+
+    def setUp(self):
+        _reset()
+
+    def test_link_filters_reach_the_page(self):
+        """Opportunity From's Property Setter limits it to Lead, Customer and Prospect; v16's Link
+        control applies link_filters without a frm, so the definition only has to carry it."""
+        flow = steps.flow_steps("Opportunity", None)
+        field = _field(flow, "opportunity_from")
+        self.assertEqual(json.loads(field["link_filters"]), [["DocType", "name", "in", ["Lead", "Customer", "Prospect"]]])
+        for key in ("link_filters", "ignore_user_permissions", "length", "sort_options", "placeholder"):
+            self.assertIn(key, steps.FIELD_KEYS)
+        self.assertNotIn("fetch_from", steps.FIELD_KEYS, "the server fetches on save; save_step returns it")
+
+    def test_the_ranks_are_required_on_closed_won(self):
+        """opportunity_migrated_scripts.js makes the three ranks reqd while the status is Closed Won;
+        the flow says the same as their mandatory_depends_on, from the config's ``won``."""
+        flow = steps.flow_steps("Opportunity", _doc(_seed()))
+        for fieldname in ("custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"):
+            self.assertEqual(_field(flow, fieldname)["mandatory_depends_on"], 'eval:doc.status==="Closed Won"')
+        self.assertNotIn("mandatory_depends_on", _field(flow, "custom_opportunity_summary"))
+        self.assertEqual(steps.won_conditions({}), {})
+
+    def test_get_flow_sends_the_queries_without_their_sources(self):
+        payload = api.get_flow("Opportunity", _seed())
+        self.assertEqual(set(payload["queries"]), set(config.CONFIGS["Opportunity"]["queries"]))
+        self.assertTrue(all("source" not in query for query in payload["queries"].values()))
+        self.assertEqual(payload["queries"]["party_name"]["cases"]["Lead"], {"query": "erpnext.controllers.queries.lead_query"})
+        self.assertEqual(payload["label_from"], {"party_name": "opportunity_from"})
+
+    def test_the_query_context_holds_what_the_values_do_not(self):
+        """A Prospect is searched by the deal's company, which the flow does not show; the contact
+        and address pickers search the record and the parties its stakeholder rows name, as the
+        form's directory does (the live party is added on the page)."""
+        name = _seed(
+            custom_contacts__address_table=[
+                {"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Example Builders"},
+                {"name": "s2", "idx": 2, "party_type": "", "party_name": "No type"},
+            ]
+        )
+        context = api.get_flow("Opportunity", name)["query_context"]
+        self.assertEqual(context["fields"], {"company": "Sapphire Fountains"})
+        self.assertEqual(context["directory"], [name, "Example Builders"])
+        self.assertNotIn("Smith Residence", context["directory"], "the party is the page's live one")
+
+    def test_a_new_record_has_no_directory(self):
+        context = api.get_flow("Opportunity")["query_context"]
+        self.assertEqual(context["directory"], [])
+        self.assertIn("company", context["fields"])
+
+    def test_the_item_flow_sends_its_grid_queries(self):
+        """Item's queries are item.js's, on grid columns ("table.field"); a ``{"row": ...}`` value is
+        the edited row's, so nothing has to come with them, and an Item has no directory query."""
+        payload = api.get_flow("Item")
+        self.assertEqual(
+            payload["queries"]["item_defaults.expense_account"],
+            {"query": "erpnext.controllers.queries.get_expense_account", "filters": {"company": {"row": "company"}}},
+        )
+        self.assertEqual(payload["query_context"], {"fields": {}, "directory": []})
+        self.assertNotIn("label_from", payload)
+
+    def test_a_table_at_an_unreadable_level_is_not_read(self):
+        metas = build_metas(field_overrides={"custom_contacts__address_table": {"permlevel": 7}})
+        _reset(metas)
+        name = _seed(
+            custom_contacts__address_table=[{"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Example Builders"}]
+        )
+        self.assertEqual(api.get_flow("Opportunity", name)["query_context"]["directory"], [name])
+
+
 class TestEndpoints(unittest.TestCase):
     def setUp(self):
         _reset()
@@ -1911,6 +1985,11 @@ class TestEndpoints(unittest.TestCase):
                 "won",
                 # The statuses that close a record: the side panel offers no Undo across them.
                 "closed",
+                # v1.685.0: the form scripts' set_query as data, what they read, and party_name's
+                # label from opportunity_from.
+                "queries",
+                "query_context",
+                "label_from",
             },
         )
         self.assertEqual(payload["name"], name)

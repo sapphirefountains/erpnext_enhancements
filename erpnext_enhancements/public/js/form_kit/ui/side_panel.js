@@ -607,7 +607,12 @@ export class SidePanel extends RecordEditor {
 			this.lost_fg = new frappe.ui.FieldGroup({ fields: this.lost_fields(), body: $fields[0], no_submit_on_enter: true });
 			this.lost_fg.make();
 		} else {
-			const fields = this.gate.kind === "won" ? this.kit.field_defs(this.flow, this.gate.fieldnames) : [];
+			// Every one is required for the move (panel.js gate_missing), so each shows the asterisk the
+			// form shows once the status is Closed Won (v1.685.0).
+			const fields =
+				this.gate.kind === "won"
+					? this.kit.field_defs(this.flow, this.gate.fieldnames).map((f) => Object.assign({}, f, { reqd: 1 }))
+					: [];
 			const step = this.kit.panel_step(
 				"move",
 				fields.length ? __("Before it moves") : __("Move"),
@@ -795,6 +800,16 @@ export class SidePanel extends RecordEditor {
 				})
 				.catch(() => {});
 		}
+	}
+
+	// Ctrl/Cmd+S (editor.js save_now, v1.685.0): a move is committed, as its button does; an edit
+	// saves now; a quick add is created.
+	save_now() {
+		if (this.spec && this.spec.kind === "move") {
+			if (this.$root.find(".fk-commit").length && !this.committing) this.commit();
+			return true;
+		}
+		return super.save_now();
 	}
 
 	has_unsaved() {
