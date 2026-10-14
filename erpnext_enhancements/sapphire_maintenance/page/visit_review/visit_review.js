@@ -78,6 +78,9 @@ const VR_STYLE = `
 .vr-follow{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:8px;}
 .vr-follow-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
 .vr-follow-bar select{max-width:180px;}
+.vr-bill-cell{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.vr-bill-cell select{width:auto;max-width:240px;}
+.vr-bill-cell input{width:70px;}
 .vr-actions{position:sticky;bottom:0;background:var(--bg-color);border-top:1px solid var(--border-color);padding:10px 0;margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;z-index:2;}
 @media (max-width:640px){.vr-missed .vr-hide-sm{display:none;}.vr-kv td:first-child{width:45%;}}
 `;
@@ -492,6 +495,8 @@ class VisitReview {
 			)}</a></div>`;
 		}
 
+		html += this.chemicals_html(data);
+
 		html += '<div class="vr-actions">';
 		if (data.can_approve) {
 			html += `<button type="button" class="btn btn-primary btn-sm" data-act="approve">${__("Approve & Submit")}</button>`;
@@ -509,6 +514,69 @@ class VisitReview {
 
 		this.$body.html(html);
 		this.$body.find("[data-act]").on("click", (e) => this.act($(e.currentTarget).attr("data-act")));
+		// Whole container asks how many; the other two do not.
+		this.$body.find(".vr-bill").on("change", (e) => {
+			const $select = $(e.currentTarget);
+			$select.siblings(".vr-containers").toggle($select.val() === "Whole Container");
+		});
+	}
+
+	// "Chemicals to bill" (v1.628.0): per dose, whole container or not at all is situational
+	// (Nik, 2026-10-13), so the reviewer chooses for each chemical, starting from the item's
+	// default. Sent with Approve; read-only for a reviewer who cannot approve this visit.
+	chemicals_html(data) {
+		const chemicals = data.chemicals || [];
+		if (!chemicals.length) return "";
+		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+		const money = (v) => esc(format_currency(v || 0));
+		// A missing price says so rather than reading as a free chemical.
+		const per_dose = (c) =>
+			c.price_per_dose ? __("Per dose ({0} each)", [money(c.price_per_dose)]) : __("Per dose (no price set)");
+		const whole = (c) =>
+			c.container_price
+				? __("Whole container ({0} each)", [money(c.container_price)])
+				: __("Whole container (no price set)");
+		const label = (c) =>
+			({
+				"Per Dose": per_dose(c),
+				"Whole Container": whole(c),
+				"Don't Bill": __("Don't bill"),
+			})[c.bill_as] || esc(c.bill_as);
+		let html = `<div class="vr-block"><h5>${__("Chemicals to bill")}</h5>
+			<div class="vr-muted">${__(
+				"Per dose bills the doses recorded at the item's Price per Dose. Whole container bills the containers opened, for a product that cannot be kept once opened."
+			)}</div>
+			<div class="vr-scroll"><table class="vr-table"><thead><tr><th>${__("Chemical")}</th><th>${__(
+				"Used"
+			)}</th><th>${__("Bill as")}</th></tr></thead><tbody>`;
+		chemicals.forEach((c, i) => {
+			let cell = label(c);
+			if (data.can_approve) {
+				const options = [
+					["Per Dose", per_dose(c)],
+					["Whole Container", whole(c)],
+					["Don't Bill", __("Don't bill")],
+				];
+				cell = `<div class="vr-bill-cell"><select class="form-control input-xs vr-bill" data-i="${i}" aria-label="${__(
+					"Bill as"
+				)}">${options
+					.map(([value, text]) => `<option value="${esc(value)}"${value === c.bill_as ? " selected" : ""}>${text}</option>`)
+					.join("")}</select><input type="number" min="1" step="1" class="form-control input-xs vr-containers" data-i="${i}" value="${esc(
+					c.containers
+				)}" aria-label="${__("Containers")}"${c.bill_as === "Whole Container" ? "" : ' style="display:none"'}></div>`;
+			}
+			html += `<tr><td>${esc(c.item_name)}</td><td>${esc(c.dose)}</td><td>${cell}</td></tr>`;
+		});
+		html += "</tbody></table></div></div>";
+		return html;
+	}
+
+	chemical_choices(data) {
+		return (data.chemicals || []).map((c, i) => ({
+			row: c.row,
+			bill_as: this.$body.find(`.vr-bill[data-i="${i}"]`).val() || c.bill_as,
+			containers: parseFloat(this.$body.find(`.vr-containers[data-i="${i}"]`).val()) || 1,
+		}));
 	}
 
 	act(action) {
@@ -534,7 +602,11 @@ class VisitReview {
 				frappe
 					.call({
 						method: VR_API + "approve_visit",
-						args: { record: data.name, modified: data.modified },
+						args: {
+							record: data.name,
+							modified: data.modified,
+							chemicals: JSON.stringify(this.chemical_choices(data)),
+						},
 						freeze: true,
 						freeze_message: __("Approving…"),
 					})

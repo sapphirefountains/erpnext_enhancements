@@ -11,6 +11,8 @@
   "uom",
   "warehouse",
   "qty",
+  "bill_as",
+  "containers",
   "default_qty",
   "qty_step",
   "serial_and_batch_bundle"
@@ -74,6 +76,22 @@
    "reqd": 1
   },
   {
+   "description": "Chosen when the visit is approved. Blank: the item's own default (Bill On Visits).",
+   "fieldname": "bill_as",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Bill As",
+   "options": "\nPer Dose\nWhole Container\nDon't Bill"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.bill_as == 'Whole Container'",
+   "description": "How many containers this visit opened.",
+   "fieldname": "containers",
+   "fieldtype": "Float",
+   "label": "Containers"
+  },
+  {
    "description": "The quantity usually used — the wizard stepper's first-tap prefill. Copied from the template section item.",
    "fieldname": "default_qty",
    "fieldtype": "Float",
@@ -97,7 +115,7 @@
    "options": "Serial and Batch Bundle"
   }
  ],
- "modified": "2026-10-12 14:00:00.000000",
+ "modified": "2026-10-13 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Consumable",
