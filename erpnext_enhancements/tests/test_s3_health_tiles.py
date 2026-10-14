@@ -39,9 +39,12 @@ PAGES = {
 	"integrations-health": APP / "integration_hub/page/integrations_health/integrations_health.js",
 	"device-fleet-dashboard": APP / "device_management/page/device_fleet_dashboard/device_fleet_dashboard.js",
 	"quickbooks-online-dashboard": QBO_DIR / "quickbooks_online_dashboard.js",
-	"stripe-payments-dashboard": APP / "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
+	"stripe-payments-dashboard": APP
+	/ "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
 }
 HEALTH_PAGES = ("integrations-health", "device-fleet-dashboard")
+# Every script that draws on these pages: the four, and the board two of them call.
+SCANNED = [*PAGES.items(), ("health-board", BOARD)]
 
 KIT_TONES = {"good", "warn", "danger", "neutral"}
 
@@ -56,9 +59,7 @@ COLOUR = re.compile(
 	r"|\b(?:rgb|rgba|hsl|hsla)\("
 )
 # A colour NAME as a value: the shape of a status-to-colour map ({ Paid: "green" }).
-COLOUR_VALUE = re.compile(
-	r""":\s*(['"])(?:green|red|orange|yellow|amber|blue|gray|grey|purple|pink)\1"""
-)
+COLOUR_VALUE = re.compile(r""":\s*(['"])(?:green|red|orange|yellow|amber|blue|gray|grey|purple|pink)\1""")
 # Tile markup written by hand: the kit's own classes in a class attribute, or the classes and
 # Bootstrap scaffolding the pages used to draw their tiles with.
 HAND_TILE = re.compile(
@@ -108,12 +109,12 @@ class TestOneTileRenderer(unittest.TestCase):
 				self.assertIn(".map(board.tile)", code)
 
 	def test_no_page_renders_tile_markup_by_hand(self):
-		for name, path in list(PAGES.items()) + [("health-board", BOARD)]:
+		for name, path in SCANNED:
 			with self.subTest(page=name):
 				self.assertIsNone(HAND_TILE.search(_code(path)), "draw tiles with sf.tiles.html")
 
 	def test_no_page_keeps_a_status_colour(self):
-		for name, path in list(PAGES.items()) + [("health-board", BOARD)]:
+		for name, path in SCANNED:
 			with self.subTest(page=name):
 				code = _without_dialog_indicators(_code(path))
 				self.assertIsNone(COLOUR.search(code), "a status colour: the kit's tokens draw it")
@@ -265,7 +266,10 @@ class TestTheQuickBooksStylesheet(unittest.TestCase):
 		classes = set(re.findall(r"\.(qbo-[\w-]+)", _text(QBO_CSS))) - {"qbo-dashboard"}
 		self.assertTrue(classes)
 		for path in APP.rglob("*"):
-			if path.suffix not in {".js", ".html", ".py", ".css", ".scss"} or path in (QBO_CSS, PAGES["quickbooks-online-dashboard"]):
+			if path.suffix not in {".js", ".html", ".py", ".css", ".scss"} or path in (
+				QBO_CSS,
+				PAGES["quickbooks-online-dashboard"],
+			):
 				continue
 			if "node_modules" in path.parts or path.name == Path(__file__).name:
 				continue
@@ -277,12 +281,12 @@ class TestTheQuickBooksStylesheet(unittest.TestCase):
 
 class TestThePagesStayInTheDesk(unittest.TestCase):
 	def test_no_hard_coded_app_paths(self):
-		for name, path in list(PAGES.items()) + [("health-board", BOARD)]:
+		for name, path in SCANNED:
 			with self.subTest(page=name):
 				self.assertNotRegex(_code(path), r"['\"`(]/app/")
 
 	def test_no_history_writes(self):
-		for name, path in list(PAGES.items()) + [("health-board", BOARD)]:
+		for name, path in SCANNED:
 			with self.subTest(page=name):
 				for token in ("pushState", "replaceState", "popstate"):
 					self.assertNotIn(token, _code(path))
