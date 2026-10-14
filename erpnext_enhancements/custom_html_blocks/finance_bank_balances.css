@@ -81,13 +81,13 @@
 }
 
 .fbb-status-warn {
-    background: rgba(240, 173, 78, 0.18);
-    color: #8a5a00;
+    background: color-mix(in srgb, var(--sf-warn) 18%, transparent);
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .fbb-status-error {
-    background: rgba(217, 83, 79, 0.15);
-    color: #a32d2a;
+    background: color-mix(in srgb, var(--sf-danger) 15%, transparent);
+    color: var(--sf-danger);
 }
 
 .fbb-bank-msg {
@@ -143,8 +143,8 @@
 }
 
 .fbb-reconnect {
-    background: rgba(240, 173, 78, 0.12);
-    border: 1px solid #f0ad4e;
+    background: color-mix(in srgb, var(--sf-warn) 12%, transparent);
+    border: 1px solid var(--sf-warn);
     border-radius: var(--border-radius, 6px);
     padding: 10px 12px;
     font-size: 12px;

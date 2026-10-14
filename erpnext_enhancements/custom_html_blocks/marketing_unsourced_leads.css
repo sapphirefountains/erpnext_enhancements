@@ -1,7 +1,8 @@
 /* Unsourced Leads — Marketing Dashboard widget.
    Structural colours come from Frappe CSS variables (they pierce the shadow
-   boundary, so both themes work); literal colours appear only where the colour
-   IS the meaning — good / watch / bad. */
+   boundary, so both themes work); status colours, where the colour IS the
+   meaning (good / watch / bad), come from the app's --sf-* tokens, which
+   pierce it the same way. */
 
 .mul-card {
     font-size: var(--text-md);
@@ -92,15 +93,15 @@
 }
 
 .mul-good {
-    color: #1e7e51;
+    color: var(--sf-good);
 }
 
 .mul-warn {
-    color: #b7791f;
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .mul-bad {
-    color: #c0392b;
+    color: var(--sf-danger);
     font-weight: 600;
 }
 
