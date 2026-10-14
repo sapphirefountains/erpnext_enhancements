@@ -72,6 +72,7 @@ from frappe.utils import (
 )
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements.crm_enhancements.historical import is_historical
 from erpnext_enhancements.feature_flags import handoff_gate_enabled, process_automation_enabled
 from erpnext_enhancements.utils.working_days import add_working_days
 
@@ -965,8 +966,13 @@ def handoff_state(opportunity):
 	"""Everything the Opportunity form needs to decide which button to show."""
 	if not frappe.has_permission("Opportunity", "read", doc=opportunity):
 		frappe.throw(_("Not permitted to read this Opportunity."), frappe.PermissionError)
+	# A historical (pre-ERPNext, untouched) deal is excluded from hand-off warnings
+	# (crm_enhancements/historical.py, v1.629.0): the form shows a quiet line instead of
+	# offering Create Project as the next step. Reported on both branches so the prompt
+	# never asks about one just because the gate fields are missing.
+	historical = is_historical(opportunity)
 	if not _has_gate_fields():
-		return {"available": False}
+		return {"available": False, "is_historical": historical}
 
 	row = frappe.db.get_value(
 		"Opportunity",
@@ -1017,6 +1023,7 @@ def handoff_state(opportunity):
 		# button can never be offered for something the insert will refuse.
 		"gate_open": not handoff_block_reason(opportunity),
 		"gate_message": _(GATE_MESSAGE),
+		"is_historical": historical,
 	}
 
 
@@ -1039,9 +1046,10 @@ def stamp_handoff_gate(doc, method=None):
 	``feature_flags`` documents why those stay ungated: the data has to already
 	be meaningful on the day somebody flips a switch, not start from blank.
 
-	Runs after ``stamp_won_date`` in the ``before_save`` chain, which fills
-	``custom_date_closed_won`` when empty — the deadlines are measured from the
-	transition itself, so both stamps describe the same moment.
+	Runs after ``stamp_won_date`` in the ``before_save`` chain, which fills an
+	empty ``custom_date_closed_won`` on the same transition (transition-only since
+	v1.629.0) — the deadlines are measured from the transition itself, so both
+	stamps describe the same moment.
 	"""
 	if doc.status != WON_STATUS:
 		return

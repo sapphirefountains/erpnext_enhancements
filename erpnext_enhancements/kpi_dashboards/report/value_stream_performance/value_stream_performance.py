@@ -56,6 +56,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_months, flt, getdate, nowdate
 
+from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
 #: Statuses that count as won and lost.
 #:
 #: This used to read: "Closed" is neither -- on this site it is used for administratively
@@ -128,9 +130,13 @@ def _all_streams():
 
 
 def _opportunity_rollup(from_date, to_date):
-	"""Opportunity counts per stream. One row per (stream, outcome)."""
+	"""Opportunity counts per stream. One row per (stream, outcome).
+
+	Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.629.0) are
+	left out of every outcome, not just the wins, so the win rate is not skewed by them.
+	"""
 	rows = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			vs.value_stream AS stream,
 			SUM(1) AS total,
@@ -141,6 +147,7 @@ def _opportunity_rollup(from_date, to_date):
 		INNER JOIN `tabOpportunity` o
 			ON o.name = vs.parent AND vs.parenttype = 'Opportunity'
 		WHERE o.transaction_date BETWEEN %(from_date)s AND %(to_date)s
+		  AND {exclude_sql("o")}
 		GROUP BY vs.value_stream
 		""",
 		{"won": WON_STATUSES, "lost": LOST_STATUSES, "from_date": from_date, "to_date": to_date},
@@ -155,6 +162,10 @@ def _revenue_rollup(from_date, to_date):
 	`total_billed_amount` is the honest figure where a Project exists. Where it
 	does not — the WP-7 backlog — the opportunity amount is used instead, and the
 	count of those is returned so the report can say so.
+
+	Historical deals are deliberately NOT excluded here (v1.629.0), unlike in
+	``_opportunity_rollup``: billed revenue is real money whatever the deal's age, and
+	leaving it out would understate what a stream earned.
 	"""
 	rows = frappe.db.sql(
 		"""

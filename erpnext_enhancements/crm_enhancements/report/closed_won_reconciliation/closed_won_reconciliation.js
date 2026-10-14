@@ -25,6 +25,15 @@ frappe.query_reports["Closed Won Reconciliation"] = {
 			fieldtype: "Int",
 			default: 0,
 		},
+		{
+			// Historical = created before 2025-08-01 and nobody's activity in 90 days
+			// (crm_enhancements/historical.py). Off by default: those deals are Zoho
+			// history, excluded from every won-without-project warning.
+			fieldname: "include_historical",
+			label: __("Include historical"),
+			fieldtype: "Check",
+			default: 0,
+		},
 	],
 
 	onload(report) {

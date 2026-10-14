@@ -185,6 +185,43 @@ class TestTheLinkShowsWhatWasCounted(unittest.TestCase):
         self.assertIn("status=", url)
         self.assertIn("custom_created_project", url)
 
+    def test_the_predicate_form_leaves_historical_deals_out_once_the_column_exists(self):
+        """The nag excludes historical deals (v1.629.0), so the fallback link must too --
+        and must not name the column before it exists, which errors the list view."""
+        fake = sys.modules["frappe"]
+        self.assertNotIn("custom_is_historical", self.mod._unconverted_list_url(None))
+        fake.db.has_column = lambda doctype, column: True
+        try:
+            url = self.mod._unconverted_list_url(None)
+        finally:
+            del fake.db.has_column
+        self.assertIn("custom_is_historical=0", url)
+
+
+class TestHistoricalDealsAreNotNagged(unittest.TestCase):
+    """Historical = created before 2025-08-01 and no person's activity in 90 days
+    (crm_enhancements/historical.py, WI-024, decided 2026-10-13)."""
+
+    def test_the_nag_filter_carries_the_exclusion(self):
+        self.assertIn("exclude_filters()", _fn_source("nag_unconverted_opportunities"))
+
+    def test_the_exclusion_reaches_the_query(self):
+        """RUN: with the column present, the filter list handed to get_all excludes them."""
+        mod = _module()
+        fake = sys.modules["frappe"]
+        seen = {}
+        saved = (fake.get_all, mod.process_automation_enabled, mod._alert_recipients)
+        fake.db.has_column = lambda doctype, column: True
+        fake.get_all = lambda *a, **k: seen.update(k) or []
+        mod.process_automation_enabled = lambda: True
+        mod._alert_recipients = lambda flag: [{"user_id": "x@example.com"}]
+        try:
+            mod.nag_unconverted_opportunities()
+        finally:
+            del fake.db.has_column
+            fake.get_all, mod.process_automation_enabled, mod._alert_recipients = saved
+        self.assertIn(["Opportunity", "custom_is_historical", "!=", 1], seen.get("filters"))
+
 
 class TestItIsWiredIntoCi(unittest.TestCase):
     def test_ci_runs_this_suite(self):

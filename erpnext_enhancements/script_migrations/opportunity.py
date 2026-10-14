@@ -20,9 +20,21 @@ import frappe
 def stamp_won_date(doc, method=None):
 	"""Source Server Script: "Stamp Opportunity Won Date" (Opportunity, Before Save).
 
-	When the opportunity is won and the date hasn't been set yet, stamp today.
+	Stamp today on the transition INTO Closed Won -- a new deal saved as won, or a status
+	change to it -- and only when nobody has entered a date.
+
+	Transition-only since v1.629.0. It used to stamp on ANY save of a won deal whose date was
+	blank, so the date meant "first saved after this hook shipped", not "won". A spreadsheet
+	re-import on 2026-06-30 re-saved twelve long-won deals and dated every one of them
+	06-30-2026 (patches/restore_opportunity_won_dates.py puts eleven back). A won deal with
+	no date now stays undated, which is the truthful answer when the date is not known.
+
+	``has_value_changed`` is valid here: v16 ``Document._save`` loads ``_doc_before_save`` in
+	``check_if_latest`` before ``run_before_save_methods``, and returns True for a new doc.
 	"""
-	if doc.status == "Closed Won" and not doc.custom_date_closed_won:
+	if doc.status != "Closed Won" or doc.get("custom_date_closed_won"):
+		return
+	if doc.is_new() or doc.has_value_changed("status"):
 		doc.custom_date_closed_won = frappe.utils.today()
 
 

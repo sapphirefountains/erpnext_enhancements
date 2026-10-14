@@ -238,6 +238,9 @@ CONFIG = {
 				"custom_budget_rank",
 				"custom_date_closed_won",
 				"custom_stage_changed_on",
+				# Read-only, set by the nightly job (crm_enhancements/historical.py): shown
+				# beside the other status stamps, like custom_stage_changed_on.
+				"custom_is_historical",
 			],
 			"sections": ["lost_detail_section"],
 		},

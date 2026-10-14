@@ -71,6 +71,7 @@ from frappe import _
 from frappe.utils import cint, get_datetime, get_url_to_form, now_datetime
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements.crm_enhancements.historical import exclude_filter_dict
 from erpnext_enhancements.feature_flags import (
 	handoff_gate_enabled,
 	process_automation_enabled,
@@ -760,6 +761,11 @@ def escalate_overdue_handoffs():
 	Same cadence and same escalation shape as the project-side sweep: responsible
 	person plus their manager, at most once per calendar day, repeating daily
 	while it stays late.
+
+	Historical deals (pre-ERPNext, untouched for 90 days -- crm_enhancements/
+	historical.py, v1.629.0) are left out, as the form already hides their OVERDUE
+	banner: an email the form contradicts is worse than either alone.
+	``exclude_filter_dict`` is empty until the column exists.
 	"""
 	if not handoff_gate_enabled():
 		return
@@ -777,6 +783,7 @@ def escalate_overdue_handoffs():
 			"custom_handoff_gate_applies": 1,
 			"custom_handoff_meeting_held": 0,
 			"custom_handoff_due_by": ("<", now),
+			**exclude_filter_dict(),
 		},
 		fields=[
 			"name",

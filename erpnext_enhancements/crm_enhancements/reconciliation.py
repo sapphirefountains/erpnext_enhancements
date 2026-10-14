@@ -48,6 +48,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate
 
+from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
 #: Days between opportunity close and project start that still counts as a full
 #: date match. A fountain build is quoted and scheduled within a quarter; beyond
 #: that the two are probably different jobs for the same customer.
@@ -76,12 +78,20 @@ LINKER_ROLES = {"System Manager", "Sales Manager", "Projects Manager"}
 
 
 def unlinked_won_opportunities(filters=None):
-	"""Closed-won Opportunities with no Project pointing at them."""
+	"""Closed-won Opportunities with no Project pointing at them.
+
+	Historical deals (pre-ERPNext and untouched for 90 days, ``historical.py``) are left
+	out unless ``include_historical`` is ticked: most of this backlog is Zoho history
+	that will never get a Project here, and a worklist that leads with it hides the
+	recent deals that genuinely need one.
+	"""
 	filters = frappe._dict(filters or {})
 	conditions = [
 		"o.status = 'Closed Won'",
 		"NOT EXISTS (SELECT 1 FROM `tabProject` p WHERE p.custom_opportunity = o.name)",
 	]
+	if not cint(filters.get("include_historical")):
+		conditions.append(exclude_sql("o"))
 	values = {}
 
 	if filters.get("from_date"):
