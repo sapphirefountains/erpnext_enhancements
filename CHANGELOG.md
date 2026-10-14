@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.647.0] - 2026-10-13
+
+Form kit P6, part A (ERPNext TASK-2026-02774, "New Opportunity board"): **a new Opportunity board
+page, `/desk/opportunity-board`**, the board that is to replace the patched stock Kanban. This
+release builds P6.1 (the board and its cards), P6.2 (rows by value stream), P6.5 (the forecast
+strip) and P6.9 (the phone layout). On prod on 2026-10-13 there were 80 open deals, 41 of them On
+Hold, and 58 of the 80 had no amount.
+
+**Nothing is retired yet.** The stock Kanban, its patches (`ee_kanban.bundle.js`) and
+`opportunity_list.js`'s redirect to it are unchanged until P6.10, and the `/sales-pipeline` TV board
+stays as it is. The new board is reached from the CRM sidebar, under Guided Entry. Roles: Sales
+User, Sales Manager, System Manager.
+
+### Added
+
+- **The board** (`crm_enhancements/page/opportunity_board`). Its stage columns are the status
+  options, read the way the Sales Pipeline page reads them (`sales_pipeline._stage_columns`), so a
+  renamed stage reshapes both boards with no deploy. On Hold comes last. An open deal whose status the
+  options no longer list gets a column of its own, so no deal falls out of the totals.
+  - The board refreshes on the existing `sales_pipeline_updated` realtime event. The refresh is
+    debounced, and it waits while a card is being dragged or saved.
+- **Each card shows:**
+  - a band in its value streams' pillar colors, split into one segment per stream;
+  - the stream chips;
+  - the amount, or a plain "No amount";
+  - the expected close date;
+  - the days in stage, counted from `custom_stage_changed_on` on the site's date;
+  - the P4.6 completeness meter, with what is missing in its tooltip.
+- **Stale cards glow.** Past the Sales Pipeline Dashboard thresholds, a card takes an amber and then
+  a red 2px border, and its age chip says "slowing" or "stalled". These are the same settings the TV
+  board reads (ERPNext Enhancements Settings). On Hold never glows, as on the TV board.
+  - The glow is a border, not a shadow: the brand has no shadows.
+- **Rows by value stream** (P6.2), from a "By value stream" switch. The rows are Design, Build,
+  Service and Events, then Products and Delivery, then any other stream, then "No value stream".
+  - A deal with several streams appears in each of its rows, marked "Also in …".
+  - Each row's total counts the deal in full. The column heads and the overall total count it once
+    (Nik, 2026-10-13), so they match the plain board's.
+- **The forecast strip** (P6.5). For each stage it shows the deals, their value, and their value
+  weighted by each deal's own `probability`, which is P5.5's stage default or Sales' override.
+  - On Hold is left out of the weighted figure and shows "Not forecast".
+  - It also shows the deals expected to close this month and next, by `expected_closing`. Their
+    count and value include On Hold deals, and their weighted value does not.
+  - A probability above 100 is capped. A deal with no probability adds nothing to the weighted
+    figure.
+  - The SQL that checks these figures is in `crm_enhancements/README.md`, and the test suite runs
+    that exact query against the same deals.
+- **Moving a card.** With a mouse, drag it; it lifts after 6px. On a touch screen, press and hold
+  for 300 ms; a finger that moves first is scrolling. These are the planners' numbers. Every card
+  also has a **Move** button, which is the keyboard's way in.
+  - A move between open stages, or to On Hold, saves the status through the form kit's own save
+    path (`form_kit.api.save_step`) and carries the card's `modified`. The toast that confirms it
+    has an Undo.
+  - **On a conflict**, nothing is saved. The card goes back, the toast names who changed the deal,
+    and the board reloads. Nothing is ever overwritten silently.
+  - A user who may not change the status sees the card go back, with a message saying so.
+  - **A drop on Closed Won or Lost saves nothing.** Those stages need the ranks or the lost reasons,
+    which the side panel (P6.6) will collect. Until then, the deal's guided page opens on its Close
+    step and the card stays where it was.
+- **Opening a card.** A click opens the record with `frappe.set_route("Form", "Opportunity", …)`,
+  which `guided_default.js` (v1.644.0) sends on to the guided page.
+- **The phone layout** (P6.9). Under 768px the board shows one stage at a time, under a row of stage
+  tabs that wrap instead of scrolling sideways.
+  - To move a card, tap it, then tap a stage in the move panel. The panel also has "Open
+    opportunity".
+  - Checked at 390px: nothing is wider than the screen, and every button is at least 44px.
+- **History.** Every view is a route: the layout, the phone's stage tab, and the move panel
+  (`…/move/<name>`). The panel is pushed over the view it opened from, so Back closes it before it
+  changes the view (Nik's rule: never break Back/Forward).
+- **`get_board`**, a new whitelisted GET endpoint, sends the open deals with exactly what the cards,
+  rows and strip read.
+  - It reads through `frappe.get_list`, so the caller's own permissions apply. The TV board reads
+    permission-free because it is a shared wall display; this board is where a person works their
+    deals.
+  - Historical deals are left out. Each custom field is read only when the meta has it.
+  - Stream rows and completeness are read in batches of 500 names.
+  - **`modified` is sent as `str(modified)`**, the exact string `form_kit.saver` compares. Any other
+    format would turn every move into a conflict.
+- **The board's decisions are one pure ES module**, `public/js/opportunity_board/board.js`, loaded
+  as `opportunity_board.bundle.js`. It holds the routes, the model, the ages, the rows, the forecast,
+  and what a drop means. The pillars come from `form_kit/summary.js`, which `test_guided_entry`
+  holds to `print_style.STREAM_PILLAR`, so there is one source.
+  - The stylesheet, `opportunity_board.bundle.css`, uses `--sf-*` tokens only. Each band segment is
+    edged in `--sf-chip-edge-<pillar>`, so Build's navy and Neutral's blue still show on a
+    dark-theme card.
+- **`tests/test_opportunity_board.py`**, bench-free, in its own CI step:
+  - runs the module under node on a realistic payload;
+  - runs the README's SQL check on SQLite and holds the forecast to it;
+  - calls `get_board` against a frappe stub;
+  - checks the page statically: every request is `sf_kit.call` quiet, reads are GET and the save is
+    POST, there are no `/app/` paths, the CSS uses tokens only, and the Kanban patches and the list
+    redirect are untouched.
+
+### Changed
+
+- The CRM sidebar's additions (`setup/workspace_tweaks.py`) gain **Opportunity Board**, placed
+  after Guided Entry. `test_workspace_tweaks` now expects both rows.
+
 ## [1.646.0] - 2026-10-13
 
 ### Changed

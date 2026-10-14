@@ -161,7 +161,7 @@ Won without the three ranks, Lost without a lost reason) or a missing permission
 `_server_messages`, which `frappe.call` shows. Nothing is half-saved. A conflict is a return value
 because it is an expected outcome the page handles, not an error.
 
-`completeness_for(doctype, names)`: `names` a JSON list of up to 500 names; returns
+`completeness_for(doctype, names)` (the Opportunity board's meters, P6.1, call the Python function directly, in batches of 500): `names` a JSON list of up to 500 names; returns
 `{name: completeness}` for those the caller can read (one `frappe.get_list`, so an unreadable
 record is simply absent) with one bound query per child table, never one per record.
 

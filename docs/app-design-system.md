@@ -135,7 +135,9 @@ pillar a stream takes:
 Products has always been drawn as Build in the project brief. Nik chose Build for Delivery on
 2026-10-13. A stream mapped to `None` would take the neutral band. `project_brief.js` carries a
 copy, and `tests/test_print_style.py` holds that copy to `STREAM_PILLAR`. The Kanban's own
-value-stream colours are retired by form kit P6.
+value-stream colours are retired by form kit P6: the new Opportunity board
+(`crm_enhancements/page/opportunity_board`) draws each card's band from `form_kit/summary.js`'s copy, one segment
+per stream in the closing stop, edged in `--sf-chip-edge-<pillar>` so Build and Neutral still show on a dark card.
 
 ## Type
 
