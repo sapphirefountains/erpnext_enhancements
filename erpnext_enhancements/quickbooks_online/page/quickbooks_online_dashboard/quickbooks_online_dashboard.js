@@ -23,6 +23,11 @@
  *                               row -- after a full import, none of them.
  *
  * The page is otherwise stateless; all data comes from the RPCs above.
+ *
+ * The status load and the resync-preview poll run on sf_kit's quiet path (v1.637.0): the load
+ * draws its loading, empty, error and no-access states from the kit where the sync logs go, and
+ * the poll, which no one is watching, never puts up a frappe dialog. The buttons keep
+ * frappe.call and its dialogs: those failures answer a click.
  */
 frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -96,8 +101,60 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	});
 
 	renderEntities(root);
-	refresh(root);
+	qboKit().then(() => refresh(root));
 };
+
+// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
+// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
+// dashboard carries on with qboPlainKit: frappe.call and a line of plain text.
+let qbo_kit_loading = null;
+let qbo_sf = null;
+function qboKit() {
+	if (!qbo_kit_loading) {
+		qbo_kit_loading = new Promise((resolve) => {
+			const ready = () => {
+				qbo_sf = window.sf_kit && window.sf_kit.state ? window.sf_kit : qboPlainKit();
+				resolve(qbo_sf);
+			};
+			try {
+				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
+			} catch (e) {
+				ready();
+			}
+		});
+	}
+	return qbo_kit_loading;
+}
+
+function qboPlainKit() {
+	return {
+		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
+		call: (method, args, opts) =>
+			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
+				(r) => r && r.message,
+				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false }),
+			),
+		state: {
+			render(el, kind, opts) {
+				opts = opts || {};
+				const $el = $(el).empty();
+				$('<div class="text-muted"></div>').text(opts.title || "").appendTo($el);
+				if (typeof opts.on_action === "function") {
+					$('<button class="btn btn-default btn-sm"></button>')
+						.text(opts.action_label || __("Try again"))
+						.on("click", opts.on_action)
+						.appendTo($el);
+				}
+			},
+		},
+		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
+	};
+}
+
+// The kit, or the plain stand-in until it has loaded.
+function qboSf() {
+	return qbo_sf || qboPlainKit();
+}
 
 // Keep in sync with ACCOUNTING_ENTITIES in quickbooks_online/core/constants.py.
 const QBO_ENTITIES = [
@@ -140,11 +197,14 @@ function renderEntities(root) {
 	});
 }
 
+// Loaded once, on the way in: the tiles keep their "-" and the log list carries the state.
 function refresh(root) {
-	frappe.call({
-		method: "erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status",
-		callback(response) {
-			const data = response.message || {};
+	const sf = qboSf();
+	const list = root.find(".qbo-log-list");
+	sf.state.render(list, "loading", { title: __("Loading QuickBooks status…") });
+	sf.call("erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status", {}, { quiet: true }).then(
+		(message) => {
+			const data = message || {};
 			const settings = data.settings || {};
 			root.find("[data-field='status']").text(settings.status || "-");
 			root.find("[data-field='environment']").text(settings.environment || "-");
@@ -152,30 +212,58 @@ function refresh(root) {
 			root.find("[data-field='failed_records']").text(data.failed_records || 0);
 			renderLogs(root, data.latest_logs || []);
 		},
-	});
+		(err) => {
+			err = err || {};
+			if (err.session_expired) {
+				sf.state.render(list, "error", {
+					title: __("You have been signed out."),
+					body: __("Reload the page to sign in again."),
+					action_label: __("Reload"),
+					on_action: () => window.location.reload(),
+				});
+			} else if (err.status === 403) {
+				sf.state.render(list, "no-access", {
+					title: __("You do not have access to the QuickBooks Online dashboard."),
+					body: err.message,
+				});
+			} else {
+				sf.state.render(list, "error", {
+					title: __("Could not load the QuickBooks status."),
+					body: err.message,
+					on_action: () => refresh(root),
+				});
+			}
+		},
+	);
 }
 
+// Every value in a row is the server's, so every one goes through the kit's escape (v1.637.0).
 function renderLogs(root, logs) {
+	const sf = qboSf();
+	const esc = sf.esc;
 	const list = root.find(".qbo-log-list");
 	list.empty();
 	if (!logs.length) {
-		list.html(`<div class="text-muted">${__("No sync logs yet.")}</div>`);
+		sf.state.render(list, "empty", {
+			title: __("No sync logs yet."),
+			body: __("Import All or sync a single entity above, and its log appears here."),
+		});
 		return;
 	}
 	logs.forEach((log) => {
 		$(`
 			<div class="qbo-log-row">
 				<div>
-					<a data-route="Form/QuickBooks Sync Log/${log.name}">${log.name}</a>
-					<div class="text-muted">${log.sync_type || ""} ${log.entity_type || ""}</div>
+					<a data-route="Form/QuickBooks Sync Log/${esc(log.name)}">${esc(log.name)}</a>
+					<div class="text-muted">${esc(log.sync_type || "")} ${esc(log.entity_type || "")}</div>
 				</div>
-				<div>${log.status}</div>
+				<div>${esc(log.status)}</div>
 				<div>
-					${__("C")} ${log.created_count || 0} /
-					${__("L")} ${log.linked_count || 0} /
-					${__("R")} ${log.manual_review_count || 0} /
-					${__("X")} ${log.conflict_count || 0} /
-					${__("I")} ${log.ignored_count || 0}
+					${__("C")} ${esc(log.created_count || 0)} /
+					${__("L")} ${esc(log.linked_count || 0)} /
+					${__("R")} ${esc(log.manual_review_count || 0)} /
+					${__("X")} ${esc(log.conflict_count || 0)} /
+					${__("I")} ${esc(log.ignored_count || 0)}
 				</div>
 			</div>
 		`).appendTo(list);
@@ -279,11 +367,12 @@ function pollResyncPreview(previewId, attempts) {
 		);
 		return;
 	}
-	frappe.call({
-		method: "erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary",
-		args: { name: previewId },
-		callback(response) {
-			const data = response.message || {};
+	// Quiet (v1.637.0): a poll every 3 s must not put up a frappe dialog for each failed tick. A
+	// failed tick counts as an attempt and tries again; a lapsed session ends the poll with a toast.
+	const sf = qboSf();
+	sf.call("erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary", { name: previewId }, { quiet: true }).then(
+		(message) => {
+			const data = message || {};
 			if (data.status === "Completed") {
 				offerRunResync(previewId, data.summary || {});
 			} else if (data.status === "Failed") {
@@ -296,7 +385,14 @@ function pollResyncPreview(previewId, attempts) {
 				setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
 			}
 		},
-	});
+		(err) => {
+			if (err && err.session_expired) {
+				sf.toast(__("You have been signed out. Sign in again and review Sync Log {0}.", [previewId]), { tone: "warning" });
+				return;
+			}
+			setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+		},
+	);
 }
 
 function offerRunResync(previewId, summary) {

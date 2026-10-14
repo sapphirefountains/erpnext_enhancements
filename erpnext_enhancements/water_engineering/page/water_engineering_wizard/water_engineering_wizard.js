@@ -14,6 +14,10 @@
  *
  * Access is gated server-side by `check_permission` (read on Water Feature
  * Design); theming uses Frappe CSS variables so Light + Timeless Night both work.
+ *
+ * Loading, empty, error and no-access states come from sf_kit (v1.637.0), and the loads that
+ * report in their own panel (the access check, the design list, a design's state) use its quiet
+ * call. Calculate keeps frappe.call's dialogs: that failure answers a click.
  */
 
 const WE_API = "erpnext_enhancements.water_engineering.api.water_design.";
@@ -72,17 +76,101 @@ frappe.pages["water-engineering-wizard"].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 	const $body = $(page.body);
-
-	frappe.call(WE_API + "check_permission").then((r) => {
-		if (!r.message) {
-			$body.html(
-				`<div class="we-denied">${__("You do not have access to Water Feature Designs.")}</div>`
-			);
-			return;
-		}
-		render_shell(page, $body);
-	});
+	we_kit().then(() => we_open(page, $body));
 };
+
+function we_open(page, $body) {
+	const sf = we_sf();
+	sf.state.render($body, "loading", { title: __("Loading the Water Engineering Wizard…") });
+	sf.call(WE_API + "check_permission", {}, { quiet: true }).then(
+		(allowed) => {
+			if (!allowed) {
+				sf.state.render($body, "no-access", {
+					title: __("You do not have access to Water Feature Designs."),
+				});
+				return;
+			}
+			render_shell(page, $body);
+		},
+		(err) => we_failed($body, err, __("Could not open the Water Engineering Wizard."), () => we_open(page, $body))
+	);
+}
+
+// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
+// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
+// wizard carries on with we_plain_kit: frappe.call and a line of plain text.
+let we_kit_loading = null;
+let we_kit_ready = null;
+function we_kit() {
+	if (!we_kit_loading) {
+		we_kit_loading = new Promise((resolve) => {
+			const ready = () => {
+				we_kit_ready = window.sf_kit && window.sf_kit.state ? window.sf_kit : we_plain_kit();
+				resolve(we_kit_ready);
+			};
+			try {
+				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
+			} catch (e) {
+				ready();
+			}
+		});
+	}
+	return we_kit_loading;
+}
+
+function we_plain_kit() {
+	return {
+		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
+		call: (method, args, opts) =>
+			Promise.resolve(
+				frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet), freeze: !!(opts && opts.freeze) })
+			).then(
+				(r) => r && r.message,
+				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false })
+			),
+		state: {
+			render(el, kind, opts) {
+				opts = opts || {};
+				const $el = $(el).empty();
+				$('<div class="we-muted"></div>').text(opts.title || "").appendTo($el);
+				if (typeof opts.on_action === "function") {
+					$('<button class="btn btn-default btn-xs"></button>')
+						.text(opts.action_label || __("Try again"))
+						.on("click", opts.on_action)
+						.appendTo($el);
+				}
+			},
+		},
+		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
+	};
+}
+
+// The kit, or the plain stand-in until it has loaded.
+function we_sf() {
+	return we_kit_ready || we_plain_kit();
+}
+
+// A load that failed: no access on a 403, a way back in when the session has lapsed (the quiet
+// path puts up no sign-in dialog of frappe's), otherwise what went wrong with Try again.
+function we_failed($el, err, title, retry) {
+	const sf = we_sf();
+	err = err || {};
+	if (err.session_expired) {
+		return sf.state.render($el, "error", {
+			title: __("You have been signed out."),
+			body: __("Reload the page to sign in again."),
+			action_label: __("Reload"),
+			on_action: () => window.location.reload(),
+		});
+	}
+	if (err.status === 403) {
+		return sf.state.render($el, "no-access", {
+			title: __("You do not have access to Water Feature Designs."),
+			body: err.message,
+		});
+	}
+	return sf.state.render($el, "error", { title, body: err.message, on_action: retry });
+}
 
 function render_shell(page, $body) {
 	$body.html(`
@@ -154,11 +242,13 @@ function run_calc($body) {
 		if ($(this).attr("type") === "number") v = v === "" ? 0 : parseFloat(v);
 		inputs[name] = v;
 	});
-	frappe.call({
-		method: WE_API + "run_calc",
-		args: { calc: calc, inputs: JSON.stringify(inputs) },
-		freeze: true,
-	}).then((r) => render_result($body.find("#we-calc-result"), r.message));
+	// frappe.call's own dialog says why a calculation failed; the last result stays.
+	we_sf()
+		.call(WE_API + "run_calc", { calc: calc, inputs: JSON.stringify(inputs) }, { freeze: true })
+		.then(
+			(message) => render_result($body.find("#we-calc-result"), message),
+			() => {}
+		);
 }
 
 function render_result($el, res) {
@@ -209,21 +299,42 @@ function we_status_class(status) {
 	return "ok";
 }
 
+// The list fills the picker; its loading, empty and error states show where a design's state
+// goes, which is empty until one is picked.
 function load_design_list($body) {
-	frappe.call(WE_API + "get_design_state").then((r) => {
-		const $pick = $body.find("#we-design-pick");
-		$pick.html(`<option value="">${__("Select a design…")}</option>`);
-		((r.message || {}).designs || []).forEach((d) => {
-			const label = `${d.name} — ${d.design_title || d.project || ""} (${d.status})`;
-			$pick.append(`<option value="${d.name}">${frappe.utils.escape_html(label)}</option>`);
-		});
-	});
+	const sf = we_sf();
+	const $state = $body.find("#we-design-state");
+	sf.state.render($state, "loading", { title: __("Loading designs…") });
+	sf.call(WE_API + "get_design_state", {}, { quiet: true }).then(
+		(message) => {
+			const designs = (message || {}).designs || [];
+			const $pick = $body.find("#we-design-pick");
+			$pick.html(`<option value="">${__("Select a design…")}</option>`);
+			designs.forEach((d) => {
+				const label = `${d.name} — ${d.design_title || d.project || ""} (${d.status})`;
+				$pick.append(`<option value="${d.name}">${frappe.utils.escape_html(label)}</option>`);
+			});
+			if (designs.length) {
+				$state.empty();
+			} else {
+				sf.state.render($state, "empty", {
+					title: __("No Water Feature Designs yet."),
+					body: __("Start one with New Design."),
+				});
+			}
+		},
+		(err) => we_failed($state, err, __("Could not load the designs."), () => load_design_list($body))
+	);
 }
 
 function load_design_state($body, design) {
-	frappe.call({ method: WE_API + "get_design_state", args: { design } }).then((r) => {
-		render_design_state($body.find("#we-design-state"), r.message);
-	});
+	const sf = we_sf();
+	const $state = $body.find("#we-design-state");
+	sf.state.render($state, "loading", { title: __("Loading {0}…", [design]) });
+	sf.call(WE_API + "get_design_state", { design }, { quiet: true }).then(
+		(message) => render_design_state($state, message),
+		(err) => we_failed($state, err, __("Could not load {0}.", [design]), () => load_design_state($body, design))
+	);
 }
 
 function render_design_state($el, st) {

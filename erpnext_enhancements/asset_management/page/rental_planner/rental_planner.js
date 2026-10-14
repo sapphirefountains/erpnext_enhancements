@@ -47,6 +47,52 @@ const RP_FEES = ["delivery_setup_fee", "pickup_removal_fee", "other_fee", "secur
 // A Date as "YYYY-MM-DD". Not frappe.datetime.obj_to_str, which returns a full ISO timestamp.
 const rp_ymd = (date) => moment(date).format("YYYY-MM-DD");
 
+// sf_kit (v1.637.0): the board's loading, error and no-access panels and its quiet server call,
+// loaded once with frappe.require. v16's loader resolves even when a file fails to load
+// (assets.js: "resolve even on error"), so a kit that never arrived leaves window.sf_kit unset
+// and the board carries on with rp_plain_kit instead of sitting on "Loading" for good.
+let rp_kit_loading = null;
+function rp_kit() {
+	if (!rp_kit_loading) {
+		rp_kit_loading = new Promise((resolve) => {
+			const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : rp_plain_kit());
+			try {
+				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
+			} catch (e) {
+				ready();
+			}
+		});
+	}
+	return rp_kit_loading;
+}
+
+// The kit's shape without the kit: calls go through frappe.call (its dialogs included) and a
+// state is a line of plain text, with its one action as a plain button.
+function rp_plain_kit() {
+	return {
+		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
+		call: (method, args, opts) =>
+			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
+				(r) => r && r.message,
+				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false })
+			),
+		state: {
+			render(el, kind, opts) {
+				opts = opts || {};
+				const $el = $(el).empty();
+				$('<div class="rp-empty"></div>').text(opts.title || "").appendTo($el);
+				if (typeof opts.on_action === "function") {
+					$('<button class="btn btn-default btn-sm"></button>')
+						.text(opts.action_label || __("Try again"))
+						.on("click", opts.on_action)
+						.appendTo($el);
+				}
+			},
+		},
+		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
+	};
+}
+
 frappe.pages[RP.route].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -338,15 +384,57 @@ class RentalPlanner {
 		const days = this.board_days;
 		const end = frappe.datetime.add_days(start, days - 1);
 		this.$range_label.text(`${frappe.datetime.str_to_user(start)} – ${frappe.datetime.str_to_user(end)}`);
-		this.$timeline.empty().append($('<div class="rp-empty">').text(__("Loading the fleet...")));
+		const $timeline = this.$timeline;
 		const token = (this._timeline_token = {});
-		frappe
-			.call({ method: `${RP.api}.get_timeline`, args: { start, days } })
-			.then(({ message }) => {
-				// A later request (the person paged again) owns the board now.
-				if (token !== this._timeline_token || !message) return;
-				this.render_timeline(message);
+		// Quiet (v1.637.0): a failed load says so in the board's own panel, with Try again, rather
+		// than leaving "Loading the fleet" up for good behind a frappe dialog. Each page of the
+		// range is a fresh load (the old range is already off the board), so each gets the panel.
+		rp_kit().then((sf) => {
+			// A later request (the person paged again) owns the board now.
+			if (token !== this._timeline_token) return;
+			sf.state.render($timeline, "loading", { title: __("Loading the fleet…") });
+			sf.call(`${RP.api}.get_timeline`, { start, days }, { quiet: true }).then(
+				(message) => {
+					if (token !== this._timeline_token) return;
+					if (!message) {
+						sf.state.render($timeline, "empty", {
+							title: __("Nothing came back for these dates."),
+							body: __("Try another range, or Today."),
+						});
+						return;
+					}
+					this.render_timeline(message);
+				},
+				(err) => {
+					if (token !== this._timeline_token) return;
+					this.timeline_failed(sf, $timeline, err || {});
+				}
+			);
+		});
+	}
+
+	// No access on a 403; a way back in when the session has lapsed (the quiet path puts up no
+	// sign-in dialog of frappe's); otherwise what went wrong, with Try again for the same range.
+	timeline_failed(sf, $timeline, err) {
+		if (err.session_expired) {
+			sf.state.render($timeline, "error", {
+				title: __("You have been signed out."),
+				body: __("Reload the page to sign in again."),
+				action_label: __("Reload"),
+				on_action: () => window.location.reload(),
 			});
+		} else if (err.status === 403) {
+			sf.state.render($timeline, "no-access", {
+				title: __("You do not have access to the rental fleet."),
+				body: err.message,
+			});
+		} else {
+			sf.state.render($timeline, "error", {
+				title: __("Could not load the fleet."),
+				body: err.message,
+				on_action: () => this.load_timeline(),
+			});
+		}
 	}
 
 	day_width(days) {

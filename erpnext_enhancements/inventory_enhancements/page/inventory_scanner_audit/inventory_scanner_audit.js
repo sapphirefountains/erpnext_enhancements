@@ -46,6 +46,78 @@ const ISA_QR_DECODER = '/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.
 // and a full 1080p frame costs ~5x the time for no better read.
 const ISA_QR_FRAME_WIDTH = 480;
 
+// sf_kit (v1.637.0): the shared loading / error / no-access panel and the quiet server call,
+// loaded once with frappe.require. v16's loader resolves even when a file fails to load
+// (assets.js: "resolve even on error"), so a kit that never arrived leaves window.sf_kit unset
+// and the count carries on with isa_plain_kit instead of stopping. The jsQR decoder stays a
+// require of its own on first camera use: most counts never open the camera.
+let isa_kit_loading = null;
+function isa_kit() {
+	if (!isa_kit_loading) {
+		isa_kit_loading = new Promise((resolve) => {
+			const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : isa_plain_kit());
+			try {
+				frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], ready);
+			} catch (e) {
+				ready();
+			}
+		});
+	}
+	return isa_kit_loading;
+}
+
+// The kit's shape without the kit: calls go through frappe.call (its dialogs included) and a
+// state is a line of plain text, with its one action as a plain button.
+function isa_plain_kit() {
+	return {
+		esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)),
+		call: (method, args, opts) =>
+			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
+				(r) => r && r.message,
+				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: '', exc_type: '', session_expired: false })
+			),
+		state: {
+			render(el, kind, opts) {
+				opts = opts || {};
+				const $el = $(el).empty();
+				$('<div class="text-muted"></div>').text(opts.title || '').appendTo($el);
+				if (typeof opts.on_action === 'function') {
+					$('<button class="btn btn-default btn-sm"></button>')
+						.text(opts.action_label || __('Try again'))
+						.on('click', opts.on_action)
+						.appendTo($el);
+				}
+			},
+		},
+		toast: (message) => frappe.show_alert({ message, indicator: 'orange' }),
+	};
+}
+
+// A failed load's panel: no access on a 403; a way back in when the session has lapsed (the
+// quiet path puts up no sign-in dialog of frappe's); otherwise what went wrong, with Try again.
+function isa_failed(sf, el, err, retry) {
+	err = err || {};
+	if (err.session_expired) {
+		return sf.state.render(el, 'error', {
+			title: __('You have been signed out.'),
+			body: __('Reload the page to sign in again.'),
+			action_label: __('Reload'),
+			on_action: () => window.location.reload(),
+		});
+	}
+	if (err.status === 403) {
+		return sf.state.render(el, 'no-access', {
+			title: __('You do not have access to the Inventory Scanner Audit.'),
+			body: err.message,
+		});
+	}
+	return sf.state.render(el, 'error', {
+		title: __('Could not load the count.'),
+		body: err.message,
+		on_action: retry,
+	});
+}
+
 class InventoryScanner {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -75,12 +147,20 @@ class InventoryScanner {
 		return frappe.call({ method: ISA_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
+	// Quiet (v1.637.0): a failed start-up says so where the count's lines go, with Try again,
+	// instead of leaving an empty page behind a frappe dialog.
 	boot() {
-		this.call('get_bootstrap').then((d) => {
-			this.state.settings = (d && d.settings) || {};
-			this.state.session = (d && d.session) || null;
-			this.renderAll();
-			this.focusScan();
+		isa_kit().then((sf) => {
+			sf.state.render(this.$list, 'loading', { title: __('Loading the count…') });
+			sf.call(ISA_METHOD + 'get_bootstrap', {}, { quiet: true }).then(
+				(d) => {
+					this.state.settings = (d && d.settings) || {};
+					this.state.session = (d && d.session) || null;
+					this.renderAll();
+					this.focusScan();
+				},
+				(err) => isa_failed(sf, this.$list, err, () => this.boot())
+			);
 		});
 	}
 
@@ -129,9 +209,9 @@ class InventoryScanner {
 	// Each replace the page asks for clears `route_flags.replace_route` as soon as set_route
 	// returns. set_route reads the flag as it writes the entry, but clears route_flags itself
 	// only once its promise settles, and that waits on every request then in flight (v16's
-	// after_ajax) — on a first show, the bootstrap call. Left set, the flag would turn the
-	// clerk's next tap into a replace of the count's own entry, and X or Back from the sheet it
-	// opened would then leave the page.
+	// after_ajax) — on a first show, the bootstrap call whenever it goes through frappe.call. Left
+	// set, the flag would turn the clerk's next tap into a replace of the count's own entry, and X
+	// or Back from the sheet it opened would then leave the page.
 
 	sheetRoute() {
 		const route = frappe.get_route() || [];

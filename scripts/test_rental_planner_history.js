@@ -111,6 +111,8 @@ function makeWorld() {
 		local: new Map(),
 		requests: [],
 		created: [],
+		// Methods whose calls fail as a 500 would (v1.637.0: the board's error panel).
+		down: new Set(),
 		confirmAnswer: true,
 	};
 	world.route = () => world.entries[world.index].replace(/^\/desk\//, "").split("/").filter(Boolean);
@@ -211,6 +213,7 @@ function loadPage(world) {
 		},
 		call({ method, args }) {
 			world.requests.push(method);
+			if (world.down.has(method)) return Promise.reject({ status: 500 });
 			const respond = responders[method];
 			return Promise.resolve({ message: respond ? respond(args || {}) : null });
 		},
@@ -406,6 +409,24 @@ test("After booking, Back cannot resubmit the old draft", async () => {
 	check("Back from the confirmation lands on step 1, not a filled step 3", desk.here(), "/desk/rental-planner/new/dates");
 	check("draft cleared", desk.planner().draft.fountains.length, 0);
 	check("still one booking", desk.world.created.length, 1);
+});
+
+test("A board that failed to load says so, and Try again loads it in place", async () => {
+	const timeline = "erpnext_enhancements.asset_management.rental_planner.get_timeline";
+	const world = makeWorld();
+	world.down.add(timeline);
+	const desk = loadPage(world);
+	desk.open("/desk/rental-planner");
+	await settle();
+	const shown = (text) => desk.registry.some((e) => e.__state.text === text);
+	check("one request", world.requests.filter((m) => m === timeline).length, 1);
+	check("the error is on the board", shown("Could not load the fleet."), true);
+	const entries = desk.length();
+	world.down.delete(timeline);
+	await desk.click("Try again");
+	check("Try again asked again", world.requests.filter((m) => m === timeline).length, 2);
+	check("the board drew what came back", shown("No fountains are marked Available for Event Rental yet. Tick it on each fleet Asset."), true);
+	check("no history entry for a retry", [desk.here(), desk.length()], ["/desk/rental-planner", entries]);
 });
 
 test("Starting over after a started draft asks first", async () => {

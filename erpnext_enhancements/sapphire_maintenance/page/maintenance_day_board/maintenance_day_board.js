@@ -3,7 +3,8 @@
 // scheduled drafts, techs clocked in, submitted today, flagged (last 7 days).
 // Auto-refreshes every 60s, but only while this page is the one on screen (Desk pages are
 // never removed, so a timer left running would poll all day); on_page_show refreshes at
-// once on the way back. Cards link to the underlying documents.
+// once on the way back. Cards link to the underlying documents. Its loading, error and
+// no-access panels and its server call come from sf_kit (v1.637.0).
 
 frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -30,7 +31,53 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		'[data-theme="dark"] .mdb-red{background:rgba(239,68,68,.22);color:#fca5a5;}\n' +
 		'[data-theme="dark"] .mdb-orange{background:rgba(245,158,11,.22);color:#fcd34d;}\n' +
 		'[data-theme="dark"] .mdb-green{background:rgba(34,197,94,.22);color:#86efac;}\n' +
+		// A state panel is the whole board, not one column of it.
+		'.mdb-board > .sf-state{grid-column:1/-1;}\n' +
+		'.mdb-stale{margin:4px 0 0;}\n' +
 	'</style>').appendTo(page.body);
+	// A refresh that failed while the board was showing says so here, and leaves the board be.
+	const $stale = $('<div class="mdb-empty mdb-stale" role="status"></div>').hide().insertBefore($board);
+
+	// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
+	// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
+	// board carries on with frappe.call and a line of plain text instead of stopping.
+	let kitLoading = null;
+	function kit() {
+		if (!kitLoading) {
+			kitLoading = new Promise((resolve) => {
+				const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : plainKit());
+				try {
+					frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], ready);
+				} catch (e) {
+					ready();
+				}
+			});
+		}
+		return kitLoading;
+	}
+
+	function plainKit() {
+		return {
+			call: (method, args, opts) =>
+				Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
+					(r) => r && r.message,
+					(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: '', exc_type: '', session_expired: false })
+				),
+			state: {
+				render(el, kind, opts) {
+					opts = opts || {};
+					const $el = $(el).empty();
+					$('<div class="mdb-empty"></div>').text(opts.title || '').appendTo($el);
+					if (typeof opts.on_action === 'function') {
+						$('<button class="btn btn-default btn-sm"></button>')
+							.text(opts.action_label || __('Try again'))
+							.on('click', opts.on_action)
+							.appendTo($el);
+					}
+				},
+			},
+		};
+	}
 
 	function esc(value) {
 		return frappe.utils.escape_html(String(value == null ? '' : value));
@@ -69,37 +116,71 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		return html + '</div>';
 	}
 
-	const state = { timer: null, loaded: false, inflight: false };
+	const state = { timer: null, loaded: false, loadedAt: '', inflight: false };
 
 	function isCurrent() {
 		return frappe.get_route()[0] === 'maintenance-day-board';
 	}
 
-	$board.html('<div class="mdb-empty">' + __('Loading…') + '</div>');
+	// A board that never loaded: no access on a 403, a way back in when the session has lapsed,
+	// otherwise what went wrong with Try again (and the timer keeps retrying meanwhile).
+	function failed(sf, err) {
+		err = err || {};
+		if (err.session_expired) {
+			sf.state.render($board, 'error', {
+				title: __('You have been signed out.'),
+				body: __('Reload the page to sign in again.'),
+				action_label: __('Reload'),
+				on_action: () => window.location.reload(),
+			});
+		} else if (err.status === 403) {
+			sf.state.render($board, 'no-access', {
+				title: __('You do not have access to the Maintenance Day Board.'),
+				body: err.message,
+			});
+		} else {
+			sf.state.render($board, 'error', {
+				title: __('Could not load the day board.'),
+				body: err.message || __('It tries again every minute.'),
+				on_action: () => refresh(),
+			});
+		}
+	}
 
-	// `quiet` (the timer) asks frappe not to pop its message dialog: a board left on a wall
-	// screen must not stack an error dialog every minute while the server is unhappy.
-	function refresh(quiet) {
+	// Always the quiet path (v1.637.0), the timer's above all: a board left on a wall screen must
+	// not stack a frappe dialog every minute while the server is unhappy. frappe.call's `silent`,
+	// used here before, stops only the msgprint of a 417; a 500, 502, 504 or a lapsed session
+	// still put up a dialog of their own on every tick.
+	function refresh() {
 		if (state.inflight) return;
 		state.inflight = true;
-		frappe.call({ method: 'erpnext_enhancements.api.maintenance_board.get_day_board_data', silent: Boolean(quiet) }).then((r) => {
-			const data = r.message || {};
-			state.loaded = true;
-			$board.html([
-				column(__('Scheduled'), data.scheduled || [], (row) => recordCard(row, pctBadge(row))),
-				column(__('Clocked In'), data.in_progress || [], (row) =>
-					'<a class="mdb-card" href="' + frappe.utils.get_form_link('Job Interval', row.name) + '">' +
-					'<div class="mdb-title">' + esc(row.employee_name) + '</div>' +
-					'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
-					__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
-				column(__('Submitted Today'), data.submitted_today || [], (row) =>
-					recordCard(row, pctBadge(row) + flagBadges(row))),
-				column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
-			].join(''));
-		}).catch(() => {
-			// A transient failure keeps the board already showing; only a board that never loaded says so.
-			if (!state.loaded) $board.html('<div class="mdb-empty">' + __('Could not load the day board. Retrying shortly.') + '</div>');
-		}).always(() => {
+		kit().then((sf) => {
+			if (!state.loaded) sf.state.render($board, 'loading', { title: __('Loading the day board…') });
+			return sf.call('erpnext_enhancements.api.maintenance_board.get_day_board_data', {}, { quiet: true }).then((message) => {
+				const data = message || {};
+				state.loaded = true;
+				state.loadedAt = frappe.datetime.now_time();
+				$stale.hide().text('');
+				$board.html([
+					column(__('Scheduled'), data.scheduled || [], (row) => recordCard(row, pctBadge(row))),
+					column(__('Clocked In'), data.in_progress || [], (row) =>
+						'<a class="mdb-card" href="' + frappe.utils.get_form_link('Job Interval', row.name) + '">' +
+						'<div class="mdb-title">' + esc(row.employee_name) + '</div>' +
+						'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
+						__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
+					column(__('Submitted Today'), data.submitted_today || [], (row) =>
+						recordCard(row, pctBadge(row) + flagBadges(row))),
+					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
+				].join(''));
+			}, (err) => {
+				// A failure keeps the board already showing and says so above it; only a board that
+				// never loaded gets the panel.
+				if (!state.loaded) return failed(sf, err);
+				$stale.text(err && err.session_expired
+					? __('You have been signed out. Reload the page to sign in again.')
+					: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt])).show();
+			});
+		}).finally(() => {
 			state.inflight = false;
 		});
 	}
@@ -116,7 +197,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		stop();
 		state.timer = setInterval(() => {
 			if (!isCurrent()) return stop();
-			if (!document.hidden) refresh(true);
+			if (!document.hidden) refresh();
 		}, 60000);
 	}
 

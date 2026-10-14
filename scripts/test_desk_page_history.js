@@ -1151,6 +1151,27 @@ test("Device Console: the camera tapped while the first show's replace waits on 
 	check("no push without a tap", desk.violations, []);
 });
 
+// A failed start-up (v1.637.0): the page's own panel says why, and its Try again asks again in
+// place. The harness has no sf_kit, so this is the plain stand-in each page falls back to.
+const saidText = (desk, text) => desk.calls.some((c) => c.method === "text" && c.args[0] === text);
+const tryAgain = (desk) =>
+	desk.handlers.filter((h) => h.type === "click" && String(h.label).includes("btn btn-default btn-sm")).pop();
+
+test("Device Console: a start-up that failed says so, and Try again boots it in place", async () => {
+	const desk = makeDesk();
+	desk.respond.get_console_bootstrap = () => NETWORK_DOWN;
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	check("the panel says why", saidText(desk, "Could not load the Device Console."), true);
+	const retry = tryAgain(desk);
+	check("with Try again", !!retry, true);
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	await desk.tap(() => retry.fn({ preventDefault() {} }));
+	check("asked again", desk.sent("get_console_bootstrap").length, 2);
+	check("still the console's one entry", [desk.route(), desk.urls()], ["device-console", ["/desk/home", "/desk/device-console"]]);
+	check("no push without a tap", desk.violations, []);
+});
+
 test("Device Console: Choose Employee is an entry; a pick checks out after the step back", async () => {
 	const desk = await deviceConsole();
 	await desk.key(() => dc(desk).handleScan("DEV-1"));
@@ -1377,6 +1398,21 @@ async function inventory(settings) {
 }
 
 const isa = (desk) => desk.wrapper("inventory-scanner-audit").inventory_scanner;
+
+test("Scanner Audit: a start-up that failed says so, and Try again boots it in place", async () => {
+	const desk = makeDesk();
+	desk.respond.get_bootstrap = () => NETWORK_DOWN;
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit"));
+	check("the panel says why", saidText(desk, "Could not load the count."), true);
+	const retry = tryAgain(desk);
+	check("with Try again", !!retry, true);
+	desk.respond.get_bootstrap = () => ({ settings: {}, session: null });
+	await desk.tap(() => retry.fn({ preventDefault() {} }));
+	check("asked again", desk.sent("get_bootstrap").length, 2);
+	check("still the count's one entry", [desk.route(), desk.urls()], ["inventory-scanner-audit", ["/desk/home", "/desk/inventory-scanner-audit"]]);
+	check("no push without a tap", desk.violations, []);
+});
 
 test("Scanner Audit: Back closes Find Item and stays; Forward reopens it", async () => {
 	const desk = await inventory();

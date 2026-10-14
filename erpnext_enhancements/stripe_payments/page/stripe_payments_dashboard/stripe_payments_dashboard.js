@@ -3,7 +3,8 @@
 
 // Stripe Payments dashboard: connection/config readiness, status counts and a
 // recent-payments table. All data comes from the operator-gated RPC
-// erpnext_enhancements.stripe_payments.core.api.get_dashboard_status.
+// erpnext_enhancements.stripe_payments.core.api.get_dashboard_status. Its loading, empty, error
+// and no-access panels, its toast and its server call come from sf_kit (v1.637.0).
 frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -30,6 +31,73 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 
 	function esc(v) {
 		return frappe.utils.escape_html(v == null ? "" : String(v));
+	}
+
+	// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
+	// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
+	// dashboard carries on with frappe.call and a line of plain text instead of stopping.
+	let kitLoading = null;
+	function kit() {
+		if (!kitLoading) {
+			kitLoading = new Promise((resolve) => {
+				const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : plainKit());
+				try {
+					frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
+				} catch (e) {
+					ready();
+				}
+			});
+		}
+		return kitLoading;
+	}
+
+	function plainKit() {
+		return {
+			call: (method, args, opts) =>
+				Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
+					(r) => r && r.message,
+					(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false }),
+				),
+			state: {
+				render(el, kind, opts) {
+					opts = opts || {};
+					const $el = $(el).empty();
+					$('<div class="text-muted"></div>').text(opts.title || "").appendTo($el);
+					if (typeof opts.on_action === "function") {
+						$('<button class="btn btn-default btn-sm"></button>')
+							.text(opts.action_label || __("Try again"))
+							.on("click", opts.on_action)
+							.appendTo($el);
+					}
+				},
+			},
+			toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
+		};
+	}
+
+	// A dashboard that never loaded: no access on a 403, a way back in when the session has
+	// lapsed (the quiet path puts up no sign-in dialog of frappe's), else the error with Try again.
+	function failed(sf, err) {
+		err = err || {};
+		if (err.session_expired) {
+			sf.state.render($body, "error", {
+				title: __("You have been signed out."),
+				body: __("Reload the page to sign in again."),
+				action_label: __("Reload"),
+				on_action: () => window.location.reload(),
+			});
+		} else if (err.status === 403) {
+			sf.state.render($body, "no-access", {
+				title: __("You do not have access to the Stripe Payments dashboard."),
+				body: err.message,
+			});
+		} else {
+			sf.state.render($body, "error", {
+				title: __("Could not load the Stripe Payments dashboard."),
+				body: err.message,
+				on_action: () => load(),
+			});
+		}
 	}
 
 	function statusColor(status) {
@@ -103,12 +171,35 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		`);
 	}
 
+	// Quiet (v1.637.0): the dashboard says what went wrong in its own panel. A refresh that fails
+	// while the dashboard is showing (Refresh, or after Test Connection) keeps it and says so in a
+	// toast; only a dashboard that never loaded is replaced by the panel.
+	let loaded = false;
 	function load() {
-		frappe.call({
-			method: "erpnext_enhancements.stripe_payments.core.api.get_dashboard_status",
-			callback(r) {
-				if (!r.exc && r.message) render(r.message);
-			},
+		kit().then((sf) => {
+			if (!loaded) sf.state.render($body, "loading", { title: __("Loading the Stripe Payments dashboard…") });
+			sf.call("erpnext_enhancements.stripe_payments.core.api.get_dashboard_status", {}, { quiet: true }).then(
+				(message) => {
+					if (message) {
+						loaded = true;
+						render(message);
+					} else if (!loaded) {
+						sf.state.render($body, "empty", {
+							title: __("No dashboard data came back."),
+							body: __("Check Stripe Payments Settings, then Refresh."),
+						});
+					}
+				},
+				(err) => {
+					if (!loaded) return failed(sf, err);
+					sf.toast(
+						err && err.session_expired
+							? __("You have been signed out. Reload the page to sign in again.")
+							: __("Could not refresh the dashboard. Showing what was last loaded."),
+						{ tone: "warning" },
+					);
+				},
+			);
 		});
 	}
 
