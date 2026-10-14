@@ -2148,6 +2148,14 @@ pdf_body_html = "erpnext_enhancements.knowledge_base.template_guard.pdf_body_htm
 
 # Run BEFORE each `bench migrate` (in pre_schema_updates, before fixture sync).
 before_migrate = [
+	# FIRST: refuse to migrate a build older than the one that last migrated this site (v1.682.1).
+	# Fixture sync is additive and removal patches run once, so an older build's fixtures bring
+	# back every customization a later release retired, for good: on 2026-07-18 one did, and 14
+	# retired Custom Fields (12 blank "Comments" tabs, Opportunity's old Lost Reason) stayed for
+	# three months. The site's Installed Application row still holds the previous version here;
+	# v16 updates it only after fixture sync. Override per site with
+	# allow_erpnext_enhancements_downgrade in site_config. See setup/downgrade_guard.py.
+	"erpnext_enhancements.setup.downgrade_guard.refuse_downgrade",
 	# Rebuild the app -> modules map from every app's modules.txt BEFORE model sync.
 	# ADDING A MODULE TO modules.txt IS NOT ENOUGH ON AN ALREADY-INSTALLED SITE.
 	# frappe.model.sync.sync_for() iterates frappe.local.app_modules, NOT modules.txt.

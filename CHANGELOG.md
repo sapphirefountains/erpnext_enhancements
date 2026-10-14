@@ -66,6 +66,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it only with a form). `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the
   shared directory rules under node and `record_info` against a frappe stub.
 
+## [1.682.1] - 2026-10-14
+
+### Fixed
+- **The blank second "Comments" tab is gone again from 12 forms, and so is Opportunity's old Lost
+  Reason.** Both had been retired, and both came back.
+  - **What came back:** 14 Custom Fields.
+    - The 12 empty duplicate "Comments" Tab Breaks that v1.159.2 deleted: Address, Batch, Delivery
+      Note, Lead, Project, Quotation, Serial No, Stock Entry and Task's `custom_comments_tab`, and
+      Employee, Purchase Order and Supplier Quotation's `custom_comments`.
+    - Opportunity's `custom_lost_reason` and `custom_lost_competitor`, which v1.159.0 replaced with
+      ERPNext's own `lost_reasons` and `competitors`. The Desk showed a second Lost Reason again,
+      and four deals were given a value in it.
+  - **When:** all 14 were re-created in one minute, 18:07–18:08 on 2026-07-18, the evening the
+    site moved to the new Google Cloud infrastructure.
+  - **Cause:** a migrate ran a build from before v1.159.0. Its fixtures still held these records,
+    with the same names and `insert_after` as on prod (five of them with an empty `module`, as in
+    those old fixtures). Fixture sync
+    only adds, and the removal patches were already in `tabPatch Log`, so nothing deleted them
+    again. No code creates them: it was one downgraded migrate.
+  - **Cleanup:** `patches/retire_resurrected_customizations` runs both removal patches' `execute()`
+    once more. Both are idempotent, and the patch never raises.
+  - **Data, checked on prod first:** the Tab Breaks carry none. The four `custom_lost_reason`
+    values (CRM-OPP-2026-00068, -00104, -00124, -00137) are all "Other" on Lost deals, and each
+    deal already has a native `lost_reasons` row. `custom_lost_competitor` was empty everywhere.
+    Nothing in the fixtures is anchored on, sets a property on, or orders any of the 14.
+- **Downgrade guard:** a migrate now refuses to run a build older than the one that last migrated
+  the site.
+  - `setup/downgrade_guard.py` runs first in `before_migrate`. That is before both patch phases
+    and fixture sync, while the site's `Installed Application` row still holds the previous
+    version; v16 updates it only afterwards (`InstalledApplications.update_versions`).
+  - **Why it's safe:** every release bumps the version and main only moves forward, so on this
+    pipeline an older build is always a mistake: a stale image, a branch deployed by hand, or two
+    deploys finishing out of order. A rollback ships as a revert commit with a new version.
+  - **Override:** `allow_erpnext_enhancements_downgrade: 1` in a site's `site_config.json`, for
+    one migrate.
+  - **Failure mode:** the guard never blocks on its own failure.
+  - **CI keeps the version moving forward:** a new "Version moves forward" step in the
+    `version-sync` job. A PR's `__version__` must be strictly above its base branch's as it stands
+    when CI runs, and a push to main must not go below the commit it replaced. Without it, a
+    GitHub "Revert" PR (which restores the old number) or a version conflict resolved toward the
+    lower side would make every deploy refuse to migrate until someone bumped it.
+- **New guard:** `tests/test_retired_customizations.py`, in its own CI step. It pins:
+  - the downgrade guard, and that it runs first;
+  - the cleanup patch;
+  - that none of the 14 retired fields (read from the two removal patches) is back in the
+    fixtures, anchored on, ordered, or created by app code.
+
 ## [1.682.0] - 2026-10-14
 
 ### Fixed
