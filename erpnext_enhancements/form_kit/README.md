@@ -29,6 +29,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
+| `blocks.py` | The information blocks (P3.1): Party, Site, Schedule window, Scope by pillar, Money, Crew, with their fields per DocType and their three faces. JavaScript twin: `public/js/info_blocks/blocks.js`. See *Information blocks* below |
 
 ## How the steps are built
 
@@ -269,6 +270,56 @@ behind an (i); the text lives in the repository and changes by PR, never from th
 - `get_field_help(doctype)`, GET: `{"article", "fields": {fieldname: {"help", "anchor"}}}`, only
   fields with an explanation that the caller may read; `anchor` is the field's step key.
 
+## Information blocks
+
+P3 (TASK-2026-02753): the same piece of information is entered, shown in a report and printed the
+same way. `blocks.py` is the one definition (P3.1, TASK-2026-02754, v1.669.0). For each block it
+names the fields that carry it on each DocType, and its three faces:
+
+- **entry**: the kit component that enters it, as `{"module", "export"}` (an ES module under
+  `public/`), or `{"pending": "<task>", "builds": "<what>"}` when the component is not built yet;
+- **report**: the report face's column kinds (`public/js/report_face/cells.js` `KINDS`);
+- **print**: the helpers a print format calls (`print_style` / `print_lookup`, registered as Jinja
+  globals), Frappe's own `frappe.format` (listed in `FRAMEWORK_HELPERS` with the reason), or pending.
+
+| Block | Opportunity | Project | Entry | Report | Print |
+|---|---|---|---|---|---|
+| Party | `opportunity_from`, `party_name`, `primary_contact`, `customer_address`; mirror `primary_contact` → `contact_person` | `customer`, `primary_contact`, `custom_billing_address` | pending TASK-2026-02755 (P3.2) | `party` | `ps_party` |
+| Site | `primary_address` | `primary_address` | pending TASK-2026-02755 (P3.2) | `party` | `ps_address` |
+| Schedule window | `utils/date_pairs.PAIRS["Opportunity"]` | `PAIRS["Project"]` + ERPNext's `expected_*` and `actual_*` pairs | pending TASK-2026-02753 | `date`, `datetime` | `ps_date`, `ps_datetime` |
+| Scope by pillar | `custom_value_stream` + each stream's Customer Requests and Deliverables table | the same | `form_kit/fields.js` `text_list_column` | `pillar` | `print_style.STREAM_PILLAR`, `pillar` |
+| Money | `opportunity_amount`, `custom_materials_budget`, in `currency` | `custom_project_dollar_amount`, `estimated_costing`, `custom_materials_budget`, `custom_bid_cost`, company currency | pending TASK-2026-02753 | `money` | `frappe.format` |
+| Crew | `opportunity_owner`, `custom_scope_contributors` | `custom_project_owner`, `custom_technical_lead`, `custom_scope_contributors` | pending TASK-2026-02753 | `party` | pending TASK-2026-02753 |
+
+Decisions:
+
+- **A face is never left out; it may be pending.** A component that does not exist yet is declared
+  with the task that builds it and a sentence saying what it is. `check()` refuses a block with no
+  face declared at all, a pending face without a task, and an unknown report kind;
+  `tests/test_form_kit_blocks.py` also fails when a named module does not export what it names, a
+  print helper is not defined (or a `ps_` helper not registered in `hooks.py`'s Jinja globals), or a
+  block names a field the DocType's meta does not have.
+- **Point at the rules, don't copy them.** The Schedule window is `utils/date_pairs.PAIRS` (P2.2) plus
+  the pairs ERPNext validates itself, which `date_pairs` deliberately leaves out. Scope by pillar is
+  built from `config/opportunity.REQUEST_TABLES` and each stream's pillar is `print_style.STREAM_PILLAR`.
+  Money has no app print helper because Frappe's currency formatting is already the one answer.
+- **Party's address is the Billing Address; Site is the job site.** The plan wrote Party as
+  `party_name` + `primary_contact` + `primary_address`, before v1.633.0 made `customer_address` the
+  visible *Billing Address* and kept Primary Address as the job site (Nik, 2026-10-13). So Party
+  carries the account, the contact and where invoices go, and Site carries where the work is. The
+  P3.2 component picks both.
+- **Mirrors.** `mirrors` names a hidden stock field kept equal to a visible one, read by
+  `crm_enhancements/party_mirrors.py` on save. Opportunity's `primary_contact` → `contact_person` is
+  the only one: Project has no stock contact field. Project's equivalent pair for P7 is the address:
+  `primary_address` beside the older `custom_customer__lead_address` link, which `api/pickup_routing.py`
+  and `api/travel.py` still read as a fallback; it is left alone until P7 makes Project guided.
+- **The meta in the test is the v16 one.** ERPNext's DocType JSON at `origin/version-16`, trimmed
+  into `tests/fixtures/form_kit/erpnext_v16_opportunity.json` and `erpnext_v16_project.json` (each
+  `_source` says how), plus this app's Custom Fields and the fields `setup/custom_fields.py` adds on
+  migrate. The sibling `erpnext` checkout's working tree is `develop` (v17), the wrong tree.
+- **The JS twin** (`public/js/info_blocks/blocks.js`) is `resolved()` written out, held equal under
+  node. Change the Python first.
+
 ## Adding a DocType
 
 1. Write `config/<doctype>.py` with a `CONFIG` dict (the schema is in `config/__init__.py`'s
@@ -280,3 +331,5 @@ behind an (i); the text lives in the repository and changes by PR, never from th
    Setters the way it builds Opportunity's, so the schema checks (every fieldname exists, every
    section exists, every step key is unique) and "every field the form shows is in exactly one step"
    run against it.
+5. Add the DocType to each block in `blocks.py` that it carries (and to the JS twin), with a meta
+   fixture in `tests/test_form_kit_blocks.py` built the same way, so every field it names is checked.
