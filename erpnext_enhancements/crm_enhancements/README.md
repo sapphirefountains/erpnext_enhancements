@@ -296,9 +296,11 @@ under Guided Entry.
 - **Layout** (v1.688.0, Nik: "Make the Kanban columns uniform width, and scroll horizontally if
   not all columns fit on the page"). Every column is the same width (`--ob-col-min`, 280px, and an
   equal share of what is left); a folded On Hold no longer takes a narrow one. On a wide screen the
-  board sits in a box the height of the screen under the sticky page head (the page measures the
-  head and what follows the board into `--ob-fit-top` / `--ob-fit-bottom`), scrolling sideways
-  inside the box, and each column scrolls on its own. Before, every column stretched to the
+  board sits in a box the height of the screen under the sticky page head (`set_fit` measures the
+  head and what follows the board against the real scroller, `.main-section` on Frappe v16, never
+  the window, into `--ob-fit-h`), scrolling sideways inside the box, and each column scrolls on its
+  own. A redraw (a card's click, a panel save, a realtime refresh) puts every scroll position back
+  (`scroll_marker` / `restore_scroll`). Before, every column stretched to the
   longest (3,989px on prod) and the sideways scrollbar sat at the very bottom of the page. By
   value stream, the rows scroll inside the same box under column heads that stay put. A phone
   keeps its one-stage page.

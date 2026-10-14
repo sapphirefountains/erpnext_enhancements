@@ -245,6 +245,21 @@ out.closed = {
 	drop_on_won: kit.drop_action(model, model.by_name["OPP-2"], "closed-won"),
 };
 out.deals_names_closed = model.deals.map((d) => d.name).filter((n) => ["OPP-80", "OPP-81", "OPP-82", "OPP-83"].includes(n));
+const won = kit.close_deal(model, "OPP-2", "Closed Won");
+out.close_deal = {
+	open: won.deals.some((d) => d.name === "OPP-2") || !!won.by_name["OPP-2"],
+	first: [won.closed[0].name, won.closed[0].stage, won.closed[0].kind, won.closed[0].since, won.closed[0].stale],
+	column: kit.columns(won).find((c) => c.stage.key === "closed-won").deals.map((d) => d.name),
+	totals: kit.totals(won.deals).count,
+	not_closing: kit.close_deal(model, "OPP-2", "Needs Analysis").closed.length,
+	unknown: kit.close_deal(model, "NOPE", "Lost") === model,
+	old_untouched: model.closed.length,
+};
+const snoozed = kit.prepare(Object.assign({}, input.payload, {
+	closed: [Object.assign({}, input.payload.closed[0], { snoozed_until: "2026-12-01" })],
+}));
+out.closed_snooze = snoozed.closed[0].snooze;
+out.closing_month_closed = kit.filtered(model, { closing_month: true }, "x").closed.map((d) => d.name);
 console.log(JSON.stringify(out));
 """
 
@@ -380,6 +395,22 @@ class TestTheBoardUnderNode(unittest.TestCase):
 
 	def test_the_filters_narrow_the_closing_columns_too(self):
 		self.assertEqual(self.out["closed"]["mine"], ["OPP-80"])
+		# "Closing this month" on a closed deal means it closed this month (its `since`), so OPP-80
+		# and OPP-82 (October) stay and OPP-81 (September) goes, whatever their expected dates.
+		self.assertEqual(self.out["closing_month_closed"], ["OPP-82", "OPP-80"])
+
+	def test_a_deal_moved_to_a_closing_stage_lands_in_its_column_at_once(self):
+		c = self.out["close_deal"]
+		self.assertFalse(c["open"], "off the open board")
+		self.assertEqual(c["first"], ["OPP-2", "closed-won", "close", TODAY, 0], "closed today, at the top")
+		self.assertEqual(c["column"], ["OPP-2", "OPP-82", "OPP-80"])
+		self.assertEqual(c["totals"], len(DEALS) - 1)
+		self.assertEqual(c["not_closing"], 3, "an open status only takes it off, as remove_deal does")
+		self.assertIs(c["unknown"], True, "a deal not on the board leaves the model as it was")
+		self.assertEqual(c["old_untouched"], 3, "pure: the old model keeps its closed list")
+
+	def test_a_closed_deal_is_never_snoozed(self):
+		self.assertEqual(self.out["closed_snooze"], "")
 
 	def test_a_column_is_stalest_first(self):
 		qual = next(c for c in self.out["columns"] if c["key"] == "qualification")
@@ -1030,6 +1061,8 @@ class TestTheEndpoint(unittest.TestCase):
 		)
 		self.assertNotIn("ignore_permissions", closed["kwargs"])
 		self.assertEqual(closed["limit"], self.mod.MAX_CLOSED)
+		# By the stage date first: a mass edit of old closed deals cannot crowd out the recent ones.
+		self.assertEqual(closed["order_by"], "custom_stage_changed_on desc, modified desc")
 		self.assertEqual(closed["fields"], call["fields"])
 
 	def test_the_closing_columns_get_the_last_90_days_of_closes(self):
@@ -1438,9 +1471,7 @@ class TestTheColumnsLayout(unittest.TestCase):
 		css = _code(CSS)
 		fit = css[css.index(".ob-scroll--fit {") :]
 		fit = fit[: fit.index("}")]
-		self.assertIn(
-			"height: calc(100vh - var(--ob-fit-top, 0px) - var(--ob-fit-bottom, 0px) - var(--sf-space-10));", fit
-		)
+		self.assertIn("height: var(--ob-fit-h, 70vh);", fit)
 		self.assertIn("overflow: auto;", fit)
 		cards = css[css.index(".ob-scroll--cols .ob-col > .ob-cards {") :]
 		cards = cards[: cards.index("}")]
@@ -1452,11 +1483,54 @@ class TestTheColumnsLayout(unittest.TestCase):
 		self.assertIn('return phone ? "ob-scroll" : `ob-scroll ob-scroll--fit ob-scroll--${kind}`;', code)
 		self.assertIn('<div class="${this.scroll_class(phone, "cols")}">', code)
 		self.assertIn('<div class="${this.scroll_class(phone, "rows")}">', code)
-		# The box starts under the sticky page head, measured after every draw and on resize.
-		self.assertIn('this.$root[0].style.setProperty("--ob-fit-top", `${Math.round(top)}px`);', code)
-		self.assertIn('this.$root[0].style.setProperty("--ob-fit-bottom", `${Math.round(below)}px`);', code)
+		# The box is measured after every draw and on resize, against what really scrolls: on Frappe
+		# v16 that is .main-section, never the window (window.scrollY stays 0 there).
+		self.assertIn('return this.$root[0].closest(".main-section") || document.scrollingElement', code)
+		fit = code[code.index("\tset_fit() {") :]
+		fit = fit[: fit.index("\n\t}\n")]
+		self.assertIn("const sc = this.scroller();", fit)
+		self.assertNotIn("window.scrollY", fit)
+		self.assertIn('this.$root[0].style.setProperty("--ob-fit-h", `${height}px`);', fit)
+		self.assertIn(
+			"if (this.fit_frame || !this.showing()) return;", code, "a hidden box measures as zeros"
+		)
 		render = code[code.index("\trender() {") :]
-		self.assertLess(render.index('this.$root.html(parts.join(""));'), render.index("this.set_fit();"))
+		order = [
+			"const scroll = this.scroll_marker();",
+			'this.$root.html(parts.join(""));',
+			"this.set_fit();",
+			"this.restore_scroll(scroll);",
+			"this.restore_focus(focus);",
+		]
+		self.assertEqual(sorted(order, key=render.index), order)
+
+	def test_a_redraw_keeps_where_the_board_was_scrolled(self):
+		# A card's click, a panel save and every realtime refresh redraw the board: the box's sideways
+		# and downward scroll and each column's own scroll come back, and focus never scrolls them.
+		code = _code(PAGE_JS)
+		marker = code[code.index("\tscroll_marker() {") :]
+		marker = marker[: marker.index("\n\t}\n")]
+		self.assertIn('box.querySelectorAll(".ob-col[data-drop] > .ob-cards")', marker)
+		self.assertIn("left: box.scrollLeft, top: box.scrollTop", marker)
+		restore = code[code.index("\trestore_scroll(marker) {") :]
+		restore = restore[: restore.index("\n\t}\n")]
+		self.assertIn("box.scrollLeft = marker.left;", restore)
+		self.assertIn("if (top) el.scrollTop = top;", restore)
+		self.assertIn("if (el) el.focus({ preventScroll: true });", code)
+
+	def test_the_closing_columns_show_when_no_open_deal_does(self):
+		code = _code(PAGE_JS)
+		self.assertIn(
+			"if (!this.vm.deals.length && !this.vm.closed.length) parts.push(this.no_match_html());", code
+		)
+
+	def test_dragging_never_scrolls_by_hovering_a_drop_zone(self):
+		code = _code(PAGE_JS)
+		edge = code[code.index("\tedge_scroll(x, y) {") :]
+		edge = edge[: edge.index("\n\t}\n")]
+		self.assertIn("const page = this.scroller();", edge)
+		self.assertNotIn("window.scrollBy", edge)
+		self.assertIn("const bottom = Math.min(rect.bottom, bar_top);", edge)
 
 	def test_a_closed_card_has_no_move_and_is_never_picked(self):
 		code = _code(PAGE_JS)

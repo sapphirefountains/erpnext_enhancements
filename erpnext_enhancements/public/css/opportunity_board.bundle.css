@@ -136,10 +136,11 @@
 	grid-template-columns: repeat(var(--ob-cols, 1), minmax(var(--ob-col-min), 1fr));
 	gap: var(--sf-space-10);
 }
-/* The fitted board (wide screens): the height of the screen under the sticky page head, less what
-   follows the board (both measured by the page), so scrolled to the end it fills the screen exactly. */
+/* The fitted board (wide screens): the height of what the page scrolls in, under the sticky page
+   head and less what follows the board, measured by the page (set_fit, --ob-fit-h), so scrolled to
+   the end it fills the screen exactly. 70vh until the first measurement. */
 .ob-scroll--fit {
-	height: calc(100vh - var(--ob-fit-top, 0px) - var(--ob-fit-bottom, 0px) - var(--sf-space-10));
+	height: var(--ob-fit-h, 70vh);
 	min-height: 360px;
 	overflow: auto;
 }

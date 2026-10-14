@@ -1130,7 +1130,8 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn("this.open_side({ kind: this.kit.CLOSING, name, stage: key }, true);", choose)
 		self.assertIn('this.open_side({ kind: this.kit.EDIT, name, step: "" });', page)
 		committed = _body(page, "\tside_committed(info) {")
-		self.assertIn("this.kit.remove_deal(this.model, info.name)", committed)
+		# v1.688.0: off the open board and into its closing column at once (close_deal).
+		self.assertIn("this.kit.close_deal(this.model, info.name, info.status)", committed)
 		self.assertIn("this.move_epoch += 1;", committed, "a load in flight cannot put the card back")
 
 	def test_quick_add_creates_through_the_form_kit(self):

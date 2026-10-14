@@ -453,7 +453,8 @@ export function prepare(data) {
 		const stage = by_label[text(raw.status)];
 		if (!stage || stage.kind !== "close") return;
 		seen[name] = true;
-		closed.push(prepare_deal(raw, stage, today, thresholds));
+		// A snooze is about an open deal: once closed it is not hidden, dimmed or marked.
+		closed.push(Object.assign(prepare_deal(raw, stage, today, thresholds), { snooze: "" }));
 	});
 	return {
 		stages,
@@ -771,7 +772,9 @@ export function passes(deal, filters, user, today) {
 	} else if (f.stream && !(deal.streams || []).includes(f.stream)) return false;
 	const limit = amount_limit(f.min_amount);
 	if (limit && !((amount_of(deal) || 0) > limit)) return false;
-	if (f.closing_month && (!month_key(today) || month_key(deal.expected_closing) !== month_key(today))) return false;
+	// A closed deal's month is the one it closed in (its `since`), not the one it was expected to.
+	const closing = deal.kind === "close" ? deal.since : deal.expected_closing;
+	if (f.closing_month && (!month_key(today) || month_key(closing) !== month_key(today))) return false;
 	return true;
 }
 
@@ -1042,6 +1045,28 @@ export function side_ok(model, side, picks) {
 	if (s.kind === NEW) return can_add(model, s.stage);
 	if (s.kind === BULK) return BULK_ACTIONS.includes(s.action) && (picks || []).length > 0;
 	return false;
+}
+
+// v1.688.0: a deal moved to Closed Won or Lost leaves the open board and is at the top of that
+// closing column at once (closed today), before the refresh confirms it. A status that is not a
+// closing stage only takes it off the open board, as remove_deal does.
+export function close_deal(model, name, status) {
+	const m = model || {};
+	const old = (m.by_name || {})[name];
+	const stage = (m.stages || []).find((s) => s.label === text(status));
+	const removed = remove_deal(m, name);
+	if (!old || !stage || stage.kind !== "close") return removed;
+	const deal = Object.assign({}, old, {
+		status: stage.label,
+		stage: stage.key,
+		kind: stage.kind,
+		since: m.today,
+		days: m.today ? 0 : old.days,
+		stale: 0,
+		snooze: "",
+	});
+	const closed = (m.closed || []).filter((d) => d.name !== name);
+	return Object.assign({}, removed, { closed: sort_closed([deal].concat(closed)) });
 }
 
 // The model without one deal: a deal moved to Closed Won or Lost leaves the open board at once,

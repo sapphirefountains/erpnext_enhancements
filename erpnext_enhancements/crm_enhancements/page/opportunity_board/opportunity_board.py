@@ -79,6 +79,9 @@ CLOSED_DAYS = 90
 #: The most closed deals the board loads (53 changed in 90 days on 2026-10-14).
 MAX_CLOSED = 500
 
+#: When a deal last changed stage: what ``since`` is, and what the closing columns' window reads.
+STAGE_CHANGED_FIELD = "custom_stage_changed_on"
+
 #: Read when the meta has them. ``name``, ``status`` and ``modified`` are always there.
 OPTIONAL_FIELDS = (
 	"custom_opportunity_name",
@@ -219,17 +222,22 @@ def _recently_closed(meta, fields):
 
 	A stage change saves the deal, so ``modified`` is never before ``custom_stage_changed_on``:
 	filtering on ``modified`` in SQL keeps every deal that can qualify, and the stage date (the
-	deal's ``since``) then decides, here, exactly as the card shows it.
+	deal's ``since``) then decides, here, exactly as the card shows it. The SQL orders by the stage
+	date first, so a mass edit of old closed deals (a patch touching ``modified`` on hundreds) can
+	never push the real recent closes past :data:`MAX_CLOSED`.
 	"""
 	cutoff = add_days(nowdate(), -CLOSED_DAYS)
 	filters = [["status", "in", list(CLOSING_STATUSES)], ["modified", ">=", cutoff]]
 	if meta.has_field(HISTORICAL_FIELD):
 		filters.append([HISTORICAL_FIELD, "!=", 1])
+	order_by = "modified desc"
+	if meta.has_field(STAGE_CHANGED_FIELD):
+		order_by = f"{STAGE_CHANGED_FIELD} desc, modified desc"
 	records = frappe.get_list(
 		DOCTYPE,
 		filters=filters,
 		fields=fields,
-		order_by="modified desc",
+		order_by=order_by,
 		limit_page_length=MAX_CLOSED,
 	)
 	return [
