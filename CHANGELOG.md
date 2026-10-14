@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.625.0] - 2026-10-13
+## [1.626.0] - 2026-10-13
 
 Custom pages, step 2 of 7 (TASK-2026-02804; subtasks 02816–02819): `sf_kit`, the shared page pieces,
 built on the Sapphire design tokens from form kit P1. Every custom page and dashboard block had grown
@@ -62,6 +62,56 @@ top of it (boundary agreed with the form-kit session on 2026-10-13).
   reads must exist. Every primitive is executed: escaping, `call` against 200 / 417 / 500 / network
   failure / silent, every state kind and tone, hostile labels and hrefs, toast timing and
   replacement.
+
+## [1.625.0] - 2026-10-13
+
+### Added
+
+- **Billing seasons for recurring maintenance billing.** Nik, 2026-10-13: "add the season limit to recurring
+  billing". The recurring-billing job billed a Monthly contract's base fee every month of the year. Valley
+  Fair Mall's agreement ("service starts May 1st through September 30th, billed monthly", $7,920) and Day
+  Dairy's ($1,330) would have been billed through the winter. Valley Fair's first period, 9 September to
+  9 October 2026, would also have billed a September before its agreement starts on 5 October.
+  - **The fields.** A Monthly Sapphire Maintenance Contract now has **Bill From** and **Bill Through** months
+    (`billing_season_start` / `billing_season_end`).
+    - Blank both to bill all year, as before. A Monthly contract refuses one without the other, and the
+      season may wrap the year end.
+    - The season is independent of the winter pause (`pause_over_winter`), which moves visits, not bills.
+  - **The rule** (`maintenance_billing.period_is_billable`). A month bills its base fee when its billing
+    period's **middle day** is in season and on or after the contract's Start Date.
+    - A period runs from billing date to billing date. Billing every period that touched the season would
+      make six May-to-September invoices out of five months.
+    - The first version counted in-season days and billed at half or more. Review found that tie at
+      exactly half for a contract billing on the 16th, so that day billed six.
+    - The middle day gives five for every billing day, which is tested for the 1st to the 31st.
+    - The Start Date keeps a contract signed for next season from billing the end of this one. This also
+      applies to year-round Monthly contracts, whose first period now skips when its middle day falls
+      before they start.
+  - **Monthly only.** A quarter is billed whole or not at all, so a five-month season billed once or twice
+    a year depending on the month the contract started. Quarterly and Annually ignore the season.
+  - **The Annual Fee is split over the season.** When the Recurring Amount is derived from the agreement's
+    Annual Fee, it is divided by the months that bill (`billed_periods_per_year`), not by twelve. Otherwise
+    $7,920 a year billed five times would have come to $3,300. Changing the season re-derives an amount
+    still on the old split; an amount typed by hand is kept.
+  - **Out of season** (`_bill_out_of_season`).
+    - The base fee is not billed, but chemicals are always extra. Chemicals with a selling price go on a
+      chemicals-only draft, and that period's visits are stamped as billed.
+    - With nothing to charge, nothing is drafted (no $0 drafts), and the visits roll into the next invoice.
+    - Either way the next billing date moves on and the contract gets a comment saying why.
+    - The season check now runs before the fee-item check, so a period out of season never stalls on a
+      missing fee item.
+    - The README's caveat still applies before invoicing is switched on: chemical lines bill the dose
+      unit's quantity at the item's selling price.
+  - Recurring billing is still off ("Recurring Maintenance Billing" in ERPNext Enhancements Settings).
+  - **Tests.** `tests/test_maintenance_billing_season.py` (bench-free, own CI step, 19 tests) runs the real
+    module and contract controller. It covers:
+    - the season and the periods a year that bill;
+    - five bills for every billing day of two years;
+    - the start date, a wrapping season, and quarterly ignoring the season;
+    - the chemicals-only draft, unpriced chemicals and no fee item;
+    - year-round and annual contracts;
+    - the half-season refusal and the hidden fields;
+    - the Annual Fee split and its re-derivation.
 
 ## [1.624.0] - 2026-10-13
 
