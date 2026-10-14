@@ -137,6 +137,13 @@ body {
 	line-height: var(--sf-leading-body);
 }
 
+/* The skip link's target (tabindex="-1", so following the link moves keyboard focus here): a ring
+   in the focus colour, like every other focused thing on the page. */
+.sf-portal:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 4px;
+}
+
 /* /pay-card and /rent-a-fountain are one column of form; they were 520px and 640px inline. */
 .sf-portal--narrow {
 	max-width: 520px;

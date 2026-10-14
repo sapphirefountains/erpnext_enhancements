@@ -14,7 +14,7 @@
 {% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
 
 {% block page_content %}
-<div class="pay-portal sf-portal" id="sf-portal-main">
+<div class="pay-portal sf-portal" id="sf-portal-main" tabindex="-1">
 	<h1 class="mb-4">{{ _("Pay Invoices") }}</h1>
 
 	{% if not enabled %}
@@ -25,20 +25,22 @@
 		<p class="text-muted">{{ _("Select an invoice to pay securely by card or bank (ACH).") }}</p>
 		<div class="table-responsive">
 			{#- On a phone each row is drawn as a card, and data-label names the cell it stacks (the
-			    header row is hidden there). The Invoice cell stays a bare <td>: it is the card's title. -#}
-			<table class="table table-bordered sf-portal-invoices">
-				<thead>
-					<tr>
-						<th>{{ _("Invoice") }}</th>
-						<th>{{ _("Due Date") }}</th>
-						<th class="text-right">{{ _("Amount Due") }}</th>
-						<th></th>
+			    header row is hidden there). The Invoice cell has no label: it is the card's title.
+			    The explicit ARIA roles keep it a table to a screen reader once CSS sets display:block
+			    on its parts, which Safari takes as leave to drop the table semantics. -#}
+			<table class="table table-bordered sf-portal-invoices" role="table">
+				<thead role="rowgroup">
+					<tr role="row">
+						<th role="columnheader">{{ _("Invoice") }}</th>
+						<th role="columnheader">{{ _("Due Date") }}</th>
+						<th class="text-right" role="columnheader">{{ _("Amount Due") }}</th>
+						<th role="columnheader"></th>
 					</tr>
 				</thead>
-				<tbody>
+				<tbody role="rowgroup">
 					{% for inv in invoices %}
-					<tr>
-						<td>{{ inv.name }}
+					<tr role="row">
+						<td role="cell">{{ inv.name }}
 							{# The invoice itself, whatever its payment state, from
 							   stripe_payments.core.api.portal_invoice_pdf, which checks again that it
 							   is this customer's submitted invoice. A new tab: the phone's PDF viewer,
@@ -47,9 +49,9 @@
 								<a href="/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf?invoice={{ inv.name | urlencode }}" target="_blank" rel="noopener">{{ _("View invoice (PDF)") }}</a>
 							</div>
 						</td>
-						<td data-label="{{ _('Due Date') }}">{{ inv.due_display }}</td>
-						<td class="text-right" data-label="{{ _('Amount Due') }}">{{ inv.amount_display }}</td>
-						<td class="text-right sf-portal-actions">
+						<td role="cell" data-label="{{ _('Due Date') }}">{{ inv.due_display }}</td>
+						<td class="text-right" role="cell" data-label="{{ _('Amount Due') }}">{{ inv.amount_display }}</td>
+						<td class="text-right sf-portal-actions" role="cell">
 							{# payment_block is the verdict every payment path enforces
 							   (card_element.invoice_payment_block, see pay.py), so no button
 							   shows here that its endpoint would refuse. Any verdict at all

@@ -24,7 +24,7 @@
 {%- macro invoice_pdf_link(name, css="") -%}
 <a{% if css %} class="{{ css }}"{% endif %} href="/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf?invoice={{ name | urlencode }}" target="_blank" rel="noopener">{{ _("View invoice (PDF)") }}</a>
 {%- endmacro %}
-<div class="pay-card sf-portal sf-portal--narrow" id="sf-portal-main">
+<div class="pay-card sf-portal sf-portal--narrow" id="sf-portal-main" tabindex="-1">
 	<h1 class="mb-4">{{ _("Pay by Card") }}</h1>
 
 	{% if not enabled %}

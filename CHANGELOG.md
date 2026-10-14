@@ -67,6 +67,13 @@ byte-for-byte what it was, and a test now pins each one by SHA-256.
     `#review-disclosure` and `#review-nofee` is state: the script shows and hides those through
     `style.display` and reads it back, and no stylesheet rule sets `display` on them (tested). The
     rent form's honeypot also stays inline, so it is off screen even if the stylesheet never arrives.
+  - **Keyboard and screen readers.** Each page's content wrapper (`#sf-portal-main`) takes
+    `tabindex="-1"`, so the skip link moves keyboard focus and not just the view; it gets the same
+    focus ring as everything else. `/pay`'s invoice table carries explicit ARIA roles (`table`,
+    `rowgroup`, `row`, `columnheader`, `cell`), because Safari and VoiceOver drop a table's
+    semantics once CSS sets `display: block` on its parts, as the phone card layout does.
+    `test_stripe_payments`' two row parsers now match `<tr …>` and `<td …>` with attributes, and
+    count the rows so they can never pass on an empty match.
   - **Labels.** `/rentals`' site-prep fields had labels that were not tied to their fields. Each now
     has `for` and an `id`. The change-request box, which had only a placeholder, is labelled by its
     card's heading through `aria-labelledby`. The `/pay` consent line is the whole 44px target.

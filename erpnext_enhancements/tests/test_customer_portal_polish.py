@@ -264,7 +264,10 @@ class TestEachPageLinksTheTokensAndTheNav(unittest.TestCase):
 		for page in SCRIPT_PINS:
 			markup = _markup(_read(WWW / page))
 			with self.subTest(page=page):
-				self.assertRegex(markup, r'<div class="[^"]*\bsf-portal\b[^"]*" id="sf-portal-main">')
+				# tabindex="-1": following the skip link moves keyboard focus here, not just the view.
+				self.assertRegex(
+					markup, r'<div class="[^"]*\bsf-portal\b[^"]*" id="sf-portal-main" tabindex="-1">'
+				)
 
 	def test_no_raw_asset_path_for_the_new_css(self):
 		for page in SCRIPT_PINS:
@@ -507,6 +510,22 @@ class TestThePageScriptsDidNotMove(unittest.TestCase):
 
 
 class TestAccessibilityAndInlineStyles(unittest.TestCase):
+	def test_the_invoice_table_keeps_its_roles_when_it_becomes_cards(self):
+		"""On a phone the CSS sets display:block on the table's parts, and Safari/VoiceOver then
+		drops the table semantics unless the roles are explicit."""
+		markup = _markup(_read(WWW / "pay.html"))
+		table = markup[markup.index("<table") : markup.index("</table>")]
+		self.assertRegex(table, r'<table class="[^"]*\bsf-portal-invoices\b[^"]*" role="table">')
+		self.assertEqual(len(re.findall(r"<(?:thead|tbody)\b", table)), 2)
+		self.assertEqual(len(re.findall(r'<(?:thead|tbody) role="rowgroup">', table)), 2)
+		for tag in ("tr", "th", "td"):
+			role = {"tr": "row", "th": "columnheader", "td": "cell"}[tag]
+			tags = re.findall(rf"<{tag}\b[^>]*>", table)
+			with self.subTest(tag=tag):
+				self.assertGreater(len(tags), 1)
+				for found in tags:
+					self.assertIn(f'role="{role}"', found)
+
 	def test_every_field_has_a_label(self):
 		for page in SCRIPT_PINS:
 			markup = _markup(_read(WWW / page))

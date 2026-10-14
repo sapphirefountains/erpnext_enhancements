@@ -14,7 +14,7 @@
 {% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
 
 {% block page_content %}
-<div class="rentals-portal sf-portal" id="sf-portal-main">
+<div class="rentals-portal sf-portal" id="sf-portal-main" tabindex="-1">
 	{% if detail %}
 		<p><a href="/rentals">&larr; {{ _("All rentals") }}</a></p>
 		<h1 class="mb-1">{{ detail.event_name or detail.name }}</h1>
