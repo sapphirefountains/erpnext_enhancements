@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.686.1] - 2026-10-14
+
+### Changed
+- **The guided page's Notes list reads every notes store a DocType has, not only ERPNext's CRM
+  Notes.** Notes and Comments are separate stores, and some DocTypes keep notes in more than one
+  place. Nik, 2026-10-14: "just include both where appropriate". `record_notes` now finds the stores
+  from the DocType's meta (`_note_sources`):
+  - a table of CRM Note (Opportunity, Lead, Prospect);
+  - a table of Project Notes (Project's imported history, `custom_comments_table`, 283 rows on prod,
+    hidden on the Desk form);
+  - a plain `notes` text field (Project's own, on 9 projects). It is listed first as one note
+    labelled "Notes field", since it has no author or date.
+
+  Table rows are merged newest first. A store at a permlevel the user cannot read is left out, as
+  the Desk form leaves it out. Only DocTypes with ERPNext's `add_note` get the Add note box; on the
+  others a new note is a Comment, which the Comments App under the list already takes.
+
+  Nothing changes on an Opportunity, the only DocType with notes that is guided today. Project gets
+  all of this the day it becomes guided. Tests: `tests/test_form_kit.py TestNotesFromEveryStore`.
+
 ## [1.684.0] - 2026-10-14
 
 ### Added

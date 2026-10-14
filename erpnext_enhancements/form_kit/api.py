@@ -294,6 +294,23 @@ def my_records(doctype):
 #: The notes block lists at most this many, newest first; the Desk form's Notes tab has the rest.
 NOTES_LIMIT = 200
 
+#: Where notes are kept, by the child table they are rows of, and the field holding each one's text.
+#: ERPNext's CRM Note is the Notes tab (Opportunity, Lead, Prospect). Project Notes is Project's
+#: imported history, ``custom_comments_table``: 283 rows on prod, hidden on the Desk form.
+NOTE_TABLES = {"CRM Note": "note", "Project Notes": "notes"}
+
+#: A ``notes`` field of one of these types (Project has one) is a single note, with no author or date.
+NOTE_TEXT_TYPES = ("Text Editor", "Text", "Small Text", "Long Text")
+
+
+def _note_sources(meta):
+	"""``(tables, text_field)``: every notes store ``meta`` has, read off the meta and nothing else."""
+	tables = [df for df in meta.fields if df.fieldtype == "Table" and df.options in NOTE_TABLES]
+	text_field = meta.get_field("notes")
+	if not text_field or text_field.fieldtype not in NOTE_TEXT_TYPES:
+		text_field = None
+	return tables, text_field
+
 
 def _note_text(value):
 	"""A CRM Note's HTML (a Text Editor) as plain text with its line breaks, for ``.text()``."""
@@ -305,47 +322,67 @@ def _note_text(value):
 
 @frappe.whitelist(methods=["GET"])
 def record_notes(doctype, name):
-	"""A record's CRM Notes (ERPNext's Notes tab), for the guided page and the side panel.
+	"""A record's notes, from every store its DocType keeps them in, for the guided page and the side panel.
 
 	Nik, 2026-10-14: "I can't see comments which are extremely important." The guided page replaced
 	the Desk form, and an Opportunity's history is mostly here (1,049 notes on 235 deals on prod).
+	Notes and Comments are separate stores, and both show ("just include both where appropriate"):
+	the Comments App sits under this list. The stores are found by ``_note_sources``: a table of
+	CRM Note or Project Notes, and a ``notes`` text field, which is listed first, labelled with its
+	field.
 
-	``{"has_notes", "notes": [{"name", "text", "added_by", "added_on"}], "total", "can_add"}``,
-	newest first. ``has_notes`` is false for a DocType without a ``notes`` table of CRM Note. ``text``
-	is plain text (the note's HTML with its tags taken out), so the page writes it with ``.text()``.
+	``{"has_notes", "notes": [{"name", "text", "added_by", "added_on", "label"}], "total", "can_add"}``,
+	rows newest first. ``has_notes`` is false for a DocType with no notes store. A store at a
+	permlevel the user cannot read is left out, as the Desk form leaves it out. ``text`` is plain
+	text (the note's HTML with its tags taken out), so the page writes it with ``.text()``.
 	``can_add`` is write permission on the record and the DocType's own ``add_note``, which the page
-	calls through ``run_doc_method`` (ERPNext's CRMNote mixin; it appends a row and saves).
+	calls through ``run_doc_method`` (ERPNext's CRMNote mixin; it appends a row and saves). A DocType
+	without it (Project) takes new notes as Comments.
 	"""
 	_require_configured(doctype)
 	if not isinstance(name, str) or not name:
 		frappe.throw(_("Which record?"), title=_("Not Found"))
-	field = frappe.get_meta(doctype).get_field("notes")
-	if not field or field.fieldtype != "Table" or field.options != "CRM Note":
+	meta = frappe.get_meta(doctype)
+	tables, text_field = _note_sources(meta)
+	if not tables and not text_field:
 		return {"has_notes": False, "notes": [], "total": 0, "can_add": False}
 	doc = frappe.get_doc(doctype, name)
 	doc.check_permission("read")
-	rows = sorted(
-		doc.get("notes") or [],
-		key=lambda row: str(row.get("added_on") or row.get("creation") or ""),
-		reverse=True,
-	)
-	shown = rows[:NOTES_LIMIT]
+	levels = flow.access_for(doctype, meta, doc)["read_levels"]
+	rows = []
+	for df in tables:
+		if frappe.utils.cint(df.get("permlevel")) not in levels:
+			continue
+		text_key = NOTE_TABLES[df.options]
+		rows.extend((row, text_key) for row in doc.get(df.fieldname) or [])
+	rows.sort(key=lambda pair: str(pair[0].get("added_on") or pair[0].get("creation") or ""), reverse=True)
+	pinned = []
+	if text_field and frappe.utils.cint(text_field.get("permlevel")) in levels:
+		text = _note_text(doc.get(text_field.fieldname))
+		if text:
+			label = _("{0} field").format(_(text_field.label or "Notes"))
+			pinned.append(
+				{"name": text_field.fieldname, "text": text, "added_by": "", "added_on": "", "label": label}
+			)
+	shown = rows[: max(NOTES_LIMIT - len(pinned), 0)]
 	people = {}
-	for row in shown:
+	for row, _text_key in shown:
 		user = row.get("added_by")
 		if user and user not in people:
 			people[user] = frappe.utils.get_fullname(user) or user
 	return {
 		"has_notes": True,
-		"notes": [
+		"notes": pinned
+		+ [
 			{
 				"name": row.get("name"),
-				"text": _note_text(row.get("note")),
+				"text": _note_text(row.get(text_key)),
 				"added_by": people.get(row.get("added_by"), row.get("added_by") or ""),
 				"added_on": str(row.get("added_on") or ""),
+				"label": "",
 			}
-			for row in shown
+			for row, text_key in shown
 		],
-		"total": len(rows),
+		"total": len(pinned) + len(rows),
 		"can_add": bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None)),
 	}

@@ -257,8 +257,9 @@ export class RecordEditor {
 		notes.forEach((note) => {
 			const $item = $('<li class="ge-note"></li>').appendTo($list);
 			const when = note.added_on ? frappe.datetime.str_to_user(note.added_on) : "";
+			// `label` names a notes field (Project's own), which has no author or date of its own.
 			$('<div class="ge-note-meta"></div>')
-				.text([note.added_by, when].filter(Boolean).join(" · "))
+				.text([note.label, note.added_by, when].filter(Boolean).join(" · "))
 				.appendTo($item);
 			$('<div class="ge-note-text"></div>').text(note.text || "").appendTo($item);
 		});
