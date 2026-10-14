@@ -30,6 +30,12 @@ What a Save posts, by what the person did:
 Each save also writes a ``Stock Scan Log`` row: the page's history, its Undo, and the
 review queue.
 
+**Bin assignments** (v1.689.0) live in ``inventory_enhancements/bin_assignments.py``: putting
+an item on a bin or taking it off (an ERPNext Putaway Rule), pushing stock out of a bin
+(*Move To*), and correcting a count (a Stock Reconciliation). They reuse this module's
+reference check, log row, transfer builder and Undo, and the location listing here
+(:func:`_items_at`) reads the assignment.
+
 Things this module is careful about, each of which the obvious version gets wrong:
 
 * **Permissions are the framework's.** After the role gate (``stock_scan_rules.SCAN_ROLES``)
@@ -69,6 +75,7 @@ Things this module is careful about, each of which the obvious version gets wron
 Indentation is tabs (new file; ``api/README.md`` lists the package's mix).
 """
 
+import json
 import re
 
 import frappe
@@ -229,6 +236,15 @@ def _warehouse_names(names):
 	return {row.name: row.warehouse_name or row.name for row in rows}
 
 
+def _can_manage():
+	"""Whether the caller may put items on bins and take them off (``bin_assignments``): one of
+	the page's roles and read on Item, the owner's 2026-10-14 decision ("everyone with
+	permissions to our inventory and items already"). The page and the Desk page hide those
+	buttons without it; ``bin_assignments.require_manage`` is the same gate on every write.
+	"""
+	return bool(rules.SCAN_ROLES.intersection(frappe.get_roles()) and frappe.has_permission("Item", "read"))
+
+
 def _location_payload(row):
 	items, truncated = _items_at(row)
 	return {
@@ -238,33 +254,79 @@ def _location_payload(row):
 		"company": row.company,
 		"items": items,
 		"truncated": truncated,
+		"can_manage": _can_manage(),
 	}
 
 
 def _items_at(row):
-	"""The items kept at a location: every Bin there (an emptied bin still lists its item,
-	so the next receiver can restock it) plus every item whose default warehouse it is.
+	"""The items kept at a location (v1.689.0). An item lists here when any of:
+
+	* **it is on hand here** (``tabBin.actual_qty > 0``): stock nobody can see is stock that
+	  gets lost, so on-hand stock always lists, assigned or not;
+	* **it is assigned here**: an enabled ERPNext Putaway Rule for the item and this location
+	  (``bin_assignments``). An emptied bin still lists its item, so the next receiver can
+	  restock it;
+	* **this is its default warehouse** for the location's company (its Item Default), as
+	  before;
+	* **it is on order to here** (``tabBin.ordered_qty > 0``): stock on its way to this bin,
+	  so the receiver who scans the bin's label finds the item to receive against its order;
+	* **nobody has decided on it here yet**: a Bin row and **no Putaway Rule at all**, enabled or
+	  disabled. Stock first put into a bin after v1.689.0 (a *Move here*, an add, a receipt) has
+	  a Bin row and no rule; without this it would drop off the bin's list the moment it was
+	  emptied, and only a Stock Manager in the Desk could bring it back. Nothing is assigned
+	  automatically: the item lists as undecided until someone puts it on the bin or takes it
+	  off, and taking it off records a *disabled* rule (``bin_assignments._release``), which is
+	  what ends this clause.
+
+	Until v1.689.0 the test was "has *any* Bin row here", and a Bin row is created by the first
+	transaction that touches a pair and is never deleted -- so an item, once in a bin, could
+	never be taken off it. The rows cannot be deleted either: 28 of the 80 zero rows on
+	production (2026-10-14) still carry ordered, reserved or projected quantities that ERPNext
+	maintains. Taking an item off a bin is therefore a decision recorded on its rule, and this
+	query reads the rule.
 
 	Only stock items that are not disabled; the item's own refusal is shown when opened.
-	Ordered by what is on hand first, then name.
+	Ordered by what is on hand first, then name. Each row says why it lists (``assigned``,
+	``is_default``, ``on_order``, ``undecided``), so the page can say why an item stays after it
+	was taken off.
 
 	One query, filtered to stock items in SQL: ``Stores - SF`` is the default warehouse of
 	741 Items on production, almost all of them non-stock, so capping the defaults before
-	filtering them would drop real stock items off the end.
+	filtering them would drop real stock items off the end. The rules and the defaults are
+	joined as small derived tables (one location's worth each) rather than as a correlated
+	``exists`` per Item, and ``distinct`` keeps a duplicate rule from listing an item twice
+	(ERPNext refuses one in ``validate``, but there is no unique index behind it).
 	"""
 	items = frappe.db.sql(
 		"""
-		select i.name, i.item_name, i.image, i.stock_uom, coalesce(b.actual_qty, 0) as on_hand
+		select i.name, i.item_name, i.image, i.stock_uom,
+			coalesce(b.actual_qty, 0) as on_hand,
+			coalesce(b.ordered_qty, 0) as on_order,
+			r.item_code is not null as assigned,
+			d.parent is not null as is_default,
+			b.name is not null and ar.item_code is null as undecided
 		from `tabItem` i
 		left join `tabBin` b on b.item_code = i.name and b.warehouse = %(warehouse)s
+		left join (
+			select distinct pr.item_code from `tabPutaway Rule` pr
+			where pr.warehouse = %(warehouse)s and pr.disable = 0
+		) r on r.item_code = i.name
+		left join (
+			select distinct apr.item_code from `tabPutaway Rule` apr
+			where apr.warehouse = %(warehouse)s
+		) ar on ar.item_code = i.name
+		left join (
+			select distinct idf.parent from `tabItem Default` idf
+			where idf.parenttype = 'Item'
+				and idf.default_warehouse = %(warehouse)s and idf.company = %(company)s
+		) d on d.parent = i.name
 		where i.disabled = 0 and i.is_stock_item = 1
 			and (
-				b.name is not null
-				or exists (
-					select 1 from `tabItem Default` d
-					where d.parent = i.name and d.parenttype = 'Item'
-						and d.default_warehouse = %(warehouse)s and d.company = %(company)s
-				)
+				b.actual_qty > 0
+				or b.ordered_qty > 0
+				or r.item_code is not null
+				or d.parent is not null
+				or (b.name is not null and ar.item_code is null)
 			)
 		""",
 		{"warehouse": row.name, "company": row.company},
@@ -279,6 +341,10 @@ def _items_at(row):
 			"image": item.image or None,
 			"stock_uom": item.stock_uom,
 			"on_hand": flt(item.on_hand),
+			"on_order": flt(item.on_order),
+			"assigned": bool(cint(item.assigned)),
+			"is_default": bool(cint(item.is_default)),
+			"undecided": bool(cint(item.undecided)),
 		}
 		for item in items
 	]
@@ -505,6 +571,7 @@ def _item_payload(item_code, location=None):
 		"warehouse_name": None,
 		"on_hand": None,
 		"available": None,
+		"assigned": None,
 		"elsewhere": [],
 		"open_orders": [],
 	}
@@ -517,6 +584,13 @@ def _item_payload(item_code, location=None):
 				"warehouse_name": location.warehouse_name or location.name,
 				"on_hand": on_hand,
 				"available": on_hand - reserved,
+				# Whether the item is on this bin (an enabled Putaway Rule): the page offers
+				# "Take off this bin" or "Put on this bin" by it (v1.689.0).
+				"assigned": bool(
+					frappe.db.exists(
+						"Putaway Rule", {"item_code": item.name, "warehouse": location.name, "disable": 0}
+					)
+				),
 			}
 		)
 	# A non-stock item gets its open order lines too: a store run for something already on a
@@ -876,6 +950,20 @@ def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_cod
 	location = _location(warehouse)
 	item = _stock_item(item_code)
 	qty = _checked_qty(qty, item)
+	source = _transfer_source(from_warehouse, location, item, qty)
+	_require("Stock Entry", "create", "submit")
+
+	log = _begin_log(ref, rules.ACTION_MOVE, item, qty, location, scanned_code, from_warehouse=source.name)
+	se = _transfer_entry(rules.ACTION_MOVE, item, qty, source, location)
+	_post(se)
+	_finish_log(log, "Stock Entry", se.name)
+	return _result(log.name)
+
+
+def _transfer_source(from_warehouse, location, item, qty):
+	"""The location a transfer into ``location`` draws from, checked; or throw in the user's
+	terms. Shared by *Move here* and ``bin_assignments.move_to`` (which pushes stock out of the
+	bin being managed), so both refuse the same things the same way, before any document."""
 	source = _warehouse(from_warehouse)
 	if not source or source.is_group or source.disabled:
 		frappe.throw(_("There is no location {0} to move stock from.").format(cstr(from_warehouse)))
@@ -893,16 +981,18 @@ def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_cod
 				source.warehouse_name or source.name,
 			)
 		)
-	_require("Stock Entry", "create", "submit")
-	settings = get_settings()
+	return source
 
-	log = _begin_log(ref, rules.ACTION_MOVE, item, qty, location, scanned_code, from_warehouse=source.name)
+
+def _transfer_entry(action, item, qty, source, location):
+	"""The unsaved Material Transfer of ``qty`` from ``source`` into ``location``: the one
+	transfer this app's scan pages build (*Move here*, and *Move To* in ``bin_assignments``).
+	The caller inserts its log row first and then posts it, like every other save."""
+	settings = get_settings()
 	se = _stock_entry(
 		"Material Transfer",
 		location.company,
-		remarks=rules.remark(
-			rules.ACTION_MOVE, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name
-		),
+		remarks=rules.remark(action, _who(), location.name, qty, item.stock_uom, from_warehouse=source.name),
 	)
 	se.from_warehouse = source.name
 	se.to_warehouse = location.name
@@ -921,9 +1011,7 @@ def move_here(item_code, warehouse, from_warehouse, qty, client_ref, scanned_cod
 			"cost_center": _cost_center(settings.get("scan_cost_center"), location.company),
 		},
 	)
-	_post(se)
-	_finish_log(log, "Stock Entry", se.name)
-	return _result(log.name)
+	return se
 
 
 def _checked_qty(value, item):
@@ -1594,12 +1682,25 @@ def undo(log):
 	of the run alone; a quick Item created with it stays, for Purchasing's weekly review. Who
 	may undo one is narrower (``stock_scan_rules.undo_refusal``): never once reviewed, and
 	after the window only Purchasing or Accounts.
+
+	A bin assignment (v1.689.0: *Assign*, *Unassign*, and *Move To* with "make it the item's
+	home") changes Putaway Rules and Item Defaults, which have no voucher to cancel. Its log row
+	keeps what they were before (``rule_changes``) and ``bin_assignments.restore`` puts that
+	back, behind the same module gate the change needed (``bin_assignments.require_manage``).
+	A *Move To* that moved the
+	assignment has both: its transfer is canceled and its rules restored, in one transaction, so
+	if ERPNext refuses the cancel nothing is restored either.
 	"""
 	_check_access()
 	doc = frappe.get_doc(LOG, cstr(log).strip())
 	refusal = _undo_refusal(doc)
 	if refusal:
 		frappe.throw(refusal)
+	from erpnext_enhancements.inventory_enhancements import bin_assignments
+
+	changes = bin_assignments.parse_changes(doc.get("rule_changes"))
+	if changes:
+		bin_assignments.require_manage()
 
 	already_canceled = False
 	if doc.voucher_type and doc.voucher_no and frappe.db.exists(doc.voucher_type, doc.voucher_no):
@@ -1617,6 +1718,8 @@ def undo(log):
 					).format(doc.voucher_no, replacement)
 				)
 			already_canceled = True
+	if changes:
+		bin_assignments.restore(changes)
 
 	doc.flags.stock_scan_undo = True
 	doc.status = "Undone"
@@ -1679,6 +1782,13 @@ def _log_row(doc, names=None, settings=None):
 		"non_stock_item": cint(doc.get("non_stock_item")),
 		"created_item": cint(doc.get("created_item")),
 		"repeat_unstocked": cint(doc.get("repeat_unstocked")),
+		# Bin assignments (v1.689.0); None on every other action.
+		"putaway_rule": doc.get("putaway_rule") or None,
+		"qty_before": flt(doc.get("qty_before")) if doc.action == rules.ACTION_COUNT else None,
+		"moved_home": bool(doc.action == rules.ACTION_MOVE_TO and doc.get("rule_changes")),
+		# A make-home move or a boneyard trip that left stock at the source keeps the source's
+		# assignment (bin_assignments._plan_source); None when the save had no say over it.
+		"source_kept": _source_kept(doc),
 	}
 
 
@@ -1704,6 +1814,72 @@ def _store_run_message(doc, amount, item, undone=False):
 	return text
 
 
+def _bin_message(doc, amount, item, undone=False):
+	"""The sentence for a bin-assignment save (v1.689.0), or its undo."""
+	names = _warehouse_names([doc.warehouse, doc.from_warehouse])
+	here = names.get(doc.warehouse) or doc.warehouse
+	there = names.get(doc.from_warehouse) or doc.from_warehouse
+	if doc.action == rules.ACTION_ASSIGN:
+		if undone:
+			return _("Undone: {0} is no longer on {1}.").format(item, here)
+		return _("{0} is now on {1}.").format(item, here)
+	if doc.action == rules.ACTION_UNASSIGN:
+		if undone:
+			return _("Undone: {0} is back on {1}.").format(item, here)
+		text = _("{0} is off {1}.").format(item, here)
+		on_order = frappe.db.get_value(
+			"Bin", {"item_code": doc.item_code, "warehouse": doc.warehouse}, "ordered_qty"
+		)
+		if flt(on_order) > 0:
+			text += " " + _(
+				"It is still on order to {0}, so it stays listed there until that order is received or closed."
+			).format(here)
+		return text
+	source = _source_marker(doc)
+	kept = ""
+	if source and not cint(source.get("released")):
+		kept = " " + _("{0} still at {1}, so it stays there.").format(
+			f"{rules.plain(source.get('left'))} {doc.stock_uom or ''}".strip(), there
+		)
+	if doc.action == rules.ACTION_BONEYARD:
+		if undone:
+			return _("Undone: {0} of {1} is back at {2}, as it was.").format(amount, item, there)
+		text = _("Sent {0} of {1} from {2} to the boneyard ({3}).").format(amount, item, there, here)
+		return text + (kept or " " + _("It is off {0}.").format(there))
+	if doc.action == rules.ACTION_COUNT:
+		before = f"{rules.plain(doc.get('qty_before'))} {doc.stock_uom or ''}".strip()
+		if undone:
+			return _("Undone: the count of {0} at {1} is back to {2}.").format(item, here, before)
+		return _("Counted {0} of {1} at {2} (the system showed {3}).").format(amount, item, here, before)
+	# Move To: pushed out of the bin being managed, into ``doc.warehouse``.
+	if undone:
+		return _("Undone: {0} of {1} is back at {2}.").format(amount, item, there)
+	text = _("Moved {0} of {1} from {2} to {3}.").format(amount, item, there, here)
+	if doc.get("rule_changes"):
+		text += " " + _("{0} is now its home.").format(here) + kept
+	return text
+
+
+def _source_kept(doc):
+	source = _source_marker(doc)
+	return None if source is None else not cint(source.get("released"))
+
+
+def _source_marker(doc):
+	"""What a *Move To* (make home) or *Boneyard* save did about its source bin: the ``source``
+	entry ``bin_assignments`` records in ``rule_changes`` (``released``, and ``left`` when stock
+	stayed), or ``None``."""
+	if doc.action not in (rules.ACTION_MOVE_TO, rules.ACTION_BONEYARD) or not doc.get("rule_changes"):
+		return None
+	try:
+		changes = json.loads(doc.rule_changes)
+	except (TypeError, ValueError):
+		return None
+	if not isinstance(changes, list):
+		return None
+	return next((c for c in changes if isinstance(c, dict) and c.get("kind") == "source"), None)
+
+
 def _message(doc, repeated=False, undone=False, already_canceled=False):
 	amount = f"{rules.plain(doc.qty)} {doc.stock_uom or ''}".strip()
 	item = doc.item_name or doc.item_code
@@ -1713,6 +1889,9 @@ def _message(doc, repeated=False, undone=False, already_canceled=False):
 		)
 	if doc.action == rules.ACTION_STORE_RUN:
 		text = _store_run_message(doc, amount, item, undone=undone)
+		return _("Already saved. {0}").format(text) if repeated else text
+	if doc.action in rules.BIN_ACTIONS:
+		text = _bin_message(doc, amount, item, undone=undone)
 		return _("Already saved. {0}").format(text) if repeated else text
 	if undone:
 		return _("Undone: {0} of {1} is back as it was.").format(amount, item)
@@ -2102,11 +2281,15 @@ def boot_payload(args=None):
 		"user": user,
 		"full_name": frappe.db.get_value("User", user, "full_name") or user,
 		"is_supervisor": _is_supervisor(),
+		# May put items on bins and take them off (v1.689.0, ``bin_assignments``).
+		"can_manage": _can_manage(),
 		"settings": {
 			"require_project_for_take": cint(settings.get("require_project_for_take")),
 			"undo_window_minutes": cint(settings.get("undo_window_minutes")),
 			# 0 only when a Stock Manager ticked the off switch (Inventory Scanner Settings).
 			"browser_history": 0 if cint(settings.get("stock_scan_disable_browser_back")) else 1,
+			# Where "Send to boneyard" moves stock (v1.689.0); None hides the button.
+			"boneyard_warehouse": settings.get("boneyard_warehouse") or None,
 		},
 		"recent": _recent(),
 		"initial": initial,

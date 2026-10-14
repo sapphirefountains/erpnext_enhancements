@@ -9,7 +9,10 @@ voucher that did it — a Stock Entry, or a Purchase Receipt for stock received 
 order. The voucher is the stock ledger's record; this row is the page's, and it carries
 three things the voucher cannot:
 
-* **Undo.** The page lists the caller's recent rows and cancels the voucher behind one.
+* **Undo.** The page lists the caller's recent rows and cancels the voucher behind one. A
+  bin-assignment save (v1.689.0, ``inventory_enhancements.bin_assignments``) may change
+  Putaway Rules and Item Defaults instead of, or as well as, posting a voucher; it records
+  what they were in ``rule_changes`` so Undo can put them back.
 * **The review queue.** Stock added without a purchase order sets ``needs_review``; a
   Stock Manager ticks ``reviewed`` once they know where it came from. A store-run line
   (v1.536.0) is reviewed by Purchasing, and never by the person who recorded it.
