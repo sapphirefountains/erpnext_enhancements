@@ -74,6 +74,23 @@ UNIFIED_TAB_FIELDS = [
     {"fieldname": "address_list_html", "label": "Address List HTML", "fieldtype": "HTML", "insert_after": "section_break_address_list"},
 ]
 
+#: Custom fields this app creates in code rather than in the fixtures (a patch must write them
+#: on the migrate that adds them). Each must equal its definition; see TestMergedMeta.
+PROBABILITY_SOURCE = APP / "crm_enhancements" / "opportunity_probability.py"
+CODE_FIELDS = [
+    {
+        "fieldname": "custom_probability_by_hand",
+        "label": "Probability Set by Hand",
+        "fieldtype": "Check",
+        "insert_after": "probability",
+        "default": "0",
+        "description": (
+            "Ticked when someone types the probability: a stage change then keeps it. "
+            "Untick to go back to the stage's default (Sales Activity Settings)."
+        ),
+    },
+]
+
 CHECK_PROPERTIES = {"hidden", "reqd", "read_only", "bold", "collapsible", "in_list_view", "permlevel", "set_only_once"}
 TABLE_TYPES = {"Table", "Table MultiSelect"}
 
@@ -179,7 +196,7 @@ def build_metas(permission_rows=None, field_overrides=None, extra_fields=None):
     opp = erpnext["Opportunity"]
     fields = [dict(f) for f in opp["fields"]]
     customs = [c for c in json.loads(CUSTOM_FIELDS.read_text(encoding="utf-8")) if c["dt"] == "Opportunity"]
-    for custom in customs + UNIFIED_TAB_FIELDS:
+    for custom in customs + UNIFIED_TAB_FIELDS + CODE_FIELDS:
         record = {k: v for k, v in custom.items() if v is not None and k not in ("doctype", "dt", "name", "module")}
         record["is_custom_field"] = 1
         fields.append(record)
@@ -562,6 +579,27 @@ class TestMergedMeta(unittest.TestCase):
         self.assertEqual(len(self.names), len(set(self.names)))
         self.assertIn("primary_address", self.names)
         self.assertIn("custom_billing_email", self.names)
+
+    def test_the_code_owned_fields_match_their_definitions(self):
+        tree = ast.parse(PROBABILITY_SOURCE.read_text(encoding="utf-8"))
+        # The module's top-level string constants (FIELD), substituted so literal_eval can read it.
+        constants = {
+            n.targets[0].id: n.value.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and isinstance(n.targets[0], ast.Name)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+        }
+
+        class Substitute(ast.NodeTransformer):
+            def visit_Name(self, node):
+                return ast.Constant(constants[node.id]) if node.id in constants else node
+
+        (func,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "field_definition"]
+        (ret,) = [n for n in ast.walk(func) if isinstance(n, ast.Return)]
+        self.assertEqual(ast.literal_eval(Substitute().visit(ret.value)), CODE_FIELDS[0])
+        self.assertEqual(self.names[self.names.index("probability") + 1], "custom_probability_by_hand")
 
     def test_the_unified_tab_fields_are_the_ones_setup_creates(self):
         source = SETUP_FIELDS.read_text(encoding="utf-8")
