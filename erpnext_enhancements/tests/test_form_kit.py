@@ -1734,9 +1734,12 @@ class TestEndpoints(unittest.TestCase):
                 "distinct",
                 "clears",
                 "lost",
+                # Form kit P6.6 (v1.668.0): what a move into Closed Won must carry.
+                "won",
             },
         )
         self.assertEqual(payload["name"], name)
+        self.assertNotIn("quick", payload, "quick add is for a new record only")
         self.assertEqual(payload["modified"], STATE["db"][name]["modified"])
         self.assertEqual(payload["can_write"], 1)
         self.assertEqual(payload["values"]["custom_value_stream"][0]["value_stream"], "Design")
@@ -1748,6 +1751,43 @@ class TestEndpoints(unittest.TestCase):
         self.assertIsNone(payload["modified"])
         self.assertEqual(payload["values"]["status"], "Qualification")
         self.assertEqual(payload["steps"][0]["create"], 1)
+
+    def test_the_moves_and_quick_add_the_side_panel_reads(self):
+        """Form kit P6.6 / P6.7 (v1.668.0): ``won`` names fields the flow offers on a saved record,
+        and ``quick`` (new records only) asks for fields step 1 shows, filling the rest itself."""
+        name = _seed()
+        saved = api.get_flow("Opportunity", name)
+        won = saved["won"]
+        self.assertEqual(won["status"], "Closed Won")
+        self.assertEqual(won["status_field"], "status")
+        names = set(_all_values(saved["steps"]))
+        self.assertEqual(won["fields"], ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"])
+        self.assertTrue(set(won["fields"]) <= names, "every rank is in the flow")
+        new = api.get_flow("Opportunity")
+        quick = new["quick"]
+        step_one = next(step for step in new["steps"] if step["create"])
+        shown = {f["fieldname"]: f for f in step_one["fields"] if f.get("fieldname")}
+        for fieldname in quick["fields"]:
+            with self.subTest(field=fieldname):
+                self.assertIn(fieldname, shown, "quick add asks only for what step 1 shows")
+        # What step 1 needs that quick add does not ask for, it fills: fixed, the owner, or a default.
+        required = {f for f, d in shown.items() if d.get("reqd") and not d.get("read_only")}
+        filled = set(quick["fields"]) | set(quick["fixed"]) | {quick["owner_field"]}
+        self.assertEqual(required - filled, set(), "a quick add could never be created")
+        self.assertEqual(quick["fixed"], {"opportunity_from": "Customer"})
+        self.assertEqual(quick["stage_field"], "status")
+        self.assertIn("status", new["prefill_fields"], "the column's stage goes with the create")
+        self.assertIn("custom_opportunity_summary", new["prefill_fields"], "so does the summary")
+
+    def test_the_schema_check_holds_won_and_quick(self):
+        broken = copy.deepcopy(config.CONFIGS["Opportunity"])
+        broken["won"] = {"status": "", "fields": []}
+        broken["quick"] = {"fields": [], "extra": 1}
+        problems = " ".join(config.check(broken))
+        self.assertIn("won needs status", problems)
+        self.assertIn("won needs a list of fields", problems)
+        self.assertIn("quick needs a list of fields", problems)
+        self.assertIn("unknown quick keys", problems)
 
     def test_get_flow_needs_create_for_a_new_record_and_read_for_an_existing_one(self):
         name = _seed()

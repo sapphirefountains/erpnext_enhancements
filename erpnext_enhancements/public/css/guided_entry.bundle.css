@@ -698,3 +698,152 @@ body.ge-page-active .triton-fab {
 		transition: none;
 	}
 }
+
+/* ---- The side panel (form kit P4.4, v1.668.0): the same editor in the planner kit's drawer ----
+ * form_kit/ui/side_panel.js draws a step's fields with the guided page's own classes (.ge-fields,
+ * .ge-notices, .ge-conflict, .ge-saveline, .ge-help-*), so all of the above applies to it. Here only
+ * what differs: the drawer is narrow, so a form's columns always stack; the panel's own head and
+ * footer; and the drawer's x, which the panel replaces with a Done / Cancel that saves first. The
+ * drawer itself (.pk-drawer) is the planner kit's; under 768px it fills the screen. */
+.fk-panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	min-height: 100%;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	line-height: var(--sf-leading-body);
+}
+.fk-panel .ge-stage {
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+.fk-panel .ge-fields .form-section .section-body,
+.fk-panel .ge-fields .form-section .form-column {
+	display: block;
+	flex: 0 0 100%;
+	max-width: 100%;
+	width: 100%;
+}
+.fk-panel .ge-fields .form-section,
+.fk-panel .ge-fields .form-section .form-column {
+	padding-left: 0;
+	padding-right: 0;
+}
+.fk-panel input,
+.fk-panel select,
+.fk-panel textarea {
+	font-size: var(--sf-text-input);
+}
+.fk-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+.fk-progress {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+.fk-progress .ge-progress-track {
+	background: var(--sf-surface);
+	border-color: var(--sf-field-border);
+}
+.fk-progress-text {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.fk-head-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10);
+}
+.fk-step-pick {
+	display: flex;
+	flex: 1 1 220px;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	min-width: 0;
+	margin: 0;
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.fk-step-pick select {
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-weight: var(--sf-weight-regular);
+}
+.fk-foot {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	margin-top: auto;
+	padding: var(--sf-space-10) 0 calc(var(--sf-space-10) + env(safe-area-inset-bottom, 0px));
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--card-bg, var(--sf-surface));
+}
+.fk-foot-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+.fk-foot-row--quiet {
+	justify-content: flex-end;
+}
+.fk-foot-row .ge-saveline,
+.fk-foot-note {
+	flex: 1 1 120px;
+	min-width: 0;
+}
+.fk-foot-note {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	text-align: center;
+}
+.fk-lost-fields {
+	margin-top: var(--sf-space-10);
+}
+/* The panel's own Done / Cancel replaces the drawer's x (it saves first, and the page's address
+   follows); the bulk panel on the board likewise. */
+.pk-drawer[data-owner="fk"] .pk-drawer-close,
+.pk-drawer[data-owner="ob-bulk"] .pk-drawer-close {
+	display: none;
+}
+.fk-close {
+	min-height: var(--sf-touch-min);
+	font-family: var(--sf-font-sans);
+}
+.pk-drawer[data-owner="fk"] .pk-drawer-title,
+.pk-drawer[data-owner="ob-bulk"] .pk-drawer-title {
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+}
+
+@media (max-width: 767px) {
+	/* Full screen on a phone: pinned to both edges, so a desktop scrollbar never pushes it past the
+	   left edge (the drawer's own 100vw counts the scrollbar). */
+	.pk-drawer[data-owner="fk"],
+	.pk-drawer[data-owner="ob-bulk"] {
+		left: 0;
+		width: auto;
+	}
+	.fk-foot-row .sf-btn {
+		flex: 1 1 auto;
+	}
+	.fk-foot-row .ge-saveline {
+		flex-basis: 100%;
+		order: -1;
+	}
+}

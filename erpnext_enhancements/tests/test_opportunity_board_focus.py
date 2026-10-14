@@ -441,7 +441,9 @@ class TestFocusUnderNode(unittest.TestCase):
 
 	def test_each_view_has_its_own_route(self):
 		r = self.out["routes"]
-		self.assertEqual(r["table"], {"view": "table", "layout": "", "stage": "", "panel": "", "bare": False})
+		self.assertEqual(
+			r["table"], {"view": "table", "layout": "", "stage": "", "panel": "", "side": None, "bare": False}
+		)
 		self.assertEqual(r["timeline_panel"]["panel"], "X-1")
 		self.assertEqual(r["attention"]["view"], "attention")
 		self.assertEqual(
@@ -1232,12 +1234,13 @@ class TestThePageWiring(unittest.TestCase):
 		self.assertNotIn("filters", show)
 
 	def test_attention_opens_the_deal_until_the_side_panel_exists(self):
+		"""Part C (v1.668.0): the side panel exists, and the attention list opens a deal in it."""
 		raw = _text(PAGE_JS)
 		self.assertIn("P6.6", raw[raw.index("attention_html() {") :][:1200])
-		self.assertIn(
-			'this.open_record(hit.getAttribute("data-open") || hit.getAttribute("data-name"));',
-			_code(PAGE_JS),
-		)
+		code = _code(PAGE_JS)
+		self.assertIn('.ob-att-item[data-name], .ob-tl-item[data-name]");', code)
+		self.assertIn('const name = hit.getAttribute("data-open") || hit.getAttribute("data-name");', code)
+		self.assertIn('this.open_side({ kind: this.kit.EDIT, name, step: "" });', code)
 
 	def test_the_page_follows_the_layout_rules(self):
 		"""Review of #1278, the wiring half (the rules themselves run under node above)."""

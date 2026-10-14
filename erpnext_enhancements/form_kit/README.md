@@ -170,12 +170,48 @@ record is simply absent) with one bound query per child table, never one per rec
 `frappe.get_list`. The config's `mine` says whose (`owner_field`), which are open (`open.not_in`),
 which to leave out (`hide_flag`: on Opportunity, the historical deals) and what a row shows.
 
+`get_flow` also sends `won` (`{"status", "status_field", "fields"}`: what a move into Closed Won must
+carry, the config's `won`; the side panel asks for these fields before it saves the move) and, for a
+new record only, `quick` (`{"fields", "fixed", "owner_field", "stage_field"}`: the board's quick
+add, the config's `quick`).
+
 `declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None)`, POST: the
 config's `lost` (on Opportunity, ERPNext's `declare_enquiry_lost`), with `reasons` and
 `competitors` as JSON lists of names or rows. It is locked on `modified` like `save_step` and
 returns the same result or conflict shape. `get_flow` sends `lost` (the status that opens the
 page's Set as Lost dialog, and the two child DocTypes), `distinct` (fields the page warns should
 not share a value) and `clears` (a field whose change empties others).
+
+## One editor, two shells (P4.4)
+
+The page that walks a record and the side panel that edits one from a list or board run **the same
+record editor**, `public/js/form_kit/ui/editor.js` (`RecordEditor`, v1.668.0): one step's fields in
+a `frappe.ui.FieldGroup`, the values as shown and as saved, the save queue and its conflict chooser,
+the phone's journal, step 1's create and Set as Lost. It draws with frappe and jQuery, so it is
+not among the pure modules in `public/js/form_kit/*.js` (those are what the node suites import);
+`guided_entry.bundle.js` carries it.
+
+- **The guided page** keeps what only it has: its routes, the band, rail, summary and footer, the
+  start screen. Its class is defined before the bundle loads, so the editor's methods are mixed onto
+  it when the bundle arrives (`mix_editor`), never over a method the page defines.
+- **The side panel**, `public/js/form_kit/ui/side_panel.js` (`class SidePanel extends
+  RecordEditor`), lives in the planner kit's drawer, full screen on a phone. The page that opens it
+  owns the address (the drawer is opened with `history: false`): each panel is a route, Back closes
+  it, reload reopens it, and a step change *replaces* the address. Three kinds:
+  - **edit**: a record, one step at a time, autosaved as on the guided page; closing it offers an
+    Undo toast that puts back what this panel changed, locked on `modified`.
+  - **move**: what a move into a stage must carry (`won`'s fields, or `lost`'s reasons), then the
+    move, in one save. The queue is `manual` (`save_queue.js`: nothing autosaves) and the journal
+    keeps nothing (`hold_saves`), so nothing reaches the record until the person commits.
+  - **new**: the config's `quick`, created through `create_record` with the create's `client_id`.
+- What a shell must provide (`showing`, `load`, `refresh_chrome`, `after_create`, `show_created`,
+  `still_new`) is listed at the head of `editor.js`. The panel's pure decisions are
+  `public/js/form_kit/panel.js` (`gate_for`, `field_defs`, `quick_start`, `create_extras`,
+  `undo_values`), run under node by `tests/test_opportunity_board_panel.py`.
+
+Step 1's create carries, as `prefill`, whatever else step 1 shows that the person changed (the
+summary, a close date): `create_record` assigns only the "create" fields, and before v1.668.0 the
+rest was silently dropped.
 
 ## No signal (P4.7)
 

@@ -21,7 +21,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
-| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move; part B (v1.663.0) the table, timeline and needs-attention views under one filter bar, On Hold folded, snooze, quick filters and saved views. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET); `snooze` (whitelisted, POST: write permission, the `modified` lock, `db_set` of `custom_snoozed_until` / `custom_snooze_reason`) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
+| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move; part B (v1.663.0) the table, timeline and needs-attention views under one filter bar, On Hold folded, snooze, quick filters and saved views; part C (v1.668.0) the side panel (tap to edit, a closing drop's required fields), quick add per column and bulk actions. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET); `snooze` (whitelisted, POST: write permission, the `modified` lock, `db_set` of `custom_snoozed_until` / `custom_snooze_reason`); `bulk_update` (whitelisted, POST: each deal through `form_kit.saver`, its own lock and savepoint, answered deal by deal) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -305,10 +305,10 @@ under Guided Entry.
   has a **Move** button that opens the same panel, the keyboard's way in. A move between open
   stages or to On Hold saves the status with `form_kit.api.save_step`, carrying the card's
   `modified`; a conflict puts the card back, names who changed the deal and reloads the board, and
-  nothing is overwritten. A drop on **Closed Won or Lost saves nothing**: those need the ranks or
-  the lost reasons, which the side panel (P6.6) will collect, so for now the deal's guided page
-  opens on its Close step and the card stays where it was. A card's click opens the record (which
-  `guided_default.js` sends to the guided page).
+  nothing is overwritten. A drop on **Closed Won or Lost saves nothing by itself**: those need the
+  ranks or the lost reasons, which the side panel collects first (part C, below). Since part C a
+  tap on a card opens the deal in the side panel, on a phone too; the Move button opens the move
+  panel.
 - **History.** Each view is a route: `/desk/opportunity-board/<stages|streams>`, the phone's
   stage tab as a further segment, and the move panel as `.../move/<name>`, pushed over the view it
   came from, so Back closes the panel before it changes the view.
@@ -353,9 +353,9 @@ group by substr(expected_closing, 1, 7)
 
 ### Part B: views, needs attention, focus (v1.663.0)
 
-Form kit P6.3, P6.4 and P6.8. Out of scope still: the side panel (P6.6), quick add and bulk
-(P6.7), and retiring the stock Kanban's patches and the list's redirect (P6.10, waiting on Nik's
-sign-off on the board).
+Form kit P6.3, P6.4 and P6.8. The side panel (P6.6), quick add and bulk (P6.7) are part C, below.
+Out of scope still: retiring the stock Kanban's patches and the list's redirect (P6.10, waiting on
+Nik's sign-off on the board).
 
 - **Three views and a list under one filter bar** (P6.3). The views are the board, a sortable table,
   and a timeline of expected close dates by month (past months marked; deals with no date last).
@@ -374,8 +374,7 @@ sign-off on the board).
   there. A snoozed deal is not on it until its date comes. On Hold deals are on it for the last
   three rules: being parked is no reason to have no amount.
 
-  A deal opens the normal way, which is the guided page by default. The task says "in the side
-  panel"; that waits for P6.6, and the code says so where it opens.
+  A deal opens in the side panel (since part C).
 - **On Hold folded** (P6.8). The column folds into a count by default: 36 of 74 open deals sat
   there on 2026-10-14. "Show them" unfolds it and "Fold" folds it again. A folded column is still a
   drop target, and its deals still count in every total.
@@ -408,6 +407,49 @@ sign-off on the board).
   - Named views come from "Save this view" and the Saved views list. Up to 20 per person, and saving
     a name again replaces it.
   - The board's views are gated by read permission on Opportunity, not a planner role.
+
+### Part C: the side panel, quick add, bulk (v1.668.0)
+
+Form kit P6.6 and P6.7, on P4.4's side panel (`public/js/form_kit/ui/side_panel.js`: the guided
+page's own record editor in the planner kit's drawer; see [`form_kit/README.md`](../form_kit/README.md#one-editor-two-shells-p44)).
+The panel's files load the first time one opens (`OB_PANEL_ASSETS`); if they never arrive, a deal
+opens the normal way and a closing drop opens the guided Close step, as before part C.
+
+- **Every panel is a route over any view**, pushed and tagged in `history.state` (`ob_side`), so
+  Back closes it (the router's own popstate; the drawer pushes nothing of its own), Forward reopens
+  it, and a reload on its address reopens it:
+
+  | Address | Panel |
+  |---|---|
+  | `…/edit/<name>[/<step>]` | the deal, one step at a time (a step change replaces the entry) |
+  | `…/closing/<name>/<stage key>` | a drop on Closed Won or Lost: that stage's required fields |
+  | `…/new/<stage key>` | quick add in that column's stage |
+  | `…/bulk/<stage\|owner\|close_date\|snooze>` | a bulk action on the selected deals |
+
+  A panel for a deal that has left the board (a closing move), a stage that is gone, or a bulk
+  action with nothing selected puts the view back in its place, as the move panel does.
+- **Tap to edit** (P6.6): a card, or a row of the table, the timeline or the attention list, opens
+  the deal for editing. Closing an edit that saved something offers Undo.
+- **Required fields on a drop** (P6.6): Closed Won asks for the three ranks, Lost for the lost
+  reasons, competitors and detail (the Set as Lost dialog's fields). The move is saved only when the
+  person commits, together with those fields and locked on the card's `modified`; until then the
+  card stays put, marked "Moving to …". Cancel, Esc or Back drop what was typed. A refusal keeps the
+  panel open with the reason; a conflict asks, with the guided page's chooser. The Closed-Won
+  project prompt and the hand-off gate's stamps come from the ordinary save, as for any move into
+  Closed Won.
+- **Quick add** (P6.7): the "+" on each open column and On Hold asks for the account, a name, the
+  value streams and a summary (the config's `quick`), creates through `form_kit.api.create_record`
+  with its `client_id`, in that stage, and then shows the new deal in the panel.
+- **Bulk** (P6.7): "Select" shows a box on every deal and a bar along the bottom. **Change stage**
+  (a closing stage asks for its required fields first; the ranks given fill only a deal's blank
+  ranks), **Reassign**, **Set close date** and **Snooze** go through `opportunity_board.bulk_update`
+  (POST, up to 100 deals): every deal through the path a single change takes
+  (`form_kit.saver.save_step`, `saver.declare_lost`, or `snooze`), with write permission and the
+  `modified` lock checked per deal and a savepoint per deal, so one refusal never undoes the others.
+  The answer is deal by deal; what did not change stays selected, with its reason. The selection
+  is kept for the tab (`sessionStorage`, guarded), so a reload on a bulk address finds it.
+  - A bulk move into Closed Won sends each deal's Closed-Won project prompt, one per deal, as
+    single moves do.
 
 ### Needs attention check
 

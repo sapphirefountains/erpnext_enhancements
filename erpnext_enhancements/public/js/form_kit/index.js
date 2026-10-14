@@ -52,3 +52,17 @@ export {
 	usable_entry,
 	reconcile,
 } from "./journal.js";
+// P4.4 / P6.6 / P6.7: the side panel's decisions. The panel itself (./ui/side_panel.js) and the
+// record editor both shells run (./ui/editor.js) draw with frappe, so they are not exported here:
+// the bundle adds them (guided_entry.bundle.js).
+export {
+	field_defs,
+	panel_step,
+	gate_for,
+	gate_missing,
+	lost_fields,
+	create_extras,
+	quick_start,
+	panel_key,
+	undo_values,
+} from "./panel.js";

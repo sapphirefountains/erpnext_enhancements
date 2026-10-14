@@ -75,6 +75,23 @@ def get_flow(doctype, name=None):
 		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
 	]
 	out["clears"] = config.get("clears") or {}
+	won = config.get("won")
+	if won:
+		# What a move into Closed Won must carry (form kit P6.6): the board's side panel asks for it.
+		out["won"] = {
+			"status": won["status"],
+			"status_field": won.get("status_field", "status"),
+			"fields": list(won["fields"]),
+		}
+	quick = config.get("quick")
+	if quick and not name:
+		# The board's quick add (P6.7): the fields it asks for, and what it fills itself.
+		out["quick"] = {
+			"fields": list(quick["fields"]),
+			"fixed": dict(quick.get("fixed") or {}),
+			"owner_field": quick.get("owner_field"),
+			"stage_field": quick.get("stage_field"),
+		}
 	lost = config.get("lost")
 	if lost:
 		# What the page's Set as Lost dialog needs: the value that opens it and the child tables.

@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.668.0] - 2026-10-14
+
+Form kit P4.4 part 2, P6.6 and P6.7 (ERPNext TASK-2026-02762, -02780, -02781): **the side panel**,
+and on the Opportunity board **tap to edit, required fields on a drop, quick add and bulk
+actions**. Still out of scope: P6.10, retiring the stock Kanban's patches and the list's redirect,
+which waits for Nik's sign-off on the board.
+
+### Added
+
+- **The side panel** (P4.4), `public/js/form_kit/ui/side_panel.js`: a record edited from a list or
+  board without leaving it, in the planner kit's drawer. It runs **the guided page's own record
+  editor**, not a copy: the same fields and help, the same save queue and conflict chooser, the
+  same phone journal (P4.7), the same Set as Lost dialog.
+  - Full screen on a phone (under 768px); beside the board on a wide screen, which it pushes aside.
+  - **Every panel is a route of the page that opens it**, so reload reopens it, Back closes it and
+    Forward reopens it. Moving between a deal's steps *replaces* the address (`…/edit/<name>/<step>`),
+    so Back still closes the panel instead of walking its steps; the step survives a reload.
+  - **Undo toast.** Closing an edit that saved something offers Undo, which saves each changed field
+    back to what it was when the panel opened, locked on `modified`: someone else's save since is
+    reported and never overwritten, and a field the other person changed (a conflict) becomes what
+    Undo returns to.
+  - Its files load on demand the first time a panel opens (`frappe.require` of `planner_kit`,
+    `guided_entry.bundle.js` and `.css`), as the planners load theirs. If they do not arrive, a deal
+    opens the normal way and a closing drop opens the guided Close step, as before.
+- **Tap to edit** (P6.6). A tap or click on a card, or on a row of the table, the timeline or the
+  attention list, opens the deal in the side panel (`…/edit/<name>`). On a phone too: the card's
+  Move button is now the way to the move panel. The move panel's "Open opportunity" and the side
+  panel's "Open full page" open the guided page, in place of the panel's history entry.
+- **Required fields on a drop** (P6.6). A drop on Closed Won or Lost (or choosing either in the move
+  panel) opens that stage's required fields in the side panel (`…/closing/<name>/<stage>`):
+  - **Closed Won**: Scope, Schedule and Budget Rank, from the flow's own field definitions
+    (prefilled where the deal has them), with the ranks' "each its own rank" warning. "Move to
+    Closed Won" saves the ranks **and** the status in one `save_step`, locked on `modified`. Nothing
+    is saved before that: the panel's queue is `manual` (no autosave) and keeps no phone copy, so a
+    move nobody committed can never be put back later.
+  - **Lost**: Lost Reasons, Competitors and Detailed Reason, the Set as Lost dialog's fields, then
+    the record's own Declare Lost (`form_kit.api.declare_lost`), locked the same way.
+  - **Commit or cancel.** The card stays in its column, marked "Moving to …", until the move is
+    saved; Cancel, Esc or Back drops what was typed and the card never moved. A refused save keeps
+    the panel open with the reason; a conflict shows the guided page's chooser. **No drop ends in a
+    save error with the card jumping back.**
+  - The hand-off steps keep working: the save is an ordinary `save()`, so the hand-off gate's
+    stamps run, and the Closed-Won project prompt arrives from the server as it does for any save
+    into Closed Won. The panel closes before it can, so the route change does not dismiss it.
+- **Quick add** (P6.7). A "+" at the head of each open column and On Hold opens quick add in the
+  side panel (`…/new/<stage>`): the account, a name, the value streams and a summary, nothing else.
+  It creates through `form_kit.api.create_record` with the create's `client_id` (a resend returns
+  the deal the first attempt made), already in that column's stage, owned by the person adding; the
+  panel then shows the new deal for anything else (its entry replaced, so Back never lands on an
+  empty quick add). The config's new `quick` says what it asks for and what it fills itself.
+- **Bulk actions** (P6.7). "Select" (page state, like the filters) puts a 44px box on every card
+  and row and a bar along the bottom: **Change stage**, **Reassign**, **Set close date**,
+  **Snooze**, each in the side panel's drawer (`…/bulk/<action>`; the selection is kept for the tab
+  in guarded `sessionStorage`, so a reload finds it). A closing stage asks for its required fields
+  first, as a drop does: the ranks (which fill only a deal's blank ranks; its own are kept) or the
+  lost reasons. The answer is deal by deal; what failed or conflicted stays selected, with each
+  reason, and "Try the rest again" is one tap.
+- **`opportunity_board.bulk_update`**, POST: up to 100 deals, each with the `modified` the board
+  loaded. Every deal goes through the path a single change takes (`form_kit.saver.save_step`,
+  `saver.declare_lost`, or the board's own `snooze`): write permission on that deal, the lock and
+  its conflict shape, a real `save()`. Each runs in a savepoint, so a refusal rolls back that deal
+  only; a database error fails the whole request. A value the flow would not let the person write
+  is reported as a refusal, not a success. Listed in `test_whitelist_placement`'s exact surfaces.
+- `get_flow` sends `won` (what a move into Closed Won must carry) and, for a new record, `quick`;
+  `get_board` sends each closing stage's `gate` ("won" or "lost").
+- **`tests/test_opportunity_board_panel.py`**, bench-free, with its own CI step: the panel's pure
+  decisions and the save queue's `manual` mode under node, the board's part C, `bulk_update` against
+  a frappe stub, one renderer for both shells, and the wiring.
+
+### Changed
+
+- **The guided page's record editor moved to `public/js/form_kit/ui/editor.js`** (P4.4: "do not
+  fork a second renderer"). Drawing a step's fields, values, the save queue, conflicts, the phone
+  journal, step 1's create and Set as Lost are `RecordEditor`, which the side panel extends; the
+  guided page keeps its routes, band, rail, summary, footer and start screen, and the editor's
+  methods are mixed onto it when `guided_entry.bundle.js` arrives (`mix_editor`; the class is
+  defined before the bundle loads). The moved code is unchanged except at four seams, each marked
+  "P4.4": the step on screen (`current_step`), the help ids' prefix, step 1's create handing its
+  routing to the shell (`after_create`, `show_created`, `still_new`), and `send_lost`.
+  `test_guided_entry` reads the page and the editor together where code moved; no assertion was
+  loosened. `guided_entry.bundle.js` is version 2 and carries `RecordEditor`, `mix_editor` and
+  `SidePanel`.
+- **The planner kit's drawer takes `history: false`** (additive): the page keeps the drawer in its
+  own route, so the kit pushes no entry and leaves Esc to the page. The planners pass nothing and
+  behave as before.
+- The board's move panel says what a closing stage asks for ("Asks for the ranks" / "Asks why it
+  was lost") rather than "Opens the close step".
+
+### Fixed
+
+- **A new record's step 1 dropped what it showed but did not create.** `create_record` assigns only
+  the step's "create" fields, so the summary, a close date or a probability typed on the guided
+  page's step 1 was silently lost. They now go with the create as `prefill` (only what differs from
+  the new record's defaults), which the server already takes for any field the flow lets the
+  person write.
+
 ## [1.663.0] - 2026-10-14
 
 Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:

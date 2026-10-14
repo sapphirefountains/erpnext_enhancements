@@ -19,6 +19,8 @@
  *     reopen: () => ...,               // how to open it again (Forward onto its history entry)
  *     on_click: (event, handle) => ..., // one delegated click listener for whatever the body shows
  *     on_close: (how) => ...,          // "user" | "back" | "route" | "replaced" | "parent"
+ *     history: false,                  // the page keeps the drawer in its own route (form kit
+ *                                      // P4.4's side panel): no kit history entry, no kit Esc
  *   });
  *   handle.set_title / set_subtitle / set_body / set_tools / set_actions / close / is_open
  *   planner_kit.drawer.current()  ·  .close()  ·  .element()  ·  .route(fn, keep)
@@ -242,7 +244,10 @@ export function create_drawer(env) {
 			doc.body.classList.add("pk-drawer-open");
 			parts.body.scrollTop = 0;
 			apply_push(opts.push);
-			guard.open(overlay);
+			// `history: false` (form kit P4.4, the side panel): the page keeps the drawer in its own
+			// address (/desk/opportunity-board/.../edit/<name>), so reload reopens it and Back is the
+			// router's; the kit pushes no entry of its own and Esc is the page's to handle.
+			if (opts.history !== false) guard.open(overlay);
 			if (!previous) {
 				try {
 					root.focus({ preventScroll: true });
