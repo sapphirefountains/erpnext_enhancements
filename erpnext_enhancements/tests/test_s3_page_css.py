@@ -13,6 +13,12 @@ their own ``.css`` but painted it in Frappe's palette and the learner's Aurora p
 Sales Pipeline TV board; and the Location Timeline, whose stylesheet lived in
 ``public/css/workforce/`` and came in by ``frappe.require`` of a raw ``/assets`` path.
 
+S3.4c (v1.661.0) adds Plan a Trip, which wrote its whole stylesheet from the script (``TP_STYLE``)
+and painted its Map markers inline. Its Map colours are the one place a page here still needs a
+colour value (the Maps API takes no CSS variable), so the script reads them from the same tokens
+its CSS uses; ``TestPlanATrip`` holds the two together. A ``style.cssText`` assignment that sets a
+colour now counts as an inline colour too.
+
 This fails the build if any of these pages:
 
 * writes a ``<style>`` element from JS again, or paints a colour through an inline ``style``,
@@ -68,6 +74,8 @@ PAGES = {
 	"training_canvas": APP / "training" / "page" / "training_canvas",
 	"location_timeline": APP / "workforce" / "page" / "location_timeline",
 	"sales_pipeline": APP / "crm_enhancements" / "page" / "sales_pipeline",
+	# S3.4c
+	"plan_a_trip": APP / "travel_management" / "page" / "plan_a_trip",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -85,6 +93,7 @@ NAMESPACES = {
 	# The board's own class names (.pipeline-card, .rail-chip) are generic, so every rule sits
 	# under the page body (.sales-pipeline-page) or the TV-mode body class.
 	"sales_pipeline": re.compile(r"\.sales-pipeline-[\w-]+"),
+	"plan_a_trip": re.compile(r"\.tp-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -99,6 +108,7 @@ KEYFRAME_PREFIXES = {
 	"training_canvas": ("tc-",),
 	"location_timeline": ("lt-",),
 	"sales_pipeline": ("sales-pipeline-",),
+	"plan_a_trip": ("tp-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages
@@ -196,6 +206,10 @@ def _js_colour_writes(js):
 	found += re.findall(r"\.attr\(\s*[\"']style[\"']", js)
 	found += re.findall(r"setAttribute\(\s*[\"']style[\"']", js)
 	found += re.findall(r"\.style\." + COLOUR_PROPS + r"\w*\s*=", js, flags=re.I)
+	# A whole declaration list in one assignment (Plan a Trip's map pin and popup, before S3.4c).
+	# The statement runs to the first ";" that ends a line, past the semicolons inside the CSS.
+	for statement in re.findall(r"\.style\.cssText\s*=(.*?);[ \t]*(?:\n|$)", js, flags=re.S):
+		found += re.findall(r"(?i)\b" + COLOUR_PROPS + r"[\w-]*\s*:", statement)
 	return found
 
 
@@ -235,10 +249,13 @@ class TestTheCssLeftTheJs(unittest.TestCase):
 			'$el.attr("style", "x");',
 			'el.setAttribute("style", "x");',
 			'el.style.backgroundColor = "x";',
+			'pin.style.cssText =\n\t"min-width:26px;height:26px;" +\n\t`background:${kind.color};color:#fff;`;\n',
+			'box.style.cssText = "max-width:260px;color:#202124;font-size:13px;";\n',
 		):
 			with self.subTest(sample=sample):
 				self.assertTrue(_js_colour_writes(sample))
 		self.assertEqual(_js_colour_writes('$wrap.css("width", `${value}%`);'), [])
+		self.assertEqual(_js_colour_writes('el.style.cssText = "width:10px;height:4px;";\n'), [])
 
 	def test_every_page_has_its_css(self):
 		for name, folder in PAGES.items():
@@ -461,6 +478,107 @@ class TestTheSalesPipelineWiringIsUntouched(unittest.TestCase):
 		for fn in ("sales_pipeline.publish_pipeline_update", "sales_pipeline.stamp_stage_change"):
 			with self.subTest(fn=fn):
 				self.assertIn(fn, hooks)
+
+
+class TestPlanATrip(unittest.TestCase):
+	"""S3.4c (v1.661.0). Plan a Trip wrote its whole stylesheet from the script (TP_STYLE, about
+	200 rules in Frappe's palette with literal hex for every status and a [data-theme="dark"]
+	block of its own), painted the Map list's numbers and its markers inline, and showed a step
+	tab's missing count in red alone."""
+
+	FOLDER = PAGES["plan_a_trip"]
+
+	@classmethod
+	def setUpClass(cls):
+		cls.js = _js_code(_read(cls.FOLDER / "plan_a_trip.js"))
+		css = cls.FOLDER / "plan_a_trip.css"
+		cls.css = _css_code(_read(css)) if css.exists() else ""
+
+	def _rule(self, selector):
+		m = re.search(r"(?m)^" + re.escape(selector) + r"\s*[,{]", self.css)
+		self.assertIsNotNone(m, f"no rule for {selector} in plan_a_trip.css")
+		return self.css[m.start() :].split("{", 1)[1].split("}", 1)[0]
+
+	def test_no_theme_block_of_its_own(self):
+		"""The tokens follow the Desk's theme; a dark block beside them is a second palette."""
+		self.assertTrue(self.css)
+		self.assertNotIn("data-theme", self.css)
+
+	def test_the_map_kinds_read_one_token_each_in_the_script_and_the_css(self):
+		"""The older Marker's fill is a value (read from the token), the list's number and the HTML
+		marker are CSS (the same token, by data-kind), so the three cannot drift apart."""
+		kinds = re.search(r"const TP_PLACE_KINDS = \{(.*?)\n\};", self.js, flags=re.S)
+		self.assertIsNotNone(kinds)
+		# One entry per kind, each opening on its own line ("\tairport: {"); a glyph such as
+		# "\u{1F3E8}" has braces of its own, so the entries are split on their openings.
+		parts = re.split(r"(?m)^\t(\w+): \{", kinds.group(1))[1:]
+		found = {}
+		for kind, body in zip(parts[0::2], parts[1::2], strict=True):
+			m = re.search(r'color: tp_token_color\("(--sf-[a-z0-9-]+)", "#[0-9a-f]{6}"\)', body)
+			with self.subTest(kind=kind):
+				self.assertIsNotNone(m, f"{kind}'s colour is not read from a token")
+			found[kind] = m.group(1) if m else None
+		self.assertEqual(sorted(found), ["airport", "dropoff", "freight", "hotel", "pickup", "stop"])
+		for kind, token in found.items():
+			for selector in (f'.tp-map-num[data-kind="{kind}"]', f'.tp-map-pin[data-kind="{kind}"]'):
+				with self.subTest(kind=kind, selector=selector):
+					self.assertIn(f"var({token})", self._rule(selector))
+
+	def test_the_lines_and_the_marker_ring_read_tokens(self):
+		self.assertRegex(self.js, r'const TP_MARKER_WHITE = tp_token_color\("--sf-white", "#ffffff"\);')
+		legs = re.search(r"const TP_LEG_COLORS = \{(.*?)\};", self.js, flags=re.S).group(1)
+		self.assertEqual(
+			sorted(re.findall(r"(\w+): tp_token_color\(\"--sf-[a-z0-9-]+\", \"#[0-9a-f]{6}\"\)", legs)),
+			["drive", "flight", "walk"],
+		)
+		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", self.js)
+		# No colour value is written anywhere else in the script ("&#128196;" is an icon).
+		rest = re.sub(r'tp_token_color\("--sf-[a-z0-9-]+", "#[0-9a-f]{6}"\)', "", self.js)
+		self.assertNotRegex(rest, r"(?<!&)#[0-9a-fA-F]{3,8}\b")
+		self.assertNotRegex(rest, r"\brgba?\(")
+
+	def test_the_number_and_the_pin_are_classes(self):
+		self.assertIn(
+			'<span class="tp-map-num" data-kind="${TP_PLACE_KINDS[place.kind] ? place.kind : "stop"}">',
+			self.js,
+		)
+		self.assertIn('pin.className = "tp-map-pin";', self.js)
+		self.assertIn('box.className = "tp-map-popup";', self.js)
+		self.assertNotIn(".style.", self.js)
+
+	def test_a_step_tabs_red_count_says_missing(self):
+		self.assertIn(
+			'<span class="tp-badge">${count}<span class="tp-sr"> ${__("missing")}</span></span>', self.js
+		)
+		self.assertIn('title="${tp_esc(__("{0} missing", [count]))}"', self.js)
+		self.assertIn("clip: rect(0, 0, 0, 0)", self._rule(".tp-sr"))
+
+	def test_warn_text_is_the_mix_never_yellow(self):
+		"""Plain yellow is 1.7:1 on white: warn as text is mixed with --sf-text-strong."""
+		for prop, value in _declarations(self.css):
+			if prop == "color" and "--sf-warn" in value:
+				with self.subTest(value=value):
+					self.assertEqual(value, "color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))")
+		self.assertIn(
+			"color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))", self._rule(".tp-notice")
+		)
+
+	def test_controls_are_touch_sized(self):
+		for selector in (".tp-tab", ".tp-btn", ".tp-seg button", ".tp-doc-x", ".tp-pdoc"):
+			with self.subTest(selector=selector):
+				self.assertIn("min-height: var(--sf-touch-min)", self._rule(selector))
+		phone = self.css[self.css.index("@media (max-width: 767px)") :]
+		self.assertRegex(phone, r"button\.tp-chip,\s*\.tp-vbtn,[^{]*\{[^}]*min-height: var\(--sf-touch-min\)")
+
+	def test_every_class_the_script_draws_is_styled_and_every_rule_is_drawn(self):
+		"""An unstyled element, or a rule for a class nothing draws any more, is a sign of a rename
+		on one side only. The four left out are a container or a click hook on purpose, and a radio
+		group's name."""
+		hooks = {"tp-step", "tp-view", "tp-map-day", "tp-lead"}
+		drawn = set(re.findall(r"\btp-[a-z0-9]+(?:-[a-z0-9]+)*", self.js)) - hooks
+		styled = set(re.findall(r"\.(tp-[a-z0-9]+(?:-[a-z0-9]+)*)", self.css))
+		self.assertEqual(sorted(drawn - styled), [], "drawn by the script, styled nowhere")
+		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
 
 
 class TestThisSuiteRunsInCi(unittest.TestCase):
