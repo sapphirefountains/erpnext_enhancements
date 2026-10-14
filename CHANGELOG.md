@@ -83,6 +83,47 @@ when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto th
   The harnesses keep their stand-in scenarios, and the Device Console and the Scanner Audit keep every
   Back/Forward assertion.
 
+## [1.639.0] - 2026-10-13
+
+Orphaned addresses: a one-shot patch, `cleanup_orphan_import_addresses`, settles the unlinked
+Address rows two imports left behind. Approved 2026-10-13.
+
+### Fixed
+
+- **445 addresses on prod belonged to nothing.** An Address with no Dynamic Link shows on no party
+  form, in no address picker and in no report. An audit on 2026-10-13 traced them to three sources:
+  - **The 2025-07-10 CRM import (154 rows).** It wrote one shipping address per account that had one,
+    and almost every one carries another account's street: a mis-join that the import's own export
+    already shows. Each row is a copy of an address that is linked to the right Customer. That was
+    true for 140 of them already; the other 12 accounts had their real shipping address added by hand
+    before this patch, so the rule covers all 154.
+  - **The 2025-10-03 supplier import (198 rows).** These are named "<Supplier>-Billing" after existing
+    Suppliers and were never linked to them.
+  - **Addresses people entered since go-live (93 rows).** These are a separate review for a person,
+    and the patch does not touch them.
+- **The patch finds its targets by rule, never by a list of names,** because this repository is public.
+  - **Delete:** an unlinked Address created on 2025-07-10 by Administrator whose `address_line1` +
+    `city` match an Address linked to a Customer. The match is lowercase, letters and digits only, and
+    is compared in Python, because MariaDB's PAD SPACE collation makes trailing-space checks in SQL
+    always false. It calls `delete_doc` without `force`, one savepoint per row, so anything that Links
+    to the row makes it refuse and the row is listed instead. Deleted rows go to Deleted Document.
+  - **Link:** an unlinked "<X>-Billing" Address created inside the supplier import's one-minute batch,
+    2025-10-03 09:39:00 to 09:40:00 site time, gets one Dynamic Link to the one Supplier whose `name` or
+    `supplier_name` is X. The import ran in 15 seconds and nothing else was created in that minute, so
+    the window identifies the batch. "Created that day by a person" would also have linked two
+    addresses that were entered by hand that same day. A name a Customer also answers to is
+    skipped and listed (4 on prod). The link is a bare `Dynamic Link` `db_insert()` with its own hash
+    name: no Address save, so no validate, no `doc_events` (the app's wildcard text normalizer would
+    rewrite the address) and an untouched `modified`.
+- **It cannot raise,** since a patch that raises aborts `bench migrate`, which on this repo is the
+  deploy. Each row is guarded on its own. The tally (`deleted / delete_skipped_no_match / delete_refused
+  / linked / link_skipped_ambiguous / link_skipped_no_supplier / failed`) is checked to add up. Every
+  row left for a person goes to the console and one Error Log. A missing table makes it a no-op, and it
+  is safe twice. Expected on prod: about 154 deleted, 194 linked, 4 listed.
+- `tests/test_address_orphan_cleanup.py` (34 bench-free tests) runs it against a stub and has its own
+  CI step. Static guards cover: no `force`, no `save()`, keyword `log_error`, and no record name or
+  email address in the patch.
+
 ## [1.637.2] - 2026-10-13
 
 ### Changed
