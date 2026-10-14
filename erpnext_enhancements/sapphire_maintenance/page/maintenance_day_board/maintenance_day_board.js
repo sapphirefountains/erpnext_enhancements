@@ -3,7 +3,8 @@
 // scheduled drafts, techs clocked in, submitted today, flagged (last 7 days).
 // Auto-refreshes every 60s, but only while this page is the one on screen (Desk pages are
 // never removed, so a timer left running would poll all day); on_page_show refreshes at
-// once on the way back. Cards link to the underlying documents.
+// once on the way back. Cards link to the underlying documents. Its loading, error and
+// no-access panels and its server call come from sf_kit (v1.645.0).
 
 frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -30,7 +31,37 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		'[data-theme="dark"] .mdb-red{background:rgba(239,68,68,.22);color:#fca5a5;}\n' +
 		'[data-theme="dark"] .mdb-orange{background:rgba(245,158,11,.22);color:#fcd34d;}\n' +
 		'[data-theme="dark"] .mdb-green{background:rgba(34,197,94,.22);color:#86efac;}\n' +
+		// A state panel is the whole board, not one column of it.
+		'.mdb-board > .sf-state{grid-column:1/-1;}\n' +
+		'.mdb-stale{margin:4px 0 0;}\n' +
 	'</style>').appendTo(page.body);
+	// A refresh that failed while the board was showing says so here, and leaves the board be.
+	const $stale = $('<div class="mdb-empty mdb-stale" role="status"></div>').hide().insertBefore($board);
+
+	// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+	// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of
+	// plain text), so the board carries on. A Desk opened before the deploy that added the loader
+	// has no sf_kit_ready yet, and asks frappe.require for the kit itself.
+	function kit() {
+		if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
+		return new Promise((resolve) =>
+			frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () =>
+				resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : bareKit())
+			)
+		);
+	}
+
+	// Neither the loader nor the kit: a Desk opened before this deploy whose old kit file is gone too.
+	// A line of text and a button, so the page still says something instead of throwing.
+	function bareKit() {
+		const failed = (x) => ({ status: (x && x.status) || 0, message: '', exc_type: '', session_expired: (x && x.status) === 401 });
+		const render = (el, kind, o) => {
+			const $el = $(el).empty().append($('<div class="text-muted"></div>').text((o && o.title) || ''));
+			if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __('Try again')).on('click', o.on_action).appendTo($el);
+		};
+		const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
+		return { esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: 'orange' }) };
+	}
 
 	function esc(value) {
 		return frappe.utils.escape_html(String(value == null ? '' : value));
@@ -69,37 +100,91 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		return html + '</div>';
 	}
 
-	const state = { timer: null, loaded: false, inflight: false };
+	// attempted: a load has been asked for at least once (the loading panel is drawn only before
+	// the first). stale: the last refresh failed over a board already showing (toast once a run).
+	const state = { timer: null, loaded: false, attempted: false, stale: false, loadedAt: '', inflight: false };
 
 	function isCurrent() {
 		return frappe.get_route()[0] === 'maintenance-day-board';
 	}
 
-	$board.html('<div class="mdb-empty">' + __('Loading…') + '</div>');
+	// A board that never loaded: no access on a 403, a way back in when the session has lapsed,
+	// otherwise what went wrong with Try again (and the timer keeps retrying meanwhile; a 403 or a
+	// lapsed session has stopped it, see refresh).
+	function failed(sf, err) {
+		err = err || {};
+		if (err.session_expired) {
+			sf.state.render($board, 'error', {
+				title: __('You have been signed out.'),
+				body: __('Reload the page to sign in again.'),
+				action_label: __('Reload'),
+				on_action: () => window.location.reload(),
+			});
+		} else if (err.status === 403) {
+			sf.state.render($board, 'no-access', {
+				title: __('You do not have access to the Maintenance Day Board.'),
+				body: err.message,
+			});
+		} else {
+			sf.state.render($board, 'error', {
+				title: __('Could not load the day board.'),
+				body: err.message || __('It tries again every minute.'),
+				on_action: () => refresh({ asked: true }),
+			});
+		}
+	}
 
-	// `quiet` (the timer) asks frappe not to pop its message dialog: a board left on a wall
-	// screen must not stack an error dialog every minute while the server is unhappy.
-	function refresh(quiet) {
+	// Always the quiet path (v1.645.0), the timer's above all: a board left on a wall screen must
+	// not stack a frappe dialog every minute while the server is unhappy. frappe.call's `silent`,
+	// used here before, stops only the msgprint of a 417; a 500, 502, 504 or a lapsed session
+	// still put up a dialog of their own on every tick.
+	//
+	// The loading panel is drawn on the first attempt only, or when someone presses Try again
+	// (`asked`): a timer tick must never blank what is on screen, the board or the error panel. A
+	// 403 or a lapsed session stops the timer, since asking again every minute cannot change the
+	// answer; the next show of the page tries once more and starts it again.
+	function refresh(opts) {
 		if (state.inflight) return;
 		state.inflight = true;
-		frappe.call({ method: 'erpnext_enhancements.api.maintenance_board.get_day_board_data', silent: Boolean(quiet) }).then((r) => {
-			const data = r.message || {};
-			state.loaded = true;
-			$board.html([
-				column(__('Scheduled'), data.scheduled || [], (row) => recordCard(row, pctBadge(row))),
-				column(__('Clocked In'), data.in_progress || [], (row) =>
-					'<a class="mdb-card" href="' + frappe.utils.get_form_link('Job Interval', row.name) + '">' +
-					'<div class="mdb-title">' + esc(row.employee_name) + '</div>' +
-					'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
-					__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
-				column(__('Submitted Today'), data.submitted_today || [], (row) =>
-					recordCard(row, pctBadge(row) + flagBadges(row))),
-				column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
-			].join(''));
-		}).catch(() => {
-			// A transient failure keeps the board already showing; only a board that never loaded says so.
-			if (!state.loaded) $board.html('<div class="mdb-empty">' + __('Could not load the day board. Retrying shortly.') + '</div>');
-		}).always(() => {
+		const first = !state.attempted;
+		state.attempted = true;
+		kit().then((sf) => {
+			if (first || (opts && opts.asked)) sf.state.render($board, 'loading', { title: __('Loading the day board…') });
+			return sf.call('erpnext_enhancements.api.maintenance_board.get_day_board_data', {}, { quiet: true }).then((message) => {
+				const data = message || {};
+				state.loaded = true;
+				state.stale = false;
+				state.loadedAt = frappe.datetime.now_time();
+				$stale.hide().text('');
+				$board.html([
+					column(__('Scheduled'), data.scheduled || [], (row) => recordCard(row, pctBadge(row))),
+					column(__('Clocked In'), data.in_progress || [], (row) =>
+						'<a class="mdb-card" href="' + frappe.utils.get_form_link('Job Interval', row.name) + '">' +
+						'<div class="mdb-title">' + esc(row.employee_name) + '</div>' +
+						'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
+						__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
+					column(__('Submitted Today'), data.submitted_today || [], (row) =>
+						recordCard(row, pctBadge(row) + flagBadges(row))),
+					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
+				].join(''));
+			}, (err) => {
+				err = err || {};
+				if (err.status === 403 || err.session_expired) stop();
+				// A failure keeps the board already showing, says so in a toast (once per run of
+				// failures, not every minute) and in the line above it, which stays for a wall screen
+				// nobody was watching when the toast went; only a board that never loaded gets the panel.
+				if (!state.loaded) return failed(sf, err);
+				// A refusal is not a hiccup: the timer has stopped, so say why rather than "could not refresh".
+				const said = err.session_expired
+					? __('You have been signed out. Reload the page to sign in again.')
+					: err.status === 403
+						? __('You no longer have access to the Day Board. Showing it as of {0}.', [state.loadedAt])
+						: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt]);
+				if (!state.stale || err.session_expired || err.status === 403) sf.toast(said, { tone: 'warning' });
+				state.stale = true;
+				$stale.text(said).show();
+			});
+		}).finally(() => {
 			state.inflight = false;
 		});
 	}
@@ -116,7 +201,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		stop();
 		state.timer = setInterval(() => {
 			if (!isCurrent()) return stop();
-			if (!document.hidden) refresh(true);
+			if (!document.hidden) refresh();
 		}, 60000);
 	}
 
