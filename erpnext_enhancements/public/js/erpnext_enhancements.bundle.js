@@ -71,6 +71,13 @@ import "./global_enhancements/field_text_wrap.js";
 // sf_normalize (the disable_value_normalization kill switch). An ES module: it imports the
 // rules from normalize/normalize.js, the twin tests/test_normalize.py holds to the Python.
 import "./normalize/desk_display.js";
+// Form kit P3.3, the report face: erpnext_enhancements.report_face.format, the one formatter
+// script reports call for their phone, party, pillar, money and date columns. Global because a
+// report's own .js can import nothing. Pure rules in report_face/cells.js (on the twin above and
+// sf_kit's one escape, not the kit), the Desk half in report_face.js; the chip is drawn with
+// inline declarations on the --sf-* tokens, so no stylesheet is added to any page.
+// tests/test_report_face.py; docs/app-design-system.md, "The report face".
+import "./report_face/report_face.js";
 // Show the activity feed on the first tab only. Frappe renders the timeline into
 // `.form-footer`, a SIBLING of the tab panes, so it follows you onto every tab and
 // pushes the thing you came for off the screen. One shared script rather than a

@@ -142,7 +142,11 @@ frappe.query_reports["Account Data Quality"] = {
 	},
 
 	formatter(value, row, column, data, default_formatter) {
-		const formatted = default_formatter(value, row, column, data);
+		// Parties, pillars, money and dates: the report face (form kit P3.3); the legacy tint is ours.
+		const face = window.erpnext_enhancements?.report_face;
+		const formatted = face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
 		if (column.fieldname === "customer_type" && data && data.is_legacy) {
 			return `<span style="color: var(--orange-500);" title="${__(
 				"Un-migrated legacy import"

@@ -38,7 +38,11 @@ frappe.query_reports["Attribution Gaps"] = {
 	],
 
 	formatter(value, row, column, data, default_formatter) {
-		const formatted = default_formatter(value, row, column, data);
+		// The Created date and the Value: the report face (form kit P3.3); the red gap is ours.
+		const face = window.erpnext_enhancements?.report_face;
+		const formatted = face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
 		if (column.fieldname === "gap" && data && (data.gap === __("No source") || data.gap === __("Unknown (new)"))) {
 			return `<span style="color: var(--red-500); font-weight: 600;">${formatted}</span>`;
 		}
