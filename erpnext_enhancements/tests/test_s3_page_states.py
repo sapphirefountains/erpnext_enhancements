@@ -326,6 +326,20 @@ class TestRefreshes(unittest.TestCase):
 		self.assertEqual(code.count("this.sessionTouched += 1;"), 2, "startSession and resetSession")
 		self.assertIn('<div class="isa-boot"></div>', code)
 
+	def test_the_scanner_kit_never_holds_up_the_start_up_panel(self):
+		"""S6b (v1.666.0): both scanner pages also load the scanner kit, a require of its own behind
+		its own guard. The start-up's loading / error / no-access panel is still sf_kit's, and a
+		scanner kit that is slow or never arrives must not keep it from drawing."""
+		for name, kit in (("device-console", "dc_kit"), ("inventory-scanner-audit", "isa_kit")):
+			with self.subTest(page=name):
+				code = _code(PAGES[name])
+				boot = code[code.index("\tboot() {") :]
+				boot = boot[: boot.index("\n\t}\n")]
+				self.assertIn(f"{kit}().then((sf) => {{", boot)
+				self.assertNotIn("scanner", boot.lower())
+				self.assertEqual(len(REQUIRE.findall(code)), 1, "sf_kit is still one require")
+				self.assertEqual(code.count("frappe.require(['scanner_kit.bundle.js']"), 1)
+
 	def test_a_stale_timeline_reply_never_paints(self):
 		code = _code(PAGES["rental-planner"])
 		block = code[code.index("load_timeline() {") : code.index("timeline_failed(sf, $timeline, err) {")]

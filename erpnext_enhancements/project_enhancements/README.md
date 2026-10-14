@@ -719,6 +719,18 @@ the core **Projects** module sidebar right after Task, with Crew Utilization amo
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
+**Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
+(`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
+or to `/week/<expected_start_date>` for a project that has not started yet. The button is only on
+an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
+those whose roles open the page. `take_route_project` (from `handle_route`) reads `project` from
+`frappe.route_options` after the last-used view is restored, consumes it, and clears the PM filter
+so it cannot hide that project's cards. It is a one-off: the remembered filters are not saved, the
+"last used" view is not saved while the link's project is the filter (`project_link`), and the key
+is taken out of the address with `history.replaceState` so Back does not reapply it. A linked
+project the planner does not list stays the filter, and a filtered project with nothing in range
+or unscheduled is named in a "No work for … in this range" note over the calendar.
+
 **Its stylesheet** (custom pages S3.4d, v1.664.0) is `page/project_planner/project_planner.css`,
 which Frappe's page loader sends with the page; the script writes no `<style>` element. The file is
 on the app's `--sf-*` tokens ([docs/app-design-system.md](../../docs/app-design-system.md)), so it

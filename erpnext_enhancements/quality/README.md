@@ -47,7 +47,7 @@ question why it exists.**
 | `routing.py` | A failed check becomes an NCR and a Quality Action; and on submit, carried fixes get their verdict |
 | `carry_forward.py` | Claiming an unverified fix into the next inspection, and what a re-verification does to it. **The punch list is this, plus a flag** |
 | `merge.py` | **The centre of the module.** Merging a master template with a project's contracted criteria, the content hash that freezes the result, and what counts as a failure. Frappe-free, so the freeze is asserted on every push |
-| `doctype/project_quality_inspection/` + `inspection_result/` | The generated inspection. Its rows are copies, never links |
+| `doctype/project_quality_inspection/` + `inspection_result/` | The generated inspection. Its rows are copies, never links. Its form script (v1.667.0) adds *Open in Inspection Wizard* on a saved draft, for those whose roles open the page: `/desk/inspection-wizard/<inspection>/0` |
 | `stable_keys.py` | Row identity — the `*_key` that criteria, checks and (in D) results all join on. Minted once, never regenerated |
 | `doctype/inspection_milestone/` | Where in a project's life an inspection is due |
 | `doctype/inspection_section/` + `inspection_section_item/` | A reusable block of checks. Top-level rather than a table on the template, because **Frappe has no grandchild tables** |
