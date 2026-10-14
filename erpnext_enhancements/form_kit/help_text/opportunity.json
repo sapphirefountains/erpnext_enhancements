@@ -195,6 +195,10 @@
    "hint": "Set automatically whenever the status changes",
    "help": "The Sales Pipeline board ages each card from this time and turns it amber, then red, after the thresholds in settings (7 and 14 days by default)."
   },
+  "custom_is_historical": {
+   "hint": "Set nightly on old deals nobody is working; kept out of project warnings and sales KPIs",
+   "help": "Deals created before 2025-08-01 (mostly the Zoho import) with no comment, file, assignment, email or status change in 90 days, so they stop nagging for a project and don't skew win rate, won totals or pipeline. A status change clears it at once; the nightly check clears it after any of the others. Imports, bulk edits and auto emails don't count."
+  },
   "lost_reasons": {
    "hint": "Filled from the Lost dialog when the status is set to Lost",
    "help": "Choosing Lost opens a dialog for the reasons, any competitors and a detailed reason. A deal can't be marked Lost without at least one reason, so loss analysis always has data."

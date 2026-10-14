@@ -21,7 +21,8 @@ the review's questions change the form too.
     ⓘ). The file also names the Knowledge Article the *Learn more* links open.
   - This follows Nik's 2026-10-13 decision: help text lives in the repo and changes by PR, with no
     Desk-editable Field Help.
-- **The Opportunity's help text: 76 fields, each with a hint and an explanation.**
+- **The Opportunity's help text: 77 fields, each with a hint and an explanation.** That is the 76 from Nik's
+  review plus v1.629.0's Historical flag, whose text was agreed with that PR.
   - Before this, 32 of the 86 fields the flow shows had any description at all.
   - The text was drafted from `docs/opportunity-field-guide.md`, the form scripts and the server
     code, then approved field by field.
