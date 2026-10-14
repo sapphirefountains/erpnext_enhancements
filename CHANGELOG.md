@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.671.0] - 2026-10-14
+
+### Added
+
+- **A "Pages" section in search, and keyboard shortcuts to the six busiest pages** (custom pages
+  S4c, ERPNext TASK-2026-02806). One new global module, `public/js/global_enhancements/page_search.js`,
+  holds a single alias table for this app's 26 main pages.
+  - **Awesomebar (Ctrl+K).** Typing a page's title or a short word now finds it: "planner" (the
+    Project, Maintenance and Rental planners), "kiosk" (the Time Kiosk), "scan" (Stock Scan and
+    Inventory Scanner Audit), "trip", "day board", "rental", "health" (the four health dashboards),
+    "qbo" and so on. Each row says "Page" and shows its shortcut. Frappe v16.50 already listed a Page
+    whose title fuzzy-matched, so "Project Planner" was findable by its full name. An alias was not,
+    and Frappe's own row for a page this section also lists is folded into ours, so a page is one row.
+  - **Search dialog (Enter, or Ctrl+G).** A "Pages" section beside the existing "DocTypes" one. The
+    dialog's content search is MariaDB full-text, which skips words under four letters
+    (`ft_min_word_len`), so "QBO" could never match there. This section does its own matching, so it
+    does.
+  - **Shortcuts.** Alt+Shift+P Project Planner, Alt+Shift+M Maintenance Planner, Alt+Shift+D
+    Maintenance Day Board, Alt+Shift+R Rental Planner, Alt+Shift+J Plan a Trip, Alt+Shift+S Stock
+    Scan. They are registered through `frappe.ui.keys.add_shortcut`, so they appear in Frappe's
+    Keyboard Shortcuts dialog (Shift+/). Each also gets a "Go to ..." command in the awesomebar
+    through `search_utils.make_function_searchable`, the API Frappe uses for its own "Background
+    Jobs" command, so typing "go" lists them. v16.50 has no separate command palette: Ctrl+K is it.
+  - **Who sees what.** A Desk page is offered only when `frappe.boot.page_info` has it, which holds
+    only the pages the user's roles allow. Stock Scan is a www page and carries its controller's
+    `SCAN_ROLES`, which the guard test holds equal. A shortcut is registered only for a page the user
+    can open, so the help dialog never lists one that lands on "not permitted".
+  - **Routing.** A Desk page opens with `frappe.set_route(<page name>)`, a www page with a real
+    navigation; both leave a history entry. "kiosk" goes through the `time-kiosk` Desk page, which
+    already redirects to `/kiosk` and is gated by its roles.
+
+### Notes
+
+- **Why a wrap, and why it cannot break search.** v16.50 has no client-side extension point for
+  awesomebar results. `AwesomeBar.build_options` is a fixed list of builders, and the server
+  `awesomebar_search` hook would cost a request on every keystroke for every user. So
+  `AwesomeBar.prototype.build_options` and `SearchDialog.prototype.parse_results` are wrapped
+  narrowly, the way `global_search_doctypes.js` already wraps the latter. Frappe's own list is built
+  first and returned untouched if anything of ours throws, if nothing matches, or in "#tag" mode. A
+  method that is missing or renamed is left alone, so a Frappe upgrade turns the feature off rather
+  than search.
+- **Why Alt+Shift.** Frappe has no key sequences (`g` then a letter), only chords. Frappe's
+  `get_key` spells a chord `alt+shift+<letter>` (ctrl, then shift, then alt), and nothing in Frappe
+  v16.50, ERPNext v16.50 or this app binds one. Frappe's own Alt+<letter> menu accelerators step
+  aside whenever Shift is held, and a workspace's bare and Shift+letter keys, which open the
+  awesomebar, are different chords. `add_shortcut` drops every other global handler on its chord,
+  which is why a collision would be silent. T is avoided because the Triton widget opens on Alt+T
+  without excluding Shift and Chrome uses Shift+Alt+T for its toolbar. I and A are avoided for
+  Chrome's own keys. Plan a Trip takes J.
+- **Never while typing.** `add_shortcut` already skips `input`, `select`, `textarea` and
+  `[contenteditable=true]`. That selector misses `contenteditable=""`, `"plaintext-only"` and the
+  child nodes of an editor, so the action also refuses there. It also refuses on a held-down repeat
+  and while a dialog is open. A refusal leaves the keystroke untouched.
+- **Tests.** `scripts/test_page_search.js` runs the real module under node against a stubbed
+  frappe (`page_info`, `ui.keys` with v16.50's handler and `get_key`, `set_route`, a fake
+  AwesomeBar and SearchDialog), with 107 checks. `tests/test_custom_pages_s4c.py` holds the map to
+  real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
+  chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
+
 ## [1.664.0] - 2026-10-14
 
 ### Changed

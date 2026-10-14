@@ -3495,6 +3495,18 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
+      # Custom pages S4c (v1.671.0). page_search.js gives the awesomebar and the search dialog a
+      # "Pages" section with aliases ("planner", "kiosk", "scan", "qbo", which full-text search
+      # cannot see at three letters) and binds six Alt+Shift page shortcuts. The node step runs the
+      # real file against a stubbed frappe: matching, role filtering through page_info, routing,
+      # the awesomebar and search-dialog wraps (Frappe's list untouched on error or a missing hook
+      # point), no chord Frappe v16.50 or this app already binds, and nothing fires while typing.
+      # The unittest step holds the map to real pages, Stock Scan's roles to its controller, the
+      # chords to nowhere else in the app, and the bundle and CI wiring. Reads files only.
+      - name: Custom pages S4c page search + shortcuts (node)
+        run: node scripts/test_page_search.js
+      - name: Custom pages S4c page search + shortcuts (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s4c -v
       # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
       # which the page loader sends with the page (never stale from the immutable /assets
       # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
