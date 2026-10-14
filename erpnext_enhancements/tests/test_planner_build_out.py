@@ -1313,7 +1313,10 @@ class TestPageSource(unittest.TestCase):
 
 	def test_the_hooks_into_the_class_are_one_line_each(self):
 		code = self.code
-		self.assertIn("this.init_phase6d();\n\t\tthis.init_t1();\n\t\tthis.bind_drag();", code)
+		# The toolbar (v1.687.0) comes last: it folds what every phase put in the bar into its menus.
+		self.assertIn(
+			"this.init_phase6d();\n\t\tthis.init_t1();\n\t\tthis.init_toolbar();\n\t\tthis.bind_drag();", code
+		)
 		self.assertIn("this.load_overdue();\n\t\t\t\tthis.t1_load_needs();", code)
 		self.assertIn("this.t1_render_tray();\n\t}", code)
 		self.assertIn("if (this.t1_undo(snap)) return;\n\t\tif (this.p6b_undo(snap)) return;", code)

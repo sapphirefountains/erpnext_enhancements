@@ -1439,6 +1439,212 @@ a.pk-stop-addr {
 }
 
 /* ======================================================================================== */
+/* The toolbar's menus and the phone's sheet (toolbar.js, v1.687.0).                         */
+/* ======================================================================================== */
+
+/* A toolbar menu is the right-click menu's list (.pk-menu: fixed, square, a field edge, no
+ * shadow), placed under its button, scrolling inside itself when a long color key would run past
+ * the screen. */
+.pk-tb-menu {
+	max-height: min(70vh, 560px);
+	overflow-y: auto;
+	min-width: 220px;
+}
+
+.pk-tb-menu:focus {
+	outline: none;
+}
+
+.pk-tb-item {
+	justify-content: flex-start;
+	gap: 8px;
+}
+
+.pk-tb-label {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* A toggle's state is a check mark in a fixed column, so a ticked and an unticked item line up and
+ * the state is a shape, never color alone. */
+.pk-tb-check {
+	flex: 0 0 14px;
+	width: 14px;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-link);
+	text-align: center;
+}
+
+.pk-tb-sample {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 0 auto;
+}
+
+/* A color key entry: read, not chosen. */
+.pk-tb-info {
+	cursor: default;
+	color: var(--sf-text);
+}
+
+.pk-tb-item[aria-disabled="true"]:not(.pk-tb-info) {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* The sheet: a square panel along the bottom of a phone, over a dimmed page, with a hairline at its
+ * top edge instead of a shadow. It sits just under the drawer (1025), so a drawer an item opens is
+ * never behind it; the backdrop is under the sheet. */
+.pk-sheet-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 1024;
+	background: color-mix(in srgb, var(--sf-navy-900) 45%, transparent);
+}
+
+.pk-sheet {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1024;
+	display: flex;
+	flex-direction: column;
+	max-height: 85vh;
+	padding-bottom: env(safe-area-inset-bottom);
+	border-top: var(--sf-border-control) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	outline: none;
+	animation: pk-sheet-up 0.16s ease-out;
+}
+
+@keyframes pk-sheet-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0.6;
+	}
+
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+
+.pk-sheet-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) var(--sf-space-5) var(--sf-space-5) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-sheet-heading {
+	flex: 1 1 auto;
+	margin: 0;
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.pk-sheet-close {
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	border: 0;
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-text);
+	font-size: var(--sf-text-lg);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.pk-sheet-close:focus-visible,
+.pk-sheet-item:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pk-sheet-top,
+.pk-sheet-body {
+	padding: 0 var(--sf-space-15);
+}
+
+.pk-sheet-body {
+	overflow-y: auto;
+	padding-bottom: var(--sf-space-15);
+}
+
+.pk-sheet-top:empty {
+	display: none;
+}
+
+.pk-sheet-section {
+	padding: var(--sf-space-10) 0;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-sheet-section:last-child {
+	border-bottom: 0;
+}
+
+.pk-sheet-title {
+	margin: 0 0 var(--sf-space-5);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-eyebrow);
+	letter-spacing: 0.04em;
+}
+
+.pk-sheet-sub {
+	padding: var(--sf-space-5) 0 0;
+	font-size: var(--sf-text-xs);
+	color: var(--sf-text-muted);
+}
+
+.pk-sheet-items {
+	display: flex;
+	flex-direction: column;
+}
+
+.pk-sheet-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-5);
+	border: 0;
+	border-radius: var(--sf-radius-none);
+	background: transparent;
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-sheet-item:hover {
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+}
+
+.pk-sheet-item[aria-disabled="true"] {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* An alert in the sheet carries its tone's edge and its word, never color alone. */
+.pk-sheet-item.pk-sheet-danger {
+	border-left: var(--sf-space-5) solid var(--sf-danger);
+	font-weight: var(--sf-weight-bold);
+}
+
+.pk-sheet-item.pk-sheet-warn {
+	border-left: var(--sf-space-5) solid var(--sf-warn);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* ======================================================================================== */
 /* Touch, phones and motion.                                                                 */
 /* ======================================================================================== */
 
@@ -1452,7 +1658,8 @@ a.pk-stop-addr {
 	.pk-menu-item,
 	.pk-hint-close,
 	.pk-day-head,
-	.pk-cc-person {
+	.pk-cc-person,
+	.pk-sheet-item {
 		min-height: var(--sf-touch-min);
 	}
 }
@@ -1494,9 +1701,10 @@ a.pk-stop-addr {
 	}
 }
 
-/* The drawer does not slide in for someone who asked for less motion. */
+/* The drawer and the sheet do not slide in for someone who asked for less motion. */
 @media (prefers-reduced-motion: reduce) {
-	.pk-drawer.pk-open {
+	.pk-drawer.pk-open,
+	.pk-sheet {
 		animation: none;
 	}
 }

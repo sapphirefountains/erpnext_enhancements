@@ -392,6 +392,8 @@ function projectPlanner(desk, init) {
 		pp.renders += 1;
 	};
 	pp.load_route = () => pp.loads.push({ view: "route", resource: pp.route_resource, filters: pp.filters() });
+	// The Utilization view (v1.687.0) loads the Crew Utilization report's rows; recorded like the rest.
+	pp.load_utilization = () => pp.loads.push({ view: pp.view, anchor: pp.anchor, filters: pp.filters() });
 	pp.p6c_kit = () => null;
 	pp.p6c_sync_controls = () => {};
 	desk.handlers["project-planner"] = () => pp.handle_route();
@@ -553,6 +555,39 @@ test("Project Planner: Back and Forward walk the screens, each with the filters 
 	desk.back();
 	check("Back to the form", desk.route, ["project", "PRJ-00001"]);
 	check("with no query", desk.here(), "/desk/project/PRJ-00001");
+});
+
+test("Project Planner: Utilization is a view, a route of its own with the filters in the address", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?group=Field" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	pp.go("utilization", "2026-10-12");
+	check("its own screen, carrying the filters", desk.here(), "/desk/project-planner/utilization/2026-10-12?group=Field");
+	check("the view is Utilization", [pp.view, pp.anchor], ["utilization", "2026-10-12"]);
+	check("loaded as Utilization, for the group", pp.loads[pp.loads.length - 1], {
+		view: "utilization",
+		anchor: "2026-10-12",
+		filters: { project: "", pm: "", group: "Field" },
+	});
+	pp.pick_filter("group", "Design");
+	check("a filter picked there rewrites its address in place", desk.here(), "/desk/project-planner/utilization/2026-10-12?group=Design");
+	check("one entry for the week, one for Utilization", desk.entries.length, 2);
+	desk.back();
+	check("Back: the week, with the group it had", [pp.view, pp.filters().group], ["week", "Field"]);
+	desk.forward();
+	check("Forward: Utilization again, with its group", [pp.view, pp.filters().group], ["utilization", "Design"]);
+});
+
+test("Project Planner: a link to Utilization opens it on the link's filters", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/utilization/2026-10-01?project=PRJ-00001&group=PM" });
+	Object.assign(desk.prefs, MINE);
+	const pp = projectPlanner(desk);
+	desk.land();
+	check("the view and the month", [pp.view, pp.anchor], ["utilization", "2026-10-01"]);
+	check("the link's filters, the others All", pp.filters(), { project: "PRJ-00001", pm: "", group: "PM" });
+	check("the address as it came", desk.here(), "/desk/project-planner/utilization/2026-10-01?project=PRJ-00001&group=PM");
+	pp.go("week", "2026-10-01");
+	check("the next calendar view keeps the project the link named", desk.here(), "/desk/project-planner/week/2026-10-01?project=PRJ-00001&group=PM");
 });
 
 test("Project Planner: malformed or unknown values are ignored", () => {
