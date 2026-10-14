@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.677.1] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open now closes only the dialog.** On prod, Back on the
+  guided page closed the New Contact / New Address dialog and *also* left the step (Contact &
+  site → Basics); in the board's side panel it would have closed the panel too.
+  - The dialog never joined the planner kit's history guard. `PartyEntry.track` took what
+    `frappe.ui.form.make_quick_entry` resolves with as the dialog, but v16's
+    `QuickEntryForm.setup()` resolves the **QuickEntryForm itself**; its frappe Dialog is
+    `.dialog`. With no `$wrapper` on the entry, `track` returned early, no history entry was
+    pushed, and frappe's router closed the dialog on the route change as it always does.
+  - The test harness passed because its stand-in resolved with the dialog. The new pure
+    `form_kit/party.js` `dialog_of(entry)` unwraps the QuickEntryForm (a bare Dialog is taken
+    as it is, and an entry with no dialog — the full form routed to instead — gives null),
+    tested under node.
+
 ## [1.677.0] - 2026-10-14
 
 Form kit P3.2, UI half (ERPNext TASK-2026-02755): **the Party entry component**. On the guided

@@ -59,6 +59,7 @@ import {
 	account_of,
 	create_kind,
 	details_args,
+	dialog_of,
 	plan_account_change,
 	same_details_args,
 } from "../party.js";
@@ -417,8 +418,12 @@ export class PartyEntry {
 	}
 
 	// The dialog as an overlay of the kit's: Back closes it (and only it); closing it any other way
-	// steps back off the kit's history entry.
-	track(dialog, guard) {
+	// steps back off the kit's history entry. make_quick_entry resolves with the QuickEntryForm, not
+	// its dialog (v16 QuickEntryForm.setup() resolves `this`; the frappe Dialog is its .dialog), so
+	// the entry is unwrapped first. Taking the entry as the dialog skipped the guard on prod, and Back
+	// closed the dialog AND left the step (v1.677.1).
+	track(entry, guard) {
+		const dialog = dialog_of(entry);
 		if (!dialog || !dialog.$wrapper || !guard || !guard.enabled) return;
 		if (dialog.display === false) return; // it did not open (the full form instead)
 		const overlay = {
