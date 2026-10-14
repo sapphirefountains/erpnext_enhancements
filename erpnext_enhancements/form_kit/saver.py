@@ -138,7 +138,46 @@ def _result(doctype, doc, fields):
 	}
 
 
-def create_record(doctype, values, prefill=None):
+def _client_id(value):
+	"""The page's id for one create, or "" when it is absent or not the shape the page makes."""
+	text = value.strip() if isinstance(value, str) else ""
+	if 8 <= len(text) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in text):
+		return text
+	return ""
+
+
+def client_id_field(doctype):
+	"""The config's ``create.client_id_field``, when the DocType has it: where a create's id is kept."""
+	fieldname = ((get_config(doctype) or {}).get("create") or {}).get("client_id_field")
+	if fieldname and frappe.get_meta(doctype).has_field(fieldname):
+		return fieldname
+	return None
+
+
+def already_created(doctype, client_id):
+	"""The record a create with this id already made for the session user, if they may read it."""
+	fieldname = client_id_field(doctype)
+	client_id = _client_id(client_id)
+	if not fieldname or not client_id:
+		return None
+	name = frappe.db.get_value(doctype, {fieldname: client_id, "owner": frappe.session.user}, "name")
+	if not name:
+		return None
+	doc = frappe.get_doc(doctype, name)
+	return doc if frappe.has_permission(doctype, "read", doc=doc) else None
+
+
+def _as_created(doctype, doc):
+	"""The create result for a record an earlier attempt made (``deduped``: the page re-sends
+	whatever step 1 holds that differs, since it may have changed after that attempt)."""
+	steps = flow.flow_steps(doctype, doc)
+	create_step = next(step for step in steps if step["create"])
+	out = _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
+	out["deduped"] = 1
+	return out
+
+
+def create_record(doctype, values, prefill=None, client_id=None):
 	"""Insert a new draft of ``doctype`` from step 1's fields. Returns the save result shape.
 
 	``frappe.new_doc`` first, so the record gets the same defaults the Desk's New form does
@@ -149,10 +188,26 @@ def create_record(doctype, values, prefill=None):
 	(the Customer form's *Create > Opportunity*), or a mapped document. Only
 	:func:`form_kit.steps.prefill_fields` are taken from it, and never over a step-1 value, so
 	it can carry a hidden contact or a billing address but cannot set what the flow would not.
+
+	``client_id`` is the page's id for this one create (form kit P4.7). A create sent with no signal
+	is kept on the phone and sent again when the signal returns, and the first attempt may have
+	arrived after all, its answer lost on the way back. So the id is stored on the record (the
+	config's ``create.client_id_field``, a hidden unique column), and a create whose id this user's
+	earlier create used returns that record, marked ``deduped``, rather than a second one. In the
+	database, not the cache: the deploy flushes the cache several times a day. The unique index
+	also settles a resend that arrives while the first insert is still running: its insert waits for
+	that one and collides (``UniqueValidationError``; the transaction carries on). This request's
+	snapshot predates the winner's commit, so no read here could see it: the transaction is rolled
+	back (which also returns the naming-series number this insert took), and a fresh one finds it.
 	"""
 	values = _parse(values)
 	prefill = _parse(prefill) if prefill not in (None, "", "null") else {}
 	frappe.has_permission(doctype, "create", throw=True)
+	client_id = _client_id(client_id)
+	id_field = client_id_field(doctype) if client_id else None
+	existing = already_created(doctype, client_id) if id_field else None
+	if existing is not None:
+		return _as_created(doctype, existing)
 	doc = frappe.new_doc(doctype)
 	steps = flow.flow_steps(doctype, doc)
 	allowed = flow.editable_fields(steps, create_only=True)
@@ -165,7 +220,20 @@ def create_record(doctype, values, prefill=None):
 			if fieldname not in allowed
 		}
 		assign(doc, extra, prefill)
-	doc.insert()
+	if id_field:
+		doc.set(id_field, client_id)
+	try:
+		doc.insert()
+	except frappe.UniqueValidationError:
+		if not id_field:
+			raise
+		# Another request with this id may have won the unique index (see above): a fresh
+		# transaction sees its commit. Anything else that collided is raised as it was.
+		frappe.db.rollback()
+		won = already_created(doctype, client_id)
+		if won is None:
+			raise
+		return _as_created(doctype, won)
 	create_step = next(step for step in steps if step["create"])
 	return _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
 

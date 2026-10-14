@@ -297,7 +297,7 @@ A block on a workspace does not write those lines itself: `blocks.kit(root)` on
 global) does the require once per page load and the adoption once per root, and resolves the
 kit, or a plain-text stand-in when the bundle could not load. `blocks.ticket(root)` is the
 "only the newest answer draws" counter that goes with it. How a block uses both, and what it
-does on a bundle from before them, is in `custom_html_blocks/README.md` (v1.647.0).
+does on a bundle from before them, is in `custom_html_blocks/README.md` (v1.649.0).
 
 ### The pieces
 

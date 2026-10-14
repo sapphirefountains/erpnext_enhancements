@@ -73,7 +73,7 @@ hidden, and hidden on an older bundle.
 
 ## Panels, chips and escaping come from sf_kit
 
-Since v1.647.0 the 34 department dashboard widgets draw their shell from
+Since v1.649.0 the 34 department dashboard widgets draw their shell from
 [sf_kit](../../docs/app-design-system.md#sf_kit-the-shared-page-pieces) instead of each
 carrying a copy: no block has its own escape, `muted()` helper, ticket counter or `-pill`
 markup any more. Two more helpers on `workspace_blocks`, in the same

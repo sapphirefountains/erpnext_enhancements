@@ -18,9 +18,10 @@
 // here, in JavaScript, would be a second chance to get that wrong.
 //
 // WHAT IT DELIBERATELY DOES NOT KEEP. The Aurora palette. `player.css` is the
-// learner's reading surface; this is a manager's console and takes frappe's own
-// tokens, so it looks like every other desk dashboard and costs no extra asset load.
-// Hence `ti-` and no `--tr-*` anywhere.
+// learner's reading surface; this is a manager's console and takes the app's global
+// --sf-* tokens (training_insights.css), so it looks like every other dashboard the
+// app draws, follows the Desk theme and costs no extra asset load. Hence `ti-` and
+// no `--tr-*` anywhere.
 //
 // Numbers here are CLICKABLE. A manager reading "7 overdue" and then hand-building
 // the filter to find out who is the difference between a dashboard and a report.

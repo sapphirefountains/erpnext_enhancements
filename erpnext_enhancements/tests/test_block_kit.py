@@ -1,4 +1,4 @@
-"""Custom HTML Blocks on sf_kit carry no shell of their own (v1.647.0).
+"""Custom HTML Blocks on sf_kit carry no shell of their own (v1.649.0).
 
 Every block used to repeat the same shell: an HTML escape (``function esc``), a ``muted()``
 helper writing its loading / empty / error lines, a ``root.__ee_ticket`` counter so only the
@@ -197,7 +197,7 @@ class TestTheScanner(unittest.TestCase):
 		self.assertEqual(violations(strip_comments(clean)), [])
 
 	def test_an_unescaped_join_is_caught(self):
-		# Design Sign-Off Queue before v1.647.0: the customer reached innerHTML as typed.
+		# Design Sign-Off Queue before v1.649.0: the customer reached innerHTML as typed.
 		bug = 'const meta = [d.customer, state].filter(Boolean).join(" · ");'
 		self.assertEqual(unescaped_joins(bug), [("meta", "d.customer")])
 		wrapped = 'const meta = [\n    row.owner,\n    __("{0} h", [n]),\n]\n    .filter(Boolean)\n    .join(" · ");'

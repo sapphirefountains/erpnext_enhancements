@@ -2027,7 +2027,7 @@ jobs:
       # sf_tokens.bundle.css does not define. Reads files only; no frappe stub.
       - name: Block status colours from tokens
         run: python -m unittest erpnext_enhancements.tests.test_block_status_tokens -v
-      # Blocks on sf_kit (v1.647.0) get the kit and the "newest answer draws" ticket from
+      # Blocks on sf_kit (v1.649.0) get the kit and the "newest answer draws" ticket from
       # workspace_block_return.js (blocks.kit / blocks.ticket). Fails when a converted block
       # brings back its own escape, ticket counter, muted() helper, -pill markup or hand-written
       # loading / error / switched-off markup, or loses its guard for an older bundle; and when
@@ -3444,6 +3444,15 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
+      # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
+      # which the page loader sends with the page (never stale from the immutable /assets
+      # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
+      # .css() or attr("style") colour, no literal or named colour or Frappe palette variable,
+      # every selector namespaced to its page (page CSS stays in <head> all session), no
+      # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
+      # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
+      - name: Custom pages S3.4a page CSS on the tokens (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads

@@ -1,0 +1,103 @@
+/* GA4 Dashboard (/desk/ga4-dashboard).
+ *
+ * This used to be a <style> block inside the page's markup string. Frappe's page loader
+ * reads <page>.css beside the page's JS and sends it with the page (Page.load_assets,
+ * through getpage), so an edit reaches every device on its next open rather than waiting
+ * out a cached copy.
+ *
+ * Colours are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's
+ * light or dark theme. Cards are square with a hairline and no shadow. The chart series
+ * colours are still literal in ga4_dashboard.js: frappe.Chart takes them as values, not as
+ * CSS, and moving them is a separate change. */
+
+.ga4-dashboard-wrapper {
+	color: var(--sf-text);
+}
+
+.ga4-dashboard-wrapper #ga4-loading {
+	padding: var(--sf-space-20);
+	color: var(--sf-text-muted);
+}
+
+.ga4-dashboard-wrapper #ga4-dashboard-grid {
+	padding: var(--sf-space-15);
+}
+
+.ga4-grid-container {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-gap: var(--sf-space-20);
+}
+
+.ga4-grid-item-full {
+	grid-column: 1 / -1;
+}
+
+.ga4-chart-box {
+	min-width: 0;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: var(--sf-space-15);
+}
+
+.ga4-chart-box h4 {
+	color: var(--sf-heading);
+}
+
+/* A section title, so the display face (docs/app-design-system.md, Type). */
+.ga4-section-title {
+	grid-column: 1 / -1;
+	margin-top: var(--sf-space-20);
+	margin-bottom: var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	line-height: var(--sf-leading-display);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+
+/* A source that failed. The heading inside it ("GA4 Error:") is the word; the tint and the
+ * edge only repeat it. */
+.ga4-error {
+	padding: var(--sf-space-15);
+	border: var(--sf-border-hairline) solid color-mix(in srgb, var(--sf-danger) 35%, transparent);
+	border-left: 4px solid var(--sf-danger);
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
+	color: var(--sf-text-strong);
+}
+
+.ga4-failed {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.gsc-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-top: var(--sf-space-10);
+}
+
+.ga4-dashboard-wrapper .gsc-table th,
+.ga4-dashboard-wrapper .gsc-table td {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 8px;
+	text-align: left;
+	color: var(--sf-text);
+}
+
+.ga4-dashboard-wrapper .gsc-table th {
+	background-color: var(--sf-bg);
+	color: var(--sf-text-strong);
+}
+
+@media (max-width: 767px) {
+	/* One column on a phone; the wide tables scroll inside their card. */
+	.ga4-grid-container {
+		grid-template-columns: 1fr;
+	}
+
+	.ga4-chart-box {
+		overflow-x: auto;
+	}
+}

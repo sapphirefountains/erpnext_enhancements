@@ -71,7 +71,7 @@
  * Task Dashboard and Who's Working each carried a copy of this check until v1.641.0; they ask
  * here now, and treat a missing helper (an older bundle) as on screen too.
  *
- * THE KIT AND THE TICKET (v1.647.0). Every block used to carry its own escape, its own "only
+ * THE KIT AND THE TICKET (v1.649.0). Every block used to carry its own escape, its own "only
  * the newest answer draws" counter and its own loading / empty / error markup. Two helpers
  * replace them:
  *

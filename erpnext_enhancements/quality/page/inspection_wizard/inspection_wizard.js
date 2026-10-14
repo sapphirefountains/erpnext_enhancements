@@ -26,9 +26,10 @@
 // measured_value, notes and photo. A wizard that could edit a bound could turn a failing
 // measurement into a passing one from a phone, on site, with nothing in the diff.
 //
-// Styling uses Frappe CSS variables so Frappe Light and Timeless Night both work; pass/fail
-// colours stay literal, matching the Visit Wizard's house convention. The page loader serves
-// this file version-aware, so no .bundle.* is needed.
+// Styling lives in inspection_wizard.css beside this file, on the app's --sf-* tokens, so
+// both Desk themes work and pass/fail comes from the status tokens. The page loader sends a
+// page's own .js and .css with the page itself, so no .bundle.* is needed and an edit is
+// never served stale from the browser's cache.
 
 frappe.pages["inspection-wizard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -44,68 +45,6 @@ frappe.pages["inspection-wizard"].on_page_show = function (wrapper) {
 		wrapper.inspection_wizard.handle_route();
 	}
 };
-
-const QW_STYLE = `
-.qw-wrap{max-width:640px;margin:0 auto;padding-bottom:104px;font-size:15px;}
-.qw-muted{color:var(--text-muted);font-size:13px;}
-.qw-progress{height:6px;border-radius:3px;background:var(--control-bg);margin:8px 0 4px;overflow:hidden;}
-.qw-progress>div{height:100%;border-radius:3px;background:var(--primary,#2490ef);transition:width .25s;}
-.qw-stepline{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:10px;}
-.qw-tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;position:sticky;top:0;background:var(--bg-color);z-index:3;}
-.qw-tab{flex:0 0 auto;padding:9px 15px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:15px;cursor:pointer;white-space:nowrap;}
-.qw-tab.qw-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.qw-tab.qw-has-fail{border-color:#dc2626;}
-.qw-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);}
-.qw-card.qw-bad{border-color:#dc2626;background:rgba(220,38,38,.06);}
-.qw-card.qw-done{border-color:#15803d;}
-.qw-card-title{font-weight:600;font-size:17px;line-height:1.35;}
-.qw-card-sub{font-size:14px;color:var(--text-muted);margin-top:4px;}
-.qw-chip{display:inline-block;font-size:12px;border-radius:10px;padding:2px 9px;margin-left:6px;vertical-align:middle;}
-.qw-chip-req{background:#fef3c7;color:#92400e;font-weight:600;}
-.qw-chip-photo{background:#e5e7eb;color:#374151;}
-.qw-chip-carried{background:#ede9fe;color:#5b21b6;font-weight:600;}
-.qw-chip-addendum{background:#dbeafe;color:#1e40af;}
-.qw-chip-red{background:#fde8e8;color:#b91c1c;font-weight:600;}
-.qw-seg{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
-.qw-seg button{flex:1 1 calc(33% - 8px);min-width:84px;min-height:48px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;cursor:pointer;padding:7px 4px;}
-.qw-seg button.qw-on{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.qw-seg button.qw-on.qw-neg{background:#dc2626;border-color:#dc2626;}
-.qw-seg button.qw-on.qw-na{background:#6b7280;border-color:#6b7280;}
-.qw-measure{display:flex;gap:10px;align-items:center;margin-top:12px;}
-.qw-measure input{flex:1;font-size:24px;text-align:center;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
-.qw-measure input:focus{outline:2px solid var(--primary,#2490ef);}
-.qw-measure input.qw-oor{border-color:#dc2626;color:#b91c1c;font-weight:700;}
-.qw-measure .qw-uom{flex:0 0 auto;font-size:15px;color:var(--text-muted);}
-.qw-range{margin-top:6px;font-size:13px;color:var(--text-muted);text-align:center;}
-.qw-range.qw-oor{color:#b91c1c;font-weight:600;}
-.qw-row-extra{margin-top:10px;display:flex;gap:8px;align-items:center;}
-.qw-row-extra input{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
-.qw-photo-btn{flex:0 0 auto;min-width:52px;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);cursor:pointer;font-size:18px;}
-.qw-photo-btn.qw-has-photo{border-color:#15803d;background:#e7f7ed;}
-.qw-banner{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:15px;line-height:1.45;}
-.qw-banner-red{background:#fde8e8;color:#b91c1c;}
-.qw-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
-.qw-banner-green{background:#e7f7ed;color:#15803d;}
-.qw-banner-amber{background:#fef3c7;color:#92400e;}
-.qw-banner h6{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;}
-.qw-help{border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;overflow:hidden;background:var(--card-bg);}
-.qw-help-head{display:flex;align-items:center;gap:8px;width:100%;padding:12px 14px;background:none;border:none;color:var(--text-color);font-size:15px;font-weight:600;cursor:pointer;text-align:left;}
-.qw-help-caret{margin-left:auto;transition:transform .15s;}
-.qw-help.qw-open .qw-help-caret{transform:rotate(90deg);}
-.qw-help-body{padding:0 14px 14px;font-size:14px;line-height:1.5;color:var(--text-color);}
-.qw-nav{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:var(--bg-color);border-top:1px solid var(--border-color);z-index:5;}
-.qw-nav button{flex:1;min-height:50px;border-radius:9px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:16px;cursor:pointer;}
-.qw-nav button.qw-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.qw-nav button:disabled{opacity:.5;cursor:default;}
-.qw-savestate{position:fixed;left:0;right:0;bottom:calc(74px + env(safe-area-inset-bottom));text-align:center;font-size:13px;pointer-events:none;z-index:6;}
-.qw-savestate span{display:inline-block;padding:4px 12px;border-radius:12px;background:var(--control-bg);color:var(--text-muted);border:1px solid var(--border-color);}
-.qw-savestate.qw-err span{background:#fde8e8;color:#b91c1c;border-color:#b91c1c;font-weight:600;pointer-events:auto;}
-.qw-list-item{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);cursor:pointer;}
-.qw-list-item h5{margin:0 0 4px;font-size:16px;}
-.qw-sign{margin-top:10px;border:1px solid var(--border-color);border-radius:10px;padding:12px;background:var(--card-bg);}
-.qw-sign-img{max-width:100%;border:1px solid var(--border-color);border-radius:8px;background:#fff;}
-.qw-empty{text-align:center;padding:40px 16px;color:var(--text-muted);}
-`;
 
 // ---------------------------------------------------------------------------
 // Rendering authored text.
@@ -152,7 +91,6 @@ class InspectionWizard {
 		this.page = page;
 		this.wrapper = wrapper;
 		this.body = $('<div class="qw-wrap"></div>').appendTo(page.main);
-		$(`<style>${QW_STYLE}</style>`).appendTo(page.main);
 		this.doc = null;
 		this.section_index = 0;
 		// Which screen is painted or being fetched: "list", "inspection", or null.
@@ -568,7 +506,10 @@ class InspectionWizard {
 				index === this.section_index ? "qw-active" : "",
 				failing ? "qw-has-fail" : "",
 			].join(" ");
-			$(`<button class="${classes}">${frappe.utils.escape_html(section.title)}</button>`)
+			// "failing" is printed on the tab as well as its red edge: the colour alone told a
+			// colour-blind inspector nothing.
+			const flag = failing ? `<span class="qw-tab-flag">${__("failing")}</span>` : "";
+			$(`<button class="${classes}">${frappe.utils.escape_html(section.title)}${flag}</button>`)
 				.appendTo(tabs)
 				.on("click", () => this.go_section(index));
 		});
@@ -627,7 +568,7 @@ class InspectionWizard {
 		// The contracted range, printed. An inspector who cannot see the bound is guessing at
 		// what "passes" means, which is the gap this whole programme exists to close.
 		const range = $(
-			`<div class="qw-range ${row.out_of_range ? "qw-oor" : ""}">${__("Range")}: ${qw_range_text(row)}</div>`
+			`<div class="qw-range ${row.out_of_range ? "qw-oor" : ""}"><span class="qw-oor-word">${__("Out of range")} &middot; </span>${__("Range")}: ${qw_range_text(row)}</div>`
 		).appendTo(card);
 		input.on("change", () => {
 			const value = input.val() === "" ? null : parseFloat(input.val());

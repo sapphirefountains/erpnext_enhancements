@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.647.0] - 2026-10-13
+## [1.649.0] - 2026-10-13
 
 Custom pages S3.3b (TASK-2026-02822): the 34 department dashboard widgets draw their panels,
 chips and escaping from sf_kit, and their copies of the same shell are gone.
@@ -87,6 +87,123 @@ chips and escaping from sf_kit, and their copies of the same shell are gone.
 Not converted yet, and listed in `test_block_kit.py` as a follow-up: the KPI Cockpit, Morning
 Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk
 Shortcuts asks the server nothing and has no panel to convert.
+
+## [1.648.0] - 2026-10-13
+
+Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.
+
+### Added
+
+- **Nothing typed is lost to a dropped signal, a reload, a crash, or the phone closing the browser.**
+  - What has not reached the server is kept on the phone: one localStorage entry per record, with the server's value from before each change and the record's `modified`.
+  - It is the Visit Wizard's journal (v1.596.0), as a form-kit service: the pure rules are in `public/js/form_kit/journal.js`, and the page owns the storage and the timers.
+- **Opening the record again puts kept changes back,** decided by the server's current value:
+  - unchanged since, the change goes back on and is saved;
+  - already there (a save that landed and lost its answer), it is dropped;
+  - changed by someone else, the person chooses, with the same side-by-side chooser as any conflict.
+  - A newer edit on the server is never overwritten without saying so.
+- **A save that fails for want of signal** (no answer, or a 408, 429, 502, 503 or 504) reads "Saved on this phone — sends when there is signal" rather than "Not saved".
+  - It is retried when the browser reports the signal back, and every 20 seconds until one gets through.
+  - Tapping the line retries now. A refusal by the server (a validation, a permission) still says so as before.
+- **A new deal can be started without signal, and is never created twice.**
+  - Step 1 is kept on the phone as it is typed, with an id for the create.
+  - A create that cannot be sent waits for the signal and is sent again with the same id.
+  - `create_record` stores the id on the record it makes, in a new hidden, unique, no-copy field `custom_guided_client_id` (config `create.client_id_field`). It answers a resend from the same user with that record, marked `deduped`, because the first attempt may have arrived with its answer lost. The page then saves whatever step 1 holds that differs.
+  - The id lives in the database, not the cache, which the deploy flushes several times a day. The unique index also settles a resend that races the first insert. It waits for that insert and collides. Its own snapshot predates the winner's commit, so the transaction is rolled back, which also returns the naming-series number it took, and a fresh read finds the winner.
+  - New endpoint `find_created` (GET): a page that puts back a kept start first asks whether that create arrived after all, and opens the record if it did.
+  - A start kept from before is put back on the next New, with *Start over*. Each start is its own entry, so two tabs never overwrite each other. Switching to the full form drops the phone's copy, since the form holds it from there.
+- **Kept copies are per person.** Keys carry the signed-in user, so on a shared phone nobody sees or saves another's changes. Entries older than 30 days are swept when the page loads.
+- **Kept values the server has since changed differently** wait on the person's choice, and the phone keeps them until then, so closing the app before choosing loses nothing. Changes typed while a conflict is open are kept too. A kept change to a field the person can no longer edit is reported, not silently dropped.
+- **Reloading a record keeps changes still waiting to send.** This covers a reload by Set as Lost, by the hand-off prompt, or by Back while there was no signal. The changes come over to the reloaded page, through the same check against the server.
+- **Typing after a restore is kept.** If a kept start's create turns out to have arrived after all, the record opens, and step 1 as it stands now is saved onto it.
+- **Start over** drops every start kept for that DocType, rather than bringing back the next-oldest.
+- **Closing the tab warns only when the phone could not keep something:** storage refused, as in a private window or with site data blocked. This is tracked per entry.
+- `docs/offline-cold-start-spike.md`: the P4.8 finding.
+  - It recommends a service worker scoped to the guided page only, built like `/itinerary`'s.
+  - The proof gate: does Desk's own boot reach the page offline? A 1–2 day proof on real phones decides.
+  - Size: about 6–9 days after that. The fallback is a standalone page.
+- Three independent review passes over this change; every finding is fixed here.
+- Tests:
+  - `test_guided_entry` runs the journal rules under node (reconcile, try-later, keys, entry shapes and ages) and checks the page wiring.
+  - `test_form_kit` holds `create_record`'s client id:
+    - a resend returns the first record, marked `deduped`;
+    - a resend racing the first insert returns it after a rollback;
+    - a record that is gone is made again;
+    - another user's is never returned;
+    - another unique collision is raised;
+    - an id of the wrong shape is ignored;
+    - `find_created` answers only for the caller.
+
+## [1.646.0] - 2026-10-13
+
+### Changed
+
+- **Five Desk pages keep their CSS in their own `.css` file and draw it from the `--sf-*` tokens**
+  (custom pages S3.4a, ERPNext TASK-2026-02823): Drive Link Manager, GA4 Dashboard, Inspection
+  Wizard, Training Insights and Glossary Review.
+  - **Why the files moved.** Drive Link Manager and GA4 Dashboard wrote a `<style>` block into their
+    markup string, and the Inspection Wizard appended a 60-line `QW_STYLE` constant to the page. A
+    page's own `<page>.css` is the better home: frappe reads it beside the page's JS and sends it with
+    the page itself (`Page.load_assets` in `frappe/core/doctype/page/page.py`, through
+    `desk_page.getpage`; checked on `version-16`), so an edit reaches a phone on its next open rather
+    than waiting out a cached copy, and the styles can be read and linted as CSS. The injection code
+    is gone, and so are the inline `style="color: ..."` attributes the Drive Link Manager painted its
+    confidence and status colours with: they are tone classes now.
+  - **Why the colours changed.** The pages mixed Frappe's palette (`--green-500`, `--red-500`) with
+    literal hexes (`#dc2626`, `#e03636`, `#fde8e8`), so "failed" was a different red on each screen and
+    the literal ones ignored the dark theme. They now read the app's tokens, which follow the Desk's
+    light or dark setting: square cards on `--sf-surface` with a `--sf-rule` hairline and no shadow,
+    status from `--sf-good` / `--sf-warn` / `--sf-danger` with their `--sf-on-*` labels, radii from
+    `--sf-radius-*`, and one phone breakpoint at 767px. Status *text* mixes its token 50% with
+    `--sf-text-strong`, so it reads on a white card and a navy one; `--sf-warn` is a yellow fill and
+    is never text on its own. Fields are white with 16px text in both themes, so iOS no longer zooms
+    into the Inspection Wizard's note box or the Glossary Review's text areas (both were 15px or less).
+    The Inspection Wizard is Build work, so the section on screen is a Build pillar chip with a 4px
+    `--sf-primary` bar under it. The bar matters in the dark theme, where the chip's navy-800 fill
+    is the same colour as every other tab's `--sf-surface`, and on a failing section, whose danger
+    edge replaces the chip's. Its nav bar and sticky tabs keep Frappe's `--bg-color` on purpose,
+    because they sit over the Desk's own page ground and have to match it. The Glossary Review's
+    collision cards are edged in `--sf-chip-edge-neutral`, not the flat neutral pillar colour, which
+    is 1.06:1 on a dark-theme card.
+  - **Statuses that were colour alone now carry a word.** A failing section's tab says "failing" beside
+    its red edge; a measurement out of range says "Out of range" on its range line (shown only while
+    the line is marked, so typing a new value clears the word and the line's red together, while the
+    input's red edge waits for the server's verdict as before); a row with a photo attached shows a
+    tick; the Drive Link Manager's status is a pill with its word on the fill; the Glossary Review's
+    current tab has a bar under it, not just a change of ground.
+  - **Every selector is namespaced to its page.** A Desk page's CSS is appended to `<head>` once and
+    stays for the session, so Training Insights' bare `td.is-bad` would have reddened any cell with
+    that class on any page opened afterwards; it is `.ti-table td.is-bad` now.
+  - **Layout on phones.** GA4's two-column grid becomes one column, the Drive Link Manager's table
+    scrolls inside its own box instead of pushing the page sideways, and Training Insights shows its
+    tiles two to a row.
+  - Behaviour is otherwise unchanged. GA4's chart series colours are still literal in its JS:
+    `frappe.Chart` takes them as values, so moving them onto the tokens is a separate change.
+
+### Fixed
+
+- **Glossary Review loaded the shared Training rail's stylesheet and script with no version**, so
+  every load asked for `desk_nav.css?v=` and `desk_nav.js?v=`: one unchanging URL for files that
+  `/assets` serves immutable for a year. A device that had cached them never saw an edit again (the
+  "works on desktop, phones still broken" bug in CLAUDE.md). `TR.loadAssets` refuses a path with no
+  `?v=` at all, but an empty token passed its guard. The page now passes the deploy version, as
+  Training Insights, Question Review, the learner page and the authoring canvas already did, and its
+  load ends in a `catch` so a failed rail can never cost the page. Question Review was checked and
+  already passed the version.
+
+### Added
+
+- **`tests/test_s3_page_css.py`** (bench-free, its own CI step). Fails the build if any of the five
+  pages writes a `<style>` from JS or paints a colour inline, through a jQuery `.css(...)` colour
+  write or an `attr("style", ...)` again; loses its `.css`; puts a literal colour (hex, `rgb()`,
+  `hsl()`, a named colour such as `white`) or a Frappe palette variable (`--red-500`, `--bg-orange`,
+  `--text-on-red`; not the structural `--bg-color`) in it; writes a selector whose first compound
+  does not carry the page's prefix or wrapper; reads a `var(--sf-...)` that `sf_tokens.bundle.css`
+  does not define (it would resolve to nothing, silently); declares a custom property of its own; or
+  uses a shadow, a radius that is not a token, or a breakpoint other than 767px. It also holds every
+  Training page's `TR.loadAssets` call to passing a version. The namespace and palette checks fail
+  on the files as they were; no page ever had a named colour or a jQuery colour write, so those two
+  checks are proven against samples inside the suite instead.
 
 ## [1.645.0] - 2026-10-13
 
