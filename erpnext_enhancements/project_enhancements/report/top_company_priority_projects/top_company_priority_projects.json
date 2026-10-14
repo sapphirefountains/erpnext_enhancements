@@ -1,0 +1,38 @@
+{
+ "add_total_row": 0,
+ "columns": [],
+ "creation": "2025-12-08 06:16:14.661700",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letterhead": null,
+ "modified": "2026-10-14 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Top Company Priority Projects",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "query": "SELECT\n    p.project_name as \"Project Name\",\n    p.name as \"Project ID:Link/Project:120\",\n    p.custom_company_priority as \"Priority Score\",\n    (SELECT count(*) FROM `tabTask` t WHERE t.project = p.name) as \"Total Tasks\",\n    (SELECT count(*) FROM `tabTask` t WHERE t.project = p.name AND t.status = 'Completed') as \"Completed Tasks\",\n    (SELECT count(*) FROM `tabTask` t WHERE t.project = p.name AND t.exp_end_date < CURDATE() AND t.status != 'Completed') as \"Overdue Tasks\"\nFROM\n    `tabProject` p\nWHERE\n    p.status NOT IN ('Completed', 'Cancelled')\n    AND p.custom_company_priority IS NOT NULL\n    AND p.custom_company_priority != ''\n    AND CAST(p.custom_company_priority AS UNSIGNED) > 0\nORDER BY\n    CAST(p.custom_company_priority AS UNSIGNED) ASC\nLIMIT 10",
+ "ref_doctype": "Project",
+ "report_name": "Top Company Priority Projects",
+ "report_type": "Query Report",
+ "roles": [
+  {
+   "role": "Employee"
+  },
+  {
+   "role": "Employee Self Service"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Projects User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

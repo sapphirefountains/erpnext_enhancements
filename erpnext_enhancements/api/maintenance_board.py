@@ -7,8 +7,14 @@ technicians currently clocked into maintenance projects, visits submitted
 today, and recent flagged visits (out-of-range chemistry / warranty claims).
 
 Read-only; restricted to the page's roles (System Manager, Maintenance
-Supervisor, Projects Manager) — enforced here as well as on the page, since
-whitelisted methods are callable directly.
+Supervisor, Projects Manager, Maintenance Manager) — enforced here as well as on
+the page, since whitelisted methods are callable directly.
+
+Maintenance Manager joined in v1.681.0. The Production Hub, which links the
+board, is gated on it, so the hub promised a page the role alone could not open;
+the board answered only because, on prod on 2026-10-14, all 14 holders of
+Maintenance Manager also held Projects Manager. Nobody's access changed that day.
+Keep this set and the page JSON's roles the same (tests/test_s4a_hub_links.py).
 
 Another day (v1.662.0). The page keeps the day it shows in its address, so
 ``date`` (YYYY-MM-DD) asks for that day's board. Today, named or not, runs
@@ -38,7 +44,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, nowdate
 
-BOARD_ROLES = {"System Manager", "Maintenance Supervisor", "Projects Manager"}
+BOARD_ROLES = {"System Manager", "Maintenance Supervisor", "Projects Manager", "Maintenance Manager"}
 
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
