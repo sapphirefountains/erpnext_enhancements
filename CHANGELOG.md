@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     created, and a side panel's move is committed. Binding is once per editor, so showing the page
     again never binds the key twice, an open dialog keeps Ctrl+S for itself as on the form, and
     every other page is unchanged.
+  - **Nothing changed on the Close step was saved.** A step's starting values went through
+    `FieldGroup.set_values`, which waits for every control. v16's Table MultiSelect rejects a value
+    while it is read-only or hidden (it has no input area to draw its pills in), and the Close step's
+    Lost Reasons and Competitors are both, so the wait never ended and every field of the step stayed
+    in the editor's `suppress` list: changing the status or a rank queued nothing, and Ctrl+S had
+    nothing to send. Found on prod while verifying this change (the Close step of a saved deal held
+    all ten of its fields in `suppress`). Each value is now set on its own, and a field is listened to
+    again as soon as its own value settles (`editor.js set_initial_values`).
   - **The guided Item flow (v1.683.0) gets the Item form's queries.** ERPNext's `item.js`
     filters the Accounting rows' accounts, cost centers and warehouse by the row's company, and the
     Reorder rows' warehouse and warehouse group; `config/item.py` mirrors all of them. Waived:

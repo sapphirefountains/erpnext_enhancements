@@ -309,6 +309,10 @@ script sets, on a DocType added to the registry without being audited, and on a 
 Won rule that drifted from the scripts. Under node it holds every Item condition to what the Desk
 form sets on 128 records.
 
+A step's starting values are set one control at a time (`set_initial_values`): v16's read-only or
+hidden Table MultiSelect rejects a value, and through `FieldGroup.set_values` that left every field of
+the step unheard (the Close step saved nothing before v1.685.0).
+
 Checked and left as they are: `fetch_from` (the server fills it on every save and `save_step` returns
 what changed; a client fetch would queue a change to a field the person cannot edit), Select, Date,
 Datetime, Percent, Check, Text Editor and Table MultiSelect (their controls read nothing from `frm`),

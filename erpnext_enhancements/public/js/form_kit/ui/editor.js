@@ -524,10 +524,7 @@ export class RecordEditor {
 				this.suppress.add(field.fieldname);
 			}
 		});
-		fg.set_values(initial).then(() => {
-			Object.keys(initial).forEach((fieldname) => this.suppress.delete(fieldname));
-			if (this.fg === fg) fg.refresh_dependency();
-		});
+		this.set_initial_values(fg, initial);
 		(step.fields || []).forEach((field) => {
 			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
 		});
@@ -785,6 +782,29 @@ export class RecordEditor {
 			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
 			this.set_link_reference(control);
 			if (field.help) this.add_help(control.$wrapper, field, step);
+		});
+	}
+
+	// A step's starting values, each on its own, and each field listened to again once its own value
+	// has settled (v1.685.0). They went through fg.set_values, whose Promise.all waits for every
+	// control: v16's Table MultiSelect rejects a value while it is read-only or hidden (it has no
+	// input area to draw its pills in), FieldGroup.set_value then never resolves, and every field of
+	// the step stayed in `suppress`, so field_changed ignored it. On the Close step that was the
+	// status and the three ranks: nothing typed there was saved.
+	set_initial_values(fg, initial) {
+		const settled = Object.keys(initial).map((fieldname) => {
+			const control = fg.fields_dict[fieldname];
+			const value = initial[fieldname];
+			return Promise.resolve()
+				.then(() => control && control.set_value(value))
+				.then(() => control && control.set_input && control.set_input(value))
+				.catch(() => {
+					// The control keeps what it could show; the value is still this.values'.
+				})
+				.then(() => this.suppress.delete(fieldname));
+		});
+		return Promise.all(settled).then(() => {
+			if (this.fg === fg) fg.refresh_dependency();
 		});
 	}
 

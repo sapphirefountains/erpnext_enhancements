@@ -518,6 +518,20 @@ out.cond = {
 	out.cond.toggles = seen;
 }
 
+// ---- set_initial_values: one control that rejects its value (a read-only Table MultiSelect) must
+// not leave the rest of the step ignored.
+{
+	const refreshed = [];
+	const ok = { set_value: () => Promise.resolve(), set_input: () => {} };
+	const rejects = { set_value: () => Promise.reject(new Error("no input area")) };
+	const throws = { set_value: () => { throw new Error("sync"); } };
+	const fg = { fields_dict: { status: ok, lost_reasons: rejects, competitors: throws }, refresh_dependency: () => refreshed.push(1) };
+	editor.suppress = new Set(["status", "lost_reasons", "competitors"]);
+	editor.fg = fg;
+	await editor.set_initial_values(fg, { status: "Lost", lost_reasons: [{ lost_reason: "Price" }], competitors: [] });
+	out.initial = { suppress: [...editor.suppress], refreshed: refreshed.length };
+}
+
 // ---- Item's conditions against the Desk: v16's form sets the property to the expression's truth
 // (Layout.set_dependant_property on frm.doc); the guided editor must land on the same value for a
 // field that is neither required nor read-only by itself.
@@ -632,6 +646,11 @@ class TestTheEditorUnderNode(unittest.TestCase):
 		"""Item's Standard Selling Rate shows only on a new Item (eval:doc.__islocal && ...)."""
 		self.assertIs(self.out["cond"]["islocal_new"], True)
 		self.assertIs(self.out["cond"]["islocal_saved"], False)
+
+	def test_a_control_that_refuses_its_value_leaves_the_step_listened_to(self):
+		"""v16's read-only or hidden Table MultiSelect rejects a value; before v1.685.0 that left the
+		whole step in `suppress`, so the Close step's status and ranks were never saved."""
+		self.assertEqual(self.out["initial"], {"suppress": [], "refreshed": 1})
 
 	def test_items_conditions_are_the_desks(self):
 		"""Every mandatory_depends_on / read_only_depends_on on the Item lands where the Desk form
