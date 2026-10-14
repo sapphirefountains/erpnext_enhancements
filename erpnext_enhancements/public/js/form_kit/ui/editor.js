@@ -209,7 +209,8 @@ export class RecordEditor {
 	// are extremely important"). The guided page replaced the Desk form, and with it the two places an
 	// Opportunity's history lives:
 	// - its Notes tab, ERPNext's `notes` table of CRM Note (1,049 notes on 235 deals on prod), read
-	//   through form_kit.api.record_notes and added with the DocType's own `add_note`;
+	//   through form_kit.api.record_notes (which reads every notes store a DocType has: Project's
+	//   Project Notes table and `notes` field too) and added with the DocType's own `add_note`;
 	// - its timeline comments, the native Comment rows, shown by the same Comments App the Desk forms
 	//   mount (public/js/comments.js, loaded globally with Vue), so a comment added here is on the form
 	//   and the reverse.
@@ -257,8 +258,9 @@ export class RecordEditor {
 		}
 	}
 
-	// The Notes list, newest first, with an Add box when the caller may write. A DocType without a
-	// `notes` table answers has_notes: false and the block stays hidden.
+	// The Notes list, newest first, with an Add box when the caller may write. A record with nothing to
+	// show and nothing to add (no notes store, or no notes and no `add_note`) answers has_notes: false
+	// and the block stays hidden.
 	load_notes($notes) {
 		const doctype = this.doctype;
 		const name = this.name;
@@ -311,14 +313,15 @@ export class RecordEditor {
 		notes.forEach((note) => {
 			const $item = $('<li class="ge-note"></li>').appendTo($list);
 			const when = note.added_on ? frappe.datetime.str_to_user(note.added_on) : "";
+			// `label` names a notes field (Project's own), which has no author or date of its own.
 			$('<div class="ge-note-meta"></div>')
-				.text([note.added_by, when].filter(Boolean).join(" · "))
+				.text([note.label, note.added_by, when].filter(Boolean).join(" · "))
 				.appendTo($item);
 			$('<div class="ge-note-text"></div>').text(note.text || "").appendTo($item);
 		});
 		if ((data.total || 0) > notes.length) {
 			$('<p class="ge-muted"></p>')
-				.text(__("The newest {0} of {1}; the form has the rest.", [notes.length, data.total]))
+				.text(__("The newest {0} of {1}.", [notes.length, data.total]))
 				.appendTo($notes);
 		}
 	}
