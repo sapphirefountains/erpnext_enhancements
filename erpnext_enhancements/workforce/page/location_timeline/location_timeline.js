@@ -22,15 +22,12 @@
 //
 // Assets. The map is Google Maps: the API key comes from
 // erpnext_enhancements.api.travel.get_maps_config and window.EEGoogleMaps.load()
-// pulls the library in (loadAssets below). The stylesheet lives in
-// public/css/workforce/ and comes in through frappe.require with a BARE path. On v16
-// frappe.require appends
-// ?v=<build version> to a non-bundled same-origin path itself
-// (frappe/public/js/frappe/assets.js, AssetManager.execute), which is what keeps a
-// raw /assets URL out of the one-year immutable cache — and a path that already
-// carries "?v=" is NOT safe: frappe.assets.extn() reads the text after the last
-// "?" as the extension and loads the file as neither css nor js, silently.
-// public/js/training/desk_assets.js documents the same trap from the other side.
+// pulls the library in (loadAssets below). The stylesheet is the page's own
+// location_timeline.css beside this file, which Frappe's page loader sends with the
+// page (getpage), so it needs no loading here at all. It used to live in
+// public/css/workforce/ and come in through frappe.require of a raw /assets path
+// (moved in v1.652.0, S3.4b): one more request, behind a frappe.dom.freeze(), for a
+// file the page loader delivers for nothing.
 //
 // Every server string that reaches innerHTML, a tooltip or a popup goes through
 // esc(). Colours come from a fixed palette, never from data.
@@ -74,21 +71,29 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     // the @frappe.whitelist() defs.
     const PAGE_ROUTE = 'location-timeline';
 
-    // Bare path on purpose — see the header. Only the stylesheet goes through
-    // frappe.require; the Google Maps library is loaded separately by loadAssets().
-    const ASSETS = [
-        '/assets/erpnext_enhancements/css/workforce/location_timeline.css'
-    ];
-
-    
     // Distinct colours cycled per clock-in interval.
     const PALETTE = [
         '#2490ef', '#8e44ad', '#28a745', '#f39c12', '#d63384',
         '#16a085', '#fd7e14', '#0dcaf0', '#6610f2', '#e03636'
     ];
-    const GAP_COLOR = '#e03636';
-    const STOP_COLOR = '#f39c12';
-    const SITE_COLOR = '#2490ef';
+    // The three map strokes the legend names are read from the app's tokens, so the legend
+    // swatches (location_timeline.css) and the lines on the map are the same colour. The Maps
+    // API takes a colour value, not var(), so the token's computed value is read once here;
+    // custom properties compute with var() already substituted, so --sf-danger comes back as
+    // the hex of --sf-red. All three are palette values that do not change with the theme.
+    // The hex after each is the old literal, kept as the fallback for a page without the
+    // token stylesheet.
+    function tokenColor(name, fallback) {
+        try {
+            const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return value || fallback;
+        } catch (e) {
+            return fallback;
+        }
+    }
+    const GAP_COLOR = tokenColor('--sf-danger', '#e03636');
+    const STOP_COLOR = tokenColor('--sf-warn', '#f39c12');
+    const SITE_COLOR = tokenColor('--sf-pillar-service', '#2490ef');
     const LOW_ACCURACY = 'Low Accuracy';
 
     // Before anything loads the map shows the Wasatch Front rather than a blank
@@ -511,10 +516,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         loadAssets() {
-            return new Promise((resolve, reject) => {
-                frappe.require(ASSETS, () => resolve());
-            })
-            .then(() => frappe.xcall("erpnext_enhancements.api.travel.get_maps_config"))
+            // The stylesheet came with the page; only the map library is fetched here.
+            return frappe.xcall("erpnext_enhancements.api.travel.get_maps_config")
             .then((cfg) => {
                 this.mapsConfig = cfg;
                 return window.EEGoogleMaps.load({ apiKey: cfg.api_key, libraries: ["marker", "geometry"] });
@@ -1462,7 +1465,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 const html = '<span class="lt-live-pin' + (stale ? ' stale' : '') + '">'
                     + '<i class="lt-live-dot"></i>'
                     + '<span class="lt-live-label"><b>' + esc(r.employee_name || r.employee) + '</b>'
-                    + '<small>' + esc((r.project_title || r.project || __('No project')) + ' · ' + fmtDuration(r.elapsed_seconds)) + '</small>'
+                    // A stale pin says so in a word, not only in its red dot.
+                    + '<small>' + esc((stale ? __('Stale') + ' · ' : '') + (r.project_title || r.project || __('No project')) + ' · ' + fmtDuration(r.elapsed_seconds)) + '</small>'
                     + '</span></span>';
                 
                 const marker = this.createMarker(ll, `<div class="lt-icon">${html}</div>`, stale ? 0 : 200, r.employee_name || r.employee);
