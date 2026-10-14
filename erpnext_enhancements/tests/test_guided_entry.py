@@ -1594,7 +1594,8 @@ class TestTheCommentsAreShown(unittest.TestCase):
 		self.assertIn('<section class="ge-comments" hidden></section>', _code(PAGE_JS))
 		self.assertIn('<section class="ge-comments fk-comments" hidden></section>', _code(self.SIDE_PANEL_JS))
 
-	# The Notes tab (ERPNext's `notes` table of CRM Note) is where most of an Opportunity's history is.
+	# The Notes tab (ERPNext's `notes` table of CRM Note) is where most of an Opportunity's history is;
+	# record_notes reads every notes store a DocType has (Project's table and field too).
 
 	def test_the_notes_are_read_through_one_get_that_checks_the_record(self):
 		api = _text(APP / "form_kit" / "api.py")
@@ -1602,8 +1603,11 @@ class TestTheCommentsAreShown(unittest.TestCase):
 		self.assertIn('@frappe.whitelist(methods=["GET"])\ndef record_notes(doctype, name):', api)
 		self.assertIn("_require_configured(doctype)", body)
 		self.assertIn('doc.check_permission("read")', body)
-		self.assertIn('field.options != "CRM Note"', body)
-		self.assertIn('"text": _note_text(row.get("note")),', body)
+		# Every notes store, by meta: CRM Note and Project Notes tables, and a `notes` text field.
+		self.assertIn('NOTE_TABLES = {"CRM Note": "note", "Project Notes": "notes"}', api)
+		self.assertIn("tables, text_field = _note_sources(meta)", body)
+		self.assertIn('"text": _note_text(row.get(text_key)),', body)
+		self.assertIn('flow.access_for(doctype, meta, doc)["read_levels"]', body)
 		self.assertIn('bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None))', body)
 
 	def test_a_note_is_plain_text_with_its_line_breaks(self):

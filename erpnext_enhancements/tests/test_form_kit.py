@@ -359,6 +359,9 @@ class FakeDoc:
         if not FRAPPE.has_permission(self.doctype, ptype, doc=self):
             raise FRAPPE.PermissionError(f"No permission to {ptype}")
 
+    def has_permission(self, ptype="read"):
+        return bool(FRAPPE.has_permission(self.doctype, ptype, doc=self))
+
     def _validate(self):
         # The "*" normalize hook, as far as these tests need it (website_cleanup adds a scheme).
         website = self._d.get("website")
@@ -588,6 +591,8 @@ def _install_frappe_stub(metas):
 
     utils.flt = flt
     utils.escape_html = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    utils.strip_html_tags = lambda s: re.sub(r"<.*?>", "", s or "")
+    utils.get_fullname = lambda user: {"ae@example.com": "Alex Example", "pm@example.com": "Pat Manager"}.get(user)
     frappe.utils = utils
     sys.modules["frappe"] = frappe
     sys.modules["frappe.utils"] = utils
@@ -2610,6 +2615,135 @@ class TestItemNotesAndComments(unittest.TestCase):
         FakeDoc("Item", item)._store()
         out = api.record_notes("Item", "LG-505025")
         self.assertEqual(out, {"has_notes": False, "notes": [], "total": 0, "can_add": False})
+
+
+PROJECT_FIXTURE = APP / "tests" / "fixtures" / "form_kit" / "erpnext_v16_project.json"
+
+
+class TestNotesFromEveryStore(unittest.TestCase):
+    """record_notes reads every notes store a DocType has, found from its meta. Nik,
+    2026-10-14, on Notes and Comments being separate: "just include both where appropriate". So an
+    Opportunity's CRM Notes, and a Project's Project Notes table and its own ``notes`` field."""
+
+    def setUp(self):
+        _reset()
+
+    def _project(self, comments_permlevel=0):
+        project = json.loads(PROJECT_FIXTURE.read_text(encoding="utf-8"))["doctypes"]["Project"]
+        fields = [dict(f) for f in project["fields"]]
+        fields.append(
+            {
+                "fieldname": "custom_comments_table",
+                "fieldtype": "Table",
+                "options": "Project Notes",
+                "hidden": 1,
+                "permlevel": comments_permlevel,
+            }
+        )
+        rows = [{"role": "Sales User", "read": 1, "write": 1, "permlevel": 0}]
+        STATE["metas"]["Project"] = FakeMeta("Project", fields, rows)
+        FakeDoc(
+            "Project",
+            {
+                "doctype": "Project",
+                "name": "PROJ-0001",
+                "docstatus": 0,
+                "notes": "<p>Gate code is on the office board</p>",
+                "custom_comments_table": [
+                    {"notes": "<p>Pump replaced</p>", "added_by": "pm@example.com", "added_on": "2025-11-03 10:00:00"},
+                    {"notes": "Site visit", "added_by": "ae@example.com", "added_on": "2025-12-01 08:30:00"},
+                ],
+            },
+        )._store()
+
+    def _as_guided(self, doctype):
+        """Project is not a guided DocType yet; the notes it would show are decided now."""
+        configs = api.CONFIGS
+        configs[doctype] = {}
+        self.addCleanup(configs.pop, doctype, None)
+
+    def test_an_opportunitys_crm_notes_come_newest_first_with_their_authors(self):
+        name = _seed(
+            notes=[
+                {"note": "<p>First call</p>", "added_by": "ae@example.com", "added_on": "2026-10-01 09:00:00"},
+                {"note": "<p>Quote sent &amp; chased</p>", "added_by": "pm@example.com", "added_on": "2026-10-02 09:00:00"},
+            ]
+        )
+        out = api.record_notes("Opportunity", name)
+        self.assertTrue(out["has_notes"])
+        self.assertEqual([n["text"] for n in out["notes"]], ["Quote sent & chased", "First call"])
+        self.assertEqual([n["added_by"] for n in out["notes"]], ["Pat Manager", "Alex Example"])
+        self.assertEqual({n["label"] for n in out["notes"]}, {""})
+        self.assertEqual(out["total"], 2)
+        self.assertFalse(out["can_add"], "this Opportunity has no add_note: the stub is not ERPNext's")
+
+    def test_a_project_shows_its_notes_table_and_its_notes_field(self):
+        self._as_guided("Project")
+        self._project()
+        out = api.record_notes("Project", "PROJ-0001")
+        self.assertTrue(out["has_notes"])
+        field, *rows = out["notes"]
+        # The record's own notes field first, named, with no author or date to show.
+        self.assertEqual(
+            field,
+            {
+                "name": "notes",
+                "text": "Gate code is on the office board",
+                "added_by": "",
+                "added_on": "",
+                "label": "Notes field",
+            },
+        )
+        self.assertEqual([n["text"] for n in rows], ["Site visit", "Pump replaced"])
+        self.assertEqual([n["added_by"] for n in rows], ["Alex Example", "Pat Manager"])
+        self.assertEqual(out["total"], 3)
+        # Project has no add_note: a new note there is a Comment, under this list.
+        self.assertFalse(out["can_add"])
+
+    def test_a_store_at_a_permlevel_the_user_cannot_read_is_left_out(self):
+        self._as_guided("Project")
+        self._project(comments_permlevel=2)
+        out = api.record_notes("Project", "PROJ-0001")
+        self.assertEqual([n["name"] for n in out["notes"]], ["notes"])
+        self.assertEqual(out["total"], 1)
+
+    def test_nothing_to_show_and_nothing_to_add_hides_the_block(self):
+        # A Project with no notes has no add_note: no empty "No notes yet." block (Comments still show).
+        self._as_guided("Project")
+        self._project()
+        record = STATE["db"]["PROJ-0001"]
+        record["notes"] = ""
+        record["custom_comments_table"] = []
+        out = api.record_notes("Project", "PROJ-0001")
+        self.assertEqual(out, {"has_notes": False, "notes": [], "total": 0, "can_add": False})
+        # Nor when the only stores are at a permlevel the user cannot read.
+        self._project(comments_permlevel=2)
+        STATE["db"]["PROJ-0001"]["notes"] = ""
+        self.assertFalse(api.record_notes("Project", "PROJ-0001")["has_notes"])
+
+    def test_a_plain_text_notes_field_is_not_read_as_html(self):
+        self._as_guided("Project")
+        self._project()
+        STATE["metas"]["Project"].get_field("notes")["fieldtype"] = "Small Text"
+        out = api.record_notes("Project", "PROJ-0001")
+        # Only the table's rows: a plain-text field would lose "a<b and c>d" to the tag stripper.
+        self.assertEqual([n["text"] for n in out["notes"]], ["Site visit", "Pump replaced"])
+
+    def test_an_empty_notes_field_adds_nothing(self):
+        self._as_guided("Project")
+        self._project()
+        record = STATE["db"]["PROJ-0001"]
+        record["notes"] = "<p><br></p>"
+        out = api.record_notes("Project", "PROJ-0001")
+        self.assertEqual([n["text"] for n in out["notes"]], ["Site visit", "Pump replaced"])
+        self.assertEqual(out["total"], 2)
+
+    def test_the_record_must_be_readable(self):
+        self._as_guided("Project")
+        self._project()
+        STATE["perm"]["read"] = False
+        with self.assertRaises(FRAPPE.PermissionError):
+            api.record_notes("Project", "PROJ-0001")
 
 
 if __name__ == "__main__":

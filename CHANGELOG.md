@@ -104,6 +104,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **No empty menus.** A menu with nothing for the screen on show is hidden. Display and Edit are
   hidden on Utilization, where Edit now offers nothing: Draft mode and Undo do not apply.
 
+## [1.686.1] - 2026-10-14
+
+### Changed
+- **The guided page's Notes list reads every notes store a DocType has, not only ERPNext's CRM
+  Notes.** Notes and Comments are separate stores, and some DocTypes keep notes in more than one
+  place. Nik, 2026-10-14: "just include both where appropriate". `record_notes` now finds the stores
+  from the DocType's meta (`_note_sources`):
+  - a table of CRM Note (Opportunity, Lead, Prospect);
+  - a table of Project Notes (Project's imported history, `custom_comments_table`, 283 rows on prod,
+    hidden on the Desk form);
+  - the `notes` Text Editor field (Project's own, on 9 projects). It is listed first as one note
+    labelled "Notes field", since it has no author or date. Only a Text Editor is read this way:
+    the tag stripper would eat a plain-text field's "a<b and c>d".
+
+  Table rows are merged newest first. A store at a permlevel the user cannot read is left out, as
+  the Desk form leaves it out. A record with nothing to show and nothing to add answers
+  `has_notes: false`, so a Project with no notes shows no empty "No notes yet." block (its
+  Comments are still there). Checked on prod: none of the 283 Project Notes lacks an `added_on`,
+  and the most on one project is 13, so ordering and the 200-note cap hold. The "newest N of M"
+  line drops "the form has the rest", which was untrue for Project Notes (hidden on the form). Only DocTypes with ERPNext's `add_note` get the Add note box; on the
+  others a new note is a Comment, which the Comments App under the list already takes.
+
+  Nothing changes on an Opportunity, the only DocType with notes that is guided today. Project gets
+  all of this the day it becomes guided. Tests: `tests/test_form_kit.py TestNotesFromEveryStore`.
+
 ## [1.686.0] - 2026-10-14
 
 ### Added
