@@ -9,9 +9,11 @@
  * time so a single failure never stops the rest). All data comes from
  * google_drive.drive_link_manager (whitelisted, System-Manager only).
  *
- * Theming follows the app convention: Frappe CSS vars for surfaces/text (works
- * in Frappe Light + Timeless Night); confidence/status colors are semantic and
- * stay literal. Every server-supplied string is escaped with escape_html.
+ * Styles live in drive_link_manager.css beside this file, which the page loader
+ * ships with the page; colours are the app's --sf-* tokens, so both Desk themes
+ * work. Confidence and status are tone classes (good / warn / danger / none)
+ * defined there, always next to the word they repeat. Every server-supplied
+ * string is escaped with escape_html.
  */
 frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -21,17 +23,19 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 	});
 
 	const esc = frappe.utils.escape_html;
+	// Tone names, not colours: drive_link_manager.css maps each to an --sf-* status token
+	// (dlm-fill-<tone> for a dot or the meter, dlm-text-<tone> for a label).
 	const TONE = {
-		High: 'var(--green-500)',
-		Medium: 'var(--yellow-500)',
-		Low: 'var(--orange-500, #f59e0b)',
-		None: 'var(--gray-400, #9ca3af)',
+		High: 'good',
+		Medium: 'warn',
+		Low: 'danger',
+		None: 'none',
 	};
 	const STATUS_TONE = {
-		Linked: 'var(--green-500)',
-		Failed: 'var(--red-500)',
-		Skipped: 'var(--gray-400, #9ca3af)',
-		Suggested: 'var(--text-muted)',
+		Linked: 'good',
+		Failed: 'danger',
+		Skipped: 'none',
+		Suggested: 'none',
 	};
 	const ROUTE = { Customer: 'customer', Project: 'project', Opportunity: 'opportunity' };
 
@@ -39,36 +43,6 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 
 	const $body = $(`
 		<div class="drive-link-manager">
-			<style>
-				.drive-link-manager { padding: 10px 4px 40px; }
-				.dlm-meta { color: var(--text-muted); font-size: 12px; margin: 0 6px 12px; }
-				.dlm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 6px 14px; }
-				.dlm-toolbar .dlm-spacer { flex: 1 1 auto; }
-				.dlm-toolbar select { width: auto; min-width: 130px; }
-				.dlm-counts { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 6px 14px; font-size: 12.5px; }
-				.dlm-chip { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
-				.dlm-chip b { color: var(--text-color); font-weight: 600; }
-				.dlm-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-				.dlm-group-title { font-weight: 600; font-size: 13px; margin: 18px 6px 8px; color: var(--text-color); }
-				.dlm-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-				.dlm-table th { text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding: 6px 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
-				.dlm-table td { padding: 8px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
-				.dlm-rec-label { font-weight: 600; color: var(--text-color); }
-				.dlm-rec-sub { color: var(--text-muted); font-size: 11.5px; }
-				.dlm-match { display: flex; flex-direction: column; gap: 3px; }
-				.dlm-match-label { color: var(--text-color); word-break: break-word; }
-				.dlm-bar { height: 5px; border-radius: 3px; background: var(--control-bg, #eee); overflow: hidden; max-width: 180px; }
-				.dlm-bar > span { display: block; height: 100%; }
-				.dlm-tier { font-size: 11px; font-weight: 600; }
-				.dlm-controls { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
-				.dlm-controls select { width: 100%; }
-				.dlm-status { font-weight: 600; }
-				.dlm-conflict { color: var(--red-500); font-size: 11.5px; margin-top: 3px; }
-				.dlm-empty { color: var(--text-muted); padding: 40px; text-align: center; }
-				.dlm-loading { color: var(--text-muted); padding: 40px; text-align: center; }
-				.dlm-row-linked { opacity: .62; }
-				.dlm-apply-count { font-weight: 600; }
-			</style>
 			<div class="dlm-meta"></div>
 			<div class="dlm-content"><div class="dlm-loading">${__('Loading…')}</div></div>
 		</div>
@@ -184,8 +158,8 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 	function counts() {
 		const tier = (state.summary.by_tier) || {};
 		const status = (state.summary.by_status) || {};
-		const chip = (label, val, color) =>
-			`<span class="dlm-chip">${color ? `<span class="dlm-dot" style="background:${color}"></span>` : ''}<b>${esc(String(val || 0))}</b> ${esc(label)}</span>`;
+		const chip = (label, val, tone) =>
+			`<span class="dlm-chip">${tone ? `<span class="dlm-dot dlm-fill-${tone}"></span>` : ''}<b>${esc(String(val || 0))}</b> ${esc(label)}</span>`;
 		return `<div class="dlm-counts">
 			${chip(__('High'), tier.High, TONE.High)}
 			${chip(__('Medium'), tier.Medium, TONE.Medium)}
@@ -233,8 +207,8 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 		const match = c.suggested_folder_id
 			? `<div class="dlm-match">
 					<span class="dlm-match-label">${esc(c.suggested_folder_label || '')}</span>
-					<div class="dlm-bar"><span style="width:${score}%;background:${TONE[tier]}"></span></div>
-					<span class="dlm-tier" style="color:${TONE[tier]}">${esc(tier)} · ${score}%</span>
+					<div class="dlm-bar"><span class="dlm-fill-${TONE[tier] || 'none'}" style="width:${score}%"></span></div>
+					<span class="dlm-tier dlm-text-${TONE[tier] || 'none'}">${esc(tier)} · ${score}%</span>
 				</div>`
 			: `<span class="text-muted">${__('No confident match')}</span>`;
 
@@ -242,8 +216,8 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 			? `<span class="text-muted">${__('Linked to')} ${esc(c.chosen_folder_label || c.suggested_folder_label || '')}</span>`
 			: decisionControls(c);
 
-		const stone = STATUS_TONE[c.status] || 'var(--text-muted)';
-		const statusHtml = `<span class="dlm-status" style="color:${stone}">${esc(c.status || 'Suggested')}</span>` +
+		const stone = STATUS_TONE[c.status] || 'none';
+		const statusHtml = `<span class="dlm-status dlm-tone-${stone}">${esc(c.status || 'Suggested')}</span>` +
 			(c.status === 'Failed' && c.error ? `<div class="dlm-conflict" title="${esc(c.error)}">${__('error — hover')}</div>` : '') +
 			(c.conflict && !linked ? `<div class="dlm-conflict">${__('⚠ folder also chosen elsewhere')}</div>` : '');
 
@@ -273,7 +247,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 				<option value="__search__">${__('🔍 Search Drive…')}</option>
 			</select>`;
 		} else if (c.decision === 'Create New') {
-			folderSel = `<span class="text-muted" style="font-size:11.5px">${__('A new folder will be created and linked.')}</span>`;
+			folderSel = `<span class="dlm-create-note">${__('A new folder will be created and linked.')}</span>`;
 		}
 		return `<div class="dlm-controls">${decSel}${folderSel}</div>`;
 	}
@@ -356,7 +330,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 					const items = (r && r.message) || [];
 					if (!items.length) { d.fields_dict.results.$wrapper.html(`<div class="text-muted">${__('No folders found.')}</div>`); return; }
 					const html = items.map((it) =>
-						`<div style="padding:6px 0;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;gap:10px;align-items:center">
+						`<div class="dlm-search-row">
 							<span>${esc(it.name)}</span>
 							<button class="btn btn-xs btn-default dlm-pick" data-id="${esc(it.id)}" data-label="${esc(it.label || it.name)}">${__('Use')}</button>
 						</div>`).join('');

@@ -1,0 +1,558 @@
+/* Inspection Wizard (/desk/inspection-wizard).
+ *
+ * This was QW_STYLE, a string inspection_wizard.js wrote into the page as a <style> tag.
+ * Frappe's page loader reads <page>.css beside the page's JS and sends it with the page
+ * (Page.load_assets, through getpage), so an edit reaches an inspector's phone on its next
+ * open rather than waiting out a cached copy.
+ *
+ * Colours are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's
+ * light or dark theme. Two Frappe variables stay, on purpose: the sticky tab strip and the
+ * fixed nav bar are painted with --bg-color because they sit over the Desk's own page
+ * ground and have to match it exactly, whatever theme draws it.
+ *
+ * Pass / fail is the three status tokens. Every failing state carries a word as well as the
+ * colour: the "failing" count chip, the selected "Fail" answer, "Out of range" on the range
+ * line, and "failing" on a section's tab. Quality inspections are Build work, so the
+ * section on screen is a Build pillar chip.
+ *
+ * Fields are square and white in both themes, with 16px text so iOS does not zoom into
+ * them. Controls round at --sf-radius-control; chips and pills are --sf-radius-pill. */
+
+.qw-wrap {
+	max-width: 640px;
+	margin: 0 auto;
+	padding-bottom: 104px;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text);
+}
+
+.qw-muted {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.qw-progress {
+	height: 6px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-text-muted) 25%, transparent);
+	margin: 8px 0 4px;
+	overflow: hidden;
+}
+
+.qw-progress > div {
+	height: 100%;
+	background: var(--sf-primary);
+	transition: width var(--sf-duration) var(--sf-ease);
+}
+
+.qw-stepline {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	font-size: 14px;
+	color: var(--sf-text-muted);
+	margin-bottom: var(--sf-space-10);
+}
+
+.qw-tabs {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding: 2px 0 var(--sf-space-10);
+	position: sticky;
+	top: 0;
+	background: var(--bg-color);
+	z-index: 3;
+}
+
+.qw-tab {
+	flex: 0 0 auto;
+	min-height: var(--sf-touch-min);
+	padding: 9px 15px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+/* The section on screen: a Build pillar chip, bold, and a 4px bar under it. The bar is the
+ * part that always shows. In the dark theme the chip's fill (navy-800) is the same colour
+ * as every other tab's --sf-surface, and on a failing section the danger edge below replaces
+ * the chip's edge, so without the bar only the weight would mark it. */
+.qw-tab.qw-active {
+	background: var(--sf-pillar-build-deep);
+	border-color: var(--sf-chip-edge-build);
+	border-bottom: 4px solid var(--sf-primary);
+	color: var(--sf-on-pillar);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-tab.qw-has-fail {
+	border: 2px solid var(--sf-danger);
+}
+
+/* Failing and on screen: the danger edge on three sides, and the bar kept. */
+.qw-tab.qw-active.qw-has-fail {
+	border-bottom: 4px solid var(--sf-primary);
+}
+
+.qw-tab-flag {
+	margin-left: 6px;
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.qw-tab.qw-active .qw-tab-flag {
+	color: var(--sf-on-pillar);
+}
+
+.qw-card {
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 14px;
+	margin-bottom: var(--sf-space-10);
+	color: var(--sf-text);
+}
+
+.qw-card.qw-bad {
+	border-color: var(--sf-danger);
+	border-left: 4px solid var(--sf-danger);
+	background: color-mix(in srgb, var(--sf-danger) 6%, var(--sf-surface));
+}
+
+.qw-card.qw-done {
+	border-color: var(--sf-good);
+}
+
+.qw-card-title {
+	font-weight: var(--sf-weight-bold);
+	font-size: 17px;
+	line-height: 1.35;
+	color: var(--sf-text-strong);
+}
+
+.qw-card-sub {
+	font-size: 14px;
+	color: var(--sf-text-muted);
+	margin-top: 4px;
+}
+
+.qw-chip {
+	display: inline-block;
+	font-size: var(--sf-text-xs);
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-pill);
+	padding: 2px 9px;
+	margin-left: 6px;
+	vertical-align: middle;
+}
+
+.qw-chip-req {
+	background: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
+	color: var(--sf-on-warn);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-chip-photo {
+	background: transparent;
+	border-color: var(--sf-field-border);
+	color: var(--sf-text-muted);
+}
+
+.qw-chip-carried {
+	background: var(--sf-pillar-neutral-deep);
+	border-color: var(--sf-chip-edge-neutral);
+	color: var(--sf-on-pillar);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-chip-addendum {
+	background: transparent;
+	border-color: var(--sf-chip-edge-neutral);
+	color: var(--sf-text-strong);
+}
+
+.qw-chip-red {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-seg {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.qw-seg button {
+	flex: 1 1 calc(33% - 8px);
+	min-width: 84px;
+	min-height: 48px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	cursor: pointer;
+	padding: 7px 4px;
+}
+
+.qw-seg button.qw-on {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-seg button.qw-on.qw-neg {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+}
+
+.qw-seg button.qw-on.qw-na {
+	background: var(--sf-text-muted);
+	border-color: var(--sf-text-muted);
+	color: var(--sf-surface);
+}
+
+.qw-measure {
+	display: flex;
+	gap: var(--sf-space-10);
+	align-items: center;
+	margin-top: 12px;
+}
+
+.qw-measure input {
+	flex: 1;
+	min-width: 0;
+	font-size: 24px;
+	text-align: center;
+	padding: var(--sf-space-10);
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.qw-measure input:focus,
+.qw-row-extra input:focus {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
+}
+
+/* The field stays white in both themes, so the danger token reads on it directly. */
+.qw-measure input.qw-oor {
+	border: 2px solid var(--sf-danger);
+	color: var(--sf-danger);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-measure .qw-uom {
+	flex: 0 0 auto;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text-muted);
+}
+
+.qw-range {
+	margin-top: 6px;
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+	text-align: center;
+}
+
+.qw-range.qw-oor {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: var(--sf-weight-bold);
+}
+
+/* "Out of range", printed only while the range line is marked. Typing a new value clears
+ * the RANGE line's class at once, so the word and the line's red go together. The input's
+ * own red edge (.qw-measure input.qw-oor) is left as it was until the save comes back and
+ * the server's verdict repaints the row; the server decides, not the page. */
+.qw-oor-word {
+	display: none;
+}
+
+.qw-range.qw-oor .qw-oor-word {
+	display: inline;
+}
+
+.qw-row-extra {
+	margin-top: var(--sf-space-10);
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.qw-row-extra input {
+	flex: 1;
+	min-width: 0;
+	padding: var(--sf-space-10);
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+.qw-photo-btn {
+	flex: 0 0 auto;
+	min-width: 52px;
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	cursor: pointer;
+	font-size: 18px;
+}
+
+/* A photo is attached: the tick says so, the green edge repeats it. */
+.qw-photo-btn.qw-has-photo {
+	border: 2px solid var(--sf-good);
+	background: color-mix(in srgb, var(--sf-good) 12%, var(--sf-surface));
+}
+
+.qw-photo-btn.qw-has-photo::after {
+	content: "✓";
+	margin-left: 2px;
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+/* Banners: a tint and a leading bar of the tone, with the theme's strong text on top. The
+ * heading or the sentence inside says what the tone means. */
+.qw-banner {
+	border-radius: var(--sf-radius-none);
+	border-left: 4px solid var(--sf-rule);
+	padding: 12px 14px;
+	margin-bottom: var(--sf-space-10);
+	font-size: var(--sf-text-md);
+	line-height: 1.45;
+	color: var(--sf-text-strong);
+}
+
+.qw-banner-red {
+	border-left-color: var(--sf-danger);
+	background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
+}
+
+.qw-banner-blue {
+	border-left-color: var(--sf-focus);
+	background: color-mix(in srgb, var(--sf-focus) 12%, transparent);
+}
+
+.qw-banner-green {
+	border-left-color: var(--sf-good);
+	background: color-mix(in srgb, var(--sf-good) 12%, transparent);
+}
+
+.qw-banner-amber {
+	border-left-color: var(--sf-warn);
+	background: color-mix(in srgb, var(--sf-warn) 18%, transparent);
+}
+
+.qw-banner h6 {
+	margin: 0 0 4px;
+	font-size: var(--sf-text-sm);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-text-strong);
+}
+
+.qw-banner a {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.qw-help {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	margin-bottom: var(--sf-space-10);
+	overflow: hidden;
+	background: var(--sf-surface);
+}
+
+.qw-help-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 12px 14px;
+	background: none;
+	border: none;
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+	text-align: left;
+}
+
+.qw-help-caret {
+	margin-left: auto;
+	transition: transform var(--sf-duration) var(--sf-ease);
+}
+
+.qw-help.qw-open .qw-help-caret {
+	transform: rotate(90deg);
+}
+
+.qw-help-body {
+	padding: 0 14px 14px;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--sf-text);
+}
+
+.qw-nav {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	gap: var(--sf-space-10);
+	padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+	background: var(--bg-color);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	z-index: 5;
+}
+
+.qw-nav button {
+	flex: 1;
+	min-height: 50px;
+	border-radius: var(--sf-radius-control);
+	border: 2px solid var(--sf-text);
+	background: transparent;
+	color: var(--sf-text);
+	font-size: var(--sf-text-input);
+	cursor: pointer;
+}
+
+.qw-nav button.qw-primary {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.qw-nav button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.qw-nav button:focus-visible,
+.qw-seg button:focus-visible,
+.qw-tab:focus-visible,
+.qw-photo-btn:focus-visible,
+.qw-help-head:focus-visible,
+.qw-list-item:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.qw-savestate {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: calc(74px + env(safe-area-inset-bottom));
+	text-align: center;
+	font-size: var(--sf-text-sm);
+	pointer-events: none;
+	z-index: 6;
+}
+
+.qw-savestate span {
+	display: inline-block;
+	padding: 4px 12px;
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.qw-savestate.qw-err span {
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+	border-color: var(--sf-chip-edge-danger);
+	font-weight: var(--sf-weight-bold);
+	pointer-events: auto;
+}
+
+.qw-list-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 14px;
+	margin-bottom: var(--sf-space-10);
+	color: var(--sf-text);
+	cursor: pointer;
+}
+
+.qw-list-item:hover {
+	border-color: var(--sf-focus);
+}
+
+.qw-list-item h5 {
+	margin: 0 0 4px;
+	font-size: 16px;
+	color: var(--sf-text-strong);
+}
+
+.qw-sign {
+	margin-top: var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 12px;
+	background: var(--sf-surface);
+}
+
+/* A signature is dark ink on a transparent image, so it sits on white in both themes. */
+.qw-sign-img {
+	max-width: 100%;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-white);
+}
+
+.qw-empty {
+	text-align: center;
+	padding: var(--sf-space-40) 16px;
+	color: var(--sf-text-muted);
+}
+
+.qw-empty a {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+	.qw-card,
+	.qw-list-item {
+		padding: 12px;
+	}
+
+	.qw-card-title {
+		font-size: 16px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.qw-progress > div,
+	.qw-help-caret {
+		transition: none;
+	}
+}
