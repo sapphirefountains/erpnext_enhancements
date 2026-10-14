@@ -12,6 +12,12 @@
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
 // Forward re-render through on_page_show -> handle_route.
 //
+// The Technician filter rides along on every one of those as the query (S5c):
+// /desk/maintenance-planner/week/2026-10-05?technician=<user> (__none__ for Unassigned). A link
+// with it opens the planner on that technician, and a reload keeps it. Picking a technician rewrites
+// the address in place; it is not a screen of its own. See "the filter in the address" below. The
+// two boxes beside it (Projected visits, Project work) are display switches and stay remembered only.
+//
 // Cards come from erpnext_enhancements.api.maintenance_planner.get_planner:
 //   visit      a Sapphire Maintenance Record. It carries `technician` (the lead, who fills it in),
 //              `crew` ([{user, name, hours}]: the others booked on it), `planned_hours`, `full_day` and
@@ -71,6 +77,10 @@ const MP = {
 	projected_key: "ee_maintenance_planner_projected",
 	project_key: "ee_maintenance_planner_project_work",
 	panel_key: "ee_maintenance_planner_panel",
+	// The filter the address carries (S5c): ?technician=<user>, or __none__ for Unassigned.
+	url_filters: ["technician"],
+	// The longest value the address may give it: a document name's limit.
+	url_value_max: 140,
 	hold_ms: 300,
 	drag_px: 6,
 	undo_max: 20,
@@ -168,6 +178,10 @@ class MaintenancePlanner {
 		this.page.set_secondary_action(__("Day Board"), () => frappe.set_route("maintenance-day-board"));
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		// The person's own filter, and the one the address gave while it is on screen (S5c).
+		this.own_filters = this.filters();
+		this.url_filters = null;
+		this.watch_filter_url();
 		this.init_phase6a();
 		this.init_phase6b();
 		this.init_phase6c();
@@ -191,6 +205,7 @@ class MaintenancePlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
 		this.load();
@@ -202,7 +217,132 @@ class MaintenancePlanner {
 			this.load();
 			return;
 		}
-		this.p6a_route(() => frappe.set_route(MP.route, view, anchor), true);
+		this.self_route = [MP.route, view, anchor].join("/");
+		this.p6a_route(() => frappe.set_route(MP.route, view, anchor, this.filter_options()), true);
+	}
+
+	// ------------------------------------------------------------------ the filter in the address (S5c)
+	//
+	// The Technician filter is part of the address, as ?technician=, on every planner screen. The same
+	// rules as the Project Planner's filters (its "filters in the address" says why each is so):
+	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
+	//     address wins over it. An address that does not name it keeps the technician on screen.
+	//   - What the address gave is that visit's only: not remembered, and "last used" keeps the
+	//     person's own technician while it is on screen (p6c_save_last). A bare address after it
+	//     brings back the person's own, except on the planner's own next screen (self_route). A
+	//     technician the person picks (pick_filter) is theirs, remembered as before. One the loaded
+	//     planner does not list becomes All and stops being the address's, and so does one that is
+	//     the person's own anyway (a Back onto one of their own entries).
+	//   - Back onto an entry the planner left bare (All, and the person's own) names nothing, so it
+	//     keeps whatever technician is on screen by then, the newer one.
+	//   - Picking one rewrites the address in place (write_filter_url, no new entry): a filter is not
+	//     a screen, and Back steps through months, weeks and views, not through every pick. A month,
+	//     a week or a view moves by set_route as it always has, carrying the filter (filter_options).
+	//   - The key is consumed from route_options, so it is never written into the next route's
+	//     address. Keys that are not the planner's are not its to take.
+
+	filters() {
+		return { technician: this.technician || "" };
+	}
+
+	filter_options() {
+		return this.technician ? { technician: this.technician } : {};
+	}
+
+	// A value the address gives the filter, or null when it cannot take it, which ignores it. Whether
+	// that person is on the list is only known once the planner has loaded (fill_technicians).
+	filter_from_address(key, value) {
+		if (value == null || typeof value === "object") return null;
+		const text = String(value).trim();
+		return text.length > MP.url_value_max ? null : text;
+	}
+
+	take_route_filters() {
+		const opts = frappe.route_options;
+		const named = {};
+		if (opts && typeof opts === "object") {
+			MP.url_filters.forEach((key) => {
+				if (!Object.prototype.hasOwnProperty.call(opts, key)) return;
+				const value = this.filter_from_address(key, opts[key]);
+				if (value !== null) named[key] = value;
+				delete opts[key];
+			});
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
+		// The planner's own next screen (go) carries the technician on screen; with All it carries
+		// nothing, and is no bare address for all that.
+		const self_step = !!this.self_route && this.self_route === (frappe.get_route() || []).join("/");
+		this.self_route = null;
+		const own = this.own_filter_values();
+		let next = null;
+		if (Object.keys(named).length) {
+			next = { technician: named.technician || "" };
+			// The planner's own screens carry the filter on screen: nothing changes, nothing is marked.
+			if (next.technician === this.filters().technician) next = null;
+			else this.url_filters = Object.assign({}, next);
+		} else if (this.url_filters && !self_step) {
+			next = own;
+			this.url_filters = null;
+		}
+		// The person's own technician again (a Back onto one of their own entries): theirs, not a link's.
+		if (this.url_filters && (next || this.filters()).technician === own.technician) this.url_filters = null;
+		if (next) {
+			this.technician = next.technician;
+			if (this.$tech) this.$tech.val(this.technician);
+		}
+		this.write_filter_url();
+	}
+
+	own_filter_values() {
+		return Object.assign({ technician: "" }, this.own_filters);
+	}
+
+	// The key the address gave stops being the address's: the person picked one, or the loaded planner
+	// reset it to All.
+	release_filter(key) {
+		if (!this.url_filters) return;
+		delete this.url_filters[key];
+		if (!Object.keys(this.url_filters).length) this.url_filters = null;
+	}
+
+	// A technician picked in the bar.
+	pick_filter(value) {
+		this.technician = value || "";
+		this.own_filters = Object.assign(this.own_filter_values(), { technician: this.technician });
+		this.release_filter("technician");
+		this.save_pref(MP.tech_key, this.technician);
+		this.write_filter_url();
+		this.render();
+	}
+
+	// The page's one history write: the filter on screen into the entry on screen, in place. Only
+	// while the router is on the planner's own path and never over a filter the page has not read
+	// yet. The path as the router wrote it, any key that is not the planner's, the hash and
+	// history.state are kept; values are encoded as v16.50's set_route encodes them, an apostrophe as
+	// the browser writes it in a query (%27), or the address read back would never match.
+	write_filter_url() {
+		const path = window.location.pathname;
+		if ((frappe.get_route() || [])[0] !== MP.route || !path.split("/").includes(MP.route)) return;
+		const opts = frappe.route_options;
+		if (opts && MP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return;
+		const enc = (text) => encodeURIComponent(text).replace(/'/g, "%27");
+		const pairs = [];
+		const filters = this.filters();
+		MP.url_filters.forEach((key) => {
+			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
+		});
+		new URLSearchParams(window.location.search).forEach((value, key) => {
+			if (!MP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
+		});
+		const search = pairs.length ? `?${pairs.join("&")}` : "";
+		if (search === window.location.search) return;
+		window.history.replaceState(window.history.state, "", path + search + window.location.hash);
+	}
+
+	// A Back the router does not route (the planner kit closing its drawer) may land on an entry that
+	// still holds the technician from before a pick; once the router has had its turn, it is updated.
+	watch_filter_url() {
+		window.addEventListener("popstate", () => setTimeout(() => this.write_filter_url(), 0));
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -324,11 +464,7 @@ class MaintenancePlanner {
 		$('<span class="mp-spacer"></span>').appendTo($bar);
 		this.$tech = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", __("Technician"))
-			.on("change", () => {
-				this.technician = this.$tech.val() || "";
-				this.save_pref(MP.tech_key, this.technician);
-				this.render();
-			})
+			.on("change", () => this.pick_filter(this.$tech.val() || ""))
 			.appendTo($bar);
 		const $projected = $("<label></label>").appendTo($bar);
 		$('<input type="checkbox">')
@@ -410,6 +546,8 @@ class MaintenancePlanner {
 				this.$body.removeClass("mp-loading");
 				this.index();
 				this.fill_technicians();
+				// A technician the planner does not list has just become All: the address says so too.
+				this.write_filter_url();
 				this.render();
 			})
 			.catch(() => {
@@ -449,6 +587,8 @@ class MaintenancePlanner {
 				.appendTo(this.$tech);
 		});
 		const known = !keep || keep === "__none__" || people.some((person) => person.user === keep);
+		// One a link named that is not listed is ignored: All, and no longer the link's (S5c).
+		if (!known && this.url_filters && this.url_filters.technician === keep) this.release_filter("technician");
 		this.technician = known ? keep : "";
 		this.$tech.val(this.technician);
 	}
@@ -2158,7 +2298,14 @@ const MP6A_METHODS = {
 			},
 			true
 		);
-		frappe.require(MP6A.kit, () => this.p6a_ready());
+		this.p6a_require(() => this.p6a_ready());
+	},
+
+	// The kit and its stylesheet, asked for once (S5c); see the Project Planner's twin for why. Both
+	// planners share the one request (window.planner_kit_request), since PP6A.kit is the same two files.
+	p6a_require(callback) {
+		if (!window.planner_kit_request) window.planner_kit_request = Promise.resolve(frappe.require(MP6A.kit));
+		return window.planner_kit_request.then(callback);
 	},
 
 	p6a_ready() {
@@ -4702,12 +4849,17 @@ const MP6C_METHODS = {
 			const known = ((this.data && this.data.technicians) || []).some((person) => person.user === this.technician);
 			if (!known) this.technician = "";
 		}
+		// A view of their own (restored or picked) is the person's filter, not an address's (S5c).
+		this.url_filters = null;
+		this.own_filters = this.filters();
 		this.p6c_sync_controls();
 		if (opts.route && view.view && view.view !== this.view) {
 			this.go(view.view, this.anchor);
 			return;
 		}
-		if (opts.render !== false && this.data) this.render();
+		if (opts.render === false) return;
+		this.write_filter_url();
+		if (this.data) this.render();
 	},
 
 	p6c_state_soon() {
@@ -4721,6 +4873,11 @@ const MP6C_METHODS = {
 		const p6c = this.p6c;
 		if (!MP6C.schema.view[1].includes(this.view)) return;
 		const state = this.p6c_state();
+		// A technician the address gave (S5c) is that visit's, not "last used": it keeps the person's
+		// own until they pick one themselves (pick_filter).
+		Object.keys(this.url_filters || {}).forEach((key) => {
+			if (key in state) state[key] = this.own_filter_values()[key];
+		});
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;
@@ -5191,7 +5348,7 @@ const MP6D_METHODS = {
 			},
 			true
 		);
-		frappe.require(MP6A.kit, () => this.p6d_ready());
+		this.p6a_require(() => this.p6d_ready());
 	},
 
 	p6d_ready() {

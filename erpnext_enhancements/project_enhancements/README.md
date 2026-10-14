@@ -723,13 +723,52 @@ under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 (`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
 or to `/week/<expected_start_date>` for a project that has not started yet. The button is only on
 an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
-those whose roles open the page. `take_route_project` (from `handle_route`) reads `project` from
-`frappe.route_options` after the last-used view is restored, consumes it, and clears the PM filter
-so it cannot hide that project's cards. It is a one-off: the remembered filters are not saved, the
-"last used" view is not saved while the link's project is the filter (`project_link`), and the key
-is taken out of the address with `history.replaceState` so Back does not reapply it. A linked
-project the planner does not list stays the filter, and a filtered project with nothing in range
-or unscheduled is named in a "No work for … in this range" note over the calendar.
+those whose roles open the page. The planner reads `project` as one of its address filters (below):
+after the last-used view is restored, so it wins over that, with the PM filter at All so it cannot
+hide that project's cards. It is a one-off: the remembered filters are not saved, and nor is the
+"last used" view while the link's filters are on screen. A linked project the planner does not list
+stays the filter, and a filtered project with nothing in range or unscheduled is named in a "No
+work for … in this range" note over the calendar. (Until v1.676.0 the key was taken out of the
+address; it now stays there, as the Project filter.)
+
+**Its filters are in the address** (custom pages S5c, v1.676.0, TASK-2026-02807). The Project,
+Project manager and Group filters ride on every planner screen as `?project=`, `?pm=` and
+`?group=`, e.g. `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`, so a copied
+link shows what its sender saw and a reload keeps it. The Maintenance Planner does the same for its
+Technician (`?technician=`, see the Sapphire Maintenance README). The rules, in the page's "filters
+in the address" block:
+
+- `take_route_filters` (from `handle_route`, after `p6c_before_route`) reads the keys from
+  `frappe.route_options` and consumes them, so none is written into the next route's address
+  (v16.50's `set_route` writes whatever is left there). Keys that are not the planner's are left
+  alone. An address that names any filter is the whole filter: one it does not name is All. An
+  address that names none (the sidebar, another page's path-only link) keeps the filters on screen,
+  and they are written into it. A group that is not one of the four, an overlong value or an object
+  is ignored; a PM the loaded planner does not list becomes All, and the address follows.
+- **A link's filters are that visit's only** (S5b's rule for the form link, made general).
+  `url_filters` holds the keys the address decided. None is saved to the remembered filters, and
+  "last used" keeps the person's own value for each.
+  - A filter the person picks (`pick_filter`: the three selects, and "Filter to this project" in a
+    project's drawer) is theirs and saved as before. Only that one: the link's others stay one-off.
+  - A key the loaded planner resets to All stops being the link's.
+  - Back onto the person's own filters makes them theirs again.
+  - A bare planner address after a link brings back the person's own filters. The planner's own
+    next screen (`self_route`) is not such an address, even when it carries no query.
+  - Back onto an entry the planner left bare (all All, and the person's own) keeps the newer
+    filters on screen.
+  - A saved view, used or restored, is theirs too.
+- **A pick replaces, a screen pushes.** `pick_filter` rewrites the entry on screen in place
+  (`write_filter_url`, `history.replaceState`, the page's one history write). A filter is not a
+  screen: a push per pick would make Back step through every select change before it reached the
+  week before, and Nik's rule is an entry per screen. The entry keeps saying what it shows, so Back
+  onto it, a reload and a copied link all show it again. A week, month, view, heatmap, My week or a
+  person's route is a screen and moves by `set_route`, carrying the filters (`filter_options`), so
+  Back and Forward walk the screens, each with the filters it had. The write happens only on the
+  planner's own path and never over keys the router has put in `route_options` that the page has
+  not read yet. `watch_filter_url` re-runs it after a popstate the router does not route (the
+  planner kit closing a drawer), so a pick made under a drawer reaches the entry below.
+- Guarded by `tests/test_planner_url_filters.py`, which runs `scripts/test_planner_url_filters.js`:
+  the real page scripts against a model of v16.50's router (and the router before it).
 
 **Its stylesheet** (custom pages S3.4d, v1.664.0) is `page/project_planner/project_planner.css`,
 which Frappe's page loader sends with the page; the script writes no `<style>` element. The file is
@@ -1087,7 +1126,13 @@ Its stylesheet is a bundle of its own, `public/css/planner_kit.bundle.css` (cust
 v1.673.0), on the `--sf-*` tokens, which each planner loads in the same require as the kit
 (`PP6A.kit` and `MP6A.kit` list both bundles): its `<link>` lands after the page's own stylesheet,
 so the kit's rules still come after the page's, as the injected text did, and the callback waits
-for it, so nothing the kit draws flashes unstyled. It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
+for it, so nothing the kit draws flashes unstyled. **Each page asks for it once**, through
+`p6a_require` (custom pages S5c, v1.676.0), which 6A's and 6D's start-up both call: v16.50's
+`frappe.require` counts a file as loaded only once it has finished loading (`assets.js` pushes to
+`_executed` after `onload`), so the two requires the constructor used to make in one tick each
+appended a `<script>` and a `<link>`, and the kit's stylesheet was on the page twice. The request is
+kept on `window.planner_kit_request`, one per Desk, shared by both planners, so opening the other
+planner while it is on its way does not ask again either. It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
 
 | Part | Use | Notes |
 |---|---|---|

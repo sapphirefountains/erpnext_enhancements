@@ -161,6 +161,15 @@ class TestCrewsPageSource(unittest.TestCase):
 
 	def test_nothing_else_changed_about_how_the_page_behaves(self):
 		code = self.code
+		self.assertIn("frappe.set_route(MP.route, view, anchor, this.filter_options())", code)
+		# The page's one history write is write_filter_url's in-place rewrite of the Technician filter
+		# in the address, re-run by watch_filter_url after a popstate (S5c, v1.676.0; held by
+		# tests/test_planner_url_filters.py). Neither pushes.
+		for method in ("\twrite_filter_url() {", "\twatch_filter_url() {"):
+			start = code.index(method)
+			end = code.index("\n\t}\n", start)
+			self.assertNotIn("pushState", code[start:end])
+			code = code[:start] + code[end:]
 		for forbidden in (
 			"draggable",
 			"dragstart",
@@ -173,7 +182,6 @@ class TestCrewsPageSource(unittest.TestCase):
 		):
 			self.assertNotIn(forbidden, code)
 		self.assertEqual(code.count("localStorage"), 2)
-		self.assertIn("frappe.set_route(MP.route, view, anchor)", code)
 		# New visible text is translated.
 		for text in ("Planned hours", "Full day", "{0} added to {1}", "{0}h each", "Crew"):
 			self.assertIn(f'__("{text}"', code)

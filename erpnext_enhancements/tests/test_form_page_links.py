@@ -5,8 +5,10 @@ Each form opens the page that works on the same record, in the right state:
 * Project — View > Open in Project Planner, on an open customer job (a planner project type):
   the planner with that project as its Project filter (``?project=``, read from
   ``frappe.route_options`` and consumed by the planner), on the week the project starts when that
-  is still ahead. A one-off: the person's remembered filters and "last used" view are untouched,
-  and the key leaves the address so Back does not put the filter back.
+  is still ahead. A one-off: the person's remembered filters and "last used" view are untouched.
+  Since S5c (v1.676.0) the key stays in the address, as the planner's Project filter: the planner
+  keeps all its filters there and rewrites the entry in place when one is picked, so Back onto it
+  still shows what was picked (``tests/test_planner_url_filters.py``).
 * Project Quality Inspection — Open in Inspection Wizard, on a saved draft:
   ``/desk/inspection-wizard/<inspection>/0``, the wizard's own path form.
 * Rental Booking — View > Open in Rental Planner: the board from the booking's first day
@@ -162,48 +164,55 @@ class TestTheButtons(unittest.TestCase):
 
 
 class TestTheProjectPlannerRead(unittest.TestCase):
-	"""The planner's one new read: `project` from route_options, consumed, after the last-used
-	view is restored (p6c_before_route) so the form's project wins over the remembered one. A
-	one-off: nothing saved, and the key taken out of the address in place."""
+	"""The planner's read of `project`: from route_options, consumed, after the last-used view is
+	restored (p6c_before_route) so the form's project wins over the remembered one. A one-off:
+	nothing saved. Since S5c (v1.676.0) it is one of the three filters `take_route_filters` reads,
+	and the key stays in the address; tests/test_planner_url_filters.py holds the rest."""
 
 	def _read(self):
 		code = _code(PROJECT_PLANNER)
-		return _between(code, "\ttake_route_project() {", "\tset_mode(mode) {")
+		return _between(code, "\ttake_route_filters() {", "\tpick_filter(key, value) {")
 
 	def test_project_is_read_after_the_last_used_view_and_consumed(self):
 		code = _code(PROJECT_PLANNER)
-		handle = _between(code, "\thandle_route() {", "\ttake_route_project() {")
-		self.assertLess(handle.index("this.p6c_before_route()"), handle.index("this.take_route_project();"))
-		self.assertLess(handle.index("this.take_route_project();"), handle.index("this.view = target.view;"))
+		handle = _between(code, "\thandle_route() {", "\tset_mode(mode) {")
+		self.assertLess(handle.index("this.p6c_before_route()"), handle.index("this.take_route_filters();"))
+		self.assertLess(handle.index("this.take_route_filters();"), handle.index("this.view = target.view;"))
 		read = self._read()
-		self.assertIn('Object.prototype.hasOwnProperty.call(opts, "project")', read)
-		self.assertIn("delete opts.project;", read)
+		self.assertIn("Object.prototype.hasOwnProperty.call(opts, key)", read)
+		self.assertIn("delete opts[key];", read)
 		self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", read)
-		self.assertIn('this.pm = "";', read)
+		self.assertIn('url_filters: ["project", "pm", "group"],', code)
+		# The link names only the project, so the PM filter is All and cannot hide its cards.
+		self.assertIn(
+			'next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };', read
+		)
 
 	def test_the_link_saves_nothing(self):
 		"""The person's remembered project and PM, and their "last used" view, are left alone."""
 		read = self._read()
 		self.assertNotIn("save_pref", read)
-		self.assertIn('this.project = this.project_link = String(opts.project || "");', read)
+		self.assertIn("else this.url_filters = Object.assign({}, next);", read)
 		save_last = _between(_code(PROJECT_PLANNER), "\tp6c_save_last() {", "\tp6c_matching_view() {")
-		self.assertIn("if (this.project_link && this.project === this.project_link) return;", save_last)
+		self.assertIn("state[key] = this.own_filter_values()[key];", save_last)
 
-	def test_the_only_history_write_takes_the_key_out_of_the_address(self):
-		"""One replaceState, on the entry on screen, so Back onto it does not reapply the filter;
-		the planner still moves between screens only by set_route."""
+	def test_the_only_history_write_is_in_place(self):
+		"""One replaceState, on the entry on screen; the planner still moves between screens only
+		by set_route."""
 		code = _code(PROJECT_PLANNER)
 		self.assertNotIn("history.pushState", code)
 		self.assertEqual(code.count("history.replaceState"), 1)
+		write = _between(code, "\twrite_filter_url() {", "\twatch_filter_url() {")
 		self.assertIn(
-			'window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : ""));',
-			self._read(),
+			'window.history.replaceState(window.history.state, "", path + search + window.location.hash);',
+			write,
 		)
 
 	def test_an_unlisted_linked_project_stays_the_filter_and_is_named(self):
 		code = _code(PROJECT_PLANNER)
 		fill = _between(code, "\tfill_filters() {", "\ttask_visible(card) {")
-		self.assertIn("this.project === this.project_link && !this.by_project[this.project]", fill)
+		self.assertIn("const linked = this.url_filters && this.project === this.url_filters.project;", fill)
+		self.assertIn("if (this.project && linked && !this.by_project[this.project]) {", fill)
 		render = _between(code, "\trender() {", "\tavail_state(day) {")
 		self.assertIn('__("No work for {0} in this range."', render)
 		self.assertIn(".prependTo(this.$grid_wrap);", render)
