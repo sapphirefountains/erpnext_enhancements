@@ -31,6 +31,20 @@ export function journal_key(doctype, name) {
 	return `${JOURNAL_PREFIX}${doctype}/${name}`;
 }
 
+// A record not created yet: one per DocType on a phone, step 1's values and the create's id.
+export const NEW_PREFIX = "ge-new:";
+
+export function new_key(doctype) {
+	return `${NEW_PREFIX}${doctype}`;
+}
+
+// Whether a kept new record is one this page wrote and still worth putting back.
+export function usable_new(entry, now) {
+	if (!entry || typeof entry !== "object" || !entry.values || typeof entry.values !== "object") return false;
+	if (!Object.keys(entry.values).length) return false;
+	return !(Number(now) && Number(entry.at) && Number(now) - Number(entry.at) > JOURNAL_MAX_AGE_MS);
+}
+
 // Whether a failed save is the network's doing (no signal, a gateway, a restart), so it is kept
 // and retried, rather than the server refusing it (a validation, a permission).
 export function try_later(error) {

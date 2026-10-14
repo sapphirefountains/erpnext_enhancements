@@ -138,7 +138,60 @@ def _result(doctype, doc, fields):
 	}
 
 
-def create_record(doctype, values, prefill=None):
+#: How long a create's client id is remembered: as long as the guided page keeps a create that
+#: could not be sent (form_kit/journal.js, 30 days), with a day to spare.
+CLIENT_ID_TTL_SECONDS = 31 * 24 * 3600
+
+
+def _client_id(value):
+	"""The page's id for one create, or "" when it is absent or not the shape the page makes."""
+	text = value.strip() if isinstance(value, str) else ""
+	if 8 <= len(text) <= 64 and all(c.isascii() and (c.isalnum() or c == "-") for c in text):
+		return text
+	return ""
+
+
+def _client_id_key(doctype, client_id):
+	# No make_key here: get_value and set_value add the site prefix themselves.
+	return f"ee_form_kit_created:{frappe.session.user}:{doctype}:{client_id}"
+
+
+def _already_created(doctype, client_id):
+	"""The record this create already made for the session user, or None.
+
+	Checked against the table, so a name remembered for an insert that was rolled back is not taken
+	for proof that the record exists.
+	"""
+	if not client_id:
+		return None
+	name = frappe.cache.get_value(_client_id_key(doctype, client_id))
+	if not name or not frappe.db.exists(doctype, {"name": name, "owner": frappe.session.user}):
+		return None
+	return frappe.get_doc(doctype, name)
+
+
+def _remember_created(doctype, client_id, name):
+	"""Remember the insert once it is committed (api/feedback.py's capture panel does the same).
+
+	After commit, not now: a remembered name for an insert that then rolled back would turn the
+	page's resend into a silent no-op. The deploy's FLUSHDB forgets every id, which costs at worst
+	the duplicate this exists to prevent.
+	"""
+	if not client_id:
+		return
+	key = _client_id_key(doctype, client_id)
+
+	def remember():
+		frappe.cache.set_value(key, name, expires_in_sec=CLIENT_ID_TTL_SECONDS)
+
+	after_commit = getattr(frappe.db, "after_commit", None)
+	if after_commit is not None and hasattr(after_commit, "add"):
+		after_commit.add(remember)
+	else:
+		remember()
+
+
+def create_record(doctype, values, prefill=None, client_id=None):
 	"""Insert a new draft of ``doctype`` from step 1's fields. Returns the save result shape.
 
 	``frappe.new_doc`` first, so the record gets the same defaults the Desk's New form does
@@ -149,10 +202,21 @@ def create_record(doctype, values, prefill=None):
 	(the Customer form's *Create > Opportunity*), or a mapped document. Only
 	:func:`form_kit.steps.prefill_fields` are taken from it, and never over a step-1 value, so
 	it can carry a hidden contact or a billing address but cannot set what the flow would not.
+
+	``client_id`` is the page's id for this one create (form kit P4.7). A create sent with no signal
+	is kept on the phone and sent again when the signal returns, and the first attempt may have
+	arrived after all, its answer lost on the way back. So an id this user's create already used
+	returns that record rather than inserting it twice.
 	"""
 	values = _parse(values)
 	prefill = _parse(prefill) if prefill not in (None, "", "null") else {}
 	frappe.has_permission(doctype, "create", throw=True)
+	client_id = _client_id(client_id)
+	existing = _already_created(doctype, client_id)
+	if existing is not None:
+		steps = flow.flow_steps(doctype, existing)
+		create_step = next(step for step in steps if step["create"])
+		return _result(doctype, existing, flow.value_fields(steps, create_step["key"]))
 	doc = frappe.new_doc(doctype)
 	steps = flow.flow_steps(doctype, doc)
 	allowed = flow.editable_fields(steps, create_only=True)
@@ -166,6 +230,7 @@ def create_record(doctype, values, prefill=None):
 		}
 		assign(doc, extra, prefill)
 	doc.insert()
+	_remember_created(doctype, client_id, doc.name)
 	create_step = next(step for step in steps if step["create"])
 	return _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
 

@@ -607,6 +607,13 @@ out.queue = q;
 			{ t: [{ name: "r1", idx: 1, c: "a" }] }
 		),
 		reconciled_nothing: kit.reconcile(null, {}),
+		new_key: kit.new_key("Opportunity"),
+		usable_new: [
+			kit.usable_new({ values: { party_name: "X" }, at: 1000 }, 2000),
+			kit.usable_new({ values: { party_name: "X" }, at: 1000 }, 1000 + kit.JOURNAL_MAX_AGE_MS + 1),
+			kit.usable_new({ values: {}, at: 1000 }, 2000),
+			kit.usable_new(null, 1),
+		],
 		try_later: [
 			{ status: 0 },
 			{ status: 502 },
@@ -952,6 +959,11 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		rows = self.out["journal"]["reconciled_rows"]
 		self.assertEqual(rows["reapply"], {"t": [{"c": "a"}, {"c": "b"}]})
 		self.assertEqual(self.out["journal"]["reconciled_nothing"], {"reapply": {}, "drop": [], "conflicts": []})
+
+	def test_a_record_not_created_yet_is_kept_once_per_doctype(self):
+		j = self.out["journal"]
+		self.assertEqual(j["new_key"], "ge-new:Opportunity")
+		self.assertEqual(j["usable_new"], [True, False, False, False])
 
 	def test_only_the_networks_failures_wait_for_signal(self):
 		self.assertEqual(
@@ -1301,6 +1313,16 @@ class TestNoSignal(unittest.TestCase):
 			with self.subTest(function=name):
 				self.assertIn("} catch (e) {", body)
 		self.assertIn("if (!this.has_unsaved() || this.kept_on_phone()) return;", code)
+
+	def test_a_create_without_signal_is_kept_and_sent_again_with_its_id(self):
+		code = _code(PAGE_JS)
+		self.assertIn("const args = { doctype, values, client_id: this.client_id };", code)
+		self.assertIn("if (this.kit.try_later(err) && this.write_new_journal()) {", code)
+		self.assertIn('this.notice.kind === "create-offline" && !this.creating && this.showing()', code)
+		# The kept copy is dropped once created, and whenever the full form takes over.
+		self.assertIn("ge_write_kept(this.kit.new_key(doctype), null);", code)
+		self.assertIn("this.forget_new();", code)
+		self.assertIn("if (entry.client_id) this.client_id = entry.client_id;", code)
 
 	def test_the_saving_line_says_kept_on_the_phone(self):
 		code = _code(PAGE_JS)

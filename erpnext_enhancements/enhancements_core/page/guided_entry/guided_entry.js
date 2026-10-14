@@ -46,8 +46,11 @@
 // that fails for want of signal says "Saved on this phone" rather than "Not saved", and is retried
 // when the signal returns (the window's "online" event, and every 20 s while waiting). Opening the
 // record again puts kept changes back: still the server's old value, saved; already there,
-// dropped; changed by someone else, asked, with the same chooser as any conflict. Closing the tab
-// warns only when the phone could not keep something (storage refused, or a record not created).
+// dropped; changed by someone else, asked, with the same chooser as any conflict. A record not
+// created yet is kept the same way (step 1 as typed, and the create's id); a create that cannot be
+// sent waits for the signal, and the id makes the server answer a resend with the record the first
+// attempt made, if it arrived after all. Closing the tab warns only when the phone could not keep
+// something (storage refused).
 //
 // Every request this page makes goes through sf_kit.call(..., { quiet: true }): frappe.call's own
 // dialogs (403, 5xx, QueryTimeout) would interrupt a page that already says it once, in its
@@ -124,6 +127,16 @@ function ge_write_kept(key, entry) {
 	} catch (e) {
 		return false;
 	}
+}
+
+// The id of one create (saver.create_record's client_id): a UUID where the browser has one.
+function ge_client_id() {
+	try {
+		if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+	} catch (e) {
+		// Falls through to the timestamp-and-random id.
+	}
+	return `ge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 // One string for what a new record was started with, "" for nothing.
@@ -244,6 +257,7 @@ class GuidedEntry {
 		// options themselves, so a second start with different values is told from Back.
 		this.carry = {};
 		this.started_with = "";
+		this.client_id = null;
 	}
 
 	// ------------------------------------------------------------------ routing
@@ -422,6 +436,7 @@ class GuidedEntry {
 				if (seq !== this.load_seq) return;
 				this.take_flow(flow);
 				if (this.is_new) this.apply_start(options);
+				if (this.is_new) this.restore_new();
 				const kept = this.is_new ? null : this.restore_kept();
 				this.render_shell();
 				this.show_step(step_key);
@@ -487,6 +502,8 @@ class GuidedEntry {
 		this.collect_step();
 		const doctype = this.doctype;
 		const values = Object.assign({}, this.carry, this.values);
+		// The full form holds it from here; the phone's copy would come back on the next New.
+		this.forget_new();
 		this.reset();
 		if (window.sf_guided && window.sf_guided.new_in_form) window.sf_guided.new_in_form(doctype, values);
 		else frappe.new_doc(doctype);
@@ -659,6 +676,7 @@ class GuidedEntry {
 		);
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.queue = this.is_new ? null : this.make_queue(flow.modified);
+		if (this.is_new && !this.client_id) this.client_id = ge_client_id();
 	}
 
 	// The record is fixed when the queue is made: a queue still sending after the page has moved to
@@ -1024,7 +1042,10 @@ class GuidedEntry {
 		let text = "";
 		let tone = "saved";
 		let retry = false;
-		if (this.is_new) {
+		if (this.is_new && this.notice && this.notice.kind === "create-offline" && !this.creating) {
+			text = __("Saved on this phone — created when there is signal");
+			tone = "offline";
+		} else if (this.is_new) {
 			text = this.creating ? __("Saving…") : __("Not saved yet");
 			tone = this.creating ? "saving" : "dirty";
 		} else if (!this.flow.can_write) {
@@ -1492,6 +1513,7 @@ class GuidedEntry {
 		this.values[fieldname] = value;
 		if (this.is_new) {
 			this.new_dirty = true;
+			this.write_new_journal();
 		} else if (this.queue) {
 			if (this.kit.same_value(value, this.saved[fieldname])) {
 				this.queue.discard(fieldname);
@@ -1556,11 +1578,47 @@ class GuidedEntry {
 		this.journal_failed = !ge_write_kept(key, entry);
 	}
 
-	// Whether closing the tab now loses nothing: the phone holds every record's unsent changes,
-	// and no record is half-started on step 1 (that is created, not kept).
+	// Whether closing the tab now loses nothing: the phone holds every record's unsent changes, and
+	// step 1 of a record not created yet.
 	kept_on_phone() {
-		if (this.journal_failed || !ge_storage()) return false;
-		return !(this.is_new && (this.new_dirty || this.creating));
+		return !this.journal_failed && !!ge_storage();
+	}
+
+	// Step 1 of a record not created yet, as typed, with the create's id and what it carries.
+	write_new_journal() {
+		if (!this.is_new || !this.flow || !this.kit) return false;
+		const steps = this.flow.steps || [];
+		const step = steps.find((s) => s.create) || steps[0] || {};
+		const values = {};
+		this.kit.editable_fieldnames(step).forEach((fieldname) => {
+			if (ge_has(this.values, fieldname)) values[fieldname] = ge_clone(this.values[fieldname]);
+		});
+		const entry = { doctype: this.doctype, client_id: this.client_id, values, carry: this.carry || {}, at: Date.now() };
+		const kept = ge_write_kept(this.kit.new_key(this.doctype), entry);
+		this.journal_failed = !kept;
+		return kept;
+	}
+
+	forget_new() {
+		if (this.kit && this.doctype) ge_write_kept(this.kit.new_key(this.doctype), null);
+	}
+
+	// A record this phone started and did not create: put step 1 back, with the same create id (so a
+	// create that did arrive is found, not repeated). Not over a start from somewhere else.
+	restore_new() {
+		if (this.started_with) return;
+		const key = this.kit.new_key(this.doctype);
+		const entry = ge_read_kept(key);
+		if (!entry) return;
+		if (!this.kit.usable_new(entry, Date.now())) {
+			ge_write_kept(key, null);
+			return;
+		}
+		Object.keys(entry.values).forEach((fieldname) => (this.values[fieldname] = ge_clone(entry.values[fieldname])));
+		this.carry = entry.carry || {};
+		if (entry.client_id) this.client_id = entry.client_id;
+		this.new_dirty = true;
+		this.notice = { kind: "kept-new", at: entry.at };
 	}
 
 	// The record just loaded: put back what this phone kept for it (journal.js reconcile). Returns
@@ -1625,6 +1683,9 @@ class GuidedEntry {
 	}
 
 	signal_back() {
+		if (this.is_new && this.notice && this.notice.kind === "create-offline" && !this.creating && this.showing()) {
+			this.create();
+		}
 		[this.queue, ...this.retired].forEach((queue) => {
 			if (queue && queue.state === "error" && this.kit && this.kit.try_later(queue.error)) {
 				queue.retry().catch(() => {});
@@ -1867,7 +1928,7 @@ class GuidedEntry {
 		this.notice = null;
 		this.refresh_notices();
 		this.refresh_chrome();
-		const args = { doctype, values };
+		const args = { doctype, values, client_id: this.client_id };
 		if (Object.keys(this.carry || {}).length) args.prefill = this.carry;
 		this.sf
 			.call(GE_API + "create_record", args, { quiet: true })
@@ -1882,6 +1943,7 @@ class GuidedEntry {
 			.then(({ created, flow }) => {
 				this.creating = false;
 				this.new_dirty = false;
+				ge_write_kept(this.kit.new_key(doctype), null);
 				const still_here = (() => {
 					const target = this.kit.parse_route(frappe.get_route());
 					return !!target && target.is_new && target.doctype === doctype;
@@ -1922,7 +1984,13 @@ class GuidedEntry {
 			})
 			.catch((err) => {
 				this.creating = false;
-				this.notice = err && err.session_expired ? { kind: "expired" } : { kind: "save", error: err || {} };
+				if (this.kit.try_later(err) && this.write_new_journal()) {
+					// No signal: kept on the phone, created when it returns (signal_back).
+					this.notice = { kind: "create-offline" };
+					this.wait_for_signal();
+				} else {
+					this.notice = err && err.session_expired ? { kind: "expired" } : { kind: "save", error: err || {} };
+				}
 				this.refresh_notices();
 				this.refresh_chrome();
 			});
@@ -1952,6 +2020,27 @@ class GuidedEntry {
 		}
 		if (notice.kind === "create") {
 			this.sf.state.render($slot, "error", { title: notice.title, body: notice.body });
+			return;
+		}
+		if (notice.kind === "kept-new") {
+			this.sf.state.render($slot, "empty", {
+				title: __("Put back the new {0} you started on this phone.", [__(this.doctype)]),
+				body: __("Check it and create it, or start over."),
+				action_label: __("Start over"),
+				on_action: () => {
+					const doctype = this.doctype;
+					this.forget_new();
+					this.load(doctype, null, null);
+				},
+			});
+			return;
+		}
+		if (notice.kind === "create-offline") {
+			this.sf.state.render($slot, "empty", {
+				title: __("No signal. This is kept on the phone and will be created when there is signal."),
+				action_label: __("Try now"),
+				on_action: () => this.create(),
+			});
 			return;
 		}
 		if (notice.kind === "distinct") {

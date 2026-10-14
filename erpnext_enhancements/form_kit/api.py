@@ -88,14 +88,15 @@ def get_flow(doctype, name=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def create_record(doctype, values, prefill=None):
+def create_record(doctype, values, prefill=None, client_id=None):
 	"""Insert a new draft from step 1's values (JSON). Returns the save result.
 
 	``prefill`` (JSON, optional) is what the record was started with elsewhere; see
-	``saver.create_record`` for what is taken from it.
+	``saver.create_record`` for what is taken from it. ``client_id`` (optional) is the page's id
+	for this create: sent again, it returns the record it made rather than a second one.
 	"""
 	_require_configured(doctype)
-	return saver.create_record(doctype, values, prefill)
+	return saver.create_record(doctype, values, prefill, client_id)
 
 
 @frappe.whitelist(methods=["POST"])

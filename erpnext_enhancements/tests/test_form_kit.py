@@ -466,7 +466,18 @@ def _install_frappe_stub(metas):
         assert child, query
         return out
 
-    frappe.db = types.SimpleNamespace(sql=sql)
+    def db_exists(doctype, filters=None, *args, **kwargs):
+        if isinstance(filters, dict):
+            record = STATE["db"].get(filters.get("name"))
+            return bool(record) and all(record.get(k) == v for k, v in filters.items())
+        return filters in STATE["db"]
+
+    after_commit = types.SimpleNamespace(add=lambda fn: STATE["after_commit"].append(fn))
+    frappe.db = types.SimpleNamespace(sql=sql, exists=db_exists, after_commit=after_commit)
+    frappe.cache = types.SimpleNamespace(
+        get_value=lambda key: STATE["cache"].get(key),
+        set_value=lambda key, value, expires_in_sec=None: STATE["cache"].__setitem__(key, value),
+    )
 
     utils = types.ModuleType("frappe.utils")
     utils.cint = lambda value: int(float(value or 0)) if str(value or "0").strip() not in ("",) else 0
@@ -520,6 +531,8 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["get_list"].clear()
     STATE["lost_calls"] = []
     STATE["active_quotation"] = False
+    STATE["cache"] = {}
+    STATE["after_commit"] = []
     FRAPPE.session.user = user
 
 
@@ -1314,6 +1327,65 @@ class TestMyRecords(unittest.TestCase):
         for expected in ("unknown mine keys", "mine needs title_field", "mine needs label", "mine.open needs",
                          "unknown create keys", "create.prefill_fields.contact_person has no reason"):
             self.assertIn(expected, problems)
+
+
+class TestCreateIsNeverRepeated(unittest.TestCase):
+    """Form kit P4.7: a create sent with no signal is kept on the phone and sent again when the
+    signal returns. The first attempt may have arrived, its answer lost, so the same client id
+    must come back with that record rather than a second one."""
+
+    VALUES = json.dumps(
+        {
+            "party_name": "Jones Ranch",
+            "custom_opportunity_name": "Jones Ranch - Fountain Service",
+            "custom_value_stream": [{"value_stream": "Service"}],
+            "opportunity_owner": "ae@example.com",
+        }
+    )
+    ID = "4f9c2b1e-7a3d-4e8f-9b6a-0c1d2e3f4a5b"
+
+    def setUp(self):
+        _reset()
+
+    def _commit(self):
+        callbacks, STATE["after_commit"] = STATE["after_commit"], []
+        for callback in callbacks:
+            callback()
+
+    def test_a_resent_create_returns_the_first_record(self):
+        first = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self._commit()
+        again = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self.assertEqual(again["name"], first["name"])
+        self.assertEqual(STATE["inserts"], [first["name"]])
+        self.assertEqual(again["values"]["custom_opportunity_name"], "Jones Ranch - Fountain Service")
+
+    def test_the_id_is_remembered_only_once_committed(self):
+        api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self.assertEqual(STATE["cache"], {})
+        self._commit()
+        self.assertEqual(len(STATE["cache"]), 1)
+
+    def test_a_record_that_is_gone_or_another_users_is_never_returned(self):
+        first = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self._commit()
+        del STATE["db"][first["name"]]
+        second = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self.assertNotEqual(second["name"], first["name"])
+        self._commit()
+        FRAPPE.session.user = "boss@example.com"
+        third = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        self.assertNotIn(third["name"], (first["name"], second["name"]))
+
+    def test_an_id_not_of_the_pages_shape_is_ignored(self):
+        for bad in ("short", "x" * 65, "has space in it", "semi;colon-1234", 12345678):
+            with self.subTest(client_id=bad):
+                _reset()
+                api.create_record("Opportunity", self.VALUES, None, bad)
+                self._commit()
+                api.create_record("Opportunity", self.VALUES, None, bad)
+                self.assertEqual(len(STATE["inserts"]), 2)
+                self.assertEqual(STATE["cache"], {})
 
 
 class TestDeclareLost(unittest.TestCase):
