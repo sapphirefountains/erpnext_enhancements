@@ -68,12 +68,14 @@
 	margin: 0 6px;
 }
 
-/* The page's own fields stay white and square, with the field edge, in both themes. Bootstrap's
+/* Fields stay white and square, with the field edge, in both themes: the toolbar's range picker,
+ * and everything in the flow's card (the pick list's quantities and rates, and the Frappe
+ * controls the wizard makes: its FieldGroups and the package picker). Bootstrap's
  * .form-control:focus (0,2,0) would turn a field grey while in use, so the focused field has a
  * rule of its own, under the page; and a disabled one (a rate before its fountain is ticked)
  * still looks disabled. */
 .rp-wrap .rp-toolbar .form-control,
-.rp-wrap .rp-pick .form-control {
+.rp-wrap .rp-card .form-control {
 	border-radius: var(--sf-radius-none);
 	border: var(--sf-border-hairline) solid var(--sf-field-border);
 	background-color: var(--sf-field-bg);
@@ -81,14 +83,14 @@
 }
 
 .rp-wrap .rp-toolbar .form-control:focus,
-.rp-wrap .rp-pick .form-control:focus {
+.rp-wrap .rp-card .form-control:focus {
 	border-color: var(--sf-focus);
 	background-color: var(--sf-field-bg);
 	color: var(--sf-field-text);
 	outline: 1px solid var(--sf-focus);
 }
 
-.rp-wrap .rp-pick .form-control:disabled {
+.rp-wrap .rp-card .form-control:disabled {
 	background-color: color-mix(in srgb, var(--sf-field-text) 8%, var(--sf-field-bg));
 	color: color-mix(in srgb, var(--sf-field-text) 55%, var(--sf-field-bg));
 	cursor: not-allowed;
@@ -204,9 +206,11 @@
 	font-size: var(--sf-text-xs);
 }
 
-/* Today: a bar along the top of its column and the weight, never color alone. */
+/* Today: a bar along the top of its column and the weight, never color alone. Its color is the
+ * neutral chip edge (deep-sea-blue in light, sky-200 in dark, clear of either card), not
+ * --sf-focus, so a focused bar on today's column still stands out from the line behind it. */
 .rp-day.rp-today {
-	border-top: 3px solid var(--sf-focus);
+	border-top: 3px solid var(--sf-chip-edge-neutral);
 	padding-top: 1px;
 	color: var(--sf-text-strong);
 	font-weight: var(--sf-weight-bold);
@@ -217,7 +221,7 @@
 	top: 0;
 	bottom: 0;
 	width: 2px;
-	background: var(--sf-focus);
+	background: var(--sf-chip-edge-neutral);
 	z-index: 1;
 	pointer-events: none;
 }
@@ -313,13 +317,15 @@
 	border-color: var(--sf-chip-edge-warn);
 }
 
-/* Out of service: the danger fill, hatched against a darker red. */
+/* Out of service: the danger fill, hatched against a darker red. The dark stripe is mixed with the
+ * fixed ink-900, never --sf-text-strong: that is off-white in the dark theme, which would make the
+ * stripe LIGHTER and drop the off-white label to 3.65:1. With ink it is about 7.7:1 in both. */
 .rp-bar.rp-out_of_service,
 .rp-swatch.rp-out_of_service {
 	background: repeating-linear-gradient(
 		45deg,
 		var(--sf-danger) 0 6px,
-		color-mix(in srgb, var(--sf-danger) 75%, var(--sf-text-strong)) 6px 12px
+		color-mix(in srgb, var(--sf-danger) 75%, var(--sf-ink-900)) 6px 12px
 	);
 	color: var(--sf-on-danger);
 	border-color: var(--sf-chip-edge-danger);
@@ -593,7 +599,7 @@ button.rp-step:hover {
 	}
 
 	.rp-wrap .rp-toolbar .form-control,
-	.rp-wrap .rp-pick .form-control {
+	.rp-wrap .rp-card .form-control {
 		font-size: var(--sf-text-input);
 	}
 

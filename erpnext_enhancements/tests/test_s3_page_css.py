@@ -717,10 +717,41 @@ class TestRentalPlanner(unittest.TestCase):
 		for selector in (".rp-scroll", ".rp-card"):
 			with self.subTest(selector=selector):
 				self.assertIn("border-top: 4px solid var(--sf-pillar-rent);", self._rule(selector))
-		# No other pillar; Neutral's edges vanish on a dark card, and a closing stop other than Rent's
-		# (Build's is navy-800, the dark card itself) is not this page's to draw.
-		pillars = set(re.findall(r"var\(--sf-(?:pillar|chip-edge|gradient)-(\w+)", self.css))
-		self.assertLessEqual(pillars, {"rent", "good", "warn", "danger"})
+		# No other pillar: Neutral's opening stop vanishes on a dark card, and a closing stop other than
+		# Rent's (Build's is navy-800, the dark card itself) is not this page's to draw. The one
+		# exception is the neutral chip EDGE for today's marker, which is themed to clear both cards.
+		pillars = set(re.findall(r"var\(--sf-(?:pillar|gradient)-([\w-]+)\)", self.css))
+		self.assertLessEqual(pillars, {"rent", "rent-deep"})
+		edges = set(re.findall(r"var\(--sf-chip-edge-(\w+)\)", self.css))
+		self.assertLessEqual(edges, {"rent", "good", "warn", "danger", "neutral"})
+
+	def test_no_fill_behind_a_label_is_mixed_with_the_themed_text(self):
+		"""--sf-text-strong is ink in light and off-white in dark, so a fill mixed with it darkens in
+		one theme and LIGHTENS in the other: out-of-service's dark stripe went to about #cc615e on a
+		navy card and its off-white label to 3.65:1. A bar's, swatch's or cell's fill mixes with a
+		fixed ink or with the card under it; --sf-text-strong is for text and edges only."""
+		checked = 0
+		for selectors, body in self._rules():
+			if not any(s.startswith((".rp-bar", ".rp-swatch", ".rp-cell")) for s in selectors):
+				continue
+			for prop, value in _declarations("{" + body + "}"):
+				if prop.startswith("background"):
+					checked += 1
+					with self.subTest(selectors=selectors, prop=prop):
+						self.assertNotIn("--sf-text-strong", value)
+		self.assertGreaterEqual(checked, 8)
+		self.assertIn(
+			"color-mix(in srgb, var(--sf-danger) 75%, var(--sf-ink-900))",
+			self._rule(".rp-bar.rp-out_of_service"),
+		)
+
+	def test_today_is_not_the_focus_color(self):
+		"""A focused bar on today's column must stand out from the line behind it."""
+		for selector in (".rp-day.rp-today", ".rp-today-line"):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertNotIn("--sf-focus", body)
+				self.assertIn("var(--sf-chip-edge-neutral)", body)
 
 	def test_status_fills_carry_their_label_and_edge(self):
 		checked = 0
@@ -758,18 +789,19 @@ class TestRentalPlanner(unittest.TestCase):
 	def test_focused_and_disabled_fields_keep_their_own_rules(self):
 		"""Bootstrap's .form-control:focus (0,2,0) outranks a plain field rule and turns it grey while
 		typing; the page's field rule (0,3,0) in turn would make a disabled rate look live."""
-		for selector in (".rp-wrap .rp-toolbar .form-control:focus", ".rp-wrap .rp-pick .form-control:focus"):
+		for selector in (".rp-wrap .rp-toolbar .form-control:focus", ".rp-wrap .rp-card .form-control:focus"):
 			with self.subTest(selector=selector):
 				body = self._rule(selector)
 				self.assertIn("border-color: var(--sf-focus);", body)
 				self.assertIn("background-color: var(--sf-field-bg);", body)
-		for selector in (".rp-wrap .rp-toolbar .form-control", ".rp-wrap .rp-pick .form-control"):
+		# The card's rule reaches the pick list's boxes and the wizard's own Frappe controls alike.
+		for selector in (".rp-wrap .rp-toolbar .form-control", ".rp-wrap .rp-card .form-control"):
 			with self.subTest(selector=selector):
 				self.assertIn("background-color: var(--sf-field-bg);", self._rule(selector))
 				self.assertIn("border-radius: var(--sf-radius-none);", self._rule(selector))
-		self.assertIn("cursor: not-allowed;", self._rule(".rp-wrap .rp-pick .form-control:disabled"))
+		self.assertIn("cursor: not-allowed;", self._rule(".rp-wrap .rp-card .form-control:disabled"))
 		phone = self.css[self.css.index("@media (max-width: 767px)") :]
-		self.assertRegex(phone, r"\.rp-wrap \.rp-pick \.form-control \{\s*font-size: var\(--sf-text-input\);")
+		self.assertRegex(phone, r"\.rp-wrap \.rp-card \.form-control \{\s*font-size: var\(--sf-text-input\);")
 
 	def test_touch_targets_are_44px(self):
 		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
@@ -798,7 +830,7 @@ class TestRentalPlanner(unittest.TestCase):
 			self.js,
 		)
 		self.assertIn("clip: rect(0, 0, 0, 0)", self._rule(".rp-sr"))
-		self.assertIn("border-top: 3px solid var(--sf-focus);", self._rule(".rp-day.rp-today"))
+		self.assertIn("border-top: 3px solid var(--sf-chip-edge-neutral);", self._rule(".rp-day.rp-today"))
 		self.assertIn('.text(f.available ? __("Free") : __("Taken"))', self.js)
 
 	def test_every_class_the_script_draws_is_styled_and_every_rule_is_drawn(self):

@@ -25,7 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with an off-white label and the Rent chip edge (it was blue), a hold is the same pillar pale and
     hatched with a dashed edge, and the board and the flow's card carry the pillar's teal stripe
     along the top. A hand booking on Asset Booking is the warn fill with its navy label (it was
-    amber), out-of-service is the danger fill, hatched, and prep and cleaning stay grey. Pool days
+    amber), out-of-service is the danger fill, hatched against red mixed with the fixed ink-900, and
+    prep and cleaning stay grey. (Not with `--sf-text-strong`: that is off-white in the dark theme,
+    so the stripe would turn lighter and the off-white label fall to 3.65:1; with ink it is about
+    7.7:1 in both themes. Text-strong is for text and edges, never a fill behind a label.) Pool days
     are tinted with the pillar, warn and danger as they fill. Free and Taken are good and danger
     chips. What holds a taken fountain is in the danger text color (red mixed with the strong text,
     which reads on a white card and a navy one).
@@ -36,9 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     square, the step rail rounds at the control radius and the chips are pills. The bar's hover
     shadow is gone (hover brightens the color only), and outline is used for focus alone.
   - **Nothing is said by color alone.** Today's column has a 3px bar along its top and its weight,
-    and says "Today" to a screen reader; a pool day that is full or nearly full says so.
-  - **Fields.** The range picker and the pick list's quantity and rate boxes are white and square in
-    both themes. Bootstrap's `.form-control:focus` (0,2,0) would grey a focused field, so the focused
+    and says "Today" to a screen reader; a pool day that is full or nearly full says so. Today's bar
+    and line are the neutral chip edge (deep-sea-blue in light, sky-200 in dark), not `--sf-focus`,
+    so a focused booking on today's column still stands out from the line behind it.
+  - **Fields.** The range picker, the pick list's quantity and rate boxes, and the wizard's own Frappe
+    controls (its field groups and the package picker) are white and square in both themes, where
+    the wizard's fields used to keep the Desk's dark field. Bootstrap's `.form-control:focus` (0,2,0) would grey a focused field, so the focused
     field has its own rule; and the page's field rule would make a disabled rate (its fountain not
     ticked) look live, so a disabled one has its own rule too. On a phone they are 16px, so iOS does
     not zoom into them.
@@ -54,8 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script, no inline or jQuery color, tokens only, prefixed selectors, token radii, no shadow, one
   767px breakpoint) and `TestRentalPlanner`, which holds every bar kind the server sends
   (`_bar_kind` and out-of-service) to a rule, the legend to the bars' rules, the Rent pillar, status
-  fills with their label and edge, status text as the mix, outline for focus only, the focused and
-  disabled field rules, 44px touch targets, the screen-reader words, every drawn class styled and
+  fills with their label and edge, status text as the mix, no bar, swatch or cell fill mixed with
+  the themed `--sf-text-strong`, today's marker off the focus color, outline for focus only, the
+  focused and disabled field rules, 44px touch targets, the screen-reader words, every drawn class styled and
   every rule drawn, and the `rp-` prefix to this page alone. Run against the old page, every check
   on the page itself fails (the prefix check reads the other files, and passes on both).
   `tests/test_s3_6_accessibility.py` reads the bar label's truncation and the focus rings from the
