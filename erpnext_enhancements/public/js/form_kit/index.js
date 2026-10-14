@@ -112,6 +112,7 @@ export {
 	must_show,
 	hidden_when_filled_only,
 	field_hidden,
+	filled_snapshot,
 	step_hidden,
 	can_hide,
 	save_preset,

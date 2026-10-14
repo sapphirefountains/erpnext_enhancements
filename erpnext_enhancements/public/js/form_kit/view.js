@@ -356,6 +356,7 @@ export function start_step(entry, name, steps, values, step_active) {
 
 // ------------------------------------------------------------------ what shows
 
+const LAYOUT = ["Section Break", "Column Break", "Tab Break"];
 const NUMBER_TYPES = ["Int", "Float", "Currency", "Percent", "Rating", "Duration"];
 
 // Whether a field holds something worth showing in "only fields with a value". Zero is no value
@@ -390,17 +391,42 @@ export function hidden_when_filled_only(def, value) {
 }
 
 // Whether one field is put away right now: by the person's own list (unless it must show), or by
-// "only fields with a value". `reveal` (the "Show hidden" toggle) shows the person's list again.
+// "only fields with a value". `reveal` (the "Show hidden" toggle) shows the person's list again;
+// `revealed` (a Set) names single fields brought into view to be filled in.
+//
+// The page asks again whenever the record moves (a save's new completeness, a status change), so a
+// field that has just become required or stage-needed comes back at once. "Only fields with a value"
+// is the exception that must not follow every keystroke: a field the person empties while typing
+// would vanish under the cursor. So the page passes `filled_snapshot`, the Set of fields that were
+// empty when the person chose it (or the section was drawn), and only those stay put away, and only
+// while they are still empty and not needed.
 export function field_hidden(def, value, opts) {
 	const o = opts || {};
 	if (!def) return { hidden: false, by: null };
+	if (o.revealed && o.revealed.has && o.revealed.has(def.fieldname)) return { hidden: false, by: null };
 	if (!o.reveal && (o.hidden_fields || []).includes(def.fieldname) && !must_show(def, value, o.missing)) {
 		return { hidden: true, by: "person" };
 	}
-	if (o.filled_only && hidden_when_filled_only(def, value) && !(o.missing && o.missing.has(def.fieldname))) {
+	const snapshot = o.filled_snapshot;
+	const in_snapshot = !snapshot || (snapshot.has && snapshot.has(def.fieldname));
+	if (o.filled_only && in_snapshot && hidden_when_filled_only(def, value) && !must_show(def, value, o.missing)) {
 		return { hidden: true, by: "filled" };
 	}
 	return { hidden: false, by: null };
+}
+
+// The fields "only fields with a value" puts away as things stand: { fieldname } for every value
+// field of `steps` that is empty and that nothing can require. The page keeps it as the snapshot.
+export function filled_snapshot(steps, values) {
+	const out = new Set();
+	const v = values || {};
+	(steps || []).forEach((step) =>
+		((step && step.fields) || []).forEach((field) => {
+			if (!field || !field.fieldname || LAYOUT.includes(field.fieldtype)) return;
+			if (hidden_when_filled_only(field, v[field.fieldname])) out.add(field.fieldname);
+		})
+	);
+	return out;
 }
 
 // Whether a section is put away: listed by the person, and none of its fields must show.

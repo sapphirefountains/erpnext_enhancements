@@ -70,6 +70,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The side panel is unchanged: still step by step, no settings.
 - `guided_entry.bundle.js` is version 3 and `opportunity_board.bundle.js` version 2, so a tab still
   holding the older bundle takes the new one.
+- **Review of #1299.**
+  - What the person put away is worked out again on every refresh: after a save brings a new
+    completeness, and after a status change. A hidden field the stage now needs comes back at once,
+    and the hidden count stays true. "Only fields with a value" keeps a snapshot of the fields that
+    were empty when it was turned on (or the section drawn), so a field emptied while typing never
+    vanishes under the cursor.
+  - One page and Tabs read values back only from sections that apply and show
+    (`editor.js collect_steps`, the shell's `step_visible`). A control whose value does not
+    round-trip, such as a Select with no blank option, could otherwise queue a change nobody made.
+  - With hints put away (or in focus mode), a Datetime whose zone differs from the site's gets the
+    (i), which carries the zone.
+  - The Record tools choice shows only once something has mounted into `.ge-tools`.
+  - The first-time pop-up waits until neither the chooser for kept changes, a conflict, nor a dialog
+    (the Closed Won nudge) is showing.
 
 ## [1.682.0] - 2026-10-14
 

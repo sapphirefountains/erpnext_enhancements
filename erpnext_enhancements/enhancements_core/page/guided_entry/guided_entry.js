@@ -267,6 +267,9 @@ class GuidedEntry {
 		this.sections = null;
 		this.collapsed = new Set();
 		this.reveal_hidden = false;
+		this.revealed = null;
+		this.filled_snapshot = null;
+		this.viewbar_key = "";
 		this.away = { person: 0, filled: 0 };
 	}
 
@@ -852,8 +855,9 @@ class GuidedEntry {
 					: ""
 			);
 
+		// What shows follows the record too (a new completeness, a status, the steps that apply).
+		this.apply_visibility(false);
 		if (this.sections) {
-			this.refresh_section_states();
 			this.render_nav();
 		} else {
 			this.render_rail(steps, pos);
@@ -1298,6 +1302,12 @@ class GuidedEntry {
 		});
 		// The side column sticks only while it holds the summary alone (guided_entry.bundle.css).
 		this.$root.attr("data-ge-aside-blocks", side_blocks ? "1" : "0");
+	}
+
+	// Whether the record tools have drawn anything into .ge-tools.
+	tools_present() {
+		const $tools = this.$root.find(".ge-tools");
+		return $tools.length > 0 && !$tools.prop("hidden") && $tools.children().length > 0;
 	}
 
 	// How many notes and comments the record has, as drawn (the Notes list's total, and the Comments
@@ -1765,14 +1775,25 @@ class GuidedEntry {
 			hidden_steps: own && this.sections ? this.entry.hidden_steps : [],
 			missing,
 			filled_only: own && !!this.view && this.view.fields === "filled",
+			filled_snapshot: this.filled_snapshot || null,
 			reveal: !!this.reveal_hidden,
+			revealed: this.revealed || null,
 		};
 	}
 
 	// Fields put away (by the person, or "only fields with a value"), as classes: the controls stay
 	// drawn and keep their values; only what shows changes. Counted for the bar over the form.
-	apply_visibility() {
+	//
+	// Asked again on every refresh_chrome (review of #1299), which follows each save's new
+	// completeness and each status change: a field that becomes required or stage-needed comes back
+	// at once, and the count stays true. `refresh_filled` takes a new snapshot of the empty fields
+	// "only fields with a value" puts away (view.js field_hidden): when the section is drawn or the
+	// person turns it on, never while they type.
+	apply_visibility(refresh_filled = true) {
 		if (!this.fg || !this.flow) return;
+		if (refresh_filled || !this.filled_snapshot) {
+			this.filled_snapshot = this.kit.filled_snapshot(this.shown_steps(), this.values);
+		}
 		const opts = this.visibility_opts();
 		let person = 0;
 		let filled = 0;
@@ -1821,11 +1842,17 @@ class GuidedEntry {
 		const $bar = this.$root.find(".ge-viewbar");
 		if (!$bar.length) return;
 		if (this.in_setup() || !this.entry || !this.view) {
+			this.viewbar_key = "";
 			$bar.prop("hidden", true).empty();
 			return;
 		}
-		$bar.empty().prop("hidden", false);
 		const filled = this.view.fields === "filled";
+		// Drawn again only when what it says changes: it is asked on every refresh, and redrawing it
+		// would take the focus off its own buttons.
+		const key = [filled, this.away.filled, this.away.person, this.reveal_hidden, (this.entry.hidden_fields || []).length].join("|");
+		if (key === this.viewbar_key && !$bar.prop("hidden")) return;
+		this.viewbar_key = key;
+		$bar.empty().prop("hidden", false);
 		$('<button type="button" class="sf-btn sf-btn--quiet ge-viewbar-btn ge-filled-btn"></button>')
 			.attr("aria-pressed", filled ? "true" : "false")
 			.text(__("Only fields with a value"))
@@ -1850,7 +1877,7 @@ class GuidedEntry {
 				)
 				.on("click", () => {
 					this.reveal_hidden = !this.reveal_hidden;
-					this.apply_visibility();
+					this.apply_visibility(false);
 					this.$root.find(".ge-reveal-btn").trigger("focus");
 				})
 				.appendTo($bar);
@@ -1865,13 +1892,26 @@ class GuidedEntry {
 			const $sec = this.section_el(step.key);
 			if ($sec.length && $sec.prop("hidden") && this.kit.step_active(step, this.values)) {
 				this.reveal_hidden = true;
-				this.apply_visibility();
+				this.apply_visibility(false);
 			}
 			if (this.collapsed.has(step.key)) this.toggle_section(step.key, false);
 		}
 		const control = this.fg.fields_dict[fieldname] || this.fg.fields_dict[fieldname + "__ge_list"];
 		const $w = control ? control.$wrapper || $(control.wrapper) : null;
-		if ($w && $w.hasClass("ge-away")) $w.removeClass("ge-away").addClass("ge-revealed");
+		if ($w && $w.hasClass("ge-away")) {
+			// Shown to be filled in, and kept shown through the refreshes that follow its change.
+			if (!this.revealed) this.revealed = new Set();
+			this.revealed.add(fieldname);
+			$w.removeClass("ge-away").addClass("ge-revealed");
+		}
+	}
+
+	// editor.js collect_steps: a drawn section is read back only while it shows (review of #1299).
+	step_visible(step) {
+		if (!this.sections || !step) return true;
+		const $sec = this.section_el(step.key);
+		if (!$sec.length) return false;
+		return !$sec.prop("hidden") && !$sec.closest(".ge-group").prop("hidden");
 	}
 
 	// ------------------------------------------------------------------ where the record opens
@@ -2026,11 +2066,16 @@ class GuidedEntry {
 			["side", __("Side column")],
 			["collapsed", __("Collapsed")],
 		]);
-		group("tools", __("Record tools"), [
-			["side", __("Side column")],
-			["below", __("Below the form")],
-			["collapsed", __("Collapsed")],
-		]);
+		// Offered only once something has mounted into .ge-tools (the record tools, a separate
+		// change, draw there). Until then the choice would do nothing, so it is not shown; whatever
+		// fills .ge-tools makes it appear, with nothing to change here.
+		if (this.tools_present()) {
+			group("tools", __("Record tools"), [
+				["side", __("Side column")],
+				["below", __("Below the form")],
+				["collapsed", __("Collapsed")],
+			]);
+		}
 		group(
 			"focus",
 			__("Focus mode"),
@@ -2244,7 +2289,7 @@ class GuidedEntry {
 					this.entry.hidden_steps = this.kit.toggle_key(this.entry.hidden_steps, step.key, !event.currentTarget.checked, this.kit.MAX_HIDDEN);
 					this.store_entry();
 					this.save_entry({ hidden_steps: this.entry.hidden_steps });
-					this.apply_visibility();
+					this.apply_visibility(false);
 				})
 				.appendTo($show);
 			$("<span></span>").text(__("Show")).appendTo($show);
@@ -2274,7 +2319,7 @@ class GuidedEntry {
 						);
 						this.store_entry();
 						this.save_entry({ hidden_fields: this.entry.hidden_fields });
-						this.apply_visibility();
+						this.apply_visibility(false);
 					})
 					.appendTo($label);
 				$("<span></span>").text(__(field.label || field.fieldname)).appendTo($label);
@@ -2389,8 +2434,23 @@ class GuidedEntry {
 
 	// The first time a person opens a saved record here: what they can make of the page. Once per
 	// person, remembered on the server the moment it shows, so it is never shown twice.
-	maybe_intro() {
+	maybe_intro(tries) {
 		if (this.is_new || this.in_setup() || !this.view_store_ok || !this.view_store || this.view_store.intro_seen) return;
+		// Never over something that asks the person to decide: the chooser for kept changes
+		// (after_restore), a conflict, or a dialog such as the Closed Won nudge, which may open a moment
+		// after the record. Asked again until the way is clear, on this record only.
+		const doctype = this.doctype;
+		const name = this.name;
+		const n = tries || 0;
+		const busy = !!this.conflict || !!document.querySelector(".modal.show") || !!(window.cur_dialog && window.cur_dialog.display);
+		if (n === 0 || busy) {
+			if (n > 120) return;
+			clearTimeout(this.intro_timer);
+			this.intro_timer = setTimeout(() => {
+				if (this.showing() && this.doctype === doctype && this.name === name) this.maybe_intro(n + 1);
+			}, n === 0 ? 700 : 1000);
+			return;
+		}
 		this.view_store.intro_seen = true;
 		this.sf.call(GE_PREFS + "mark_guided_intro_seen", {}, { quiet: true }).catch(() => {});
 		this.open_overlay(($box) => {

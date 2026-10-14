@@ -298,12 +298,29 @@ export class RecordEditor {
 
 	// Every step whose fields are on screen (v1.684.0). One step at a time that is current_step();
 	// the guided page's One page and Tabs layouts draw several, one FieldGroup each (`this.fg` is
-	// then a ../field_groups.js FieldGroups), and everything that reads "the fields on screen"
-	// (collect_step, collect_tables) reads all of them.
+	// then a ../field_groups.js FieldGroups). Reading values back goes through collect_steps(),
+	// which leaves out the sections nobody can see.
 	shown_steps() {
 		if (this.fg && this.fg.multi) return this.fg.steps();
 		const step = this.current_step();
 		return step ? [step] : [];
+	}
+
+	// The steps whose fields are read back into the record (collect_step, collect_tables): those on
+	// screen, less, in One page and Tabs, a section that does not apply or that the shell is not
+	// showing (step_visible). Their controls exist but nobody can see them, and a control whose value
+	// does not round-trip (a Select with no blank option reads back its first option for null) would
+	// otherwise queue a change the person never made: a layout must stay only a presentation.
+	collect_steps() {
+		const steps = this.shown_steps();
+		if (!(this.fg && this.fg.multi)) return steps;
+		return steps.filter((step) => this.kit.step_active(step, this.values) && this.step_visible(step));
+	}
+
+	// Host hook (v1.684.0): is this drawn step's section showing. The guided page answers for its
+	// sections; a shell that draws one step at a time has nothing hidden.
+	step_visible() {
+		return true;
 	}
 
 	// Several steps on screen at once from here: render_fields adds each one's FieldGroup to the set.
@@ -710,6 +727,8 @@ export class RecordEditor {
 	wants_help(field) {
 		if (!field) return false;
 		if (field.help) return true;
+		// The time-zone line lives in the hint's box: put away with the hints, the (i) carries it.
+		if (this.hints_hidden && field.fieldtype === "Datetime" && !this.same_time_zone()) return true;
 		const hint = String(field.hint || "");
 		return !!hint && (!!this.hints_hidden || hint.length > GE_HINT_CLAMP);
 	}
@@ -939,7 +958,7 @@ export class RecordEditor {
 	// Grids say nothing when a row is removed or moved: compare them with what is held.
 	collect_tables() {
 		if (!this.fg || !this.flow) return;
-		this.shown_steps().forEach((step) =>
+		this.collect_steps().forEach((step) =>
 			((step && step.fields) || []).forEach((field) => {
 				if (field.fieldtype === "Table" && !field.read_only && !this.kit.text_list_column(field)) {
 					this.table_touched(field.fieldname);
@@ -959,7 +978,7 @@ export class RecordEditor {
 		this.batching = true;
 		this.batch_dirty = false;
 		try {
-			this.shown_steps().forEach((step) =>
+			this.collect_steps().forEach((step) =>
 				((step && step.fields) || []).forEach((field) => {
 					if (this.kit.is_layout(field) || field.read_only || this.kit.text_list_column(field)) return;
 					if (field.fieldtype === "Table") return;

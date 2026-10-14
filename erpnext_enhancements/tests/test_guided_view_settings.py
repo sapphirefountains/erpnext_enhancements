@@ -282,6 +282,70 @@ out.card = {
 	view_kind: board.VIEW_SCHEMA.card,
 	picked: board.pick_view({ card: "owner,amount", view: "board" }),
 };
+// ---- review of #1299, S1: what is put away follows the record; filled-only keeps its snapshot
+const status = def("custom_lost_detail", "Small Text");
+const hidden_opts = (missing_now) => ({ hidden_fields: ["custom_lost_detail"], missing: new Set(missing_now), filled_only: false, reveal: false });
+const snap = v.filled_snapshot([{ fields: [def("a", "Data"), def("b", "Data"), def("c", "Data", { reqd: 1 }), { fieldtype: "Column Break", fieldname: "cb" }] }], { a: "", b: "x", c: "" });
+out.s1 = {
+	before_status: v.field_hidden(status, "", hidden_opts([])).hidden,
+	after_status: v.field_hidden(status, "", hidden_opts(["custom_lost_detail"])).hidden,
+	snapshot: Array.from(snap).sort(),
+	// "b" had a value when the snapshot was taken; emptied while typing, it stays on screen.
+	emptied_while_typing: v.field_hidden(def("b", "Data"), "", { filled_only: true, filled_snapshot: snap }).hidden,
+	still_empty: v.field_hidden(def("a", "Data"), "", { filled_only: true, filled_snapshot: snap }).hidden,
+	filled_since: v.field_hidden(def("a", "Data"), "now", { filled_only: true, filled_snapshot: snap }).hidden,
+	needed_since: v.field_hidden(def("a", "Data"), "", { filled_only: true, filled_snapshot: snap, missing: new Set(["a"]) }).hidden,
+	revealed: v.field_hidden(def("website", "Data"), "x", { hidden_fields: ["website"], revealed: new Set(["website"]) }).hidden,
+};
+
+// ---- review of #1299, S2: One page reads back only the sections that show
+globalThis.frappe = { session: { user: "u@example.com" }, boot: {} };
+globalThis.document = { activeElement: null };
+globalThis.__ = (text) => text;
+const { RecordEditor } = await import(pathToFileURL(dir + "/form_kit/ui/editor.js").href);
+const kit = await import(pathToFileURL(dir + "/form_kit/index.js").href);
+const S2_STEPS = [
+	{ key: "basics", fields: [{ fieldname: "title", fieldtype: "Data" }] },
+	{ key: "scope_design", applies: { field: "streams", row_field: "s", in: ["Design"] }, fields: [{ fieldname: "design_kind", fieldtype: "Select" }] },
+	{ key: "more", fields: [{ fieldname: "source", fieldtype: "Select" }] },
+];
+// A Select with no blank option reads back its first option for a null value, as v16's does.
+const control = (value) => ({ get_value: () => value });
+const s2 = (visible_more, active_design) => {
+	const ed = Object.create(RecordEditor.prototype);
+	const changes = [];
+	Object.assign(ed, {
+		kit,
+		flow: { steps: S2_STEPS },
+		values: { title: "T", design_kind: null, source: null, streams: active_design ? [{ s: "Design" }] : [] },
+		saved: { title: "T", design_kind: null, source: null, streams: active_design ? [{ s: "Design" }] : [] },
+		defs: {},
+		suppress: new Set(),
+		bases: {},
+		held: {},
+		retired: [],
+		failed_keys: new Set(),
+		is_new: false,
+		doctype: "Opportunity",
+		name: "OPP-1",
+		$root: [{ contains: () => false }],
+		party_ui: { changed() {} },
+		queue: { change: (f, value) => changes.push([f, value]), discard() {}, pending: () => ({}), in_flight: () => ({}), manual: false, record_key: "" },
+		refresh_chrome() {},
+		render_saveline() {},
+		refresh_distinct() {},
+		write_journal() {},
+		step_visible: (step) => step.key !== "more" || visible_more,
+	});
+	const groups = new kit.FieldGroups();
+	groups.add(S2_STEPS[0], { fields_dict: { title: control("T") }, refresh_dependency() {} });
+	groups.add(S2_STEPS[1], { fields_dict: { design_kind: control("Concept") }, refresh_dependency() {} });
+	groups.add(S2_STEPS[2], { fields_dict: { source: control("Website") }, refresh_dependency() {} });
+	ed.fg = groups;
+	ed.collect_step();
+	return { changes, collected: ed.collect_steps().map((st) => st.key) };
+};
+out.s2 = { hidden: s2(false, false), shown: s2(true, true) };
 console.log(JSON.stringify(out));
 """
 
@@ -293,6 +357,7 @@ def _run_node():
 		(folder / "package.json").write_text('{"type": "module"}', encoding="utf-8")
 		shutil.copytree(FORM_KIT_JS, folder / "form_kit")
 		shutil.copytree(BOARD_JS, folder / "opportunity_board")
+		shutil.copytree(JS / "info_blocks", folder / "info_blocks")
 		(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
 		proc = subprocess.run(
 			[node, str(folder / "runner.mjs"), str(folder)],
@@ -458,6 +523,30 @@ class TestTheDecisions(unittest.TestCase):
 			set(self.out["shortcut_actions"]),
 			{"next", "prev", "save", "comments", "settings", "focus", "help"},
 		)
+
+	def test_what_is_put_away_follows_the_record(self):
+		# Review of #1299, S1: a field the person hid comes back once the stage needs it, and
+		# "only fields with a value" keeps its snapshot, so a field emptied while typing stays.
+		s1 = self.out["s1"]
+		self.assertTrue(s1["before_status"])
+		self.assertFalse(s1["after_status"])
+		self.assertEqual(s1["snapshot"], ["a"])
+		self.assertFalse(s1["emptied_while_typing"])
+		self.assertTrue(s1["still_empty"])
+		self.assertFalse(s1["filled_since"])
+		self.assertFalse(s1["needed_since"])
+		self.assertFalse(s1["revealed"])
+
+	def test_one_page_never_reads_a_section_nobody_sees(self):
+		# Review of #1299, S2: a Select reads back its first option for null; drawn in a section
+		# that does not apply or is not showing, it must queue nothing.
+		hidden = self.out["s2"]["hidden"]
+		self.assertEqual(hidden["collected"], ["basics"])
+		self.assertEqual(hidden["changes"], [], "a layout is only a presentation")
+		shown = self.out["s2"]["shown"]
+		self.assertEqual(shown["collected"], ["basics", "scope_design", "more"])
+		# The same controls on screen do queue: the check above is not vacuous.
+		self.assertEqual(sorted(c[0] for c in shown["changes"]), ["design_kind", "source"])
 
 	def test_field_groups_answer_for_every_section(self):
 		g = self.out["groups"]
@@ -780,7 +869,13 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 		editor = _code(EDITOR_JS)
 		for head in ("\tcollect_step() {", "\tcollect_tables() {"):
 			with self.subTest(method=head):
-				self.assertIn("this.shown_steps()", _method(editor, head))
+				self.assertIn("this.collect_steps()", _method(editor, head))
+		collect = _method(editor, "\tcollect_steps() {")
+		self.assertIn("this.kit.step_active(step, this.values) && this.step_visible(step)", collect)
+		page = _code(PAGE_JS)
+		self.assertIn('!$sec.prop("hidden")', _method(page, "\tstep_visible(step) {"))
+		# S1: every refresh asks again what is put away.
+		self.assertIn("this.apply_visibility(false);", _method(page, "\trefresh_chrome() {"))
 		self.assertIn("if (this.fg && this.fg.multi) this.fg.add(step, fg);", editor)
 		self.assertIn("this.before_focus(fieldname);", _method(editor, "\tfocus_field(fieldname) {"))
 
@@ -791,10 +886,24 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 		self.assertIn("if (this.is_new) return true;", in_setup)
 		self.assertIn("return !this.is_new && !!this.flow", _method(page, "\tsections_mode() {"))
 		# The first-time pop-up never shows on a setup flow, and never twice.
-		intro = _method(page, "\tmaybe_intro() {")
+		intro = _method(page, "\tmaybe_intro(tries) {")
 		self.assertIn("this.in_setup()", intro)
 		self.assertIn("this.view_store.intro_seen = true;", intro)
 		self.assertLess(intro.index("this.view_store.intro_seen = true;"), intro.index("this.open_overlay("))
+
+	def test_the_intro_waits_for_a_decision_on_screen(self):
+		# Nit 4: never over the kept-changes chooser, a conflict or a dialog (the Won nudge).
+		intro = _method(_code(PAGE_JS), "\tmaybe_intro(tries) {")
+		self.assertIn("!!this.conflict", intro)
+		self.assertIn('document.querySelector(".modal.show")', intro)
+		self.assertLess(intro.index("busy"), intro.index("this.view_store.intro_seen = true;"))
+
+	def test_record_tools_are_offered_once_they_exist(self):
+		# Nit 2: the choice shows only when something has mounted into .ge-tools.
+		page = _code(PAGE_JS)
+		main = _method(page, "\trender_settings_main($body) {")
+		self.assertIn("if (this.tools_present()) {", main)
+		self.assertLess(main.index("if (this.tools_present()) {"), main.index('group("tools"'))
 
 	def test_the_side_panel_stays_step_by_step(self):
 		panel = _code(PANEL_JS)
@@ -806,6 +915,8 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 		editor = _code(EDITOR_JS)
 		wants = _method(editor, "\twants_help(field) {")
 		self.assertIn("this.hints_hidden", wants)
+		# Nit 1: the time-zone line lives in the hint's box; with hints put away the (i) carries it.
+		self.assertIn('field.fieldtype === "Datetime" && !this.same_time_zone()', wants)
 		self.assertIn("GE_HINT_CLAMP", wants)
 		self.assertIn("ge-help-hint", _method(editor, "\tadd_help($wrapper, field, step) {"))
 
