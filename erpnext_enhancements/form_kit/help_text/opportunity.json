@@ -1,0 +1,351 @@
+{
+ "_readme": "Field help for the Opportunity form and its guided flow (form kit P4.3; see form_kit/field_help.py). hint: the short line under the field, which is also the field's description. help: the longer (i) explanation. Changed by PR. article: the Knowledge Article the Learn more links open, each field at its step's anchor.",
+ "doctype": "Opportunity",
+ "article": null,
+ "fields": {
+  "custom_opportunity_name": {
+   "hint": "",
+   "help": ""
+  },
+  "naming_series": {
+   "hint": "",
+   "help": ""
+  },
+  "opportunity_from": {
+   "hint": "",
+   "help": ""
+  },
+  "party_name": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_value_stream": {
+   "hint": "",
+   "help": ""
+  },
+  "opportunity_owner": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_opportunity_summary": {
+   "hint": "One plain-English line answering \"what is this?\" - e.g. \"Sapphire hardware access + VNC for controller\". Written by the Account Executive; the detail lives in Scope, not here.",
+   "help": ""
+  },
+  "custom_lead_source": {
+   "hint": "Where this opportunity came from. Mirrors Customer.custom_lead_source and Lead.custom_lead_source.",
+   "help": ""
+  },
+  "expected_closing": {
+   "hint": "",
+   "help": ""
+  },
+  "probability": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_probability_by_hand": {
+   "hint": "Ticked when someone types the probability: a stage change then keeps it. Untick to go back to the stage's default (Sales Activity Settings).",
+   "help": ""
+  },
+  "territory": {
+   "hint": "",
+   "help": ""
+  },
+  "primary_contact": {
+   "hint": "",
+   "help": ""
+  },
+  "primary_address": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_general_scope_description": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_design_customer_requests": {
+   "hint": "The customer's ask, in their own words - entered by Sales when the request comes in. Don't break it down here; one row per ask (or everything in one row) is fine.",
+   "help": ""
+  },
+  "custom_design_deliverables": {
+   "hint": "The internal breakdown of what we'll deliver - translated from the Customer Requests by the PM/design team (PRO-0204 Step 6). Not filled in by Sales.",
+   "help": ""
+  },
+  "custom_build_customer_requests": {
+   "hint": "The customer's ask, in their own words - entered by Sales when the request comes in. Don't break it down here; one row per ask (or everything in one row) is fine.",
+   "help": ""
+  },
+  "custom_build_deliverables": {
+   "hint": "The internal breakdown of what we'll deliver - translated from the Customer Requests by the PM/design team (PRO-0204 Step 6). Not filled in by Sales.",
+   "help": ""
+  },
+  "custom_service_customer_requests": {
+   "hint": "The customer's ask, in their own words - entered by Sales when the request comes in. Don't break it down here; one row per ask (or everything in one row) is fine.",
+   "help": ""
+  },
+  "custom_service_deliverables": {
+   "hint": "The internal breakdown of what we'll deliver - translated from the Customer Requests by the PM/design team (PRO-0204 Step 6). Not filled in by Sales.",
+   "help": ""
+  },
+  "custom_rent_customer_requests": {
+   "hint": "The customer's ask, in their own words - entered by Sales when the request comes in. Don't break it down here; one row per ask (or everything in one row) is fine.",
+   "help": ""
+  },
+  "custom_rent_deliverables": {
+   "hint": "The internal breakdown of what we'll deliver - translated from the Customer Requests by the PM/design team (PRO-0204 Step 6). Not filled in by Sales.",
+   "help": ""
+  },
+  "custom_project_start_date": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_project_end_date": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_notes_for_scheduling": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_delivery_date_time": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_delivery_date_time_notes": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_setup_date_time": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_setup_date_time_notes": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_event_date_time": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_event_date_time_notes": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_take_down_date_time": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_take_down_date_time_notes": {
+   "hint": "",
+   "help": ""
+  },
+  "opportunity_amount": {
+   "hint": "",
+   "help": ""
+  },
+  "base_opportunity_amount": {
+   "hint": "",
+   "help": ""
+  },
+  "conversion_rate": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_materials_budget": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_time_budget_in_hours": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_time__materials": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_notes_relating_to_budget": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_first_invoice_percentage": {
+   "hint": "How much of the project amount goes on the first invoice to the customer. Named in the hand-off note to Billing (Hand-Off Process step 4), together with the money it works out to. Blank means the note asks Billing to confirm the amount with Sales rather than inventing one.",
+   "help": ""
+  },
+  "custom_billing_email": {
+   "hint": "Where the hand-off note for step 4 (Create Accounting Project & Send Invoice) is addressed. Leave blank for the configured Billing route (billing@sapphirefountains.com) — this is an override, not a required setting, and several addresses may be separated by commas.",
+   "help": ""
+  },
+  "status": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_scope_rank": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_schedule_rank": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_budget_rank": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_date_closed_won": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_stage_changed_on": {
+   "hint": "Timestamp of the last status change - feeds the days-in-stage aging on the Sales Pipeline board.",
+   "help": ""
+  },
+  "lost_reasons": {
+   "hint": "",
+   "help": ""
+  },
+  "order_lost_reason": {
+   "hint": "",
+   "help": ""
+  },
+  "competitors": {
+   "hint": "",
+   "help": ""
+  },
+  "no_of_employees": {
+   "hint": "",
+   "help": ""
+  },
+  "annual_revenue": {
+   "hint": "",
+   "help": ""
+  },
+  "customer_group": {
+   "hint": "",
+   "help": ""
+  },
+  "industry": {
+   "hint": "",
+   "help": ""
+  },
+  "market_segment": {
+   "hint": "",
+   "help": ""
+  },
+  "website": {
+   "hint": "",
+   "help": ""
+  },
+  "city": {
+   "hint": "",
+   "help": ""
+  },
+  "state": {
+   "hint": "",
+   "help": ""
+  },
+  "country": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_utm_source": {
+   "hint": "Raw utm_source from the landing URL. NOT erpnext's own utm_source, which is a Link to the empty UTM Source taxonomy and is reserved for the fountain-move stray-Contact suppression. See crm_enhancements/attribution.py.",
+   "help": ""
+  },
+  "custom_utm_medium": {
+   "hint": "Raw utm_medium. Drives the derived Lead Source: cpc/ppc -> Advertisement, email -> Email Campaign, social -> Social Media Campaign.",
+   "help": ""
+  },
+  "custom_utm_campaign": {
+   "hint": "Raw utm_campaign. Data, not a Link, so an arbitrary campaign slug cannot spawn junk taxonomy rows.",
+   "help": ""
+  },
+  "custom_utm_id": {
+   "hint": "Raw utm_id -- the ad platform's own campaign ID, written by its dynamic URL macro (Google ValueTrack campaignid, Meta campaign.id, LinkedIn CAMPAIGN_ID). Equals Ad Campaign.external_id: the spend-to-lead join key (TASK-2026-01570).",
+   "help": ""
+  },
+  "custom_utm_content": {
+   "hint": "Raw utm_content -- which creative or placement was clicked.",
+   "help": ""
+  },
+  "custom_utm_term": {
+   "hint": "Raw utm_term -- the paid keyword. erpnext ships no equivalent field.",
+   "help": ""
+  },
+  "custom_gclid": {
+   "hint": "Google Ads click identifier. Auto-tagging sets it even when no utm_* parameters are present, so it is checked first when deriving a Lead Source.",
+   "help": ""
+  },
+  "custom_landing_page": {
+   "hint": "First page of the session on the marketing site. Small Text because a query-string-bearing URL overflows Data(140).",
+   "help": ""
+  },
+  "custom_first_referrer": {
+   "hint": "document.referrer at session entry. Distinguishes organic search from a direct visit when utm parameters are absent.",
+   "help": ""
+  },
+  "custom_attribution_captured_on": {
+   "hint": "Stamped once, when attribution first landed on this record. Read-only: derived, and a hand-edit would misdate the acquisition.",
+   "help": ""
+  },
+  "company": {
+   "hint": "",
+   "help": ""
+  },
+  "transaction_date": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_travel_trip": {
+   "hint": "",
+   "help": ""
+  },
+  "language": {
+   "hint": "",
+   "help": ""
+  },
+  "first_response_time": {
+   "hint": "",
+   "help": ""
+  },
+  "amended_from": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_created_project": {
+   "hint": "",
+   "help": ""
+  },
+  "custom_handoff_meeting_held": {
+   "hint": "Set by the Hand-Off Meeting buttons only. Until this is ticked (or the hand-off is skipped with a reason), no Project can be created from this Opportunity.",
+   "help": ""
+  },
+  "custom_handoff_meeting_on": {
+   "hint": "Server-generated. Carried onto the Project's step 2 row.",
+   "help": ""
+  },
+  "custom_handoff_meeting_by": {
+   "hint": "Server-generated. Carried onto the Project's step 2 row.",
+   "help": ""
+  },
+  "custom_handoff_event": {
+   "hint": "The calendar Event created by the “Hold Hand-Off Meeting” button.",
+   "help": ""
+  },
+  "custom_handoff_skip_reason": {
+   "hint": "Why the hand-off meeting was skipped. Recorded by a System Manager through the permission-gated skip action, and copied onto the Project's step 2 row with a [SKIPPED] prefix.",
+   "help": ""
+  },
+  "custom_handoff_due_by": {
+   "hint": "Two business days from the Opportunity being marked Closed Won. Stamped once, at the transition.",
+   "help": ""
+  },
+  "custom_launch_deadline": {
+   "hint": "Seven business days from Closed Won — the meeting's headline goal for holding the Project Launch Meeting (step 7). Stamped once, at the transition.",
+   "help": ""
+  },
+  "custom_handoff_gate_applies": {
+   "hint": "Set only on a genuine transition into Closed Won, so the pre-existing Closed Won backlog stays exempt from the hand-off gate. Do not set by hand.",
+   "help": ""
+  }
+ }
+}

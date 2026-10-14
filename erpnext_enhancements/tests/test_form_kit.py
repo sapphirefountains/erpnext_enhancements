@@ -1277,7 +1277,10 @@ class TestEndpoints(unittest.TestCase):
     def test_get_flow_payload(self):
         name = _seed()
         payload = api.get_flow("Opportunity", name)
-        self.assertEqual(set(payload), {"doctype", "name", "modified", "steps", "values", "completeness", "can_write"})
+        self.assertEqual(
+            set(payload),
+            {"doctype", "name", "modified", "steps", "values", "completeness", "can_write", "help_article"},
+        )
         self.assertEqual(payload["name"], name)
         self.assertEqual(payload["modified"], STATE["db"][name]["modified"])
         self.assertEqual(payload["can_write"], 1)
@@ -1300,6 +1303,33 @@ class TestEndpoints(unittest.TestCase):
         with self.assertRaises(FRAPPE.PermissionError):
             api.get_flow("Opportunity", name)
 
+    def test_get_field_help_sends_explanations_with_their_step(self):
+        field_help = sys.modules["erpnext_enhancements.form_kit.field_help"]
+        original = field_help.load
+        field_help.load = lambda doctype: {
+            "doctype": doctype,
+            "article": "KA-0007",
+            "fields": {
+                "custom_opportunity_summary": {"hint": "One line", "help": "Why it matters."},
+                "custom_lead_source": {"hint": "Where it came from", "help": ""},
+                "no_such_field": {"hint": "x", "help": "Never sent: not on the form."},
+            },
+        }
+        try:
+            payload = api.get_field_help("Opportunity")
+        finally:
+            field_help.load = original
+        self.assertEqual(payload["article"], "KA-0007")
+        self.assertEqual(payload["fields"], {"custom_opportunity_summary": {"help": "Why it matters.", "anchor": "basics"}})
+
+    def test_get_field_help_needs_read_and_a_configured_doctype(self):
+        STATE["perm"]["read"] = False
+        with self.assertRaises(FRAPPE.PermissionError):
+            api.get_field_help("Opportunity")
+        STATE["perm"]["read"] = True
+        with self.assertRaises(FRAPPE.PermissionError):
+            api.get_field_help("User")
+
     def test_doctypes_outside_the_registry_are_refused(self):
         for doctype in ("User", "Sales Invoice", "", None, ["Opportunity"]):
             with self.subTest(doctype=doctype):
@@ -1320,7 +1350,9 @@ class TestEndpoints(unittest.TestCase):
                 for decorator in node.decorator_list:
                     if "whitelist" in ast.unparse(decorator):
                         decorated[node.name] = ast.unparse(decorator)
-        self.assertEqual(set(decorated), {"get_flow", "create_record", "save_step", "completeness_for"})
+        self.assertEqual(
+            set(decorated), {"get_flow", "create_record", "save_step", "completeness_for", "get_field_help"}
+        )
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["save_step"])
         for decorator in decorated.values():
@@ -1331,6 +1363,79 @@ class TestEndpoints(unittest.TestCase):
             if path.name == "api.py":
                 continue
             self.assertNotIn("frappe.whitelist", path.read_text(encoding="utf-8"), path.name)
+
+
+# --------------------------------------------------------------------------- field help (P4.3)
+
+
+HELP_FILE = APP / "form_kit" / "help_text" / "opportunity.json"
+DESC_ICONS_JS = APP / "public" / "js" / "global_enhancements" / "field_description_icons.js"
+
+
+class TestFieldHelp(unittest.TestCase):
+    def setUp(self):
+        _reset()
+        self.help = json.loads(HELP_FILE.read_text(encoding="utf-8"))
+        self.field_help = sys.modules["erpnext_enhancements.form_kit.field_help"]
+
+    def test_the_file_covers_exactly_the_fields_the_flow_shows(self):
+        name = _seed()
+        offered = set(_all_values(steps.flow_steps("Opportunity", _doc(name))))
+        self.assertEqual(set(self.help["fields"]), offered)
+        self.assertEqual(self.help["doctype"], "Opportunity")
+        for fieldname, entry in self.help["fields"].items():
+            with self.subTest(fieldname=fieldname):
+                self.assertEqual(set(entry), {"hint", "help"})
+
+    def test_every_hint_is_the_fields_description(self):
+        """The hint is also the field's description (fixture or Property Setter), so the Desk form,
+        Quick Entry and every grid show the same line as the guided flow."""
+        meta = STATE["metas"]["Opportunity"]
+        described = {df.fieldname: (df.get("description") or "") for df in meta.fields}
+        for fieldname, entry in self.help["fields"].items():
+            if not entry["hint"] or fieldname in config.CONFIGS["Opportunity"]["site_only_fields"]:
+                continue
+            with self.subTest(fieldname=fieldname):
+                self.assertEqual(described.get(fieldname), entry["hint"])
+
+    def test_the_flow_reads_hint_and_help_from_the_file(self):
+        original = self.field_help.load
+        self.field_help.load = lambda doctype: {
+            "doctype": doctype,
+            "article": None,
+            "fields": {"custom_opportunity_summary": {"hint": "One plain line", "help": "Read by everyone."}},
+        }
+        try:
+            flow = steps.flow_steps("Opportunity", _doc(_seed()))
+        finally:
+            self.field_help.load = original
+        summary = _field(flow, "custom_opportunity_summary")
+        self.assertEqual((summary["hint"], summary["help"]), ("One plain line", "Read by everyone."))
+        # A field the file is silent about keeps its own description and has no (i).
+        status = _field(flow, "status")
+        self.assertIsNone(status["help"])
+
+    def test_the_loader_reads_the_file_and_tolerates_a_missing_one(self):
+        loaded = self.field_help.load("Opportunity")
+        self.assertEqual(set(loaded), {"doctype", "article", "fields"})
+        self.assertTrue(self.field_help.has_help("Opportunity"))
+        self.assertFalse(self.field_help.has_help("Lead"))
+        self.assertEqual(self.field_help.load("Lead")["fields"], {})
+        self.assertEqual(self.field_help.for_field("Lead", "anything"), {"hint": "", "help": ""})
+        self.assertEqual(self.field_help.help_file("Material Request").name, "material_request.json")
+
+    def test_the_desk_tooltip_fetches_quietly_and_escapes(self):
+        source = DESC_ICONS_JS.read_text(encoding="utf-8")
+        self.assertIn("erpnext_enhancements.form_kit.api.get_field_help", source)
+        self.assertIn("fetch(url", source)
+        code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith(("//", "*")))
+        self.assertNotIn("frappe.call(", code[code.index("function load_help") : code.index("function more_html")])
+        self.assertIn("frappe.utils.escape_html(extra.help)", source)
+        self.assertIn("frappe.boot.sf_field_help", source)
+
+    def test_boot_lists_the_doctypes_with_help(self):
+        boot = (APP / "boot.py").read_text(encoding="utf-8")
+        self.assertIn("bootinfo.sf_field_help = _field_help_doctypes()", boot)
 
 
 if __name__ == "__main__":

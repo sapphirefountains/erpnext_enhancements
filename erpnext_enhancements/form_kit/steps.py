@@ -36,6 +36,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
+from erpnext_enhancements.form_kit import field_help
 from erpnext_enhancements.form_kit.config import get_config
 
 LAYOUT_TYPES = {"Section Break", "Column Break", "Tab Break"}
@@ -121,15 +122,19 @@ def access_for(doctype, meta, doc=None, user=None):
 	}
 
 
-def field_def(df, access, *, read_only=False, read_only_names=()):
-	"""The docfield as the page renders it, or None when the user may not read its permlevel."""
+def field_def(df, access, *, read_only=False, read_only_names=(), help_entry=None):
+	"""The docfield as the page renders it, or None when the user may not read its permlevel.
+
+	``hint`` and ``help`` come from the DocType's help file (``form_kit.field_help``, P4.3); a
+	field the file says nothing about falls back to its docfield description, with no (i).
+	"""
 	level = cint(df.get("permlevel"))
 	if level not in access["read_levels"]:
 		return None
 	out = {key: df.get(key) for key in FIELD_KEYS if df.get(key) not in (None, "", 0)}
-	# P4.3 hangs the long "(i)" help text off ``help``; ``hint`` is the docfield description.
-	out["hint"] = df.get("description") or ""
-	out["help"] = None
+	entry = help_entry or {}
+	out["hint"] = entry.get("hint") or df.get("description") or ""
+	out["help"] = entry.get("help") or None
 	default = df.get("default")
 	if (
 		default not in (None, "")
@@ -352,7 +357,13 @@ def flow_steps(doctype, doc=None, user=None):
 			if df.get("fieldtype") in LAYOUT_TYPES:
 				out.append({"fieldtype": df.get("fieldtype"), "fieldname": df.get("fieldname")})
 				continue
-			field = field_def(df, access, read_only=read_only, read_only_names=read_only_names)
+			field = field_def(
+				df,
+				access,
+				read_only=read_only,
+				read_only_names=read_only_names,
+				help_entry=field_help.for_field(doctype, df.get("fieldname")),
+			)
 			if field is None:
 				continue
 			if mark_create and field["fieldname"] in create:

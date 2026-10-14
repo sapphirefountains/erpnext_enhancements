@@ -21,6 +21,14 @@
  *
  * Same family as filter_help.js; mirrors the global form-refresh hook in
  * activity_log_numbering.js.
+ *
+ * The longer explanation (form kit P4.3). For a DocType with a help file in the repo
+ * (form_kit/help_text/, listed in `frappe.boot.sf_field_help`), the tooltip shows the
+ * description (the field's short hint) and then the field's longer explanation and a
+ * "Learn more" link to its section of the Knowledge Article. The help is fetched once per
+ * DocType per page load, with a plain fetch() rather than frappe.call: frappe.call shows its
+ * own error dialog on a 403, a 5xx or a timeout whatever `silent` says, and a tooltip must
+ * never do that. A failed fetch simply leaves the tooltip as it was: the description alone.
  */
 frappe.provide("erpnext_enhancements.field_description_icons");
 
@@ -83,7 +91,12 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 				"</span>"
 		);
 		// Fallback text for the rare case the help-box isn't populated yet.
-		$icon.data("eeDescFallback", __(field.df.description));
+		$icon.data("eeDescFallback", __(field.df.description || ""));
+		// Which field it is, for the longer explanation (form kit P4.3).
+		$icon.data("eeDescField", {
+			doctype: field.doctype || field.df.parent || (window.cur_frm && window.cur_frm.doctype),
+			fieldname: field.df.fieldname,
+		});
 
 		$label.append(" ").append($icon);
 		return true;
@@ -94,7 +107,10 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 	// the same shape add_icon() expects from a fields_dict entry.
 	function decorate(control) {
 		if (!is_enabled()) return;
-		if (!control || !control.df || !control.df.description) return;
+		if (!control || !control.df) return;
+		if (!control.df.description && !extra_for(control.doctype || control.df.parent, control.df.fieldname)) {
+			return;
+		}
 		try {
 			add_icon(control);
 		} catch (e) {
@@ -110,6 +126,63 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 		frm = frm || window.cur_frm;
 		if (!is_enabled() || !frm || !frm.fields_dict) return;
 		Object.keys(frm.fields_dict).forEach((f) => decorate(frm.fields_dict[f]));
+	}
+
+	// --- The longer explanation (form kit P4.3) ---
+	// {doctype: {article, fields: {fieldname: {help, anchor}}}} once fetched; a pending
+	// fetch is held in `loading` so a form refresh never asks twice.
+	const help_by_doctype = {};
+	const loading = {};
+
+	function has_help_file(doctype) {
+		const list = (frappe.boot && frappe.boot.sf_field_help) || [];
+		return !!doctype && list.indexOf(doctype) !== -1;
+	}
+
+	function extra_for(doctype, fieldname) {
+		const data = doctype && help_by_doctype[doctype];
+		const entry = data && data.fields && data.fields[fieldname];
+		return entry && entry.help ? { help: entry.help, anchor: entry.anchor, article: data.article } : null;
+	}
+
+	function load_help(doctype) {
+		if (!has_help_file(doctype) || help_by_doctype[doctype] || loading[doctype]) {
+			return loading[doctype] || Promise.resolve();
+		}
+		const url =
+			"/api/method/erpnext_enhancements.form_kit.api.get_field_help?doctype=" +
+			encodeURIComponent(doctype);
+		loading[doctype] = fetch(url, {
+			credentials: "same-origin",
+			headers: { Accept: "application/json", "X-Frappe-CSRF-Token": frappe.csrf_token || "" },
+		})
+			.then((r) => (r.ok ? r.json() : null))
+			.then((body) => {
+				if (body && body.message && body.message.fields) help_by_doctype[doctype] = body.message;
+			})
+			.catch(() => null)
+			.then(() => {
+				delete loading[doctype];
+			});
+		return loading[doctype];
+	}
+
+	function more_html(extra) {
+		if (!extra) return "";
+		let html = '<p class="ee-field-desc-more">' + frappe.utils.escape_html(extra.help) + "</p>";
+		if (extra.article) {
+			const href =
+				"/app/knowledge-article/" +
+				encodeURIComponent(extra.article) +
+				(extra.anchor ? "#" + encodeURIComponent(extra.anchor) : "");
+			html +=
+				'<a class="ee-field-desc-learn" href="' +
+				href +
+				'">' +
+				frappe.utils.escape_html(__("Learn more")) +
+				"</a>";
+		}
+		return html;
 	}
 
 	// --- Tooltip (single body-appended element; avoids section overflow clipping) ---
@@ -138,10 +211,12 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 		if (!$src.length || !($src.html() || "").trim()) {
 			$src = $ctrl.find(".grid-description").first();
 		}
+		const field = $icon.data("eeDescField") || {};
+		const more = more_html(extra_for(field.doctype, field.fieldname));
 		const html = $src.length ? ($src.html() || "").trim() : "";
-		if (html) return html;
+		if (html) return html + more;
 		const fallback = $icon.data("eeDescFallback") || "";
-		return frappe.utils.escape_html(fallback);
+		return (fallback ? frappe.utils.escape_html(fallback) : "") + more;
 	}
 
 	function show_tip($icon) {
@@ -264,7 +339,14 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 	// Safety net: a deferred pass after the form's render chain settles
 	// (setTimeout runs after run_serially's microtask chain, i.e. after
 	// refresh_fields). Idempotent — add_icon no-ops on already-decorated fields.
-	$(document).on("form-refresh", (e, frm) => setTimeout(() => rescan(frm), 0));
+	$(document).on("form-refresh", (e, frm) => {
+		setTimeout(() => rescan(frm), 0);
+		// The longer explanation: fetched once per DocType, then a rescan picks up fields
+		// that have help but no description of their own.
+		if (frm && has_help_file(frm.doctype) && !help_by_doctype[frm.doctype]) {
+			load_help(frm.doctype).then(() => rescan(frm));
+		}
+	});
 
 	erpnext_enhancements.field_description_icons.rescan = rescan;
 })();

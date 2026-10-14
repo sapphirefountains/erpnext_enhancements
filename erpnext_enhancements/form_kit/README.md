@@ -23,7 +23,8 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `steps.py` | `flow_steps(doctype, doc=None, user=None)`: the meta walked into steps, with each field's permission worked out for the user |
 | `saver.py` | `create_record` (step 1 inserts the draft) and `save_step` (one step, optimistic lock on `modified`) |
 | `completeness.py` | `stage_completeness(doctype, doc)`, pure; `completeness_for(doctype, names)`, the batch for the board |
-| `api.py` | The four whitelisted endpoints, and the DocType allowlist in front of them |
+| `api.py` | The five whitelisted endpoints, and the DocType allowlist in front of them |
+| `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
 
@@ -108,8 +109,9 @@ With no `name` it describes a new record: `name` and `modified` are null, `value
 record's defaults (`frappe.new_doc`), and step 1 (`"create": 1`) is what `create_record` takes.
 `applies` is data the page re-evaluates as the user picks values; `active` is its value for the
 record as loaded. A step that does not apply is still sent (the page can show it greyed, or skip it).
-`hint` is the docfield description; `help` is the hook for the (i) bubble's long text (P4.3, kept in
-the repo, not yet filled).
+`hint` and `help` come from the DocType's help file (see *Field help* below); a field the file is
+silent about falls back to its docfield description, with `help` null. `help_article` is the
+Knowledge Article each field's *Learn more* opens, at its step's anchor, or null.
 
 `create_record(doctype, values)` and `save_step(doctype, name, values, modified, step=None)`, POST,
 `values` a JSON object of `{fieldname: value}`. A table's value is its full list of rows: a row with
@@ -174,6 +176,24 @@ Opportunity (decided from prod fill rates, TASK-2026-02773; cumulative):
 
 Rarely filled fields (scope description, requested dates, budget notes, the Events schedule,
 budgets, the initial invoice, contributors, deliverables) are deliberately not counted.
+
+## Field help
+
+Nik, 2026-10-13: every field gets a short hint, always visible under it, and a longer explanation
+behind an (i); the text lives in the repository and changes by PR, never from the Desk.
+`help_text/<doctype>.json` holds `{"article", "fields": {fieldname: {"hint", "help"}}}`.
+
+- **The hint is also the field's description** (the custom field in the fixtures, or a
+  `description` Property Setter for an ERPNext field), so the Desk form, Quick Entry and grids show
+  the same line as the flow. `test_form_kit` fails when the two drift, and when the file does not
+  cover exactly the fields the flow shows.
+- **The flow** sends `hint` and `help` per field (`steps.field_def`).
+- **The standard Desk form**: `field_description_icons.js` already shows a description as an ⓘ
+  tooltip. For a DocType with a help file (`frappe.boot.sf_field_help`) the tooltip adds the longer
+  explanation and a *Learn more* link, fetched once per DocType from `get_field_help` with a plain
+  `fetch` (frappe.call shows its own dialogs on errors; a tooltip must not).
+- `get_field_help(doctype)`, GET: `{"article", "fields": {fieldname: {"help", "anchor"}}}`, only
+  fields with an explanation that the caller may read; `anchor` is the field's step key.
 
 ## Adding a DocType
 

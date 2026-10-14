@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.631.0] - 2026-10-13
+
+Form kit P4.3: field help, the plumbing (TASK-2026-02761). The Opportunity help text itself (P5.4) follows
+in its own PR, once Nik has approved each field on the review page.
+
+### Added
+
+- **One help file per DocType, in the repo:** `form_kit/help_text/opportunity.json`, read by
+  `form_kit/field_help.py`. Each field has a short `hint` and a longer `help`, and the file names
+  the Knowledge Article the *Learn more* links open. This follows Nik's 2026-10-13 decision that help
+  text lives in the repo and changes by PR, with no Desk-editable Field Help.
+  - **The seed copies today's descriptions:** 32 of the 86 fields the flow shows have one, and no
+    field has a `help` yet. So nothing a person sees changes in this release.
+  - **Tests:** `test_form_kit` checks that the file covers exactly the fields the flow shows, and
+    that every hint equals the field's own description. The hint is also what the Desk form,
+    Quick Entry and grids show, so the two can never drift.
+- **The guided flow sends each field's `hint` and `help` from the file** (`steps.field_def`), with
+  the docfield description as the fallback. `get_flow` adds `help_article`.
+- **`form_kit.api.get_field_help(doctype)` (GET):** `{"article", "fields": {fieldname: {"help",
+  "anchor"}}}`. It returns only fields that have an explanation and that the caller may read.
+  `anchor` is the field's step key, which matches the section anchors the KB seeding uses.
+  `test_whitelist_placement` pins it.
+- **The Desk form's ⓘ tooltips show the longer explanation.**
+  - `field_description_icons.js` already turns a description into an ⓘ tooltip. For a DocType
+    listed in `frappe.boot.sf_field_help`, the tooltip now adds the field's explanation and a
+    *Learn more* link to its section of the article.
+  - **No error dialogs:** the help is fetched once per DocType with a plain `fetch`. `frappe.call`
+    shows its own dialog on a 403, 5xx or timeout even when `silent` is set, and a tooltip must
+    never do that. A failed fetch leaves the tooltip showing just the description.
+
 ## [1.629.0] - 2026-10-13
 
 Historical Opportunities (WI-024, TASK-2026-00917). Nik, 2026-10-13: the Closed-Won-but-no-project
