@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.633.0] - 2026-10-13
+
+### Fixed
+
+- **A site-wide checklist is filled in once on a site visit, not once on every water feature's tab.**
+  On a Per Site Visit, every covered feature resolves its form. A seasonal visit resolves the contract's
+  seasonal form for all of them, so each feature's tab got the whole list. That is right for 4th West,
+  where each courtyard fountain is drained the same way. It is wrong where the form names each fountain's
+  steps itself.
+  - Hardware's winterization (drafted for 2026-10-24) would have put the courtyard heaters and the East
+    Wall drain on all seven tabs, lobbies included: about 35 extra required lines to answer N/A.
+    Sanctuary's changeovers would have done the same on thirteen tabs. No such visit had been opened yet.
+  - A Sapphire Maintenance Template now has **Once per Site Visit** (`site_wide`). `get_visit_payload`
+    instantiates a ticked form once on a site visit, with its rows untagged (no `serial_no`) and no
+    feature's chemical store. A Per Feature visit is unaffected.
+  - The Visit Wizard shows untagged rows on a **Whole site** tab, first, when tagged rows sit beside
+    them (`VZ_SITE`). With every row untagged it shows no tabs, as before. Before this, untagged rows on
+    a tabbed visit showed on no tab at all.
+    - A chemical or follow-up added on the Whole site tab is untagged (`feature_serial`).
+    - The follow-up dialog does not list the tab twice.
+  - The review email, the customer report and the portal already label untagged rows "Whole site".
+  - Tests: four in `tests/test_visit_agreement_match.py` (the payload, once and per fountain, a Per
+    Feature visit, and no store on the site copy). Two in `scripts/test_wizard_back_forward.mjs` (the
+    Whole site tab with its rows, route and Back, and no tabs when everything is site-wide).
+
 ## [1.632.0] - 2026-10-13
 
 Fixes to `sf_kit` from the review of #1245 (custom pages step 2, TASK-2026-02804), before step 3 moves

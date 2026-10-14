@@ -254,6 +254,10 @@ function vz_required_chip(table, row) {
 		: `<span class="vz-chip vz-chip-req">${__("Required")}</span>`;
 }
 
+// The Whole site tab's key (v1.633.0): rows of a form ticked Once per Site Visit carry no
+// serial_no. Not "" because an empty feature reads as "no tab" in the route and in go().
+const VZ_SITE = "whole-site";
+
 function vz_plain_html(value) {
 	return frappe.utils.escape_html(String(value == null ? "" : value)).replace(/\n/g, "<br>");
 }
@@ -1511,18 +1515,31 @@ class VisitWizard {
 
 	build_features() {
 		// Per Site Visit records tag every row with its water feature; one
-		// header serial (or untagged rows) means no tab strip.
+		// header serial (or untagged rows) means no tab strip. A form ticked Once per
+		// Site Visit (v1.633.0) leaves its rows untagged: with tagged rows beside them
+		// they get a Whole site tab of their own, first, or they would show on no tab.
 		const serials = new Set();
+		let untagged = false;
 		["chemistry_readings", "consumables", "maintenance_results", "cleaning_tasks"].forEach((table) => {
-			(this.doc[table] || []).forEach((row) => row.serial_no && serials.add(row.serial_no));
+			(this.doc[table] || []).forEach((row) => {
+				if (row.serial_no) serials.add(row.serial_no);
+				else untagged = true;
+			});
 		});
-		this.features = !this.doc.serial_no && serials.size > 1 ? Array.from(serials) : [];
+		const tabbed = !this.doc.serial_no && (serials.size > 1 || (serials.size && untagged));
+		this.features = tabbed ? (untagged ? [VZ_SITE] : []).concat(Array.from(serials)) : [];
 		this.feature = this.features[0] || null;
 	}
 
 	rows(table) {
 		const rows = this.doc[table] || [];
-		return this.features.length ? rows.filter((row) => row.serial_no === this.feature) : rows;
+		return this.features.length ? rows.filter((row) => (row.serial_no || VZ_SITE) === this.feature) : rows;
+	}
+
+	// The water feature the tab on screen stands for: null on the Whole site tab and
+	// when there are no tabs, so a row added there is not tagged with the sentinel.
+	feature_serial() {
+		return this.feature && this.feature !== VZ_SITE ? this.feature : null;
 	}
 
 	// ----- dirty tracking + autosave --------------------------------------
@@ -2882,11 +2899,11 @@ class VisitWizard {
 		const table = this.steps[this.step_index].table;
 		this.features.forEach((serial) => {
 			const active = serial === this.feature;
-			const label = (this.feature_names || {})[serial] || serial;
+			const label = serial === VZ_SITE ? __("Whole site") : (this.feature_names || {})[serial] || serial;
 			// Outstanding required rows for this feature on this step, so a tab
 			// that still needs work says so before you leave the site.
 			const left = (this.doc[table] || []).filter(
-				(row) => row.serial_no === serial && row.is_mandatory && !vz_row_answered(table, row)
+				(row) => (row.serial_no || VZ_SITE) === serial && row.is_mandatory && !vz_row_answered(table, row)
 			).length;
 			$(`<button type="button" role="tab" aria-selected="${active}" class="vz-tab ${active ? "vz-active" : ""}">
 					${frappe.utils.escape_html(label)}${left ? ` <span class="vz-chip vz-chip-req">${left}</span>` : ""}
@@ -3671,7 +3688,7 @@ class VisitWizard {
 					qty: values.qty,
 					uom: (values.uom || "").trim() || null,
 					qty_step: 1,
-					serial_no: this.feature,
+					serial_no: this.feature_serial(),
 				};
 				this.doc.consumables.push(row);
 				this.pending_added.push(row);
@@ -4075,7 +4092,10 @@ class VisitWizard {
 	// water feature.
 	add_follow_up(from) {
 		from = from || {};
-		const features = this.features.map((serial) => ({ label: this.feature_names[serial] || serial, value: serial }));
+		// The Whole site tab is the select's own "Whole site" option, not a feature.
+		const features = this.features
+			.filter((serial) => serial !== VZ_SITE)
+			.map((serial) => ({ label: this.feature_names[serial] || serial, value: serial }));
 		const fields = [
 			{
 				fieldname: "description",
@@ -4099,7 +4119,7 @@ class VisitWizard {
 				fieldtype: "Select",
 				label: __("Water feature"),
 				options: [{ label: __("Whole site"), value: "" }, ...features],
-				default: from.serial_no || this.feature || "",
+				default: from.serial_no || this.feature_serial() || "",
 			});
 		}
 		const dialog = new frappe.ui.Dialog({

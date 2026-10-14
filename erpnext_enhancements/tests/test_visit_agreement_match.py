@@ -393,6 +393,101 @@ class TestPayloadByWeekday(unittest.TestCase):
 		)
 
 
+class TestOncePerSiteVisit(unittest.TestCase):
+	"""v1.633.0: a form ticked Once per Site Visit is filled in once, for the whole site.
+
+	Hardware's winterization names each fountain's steps itself, and every one of its seven
+	water features got the whole list; Sanctuary's thirteen would have too."""
+
+	def setUp(self):
+		_reset()
+		self.contract = _Document(
+			name="MNT-HW",
+			customer="Hardware",
+			project="PRJ-00228",
+			visit_shape="Per Site Visit",
+			default_template="Site Winterization",
+			covered_features=[
+				_Dict(serial_no="EAST", template=None, default_warehouse="WH-EAST"),
+				_Dict(serial_no="WEST", template=None, default_warehouse=None),
+				_Dict(serial_no="LOBBY", template="Lobby Form", default_warehouse=None),
+			],
+		)
+		steps = _Document(
+			name="Steps",
+			section_title="Steps",
+			section_type="Cleaning Tasks",
+			disabled=0,
+			items=[_item("East Courtyard - heater on", "", 1, 1), _item("East Wall - drained", "", 2, 2)],
+		)
+		lobby = _Document(
+			name="Lobby",
+			section_title="Lobby",
+			section_type="Cleaning Tasks",
+			disabled=0,
+			items=[_item("Lobby wall wiped", "", 1, 1)],
+		)
+		STATE["docs"].update(
+			{
+				("Sapphire Maintenance Contract", "MNT-HW"): self.contract,
+				("Sapphire Maintenance Template", "Site Winterization"): _Document(
+					sections=[_Dict(section="Steps")], site_wide=1
+				),
+				("Sapphire Maintenance Template", "Lobby Form"): _Document(
+					sections=[_Dict(section="Lobby")], site_wide=0
+				),
+				("Sapphire Maintenance Section", "Steps"): steps,
+				("Sapphire Maintenance Section", "Lobby"): lobby,
+			}
+		)
+
+	def tasks(self, **kwargs):
+		payload = record_module.get_visit_payload(
+			maintenance_contract="MNT-HW", visit_date="2026-10-24", **kwargs
+		)
+		return [(row["task"], row["serial_no"]) for row in payload["tasks"]]
+
+	def test_a_site_wide_form_is_filled_in_once_for_the_whole_site(self):
+		self.assertEqual(
+			self.tasks(),
+			[
+				("East Courtyard - heater on", None),
+				("East Wall - drained", None),
+				("Lobby wall wiped", "LOBBY"),
+			],
+		)
+
+	def test_a_per_fountain_form_still_goes_on_every_fountain(self):
+		STATE["docs"][("Sapphire Maintenance Template", "Site Winterization")].site_wide = 0
+		self.assertEqual(
+			self.tasks(),
+			[
+				("East Courtyard - heater on", "EAST"),
+				("East Wall - drained", "EAST"),
+				("East Courtyard - heater on", "WEST"),
+				("East Wall - drained", "WEST"),
+				("Lobby wall wiped", "LOBBY"),
+			],
+		)
+
+	def test_a_one_feature_visit_keeps_its_feature(self):
+		"""Once per Site Visit is about site visits: a Per Feature visit's rows stay tagged."""
+		self.assertEqual(
+			self.tasks(serial_no="EAST"),
+			[("East Courtyard - heater on", "EAST"), ("East Wall - drained", "EAST")],
+		)
+
+	def test_the_site_wide_copy_names_no_one_fountain_s_store(self):
+		STATE["docs"][("Sapphire Maintenance Section", "Steps")].section_type = "Chemical Dosing"
+		STATE["docs"][("Sapphire Maintenance Section", "Steps")].items = [
+			_item("Acid", "", 1, 1, item="ACID", default_qty=0, qty_step=1)
+		]
+		payload = record_module.get_visit_payload(maintenance_contract="MNT-HW", visit_date="2026-10-24")
+		self.assertEqual(
+			[(row["serial_no"], row["warehouse"]) for row in payload["consumables"]], [(None, None)]
+		)
+
+
 class TestAgreementScope(unittest.TestCase):
 	NAME = "SF-MAINT-2026-0010"
 
