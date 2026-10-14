@@ -280,6 +280,17 @@
     margin-top: 5px;
 }
 
+/* The priority in words, beside the border colour that also shows it. */
+.tdb-prio {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 0;
+    margin-right: 2px;
+    color: var(--text-muted, #888);
+}
+
 .tdb-chip {
     font-size: 10px;
     font-weight: 600;

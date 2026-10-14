@@ -109,8 +109,10 @@ const RP_STYLE = `
 .rp-day b{display:block;color:var(--text-color);font-size:12px;}
 .rp-day.rp-today b{color:var(--primary,#2490ef);}
 .rp-today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--primary,#2490ef);opacity:.55;z-index:1;pointer-events:none;}
-.rp-bar{position:absolute;top:7px;height:24px;border-radius:5px;font-size:11px;line-height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;cursor:pointer;z-index:2;box-sizing:border-box;}
+.rp-bar{position:absolute;top:7px;height:24px;border-radius:5px;font-size:11px;line-height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;cursor:pointer;z-index:2;box-sizing:border-box;display:block;margin:0;border:0;font-family:inherit;text-align:left;}
 .rp-bar:hover{filter:brightness(1.08);box-shadow:0 1px 4px rgba(0,0,0,.25);}
+.rp-bar:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;z-index:4;}
+.rp-bar-text{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .rp-bar.rp-rental{background:#2563eb;}
 .rp-bar.rp-rental.rp-held{background:repeating-linear-gradient(45deg,#93c5fd,#93c5fd 6px,#bfdbfe 6px,#bfdbfe 12px);color:#1e3a8a;border:1px dashed #2563eb;}
 .rp-bar.rp-prep,.rp-bar.rp-turnaround{background:#94a3b8;color:#0f172a;top:12px;height:14px;line-height:14px;font-size:10px;}
@@ -126,6 +128,8 @@ const RP_STYLE = `
 .rp-steps{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px;}
 .rp-step{padding:7px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);font-size:13px;color:var(--text-muted);}
 .rp-step.rp-done{color:var(--text-color);cursor:pointer;}
+button.rp-step{font-family:inherit;line-height:inherit;margin:0;}
+.rp-step:focus-visible{outline:2px solid var(--sf-focus);outline-offset:2px;}
 .rp-step.rp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .rp-card{max-width:860px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:12px;}
 .rp-card h4{margin:0 0 10px;font-size:15px;}
@@ -320,12 +324,12 @@ class RentalPlanner {
 			this.board_start = frappe.datetime.add_days(this.board_start, sign * step);
 			this.load_timeline();
 		};
-		$('<button class="btn btn-default btn-sm">').text("‹").attr("title", __("Earlier")).on("click", () => shift(-1)).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-sm">').text("‹").attr({ title: __("Earlier"), "aria-label": __("Earlier") }).on("click", () => shift(-1)).appendTo($bar);
 		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => {
 			this.board_start = frappe.datetime.get_today();
 			this.load_timeline();
 		}).appendTo($bar);
-		$('<button class="btn btn-default btn-sm">').text("›").attr("title", __("Later")).on("click", () => shift(1)).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-sm">').text("›").attr({ title: __("Later"), "aria-label": __("Later") }).on("click", () => shift(1)).appendTo($bar);
 		this.$range_label = $('<span class="rp-range-label"></span>').appendTo($bar);
 		const $range = $('<select class="form-control input-sm" style="width:auto"></select>').appendTo($bar);
 		[[14, __("2 weeks")], [31, __("Month")], [92, __("Quarter")]].forEach(([days, label]) =>
@@ -481,25 +485,24 @@ class RentalPlanner {
 				const left = Math.max(0, px(bar.from));
 				const right = Math.min(width, px(bar.to));
 				if (right <= left) return;
-				const $bar = $('<div class="rp-bar"></div>')
+				// A real button (S3.6): Tab reaches it, and Enter or Space opens it as a click does.
+				const $bar = $('<button type="button" class="rp-bar"></button>')
 					.addClass(`rp-${bar.kind}`)
 					.toggleClass("rp-held", Boolean(bar.held))
 					.css({ left: left + "px", width: Math.max(right - left, 3) + "px" })
 					.appendTo($track);
 				const text = bar.kind === "prep" ? __("Prep") : bar.kind === "turnaround" ? __("Cleaning") : bar.label;
-				if (bar.kind !== "prep" && bar.kind !== "turnaround") $bar.text(text);
+				// The label truncates on an inner span: some engines ignore text-overflow on a <button>.
+				if (bar.kind !== "prep" && bar.kind !== "turnaround") $('<span class="rp-bar-text"></span>').text(text).appendTo($bar);
 				const until = bar.open_ended ? __("until further notice") : frappe.datetime.str_to_user(bar.to);
-				$bar.attr(
-					"title",
-					[
-						text,
-						bar.held ? __("Held (tentative)") : bar.status,
-						`${frappe.datetime.str_to_user(bar.from)} – ${until}`,
-						bar.name,
-					]
-						.filter(Boolean)
-						.join("\n")
-				);
+				const facts = [
+					text,
+					bar.held ? __("Held (tentative)") : bar.status,
+					`${frappe.datetime.str_to_user(bar.from)} – ${until}`,
+					bar.name,
+				].filter(Boolean);
+				// The prep and cleaning bars draw no text, so the label is all a screen reader has.
+				$bar.attr({ title: facts.join("\n"), "aria-label": facts.join(", ") });
 				$bar.on("click", (event) => {
 					event.stopPropagation();
 					frappe.set_route("Form", bar.doctype, bar.name);
@@ -552,9 +555,20 @@ class RentalPlanner {
 		const current = RP.steps.indexOf(step);
 		const reachable = RP.steps.indexOf(this.first_unfinished_step());
 		RP.steps.forEach((key, i) => {
-			const $s = $('<div class="rp-step"></div>').text(`${i + 1}. ${RP_STEP_TITLES[key]}`).appendTo($steps);
-			if (i === current) $s.addClass("rp-active");
-			else if (i <= reachable) $s.addClass("rp-done").on("click", () => this.go_step(key));
+			// A step that can be gone back to is a real button (S3.6); the others are only words.
+			const done = i !== current && i <= reachable;
+			const $s = $(done ? '<button type="button" class="rp-step"></button>' : '<div class="rp-step"></div>')
+				.text(`${i + 1}. ${RP_STEP_TITLES[key]}`)
+				.appendTo($steps);
+			if (i === current) $s.addClass("rp-active").attr("aria-current", "step");
+			else if (done) {
+				$s.addClass("rp-done").on("click", (event) => {
+					// Enter or Space on a button is a click with detail 0. The step that comes next
+					// replaces the rail, so focus would fall to <body>: put it on the step's heading.
+					if (event && event.detail === 0) this.focus_heading_until = Date.now() + 2000;
+					this.go_step(key);
+				});
+			}
 		});
 
 		this.$card = $('<div class="rp-card"></div>').appendTo(this.$body);
@@ -566,6 +580,12 @@ class RentalPlanner {
 		this.$next = $('<div></div>').appendTo($nav);
 
 		this[`render_${step}`]();
+		// A step reached from the keyboard (S3.6): its heading takes focus, a mouse click leaves it.
+		if (this.focus_heading_until > Date.now()) {
+			this.focus_heading_until = 0;
+			const heading = this.$card.find("h4").first().attr("tabindex", "-1")[0];
+			if (heading && typeof heading.focus === "function") heading.focus();
+		}
 	}
 
 	// Keep what was typed on this step before moving, whichever way.

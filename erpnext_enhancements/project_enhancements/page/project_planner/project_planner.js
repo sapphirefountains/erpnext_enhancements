@@ -173,6 +173,7 @@ const PP_STYLE = `
 .pp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
 .pp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
 .pp-day-num:hover{background:var(--control-bg);}
+.pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
 .pp-day.pp-today .pp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .pp-day.pp-out{background:var(--control-bg);}
 .pp-day.pp-out .pp-day-head{opacity:.55;}
@@ -563,19 +564,21 @@ class ProjectPlanner {
 	build_shell() {
 		const $bar = $('<div class="pp-toolbar"></div>').appendTo(this.$body);
 		this.$toolbar = $bar;
-		$('<button class="btn btn-default btn-sm">‹</button>')
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Earlier"))
+			.attr("aria-label", __("Earlier"))
 			.on("click", () => this.shift(-1))
 			.appendTo($bar);
 		$('<button class="btn btn-default btn-sm"></button>')
 			.text(__("Today"))
 			.on("click", () => this.go(this.view, frappe.datetime.get_today()))
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">›</button>')
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
 			.attr("title", __("Later"))
+			.attr("aria-label", __("Later"))
 			.on("click", () => this.shift(1))
 			.appendTo($bar);
-		this.$title = $('<span class="pp-title"></span>').appendTo($bar);
+		this.$title = $('<span class="pp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="pp-seg"></span>').appendTo($bar);
 		this.$view_buttons = {};
@@ -635,8 +638,9 @@ class ProjectPlanner {
 			.text(__("Undo"))
 			.on("click", () => this.undo())
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">↻</button>')
+		$('<button type="button" class="btn btn-default btn-sm">↻</button>')
 			.attr("title", __("Refresh"))
+			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
 		this.update_undo_button();
@@ -664,6 +668,7 @@ class ProjectPlanner {
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
+		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
@@ -1086,7 +1091,9 @@ class ProjectPlanner {
 			html.push(`
 				<div class="${classes.join(" ")}" data-date="${pp_esc(ymd)}">
 					<div class="pp-day-head">
-						<span class="pp-day-num" data-week="${pp_esc(ymd)}" title="${pp_esc(__("Show this week"))}">${pp_esc(label)}</span>
+						<span class="pp-day-num" role="button" tabindex="0" data-week="${pp_esc(ymd)}" title="${pp_esc(
+							__("Show this week")
+						)}" aria-label="${pp_esc(__("Show the week of {0}", [this.day_words(ymd)]))}">${pp_esc(label)}</span>
 						${
 							this.view === "week" && resources.length
 								? `<span class="pp-day-free" title="${pp_esc(__("Free hours of the people shown"))}">${pp_esc(
@@ -1101,7 +1108,7 @@ class ProjectPlanner {
 				</div>`);
 		});
 		const $grid = $('<div class="pp-grid"></div>').html(html.join(""));
-		$grid.find("[data-week]").on("click", (e) => this.go("week", e.currentTarget.getAttribute("data-week")));
+		this.bind_week_links($grid);
 		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view").addClass(`pp-${this.view}`).append($grid);
 	}
 
@@ -1112,9 +1119,9 @@ class ProjectPlanner {
 		const html = [`<div class="pp-crew-corner"></div>`];
 		days.forEach((ymd) => {
 			html.push(
-				`<div class="pp-crew-head${ymd === today ? " pp-today" : ""}" data-week="${pp_esc(ymd)}" title="${pp_esc(
+				`<div class="pp-crew-head${ymd === today ? " pp-today" : ""}" role="button" tabindex="0" data-week="${pp_esc(ymd)}" title="${pp_esc(
 					__("Show this week")
-				)}">${pp_esc(pp_when(ymd))}</div>`
+				)}" aria-label="${pp_esc(__("Show the week of {0}", [this.day_words(ymd)]))}">${pp_esc(pp_when(ymd))}</div>`
 			);
 		});
 		html.push(this.p6d_crew_notes_row(days));
@@ -1149,7 +1156,36 @@ class ProjectPlanner {
 		}
 		const $scroll = $('<div class="pp-scroll"></div>').appendTo(this.$grid_wrap);
 		const $crew = $('<div class="pp-crew"></div>').html(html.join("")).appendTo($scroll);
-		$crew.find("[data-week]").on("click", (e) => this.go("week", e.currentTarget.getAttribute("data-week")));
+		this.bind_week_links($crew);
+	}
+
+	// The words a day link's label reads its date in (S3.6).
+	day_words(ymd) {
+		return moment(ymd, "YYYY-MM-DD").format("dddd, MMMM D");
+	}
+
+	// A week opened from the keyboard (S3.6): the day link that had focus is redrawn away, so the
+	// toolbar title takes it rather than <body>. A mouse click leaves focus where the browser put it.
+	take_title_focus() {
+		if (!(this.focus_title_until > Date.now())) return;
+		this.focus_title_until = 0;
+		const title = this.$title && this.$title[0];
+		if (title && typeof title.focus === "function") title.focus();
+	}
+
+	// A day number or a crew-view date head opens that week. Enter and Space do what a click does
+	// (S3.6); with the quick looks on, their own capture-phase handlers take both first.
+	bind_week_links($root) {
+		const open = (e) => this.go("week", e.currentTarget.getAttribute("data-week"));
+		$root
+			.find("[data-week]")
+			.on("click", open)
+			.on("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				this.focus_title_until = Date.now() + 2000;
+				open(e);
+			});
 	}
 
 	// One booking in a crew-view cell: a task the planner can move, or someone else's (static).
@@ -2590,6 +2626,7 @@ class ProjectPlanner {
 		const { start } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
+		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
@@ -2962,10 +2999,12 @@ class ProjectPlanner {
 		const $head = $('<div class="pp-route-head"></div>').appendTo(this.$route);
 		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Previous day"))
+			.attr("aria-label", __("Previous day"))
 			.on("click", () => step(-1))
 			.appendTo($head);
 		$('<button type="button" class="btn btn-default btn-sm">›</button>')
 			.attr("title", __("Next day"))
+			.attr("aria-label", __("Next day"))
 			.on("click", () => step(1))
 			.appendTo($head);
 		$('<span class="pp-route-title"></span>')
@@ -3615,10 +3654,12 @@ const PP3B_METHODS = {
 		const $head = $('<div class="pp-route-head"></div>').appendTo($root);
 		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Previous week"))
+			.attr("aria-label", __("Previous week"))
 			.on("click", () => step(-1))
 			.appendTo($head);
 		$('<button type="button" class="btn btn-default btn-sm">›</button>')
 			.attr("title", __("Next week"))
+			.attr("aria-label", __("Next week"))
 			.on("click", () => step(1))
 			.appendTo($head);
 		const $title = $('<span class="pp-mw-title"></span>').appendTo($head);
@@ -4776,6 +4817,7 @@ const PP6A_METHODS = {
 		root.querySelectorAll("[data-week]").forEach((el) => {
 			el.setAttribute("data-pp6a-day", el.getAttribute("data-week"));
 			el.setAttribute("title", __("See everyone's day"));
+			el.setAttribute("aria-label", __("See everyone's day on {0}", [this.day_words(el.getAttribute("data-week"))]));
 			el.setAttribute("tabindex", "0");
 		});
 		const heads = root.querySelectorAll(".pp-res-grid > .pp-res-head");

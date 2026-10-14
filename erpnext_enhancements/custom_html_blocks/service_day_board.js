@@ -96,7 +96,7 @@
                         <a class="odb-name" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${sf.esc(v.title)}</a>
                         ${flag}
                         <span class="odb-meta">${meta}</span>
-                        <span class="odb-bar" title="${sf.esc(pct + "%")}"><span class="odb-fill ${fill}" style="width:${pct}%"></span></span>
+                        <span class="odb-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${sf.esc(__("Progress"))}" title="${pct}%"><span class="odb-fill ${fill}" style="width:${pct}%"></span></span>
                         <span class="odb-age">${sf.esc(v.state)}</span>
                     </div>`;
             })
