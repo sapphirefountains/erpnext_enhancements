@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.654.1] - 2026-10-13
+
+### Fixed
+
+- **The "Printed" date on the Project Schedule and Project Task List formats** now goes through `ps_date` like every other print date (form kit P3.4, v1.650.0).
+  - v1.650.0 missed it because its argument, `frappe.utils.nowdate()`, has parentheses of its own. That stopped both the rewrite and `test_print_style`'s check at the first `)`.
+  - It printed the same date, so nothing looked wrong. The check was wrong, though, and this one was found by querying the rebuilt formats on prod after the deploy.
+  - The check now bans any date fieldtype literal in a print template, and any `formatdate(` call, however it is nested.
+
 ## [1.650.0] - 2026-10-13
 
 Form kit P3.4 (TASK-2026-02757): **print shows dates in the same style as every other channel.** That style is `10/14/2026` and `10/14/2026 2:00 PM`, from the one library the Desk, reports, emails and SMS already share (`utils.normalize`, P2.1).
