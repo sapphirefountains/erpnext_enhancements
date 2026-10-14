@@ -163,6 +163,26 @@ CONFIG = {
 		"filled_on_create": {
 			"company": "frappe.new_doc sets it from the user's or the global default company.",
 		},
+		# Hidden fields a deal started elsewhere arrives with (the guided page is where every new
+		# Opportunity opens, Nik, 2026-10-13), taken on create alongside the flow's own fields.
+		"prefill_fields": {
+			"contact_person": (
+				"ERPNext's Create > Opportunity on a Customer sets it (customer._set_missing_values), "
+				"as does Create Opportunity on a Lead (public/js/lead.js); hidden on the form."
+			),
+			"custom_description": "Create Opportunity on a Lead copies the Lead's details into it; hidden.",
+			"company": "Create Opportunity on a Lead copies the Lead's company; hidden, with a default.",
+		},
+	},
+	# The guided page's start screen: the caller's open deals, newest change first. Historical
+	# deals (crm_enhancements/historical.py) are left out; they are not being worked.
+	"mine": {
+		"label": "Your open opportunities",
+		"owner_field": "opportunity_owner",
+		"title_field": "custom_opportunity_name",
+		"detail_fields": ["customer_name", "status"],
+		"open": {"field": "status", "not_in": ["Closed Won", "Lost", "Closed", "Converted"]},
+		"hide_flag": "custom_is_historical",
 	},
 	"steps": [
 		{

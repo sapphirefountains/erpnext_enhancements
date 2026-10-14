@@ -37,3 +37,4 @@ export {
 export { same_value, split_conflict, resolve, value_text } from "./conflict.js";
 export { STATES, create_save_queue } from "./save_queue.js";
 export { STREAM_PILLAR, SUMMARY, pillar_for, streams_of, lead_pillar, summary_model } from "./summary.js";
+export { is_new_name, full_form_key, carry_over, redirect_for, split_prefill } from "./opening.js";

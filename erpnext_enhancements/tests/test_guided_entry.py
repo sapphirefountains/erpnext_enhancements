@@ -41,6 +41,8 @@ PAGE_JSON = PAGE_DIR / "guided_entry.json"
 PAGE_JS = PAGE_DIR / "guided_entry.js"
 ICONS = JS / "global_enhancements" / "field_description_icons.js"
 OPPORTUNITY_JS = JS / "crm_enhancements" / "opportunity.js"
+DEFAULT_JS = JS / "guided_default.js"
+DESK_BUNDLE = JS / "erpnext_enhancements.bundle.js"
 STEPS_PY = APP / "form_kit" / "steps.py"
 
 
@@ -486,6 +488,89 @@ const q = {};
 	q.throws = shape(h);
 }
 out.queue = q;
+
+// ---- where a record opens (P5.2)
+{
+	const guided = { Opportunity: { accepts: ["party_name", "opportunity_from", "customer_address", "contact_person", "status"] } };
+	const base = { guided, page_open: true, full_form: [], hash: "", from_link: false, bypass: null, renamed: [], local: null, fresh: null, ignore: [] };
+	const ctx = (extra) => Object.assign({}, base, extra || {});
+	const fresh = {
+		name: "new-opportunity-2",
+		doctype: "Opportunity",
+		__islocal: 1,
+		__unsaved: 1,
+		status: "Qualification",
+		opportunity_from: "Customer",
+		naming_series: "CRM-OPP-.YYYY.-",
+		transaction_date: "2026-10-13",
+		custom_value_stream: [],
+	};
+	const mapped = Object.assign({}, fresh, {
+		name: "new-opportunity-1",
+		party_name: "CUST-1",
+		customer_address: "ADDR-1",
+		contact_person: "CONT-1",
+		customer_name: "Storybook",
+	});
+	const form = (name, extra) => kit.redirect_for(["Form", "Opportunity", name], ctx(extra));
+	const held = (extra) => form("new-opportunity-1", Object.assign({ local: mapped, fresh, ignore: ["customer_name"] }, extra));
+	out.opening = {
+		existing: form("CRM-OPP-1"),
+		slash_name: kit.redirect_for(["Form", "Opportunity", "A", "B"], ctx()),
+		new_word: form("new"),
+		new_name_unheld: form("new-opportunity-9"),
+		other_doctype: kit.redirect_for(["Form", "Lead", "L-1"], ctx()),
+		list_route: kit.redirect_for(["List", "Opportunity"], ctx()),
+		no_name: kit.redirect_for(["Form", "Opportunity"], ctx()),
+		not_array: kit.redirect_for("Form/Opportunity/X", ctx()),
+		no_ctx: kit.redirect_for(["Form", "Opportunity", "X"], null),
+		page_closed: form("CRM-OPP-1", { page_open: false }),
+		hash: form("CRM-OPP-1", { hash: "#custom_process_tab" }),
+		bare_hash: form("CRM-OPP-1", { hash: "#" }),
+		full_form: form("CRM-OPP-1", { full_form: [kit.full_form_key("Opportunity", "CRM-OPP-1")] }),
+		full_form_other: form("CRM-OPP-2", { full_form: [kit.full_form_key("Opportunity", "CRM-OPP-1")] }),
+		renamed: form("CRM-OPP-5", { renamed: ["CRM-OPP-5"] }),
+		mapped: held(),
+		mapped_left: held({ local: Object.assign({}, mapped, { territory: "Utah" }) }),
+		mapped_table: held({ local: Object.assign({}, mapped, { items: [{ item_code: "X" }] }) }),
+		// The real shape from prod (2026-10-13): the Customer mapping copies the value streams and
+		// sets every number field to 0.
+		mapped_prod: held({
+			local: Object.assign({}, mapped, {
+				custom_value_stream: [
+					{ name: "r1", idx: 1, doctype: "Opportunity Value Stream", parent: "new-opportunity-1", value_stream: "Design" },
+					{ name: "r2", idx: 2, doctype: "Opportunity Value Stream", parent: "new-opportunity-1", value_stream: "Build", __unedited: 1 },
+				],
+				opportunity_amount: 0,
+				annual_revenue: 0,
+				conversion_rate: 0,
+			}),
+			guided: { Opportunity: { accepts: ["party_name", "customer_address", "contact_person", "custom_value_stream", "opportunity_amount"] } },
+		}),
+		from_link: held({ from_link: true }),
+		bypass: held({ bypass: "Opportunity" }),
+		bypass_other: held({ bypass: "Lead" }),
+		plain_local: form("new-opportunity-2", { local: fresh, fresh }),
+		is_new: ["new", "new-opportunity-1", "newsletter", "CRM-OPP-1", "", null].map(kit.is_new_name),
+		carry: kit.carry_over(mapped, fresh, ["party_name", "customer_address"], ["customer_name"]),
+		carry_nothing: kit.carry_over(null, null, [], []),
+		split: kit.split_prefill(
+			{
+				party_name: "CUST-1",
+				opportunity_from: "Customer",
+				contact_person: "C-1",
+				lead: "L-1",
+				campaign: "",
+				__x: 1,
+				name: "N",
+				status: "Needs Analysis",
+			},
+			["party_name", "opportunity_from", "contact_person", "status"],
+			["party_name", "opportunity_from"]
+		),
+		split_nothing: kit.split_prefill(null, null, null),
+	};
+}
 console.log(JSON.stringify(out));
 """
 
@@ -795,6 +880,63 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(t["state"], "error")
 		self.assertEqual(t["pending"], {"a": 1})
 
+	# ---- where a record opens (P5.2). Nik, 2026-10-13: "I want these guided setups to be the
+	# default for new and existing documents of the DocTypes we are making guided setups for."
+
+	def test_opening_an_existing_record_opens_on_the_guided_page(self):
+		o = self.out["opening"]
+		self.assertEqual(o["existing"], {"route": ["guided-entry", "Opportunity", "CRM-OPP-1"], "prefill": None})
+		self.assertEqual(o["slash_name"]["route"], ["guided-entry", "Opportunity", "A/B"])
+		self.assertEqual(o["bare_hash"], o["existing"])
+
+	def test_opening_a_new_record_opens_on_step_one(self):
+		o = self.out["opening"]
+		new = {"route": ["guided-entry", "Opportunity", "new"], "prefill": {}}
+		self.assertEqual(o["new_word"], new)
+		self.assertEqual(o["new_name_unheld"], new)
+		self.assertEqual(o["plain_local"], new)
+		self.assertEqual(o["is_new"], [True, True, False, False, False, False])
+
+	def test_opening_the_form_stays_when_it_should(self):
+		o = self.out["opening"]
+		for key in ("other_doctype", "list_route", "no_name", "not_array", "no_ctx", "page_closed", "hash",
+				"full_form", "renamed", "mapped_left", "mapped_table", "from_link", "bypass"):
+			with self.subTest(case=key):
+				self.assertIsNone(o[key])
+		self.assertIsNotNone(o["full_form_other"])
+
+	def test_opening_a_mapped_record_carries_its_values(self):
+		o = self.out["opening"]
+		# ERPNext's Create > Opportunity on a Customer: the party, an address and a contact.
+		expected = {
+			"route": ["guided-entry", "Opportunity", "new"],
+			"prefill": {"party_name": "CUST-1", "customer_address": "ADDR-1", "contact_person": "CONT-1"},
+		}
+		self.assertEqual(o["mapped"], expected)
+		self.assertEqual(o["bypass_other"], expected)
+		# Zeros are not values, and accepted tables come along as their own columns.
+		prod = dict(expected["prefill"], custom_value_stream=[{"value_stream": "Design"}, {"value_stream": "Build"}])
+		self.assertEqual(o["mapped_prod"], {"route": expected["route"], "prefill": prod})
+
+	def test_opening_carry_over_tells_defaults_from_values(self):
+		o = self.out["opening"]
+		self.assertEqual(
+			o["carry"], {"prefill": {"party_name": "CUST-1", "customer_address": "ADDR-1"}, "left": ["contact_person"]}
+		)
+		self.assertEqual(o["carry_nothing"], {"prefill": {}, "left": []})
+
+	def test_opening_the_page_splits_what_it_was_started_with(self):
+		o = self.out["opening"]
+		self.assertEqual(
+			o["split"],
+			{
+				"values": {"party_name": "CUST-1", "opportunity_from": "Customer"},
+				"carry": {"contact_person": "C-1", "status": "Needs Analysis"},
+				"dropped": ["lead"],
+			},
+		)
+		self.assertEqual(o["split_nothing"], {"values": {}, "carry": {}, "dropped": []})
+
 
 class TestThePage(unittest.TestCase):
 	def test_the_page_record(self):
@@ -861,7 +1003,7 @@ class TestThePage(unittest.TestCase):
 		for match in re.finditer(r'GE_API \+ "(\w+)"[\s\S]*?\{ quiet: true(?:, method: "GET")? \}', code):
 			with self.subTest(method=match.group(1)):
 				is_get = 'method: "GET"' in match.group(0)
-				self.assertEqual(is_get, match.group(1) == "get_flow")
+				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records"))
 
 	def test_steps_move_with_set_route(self):
 		code = _code(PAGE_JS)
@@ -879,7 +1021,7 @@ class TestThePage(unittest.TestCase):
 
 	def test_no_hard_coded_app_paths(self):
 		pattern = re.compile(r"""['"`(]/app/""")
-		files = [PAGE_JS, BUNDLE, *FORM_KIT_JS.glob("*.js")]
+		files = [PAGE_JS, BUNDLE, DEFAULT_JS, *FORM_KIT_JS.glob("*.js")]
 		for path in files:
 			with self.subTest(file=path.name):
 				self.assertIsNone(pattern.search(_code(path)))
@@ -943,6 +1085,8 @@ class TestTheEntryPoint(unittest.TestCase):
 		self.assertIn('frm.add_custom_button(__("Guided")', code)
 		self.assertIn('frappe.set_route("guided-entry", frm.doctype, frm.doc.name)', code)
 		self.assertIn('frappe.boot.page_info["guided-entry"]', code)
+		# It brings the record back to the guided page for good, not just this once.
+		self.assertIn("window.sf_guided.forget_form(frm.doctype, frm.doc.name)", code)
 
 	def test_the_form_script_is_wired_for_opportunity(self):
 		hooks = _text(APP / "hooks.py")
@@ -967,6 +1111,55 @@ class TestPhoneFixesFromTheLiveCheck(unittest.TestCase):
         css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
         phone = css[css.index("@media (max-width: 767px)") :]
         self.assertIn(".ge-fields .form-section .form-column {\n\t\tpadding-left: 0;", phone)
+
+
+class TestTheDefaultIsWired(unittest.TestCase):
+	def test_the_desk_bundle_loads_it(self):
+		self.assertIn('import "./guided_default.js";', _code(DESK_BUNDLE))
+
+	def test_new_goes_through_v16s_create_routes(self):
+		code = _code(DEFAULT_JS)
+		self.assertIn('frappe.create_routes[doctype] = ["guided-entry", doctype, "new"]', code)
+		self.assertIn("frappe.new_doc(doctype, scalar_values(values))", code)
+
+	def test_existing_goes_through_the_form_factorys_before_show(self):
+		code = _code(DEFAULT_JS)
+		self.assertIn("Factory.prototype.before_show = function", code)
+		# A before_show already there runs first and keeps its say.
+		self.assertIn("if (own && own.apply(this, args) === false) return false;", code)
+		# The form's history entry is replaced, so Back leaves the way the person came.
+		self.assertIn("frappe.route_flags.replace_route = true;", code)
+		self.assertIn('import { redirect_for, full_form_key } from "./form_kit/opening.js";', code)
+
+	def test_only_for_people_who_may_open_the_page(self):
+		code = _code(DEFAULT_JS)
+		self.assertIn('frappe.boot.page_info["guided-entry"]', code)
+		self.assertIn("frappe.boot.sf_guided", code)
+
+	def test_session_storage_never_breaks_it(self):
+		code = _code(DEFAULT_JS)
+		self.assertEqual(code.count("window.sessionStorage"), 2)
+		self.assertEqual(code.count("try {"), code.count("} catch (e) {"))
+
+	def test_the_page_uses_the_full_form_way_out(self):
+		code = _code(PAGE_JS)
+		self.assertIn("window.sf_guided.allow_form(this.doctype, this.name)", code)
+		self.assertIn("window.sf_guided.new_in_form(doctype, values)", code)
+		self.assertIn("this.open_in_form(step.link.tab)", code)
+		# Done goes back to the list: the form is the fallback now, not the destination.
+		self.assertIn('.then(() => frappe.set_route("List", this.doctype))', code)
+		self.assertNotIn('.then(() => frappe.set_route("Form", this.doctype, this.name))', code)
+
+	def test_the_start_screen_lists_the_callers_records(self):
+		code = _code(PAGE_JS)
+		self.assertIn('GE_API + "my_records"', code)
+		self.assertIn("frappe.new_doc(doctype)", code)
+
+	def test_the_crm_sidebar_links_the_start_screen(self):
+		tweaks = _text(APP / "setup" / "workspace_tweaks.py")
+		block = tweaks[tweaks.index('"CRM": [') :]
+		self.assertIn('"link_to": "guided-entry"', block)
+		self.assertIn('"after": ("DocType", "Opportunity")', block)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.640.0] - 2026-10-13
+
+Form kit P5.2 (TASK-2026-02742): **the guided page is where an Opportunity opens, new or existing.**
+Nik, 2026-10-13: "I want these guided setups to be the default for new and existing documents of
+the DocTypes we are making guided setups for." Before this, the only way in was a *Guided* button
+on a saved Opportunity, which on a phone sits in the form's ⋯ menu.
+
+### Changed
+
+- **Opening an existing Opportunity** goes to the Guided Entry page: from the list, the Kanban, a
+  link or a search. It works for anyone who may open the page (Sales User, Sales Manager, System
+  Manager); everyone else still gets the form.
+  - The form's history entry is replaced, so Back still leaves the way the person came in.
+  - It uses v16's own hook: a `before_show` on the Form view factory, the way the List view
+    re-routes. Any `before_show` already there runs first.
+- **A new Opportunity** starts on the guided page's step 1. That covers the list's + Add, the
+  awesomebar, the Kanban's add card, and the Customer and Lead forms' Create Opportunity buttons.
+  - It goes through `frappe.create_routes`, which v16's `frappe.new_doc` already honors.
+  - The values a start carries arrive as route options and become step 1's starting values.
+- **ERPNext's own Create > Opportunity on a Customer** also opens on step 1, carrying what it
+  mapped: the party, a contact, the billing address and the Customer's value streams.
+  - Checked against prod's real mapping on 2026-10-13. A server-mapped document holds `0` in
+    every number field where a browser-made one holds nothing, so zeros never count as values.
+  - A start the guided page cannot take whole stays on the form, where nothing is lost: a table
+    other than the value streams, or a field the flow does not offer.
+- **The form is the fallback.** The guided page's *Open form* opens the full form, and that
+  record keeps opening there in this browser tab until the form's *Guided* button is used.
+  - On a new record, *Open form* starts the full form from what step 1 holds.
+  - A link into one tab of the form (the hand-off step's link) always opens the form.
+  - A record a Link field's "Create a new …" is waiting on stays on the form, as does one just
+    saved there.
+- **Done** on the last step goes back to the Opportunity list rather than to the form.
+- The decisions are `public/js/form_kit/opening.js` (pure; run under node by
+  `test_guided_entry`). The wiring is `public/js/guided_default.js`, loaded from
+  `erpnext_enhancements.bundle.js`.
+- Kill switch: site_config `disable_guided_default` opens every record in the form again.
+
+### Added
+
+- **`create_record` takes `prefill`**, what the record was started with.
+  - The server takes only `steps.prefill_fields` from it: every field the flow lets this user write
+    in any step, plus the config's new `create.prefill_fields`.
+  - On Opportunity, those listed fields are `contact_person`, `custom_description` and `company`:
+    hidden fields that ERPNext's mapping and `lead.js` fill.
+  - Each field is still held to its permlevel. Step 1's own fields are never taken from `prefill`.
+  - `get_flow` for a new record reports `prefill_fields`. A start with a field the page cannot carry
+    says so and offers the full form.
+- **The guided page's start screen lists your open opportunities**, newest change first. New
+  endpoint `form_kit.api.my_records`, GET, through `frappe.get_list`.
+  - It leaves out Closed Won, Lost, Closed, Converted and the historical deals.
+  - The screen also has a New Opportunity button and a link to the full list.
+- **A *Guided Entry* link in the CRM sidebar**, under Opportunity, to that start screen. It is added
+  by `workspace_tweaks.add_core_sidebar_items`, like the Project Planner link.
+- `frappe.boot.sf_guided`: the DocTypes whose records open on the guided page, and what a new one
+  accepts.
+- Tests: `test_form_kit` (prefill, `my_records`, the boot entry, the config schema),
+  `test_guided_entry` (the opening rules under node, with the shape prod's mapping produced, and
+  the wiring) and `test_workspace_tweaks` (the CRM link). 174 tests across the three.
+
+### Fixed
+
+- `form_kit/README.md` still said a site address could be the Billing Address. It has been Primary
+  Address only since v1.633.0.
+
 ## [1.637.2] - 2026-10-13
 
 ### Changed

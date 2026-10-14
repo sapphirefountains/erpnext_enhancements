@@ -478,3 +478,28 @@ def editable_fields(steps, step_key=None, create_only=False):
 		else:
 			out[fieldname] = None
 	return out
+
+
+def prefill_fields(doctype, steps, user=None):
+	"""``{fieldname: None | [child fieldnames]}``: what a new record may take from where it was
+	started (``frappe.new_doc``'s options, or a mapped document), beyond step 1.
+
+	Every field the flow lets this user write, in any step, plus the config's
+	``create.prefill_fields``: fields the flow does not show that such a start fills. Those are
+	held to the same rule as a flow field: a value field the user may write at its permlevel,
+	not read-only, never a table.
+	"""
+	out = editable_fields(steps)
+	listed = (get_config(doctype).get("create") or {}).get("prefill_fields") or {}
+	if not listed:
+		return out
+	meta = frappe.get_meta(doctype)
+	access = access_for(doctype, meta, None, user)
+	for fieldname in listed:
+		df = meta.get_field(fieldname)
+		if fieldname in out or df is None or not is_value_field(df) or df.get("fieldtype") in TABLE_TYPES:
+			continue
+		if cint(df.get("permlevel")) not in access["write_levels"] or cint(df.get("read_only")):
+			continue
+		out[fieldname] = None
+	return out

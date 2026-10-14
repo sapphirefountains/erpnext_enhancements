@@ -121,6 +121,9 @@ class FakeMeta:
     def get_field(self, fieldname):
         return next((df for df in self.fields if df.fieldname == fieldname), None)
 
+    def has_field(self, fieldname):
+        return self.get_field(fieldname) is not None
+
     def get_permlevel_access(self, permission_type="read", parenttype=None, *, user=None):
         """frappe/model/meta.py (v16) Meta.get_permlevel_access, verbatim in behaviour."""
         roles = set(FRAPPE.get_roles(user))
@@ -410,15 +413,33 @@ def _install_frappe_stub(metas):
 
     frappe.get_doc = get_doc
 
-    def get_list(doctype, filters=None, fields=None, limit_page_length=None, **kwargs):
-        STATE["get_list"].append({"doctype": doctype, "filters": filters, "fields": list(fields or [])})
-        names = filters["name"][1]
+    def get_list(doctype, filters=None, fields=None, limit_page_length=None, order_by=None, **kwargs):
+        STATE["get_list"].append(
+            {"doctype": doctype, "filters": filters, "fields": list(fields or []), "order_by": order_by}
+        )
         readable = STATE["readable"]
-        return [
-            {field: STATE["db"][name].get(field) for field in fields}
-            for name in names
-            if name in STATE["db"] and (readable is None or name in readable)
-        ]
+        if "name" in filters:
+            names = filters["name"][1]
+            return [
+                {field: STATE["db"][name].get(field) for field in fields}
+                for name in names
+                if name in STATE["db"] and (readable is None or name in readable)
+            ]
+
+        def matches(record):
+            for key, rule in filters.items():
+                value = record.get(key)
+                if isinstance(rule, list) and rule[0] == "not in":
+                    if value in rule[1]:
+                        return False
+                elif (value or 0 if rule == 0 else value) != rule:
+                    return False
+            return True
+
+        rows = [r for name, r in STATE["db"].items() if matches(r) and (readable is None or name in readable)]
+        assert order_by == "modified desc"
+        rows.sort(key=lambda r: r.get("modified") or "", reverse=True)
+        return [{field: r.get(field) for field in fields} for r in rows[:limit_page_length]]
 
     frappe.get_list = get_list
 
@@ -1137,6 +1158,186 @@ class TestCreateRecord(unittest.TestCase):
             api.create_record("Opportunity", "[1, 2]")
 
 
+class TestStartedElsewhere(unittest.TestCase):
+    """Form kit P5.2: every new Opportunity opens on the guided page (Nik, 2026-10-13), so one
+    started elsewhere (the Customer form's Create > Opportunity, a mapped document) carries its
+    values in as ``prefill``, and the server decides which it takes."""
+
+    def setUp(self):
+        _reset()
+
+    def _create(self, prefill, **values):
+        base = {
+            "party_name": "Jones Ranch",
+            "custom_opportunity_name": "Jones Ranch - Fountain Service",
+            "custom_value_stream": [{"value_stream": "Service"}],
+            "opportunity_owner": "ae@example.com",
+        }
+        base.update(values)
+        result = api.create_record("Opportunity", json.dumps(base), json.dumps(prefill))
+        return STATE["db"][result["name"]]
+
+    def test_fields_the_flow_offers_and_the_listed_hidden_ones_are_taken(self):
+        stored = self._create(
+            {
+                "customer_address": "Jones Ranch-Billing",
+                "contact_person": "Jane Jones-Jones Ranch",
+                "custom_description": "<p>From the Lead</p>",
+                "company": "Sapphire Fountains",
+                "status": "Needs Analysis",
+            }
+        )
+        self.assertEqual(stored["customer_address"], "Jones Ranch-Billing")
+        self.assertEqual(stored["contact_person"], "Jane Jones-Jones Ranch")
+        self.assertEqual(stored["custom_description"], "<p>From the Lead</p>")
+        self.assertEqual(stored["status"], "Needs Analysis")
+
+    def test_step_one_is_never_taken_from_prefill(self):
+        stored = self._create({"custom_opportunity_name": "From somewhere else", "party_name": "Other"})
+        self.assertEqual(stored["custom_opportunity_name"], "Jones Ranch - Fountain Service")
+        self.assertEqual(stored["party_name"], "Jones Ranch")
+
+    def test_what_the_flow_would_not_set_is_ignored(self):
+        stored = self._create(
+            {
+                "owner": "someone@example.com",
+                "docstatus": 1,
+                "name": "CHOSEN",
+                "custom_utm_source": "google",  # attribution: left out of the flow
+                "naming_series": "OTHER-.YYYY.-",  # left out of the flow
+                "lead": "CRM-LEAD-0001",  # not a field of Opportunity at all
+            }
+        )
+        self.assertEqual(stored["owner"], "ae@example.com")
+        self.assertEqual(stored["docstatus"], 0)
+        self.assertNotEqual(stored["name"], "CHOSEN")
+        self.assertIsNone(stored.get("custom_utm_source"))
+        self.assertEqual(stored["naming_series"], "CRM-OPP-.YYYY.-")
+        self.assertNotIn("lead", stored)
+
+    def test_a_listed_hidden_field_still_needs_its_permlevel(self):
+        metas = build_metas(permission_rows=LEVELS, field_overrides={"contact_person": {"permlevel": 1}})
+        _reset(metas, user="ae@example.com")
+        stored = self._create({"contact_person": "Jane Jones-Jones Ranch"})
+        self.assertIsNone(stored.get("contact_person"))
+        _reset(metas, user="boss@example.com")
+        stored = self._create({"contact_person": "Jane Jones-Jones Ranch"})
+        self.assertEqual(stored["contact_person"], "Jane Jones-Jones Ranch")
+
+    def test_no_prefill_is_the_old_create(self):
+        result = api.create_record("Opportunity", json.dumps({"party_name": "Jones Ranch", "custom_opportunity_name": "J",
+                                   "custom_value_stream": [{"value_stream": "Service"}], "opportunity_owner": "ae@example.com"}))
+        self.assertEqual(STATE["inserts"], [result["name"]])
+
+    def test_prefill_must_be_an_object(self):
+        with self.assertRaises(FRAPPE.ValidationError):
+            api.create_record("Opportunity", "{}", "[1, 2]")
+        self.assertEqual(STATE["inserts"], [])
+
+    def test_a_new_flow_says_what_prefill_may_set(self):
+        payload = api.get_flow("Opportunity")
+        accepts = set(payload["prefill_fields"])
+        self.assertTrue({"customer_address", "contact_person", "custom_description", "company", "party_name"} <= accepts)
+        self.assertTrue(accepts.isdisjoint({"custom_utm_source", "naming_series", "language", "owner"}))
+        self.assertNotIn("prefill_fields", api.get_flow("Opportunity", _seed()))
+
+    def test_the_listed_hidden_fields_exist_and_are_hidden_on_the_form(self):
+        meta = STATE["metas"]["Opportunity"]
+        listed = config.CONFIGS["Opportunity"]["create"]["prefill_fields"]
+        offered = set(_all_values(steps.flow_steps("Opportunity", FRAPPE.new_doc("Opportunity"))))
+        for fieldname, reason in listed.items():
+            with self.subTest(fieldname=fieldname):
+                self.assertIsNotNone(meta.get_field(fieldname))
+                self.assertTrue(reason.strip())
+                self.assertNotIn(fieldname, offered, "a field the flow offers needs no listing")
+
+
+class TestMyRecords(unittest.TestCase):
+    """The guided page's start screen: the caller's open deals, newest change first."""
+
+    def setUp(self):
+        _reset()
+
+    def test_only_the_callers_open_current_deals(self):
+        older = _seed(custom_opportunity_name="Older", customer_name="Smith Residence")
+        newer = _seed(custom_opportunity_name="Newer", status="Needs Analysis")
+        _seed(custom_opportunity_name="Won", status="Closed Won")
+        _seed(custom_opportunity_name="Lost", status="Lost")
+        _seed(custom_opportunity_name="Zoho", status="Closed")
+        _seed(custom_opportunity_name="Old", custom_is_historical=1)
+        _seed(custom_opportunity_name="Theirs", opportunity_owner="someone@example.com")
+        mine = api.my_records("Opportunity")
+        self.assertEqual([row["name"] for row in mine["rows"]], [newer, older])
+        self.assertEqual(mine["rows"][0]["title"], "Newer")
+        self.assertEqual(mine["rows"][0]["details"], ["Needs Analysis"])
+        self.assertEqual(mine["rows"][1]["details"], ["Smith Residence", "Qualification"])
+        self.assertEqual(mine["label"], "Your open opportunities")
+        self.assertEqual(STATE["get_list"][-1]["order_by"], "modified desc")
+
+    def test_permissions_decide(self):
+        name = _seed()
+        STATE["readable"] = set()
+        self.assertEqual(api.my_records("Opportunity")["rows"], [])
+        STATE["readable"] = {name}
+        self.assertEqual([row["name"] for row in api.my_records("Opportunity")["rows"]], [name])
+        STATE["perm"]["read"] = False
+        with self.assertRaises(FRAPPE.PermissionError):
+            api.my_records("Opportunity")
+
+    def test_the_config_names_real_fields(self):
+        mine = config.CONFIGS["Opportunity"]["mine"]
+        meta = STATE["metas"]["Opportunity"]
+        names = [mine["owner_field"], mine["title_field"], mine["open"]["field"], mine["hide_flag"]]
+        for fieldname in names + list(mine["detail_fields"]):
+            with self.subTest(fieldname=fieldname):
+                self.assertIsNotNone(meta.get_field(fieldname))
+
+    def test_the_schema_check_holds_mine_and_prefill_to_their_shape(self):
+        broken = dict(config.CONFIGS["Opportunity"])
+        broken["mine"] = {"owner_field": "opportunity_owner", "open": {"field": "status"}, "extra": 1}
+        broken["create"] = dict(broken["create"], prefill_fields={"contact_person": ""}, extra=1)
+        problems = " ".join(config.check(broken))
+        for expected in ("unknown mine keys", "mine needs title_field", "mine needs label", "mine.open needs",
+                         "unknown create keys", "create.prefill_fields.contact_person has no reason"):
+            self.assertIn(expected, problems)
+
+
+class TestGuidedBoot(unittest.TestCase):
+    """``frappe.boot.sf_guided``: the DocTypes whose records open on the guided page."""
+
+    def setUp(self):
+        _reset()
+
+    def _run(self, conf):
+        boot = (APP / "boot.py").read_text(encoding="utf-8")
+        tree = ast.parse(boot)
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_guided_doctypes")
+        namespace = {"frappe": FRAPPE}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "boot.py", "exec"), namespace)
+        had = getattr(FRAPPE, "conf", None)
+        FRAPPE.conf = conf
+        try:
+            return namespace["_guided_doctypes"]()
+        finally:
+            FRAPPE.conf = had
+
+    def test_lists_each_configured_doctype_with_what_a_new_record_accepts(self):
+        out = self._run({})
+        self.assertEqual(set(out), {"Opportunity"})
+        self.assertIn("contact_person", out["Opportunity"]["accepts"])
+        self.assertIn("party_name", out["Opportunity"]["accepts"])
+        self.assertEqual(out["Opportunity"]["accepts"], sorted(out["Opportunity"]["accepts"]))
+
+    def test_the_kill_switch_and_no_read_permission_leave_it_empty(self):
+        self.assertEqual(self._run({"disable_guided_default": 1}), {})
+        STATE["perm"]["read"] = False
+        self.assertEqual(self._run({}), {})
+
+    def test_it_is_wired_into_boot(self):
+        boot = (APP / "boot.py").read_text(encoding="utf-8")
+        self.assertIn("bootinfo.sf_guided = _guided_doctypes()", boot)
+
+
 # --------------------------------------------------------------------------- completeness
 
 
@@ -1356,6 +1557,8 @@ class TestEndpoints(unittest.TestCase):
                     api.create_record(doctype, "{}")
                 with self.assertRaises(FRAPPE.PermissionError):
                     api.completeness_for(doctype, "[]")
+                with self.assertRaises(FRAPPE.PermissionError):
+                    api.my_records(doctype)
 
     def test_writes_are_post_only_and_nothing_is_open_to_guests(self):
         tree = ast.parse((KIT / "api.py").read_text(encoding="utf-8"))
@@ -1366,7 +1569,8 @@ class TestEndpoints(unittest.TestCase):
                     if "whitelist" in ast.unparse(decorator):
                         decorated[node.name] = ast.unparse(decorator)
         self.assertEqual(
-            set(decorated), {"get_flow", "create_record", "save_step", "completeness_for", "get_field_help"}
+            set(decorated),
+            {"get_flow", "create_record", "save_step", "completeness_for", "get_field_help", "my_records"},
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["save_step"])

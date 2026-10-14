@@ -16,9 +16,17 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     Shown, never written by the flow.
 ``site_only_fields``  ``{fieldname}``
     Fieldnames above that exist on the production site but are not created by this repo.
-``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}}``
+``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}, "prefill_fields": {fieldname: reason}}``
     What step 1 asks for before the record exists. Any other required field without a default
     is added to step 1 at run time unless ``filled_on_create`` says how the new record fills it.
+    A record started somewhere else (``frappe.new_doc``'s options, or a mapped document such as
+    ERPNext's *Create > Opportunity* on a Customer) arrives with values of its own. The new
+    record takes those for every field the flow lets the user write, and for the fields in
+    ``prefill_fields``: fields the flow does not show that such a start fills (a hidden Link).
+``mine``  ``{"owner_field", "title_field", "detail_fields"?, "open"?, "hide_flag"?, "label"}``
+    The guided page's start screen lists the caller's records: ``owner_field`` is the caller,
+    ``open`` is ``{"field", "not_in": [...]}`` (closed records are left out), and a record whose
+    ``hide_flag`` Check is set is left out too. ``label`` heads the list.
 ``steps``  ``[{key, title, intro, sections, fields?, applies?, read_only?, final?, link?}]``
     In order. ``sections`` are Section Break fieldnames (``_top`` for the fields before the first
     one; a tab's fieldname for the fields that open a tab before any Section Break). ``fields``
@@ -45,7 +53,10 @@ CONFIG_KEYS = {
 	"create",
 	"steps",
 	"stages",
+	"mine",
 }
+CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields"}
+MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
 
 
@@ -81,6 +92,25 @@ def check(config):
 		for fieldname, reason in (config.get(key) or {}).items():
 			if not str(reason or "").strip():
 				problems.append(f"{key}.{fieldname} has no reason")
+	create = config.get("create") or {}
+	unknown = set(create) - CREATE_KEYS
+	if unknown:
+		problems.append(f"unknown create keys {sorted(unknown)}")
+	for key in ("filled_on_create", "prefill_fields"):
+		for fieldname, reason in (create.get(key) or {}).items():
+			if not str(reason or "").strip():
+				problems.append(f"create.{key}.{fieldname} has no reason")
+	mine = config.get("mine")
+	if mine is not None:
+		unknown = set(mine) - MINE_KEYS
+		if unknown:
+			problems.append(f"unknown mine keys {sorted(unknown)}")
+		for key in ("owner_field", "title_field", "label"):
+			if not str(mine.get(key) or "").strip():
+				problems.append(f"mine needs {key}")
+		open_rule = mine.get("open")
+		if open_rule is not None and (not open_rule.get("field") or not isinstance(open_rule.get("not_in"), list)):
+			problems.append("mine.open needs a field and a 'not_in' list")
 	seen_keys, seen_sections, seen_fields = set(), set(), set()
 	for index, step in enumerate(config.get("steps") or []):
 		key = step.get("key")

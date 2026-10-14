@@ -137,19 +137,33 @@ def _result(doctype, doc, fields):
 	}
 
 
-def create_record(doctype, values):
+def create_record(doctype, values, prefill=None):
 	"""Insert a new draft of ``doctype`` from step 1's fields. Returns the save result shape.
 
 	``frappe.new_doc`` first, so the record gets the same defaults the Desk's New form does
 	(status, dates, the default company, the first naming series); then only the step-1 fields
 	this user may write are assigned, and ``insert()`` runs every validation and hook.
+
+	``prefill`` is what the record was started with somewhere else: ``frappe.new_doc``'s options
+	(the Customer form's *Create > Opportunity*), or a mapped document. Only
+	:func:`form_kit.steps.prefill_fields` are taken from it, and never over a step-1 value, so
+	it can carry a hidden contact or a billing address but cannot set what the flow would not.
 	"""
 	values = _parse(values)
+	prefill = _parse(prefill) if prefill not in (None, "", "null") else {}
 	frappe.has_permission(doctype, "create", throw=True)
 	doc = frappe.new_doc(doctype)
 	steps = flow.flow_steps(doctype, doc)
 	allowed = flow.editable_fields(steps, create_only=True)
 	assign(doc, allowed, values)
+	if prefill:
+		# Step 1 is what the person saw and sent, so a step-1 field is never taken from prefill.
+		extra = {
+			fieldname: columns
+			for fieldname, columns in flow.prefill_fields(doctype, steps).items()
+			if fieldname not in allowed
+		}
+		assign(doc, extra, prefill)
 	doc.insert()
 	create_step = next(step for step in steps if step["create"])
 	return _result(doctype, doc, flow.value_fields(steps, create_step["key"]))

@@ -108,7 +108,8 @@ as a field the page did not send. Frappe's own `validate_higher_perm_levels` sti
 ```
 
 With no `name` it describes a new record: `name` and `modified` are null, `values` are the new
-record's defaults (`frappe.new_doc`), and step 1 (`"create": 1`) is what `create_record` takes.
+record's defaults (`frappe.new_doc`), and step 1 (`"create": 1`) is what `create_record` takes. It
+also carries `prefill_fields`: what `create_record`'s `prefill` may set (see below).
 `applies` is data the page re-evaluates as the user picks values; `active` is its value for the
 record as loaded. A step that does not apply is still sent (the page can show it greyed, or skip it).
 `hint` and `help` come from the DocType's help file (see *Field help* below); a field the file is
@@ -124,6 +125,14 @@ removed. A table not sent is untouched. With `step`, only that step's fields are
 {"name": "CRM-OPP-2026-00123", "modified": "2026-10-13 10:00:02.000000",
  "values": {"website": "https://smithponds.com"}, "completeness": {"…": "…"}}
 ```
+
+`create_record` also takes an optional `prefill`, a JSON object of what the record was started with
+somewhere else (`frappe.new_doc`'s options, or a mapped document such as ERPNext's *Create >
+Opportunity* on a Customer, which copies the party, a contact, an address and the value streams).
+The server takes from it only `steps.prefill_fields`: every field the flow lets this user write, in
+any step, plus the config's `create.prefill_fields` (hidden fields such a start fills; on
+Opportunity `contact_person`, `custom_description`, `company`), each still held to its permlevel.
+Step 1's own fields are never taken from it: step 1 is what the person saw and sent.
 
 `values` are read back after the save, so they are what the hooks stored (the `"*"` normalize
 hook's phones and websites, for one); the page replaces what it shows with them, and keeps
@@ -156,6 +165,31 @@ because it is an expected outcome the page handles, not an error.
 `{name: completeness}` for those the caller can read (one `frappe.get_list`, so an unreadable
 record is simply absent) with one bound query per child table, never one per record.
 
+`my_records(doctype)`, GET: the guided page's start screen. `{"label", "rows": [{"name", "title",
+"details", "modified"}], "limit"}`, the caller's open records newest change first, through
+`frappe.get_list`. The config's `mine` says whose (`owner_field`), which are open (`open.not_in`),
+which to leave out (`hide_flag`: on Opportunity, the historical deals) and what a row shows.
+
+## Where a record opens
+
+Nik, 2026-10-13: "I want these guided setups to be the default for new and existing documents of
+the DocTypes we are making guided setups for." So for anyone who may open the guided page, a
+configured DocType's records open there; the form is the fallback. `public/js/guided_default.js`
+(global, in `erpnext_enhancements.bundle.js`) does it with v16's own hooks:
+
+- **New**: `frappe.create_routes[doctype]`, which `frappe.new_doc` (the list's + Add, the awesomebar,
+  the Kanban's add card, `customer.js` and `lead.js`) routes to instead of a form; its options
+  arrive as route options, step 1's starting values.
+- **Existing**: a `before_show` on the Form view factory (the List factory re-routes the same
+  way), replacing the form's history entry so Back still leaves the way the person came.
+- **The form stays** for a record opened with the guided page's *Open form* (remembered for the
+  tab in sessionStorage until the form's *Guided* button), a link into one tab of the form (a
+  `#hash`), a record just saved from the full form, and an unsaved record the Desk holds that the
+  guided page cannot take whole. One it can take (the Customer mapping) opens on step 1 with its
+  values. The rules are `public/js/form_kit/opening.js`, run under node by `test_guided_entry`.
+- `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts. site_config
+  `disable_guided_default` empties it, and every record opens in the form again.
+
 ## Completeness
 
 `config["stages"]` lists, per stage (the value of `stages.field`, `status` on Opportunity), what a
@@ -172,7 +206,7 @@ Opportunity (decided from prod fill rates, TASK-2026-02773; cumulative):
 |---|---|
 | Qualification, On Hold | account, Opportunity Name, a Value Stream, Opportunity Owner, Opportunity Summary, a contact (`primary_contact` or `contact_person`) |
 | Needs Analysis | + Lead Source, Expected Closing Date, Customer Requests for a chosen stream (Design, Build, Service, Events; Products and Delivery have no requests table) |
-| Proposal/Price Quote, Negotiation/Review | + Opportunity Amount above zero, a site address (`primary_address` or `customer_address`) |
+| Proposal/Price Quote, Negotiation/Review | + Opportunity Amount above zero, a site address (`primary_address` only: `customer_address` is the Billing Address since v1.633.0) |
 | Closed Won | + Scope, Schedule and Budget Rank |
 | Lost | the Qualification list + a lost reason (ERPNext's `lost_reasons` table; the app's `custom_lost_reason` was removed in v1.159.0) |
 

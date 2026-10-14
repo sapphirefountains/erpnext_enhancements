@@ -3,6 +3,11 @@
 // README is the payload reference); this page draws it. Generic over form_kit.config.CONFIGS,
 // so it serves whatever DocType has a config there (Opportunity today).
 //
+// It is where those records open, new and existing (P5.2, public/js/guided_default.js): the
+// form is the fallback, reached with "Open form", which this tab then remembers for the record.
+// A new record started somewhere else (the Customer form's Create > Opportunity) arrives with
+// route options, which become step 1's starting values (form_kit/opening.js split_prefill).
+//
 // Screens, each its own history entry so the phone's Back and Forward walk the steps (Nik's rule,
 // 2026-09-24: never break Back/Forward):
 //
@@ -80,6 +85,25 @@ function ge_has(object, key) {
 	return !!object && Object.prototype.hasOwnProperty.call(object, key);
 }
 
+// One string for what a new record was started with, "" for nothing.
+function ge_start_key(options) {
+	if (!options || typeof options !== "object") return "";
+	const keys = Object.keys(options).filter((key) => options[key] !== null && options[key] !== undefined && options[key] !== "");
+	if (!keys.length) return "";
+	return JSON.stringify(keys.sort().map((key) => [key, options[key]]));
+}
+
+// Table rows as route options carry them: an array, or the JSON v16's set_route wrote for one.
+function ge_rows(value) {
+	if (Array.isArray(value)) return value;
+	try {
+		const rows = JSON.parse(value);
+		return Array.isArray(rows) ? rows : null;
+	} catch (e) {
+		return null;
+	}
+}
+
 class GuidedEntry {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -141,6 +165,10 @@ class GuidedEntry {
 		this.conflict = null;
 		this.notice = null;
 		this.$shell = null;
+		// What a new record was started with: fields beyond step 1 sent with the create, and the
+		// options themselves, so a second start with different values is told from Back.
+		this.carry = {};
+		this.started_with = "";
 	}
 
 	// ------------------------------------------------------------------ routing
@@ -158,8 +186,10 @@ class GuidedEntry {
 	handle_route() {
 		const target = this.kit.parse_route(frappe.get_route());
 		if (!target) return;
-		// Nothing on this page reads route_options; left set, v16's set_route would write them into
-		// the address of every step this page pushes.
+		// A new record's route options are what it was started with (frappe.new_doc's options,
+		// through guided_default.js). Nothing else here reads them, and left set, v16's set_route
+		// would write them into the address of every step this page pushes.
+		const options = target.is_new && frappe.route_options ? ge_clone(frappe.route_options) : null;
 		if (frappe.route_options) frappe.route_options = null;
 		if (!target.doctype) {
 			this.leave_record();
@@ -167,7 +197,7 @@ class GuidedEntry {
 			return;
 		}
 		if (target.is_new) {
-			this.open_new(target.doctype);
+			this.open_new(target.doctype, options);
 			return;
 		}
 		if (this.flow && !this.is_new && this.doctype === target.doctype && this.name === target.name) {
@@ -179,8 +209,9 @@ class GuidedEntry {
 		this.load(target.doctype, target.name, target.step);
 	}
 
-	open_new(doctype) {
-		if (this.orphan && this.orphan.doctype === doctype) {
+	open_new(doctype, options) {
+		const started_with = ge_start_key(options);
+		if (this.orphan && this.orphan.doctype === doctype && !started_with) {
 			// Forward onto a "new" entry whose record was created after the person left it.
 			const orphan = this.orphan;
 			this.orphan = null;
@@ -190,13 +221,13 @@ class GuidedEntry {
 			this.go(null, true);
 			return;
 		}
-		if (this.flow && this.is_new && this.doctype === doctype) {
+		if (this.flow && this.is_new && this.doctype === doctype && started_with === this.started_with) {
 			// Back to step 1 of the record being started: what was typed is still here.
 			this.show_step(null);
 			return;
 		}
 		this.leave_record();
-		this.load(doctype, null, null);
+		this.load(doctype, null, null, options);
 	}
 
 	// Put a step of this record in the address: a new history entry, or (replace) in place of the
@@ -258,9 +289,9 @@ class GuidedEntry {
 			this.navigate(next);
 			return;
 		}
-		// Done: back to the record's own Desk form.
+		// Done: the record opens here by default now, so Done goes back to the list.
 		this.save_before_moving()
-			.then(() => frappe.set_route("Form", this.doctype, this.name))
+			.then(() => frappe.set_route("List", this.doctype))
 			.catch(() => {});
 	}
 
@@ -288,7 +319,7 @@ class GuidedEntry {
 
 	// ------------------------------------------------------------------ loading
 
-	load(doctype, name, step_key) {
+	load(doctype, name, step_key, options) {
 		const seq = ++this.load_seq;
 		this.reset();
 		this.doctype = doctype;
@@ -303,13 +334,59 @@ class GuidedEntry {
 			.then((flow) => {
 				if (seq !== this.load_seq) return;
 				this.take_flow(flow);
+				if (this.is_new) this.apply_start(options);
 				this.render_shell();
 				this.show_step(step_key);
+				this.refresh_notices();
 			})
 			.catch((err) => {
 				if (seq !== this.load_seq) return;
-				this.show_load_error(err || {}, () => this.load(doctype, name, step_key));
+				this.show_load_error(err || {}, () => this.load(doctype, name, step_key, options));
 			});
+	}
+
+	// A new record started somewhere else: step 1 takes its fields, the other fields the server
+	// will take (flow.prefill_fields) go with the create, and a real field it cannot take is
+	// named, with the full form offered instead. A table value must arrive as rows.
+	apply_start(options) {
+		this.started_with = ge_start_key(options);
+		if (!this.started_with) return;
+		const step = (this.flow.steps || []).find((s) => s.create) || (this.flow.steps || [])[0] || {};
+		const split = this.kit.split_prefill(options, this.flow.prefill_fields || [], this.kit.editable_fieldnames(step));
+		Object.keys(split.values).forEach((fieldname) => {
+			const def = this.defs[fieldname] || {};
+			let value = split.values[fieldname];
+			if (def.fieldtype === "Table" || def.fieldtype === "Table MultiSelect") {
+				value = ge_rows(value);
+				if (!value) return;
+			}
+			this.values[fieldname] = value;
+		});
+		this.carry = split.carry;
+		const known = split.dropped.filter((fieldname) => frappe.meta && frappe.meta.has_field(this.doctype, fieldname));
+		if (known.length) {
+			this.notice = {
+				kind: "carry",
+				fields: known.map((fieldname) => __(frappe.meta.get_label(this.doctype, fieldname) || fieldname)),
+			};
+		}
+	}
+
+	// The full form for a record not created yet, starting from what is here.
+	open_new_in_form() {
+		this.collect_step();
+		const doctype = this.doctype;
+		const values = Object.assign({}, this.carry, this.values);
+		this.reset();
+		if (window.sf_guided && window.sf_guided.new_in_form) window.sf_guided.new_in_form(doctype, values);
+		else frappe.new_doc(doctype);
+	}
+
+	// The full form for this record, which this tab then opens it in (guided_default.js).
+	open_in_form(tab) {
+		if (window.sf_guided && window.sf_guided.allow_form) window.sf_guided.allow_form(this.doctype, this.name);
+		if (tab) frappe.route_hash = `#${tab}`;
+		frappe.set_route("Form", this.doctype, this.name);
 	}
 
 	// A Table MultiSelect reads its link column from the child's meta (frappe.get_meta), which the
@@ -363,16 +440,88 @@ class GuidedEntry {
 		return queue;
 	}
 
+	// The start screen: for each guided DocType, a way to start a new record and the person's own
+	// open ones (form_kit.api.my_records), each opening here.
 	show_landing() {
 		this.reset();
 		this.page.set_title(__("Guided Entry"));
-		const can_create = frappe.model && frappe.model.can_create && frappe.model.can_create("Opportunity");
-		this.sf.state.render(this.$root, "empty", {
-			title: __("Fill in a record one step at a time."),
-			body: __("Open an opportunity and choose Guided, or start a new one here."),
-			action_label: can_create ? __("Start a new opportunity") : undefined,
-			on_action: can_create ? () => frappe.set_route(this.kit.build_route("Opportunity", null, null)) : undefined,
+		const doctypes = Object.keys((frappe.boot && frappe.boot.sf_guided) || {});
+		if (!doctypes.length) doctypes.push("Opportunity");
+		this.$root.html(`
+			<div class="ge-landing">
+				<header class="ge-landing-head">
+					<h1 class="ge-landing-title"></h1>
+					<p class="ge-landing-intro"></p>
+				</header>
+				<div class="ge-landing-lists"></div>
+			</div>`);
+		this.$root.find(".ge-landing-title").text(__("Guided Entry"));
+		this.$root
+			.find(".ge-landing-intro")
+			.text(__("Records open here one step at a time. Pick up one of yours, or start a new one."));
+		const $lists = this.$root.find(".ge-landing-lists");
+		doctypes.forEach((doctype) => this.render_mine(doctype, $('<section class="sf-card ge-mine"></section>').appendTo($lists)));
+	}
+
+	render_mine(doctype, $card) {
+		const can_create = frappe.model && frappe.model.can_create && frappe.model.can_create(doctype);
+		$card.html(`
+			<div class="ge-mine-head">
+				<h2 class="sf-card-title ge-mine-title"></h2>
+				<button type="button" class="sf-btn sf-btn--primary ge-mine-new"></button>
+			</div>
+			<div class="ge-mine-body"></div>
+			<button type="button" class="sf-btn sf-btn--quiet ge-mine-all"></button>`);
+		$card.find(".ge-mine-title").text(__(doctype));
+		const $new = $card.find(".ge-mine-new");
+		if (can_create) {
+			$new.text(__("New {0}", [__(doctype)])).on("click", () => frappe.new_doc(doctype));
+		} else {
+			$new.remove();
+		}
+		$card
+			.find(".ge-mine-all")
+			.text(__("All in the {0} list", [__(doctype)]))
+			.on("click", () => frappe.set_route("List", doctype));
+		const $body = $card.find(".ge-mine-body");
+		const load = () => {
+			this.sf.state.render($body, "loading");
+			this.sf
+				.call(GE_API + "my_records", { doctype }, { quiet: true, method: "GET" })
+				.then((mine) => this.render_mine_rows(doctype, $card, $body, mine || {}))
+				.catch((err) => this.sf.state.render($body, "error", { body: (err || {}).message, on_action: load }));
+		};
+		load();
+	}
+
+	render_mine_rows(doctype, $card, $body, mine) {
+		const rows = mine.rows || [];
+		if (mine.label) $card.find(".ge-mine-title").text(mine.label);
+		if (!rows.length) {
+			this.sf.state.render($body, "empty", { title: __("Nothing open is yours right now.") });
+			return;
+		}
+		const $list = $('<ul class="ge-mine-list"></ul>');
+		rows.forEach((row) => {
+			const route = this.kit.build_route(doctype, row.name, null);
+			const href = "/desk/" + route.map((part) => encodeURIComponent(part)).join("/");
+			const $link = $('<a class="ge-mine-row"></a>').attr("href", href);
+			$('<span class="ge-mine-name"></span>').text(row.title || row.name).appendTo($link);
+			const details = [row.name].concat(row.details || []).filter(Boolean);
+			$('<span class="ge-mine-details"></span>').text(details.join(" · ")).appendTo($link);
+			$link.on("click", (event) => {
+				if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) return;
+				event.preventDefault();
+				frappe.set_route(route);
+			});
+			$("<li></li>").append($link).appendTo($list);
 		});
+		$body.empty().append($list);
+		if (rows.length >= (mine.limit || 0)) {
+			$('<p class="ge-mine-more"></p>')
+				.text(__("Showing the {0} changed most recently.", [rows.length]))
+				.appendTo($body);
+		}
 	}
 
 	show_load_error(err, retry) {
@@ -463,16 +612,18 @@ class GuidedEntry {
 				this.navigate(key);
 			}
 		});
-		if (!this.is_new) {
-			$(`<button type="button" class="sf-btn sf-btn--quiet ge-open-form"></button>`)
-				.text(__("Open form"))
-				.on("click", () =>
-					this.save_before_moving()
-						.then(() => frappe.set_route("Form", this.doctype, this.name))
-						.catch(() => {})
-				)
-				.appendTo(this.$root.find(".ge-band-actions"));
-		}
+		$(`<button type="button" class="sf-btn sf-btn--quiet ge-open-form"></button>`)
+			.text(__("Open form"))
+			.on("click", () => {
+				if (this.is_new) {
+					this.open_new_in_form();
+					return;
+				}
+				this.save_before_moving()
+					.then(() => this.open_in_form())
+					.catch(() => {});
+			})
+			.appendTo(this.$root.find(".ge-band-actions"));
 	}
 
 	// Band, rail, progress, summary and footer: everything that follows the values.
@@ -712,10 +863,7 @@ class GuidedEntry {
 				.text(__(step.link.label))
 				.on("click", () =>
 					this.save_before_moving()
-						.then(() => {
-							if (step.link.tab) frappe.route_hash = `#${step.link.tab}`;
-							frappe.set_route("Form", this.doctype, this.name);
-						})
+						.then(() => this.open_in_form(step.link.tab))
 						.catch(() => {})
 				)
 				.appendTo($stage);
@@ -1340,8 +1488,10 @@ class GuidedEntry {
 		this.notice = null;
 		this.refresh_notices();
 		this.refresh_chrome();
+		const args = { doctype, values };
+		if (Object.keys(this.carry || {}).length) args.prefill = this.carry;
 		this.sf
-			.call(GE_API + "create_record", { doctype, values }, { quiet: true })
+			.call(GE_API + "create_record", args, { quiet: true })
 			.then((created) =>
 				// The flow for the record as it now exists: set-only-once fields lock, and each
 				// step's permissions are worked out for the saved document.
@@ -1420,6 +1570,15 @@ class GuidedEntry {
 		}
 		if (notice.kind === "create") {
 			this.sf.state.render($slot, "error", { title: notice.title, body: notice.body });
+			return;
+		}
+		if (notice.kind === "carry") {
+			this.sf.state.render($slot, "empty", {
+				title: __("Not carried over here: {0}.", [notice.fields.join(", ")]),
+				body: __("The full form keeps every value it was started with."),
+				action_label: __("Use the full form"),
+				on_action: () => this.open_new_in_form(),
+			});
 			return;
 		}
 		const error = notice.error || {};

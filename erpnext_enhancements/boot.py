@@ -98,6 +98,12 @@ def boot_session(bootinfo):
 	``frappe.boot.sf_field_help`` lists the DocTypes with a help file in the repo (form kit
 	P4.3, ``form_kit/help_text/``): their description tooltips also show the field's longer
 	explanation, fetched by ``field_description_icons.js``. See ``form_kit.field_help``.
+
+	``frappe.boot.sf_guided`` is ``{doctype: {"accepts": [fieldname, ...]}}`` for the DocTypes the
+	guided page opens by default (form kit P5.2, ``public/js/guided_default.js``): a New or an
+	existing record of one opens on the guided page rather than the form. ``accepts`` is what a
+	new record may carry over from where it was started (``form_kit.steps.prefill_fields``).
+	Empty when site_config's ``disable_guided_default`` is set, and the Desk then opens forms.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -121,6 +127,7 @@ def boot_session(bootinfo):
 	if normalize_registry:
 		bootinfo.sf_normalize = normalize_registry
 	bootinfo.sf_field_help = _field_help_doctypes()
+	bootinfo.sf_guided = _guided_doctypes()
 
 
 def _field_help_doctypes():
@@ -132,6 +139,29 @@ def _field_help_doctypes():
 		return sorted(doctype for doctype in CONFIGS if field_help.has_help(doctype))
 	except Exception:
 		return []
+
+
+def _guided_doctypes():
+	"""The DocTypes the guided page opens by default, for this user (form kit P5.2).
+
+	Never raises: boot runs everywhere, and a broken flow config is not worth a broken desk.
+	Whether the user may open the page at all is the browser's check (``frappe.boot.page_info``).
+	"""
+	try:
+		if frappe.conf.get("disable_guided_default"):
+			return {}
+		from erpnext_enhancements.form_kit import steps as flow
+		from erpnext_enhancements.form_kit.config import CONFIGS
+
+		out = {}
+		for doctype in CONFIGS:
+			if not frappe.has_permission(doctype, "read"):
+				continue
+			steps = flow.flow_steps(doctype, None)
+			out[doctype] = {"accepts": sorted(flow.prefill_fields(doctype, steps))}
+		return out
+	except Exception:
+		return {}
 
 
 def _settings_for_forms():

@@ -40,7 +40,9 @@ def get_flow(doctype, name=None):
 	"help_article"}``; ``help_article`` is the Knowledge Article each field's *Learn more* opens at
 	its step's anchor (``form_kit.field_help``), or None.
 	For a new record (no ``name``) ``name`` and ``modified`` are None, ``values`` are the new
-	record's defaults, and step 1 (``"create": 1``) is what ``create_record`` takes.
+	record's defaults, and step 1 (``"create": 1``) is what ``create_record`` takes; it also
+	carries ``prefill_fields``, the fields ``create_record``'s ``prefill`` may set
+	(``form_kit.steps.prefill_fields``), so the page can tell what a start elsewhere carries over.
 	"""
 	_require_configured(doctype)
 	if name:
@@ -56,7 +58,7 @@ def get_flow(doctype, name=None):
 		for field in step["fields"]
 		if field["fieldtype"] not in flow.LAYOUT_TYPES
 	)
-	return {
+	out = {
 		"doctype": doctype,
 		"name": doc.name if name else None,
 		"modified": str(doc.modified) if name else None,
@@ -66,13 +68,20 @@ def get_flow(doctype, name=None):
 		"can_write": 1 if can_write else 0,
 		"help_article": field_help.load(doctype)["article"],
 	}
+	if not name:
+		out["prefill_fields"] = sorted(flow.prefill_fields(doctype, steps))
+	return out
 
 
 @frappe.whitelist(methods=["POST"])
-def create_record(doctype, values):
-	"""Insert a new draft from step 1's values (JSON). Returns the save result."""
+def create_record(doctype, values, prefill=None):
+	"""Insert a new draft from step 1's values (JSON). Returns the save result.
+
+	``prefill`` (JSON, optional) is what the record was started with elsewhere; see
+	``saver.create_record`` for what is taken from it.
+	"""
 	_require_configured(doctype)
-	return saver.create_record(doctype, values)
+	return saver.create_record(doctype, values, prefill)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -118,3 +127,54 @@ def completeness_for(doctype, names):
 	"""``{name: completeness}`` for up to 500 records (``names`` is a JSON list) the caller can read."""
 	_require_configured(doctype)
 	return _completeness_for(doctype, names)
+
+
+#: The start screen lists at most this many records; the Desk list has the rest.
+MINE_LIMIT = 50
+
+
+@frappe.whitelist()
+def my_records(doctype):
+	"""The caller's open records of ``doctype``, for the guided page's start screen.
+
+	``{"label", "rows": [{"name", "title", "details": [...], "modified"}], "limit"}``, newest change
+	first, through ``frappe.get_list`` so the caller's own permissions decide. The config's ``mine``
+	says who "the caller's" is, which records are open, and what each row shows; a DocType
+	without one lists nothing.
+	"""
+	_require_configured(doctype)
+	frappe.has_permission(doctype, "read", throw=True)
+	mine = CONFIGS[doctype].get("mine")
+	if not mine:
+		return {"label": "", "rows": [], "limit": MINE_LIMIT}
+	meta = frappe.get_meta(doctype)
+	filters = {mine["owner_field"]: frappe.session.user}
+	open_rule = mine.get("open")
+	if open_rule:
+		filters[open_rule["field"]] = ["not in", open_rule["not_in"]]
+	hide_flag = mine.get("hide_flag")
+	if hide_flag and meta.has_field(hide_flag):
+		filters[hide_flag] = 0
+	shown = [mine["title_field"], *(mine.get("detail_fields") or [])]
+	shown = [fieldname for fieldname in shown if meta.has_field(fieldname)]
+	records = frappe.get_list(
+		doctype,
+		filters=filters,
+		fields=["name", "modified", *shown],
+		order_by="modified desc",
+		limit_page_length=MINE_LIMIT,
+	)
+	details = [fieldname for fieldname in shown if fieldname != mine["title_field"]]
+	return {
+		"label": _(mine["label"]),
+		"rows": [
+			{
+				"name": record.get("name"),
+				"title": record.get(mine["title_field"]) or record.get("name"),
+				"details": [str(record.get(fieldname)) for fieldname in details if record.get(fieldname)],
+				"modified": str(record.get("modified")),
+			}
+			for record in records
+		],
+		"limit": MINE_LIMIT,
+	}
