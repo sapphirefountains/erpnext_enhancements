@@ -286,6 +286,13 @@
         sf.state.render(el, "empty", { title });
     }
 
+    // project_dashboard.get_project_data's answer to a user without the page role
+    // (check_permission): {"error": "You do not have permission to view the Project
+    // Dashboard."}, on HTTP 200. Its other {"error"} is a failed read, worth a retry.
+    function is_denial(message) {
+        return Boolean(message && typeof message.error === "string" && /permission/i.test(message.error));
+    }
+
     async function fetch_initial_data() {
         sf.state.render(content_el(), "loading");
         init_gantt_filters();
@@ -316,6 +323,10 @@
             if (projectsRes.message && !projectsRes.message.error) {
                 project_data = projectsRes.message;
                 render_current_tab();
+            } else if (is_denial(projectsRes.message)) {
+                // No page role: get_project_data answers 200 with {"error": "You do not have
+                // permission ..."} rather than a 403. Asking again cannot help, so no Try again.
+                sf.state.render(content_el(), "no-access");
             } else {
                 const title = __("Could not load the projects.");
                 sf.state.render(content_el(), "error", { title, on_action: fetch_data });

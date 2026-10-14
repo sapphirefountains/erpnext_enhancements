@@ -884,7 +884,8 @@ console.log("\nevery block on the kit (" + onKit.length + "), drawn with the rea
 
 await test("the blocks on the kit are found", () => {
 	assert.ok(onKit.length >= 40, "only " + onKit.length + " blocks use blocks.kit");
-	assert.ok(onKit.includes("sales_stalled_deals.js") && onKit.includes("finance_whos_working.js"));});
+	assert.ok(onKit.includes("sales_stalled_deals.js") && onKit.includes("finance_whos_working.js"));
+});
 
 /**
  * The six blocks converted after the department widgets (v1.658.0) draw into a different
@@ -1392,6 +1393,31 @@ await test("projects_dashboard.js: a project to list draws its table, not a stat
 	);
 	const drawn = allText(body);
 	assert.doesNotMatch(drawn, /sf-state/, "a project to list, and a state panel was drawn: " + drawn.slice(0, 200));
+});
+
+await test("projects_dashboard.js: a user without the page role sees no access, with no Try again", async () => {
+	// get_project_data answers that user with {"error": ...} on HTTP 200, not a 403.
+	const denied = { error: "You do not have permission to view the Project Dashboard." };
+	const { desk, body } = await runOnKit("projects_dashboard.js", (method) =>
+		Promise.resolve({ message: method.endsWith(".get_project_data") ? denied : [] }),
+	);
+	assert.match(body.innerHTML, /sf-state--no-access/, body.innerHTML.slice(0, 160));
+	assert.doesNotMatch(body.innerHTML, /Try again|sf-state-action/, "a Try again that can never succeed");
+	// Its other {"error"} is a failed read: the error panel, with Try again.
+	const failed = await runOnKit("projects_dashboard.js", (method) =>
+		Promise.resolve({
+			message: method.endsWith(".get_project_data") ? { error: "Could not fetch project data. Please check the logs." } : [],
+		}),
+	);
+	assert.match(failed.body.innerHTML, /sf-state--error[\s\S]*Try again/);
+	// On an older bundle the denial is still the words, not a raw kind.
+	const old = await runOnKit(
+		"projects_dashboard.js",
+		(method) => Promise.resolve({ message: method.endsWith(".get_project_data") ? denied : [] }),
+		{ old: true },
+	);
+	assert.equal(old.body.textContent, "No access");
+	assert.ok(desk.calls.length >= 3);
 });
 
 await settle(20);

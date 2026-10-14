@@ -67,6 +67,11 @@ Block is now on the kit except Desk Shortcuts, which asks the server nothing.
   `frappe.call`'s `callback` / `error` options, and v16 calls `error` with no arguments on a 403
   (`request.js`, `statusCode[403]`). It now settles on `frappe.call`'s promise, which rejects with
   the jqXHR.
+- **A user without the Project Dashboard's page role got a Try again that could never work.**
+  `get_project_data` answers that user with `{"error": "You do not have permission ..."}` on
+  HTTP 200, not a 403, so the block drew "Could not load the projects." with a retry. It now
+  draws the no-access panel, with no Try again. Its other `{"error"}`, a failed read, keeps the
+  error panel and its Try again. The server is unchanged.
 - **Projects Dashboard values went into markup unescaped**: the value-stream and master-project
   headings, the Assigned To and Type cells, the Completed tab's status, and the status and
   priority options with their `data-project` attributes. All go through `sf.esc` now.
