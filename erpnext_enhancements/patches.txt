@@ -1411,3 +1411,10 @@ erpnext_enhancements.patches.set_historical_opportunities
 # deal that is not Closed Won, never hands one Project to two deals (those are listed for review). set_value with
 # update_modified=False, never save() (hazards H1/H3). Cannot raise, safe twice.
 erpnext_enhancements.patches.backfill_opportunity_project_links
+# Orphaned addresses (v1.639.0, approved 2026-10-13): settle the unlinked Address rows two imports left, by rule, never by
+# a list of names. Delete a 2025-07-10 Administrator-import Address with no Dynamic Link whose normalized line 1 + city
+# (lowercase, letters and digits only) matches another Address linked to a Customer; delete_doc without force, one
+# savepoint each, so a linked one is refused and listed. Link a "<X>-Billing" Address with no Dynamic Link created in
+# the supplier import's minute (2025-10-03 09:39) to the one Supplier named X, unless a Customer shares the name (listed). The link is a bare Dynamic Link db_insert, no
+# Address save, no hooks, modified untouched. Everything else is left alone. Cannot raise; tally adds up. Safe twice.
+erpnext_enhancements.patches.cleanup_orphan_import_addresses
