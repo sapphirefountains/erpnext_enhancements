@@ -110,11 +110,20 @@ def get_stalled_deals():
 	``modified`` is the staleness signal for the same reason the KPI uses it: it
 	is the only column every write path touches. It does mean a bulk edit can
 	reset a deal's clock without anyone having spoken to the customer.
+
+	Historical deals (pre-ERPNext, untouched for 90 days — ``historical.py``,
+	v1.629.0) are left out, as they are from the ``stalled_opportunities`` KPI.
+	Sorted oldest-touch first with a limit, the widget would otherwise fill with
+	quiet Zoho-era deals and never reach a live one.
 	"""
 	cutoff = add_days(getdate(nowdate()), -STALLED_DAYS)
 	rows = fetch_all(
 		"Opportunity",
-		filters={"status": ("not in", OPEN_OPPORTUNITY_STATUSES), "modified": ("<", cutoff)},
+		filters={
+			"status": ("not in", OPEN_OPPORTUNITY_STATUSES),
+			"modified": ("<", cutoff),
+			**exclude_filter_dict(),
+		},
 		fields=[
 			"name",
 			"customer_name",

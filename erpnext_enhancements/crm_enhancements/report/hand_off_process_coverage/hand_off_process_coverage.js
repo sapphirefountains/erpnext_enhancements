@@ -17,15 +17,6 @@ frappe.query_reports["Hand-Off Process Coverage"] = {
 			options: ["", "Started", "Not Started"].join("\n"),
 			default: "Not Started",
 		},
-		{
-			// Historical = created before 2025-08-01 and nobody's activity in 90 days
-			// (crm_enhancements/historical.py). Off by default, as on Closed Won
-			// Reconciliation.
-			fieldname: "include_historical",
-			label: __("Include historical"),
-			fieldtype: "Check",
-			default: 0,
-		},
 	],
 	formatter(value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);

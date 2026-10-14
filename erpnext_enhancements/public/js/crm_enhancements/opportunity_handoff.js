@@ -45,7 +45,9 @@
  *  - A historical deal (`custom_is_historical`: pre-ERPNext and untouched for 90
  *    days, v1.629.0) with no Project marks neither step 2 nor step 3 as next,
  *    never reads Ready or OVERDUE, and shows one quiet line saying it is excluded
- *    from hand-off warnings. Create Project stays, as a plain button.
+ *    from hand-off warnings. Its buttons stay, all plain (none primary), so a
+ *    deal behind a closed gate can still book or skip the meeting and then
+ *    create its project.
  *
  * Styling matches the Project's hand-off bar (Frappe CSS vars; Light + Night).
  */
@@ -312,29 +314,26 @@
 		if (!f.won) return by_step;
 		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
 
-		// Historical (pre-ERPNext, untouched for 90 days): no meeting buttons and
-		// no primary call to action. Create Project stays available as a plain
-		// button, because "excluded from warnings" must not mean "impossible".
-		if (f.historical && !f.project) {
-			if (f.gate_open || !f.gate_applies) {
-				at(STEP_PROJECT, button("create", __("Create Project in PM System"), "default"));
-			}
-			return by_step;
-		}
+		// Historical (pre-ERPNext, untouched for 90 days): the same buttons, but
+		// none of them primary — nothing is "next" on a deal excluded from hand-off
+		// warnings. Every path stays offered, because "excluded from warnings" must
+		// not mean "stranded": a deal whose gate is closed can still book (or, for a
+		// System Manager, skip) the meeting that opens it, then create its project.
+		const lead = f.historical && !f.project ? "default" : "primary";
 
 		// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
 		// can be offered together, and then this one still leads — one primary
 		// button, pointing at the step the process actually wants next.
 		const booking_first = !f.held && !f.scheduled;
 		if (booking_first) {
-			at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), "primary"));
+			at(STEP_MEETING, button("schedule", __("Schedule Hand-Off Meeting"), lead));
 		}
 		// Offered strictly on the server's own predicate, so the tab can never
 		// show a button whose insert is guaranteed to be refused.
 		if (!f.project && (f.gate_open || !f.gate_applies)) {
 			at(
 				STEP_PROJECT,
-				button("create", __("Create Project in PM System"), booking_first ? "default" : "primary")
+				button("create", __("Create Project in PM System"), booking_first ? "default" : lead)
 			);
 		}
 		// Secondary on purpose: closing step 2 is bookkeeping the process needs,

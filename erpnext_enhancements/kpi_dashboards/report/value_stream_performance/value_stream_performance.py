@@ -161,11 +161,14 @@ def _revenue_rollup(from_date, to_date):
 
 	`total_billed_amount` is the honest figure where a Project exists. Where it
 	does not — the WP-7 backlog — the opportunity amount is used instead, and the
-	count of those is returned so the report can say so. Historical deals are left out,
-	as in ``_opportunity_rollup``.
+	count of those is returned so the report can say so.
+
+	Historical deals are deliberately NOT excluded here (v1.629.0), unlike in
+	``_opportunity_rollup``: billed revenue is real money whatever the deal's age, and
+	leaving it out would understate what a stream earned.
 	"""
 	rows = frappe.db.sql(
-		f"""
+		"""
 		SELECT
 			vs.value_stream AS stream,
 			SUM(COALESCE(NULLIF(p.total_billed_amount, 0), o.opportunity_amount, 0)) AS revenue,
@@ -176,7 +179,6 @@ def _revenue_rollup(from_date, to_date):
 		LEFT JOIN `tabProject` p ON p.custom_opportunity = o.name
 		WHERE o.status IN %(won)s
 		  AND o.transaction_date BETWEEN %(from_date)s AND %(to_date)s
-		  AND {exclude_sql("o")}
 		GROUP BY vs.value_stream
 		""",
 		{"won": WON_STATUSES, "from_date": from_date, "to_date": to_date},
@@ -282,7 +284,7 @@ def _message(from_date, to_date, spend, revenue):
 		notes.append(
 			_("{0} won opportunities in this window have no linked Project, so their revenue is the "
 			  "quoted amount rather than the billed one. Work the <i>Closed Won Reconciliation</i> "
-			  "report to close that gap. Historical (pre-ERPNext) deals are not counted here.").format(orphaned)
+			  "report to close that gap.").format(orphaned)
 		)
 
 	return "<br><br>".join(notes)

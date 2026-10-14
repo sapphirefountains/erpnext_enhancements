@@ -264,36 +264,41 @@ class TestWhatCountsAsActivity(unittest.TestCase):
 			self._comment(kind)
 		self.assertEqual(self._active(), set())
 
-	def test_a_communication_counts(self):
+	def _email(self, owner="sales@example.com", kind="Communication", age=10):
 		STATE["tables"]["Communication"].append(
 			{
 				"reference_doctype": "Opportunity",
 				"reference_name": "OPP-1",
-				"owner": "sales@example.com",
-				"creation": _days_ago(10),
+				"communication_type": kind,
+				"owner": owner,
+				"creation": _days_ago(age),
 			}
 		)
+
+	def test_a_communication_counts(self):
+		self._email()
 		self.assertEqual(self._active(), {"OPP-1"})
+
+	def test_an_automated_message_does_not(self):
+		"""v16 Notification emails ("Email Team on Opportunity Won" fires on an Administrator
+		transition) are Automated Messages: the system talking to itself."""
+		self._email(owner="Administrator", kind="Automated Message")
+		self._email(kind="Automated Message")
+		self.assertEqual(self._active(), set())
 
 	def test_a_communication_logged_as_administrator_counts(self):
 		"""Lead, 2026-10-13: an email about a deal is somebody working it, whoever the
 		system logged it as. 4 of prod's 392 Opportunity Communications are Administrator's."""
-		STATE["tables"]["Communication"].append(
-			{
-				"reference_doctype": "Opportunity",
-				"reference_name": "OPP-1",
-				"owner": "Administrator",
-				"creation": _days_ago(10),
-			}
-		)
+		self._email(owner="Administrator")
 		self.assertEqual(self._active(), {"OPP-1"})
 
-	def _linked_email(self, age, owner="Administrator"):
+	def _linked_email(self, age, owner="Administrator", kind="Communication"):
 		STATE["tables"]["Communication"].append(
 			{
 				"name": "COMM-9",
 				"reference_doctype": "Contact",
 				"reference_name": "C-1",
+				"communication_type": kind,
 				"owner": owner,
 				"creation": _days_ago(age),
 			}
@@ -310,6 +315,11 @@ class TestWhatCountsAsActivity(unittest.TestCase):
 	def test_a_communication_attached_through_a_timeline_link_counts(self):
 		self._linked_email(age=5)
 		self.assertEqual(self._active(), {"OPP-1"})
+
+	def test_a_timeline_link_to_an_automated_message_does_not(self):
+		"""The PARENT's type is what is checked on the link path."""
+		self._linked_email(age=5, kind="Automated Message")
+		self.assertEqual(self._active(), set())
 
 	def test_a_timeline_link_to_an_old_email_does_not(self):
 		"""The window is the email's own date, not the link row's."""
@@ -522,10 +532,18 @@ class TestHelpers(unittest.TestCase):
 class _Doc(dict):
 	"""Enough of a Document for the before_save hooks."""
 
-	def __init__(self, new=False, before_status=None, **fields):
+	def __init__(self, new=False, before_status=None, before_flag=None, **fields):
 		super().__init__(**fields)
 		self._new = new
 		self._before_status = before_status
+		# What doc_before_save holds: the row as stored. Defaults to the doc's own flag.
+		self._before = None
+		if not new:
+			flag = fields.get("custom_is_historical") if before_flag is None else before_flag
+			self._before = {"status": before_status, "custom_is_historical": flag}
+
+	def get_doc_before_save(self):
+		return self._before
 
 	def __getattr__(self, key):
 		return self.get(key)
@@ -584,6 +602,41 @@ class TestClearOnPersonStatusChange(unittest.TestCase):
 			historical.clear_on_person_status_change(doc)
 			self.assertEqual(doc["custom_is_historical"], 1, flag)
 			setattr(frappe.flags, flag, False)
+
+	def test_a_stale_form_cannot_unflag_the_deal(self):
+		"""The Desk sends read-only fields, and the nightly set_value(update_modified=False)
+		never trips check_if_latest: a form opened yesterday still holds 0."""
+		doc = _Doc(status="Closed Won", before_status="Closed Won", before_flag=1, custom_is_historical=0)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 1)
+
+	def test_a_form_opened_before_the_deploy_cannot_either(self):
+		"""No key at all: cint(None) reads 0."""
+		doc = _Doc(status="Closed Won", before_status="Closed Won", before_flag=1)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 1)
+
+	def test_a_stale_form_cannot_flag_a_live_deal(self):
+		doc = _Doc(status="Open", before_status="Open", before_flag=0, custom_is_historical=1)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 0)
+
+	def test_a_person_status_change_still_clears_a_stale_form(self):
+		"""The restore must not stop the one rule that is allowed to clear it."""
+		doc = _Doc(status="Closed Won", before_status="Closed", before_flag=1)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 0)
+
+	def test_administrator_saving_a_stale_form_gets_the_stored_value(self):
+		sys.modules["frappe"].session.user = "Administrator"
+		doc = _Doc(status="Lost", before_status="Open", before_flag=1, custom_is_historical=0)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 1)
+
+	def test_a_new_doc_is_left_alone(self):
+		doc = _Doc(new=True, status="Open", custom_is_historical=0)
+		historical.clear_on_person_status_change(doc)
+		self.assertEqual(doc["custom_is_historical"], 0)
 
 	def test_a_doc_without_the_field_is_left_alone(self):
 		doc = _Doc(status="Lost", before_status="Open")
@@ -747,6 +800,25 @@ def _js_code(rel):
 	return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
 
 
+VSP = "kpi_dashboards/report/value_stream_performance/value_stream_performance.py"
+
+
+def _fn_tokens(rel, name):
+	"""Names, attributes and non-docstring strings inside one top-level function."""
+	tree = ast.parse(_read(rel))
+	fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+	doc = fn.body[0].value if isinstance(fn.body[0], ast.Expr) else None
+	tokens = set()
+	for node in ast.walk(fn):
+		if isinstance(node, ast.Name):
+			tokens.add(node.id)
+		elif isinstance(node, ast.Attribute):
+			tokens.add(node.attr)
+		elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node is not doc:
+			tokens.add(node.value)
+	return tokens
+
+
 def _py_tokens(rel):
 	"""Every name, attribute and string constant in a Python file, docstrings excluded."""
 	tree = ast.parse(_read(rel))
@@ -782,7 +854,7 @@ PY_CALL_SITES = {
 	"assistant_tools/closed_won_handoff_status.py": "exclude_filter_dict",
 	"crm_enhancements/page/sales_pipeline/sales_pipeline.py": "HISTORICAL_FIELD",
 	"crm_enhancements/handoff.py": "is_historical",
-	"crm_enhancements/report/hand_off_process_coverage/hand_off_process_coverage.py": "exclude_filter_dict",
+	"process_steps.py": "exclude_filter_dict",
 	"api/marketing_dashboard.py": "exclude_filter_dict",
 	"kpi_dashboards/report/value_stream_performance/value_stream_performance.py": "exclude_sql",
 	"api/briefing.py": "exclude_filter_dict",
@@ -793,7 +865,6 @@ JS_CALL_SITES = {
 	"public/js/crm_enhancements/create_project_prompt.js": "is_historical",
 	"public/js/crm_enhancements/opportunity_handoff.js": "is_historical",
 	"crm_enhancements/report/closed_won_reconciliation/closed_won_reconciliation.js": "include_historical",
-	"crm_enhancements/report/hand_off_process_coverage/hand_off_process_coverage.js": "include_historical",
 }
 
 
@@ -844,6 +915,41 @@ class TestCallSitesAdopted(unittest.TestCase):
 
 	def test_the_ai_tool_reports_how_many_it_left_out(self):
 		self.assertIn("historical_excluded", _py_tokens("assistant_tools/closed_won_handoff_status.py"))
+
+	def test_each_function_that_must_exclude_does(self):
+		"""Function-level, where a file has more than one query and only some must exclude."""
+		for rel, fn, helper in (
+			("process_steps.py", "escalate_overdue_handoffs", "exclude_filter_dict"),
+			("api/sales_dashboard.py", "get_handoff_backlog", "exclude_filter_dict"),
+			("api/sales_dashboard.py", "get_stalled_deals", "exclude_filter_dict"),
+			(VSP, "_opportunity_rollup", "exclude_sql"),
+		):
+			with self.subTest(fn=fn):
+				self.assertIn(helper, _fn_tokens(rel, fn))
+
+	def test_rows_that_have_a_project_or_revenue_are_not_excluded(self):
+		"""Hand-Off Process Coverage lists only deals WITH a project, and billed revenue is real
+		money: excluding historical deals there would hide live projects and real income."""
+		for rel in (
+			"crm_enhancements/report/hand_off_process_coverage/hand_off_process_coverage.py",
+			"crm_enhancements/report/hand_off_process_coverage/hand_off_process_coverage.js",
+		):
+			with self.subTest(file=rel):
+				self.assertNotIn("historical", _read(rel).lower())
+		tokens = _fn_tokens(VSP, "_revenue_rollup")
+		self.assertNotIn("exclude_sql", tokens)
+		self.assertNotIn("custom_is_historical", tokens)
+
+	def test_a_historical_deal_behind_a_closed_gate_is_never_stranded(self):
+		"""Every hand-off button stays for a historical deal, just none of them primary."""
+		code = _js_code("public/js/crm_enhancements/opportunity_handoff.js")
+		buttons = code[code.index("function step_buttons") :]
+		buttons = buttons[: buttons.index("return by_step;\n\t}")]
+		# The only early return left is the not-won guard; no historical early exit.
+		self.assertEqual(buttons.count("return by_step;"), 1)
+		self.assertIn('const lead = f.historical && !f.project ? "default" : "primary";', buttons)
+		self.assertIn('button("schedule", __("Schedule Hand-Off Meeting"), lead)', buttons)
+		self.assertIn('button("skip", __("Skip Hand-Off"), "default")', buttons)
 
 	def test_the_handoff_tab_never_marks_a_historical_deal_ready(self):
 		code = _js_code("public/js/crm_enhancements/opportunity_handoff.js")
@@ -907,6 +1013,8 @@ class TestFixtures(unittest.TestCase):
 	def test_the_number_card_and_charts_filter_it_out(self):
 		records = [
 			self.cards["Closed-Won Opportunities"],
+			self.cards["Open Opportunities"],
+			self.cards["Open Pipeline Value"],
 			self.charts["Opportunities by Status"],
 			self.charts["Opportunity Value by Status"],
 		]

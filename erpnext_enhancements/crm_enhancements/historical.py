@@ -30,9 +30,11 @@ counts whoever owns it:
   ``reference_doctype``/``reference_name`` or through a ``Communication Link`` timeline row
   (``link_doctype`` "Opportunity"). **Any owner** (lead, 2026-10-13): an email about a deal is
   somebody working it even when the system logged it as Administrator -- on production 4 of
-  the 392 Opportunity Communications are, all of them Sent mail. The window is the
-  Communication's own ``creation``, not the link row's, so linking an old email to a deal
-  today does not make the deal look worked today;
+  the 392 Opportunity Communications are, all of them Sent mail. Only
+  ``communication_type`` "Communication" counts, on both paths: an "Automated Message" (a
+  v16 Notification email, such as the won-deal alert) is the system talking to itself. The
+  window is the Communication's own ``creation``, not the link row's, so linking an old
+  email to a deal today does not make the deal look worked today;
 * a ``ToDo`` referencing it (an assignment);
 * a ``Version`` on it whose ``changed`` list holds a ``status`` change, and that is not part
   of a Data Import. Every v16 Version carries a ``"data_import": null`` key, so a SQL
@@ -75,6 +77,11 @@ NON_PERSON_OWNERS = ("Administrator", "Guest")
 
 #: The Comment types a person writes on purpose. See the module docstring for the rest.
 PERSON_COMMENT_TYPES = ("Comment", "Attachment")
+
+#: The Communication type of an email or call between people. v16 Notification emails are
+#: "Automated Message" -- "Email Team on Opportunity Won" fires on an Administrator status
+#: transition, for one -- and a deal must not revive because a notification mentioned it.
+PERSON_COMMUNICATION_TYPE = "Communication"
 
 #: Batch size for the ``IN`` lists. ~850 opportunities predate the cutoff; the chunking is
 #: there so the rule keeps working if that ever grows, not because it is needed today.
@@ -193,13 +200,14 @@ def active_recently(names, since):
 			)
 		)
 		# Communications count whoever owns them (see the module docstring), so no owner
-		# filter on either path.
+		# filter on either path -- but only person-to-person ones, on both paths.
 		active.update(
 			frappe.get_all(
 				"Communication",
 				filters=[
 					["reference_doctype", "=", "Opportunity"],
 					["reference_name", "in", chunk],
+					["communication_type", "=", PERSON_COMMUNICATION_TYPE],
 					["creation", ">=", since],
 				],
 				pluck="reference_name",
@@ -222,6 +230,7 @@ def active_recently(names, since):
 					"Communication",
 					filters=[
 						["name", "in", list({link.get("parent") for link in links})],
+						["communication_type", "=", PERSON_COMMUNICATION_TYPE],
 						["creation", ">=", since],
 					],
 					pluck="name",
@@ -351,16 +360,30 @@ def refresh_historical_flags():
 
 
 def clear_on_person_status_change(doc, method=None):
-	"""Opportunity ``before_save``: a person moving a historical deal's status revives it.
+	"""Opportunity ``before_save``: the flag is the job's to write, except when a person revives it.
 
-	Without this the deal would stay excluded until the next nightly run -- long enough for
-	somebody who just marked an old deal Closed Won to be told nothing is waiting on a
-	project. Before_save rather than on_update, so it rides the save already happening.
+	**The stored value wins** (v1.629.0). The Desk sends every field on save, read-only ones
+	included, and the nightly refresh writes with ``update_modified=False``, so it never trips
+	``check_if_latest``: a form opened before last night's run, or before the deploy that added
+	the column (no key at all, so ``cint(None)`` reads 0), would write its stale copy straight
+	back and un-flag the deal. So on any save of an existing deal, a value that differs from
+	``doc_before_save`` is put back. The refresh itself uses ``db.set_value`` and never passes
+	through here.
 
-	Only for a person: Administrator, a patch, a data import or a migrate changing status is
-	exactly the kind of bulk edit the rule exists to ignore.
+	**A person moving a historical deal's status revives it**, in this same save -- otherwise
+	somebody who just marked an old deal Closed Won would be told nothing is waiting on a
+	project until the next nightly run. Only a person: Administrator, a patch, a data import
+	or a migrate changing status is exactly the kind of bulk edit the rule exists to ignore.
 	"""
-	if not frappe.utils.cint(doc.get(HISTORICAL_FIELD)) or doc.is_new():
+	if doc.is_new():
+		return
+	before = doc.get_doc_before_save()
+	if before is None:
+		return
+	stored = frappe.utils.cint(before.get(HISTORICAL_FIELD))
+	if frappe.utils.cint(doc.get(HISTORICAL_FIELD)) != stored:
+		doc.set(HISTORICAL_FIELD, stored)
+	if not stored:
 		return
 	if frappe.session.user in NON_PERSON_OWNERS:
 		return

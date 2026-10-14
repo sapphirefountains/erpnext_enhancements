@@ -20,9 +20,9 @@ deals turned out to carry a won date nobody entered, 06-30-2026.
 - **`Opportunity.custom_is_historical`**, "Historical (pre-ERPNext)": a stored, read-only check box.
   A deal is historical when it was **created before 2025-08-01** (which covers every deal imported
   from Zoho on 2025-07-14, however late it was won) **and nobody has worked it in 90 days**. Worked
-  means a comment or attachment, any email on the deal (by reference or a Communication Link,
-  whoever logged it), an assignment, or a person changing its status. Imports, bulk edits and
-  patches never count: they re-saved these rows on 2026-06-07, 06-30 and 08-19 without anyone
+  means a comment or attachment, any person-to-person email on the deal (by reference or a
+  Communication Link, whoever logged it; automated notification emails don't count), an assignment,
+  or a person changing its status. Imports, bulk edits and patches never count: they re-saved these rows on 2026-06-07, 06-30 and 08-19 without anyone
   working the deals. It is a stored field rather than a computed rule because Number Cards,
   Report Builder filters and list views can only filter on a column; this supersedes WI-024's "no
   invented status field" line (the work item records the decision).
@@ -30,11 +30,11 @@ deals turned out to carry a won date nobody entered, 06-30-2026.
     (`exclude_filters`, `exclude_sql`, `is_historical`), each safe on a database that does not yet
     have the column.
   - A daily job re-checks every deal, and a person changing a historical deal's status clears the
-    flag on that save.
+    flag on that save. A form left open from before a nightly run (or the deploy) cannot write a
+    stale value back: the save restores the stored flag.
   - The field sits on the Close step after "Stage changed on", in the hand-kept
     `Opportunity-main-field_order`, and can be used as a list filter.
-- **"Include historical"** check boxes on the Closed Won Reconciliation and Hand-Off Process Coverage
-  reports, off by default.
+- **An "Include historical"** check box on the Closed Won Reconciliation report, off by default.
 
 ### Changed
 
@@ -42,14 +42,21 @@ deals turned out to carry a won date nobody entered, 06-30-2026.
   - the daily "won but not converted" SMS nag and the list link it sends;
   - the Sales hand-off backlog block and its KPI, and the TV board's "Won — awaiting project"
     column;
-  - the Opportunity form's "Create project now?" prompt and the hand-off panel, which shows a quiet
-    "Historical (pre-ERPNext)" line instead of a Ready step or an OVERDUE banner (Create Project
-    stays available as a plain button, so a real case is never stranded);
+  - the Opportunity form's "Create project now?" prompt, and the daily OVERDUE hand-off emails;
+  - the hand-off panel's emphasis: it shows a quiet "Historical (pre-ERPNext)" line instead of a
+    Ready step or an OVERDUE banner, and keeps every action (schedule, finish, skip, Create Project)
+    as plain buttons, so a real case is never stranded;
   - the AI hand-off tool, which says how many historical deals it left out;
   - the KPIs: win rate (both legs), won count and value, average deal size, marketing won, the
-    marketing funnel, value-stream performance and the three open-pipeline measures;
+    marketing funnel, value-stream won counts and amounts, and the three open-pipeline measures;
+  - the Sales Dashboard's stalled-deals list, so it matches the stalled-deals KPI;
   - the morning briefing's "my open pipeline";
-  - the "Closed-Won Opportunities" number card and the two status charts.
+  - the "Closed-Won Opportunities", "Open Opportunities" and "Open Pipeline Value" number cards
+    (so each matches the KPI of the same name) and the two status charts.
+- **Deliberately not applied** where the rows are deals that already have a project or revenue: the
+  Hand-Off Process Coverage report and value-stream billed revenue. A pre-2025-08 deal with a live
+  project is quiet on the Opportunity because the work happens on the Project, and hiding it there
+  would hide real work and real money.
 - **`stamp_won_date` stamps a won date only when a deal becomes won** (inserted as Closed Won, or its
   status changes to Closed Won on that save). It used to stamp today on *any* save of a won deal
   with a blank date, so a spreadsheet re-import on 2026-06-30 dated twelve deals 06-30-2026 and
@@ -75,7 +82,7 @@ deals turned out to carry a won date nobody entered, 06-30-2026.
 
 ### Tests
 
-- `tests/test_historical_opportunities.py` (66 tests, own CI step): the rule at the cutoff boundary,
+- `tests/test_historical_opportunities.py` (77 tests, own CI step): the rule at the cutoff boundary,
   each activity source, what does not count, the stamp's transition behaviour, both patches, the
   fixtures and wiring, and a scan that every adopting call site uses the helper.
   `test_unconverted_nag` and `test_handoff_gate` cover the nag's and the gate's new exclusions.

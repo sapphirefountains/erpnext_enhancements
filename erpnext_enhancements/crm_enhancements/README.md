@@ -443,7 +443,9 @@ Version sources only when the owner is not Administrator or Guest):
 - a Communication on it (email, call), through `reference_doctype`/`reference_name` **or** a
   `Communication Link` timeline row, **whoever owns it**: an email about a deal is somebody
   working it even when the system logged it as Administrator (4 of prod's 392 Opportunity
-  Communications are). The window is the Communication's own date, not the link row's;
+  Communications are). Only `communication_type` **Communication**, on both paths: an
+  Automated Message (a v16 Notification email, such as the won-deal alert) does not revive
+  a deal. The window is the Communication's own date, not the link row's;
 - a ToDo referencing it (an assignment);
 - a Version recording a **status** change that was not part of a Data Import. The JSON is
   parsed in Python: every v16 Version carries `"data_import": null`, so a SQL
@@ -454,33 +456,45 @@ read-only Check in the list's standard filters. It is a column rather than a Pyt
 because Number Cards, Dashboard Charts, Report Builder and the list view can only filter on a
 stored column. Nobody sets it by hand.
 
-**The nightly job.** `refresh_historical_flags` (daily, ahead of the won-deal nag) recomputes
-every deal created before the cutoff with one `IN`-list query per source per 500 deals, writes only the
-rows that change (`update_modified=False`), clears the flag on anything newer, logs its counts
-and never raises. A person changing the status of a historical deal un-flags it in that same
-save (`clear_on_person_status_change`); a comment or email un-flags it on the next run; and
-ninety quiet days later it is historical again.
+**The nightly job.** `refresh_historical_flags` (daily) recomputes every deal created before
+the cutoff with one `IN`-list query per source per 500 deals, writes only the rows that change
+(`update_modified=False`), clears the flag on anything newer, logs its counts and never
+raises. It is not ordered against the won-deal nag (each daily job is its own RQ job), so a
+deal that flips can be off by one day in the nag. A person changing the status of a
+historical deal un-flags it in that same save (`clear_on_person_status_change`); a comment
+or email un-flags it on the next run; and ninety quiet days later it is historical again.
+Any other save puts the stored flag back, so a stale open form (the Desk sends read-only
+fields too) can never write an old value over the job's.
 
 **Where it is applied** (always through `exclude_filters` / `exclude_filter_dict` /
 `exclude_sql` / `is_historical`, each of which excludes nothing until the column exists):
 
 - warnings and queues: the daily won-deal nag and its list link (`status_alerts.py`), the
-  **Closed Won Reconciliation** and **Hand-Off Process Coverage** reports, the Sales
-  Dashboard's hand-off backlog widget, the `handoff_backlog` KPI, the Sales Pipeline's "Won —
-  awaiting project" column, the Opportunity form's create-project prompt and its Hand-Off
-  Process tab (a quiet "Historical (pre-ERPNext) — excluded from hand-off warnings" line, no
-  Ready step, Create Project only as a plain button), and the `closed_won_handoff_status` AI
-  tool, which returns `historical_excluded` so an answer can say how many it left out;
+  daily overdue hand-off-meeting emails (`process_steps.escalate_overdue_handoffs`), the
+  **Closed Won Reconciliation** report, the Sales Dashboard's hand-off backlog and stalled
+  deals widgets, the `handoff_backlog` KPI, the Sales Pipeline's "Won — awaiting project"
+  column, the Opportunity form's create-project prompt and its Hand-Off Process tab (a quiet
+  "Historical (pre-ERPNext) — excluded from hand-off warnings" line, no Ready step, no
+  OVERDUE banner, and every button kept but none primary, so a deal behind a closed gate can
+  still book or skip the meeting and create its project), and the
+  `closed_won_handoff_status` AI tool, which returns `historical_excluded` so an answer can
+  say how many it left out;
 - measurements: the Closed-Won KPIs (`win_rate_90` on both legs, `won_count_30`,
   `won_value_30`, `avg_deal_size`, `marketing_won_30`), the open-pipeline KPIs
-  (`open_pipeline_value`, `open_opportunities`, `stalled_opportunities`), the marketing funnel's won count, the
-  Value Stream Performance report, the morning briefing's open-pipeline list, the
-  **Closed-Won Opportunities** Number Card and the **Opportunities by Status** /
-  **Opportunity Value by Status** charts.
+  (`open_pipeline_value`, `open_opportunities`, `stalled_opportunities`), the marketing
+  funnel's won count, the Value Stream Performance report's opportunity counts and won
+  amounts, the morning briefing's open-pipeline list, the **Closed-Won Opportunities**,
+  **Open Opportunities** and **Open Pipeline Value** Number Cards and the **Opportunities by
+  Status** / **Opportunity Value by Status** charts.
+
+**Deliberately not applied** where the rows are deals that already have a project or revenue:
+the **Hand-Off Process Coverage** report (it lists only deals with a project, so excluding
+historical ones would hide live projects) and Value Stream Performance's billed-revenue
+rollup (real money, whatever the deal's age). The TV pipeline board's open columns also keep
+historical deals, so people can still see and act on them.
 
 **To see historical deals in the reconciliation report**, tick **Include historical** (off by
-default); Hand-Off Process Coverage has the same checkbox. In the Opportunity list, filter on
-*Historical (pre-ERPNext)*.
+default). In the Opportunity list, filter on *Historical (pre-ERPNext)*.
 
 Alongside it, `stamp_won_date` became transition-only: it used to stamp today on any save of a
 won deal with a blank date, which is how a 2026-06-30 re-import dated twelve old wins

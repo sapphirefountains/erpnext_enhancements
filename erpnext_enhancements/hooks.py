@@ -1080,7 +1080,11 @@ doc_events = {
 			# Historical opportunities (v1.629.0, WI-024): a PERSON changing the status of a
 			# deal flagged custom_is_historical un-flags it in the same save, so an old deal
 			# somebody just marked Closed Won is in the hand-off warnings today rather than
-			# after the nightly refresh. Never for Administrator, an import or a patch.
+			# after the nightly refresh. Never for Administrator, an import or a patch. Any
+			# other save puts the STORED flag back: the Desk sends read-only fields, and the
+			# nightly set_value(update_modified=False) never trips check_if_latest, so a stale
+			# open form would otherwise write yesterday's value (or, from before the deploy,
+			# no key at all = 0) over it.
 			"erpnext_enhancements.crm_enhancements.historical.clear_on_person_status_change",
 		],
 		"on_update": [
@@ -1714,11 +1718,14 @@ scheduler_events = {
 		"erpnext_enhancements.quickbooks_online.core.tasks.sync_attachments_scheduled",
 		# Historical opportunities (v1.629.0, WI-024, decided 2026-10-13): recompute
 		# Opportunity.custom_is_historical -- created before 2025-08-01 AND, in 90 days, no
-		# person's comment, attachment, assignment or status change and no email on the deal
-		# (whoever logged it). Every won-without-project warning and the Closed-Won and
-		# open-pipeline KPIs filter on it. Listed ahead of the nag below so a same-tick run
-		# sees today's flags; batched (one IN-list query per source per 500 deals), writes
-		# only changed rows with update_modified=False, never raises.
+		# person's comment, attachment, assignment or status change and no person-to-person
+		# email on the deal (whoever logged it). Every won-without-project warning and the
+		# Closed-Won and open-pipeline KPIs filter on it. Batched (one IN-list query per
+		# source per 500 deals), writes only changed rows with update_modified=False, never
+		# raises. NOT ordered against the nag below: each daily entry is its own Scheduled
+		# Job Type and RQ job with no fixed order, so a deal that flips today can be counted
+		# (or not) by the nag one day late. Harmless for a daily reminder, and deliberately
+		# not coupled.
 		"erpnext_enhancements.crm_enhancements.historical.refresh_historical_flags",
 		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 		"erpnext_enhancements.process_steps.escalate_overdue_steps",
