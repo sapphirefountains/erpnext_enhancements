@@ -9,7 +9,7 @@
  * frappe/gettext/extractors/javascript.py tokenizes the source with babel's JS lexer and keeps a
  * call only when the name token right before `(` is `__` and the first argument is a string
  * literal. `t("Loading…")` or `env.t(...)` is never extracted, so those words could never be
- * translated (v1.630.0). This module-level `__` shadows the Desk's global one inside the kit and
+ * translated (v1.632.0). This module-level `__` shadows the Desk's global one inside the kit and
  * hands straight to it when it exists; without one (node) it substitutes {0} itself.
  *
  * `t` stays for a caller's own dynamic text; it is the same function.

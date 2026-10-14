@@ -274,7 +274,7 @@ BOUNDARY_PAIRS = (
     # a good chip (sf_kit) is a fill whose edge is its own colour, on a card or the page
     ("--sf-good", "--sf-surface"),
     ("--sf-good", "--sf-bg"),
-    # a chip's edge, where the edge alone must carry the boundary in both themes (v1.630.0):
+    # a chip's edge, where the edge alone must carry the boundary in both themes (v1.632.0):
     # Build's fill is the dark card itself, Neutral's and danger's fills sink into the navy
     # ground, warn's yellow is 1.7:1 on white. Service's and rent's light edges are not here:
     # their fills are the boundary (CHIP_PARTS below).

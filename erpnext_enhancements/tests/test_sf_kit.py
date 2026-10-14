@@ -192,7 +192,7 @@ class TestTheStylesheet(unittest.TestCase):
 	def test_link_colours_beat_the_desks_a_hover(self):
 		"""Desk's `a:hover, a:focus` (0,1,1; color var(--text-color), plus bootstrap's underline)
 		outranks one class, so an sf-btn or tile link written as an <a> lost its colour on hover
-		(v1.630.0). Each needs a rule of at least (0,2,0) for hover AND focus that sets its colour,
+		(v1.632.0). Each needs a rule of at least (0,2,0) for hover AND focus that sets its colour,
 		and the variants must come after `.sf-btn`'s own, which they override at equal weight."""
 		rules = {}
 		order = []
@@ -309,7 +309,7 @@ class TestLoading(unittest.TestCase):
 	def test_no_irregular_whitespace(self):
 		"""CI's eslint gate (`npx eslint . --quiet`, eslint:recommended) errors on
 		no-irregular-whitespace, and eslint is not installed locally, so a literal no-break space
-		in a regex shipped once (v1.630.0). This is that rule's character set, checked everywhere
+		in a regex shipped once (v1.632.0). This is that rule's character set, checked everywhere
 		in the file (eslint skips string literals by default; this does not, so write the escape)."""
 		# Built from code points, so this file holds none of them (and no escape a shell can eat).
 		points = (0x0B, 0x0C, 0xA0, 0x1680, 0x180E, *range(0x2000, 0x200C), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)

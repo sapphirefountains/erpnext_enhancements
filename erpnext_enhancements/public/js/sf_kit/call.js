@@ -18,7 +18,7 @@
  *   session_expired  true when the reply means the person is signed out; exc_type is then
  *                    "SessionExpired" too, whatever the server named it (see below)
  *
- * TWO PATHS, and which dialogs each one shows (v1.630.0).
+ * TWO PATHS, and which dialogs each one shows (v1.632.0).
  *
  * Default: frappe.call. v16's request.js shows its own dialogs for most failures, and `silent`
  * (passed through, with freeze / freeze_message) stops only ONE of them: the _server_messages
@@ -45,7 +45,7 @@
  *     $.param (v16 pins jquery 3.7.1) writes each key as encodeURIComponent(key) "="
  *     encodeURIComponent(value == null ? "" : value), joined with "&". So 3 goes as "3", true as
  *     "true", null and undefined as "" (the key is still sent), {a: 1} as '{"a":1}'. A JSON body
- *     would NOT be the same request (v1.630.0 review): the server would see 3, False and None,
+ *     would NOT be the same request (v1.632.0 review): the server would see 3, False and None,
  *     v16's typing_validations reject an int or None for a `str` parameter with a 417, an
  *     undefined arg vanishes, and an untyped `== "true"` check changes its answer.
  *   - A GET to a method whitelisted methods=["POST"] is refused 403 PermissionError, "Not

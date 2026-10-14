@@ -12,7 +12,7 @@
  * One optional action button, drawn when there is an `action_label` or an `on_action` (label
  * "Try again" by default). render() wires `on_action` when it is given; html() never can, so a
  * caller that builds the markup itself passes `action_label` and delegates clicks on
- * `.sf-state-action` (v1.630.0: html() used to drop the button unless it had a function it could
+ * `.sf-state-action` (v1.632.0: html() used to drop the button unless it had a function it could
  * not use). Loading is role="status" (announced politely), error role="alert" (announced at once).
  * The spinner stops turning under prefers-reduced-motion (the CSS); the word "Loading" carries the
  * meaning either way.

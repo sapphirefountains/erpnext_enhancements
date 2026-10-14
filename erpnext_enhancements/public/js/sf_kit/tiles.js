@@ -21,7 +21,7 @@
  *
  * The data comes from a server, so a tile never trusts its shape: metrics or links that are not a
  * list, or an item that is not an object, are skipped rather than thrown on, because one bad tile
- * must not blank the whole grid (v1.630.0). A tile with no title draws no empty heading.
+ * must not blank the whole grid (v1.632.0). A tile with no title draws no empty heading.
  */
 
 import { esc } from "./esc.js";

@@ -54,7 +54,7 @@ import {
 	CSS,
 } from "./sf_kit/index.js";
 
-// 2 (v1.630.0): call()'s quiet path and its rejection shape, the shared toast registry. A page
+// 2 (v1.632.0): call()'s quiet path and its rejection shape, the shared toast registry. A page
 // that loaded version 1 first gets this one in its place.
 const VERSION = 2;
 

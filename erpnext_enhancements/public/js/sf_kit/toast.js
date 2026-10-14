@@ -13,7 +13,7 @@
  * producing exactly the markup it always did (scripts/test_sf_kit.mjs compares it byte for byte),
  * so the planners' pk-toast CSS keeps matching. Change the behaviour here and both change.
  *
- * ONE PER DOCUMENT, across every instance (v1.630.0). The toast is position: fixed at the bottom
+ * ONE PER DOCUMENT, across every instance (v1.632.0). The toast is position: fixed at the bottom
  * centre, so two from different instances (the page's sf toast, a planner's pk toast, a block's
  * toast in its shadow root) would sit on top of each other. The "current toast" is therefore kept
  * on the document itself, under Symbol.for("sf_kit.toast.current"), not in this module: the
