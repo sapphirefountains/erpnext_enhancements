@@ -50,6 +50,8 @@ STUBBED = (
 	f"{PACKAGE}.follow_ups",
 	f"{PACKAGE}.visit_report",
 	f"{PACKAGE}.visit_names",
+	# The real module (v1.628.0), imported fresh under this stub and dropped at teardown.
+	f"{PACKAGE}.chemical_billing",
 	API,
 )
 
@@ -140,6 +142,9 @@ def _reset():
 			"workflow_comments": [],
 			"comments": [],
 			"applied": [],
+			"set_values": [],
+			"order": [],
+			"item_names": {"ACID": "Muriatic Acid", "EPOXY": "Epoxy Patch"},
 			"checked": [],
 			"emailed": [],
 			"errors": [],
@@ -201,7 +206,16 @@ def _get_all(doctype, filters=None, fields=None, order_by=None, limit=None, **kw
 		names = filters["reference_name"][1]
 		rows = [c for c in STATE["workflow_comments"] if c.reference_name in names]
 		return sorted(rows, key=lambda c: c.creation, reverse=True)
+	if doctype == "Item":
+		return [_Dict(name=n, item_name=STATE["item_names"].get(n, n), stock_uom="Gallon") for n in filters["name"][1]]
+	if doctype == "Item Price":
+		return []
 	raise AssertionError(doctype)
+
+
+def _set_value(doctype, name, values, update_modified=True):
+	STATE["set_values"].append((doctype, name, values, update_modified))
+	STATE["order"].append("set_value")
 
 
 def _get_doc(doctype, name):
@@ -255,6 +269,7 @@ def _has_approval_access(user, doc, transition):
 
 def _apply_workflow(doc, action):
 	STATE["applied"].append((doc.name, action, STATE["user"]))
+	STATE["order"].append("workflow")
 	transition = next(t for t in WORKFLOW.transitions if t.action == action and t.state == doc.workflow_state)
 	doc.workflow_state = transition.next_state
 	if transition.next_state == "Final/Submitted":
@@ -286,7 +301,10 @@ def setUpModule():
 		exists=lambda doctype, name: name
 		in (STATE["follow_ups"] if doctype == "Maintenance Follow-Up" else STATE["visits"]),
 		get_value=_get_value,
+		set_value=_set_value,
+		has_column=lambda doctype, column: True,
 	)
+	frappe.parse_json = json.loads
 
 	class _Session:
 		@property
@@ -397,6 +415,9 @@ def setUpModule():
 	# A stale attribute would be taken over the fresh import below.
 	if "maintenance_review" in vars(api):
 		delattr(api, "maintenance_review")
+	_saved_attrs["chemical_billing"] = vars(package).get("chemical_billing")
+	if "chemical_billing" in vars(package):
+		delattr(package, "chemical_billing")
 
 	from erpnext_enhancements.api import maintenance_review
 
@@ -579,6 +600,44 @@ class TestApprove(_Base):
 		self.assertEqual(
 			(result["state"], result["docstatus"], result["next"]), ("Final/Submitted", 1, "NEW")
 		)
+
+	def _with_chemicals(self):
+		STATE["visits"]["OLD"].consumables = [
+			_Dict(name="c1", item="ACID", qty=2, uom="cap full"),
+			_Dict(name="c2", item="EPOXY", qty=1, uom="tube"),
+		]
+
+	def test_the_chemical_choices_are_written_before_the_workflow_reloads_the_visit(self):
+		"""v1.628.0: apply_workflow reads the visit back from the database, so choices only in
+		memory would be lost; and the timeline says how each was billed."""
+		self._with_chemicals()
+		review.approve_visit(
+			"OLD",
+			modified="2026-10-12 09:00:00",
+			chemicals=json.dumps(
+				[{"row": "c1", "bill_as": "Per Dose"}, {"row": "c2", "bill_as": "Whole Container", "containers": 2}]
+			),
+		)
+		self.assertEqual(
+			STATE["set_values"],
+			[
+				("Sapphire Maintenance Consumable", "c1", {"bill_as": "Per Dose", "containers": 0}, False),
+				("Sapphire Maintenance Consumable", "c2", {"bill_as": "Whole Container", "containers": 2.0}, False),
+			],
+		)
+		self.assertEqual(STATE["order"], ["set_value", "set_value", "workflow"])
+		said = [text for _name, _kind, text in STATE["comments"] if text.startswith("Chemicals billed as")]
+		self.assertEqual(
+			said, ["Chemicals billed as: Muriatic Acid: per dose (2 cap full); Epoxy Patch: whole container x2."]
+		)
+
+	def test_a_chemical_of_another_visit_is_refused_before_anything_is_written(self):
+		self._with_chemicals()
+		with self.assertRaisesRegex(Thrown, "not on this visit"):
+			review.approve_visit(
+				"OLD", modified="2026-10-12 09:00:00", chemicals=json.dumps([{"row": "SOMEONE-ELSES", "bill_as": "Don't Bill"}])
+			)
+		self.assertEqual((STATE["set_values"], STATE["applied"]), ([], []))
 
 	def test_a_visit_changed_since_it_was_shown_is_refused(self):
 		with self.assertRaisesRegex(Thrown, "changed since you opened it"):

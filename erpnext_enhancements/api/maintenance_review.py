@@ -143,13 +143,18 @@ def approve_visit(record, modified=None, chemicals=None):
 	if not approve:
 		frappe.throw(blocked or _("You cannot approve visits."), frappe.PermissionError)
 
-	for row, (bill_as, containers) in chemical_billing.checked_choices(doc.get("consumables"), chemicals).items():
+	chosen = chemical_billing.checked_choices(doc.get("consumables"), chemicals)
+	for row, (bill_as, containers) in chosen.items():
 		frappe.db.set_value(
 			"Sapphire Maintenance Consumable",
 			row,
 			{"bill_as": bill_as, "containers": containers},
 			update_modified=False,
 		)
+	# No Version row records a db write, so the timeline says how each chemical was billed.
+	said = chemical_billing.describe_choices(doc.get("consumables"), chosen)
+	if said:
+		doc.add_comment("Comment", said)
 
 	from frappe.model.workflow import apply_workflow
 

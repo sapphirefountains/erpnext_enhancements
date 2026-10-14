@@ -31665,7 +31665,7 @@
   "options": null,
   "permlevel": 0,
   "placeholder": null,
-  "precision": "",
+  "precision": "4",
   "print_hide": 0,
   "print_hide_if_no_value": 0,
   "print_width": null,

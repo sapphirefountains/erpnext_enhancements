@@ -75,14 +75,19 @@ def setUpModule():
             rows = []
             for name in filters["name"][1]:
                 if name in STATE["items"]:
-                    row = _Row(name=name, item_name=STATE["items"][name].get("item_name", name))
+                    row = _Row(
+                        name=name,
+                        item_name=STATE["items"][name].get("item_name", name),
+                        stock_uom=STATE["items"][name].get("stock_uom", "Bottle"),
+                    )
                     if "custom_maintenance_billing" in fields:
                         row["custom_maintenance_billing"] = STATE["items"][name].get("bill")
                         row["custom_price_per_dose"] = STATE["items"][name].get("per_dose")
                     rows.append(row)
             return rows
         if doctype == "Item Price":
-            assert filters["price_list"] == "Standard Selling" and order_by == "modified asc", (filters, order_by)
+            # Newest by creation, as frappe.db.get_value picked it before v1.628.0.
+            assert filters["price_list"] == "Standard Selling" and order_by == "creation asc", (filters, order_by)
             return [_Row(item_code=c, price_list_rate=r) for c, r in STATE["prices"] if c in filters["item_code"][1]]
         raise AssertionError(doctype)
 
@@ -123,8 +128,9 @@ class TestLines(unittest.TestCase):
             ACID={"item_name": "Muriatic Acid", "bill": "Per Dose", "per_dose": 4},
             EPOXY={"item_name": "Epoxy Patch", "bill": "Whole Container", "per_dose": 0},
             BARE={"item_name": "Tablets"},
+            CHLORINE={"item_name": "Liquid Chlorine", "stock_uom": "Gallon"},
         )
-        STATE["prices"] = [("ACID", 30), ("EPOXY", 55), ("EPOXY", 60)]
+        STATE["prices"] = [("ACID", 30), ("EPOXY", 55), ("EPOXY", 60), ("CHLORINE", 9)]
 
     def lines(self, *rows, visit="PRJ-1-V001"):
         return chemical_billing.invoice_lines(list(rows), visit=visit)
@@ -154,6 +160,30 @@ class TestLines(unittest.TestCase):
         (line,) = self.lines(_row("r1", "BARE", 3, uom="tablet"))
         self.assertEqual(line["rate"], 0)
         self.assertEqual(line["description"], "Tablets: 3 tablet on PRJ-1-V001 at $0.00 per dose (no Price per Dose on the item)")
+
+    def test_every_line_names_its_own_list_price(self):
+        """Review of v1.628.0: without price_list_rate ERPNext fills the list price and
+        calculate_item_rate replaces a rate of 0 with it, so an unpriced dose billed a bottle."""
+        rows = [_row("r1", "ACID", 2), _row("r2", "BARE", 1), _row("r3", "EPOXY", 1)]
+        for line in self.lines(*rows):
+            self.assertIn("price_list_rate", line)
+            self.assertEqual(line["price_list_rate"], line["rate"], line)
+
+    def test_a_dose_in_the_items_own_unit_bills_at_its_selling_price(self):
+        """Gallons of a gallon item billed qty x price before v1.628.0, and still do."""
+        (line,) = self.lines(_row("r1", "CHLORINE", 1.5, uom="gallon"))
+        self.assertEqual((line["qty"], line["rate"]), (1, 13.5))
+        self.assertEqual(line["description"], "Liquid Chlorine: 1.5 gallon on PRJ-1-V001 at $9.00 per dose")
+
+    def test_the_timeline_says_how_each_was_billed(self):
+        rows = [_row("r1", "ACID", 2), _row("r2", "EPOXY", 1, uom="tube"), _row("r3", "BARE", 1)]
+        chosen = {"r1": ("Per Dose", 0), "r2": ("Whole Container", 2.0), "r3": ("Don't Bill", 0)}
+        self.assertEqual(
+            chemical_billing.describe_choices(rows, chosen),
+            "Chemicals billed as: Muriatic Acid: per dose (2 cap full); Epoxy Patch: whole container x2; "
+            "Tablets: not billed.",
+        )
+        self.assertEqual(chemical_billing.describe_choices(rows, {}), "")
 
     def test_before_the_item_fields_exist_everything_is_per_dose(self):
         STATE["has_column"] = False

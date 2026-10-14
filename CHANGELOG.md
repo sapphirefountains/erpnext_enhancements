@@ -34,12 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **One module.** `sapphire_maintenance/chemical_billing.py` is read by the per-visit invoice
     (`maintenance_workflow.create_sales_invoice`) and the monthly job (`maintenance_billing`), so both
     bill a chemical the same way.
-    - A line with no price says so in its description, and invoices stay drafts.
+    - A line with no price says so in its description, and the review page says "no price set" rather
+      than "$0.00". Invoices stay drafts.
     - An out-of-season month drafts chemicals only when a line has a price (v1.625.0).
-  - **Tests.** `tests/test_chemical_billing.py` (bench-free, own CI step, 12 tests) covers the lines,
-    defaults, prices and the checked choices. It also checks the wiring of both builders, the approval
-    order and the page's escaping, and that the fields agree with the module. `test_visit_review`'s
-    and `test_maintenance_billing_season`'s stubs learned the module's needs.
+    - **Every line carries `price_list_rate` equal to its rate.** Review caught this in erpnext
+      version-16 (`accounts_controller.set_missing_item_details` keeps a set value;
+      `taxes_and_totals.calculate_item_rate` replaces a rate of 0 with the list price). Without it,
+      `set_missing_values` filled the item's list price, so an unpriced per-dose line billed the whole
+      container, and a priced one showed the container price less an invented discount.
+    - **A dose recorded in the item's own stock unit** (1.5 gallons of a gallon item) bills at the
+      selling price when the item has no Price per Dose, as it did before.
+    - The selling price is the newest Item Price by creation, as `frappe.db.get_value` picked it before.
+    - Approval adds a timeline comment saying how each chemical was billed, since a database write leaves
+      no Version row.
+    - Price per Dose keeps four decimals, so 12.5 cents a tablet fits.
+  - **Tests.**
+    - `tests/test_chemical_billing.py` (bench-free, own CI step, 15 tests) covers the lines, the list
+      price on every line, the stock-unit price, defaults, the checked choices and the timeline line. It
+      also checks the wiring of both builders, the page's escaping, and that the fields agree with the
+      module.
+    - `test_visit_review` now runs the approval itself: the choices are written before the workflow,
+      and another visit's chemical is refused before anything is written. It also imports and drops the
+      real module cleanly.
 
 ### Still before invoicing is switched on
 

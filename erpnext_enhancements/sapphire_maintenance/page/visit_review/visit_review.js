@@ -529,10 +529,17 @@ class VisitReview {
 		if (!chemicals.length) return "";
 		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
 		const money = (v) => esc(format_currency(v || 0));
+		// A missing price says so rather than reading as a free chemical.
+		const per_dose = (c) =>
+			c.price_per_dose ? __("Per dose ({0} each)", [money(c.price_per_dose)]) : __("Per dose (no price set)");
+		const whole = (c) =>
+			c.container_price
+				? __("Whole container ({0} each)", [money(c.container_price)])
+				: __("Whole container (no price set)");
 		const label = (c) =>
 			({
-				"Per Dose": __("Per dose ({0} each)", [money(c.price_per_dose)]),
-				"Whole Container": __("Whole container ({0} each)", [money(c.container_price)]),
+				"Per Dose": per_dose(c),
+				"Whole Container": whole(c),
 				"Don't Bill": __("Don't bill"),
 			})[c.bill_as] || esc(c.bill_as);
 		let html = `<div class="vr-block"><h5>${__("Chemicals to bill")}</h5>
@@ -546,8 +553,8 @@ class VisitReview {
 			let cell = label(c);
 			if (data.can_approve) {
 				const options = [
-					["Per Dose", __("Per dose ({0} each)", [money(c.price_per_dose)])],
-					["Whole Container", __("Whole container ({0} each)", [money(c.container_price)])],
+					["Per Dose", per_dose(c)],
+					["Whole Container", whole(c)],
 					["Don't Bill", __("Don't bill")],
 				];
 				cell = `<div class="vr-bill-cell"><select class="form-control input-xs vr-bill" data-i="${i}" aria-label="${__(

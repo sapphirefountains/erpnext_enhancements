@@ -35,15 +35,15 @@ def item_terms(items):
 	"""{item: {item_name, default, price_per_dose, container_price}} for these item codes.
 
 	``container_price`` is the item's Standard Selling price (its stock unit is the container),
-	the newest when there are several. Guarded: the two Item fields are custom fields, absent on
-	a fresh install until fixtures sync.
+	the newest by creation when there are several, as ``frappe.db.get_value`` picked it before.
+	Guarded: the two Item fields are custom fields, absent on a fresh install until fixtures sync.
 	"""
 	from frappe.utils import flt
 
 	items = sorted({item for item in items if item})
 	if not items:
 		return {}
-	fields = ["name", "item_name"]
+	fields = ["name", "item_name", "stock_uom"]
 	if frappe.db.has_column("Item", "custom_maintenance_billing"):
 		fields += ["custom_maintenance_billing", "custom_price_per_dose"]
 	terms = {}
@@ -54,16 +54,32 @@ def item_terms(items):
 			"default": default if default in ITEM_DEFAULTS else DEFAULT,
 			"price_per_dose": flt(row.get("custom_price_per_dose")),
 			"container_price": 0.0,
+			"stock_uom": (row.get("stock_uom") or "").strip().lower(),
 		}
 	for price in frappe.get_all(
 		"Item Price",
 		filters={"item_code": ["in", items], "price_list": "Standard Selling"},
 		fields=["item_code", "price_list_rate"],
-		order_by="modified asc",
+		order_by="creation asc",
 	):
 		if price.item_code in terms:
 			terms[price.item_code]["container_price"] = flt(price.price_list_rate)
 	return terms
+
+
+def dose_price(row, term):
+	"""What one dose of this row bills: the item's Price per Dose, else its selling price when the
+	dose was recorded in the item's own stock unit (gallons of a gallon item), which is how it
+	billed before v1.628.0. Zero when neither applies."""
+	from frappe.utils import flt
+
+	per = flt(term.get("price_per_dose"))
+	if per:
+		return per
+	unit = (row.get("uom") or "").strip().lower()
+	if unit and unit == term.get("stock_uom"):
+		return flt(term.get("container_price"))
+	return 0.0
 
 
 def choice(row, terms):
@@ -93,9 +109,16 @@ def billable_rows(rows):
 def invoice_lines(rows, visit=None, terms=None):
 	"""Sales Invoice item rows for a visit's chemicals, as chosen.
 
-	A per-dose line is one line priced at the doses times the Price per Dose, with the doses in
-	its description: a dose ("cap full") is no unit of the item's, so a quantity in it would
-	not convert. A line without a price says so, so the draft cannot pass as complete.
+	A per-dose line is one line priced at the doses times the dose price (:func:`dose_price`),
+	with the doses in its description: a dose ("cap full") is no unit of the item's, so a
+	quantity in it would not convert. A line without a price says so, so the draft cannot pass
+	as complete.
+
+	Every line carries ``price_list_rate`` equal to its ``rate``. Without it ERPNext fills the
+	list price from the price list on ``set_missing_values``, and ``calculate_item_rate`` then
+	replaces a rate of 0 with it: a per-dose line with no dose price billed the whole container,
+	and a priced one showed the container's list price less a made-up discount (review of
+	v1.628.0, read in erpnext version-16 ``taxes_and_totals`` / ``accounts_controller``).
 	"""
 	from frappe.utils import flt, fmt_money
 
@@ -111,31 +134,52 @@ def invoice_lines(rows, visit=None, terms=None):
 		term = terms.get(item) or {"item_name": item, "price_per_dose": 0.0, "container_price": 0.0}
 		if how == "Whole Container":
 			count = flt(row.get("containers")) or 1
-			note = "" if term["container_price"] else _(" (no selling price on the item)")
+			rate = flt(term["container_price"])
+			note = "" if rate else _(" (no selling price on the item)")
 			lines.append(
 				{
 					"item_code": item,
 					"qty": count,
-					"rate": term["container_price"],
+					"rate": rate,
+					"price_list_rate": rate,
 					"description": _("{0}: whole container ({1} used{2}){3}").format(
 						term["item_name"], dose_text(row), where, note
 					),
 				}
 			)
 		else:
-			per = term["price_per_dose"]
+			per = dose_price(row, term)
+			rate = flt(per * flt(row.get("qty")), 2)
 			note = "" if per else _(" (no Price per Dose on the item)")
 			lines.append(
 				{
 					"item_code": item,
 					"qty": 1,
-					"rate": flt(per * flt(row.get("qty")), 2),
+					"rate": rate,
+					"price_list_rate": rate,
 					"description": _("{0}: {1}{2} at {3} per dose{4}").format(
 						term["item_name"], dose_text(row), where, fmt_money(per), note
 					),
 				}
 			)
 	return lines
+
+
+def describe_choices(rows, chosen, terms=None):
+	"""One line for the visit's timeline: how each chemical was billed, as the reviewer chose."""
+	rows = [row for row in rows or [] if row.name in chosen]
+	terms = terms if terms is not None else item_terms(row.get("item") for row in rows)
+	parts = []
+	for row in rows:
+		how, containers = chosen[row.name]
+		name = (terms.get(row.get("item")) or {}).get("item_name") or row.get("item")
+		if how == "Whole Container":
+			parts.append(_("{0}: whole container x{1:g}").format(name, containers))
+		elif how == "Per Dose":
+			parts.append(_("{0}: per dose ({1})").format(name, dose_text(row)))
+		else:
+			parts.append(_("{0}: not billed").format(name))
+	return _("Chemicals billed as: {0}.").format("; ".join(parts)) if parts else ""
 
 
 def review_rows(doc):
@@ -154,7 +198,7 @@ def review_rows(doc):
 				"dose": dose_text(row),
 				"bill_as": choice(row, terms),
 				"containers": flt(row.get("containers")) or 1,
-				"price_per_dose": flt(term.get("price_per_dose")),
+				"price_per_dose": dose_price(row, term),
 				"container_price": flt(term.get("container_price")),
 			}
 		)
