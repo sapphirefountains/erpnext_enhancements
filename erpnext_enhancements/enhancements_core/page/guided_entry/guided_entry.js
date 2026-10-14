@@ -1,0 +1,1439 @@
+// Guided Entry (form kit P4-B, ERPNext TASK-2026-02742): a record filled in one step at a time,
+// each step saved onto the real record as it goes. The server engine is form_kit/ (P4-A; its
+// README is the payload reference); this page draws it. Generic over form_kit.config.CONFIGS,
+// so it serves whatever DocType has a config there (Opportunity today).
+//
+// Screens, each its own history entry so the phone's Back and Forward walk the steps (Nik's rule,
+// 2026-09-24: never break Back/Forward):
+//
+//   /desk/guided-entry                              nothing chosen: how to start
+//   /desk/guided-entry/<DocType>/new                step 1 of a record that does not exist yet
+//   /desk/guided-entry/<DocType>/<name>/<step>      one step of a record
+//
+// The page moves only with frappe.set_route (public/js/form_kit/route.js builds every route), and
+// frappe owns history: Back and Forward re-render the route, which fires on_page_show ->
+// route_changed -> handle_route. There is no popstate listener here.
+//
+// NEW -> CREATED. Step 1 inserts the record (form_kit.api.create_record). The "new" entry must
+// not survive that, or Back would land on an empty step 1 and Next would insert a second record.
+// So the page replaces it in place (frappe.route_flags.replace_route: the router's push_state
+// uses history.replaceState) with the record's own first step, then pushes the next step as an
+// ordinary entry. History reads [... , <name>/<step 1>, <name>/<step 2>]: Back from step 2 goes
+// to step 1 of the saved record, and Back again leaves the page the way the person came in. Both
+// router calls run push_state synchronously, so route_changed coalesces the two on_page_show
+// calls into one handle_route that reads the final route. If the person has already left the
+// "new" entry when the insert returns (Back while it was in flight), there is nothing to replace:
+// the page remembers the record (this.orphan) and says so, and a later Forward onto that "new"
+// entry opens the created record instead of a blank one.
+//
+// SAVING. Values save onto the record, never a draft store: on leaving a step (Next, Back, the
+// rail) when anything changed, and 2.5 s after the last change while typing. All of it goes
+// through one save queue (public/js/form_kit/save_queue.js; the offline queue, P4.7, wraps it):
+// one request in flight, changes coalesce by field, every request carries the `modified` of the
+// last good load or save. A conflict ({conflict: true}, returned without saving) is settled
+// three ways (conflict.js): a field only this person changed is kept, a field both changed is
+// shown side by side with "Keep mine" / "Use theirs", then saved again on the new `modified`.
+// A validation error (417) is shown at the top of the step and keeps the person on it; a lapsed
+// session shows a sign-in panel and keeps everything typed in memory.
+//
+// Every request this page makes goes through sf_kit.call(..., { quiet: true }): frappe.call's own
+// dialogs (403, 5xx, QueryTimeout) would interrupt a page that already says it once, in its
+// own panel. The one framework loader it uses is frappe.model.with_doctype, for the child-table
+// metas a Table MultiSelect needs (frappe.get_meta), and only when they are not loaded already.
+
+frappe.pages["guided-entry"].on_page_load = function (wrapper) {
+	const page = frappe.ui.make_app_page({
+		parent: wrapper,
+		title: __("Guided Entry"),
+		single_column: true,
+	});
+	wrapper.guided_entry = new GuidedEntry(page, wrapper);
+	// Leaving for another Desk page (the sidebar, a link) saves what was typed, as a step change does.
+	$(wrapper).on("hide", () => {
+		document.body.classList.remove(GE_BODY_CLASS);
+		wrapper.guided_entry.on_hide();
+	});
+};
+
+frappe.pages["guided-entry"].on_page_show = function (wrapper) {
+	// While this page shows, the Triton assistant button floats above the sticky footer instead of
+	// on its Next button (guided_entry.bundle.css). Cleared on hide, so other pages keep it as is.
+	document.body.classList.add(GE_BODY_CLASS);
+	if (wrapper.guided_entry) wrapper.guided_entry.route_changed();
+};
+
+const GE_BODY_CLASS = "ge-page-active";
+const GE_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "guided_entry.bundle.js", "guided_entry.bundle.css"];
+const GE_API = "erpnext_enhancements.form_kit.api.";
+const GE_LIST_SUFFIX = "__ge_list";
+const GE_INFO_ICON =
+	'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" focusable="false">' +
+	'<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4"/>' +
+	'<circle cx="8" cy="4.7" r="0.95" fill="currentColor"/>' +
+	'<rect x="7.2" y="6.8" width="1.6" height="5" rx="0.8" fill="currentColor"/></svg>';
+
+function ge_clone(value) {
+	return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function ge_has(object, key) {
+	return !!object && Object.prototype.hasOwnProperty.call(object, key);
+}
+
+class GuidedEntry {
+	constructor(page, wrapper) {
+		this.page = page;
+		this.wrapper = wrapper;
+		this.$root = $('<div class="ge-app"></div>').appendTo(page.main);
+		// Queues of records the page has moved away from while they still held something.
+		this.retired = [];
+		this.reset();
+		this.orphan = null;
+		this.load_seq = 0;
+		this._route_timer = null;
+		this.ready = new Promise((resolve) => frappe.require(GE_ASSETS, resolve)).then(() => {
+			this.sf = window.sf_kit;
+			this.kit = window.sf_form_kit;
+		});
+
+		// Closing or reloading the tab with anything unsaved asks first. A record's queued changes
+		// count wherever the person is on the Desk (they are only in this page's memory); an
+		// uncreated step 1 counts only while this page is showing.
+		window.addEventListener("beforeunload", (event) => {
+			if (!this.has_unsaved()) return;
+			event.preventDefault();
+			event.returnValue = "";
+			return "";
+		});
+		// Back from signing in on another tab: try the save that the lapsed session refused.
+		window.addEventListener("focus", () => {
+			if (this.queue && this.queue.state === "expired") this.queue.retry().catch(() => {});
+		});
+		this.$root.on("keydown", (event) => {
+			if (event.key !== "Escape") return;
+			const $open = this.$root.find(".ge-help-btn[aria-expanded='true']");
+			if ($open.length) {
+				event.preventDefault();
+				$open.each((i, button) => this.toggle_help($(button), false));
+				$open.last().trigger("focus");
+			}
+		});
+	}
+
+	reset() {
+		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
+		this.retired = this.retired.filter((queue) => queue.has_unsaved());
+		this.flow = null;
+		this.doctype = null;
+		this.name = null;
+		this.is_new = false;
+		this.values = {};
+		this.saved = {};
+		this.completeness = null;
+		this.step_key = null;
+		this.screen_key = "";
+		this.fg = null;
+		this.suppress = new Set();
+		this.queue = null;
+		this.creating = false;
+		this.new_dirty = false;
+		this.defs = {};
+		this.conflict = null;
+		this.notice = null;
+		this.$shell = null;
+	}
+
+	// ------------------------------------------------------------------ routing
+
+	route_changed() {
+		// One handle_route per task: after step 1 creates the record, the replace and the push
+		// each fire on_page_show, and only the final route matters.
+		if (this._route_timer) return;
+		this._route_timer = setTimeout(() => {
+			this._route_timer = null;
+			this.ready.then(() => this.handle_route());
+		}, 0);
+	}
+
+	handle_route() {
+		const target = this.kit.parse_route(frappe.get_route());
+		if (!target) return;
+		// Nothing on this page reads route_options; left set, v16's set_route would write them into
+		// the address of every step this page pushes.
+		if (frappe.route_options) frappe.route_options = null;
+		if (!target.doctype) {
+			this.leave_record();
+			this.show_landing();
+			return;
+		}
+		if (target.is_new) {
+			this.open_new(target.doctype);
+			return;
+		}
+		if (this.flow && !this.is_new && this.doctype === target.doctype && this.name === target.name) {
+			this.save_in_background();
+			this.show_step(target.step);
+			return;
+		}
+		this.leave_record();
+		this.load(target.doctype, target.name, target.step);
+	}
+
+	open_new(doctype) {
+		if (this.orphan && this.orphan.doctype === doctype) {
+			// Forward onto a "new" entry whose record was created after the person left it.
+			const orphan = this.orphan;
+			this.orphan = null;
+			this.reset();
+			this.doctype = doctype;
+			this.name = orphan.name;
+			this.go(null, true);
+			return;
+		}
+		if (this.flow && this.is_new && this.doctype === doctype) {
+			// Back to step 1 of the record being started: what was typed is still here.
+			this.show_step(null);
+			return;
+		}
+		this.leave_record();
+		this.load(doctype, null, null);
+	}
+
+	// Put a step of this record in the address: a new history entry, or (replace) in place of the
+	// current one. Each pushed entry is tagged in history.state with the screen it was pushed from,
+	// so the footer's Back can step back through history instead of stacking a new entry.
+	go(step_key, replace) {
+		if ((frappe.get_route() || [])[0] !== this.kit.PAGE) return;
+		const route = this.kit.build_route(this.doctype, this.name, step_key);
+		const target = this.kit.parse_route(route);
+		const next_key = this.kit.route_key(target);
+		const behind = this.screen_key;
+		const kept = ((window.history.state || {}).ge || {}).back;
+		const before = window.location.href;
+		if (frappe.route_options) frappe.route_options = null;
+		if (replace) frappe.route_flags.replace_route = true;
+		frappe.set_route(route);
+		// Read only by push_state, which has already run; left set, frappe clears it only after
+		// 100 ms and every pending request, and the next step would be a replace too.
+		delete frappe.route_flags.replace_route;
+		this.screen_key = next_key;
+		if (window.location.href === before) return;
+		const back = replace ? kept : behind;
+		if (!back) return;
+		try {
+			window.history.replaceState(Object.assign({}, window.history.state, { ge: { back } }), "");
+		} catch (e) {
+			// Untagged, the footer's Back pushes rather than steps back.
+		}
+	}
+
+	// Save, then move. A save the server refused keeps the person on the step, with the reason.
+	navigate(step_key) {
+		if (this.is_new) return;
+		this.save_before_moving()
+			.then(() => this.go(step_key))
+			.catch(() => {});
+	}
+
+	back() {
+		const prev = this.kit.neighbor(this.flow.steps, this.values, this.step_key, -1);
+		if (!prev || this.is_new) return;
+		this.save_before_moving()
+			.then(() => {
+				const tag = ((window.history.state || {}).ge || {}).back;
+				const prev_key = this.kit.route_key({ doctype: this.doctype, name: this.name, step: prev });
+				if (tag && tag === prev_key) window.history.back();
+				else this.go(prev);
+			})
+			.catch(() => {});
+	}
+
+	next() {
+		if (this.is_new) {
+			this.create();
+			return;
+		}
+		const next = this.kit.neighbor(this.flow.steps, this.values, this.step_key, 1);
+		if (next) {
+			this.navigate(next);
+			return;
+		}
+		// Done: back to the record's own Desk form.
+		this.save_before_moving()
+			.then(() => frappe.set_route("Form", this.doctype, this.name))
+			.catch(() => {});
+	}
+
+	on_hide() {
+		this.toggle_all_help(false);
+		this.save_in_background();
+	}
+
+	has_unsaved() {
+		if (this.queue && this.queue.has_unsaved()) return true;
+		if (this.retired.some((queue) => queue.has_unsaved())) return true;
+		if (this.is_new && (this.new_dirty || this.creating)) {
+			return (frappe.get_route() || [])[0] === (this.kit ? this.kit.PAGE : "guided-entry");
+		}
+		return false;
+	}
+
+	// Leaving this record for another (or for the landing screen): send what it still holds.
+	leave_record() {
+		if (this.queue) {
+			this.collect_step();
+			this.queue.flush().catch(() => {});
+		}
+	}
+
+	// ------------------------------------------------------------------ loading
+
+	load(doctype, name, step_key) {
+		const seq = ++this.load_seq;
+		this.reset();
+		this.doctype = doctype;
+		this.name = name || null;
+		this.is_new = !name;
+		this.page.set_title(__("Guided Entry"));
+		this.sf.state.render(this.$root, "loading");
+		this.ensure_meta(doctype)
+			.then(() =>
+				this.sf.call(GE_API + "get_flow", { doctype, name: name || null }, { quiet: true, method: "GET" })
+			)
+			.then((flow) => {
+				if (seq !== this.load_seq) return;
+				this.take_flow(flow);
+				this.render_shell();
+				this.show_step(step_key);
+			})
+			.catch((err) => {
+				if (seq !== this.load_seq) return;
+				this.show_load_error(err || {}, () => this.load(doctype, name, step_key));
+			});
+	}
+
+	// A Table MultiSelect reads its link column from the child's meta (frappe.get_meta), which the
+	// Desk has only after the DocType has been opened. Loaded once, only when missing.
+	ensure_meta(doctype) {
+		if (locals.DocType && locals.DocType[doctype]) return Promise.resolve();
+		return new Promise((resolve) => {
+			try {
+				frappe.model.with_doctype(doctype, () => resolve());
+			} catch (e) {
+				resolve();
+			}
+		});
+	}
+
+	take_flow(flow) {
+		this.flow = flow;
+		this.doctype = flow.doctype;
+		this.name = flow.name || null;
+		this.is_new = !flow.name;
+		this.values = ge_clone(flow.values || {});
+		this.saved = ge_clone(flow.values || {});
+		this.completeness = flow.completeness || null;
+		this.defs = {};
+		(flow.steps || []).forEach((step) =>
+			(step.fields || []).forEach((field) => {
+				if (field.fieldname && !this.kit.is_layout(field)) this.defs[field.fieldname] = field;
+			})
+		);
+		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
+		this.queue = this.is_new ? null : this.make_queue(flow.modified);
+	}
+
+	// The record is fixed when the queue is made: a queue still sending after the page has moved to
+	// another record saves onto its own record, and its answers no longer touch the screen.
+	make_queue(modified) {
+		const doctype = this.doctype;
+		const name = this.name;
+		const current = () => this.queue === queue && this.name === name;
+		const queue = this.kit.create_save_queue({
+			delay: 2500,
+			send: (values, at) =>
+				this.sf.call(GE_API + "save_step", { doctype, name, values, modified: at }, { quiet: true }),
+			on_state: (state, error) => current() && this.on_save_state(state, error),
+			on_saved: (result, sent) => current() && this.on_saved(result, sent),
+			on_conflict: (result, sent) => (current() ? this.on_conflict(result, sent) : Promise.resolve(null)),
+			set_timeout: (fn, ms) => window.setTimeout(fn, ms),
+			clear_timeout: (id) => window.clearTimeout(id),
+		});
+		queue.set_modified(modified);
+		return queue;
+	}
+
+	show_landing() {
+		this.reset();
+		this.page.set_title(__("Guided Entry"));
+		const can_create = frappe.model && frappe.model.can_create && frappe.model.can_create("Opportunity");
+		this.sf.state.render(this.$root, "empty", {
+			title: __("Fill in a record one step at a time."),
+			body: __("Open an opportunity and choose Guided, or start a new one here."),
+			action_label: can_create ? __("Start a new opportunity") : undefined,
+			on_action: can_create ? () => frappe.set_route(this.kit.build_route("Opportunity", null, null)) : undefined,
+		});
+	}
+
+	show_load_error(err, retry) {
+		if (err.session_expired) {
+			this.sf.state.render(this.$root, "error", {
+				title: __("You are signed out."),
+				body: __("Sign in again, then come back to this tab and try again."),
+				action_label: __("Sign in"),
+				on_action: () => this.open_login(),
+			});
+			const $again = $(`<button type="button" class="sf-btn sf-btn--quiet ge-again"></button>`).text(__("Try again"));
+			$again.on("click", retry);
+			this.$root.find(".sf-state").append($again);
+			return;
+		}
+		if (err.status === 403) {
+			this.sf.state.render(this.$root, "no-access", { body: err.message });
+			return;
+		}
+		this.sf.state.render(this.$root, "error", {
+			title: __("This could not be opened."),
+			body: err.message,
+			on_action: retry,
+		});
+	}
+
+	// v16's own login path. In a new tab, so nothing typed here is lost: the Desk that boots there
+	// broadcasts its new CSRF token to this tab (desk.js setup_broadcast_listeners).
+	open_login() {
+		const here = window.location.pathname + window.location.search;
+		window.open(`/login?redirect-to=${encodeURIComponent(here)}`, "_blank", "noopener");
+	}
+
+	// ------------------------------------------------------------------ the shell
+
+	render_shell() {
+		this.page.set_title(this.is_new ? __("New {0}", [__(this.doctype)]) : this.name);
+		this.$root.html(`
+			<div class="ge-band">
+				<div class="ge-band-inner">
+					<div class="ge-band-text">
+						<div class="ge-eyebrow"></div>
+						<h1 class="ge-title"></h1>
+					</div>
+					<div class="ge-band-actions"></div>
+				</div>
+				<div class="ge-progress">
+					<div class="ge-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+						<div class="ge-progress-bar"></div>
+					</div>
+					<div class="ge-progress-text"></div>
+				</div>
+			</div>
+			<div class="ge-stripe"></div>
+			<div class="ge-layout">
+				<nav class="ge-rail" aria-label="${frappe.utils.escape_html(__("Steps"))}"><ol></ol></nav>
+				<main class="ge-main">
+					<div class="ge-notices" aria-live="polite"></div>
+					<div class="ge-conflict-slot"></div>
+					<section class="ge-stage"></section>
+				</main>
+				<aside class="ge-summary" aria-label="${frappe.utils.escape_html(__("Summary"))}"></aside>
+			</div>
+			<div class="ge-footer">
+				<button type="button" class="sf-btn sf-btn--secondary ge-back"></button>
+				<button type="button" class="ge-saveline" aria-live="polite"></button>
+				<button type="button" class="sf-btn sf-btn--primary ge-next"></button>
+			</div>`);
+		this.$shell = this.$root;
+		this.$root.find(".ge-back").text(__("Back")).on("click", () => this.back());
+		this.$root.find(".ge-next").on("click", () => this.next());
+		this.$root.find(".ge-saveline").on("click", () => {
+			if (this.queue && ["error", "expired"].includes(this.queue.state)) {
+				this.collect_step();
+				this.queue.retry().catch(() => {});
+			}
+		});
+		this.$root.find(".ge-rail").on("click", "button[data-step]", (event) => {
+			const key = $(event.currentTarget).attr("data-step");
+			if (key && key !== this.step_key) this.navigate(key);
+		});
+		this.$root.find(".ge-summary").on("click", "button[data-step]", (event) => {
+			const key = $(event.currentTarget).attr("data-step");
+			const fieldname = $(event.currentTarget).attr("data-field");
+			if (key === this.step_key) this.focus_field(fieldname);
+			else if (key) {
+				this.pending_focus = fieldname;
+				this.navigate(key);
+			}
+		});
+		if (!this.is_new) {
+			$(`<button type="button" class="sf-btn sf-btn--quiet ge-open-form"></button>`)
+				.text(__("Open form"))
+				.on("click", () =>
+					this.save_before_moving()
+						.then(() => frappe.set_route("Form", this.doctype, this.name))
+						.catch(() => {})
+				)
+				.appendTo(this.$root.find(".ge-band-actions"));
+		}
+	}
+
+	// Band, rail, progress, summary and footer: everything that follows the values.
+	refresh_chrome() {
+		if (!this.$shell || !this.flow) return;
+		const kit = this.kit;
+		const steps = this.flow.steps || [];
+		const model = kit.summary_model(this.doctype, this.name, this.values, this.completeness);
+		const pos = kit.position(steps, this.values, this.step_key);
+
+		this.$root
+			.find(".ge-eyebrow")
+			.text(this.is_new ? __("New {0}", [__(this.doctype)]) : `${__(this.doctype)} · ${this.name}`);
+		this.$root.find(".ge-title").text(model.title || (this.is_new ? __("New {0}", [__(this.doctype)]) : this.name));
+		this.$root
+			.find(".ge-stripe")
+			.attr("class", `ge-stripe ge-stripe--${kit.lead_pillar(this.doctype, this.values)}`);
+
+		const $track = this.$root.find(".ge-progress-track");
+		$track.attr("aria-valuenow", model.percent).attr("aria-label", __("Complete for this stage"));
+		this.$root.find(".ge-progress-bar").css("width", `${model.percent}%`);
+		this.$root
+			.find(".ge-progress-text")
+			.text(
+				model.total
+					? __("{0} of {1} filled for {2}", [model.done, model.total, __(model.stage || "")])
+					: ""
+			);
+
+		this.render_rail(steps, pos);
+		this.render_summary(model, steps);
+		this.render_footer(steps, pos);
+		this.render_saveline();
+	}
+
+	render_rail(steps, pos) {
+		const kit = this.kit;
+		const missing = kit.missing_by_step(steps, (this.completeness || {}).missing);
+		const active_index = {};
+		kit.active_steps(steps, this.values).forEach((step, index) => (active_index[step.key] = index));
+		const current = active_index[this.step_key];
+		const $ol = this.$root.find(".ge-rail ol").empty();
+		steps.forEach((step) => {
+			const active = ge_has(active_index, step.key);
+			const reachable = active && !this.is_new;
+			const index = active_index[step.key];
+			const left = (missing[step.key] || []).length;
+			const is_current = step.key === this.step_key;
+			const done = active && !is_current && index < current && !left;
+			const $li = $('<li class="ge-rail-item"></li>')
+				.toggleClass("is-current", is_current)
+				.toggleClass("is-off", !active)
+				.toggleClass("is-done", done);
+			const $button = $('<button type="button" class="ge-rail-step"></button>')
+				.attr("data-step", reachable ? step.key : null)
+				.prop("disabled", !reachable && !is_current)
+				.attr("aria-current", is_current ? "step" : null);
+			$('<span class="ge-rail-mark" aria-hidden="true"></span>')
+				.text(done ? "✓" : active ? String(index + 1) : "–")
+				.appendTo($button);
+			const $text = $('<span class="ge-rail-text"></span>').appendTo($button);
+			$('<span class="ge-rail-title"></span>').text(step.title).appendTo($text);
+			let meta = "";
+			if (!active) meta = __("Not for this record");
+			else if (left) meta = left === 1 ? __("1 to fill") : __("{0} to fill", [left]);
+			else if (done) meta = __("Done");
+			if (meta) $('<span class="ge-rail-meta"></span>').text(meta).appendTo($text);
+			$li.append($button).appendTo($ol);
+		});
+		// On a phone the rail is a strip: keep the current step in view.
+		const el = $ol.find(".is-current")[0];
+		if (el && el.scrollIntoView && window.matchMedia && window.matchMedia("(max-width: 1023px)").matches) {
+			try {
+				el.scrollIntoView({ block: "nearest", inline: "center" });
+			} catch (e) {
+				// older engines: no options object
+			}
+		}
+		if (pos.total) {
+			this.$root.find(".ge-rail").attr("data-position", __("Step {0} of {1}", [pos.number, pos.total]));
+		}
+	}
+
+	render_summary(model, steps) {
+		const sf = this.sf;
+		const esc = sf.esc;
+		const $box = this.$root.find(".ge-summary").empty();
+		const rows = [];
+		const row = (label, html) =>
+			rows.push(`<div class="ge-sum-row"><dt>${esc(label)}</dt><dd>${html || "<span class='ge-muted'>–</span>"}</dd></div>`);
+		const config = this.kit.SUMMARY[this.doctype];
+		const label_of = (fieldname, fallback) => __((this.defs[fieldname] || {}).label || fallback);
+		if (config) {
+			// The party is an Account at Sapphire (Customer is relabeled "Account" on the Desk).
+			row(__("Account"), esc(model.account));
+			row(label_of(config.title, "Name"), esc(model.title === model.name ? "" : model.title));
+			row(
+				label_of(config.streams.field, "Value streams"),
+				model.streams.map((s) => sf.chip(__(s.stream), s.pillar)).join(" ")
+			);
+			const amount =
+				model.amount === null
+					? ""
+					: format_currency(model.amount, this.values.currency || frappe.boot.sysdefaults.currency);
+			row(label_of(config.amount, "Amount"), esc(amount));
+			row(label_of(config.status, "Status"), model.status ? sf.chip(__(model.status), "neutral") : "");
+		}
+		const where = this.kit.field_steps(steps);
+		const missing = model.missing
+			.map((item) => {
+				const key = where[item.fieldname];
+				const label = esc(item.label);
+				return key
+					? `<li><button type="button" class="ge-sum-missing" data-step="${esc(key)}" data-field="${esc(item.fieldname)}">${label}</button></li>`
+					: `<li>${label}</li>`;
+			})
+			.join("");
+		const head = model.total
+			? __("{0}: {1} of {2}", [__(model.stage || ""), model.done, model.total])
+			: __("Checklist");
+		const checklist = model.total
+			? missing
+				? `<ul class="ge-checklist">${missing}</ul>`
+				: `<p class="ge-muted">${esc(__("Everything this stage asks for is filled in."))}</p>`
+			: "";
+		$box.html(
+			`<section class="sf-card ge-sum-card"><h2 class="sf-card-title">${esc(__("Summary"))}</h2>` +
+				(rows.length ? `<dl class="ge-sum-list">${rows.join("")}</dl>` : "") +
+				`<h3 class="ge-sum-head">${esc(head)}</h3>${checklist}</section>`
+		);
+	}
+
+	render_footer(steps, pos) {
+		const kit = this.kit;
+		const prev = this.is_new ? null : kit.neighbor(steps, this.values, this.step_key, -1);
+		const next = this.is_new ? null : kit.neighbor(steps, this.values, this.step_key, 1);
+		this.$root.find(".ge-back").toggleClass("is-hidden", !prev).prop("disabled", !prev);
+		let label;
+		if (this.is_new) label = this.creating ? __("Creating…") : __("Create and continue");
+		else if (next) label = __("Next");
+		else label = __("Done");
+		this.$root
+			.find(".ge-next")
+			.text(label)
+			.prop("disabled", !!this.creating)
+			.attr("aria-label", next ? __("Next: {0}", [(kit.find_step(steps, next) || {}).title || ""]) : label);
+	}
+
+	render_saveline() {
+		const $line = this.$root.find(".ge-saveline");
+		if (!$line.length) return;
+		let text = "";
+		let tone = "saved";
+		let retry = false;
+		if (this.is_new) {
+			text = this.creating ? __("Saving…") : __("Not saved yet");
+			tone = this.creating ? "saving" : "dirty";
+		} else if (!this.flow.can_write) {
+			text = __("Read only");
+		} else {
+			const state = this.queue ? this.queue.state : "saved";
+			tone = state;
+			if (state === "saved") text = __("Saved");
+			else if (state === "dirty" || state === "saving") text = __("Saving…");
+			else if (state === "conflict") text = __("Not saved — choose above");
+			else {
+				text = __("Not saved — retry");
+				retry = true;
+			}
+		}
+		$line
+			.text(text)
+			.attr("class", `ge-saveline ge-saveline--${tone}`)
+			.prop("disabled", !retry)
+			.attr("aria-label", retry ? __("Not saved. Retry saving.") : text);
+	}
+
+	// ------------------------------------------------------------------ a step
+
+	show_step(step_key) {
+		if (!this.flow) return;
+		const steps = this.flow.steps || [];
+		let key = step_key;
+		if (this.is_new) {
+			key = (steps.find((step) => step.create) || steps[0] || {}).key;
+		} else {
+			const resolved = this.kit.resolve_step(steps, this.values, step_key);
+			key = resolved.key;
+			if (resolved.replace && key) this.go(key, true);
+		}
+		this.screen_key = this.kit.route_key({
+			doctype: this.doctype,
+			name: this.name,
+			step: this.is_new ? "" : key,
+			is_new: this.is_new,
+		});
+		if (!key) {
+			this.$root.find(".ge-stage").html(this.sf.state.html("empty", { title: __("There is nothing to fill in here.") }));
+			return;
+		}
+		if (key === this.step_key && this.fg) {
+			this.refresh_chrome();
+			return;
+		}
+		this.render_step(key);
+	}
+
+	render_step(key) {
+		const step = this.kit.find_step(this.flow.steps, key);
+		const moved = this.step_key !== null;
+		this.step_key = key;
+		this.fg = null;
+		this.toggle_all_help(false);
+		const pos = this.kit.position(this.flow.steps, this.values, key);
+		const editable = !!this.flow.can_write && !step.read_only;
+		const $stage = this.$root.find(".ge-stage").empty();
+		const $head = $('<header class="ge-step-head"></header>').appendTo($stage);
+		$('<div class="ge-step-eyebrow"></div>')
+			.text(
+				this.is_new
+					? __("Step 1: creates the {0}", [__(this.doctype)])
+					: pos.total
+						? __("Step {0} of {1}", [pos.number, pos.total])
+						: step.tab || ""
+			)
+			.appendTo($head);
+		$('<h2 class="ge-step-title" tabindex="-1"></h2>').text(step.title).appendTo($head);
+		if (step.intro) $('<p class="ge-step-intro"></p>').text(step.intro).appendTo($head);
+		if (!this.flow.can_write) {
+			$('<p class="ge-readonly-note"></p>')
+				.text(__("You can read this record but not change it."))
+				.appendTo($stage);
+		}
+		const $fields = $('<div class="ge-fields"></div>').appendTo($stage);
+		if (step.link && !this.is_new) {
+			$(`<button type="button" class="sf-btn sf-btn--secondary ge-step-link"></button>`)
+				.text(__(step.link.label))
+				.on("click", () =>
+					this.save_before_moving()
+						.then(() => {
+							if (step.link.tab) frappe.route_hash = `#${step.link.tab}`;
+							frappe.set_route("Form", this.doctype, this.name);
+						})
+						.catch(() => {})
+				)
+				.appendTo($stage);
+		}
+
+		const dfs = (step.fields || []).map((field) => this.control_def(field, step, editable));
+		this.fg = new frappe.ui.FieldGroup({ fields: dfs, body: $fields[0], no_submit_on_enter: true });
+		this.fg.make();
+		const fg = this.fg;
+		const initial = {};
+		(step.fields || []).forEach((field) => {
+			if (this.kit.is_layout(field) || this.kit.text_list_column(field)) return;
+			if (field.fieldtype === "Table") return; // the grid was given its rows (df.data)
+			if (ge_has(this.values, field.fieldname)) {
+				initial[field.fieldname] = ge_clone(this.values[field.fieldname]);
+				this.suppress.add(field.fieldname);
+			}
+		});
+		fg.set_values(initial).then(() => {
+			Object.keys(initial).forEach((fieldname) => this.suppress.delete(fieldname));
+			if (this.fg === fg) fg.refresh_dependency();
+		});
+		(step.fields || []).forEach((field) => {
+			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
+		});
+		this.decorate_controls(step);
+		// A grid says nothing when a row is removed or moved, and a cell edit may not reach the
+		// table's own onchange: read the grids again after either (delete_rows runs in 0.1 s steps).
+		$fields.on("click", ".grid-remove-rows, .grid-delete-row, .grid-add-row, .grid-move-row", () =>
+			setTimeout(() => this.collect_tables(), 350)
+		);
+		$fields.on("change", ".form-grid input, .form-grid textarea, .form-grid select", () =>
+			setTimeout(() => this.collect_tables(), 0)
+		);
+
+		this.refresh_notices();
+		this.refresh_chrome();
+		if (moved) {
+			const top = this.$root.offset().top - 60;
+			if (window.scrollY > top) window.scrollTo({ top: Math.max(0, top) });
+			$head.find(".ge-step-title").trigger("focus");
+		}
+		if (this.pending_focus) {
+			const fieldname = this.pending_focus;
+			this.pending_focus = null;
+			setTimeout(() => this.focus_field(fieldname), 50);
+		}
+	}
+
+	control_def(field, step, editable) {
+		const kit = this.kit;
+		const df = Object.assign({}, field);
+		delete df.child_fields;
+		delete df.hint;
+		delete df.help;
+		delete df.create;
+		// FieldGroup.make() writes a field's `default` over the values it is given on a new record;
+		// the defaults are already in get_flow's values.
+		delete df.default;
+		["depends_on", "mandatory_depends_on", "read_only_depends_on"].forEach((key) => {
+			if (df[key]) df[key] = this.condition(df[key]);
+		});
+		if (kit.is_layout(field)) return df;
+
+		const read_only = !editable || !!field.read_only;
+		if (read_only) df.read_only = 1;
+		df.parent = this.doctype;
+		df.description = field.hint || "";
+		df.ee_desc_inline = 1;
+
+		if (kit.text_list_column(field)) {
+			// Drawn by render_text_list into this placeholder.
+			return {
+				fieldtype: "HTML",
+				fieldname: field.fieldname + GE_LIST_SUFFIX,
+				depends_on: df.depends_on,
+			};
+		}
+		if (field.fieldtype === "Table") {
+			const fieldname = field.fieldname;
+			df.fields = (field.child_fields || []).map((child) => {
+				const out = Object.assign({}, child, {
+					parent: field.options,
+					description: child.hint || "",
+					ee_desc_inline: 1,
+				});
+				delete out.hint;
+				delete out.help;
+				delete out.default;
+				if (read_only) out.read_only = 1;
+				else out.onchange = () => this.table_touched(fieldname);
+				return out;
+			});
+			df.data = ge_clone(this.values[fieldname] || []);
+			df.in_place_edit = true;
+			df.cannot_add_rows = read_only;
+			df.cannot_delete_rows = read_only;
+			df.on_add_row = () => setTimeout(() => this.table_touched(fieldname), 0);
+			return df;
+		}
+		if (field.fieldtype === "Dynamic Link") {
+			df.get_options = () => this.current(field.options);
+		}
+		if (field.fieldtype === "Link" && kit.PARTY_QUERIES[field.options]) {
+			// Only Contact and Address: any other Link keeps its own filters untouched.
+			df.get_query = () => kit.link_query(field, kit.party_of(this.flow.steps, this.current_values())) || {};
+		}
+		df.onchange = () => this.field_changed(field.fieldname);
+		return df;
+	}
+
+	// depends_on is written against the whole record (doc.status, doc.custom_value_stream ...),
+	// but a FieldGroup only knows the fields of this one step: evaluate it against the record's
+	// values with the step's live inputs laid over them.
+	condition(expression) {
+		if (typeof expression !== "string") return expression;
+		return (step_values) => {
+			const doc = Object.assign({}, this.values, step_values || {});
+			try {
+				if (expression.startsWith("eval:")) {
+					return frappe.utils.eval(expression.slice(5), { doc, parent: doc });
+				}
+				const value = doc[expression];
+				return Array.isArray(value) ? value.length > 0 : !!value;
+			} catch (e) {
+				// A condition that cannot be read shows the field: never hide one by accident.
+				return true;
+			}
+		};
+	}
+
+	current(fieldname) {
+		const control = this.fg && this.fg.fields_dict[fieldname];
+		if (control && control.get_value) return control.get_value();
+		return this.values[fieldname];
+	}
+
+	current_values() {
+		return Object.assign({}, this.values);
+	}
+
+	// inputmode per field, the (i) beside each label that has longer help.
+	decorate_controls(step) {
+		const registry = frappe.boot && frappe.boot.sf_normalize;
+		(step.fields || []).forEach((field) => {
+			if (this.kit.is_layout(field)) return;
+			const control = this.fg.fields_dict[field.fieldname];
+			if (!control) return;
+			const mode = this.kit.inputmode_for(control.df, registry, this.doctype);
+			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
+			if (field.help) this.add_help(control.$wrapper, field, step);
+		});
+	}
+
+	add_help($wrapper, field, step) {
+		if (!$wrapper || !$wrapper.length) return;
+		const id = `ge-help-${field.fieldname}`;
+		const label = __(field.label || field.fieldname);
+		const $button = $(`<button type="button" class="ge-help-btn" aria-expanded="false"></button>`)
+			.attr("aria-controls", id)
+			.attr("aria-label", __("More about {0}", [label]))
+			.html(GE_INFO_ICON);
+		const $panel = $('<div class="ge-help-panel" hidden></div>').attr("id", id);
+		$('<p class="ge-help-text"></p>').text(field.help).appendTo($panel);
+		const article = this.flow.help_article;
+		if (article) {
+			const href = `${frappe.utils.get_form_link("Knowledge Article", article)}#${encodeURIComponent(step.key)}`;
+			$('<a class="ge-help-link"></a>').attr("href", href).text(__("Learn more")).appendTo($panel);
+		}
+		$button.on("click", (event) => {
+			event.preventDefault();
+			this.toggle_help($button, $button.attr("aria-expanded") !== "true");
+		});
+		// Beside the label, never inside it: set_label rewrites the label's innerHTML on refresh,
+		// and a button inside a Check's <label> would tick the box.
+		const $check_label = $wrapper.find(".checkbox label").first();
+		const $label = $wrapper.find("label.control-label, .ge-list-label").first();
+		if ($check_label.length) $check_label.after($button);
+		else if ($label.length) $label.after($button);
+		else $wrapper.prepend($button);
+		const $group = $wrapper.find(".form-group").first();
+		($group.length ? $group : $wrapper).append($panel);
+	}
+
+	toggle_help($button, open) {
+		const $panel = this.$root.find(`#${$button.attr("aria-controls")}`);
+		$button.attr("aria-expanded", open ? "true" : "false");
+		$panel.prop("hidden", !open);
+	}
+
+	toggle_all_help(open) {
+		this.$root.find(".ge-help-btn").each((i, button) => this.toggle_help($(button), open));
+	}
+
+	focus_field(fieldname) {
+		if (!fieldname || !this.fg) return;
+		const control = this.fg.fields_dict[fieldname] || this.fg.fields_dict[fieldname + GE_LIST_SUFFIX];
+		if (!control || !control.$wrapper) return;
+		const el = control.$wrapper[0];
+		if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
+		const $input = control.$wrapper.find("input, textarea, select, button").filter(":visible").first();
+		if ($input.length) $input.trigger("focus");
+	}
+
+	// ------------------------------------------------------------------ the text-list table
+
+	render_text_list(field, editable) {
+		const column = this.kit.text_list_column(field);
+		const control = this.fg.fields_dict[field.fieldname + GE_LIST_SUFFIX];
+		if (!control || !column) return;
+		const rows = this.values[field.fieldname] || [];
+		const label = __(field.label || field.fieldname);
+		const list_id = `ge-list-${field.fieldname}`;
+		const $box = $('<div class="ge-list" role="group"></div>').attr("aria-labelledby", `${list_id}-label`);
+		$(`<div class="clearfix"><span class="control-label ge-list-label"></span></div>`)
+			.find(".ge-list-label")
+			.attr("id", `${list_id}-label`)
+			.text(label)
+			.end()
+			.appendTo($box);
+		if (field.hint) $('<p class="help-box small text-muted ge-list-hint"></p>').text(field.hint).appendTo($box);
+		const $ol = $('<ol class="ge-list-rows"></ol>').appendTo($box);
+		if (!rows.length) {
+			$('<p class="ge-list-empty"></p>').text(editable ? __("Nothing added yet.") : __("None.")).appendTo($box);
+		}
+		rows.forEach((row, index) => {
+			const $li = $('<li class="ge-list-row"></li>').attr("data-index", index).appendTo($ol);
+			const number = __("{0} {1}", [label, index + 1]);
+			if (!editable) {
+				$('<p class="ge-list-text"></p>').text(row[column] || "").appendTo($li);
+				return;
+			}
+			const $input = $('<textarea class="form-control ge-list-input" rows="2"></textarea>')
+				.attr("aria-label", number)
+				.val(row[column] || "")
+				.appendTo($li);
+			this.grow($input[0]);
+			$input.on("input", () => {
+				this.grow($input[0]);
+				this.values[field.fieldname] = this.kit.set_row_text(this.values[field.fieldname], index, column, $input.val());
+				this.list_changed(field);
+			});
+			const $tools = $('<div class="ge-list-tools"></div>').appendTo($li);
+			const tool = (cls, text, aria, disabled, fn) =>
+				$(`<button type="button" class="sf-btn sf-btn--quiet ge-list-tool ${cls}"></button>`)
+					.text(text)
+					.attr("aria-label", aria)
+					.prop("disabled", disabled)
+					.on("click", fn)
+					.appendTo($tools);
+			tool("ge-up", "↑", __("Move {0} up", [number]), index === 0, () => this.list_edit(field, "move", index, -1));
+			tool("ge-down", "↓", __("Move {0} down", [number]), index === rows.length - 1, () =>
+				this.list_edit(field, "move", index, 1)
+			);
+			tool("ge-remove", __("Remove"), __("Remove {0}", [number]), false, () => this.list_edit(field, "remove", index));
+		});
+		if (editable) {
+			$('<button type="button" class="sf-btn sf-btn--secondary ge-list-add"></button>')
+				.text(__("Add"))
+				.attr("aria-label", __("Add to {0}", [label]))
+				.on("click", () => this.list_edit(field, "add"))
+				.appendTo($box);
+		}
+		$(control.wrapper).empty().append($box);
+		if (field.help) this.add_help($(control.wrapper), field, this.kit.find_step(this.flow.steps, this.step_key));
+	}
+
+	grow(el) {
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${Math.max(el.scrollHeight, 88)}px`;
+	}
+
+	list_edit(field, action, index, dir) {
+		const column = this.kit.text_list_column(field);
+		const rows = this.values[field.fieldname] || [];
+		let focus_index = index;
+		let focus = ".ge-list-input";
+		if (action === "add") {
+			this.values[field.fieldname] = this.kit.add_row(rows, column, "");
+			focus_index = rows.length;
+		} else if (action === "remove") {
+			this.values[field.fieldname] = this.kit.remove_row(rows, index);
+			focus_index = Math.min(index, rows.length - 2);
+		} else {
+			this.values[field.fieldname] = this.kit.move_row(rows, index, dir);
+			focus_index = index + dir;
+			focus = dir < 0 ? ".ge-up" : ".ge-down";
+		}
+		this.render_text_list(field, true);
+		this.list_changed(field);
+		const control = this.fg && this.fg.fields_dict[field.fieldname + GE_LIST_SUFFIX];
+		if (!control) return;
+		const $row = $(control.wrapper).find(`.ge-list-row[data-index="${focus_index}"]`);
+		let $target = $row.find(focus).first();
+		if (!$target.length || $target.prop("disabled")) $target = $row.find(".ge-list-input").first();
+		if (!$target.length) $target = $(control.wrapper).find(".ge-list-add");
+		$target.trigger("focus");
+	}
+
+	list_changed(field) {
+		const column = this.kit.text_list_column(field);
+		this.set_value_local(field.fieldname, this.kit.clean_rows(this.values[field.fieldname], [column]), true);
+	}
+
+	// ------------------------------------------------------------------ values
+
+	field_changed(fieldname) {
+		if (!this.fg || this.suppress.has(fieldname)) return;
+		const control = this.fg.fields_dict[fieldname];
+		if (!control || !control.get_value) return;
+		let value = control.get_value();
+		if (value === undefined) value = null;
+		const def = this.defs[fieldname];
+		if (def && def.fieldtype === "Table MultiSelect") {
+			value = this.kit.clean_rows(value, (def.child_fields || []).map((child) => child.fieldname));
+		}
+		this.set_value_local(fieldname, value);
+		this.fg.refresh_dependency();
+	}
+
+	table_touched(fieldname) {
+		if (!this.fg) return;
+		const control = this.fg.fields_dict[fieldname];
+		const def = this.defs[fieldname];
+		if (!control || !def || !control.get_value) return;
+		const columns = (def.child_fields || []).map((child) => child.fieldname);
+		this.set_value_local(fieldname, this.kit.clean_rows(control.get_value() || [], columns));
+	}
+
+	// Grids say nothing when a row is removed or moved: compare them with what is held.
+	collect_tables() {
+		if (!this.fg || !this.flow) return;
+		const step = this.kit.find_step(this.flow.steps, this.step_key);
+		((step && step.fields) || []).forEach((field) => {
+			if (field.fieldtype === "Table" && !field.read_only && !this.kit.text_list_column(field)) {
+				this.table_touched(field.fieldname);
+			}
+		});
+	}
+
+	// Everything on the step into this.values (a Back or Forward has no tap to blur the field
+	// being typed in, and some inputs commit on change), before the step goes away.
+	collect_step() {
+		if (!this.fg || !this.flow) return;
+		const active = document.activeElement;
+		if (active && this.$root[0].contains(active) && typeof active.blur === "function") active.blur();
+		const step = this.kit.find_step(this.flow.steps, this.step_key);
+		((step && step.fields) || []).forEach((field) => {
+			if (this.kit.is_layout(field) || field.read_only || this.kit.text_list_column(field)) return;
+			if (field.fieldtype === "Table") return;
+			this.field_changed(field.fieldname);
+		});
+		this.collect_tables();
+	}
+
+	// One field's new value on screen: queued when it differs from what is saved, dropped from
+	// the queue when it is back to it. `quiet_chrome` skips the rail redraw while typing in a list.
+	set_value_local(fieldname, value, quiet_chrome) {
+		const before_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
+		this.values[fieldname] = value;
+		if (this.is_new) {
+			this.new_dirty = true;
+		} else if (this.queue) {
+			if (this.kit.same_value(value, this.saved[fieldname])) this.queue.discard(fieldname);
+			else this.queue.change(fieldname, value);
+		}
+		const after_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
+		if (!quiet_chrome || before_active !== after_active) this.refresh_chrome();
+		else this.render_saveline();
+	}
+
+	// Put a value the server returned on screen, if its field is on this step.
+	show_value(fieldname, value) {
+		if (!this.fg) return;
+		const def = this.defs[fieldname];
+		const list = this.fg.fields_dict[fieldname + GE_LIST_SUFFIX];
+		if (list) {
+			const focused = list.wrapper && list.wrapper.contains(document.activeElement);
+			if (!focused) this.render_text_list(def, !!this.flow.can_write && !def.read_only);
+			return;
+		}
+		const control = this.fg.fields_dict[fieldname];
+		if (!control) return;
+		const focused = control.$wrapper && control.$wrapper[0].contains(document.activeElement);
+		if (def && def.fieldtype === "Table") {
+			if (focused) return;
+			control.df.data = ge_clone(value || []);
+			if (control.grid) control.grid.refresh();
+			return;
+		}
+		if (focused && this.kit.same_value(control.get_value(), value)) return;
+		this.suppress.add(fieldname);
+		Promise.resolve(control.set_value(ge_clone(value))).then(
+			() => this.suppress.delete(fieldname),
+			() => this.suppress.delete(fieldname)
+		);
+	}
+
+	// ------------------------------------------------------------------ saving
+
+	save_in_background() {
+		if (!this.queue) return;
+		this.collect_step();
+		this.queue.flush().catch(() => {});
+	}
+
+	// Before a move the person asked for. Refused by the server (a validation, a conflict, a lapsed
+	// session): stay, with the reason on screen. Not reached at all: move on; what was typed stays
+	// queued and the saving line says "Not saved — retry".
+	//
+	// A refusal already on screen does not hold the person a second time: pressing Next again with
+	// the same message showing moves on (the change stays queued, the line says "Not saved"), so a
+	// problem in a field on another step can never trap them on this one.
+	save_before_moving() {
+		this.collect_step();
+		if (this.is_new || !this.queue) return Promise.resolve();
+		const shown = this.notice && this.notice.kind === "save" ? (this.notice.error || {}).message : null;
+		return this.queue.flush().catch((err) => {
+			if (!err || (!err.conflict && !err.session_expired && !(err.status && err.status < 500))) return;
+			if (shown && err.status === 417 && err.message === shown) return;
+			throw err;
+		});
+	}
+
+	on_save_state(state, error) {
+		if (state === "saved" || state === "saving") {
+			if (this.notice && this.notice.kind !== "create") this.notice = null;
+		} else if (state === "error") {
+			this.notice = { kind: "save", error: error || {} };
+		} else if (state === "expired") {
+			this.notice = { kind: "expired" };
+		}
+		this.refresh_notices();
+		this.render_saveline();
+	}
+
+	on_saved(result, sent) {
+		const returned = result.values || {};
+		const pending = this.queue ? this.queue.pending() : {};
+		Object.keys(returned).forEach((fieldname) => {
+			this.saved[fieldname] = ge_clone(returned[fieldname]);
+			// Typed again since this was sent: what is on screen is newer.
+			if (ge_has(pending, fieldname)) return;
+			const same = this.kit.same_value(this.values[fieldname], returned[fieldname]);
+			this.values[fieldname] = ge_clone(returned[fieldname]);
+			const def = this.defs[fieldname];
+			const table = def && (def.fieldtype === "Table" || def.fieldtype === "Table MultiSelect");
+			// A table's stored rows now have names; anything else only when normalizing changed it.
+			if (!same || (table && def.fieldtype === "Table" && !this.kit.text_list_column(def))) {
+				this.show_value(fieldname, returned[fieldname]);
+			}
+		});
+		if (result.completeness) this.completeness = result.completeness;
+		if (this.after_conflict) {
+			this.after_conflict = false;
+			this.refresh_from_server();
+		}
+		this.refresh_chrome();
+	}
+
+	on_conflict(result, sent) {
+		const server = result.server || {};
+		const split = this.kit.split_conflict(this.saved, sent, server);
+		// What the server holds now is the base from here on.
+		Object.keys(server).forEach((fieldname) => (this.saved[fieldname] = ge_clone(server[fieldname])));
+		this.after_conflict = true;
+		if (!split.conflicts.length) {
+			return Promise.resolve({ save: split.resend, modified: result.modified });
+		}
+		return new Promise((resolve) => this.show_conflict(result, split, resolve));
+	}
+
+	show_conflict(result, split, resolve) {
+		const sf = this.sf;
+		const esc = sf.esc;
+		const choices = {};
+		split.conflicts.forEach((item) => (choices[item.fieldname] = "mine"));
+		const who = result.modified_by
+			? (frappe.user_info && frappe.user_info(result.modified_by).fullname) || result.modified_by
+			: "";
+		const $slot = this.$root.find(".ge-conflict-slot").empty();
+		const $box = $('<section class="ge-conflict sf-card" role="alert"></section>').appendTo($slot);
+		$('<h2 class="ge-conflict-title"></h2>')
+			.text(
+				who
+					? __("{0} changed this record while you were working.", [who])
+					: __("Someone else changed this record while you were working.")
+			)
+			.appendTo($box);
+		$('<p class="ge-conflict-intro"></p>')
+			.text(__("Choose which version to keep for each field, then save."))
+			.appendTo($box);
+		const $all = $('<div class="ge-conflict-all"></div>').appendTo($box);
+		const $list = $('<div class="ge-conflict-list"></div>').appendTo($box);
+		const paint = () => {
+			$list.find(".ge-conflict-row").each((i, el) => {
+				const fieldname = $(el).attr("data-field");
+				$(el)
+					.find("button[data-pick]")
+					.each((j, button) => {
+						const on = $(button).attr("data-pick") === choices[fieldname];
+						$(button).attr("aria-pressed", on ? "true" : "false").toggleClass("is-on", on);
+					});
+			});
+		};
+		split.conflicts.forEach((item) => {
+			const def = this.defs[item.fieldname] || {};
+			const label = __(def.label || item.fieldname);
+			const $row = $(`<div class="ge-conflict-row" role="group"></div>`)
+				.attr("data-field", item.fieldname)
+				.attr("aria-label", label)
+				.appendTo($list);
+			$('<div class="ge-conflict-label"></div>').text(label).appendTo($row);
+			const side = (pick, title, value) => {
+				const $side = $('<div class="ge-conflict-side"></div>').appendTo($row);
+				$('<div class="ge-conflict-side-title"></div>').text(title).appendTo($side);
+				$('<div class="ge-conflict-value"></div>')
+					.text(this.kit.value_text(value) || __("(empty)"))
+					.appendTo($side);
+				$(`<button type="button" class="sf-btn sf-btn--secondary"></button>`)
+					.attr("data-pick", pick)
+					.text(pick === "mine" ? __("Keep mine") : __("Use theirs"))
+					.on("click", () => {
+						choices[item.fieldname] = pick;
+						paint();
+					})
+					.appendTo($side);
+			};
+			side("mine", __("Yours"), item.mine);
+			side("theirs", __("Theirs"), item.theirs);
+		});
+		const pick_all = (pick) => {
+			split.conflicts.forEach((item) => (choices[item.fieldname] = pick));
+			paint();
+		};
+		$(`<button type="button" class="sf-btn sf-btn--quiet"></button>`)
+			.text(__("Keep all mine"))
+			.on("click", () => pick_all("mine"))
+			.appendTo($all);
+		$(`<button type="button" class="sf-btn sf-btn--quiet"></button>`)
+			.text(__("Use all theirs"))
+			.on("click", () => pick_all("theirs"))
+			.appendTo($all);
+		$(`<button type="button" class="sf-btn sf-btn--primary ge-conflict-save"></button>`)
+			.text(__("Save my choices"))
+			.on("click", () => {
+				const decided = this.kit.resolve(split.resend, split.conflicts, choices);
+				const pending = this.queue ? this.queue.pending() : {};
+				Object.keys(decided.take).forEach((fieldname) => {
+					if (ge_has(pending, fieldname)) return;
+					this.values[fieldname] = ge_clone(decided.take[fieldname]);
+					this.show_value(fieldname, decided.take[fieldname]);
+				});
+				$slot.empty();
+				this.conflict = null;
+				resolve({ save: decided.save, modified: result.modified });
+			})
+			.appendTo($box);
+		this.conflict = { result, split };
+		paint();
+		$box.find(".ge-conflict-title").attr("tabindex", "-1").trigger("focus");
+		this.render_saveline();
+	}
+
+	// After a conflict, the rest of the record may have moved too: show what it holds now for every
+	// field nobody is typing in. Its `modified` is taken only when nothing is waiting to be saved,
+	// so a newer change can never be overwritten on the strength of a refresh.
+	refresh_from_server() {
+		const name = this.name;
+		this.sf
+			.call(GE_API + "get_flow", { doctype: this.doctype, name }, { quiet: true, method: "GET" })
+			.then((flow) => {
+				if (!flow || this.name !== name || !this.queue) return;
+				const pending = this.queue.pending();
+				const busy = this.queue.has_unsaved();
+				Object.keys(flow.values || {}).forEach((fieldname) => {
+					if (ge_has(pending, fieldname)) return;
+					if (busy && this.queue.in_flight() && ge_has(this.queue.in_flight(), fieldname)) return;
+					const value = flow.values[fieldname];
+					this.saved[fieldname] = ge_clone(value);
+					if (!this.kit.same_value(this.values[fieldname], value)) {
+						this.values[fieldname] = ge_clone(value);
+						this.show_value(fieldname, value);
+					}
+				});
+				if (!busy && flow.modified) this.queue.set_modified(flow.modified);
+				if (flow.completeness) this.completeness = flow.completeness;
+				this.refresh_chrome();
+			})
+			.catch(() => {});
+	}
+
+	// Step 1 of a new record: check what it needs, insert it, and move to its real address.
+	create() {
+		if (this.creating || !this.flow) return;
+		this.collect_step();
+		const step = (this.flow.steps || []).find((s) => s.create) || this.flow.steps[0];
+		const missing = this.kit.missing_required(step.fields, this.values);
+		if (missing.length) {
+			this.notice = {
+				kind: "create",
+				title: __("Fill these in first"),
+				body: missing.map((field) => __(field.label || field.fieldname)).join(", "),
+			};
+			this.refresh_notices();
+			this.focus_field(missing[0].fieldname);
+			return;
+		}
+		const values = {};
+		this.kit.editable_fieldnames(step).forEach((fieldname) => {
+			if (!ge_has(this.values, fieldname)) return;
+			const def = this.defs[fieldname] || {};
+			const value = this.values[fieldname];
+			values[fieldname] =
+				def.fieldtype === "Table" || def.fieldtype === "Table MultiSelect"
+					? this.kit.clean_rows(value || [], (def.child_fields || []).map((child) => child.fieldname))
+					: value;
+		});
+		const doctype = this.doctype;
+		this.creating = true;
+		this.notice = null;
+		this.refresh_notices();
+		this.refresh_chrome();
+		this.sf
+			.call(GE_API + "create_record", { doctype, values }, { quiet: true })
+			.then((created) =>
+				// The flow for the record as it now exists: set-only-once fields lock, and each
+				// step's permissions are worked out for the saved document.
+				this.sf
+					.call(GE_API + "get_flow", { doctype, name: created.name }, { quiet: true, method: "GET" })
+					.then((flow) => ({ created, flow }))
+					.catch(() => ({ created, flow: null }))
+			)
+			.then(({ created, flow }) => {
+				this.creating = false;
+				this.new_dirty = false;
+				const still_here = (() => {
+					const target = this.kit.parse_route(frappe.get_route());
+					return !!target && target.is_new && target.doctype === doctype;
+				})();
+				if (flow) {
+					this.take_flow(flow);
+				} else {
+					this.flow.name = created.name;
+					this.flow.modified = created.modified;
+					this.take_flow(Object.assign({}, this.flow, { values: Object.assign({}, this.values, created.values) }));
+				}
+				if (created.completeness) this.completeness = created.completeness;
+				if (!still_here) {
+					// Left while it was being created: nothing to replace. Forward onto that "new"
+					// entry opens this record (open_new) rather than a blank one.
+					this.orphan = { doctype, name: created.name };
+					this.sf.toast(__("{0} {1} was created.", [__(doctype), created.name]), {
+						tone: "success",
+						action_label: __("Open"),
+						on_action: () => {
+							this.orphan = null;
+							frappe.set_route(this.kit.build_route(doctype, created.name, null));
+						},
+					});
+					return;
+				}
+				const steps = this.flow.steps || [];
+				const first = (steps.find((s) => s.create) || steps[0]).key;
+				const next = this.kit.neighbor(steps, this.values, first, 1);
+				this.render_shell();
+				this.fg = null;
+				this.step_key = null;
+				// Replace the "new" entry with the record's first step, then push the next one.
+				this.screen_key = "";
+				this.go(first, true);
+				if (next) this.go(next);
+				this.sf.toast(__("{0} created.", [created.name]), { tone: "success", timeout: 4000 });
+			})
+			.catch((err) => {
+				this.creating = false;
+				this.notice = err && err.session_expired ? { kind: "expired" } : { kind: "save", error: err || {} };
+				this.refresh_notices();
+				this.refresh_chrome();
+			});
+	}
+
+	refresh_notices() {
+		const $slot = this.$root.find(".ge-notices");
+		if (!$slot.length) return;
+		const notice = this.notice;
+		if (!notice) {
+			$slot.empty();
+			return;
+		}
+		if (notice.kind === "expired") {
+			this.sf.state.render($slot, "error", {
+				title: __("You are signed out, so this was not saved."),
+				body: __(
+					"What you typed is kept on this page. Sign in on the new tab, come back here, and it will save."
+				),
+				action_label: __("Sign in"),
+				on_action: () => this.open_login(),
+			});
+			return;
+		}
+		if (notice.kind === "create") {
+			this.sf.state.render($slot, "error", { title: notice.title, body: notice.body });
+			return;
+		}
+		const error = notice.error || {};
+		this.sf.state.render($slot, "error", {
+			title: __("Not saved."),
+			body: error.message || __("The server refused this change."),
+			action_label: __("Try again"),
+			on_action: () => {
+				if (this.is_new) this.create();
+				else if (this.queue) {
+					this.collect_step();
+					this.queue.retry().catch(() => {});
+				}
+			},
+		});
+	}
+}

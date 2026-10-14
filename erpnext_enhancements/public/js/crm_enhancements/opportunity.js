@@ -104,6 +104,15 @@ frappe.ui.form.on("Opportunity", {
 		// future ERPNext / site adds one.
 		frm.remove_custom_button("Project", "Create");
 
+		// Form kit P4-B: open this record in the guided step-by-step page. Only for a saved
+		// record (step 1 of a new one is the page's own "new" screen) and only when this person
+		// may open the page at all (frappe.boot.page_info lists the Pages their roles reach).
+		if (!frm.is_new() && frappe.boot.page_info && frappe.boot.page_info["guided-entry"]) {
+			frm.add_custom_button(__("Guided"), () =>
+				frappe.set_route("guided-entry", frm.doctype, frm.doc.name)
+			);
+		}
+
 		// Reopen-on-load: an opportunity already Closed Won with no project yet
 		// gets the same prompt once ("No" just dismisses — it was won intentionally
 		// earlier). Guarded to fire at most once per load and never for a status

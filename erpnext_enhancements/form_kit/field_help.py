@@ -11,8 +11,8 @@ Every field gets two pieces of help, and they live in the repository, one file p
     every grid show the same line. ``tests/test_form_kit.py`` fails when the two drift.
 ``help``
     The longer explanation behind the (i) bubble: why the field matters, who reads it next,
-    what it sets off. Shown by the guided flow and, through ``public/js/form_kit/field_help.js``,
-    on the standard Desk form.
+    what it sets off. Shown by the guided flow and, through
+    ``public/js/global_enhancements/field_description_icons.js``, on the standard Desk form.
 
 ``article`` names the Knowledge Article the help's *Learn more* link opens (P5.4); each field
 links to the section of it anchored at its step's key. ``null`` until that article exists.

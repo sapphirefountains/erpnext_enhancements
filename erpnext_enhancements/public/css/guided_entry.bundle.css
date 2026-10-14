@@ -1,0 +1,616 @@
+/*
+ * Guided Entry (form kit P4-B): the guided step-by-step page, enhancements_core/page/guided_entry.
+ * Loaded with the page (frappe.require, never app_include_css), after sf_kit.bundle.css.
+ *
+ * Built on the app design tokens only (docs/app-design-system.md): --sf-* and Frappe's own CSS
+ * variables, no colour values of its own, no shadows, square structure, controls rounded at
+ * --sf-radius-control. The navy head band sits over a light body and both follow the Desk theme.
+ *
+ * Widths:
+ *   >= 1024px  rail | step | live summary
+ *   768-1023   the rail becomes a strip over the step; no summary
+ *   <  768     phone: one column (a form's column breaks stack), 16px inputs, 44px targets,
+ *              a sticky footer above the safe area
+ */
+
+.ge-app {
+	--ge-gap: var(--sf-space-20);
+	background: var(--sf-bg);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	line-height: var(--sf-leading-body);
+	min-height: 60vh;
+}
+
+/* ---- Head band ---- */
+.ge-band {
+	background: var(--sf-band);
+	color: var(--sf-on-band);
+	padding: var(--sf-space-20) var(--sf-space-20) var(--sf-space-15);
+}
+.ge-band-inner {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-15);
+	flex-wrap: wrap;
+}
+.ge-band-text {
+	flex: 1 1 240px;
+	min-width: 0;
+}
+.ge-eyebrow {
+	color: var(--sf-on-band-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ge-title {
+	margin: var(--sf-space-5) 0 0;
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-md);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-on-band);
+	overflow-wrap: anywhere;
+}
+.ge-band .sf-btn--quiet {
+	color: var(--sf-on-band);
+	text-decoration: underline;
+}
+.ge-progress {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+}
+.ge-progress-track {
+	flex: 1;
+	height: 8px;
+	background: var(--sf-navy-800);
+	border: 1px solid var(--sf-on-band-muted);
+}
+.ge-progress-bar {
+	height: 100%;
+	width: 0;
+	background: var(--sf-primary);
+	transition: width var(--sf-duration) var(--sf-ease);
+}
+.ge-progress-text {
+	color: var(--sf-on-band-muted);
+	font-size: var(--sf-text-sm);
+	white-space: nowrap;
+}
+.ge-stripe {
+	height: 6px;
+	background: var(--sf-gradient-neutral);
+}
+.ge-stripe--design { background: var(--sf-gradient-design); }
+.ge-stripe--build { background: var(--sf-gradient-build); }
+.ge-stripe--service { background: var(--sf-gradient-service); }
+.ge-stripe--rent { background: var(--sf-gradient-rent); }
+.ge-stripe--neutral { background: var(--sf-gradient-neutral); }
+
+/* ---- Three columns ---- */
+.ge-layout {
+	display: grid;
+	grid-template-columns: 240px minmax(0, 1fr) 300px;
+	gap: var(--ge-gap);
+	align-items: start;
+	padding: var(--sf-space-20);
+}
+
+/* ---- Step rail ---- */
+.ge-rail {
+	position: sticky;
+	top: 72px;
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+}
+.ge-rail ol {
+	list-style: none;
+	margin: 0;
+	padding: var(--sf-space-5) 0;
+}
+.ge-rail-step {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border: 0;
+	border-left: 3px solid transparent;
+	background: transparent;
+	color: var(--sf-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.ge-rail-step:disabled {
+	cursor: default;
+}
+.ge-rail-step:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+.ge-rail-item.is-current .ge-rail-step {
+	border-left-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+}
+.ge-rail-item.is-current .ge-rail-title {
+	font-weight: var(--sf-weight-bold);
+}
+.ge-rail-item.is-off .ge-rail-step {
+	color: var(--sf-text-muted);
+	opacity: 0.6;
+}
+.ge-rail-mark {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-circle);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-rail-item.is-done .ge-rail-mark {
+	background: var(--sf-good);
+	border-color: var(--sf-good);
+	color: var(--sf-on-good);
+}
+.ge-rail-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ge-rail-title {
+	font-size: var(--sf-text-md);
+}
+.ge-rail-meta {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+/* ---- The step ---- */
+.ge-main {
+	min-width: 0;
+}
+.ge-stage {
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	padding: var(--sf-space-20);
+}
+.ge-step-eyebrow {
+	color: var(--sf-eyebrow);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-step-title {
+	margin: var(--sf-space-5) 0 0;
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-md);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-heading);
+}
+.ge-step-title:focus {
+	outline: none;
+}
+.ge-step-title:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ge-step-intro {
+	margin: var(--sf-space-10) 0 0;
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	max-width: 70ch;
+}
+.ge-step-head {
+	margin-bottom: var(--sf-space-20);
+}
+.ge-readonly-note {
+	margin: 0 0 var(--sf-space-15);
+	color: var(--sf-text-muted);
+}
+.ge-step-link {
+	margin-top: var(--sf-space-15);
+}
+.ge-notices:not(:empty),
+.ge-conflict-slot:not(:empty) {
+	margin-bottom: var(--sf-space-15);
+}
+.ge-notices .sf-state {
+	text-align: left;
+	align-items: flex-start;
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-danger);
+	border-left-width: 4px;
+}
+
+/* Fields: the label above, 16px text (iOS zooms into anything smaller), the hint under it. */
+.ge-fields .control-label,
+.ge-fields .ge-list-label {
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-fields .form-control,
+.ge-fields .ge-list-input {
+	font-size: var(--sf-text-input);
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-none);
+}
+.ge-fields .form-control:focus,
+.ge-fields .ge-list-input:focus {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
+}
+.ge-fields .help-box {
+	color: var(--sf-hint);
+	font-size: var(--sf-text-sm);
+}
+.ge-fields .form-section .section-head {
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+
+/* The (i) beside a label: a 44px hit area around a 16px mark. */
+.ge-help-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--sf-touch-min);
+	height: var(--sf-touch-min);
+	margin: calc(var(--sf-space-15) * -1) 0 calc(var(--sf-space-15) * -1) calc(var(--sf-space-10) * -1);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-link);
+	vertical-align: middle;
+	cursor: pointer;
+}
+.ge-help-btn:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -8px;
+}
+.ge-help-btn[aria-expanded="true"] {
+	color: var(--sf-text-strong);
+}
+.ge-fields .checkbox .ge-help-btn {
+	margin-left: 0;
+}
+.ge-help-panel {
+	margin: var(--sf-space-5) 0 var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	color: var(--sf-text);
+	font-size: var(--sf-text-sm);
+}
+.ge-help-panel[hidden] {
+	display: none;
+}
+.ge-help-text {
+	margin: 0;
+}
+.ge-help-link {
+	display: inline-block;
+	margin-top: var(--sf-space-5);
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+/* The text-list table: one text box per row, Add, Remove, Move up/down. */
+.ge-list {
+	margin-bottom: var(--sf-space-15);
+}
+.ge-list-hint {
+	margin: 0 0 var(--sf-space-5);
+}
+.ge-list-rows {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.ge-list-row {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-10);
+}
+.ge-list-input {
+	flex: 1;
+	min-height: 88px;
+	resize: vertical;
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	border: 1px solid var(--sf-field-border);
+}
+.ge-list-tools {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.ge-list-tool {
+	min-width: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+}
+.ge-list-text {
+	margin: 0;
+	white-space: pre-wrap;
+}
+.ge-list-empty {
+	color: var(--sf-text-muted);
+	margin: 0 0 var(--sf-space-10);
+}
+
+/* ---- Conflict ---- */
+.ge-conflict {
+	border-left: 4px solid var(--sf-warn);
+	padding: var(--sf-space-15) var(--sf-space-20);
+}
+.ge-conflict-title {
+	margin: 0;
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+.ge-conflict-title:focus {
+	outline: none;
+}
+.ge-conflict-intro {
+	margin: var(--sf-space-5) 0 var(--sf-space-10);
+}
+.ge-conflict-all {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-10);
+}
+.ge-conflict-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10) 0;
+	border-top: 1px solid var(--sf-rule);
+}
+.ge-conflict-label {
+	grid-column: 1 / -1;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-label);
+}
+.ge-conflict-side-title {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+.ge-conflict-value {
+	margin: var(--sf-space-5) 0;
+	color: var(--sf-text-strong);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.ge-conflict-side .sf-btn.is-on {
+	border-color: var(--sf-focus);
+	background: var(--sf-focus);
+	color: var(--sf-surface);
+}
+.ge-conflict-save {
+	margin-top: var(--sf-space-10);
+}
+
+/* ---- Live summary ---- */
+.ge-summary {
+	position: sticky;
+	top: 72px;
+}
+.ge-sum-card {
+	padding: var(--sf-space-15) var(--sf-space-20);
+}
+.ge-sum-list {
+	margin: 0;
+}
+.ge-sum-row {
+	display: grid;
+	grid-template-columns: 110px minmax(0, 1fr);
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) 0;
+	border-bottom: 1px solid var(--sf-rule);
+}
+.ge-sum-row dt {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-regular);
+}
+.ge-sum-row dd {
+	margin: 0;
+	color: var(--sf-text-strong);
+	overflow-wrap: anywhere;
+}
+.ge-sum-row dd .sf-chip {
+	margin: 0 2px 2px 0;
+}
+.ge-sum-head {
+	margin: var(--sf-space-15) 0 var(--sf-space-5);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+.ge-checklist {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.ge-checklist li::before {
+	content: "○ ";
+	color: var(--sf-text-muted);
+}
+.ge-sum-missing {
+	border: 0;
+	background: transparent;
+	padding: var(--sf-space-5) 0;
+	color: var(--sf-link);
+	text-decoration: underline;
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+.ge-muted {
+	color: var(--sf-text-muted);
+}
+
+/* ---- The Triton assistant button ----
+   It floats bottom-right over every Desk page (triton_widget.css: bottom 16px, above everything),
+   which on this page is exactly where the footer's Next button sits: on a phone it covered Next
+   completely (seen live on 2026-10-13). While the page shows (body.ge-page-active, set on show and
+   cleared on hide in guided_entry.js) it floats above the footer instead. */
+body.ge-page-active .triton-fab {
+	bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ---- Footer: Back, the saving line, Next ---- */
+.ge-footer {
+	position: sticky;
+	bottom: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-20);
+	padding-bottom: calc(var(--sf-space-10) + env(safe-area-inset-bottom, 0px));
+	background: var(--sf-surface);
+	border-top: 1px solid var(--sf-rule);
+}
+.ge-footer .ge-next {
+	margin-left: auto;
+	min-width: 120px;
+}
+.ge-back.is-hidden {
+	visibility: hidden;
+}
+.ge-saveline {
+	flex: 1;
+	min-height: var(--sf-touch-min);
+	border: 0;
+	background: transparent;
+	color: var(--sf-text-muted);
+	font: inherit;
+	font-size: var(--sf-text-sm);
+	text-align: center;
+}
+.ge-saveline:disabled {
+	cursor: default;
+	opacity: 1;
+}
+.ge-saveline--error,
+.ge-saveline--expired {
+	color: var(--sf-danger);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+	cursor: pointer;
+}
+.ge-saveline--conflict {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-again {
+	margin-top: var(--sf-space-5);
+}
+
+/* ---- Tablet: the rail becomes a strip; the summary goes ---- */
+@media (max-width: 1023px) {
+	.ge-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ge-summary {
+		display: none;
+	}
+	.ge-rail {
+		position: static;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+	.ge-rail ol {
+		display: flex;
+		padding: 0;
+	}
+	.ge-rail-item {
+		flex: none;
+	}
+	.ge-rail-item.is-off {
+		display: none;
+	}
+	.ge-rail-step {
+		border-left: 0;
+		border-bottom: 3px solid transparent;
+		white-space: nowrap;
+	}
+	.ge-rail-item.is-current .ge-rail-step {
+		border-bottom-color: var(--sf-focus);
+	}
+}
+
+/* ---- Phone ---- */
+@media (max-width: 767px) {
+	.ge-band {
+		padding: var(--sf-space-15);
+	}
+	.ge-title {
+		font-size: var(--sf-display-sm);
+	}
+	.ge-layout {
+		padding: var(--sf-space-10) 0;
+		gap: var(--sf-space-10);
+	}
+	.ge-stage {
+		padding: var(--sf-space-15);
+		border-left: 0;
+		border-right: 0;
+	}
+	.ge-rail {
+		border-left: 0;
+		border-right: 0;
+	}
+	.ge-rail-meta {
+		display: none;
+	}
+	/* One column: a form's column breaks stack. */
+	.ge-fields .form-section .section-body,
+	.ge-fields .form-section .form-column {
+		display: block;
+		flex: 0 0 100%;
+		max-width: 100%;
+		width: 100%;
+	}
+	/* Frappe's own form padding (15px on the section and 15px on the column) set every field 30px
+	   in from the step's title; on a phone that width belongs to the field. */
+	.ge-fields .form-section,
+	.ge-fields .form-section .form-column {
+		padding-left: 0;
+		padding-right: 0;
+	}
+	.ge-conflict-row {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ge-footer {
+		padding-left: max(var(--sf-space-15), env(safe-area-inset-left, 0px));
+		padding-right: max(var(--sf-space-15), env(safe-area-inset-right, 0px));
+	}
+	.ge-footer .sf-btn {
+		padding: 0 var(--sf-space-15);
+	}
+	.ge-footer .ge-next {
+		min-width: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ge-progress-bar {
+		transition: none;
+	}
+}

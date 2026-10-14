@@ -41,6 +41,96 @@ when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto th
   The rental-planner and desk-page-history node harnesses gained failed-load-then-Try-again scenarios
   (the Device Console and the Scanner Audit keep every Back/Forward assertion).
 
+## [1.637.2] - 2026-10-13
+
+### Changed
+
+- **The Guided Entry page no longer shows Series** (Nik, 2026-10-13: "it doesn't change").
+  - The Opportunity has one naming series, and it is fixed once the deal exists, so on every step
+    it was a field nobody could change.
+  - It is now in the flow's `skip_fields` (`form_kit/config/opportunity.py`). A deal created from
+    step 1 still gets its series from `frappe.new_doc`, the same as the Desk's New form, and a
+    series sent to the create endpoint is ignored.
+  - The Desk form still shows Series, with its (i) help.
+  - `test_form_kit` checks that the series is in no step, new or saved, and that a created deal
+    gets `CRM-OPP-.YYYY.-`. The set-only-once test, which used Series because it was the form's
+    only set-only-once field, now marks a different field the same way.
+
+## [1.637.1] - 2026-10-13
+
+Two fixes to the Guided Entry page (v1.637.0), found when it was checked on prod at phone width.
+
+### Fixed
+
+- **The Triton assistant button covered Next.** The button floats bottom-right over every Desk page,
+  which on this page is where the sticky footer's Next button sits; at 375px it hid Next completely.
+  While the page shows, a `ge-page-active` class on the body (set on show, cleared on hide) lifts the
+  button above the footer. Other pages keep it where it was.
+- **Fields sat 30px in from the step title on a phone.** Frappe's own form padding (15px on the section
+  and 15px on the column) narrowed every input. Under 768px the page now zeroes it, so the field uses
+  the full width.
+
+The rest of the live check passed on CRM-OPP-2026-00182:
+- loading, the step list (a stream the deal lacks shows "Not for this record"), and Back/Forward walking the steps;
+- value-stream pills, inline hints, and the (i) placement (on a Check field too);
+- the Billing Address on Contact & site, and the account filter on the Contact and Address pickers;
+- the Lost section hidden until Lost, and the text lists with Add;
+- the hand-off link opening the Hand-Off Process tab.
+
+Nothing was saved during the check.
+
+## [1.637.0] - 2026-10-13
+
+Form kit P4-B (TASK-2026-02760, 02762): the Guided Entry page, which walks an Opportunity one step at a time.
+It is opened with the new **Guided** button on the Opportunity form. New Opportunity and the list are
+unchanged until P5.2.
+
+### Added
+
+- **The Guided Entry Desk page** (`/desk/guided-entry/<DocType>/<name>/<step>`, Enhancements Core).
+  - Built on the form kit engine (v1.622.0) and the shared sf_kit pieces.
+  - Generic over the form kit's configured DocTypes; Opportunity is the only one today.
+  - Its roles are Sales User, Sales Manager and System Manager, and every endpoint still checks
+    permission on the record.
+- **Every step is a real browser history entry**, so phone Back and Forward walk the steps.
+  - Creating the record at step 1 replaces the "new" entry with the saved record's own step 1, so
+    Back can never insert a second record.
+  - A step that does not apply to this deal (a value stream not chosen) is skipped, and re-evaluated
+    live as the streams change.
+- **One step per screen, phone first.**
+  - One column under 768px, 44px controls, and a sticky footer (Back, the saving line,
+    Next/Create/Done) with safe-area padding.
+  - A scrolling step strip on phones and a step rail with "N to fill" on wider screens. At 1024px and
+    up, a live summary: account, name, value-stream chips, amount, status, and the stage checklist,
+    whose missing items jump to their field.
+  - Phones, emails, websites and numbers get the right `inputmode` for the phone's keyboard.
+  - The Customer Requests and Deliverables tables, and any table with a single text column, are a
+    list of text boxes with Add, Remove and Move up/down, instead of a grid.
+- **Field help as Nik chose it:** each field's hint is always visible under it. Its (i) opens the
+  longer explanation inline, with *Learn more* when the article exists. `field_description_icons.js`
+  gains one narrow opt-out (`df.ee_desc_inline`), which only this page sets, so the Desk's ⓘ tooltips
+  elsewhere are unchanged.
+- **Saving onto the real record, never a draft store.**
+  - Changes save on leaving a step, and 2.5 seconds after the last keystroke.
+  - One request is in flight at a time; changes made meanwhile coalesce, and every save carries the
+    last good `modified`.
+  - Values come back normalized, so a phone typed as 801-555-0100 shows as stored.
+  - The saving line always says where things stand: Saved, Saving…, or "Not saved — retry".
+  - A `beforeunload` warning holds the page while anything is unsaved.
+- **Conflicts are never overwritten silently.**
+  - When someone else changed the deal, fields only they changed are taken and fields only you
+    changed are re-sent.
+  - Fields you both changed show side by side, with Keep mine / Use theirs, per field or for all.
+- **Errors and session expiry.**
+  - A validation error shows at the top of the step, with the server's own message.
+  - An expired login shows a Sign-in panel that opens in a new tab, so what was typed stays.
+  - Every request uses sf_kit's quiet call, so Frappe never pops its own error dialog over the page.
+- **A Guided button on the Opportunity form** for saved records, shown only to people the page is
+  open to.
+- `tests/test_guided_entry.py` (42 tests) gets its own CI step. It runs the page's pure modules under
+  node, checks step activeness against `steps.py`'s own rule, and checks the page JSON, roles, routes
+  and requests.
+
 ## [1.636.0] - 2026-10-13
 
 WI-024 step 1 (TASK-2026-00917): the Opportunity↔Project links are back-filled, so the
