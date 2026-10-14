@@ -73,6 +73,33 @@ export {
 	undo_allowed,
 	undo_values,
 } from "./panel.js";
+// v1.686.0: the record tools' decisions (attachments, activity, connections, the Create menu). The
+// tools themselves (./ui/record_tools.js) draw with frappe; the editor mounts them.
+export {
+	RECORD_TOOLS,
+	tools_config,
+	create_items,
+	recipient_for,
+	email_subject,
+	email_start,
+	with_emails,
+	file_url,
+	unique_files,
+	size_text,
+	kind_text,
+	can_remove_files,
+	can_add_file,
+	version_value,
+	describe_version,
+	activity_feed,
+	clean_tag,
+	connection_groups,
+	connection_doctypes,
+	connection_counts,
+	connection_filters,
+	can_print,
+	directory_widgets,
+} from "./record_tools.js";
 // v1.684.0: how a saved record is laid out for each person (view settings), and the set of
 // FieldGroups the One page and Tabs layouts draw.
 export {

@@ -386,6 +386,7 @@ export class SidePanel extends RecordEditor {
 		this.handle && this.handle.set_subtitle(`${__(this.doctype)} · ${this.name}`);
 		// The deal's comments under the step, as on the guided page (editor.js mount_comments).
 		$('<section class="ge-comments fk-comments" hidden></section>').insertAfter(this.$root.find(".ge-stage"));
+		$('<section class="ge-tools fk-tools" hidden></section>').insertAfter(this.$root.find(".fk-comments"));
 		this.mount_comments();
 		this.show_step(step_key || (spec && spec.step) || null);
 		this.refresh_notices();
