@@ -1,6 +1,6 @@
 # Custom HTML Block — block sources (source of truth)
 
-This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. There are 41 blocks here (one `<name>.{html,js,css}` triple each, registered in `setup/custom_html_blocks.py` `BLOCKS`): the original four — *Projects Dashboard*, *Task Dashboard*, *Morning Briefing* and *Desk Shortcuts* — plus *KPI Cockpit*, the per-viewer *My Training Dashboard* and *My Travel*, and the 34 department dashboard widgets described below.
+This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. There are 43 blocks here (one `<name>.{html,js,css}` triple each, registered in `setup/custom_html_blocks.py` `BLOCKS`): the original four — *Projects Dashboard*, *Task Dashboard*, *Morning Briefing* and *Desk Shortcuts* — plus *KPI Cockpit*, the per-viewer *My Training Dashboard* and *My Travel*, the 34 department dashboard widgets described below, and since v1.681.0 *Home Dashboard Tasks* (My Priority Tasks) and *Dashboard Hub Links* ([below](#files--my-priority-tasks-and-dashboard-hub-links-v16650)).
 
 > ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** every block in `BLOCKS` from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append), and the Projects Dashboard leads ERPNext's **Projects** workspace (`PROJECTS_LAYOUT`, restored whenever an ERPNext upgrade puts that page back to stock; see [`setup/README.md`](../setup/README.md#erpnexts-projects-workspace-replaced-only-while-it-is-erpnexts)). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
 
@@ -147,7 +147,7 @@ access, an empty answer the empty panel, and on an older bundle the block still 
 
 **The other six (v1.658.0).** The KPI Cockpit, Morning Briefing, Task Dashboard, Projects
 Dashboard, My Training Dashboard and My Travel are on the kit too, so every seeded block is
-except Desk Shortcuts, which asks the server nothing and has no panel to convert. Each kept
+except Desk Shortcuts and (since v1.681.0) Dashboard Hub Links, which ask the server nothing and have no panel to convert. Each kept
 what made it different:
 
 - **KPI Cockpit and Morning Briefing** still register a wrapper, `load(false)`, so a return
@@ -325,6 +325,28 @@ so both themes work, and where the colour *is* the meaning (good / watch / bad) 
 
 Registered in `setup/custom_html_blocks.py` `BLOCKS` only. The Travel workspace JSON places it, as the
 [Travel README](../travel_management/README.md#the-travel-hub) explains.
+
+## Files — My Priority Tasks and Dashboard Hub Links (v1.681.0)
+
+**Home Dashboard Tasks** (it draws as *My Priority Tasks*) was made on the site in 2025-12 and
+placed on the Projects workspace and the Executive Hub; until v1.681.0 it existed only in the
+database. Its source is `my_priority_tasks.{html,js,css}` now, under the same block name so both
+placements still join on it, and the seeder overwrites the site copy. It is not a copy of the
+Task Dashboard: that one is the shared morning screen, this one is the viewer's own open tasks,
+ranked projects first (company rank, then the project's tasks together, then Urgent, High,
+Medium, Low), 50 at a time. One call, `api.task_dashboard.get_my_priority_tasks`, replaces the
+old script's two client-side `get_list` calls and does the sorting. It is on the kit, escapes
+every value, opens a task in place, and binds nothing on `document.body` (the old script added a
+body listener on every render).
+
+**Dashboard Hub Links** is the first block on every department dashboard: the way back to the
+dashboard's hub. It is a block rather than a URL shortcut because a URL shortcut is never
+permission-filtered, and most people who can open a dashboard cannot open its hub (8 of 14 on
+Design, 11 of 14 on Operations, on prod on 2026-10-14). It reads `frappe.workspaces`, the
+workspaces this session may open, draws only those hubs, and hides itself when none is left. It
+asks the server nothing, so like Desk Shortcuts it has no panel to put on the kit and nothing to
+reload on a return. `tests/test_s4a_hub_links.py` holds its dashboard-to-hub map to the hubs'
+own dashboard shortcuts.
 
 ## Relationship to the retired Project Dashboard desk page
 

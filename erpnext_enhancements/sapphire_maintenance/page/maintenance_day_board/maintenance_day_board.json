@@ -3,6 +3,7 @@
  "creation": "2026-06-11 10:00:00.000000",
  "doc_type": "Page",
  "doctype": "Page",
+ "modified": "2026-10-14 12:00:00.000000",
  "module": "Sapphire Maintenance",
  "name": "maintenance-day-board",
  "owner": "Administrator",
@@ -17,6 +18,9 @@
   },
   {
    "role": "Projects Manager"
+  },
+  {
+   "role": "Maintenance Manager"
   }
  ],
  "standard": "Yes",

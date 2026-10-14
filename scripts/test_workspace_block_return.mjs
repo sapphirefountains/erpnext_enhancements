@@ -915,6 +915,8 @@ const KIT_SPECS = {
 		offMessage: [],
 		off: /No active client projects/,
 	},
+	// My Priority Tasks (v1.681.0): the viewer's own tasks, so an empty answer is "none for you".
+	"my_priority_tasks.js": { off: /No open tasks/ },
 };
 
 /** Everything an element and the elements appended to it say, markup and text. */
@@ -1107,16 +1109,53 @@ for (const [file, lists] of Object.entries(EMPTY_LISTS)) {
 
 console.log("\nthe last six, on the kit");
 
-await test("the last six are on the kit, so the checks above ran on them", () => {
-	const six = Object.keys(KIT_SPECS);
-	assert.equal(six.length, 6);
-	for (const file of six) assert.ok(onKit.includes(file), file + " is not on the kit");
+await test("the last six, and My Priority Tasks, are on the kit, so the checks above ran on them", () => {
+	const specced = Object.keys(KIT_SPECS);
+	assert.equal(specced.length, 7);
+	for (const file of specced) assert.ok(onKit.includes(file), file + " is not on the kit");
 });
 
 const answers = (table) => (method) =>
 	Object.prototype.hasOwnProperty.call(table, method)
 		? Promise.resolve({ message: table[method] })
 		: Promise.resolve({ message: null });
+
+const MY_TASKS = "erpnext_enhancements.api.task_dashboard.get_my_priority_tasks";
+
+await test("my_priority_tasks.js: draws the viewer's tasks escaped, 50 at a time, and opens one in place", async () => {
+	const rows = Array.from({ length: 60 }, (_, i) => ({
+		name: "TASK-" + i,
+		subject: i === 0 ? "<b>Pump</b>" : "Task " + i,
+		priority: i === 0 ? "Urgent" : "Low",
+		status: "Open",
+		exp_end_date: "",
+		project: i === 0 ? "PROJ-1" : "",
+		project_name: i === 0 ? "<i>Fountain</i>" : "",
+		rank: i === 0 ? 3 : 0,
+	}));
+	const routes = [];
+	const { desk, body } = await runOnKit("my_priority_tasks.js", answers({ [MY_TASKS]: rows }), {
+		setup(d) {
+			d.sandbox.frappe.set_route = (...args) => routes.push(args);
+		},
+	});
+	assert.deepEqual(desk.calls, [MY_TASKS], "it asked something other than its one endpoint");
+	assert.match(body.innerHTML, /&lt;b&gt;Pump&lt;\/b&gt;/, "a subject went in unescaped");
+	assert.match(body.innerHTML, /&lt;i&gt;Fountain&lt;\/i&gt;/, "a project name went in unescaped");
+	// The stand-in desk's __() does not fill {0}; one ranked task, one rank label.
+	assert.equal((body.innerHTML.match(/class="mpt-rank"/g) || []).length, 1, "the rank label");
+	assert.match(body.innerHTML, /href="\/desk\/task\/TASK-0"/);
+	assert.doesNotMatch(body.innerHTML, /\/app\//, "a /app/ link");
+	assert.equal((body.innerHTML.match(/class="mpt-task/g) || []).length, 50, "not the first 50");
+	assert.doesNotMatch(body.innerHTML, /sf-state/, "a state panel over the rows");
+	const link = { getAttribute: () => "TASK-0" };
+	let prevented = false;
+	for (const fn of body.listeners.click || []) {
+		fn({ target: { closest: () => link }, button: 0, preventDefault: () => (prevented = true) });
+	}
+	assert.ok(prevented, "the click was left to the browser: a full Desk reload");
+	assert.deepEqual(routes, [["Form", "Task", "TASK-0"]]);
+});
 
 const KPI = "erpnext_enhancements.api.kpi.";
 

@@ -1,9 +1,17 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_production_wip_aging\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production WIP Aging\", \"col\": 12}}, {\"id\": \"ee_chb_production_milestone_slippage\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Milestone Slippage\", \"col\": 12}}, {\"id\": \"ee_chb_production_material_readiness\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Material Readiness\", \"col\": 12}}, {\"id\": \"ee_chb_production_hours_variance\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Hours Variance\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}, {\"id\": \"ee_chb_production_wip_aging\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production WIP Aging\", \"col\": 12}}, {\"id\": \"ee_chb_production_milestone_slippage\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Milestone Slippage\", \"col\": 12}}, {\"id\": \"ee_chb_production_material_readiness\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Material Readiness\", \"col\": 12}}, {\"id\": \"ee_chb_production_hours_variance\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Production Hours Variance\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Dashboard Hub Links",
+   "label": "Dashboard Hub Links"
+  },
+  {
+   "custom_block_name": "KPI Cockpit",
+   "label": "KPI Cockpit"
+  },
   {
    "custom_block_name": "Production WIP Aging",
    "label": "Production WIP Aging"
@@ -19,10 +27,6 @@
   {
    "custom_block_name": "Production Hours Variance",
    "label": "Production Hours Variance"
-  },
-  {
-   "custom_block_name": "KPI Cockpit",
-   "label": "KPI Cockpit"
   }
  ],
  "doctype": "Workspace",
@@ -33,7 +37,7 @@
  "is_standard": 1,
  "label": "Production Dashboard",
  "links": [],
- "modified": "2026-07-07 18:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Production Dashboard",

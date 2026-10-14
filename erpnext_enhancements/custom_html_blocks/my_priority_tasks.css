@@ -1,0 +1,171 @@
+/* My Priority Tasks ("Home Dashboard Tasks").
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); the Urgent and High edges, where the colour
+   IS the meaning, come from the app's --sf-* tokens, which pierce it the same
+   way. The priority is also written on every card, so colour is never the only
+   signal. */
+
+.mpt-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.mpt-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.mpt-title {
+    font-weight: 600;
+}
+
+.mpt-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.mpt-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.mpt-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.mpt-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.mpt-refresh:focus-visible,
+.mpt-more:focus-visible,
+.mpt-task:focus-visible {
+    outline: 2px solid var(--primary, #2490ef);
+    outline-offset: 2px;
+}
+
+.mpt-how {
+    margin: 0 0 10px;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.mpt-body {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+@media (min-width: 768px) {
+    .mpt-body {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1100px) {
+    .mpt-body {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+.mpt-task {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 96px;
+    padding: 12px 14px;
+    color: var(--text-color);
+    text-decoration: none;
+    background: var(--card-bg, var(--fg-color));
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--border-color);
+    border-radius: var(--border-radius-md, 8px);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mpt-task:hover {
+    text-decoration: none;
+    color: var(--text-color);
+    box-shadow: var(--shadow-sm, 0 1px 4px rgba(0, 0, 0, 0.08));
+}
+
+.mpt-task--danger {
+    border-left-color: var(--sf-danger);
+}
+
+.mpt-task--warn {
+    border-left-color: var(--sf-warn);
+}
+
+.mpt-subject {
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.mpt-project {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+}
+
+.mpt-none {
+    font-style: italic;
+}
+
+.mpt-rank {
+    margin-left: 6px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.mpt-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.mpt-id {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.mpt-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.mpt-foot {
+    text-align: center;
+    margin-top: 10px;
+}
+
+.mpt-more {
+    background: var(--control-bg, var(--bg-light-gray));
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    border-radius: var(--border-radius-sm);
+    padding: 6px 14px;
+    min-height: 32px;
+    cursor: pointer;
+}
+
+.mpt-more[hidden] {
+    display: none;
+}
