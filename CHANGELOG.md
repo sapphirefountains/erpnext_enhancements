@@ -70,6 +70,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target page's state. It covers Back and Forward, a name that needs escaping, a leftover option,
   the planner's last-used view and the Day Board on another day.
 
+## [1.666.0] - 2026-10-14
+
+### Added
+
+- **The Device Console's camera now scans on an iPhone** (S6b, ERPNext TASK-2026-02808). The
+  console used `BarcodeDetector` with no fallback, and iPhone Safari has none, so the camera button
+  never appeared there. It now falls back to jsQR, as the Inventory Scanner Audit has since
+  v1.521.0. jsQR reads QR codes only, so a device's 1D barcode on an iPhone still needs the wedge
+  scanner or typing.
+- **A shared scanner kit**, `public/js/scanner_kit/`, loaded as `scanner_kit.bundle.js`, which sets
+  `window.sf_scanner`. The Device Console and the Inventory Scanner Audit each carried their own copy
+  of the camera sheet and of the history handling that makes the phone's Back button close a sheet,
+  and the copies had drifted: that drift is how the console lost the iPhone. Both pages now use the
+  kit.
+  - `sheets.js` is the sheets' Back/Forward handling, moved from the two pages unchanged: one
+    history entry per sheet, marked in `history.state`, shown only once its route has settled;
+    Back pops it; a sheet closed another way steps back off its own entry once.
+  - `reader.js` picks the decoder. Where `BarcodeDetector` reads QR, it is used alone and jsQR is
+    never loaded, so Android and desktop Chrome pay nothing for it. With no `BarcodeDetector`, or one
+    that reads nothing, jsQR is used alone (QR only). Where the detector reads barcodes but not QR,
+    both are used, for barcodes and QR codes.
+  - jsQR is the vendored file /stock-scan already ships. It is loaded raw through `frappe.require`
+    by its bare path, never bundled: it is a UMD file that sets `window.jsQR`. /stock-scan's own
+    scanner is untouched.
+  - `camera.js` is the Camera Scan sheet. It also shows a Torch button where the camera track
+    offers one (Chrome on Android; iOS does not), and says why there is no camera: access blocked
+    for the site, no camera found, or a generic failure.
+  - **iOS handling.** The video is `playsinline`, `muted` and `autoplay`, and `muted` is also set as
+    a property. The camera uses `facingMode: "environment"` with no audio, and is asked for only
+    from a tap, after the sheet is up. Every track is stopped on close, when the document goes
+    hidden, on `pagehide`, and on frappe's `hide` of the page's wrapper, so the camera light goes
+    off.
+  - Each page loads the kit behind a guard, the same pattern it uses for sf_kit. A kit already on
+    the page answers at once, so nothing changes in timing after the first load. On a Desk's first
+    visit, a page show that comes while the kit is loading, and any sheet tapped open, wait for it.
+  - If the kit never arrives, each page falls back to plain dialogs with no history entry. The
+    camera button stays hidden, and scanning, Choose Employee, Find Item and the count still work.
+
+### Fixed
+
+- **Leaving a scanner page while its camera was still fading in left the camera running.** The
+  router closes a displayed dialog on a page change, but not one still fading in. That sheet then
+  finished showing over the next page with the camera on. The kit now stops the camera on the
+  page's `hide`, and closes the sheet as soon as Bootstrap allows.
+- **The Device Console's camera now closes when the phone locks or the app is switched.** It had no
+  `visibilitychange` close. The Scanner Audit had one, and the kit now does this for both pages.
+- **A jsQR file that failed to load can be loaded again without reloading the page.** v16.50's
+  `assets.js` marks a path as executed even when its `<script>` failed, so every later
+  `frappe.require` of it does nothing. The message still said to check the connection, which could
+  never help. On a later open after a failure, the kit now adds a `<script>` of its own: it removes
+  any earlier failed one, and the new one has a `?retry=` query so the browser fetches the file
+  again. The retry settles when the file loads, when it errors, or after 10 seconds.
+- **A scanner kit that throws as it starts no longer leaves its page stuck.** If `kit.sheets()` or
+  `watch()` threw, one of two things happened. With the kit already on the page, the page's own
+  start-up threw. On a first visit, the queue of shows and taps waiting for the kit was never
+  cleared, so the page never decided its first show and no sheet would open. Each page now treats a kit that throws as no
+  kit: it falls back to the plain sheets, and the queue still runs.
+
+### Tests
+
+- `scripts/test_scanner_kit.mjs` (run from the new `tests/test_scanner_kit.py`, and as its own CI
+  step) tests the kit against stubbed `navigator.mediaDevices`, jsQR, and a `BarcodeDetector` that is
+  present, absent, or present without QR. It checks:
+  - the decoder each case picks;
+  - that jsQR is never loaded where the detector reads QR;
+  - that every track stops on each way out;
+  - the inline muted video and the camera constraints;
+  - the failure messages and the torch;
+  - one history entry per sheet, popped by Back.
+- `tests/test_scanner_kit.py` fails the build if:
+  - either page keeps its own camera loop, decoder or history writes;
+  - either page loads the kit without its guard;
+  - the kit imports jsQR or any /stock-scan code.
+- `scripts/test_desk_page_history.js` now runs both pages on the real kit, with ten new
+  scenarios:
+  - the console reading a QR code through jsQR on an iPhone, and jsQR never loaded where the
+    detector reads QR;
+  - the Scanner Audit reading a location label through jsQR on an iPhone;
+  - the page hide during the camera's fade-in;
+  - the phone locking with the camera open;
+  - the blocked and missing camera messages;
+  - a console with no kit;
+  - a first visit where the kit arrives late, with a sheet URL and with a sheet tapped open.
+- `tests/test_desk_page_history.py` now reads the shared history logic from the kit.
+  `tests/test_s3_page_states.py` checks that the S3.1 start-up panel never waits for the scanner
+  kit.
+
 ## [1.664.0] - 2026-10-14
 
 ### Changed
