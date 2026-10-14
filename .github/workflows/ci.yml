@@ -1122,6 +1122,14 @@ jobs:
       # it installs its own frappe stub.
       - name: Opportunity-Project link backfill fills only what it can prove
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_project_link_backfill -v
+      # Orphaned addresses (v1.639.0): RUNS the import-address cleanup against a stub -- the
+      # delete rule (normalized street match to a Customer-linked address; a refused delete is
+      # rolled back and listed, never forced) and the link rule (exactly one Supplier, no
+      # Customer of the same name, a bare Dynamic Link insert, no save) -- and checks statically
+      # that no record name or email is hard-coded: this repository is public. unittest-style.
+      # Own step: it installs its own frappe stub.
+      - name: Orphaned import addresses are deleted or linked only by rule
+        run: python -m unittest erpnext_enhancements.tests.test_address_orphan_cleanup -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML
@@ -1811,7 +1819,7 @@ jobs:
       # setUpModule.
       - name: Purchase Order PDF filename (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_pdf_filename -v
-      # Opening a Kanban board never writes a document (v1.637.3). frappe v16.50.0's board
+      # Opening a Kanban board never writes a document (v1.639.1). frappe v16.50.0's board
       # init() sends each column's saved order and its update_order set_value()s every card
       # listed under the wrong column, so a card whose status changed on the form was saved
       # into its old column and back on every board open -- and re-sent the Closed Won

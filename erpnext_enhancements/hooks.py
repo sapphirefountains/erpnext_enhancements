@@ -2718,7 +2718,7 @@ override_whitelisted_methods = {
 	# and only rewrites the filename afterwards, for Purchase Order alone. See
 	# po_pdf_filename.py.
 	"frappe.utils.print_format.download_pdf": "erpnext_enhancements.po_pdf_filename.download_pdf",
-	# Opening a Kanban board must never change a document (v1.637.3). frappe v16.50.0's board
+	# Opening a Kanban board must never change a document (v1.639.1). frappe v16.50.0's board
 	# init() sends every column's SAVED order to update_order, and the server set_value()s each
 	# card listed under a column that is not its stored value. A status changed on the form
 	# leaves the card's name in its old column's saved order, so every board open re-saved it

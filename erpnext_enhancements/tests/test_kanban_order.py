@@ -1,4 +1,4 @@
-"""Bench-free unit tests for the Kanban ``update_order`` override (v1.637.3).
+"""Bench-free unit tests for the Kanban ``update_order`` override (v1.639.1).
 
 Stubs a minimal ``frappe`` -- including ``frappe.desk.doctype.kanban_board.kanban_board`` -- so
 ``erpnext_enhancements.kanban_order`` runs under plain unittest. The stub is installed in
