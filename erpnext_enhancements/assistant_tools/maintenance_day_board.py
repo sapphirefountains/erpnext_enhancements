@@ -24,7 +24,8 @@ class MaintenanceDayBoard(BaseTool):
             "chemistry readings or warranty/RMA claims). Every row carries project_title "
             "and technician. Use this first for any 'what is happening in maintenance "
             "today' question, then drill into specific visits with maintenance_visit_history. "
-            "Requires the Maintenance Supervisor, Projects Manager, or System Manager role."
+            "Requires the Maintenance Supervisor, Maintenance Manager, Projects Manager, or "
+            "System Manager role."
         )
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"

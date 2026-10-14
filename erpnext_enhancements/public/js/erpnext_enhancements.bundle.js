@@ -131,6 +131,7 @@ import "./global_enhancements/workspace_block_return.js";
 // page-loaded bundle; this is only the memoized frappe.require and the stand-in for a kit that
 // never arrived, which seven pages used to carry a copy each.
 import "./sf_kit_loader.js";
+import "./global_enhancements/page_search.js"; // S4c: a "Pages" search section + Alt+Shift page shortcuts
 import "./global_enhancements/unlink_and_delete.js";
 // Generic document merge — global "Merge into…" form button + list bulk merge
 // (gated by frappe.boot.ee_merge_tool). Server: document_merge.py.

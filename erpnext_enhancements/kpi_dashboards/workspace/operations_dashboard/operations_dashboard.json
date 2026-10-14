@@ -1,9 +1,13 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_operations_fleet_health\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Operations Fleet Health\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_operations_fleet_health\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Operations Fleet Health\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Dashboard Hub Links",
+   "label": "Dashboard Hub Links"
+  },
   {
    "custom_block_name": "Operations Fleet Health",
    "label": "Operations Fleet Health"
@@ -21,7 +25,7 @@
  "is_standard": 1,
  "label": "Operations Dashboard",
  "links": [],
- "modified": "2026-09-24 12:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Operations Dashboard",

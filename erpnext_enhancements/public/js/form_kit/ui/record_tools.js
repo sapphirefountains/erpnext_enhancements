@@ -114,10 +114,16 @@ export class RecordTools {
 	mount() {
 		const ed = this.ed;
 		this.seq += 1;
+		// Which mount (record) a lazy list's answer belongs to; `seq` also moves on every reload.
+		this.mount_seq = (this.mount_seq || 0) + 1;
 		this.info = null;
 		this.people_loaded = false;
 		this.connections_loaded = false;
 		this.show_all = false;
+		this.widgets = null;
+		this.$directory = null;
+		this.$connections = null;
+		this.groups = [];
 		const $root = ed.$root || $();
 		$root.find(".ge-tools-actions").remove();
 		const $box = $root.find(".ge-tools");
@@ -896,7 +902,9 @@ export class RecordTools {
 
 	load_people() {
 		this.people_loaded = true;
-		const seq = this.seq;
+		// Its own count: a reload of the rest (seq) must not strand this list on "loading".
+		const seq = (this.people_seq = (this.people_seq || 0) + 1);
+		const record = this.mount_seq;
 		const $body = this.$directory;
 		if (!$body) return;
 		const sources = this.sources();
@@ -906,11 +914,11 @@ export class RecordTools {
 			on ? this.sf().call(SYNC + method, args, { quiet: true, method: "GET" }) : Promise.resolve(null);
 		Promise.all([ask("get_contacts_for_context", this.widgets.contacts), ask("get_addresses_for_context", this.widgets.addresses)])
 			.then(([contacts, addresses]) => {
-				if (seq !== this.seq || !this.current()) return;
+				if (seq !== this.people_seq || record !== this.mount_seq || !this.current()) return;
 				this.render_people(contacts, addresses, sources);
 			})
 			.catch((err) => {
-				if (seq !== this.seq || !this.current()) return;
+				if (seq !== this.people_seq || record !== this.mount_seq || !this.current()) return;
 				this.sf().state.render($body, "error", {
 					title: __("Contacts and addresses could not be loaded."),
 					body: (err && err.message) || "",
@@ -1221,7 +1229,9 @@ export class RecordTools {
 
 	load_connections() {
 		this.connections_loaded = true;
-		const seq = this.seq;
+		// Its own count: a reload of the rest (seq) must not strand this list on "loading".
+		const seq = (this.connections_seq = (this.connections_seq || 0) + 1);
+		const record = this.mount_seq;
 		const $body = this.$connections;
 		const dashboard = this.meta().__dashboard || {};
 		const items = rules.connection_doctypes(this.groups);
@@ -1229,11 +1239,11 @@ export class RecordTools {
 		this.sf()
 			.call(dashboard.method || "frappe.desk.notifications.get_open_count", { doctype: this.doctype, name: this.name, items }, { quiet: true, method: "GET" })
 			.then((result) => {
-				if (seq !== this.seq || !this.current()) return;
+				if (seq !== this.connections_seq || record !== this.mount_seq || !this.current()) return;
 				this.render_connections(rules.connection_counts((result || {}).count));
 			})
 			.catch((err) => {
-				if (seq !== this.seq || !this.current()) return;
+				if (seq !== this.connections_seq || record !== this.mount_seq || !this.current()) return;
 				this.sf().state.render($body, "error", {
 					title: __("Connections could not be counted."),
 					body: (err && err.message) || "",
