@@ -130,6 +130,18 @@ _ADDED_SIDEBAR_ITEMS = {
 			"after": ("Report", "Project wise Stock Tracking"),
 		},
 	],
+	# Nik, 2026-10-13: "I don't see an easy way to navigate to the guided opportunity setup." The
+	# guided page's start screen (New, and the person's own open deals) sits under Opportunity.
+	"CRM": [
+		{
+			"label": "Guided Entry",
+			"link_type": "Page",
+			"link_to": "guided-entry",
+			"icon": "list-checks",
+			"child": 0,
+			"after": ("DocType", "Opportunity"),
+		},
+	],
 }
 
 
