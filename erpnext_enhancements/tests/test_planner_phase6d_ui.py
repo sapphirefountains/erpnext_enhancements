@@ -614,23 +614,32 @@ class TestHouseRules(unittest.TestCase):
 
 	def test_styles_are_namespaced_and_text_is_american(self):
 		for block, prefix in ((PP_BLOCK, ("pp-", "pk-")), (MP_BLOCK, ("mp-", "pk-"))):
-			if block is PP_BLOCK:
-				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
-				# section of it, from its banner to the next.
-				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
-				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6D_STYLE).")))
-				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertNotIn("_STYLE = `", block)
-			else:
-				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner
+			# to the next.
+			js, tag = (PP_JS, "PP6D_STYLE") if block is PP_BLOCK else (MP_JS, "MP6D_STYLE")
+			raw = js.with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({tag}).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual({c for c in classes if not c.startswith(prefix)}, set(), classes)
+		# The two modules' CSS is a section each of public/css/planner_kit.bundle.css (S3.4e,
+		# v1.673.0), which the planners load beside the kit. The constants stay, empty, because the
+		# bundle still appends them to its own <style>, and no rule may be injected twice.
 		for name in ("CONFLICTS_CSS", "BLOCKS_CSS"):
 			text = _kit("conflicts" if name == "CONFLICTS_CSS" else "blocks")
-			css = text[text.index(f"export const {name} = `") :]
+			self.assertIn(f'export const {name} = "";', text)
+		raw = (APP / "public/css/planner_kit.bundle.css").read_text(encoding="utf-8")
+		for tag in ("(conflicts.js CONFLICTS_CSS).", "(blocks.js BLOCKS_CSS)."):
+			start = raw.index("*/", raw.index("/* ===", raw.index(tag)))
+			end = raw.find("\n/* ===", start)
+			css = re.sub(r"/\*.*?\*/", "", raw[start + 2 : end], flags=re.S)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
-			self.assertEqual({c for c in classes if not c.startswith("pk-")}, set(), classes)
+			with self.subTest(section=tag):
+				self.assertTrue(classes)
+				self.assertEqual({c for c in classes if not c.startswith("pk-")}, set(), classes)
 		for text in (PP_BLOCK, MP_BLOCK, _kit("conflicts"), _kit("blocks")):
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour", "favour"):
 				self.assertNotIn(british, text.lower(), british)

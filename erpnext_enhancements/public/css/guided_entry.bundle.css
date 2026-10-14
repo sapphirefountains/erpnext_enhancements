@@ -699,7 +699,7 @@ body.ge-page-active .triton-fab {
 	}
 }
 
-/* ---- The side panel (form kit P4.4, v1.672.0): the same editor in the planner kit's drawer ----
+/* ---- The side panel (form kit P4.4, v1.675.0): the same editor in the planner kit's drawer ----
  * form_kit/ui/side_panel.js draws a step's fields with the guided page's own classes (.ge-fields,
  * .ge-notices, .ge-conflict, .ge-saveline, .ge-help-*), so all of the above applies to it. Here only
  * what differs: the drawer is narrow, so a form's columns always stack; the panel's own head and

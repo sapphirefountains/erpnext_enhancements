@@ -1,0 +1,1502 @@
+/* Planner kit: the stylesheet both planners share (custom pages S3.4e, v1.673.0, TASK-2026-02823).
+ *
+ * It used to be three template strings the kit wrote into one <style id="pk-style"> element:
+ * styles.js's CSS, then conflicts.js's CONFLICTS_CSS, then blocks.js's BLOCKS_CSS. It is a real
+ * esbuild bundle now, with a content-hashed name, so an edit is never served stale from the
+ * one-year /assets cache. The sections below keep the order of those three strings.
+ *
+ * How it loads: each planner asks for it in the same frappe.require as the kit's script (PP6A.kit
+ * and MP6A.kit list both bundles). frappe.require appends it as a <link> after the planner page's
+ * own stylesheet, which Frappe added when the page loaded, so the kit's rules still come after the
+ * page's: rules of equal specificity in a page's CSS and here (.pk-tl-bar.pp-tl-colored and
+ * .pk-tl-bar.pk-tl-over, .pp-p6d-mw .pk-block and .pk-block.pk-block-compact) resolve as they
+ * always did. The callback waits for both files, so nothing the kit draws flashes unstyled. If this
+ * file cannot be fetched, frappe.require still calls back: the kit is plain and every script runs.
+ * The kit's own <style id="pk-style"> is empty now (styles.js).
+ *
+ * Every selector starts with pk-, which only the kit draws; the two planners share it on purpose,
+ * so it is global once loaded. Colors are the app's --sf-* tokens (docs/app-design-system.md),
+ * which follow the Desk's light or dark theme. Status is the three status tokens: a tint is the
+ * token over the surface; status as text is mixed half and half with --sf-text-strong (plain
+ * yellow is 1.7:1 on white and is never text). A booking's edge is its pillar's chip edge, the
+ * same as the planners' own cards: a project task Build, a visit Service, a rental Rent, travel
+ * Neutral.
+ *
+ * Structure is square: the drawer, menus, day columns, timelines and conflict cards. Controls
+ * round at --sf-radius-control; chips and states are pills; a stop's number is a circle. Nothing
+ * has a shadow: the drawer and the menu have an edge, the hover glow is a tint and a late bar is a
+ * ring. One phone breakpoint, 767px; on a touch screen the kit's controls are 44px. */
+
+/* ======================================================================================== */
+/* The kit: drawer, panel, toast, menu, hints, glow, legend, quick looks, timeline           */
+/* (styles.js CSS).                                                                          */
+/* ======================================================================================== */
+
+/* The drawer sits at z-index 1025: above the page, its sticky head (6) and Frappe's sidebar
+ * (1020-1023); below a dock (1030), a modal and its backdrop (1040/1050) and the datepicker
+ * (9999), so a reason prompt or a date picker opened from it shows above it. The menu and the
+ * toast sit just above the drawer. Its width comes from the script, as --pk-w. */
+.pk-drawer {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: var(--pk-w, 440px);
+	max-width: 100vw;
+	z-index: 1025;
+	display: flex;
+	flex-direction: column;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border-left: var(--sf-border-control) solid var(--sf-field-border);
+	outline: none;
+}
+
+.pk-drawer[hidden] {
+	display: none;
+}
+
+.pk-drawer.pk-open {
+	animation: pk-slide 0.16s ease-out;
+}
+
+@keyframes pk-slide {
+	from {
+		transform: translateX(24px);
+		opacity: 0.6;
+	}
+
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+
+.pk-drawer-head {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 10px 12px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-drawer-heading {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.pk-drawer-title {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1.3;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-drawer-sub {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+}
+
+.pk-drawer-sub[hidden] {
+	display: none;
+}
+
+.pk-drawer-tools {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
+}
+
+.pk-drawer-close {
+	border: none;
+	background: none;
+	color: var(--sf-text-muted);
+	font-size: 22px;
+	line-height: 1;
+	padding: 0 4px;
+	cursor: pointer;
+	border-radius: var(--sf-radius-control);
+}
+
+.pk-drawer-close:hover,
+.pk-drawer-close:focus {
+	color: var(--sf-text-strong);
+	background: var(--sf-bg);
+	outline: none;
+}
+
+.pk-drawer-close:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-drawer-body {
+	flex: 1 1 auto;
+	overflow: auto;
+	padding: 10px 12px 16px;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
+}
+
+.pk-drawer-foot {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: flex-end;
+	padding: 8px 12px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-drawer-foot[hidden] {
+	display: none;
+}
+
+.pk-busy {
+	opacity: 0.55;
+	transition: opacity 0.1s;
+}
+
+.pk-staging {
+	display: none !important;
+}
+
+/* The side panel hosts a Frappe FieldGroup; its layout keeps Frappe's fields as they are. */
+.pk-panel .form-layout {
+	padding: 0;
+}
+
+.pk-panel .frappe-control {
+	margin-bottom: 10px;
+}
+
+.pk-arrows {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.pk-arrows-label {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	min-width: 96px;
+	text-align: center;
+	white-space: nowrap;
+}
+
+/* The toast is sf_kit's toast drawn with the pk- prefix (planner_kit/toast.js), so it looks like
+ * .sf-toast in sf_kit.bundle.css: inverted, a --sf-text-strong ground with --sf-surface text, so
+ * it stands out on the light and the dark page; a warning or a success has a 5px status edge. */
+.pk-toast {
+	position: fixed;
+	left: 50%;
+	bottom: var(--sf-space-20);
+	transform: translateX(-50%);
+	z-index: 1046;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	max-width: min(560px, calc(100vw - 24px));
+	min-height: var(--sf-touch-min);
+	padding: 0 0 0 var(--sf-space-15);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+}
+
+.pk-toast-success {
+	border-left: var(--sf-space-5) solid var(--sf-good);
+}
+
+.pk-toast-warning {
+	border-left: var(--sf-space-5) solid var(--sf-warn);
+}
+
+.pk-toast-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: var(--sf-space-10) 0;
+}
+
+.pk-toast-action,
+.pk-toast-close {
+	box-sizing: border-box;
+	min-height: var(--sf-touch-min);
+	border: 0;
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: inherit;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.pk-toast-action {
+	padding: 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+}
+
+.pk-toast-close {
+	min-width: var(--sf-touch-min);
+	font-size: var(--sf-text-lg);
+	line-height: 1;
+}
+
+.pk-toast-action:hover,
+.pk-toast-close:hover {
+	background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.pk-toast-action:focus-visible,
+.pk-toast-close:focus-visible {
+	outline: var(--sf-border-control) solid currentColor;
+	outline-offset: -4px;
+}
+
+/* The right-click menu: square, on the surface, with a field edge instead of a drop shadow. */
+.pk-menu {
+	position: fixed;
+	z-index: 1047;
+	min-width: 200px;
+	max-width: min(320px, calc(100vw - 16px));
+	padding: 4px 0;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+}
+
+.pk-menu-title {
+	padding: 4px 12px 6px;
+	font-size: 11px;
+	color: var(--sf-eyebrow);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-menu-item {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	padding: 6px 12px;
+	border: none;
+	background: none;
+	color: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-menu-item:hover,
+.pk-menu-item:focus {
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+	outline: none;
+}
+
+.pk-menu-item:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pk-menu-item[disabled] {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.pk-menu-danger {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pk-menu-hint {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pk-menu-divider {
+	height: 1px;
+	margin: 4px 0;
+	background: var(--sf-rule);
+}
+
+/* A first-time tip: a dashed focus edge on a light focus tint. */
+.pk-hint {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 8px;
+	padding: 6px 10px;
+	border: var(--sf-border-hairline) dashed var(--sf-focus);
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-focus) 6%, var(--sf-surface));
+	color: var(--sf-text);
+	font-size: 12px;
+}
+
+.pk-hint b {
+	color: var(--sf-link);
+}
+
+.pk-hint-close {
+	margin-left: auto;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	padding: 1px 8px;
+	cursor: pointer;
+}
+
+.pk-hint-close:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+/* Hovering a name lights up that person's bookings (and Phase 6C's highlight uses the same
+ * class). A booking is tinted on its ground color, not ringed: a card's outline carries its state
+ * (selected, moving, drafted, a drop target), and a ground color leaves the stripes of an off
+ * technician, a pencilled card or a blocked day (their background-image) showing through. The
+ * names themselves (a badge painted in the person's own color, a name in a row) carry
+ * data-pk-person; a tint would wash a badge's color out, so they take an inset focus ring. */
+.pk-glow:not([data-pk-person]) {
+	background-color: color-mix(in srgb, var(--sf-focus) 22%, var(--sf-surface)) !important;
+}
+
+.pk-glow[data-pk-person] {
+	outline: 2px solid var(--sf-focus) !important;
+	outline-offset: -2px !important;
+}
+
+.pk-legend-section {
+	margin-bottom: 14px;
+}
+
+.pk-legend-title {
+	margin: 0 0 4px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	font-weight: 600;
+}
+
+.pk-legend-note {
+	margin: 0 0 6px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pk-legend-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.pk-legend-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 4px 0;
+	font-size: 13px;
+}
+
+.pk-legend-sample {
+	flex: 0 0 112px;
+	display: flex;
+	align-items: center;
+	min-height: 20px;
+	overflow: hidden;
+}
+
+.pk-legend-sample > * {
+	max-width: 112px;
+}
+
+.pk-legend-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* A legend swatch: the color and the edge style come from the page's description of what it
+ * draws (legend.js writes them on the element). */
+.pk-swatch {
+	display: inline-block;
+	width: 24px;
+	height: 14px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-left-width: 4px;
+	border-radius: var(--sf-radius-none);
+}
+
+.pk-chip {
+	display: inline-block;
+	font-size: 10px;
+	border-radius: var(--sf-radius-pill);
+	padding: 0 6px;
+	margin-right: 3px;
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+}
+
+.pk-chip-red {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.pk-chip-amber {
+	background: color-mix(in srgb, var(--sf-warn) 16%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.pk-chip-green {
+	background: color-mix(in srgb, var(--sf-good) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.pk-chip-blue {
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
+	color: var(--sf-link);
+}
+
+.pk-state {
+	display: inline-block;
+	font-size: 11px;
+	border-radius: var(--sf-radius-pill);
+	padding: 0 7px;
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+}
+
+.pk-state-green {
+	background: color-mix(in srgb, var(--sf-good) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.pk-state-amber {
+	background: color-mix(in srgb, var(--sf-warn) 16%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.pk-state-red {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.pk-contact {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0 0 10px;
+}
+
+/* A person's week in the quick look: a column of days, each a list of bookings. */
+.pk-week {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.pk-day {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	overflow: hidden;
+}
+
+.pk-day-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	font-size: 12px;
+	cursor: pointer;
+	background: var(--sf-surface);
+}
+
+.pk-day-head:hover,
+.pk-day-head:focus {
+	background: var(--sf-bg);
+	outline: none;
+}
+
+.pk-day-head:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.pk-day-today .pk-day-head b {
+	color: var(--sf-link);
+}
+
+.pk-day-selected {
+	border-color: var(--sf-focus);
+}
+
+.pk-day-off {
+	background: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 14%, transparent) 6px 8px
+	);
+}
+
+/* A day with a conflict: a danger bar down its left side (it was an inset shadow). */
+.pk-day-conflict {
+	border-left: 3px solid var(--sf-danger);
+}
+
+.pk-day-drive {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	margin-left: auto;
+}
+
+.pk-items {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+/* A booking in a quick look: its left edge is its pillar's chip edge, as on the planners' cards. */
+.pk-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 5px 8px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 3px solid var(--sf-field-border);
+	font-size: 12px;
+	background: var(--sf-surface);
+}
+
+.pk-item.pk-k-task {
+	border-left-color: var(--sf-chip-edge-build);
+}
+
+.pk-item.pk-k-visit {
+	border-left-color: var(--sf-chip-edge-service);
+}
+
+.pk-item.pk-k-rental {
+	border-left-color: var(--sf-chip-edge-rent);
+}
+
+.pk-item.pk-k-travel {
+	border-left-color: var(--sf-chip-edge-neutral);
+}
+
+.pk-grab {
+	cursor: grab;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.pk-grab:hover {
+	background: var(--sf-bg);
+}
+
+.pk-dragging {
+	opacity: 0.35;
+}
+
+.pk-kind {
+	flex: 0 0 50px;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--sf-text-muted);
+	padding-top: 1px;
+}
+
+.pk-item-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.pk-item-label {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-item-meta {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-conflict {
+	font-size: 11px;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	padding: 3px 8px;
+}
+
+.pk-warning {
+	font-size: 11px;
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	padding: 3px 8px;
+}
+
+.pk-empty {
+	margin: 0;
+	padding: 6px 8px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pk-note {
+	margin: 10px 0 0;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pk-note-warn {
+	margin: 0 0 8px;
+	padding: 6px 10px;
+	border: var(--sf-border-hairline) dashed color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	border-radius: var(--sf-radius-none);
+	color: var(--sf-text);
+}
+
+.pk-stops {
+	margin-top: 12px;
+}
+
+.pk-stops-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+
+.pk-stops-head h4 {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pk-stop-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+}
+
+.pk-stop {
+	display: flex;
+	gap: 8px;
+	padding: 6px 8px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 12px;
+}
+
+.pk-stop:first-child {
+	border-top: none;
+}
+
+/* A stop's number: the route view's own marker (the Project Planner's .pp-stop-num). */
+.pk-stop-num {
+	flex: 0 0 auto;
+	width: 20px;
+	height: 20px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-bahama-blue);
+	color: var(--sf-white);
+	font-size: 11px;
+	font-weight: 700;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.pk-stop-body {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.pk-stop-time {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	font-weight: 600;
+}
+
+.pk-stop-label {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pk-stop-sub,
+.pk-stop-addr {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+a.pk-stop-addr {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.pk-link {
+	color: var(--sf-link);
+	cursor: pointer;
+	font-weight: 600;
+	border-radius: var(--sf-radius-none);
+}
+
+.pk-link:hover,
+.pk-link:focus {
+	text-decoration: underline;
+	outline: none;
+}
+
+.pk-link:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+/* Everyone's day: a column per person. */
+.pk-columns {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	overflow-x: auto;
+	padding-bottom: 6px;
+	-webkit-overflow-scrolling: touch;
+}
+
+.pk-col {
+	flex: 0 0 224px;
+	min-width: 0;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	overflow: hidden;
+}
+
+.pk-col-off {
+	background: repeating-linear-gradient(
+		135deg,
+		transparent 0 6px,
+		color-mix(in srgb, var(--sf-text-muted) 14%, transparent) 6px 8px
+	);
+}
+
+.pk-col-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	font-size: 12px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pk-col-meta {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	padding: 4px 8px;
+}
+
+.pk-section-title {
+	margin: 12px 0 4px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	font-weight: 600;
+}
+
+.pk-facts {
+	width: 100%;
+	font-size: 13px;
+	margin: 0 0 8px;
+	border-collapse: collapse;
+}
+
+.pk-facts th {
+	color: var(--sf-text-muted);
+	font-weight: normal;
+	padding: 2px 10px 2px 0;
+	vertical-align: top;
+	white-space: nowrap;
+	width: 1%;
+}
+
+.pk-facts td {
+	padding: 2px 0;
+}
+
+/* A project on a timeline (the Project Planner's quick look). Square bars on a quiet track; a
+ * task's own color comes from the page (.pk-tl-bar.pp-tl-colored in project_planner.css). A clipped
+ * end used to lose its rounded corner; the bars are square now, so the clip classes need no rule. */
+.pk-tl {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 4px 8px;
+}
+
+.pk-tl-scale {
+	display: flex;
+	justify-content: space-between;
+	font-size: 10px;
+	color: var(--sf-text-muted);
+	padding: 2px 0 4px;
+	margin-left: calc(42% + 8px);
+}
+
+.pk-tl-row {
+	display: grid;
+	grid-template-columns: minmax(0, 42%) minmax(0, 1fr);
+	gap: 8px;
+	align-items: center;
+	padding: 3px 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 12px;
+}
+
+.pk-tl-label {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.pk-tl-label b {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pk-tl-label span {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-tl-track {
+	position: relative;
+	height: 16px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-text-muted) 18%, var(--sf-surface));
+}
+
+.pk-tl-bar {
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	min-width: 4px;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-pillar-build);
+}
+
+.pk-tl-bar.pk-tl-pencil {
+	background: repeating-linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--sf-text-muted) 85%, transparent) 0 3px,
+		color-mix(in srgb, var(--sf-text-muted) 35%, transparent) 3px 6px
+	);
+}
+
+.pk-tl-bar.pk-tl-over {
+	background: var(--sf-danger);
+}
+
+.pk-tl-bar.pk-tl-late {
+	outline: 2px solid var(--sf-danger);
+	outline-offset: 0;
+}
+
+.pk-tl-today {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	width: 2px;
+	background: var(--sf-focus);
+	opacity: 0.7;
+}
+
+.pk-tl-off {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+/* ======================================================================================== */
+/* Phase 6D: the Conflict center (conflicts.js CONFLICTS_CSS).                               */
+/* ======================================================================================== */
+
+.pk-cc-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin: 0 0 6px;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pk-cc-count {
+	font-weight: 600;
+}
+
+.pk-cc-day {
+	margin: 0 0 10px;
+}
+
+.pk-cc-day-head {
+	margin: 8px 0 4px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+	font-weight: 600;
+}
+
+/* A conflict: a square card with a status edge. Over hours, double-booked or a day off is
+ * danger; a missing qualification warn; an equipment clash violet; one kept with a reason fades
+ * to a plain edge. */
+.pk-cc-item {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left: 3px solid var(--sf-danger);
+	border-radius: var(--sf-radius-none);
+	padding: 6px 8px;
+	margin-bottom: 6px;
+	background: var(--sf-surface);
+	font-size: 12px;
+}
+
+.pk-cc-item.pk-cc-k-qualification {
+	border-left-color: var(--sf-warn);
+}
+
+.pk-cc-item.pk-cc-k-equipment {
+	border-left-color: var(--sf-violet);
+}
+
+.pk-cc-item.pk-cc-kept {
+	border-left-color: var(--sf-field-border);
+	opacity: 0.8;
+}
+
+/* The conflict the center was opened at (a card's Conflict chip). */
+.pk-cc-item.pk-cc-focus {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-cc-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.pk-cc-icon {
+	display: inline-flex;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	flex: 0 0 auto;
+}
+
+.pk-cc-k-qualification .pk-cc-icon {
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.pk-cc-k-equipment .pk-cc-icon {
+	color: var(--sf-violet);
+}
+
+.pk-cc-kept .pk-cc-icon {
+	color: var(--sf-text-muted);
+}
+
+.pk-cc-who {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	color: var(--sf-text-strong);
+}
+
+.pk-cc-kind {
+	margin-left: auto;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--sf-text-muted);
+	white-space: nowrap;
+}
+
+.pk-cc-msg {
+	margin: 3px 0 4px;
+}
+
+.pk-cc-note {
+	margin: 0 0 4px;
+	color: var(--sf-text-muted);
+	font-style: italic;
+}
+
+.pk-cc-records {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.pk-cc-record {
+	border-top: var(--sf-border-hairline) dashed var(--sf-rule);
+	padding: 4px 0;
+}
+
+.pk-cc-record-main {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.pk-cc-title {
+	font-weight: 600;
+	min-width: 0;
+	color: var(--sf-text-strong);
+}
+
+.pk-cc-meta {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pk-cc-fixes {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 4px;
+}
+
+.pk-cc-ack {
+	margin-top: 4px;
+	font-size: 11px;
+	color: var(--sf-text-muted);
+}
+
+.pk-cc-keep {
+	margin-top: 6px;
+}
+
+.pk-cc-keep label {
+	font-size: 11px;
+	font-weight: normal;
+	color: var(--sf-text-muted);
+	margin: 0 0 2px;
+}
+
+.pk-cc-keep-error {
+	font-size: 11px;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	margin-top: 2px;
+}
+
+.pk-cc-keep-error[hidden] {
+	display: none;
+}
+
+.pk-cc-hint {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+}
+
+.pk-cc-pick-head {
+	margin: 0 0 6px;
+}
+
+.pk-cc-pick-title {
+	margin: 0 0 2px;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pk-cc-pick-context {
+	margin: 0;
+	font-size: 12px;
+	color: var(--sf-text-muted);
+}
+
+.pk-cc-people {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+/* Who is free: one button per person, the Project Planner's pick buttons (.p6b-pick). */
+.pk-cc-person {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	margin: 0 0 4px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.pk-cc-person:hover,
+.pk-cc-person:focus {
+	border-color: var(--sf-focus);
+	outline: none;
+}
+
+.pk-cc-person:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.pk-cc-person.pk-cc-busy {
+	opacity: 0.6;
+}
+
+.pk-cc-person[disabled] {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.pk-cc-person-name {
+	font-weight: 600;
+	min-width: 0;
+	color: var(--sf-text-strong);
+}
+
+.pk-cc-person-facts {
+	font-size: 11px;
+	color: var(--sf-text-muted);
+	text-align: right;
+}
+
+/* ======================================================================================== */
+/* Phase 6D: personal blocks and day notes (blocks.js BLOCKS_CSS).                            */
+/* ======================================================================================== */
+
+/* A personal block: hatched, on a dashed edge, so it never reads as a booking. */
+.pk-block {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	padding: 2px 6px;
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	font-size: 11px;
+	line-height: 1.3;
+	color: var(--sf-text-muted);
+	background-color: var(--sf-surface);
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 5px,
+		color-mix(in srgb, var(--sf-text-muted) 22%, transparent) 5px 7px
+	);
+	cursor: default;
+}
+
+.pk-block.pk-block-edit {
+	cursor: pointer;
+}
+
+.pk-block.pk-block-edit:hover,
+.pk-block.pk-block-edit:focus {
+	border-color: var(--sf-focus);
+	outline: none;
+}
+
+.pk-block.pk-block-edit:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-block.pk-block-allday {
+	border-style: solid;
+}
+
+.pk-block.pk-block-compact {
+	flex-direction: row;
+	padding: 0 4px;
+	font-size: 10px;
+}
+
+.pk-item.pk-k-block {
+	border-left-color: var(--sf-field-border);
+	background-image: repeating-linear-gradient(
+		135deg,
+		transparent 0 5px,
+		color-mix(in srgb, var(--sf-text-muted) 16%, transparent) 5px 7px
+	);
+}
+
+.pk-block-label {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pk-block-note {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-style: italic;
+}
+
+.pk-notes {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	font-size: 11px;
+}
+
+/* A day note: a warn tint, the color of a note on the wall, with its text in the body color. */
+.pk-note-line {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	max-width: 100%;
+	padding: 1px 6px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-warn) 18%, var(--sf-surface));
+	color: var(--sf-text);
+	cursor: pointer;
+}
+
+.pk-note-line:hover,
+.pk-note-line:focus {
+	background: color-mix(in srgb, var(--sf-warn) 32%, var(--sf-surface));
+	outline: none;
+}
+
+.pk-note-line:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-note-line.pk-note-full {
+	cursor: default;
+	white-space: normal;
+}
+
+.pk-note-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.pk-note-full .pk-note-text {
+	white-space: pre-wrap;
+}
+
+.pk-note-tag {
+	flex: 0 0 auto;
+	font-size: 9px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	padding: 0 4px;
+	border-radius: var(--sf-radius-pill);
+	background: color-mix(in srgb, var(--sf-text-muted) 14%, var(--sf-surface));
+	color: var(--sf-text-muted);
+}
+
+.pk-note-project {
+	flex: 0 0 auto;
+	font-size: 10px;
+	color: var(--sf-link);
+	white-space: nowrap;
+}
+
+.pk-note-project[data-pk-project] {
+	cursor: pointer;
+}
+
+.pk-note-project[data-pk-project]:hover {
+	text-decoration: underline;
+}
+
+.pk-note-add {
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: none;
+	color: var(--sf-text-muted);
+	font-size: 10px;
+	padding: 0 6px;
+	line-height: 16px;
+	cursor: pointer;
+}
+
+.pk-note-add:hover,
+.pk-note-add:focus {
+	color: var(--sf-link);
+	border-color: var(--sf-focus);
+	outline: none;
+}
+
+.pk-note-add:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-notes-mark {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	font-size: 11px;
+	cursor: pointer;
+	border-radius: var(--sf-radius-control);
+	padding: 0 3px;
+}
+
+.pk-notes-mark:hover,
+.pk-notes-mark:focus {
+	background: var(--sf-bg);
+	outline: none;
+}
+
+.pk-notes-mark:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+}
+
+.pk-day-notes {
+	margin: 0 0 10px;
+}
+
+.pk-day-note-list {
+	list-style: none;
+	margin: 0 0 6px;
+	padding: 0;
+}
+
+.pk-day-note {
+	padding: 5px 8px;
+	margin-bottom: 4px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-warn) 16%, var(--sf-surface));
+	color: var(--sf-text);
+	font-size: 12px;
+}
+
+.pk-day-note-text {
+	white-space: pre-wrap;
+}
+
+.pk-day-note-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 2px;
+	font-size: 11px;
+}
+
+.pk-form-who {
+	font-weight: 600;
+	margin: 0 0 6px;
+}
+
+/* ======================================================================================== */
+/* Touch, phones and motion.                                                                 */
+/* ======================================================================================== */
+
+/* On a touch screen the kit's own controls are 44px targets. */
+@media (pointer: coarse) {
+	.pk-drawer-close {
+		min-width: var(--sf-touch-min);
+		min-height: var(--sf-touch-min);
+	}
+
+	.pk-menu-item,
+	.pk-hint-close,
+	.pk-day-head,
+	.pk-cc-person {
+		min-height: var(--sf-touch-min);
+	}
+}
+
+@media (max-width: 767px) {
+	.pk-drawer {
+		width: 100vw;
+		border-left: none;
+	}
+
+	.pk-columns {
+		flex-direction: column;
+		overflow-x: visible;
+	}
+
+	.pk-col {
+		flex: 1 1 auto;
+		width: 100%;
+	}
+
+	.pk-toast {
+		left: var(--sf-space-10);
+		right: var(--sf-space-10);
+		bottom: calc(var(--sf-space-10) + env(safe-area-inset-bottom));
+		transform: none;
+		max-width: none;
+	}
+
+	.pk-legend-sample {
+		flex-basis: 88px;
+	}
+
+	.pk-tl-row {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.pk-tl-scale {
+		margin-left: 0;
+	}
+}
+
+/* The drawer does not slide in for someone who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+	.pk-drawer.pk-open {
+		animation: none;
+	}
+}

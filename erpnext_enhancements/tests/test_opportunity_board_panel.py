@@ -1,4 +1,4 @@
-"""Bench-free tests for the side panel (form kit P4.4) and the board's part C (P6.6, P6.7; v1.672.0).
+"""Bench-free tests for the side panel (form kit P4.4) and the board's part C (P6.6, P6.7; v1.675.0).
 
 Four halves:
 
@@ -1070,10 +1070,22 @@ class TestTheWiring(unittest.TestCase):
 
 	def test_the_panels_files_load_on_demand(self):
 		page = _code(PAGE_JS)
-		self.assertIn(
-			'const OB_PANEL_ASSETS = ["planner_kit.bundle.js", "guided_entry.bundle.js", "guided_entry.bundle.css"];',
-			page,
-		)
+		panel = page[
+			page.index("const OB_PANEL_ASSETS = [") : page.index(
+				"];", page.index("const OB_PANEL_ASSETS = [")
+			)
+		]
+		# The drawer's stylesheet with the drawer: since v1.673.0 the planner kit's CSS is its own
+		# bundle, and a board that loaded only the script would draw an unstyled drawer.
+		for asset in (
+			"planner_kit.bundle.js",
+			"planner_kit.bundle.css",
+			"guided_entry.bundle.js",
+			"guided_entry.bundle.css",
+		):
+			with self.subTest(asset=asset):
+				self.assertIn(f'"{asset}"', panel)
+		self.assertTrue((APP / "public" / "css" / "planner_kit.bundle.css").is_file())
 		self.assertIn("frappe.require(OB_PANEL_ASSETS, resolve)", page)
 		assets = page[page.index("const OB_ASSETS = [") : page.index("];", page.index("const OB_ASSETS = ["))]
 		self.assertNotIn("planner_kit", assets, "the board's first paint does not wait for the panel")

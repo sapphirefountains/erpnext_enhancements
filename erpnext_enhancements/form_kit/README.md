@@ -187,7 +187,7 @@ not share a value) and `clears` (a field whose change empties others).
 ## One editor, two shells (P4.4)
 
 The page that walks a record and the side panel that edits one from a list or board run **the same
-record editor**, `public/js/form_kit/ui/editor.js` (`RecordEditor`, v1.672.0): one step's fields in
+record editor**, `public/js/form_kit/ui/editor.js` (`RecordEditor`, v1.675.0): one step's fields in
 a `frappe.ui.FieldGroup`, the values as shown and as saved, the save queue and its conflict chooser,
 the phone's journal, step 1's create and Set as Lost. It draws with frappe and jQuery, so it is
 not among the pure modules in `public/js/form_kit/*.js` (those are what the node suites import);
@@ -226,7 +226,7 @@ not among the pure modules in `public/js/form_kit/*.js` (those are what the node
   `undo_values`), run under node by `tests/test_opportunity_board_panel.py`.
 
 Step 1's create carries, as `prefill`, whatever else step 1 shows that the person changed (the
-summary, a close date): `create_record` assigns only the "create" fields, and before v1.672.0 the
+summary, a close date): `create_record` assigns only the "create" fields, and before v1.675.0 the
 rest was silently dropped.
 
 ## No signal (P4.7)

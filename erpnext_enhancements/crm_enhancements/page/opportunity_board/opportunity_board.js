@@ -2,7 +2,7 @@
 // patched stock Kanban. Part A (v1.654.0) built P6.1 (cards), P6.2 (rows by value stream), P6.5
 // (the forecast strip) and P6.9 (the phone layout). Part B (v1.663.0) adds P6.3 (the board, a
 // sortable table and a timeline of close dates, under one filter bar), P6.4 (the needs-attention
-// list) and P6.8 (On Hold folded, snooze, quick filters and saved views). Part C (v1.672.0) adds the
+// list) and P6.8 (On Hold folded, snooze, quick filters and saved views). Part C (v1.675.0) adds the
 // side panel: P6.6 (tap a deal to edit it there; a drop on Closed Won or Lost asks for that stage's
 // required fields there before anything is saved) and P6.7 (quick add per column, bulk actions on
 // selected deals). The stock Kanban, its patches and the list's redirect to it are untouched until
@@ -109,9 +109,15 @@ const OB_ASSETS = [
 	"opportunity_board.bundle.js",
 	"opportunity_board.bundle.css",
 ];
-// The side panel's files (part C), loaded the first time a panel opens: the planner kit's drawer,
-// and the form kit's record editor and its stylesheet.
-const OB_PANEL_ASSETS = ["planner_kit.bundle.js", "guided_entry.bundle.js", "guided_entry.bundle.css"];
+// The side panel's files (part C), loaded the first time a panel opens: the planner kit's drawer and
+// its stylesheet (since v1.673.0 the kit's CSS is a file of its own, no longer injected by its
+// script), and the form kit's record editor and its stylesheet.
+const OB_PANEL_ASSETS = [
+	"planner_kit.bundle.js",
+	"planner_kit.bundle.css",
+	"guided_entry.bundle.js",
+	"guided_entry.bundle.css",
+];
 const OB_API = "erpnext_enhancements.crm_enhancements.page.opportunity_board.opportunity_board.";
 const OB_FORM_KIT = "erpnext_enhancements.form_kit.api.";
 const OB_DOCTYPE = "Opportunity";

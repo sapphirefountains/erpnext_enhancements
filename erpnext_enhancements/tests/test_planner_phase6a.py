@@ -996,7 +996,8 @@ class TestKitFiles(unittest.TestCase):
 		self.assertNotIn("planner_kit", hooks.split("app_include_js")[1].split("]")[0])
 		for path, constant in ((PP_JS, "PP6A"), (MP_JS, "MP6A")):
 			code = path.read_text(encoding="utf-8")
-			self.assertIn('kit: "planner_kit.bundle.js"', code)
+			# The kit and its stylesheet in one require (S3.4e, v1.673.0).
+			self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', code)
 			self.assertIn(f"frappe.require({constant}.kit, () => this.p6a_ready());", code)
 			self.assertIn("window.planner_kit", code)
 
@@ -1025,11 +1026,17 @@ class TestKitFiles(unittest.TestCase):
 		self.assertIn("frappe.route_flags.replace_route = true", bundle)
 
 	def test_the_kit_never_publishes_a_frappe_global_and_its_styles_are_namespaced(self):
-		css = (KIT_DIR / "styles.js").read_text(encoding="utf-8")
-		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css.split("export const CSS = `")[1]))
+		# The kit's CSS is a bundle of its own, public/css/planner_kit.bundle.css (S3.4e, v1.673.0);
+		# styles.js writes no rule; the planners load the bundle beside the kit.
+		raw = (APP / "public/css/planner_kit.bundle.css").read_text(encoding="utf-8")
+		css = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
 		self.assertTrue(classes)
 		self.assertEqual({c for c in classes if not c.startswith("pk-")}, {"form-layout", "frappe-control"})
-		self.assertIn("@media (max-width:767px)", css)
+		self.assertIn("@media (max-width: 767px)", css)
+		self.assertNotIn(
+			"{", (KIT_DIR / "styles.js").read_text(encoding="utf-8").split("export const CSS =")[1]
+		)
 		for path in KIT_DIR.glob("*.js"):
 			text = path.read_text(encoding="utf-8")
 			self.assertNotIn("\r", text, path.name)
@@ -1186,24 +1193,20 @@ class TestPages(unittest.TestCase):
 			self.assertIn("kit.legend(", block)
 			self.assertIn("kit.hint(key, __(text), {", block)
 			self.assertIn(f'class="btn btn-default btn-sm {prefix}-p6a-help">?</button>', block)
-			if prefix == "pp":
-				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
-				# section of it, from its banner to the next.
-				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
-				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6A_STYLE).")))
-				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertRegex(
-					style, r"\.pp-crew-view \.pp-crew-head,[^{]*\{\s*position: sticky;\s*top: 0;"
-				)
-				self.assertRegex(style, r"\.pp-week \.pp-grid \{\s*max-height:")
-				# planner_kit's timeline bar takes the task's color from the page (--pp-color).
-				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}
-			else:
-				self.assertIn(f".{prefix}-crew-view .{prefix}-crew-head", block)
-				self.assertIn("position:sticky;top:0", block)
-				self.assertIn(f".{prefix}-week .{prefix}-grid{{max-height:", block)
-				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
-				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner
+			# to the next.
+			js = PP_JS if prefix == "pp" else MP_JS
+			raw = js.with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({prefix.upper()}6A_STYLE).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
+			self.assertRegex(
+				style, rf"\.{prefix}-crew-view \.{prefix}-crew-head,[^{{]*\{{\s*position: sticky;\s*top: 0;"
+			)
+			self.assertRegex(style, rf"\.{prefix}-week \.{prefix}-grid \{{\s*max-height:")
+			# planner_kit's timeline bar takes the task's color from the Project Planner (--pp-color).
+			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}
 			self.assertEqual({c for c in classes if not c.startswith(f"{prefix}-")}, set(), classes)
 		self.assertIn('kit.hover_glow(this.$body[0], "project")', self.pp_block)
 		self.assertIn('el.setAttribute("data-pk-projects"', self.pp_block)
@@ -1558,6 +1561,36 @@ class TestKitUnderNode(unittest.TestCase):
 		if result.returncode != 0:
 			raise AssertionError(result.stderr)
 		cls.out = json.loads(result.stdout)
+
+	def test_the_kit_injects_no_stylesheet_of_its_own(self):
+		"""S3.4e (v1.673.0): the kit's rules are public/css/planner_kit.bundle.css, which each planner
+		loads in the same frappe.require as the kit (PP6A.kit / MP6A.kit). The <style id="pk-style">
+		the bundle still writes holds nothing, so no rule is injected twice: styles.js's CSS, run as
+		the browser runs it (with a Desk on the page), is the empty string."""
+		source = re.sub(
+			r"^export (const|function) ",
+			r"\1 ",
+			(KIT_DIR / "styles.js").read_text(encoding="utf-8"),
+			flags=re.M,
+		)
+		harness = """
+const fs = require("fs");
+const vm = require("vm");
+const ctx = { window: { frappe: { assets: { bundled_asset: (name) => "/assets/x/" + name } } } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + "\\nthis.kit = { CSS, STYLE_ID };", ctx);
+console.log(JSON.stringify(ctx.kit));
+"""
+		result = subprocess.run(
+			[self.node, "-e", harness],
+			input=source,
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			timeout=60,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout), {"CSS": "", "STYLE_ID": "pk-style"})
 
 	def test_the_javascript_parses(self):
 		for path in [*sorted(KIT_DIR.glob("*.js")), BUNDLE, PP_JS, MP_JS]:
