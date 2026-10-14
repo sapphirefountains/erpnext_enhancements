@@ -48,6 +48,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Tests:** `scripts/test_new_item_prefill.mjs` runs all three files against a stub of the v16
     pieces they hook, as a new CI step.
 
+## [1.687.0] - 2026-10-14
+
+### Changed
+
+- **Planner toolbar redesign** (Project Planner and Maintenance Planner, picked by Nik from a
+  mockup). Every phase had appended its own buttons to the bar, so it had become one long flat
+  row. It is still one bar, made shorter by four menus, **Views ▾**, **Display ▾**, **Edit ▾** and
+  **Print ▾**, from a new planner-kit module, `planner_kit/toolbar.js`.
+  - **The menus are the WAI-ARIA menu button.** The button carries `aria-haspopup` and
+    `aria-expanded`. Arrow keys move and wrap, Home and End jump, and Esc closes the menu and
+    gives focus back to the button. Tab or a click elsewhere also closes it. A switch (Draft mode,
+    Tap to move, Maintenance rentals and travel, Projected visits, Project work) is a
+    `menuitemcheckbox` with a check mark, and Color by is a `menuitemradio` group. An item closes
+    the menu before it runs, so a print window still opens on the person's own click.
+  - **Opening a menu pushes no history entry.** The right-click menu (`planner_kit.menu`) is an
+    overlay of `history.js` and does push one. A toolbar menu is part of the bar, not a screen.
+    Its list still carries `pk-menu`, so the planners' shortcut handlers leave its keys alone.
+    6C's Esc handler now also skips a toolbar menu or sheet, which used to clear a highlight
+    behind them.
+  - **Each menu's items are built when it opens**, from the page's own state, through the methods
+    the phases already had. The old buttons are gone, not hidden. An item whose control was
+    hidden on a screen is left out there: Copy week in the month view, Block time for someone who
+    cannot schedule, Add visit for someone who cannot create visits.
+  - **Alert chips.** Conflicts and Overdue (danger) and Running over (warn) each show a count and
+    a word, and appear only above zero. Running over also stays up while it filters the board, so
+    it can be turned off. A chip opens what its button opened: the Conflict center, the Running
+    over filter, the Overdue tray (opened and scrolled to). The Maintenance Planner had no overdue
+    list, only red cards, so its Overdue chip opens a side panel listing the overdue visits on
+    screen, each of which opens its visit. It has no Running over: visits carry no clocked
+    against planned hours. *Conflicts…* in Edit still opens the Conflict center at any count.
+  - **The draft strip moved from the bottom to just under the toolbar.** It reads "Draft mode
+    on: N changes not published yet" and keeps the same Publish, Discard and Discard out-of-date
+    (`publish_drafts` / `discard_drafts`, `c1_publish` / `c1_discard`).
+  - **Tips and keys moved into the menus and the help.** The first-time tip banners no longer take
+    a row on load; their text is the first section of the "?" help. The color key row is the key
+    in Display, where a project or site in it is a switch for its highlight. The Maintenance
+    Planner's visit-kind legend row is Display's *Visit kinds*.
+  - **Undo** is in Edit, and also a small ↶ icon in the bar while there is something to undo.
+  - **On a phone (767px and under)** the bar is ‹ Today ›, the title, the view switcher and
+    **Filters and tools**, which shows the alerts' total. That button opens a bottom sheet
+    (`planner_kit.toolbar.sheet`) with the filters and search (moved in from the bar and back,
+    keeping their values and handlers), the alert chips, the four menus' items, the help and
+    refresh. The sheet is a screen, so it takes the kit's one history entry: the phone's Back
+    closes it without the router reloading the planner, and so does Esc. A switch keeps it open.
+    Anything else closes it first and hands its entry to the drawer the item opens.
+
+### Added
+
+- **Utilization is the Project Planner's fifth view**, `/desk/project-planner/utilization/<date>`,
+  beside Month, Week, Crew and Heatmap. It was a toolbar button that left the planner for the Crew
+  Utilization script report. It is now a view drawn from that report's own rows
+  (`frappe.desk.query_report.run`), so the report's roles decide who sees it and the figures
+  always match. It shows the month holding the date, a row per person per week, and capacity,
+  booked and clocked hours with both percentages. A week past capacity carries an *Over* chip
+  and one at 75% or more *Near full*. ‹ › step a month and T is today. Group narrows it; Project
+  and Project manager do not apply to a person's week, so they are hidden there and kept in the
+  address for the next calendar view (S5c). *Open the full report* opens the report on the same
+  month and group. It is not a saved-view view (the prefs schema is unchanged), so "last used"
+  keeps the calendar view before it.
+- `tests/test_planner_toolbar.py` runs `scripts/test_planner_toolbar.js`, a new node harness.
+  - It runs the real kit module on a fake DOM, and the sheet over `history.js` and a fake browser:
+    one entry, and Back closes the sheet without routing.
+  - It runs both pages' toolbar blocks with an explicit list of every control the old bars had.
+    Each is either pinned in the bar or run from its menu or chip, and the method it reaches is
+    checked.
+  - `scripts/test_planner_url_filters.js` gains the Utilization view's route and address.
+
+### Fixed (from the review of #1302, before merge)
+
+- **Utilization answers to the report's access.** The view's button shows only when the boot says
+  the report would open: `frappe.boot.allowed_reports` lists Crew Utilization and
+  `frappe.model.can_get_report("Task")` is true. Those are the two gates of v16.50's
+  `query_report.get_report_doc`. Someone who arrives by the address anyway is not asked for
+  anything and gets the no-access panel: "You don't have access to the Crew Utilization report."
+  The rows are now asked for through the kit's new `quiet_call`, sf_kit's call on its quiet path.
+  That path shows no frappe dialog, so a server refusal (403 / PermissionError) is the same panel
+  instead of frappe's red "Not permitted" modal over a "could not be loaded" note. The kit now also
+  carries sf_kit's `state_html`.
+- **A toolbar menu closes on a route change** (the kit's `on_route_change`) and when the planner
+  page hides (`tb_close_menus` on the page's own `hide`). Its `pointerdown`, `resize` and `scroll`
+  listeners go with it. Before, it stayed on `<body>` over the next screen.
+- **Tab in a menu** closes it and gives focus back to its button without stopping the Tab, so the
+  browser moves on to the control after the button. The list sits at the end of `<body>`, so the
+  Tab used to land at the end of the page.
+- **The phone sheet's focus trap** counts only controls that can take focus: enabled, not
+  `[hidden]` and laid out (`offsetParent`). Tab no longer escapes onto the Project and PM filters
+  the Utilization view hides.
+- **The Maintenance Planner's Overdue panel** is redrawn on every reload while it is open, so a
+  visit moved on the calendar behind it leaves the list.
+- **Utilization's labels.** *Over* and *Near full* mark Planned % (the column was titled
+  "Utilization") and never Actual %. They are decided on the raw value as the report decides
+  them, so 100.4% is Over though it reads 100%. A note explains that the first and last weeks
+  count only the month's days.
+- **Ctrl+Z on Utilization** is not taken by the planner, since there is no Undo there.
+- **No empty menus.** A menu with nothing for the screen on show is hidden. Display and Edit are
+  hidden on Utilization, where Edit now offers nothing: Draft mode and Undo do not apply.
+
 ## [1.686.1] - 2026-10-14
 
 ### Changed

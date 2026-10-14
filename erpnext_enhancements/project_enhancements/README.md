@@ -38,7 +38,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D) when the person has something booked, and never sending on a note or block alone (Phase 6E); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`) with its nightly refresh of the stored Labor-line figure, and the Task equipment validator | `task_actuals`, `labor_forecast`, `refresh_labor_forecasts`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `scheduler_events.daily_long`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
-| `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Linked from the planner's toolbar |
+| `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Drawn as the Project Planner's **Utilization** view (v1.687.0), which reads it through `frappe.desk.query_report.run` and links to it |
 | `planner_weather.py` | Phase 5 weather flags (v1.583.0): one Open-Meteo request per load for every uncached site, each point cached 3 hours; flags rain ≥ 60%, a low ≤ 32 °F and wind ≥ 25 mph (imperial units, asked of Open-Meteo directly) on tasks ticked *Outdoor work*. Never fails a read and never logs a request URL | `day_flags`, `forecasts`, `forecast_for_tasks`, `span_weather` | `api/project_planner` (`get_planner`, `get_route`, `suggest_dates`, `who_is_free`) |
 | `customer_confirmations.py` | Phase 5 customer date confirmations for **both** planners (v1.583.0), **off until Settings → *Email customers their visit date* is ticked**: triggers on a customer-facing task or a draft visit, the at-most-once send, the 10-minute sweep and the preview | `on_task_update`, `on_visit_update`, `keep_stamps`, `send_one`, `send_due_confirmations`, `preview` | `doc_events` (Task, Sapphire Maintenance Record); `scheduler_events`; `api/project_planner.preview_customer_confirmation` |
 | `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
@@ -1106,7 +1106,8 @@ scrolls, and cards still move by drag.
   bottom edge scrolls them (`p6a_edge_scroll`). Phones keep the page's own scroll.
 - **Legend and help.** A "?" toolbar button opens `planner_kit.legend(...)`, which explains every card,
   chip, badge, bar, outline and icon the page draws, using the page's own classes, so the legend shows
-  exactly what the calendar shows. Two first-time tips at a time (`planner_kit.hint`).
+  exactly what the calendar shows. Its first section is the first-time tips (since v1.687.0; they
+  were banners under the toolbar on load, two at a time, through `planner_kit.hint`).
 
 The page work is in `PP6A_METHODS` / `MP6A_METHODS`, each hooked into the class by one line per
 method (`init_phase6a`, `render_phase6a`, `p6a_route` in `go`, `p6a_drag_source`, `p6a_edge_scroll`,
@@ -1115,6 +1116,55 @@ method (`init_phase6a`, `render_phase6a`, `p6a_route` in `go`, `p6a_drag_source`
 `tests/test_planner_phase6a.py` pins the endpoints (gates, `google=False`, the 31-day cap, user to
 resource, no time-off reason, no money without a cost role, internal projects refused) and, under
 node, drives the kit's history handling against a fake browser history.
+
+### The toolbar (v1.687.0)
+
+Nik picked the redesign from a mockup on 2026-10-14. Every phase had appended its own buttons to the
+bar (6A's help, 6B's search, 6C's Color by, Tap to move, Views and Print, 3B's Draft mode, My week and
+crew sheet, 6D's Conflicts and Block time, Phase 4's Running over and Utilization, Copy week, Undo),
+so it had grown into one long flat row. It is still **one bar**, made shorter by four menus
+(`planner_kit.toolbar.menu`); each menu's items are built when it opens, from the page's own state,
+through the methods the phases already had, and an item whose control was hidden on a screen (Copy
+week in the month view, Block time for someone who cannot schedule) is left out there.
+
+| Old control | Project Planner now | Maintenance Planner now |
+|---|---|---|
+| ‹ Today ›, title, view switcher, search, filters, ?, ↻ | in the bar (Utilization joins the switcher) | in the bar |
+| Views (saved views) | **Views ▾** with *My week*, *Save current view as…*, *Manage views…* | **Views ▾** |
+| My week | Views ▾ | (none) |
+| Color by, and its key row | **Display ▾**: radio items, then the key (a project in it is a switch for its highlight) | Display ▾, likewise (a site) |
+| Maintenance, rentals, travel / Projected visits, Project work | Display ▾ (check marks) | Display ▾ |
+| The visit-kind legend row | | Display ▾ (*Visit kinds*) and "?" |
+| Draft mode, Tap to move | **Edit ▾** (check marks) | Edit ▾ |
+| Block time, Copy week, Add visit | Edit ▾ (Copy week on week and crew only) | Edit ▾ (*Add visit…*, *Block time…*) |
+| Conflicts (N) | a **danger chip** above 0, and *Conflicts…* in Edit at any count | the same |
+| Running over (N) | a **warn chip** while above 0 or while it filters | (visits have no planned-vs-clocked hours) |
+| Overdue | a **danger chip** opening the Overdue tray | a **danger chip** opening a side panel listing the overdue visits on screen |
+| Undo | Edit ▾, and a small ↶ icon while there is something to undo | the same |
+| Print, Print crew sheet | **Print ▾** | Print ▾ (*Print this view*, *selection only*) |
+| Utilization (button to the report) | the fifth **view**, `/project-planner/utilization/<date>` | (none: the Project Planner's view counts visits already) |
+| First-time tip banners | the first section of "?" | the same |
+| Draft mode's bottom bar | a strip **under the toolbar**: "Draft mode on: N changes not published yet", Publish, Discard | the same |
+
+**On a phone** (767px and under) the bar is ‹ Today ›, the title, the view switcher and **Filters and
+tools** (with the alerts' total), which opens `planner_kit.toolbar.sheet`: the filters and search
+(moved in from the bar, and back when it closes), the alert chips, the four menus' items, and the
+help, refresh (and the Day Board, on the Maintenance Planner). It takes the kit's one history entry,
+so the phone's Back closes it.
+
+**Utilization** reads the Crew Utilization report itself (`frappe.desk.query_report.run`, so the
+report's roles decide who sees it and the figures always match): the month holding the date, a row
+per person per week, with capacity, booked and clocked hours and the two percentages, a week past
+capacity carrying an *Over* chip and one at 75% or more *Near full*. ‹ › step a month. Group narrows
+it; Project and Project manager do not apply to a person's week, so they are hidden there and kept in
+the address for the next calendar view. *Open the full report* opens the report on the same month and
+group. It is not a saved-view view (`planner_views_prefs.SCHEMA` is unchanged), so "last used" keeps
+the calendar view before it.
+
+The page side is `PPTB_METHODS` / `MPTB_METHODS` and `PPU_METHODS`; `tests/test_planner_toolbar.py`
+runs `scripts/test_planner_toolbar.js` (the kit module on a fake DOM and a fake browser, and both
+pages' blocks with an explicit list of every old control) and `scripts/test_planner_url_filters.js`
+covers the Utilization view's address.
 
 ### Planner kit
 
@@ -1148,6 +1198,8 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
 | `conflicts.center({planner, owner, push, width, range, can_schedule, draft, block_note, run_fix, open_item, exclude, pick_context, on_list})` | The Conflict center drawer (Phase 6D UI), one per page | `open(focus)`, `schedule()`, `refresh()`, `list()`, `count()`, `index()`, `find(doctype, name, key)`, `is_open()`. Pure renderers beside it: `html`, `picker_html`, `free_people`, `fix_args`, `open_count`, `index_by_ref` |
 | `blocks.form({...})`, `blocks.note_form({...})`, `blocks.chip_html(block, ctx)`, `blocks.notes_html(notes, ctx)`, `blocks.note_list_html(notes, ctx)` | Personal blocks and day notes on screen (Phase 6D UI): the two small forms (frappe Dialogs, so the drawer under them stays) and the markup | The note on a chip is only `ctx.note` (the page's `block_notes`); `get_notes(date)` reads one day's notes; `block_text`, `block_window`, `block_slot` |
+| `toolbar.menu(button, {label, items, on_close})` | The toolbar's menu buttons (v1.687.0): `items()` is called each time the menu opens and returns `{label, on_click, hint, title, disabled}`, `{label, checked}` (a `menuitemcheckbox`), `{label, radio: true, checked}` (a `menuitemradio`), `{label, info: true, sample_html}` (read-only, a key entry), `{heading}` or `{divider: true}` | The WAI-ARIA menu button: `aria-haspopup` / `aria-expanded` / `aria-controls` on the button, `aria-checked` and a check mark on a switch; arrow keys wrap, Home/End jump, Esc closes and gives focus back, Tab and a click elsewhere close it, an item closes it before it runs. **No history entry** (unlike `menu`, which is an overlay of `history.js`). Its list carries `pk-menu`, so the planners' shortcut handlers leave its keys alone. Returns `{open, close, is_open, element, items}` |
+| `toolbar.sheet({title, sections, top, on_close, return_focus, max_width})` | The phone's "Filters and tools" bottom sheet: `top(slot)` lets the page move its own fields in (and `on_close` back), `sections()` are `{title, items}` with the same item shapes as a menu | A modal dialog and an overlay of `history.js`: it takes the kit's one history entry, Back and Esc close it, an item closes it first (its entry is handed to a drawer the item opens), an item with `keep_open` (a switch) redraws it in place, and it closes past `max_width` |
 | `big_picture` | Phase 6C's pure half: `hash_color(key)` (FNV-1a over UTF-16 code units into the 12-color `HASH_PALETTE`), the fixed palettes `JOB_TYPES` / `TASK_STATUSES` / `VISIT_STATUSES` with `job_type`, `task_status`, `visit_status`, `palette_color`, `palette_legend`, `safe_paint` (a hex or a page's `hsl()` person color, else the fallback), `team_day(cells)` / `team_text` / `team_tip` (the capacity strip), `pick_view(state, schema)` (a saved view's keys), `print_document(model)` (a whole printable HTML document from a page's model, every value escaped) | No DOM, no frappe: tests run it under node. A page with an older kit already loaded (no `big_picture`) simply shows none of Phase 6C's colors, strip or print |
 
 **How Back closes a drawer without reloading the planner** (`history.js`). While any overlay is
@@ -1351,7 +1403,7 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
 `MP6C_METHODS`, the pure half is the kit's `big_picture`, and the one backend module is
 [`api/planner_views_prefs.py`](../api/planner_views_prefs.py).
 
-- **Color by** (toolbar). The Project Planner colors each card's left edge by *Task color* (the
+- **Color by** (the toolbar's Display menu, v1.687.0). The Project Planner colors each card's left edge by *Task color* (the
   default, today's look: the task's own color), *Person* (the lead, or in the crew view the row's
   person, in the same color as their dot and badges), *Job type*, *Project*, *Project manager* or
   *Status*; the Maintenance Planner by *Visit type* (the default, today's colors), *Technician*, *Site*,
@@ -1364,7 +1416,7 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
     card) `#dc2626`; visit status: Scheduled `#2563eb`, Next visit `#4f46e5`, Projected `#94a3b8`,
     Pending review `#ca8a04`, Done `#16a34a`, Overdue `#dc2626`;
   - project, PM, site and contract: `hash_color`, so the same project is the same color on every
-    device and every day. A key under the toolbar lists what is on screen (a project in it highlights
+    device and every day. A key in Display lists what is on screen (a project in it highlights
     the project); the "?" legend lists it all.
 
   The job type comes from `project_type`, which `build_card` now carries (one line); the PM from the
@@ -1376,7 +1428,7 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
   project in the color key: every card of it lights up and the rest fade, in every view and week on
   screen. A toolbar pill *Highlighting …* ✕ and Esc clear it (Esc closes a drawer or menu first, and
   yields to a Frappe dialog and a drag). Not remembered: a reload starts clear.
-- **Saved views, per person, on the server.** *Views* in the toolbar: *Save view as…* (a name; the
+- **Saved views, per person, on the server.** The toolbar's *Views* menu: *Save view as…* (a name; the
   same name replaces), switch, *Manage views…* (use, delete). A view holds the calendar view, the
   filters (Project Planner: project, PM, group, *Maintenance, rentals, travel*, *Running over*,
   Resources available open; Maintenance Planner: technician, projected visits, project work, Resources
@@ -1433,7 +1485,8 @@ markup are the planner kit's (`planner_kit/conflicts.js`, `planner_kit/blocks.js
 show the same thing; each page's `PP6D_METHODS` / `MP6D_METHODS` block wires it to its own data and
 its own write path. No new endpoint: everything calls the Phase 6D backend above.
 
-- **Conflict center.** A toolbar button **Conflicts (N)** (red above 0; N is what nobody has kept)
+- **Conflict center.** A toolbar chip **N Conflicts** (shown above 0; N is what nobody has kept;
+  *Conflicts…* in Edit opens it at any count)
   opens a kit drawer with `get_conflicts(start, end, planner)` for the dates on screen, grouped by
   day: each conflict's icon, the person (or vehicle, or task for a qualification), the sentence, the
   block's note when `block_notes` has it, and its records. The page's own record opens in its side
