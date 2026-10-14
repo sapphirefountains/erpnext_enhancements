@@ -159,7 +159,11 @@ class TestPlanATripChipsAreToggleButtons(unittest.TestCase):
 			self.assertNotIn('.on("click"', chain, chain[:160])
 
 	def test_focus_is_visible(self):
-		self.assertIn(".tp-chip:focus-visible{outline:2px solid var(--sf-focus);", _code(TRIP))
+		"""The page's CSS moved out of the script into plan_a_trip.css in S3.4c (v1.661.0)."""
+		css = re.sub(r"/\*[\s\S]*?\*/", "", TRIP.with_suffix(".css").read_text(encoding="utf-8"))
+		rule = re.search(r"(?m)^\.tp-chip:focus-visible\s*\{([^}]*)\}", css)
+		self.assertIsNotNone(rule, "no .tp-chip:focus-visible rule in plan_a_trip.css")
+		self.assertRegex(rule.group(1), r"outline:\s*2px solid var\(--sf-focus\);")
 
 
 class TestPlannerNavButtonsAreLabelled(unittest.TestCase):

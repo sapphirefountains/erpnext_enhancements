@@ -1,0 +1,1572 @@
+/* Plan a Trip (/desk/plan-a-trip).
+ *
+ * This was TP_STYLE, a string plan_a_trip.js wrote into the page as a <style> tag (custom pages
+ * S3.4c, v1.661.0). Frappe's page loader reads <page>.css beside the page's JS and sends it with
+ * the page (Page.load_assets, through getpage), so an edit reaches the office's phones on the
+ * next open rather than waiting out a cached copy.
+ *
+ * Page CSS is appended to <head> once and never removed, so it is GLOBAL for the rest of the
+ * session: every selector here starts with a tp- class. tests/test_s3_page_css.py holds it to
+ * that, and to everything below.
+ *
+ * Colours are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's light
+ * or dark theme, so the file has no dark block of its own. One Frappe variable stays, on purpose:
+ * the sticky step tabs and the fixed nav bar are painted with --bg-color, because they sit over
+ * the Desk's own page ground and have to match it exactly, whatever theme draws it.
+ *
+ * Status is the three status tokens. A status as a fill is the token with its --sf-on-* label
+ * and a --sf-chip-edge-* edge (the edge keeps a red chip visible on a navy card). A status as
+ * text is mixed half and half with --sf-text-strong, so it reads on a white card and a navy one
+ * (plain yellow is 1.7:1 on white and is never text). A tinted panel is the token at 12% over
+ * the card. Every status carries a word or a glyph as well as its colour: a step tab's red count
+ * says "missing" to a screen reader and in its tooltip.
+ *
+ * Structure is square: cards, rows, panels, fields and the map. Controls round at
+ * --sf-radius-control: buttons, step tabs, the segmented choices and the view bar. Chips, pills
+ * and badges are pills. Separation is a hairline or a change of ground, never a drop under a box.
+ * Fields are white in both themes, with 16px text so iOS does not zoom into them.
+ *
+ * The Map view. The numbered markers are HTML the script hands to Google Maps (an
+ * AdvancedMarkerElement's content), so this file styles them, keyed by data-kind, and the list
+ * under the map reads the same rules. The older Marker and the drive and flight lines take a
+ * colour VALUE, not a variable, so the script reads the same tokens through getComputedStyle
+ * (tp_token_color). The kinds are categories, not statuses, so they take palette hues, each dark
+ * enough for a white number. A marker keeps a white ring, which separates it from the basemap.
+ * A place's popup is always light (Google draws it white), so its text is the palette's ink, not
+ * a themed token. */
+
+.tp-wrap {
+	max-width: 760px;
+	margin: 0 auto;
+	padding-bottom: 110px;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text);
+}
+
+.tp-muted {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+/* Read aloud, never drawn: the word beside a colour that would otherwise say it alone. */
+.tp-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.tp-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	flex-wrap: wrap;
+	margin: 4px 0 8px;
+}
+
+.tp-head h4 {
+	margin: 0;
+	font-size: 19px;
+	color: var(--sf-text-strong);
+}
+
+/* The trip's status, which says its own word. */
+.tp-pill {
+	display: inline-block;
+	font-size: var(--sf-text-xs);
+	border-radius: var(--sf-radius-pill);
+	padding: 2px 10px;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.tp-pill-green {
+	background: var(--sf-good);
+	color: var(--sf-on-good);
+	border-color: var(--sf-chip-edge-good);
+}
+
+/* ---- Step tabs -------------------------------------------------------------------------- */
+
+.tp-tabs {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding: 2px 0 12px;
+	position: sticky;
+	top: 0;
+	background: var(--bg-color);
+	z-index: 3;
+}
+
+.tp-tab {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	padding: 8px 14px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 14px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+/* The step on screen: the primary fill and the weight, so it is never colour alone. */
+.tp-tab.tp-active {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* What the checklist says is missing on a step: a danger chip, its word in .tp-sr. */
+.tp-tab .tp-badge {
+	display: inline-block;
+	min-width: 18px;
+	margin-left: 6px;
+	padding: 0 5px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-chip-edge-danger);
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	text-align: center;
+}
+
+.tp-step-title {
+	font-size: var(--sf-text-lg);
+	font-weight: 600;
+	margin: 6px 0 2px;
+	color: var(--sf-text-strong);
+}
+
+.tp-step-help {
+	color: var(--sf-text-muted);
+	margin-bottom: 14px;
+	line-height: 1.45;
+}
+
+/* ---- Cards and fields ------------------------------------------------------------------- */
+
+.tp-card {
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 14px;
+	margin-bottom: 12px;
+}
+
+/* A card with something missing: a danger edge, and a 4px bar that still shows on a navy card
+ * (red is 2.8:1 on navy-800). The gap lines inside it say what is missing. */
+.tp-card.tp-bad {
+	border-color: var(--sf-danger);
+	border-left: 4px solid var(--sf-danger);
+}
+
+.tp-card-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: var(--sf-space-10);
+}
+
+.tp-card-head b {
+	font-size: 16px;
+	color: var(--sf-text-strong);
+}
+
+.tp-card-head .tp-remove {
+	margin-left: auto;
+}
+
+.tp-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+	gap: 10px 14px;
+}
+
+.tp-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.tp-field label {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-label);
+	margin: 0;
+}
+
+.tp-field label .tp-req {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+.tp-field input,
+.tp-field select,
+.tp-field textarea {
+	width: 100%;
+	padding: 8px 10px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+/* A Link field is a frappe control, so its input is a Bootstrap .form-control, and Bootstrap's
+ * .form-control:focus (0,2,0) outranks the rule above (0,1,1) and turned it grey while typing.
+ * The person search on Who's going is a bare .form-control outside .tp-field. Both stay white,
+ * square and 16px; focus changes the edge's colour only. Under .tp-wrap these are (0,4,0), above
+ * the Desk's dark-theme form-control rules as well. */
+.tp-wrap .tp-field .form-control,
+.tp-wrap .tp-field .form-control:focus,
+.tp-wrap .tp-search.form-control,
+.tp-wrap .tp-search.form-control:focus {
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+.tp-wrap .tp-field .form-control:focus,
+.tp-wrap .tp-search.form-control:focus {
+	border-color: var(--sf-focus);
+}
+
+.tp-field input[type="checkbox"],
+.tp-field input[type="radio"] {
+	width: auto;
+	padding: 0;
+}
+
+.tp-field textarea {
+	min-height: 84px;
+}
+
+.tp-field .frappe-control {
+	margin: 0;
+}
+
+.tp-field .frappe-control input {
+	height: auto;
+}
+
+.tp-pair {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.tp-pair input[type="date"] {
+	flex: 1 1 150px;
+	min-width: 0;
+}
+
+.tp-pair input[type="time"] {
+	flex: 1 1 120px;
+	min-width: 0;
+}
+
+.tp-wide {
+	grid-column: 1 / -1;
+}
+
+/* ---- Choices: segmented buttons and chips ----------------------------------------------- */
+
+.tp-seg {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.tp-seg button {
+	flex: 1 1 auto;
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 14px;
+	cursor: pointer;
+	padding: 6px 12px;
+}
+
+.tp-seg button.tp-on {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.tp-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.tp-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 14px;
+	cursor: pointer;
+	user-select: none;
+}
+
+/* A pressed toggle chip: a tint, the focus colour's edge and the weight; its label also starts
+ * with a tick. */
+.tp-chip.tp-on {
+	background: color-mix(in srgb, var(--sf-primary) 18%, var(--sf-surface));
+	border-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+	font-weight: 600;
+}
+
+button.tp-chip {
+	font-family: inherit;
+	line-height: inherit;
+	margin: 0;
+}
+
+button.tp-chip:disabled {
+	cursor: default;
+}
+
+.tp-chip:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* The coverage chips on a step (a tick or a cross and a name): status chips. */
+.tp-chip.tp-ok {
+	background: var(--sf-good);
+	border-color: var(--sf-chip-edge-good);
+	color: var(--sf-on-good);
+	cursor: default;
+}
+
+.tp-chip.tp-miss {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+	cursor: default;
+}
+
+.tp-refs {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tp-ref-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tp-ref-row span {
+	flex: 0 0 160px;
+	font-size: 14px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tp-ref-row input {
+	flex: 1;
+	padding: 6px 10px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+.tp-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+	cursor: pointer;
+	margin: 2px 0;
+}
+
+/* ---- Buttons ---------------------------------------------------------------------------- */
+
+.tp-add {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin: 6px 0 14px;
+}
+
+.tp-btn {
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-control) solid var(--sf-text);
+	background: transparent;
+	color: var(--sf-text);
+	font-size: 14px;
+	cursor: pointer;
+	padding: 6px 14px;
+}
+
+.tp-btn-primary {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* Three of the buttons are links (the full form, the trip sheet, a phone view). The Desk's
+ * a:hover and a:focus (0,1,1) would recolour and underline them, so these say it at 0,2,1. */
+a.tp-btn:hover,
+a.tp-btn:focus {
+	color: var(--sf-text);
+	text-decoration: none;
+}
+
+.tp-btn-link {
+	border: none;
+	background: none;
+	color: var(--sf-link);
+	text-decoration: underline;
+	padding: 0;
+	min-height: 0;
+	cursor: pointer;
+	font-size: 14px;
+}
+
+.tp-btn:focus-visible,
+.tp-btn-link:focus-visible,
+.tp-tab:focus-visible,
+.tp-seg button:focus-visible,
+.tp-vbtn:focus-visible,
+.tp-nav button:focus-visible,
+.tp-list-item:focus-visible,
+.tp-copy-item:focus-visible,
+.tp-doc-x:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ---- Checklist lines -------------------------------------------------------------------- */
+
+.tp-gap {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 8px 10px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-size: 14px;
+	margin-top: 8px;
+}
+
+.tp-gap .tp-btn-link {
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.tp-ok-line {
+	padding: 8px 10px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-good) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+	font-size: 14px;
+	margin-top: 8px;
+}
+
+/* Paperwork is a quieter tally than a gap (see the page script): muted, dashed, never red. */
+.tp-paper {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 6px 10px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) dashed var(--sf-field-border);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	margin-top: 6px;
+}
+
+.tp-paper .tp-btn-link {
+	margin-left: auto;
+	white-space: nowrap;
+	font-size: var(--sf-text-sm);
+}
+
+.tp-paper-count {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+/* ---- Who's going ------------------------------------------------------------------------ */
+
+.tp-crew-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: 10px 12px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	margin-bottom: 8px;
+	background: var(--sf-surface);
+}
+
+.tp-crew-row.tp-on {
+	border-color: var(--sf-focus);
+}
+
+.tp-crew-row .tp-crew-name {
+	flex: 1;
+	min-width: 0;
+}
+
+.tp-crew-extra {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+	align-items: center;
+	margin-top: 8px;
+}
+
+.tp-crew-extra input {
+	padding: 6px 8px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+/* Who is booked on what: a tick or a cross in each cell, and the tint behind it. */
+.tp-matrix {
+	overflow-x: auto;
+	margin-bottom: 14px;
+}
+
+.tp-matrix table {
+	border-collapse: collapse;
+	font-size: var(--sf-text-sm);
+}
+
+.tp-matrix th,
+.tp-matrix td {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 5px 8px;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.tp-matrix th:first-child,
+.tp-matrix td:first-child {
+	text-align: left;
+}
+
+.tp-matrix td.tp-y {
+	background: color-mix(in srgb, var(--sf-good) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+}
+
+.tp-matrix td.tp-n {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.tp-day {
+	font-weight: 600;
+	margin: 14px 0 6px;
+}
+
+/* ---- Review ----------------------------------------------------------------------------- */
+
+.tp-review-sec {
+	margin-bottom: 16px;
+}
+
+.tp-review-sec h5 {
+	margin: 0 0 6px;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text-strong);
+}
+
+.tp-sum {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: var(--sf-space-10);
+	margin-bottom: 14px;
+}
+
+.tp-sum div {
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 10px 12px;
+}
+
+.tp-sum b {
+	display: block;
+	font-size: var(--sf-text-lg);
+	color: var(--sf-text-strong);
+}
+
+.tp-sum div.tp-quiet {
+	border-style: dashed;
+	border-color: var(--sf-field-border);
+}
+
+.tp-sum div.tp-quiet b {
+	color: var(--sf-text-muted);
+	font-weight: 500;
+}
+
+/* ---- The nav bar and the save state ----------------------------------------------------- */
+
+.tp-nav {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	gap: var(--sf-space-10);
+	padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+	background: var(--bg-color);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	z-index: 5;
+}
+
+.tp-nav button {
+	flex: 1;
+	min-height: 48px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-control) solid var(--sf-text);
+	background: transparent;
+	color: var(--sf-text);
+	font-size: var(--sf-text-input);
+	cursor: pointer;
+}
+
+.tp-nav button.tp-primary {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.tp-nav button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.tp-savestate {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: calc(76px + env(safe-area-inset-bottom));
+	text-align: center;
+	font-size: var(--sf-text-sm);
+	pointer-events: none;
+	z-index: 6;
+}
+
+.tp-savestate span {
+	display: inline-block;
+	padding: 4px 12px;
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.tp-savestate.tp-err span {
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+	border-color: var(--sf-chip-edge-danger);
+	font-weight: 600;
+}
+
+/* ---- The list and the copy screen ------------------------------------------------------- */
+
+.tp-list-item,
+.tp-copy-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 14px;
+	margin-bottom: var(--sf-space-10);
+	color: var(--sf-text);
+	cursor: pointer;
+}
+
+.tp-list-item h5,
+.tp-copy-item h5 {
+	margin: 0 0 4px;
+	font-size: 16px;
+	color: var(--sf-text-strong);
+}
+
+.tp-copy-more summary {
+	cursor: pointer;
+	color: var(--sf-link);
+	font-size: 14px;
+	margin: 0 0 10px;
+}
+
+.tp-copy-facts {
+	margin-top: 8px;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.tp-copy-go {
+	margin-top: 14px;
+}
+
+.tp-empty {
+	text-align: center;
+	padding: 40px 16px;
+	color: var(--sf-text-muted);
+}
+
+/* ---- The views -------------------------------------------------------------------------- */
+
+.tp-wrap.tp-views-wide {
+	max-width: none;
+}
+
+.tp-viewbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin: 0 0 10px;
+}
+
+.tp-vbtn {
+	padding: 5px 12px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: var(--sf-text-sm);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.tp-vbtn.tp-active {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+.tp-viewbar select {
+	padding: 5px 10px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-sm);
+	max-width: 210px;
+}
+
+.tp-viewbar select.tp-active {
+	border-color: var(--sf-focus);
+	outline: var(--sf-border-hairline) solid var(--sf-focus);
+	font-weight: 600;
+}
+
+.tp-view-top {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	flex-wrap: wrap;
+	margin: 4px 0 12px;
+}
+
+.tp-view-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	flex-wrap: wrap;
+	margin: 0 0 12px;
+}
+
+.tp-view-head .tp-step-title {
+	margin: 0;
+}
+
+/* A view drawn while a save was refused: a warn panel. Warn as text is the mix, never yellow. */
+.tp-notice {
+	padding: 8px 10px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-warn) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	border: var(--sf-border-hairline) solid var(--sf-warn);
+	border-left-width: 4px;
+	font-size: 14px;
+	margin-bottom: 12px;
+}
+
+.tp-flag {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 6px 10px;
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-size: var(--sf-text-sm);
+	margin-top: 6px;
+}
+
+.tp-flag .tp-btn-link {
+	margin-left: auto;
+	white-space: nowrap;
+	font-size: var(--sf-text-sm);
+}
+
+/* The Overview's days. */
+.tp-tl-day {
+	margin-bottom: 16px;
+}
+
+.tp-tl-date {
+	font-weight: 600;
+	font-size: var(--sf-text-md);
+	margin: 0 0 6px;
+	padding-bottom: 4px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	color: var(--sf-text-strong);
+}
+
+.tp-today-tag {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 0 8px;
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+
+.tp-tl-item {
+	display: flex;
+	gap: var(--sf-space-10);
+	align-items: flex-start;
+	padding: 8px 10px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 6px;
+}
+
+.tp-tl-item.tp-bad {
+	border-color: var(--sf-danger);
+	border-left: 4px solid var(--sf-danger);
+}
+
+.tp-tl-icon {
+	flex: 0 0 22px;
+	font-size: 17px;
+	line-height: 1.3;
+	text-align: center;
+}
+
+.tp-tl-time {
+	flex: 0 0 130px;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	padding-top: 2px;
+}
+
+.tp-tl-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.tp-tl-title {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.tp-tl-sub {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.tp-whos {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.tp-who {
+	display: inline-block;
+	padding: 2px 9px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: var(--sf-text-xs);
+}
+
+/* A person with no confirmation number yet; the pill also says "no number". */
+.tp-who.tp-who-miss {
+	border-color: var(--sf-chip-edge-danger);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+}
+
+.tp-cost {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	margin-top: 4px;
+}
+
+/* The Crew grid and Side by side. */
+.tp-xscroll {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	margin-bottom: 12px;
+	max-width: 100%;
+	width: fit-content;
+}
+
+.tp-xtable {
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: var(--sf-text-sm);
+}
+
+.tp-xtable th,
+.tp-xtable td {
+	border-right: var(--sf-border-hairline) solid var(--sf-rule);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	padding: 6px 8px;
+	background: var(--sf-surface);
+}
+
+.tp-xtable .tp-sticky {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	text-align: left;
+}
+
+.tp-xtable td.tp-off,
+.tp-xtable th.tp-off {
+	background: color-mix(in srgb, var(--sf-text-muted) 12%, var(--sf-surface));
+	color: var(--sf-text-muted);
+}
+
+/* Today's column (or row): a 3px bar along the top of its heading, painted as a background
+ * image so the cell keeps its size. */
+.tp-xtable .tp-today {
+	background-image: linear-gradient(var(--sf-focus), var(--sf-focus));
+	background-size: 100% 3px;
+	background-repeat: no-repeat;
+}
+
+.tp-xtable td.tp-cell-warn {
+	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
+}
+
+.tp-cgrid th {
+	text-align: center;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.tp-cgrid td {
+	text-align: center;
+	white-space: nowrap;
+	min-width: 54px;
+	font-size: var(--sf-text-md);
+}
+
+.tp-cgrid .tp-sticky {
+	min-width: 110px;
+	max-width: 150px;
+}
+
+.tp-cgrid .tp-name {
+	display: block;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.tp-warn {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: var(--sf-weight-bold);
+}
+
+.tp-cmp th {
+	text-align: left;
+	vertical-align: top;
+	min-width: 210px;
+}
+
+.tp-cmp td {
+	vertical-align: top;
+	min-width: 210px;
+	max-width: 290px;
+	white-space: normal;
+}
+
+.tp-cmp .tp-sticky {
+	min-width: 96px;
+	max-width: 120px;
+}
+
+.tp-line {
+	font-size: var(--sf-text-sm);
+	line-height: 1.35;
+	margin-bottom: 5px;
+}
+
+.tp-miss-text {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.tp-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+	margin-bottom: 12px;
+}
+
+/* View as: one person's itinerary. */
+.tp-pday {
+	font-weight: 600;
+	margin: 14px 0 6px;
+	max-width: 640px;
+}
+
+.tp-pcard {
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 12px 14px;
+	margin-bottom: 8px;
+	max-width: 640px;
+}
+
+.tp-kicker {
+	font-size: var(--sf-text-xs);
+	color: var(--sf-eyebrow);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.tp-ptitle {
+	font-size: 16px;
+	font-weight: 600;
+	margin: 2px 0;
+	color: var(--sf-text-strong);
+}
+
+.tp-psub {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+	white-space: pre-line;
+}
+
+.tp-pnr {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin-top: 6px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* The email preview: an email is light whatever the Desk theme is. */
+.tp-preview {
+	max-width: 760px;
+}
+
+.tp-preview iframe {
+	display: block;
+	width: 100%;
+	height: 560px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-white);
+	margin: 10px 0;
+}
+
+.tp-preview dl {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 4px 12px;
+	margin: 10px 0 0;
+	font-size: 14px;
+}
+
+.tp-preview dt {
+	color: var(--sf-text-muted);
+	font-weight: normal;
+}
+
+.tp-preview dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.tp-events {
+	margin: 6px 0 10px;
+	padding-left: 18px;
+	font-size: 14px;
+}
+
+/* ---- Paperwork -------------------------------------------------------------------------- */
+
+.tp-docs {
+	margin-top: 12px;
+}
+
+.tp-docs-head {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	margin-bottom: 6px;
+}
+
+.tp-docs-head label {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-label);
+	margin: 0;
+}
+
+.tp-doc {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 6px 8px 6px 10px;
+	margin-bottom: 6px;
+	background: var(--sf-bg);
+}
+
+.tp-doc-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.tp-doc-icon {
+	flex: 0 0 22px;
+	font-size: 17px;
+	text-align: center;
+}
+
+.tp-doc-title {
+	flex: 1;
+	min-width: 0;
+	font-size: 14px;
+	line-height: 1.3;
+	overflow-wrap: anywhere;
+}
+
+.tp-doc-title .tp-muted {
+	display: block;
+}
+
+.tp-doc-open {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	padding: 0 6px;
+	font-size: 14px;
+	font-weight: 600;
+	white-space: nowrap;
+	color: var(--sf-link);
+}
+
+.tp-doc-x {
+	flex: 0 0 auto;
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	border: none;
+	background: none;
+	color: var(--sf-text-muted);
+	font-size: 17px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.tp-doc-edit {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 8px;
+	margin: 4px 0 2px 30px;
+}
+
+.tp-doc-edit select {
+	flex: 1 1 160px;
+	min-width: 0;
+	padding: 6px 8px;
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+.tp-docchips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.tp-docchip {
+	display: inline-block;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 2px 9px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: var(--sf-text-xs);
+	text-decoration: none;
+}
+
+a.tp-docchip:hover,
+a.tp-pdoc:hover {
+	border-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+	text-decoration: none;
+}
+
+.tp-bookdocs {
+	margin-bottom: 14px;
+}
+
+.tp-bookdocs-head {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 4px 10px;
+	font-weight: 600;
+	margin: 0 0 6px;
+}
+
+.tp-bookdocs-head .tp-btn-link {
+	font-weight: normal;
+}
+
+.tp-pdocs {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.tp-pdoc {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: var(--sf-touch-min);
+	padding: 6px 10px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 14px;
+	text-decoration: none;
+}
+
+.tp-pdoc span {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ---- Who to call ------------------------------------------------------------------------ */
+
+.tp-contacts {
+	max-width: 1000px;
+}
+
+.tp-contacts-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+	gap: 8px;
+}
+
+.tp-contact {
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	padding: 10px 12px;
+	font-size: 14px;
+	line-height: 1.45;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.tp-contact .tp-kicker {
+	margin-bottom: 2px;
+}
+
+.tp-contact a {
+	display: inline-block;
+	padding: 2px 0;
+	color: var(--sf-link);
+}
+
+/* Emergency, which its kicker says in words. */
+.tp-contact.tp-sos {
+	border-color: var(--sf-danger);
+	border-left: 4px solid var(--sf-danger);
+}
+
+.tp-contact.tp-sos a {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* ---- The Map view ----------------------------------------------------------------------- */
+
+.tp-map-days {
+	margin: 0 0 10px;
+}
+
+.tp-map {
+	height: 440px;
+	width: 100%;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: color-mix(in srgb, var(--sf-text-muted) 12%, var(--sf-surface));
+}
+
+.tp-map-status {
+	margin: 6px 0 10px;
+}
+
+.tp-map-list {
+	max-width: 760px;
+}
+
+.tp-map-day-head {
+	font-weight: 600;
+	font-size: var(--sf-text-md);
+	margin: 14px 0 6px;
+	padding-bottom: 4px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	color: var(--sf-text-strong);
+}
+
+.tp-map-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: 8px 10px;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 6px;
+}
+
+/* A place's number: in the list (.tp-map-num) and on the map (.tp-map-pin, a marker's HTML).
+ * The fill is the place's kind, the same on both. */
+.tp-map-num {
+	flex: 0 0 auto;
+	min-width: 26px;
+	height: 26px;
+	padding: 0 6px;
+	border-radius: var(--sf-radius-pill);
+	color: var(--sf-white);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.tp-map-pin {
+	min-width: 26px;
+	height: 26px;
+	padding: 0 6px;
+	border-radius: var(--sf-radius-pill);
+	border: 2px solid var(--sf-white);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	color: var(--sf-white);
+	font: 700 12px/1 var(--sf-font-sans);
+}
+
+.tp-map-num[data-kind="airport"],
+.tp-map-pin[data-kind="airport"] {
+	background: var(--sf-bahama-blue);
+}
+
+.tp-map-num[data-kind="hotel"],
+.tp-map-pin[data-kind="hotel"] {
+	background: var(--sf-violet-deep);
+}
+
+.tp-map-num[data-kind="stop"],
+.tp-map-pin[data-kind="stop"] {
+	background: var(--sf-red);
+}
+
+.tp-map-num[data-kind="pickup"],
+.tp-map-pin[data-kind="pickup"] {
+	background: var(--sf-green);
+}
+
+.tp-map-num[data-kind="dropoff"],
+.tp-map-pin[data-kind="dropoff"] {
+	background: var(--sf-teal-deep);
+}
+
+.tp-map-num[data-kind="freight"],
+.tp-map-pin[data-kind="freight"] {
+	background: var(--sf-ink-700);
+}
+
+/* A marker's popup, which Google always draws white. */
+.tp-map-popup {
+	min-width: 170px;
+	max-width: 260px;
+	color: var(--sf-ink-900);
+	font-size: var(--sf-text-sm);
+	line-height: 1.4;
+}
+
+.tp-map-popup-title {
+	font-weight: 600;
+}
+
+.tp-map-popup a {
+	color: var(--sf-bahama-blue);
+	text-decoration: underline;
+}
+
+.tp-map-body {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.tp-map-body .tp-muted {
+	display: block;
+}
+
+.tp-map-open {
+	flex: 0 0 auto;
+	font-size: var(--sf-text-sm);
+	white-space: nowrap;
+	color: var(--sf-link);
+}
+
+/* ---- Phones ----------------------------------------------------------------------------- */
+
+@media (max-width: 767px) {
+	.tp-map {
+		height: 340px;
+	}
+
+	.tp-map-row {
+		flex-wrap: wrap;
+		row-gap: 2px;
+	}
+
+	.tp-map-body {
+		flex: 1 1 calc(100% - 46px);
+	}
+
+	.tp-map-open {
+		margin-left: 36px;
+	}
+
+	.tp-ref-row span {
+		flex-basis: 110px;
+	}
+
+	.tp-tl-item {
+		flex-wrap: wrap;
+	}
+
+	.tp-tl-time {
+		flex: 1 1 auto;
+	}
+
+	.tp-tl-body {
+		flex: 1 1 100%;
+		padding-left: 32px;
+	}
+
+	.tp-cmp th,
+	.tp-cmp td {
+		min-width: 170px;
+	}
+
+	.tp-preview iframe {
+		height: 460px;
+	}
+
+	.tp-doc-edit {
+		margin-left: 0;
+	}
+
+	/* Touch targets: 44px for every control a thumb has to hit. */
+	button.tp-chip,
+	.tp-vbtn,
+	.tp-map-open {
+		min-height: var(--sf-touch-min);
+		display: inline-flex;
+		align-items: center;
+	}
+
+	.tp-viewbar select {
+		min-height: var(--sf-touch-min);
+		font-size: var(--sf-text-input);
+	}
+}
