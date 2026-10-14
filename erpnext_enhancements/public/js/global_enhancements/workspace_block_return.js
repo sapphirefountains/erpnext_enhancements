@@ -61,6 +61,16 @@
  * key, not a bare "#", query string into frappe.route_options, then frappe.set_route.
  * One click listener per root, on the root itself, so nothing outside the block changes.
  *
+ * ON SCREEN (v1.641.0). A block that polls (a timer, a realtime event) must not fetch while
+ * nobody can see it: leaving the workspace for a form or a list hides the block (display:none
+ * on an ancestor) or, once the workspace renders again, detaches it, and its timers keep
+ * firing. `onScreen(root)` answers for a shadow root (through its host) or an element: false
+ * when the host has left the document or getClientRects() is empty under a display:none
+ * ancestor, true otherwise. It FAILS OPEN: no host, a host without layout APIs (a document, a
+ * test double) or anything that throws answers true, so a block polls as it did before. The
+ * Task Dashboard and Who's Working each carried a copy of this check until v1.641.0; they ask
+ * here now, and treat a missing helper (an older bundle) as on screen too.
+ *
  * ONE HANDLER, NEVER A THROW. frappe.router is an event emitter
  * (frappe/public/js/frappe/event_emitter.js:26-28) whose off() wraps the handler in a
  * new function before it unbinds, so it can never remove one. This file binds exactly
@@ -193,6 +203,23 @@
 
 	/** Route a block's `/desk` links in place. Registering with onWorkspaceReturn does it too. */
 	api.routeLinks = routeLinks;
+
+	/**
+	 * Is this block on screen? `root` is a block's shadow root (asked through its host) or
+	 * an element. Fails open: true whenever it cannot tell.
+	 */
+	api.onScreen = function (root) {
+		try {
+			// A shadow root's host is an element; an anchor's `host` is a string, so it answers
+			// for itself.
+			const host = root && root.host && typeof root.host === "object" ? root.host : root;
+			if (!host || typeof host.getClientRects !== "function") return true;
+			return Boolean(host.isConnected && host.getClientRects().length > 0);
+		} catch (error) {
+			warn("on screen", error);
+			return true;
+		}
+	};
 
 	function bind() {
 		if (bound) return true;

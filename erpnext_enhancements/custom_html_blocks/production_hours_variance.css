@@ -1,7 +1,8 @@
 /* Hours: Budget vs Actual — Production Dashboard widget.
    Structural colours come from Frappe CSS variables (they pierce the shadow
-   boundary, so both themes work); literal colours appear only where the colour
-   IS the meaning — good / watch / bad. */
+   boundary, so both themes work); status colours, where the colour IS the
+   meaning (good / watch / bad), come from the app's --sf-* tokens, which
+   pierce it the same way. */
 
 .phv-card {
     font-size: var(--text-md);
@@ -92,15 +93,15 @@
 }
 
 .phv-good {
-    color: #1e7e51;
+    color: var(--sf-good);
 }
 
 .phv-warn {
-    color: #b7791f;
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .phv-bad {
-    color: #c0392b;
+    color: var(--sf-danger);
     font-weight: 600;
 }
 
@@ -134,13 +135,13 @@
 }
 
 .phv-fill-good {
-    background: #1e7e51;
+    background: var(--sf-good);
 }
 
 .phv-fill-warn {
-    background: #b7791f;
+    background: var(--sf-warn);
 }
 
 .phv-fill-bad {
-    background: #c0392b;
+    background: var(--sf-danger);
 }

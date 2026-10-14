@@ -14,6 +14,10 @@ a Custom HTML Block's DOM stays (hidden) or is detached when the user leaves the
   ``tick`` now asks ``onScreen`` first, marks the block stale off screen and loads on return.
 * Both hard-coded ``/app/...`` hrefs, which on v16 redirect to ``/desk`` and reload the page;
   they use ``frappe.utils.get_form_link``.
+* The on-screen check itself was copied into both blocks. Since v1.641.0 there is one copy,
+  ``onScreen`` on ``erpnext_enhancements.workspace_blocks`` in ``workspace_block_return.js``; each
+  block asks it through a guard that answers true (polling as before) when a device's cached
+  bundle predates it. ``scripts/test_workspace_block_return.mjs`` runs the helper and both blocks.
 
 Bench-free: the scripts are read as text, comments stripped.
 
@@ -28,6 +32,7 @@ APP = Path(__file__).resolve().parents[1]
 DAY_BOARD = APP / "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js"
 TASK_DASHBOARD = APP / "custom_html_blocks/task_dashboard.js"
 WHOS_WORKING = APP / "custom_html_blocks/finance_whos_working.js"
+HELPER = APP / "public/js/global_enhancements/workspace_block_return.js"
 
 
 def _code(path):
@@ -56,6 +61,42 @@ class TestDayBoardPolling(unittest.TestCase):
 		self.assertNotRegex(self.code, r"background:\s*#fff\b")
 		self.assertIn("var(--card-bg", self.code)
 		self.assertIn("var(--text-color)", self.code)
+
+
+def _on_screen(code):
+	"""The block's own onScreen function, up to its closing brace."""
+	body = code[code.index("function onScreen(") :]
+	return body[: body.index("\n    }\n")]
+
+
+class TestOneSharedOnScreenCheck(unittest.TestCase):
+	"""One copy of the check, in the helper; the blocks ask it and fail open without it."""
+
+	def test_the_helper_exports_the_check_and_fails_open(self):
+		code = _code(HELPER)
+		self.assertIn("api.onScreen = function (root)", code)
+		check = code[code.index("api.onScreen = function (root)") :]
+		check = check[: check.index("\n\t};\n")]
+		self.assertIn("host.isConnected && host.getClientRects().length > 0", check)
+		self.assertIn('typeof host.getClientRects !== "function") return true;', check)
+		# Anything that throws answers true as well: a poll skipped by a bug would look like
+		# a dashboard that silently stopped updating.
+		catch = check[check.index("catch (") :]
+		self.assertIn("return true;", catch)
+
+	def test_each_block_asks_the_helper_and_keeps_no_copy(self):
+		for path in (TASK_DASHBOARD, WHOS_WORKING):
+			with self.subTest(block=path.name):
+				code = _code(path)
+				self.assertNotIn("getClientRects", code, "the block still carries its own copy")
+				check = _on_screen(code)
+				self.assertIn(
+					"const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;",
+					check,
+				)
+				# An older bundle has no helper: the block must treat itself as on screen.
+				self.assertIn('if (!blocks || typeof blocks.onScreen !== "function") return true;', check)
+				self.assertIn("return blocks.onScreen(container);", check)
 
 
 class TestTaskDashboardPolling(unittest.TestCase):

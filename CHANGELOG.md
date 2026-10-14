@@ -106,6 +106,67 @@ when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto th
   The harnesses keep their stand-in scenarios, and the Device Console and the Scanner Audit keep every
   Back/Forward assertion.
 
+## [1.641.0] - 2026-10-13
+
+Custom pages S3.3a (TASK-2026-02822): the dashboard blocks' status colours come from the design
+tokens, and the on-screen check the polling blocks use exists once.
+
+### Changed
+
+- **Every Custom HTML Block takes good / watch / bad from the `--sf-*` tokens.**
+  - The department widgets wrote their status colours as literals, about fifty times each
+    (`#1e7e51`, `#b7791f`, `#c0392b`), and the older blocks used near-duplicates of each
+    (`#28a745`, `#16a34a`, `#f0ad4e`, `#dc2626`, `#e24c4c`, `#dc3545`, `#d9534f` ...). A literal
+    is one value in both themes, and changing a status colour meant editing forty files.
+  - The tokens in `sf_tokens.bundle.css` are custom properties on `:root`, so they inherit into
+    every block's shadow root, as Frappe's own variables do. One file now sets every block's
+    status colours, in both themes.
+  - "Both themes" is only half true today. `--sf-good` and `--sf-danger` have no dark-theme
+    values yet, so on a dark card good and danger text stay about 3–3.5:1, roughly what the old
+    literals gave. Warn text does improve, to about 13:1 (below).
+  - Converted: 34 blocks, 178 literal hex uses and 93 `rgba()` tints. That is 28 department
+    widgets, the KPI Cockpit, Task Dashboard, Projects Dashboard, Bank Balances, Who's Working,
+    and the fallbacks in My Travel.
+  - Good and bad text read `var(--sf-good)` / `var(--sf-danger)`; fills, bars, badges and stripes
+    read the same tokens, with `--sf-on-*` for a label on a fill; tints are
+    `color-mix(in srgb, var(--sf-…) 12%, transparent)`, edged at 35%.
+  - **Warn's pill edge is darker than the others.** The yellow at 35% is 1.22:1 on white, and the
+    outline all but disappears. It is the warn-text mix (below) at 40% instead: 1.76:1 on white,
+    level with the danger and good edges (1.78:1, 1.64:1), and 3:1 on a dark card.
+  - **Watch text is a mix, not the token.** `--sf-warn` is a yellow fill, 1.7:1 on white, which
+    the design system says is never text. Warn text is
+    `color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))`: 5.3:1 on a white card,
+    better than the old `#b7791f` (3.6:1) and `#f0ad4e` (1.9:1), and 13:1 on a dark card,
+    because `--sf-text-strong` changes with the theme.
+  - Two things kept their own colours. My Travel already used Frappe's theme-aware indicator
+    pairs (`--bg-green` with `--text-on-green` ...), so only their literal fallbacks became tokens.
+    My Training's overdue red (`#e03636`) is deliberately the same as the training manager
+    console's, so it is left for that page's own pass.
+  - Categorical colours are not statuses and stay as they were: project types, the priority
+    scale, the panel accents and the Desk Shortcuts palette. That includes two greens that are
+    banned as status colours elsewhere: the Task Dashboard's Projects panel (`#16a34a`: its
+    accent, rank circles and progress bars) and the Projects Dashboard's "Avg % Complete" card
+    (`#28a745`, one of a row of six category colours). The guard test allows exactly those sites.
+- **The on-screen check is one function in the return helper.** S1.1 copied an
+  `onScreen` check into `task_dashboard.js` and `finance_whos_working.js`. It skips a poll while
+  the block is hidden or detached, and fails open when it cannot tell.
+  - `workspace_block_return.js` now exports `erpnext_enhancements.workspace_blocks.onScreen(root)`,
+    with the same fail-open answer. It also answers true when the layout read throws.
+  - Both blocks ask it, and treat a missing helper (a device whose cached bundle predates it) as
+    on screen, so they poll as before. The copies are gone.
+
+### Added
+
+- `tests/test_block_status_tokens.py`, a CI step of its own. It fails the build on any of the old
+  status hexes or their `rgba()` tints in a block's `.css` or `.js`, compared case-insensitively.
+  Comments are stripped first, so a note naming the old value neither trips the test nor satisfies
+  it. It also fails on a `var(--sf-…)` that `sf_tokens.bundle.css` does not define, which would
+  otherwise render as no colour at all.
+- `tests/test_page_polling_lifecycle.py` pins the helper's one copy of the check and each block's
+  guard. `scripts/test_workspace_block_return.mjs` runs `onScreen` on shown, hidden, detached,
+  host-less and throwing roots. It also fires both blocks' real poll timers three ways: shown,
+  hidden, and hidden on an older bundle.
+
 ## [1.639.1] - 2026-10-13
 
 ### Fixed
