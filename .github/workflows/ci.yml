@@ -2026,7 +2026,7 @@ jobs:
       # own Contact/Address dialogs once made ours step aside on prod, and as 16.36.1.
       - name: New Contact / New Address obey the user, Link Existing links one record (bench-free, node)
         run: node scripts/test_contact_quick_entry.mjs
-      # ER-2026-520743 (v1.689.0): a new record made from a grid keeps what was typed. "Add multiple"
+      # ER-2026-520743 (v1.690.0): a new record made from a grid keeps what was typed. "Add multiple"
       # -> "Create a new X" opened a blank record (frappe's LinkSelector calls new_doc with no values)
       # and now carries the search text and adds the record to the grid; "Create a new Item" from a
       # buying grid row carries the row's name, description, units and price, but not a row still
