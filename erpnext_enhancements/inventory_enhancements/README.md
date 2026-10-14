@@ -156,6 +156,8 @@ Undo exists.
 | **+** returned from the run's job | `Add Without PO` (with the job) | Stock Entry, **Material Receipt** at the item's current cost, tagged with the job | Offsets to the *Parts Taken* account, so the credit reverses the account the take charged and the job nets by project in the ledger. Flagged `needs_review` |
 | **+** found, or not from a job | `Add Without PO` (no job) | Stock Entry, **Material Receipt** at the item's current cost | Offsets to the *Added Without PO* account. Flagged `needs_review` for a Stock Manager |
 | **Move here from…** | `Move` | Stock Entry, **Material Transfer** into the scanned location | Put-away: from wherever the stock is recorded |
+| **Move to…** (v1.692.0) | `Move To` | Stock Entry, **Material Transfer** out of the scanned location | The mirror of Move here; optionally makes the destination the item's bin. See [Bin assignments](#bin-assignments-v16890) |
+| **Remove from this bin** → Send to the Boneyard (v1.692.0) | `Unassign` / `Boneyard` | none / Stock Entry, **Material Transfer** to the Boneyard | Taking an item off a bin; with stock, moving it out first |
 | **+** bought on a store run (v1.536.0) | `Store Run` | **Purchase Receipt**, no PO, one per line, from a Supplier ticked *Store-Run Vendor* | At the price on the paper receipt, before tax; no tax row and no project on the receipt. Carries the run id, the receipt photo and the receipt total. Flagged `needs_review` for Purchasing. See [Bought on a store run](#bought-on-a-store-run-v15350) |
 
 **"+" is PO-first, and the fallback is a choice, never a default.** The item's open order
@@ -471,7 +473,8 @@ concurrent retry with a new Item gets a 409 and then "already saved"; an Amend k
 
 ER-2026-1319376 (take an item off a bin on `/stock-scan` and move it elsewhere) and
 ER-2026-1320545 (a Desk page to manage one bin's items) share one server side,
-`bin_assignments.py`. The phone buttons and the Desk page come in later releases.
+`bin_assignments.py`. The phone buttons shipped in v1.692.0 (*On the phone* below); the Desk page
+comes in a later release.
 
 **An item is on a bin when it has an enabled ERPNext Putaway Rule there.** Nobody sees the rule:
 people put an item on a bin and take it off. Every rule has capacity `CAPACITY` (1,000,000 in the
@@ -527,6 +530,19 @@ guided Item flow; it passes the gate only when it changes something.
 `patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
 once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
 QR label like any location.
+
+**On the phone** (v1.692.0, TASK-2026-02740 / -02741). On `/stock-scan`, an item at a bin carries:
+
+| Button | Who sees it | What it does |
+|---|---|---|
+| **Move to…** (beside *Move here from…*, under Save) | everyone, wherever stock here is free to move (like Take) | how many (all free here by default), where to (scan its label, *Find a location*, or where it is already), and **"Make <there> this item's bin"**, shown only with `can_manage` and ticked while the quantity is everything on hand until the person touches it. Posts `move_to`; the boneyard is never offered as a bin |
+| **Remove from this bin** | `can_manage` only | nothing on hand: one confirmed tap posts `unassign` and the page returns to the bin's list. Stock on hand: offers **Move to…** or **Send to the Boneyard** (`send_to_boneyard`, everything free here; hidden when no boneyard is set), each said plainly |
+
+Move to… without the box needs nothing a take does not (Stock Entry create and submit), which is
+why it shows to everyone; the box, Remove and the Boneyard are the module gate's, so they hide
+without `can_manage` rather than fail. A save that takes the item off the bin returns to the bin's
+list without adding a history entry. The list's rows say why an empty item still lists: an
+**on order** or **not assigned** (undecided) badge.
 
 ## Item naming
 

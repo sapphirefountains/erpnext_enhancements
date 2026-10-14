@@ -590,8 +590,9 @@ def _js_string(expr, consts):
 	return None
 
 
-def _method_map():
-	"""``{M key: dotted method}`` read from ``transport.js``'s ``export const M``.
+def _method_map(map_name="M"):
+	"""``{M key: dotted method}`` read from ``transport.js``'s ``export const M`` (or the map
+	called ``map_name``: ``BIN``, the bin-assignment endpoints, v1.692.0).
 
 	Read from the map's own braces rather than by grepping the file for method names: the
 	module names endpoints in prose too, and a scan that cannot tell a comment from the
@@ -604,9 +605,9 @@ def _method_map():
 			r"\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([\"'])([A-Za-z0-9_.]+)\2\s*;", code
 		)
 	)
-	head = re.search(r"export\s+const\s+M\s*=\s*(?:Object\.freeze\(\s*)?\{", code)
+	head = re.search(r"export\s+const\s+" + re.escape(map_name) + r"\s*=\s*(?:Object\.freeze\(\s*)?\{", code)
 	if not head:
-		raise AssertionError("transport.js has no `export const M = {...}`; the spec names it")
+		raise AssertionError(f"transport.js has no `export const {map_name} = {{...}}`; the spec names it")
 	out, unreadable = {}, []
 	for entry in _split_entries(_object_body(code, head.end() - 1)):
 		match = re.fullmatch(r"([A-Za-z_$][\w$]*)\s*:\s*(.+)", entry, flags=re.S)
@@ -738,6 +739,69 @@ class TestTheClientDialsExactlyTheEndpoints(unittest.TestCase):
 					path.startswith(DOTTED + "."), f"M.{key} = {path} is not in api/stock_scan.py"
 				)
 				self.assertIn(path.rsplit(".", 1)[-1], endpoints)
+
+
+#: Bin assignments (v1.692.0): the page's ``BIN`` map, key -> function in ``bin_assignments.py``.
+BIN_API = APP / "inventory_enhancements" / "bin_assignments.py"
+BIN_DOTTED = "erpnext_enhancements.inventory_enhancements.bin_assignments"
+BIN_CONTRACT = {"MOVE_TO": "move_to", "UNASSIGN": "unassign", "BONEYARD": "send_to_boneyard"}
+
+
+def _bin_posts():
+	"""``{BIN key: [set of keys sent], ...}`` from every ``this.post(v, BIN.KEY, {...})`` in app.js.
+	``action`` is the page's own label for the save and is not sent (``post`` strips it)."""
+	code = _strip_js_comments(_read(APP_JS))
+	out = {}
+	for match in re.finditer(r"this\.post\(", code):
+		args = _call_args(code, match.end() - 1)
+		if len(args) < 3 or not args[1].startswith("BIN."):
+			continue
+		body = args[2].strip()
+		if not body.startswith("{"):
+			raise AssertionError(f"this.post({args[1]}, ...) must send an object literal the scan can read")
+		keys = set()
+		for entry in _split_entries(_object_body(body, 0)):
+			key = re.match(r"([A-Za-z_$][\w$]*)\s*:", entry)
+			if not key:
+				raise AssertionError(f"this.post({args[1]}, ...): cannot read the entry {entry!r}")
+			keys.add(key.group(1))
+		out.setdefault(args[1][len("BIN.") :], []).append(keys - {"action"})
+	return out
+
+
+class TestTheBinButtonsDialBinAssignments(unittest.TestCase):
+	"""``transport.js``'s ``BIN`` map (v1.692.0): Move to…, Remove from this bin and Send to the
+	Boneyard post to ``bin_assignments``, not ``api/stock_scan``. A renamed function is a 404 and a
+	renamed parameter a ``TypeError``, both in front of someone holding the part."""
+
+	def test_the_map_dials_whitelisted_bin_assignment_functions(self):
+		dialled = _method_map("BIN")
+		self.assertEqual(set(dialled), set(BIN_CONTRACT))
+		endpoints = _whitelisted(BIN_API)
+		for key, fn in BIN_CONTRACT.items():
+			with self.subTest(key=key):
+				self.assertEqual(dialled[key], f"{BIN_DOTTED}.{fn}")
+				self.assertIn(fn, endpoints)
+
+	def test_every_post_sends_the_parameters_the_function_takes(self):
+		posts = _bin_posts()
+		self.assertEqual(set(posts), set(BIN_CONTRACT), "each BIN endpoint is posted from app.js")
+		endpoints = _whitelisted(BIN_API)
+		for key, sends in posts.items():
+			node = endpoints[BIN_CONTRACT[key]]
+			names = [a.arg for a in node.args.args]
+			optional = set(names[len(names) - len(node.args.defaults) :]) if node.args.defaults else set()
+			# client_ref is added by post() itself, from the save's kept or freshly minted reference.
+			required = set(names) - optional - {"client_ref"}
+			for sent in sends:
+				with self.subTest(key=key, sent=sorted(sent)):
+					self.assertLessEqual(required, sent, f"{key}: a required parameter is not sent")
+					self.assertLessEqual(sent, set(names), f"{key}: sends a key the function does not take")
+
+	def test_the_buttons_are_doors(self):
+		"""Move to… and Remove are doors like any other: nothing opens under the report form."""
+		self.assertIn("openMoveTo", TestReportAProblem.DOORS)
+		self.assertIn("openRemove", TestReportAProblem.DOORS)
 
 
 # ---------------------------------------------------------------------------
@@ -1860,6 +1924,9 @@ class TestReportAProblem(unittest.TestCase):
 		"openQuickItem",
 		"finishRun",
 		"offerTakeNow",
+		# Bin assignments (v1.692.0): Move to… and Remove from this bin.
+		"openMoveTo",
+		"openRemove",
 	)
 
 	def test_no_door_opens_under_the_form(self):

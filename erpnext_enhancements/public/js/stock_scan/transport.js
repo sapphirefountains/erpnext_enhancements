@@ -33,6 +33,21 @@ export const M = {
 };
 Object.freeze(M);
 
+/**
+ * Bin assignments (v1.692.0): the item sheet's **Move to…** and **Remove from bin**, which post
+ * to `erpnext_enhancements.inventory_enhancements.bin_assignments.*` rather than
+ * `api/stock_scan.*`. A map of their own because `M` is pinned to exactly the stock_scan
+ * module's endpoints; `tests/test_stock_scan_surface.py` pins this one to the whitelisted
+ * functions of `bin_assignments.py` and the parameters the page sends. Every one takes the
+ * page's `client_ref`, writes a Stock Scan Log row and is undone through `M.UNDO`.
+ */
+export const BIN = {
+	MOVE_TO: "erpnext_enhancements.inventory_enhancements.bin_assignments.move_to",
+	UNASSIGN: "erpnext_enhancements.inventory_enhancements.bin_assignments.unassign",
+	BONEYARD: "erpnext_enhancements.inventory_enhancements.bin_assignments.send_to_boneyard",
+};
+Object.freeze(BIN);
+
 /** How long a receipt photo may take to go up on a warehouse's signal before we give up. */
 export const UPLOAD_TIMEOUT_MS = 60000;
 
