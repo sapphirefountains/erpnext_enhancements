@@ -88,7 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/test_form_page_links.js` follows the Project link's new address, and a pick goes
   through `pick_filter`. The source checks in the planner suites now allow each page's one
   in-place history write, `write_filter_url`, still never a push, and one `frappe.require` behind
-  `p6a_require`.
+  `p6a_require`, including when the Opportunity board's side panel (v1.675.0) has already loaded
+  the kit's stylesheet, or loads it after a planner has.
+
 ## [1.675.0] - 2026-10-14
 
 Form kit P4.4 part 2, P6.6 and P6.7 (ERPNext TASK-2026-02762, -02780, -02781): **the side panel**,

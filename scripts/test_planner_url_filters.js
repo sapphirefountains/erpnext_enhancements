@@ -853,6 +853,36 @@ test("Maintenance Planner: opened while the Project Planner's request is on its 
 	check("everyone called back", ready, ["pp", "mp", "mp 6D"]);
 });
 
+// The Opportunity board's side panel (v1.675.0) asks for the kit and its stylesheet itself, in
+// OB_PANEL_ASSETS, once per board. assets.js's `_executed` is what keeps either order to one link.
+const OB_PANEL_ASSETS = ["planner_kit.bundle.js", "planner_kit.bundle.css", "guided_entry.bundle.js", "guided_entry.bundle.css"];
+
+test("The Opportunity board's side panel first, then both planners: still one link", async () => {
+	const desk = makeDesk({ start: "/desk/opportunity-board" });
+	desk.frappe.require(OB_PANEL_ASSETS);
+	await settle();
+	const pp = projectPlanner(desk);
+	pp.p6a_require(() => null);
+	pp.p6a_require(() => null);
+	const mp = maintenancePlanner(desk);
+	mp.p6a_require(() => null);
+	await settle();
+	check("one planner_kit <link>", desk.links().filter((href) => href.includes("planner_kit")).length, 1);
+	check("one planner_kit <script>", desk.scripts().filter((src) => src.includes("planner_kit")).length, 1);
+});
+
+test("A planner first, then the Opportunity board's side panel: still one link", async () => {
+	const desk = makeDesk({ start: "/desk/project-planner" });
+	const pp = projectPlanner(desk);
+	pp.p6a_require(() => null);
+	pp.p6a_require(() => null);
+	await settle();
+	desk.frappe.require(OB_PANEL_ASSETS);
+	await settle();
+	check("one planner_kit <link>", desk.links().filter((href) => href.includes("planner_kit")).length, 1);
+	check("one planner_kit <script>", desk.scripts().filter((src) => src.includes("planner_kit")).length, 1);
+});
+
 // ------------------------------------------------------------------ run
 
 (async () => {

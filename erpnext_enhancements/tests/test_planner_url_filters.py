@@ -28,6 +28,7 @@ Bench-free: reads files and runs node, no ``frappe`` stub.
 Run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -189,6 +190,17 @@ class TestTheKitLoadsOnce(unittest.TestCase):
 				self.assertIn(
 					f'const {kit} = {{\n\tkit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', code
 				)
+
+	def test_the_harness_models_the_opportunity_boards_panel_list(self):
+		"""The board's side panel (v1.675.0) requires the kit's two files itself; the harness runs its
+		list beside the planners', so it must be the board's own."""
+		board = _code(APP / "crm_enhancements/page/opportunity_board/opportunity_board.js")
+		listed = re.search(r"const OB_PANEL_ASSETS = \[([^\]]*)\];", board)
+		self.assertIsNotNone(listed)
+		names = re.findall(r'"([^"]+)"', listed.group(1))
+		self.assertIn("planner_kit.bundle.css", names)
+		harness = HARNESS.read_text(encoding="utf-8")
+		self.assertIn(f"const OB_PANEL_ASSETS = {json.dumps(names, separators=(', ', ': '))};", harness)
 
 
 class TestWiring(unittest.TestCase):
