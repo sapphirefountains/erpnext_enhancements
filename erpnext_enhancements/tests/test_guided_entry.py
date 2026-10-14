@@ -951,5 +951,23 @@ class TestTheEntryPoint(unittest.TestCase):
 		self.assertIn('"public/js/crm_enhancements/opportunity.js"', block)
 
 
+class TestPhoneFixesFromTheLiveCheck(unittest.TestCase):
+    """Found on prod at 375px on 2026-10-13: the Triton button covered Next, and Frappe's form
+    padding set the fields 30px in from the step title."""
+
+    def test_the_assistant_button_lifts_only_while_the_page_shows(self):
+        js = (APP / "enhancements_core" / "page" / "guided_entry" / "guided_entry.js").read_text(encoding="utf-8")
+        self.assertIn('const GE_BODY_CLASS = "ge-page-active";', js)
+        self.assertIn("document.body.classList.add(GE_BODY_CLASS);", js)
+        self.assertIn("document.body.classList.remove(GE_BODY_CLASS);", js)
+        css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
+        self.assertIn("body.ge-page-active .triton-fab", css)
+
+    def test_phone_fields_use_the_full_width(self):
+        css = (APP / "public" / "css" / "guided_entry.bundle.css").read_text(encoding="utf-8")
+        phone = css[css.index("@media (max-width: 767px)") :]
+        self.assertIn(".ge-fields .form-section .form-column {\n\t\tpadding-left: 0;", phone)
+
+
 if __name__ == "__main__":
 	unittest.main()
