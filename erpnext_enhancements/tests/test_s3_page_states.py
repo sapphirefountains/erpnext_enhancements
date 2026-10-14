@@ -400,6 +400,13 @@ class TestThePagesStayInTheDesk(unittest.TestCase):
 				self.assertNotRegex(_code(path), r"['\"`(]/app/")
 
 	def test_no_history_writes_were_added(self):
+		"""A state panel is never a history entry. The Rental Planner and the Day Board write their
+		own address since v1.662.0 (the board's dates, the day shown), each through one writer that
+		tests/test_page_deep_links.py pins; nothing else in them may."""
+		writers = {
+			"rental-planner": "write_board_address(push) {",
+			"maintenance-day-board": "function writeAddress(push) {",
+		}
 		for name in (
 			"rental-planner",
 			"maintenance-day-board",
@@ -409,8 +416,14 @@ class TestThePagesStayInTheDesk(unittest.TestCase):
 		):
 			with self.subTest(page=name):
 				code = _code(PAGES[name])
-				for token in ("pushState", "replaceState", "popstate"):
-					self.assertNotIn(token, code)
+				self.assertNotIn("popstate", code)
+				for token in ("pushState", "replaceState"):
+					if name in writers:
+						self.assertEqual(code.count(token), 1)
+						writer = code[code.index(writers[name]) :][:900]
+						self.assertIn(token, writer)
+					else:
+						self.assertNotIn(token, code)
 
 
 if __name__ == "__main__":

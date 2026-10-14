@@ -1719,6 +1719,13 @@ jobs:
       # the form kit's exact `modified` string, or every move is a conflict. Own frappe stub.
       - name: Opportunity board (bench-free, node + SQL check)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board -v
+      # Form kit P6 part B (P6.3, P6.4, P6.8): the needs-attention list held deal for deal to the
+      # README's SQL (run on SQLite with the child tables, through the real get_board and the form
+      # kit's real completeness), the quick filters, a snoozed deal hidden until its date then
+      # back, the snooze endpoint's write check and modified lock (never save(), so no unrelated
+      # validation blocks it), and saved views in the planners' own store. Own frappe stub.
+      - name: Opportunity board part B (views, attention, snooze, saved views)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
@@ -3434,8 +3441,9 @@ jobs:
       # lands after Back never paints over the screen the person went to.
       - name: Marketing app Back/Forward (bench-free, node)
         run: node scripts/test_marketing_history.js
-      # Six Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
-      # QuickBooks record matching, training review, location timeline). Runs the harness
+      # Seven Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
+      # QuickBooks record matching, training review, location timeline, maintenance day board),
+      # under the v16 router both before and after v16.50 for the day and trail in the address. Runs the harness
       # through Python so the source checks and the behaviour run together; node is on PATH
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
@@ -3452,6 +3460,20 @@ jobs:
         run: node scripts/test_scanner_kit.mjs
       - name: Scanner kit (pages on the kit, iOS rules)
         run: python -m unittest erpnext_enhancements.tests.test_scanner_kit -v
+      # Custom pages S5a (v1.662.0). The Day Board's ?date=, the Rental Planner's ?start= and the
+      # Location Timeline's trail live in the address: read from frappe.route_options and consumed
+      # key by key, written by one helper per page on the path on screen (never by routing to the
+      # page it is on, which older v16 routers push without the query), dates checked against the
+      # calendar, and get_day_board_data(date=None) unchanged for today. The behaviour runs in the
+      # Desk pages step above and in the Rental Planner step. Reads files only.
+      - name: Custom pages S5a deep links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_page_deep_links -v
+      # The Day Board's feed for another day (v1.662.0), its SQL run against an in-memory SQLite
+      # copy of the columns: a visit is on the day it was done (visit_date, else its clock-in),
+      # never the day billing or the sign-off last moved `modified`; today's queries are the ones
+      # it always sent; no date it can be handed raises. Its own step: installs a frappe stub.
+      - name: Day Board feed for another day (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_board_days -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

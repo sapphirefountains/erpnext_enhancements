@@ -11,9 +11,17 @@
 //   /desk/rental-planner/new/review          4. fees, then place the hold (or book it confirmed)
 //
 // Every screen is a route, so Back and Forward step through the flow (Nik's rule: never break
-// Back/Forward). The page moves only with frappe.set_route; frappe's router owns history, and
-// Back/Forward re-render the route through on_page_show -> handle_route. There is no popstate
-// listener and no history write of the page's own.
+// Back/Forward). The page moves between screens only with frappe.set_route; frappe's router owns
+// history, and Back/Forward re-render the route through on_page_show -> handle_route. There is no
+// popstate listener.
+//
+// The board's first day is in its address (v1.662.0): /desk/rental-planner?start=YYYY-MM-DD, and
+// the bare address is today. ‹ › and Today each push an entry of their own, so Back returns to the
+// dates looked at before and a reload or a pasted link opens the same ones. That is the page's one
+// history write: the same screen with another query, written with history.pushState because
+// routing to the page it is on would make older v16 routers drop the query. Back lands through
+// the router like any entry: it copies the query into frappe.route_options, and handle_route reads
+// `start` there and consumes it. A start that is not a real calendar day is ignored.
 //
 // The draft lives in memory and in sessionStorage, so leaving the page, Back past step 1 or a
 // reload loses nothing; an address for a step whose earlier steps are not done yet is corrected
@@ -46,6 +54,14 @@ const RP_FEES = ["delivery_setup_fee", "pickup_removal_fee", "other_fee", "secur
 
 // A Date as "YYYY-MM-DD". Not frappe.datetime.obj_to_str, which returns a full ISO timestamp.
 const rp_ymd = (date) => moment(date).format("YYYY-MM-DD");
+
+// "YYYY-MM-DD" when the value is a real calendar day, else null: 2026-02-30 is not one.
+function rp_valid_day(value) {
+	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value == null ? "" : value).trim());
+	if (!m || +m[1] < 1900 || +m[1] > 2999) return null;
+	const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+	return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? m[0] : null;
+}
 
 // sf_kit (v1.645.0): the board's loading, error and no-access panels and its quiet server call,
 // from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
@@ -176,11 +192,16 @@ class RentalPlanner {
 	handle_route() {
 		const target = this.route_target();
 		if (!target) return;
+		const start = this.take_route_start();
 		// Steps the flow pushed that the browser has since gone back past are no longer behind us.
 		while (this.pushed.length && this.pushed[this.pushed.length - 1].step !== target.step) {
 			this.pushed.pop();
 		}
 		if (target.view === "board") {
+			// The address names the dates, every time: Back onto the bare address is today again.
+			this.board_start = start || frappe.datetime.get_today();
+			// Today's date or a malformed one leaves the bare address: corrected in place.
+			this.write_board_address(false);
 			this.show_board();
 			return;
 		}
@@ -196,6 +217,38 @@ class RentalPlanner {
 			return;
 		}
 		this.show_step(target.step);
+	}
+
+	// The board's start from frappe.route_options (where the router copies the address's query, and
+	// where a link from another page puts its options), taken out as the list view takes its
+	// filters: the key goes, and an emptied object goes too, or a later plain set_route to this page
+	// would replay it. Null when there is none or it is not a real day.
+	take_route_start() {
+		const opts = frappe.route_options;
+		if (!opts || !Object.prototype.hasOwnProperty.call(opts, "start")) return null;
+		const start = rp_valid_day(opts.start);
+		delete opts.start;
+		if (!Object.keys(opts).length) frappe.route_options = null;
+		return start;
+	}
+
+	// The route back to the board at the dates it shows, for the flow's "Planner" buttons: a new
+	// entry, and it should not quietly jump back to today.
+	board_route() {
+		const start = this.board_start;
+		return start && start !== frappe.datetime.get_today() ? [RP.route, { start }] : [RP.route];
+	}
+
+	// The board's address on the path the router put on screen (a workspace shell may lead it). push:
+	// dates the person moved to, a new entry; otherwise the entry on screen is corrected in place.
+	// Nothing is written off the board, or when the address already says it.
+	write_board_address(push) {
+		if (this.current_screen() !== "board" || (frappe.get_route() || [])[0] !== RP.route) return;
+		const start = this.board_start;
+		const url = window.location.pathname + (start && start !== frappe.datetime.get_today() ? `?start=${encodeURIComponent(start)}` : "");
+		if (url === window.location.pathname + window.location.search) return;
+		if (push) window.history.pushState(null, "", url);
+		else window.history.replaceState(window.history.state, "", url);
 	}
 
 	go(route, replace) {
@@ -233,7 +286,7 @@ class RentalPlanner {
 		if (index > 0) {
 			this.go([RP.route, "new", RP.steps[index - 1]]);
 		} else {
-			this.go([RP.route]);
+			this.go(this.board_route());
 		}
 	}
 
@@ -321,14 +374,10 @@ class RentalPlanner {
 		const $bar = $('<div class="rp-toolbar"></div>').appendTo(this.$body);
 		const shift = (sign) => {
 			const step = this.board_days === 92 ? 30 : this.board_days === 31 ? 14 : 7;
-			this.board_start = frappe.datetime.add_days(this.board_start, sign * step);
-			this.load_timeline();
+			this.move_board(frappe.datetime.add_days(this.board_start, sign * step));
 		};
 		$('<button type="button" class="btn btn-default btn-sm">').text("‹").attr({ title: __("Earlier"), "aria-label": __("Earlier") }).on("click", () => shift(-1)).appendTo($bar);
-		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => {
-			this.board_start = frappe.datetime.get_today();
-			this.load_timeline();
-		}).appendTo($bar);
+		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => this.move_board(frappe.datetime.get_today())).appendTo($bar);
 		$('<button type="button" class="btn btn-default btn-sm">').text("›").attr({ title: __("Later"), "aria-label": __("Later") }).on("click", () => shift(1)).appendTo($bar);
 		this.$range_label = $('<span class="rp-range-label"></span>').appendTo($bar);
 		const $range = $('<select class="form-control input-sm" style="width:auto"></select>').appendTo($bar);
@@ -360,6 +409,14 @@ class RentalPlanner {
 		$('<span>').text(__("Click an empty day on a fountain to start a rental there.")).appendTo($legend);
 
 		this.$timeline = $('<div class="rp-scroll"></div>').appendTo(this.$body);
+		this.load_timeline();
+	}
+
+	// Dates the person moved the board to: an entry of their own (none when nothing moved, as Today
+	// pressed on today), then the fleet for them.
+	move_board(start) {
+		this.board_start = start;
+		this.write_board_address(true);
 		this.load_timeline();
 	}
 
@@ -548,7 +605,7 @@ class RentalPlanner {
 	show_step(step) {
 		this.page.set_title(__("New Rental"));
 		this.page.clear_actions();
-		this.page.set_secondary_action(__("Planner"), () => this.go([RP.route]));
+		this.page.set_secondary_action(__("Planner"), () => this.go(this.board_route()));
 		this.$body.empty();
 
 		const $steps = $('<div class="rp-steps"></div>').appendTo(this.$body);
@@ -1011,7 +1068,7 @@ class RentalPlanner {
 		}
 		$('<button class="btn btn-default"></button>')
 			.text(__("Back to Planner"))
-			.on("click", () => this.go([RP.route]))
+			.on("click", () => this.go(this.board_route()))
 			.appendTo($buttons);
 		$('<button class="btn btn-default"></button>')
 			.text(__("Book Another"))
