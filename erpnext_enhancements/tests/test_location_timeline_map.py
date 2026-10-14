@@ -20,10 +20,10 @@ class TestLocationTimelineMap(unittest.TestCase):
         self.js_path = os.path.join(base_dir, 'workforce', 'page', 'location_timeline', 'location_timeline.js')
         self.css_path = os.path.join(base_dir, 'workforce', 'page', 'location_timeline', 'location_timeline.css')
 
-        with open(self.js_path, 'r', encoding='utf-8') as f:
+        with open(self.js_path, encoding='utf-8') as f:
             self.js_content = f.read()
 
-        with open(self.css_path, 'r', encoding='utf-8') as f:
+        with open(self.css_path, encoding='utf-8') as f:
             self.css_content = f.read()
 
     def strip_comments(self, text):
