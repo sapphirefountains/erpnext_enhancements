@@ -99,11 +99,15 @@ def boot_session(bootinfo):
 	P4.3, ``form_kit/help_text/``): their description tooltips also show the field's longer
 	explanation, fetched by ``field_description_icons.js``. See ``form_kit.field_help``.
 
-	``frappe.boot.sf_guided`` is ``{doctype: {"accepts": [fieldname, ...]}}`` for the DocTypes the
-	guided page opens by default (form kit P5.2, ``public/js/guided_default.js``): a New or an
-	existing record of one opens on the guided page rather than the form. ``accepts`` is what a
-	new record may carry over from where it was started (``form_kit.steps.prefill_fields``).
-	Empty when site_config's ``disable_guided_default`` is set, and the Desk then opens forms.
+	``frappe.boot.sf_guided`` is ``{doctype: {"accepts": [fieldname, ...], "default": 0|1,
+	"default_new": 0|1}}`` for the DocTypes with a guided flow (form kit P5.2,
+	``public/js/guided_default.js``). With ``default`` 1 an existing record opens on the guided page
+	rather than the form, and with ``default_new`` 1 a New does. Both are 0 for the config's
+	``open_by_default: False`` (Item since P8.1), where the form's *Guided* button leads to the page,
+	and for a person without write (``default``) or create (``default_new``) permission on the
+	DocType, who keeps the form. ``accepts`` is what a new record may
+	carry over from where it was started (``form_kit.steps.prefill_fields``). Empty when
+	site_config's ``disable_guided_default`` is set, and the Desk then opens forms.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -142,7 +146,8 @@ def _field_help_doctypes():
 
 
 def _guided_doctypes():
-	"""The DocTypes the guided page opens by default, for this user (form kit P5.2).
+	"""The DocTypes with a guided flow for this user, and whether each opens there by default
+	(form kit P5.2; ``default`` since P8.1).
 
 	Never raises: boot runs everywhere, and a broken flow config is not worth a broken desk.
 	Whether the user may open the page at all is the browser's check (``frappe.boot.page_info``).
@@ -151,14 +156,28 @@ def _guided_doctypes():
 		if frappe.conf.get("disable_guided_default"):
 			return {}
 		from erpnext_enhancements.form_kit import steps as flow
-		from erpnext_enhancements.form_kit.config import CONFIGS
+		from erpnext_enhancements.form_kit.config import CONFIGS, opens_by_default
 
 		out = {}
-		for doctype in CONFIGS:
-			if not frappe.has_permission(doctype, "read"):
+		for doctype, config in CONFIGS.items():
+			# One DocType's broken flow leaves the others as they were.
+			try:
+				if not frappe.has_permission(doctype, "read"):
+					continue
+				steps = flow.flow_steps(doctype, None)
+				by_default = opens_by_default(config)
+				out[doctype] = {
+					"accepts": sorted(flow.prefill_fields(doctype, steps)),
+					# 0: the form stays where a record opens; the guided page is reached on
+					# purpose (the form's Guided button, the start screen). Item, until reviewed.
+					# And only for someone who can change the records: a person who may only read
+					# them (an Item Manager reading deals, let in for the Item flow) keeps the form.
+					"default": 1 if by_default and frappe.has_permission(doctype, "write") else 0,
+					# A New of the DocType: the same, for someone who may create one.
+					"default_new": 1 if by_default and frappe.has_permission(doctype, "create") else 0,
+				}
+			except Exception:
 				continue
-			steps = flow.flow_steps(doctype, None)
-			out[doctype] = {"accepts": sorted(flow.prefill_fields(doctype, steps))}
 		return out
 	except Exception:
 		return {}

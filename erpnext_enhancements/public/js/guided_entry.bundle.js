@@ -22,16 +22,22 @@
  *   SidePanel      form_kit/ui/side_panel.js: the same editor in the planner kit's drawer
  *
  * The guided page's DOM and Frappe wiring stay in the page script; the pure decisions live in
- * form_kit/*.js so tests/test_guided_entry.py can run them under node.
+ * form_kit/*.js so tests/test_guided_entry.py can run them under node. It also carries the DocType
+ * extensions the editor draws step blocks with (form kit P8.1; public/js/guided_item/ for Item),
+ * found through sf_form_kit.extension_for(doctype).
  */
 
 import * as form_kit from "./form_kit/index.js";
 import { RecordEditor, mix_editor } from "./form_kit/ui/editor.js";
 import { SidePanel } from "./form_kit/ui/side_panel.js";
+// Each DocType's extension registers itself with form_kit/extensions.js (form kit P8.1): the Item
+// flow's name builder and its supplier, stock and asset blocks.
+import "./guided_item/extension.js";
 
-// 2 since v1.675.0: the editor and the side panel. A tab still holding version 1 (loaded before a
-// deploy) takes this one, so a page that needs SidePanel finds it.
-const VERSION = 2;
+// 2 since v1.675.0: the editor and the side panel. 3 since v1.683.0 (form kit P8.1): extension_for,
+// ends_core and opens_by_default. A tab still holding an older version (loaded before a deploy)
+// takes this one, so a page that needs SidePanel or an extension finds it.
+const VERSION = 3;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_form_kit && window.sf_form_kit.version >= VERSION)) {

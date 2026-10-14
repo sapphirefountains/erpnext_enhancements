@@ -1252,7 +1252,16 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		self.assertIn("if (own && own.apply(this, args) === false) return false;", code)
 		# The form's history entry is replaced, so Back leaves the way the person came.
 		self.assertIn("frappe.route_flags.replace_route = true;", code)
-		self.assertIn('import { redirect_for, full_form_key } from "./form_kit/opening.js";', code)
+		self.assertIn('import { redirect_for, full_form_key, opens_by_default } from "./form_kit/opening.js";', code)
+
+	def test_only_a_default_flow_takes_over_where_records_open(self):
+		"""P8.1: a DocType reached on purpose (Item) gets no create route and no redirect; the
+		Guided button and the start screen ask has_flow instead."""
+		code = _code(DEFAULT_JS)
+		self.assertIn("return page_open() && opens_by_default(guided()[doctype], !!is_new);", code)
+		self.assertIn("return page_open() && !!guided()[doctype];", code)
+		self.assertIn('if (api.is_guided(doctype, true)) frappe.create_routes[doctype] = ["guided-entry", doctype, "new"];', code)
+		self.assertIn("if (!api.is_guided(route[1]) && !api.is_guided(route[1], true)) return false;", code)
 
 	def test_only_for_people_who_may_open_the_page(self):
 		code = _code(DEFAULT_JS)

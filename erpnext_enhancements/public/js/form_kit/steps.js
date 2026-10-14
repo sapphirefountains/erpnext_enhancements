@@ -56,6 +56,17 @@ export function neighbor(steps, values, key, dir) {
 	return null;
 }
 
+// Whether `key` is the last core step: the next active step is a "more" one (form_kit/config,
+// `more`), so the footer offers Done, and the rest stays behind More details and in the rail.
+// False on a "more" step itself, and on a flow without "more" steps (Opportunity), whose last
+// step offers Done the ordinary way.
+export function ends_core(steps, values, key) {
+	const step = find_step(steps, key);
+	if (!step || step.more) return false;
+	const next = neighbor(steps, values, key, 1);
+	return !!next && !!(find_step(steps, next) || {}).more;
+}
+
 // The step the address should show: the one asked for when it exists and applies; otherwise the
 // next active step after it (a stream's page whose stream was just removed), else the first.
 // `replace` says the address must be corrected in place, never pushed.

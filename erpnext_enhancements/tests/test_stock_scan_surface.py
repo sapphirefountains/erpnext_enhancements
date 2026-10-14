@@ -1129,7 +1129,7 @@ class TestPayloadShapes(unittest.TestCase):
 	def test_the_store_run_shapes(self):
 		self.assertCarries(_returned_dicts(self._fn("_run_summary")), RUN_KEYS, "Run")
 		self.assertCarries(_returned_dicts(self._fn("_store_run_boot")), STORE_RUN_BOOT_KEYS, "boot.store_run")
-		self.assertCarries(_dicts_in(self._fn("check_new_item")), CHECK_NEW_ITEM_KEYS, "check_new_item")
+		self.assertCarries(_dicts_in(self._fn("preview_new_item")), CHECK_NEW_ITEM_KEYS, "check_new_item")
 		self.assertIn("_store_run_boot()", ast.unparse(self._fn("boot_payload")))
 
 
@@ -1325,7 +1325,14 @@ class TestTheStoreRunReceipt(unittest.TestCase):
 		self.assertNotRegex(code, r"fields\s*=\s*\[[^\]]*\b(count|sum|max|min|avg)\s*\(", re.I)
 
 	def test_check_new_item_previews_with_the_guards_exact_call(self):
-		source = ast.unparse(self.fn("check_new_item"))
+		# The answer is preview_new_item's (shared with the guided Item flow, v1.655.0); the
+		# endpoint keeps Stock Scan's role gate in front of it.
+		self.assertIn(
+			"return preview_new_item(item_code, item_name, item_group, stock_uom)",
+			ast.unparse(self.fn("check_new_item")),
+		)
+		self.assertIn("_check_access()", ast.unparse(self.fn("check_new_item")))
+		source = ast.unparse(self.fn("preview_new_item"))
 		self.assertIn("naming.blocking_findings(code, name, frappe.get_all('Item', pluck='name'))", source)
 		self.assertIn("item_naming_guard.in_force()", source)
 		self.assertIn("naming.DELETED_MARKER", source, "QuickBooks tombstones are dropped from the neighbours")
