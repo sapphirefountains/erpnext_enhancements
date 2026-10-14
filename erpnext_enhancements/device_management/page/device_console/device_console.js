@@ -148,13 +148,21 @@ class DeviceConsole {
 	}
 
 	scannerArrived(kit) {
-		if (kit) {
-			this.kit = kit;
-			this.nav = kit.sheets({ route: DC_ROUTE, names: DC_SHEETS, mark: 'dc_sheet', back_timeout_ms: DC_BACK_TIMEOUT_MS });
-			this.nav.watch(this.wrapper);
-		}
+		// A kit that throws as it starts counts as no kit: the page carries on with plain sheets,
+		// and the queue below still runs, so nothing is left waiting on it.
 		const queue = this.scannerQueue;
 		this.scannerQueue = null;
+		if (kit) {
+			try {
+				const nav = kit.sheets({ route: DC_ROUTE, names: DC_SHEETS, mark: 'dc_sheet', back_timeout_ms: DC_BACK_TIMEOUT_MS });
+				nav.watch(this.wrapper);
+				this.nav = nav;
+				this.kit = kit;
+			} catch (e) {
+				this.kit = null;
+				this.nav = dc_bare_sheets();
+			}
+		}
 		this.renderCamera();
 		queue.forEach((fn) => fn());
 	}

@@ -50,28 +50,65 @@ export function supported_formats(env) {
 		);
 }
 
-// window.jsQR, loaded once per page on first need. A load that fails is asked for again next time
-// (v16 marks even a failed file as loaded, so that only helps where the page has been reloaded,
-// but it never leaves a promise of nothing cached here).
+// How long a retry's own <script> may take before it counts as failed.
+export const QR_RETRY_TIMEOUT_MS = 10000;
+
+// window.jsQR, loaded once per page on first need. The first try is frappe.require. v16's
+// assets.js marks a path as executed even when its <script> failed (it resolves on error "for
+// backward compatibility"), so every later frappe.require of the same path is a no-op and could
+// never fetch it again. A later open after a failure therefore retries with a <script> of the kit's
+// own: any earlier failed one removed, a fresh one with a ?retry= query so the browser fetches it
+// again, settled on load, on error, or after QR_RETRY_TIMEOUT_MS. A query string is safe here,
+// unlike in frappe.require, which reads the file's type off the text after the last "?".
 export function load_jsqr(env) {
 	const have = () => (typeof env.win.jsQR === "function" ? env.win.jsQR : null);
 	if (have()) return Promise.resolve(have());
 	if (!env.jsqr_loading) {
-		env.jsqr_loading = new Promise((resolve) => {
-			try {
-				Promise.resolve(env.frappe.require(QR_DECODER)).then(
-					() => resolve(have()),
-					() => resolve(null)
-				);
-			} catch (e) {
-				resolve(null);
-			}
-		}).then((jsQR) => {
-			if (!jsQR) env.jsqr_loading = null;
-			return jsQR;
-		});
+		const attempt = env.jsqr_attempts || 0;
+		env.jsqr_attempts = attempt + 1;
+		env.jsqr_loading = (attempt ? retry_jsqr(env, attempt) : require_jsqr(env))
+			.then(have, () => null)
+			.then((jsQR) => {
+				if (!jsQR) env.jsqr_loading = null;
+				return jsQR;
+			});
 	}
 	return env.jsqr_loading;
+}
+
+function require_jsqr(env) {
+	try {
+		return Promise.resolve(env.frappe.require(QR_DECODER));
+	} catch (e) {
+		return Promise.reject(e);
+	}
+}
+
+function retry_jsqr(env, attempt) {
+	return new Promise((resolve, reject) => {
+		const doc = env.document;
+		const head = doc && doc.head;
+		if (!head || typeof head.appendChild !== "function" || typeof doc.createElement !== "function") {
+			reject(new Error("no document to load jsQR into"));
+			return;
+		}
+		const old = env.jsqr_script;
+		if (old && old.parentNode) old.parentNode.removeChild(old);
+		const tag = doc.createElement("script");
+		env.jsqr_script = tag;
+		let timer = null;
+		const settle = (ok) => {
+			env.clear_timeout(timer);
+			tag.onload = tag.onerror = null;
+			if (ok) resolve();
+			else reject(new Error("jsQR did not load"));
+		};
+		tag.onload = () => settle(true);
+		tag.onerror = () => settle(false);
+		timer = env.set_timeout(() => settle(false), QR_RETRY_TIMEOUT_MS);
+		tag.src = `${QR_DECODER}?retry=${attempt}`;
+		head.appendChild(tag);
+	});
 }
 
 function native_read(detector) {

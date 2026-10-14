@@ -924,7 +924,16 @@ function makeDesk(options) {
 					};
 					return new Promise(() => {});
 				}
-				if (opts.scanner !== false) scannerKit.install(ctx);
+				// { scannerThrows: true }: a kit that arrives but throws as a page starts it.
+				if (opts.scannerThrows) {
+					ctx.sf_scanner = {
+						version: 1,
+						sheets() {
+							throw new Error("scanner kit broke");
+						},
+						camera: { available: () => true },
+					};
+				} else if (opts.scanner !== false) scannerKit.install(ctx);
 			}
 			if (list.includes(JSQR_PATH)) ctx.jsQR = jsQR;
 			if (typeof cb === "function") cb();
@@ -1492,6 +1501,26 @@ test("Device Console: with no scanner kit the console still scans, picks and che
 		"Camera scanning could not be loaded. Reload the page, or use a hardware/Bluetooth scanner.",
 	]);
 	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: a kit that throws as it starts leaves the console usable, on plain sheets", async () => {
+	const desk = await deviceConsoleWith({ scannerThrows: true });
+	check("on the console, its counts loaded", [desk.current(), desk.route(), desk.sent("get_console_bootstrap").length], ["device-console", "device-console", 1]);
+	check("no camera button", camButton(desk, ".dc-cam"), false);
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("the picker opens as a plain dialog", [desk.shown(), desk.route()], [["Choose Employee"], "device-console"]);
+	const pick = desk.handler("click", ".dc-emp-pick");
+	await desk.tap(() => pick({ currentTarget: { __data: { emp: "EMP-9" } } }));
+	check("and checks out", desk.sent("check_out").map((r) => r.args.employee), ["EMP-9"]);
+});
+
+test("Scanner Audit: a kit that throws as it starts leaves the count usable, on plain sheets", async () => {
+	const desk = await inventory(null, { scannerThrows: true });
+	check("on the count", [desk.current(), desk.route()], ["inventory-scanner-audit", "inventory-scanner-audit"]);
+	check("no camera button", camButton(desk, ".isa-cam"), false);
+	await desk.tap(() => isa(desk).openItemSearch(""));
+	check("Find Item opens as a plain dialog", [desk.shown(), desk.route()], [["Find Item"], "inventory-scanner-audit"]);
 });
 
 test("Device Console: a first visit waits for the kit before it decides what a sheet URL is", async () => {

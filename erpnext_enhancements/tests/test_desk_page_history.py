@@ -206,7 +206,7 @@ class TestScannerSheetsAreRouteSegments(unittest.TestCase):
 					f"back_timeout_ms: {prefix}_BACK_TIMEOUT_MS }});",
 					code,
 				)
-				self.assertIn("this.nav.watch(this.wrapper);", code)
+				self.assertIn("nav.watch(this.wrapper);", code)
 
 	def test_on_page_show_is_the_sheet_aware_show(self):
 		for name in SCANNERS:

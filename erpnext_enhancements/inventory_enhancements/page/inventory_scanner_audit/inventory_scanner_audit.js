@@ -158,13 +158,21 @@ class InventoryScanner {
 	}
 
 	scannerArrived(kit) {
-		if (kit) {
-			this.kit = kit;
-			this.nav = kit.sheets({ route: ISA_ROUTE, names: ISA_SHEETS, mark: 'isa_sheet', back_timeout_ms: ISA_BACK_TIMEOUT_MS });
-			this.nav.watch(this.wrapper);
-		}
+		// A kit that throws as it starts counts as no kit: the page carries on with plain sheets,
+		// and the queue below still runs, so nothing is left waiting on it.
 		const queue = this.scannerQueue;
 		this.scannerQueue = null;
+		if (kit) {
+			try {
+				const nav = kit.sheets({ route: ISA_ROUTE, names: ISA_SHEETS, mark: 'isa_sheet', back_timeout_ms: ISA_BACK_TIMEOUT_MS });
+				nav.watch(this.wrapper);
+				this.nav = nav;
+				this.kit = kit;
+			} catch (e) {
+				this.kit = null;
+				this.nav = isa_bare_sheets();
+			}
+		}
 		// Whether the camera button shows is known once both the kit and the bootstrap have answered.
 		if (this.booted) this.renderControls();
 		queue.forEach((fn) => fn());

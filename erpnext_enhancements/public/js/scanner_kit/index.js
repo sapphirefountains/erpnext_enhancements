@@ -16,10 +16,10 @@
 
 import { make_env } from "./env.js";
 import { create_sheets } from "./sheets.js";
-import { QR_DECODER, QR_FRAME_WIDTH, create_reader, load_jsqr, supported_formats } from "./reader.js";
+import { QR_DECODER, QR_FRAME_WIDTH, QR_RETRY_TIMEOUT_MS, create_reader, load_jsqr, supported_formats } from "./reader.js";
 import { camera_available, failure_message, prepare_camera, show_camera } from "./camera.js";
 
-export { make_env, create_sheets, QR_DECODER, QR_FRAME_WIDTH, create_reader, load_jsqr, supported_formats };
+export { make_env, create_sheets, QR_DECODER, QR_FRAME_WIDTH, QR_RETRY_TIMEOUT_MS, create_reader, load_jsqr, supported_formats };
 export { camera_available, failure_message, prepare_camera, show_camera };
 
 // 1 (v1.666.0): the first version.

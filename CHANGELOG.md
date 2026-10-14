@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page's `hide`, and closes the sheet as soon as Bootstrap allows.
 - **The Device Console's camera now closes when the phone locks or the app is switched.** It had no
   `visibilitychange` close. The Scanner Audit had one, and the kit now does this for both pages.
+- **A jsQR file that failed to load can be loaded again without reloading the page.** v16.50's
+  `assets.js` marks a path as executed even when its `<script>` failed, so every later
+  `frappe.require` of it does nothing. The message still said to check the connection, which could
+  never help. On a later open after a failure, the kit now adds a `<script>` of its own: it removes
+  any earlier failed one, and the new one has a `?retry=` query so the browser fetches the file
+  again. The retry settles when the file loads, when it errors, or after 10 seconds.
+- **A scanner kit that throws as it starts no longer leaves its page stuck.** If `kit.sheets()` or
+  `watch()` threw, one of two things happened. With the kit already on the page, the page's own
+  start-up threw. On a first visit, the queue of shows and taps waiting for the kit was never
+  cleared, so the page never decided its first show and no sheet would open. Each page now treats a kit that throws as no
+  kit: it falls back to the plain sheets, and the queue still runs.
 
 ### Tests
 

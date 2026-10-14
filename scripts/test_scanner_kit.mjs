@@ -170,7 +170,20 @@ function makeWin(opts) {
 			element(tag, {
 				getContext: () => ({ drawImage() {}, getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }),
 			}),
+		// The <head> a jsQR retry's own <script> goes into.
+		head: {
+			scripts: [],
+			appendChild(el) {
+				el.parentNode = this;
+				this.scripts.push(el);
+			},
+			removeChild(el) {
+				el.parentNode = null;
+				this.scripts = this.scripts.filter((s) => s !== el);
+			},
+		},
 	};
+	win.loadJsqr = () => (win.jsQR = jsQR); // what a retried <script> that loads sets
 	win.fireDoc = (type) => (docListeners[type] || []).slice().forEach((fn) => fn({ type }));
 	win.docListeners = (type) => (docListeners[type] || []).length;
 	win.winListeners = (type) => (listeners[type] || []).length;
@@ -440,6 +453,45 @@ await test("jsQR failing to load: no reader on an iPhone, the detector's barcode
 	const android = makeWin({ detector: "no-qr", jsqr: false });
 	const reader = await kit.create_reader(kit.make_env(android));
 	assert.equal(reader.mode, "native");
+});
+
+await test("a failed jsQR load is retried on the next open with a fresh <script> of the kit's own", async () => {
+	// v16's frappe.require marks a failed path as executed, so asking it again would do nothing.
+	const win = makeWin({ detector: "none", jsqr: false });
+	const env = kit.make_env(win);
+	assert.equal(await kit.create_reader(env), null, "the first load failed");
+	assert.deepEqual(win.required, [JSQR]);
+	assert.deepEqual(win.document.head.scripts, []);
+	// Second open: the script errors.
+	const second = kit.create_reader(env);
+	await drain();
+	assert.deepEqual(win.required, [JSQR], "not frappe.require again");
+	const [first] = win.document.head.scripts;
+	assert.equal(first.src, JSQR + "?retry=1");
+	first.onerror();
+	assert.equal(await second, null);
+	// Third open: the failed tag goes, a fresh one comes, and it loads.
+	const third = kit.create_reader(env);
+	await drain();
+	assert.equal(win.document.head.scripts.length, 1, "the failed <script> was removed");
+	const [fresh] = win.document.head.scripts;
+	assert.notEqual(fresh, first);
+	assert.equal(fresh.src, JSQR + "?retry=2");
+	win.loadJsqr();
+	fresh.onload();
+	const reader = await third;
+	assert.equal(reader.mode, "jsqr");
+});
+
+await test("a jsQR retry that never answers fails after its timeout", async () => {
+	const win = makeWin({ detector: "none", jsqr: false });
+	const env = kit.make_env(win);
+	await kit.create_reader(env);
+	const retry = kit.create_reader(env);
+	await drain();
+	assert.equal(win.document.head.scripts.length, 1);
+	await win.wait(kit.QR_RETRY_TIMEOUT_MS);
+	assert.equal(await retry, null);
 });
 
 await test("prepare() says why there is no camera, in the page's words when it gives them", async () => {
