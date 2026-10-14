@@ -976,3 +976,189 @@ body.ob-drag-active * {
 		transition: none;
 	}
 }
+
+/* ---- Part C (v1.675.0): quick add, selection and bulk (P6.7), the side panel's marks (P6.6) ----
+ * The side panel itself is the form kit's (guided_entry.bundle.css, .fk-panel) in the planner kit's
+ * drawer; only what sits on the board, and the bulk panel's body, is here. */
+.ob-head-tools {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+.ob-select-mode {
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+}
+.ob-col-titlebar {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sf-space-5);
+}
+/* Quick add: a "+" at the head of each open column and On Hold. */
+.ob-add {
+	flex: 0 0 auto;
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-text-strong);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1;
+	cursor: pointer;
+}
+.ob-add:hover {
+	background: color-mix(in srgb, var(--sf-text) 10%, transparent);
+}
+.ob-add:focus-visible,
+.ob-pick:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ob-card-top {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-5);
+}
+/* Selecting: a box on each deal, a full 44px target, and the deal marked when it is picked. */
+.ob-pick {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+	vertical-align: middle;
+}
+.ob-pick-box {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-on-primary);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-pick[aria-pressed="true"] .ob-pick-box {
+	border-color: var(--sf-primary);
+	background: var(--sf-primary);
+}
+.ob-card.is-picked,
+.ob-tl-item.is-picked,
+.ob-att-item.is-picked {
+	outline: var(--sf-border-control) solid var(--sf-primary);
+	outline-offset: -2px;
+}
+.ob-table tr.is-picked td {
+	background: color-mix(in srgb, var(--sf-primary) 12%, transparent);
+}
+.is-selecting .ob-card {
+	cursor: pointer;
+}
+/* A drop on Closed Won or Lost waiting on its required fields in the side panel. */
+.ob-card.is-gated {
+	border-style: dashed;
+	opacity: 0.75;
+}
+/* The bar along the bottom while selecting. */
+.ob-bulkbar {
+	position: sticky;
+	bottom: 0;
+	z-index: 4;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	padding-bottom: calc(var(--sf-space-10) + env(safe-area-inset-bottom, 0px));
+	border-top: var(--sf-border-control) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-bulkbar-count {
+	margin: 0;
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulkbar-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+}
+/* The bulk panel, in the planner kit's drawer. */
+.ob-bulk {
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+}
+.ob-bulk-count,
+.ob-bulk-head,
+.ob-bulk-stage {
+	margin: 0 0 var(--sf-space-10);
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulk-names,
+.ob-bulk-fails {
+	margin: 0 0 var(--sf-space-15);
+	padding-left: var(--sf-space-20);
+	color: var(--sf-text-muted);
+}
+.ob-bulk-fail {
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+}
+.ob-bulk-error {
+	margin: var(--sf-space-10) 0;
+	color: var(--sf-danger);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulk-fields input,
+.ob-bulk-fields select,
+.ob-bulk-fields textarea {
+	font-size: var(--sf-text-input);
+}
+.ob-bulk-foot {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+}
+.ob-bulk .ob-stage-btn {
+	width: 100%;
+}
+
+@media (max-width: 767px) {
+	.ob-head-tools {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.ob-bulkbar {
+		margin-left: -16px;
+		margin-right: -16px;
+		padding-left: 16px;
+		padding-right: 16px;
+	}
+	.ob-bulkbar-actions .sf-btn {
+		flex: 1 1 140px;
+	}
+	.ob-bulk-foot .sf-btn {
+		width: 100%;
+	}
+}

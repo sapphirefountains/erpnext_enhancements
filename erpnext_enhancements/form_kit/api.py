@@ -75,6 +75,36 @@ def get_flow(doctype, name=None):
 		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
 	]
 	out["clears"] = config.get("clears") or {}
+	open_rule = (config.get("mine") or {}).get("open")
+	if open_rule:
+		# The statuses that close a record (Closed Won, Lost, Closed, Converted on Opportunity): the side
+		# panel offers no Undo for an edit that moved the record into or out of one (review of #1286:
+		# a plain save back out of Closed Won skips revert_won_status's refusal once a project exists).
+		out["closed"] = {"field": open_rule["field"], "in": list(open_rule["not_in"])}
+	won = config.get("won")
+	if won:
+		# What a move into Closed Won must carry (form kit P6.6): the board's side panel asks for it.
+		out["won"] = {
+			"status": won["status"],
+			"status_field": won.get("status_field", "status"),
+			"fields": list(won["fields"]),
+		}
+	quick = config.get("quick")
+	if quick and not name:
+		# The board's quick add (P6.7): the fields it asks for, and what it fills itself.
+		# A field quick add asks for only while the server says a new record needs it (the Lead
+		# Source, while Lead Attribution Settings require one): decided here, never in the Desk.
+		extra = [
+			fieldname
+			for fieldname, path in (quick.get("when") or {}).items()
+			if frappe.get_attr(path)(doctype)
+		]
+		out["quick"] = {
+			"fields": list(quick["fields"]) + [f for f in extra if f not in quick["fields"]],
+			"fixed": dict(quick.get("fixed") or {}),
+			"owner_field": quick.get("owner_field"),
+			"stage_field": quick.get("stage_field"),
+		}
 	lost = config.get("lost")
 	if lost:
 		# What the page's Set as Lost dialog needs: the value that opens it and the child tables.

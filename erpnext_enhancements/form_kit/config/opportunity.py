@@ -187,6 +187,30 @@ CONFIG = {
 		"reasons": {"doctype": "Opportunity Lost Reason Detail", "field": "lost_reason"},
 		"competitors": {"doctype": "Competitor Detail", "field": "competitor"},
 	},
+	# Form kit P6.6: what a move into Closed Won must carry besides the status. The board's side panel
+	# asks for these before the move is saved, so a card dropped on Closed Won never ends in a refused
+	# save; they are what script_migrations.opportunity.validate_ranks_on_won refuses Closed Won
+	# without. A move into Lost carries what ``lost`` above asks for instead.
+	"won": {
+		"status": "Closed Won",
+		"fields": ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"],
+	},
+	# Form kit P6.7: the board's quick add (the "+" on a column) asks only for these, in this order,
+	# and creates through create_record like step 1, with the same client_id. ``fixed`` fills the rest
+	# of what step 1 needs (the account is a Customer), ``owner_field`` is the person adding, when the
+	# new record's defaults leave it blank, and the column's stage goes in ``stage_field``. ``when``
+	# adds a field while the server says a new record needs it: the Lead Source, while Lead
+	# Attribution Settings require it (crm_enhancements.attribution.enforce_source would refuse
+	# every quick add otherwise). The Desk never reads that Settings Single; get_flow asks.
+	"quick": {
+		"fields": ["party_name", "custom_opportunity_name", STREAMS_FIELD, "custom_opportunity_summary"],
+		"when": {
+			"custom_lead_source": "erpnext_enhancements.crm_enhancements.attribution.lead_source_required",
+		},
+		"fixed": {"opportunity_from": "Customer"},
+		"owner_field": "opportunity_owner",
+		"stage_field": "status",
+	},
 	# What the form's scripts check as a value is chosen, which the page checks the same way (P4.5).
 	# opportunity_migrated_scripts.js warns when two ranks are the same (the server only checks that
 	# each is 1, 2 or 3), and ERPNext's opportunity.js clears the party when its type changes.
