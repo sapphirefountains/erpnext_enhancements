@@ -1940,6 +1940,17 @@ class TestTheInputsAreTheForms(unittest.TestCase):
         self.assertEqual(context["directory"], [])
         self.assertIn("company", context["fields"])
 
+    def test_the_item_flow_sends_its_grid_queries(self):
+        """Item's queries are item.js's, on grid columns ("table.field"); a ``{"row": ...}`` value is
+        the edited row's, so nothing has to come with them, and an Item has no directory query."""
+        payload = api.get_flow("Item")
+        self.assertEqual(
+            payload["queries"]["item_defaults.expense_account"],
+            {"query": "erpnext.controllers.queries.get_expense_account", "filters": {"company": {"row": "company"}}},
+        )
+        self.assertEqual(payload["query_context"], {"fields": {}, "directory": []})
+        self.assertNotIn("label_from", payload)
+
     def test_a_table_at_an_unreadable_level_is_not_read(self):
         metas = build_metas(field_overrides={"custom_contacts__address_table": {"permlevel": 7}})
         _reset(metas)

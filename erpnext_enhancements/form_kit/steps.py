@@ -53,8 +53,9 @@ TOP = "_top"
 #: v1.685.0 added the ones v16's controls read from the docfield itself (Nik, 2026-10-14: "the
 #: inputs should be the same"): ``link_filters`` (ControlLink.set_custom_query applies it with no
 #: ``frm``; Opportunity From's Property Setter limits it to Lead, Customer and Prospect),
-#: ``ignore_user_permissions`` (search_link's own flag; the form reads it from the meta, which the
-#: page does not load), ``length`` (a Data input's maxlength, 140 when absent), ``sort_options``,
+#: ``ignore_user_permissions`` (search_link's own flag, which the form reads from the meta the page
+#: does not load; search_link honors it only with a reference DocType, so the editor gives each Link
+#: the record's, as the form does, and a grid cell, which has none, leaves it out), ``length`` (a Data input's maxlength, 140 when absent), ``sort_options``,
 #: ``placeholder``, ``max_height`` (Text Editor) and ``hide_days`` / ``hide_seconds`` (Duration).
 #: ``fetch_from`` is left out on purpose: v16 fills it on the server in ``_validate_links`` on every
 #: save, ``save_step`` returns what the save changed, and a client fetch inside a FieldGroup would

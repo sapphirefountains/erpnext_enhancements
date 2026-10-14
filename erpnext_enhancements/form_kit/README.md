@@ -272,9 +272,10 @@ guided page and the side panel alike:
 
 | On the form | On the guided page |
 |---|---|
-| `frm.set_query(field, ...)` | the config's `queries` (schema in `config/__init__.py`), sent by `get_flow` without their `source`, applied as each Link's `get_query` (`fields.js resolve_query`). What a query reads that the values do not hold comes as `query_context`: the deal's `company` (a Prospect's search) and the directory's link sources |
-| a docfield's `link_filters`, `ignore_user_permissions`, `length` (a Data input's maxlength), `sort_options`, `placeholder`, `max_height`, `hide_days` / `hide_seconds` | carried by `steps.FIELD_KEYS`; v16's controls read them from the df with no `frm` |
-| `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it |
+| `frm.set_query(field, ...)`, and a grid column's `set_query(field, table, ...)` / `grid.get_field(field).get_query` | the config's `queries` (schema in `config/__init__.py`; a column is keyed `table.field` and reads its row with `{"row": column}`), sent by `get_flow` without their `source`, applied as each Link's `get_query` (`fields.js resolve_query`). What a query reads that the values do not hold comes as `query_context`: the deal's `company` (a Prospect's search) and the directory's link sources |
+| a docfield's `link_filters`, `length` (a Data input's maxlength), `sort_options`, `placeholder`, `max_height`, `hide_days` / `hide_seconds` | carried by `steps.FIELD_KEYS`; v16's controls read them from the df with no `frm` |
+| a Link's search sends the form's DocType as `reference_doctype`, which `search_link` needs to honor a docfield's `ignore_user_permissions` | the editor gives each Link control the record's DocType (`set_link_reference`, only the method, so its display status stays the FieldGroup's) and `ignore_user_permissions` is carried; a grid cell, whose row carries no DocType here, does not send the flag (it would be dropped with an error logged on every search) |
+| `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it, and one that cannot be read adds neither (a `depends_on` that cannot be read still shows the field). Conditions read the record as the form's `doc` does, `__islocal` included |
 | `set_df_property(<rank>, "reqd", ...)` on Closed Won (`opportunity_migrated_scripts.js`) | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="Closed Won"` (`steps.won_conditions`); the side panel's move marks them required too |
 | ERPNext's `set_dynamic_field_label` (party_name labeled with `opportunity_from`) | the config's `label_from`; relabeled as the kind changes, translated as on the form ("Customer" shows as "Accounts") |
 | Ctrl/Cmd+S saves now | frappe's Ctrl+S ends in `frappe.container.page.save_action`; each editor adds itself to its host page's once (`ge_bind_save_key`): the queue is flushed now, a new record is created, a side panel's move is committed. A dialog keeps the key for itself, as on the form |
@@ -286,14 +287,27 @@ Opportunity's `queries`, field by field:
 | `opportunity_from` | DocType name in Customer, Lead, Prospect | ERPNext `opportunity.js` `setup` (and the field's `link_filters` Property Setter) |
 | `party_name` | Lead: `erpnext.controllers.queries.lead_query`; Customer: enabled only; Prospect: the deal's company | ERPNext `opportunity.js` `setup_queries` |
 | `primary_contact`, `primary_address` | Dynamic Link `link_name` in the deal, its stakeholder rows' parties and its live account | `unified_tab_controller.js` `setup_queries` |
-| `customer_address` | the same | ERPNext sets `address_query` (the account's only); widened so an address linked only to the deal can be picked back |
+| `customer_address` (Billing Address) | ERPNext's `address_query`: the account's addresses only, as on the form | ERPNext `opportunity.js` `setup_queries` |
 
 Waived (`query_waivers`): `contact_person` (hidden; the page offers Primary Contact) and the items
-table's `item_code` / `uom` (the table is hidden on this site's form). `tests/test_form_kit_inputs.py`
-reads ERPNext's `opportunity.js` at version-16 (trimmed into
-`tests/fixtures/form_kit/erpnext_v16_opportunity_scripts.json`) and every script this app runs on
-the form, and fails on a `set_query` that is neither mirrored nor waived, on a mirror no script sets,
-and on a relabel or a Closed Won rule that drifted from the scripts.
+table's `item_code` / `uom` (the table is hidden on this site's form).
+
+Item's `queries` are all ERPNext's `item.js` `erpnext.item.setup_queries`, on grid columns: the
+Accounting rows' accounts, cost centers and warehouse by the row's company (expense and income
+accounts through `get_expense_account` / `get_income_account`; the five Expense accounts of its
+`fields` loop; provisional Liability or Asset; deferred revenue Liability, deferred expense Asset;
+inventory Stock; discount Profit and Loss), the Reorder row's warehouse (not a group) and warehouse
+group (`get_warehouses_for_reorder` by the row's warehouse). Waived: `taxes.tax_type`, which v16's
+Item Tax row does not have. Item's own conditions (Maintain Stock and Is Fixed Asset, Is Purchase
+Item and Customer Provided each read-only while the other is ticked; Asset Category, Shelf Life and
+the variant Attributes required) now apply on the guided Item page as on the form.
+
+`tests/test_form_kit_inputs.py` reads ERPNext's form script for each guided DocType at version-16
+(trimmed into `tests/fixtures/form_kit/erpnext_v16_<doctype>_scripts.json`) and every script this app
+runs on the form, and fails on a `set_query` that is neither mirrored nor waived, on a mirror no
+script sets, on a DocType added to the registry without being audited, and on a relabel or a Closed
+Won rule that drifted from the scripts. Under node it holds every Item condition to what the Desk
+form sets on 128 records.
 
 Checked and left as they are: `fetch_from` (the server fills it on every save and `save_step` returns
 what changed; a client fetch would queue a change to a field the person cannot edit), Select, Date,
@@ -468,7 +482,7 @@ thing. Its decisions are `public/js/form_kit/party.js`, pure, run under node by
 |---|---|---|
 | Account (`party_name`, kind `opportunity_from`) | Frappe's own | Customer: the app's quick entry (`party_quick_entry.js`), then picked. Lead or Prospect: its form in a new tab, with a toast saying to pick it here once saved (neither has a quick entry on this site, and leaving the page would lose the step) |
 | Primary Contact | the Desk directory's (v1.685.0): the deal's own, its stakeholders' and the account's (`queries` `links: "directory"`) | the app's Contact quick entry, linked to the account and the deal, then picked |
-| Billing Address (`customer_address`) | the same | the app's Address quick entry, starting on "Also <account>'s address" |
+| Billing Address (`customer_address`) | the account's own (ERPNext's `address_query`, as on the form) | the app's Address quick entry, starting on "Also <account>'s address" |
 | Primary Address (the site) | the same | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
 
 Decisions, for review:

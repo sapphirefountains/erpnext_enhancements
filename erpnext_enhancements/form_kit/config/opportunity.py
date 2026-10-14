@@ -258,13 +258,14 @@ CONFIG = {
 				"(primary_address_link_field)."
 			),
 		},
+		# The Billing Address is the account's: the form searches the account's addresses only, so the
+		# page does too (review of #1300: "the inputs should be the same"; the Desk does not widen it).
 		"customer_address": {
-			"links": "directory",
+			"query": "frappe.contacts.doctype.address.address.address_query",
+			"filters": {"link_doctype": {"field": "opportunity_from"}, "link_name": {"field": "party_name"}},
 			"source": (
-				"erpnext/crm/doctype/opportunity/opportunity.js setup_queries sets erpnext.queries."
-				"address_query, the account's addresses only. The page offers the record's own too, as the "
-				"form's Address directory lists them: an address linked only to the deal could otherwise "
-				"not be picked back once cleared (the input-fidelity audit, 2026-10-14)."
+				"erpnext/crm/doctype/opportunity/opportunity.js setup_queries: erpnext.queries.address_query, "
+				"with frappe.dynamic_link the party (party_name, typed by opportunity_from)."
 			),
 		},
 	},

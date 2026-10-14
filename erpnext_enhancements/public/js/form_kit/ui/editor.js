@@ -50,6 +50,9 @@ import { PartyEntry } from "./party.js";
 
 export const GE_API = "erpnext_enhancements.form_kit.api.";
 export const GE_LIST_SUFFIX = "__ge_list";
+// What each kind of condition means when its expression cannot be read (editor.condition): show
+// the field, but never make it required or read-only by accident.
+export const CONDITION_FALLBACK = { depends_on: true, mandatory_depends_on: false, read_only_depends_on: false };
 const GE_INFO_ICON =
 	'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" focusable="false">' +
 	'<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4"/>' +
@@ -589,8 +592,8 @@ export class RecordEditor {
 		// FieldGroup.make() writes a field's `default` over the values it is given on a new record;
 		// the defaults are already in get_flow's values.
 		delete df.default;
-		["depends_on", "mandatory_depends_on", "read_only_depends_on"].forEach((key) => {
-			if (df[key]) df[key] = this.condition(df[key]);
+		Object.keys(CONDITION_FALLBACK).forEach((key) => {
+			if (df[key]) df[key] = this.condition(df[key], CONDITION_FALLBACK[key]);
 		});
 		if (kit.is_layout(field)) return df;
 
@@ -625,8 +628,18 @@ export class RecordEditor {
 				delete out.hint;
 				delete out.help;
 				delete out.default;
+				// A grid cell's Link has no reference DocType here (a FieldGroup grid's rows carry no
+				// doctype), so search_link would log and drop the flag on every search; leave it out.
+				delete out.ignore_user_permissions;
 				if (read_only) out.read_only = 1;
 				else out.onchange = () => this.table_touched(fieldname);
+				// v1.685.0: the form's query for this column ("table.field" in the config's `queries`).
+				// A grid cell's control calls get_query with its row (link.js set_custom_query, no frm).
+				const column_query = ((this.flow && this.flow.queries) || {})[`${fieldname}.${child.fieldname}`];
+				if (column_query && (child.fieldtype === "Link" || child.fieldtype === "Dynamic Link")) {
+					out.get_query = (row) =>
+						kit.resolve_query(column_query, Object.assign(this.query_ctx(), { row: row || {} })) || {};
+				}
 				return out;
 			});
 			df.data = ge_clone(this.values[fieldname] || []);
@@ -728,10 +741,17 @@ export class RecordEditor {
 	// depends_on is written against the whole record (doc.status, doc.custom_value_stream ...),
 	// but a FieldGroup only knows the fields of this one step: evaluate it against the record's
 	// values with the step's live inputs laid over them.
-	condition(expression) {
+	//
+	// `fallback` is what a condition that cannot be read means (CONDITION_FALLBACK): a depends_on
+	// shows the field, never hiding one by accident; a mandatory_depends_on or read_only_depends_on
+	// adds nothing, never making a field required or read-only by accident (v1.685.0).
+	condition(expression, fallback = true) {
 		if (typeof expression !== "string") return expression;
 		return (step_values) => {
-			const doc = Object.assign({}, this.values, step_values || {});
+			// What the form's doc also carries that the values do not: a condition such as
+			// `eval:doc.__islocal && doc.is_sales_item` (Item's Standard Selling Rate) reads it.
+			const own = { doctype: this.doctype, name: this.name, __islocal: this.is_new ? 1 : undefined };
+			const doc = Object.assign(own, this.values, step_values || {});
 			try {
 				if (expression.startsWith("eval:")) {
 					return frappe.utils.eval(expression.slice(5), { doc, parent: doc });
@@ -739,8 +759,7 @@ export class RecordEditor {
 				const value = doc[expression];
 				return Array.isArray(value) ? value.length > 0 : !!value;
 			} catch (e) {
-				// A condition that cannot be read shows the field: never hide one by accident.
-				return true;
+				return fallback;
 			}
 		};
 	}
@@ -764,8 +783,20 @@ export class RecordEditor {
 			if (!control) return;
 			const mode = this.kit.inputmode_for(control.df, registry, this.doctype);
 			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
+			this.set_link_reference(control);
 			if (field.help) this.add_help(control.$wrapper, field, step);
 		});
+	}
+
+	// v1.685.0: a Link searches with the record's DocType as its reference_doctype, as on the form
+	// (link.js get_reference_doctype reads the control's doctype, which a FieldGroup leaves unset).
+	// search_link needs it with link_fieldname to honor the docfield's ignore_user_permissions; without
+	// it the flag is dropped and an error logged on every search. Only the method is replaced: giving
+	// the control a doctype would also move its display status onto frappe.perm.
+	set_link_reference(control) {
+		if (!control || typeof control.get_reference_doctype !== "function" || !this.doctype) return;
+		const doctype = this.doctype;
+		control.get_reference_doctype = () => doctype;
 	}
 
 	add_help($wrapper, field, step) {

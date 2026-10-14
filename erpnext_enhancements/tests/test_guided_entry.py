@@ -296,6 +296,19 @@ out.queries = {
 	list_filters: kit.resolve_filters([["Item", "company", "=", { field: "company" }], ["Item", "disabled", "=", 0]], {}),
 	dict_op: kit.resolve_filters({ company: ["=", { field: "company" }], x: { field: "x" } }, { company: "C" }),
 	nothing: kit.resolve_query(null, {}),
+	// A grid column's query reads the edited row (Item's Accounting rows by their company).
+	row: kit.resolve_query(
+		{ query: "erpnext.controllers.queries.get_expense_account", filters: { company: { row: "company" }, is_group: 0 } },
+		{ values: { company: "Not the row's" }, row: { company: "Sapphire Fountains" } }
+	),
+	row_empty: kit.resolve_query({ filters: { company: { row: "company" }, is_group: 0 } }, { values: {}, row: {} }),
+	billing: kit.resolve_query(
+		{
+			query: "frappe.contacts.doctype.address.address.address_query",
+			filters: { link_doctype: { field: "opportunity_from" }, link_name: { field: "party_name" } },
+		},
+		{ values: { opportunity_from: "Customer", party_name: "CUST-1" }, directory: ["CRM-OPP-1"] }
+	),
 };
 const party_field = { fieldname: "party_name", label: "Party" };
 out.labels = {
@@ -884,6 +897,20 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(q["list_filters"], [["Item", "disabled", "=", 0]])
 		self.assertEqual(q["dict_op"], {"company": ["=", "C"]})
 		self.assertIsNone(q["nothing"])
+		self.assertEqual(
+			q["row"],
+			{"query": "erpnext.controllers.queries.get_expense_account", "filters": {"company": "Sapphire Fountains", "is_group": 0}},
+		)
+		self.assertEqual(q["row_empty"], {"filters": {"is_group": 0}})
+		# The Billing Address is the account's only, as the form's address_query: the deal's own
+		# directory is not searched (review of #1300).
+		self.assertEqual(
+			q["billing"],
+			{
+				"query": "frappe.contacts.doctype.address.address.address_query",
+				"filters": {"link_doctype": "Customer", "link_name": "CUST-1"},
+			},
+		)
 
 	def test_the_party_is_labeled_with_its_kind(self):
 		labels = self.out["labels"]

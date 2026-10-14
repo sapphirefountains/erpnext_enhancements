@@ -1752,11 +1752,12 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
-      # v1.685.0, the guided page's inputs are the form's: every set_query in ERPNext's
-      # opportunity.js (version-16, trimmed into a fixture) and in every script this app runs on the
-      # Opportunity form is mirrored in the config's `queries` or waived with a reason, the relabel
-      # and the Closed Won requirement match the scripts, and Ctrl/Cmd+S binds once per editor
-      # (node). Imports only the config, no frappe stub.
+      # v1.685.0, the guided page's inputs are the form's: every set_query in ERPNext's form script
+      # (version-16, trimmed into a fixture) and in every script this app runs on the form, for each
+      # guided DocType (Opportunity, Item), is mirrored in the config's `queries` or waived with a
+      # reason; the relabel and the Closed Won requirement match the scripts; under node, Ctrl/Cmd+S
+      # binds once per editor and every Item condition lands where the Desk puts it. Imports only
+      # the config, no frappe stub.
       - name: Form kit inputs match the form (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit_inputs -v
       # Form kit P8.1, the guided Item flow's page side (public/js/guided_item/ and the page's

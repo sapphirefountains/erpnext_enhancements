@@ -19,28 +19,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`public/js/form_kit/ui/editor.js`) and works for any guided DocType:
   - **Link filters.** `frm.set_query` never applies to a FieldGroup, and `steps.FIELD_KEYS`
     dropped the docfield's `link_filters`, so Opportunity From offered every DocType on the site.
-    The flow now carries `link_filters`, plus `ignore_user_permissions`, `length` (a Data input's
-    maxlength, which the control otherwise takes as 140 whatever the field's own length is),
-    `sort_options`, `placeholder`, `max_height` and `hide_days`/`hide_seconds`. A new config key,
-    `queries`, holds every `set_query` the form's scripts set on a field the flow shows, as data:
-    Opportunity From limited to Customer, Lead and Prospect; the account searched with ERPNext's own
-    rules for its kind (`lead_query` for a Lead, enabled accounts only, a Prospect of the deal's
-    company); the contact and address pickers below. `get_flow` sends them with `query_context`,
-    which holds what a query reads that the page's values do not: the deal's company, and the
-    directory's link sources.
+    The flow now carries `link_filters`, plus `length` (a Data input's maxlength, which the control
+    otherwise takes as 140 whatever the field's own length is), `sort_options`, `placeholder`,
+    `max_height` and `hide_days`/`hide_seconds`. A new config key, `queries`, holds every
+    `set_query` the form's scripts set on a field the flow shows, as data, a grid column's included
+    (keyed `table.field`, reading its row): Opportunity From limited to Customer, Lead and Prospect;
+    the account searched with ERPNext's own rules for its kind (`lead_query` for a Lead, enabled
+    accounts only, a Prospect of the deal's company); the Billing Address among the account's
+    addresses (ERPNext's `address_query`); the contact and site pickers below. `get_flow` sends them
+    with `query_context`, which holds what a query reads that the page's values do not: the deal's
+    company, and the directory's link sources.
+  - **A Link searches with its form's DocType, as on the Desk.** search_link honors a docfield's
+    `ignore_user_permissions` only with a `reference_doctype`, which a FieldGroup's controls never
+    sent. The editor now gives each Link control the record's DocType (only `get_reference_doctype`,
+    so the control's display status is unchanged) and the flow carries the flag. A grid cell has no
+    reference DocType on the guided page, so its column leaves the flag out rather than have the
+    server drop it and log an error on every search.
   - **Contacts and addresses linked only to the deal can be picked again.** The Desk's Contact &
     Address directory searches Dynamic Link `link_name` in the deal itself, the parties its
     stakeholder rows name and its account (`unified_tab_controller.js` `setup_queries`). The guided
     pickers searched the account only. On prod 36 contacts and 12 addresses were linked only to
     their Opportunity (a general contractor's job site, for one), and once cleared they could not be
-    found again from the guided page. Primary Contact, Primary Address and Billing Address now
-    search the directory's set (the Billing Address too, which on the form uses ERPNext's
-    account-only `address_query`). A new record, which has no links yet, still searches its account.
+    found again from the guided page. Primary Contact and Primary Address now search the directory's
+    set. The Billing Address stays the account's, as on the form. A new record, which has no links
+    yet, still searches its account.
   - **Closed Won's three ranks show as required.** v16's `Layout.set_dependant_property` applies
     `mandatory_depends_on` and `read_only_depends_on` only for a form, a dialog or a web form. A plain
     FieldGroup skipped them without a word, so no condition of either kind ever worked on the guided
     page. The editor now applies them itself, adding "required" or "read-only" to a field and never
-    taking either away (a field read-only by permission stays read-only). The ranks get the form's
+    taking either away (a field read-only by permission stays read-only). A condition that cannot be
+    read adds neither, while a `depends_on` that cannot be read still shows the field. Conditions read
+    the record as the form's `doc`, `__islocal` included, so Item's Standard Selling Rate shows on a
+    new Item only, as on the form. On the guided Item page, Item's own conditions now hold: Maintain
+    Stock and Is Fixed Asset, and Is Purchase Item and Is Customer Provided Item, each read-only while
+    the other is ticked, and Asset Category, Shelf Life In Days and the variant Attributes required
+    when the form requires them. The ranks get the form's
     rule (`opportunity_migrated_scripts.js` `set_rank_fields_mandatory`) as their
     `mandatory_depends_on`, from the config's `won` (`steps.won_conditions`), so the Close step shows
     the asterisk the moment the status is Closed Won. The side panel's move into Closed Won marks
@@ -56,18 +69,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     created, and a side panel's move is committed. Binding is once per editor, so showing the page
     again never binds the key twice, an open dialog keeps Ctrl+S for itself as on the form, and
     every other page is unchanged.
+  - **The guided Item flow (v1.683.0) gets the Item form's queries.** ERPNext's `item.js`
+    filters the Accounting rows' accounts, cost centers and warehouse by the row's company, and the
+    Reorder rows' warehouse and warehouse group; `config/item.py` mirrors all of them. Waived:
+    `taxes.tax_type`, a column v16's Item Tax row does not have.
 - Checked and unchanged, with the reasons in `form_kit/README.md`: `fetch_from` (the server fills
   it on every save and `save_step` returns it), Select, Date, Datetime, Percent, Check, Text Editor,
   Table MultiSelect, Currency (every deal is in the company currency) and Dynamic Link (its type is
   read live).
 
 ### Added
-- `tests/test_form_kit_inputs.py` (bench-free, own CI step): reads ERPNext's `opportunity.js` at
-  version-16 (trimmed into `tests/fixtures/form_kit/erpnext_v16_opportunity_scripts.json`) and every
-  script this app runs on the Opportunity form, and fails on a `set_query` that is neither mirrored in
-  `queries` nor waived in `query_waivers` with a reason, on a mirror no script sets, on a relabel or a
-  Closed Won rule that drifted from the scripts, and runs the Ctrl+S binding under node. Waived:
-  `contact_person` and the items table's `item_code` / `uom`, none of which the flow shows.
+- `tests/test_form_kit_inputs.py` (bench-free, own CI step): for each guided DocType (Opportunity,
+  Item) it reads ERPNext's form script at version-16 (trimmed into
+  `tests/fixtures/form_kit/erpnext_v16_<doctype>_scripts.json`) and every script this app runs on
+  the form, and fails on a `set_query` that is neither mirrored in `queries` nor waived in
+  `query_waivers` with a reason, on a mirror no script sets, on a guided DocType it does not audit,
+  and on a relabel or a Closed Won rule that drifted from the scripts. Under node it runs the Ctrl+S
+  binding and `apply_condition`, and holds every Item condition to what the Desk form sets on 128
+  records. Waived on Opportunity: `contact_person` and the items table's `item_code` / `uom`, none of
+  which the flow shows.
 
 ## [1.683.0] - 2026-10-14
 

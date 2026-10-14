@@ -160,6 +160,8 @@ export function link_query(df, party, sources) {
 //   ctx = { values, party, directory }   the record's values (plus query_context.fields), its live
 //                                        party ({ doctype, name } or null) and the directory's
 //                                        link sources (query_context.directory)
+//   ctx.row                              for a child table's column ("table.field" in `queries`),
+//                                        the grid row being edited
 //
 // Returns what a Link's get_query returns ({ query?, filters? }), or null for no filter.
 
@@ -167,23 +169,29 @@ function blank_value(value) {
 	return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
 }
 
-// A filter value: { field } is the record's value of that field; anything else is itself.
-function filter_value(value, values) {
-	if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1 && "field" in value) {
-		const read = (values || {})[value.field];
+// A filter value: { field } is the record's value of that field, { row } the value of a column of
+// the grid row being edited (a child table's query, as the form reads locals[cdt][cdn]); anything
+// else is itself.
+function filter_value(value, values, row) {
+	if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1) {
+		let read = value;
+		if ("field" in value) read = (values || {})[value.field];
+		else if ("row" in value) read = (row || {})[value.row];
+		else return value;
 		return blank_value(read) ? undefined : read;
 	}
 	return value;
 }
 
-// Filters with every { field } read from the record. A filter whose value is still empty is left
-// out, as a form's Link drops an empty Link value from its filters (link.js set_custom_query).
-export function resolve_filters(filters, values) {
+// Filters with every { field } read from the record and every { row } from the grid row. A filter
+// whose value is still empty is left out, as a form's Link drops an empty Link value from its
+// filters (link.js set_custom_query).
+export function resolve_filters(filters, values, row) {
 	if (Array.isArray(filters)) {
 		const out = [];
 		filters.forEach((filter) => {
 			if (!Array.isArray(filter) || !filter.length) return;
-			const value = filter_value(filter[filter.length - 1], values);
+			const value = filter_value(filter[filter.length - 1], values, row);
 			if (value === undefined) return;
 			out.push([...filter.slice(0, -1), value]);
 		});
@@ -193,11 +201,11 @@ export function resolve_filters(filters, values) {
 	Object.keys(filters || {}).forEach((key) => {
 		const spec = filters[key];
 		if (Array.isArray(spec) && spec.length === 2) {
-			const value = filter_value(spec[1], values);
+			const value = filter_value(spec[1], values, row);
 			if (value !== undefined) out[key] = [spec[0], value];
 			return;
 		}
-		const value = filter_value(spec, values);
+		const value = filter_value(spec, values, row);
 		if (value !== undefined) out[key] = value;
 	});
 	return out;
@@ -220,7 +228,7 @@ export function resolve_query(spec, ctx) {
 	const out = {};
 	if (spec.query) out.query = spec.query;
 	if (spec.filters) {
-		const filters = resolve_filters(spec.filters, values);
+		const filters = resolve_filters(spec.filters, values, c.row);
 		if (Array.isArray(filters) ? filters.length : Object.keys(filters).length) out.filters = filters;
 	}
 	return Object.keys(out).length ? out : null;
