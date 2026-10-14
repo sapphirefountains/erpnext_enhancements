@@ -98,7 +98,7 @@
                         <a class="pwa-name" href="/desk/project/${encodeURIComponent(p.name)}">${sf.esc(p.title)}</a>
                         ${late}
                         <span class="pwa-meta">${meta}</span>
-                        <span class="pwa-bar" title="${sf.esc(pct + "%")}"><span class="pwa-fill ${fill}" style="width:${pct}%"></span></span>
+                        <span class="pwa-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${sf.esc(__("Progress"))}" title="${pct}%"><span class="pwa-fill ${fill}" style="width:${pct}%"></span></span>
                         <span class="pwa-age">${sf.esc(__("{0}d open", [p.age_days]))}</span>
                     </div>`;
             })

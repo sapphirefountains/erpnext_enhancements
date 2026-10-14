@@ -14,6 +14,10 @@
 // shown. Once the departments are listed, startApp hands a snapshot read to the
 // shared return helper, public/js/global_enhancements/workspace_block_return.js,
 // which runs it again then.
+//
+// Its panels (loading, empty, error, no access) and its escaping come from sf_kit, and
+// its "only the newest answer draws" counter from blocks.ticket, both handed over by the
+// same helper (custom_html_blocks/README.md).
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -23,10 +27,30 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#kpi-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         } else {
@@ -97,13 +121,16 @@
         return { cls: "flat", text: "" };
     }
 
-    function renderCards(body, meta, snap) {
+    function renderCards(body, meta, snap, sf) {
         if (!snap) {
-            body.innerHTML = `<div class="kpi-disabled">${__("No snapshot yet — it generates overnight, or press Refresh.")}</div>`;
+            sf.state.render(body, "empty", {
+                title: __("No snapshot yet — it generates overnight, or press Refresh."),
+            });
             meta.textContent = "";
             return;
         }
-        const esc = frappe.utils.escape_html;
+        // The kit's escape, under the name the card markup below reads it by.
+        const { esc } = sf;
         const cards = (snap.values || [])
             .map((v) => {
                 const status = (v.status || "").toLowerCase();
@@ -116,9 +143,13 @@
                         ? `<span class="kpi-target">${__("Target")}: ${esc(String(v.target_value))}</span>`
                         : "<span></span>";
                 const stale = v.is_stale ? `<span class="kpi-stale">${__("stale source")}</span>` : "";
+                // The left border's colour is the grade; the word says it too, for anyone who
+                // can't tell the colours apart or can't see them (S3.6).
+                const word = { good: __("Good"), watch: __("Watch"), bad: __("Bad") }[status] || v.status || "";
+                const grade = word ? `<span class="kpi-status">${esc(word)}</span>` : "";
                 return `
                     <div class="kpi-card ${statusClass}">
-                        <div class="kpi-card-label">${esc(v.label || v.kpi_key)}</div>
+                        <div class="kpi-card-label">${grade}${esc(v.label || v.kpi_key)}</div>
                         <div>
                             <div class="kpi-card-value">${esc(v.value_text || String(v.value))}</div>
                             ${stale}
@@ -130,14 +161,13 @@
                     </div>`;
             })
             .join("");
-        body.innerHTML = cards
-            ? `<div class="kpi-grid">${cards}</div>`
-            : `<div class="kpi-disabled">${__("This snapshot has no KPI values.")}</div>`;
+        if (cards) body.innerHTML = `<div class="kpi-grid">${cards}</div>`;
+        else sf.state.render(body, "empty", { title: __("This snapshot has no KPI values.") });
         const gen = snap.generated_at ? ` · ${snap.generated_at}` : "";
         meta.textContent = `${snap.snapshot_date || ""}${gen}`;
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const state = (window.__ee_kpi_cockpit = window.__ee_kpi_cockpit || {});
 
         const body = container.querySelector("#kpi-body");
@@ -152,23 +182,33 @@
         // dashboard we're on now. A return to the same dashboard keeps its department.
         const locked = detectLockedDepartment();
 
-        function showMessage(message) {
-            body.innerHTML = `<div class="kpi-disabled">${frappe.utils.escape_html(message)}</div>`;
+        // Nothing to show (no department for this role, KPIs switched off, none configured):
+        // the server's own sentence in the kit's empty panel.
+        function showEmpty(message) {
+            sf.state.render(body, "empty", { title: message });
             meta.textContent = "";
         }
 
+        // A failed call: no access on a 403, otherwise the error panel, whose Try again
+        // `retry` runs (a snapshot read, never a recompute).
+        function showFailure(err, title, retry) {
+            meta.textContent = "";
+            if (err && err.status === 403) sf.state.render(body, "no-access");
+            else sf.state.render(body, "error", { title, on_action: retry });
+        }
+
         // Picking another department while an answer is on its way means two asks at
-        // once, so each takes a ticket and only the newest one draws: an answer for the
-        // department you just left never lands under the one you picked.
+        // once, so each takes a ticket on the root (blocks.ticket) and only the newest one
+        // draws: an answer for the department you just left never lands under the one you
+        // picked.
         function load(force) {
             const dept = select.value;
             if (!dept) {
-                showMessage(__("No KPI dashboards are available for your role."));
+                showEmpty(__("No KPI dashboards are available for your role."));
                 return;
             }
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
-            body.innerHTML = `<div class="kpi-loading">${force ? __("Recomputing…") : __("Loading…")}</div>`;
+            const current = ticket(container);
+            sf.state.render(body, "loading", force ? { title: __("Recomputing…") } : {});
             refresh_btn.disabled = true;
             const method = force
                 ? "erpnext_enhancements.api.kpi.refresh_kpi_dashboard"
@@ -179,15 +219,16 @@
                     if (!current()) return;
                     const m = r.message || {};
                     if (!m.available) {
-                        showMessage(m.reason || __("KPI dashboard unavailable."));
+                        showEmpty(m.reason || __("KPI dashboard unavailable."));
                         return;
                     }
-                    renderCards(body, meta, m.snapshot);
+                    renderCards(body, meta, m.snapshot, sf);
                 })
                 .catch((err) => {
                     if (!current()) return;
                     console.error("KPI Cockpit load failed:", err);
-                    showMessage(__("Could not load the KPI dashboard."));
+                    const title = __("Could not load the KPI dashboard.");
+                    showFailure(err, title, () => load(false));
                 })
                 .then(() => {
                     if (current()) refresh_btn.disabled = false;
@@ -198,51 +239,63 @@
         select.addEventListener("change", () => load(false));
         refresh_btn.addEventListener("click", () => load(true));
 
-        // Populate the department selector (role-gated), then load the first one.
-        frappe
-            .call({ method: "erpnext_enhancements.api.kpi.visible_departments" })
-            .then((r) => {
-                const depts = r.message || [];
-                if (!depts.length) {
-                    select.innerHTML = "";
-                    showMessage(__("No KPI dashboards are available for your role."));
-                    return;
-                }
-                select.innerHTML = depts
-                    .map((d) => `<option value="${frappe.utils.escape_html(d)}">${frappe.utils.escape_html(d)}</option>`)
-                    .join("");
+        // Populate the department selector (role-gated), then load the first one. Its
+        // Try again lists them again.
+        function listDepartments() {
+            sf.state.render(body, "loading");
+            frappe
+                .call({ method: "erpnext_enhancements.api.kpi.visible_departments" })
+                .then((r) => {
+                    const depts = Array.isArray(r.message) ? r.message : [];
+                    if (!depts.length) {
+                        select.innerHTML = "";
+                        showEmpty(__("No KPI dashboards are available for your role."));
+                        return;
+                    }
+                    showDepartments(depts);
+                })
+                .catch((err) => {
+                    console.error("KPI Cockpit: could not list departments:", err);
+                    const title = __("Could not load KPI dashboards.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: listDepartments });
+                });
+        }
 
-                // Lock to one department when this block sits on that
-                // department's dashboard (by route), or when the user can see
-                // exactly one. Otherwise keep the picker (Home / overview).
-                let forced = locked && depts.includes(locked) ? locked : null;
-                if (!forced && depts.length === 1) forced = depts[0];
+        function showDepartments(depts) {
+            select.innerHTML = depts
+                .map((d) => `<option value="${sf.esc(d)}">${sf.esc(d)}</option>`)
+                .join("");
 
-                if (forced) {
-                    select.value = forced;
-                    select.style.display = "none";
-                    if (title) title.textContent = __("{0} KPIs", [forced]);
-                } else {
-                    select.style.display = "";
-                    if (title) title.textContent = __("KPI Dashboard");
-                }
-                load(false);
+            // Lock to one department when this block sits on that
+            // department's dashboard (by route), or when the user can see
+            // exactly one. Otherwise keep the picker (Home / overview).
+            let forced = locked && depts.includes(locked) ? locked : null;
+            if (!forced && depts.length === 1) forced = depts[0];
 
-                // Registered only now: before the list arrives there is no department to
-                // read. A return reads the snapshot, never recomputes, and waits out an
-                // answer already on its way (a Refresh recompute must be the one that
-                // draws); the button is disabled exactly while one is.
-                const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
-                if (blocks && blocks.onWorkspaceReturn) {
-                    blocks.onWorkspaceReturn(container, () => {
-                        if (!refresh_btn.disabled) load(false);
-                    });
-                }
-            })
-            .catch((err) => {
-                console.error("KPI Cockpit: could not list departments:", err);
-                showMessage(__("Could not load KPI dashboards."));
-            });
+            if (forced) {
+                select.value = forced;
+                select.style.display = "none";
+                if (title) title.textContent = __("{0} KPIs", [forced]);
+            } else {
+                select.style.display = "";
+                if (title) title.textContent = __("KPI Dashboard");
+            }
+            load(false);
+
+            // Registered only now: before the list arrives there is no department to
+            // read. A return reads the snapshot, never recomputes, and waits out an
+            // answer already on its way (a Refresh recompute must be the one that
+            // draws); the button is disabled exactly while one is.
+            const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+            if (blocks && blocks.onWorkspaceReturn) {
+                blocks.onWorkspaceReturn(container, () => {
+                    if (!refresh_btn.disabled) load(false);
+                });
+            }
+        }
+
+        listDepartments();
     }
 
     waitForDOM();

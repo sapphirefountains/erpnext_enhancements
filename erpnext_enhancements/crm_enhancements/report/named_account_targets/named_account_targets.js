@@ -34,4 +34,13 @@ frappe.query_reports["Named Account Targets"] = {
 		// No scale filter: the event-planner scale taxonomy is undecided. Adding a
 		// guessed one would ship a filter that quietly matches nothing.
 	],
+
+	formatter(value, row, column, data, default_formatter) {
+		// The account, its phone, its value streams and the last activity: the report face
+		// (form kit P3.3, public/js/report_face/).
+		const face = window.erpnext_enhancements?.report_face;
+		return face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
+	},
 };

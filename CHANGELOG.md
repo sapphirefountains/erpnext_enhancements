@@ -66,6 +66,257 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     worker's node run in `test_itinerary_service_worker` now covers the tokens online, offline and
     across a build. The Review Room's browser harness links the tokens too.
 
+## [1.658.0] - 2026-10-13
+
+Custom pages S3.3c (TASK-2026-02822): the last six data blocks draw their panels, chips and
+escaping from sf_kit, as the 34 department widgets have since v1.649.0. Every seeded Custom HTML
+Block is now on the kit except Desk Shortcuts, which asks the server nothing.
+
+### Changed
+
+- **KPI Cockpit, Morning Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and
+  My Travel moved onto sf_kit.** Each takes the kit and the ticket through `blocks.kit(root)` and
+  `blocks.ticket(root)`, and keeps the one-line plain-text fallback for a device whose cached
+  bundle predates them.
+  - Loading, empty, switched-off, error and no-access are `sf.state.render` panels. An error
+    panel carries Try again; a 403 (the jqXHR's `status`) draws no access.
+  - Each block's own escape and `__ee_ticket` / `__tvh_ticket` counter are gone.
+  - **KPI Cockpit and Morning Briefing** still register a `load(false)` wrapper, so a return
+    never recomputes the KPIs or regenerates the briefing, and still skip a return while Refresh
+    is out. Their Try again is a plain read as well. The department listing has its own error
+    panel, whose Try again lists the departments again.
+  - **Task Dashboard** keeps its debounced realtime refresh, its five-minute fallback, its timers
+    on `window`, its `onScreen` skip and its live clock. Loading, error and no access go in the
+    Top 10 panel, and only until the block has drawn once, so a failed refresh still never wipes
+    rows already showing. A null answer on a block that has never drawn now says "Nothing to show
+    yet." instead of loading forever, and a list missing from the answer reads as empty rather
+    than throwing. The overdue badge is a `danger` chip.
+  - **Projects Dashboard** changed only its panels (the skeleton loader, "Error loading
+    projects", "Network Error", the Gantt-not-loaded line and the empty tabs), its escaping and
+    the Completed tab's status badge, now an `sf.chip`. Priority Overview and Active Internal
+    Projects with nothing to list draw an empty panel instead of a bare table head. Its tables,
+    column selector and resizer, Gantt and saved per-user view are untouched.
+  - **My Training and My Travel** still ask for the session user's own data and pass no name. An
+    overdue course is a `danger` chip, and a trip's status a chip (`Planning` warn,
+    `In Progress` good, the rest neutral). My Travel's "No trips coming up" stays a notice, not
+    an empty panel: the body is never empty, since the link to everyone's trips and any receipts
+    reminder are drawn under it.
+  - CSS rules nothing uses any more are deleted: `.kpi-disabled`, `.mbr-disabled`, `.tdb-empty`,
+    `.tdb-overdue-badge`, `.tmd-flag`, the `.tvh-pill` family and the Projects Dashboard's
+    skeleton loader.
+- **No status words were added here.** The KPI Cockpit's Good / Watch / Bad and the Task
+  Dashboard's priority are still told by a border colour alone in this release; S3.6
+  (accessibility, PR #1271) adds the word to both. To keep the two changes apart, the KPI
+  Cockpit and the Task Dashboard read the kit's escape under the name `esc`, which is the name
+  #1271's new markup calls.
+- `tests/test_block_kit.py` enforces all six (`NOT_YET` keeps only Desk Shortcuts).
+  `scripts/test_workspace_block_return.mjs` runs them on the real `sf_kit.bundle.js` through the
+  generic checks (a 500, a 403, an empty answer, an older bundle, a kit that did not load), with
+  per-block notes for where each draws, and adds checks for what each must keep doing: the KPI
+  Cockpit's return and Try again read the snapshot and never recompute; the briefing's return
+  never regenerates and waits out a Regenerate; three renders of the Task Dashboard leave two
+  timers and one realtime subscription, and a realtime update refreshes once; a failed refresh
+  keeps the rows; the per-viewer blocks send no name.
+- `tests/test_travel_hub.py`'s node stubs define `__` and wait a tick for the kit before counting
+  requests, since My Travel now takes the kit before it loads.
+
+### Fixed
+
+- **The Projects Dashboard could not tell a 403 from any other failure.** Its `api_call` used
+  `frappe.call`'s `callback` / `error` options, and v16 calls `error` with no arguments on a 403
+  (`request.js`, `statusCode[403]`). It now settles on `frappe.call`'s promise, which rejects with
+  the jqXHR.
+- **A user without the Project Dashboard's page role got a Try again that could never work.**
+  `get_project_data` answers that user with `{"error": "You do not have permission ..."}` on
+  HTTP 200, not a 403, so the block drew "Could not load the projects." with a retry. It now
+  draws the no-access panel, with no Try again. Its other `{"error"}`, a failed read, keeps the
+  error panel and its Try again. The server is unchanged.
+- **Projects Dashboard values went into markup unescaped**: the value-stream and master-project
+  headings, the Assigned To and Type cells, the Completed tab's status, and the status and
+  priority options with their `data-project` attributes. All go through `sf.esc` now.
+
+## [1.657.0] - 2026-10-14
+
+Form kit P3.3 (TASK-2026-02756): **one report face for phones, parties, pillars, money and
+dates.** Script reports now call one shared formatter for those columns, so a phone reads
+`(801) 555-0100` and a date `10/14/2026` in every report, the same way print, email and SMS show
+them. Before this, 23 of the 37 script reports carried their own formatter. The CRM and sales
+reports move first; the rest move as they are touched.
+
+### Added
+
+- **`erpnext_enhancements.report_face`** (`public/js/report_face/`), loaded on every Desk page by
+  `erpnext_enhancements.bundle.js`, because a report's own `.js` can import nothing.
+  - `report_face.format(value, row, column, data, default_formatter)` dispatches on the column.
+    A column says what it is with `sf_face` in the report's Python: `phone`, `party`, `pillar`,
+    `money`, `date`, `datetime` or `time`. With no marker, a Date, Datetime, Time, Currency or
+    Phone column takes its kind from its fieldtype. `sf_face: "none"` and an unknown kind leave
+    the column to Frappe, so a typo can't blank a column.
+  - **Phones and dates** come from the normalization twin (`normalize/normalize.js`, held to
+    `utils/normalize.py`): `(801) 555-0100 x12`, `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM`.
+  - **A party** is the record's human name, linked through `frappe.utils.get_form_link`. It
+    falls back to plain text when the person can't read the doctype, as Frappe's own Link cells
+    do, and it carries `data-doctype`/`data-name`, so the hover preview works. A party column
+    comes in two shapes:
+    - **A Link or Dynamic Link column** holds the docname, and `sf_label` names the row field
+      with the name. This is for a column that already was a Link to the record itself.
+    - **A Data column** holds the name, `sf_name` names the row field with the docname, and
+      `sf_doctype` or `sf_doctype_field` gives the doctype. Export, sort and the column search
+      stay on the name people know, and without the face the name still shows. With no docname
+      the name shows unlinked.
+  - **A datetime is moved into the person's time zone first**, with
+    `frappe.datetime.convert_to_user_tz`, as v16's own Datetime formatter does. Then the twin
+    formats it. Dates and times alone aren't converted, as in Frappe.
+  - **A value stream** is a chip in its pillar's colors (`STREAM_PILLAR`, a copy held to
+    `print_style`'s). A word that isn't a stream, such as Value Stream Performance's
+    "Unallocated" row, stays plain text.
+  - **Money** is Frappe's own Currency formatter on the column, with the column's currency
+    options.
+  - The same answers come one at a time for HTML a report builds itself: `phone`, `date`,
+    `datetime`, `time`, `money`, `party`, `pillar` and `chip`.
+  - **It fails open.** If the face throws, the cell gets the report's default formatter and the
+    console gets one warning.
+- **The chip is drawn with inline declarations, and no stylesheet is added to any page.** Loading
+  sf_kit globally to style one pill would be the wrong trade. `cells.js` carries sf_kit's
+  `.sf-chip` declarations as a table, and the test holds it to `css/sf_kit.bundle.css`
+  declaration for declaration. The declarations read only `--sf-*` tokens, which are already on
+  every Desk page, so the chip follows light and dark like the kit's does. Each tone's style
+  string is built once, at load. The face imports sf_kit's one escape (`sf_kit/esc.js`), not the
+  kit.
+- **`party_naming_rules.party_record(doctype, facts)`** returns the `(doctype, docname)` a
+  record's party *is*, beside `party_of`, which returns the name it shows. `audit()` rows carry it
+  as `party_record`. `party_naming.FIELDS` reads `opportunity_from` on Opportunity for it.
+- **`tests/test_report_face.py`**, a CI step with node.
+  - It runs every cell rule under node against the Python twin's own answers.
+  - It runs the Desk half against a fake `frappe`: links come from `get_form_link` and respect
+    read permission, money goes to the default formatter as Currency without mutating the
+    column, datetimes go through `convert_to_user_tz` (and show unconverted if it throws), and
+    the face fails open with a single warning.
+  - It holds the chip to sf_kit's rules and checks that every token it reads exists.
+  - It checks the bundle imports the face and not the kit, and that nothing builds a route by
+    hand.
+- **`tests/test_report_hand_formatting.py`**, in the same CI step. It reads every Script Report's
+  `.js`, `.py` and `.html` with comments and docstrings stripped, and lists each phone or date
+  still formatted by hand. That covers `frappe.datetime.str_to_user`, `moment(...).format`,
+  `toLocaleDateString`, `getMonth() + 1`, `formatdate`, `frappe.format(x, {"fieldtype": "Date"})`,
+  and a phone rebuilt with a regex or `phonenumbers`. Three rules are narrower so they don't flag
+  what isn't a shown date or phone:
+  - `strftime` is flagged only when its format has a day in it. Month or year keys such as
+    `%Y-%m` and `%b %Y` pass.
+  - `[3:6]` slices are flagged only on a phone-ish name.
+  - For a `*_date` passed straight into `.format(...)`, the call is read with `ast`. Nested
+    parentheses are handled, and a keyword's name (`.format(from_date=fd)`) is not a date.
+
+  Every rule has samples it must catch and samples it must not.
+  - **The CRM and sales reports fail the build** on a finding, on a formatter that doesn't call
+    the face, or on a phone, party or value-stream column left unmarked. Those are the seven CRM
+    Enhancements reports plus Value Stream Performance.
+  - **The rest are reported in the CI log, not failed.** They are tracked on `KNOWN_REMAINING`,
+    which pins a count per report and rule and allows only removals. These fail:
+    - a report not on the list that starts formatting by hand;
+    - a listed report with more findings under a rule than pinned;
+    - one with fewer, until the count is lowered;
+    - a report, rule or count above the frozen 2026-10-14 snapshot.
+  - Three reports are on the list today:
+    - Crew Qualification Roster: 9 `frappe.format` dates in Python and 2 `str_to_user` in its
+      print sheet.
+    - Marketing Spend Rollup: an ISO window in its message, twice.
+    - Supplier Pickup List: 2 `str_to_user` in its print sheet.
+  - `ALLOWED` takes a report that legitimately differs, with its reason. It is empty: nothing
+    found so far has a reason to differ.
+
+### Changed
+
+- **Account Data Quality**: the Customer is shown by `customer_name` and linked. Value streams
+  are pillar chips. The legacy-import tint is kept.
+- **Attribution Gaps**: the Created date and the Value go through the face. The red live-gap
+  color is kept.
+- **Closed Won Reconciliation**: the Customer is shown by `customer_name` and linked, and the close
+  date and amount go through the face.
+  - The Show Candidates dialog no longer builds its own `/desk/project/` link,
+    `frappe.datetime.str_to_user` date or `format_currency` value. It calls `report_face.party`
+    (in a new tab, as before), `.date` and `.money`. A Desk tab opened before the deploy has no
+    face, so the dialog then shows plain escaped values rather than throwing.
+- **Hand-Off Process Coverage**: the "Customer / Party" column still holds the party's name
+  (`customer_name`, else `party_name`), and it is now linked to the Opportunity's party through
+  the row's `party_id` (`party_name`) and `party_type` (`opportunity_from`). An Opportunity with
+  no `party_name` still shows its `customer_name`, unlinked. The orange untracked flag is kept.
+- **Named Account Targets** gained a formatter. The account is shown by `customer_name` and
+  linked, the phone reads `(801) 555-0100`, the value streams are chips, and Last Activity goes
+  through the face.
+- **Party Naming Audit**: "Party it belongs to" still holds the party's title, and now links to
+  the party record (Customer, Lead, Prospect, Supplier and so on) through the row's `party_id`
+  and `party_doctype`. The muted dash for a record with no party is kept, as are the severity
+  colors.
+- **Value Stream Performance**: each stream is a pillar chip, and the money columns go through
+  the face. The window in its message reads `10/14/2026` rather than an ISO date
+  (`utils.normalize.format_date`). The grey Unallocated row and the win-rate colors are kept.
+- **Opportunity Loss Reasons** is unchanged. It has no phone, party, stream, money or date column.
+- **A report's date-and-time is now 12-hour** (`10/14/2026 2:00 PM`, the print style), in the
+  person's time zone. The Desk's own fields stay 24-hour, because Frappe v16 has no 12-hour Desk
+  format. A date alone reads `10/14/2026` either way.
+- **Exports and sorting are unchanged.** Every party column that held a name still holds it. The
+  three that link by docname (the Customer columns of Account Data Quality, Named Account
+  Targets and Closed Won Reconciliation) were already Links to the record itself.
+- **Docs**: `docs/app-design-system.md` gains "The report face". The `public/`, `crm_enhancements/`
+  and `kpi_dashboards/` READMEs describe it.
+
+## [1.656.0] - 2026-10-13
+
+### Changed
+
+- **The custom pages answer the keyboard, name their glyph buttons, and stop saying things in
+  colour alone** (custom pages S3.6, ERPNext TASK-2026-02825). Nothing a click does has changed.
+  - **Keyboard.** The Rental Planner's booking bars were clickable `<div>`s, so Tab never reached a
+    booking and Enter could not open one. They are `<button type="button">`s now, styled as before,
+    with an `aria-label` built from the same facts as the tooltip: the prep and cleaning bars draw no
+    text at all, and without the label a screen reader announced only "button". The wizard's finished
+    steps are buttons too, the current step carries `aria-current="step"`, and steps not reached yet
+    stay plain words. Plan a Trip's three toggle chips (who is on a booking, who stays free, who the
+    comparison shows) were `<span>`s and are `<button type="button" aria-pressed>` now. The Project
+    and Maintenance Planners' day numbers and crew-view date heads keep their markup and gain
+    `role="button"`, `tabindex="0"` and an Enter/Space handler that calls the click's own. The quick
+    looks (P6A) already took Enter on these through a capture-phase handler that stops propagation,
+    so with them on, a key still does what a click does and never both. Every one of these has a
+    2px `--sf-focus` ring on `:focus-visible`.
+  - **Names.** The planners' ‹ › ↻ buttons (toolbar, route view, My week) had a `title` and nothing a
+    screen reader is required to read; they carry an `aria-label` from `__()` now, as do the Rental
+    Planner's ‹ ›, the scanner pages' 📷 and 🔍, the Scanner Audit's × and the Inspection Wizard's 📷.
+  - **Colour alone.** The KPI Cockpit card's left border was the only sign of Good, Watch or Bad, and
+    the Task Dashboard's priority was only a border colour; each now carries the word beside the
+    colour. The progress bars in Design WIP, Build WIP & Aging and Today's Visits gave their percent
+    only in a tooltip, which neither a phone nor a screen reader sees; each is a `progressbar` with
+    `aria-valuenow` now, its label escaped through the kit's `sf.esc` like the rest of the row
+    (S3.3b, v1.649.0, moved these blocks onto the kit).
+  - **Translation.** The GA4 Dashboard's title, section heads, chart titles, table headers, empty and
+    error messages go through `__()`.
+  - **From the review.**
+    - Plan a Trip's chips kept focus only until their own redraw: every toggle runs `render()`,
+      which empties the page body, so focus fell to `<body>` after each key. Each chip now carries
+      a stable `data-chip` key, and the toggle redraws through `render_keeping_focus()`, which
+      focuses the chip drawn in its place.
+    - A screen changed from the keyboard puts focus on the new view's heading. A planner day link
+      opened by Enter or Space focuses the toolbar title (`tabindex="-1"`). A rental wizard step
+      reached by a keyboard click (`detail` 0) focuses the step's `<h4>`. A mouse click still
+      leaves focus where the browser puts it.
+    - A chip on a booking that is on an Expense Claim (`card.protected`) is `disabled`, so it no
+      longer announces as a toggle that does nothing.
+    - The planners' day numbers and crew-view date heads carry an `aria-label` that names the
+      action and the date: "Show the week of …", or "See everyone's day on …" once the quick looks
+      take the click over.
+    - The Rental Planner bar's label truncates on an inner `<span>`. Some engines ignore
+      `text-overflow` on a `<button>`.
+  - **Not in this change.** The department widgets' age, waiting and margin numbers still carry their
+    watch/bad judgement in colour only. Each widget's threshold means something different (days in
+    the pipeline, days waiting, days left, idle days, hours used), so each needs its own word; they
+    are a follow-up on the kit S3.3b put under those rows, where `sf.chip` draws a word. Training Canvas has two × buttons with a title
+    but no `aria-label`, and its pages are another open change's. The Rental Planner's "click an
+    empty day" shortcut stays pointer-only; New Rental is its keyboard path.
+  - **Tests.** `tests/test_s3_6_accessibility.py` names each fixed file and element and fails when one
+    goes back to a click-only `<div>` or `<span>` or a nav button loses its label (CI step "Custom
+    pages S3.6 accessibility"). `scripts/test_rental_planner_history.js` now models Enter and Space as
+    the browser handles them and opens a booking from a bar, and a step from the rail, by keyboard.
+
 ## [1.654.1] - 2026-10-13
 
 ### Fixed
