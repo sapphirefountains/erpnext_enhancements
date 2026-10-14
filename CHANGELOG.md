@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.644.0] - 2026-10-13
+
+Form kit P5.2 and P4.5 (TASK-2026-02742): **the guided page is where an Opportunity opens, new or
+existing,** and it now does what the form's own scripts did. Nik, 2026-10-13: "I want these guided
+setups to be the default for new and existing documents of the DocTypes we are making guided
+setups for." Before this, the only way in was a *Guided* button on a saved Opportunity, which on a
+phone sits in the form's ⋯ menu.
+
+Before the guided page became the default, two independent reviews were run. One went through
+every handler in the nine scripts the Opportunity form loads, the other through this change. They
+found five things the guided page was missing, two of them serious, and all five are fixed here.
+
+### Changed
+
+- **Opening an existing Opportunity** goes to the Guided Entry page: from the list, the Kanban, a
+  link or a search. It works for anyone who may open the page (Sales User, Sales Manager, System
+  Manager); everyone else still gets the form.
+  - The form's history entry is replaced, so Back still leaves the way the person came in.
+  - It uses v16's own hook: a `before_show` on the Form view factory, the way the List view
+    re-routes. Any `before_show` already there runs first.
+- **A new Opportunity** starts on the guided page's step 1. That covers the list's + Add, the
+  awesomebar, the Kanban's add card, and the Customer and Lead forms' Create Opportunity buttons.
+  - It goes through `frappe.create_routes`, which v16's `frappe.new_doc` already honors.
+  - The values a start carries arrive as route options and become step 1's starting values.
+- **ERPNext's own Create > Opportunity on a Customer** also opens on step 1, carrying what it
+  mapped: the party, a contact, the billing address and the Customer's value streams.
+  - Checked against prod's real mapping on 2026-10-13. A server-mapped document holds `0` in
+    every number field where a browser-made one holds nothing, so zeros never count as values.
+  - A start the guided page cannot take whole stays on the form, where nothing is lost: a table
+    other than the value streams, or a field the flow does not offer.
+- **The form is the fallback.** The guided page's *Open form* opens the full form, and that
+  record keeps opening there in this browser tab until the form's *Guided* button is used.
+  - On a new record, *Open form* starts the full form from what step 1 holds, value streams
+    included. It builds the draft itself: `frappe.new_doc` would have opened Quick Entry, which
+    Opportunity has switched on, and dropped the tables.
+  - Switching between the form and the guided page of one record tags the history entry it
+    pushes, and switching back from a tagged entry steps back rather than pushing. Two switches
+    never leave two copies of one screen in history.
+  - A link into one tab of the form (the hand-off step's link) always opens the form.
+  - A record a Link field's "Create a new …" is waiting on stays on the form, as does one just
+    saved there.
+- **Done** on the last step goes back to the Opportunity list rather than to the form.
+- A new record's starting values that only repeat its defaults are ignored. The Kanban's add card
+  passes its whole draft, and the list passes its filters. Once read, the values are taken out of
+  the address, so a long one (a Lead's details) cannot make it too long to reload.
+- The decisions are `public/js/form_kit/opening.js` (pure; run under node by
+  `test_guided_entry`). The wiring is `public/js/guided_default.js`, loaded from
+  `erpnext_enhancements.bundle.js`.
+- Kill switch: site_config `disable_guided_default` opens every record in the form again.
+
+### Added
+
+- **`create_record` takes `prefill`**, what the record was started with.
+  - The server takes only `steps.prefill_fields` from it: every field the flow lets this user write
+    in any step, plus the config's new `create.prefill_fields`.
+  - On Opportunity, those listed fields are `contact_person`, `custom_description` and `company`:
+    hidden fields that ERPNext's mapping and `lead.js` fill.
+  - Each field is still held to its permlevel. Step 1's own fields are never taken from `prefill`.
+  - `get_flow` for a new record reports `prefill_fields`. A start with a field the page cannot carry
+    says so and offers the full form.
+- **The guided page's start screen lists your open opportunities**, newest change first. New
+  endpoint `form_kit.api.my_records`, GET, through `frappe.get_list`.
+  - It leaves out Closed Won, Lost, Closed, Converted and the historical deals.
+  - The screen also has a New Opportunity button and a link to the full list.
+- **A *Guided Entry* link in the CRM sidebar**, under Opportunity, to that start screen. It is added
+  by `workspace_tweaks.add_core_sidebar_items`, like the Project Planner link.
+- `frappe.boot.sf_guided`: the DocTypes whose records open on the guided page, and what a new one
+  accepts.
+- Tests: 230 across four suites.
+  - `test_form_kit`: prefill, `my_records`, `declare_lost`, the boot entry, the config schema.
+  - `test_guided_entry`: the opening rules under node, with the shape prod's mapping produced, the
+    wiring and the P4.5 behaviors.
+  - `test_workspace_tweaks`: the CRM link.
+  - `test_sync_contact_primary`: the contact copies.
+
+- **Set as Lost on the guided page (P4.5).**
+  - Choosing Lost in the Close step opens the same dialog the form does: Lost Reasons, Competitors
+    and Detailed Reason. It runs ERPNext's own `declare_enquiry_lost` through a new endpoint,
+    `form_kit.api.declare_lost` (POST, locked on `modified`), which the config's `lost` names.
+  - Before this, the reasons table was read-only in the flow, so a plain save of Lost always failed
+    `validate_close_reason`. The only way out was the form.
+  - ERPNext's own refusal, while an active Quotation exists, comes through as it does on the form.
+- **The Closed Won hand-off on the guided page.**
+  - After the hand-off prompt's "No", which reverts the win on the server, or "Yes", the page
+    reloads the record. Before, it kept showing Closed Won and its next save was a conflict. The
+    prompt raises `sf-record-changed` as it reloads a form.
+  - The page reports the background project's creation (made, refused by the hand-off gate,
+    or made without its Drive folder) as the form does. Every message is escaped.
+  - A won deal without a project gets the form's "create it now?" reminder once per visit, unless
+    it is historical. Like the form, it applies only to a deal already won when the visit began. A
+    reload after the prompt's "Yes" comes while the project is still being made, and asking again
+    there could queue a second one.
+  - A reload, or Set as Lost, never runs over a change that has not reached the server.
+- **What the form checks as a value is chosen** (config `distinct` and `clears`):
+  - Two equal Scope, Schedule or Budget ranks bring a warning, never a block, as on the form.
+  - Changing *Opportunity From* empties the party, as ERPNext's form script does.
+
+### Fixed
+
+- **A new Primary Contact no longer inherits the old one's title, phone and email**, which were
+  then pushed onto the new Contact.
+  - The form's `primary_contact.js` copies a picked contact's details into `primary_contact_*`.
+    Saves with no form behind them did not: the guided page, which shows those copies read-only,
+    and the API.
+  - The old contact's copies stayed on the record. The next save's `sync_from_main_doc` then
+    wrote them onto the NEW Contact, which is shared across the whole account.
+  - `sync_contact.refresh_primary_contact_copies` (Opportunity `before_save`) now does the
+    script's job on the server.
+  - A copy set in the same save is left alone: by the script, or typed over on purpose. A new
+    record fills only its blank copies.
+- `form_kit/README.md` still said a site address could be the Billing Address. It has been Primary
+  Address only since v1.633.0.
+
 ## [1.641.0] - 2026-10-13
 
 Custom pages S3.3a (TASK-2026-02822): the dashboard blocks' status colours come from the design

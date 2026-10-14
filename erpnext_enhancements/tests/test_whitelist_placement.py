@@ -209,7 +209,17 @@ EXACT_SURFACE = {
     # hold the logic, unexposed, and api.py checks the DocType allowlist before calling them. A new
     # endpoint here has to be listed, which is the moment to give it the allowlist check and a test
     # in test_form_kit.
-    "form_kit/api.py": {"get_flow", "create_record", "save_step", "completeness_for", "get_field_help"},
+    "form_kit/api.py": {
+        "get_flow",
+        "create_record",
+        "save_step",
+        "completeness_for",
+        "get_field_help",
+        # Form kit P5.2 (the guided page's start screen) and P4.5 (its Set as Lost); both check
+        # the registry and the caller's permission, tested in test_form_kit.
+        "my_records",
+        "declare_lost",
+    },
 }
 
 

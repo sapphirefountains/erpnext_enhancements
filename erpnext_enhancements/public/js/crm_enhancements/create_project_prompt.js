@@ -223,6 +223,8 @@ frappe.provide("erpnext_enhancements.crm");
 		};
 
 		const refresh_view = function () {
+			// The guided entry page (form kit P4.5) reloads the record when it is the one showing.
+			$(document).trigger("sf-record-changed", ["Opportunity", opportunity_name]);
 			if (opts.frm && opts.frm.doc && opts.frm.doc.name === opportunity_name) {
 				opts.frm.reload_doc();
 			} else if (
