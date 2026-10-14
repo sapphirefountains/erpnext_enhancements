@@ -243,9 +243,15 @@ class TestQueriesMirrorTheForm(unittest.TestCase):
 			)
 
 	def test_the_dynamic_address_field_is_still_the_three(self):
+		# Since v1.686.0 the controller's primary_address_link_field() delegates to party_sources.js
+		# primary_address_field(), shared with the guided page's record tools: the rule is read there.
 		code = _code(UNIFIED.read_text(encoding="utf-8"))
-		body = code[code.index("primary_address_link_field: function") :]
-		body = body[: body.index("\n\t},")]
+		delegate = code[code.index("primary_address_link_field: function") :]
+		delegate = delegate[: delegate.index("\n\t},")]
+		self.assertIn("rules.primary_address_field(this.frm.meta.fields || [])", delegate)
+		shared = _code((JS / "global_enhancements" / "party_sources.js").read_text(encoding="utf-8"))
+		body = shared[shared.index("export function primary_address_field(fields) {") :]
+		body = body[: body.index("\n}\n")]
 		self.assertEqual(
 			re.findall(r'return "(\w+)";', body),
 			["customer_primary_address", "supplier_primary_address", "primary_address"],
@@ -697,6 +703,10 @@ class TestTheEditorUnderNode(unittest.TestCase):
 			(folder / "package.json").write_text('{"type": "module"}', encoding="utf-8")
 			shutil.copytree(JS / "form_kit", folder / "form_kit")
 			shutil.copytree(JS / "info_blocks", folder / "info_blocks")
+			# v1.686.0: the editor's record tools import the record actions and party rules the Desk shares.
+			(folder / "global_enhancements").mkdir()
+			for name in ("party_sources.js", "record_actions.js"):
+				shutil.copy(JS / "global_enhancements" / name, folder / "global_enhancements" / name)
 			(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
 			proc = subprocess.run(
 				[
