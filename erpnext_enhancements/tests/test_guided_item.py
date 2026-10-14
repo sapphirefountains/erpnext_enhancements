@@ -541,6 +541,19 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn('__("More details: {0}"', code)
 		self.assertIn("this.kit.ends_core(this.flow.steps, this.values, this.step_key)", code)
 
+	def test_a_tab_holding_the_older_kit_still_works(self):
+		# Review of #1270: a tab that loaded sf_form_kit v2 before a deploy has neither the editor's
+		# open_extension nor the kit's opens_by_default; the page must not call either blind.
+		code = _code(PAGE_JS)
+		self.assertIn('if (typeof this.open_extension === "function") this.open_extension(doctype);', code)
+		self.assertIn("!this.kit.opens_by_default ||", code)
+
+	def test_server_html_is_read_in_an_inert_document(self):
+		# Review of #1270: a created div's innerHTML runs an <img onerror> even unattached.
+		code = _code(EXTENSION_JS)
+		self.assertIn('new DOMParser().parseFromString(String(message || ""), "text/html")', code)
+		self.assertNotIn(".innerHTML", code)
+
 	def test_new_item_on_the_start_screen_starts_on_the_guided_page(self):
 		code = _code(PAGE_JS)
 		self.assertIn("window.sf_guided.is_guided(doctype, true)", code)

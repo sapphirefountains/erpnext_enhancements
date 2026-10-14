@@ -138,15 +138,32 @@ form's new *Guided* button, the guided page's start screen, or `/desk/guided-ent
 - The page catches a block's `before_create` that throws, as it does `render`, `on_change` and
   `leave`.
 
-### Found, not changed
+### Fixed (second review of #1270)
 
-- **The Item form's layout is stale for two sections.** The `Item-main-field_order` Property
-  Setter (`scripts/layout/specs/item.json`) predates the Safety Data and Maintenance Billing
-  sections, and v16's `Meta.sort_fields` inserts a custom Section Break straight after its
-  `insert_after` field when the next field has the same type. So on production Default Unit of
-  Measure, Maintain Stock and the fixed-asset ticks sit under the *Maintenance Billing* heading.
-  The Item flow names those fields rather than relying on sections, so it is right either way;
-  re-running the layout generator would fix the form, and is a layout change for review.
+- **`Item.custom_guided_client_id` is in the Item layout.** v1.682.0 (#1297, merged first)
+  regenerated `Item-main-field_order` and added `test_layout_field_order_coverage`, which fails on a
+  field the array leaves out. The field sits after `custom_item_identifier` in
+  `scripts/layout/specs/item.json`, and only that Property Setter's value was rewritten, by the
+  generator's own build_universe, expand_layout and lint against ERPNext `origin/version-16`
+  `item.json` and its `dump_fixture`. The generator still refuses a full write while
+  `property_setter.json` is not name-sorted. The test that pinned the stale layout
+  (`test_the_fields_the_stale_layout_moved_are_named_where_they_belong`) now holds the corrected one:
+  Default Unit of Measure, Maintain Stock and the asset ticks in Details, and Maintenance Billing
+  holding only its own two fields. The steps still name those fields, so a section that moves again
+  cannot move a field between steps.
+- A tab still holding `sf_form_kit` v2 (loaded before the deploy) no longer calls the editor's
+  `open_extension` or the kit's `opens_by_default` without checking that they exist, as `ends_core`
+  already did. It gets no blocks and lists every flow, as before.
+- The Item blocks read a server message's HTML in an inert document (`DOMParser`) rather than a
+  created `div`, whose `innerHTML` runs an `<img onerror>` even when it is never attached.
+- `item_flow_rules` refuses `nan` and `inf` as a price, reorder level, reorder quantity or purchase
+  amount. `float()` accepts them, and NaN passes every `< 0` check.
+
+### Checked, not changed
+
+- **Item Manager on the guided page's roles adds no one.** All 15 people who hold Item Manager on
+  production already hold Sales User, which the Page already listed (reviewed 2026-10-14). The role
+  is kept so the page stays open to an Item Manager who is not in Sales.
 
 ## [1.682.0] - 2026-10-14
 

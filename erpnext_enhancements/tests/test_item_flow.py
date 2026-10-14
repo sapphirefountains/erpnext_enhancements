@@ -133,6 +133,19 @@ class TestBlockRules(unittest.TestCase):
 		self.assertIn("cost", rules.asset_problem("X", "0"))
 		self.assertIn("cost", rules.asset_problem("X", None))
 
+	def test_nan_and_infinity_are_not_numbers(self):
+		# float() accepts all of these, and NaN passes every `< 0` check: each must be refused.
+		for bad in ("nan", "NaN", "inf", "-inf", "Infinity", float("nan"), float("inf")):
+			with self.subTest(value=bad):
+				self.assertTrue(rules.price_problem(bad))
+				self.assertEqual(
+					rules.reorder_problem(bad, 5), "The reorder level and quantity must be numbers."
+				)
+				self.assertEqual(
+					rules.reorder_problem(4, bad), "The reorder level and quantity must be numbers."
+				)
+				self.assertIn("cost", rules.asset_problem("X", bad))
+
 	def test_client_ids(self):
 		self.assertEqual(rules.client_id(" gi-abc-123456 "), "gi-abc-123456")
 		for bad in ("", "short", "has space 123", "x" * 65, None, 12345678, "semi;colon12"):

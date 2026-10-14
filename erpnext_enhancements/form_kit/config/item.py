@@ -23,13 +23,12 @@ reviewed, so ``open_by_default`` is False: an Item opens in the form as before, 
 page is reached on purpose (the form's *Guided* button, the guided page's start screen,
 ``/desk/guided-entry/Item/new``).
 
-**Sections move; fields are named.** The Item ``field_order`` Property Setter
-(``scripts/layout/specs/item.json``) predates the Safety Data and Maintenance Billing sections, and
-v16 places a custom Section Break whose ``insert_after`` field is followed by a field of the same
-type straight after it (``Meta.sort_fields``), so on production the Maintenance Billing section
-holds Default Unit of Measure, Maintain Stock and the fixed-asset ticks. The day the generator is
-run again they move back to the top. So the steps move those fields by name (``fields``), which
-holds either way, and never rely on which section holds them.
+**Fields are named, not left to sections.** Until v1.682.0 (#1297) the Item ``field_order``
+Property Setter (``scripts/layout/specs/item.json``) predated the Safety Data and Maintenance
+Billing sections, and v16's ``Meta.sort_fields`` put Default Unit of Measure, Maintain Stock and the
+fixed-asset ticks under Maintenance Billing. The regenerated order puts them back in Details (this
+flow's ``custom_guided_client_id`` is in that spec too). The steps still move those fields by name
+(``fields``), so a section that moves again can never move a field between steps.
 """
 
 _SERIES = (

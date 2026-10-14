@@ -54,10 +54,11 @@ function esc(value) {
 }
 
 function plain(message) {
-	// Server refusals arrive as HTML (the naming guard bolds the code): shown as text.
-	const div = document.createElement("div");
-	div.innerHTML = String(message || "");
-	return (div.textContent || "").trim();
+	// Server refusals arrive as HTML (the naming guard bolds the code): shown as text. Parsed in an
+	// inert document, so nothing in it loads or runs (a created div's innerHTML is not inert: an
+	// <img onerror> fires even though the div is never attached).
+	const doc = new DOMParser().parseFromString(String(message || ""), "text/html");
+	return ((doc.body && doc.body.textContent) || "").trim();
 }
 
 function link_control($parent, df) {

@@ -2368,13 +2368,22 @@ class TestItemSteps(unittest.TestCase):
             if field["fieldtype"] not in steps.LAYOUT_TYPES and not field.get("read_only"):
                 self.assertTrue(field.get("create"), field["fieldname"])
 
-    def test_the_fields_the_stale_layout_moved_are_named_where_they_belong(self):
-        """The Item field_order predates the Safety Data and Maintenance Billing sections, so v16
-        sorts those two sections in after item_group and Default Unit of Measure, Maintain Stock and
-        the asset ticks land under Maintenance Billing. The steps name them; they stay put."""
+    def test_the_regenerated_layout_keeps_the_item_fields_in_details(self):
+        """v1.682.0 (#1297) regenerated the Item field_order, which had predated the Safety Data and
+        Maintenance Billing sections: v16 had sorted those two in after item_group, so Default Unit
+        of Measure, Maintain Stock and the asset ticks sat under Maintenance Billing. They are back
+        in Details, each new section holds only its own fields, and the steps still name the fields
+        they show, so a section moving again cannot move a field between steps."""
         meta = STATE["metas"]["Item"]
         section_of = {df.fieldname: section["key"] for section in steps.sections_of(meta) for df in section["fields"]}
-        self.assertEqual(section_of["stock_uom"], "custom_maintenance_billing_section")
+        moved = ("stock_uom", "is_stock_item", "is_fixed_asset", "asset_category", "custom_guided_client_id")
+        for fieldname in moved:
+            with self.subTest(fieldname=fieldname):
+                self.assertEqual(section_of[fieldname], "details")
+        self.assertEqual(
+            [fieldname for fieldname, key in section_of.items() if key == "custom_maintenance_billing_section"],
+            ["custom_maintenance_billing", "custom_price_per_dose"],
+        )
         self.assertIn("stock_uom", _value_names(_step(self.flow, "basics")))
         self.assertEqual(
             _value_names(_step(self.flow, "chemical")),

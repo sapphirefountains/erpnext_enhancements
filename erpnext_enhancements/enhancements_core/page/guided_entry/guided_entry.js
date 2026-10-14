@@ -398,7 +398,8 @@ class GuidedEntry {
 		this.doctype = doctype;
 		this.name = name || null;
 		this.is_new = !name;
-		this.open_extension(doctype);
+		// A tab still holding sf_form_kit v2 (before P8.1) mixed in no open_extension: no blocks, as before.
+		if (typeof this.open_extension === "function") this.open_extension(doctype);
 		this.page.set_title(__("Guided Entry"));
 		this.sf.state.render(this.$root, "loading");
 		this.ensure_meta(doctype)
@@ -552,7 +553,11 @@ class GuidedEntry {
 		// A flow that is not where its records open (Item, P8.1) is listed only for people who can
 		// start one: a salesperson who can read Items has no Item flow to pick up.
 		const doctypes = Object.keys(guided).filter(
-			(doctype) => this.kit.opens_by_default(guided[doctype]) || (frappe.model.can_create && frappe.model.can_create(doctype))
+			(doctype) =>
+				// v2 of the kit has no opens_by_default: every flow listed, as before P8.1.
+				!this.kit.opens_by_default ||
+				this.kit.opens_by_default(guided[doctype]) ||
+				(frappe.model.can_create && frappe.model.can_create(doctype))
 		);
 		if (!doctypes.length) doctypes.push("Opportunity");
 		this.$root.html(`

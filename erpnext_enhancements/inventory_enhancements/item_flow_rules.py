@@ -35,6 +35,7 @@ position) are left out.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Final
 from urllib.parse import urlsplit
@@ -139,9 +140,12 @@ def _number(value):
 	if value in (None, ""):
 		return None
 	try:
-		return float(value)
+		number = float(value)
 	except (TypeError, ValueError):
 		return "bad"
+	# float() takes "nan", "inf" and "-infinity" (any case): none is a price, a quantity or a cost,
+	# and NaN passes every `< 0` / `<= 0` check below, so it would reach the database.
+	return number if math.isfinite(number) else "bad"
 
 
 def purchase_url_problem(url) -> str | None:
