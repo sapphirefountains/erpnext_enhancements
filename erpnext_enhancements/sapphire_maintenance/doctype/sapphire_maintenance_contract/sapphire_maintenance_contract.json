@@ -222,15 +222,15 @@
    "label": "Recurring Amount (per period)"
   },
   {
-   "depends_on": "eval:in_list(['Monthly', 'Quarterly'], doc.invoicing_frequency)",
-   "description": "A seasonal agreement's first billed month, e.g. May for \"service starts May 1st through September 30th, billed monthly\". Leave Bill From and Bill Through blank to bill all year. A Monthly or Quarterly period is billed when at least half its days fall in these months, on or after the Start Date; outside them only the chemicals used are invoiced.",
+   "depends_on": "eval:doc.invoicing_frequency == 'Monthly'",
+   "description": "A seasonal agreement's first billed month, e.g. May for \"service starts May 1st through September 30th, billed monthly\". Leave Bill From and Bill Through blank to bill all year. A month is billed when its billing period's middle day falls in these months and on or after the Start Date; outside them only the chemicals used are invoiced. An Annual Fee is split over the season's months, not twelve.",
    "fieldname": "billing_season_start",
    "fieldtype": "Select",
    "label": "Bill From",
    "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
   },
   {
-   "depends_on": "eval:in_list(['Monthly', 'Quarterly'], doc.invoicing_frequency)",
+   "depends_on": "eval:doc.invoicing_frequency == 'Monthly'",
    "description": "The season's last billed month, e.g. September. The season may wrap the year end (November to March).",
    "fieldname": "billing_season_end",
    "fieldtype": "Select",

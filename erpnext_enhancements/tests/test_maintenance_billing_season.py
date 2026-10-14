@@ -118,6 +118,10 @@ def _reset():
             "records": [],
             "consumables": {},
             "contract": None,
+            "item_price": 12.0,
+            "fee_item": "MAINT-FEE",
+            "annual": 0,
+            "errors": [],
         }
     )
 
@@ -131,12 +135,21 @@ def setUpModule():
     frappe = types.ModuleType("frappe")
     frappe.__dict__["_"] = lambda text, *a, **k: text
     frappe.whitelist = lambda *a, **k: (lambda fn: fn)
-    frappe.log_error = lambda *a, **k: None
+    frappe.log_error = lambda *a, **k: STATE["errors"].append(k.get("title"))
     frappe.get_traceback = lambda: ""
+    frappe.msgprint = lambda *a, **k: None
     frappe.get_link_to_form = lambda doctype, name: name
     frappe.new_doc = lambda doctype: _Invoice()
     frappe.get_doc = lambda doctype, name: STATE["contract"]
-    frappe.get_single = lambda doctype: _Row(maintenance_fee_item="MAINT-FEE", maintenance_services_group=None)
+    frappe.get_single = lambda doctype: _Row(maintenance_fee_item=STATE["fee_item"], maintenance_services_group=None)
+
+    def _get_value(doctype, filters, field=None, *a, **k):
+        if doctype == "Item Price":
+            return STATE["item_price"]
+        if doctype == "Project Contract":
+            assert field == "annual_maintenance_fee", field
+            return STATE["annual"]
+        return "Sapphire"
 
     def _throw(message, *a, **k):
         raise _Thrown(message)
@@ -164,7 +177,7 @@ def setUpModule():
     frappe.throw = _throw
     frappe.get_all = _get_all
     frappe.db = types.SimpleNamespace(
-        get_value=lambda doctype, filters, field=None, *a, **k: 12.0 if doctype == "Item Price" else "Sapphire",
+        get_value=_get_value,
         set_value=_set_value,
         get_single_value=lambda doctype, field: 1,
         savepoint=lambda name: None,
@@ -253,10 +266,13 @@ class TestTheSeason(unittest.TestCase):
         self.assertIsNone(billing.season_months(None, None))
         self.assertIsNone(billing.season_months("", ""))
 
-    def test_service_days_count_the_season_and_the_start(self):
-        self.assertEqual(billing.service_days(D(2026, 9, 9), D(2026, 10, 9), {9}), 22)
-        self.assertEqual(billing.service_days(D(2026, 9, 9), D(2026, 10, 9), {5, 6, 7, 8, 9}, D(2026, 10, 5)), 0)
-        self.assertEqual(billing.service_days(D(2026, 9, 9), D(2026, 10, 9)), 30)
+    def test_the_periods_a_year_that_bill(self):
+        """An Annual Fee is split over these: a five-month season gets a fifth each time."""
+        self.assertEqual(billing.billed_periods_per_year("Monthly", "May", "September"), 5)
+        self.assertEqual(billing.billed_periods_per_year("Monthly", None, None), 12)
+        self.assertEqual(billing.billed_periods_per_year("Quarterly", "May", "September"), 4)
+        self.assertEqual(billing.billed_periods_per_year("Annually", "May", "September"), 1)
+        self.assertIsNone(billing.billed_periods_per_year("Per Visit"))
 
 
 class TestFiveSeasonalInvoices(unittest.TestCase):
@@ -270,10 +286,13 @@ class TestFiveSeasonalInvoices(unittest.TestCase):
         )
 
     def test_five_bills_whatever_day_of_the_month_it_bills_on(self):
-        for day in (1, 5, 15, 20, 28):
-            _reset()
-            billed = _year_of_bills(next_billing_date=D(2027, 1, day))
-            self.assertEqual(len(billed), 5, (day, billed))
+        """Review of v1.624.0: counting in-season days tied at exactly half on the 16th, and
+        billed six. The middle day gives five for every day, the 29th to 31st included."""
+        for year in (2027, 2028):
+            for day in range(1, 32):
+                _reset()
+                billed = _year_of_bills(next_billing_date=D(year, 1, day))
+                self.assertEqual(len(billed), 5, (year, day, billed))
 
     def test_nothing_before_the_agreement_starts(self):
         """Valley Fair's first period, 9 September to 9 October 2026, ends after a 5 October start."""
@@ -293,9 +312,11 @@ class TestFiveSeasonalInvoices(unittest.TestCase):
         )
         self.assertEqual([d.month for d in billed], [1, 2, 3, 12])
 
-    def test_quarterly_bills_the_quarters_mostly_in_season(self):
-        billed = _year_of_bills(invoicing_frequency="Quarterly", start_date=D(2026, 1, 1), next_billing_date=D(2027, 1, 1))
-        self.assertEqual(billed, [D(2027, 7, 1), D(2027, 10, 1)])
+    def test_quarterly_ignores_the_season(self):
+        """A quarter bills whole or not at all, so a five-month season would bill once or twice a
+        year depending on the start month. Seasons are Monthly only."""
+        billed = _year_of_bills(invoicing_frequency="Quarterly", start_date=D(2026, 1, 1), next_billing_date=D(2027, 3, 1))
+        self.assertEqual(len(billed), 4)
 
 
 class TestOutOfSeason(unittest.TestCase):
@@ -315,6 +336,25 @@ class TestOutOfSeason(unittest.TestCase):
         self.assertEqual(STATE["contract"].next_billing_date, D(2026, 12, 5))
         self.assertEqual(STATE["contract"].last_billed_on, D(2026, 11, 5))
         self.assertIn("No base fee for the period ending 2026-11-05", STATE["comments"][0])
+
+    def test_chemicals_with_no_selling_price_draft_nothing(self):
+        """A $0 chemicals-only draft is noise; the visit waits for the next invoice."""
+        _contract(next_billing_date=D(2026, 12, 9), start_date=D(2026, 5, 1))
+        STATE["item_price"] = 0
+        STATE["records"] = [{"name": "V-1", "creation": D(2026, 11, 20), "sales_invoice": None}]
+        STATE["consumables"] = {"V-1": [{"item": "UNPRICED", "qty": 1}]}
+        billing._bill_period("MNT-VF")
+        self.assertEqual(STATE["invoices"], [])
+        self.assertIsNone(STATE["records"][0]["sales_invoice"])
+
+    def test_out_of_season_needs_no_fee_item(self):
+        """Review of v1.624.0: the fee-item check ran first, so a contract with none logged
+        "misconfigured" every day off season and never moved on."""
+        _contract(next_billing_date=D(2026, 12, 9), start_date=D(2026, 5, 1))
+        STATE["fee_item"] = None
+        billing._bill_period("MNT-VF")
+        self.assertEqual(STATE["errors"], [])
+        self.assertEqual(STATE["contract"].next_billing_date, D(2027, 1, 9))
 
     def test_a_visit_with_no_chemicals_waits_for_the_next_invoice(self):
         _contract(next_billing_date=D(2026, 12, 9), start_date=D(2026, 5, 1))
@@ -349,15 +389,57 @@ class TestUnchangedWithoutASeason(unittest.TestCase):
         self.assertEqual(STATE["invoices"][0].items[0]["item_code"], "MAINT-FEE")
 
 
-class TestTheContractNeedsBothMonths(unittest.TestCase):
+class TestTheContract(unittest.TestCase):
+    def setUp(self):
+        _reset()
+
+    def _doc(self, **fields):
+        base = dict(
+            invoicing_frequency="Monthly",
+            billing_season_start=None,
+            billing_season_end=None,
+            project_contract="SF-MAINT-VF",
+            recurring_amount=0,
+            next_billing_date=D(2026, 11, 9),
+            last_billed_on=None,
+            start_date=D(2026, 10, 5),
+            _before=None,
+        )
+        base.update(fields)
+        doc = contract_module.SapphireMaintenanceContract(**base)
+        doc.get_doc_before_save = lambda: doc._before
+        return doc
+
     def test_half_a_season_is_refused(self):
-        doc = contract_module.SapphireMaintenanceContract(billing_season_start="May", billing_season_end=None)
         with self.assertRaises(_Thrown):
-            doc._validate_billing_season()
-        doc = contract_module.SapphireMaintenanceContract(billing_season_start=None, billing_season_end=None)
-        doc._validate_billing_season()
-        doc = contract_module.SapphireMaintenanceContract(billing_season_start="May", billing_season_end="September")
-        doc._validate_billing_season()
+            self._doc(billing_season_start="May")._validate_billing_season()
+        self._doc()._validate_billing_season()
+        self._doc(billing_season_start="May", billing_season_end="September")._validate_billing_season()
+
+    def test_hidden_fields_are_not_checked(self):
+        """The fields show for Monthly only; a leftover half on an Annually contract must not
+        stop a save over fields nobody can see."""
+        self._doc(invoicing_frequency="Annually", billing_season_start="May")._validate_billing_season()
+
+    def test_an_annual_fee_is_split_over_the_season(self):
+        """Review of v1.624.0: $7,920 a year split by twelve, billed five times, is $3,300."""
+        STATE["annual"] = 7920
+        doc = self._doc(billing_season_start="May", billing_season_end="September")
+        doc._recurring_billing_setup()
+        self.assertEqual(doc.recurring_amount, 1584)
+        doc = self._doc()
+        doc._recurring_billing_setup()
+        self.assertEqual(doc.recurring_amount, 660)
+
+    def test_setting_a_season_re_derives_an_amount_still_on_the_old_split(self):
+        STATE["annual"] = 7920
+        before = self._doc()
+        doc = self._doc(recurring_amount=660, billing_season_start="May", billing_season_end="September", _before=before)
+        doc._recurring_billing_setup()
+        self.assertEqual(doc.recurring_amount, 1584)
+        typed = self._doc(recurring_amount=7920, billing_season_start="May", billing_season_end="September", _before=before)
+        typed._recurring_billing_setup()
+        self.assertEqual(typed.recurring_amount, 7920, "an amount typed by hand is kept")
 
     def test_the_fields_offer_every_month(self):
         import json

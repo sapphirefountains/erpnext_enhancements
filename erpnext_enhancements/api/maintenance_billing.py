@@ -22,18 +22,22 @@ by default), so a migrate bills no one until it is switched on.
 
 **Billing seasons (v1.624.0).** A seasonal agreement bills only in season: Valley
 Fair Mall's reads "service starts May 1st through September 30th, billed monthly",
-and before this the job billed its $7,920 base every month of the year. A Monthly or
-Quarterly contract with **Bill From** / **Bill Through** months bills a period only
-when at least half its days are service days (:func:`service_days`): in those months
-and on or after the contract's Start Date. Half, not "any day", because a period runs
-from billing date to billing date: one ending 5 May holds five days of May, and
-billing it would make six May-to-September invoices out of five months. Counting
-from the Start Date stops a contract signed for next season from billing the end of
-this one (Valley Fair's first period would have been 9 September to 9 October 2026,
-for an agreement that starts on 5 October). Outside the season the base fee is not
-billed, but chemicals are always extra, so a visit's consumables still go on a
-chemicals-only draft (a Day Dairy winterization in October). Annually is unaffected:
-its one period is the whole year.
+and before this the job billed its $7,920 base every month of the year. A Monthly
+contract with **Bill From** / **Bill Through** months bills a period's base fee when
+the period's **middle day** is in those months and on or after the contract's Start
+Date (:func:`period_is_billable`). The middle day, because a period runs from billing
+date to billing date: one ending 5 May holds five days of May, and billing every
+period that touched the season would make six May-to-September invoices out of five
+months. A count of in-season days tied at exactly half for a contract billing on the
+16th and made six of those too; the middle day gives five for every billing day. The
+Start Date stops a contract signed for next season from billing the end of this one
+(Valley Fair's first period would have been 9 September to 9 October 2026, for an
+agreement that starts on 5 October). Outside the season the base fee is not billed,
+but chemicals are always extra, so a visit's consumables still go on a chemicals-only
+draft (a Day Dairy winterization in October). Seasons are Monthly only: a quarter is
+billed whole or not at all, so a five-month season billed once or twice a year
+depending on the month the contract happened to start. The season is independent of
+the winter pause (``pause_over_winter``), which moves visits, not bills.
 """
 
 import frappe
@@ -42,8 +46,8 @@ from frappe.utils import add_days, add_months, add_years, cint, flt, formatdate,
 
 RECURRING_FREQUENCIES = ("Monthly", "Quarterly", "Annually")
 PERIODS_PER_YEAR = {"Monthly": 12, "Quarterly": 4, "Annually": 1}
-#: The cadences a billing season applies to, with their length in months.
-SEASONAL_MONTHS = {"Monthly": 1, "Quarterly": 3}
+#: The cadence a billing season applies to (Monthly only; see the module docstring).
+SEASONAL_FREQUENCIES = ("Monthly",)
 MONTHS = (
     "January",
     "February",
@@ -89,34 +93,30 @@ def season_months(start, end):
     return months
 
 
-def service_days(period_start, period_end, months=None, start_date=None):
-    """Days in ``[period_start, period_end)`` in ``months`` (every month when None) and
-    on or after ``start_date``."""
-    day = getdate(period_start)
-    end = getdate(period_end)
-    first = getdate(start_date) if start_date else None
-    count = 0
-    while day < end:
-        if (months is None or day.month in months) and (first is None or day >= first):
-            count += 1
-        day = add_days(day, 1)
-    return count
+def billed_periods_per_year(frequency, season_start=None, season_end=None):
+    """How many periods a year bill their base fee: a Monthly season's month count, else
+    the cadence's periods. The contract divides an Annual Fee by this, so a five-month
+    season billed monthly is a fifth of it each time, not a twelfth."""
+    months = season_months(season_start, season_end) if frequency in SEASONAL_FREQUENCIES else None
+    return len(months) if months else PERIODS_PER_YEAR.get(frequency)
 
 
 def period_is_billable(contract, period_end):
     """Whether the period ending ``period_end`` bills its base fee (v1.624.0).
 
-    Monthly and Quarterly: when at least half its days are service days, in the
-    contract's billing season and from its Start Date. Annually: always.
+    Monthly: when the period's middle day is in the contract's billing season (any month
+    without one) and on or after its Start Date. Quarterly and Annually: always.
     """
-    length = SEASONAL_MONTHS.get(contract.get("invoicing_frequency"))
-    if not length:
+    if contract.get("invoicing_frequency") not in SEASONAL_FREQUENCIES:
         return True
     period_end = getdate(period_end)
-    period_start = add_months(period_end, -length)
-    total = (period_end - getdate(period_start)).days
+    period_start = getdate(add_months(period_end, -1))
+    middle = add_days(period_start, (period_end - period_start).days // 2)
+    start_date = contract.get("start_date")
+    if start_date and middle < getdate(start_date):
+        return False
     months = season_months(contract.get("billing_season_start"), contract.get("billing_season_end"))
-    return 2 * service_days(period_start, period_end, months, contract.get("start_date")) >= total
+    return months is None or middle.month in months
 
 
 def generate_recurring_invoices(today=None):
@@ -167,8 +167,13 @@ def generate_recurring_invoices(today=None):
 def _bill_period(contract_name):
     contract = frappe.get_doc("Sapphire Maintenance Contract", contract_name)
     period_end = getdate(contract.next_billing_date)
-    settings = frappe.get_single("ERPNext Enhancements Settings")
 
+    # Before the fee item: a period out of season bills no base fee, so it needs none.
+    if not period_is_billable(contract, period_end):
+        _bill_out_of_season(contract, period_end)
+        return
+
+    settings = frappe.get_single("ERPNext Enhancements Settings")
     fee_item = _base_fee_item(contract, settings)
     if not fee_item:
         # Hard misconfiguration: recurring_amount > 0 guarantees a charge, so we
@@ -179,10 +184,6 @@ def _bill_period(contract_name):
             message=f"Recurring billing skipped for {contract_name}: no maintenance fee item "
             f"(Sales Order services line or ERPNext Enhancements Settings default).",
         )
-        return
-
-    if not period_is_billable(contract, period_end):
-        _bill_out_of_season(contract, period_end)
         return
 
     invoice = _new_invoice(contract)
@@ -231,12 +232,12 @@ def _new_invoice(contract):
 def _bill_out_of_season(contract, period_end):
     """A period outside the billing season: no base fee, but the chemicals used on its
     visits still bill (they are always extra), on a draft of their own. With nothing to
-    bill the period is skipped and nothing is drafted; its visits stay unbilled and roll
-    into the next invoice like any other."""
+    charge (no chemicals, or none with a selling price) the period is skipped and nothing
+    is drafted; its visits stay unbilled and roll into the next invoice like any other."""
     invoice = _new_invoice(contract)
     covered_records = _append_unbilled_consumables(invoice, contract, period_end)
     season = _season_text(contract)
-    if invoice.get("items"):
+    if any(flt(row.get("rate")) > 0 for row in invoice.get("items") or []):
         invoice.set_missing_values()
         invoice.insert()
         for record in covered_records:
@@ -264,12 +265,10 @@ def _bill_out_of_season(contract, period_end):
 def _season_text(contract):
     start, end = contract.get("billing_season_start"), contract.get("billing_season_end")
     if start and end:
-        return _("fewer than half its days are in the billing season ({0} to {1}) and on or after the start date").format(
+        return _("its middle day is outside the billing season ({0} to {1}) or before the start date").format(
             _(start), _(end)
         )
-    return _("fewer than half its days are on or after the contract's start date ({0})").format(
-        formatdate(contract.get("start_date"))
-    )
+    return _("its middle day is before the contract's start date ({0})").format(formatdate(contract.get("start_date")))
 
 
 def _append_unbilled_consumables(invoice, contract, period_end):
