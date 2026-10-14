@@ -1068,7 +1068,10 @@ doc_events = {
 		"before_save": [
 			# Form kit P3.2 (v1.669.0): ERPNext's hidden contact_person kept equal to the visible
 			# Primary Contact, because Create > Quotation and the Prospect row copy the hidden one.
-			# The field a person changed wins; a hidden-only value is copied up. Not the address
+			# The field changed in the save wins (a new record: the visible one, else the hidden one
+			# copied up); a save that changes neither leaves a disagreeing pair alone until Nik
+			# approves the Party Mirror Preview. Changing contact_person also refreshes
+			# contact_display/_mobile/_email, which v16 fetched from the old one. Not the address
 			# pair: customer_address is the Billing Address, not the job site (v1.633.0). Must
 			# precede refresh_primary_contact_copies, so a contact copied up gets its copies in the
 			# same save. Rule and reasons: crm_enhancements/party_mirrors.py. Never raises.

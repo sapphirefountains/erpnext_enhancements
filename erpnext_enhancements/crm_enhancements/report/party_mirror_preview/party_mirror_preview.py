@@ -5,10 +5,12 @@
 
 A dry run, and only a dry run: this report writes nothing (form kit P3.2, TASK-2026-02755). On
 Opportunity the form shows Primary Contact and hides ERPNext's Contact Person, which is the one
-*Create > Quotation* copies. Since v1.669.0 every save keeps them equal
-(``crm_enhancements/party_mirrors.py``), but rows saved before that, and rows written past
-``save()`` (``db.set_value``, an import), can still disagree. This lists each of them with both
-values as stored and what the same rule would make them, so Nik can approve the fix before
+*Create > Quotation* copies. Since v1.669.0 a new record, and a save that changes either field,
+leaves them equal (``crm_enhancements/party_mirrors.py``). A save that changes neither leaves a
+pair that already disagreed exactly as it is, so the rows saved before that, and rows written past
+``save()`` (``db.set_value``, an import), wait here. This lists each of them with both values as
+stored and what the fix would make them (the visible contact, else the hidden one copied up), so
+Nik can approve the fix before
 anything is written, the way the Data Normalization Preview came before the P2-C cleanup.
 
 Which pairs are walked is the Party block's ``mirrors`` (``form_kit/blocks.py``); what each row
@@ -21,6 +23,10 @@ trailing spaces, so a SQL comparison would call ``"Ann Lee"`` and ``"Ann Lee "``
 and report clean on a row that is not. The query only finds rows where either field is set
 (``LENGTH(col) > 0``); the comparison happens here. One SELECT per pair, plus one read of the
 Contacts' names.
+
+**Raw SQL, so User Permissions on Opportunity do not narrow it.** Acceptable for who can open it:
+the report's roles are System Manager and Sales Manager, who see every Opportunity anyway, and it
+shows only names (record, account, contacts), no amounts.
 """
 
 import frappe
@@ -253,8 +259,9 @@ def _message():
 				"they would become."
 			),
 			_(
-				"The shown field wins when it has a value; the hidden one is copied up when it is the only one "
-				"set. Every save applies the same rule now. These rows are fixed only after the list is approved."
+				"The fix would keep the shown field when it has a value and copy the hidden one up when it is "
+				"the only one set. A save that changes neither field leaves these rows as they are; they are "
+				"fixed only after the list is approved."
 			),
 		]
 	)

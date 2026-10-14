@@ -29,8 +29,8 @@ frappe.query_reports["Party Mirror Preview"] = {
 			? face.format(value, row, column, data, default_formatter)
 			: default_formatter(value, row, column, data);
 		if (column.fieldname === "status" && data && data.status) {
-			const colour = data.status === "Both set, different" ? "var(--orange-600)" : "var(--text-muted)";
-			return `<span style="color: ${colour}; font-weight: 600;">${formatted}</span>`;
+			const color = data.status === "Both set, different" ? "var(--orange-600)" : "var(--text-muted)";
+			return `<span style="color: ${color}; font-weight: 600;">${formatted}</span>`;
 		}
 		return formatted;
 	},

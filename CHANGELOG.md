@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.669.0] - 2026-10-14
 
 Form kit P3.1 and the server half of P3.2 (ERPNext TASK-2026-02754 and TASK-2026-02755): one
-definition per piece of information, and Opportunity's two contact fields kept equal on every save.
+definition per piece of information, and Opportunity's two contact fields kept equal by every save
+that sets either one.
 No UI changes: the Party entry component is next, once the side panel (P4.4) has landed.
 
 ### Added
@@ -45,20 +46,37 @@ No UI changes: the Party entry component is next, once the side panel (P4.4) has
     `contact_person`: *Create > Quotation* maps fields by name, and the Prospect's opportunity row
     copies it too. So when the two disagreed, a Quotation went to someone other than the person on
     the deal.
-  - It runs on every save, first in Opportunity `before_save`, ahead of
+  - It runs first in Opportunity `before_save`, ahead of
     `sync_contact.refresh_primary_contact_copies`. A contact copied up therefore gets its title,
     phone and email in the same save.
   - **Which side wins.**
-    - The field a person changed in that save wins, and clearing Primary Contact clears both.
+    - A new record takes the visible field. If only the hidden one is set (by a mapping or an API
+      insert), it is copied up.
+    - On a saved record, the field a person changed in that save wins. Emptying Primary Contact
+      empties both, though on a Customer's deal ERPNext's `map_fields` (in `Opportunity.validate`,
+      before `before_save`) usually refills it from the account's own Primary Contact first.
     - If only the hidden field changed, and to a value, it is copied up. This covers ERPNext's form,
-      which sets `contact_person` when the account changes, and an API call or a mapping that only
-      knows the stock field.
-    - Otherwise the visible field wins. A hidden-only value is copied up.
-  - It copies only to a Contact that exists. It skips the fields when the meta does not have them
-    yet (ERPNext's test bootstrap), and it never raises.
+      which sets `contact_person` when the account changes, and an API call that only knows the
+      stock field.
+    - **A save that changes neither field leaves the pair exactly as it is**, and so does a saved
+      record whose stored copy cannot be read. So a board move, a guided step, ERPNext's daily
+      `auto_close_opportunity` or a bulk status change never rewrites the rows waiting for approval.
+  - **When it changes Contact Person it also refreshes ERPNext's copies of it**: `contact_display`
+    and `contact_mobile` (as v16's `get_contact_details` fills them) and `contact_email` (from
+    `custom_email`, as this app's Property Setter fetches it). Emptying Contact Person empties them.
+    v16 fills `fetch_from` values in `_validate_links`, before `before_save`, so without this the
+    email would still be the old person's. The other two are set only by the form's script. *Create
+    > Quotation* copies all three by name, so the Quotation would have had the new contact with the
+    old person's name and email.
+  - It copies only to a Contact that exists. It skips fields the meta does not have yet (ERPNext's
+    test bootstrap). It never raises: a failure goes to the Error Log with its traceback, against the
+    record.
 - **Party Mirror Preview**, a dry-run report (CRM Enhancements; System Manager and Sales Manager).
   - It lists every Opportunity whose two contact fields disagree, with both values and what the
-    save rule would make them. It writes nothing and has no apply button.
+    fix would make them (the visible contact, else the hidden one copied up). It writes nothing and
+    has no apply button.
+  - It reads with SQL, so User Permissions on Opportunity do not narrow it. Its roles (System
+    Manager, Sales Manager) see every Opportunity anyway, and it shows names only.
   - It compares in Python, not SQL: under MariaDB's PAD SPACE collation `a <> b` ignores trailing
     spaces, so a SQL check would report clean on a pair that is not.
   - On production on 2026-10-14, 9 Opportunities had the two fields set to different contacts. The

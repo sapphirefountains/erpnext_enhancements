@@ -31,6 +31,7 @@ import ast
 import copy
 import importlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -398,6 +399,9 @@ class JavaScriptTwinTest(unittest.TestCase):
 	def setUpClass(cls):
 		node = shutil.which("node")
 		if not node:
+			# CI (GitHub sets CI=true) must hold the twin: a runner without node fails, never skips.
+			if os.environ.get("CI"):
+				raise AssertionError("node is not on PATH in CI, so the JS twin went unchecked")
 			raise unittest.SkipTest("node is not on PATH")
 		cls.tmp = tempfile.TemporaryDirectory()
 		root = Path(cls.tmp.name)
