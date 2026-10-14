@@ -120,6 +120,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `maintenance_planner.css`; `test_s3_6_accessibility` reads the Maintenance Planner's focus ring
   from it; `6a` and `6d_ui` read the kit's rules from the bundle.
 
+## [1.670.0] - 2026-10-14
+
+### Changed
+
+- **The Rental Planner is on the design tokens, and its CSS is out of its script** (custom pages
+  S3.4f, ERPNext TASK-2026-02823). The page wrote its stylesheet into `<head>` from the script
+  (`RP_STYLE`), in Frappe's palette with a literal hex for every bar, and painted its legend's
+  swatches with a jQuery `.css("background", ...)`. Its styles are now
+  `asset_management/page/rental_planner/rental_planner.css`, which Frappe's page loader sends with
+  the page, so an edit is never served stale from the `/assets` cache. Page CSS stays in `<head>`
+  for the rest of the session, so every selector starts with an `rp-` class. Behaviour is unchanged:
+  routing, `?start=`, the draft, the bars' buttons and labels (S3.6) and the states (S3.1) are as
+  they were, and the history harness passes untouched.
+  - **The board follows the Desk's light or dark theme.** The colors are the `--sf-*` tokens
+    (`docs/app-design-system.md`). Rental chrome is the Rent pillar: a confirmed rental is teal-deep
+    with an off-white label and the Rent chip edge (it was blue), a hold is the same pillar pale and
+    hatched with a dashed edge, and the board and the flow's card carry the pillar's teal stripe
+    along the top. A hand booking on Asset Booking is the warn fill with its navy label (it was
+    amber), out-of-service is the danger fill, hatched against red mixed with the fixed ink-900, and
+    prep and cleaning stay grey. (Not with `--sf-text-strong`: that is off-white in the dark theme,
+    so the stripe would turn lighter and the off-white label fall to 3.65:1; with ink it is about
+    7.7:1 in both themes. Text-strong is for text and edges, never a fill behind a label.) Pool days
+    are tinted with the pillar, warn and danger as they fill. Free and Taken are good and danger
+    chips. What holds a taken fountain is in the danger text color (red mixed with the strong text,
+    which reads on a white card and a navy one).
+  - **The legend is drawn by the bars' own rules.** Each swatch carries its bar's classes, so the
+    key cannot drift from the board. The old held swatch was a narrower hatch than the bar and the
+    out-of-service one solid where the bar is hatched; both now match.
+  - **Square and flat.** The board, its rows, bars, pool cells, the card and the page's fields are
+    square, the step rail rounds at the control radius and the chips are pills. The bar's hover
+    shadow is gone (hover brightens the color only), and outline is used for focus alone.
+  - **Nothing is said by color alone.** Today's column has a 3px bar along its top and its weight,
+    and says "Today" to a screen reader; a pool day that is full or nearly full says so. Today's bar
+    and line are the neutral chip edge (deep-sea-blue in light, sky-200 in dark), not `--sf-focus`,
+    so a focused booking on today's column still stands out from the line behind it.
+  - **Fields.** The range picker, the pick list's quantity and rate boxes, and the wizard's own Frappe
+    controls (its field groups and the package picker) are white and square in both themes, where
+    the wizard's fields used to keep the Desk's dark field. Bootstrap's `.form-control:focus` (0,2,0) would grey a focused field, so the focused
+    field has its own rule; and the page's field rule would make a disabled rate (its fountain not
+    ticked) look live, so a disabled one has its own rule too. On a phone they are 16px, so iOS does
+    not zoom into them.
+  - **Touch and phones.** On a touch screen a booking bar is 44px tall (a row grows to 52px to hold
+    it), and the steps, the toolbar's and the flow's buttons and the review's Edit links are 44px.
+    The breakpoint is the app's one phone width, 767px (it was 640px), and on a phone the flow's
+    Back and Next stay in reach at the bottom of the screen. The last inline layout styles (the range
+    picker's width, the package box, a heading's margin, two button rows, the Edit link) are classes.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Rental Planner: the shared checks (no `<style>` from the
+  script, no inline or jQuery color, tokens only, prefixed selectors, token radii, no shadow, one
+  767px breakpoint) and `TestRentalPlanner`, which holds every bar kind the server sends
+  (`_bar_kind` and out-of-service) to a rule, the legend to the bars' rules, the Rent pillar, status
+  fills with their label and edge, status text as the mix, no bar, swatch or cell fill mixed with
+  the themed `--sf-text-strong`, today's marker off the focus color, outline for focus only, the
+  focused and disabled field rules, 44px touch targets, the screen-reader words, every drawn class styled and
+  every rule drawn, and the `rp-` prefix to this page alone. Run against the old page, every check
+  on the page itself fails (the prefix check reads the other files, and passes on both).
+  `tests/test_s3_6_accessibility.py` reads the bar label's truncation and the focus rings from the
+  stylesheet now.
+
 ## [1.669.0] - 2026-10-14
 
 Form kit P3.1 and the server half of P3.2 (ERPNext TASK-2026-02754 and TASK-2026-02755): one

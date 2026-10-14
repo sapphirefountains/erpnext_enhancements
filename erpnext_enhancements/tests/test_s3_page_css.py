@@ -33,6 +33,12 @@ stylesheet, which both planners share, left its three JS template strings for a 
 ``public/css/planner_kit.bundle.css``; ``TestPlannerKitStylesheet`` holds it to the same rules (its
 selectors are the kit's ``pk-``) and the three modules to carrying no CSS.
 
+S3.4f (v1.670.0) adds the Rental Planner, which wrote its stylesheet from the script (``RP_STYLE``,
+in Frappe's palette with a literal hex for every bar) and painted its legend's swatches with a
+jQuery ``.css("background", ...)``. Its bars' colors are kinds, not data, so they are classes, and
+each legend swatch carries its bar's classes; ``TestRentalPlanner`` holds the page to that and to
+the rest of the restyle.
+
 This fails the build if any of these pages:
 
 * writes a ``<style>`` element from JS again, or paints a colour through an inline ``style``,
@@ -94,6 +100,8 @@ PAGES = {
 	"project_planner": APP / "project_enhancements" / "page" / "project_planner",
 	# S3.4e
 	"maintenance_planner": APP / "sapphire_maintenance" / "page" / "maintenance_planner",
+	# S3.4f
+	"rental_planner": APP / "asset_management" / "page" / "rental_planner",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -117,6 +125,7 @@ NAMESPACES = {
 	"project_planner": re.compile(r"\.(?:pp|p6b|p6e|t1|t4)-[\w-]+"),
 	# Every class of the Maintenance Planner is mp-, its phases' too (mp-p6a-, mp-p6b- ...).
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
+	"rental_planner": re.compile(r"\.rp-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -134,6 +143,7 @@ KEYFRAME_PREFIXES = {
 	"plan_a_trip": ("tp-",),
 	"project_planner": ("pp-", "p6b-", "p6e-", "t1-", "t4-"),
 	"maintenance_planner": ("mp-",),
+	"rental_planner": ("rp-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages
@@ -1315,6 +1325,243 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 		self.assertIn("style.textContent = CSS + conflicts.CONFLICTS_CSS + blocks.BLOCKS_CSS;", bundle)
 		# Loaded only by the kit, never on every Desk page.
 		self.assertNotIn("planner_kit.bundle.css", _read(APP / "hooks.py"))
+
+
+class TestRentalPlanner(unittest.TestCase):
+	"""S3.4f (v1.670.0). The Rental Planner wrote its stylesheet from the script (RP_STYLE, in
+	Frappe's palette with a literal hex for every bar and a shadow on hover), painted its legend's
+	swatches with a jQuery .css("background", ...), set its layout through four inline style
+	attributes, and said today and a full pool day by color alone."""
+
+	FOLDER = PAGES["rental_planner"]
+	SERVER = APP / "asset_management" / "rental_planner.py"
+	STATUS_MIX = "color-mix(in srgb, var(--sf-{0}) 50%, var(--sf-text-strong))"
+
+	@classmethod
+	def setUpClass(cls):
+		cls.raw_js = _read(cls.FOLDER / "rental_planner.js")
+		cls.js = _js_code(cls.raw_js)
+		css = cls.FOLDER / "rental_planner.css"
+		cls.css = _css_code(_read(css)) if css.exists() else ""
+
+	def _rules(self):
+		"""(selectors, body) for every rule, an @media block's included."""
+		return [
+			([s.strip() for s in prelude.split(",")], body)
+			for prelude, body in re.findall(r"([^{}@]+)\{([^{}]*)\}", self.css)
+		]
+
+	def _rule(self, selector):
+		bodies = [body for selectors, body in self._rules() if selector in selectors]
+		self.assertTrue(bodies, f"no rule for {selector} in rental_planner.css")
+		return "".join(bodies)
+
+	def _kinds(self):
+		"""Every bar kind the server sends: _bar_kind's answers, and the out-of-service bars."""
+		server = _read(self.SERVER)
+		body = server[server.index("def _bar_kind(row):") :].split("\n\n", 1)[0]
+		kinds = set(re.findall(r'"([a-z_]+)"', body))
+		self.assertIn('"kind": "out_of_service"', server)
+		return kinds | {"out_of_service"}
+
+	def test_the_script_writes_no_stylesheet(self):
+		self.assertTrue(self.css)
+		self.assertNotIn("rp-style", self.js)
+		self.assertNotIn("document.head", self.js)
+		self.assertNotIn("RP_STYLE", self.js)
+
+	def test_what_stays_inline_is_layout(self):
+		"""No style attribute at all, and every jQuery .css() write is a position, a width or the
+		day width the track's gridlines read."""
+		self.assertNotRegex(self.js, r"\bstyle=")
+		keys = []
+		for args in re.findall(r"\.css\((\{[^}]*\}|[^,)]+,)", self.js):
+			keys += re.findall(r"(?:^\{|,)\s*\"?([\w-]+)\"?\s*:", args) if args.startswith("{") else [args]
+		self.assertTrue(keys)
+		self.assertLessEqual({k.strip(" ,'\"") for k in keys}, {"left", "width", "--rp-day"})
+
+	def test_every_variable_it_reads_is_a_token_the_day_width_or_the_page_ground(self):
+		"""No Frappe variable (--text-muted, --card-bg, --primary ...) but the Desk's page ground
+		under the phone's sticky bar, as Plan a Trip's."""
+		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
+		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--bg-color", "--rp-day"])
+		self.assertIn('"--rp-day": dw + "px"', self.js)
+		self.assertIn("var(--bg-color)", self._rule(".rp-nav"))
+
+	def test_every_bar_kind_the_server_sends_has_its_colors(self):
+		self.assertIn(".addClass(`rp-${bar.kind}`)", self.js)
+		kinds = self._kinds()
+		self.assertEqual(sorted(kinds), ["booking", "out_of_service", "prep", "rental", "turnaround"])
+		for kind in kinds:
+			with self.subTest(kind=kind):
+				body = self._rule(f".rp-bar.rp-{kind}")
+				self.assertIn("background:", body)
+				self.assertRegex(body, r"(?m)^\s*color: var\(--sf-")
+
+	def test_the_legend_is_painted_by_the_rules_that_paint_the_bars(self):
+		legend = re.search(r"\[\s*(\[\"rp-rental\".*?)\]\.forEach\(\(\[kind, label\]\)", self.js, flags=re.S)
+		self.assertIsNotNone(legend, "the legend names its swatches by their bar classes")
+		classes = re.findall(r'\["(rp-[a-z_ -]+)", __\(', legend.group(1))
+		self.assertEqual(
+			classes, ["rp-rental", "rp-rental rp-held", "rp-prep", "rp-booking", "rp-out_of_service"]
+		)
+		self.assertIn('$(\'<i class="rp-swatch" aria-hidden="true"></i>\').addClass(kind)', self.js)
+		for names in classes:
+			compound = "".join(f".{c}" for c in names.split())
+			with self.subTest(swatch=names):
+				shared = [
+					s for s, _ in self._rules() if f".rp-bar{compound}" in s and f".rp-swatch{compound}" in s
+				]
+				self.assertTrue(shared, f"no rule paints .rp-bar{compound} and .rp-swatch{compound} together")
+
+	def test_rental_chrome_is_the_rent_pillar(self):
+		confirmed = self._rule(".rp-bar.rp-rental")
+		for token in ("--sf-pillar-rent-deep", "--sf-on-pillar", "--sf-chip-edge-rent"):
+			with self.subTest(token=token):
+				self.assertIn(f"var({token})", confirmed)
+		self.assertIn("var(--sf-pillar-rent)", self._rule(".rp-bar.rp-rental.rp-held"))
+		for selector in (".rp-scroll", ".rp-card"):
+			with self.subTest(selector=selector):
+				self.assertIn("border-top: 4px solid var(--sf-pillar-rent);", self._rule(selector))
+		# No other pillar: Neutral's opening stop vanishes on a dark card, and a closing stop other than
+		# Rent's (Build's is navy-800, the dark card itself) is not this page's to draw. The one
+		# exception is the neutral chip EDGE for today's marker, which is themed to clear both cards.
+		pillars = set(re.findall(r"var\(--sf-(?:pillar|gradient)-([\w-]+)\)", self.css))
+		self.assertLessEqual(pillars, {"rent", "rent-deep"})
+		edges = set(re.findall(r"var\(--sf-chip-edge-(\w+)\)", self.css))
+		self.assertLessEqual(edges, {"rent", "good", "warn", "danger", "neutral"})
+
+	def test_no_fill_behind_a_label_is_mixed_with_the_themed_text(self):
+		"""--sf-text-strong is ink in light and off-white in dark, so a fill mixed with it darkens in
+		one theme and LIGHTENS in the other: out-of-service's dark stripe went to about #cc615e on a
+		navy card and its off-white label to 3.65:1. A bar's, swatch's or cell's fill mixes with a
+		fixed ink or with the card under it; --sf-text-strong is for text and edges only."""
+		checked = 0
+		for selectors, body in self._rules():
+			if not any(s.startswith((".rp-bar", ".rp-swatch", ".rp-cell")) for s in selectors):
+				continue
+			for prop, value in _declarations("{" + body + "}"):
+				if prop.startswith("background"):
+					checked += 1
+					with self.subTest(selectors=selectors, prop=prop):
+						self.assertNotIn("--sf-text-strong", value)
+		self.assertGreaterEqual(checked, 8)
+		self.assertIn(
+			"color-mix(in srgb, var(--sf-danger) 75%, var(--sf-ink-900))",
+			self._rule(".rp-bar.rp-out_of_service"),
+		)
+
+	def test_today_is_not_the_focus_color(self):
+		"""A focused bar on today's column must stand out from the line behind it."""
+		for selector in (".rp-day.rp-today", ".rp-today-line"):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertNotIn("--sf-focus", body)
+				self.assertIn("var(--sf-chip-edge-neutral)", body)
+
+	def test_status_fills_carry_their_label_and_edge(self):
+		checked = 0
+		for selectors, body in self._rules():
+			m = re.search(r"(?m)^\s*background: var\(--sf-(good|warn|danger)\);", body)
+			if not m:
+				continue
+			checked += 1
+			tone = m.group(1)
+			with self.subTest(selectors=selectors):
+				self.assertIn(f"color: var(--sf-on-{tone});", body)
+				self.assertIn(f"border-color: var(--sf-chip-edge-{tone});", body)
+		self.assertGreaterEqual(checked, 3)
+
+	def test_status_as_text_is_the_mix_never_the_fill(self):
+		"""Plain yellow is 1.7:1 on white, and plain red 2.8:1 on a navy card."""
+		checked = 0
+		for prop, value in _declarations(self.css):
+			tone = re.search(r"var\(--sf-(good|warn|danger)\)", value)
+			if prop == "color" and tone:
+				checked += 1
+				with self.subTest(value=value):
+					self.assertEqual(value, self.STATUS_MIX.format(tone.group(1)))
+		self.assertGreaterEqual(checked, 1)
+
+	def test_outline_is_kept_for_focus(self):
+		"""An outline used as a highlight hides the focus ring under it; here only focus draws one."""
+		outlined = [selectors for selectors, body in self._rules() if re.search(r"(?m)^\s*outline", body)]
+		self.assertGreaterEqual(len(outlined), 3)
+		for selectors in outlined:
+			for selector in selectors:
+				with self.subTest(selector=selector):
+					self.assertIn(":focus", selector)
+
+	def test_focused_and_disabled_fields_keep_their_own_rules(self):
+		"""Bootstrap's .form-control:focus (0,2,0) outranks a plain field rule and turns it grey while
+		typing; the page's field rule (0,3,0) in turn would make a disabled rate look live."""
+		for selector in (".rp-wrap .rp-toolbar .form-control:focus", ".rp-wrap .rp-card .form-control:focus"):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertIn("border-color: var(--sf-focus);", body)
+				self.assertIn("background-color: var(--sf-field-bg);", body)
+		# The card's rule reaches the pick list's boxes and the wizard's own Frappe controls alike.
+		for selector in (".rp-wrap .rp-toolbar .form-control", ".rp-wrap .rp-card .form-control"):
+			with self.subTest(selector=selector):
+				self.assertIn("background-color: var(--sf-field-bg);", self._rule(selector))
+				self.assertIn("border-radius: var(--sf-radius-none);", self._rule(selector))
+		self.assertIn("cursor: not-allowed;", self._rule(".rp-wrap .rp-card .form-control:disabled"))
+		phone = self.css[self.css.index("@media (max-width: 767px)") :]
+		self.assertRegex(phone, r"\.rp-wrap \.rp-card \.form-control \{\s*font-size: var\(--sf-text-input\);")
+
+	def test_touch_targets_are_44px(self):
+		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
+		self.assertIsNotNone(coarse, "no (pointer: coarse) block")
+		block = coarse.group(1)
+		self.assertRegex(block, r"\.rp-bar\.rp-turnaround \{[^}]*height: var\(--sf-touch-min\);")
+		for selector in (
+			".rp-step",
+			".rp-toolbar .btn",
+			".rp-nav .btn",
+			".rp-actions .btn",
+			".rp-summary .rp-edit",
+		):
+			with self.subTest(selector=selector):
+				self.assertRegex(
+					block, re.escape(selector) + r"[\s,][^{]*\{[^}]*min-height: var\(--sf-touch-min\);"
+				)
+		self.assertIn("min-height: var(--sf-touch-min);", self._rule(".rp-pick"))
+
+	def test_nothing_is_said_by_color_alone(self):
+		self.assertIn(
+			""".addClass("rp-today").append($('<span class="rp-sr"></span>').text(__("Today")))""", self.js
+		)
+		self.assertIn(
+			"""if (ratio >= 0.6) $('<span class="rp-sr"></span>').text(ratio >= 1 ? __("full") : __("nearly full")).appendTo($cell);""",
+			self.js,
+		)
+		self.assertIn("clip: rect(0, 0, 0, 0)", self._rule(".rp-sr"))
+		self.assertIn("border-top: 3px solid var(--sf-chip-edge-neutral);", self._rule(".rp-day.rp-today"))
+		self.assertIn('.text(f.available ? __("Free") : __("Taken"))', self.js)
+
+	def test_every_class_the_script_draws_is_styled_and_every_rule_is_drawn(self):
+		"""A rename on one side only leaves an unstyled element or a dead rule. The bar kinds are
+		drawn from the server's answer (rp-${bar.kind}), so they count as drawn."""
+		drawn = set(re.findall(r"(?<![\w-])(rp-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
+		drawn |= {f"rp-{kind}" for kind in self._kinds()}
+		styled = set(re.findall(r"\.(rp-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
+		self.assertEqual(sorted(drawn - styled), [], "drawn by the script, styled nowhere")
+		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
+
+	def test_its_prefix_is_its_own(self):
+		"""This page's CSS is global for the session, so nothing else may use an rp- class."""
+		selector = re.compile(r"(?<![\w-])\.rp-[a-z]|class=\"rp-|'rp-")
+		found = []
+		for path in APP.rglob("*"):
+			if path.suffix not in (".css", ".scss", ".js", ".html", ".vue") or "tests" in path.parts:
+				continue
+			if path.parent == self.FOLDER or "node_modules" in path.parts:
+				continue
+			text = _read(path)
+			code = _css_code(text) if path.suffix in (".css", ".scss") else _js_code(text)
+			if selector.search(code):
+				found.append(str(path.relative_to(APP)))
+		self.assertEqual(found, [])
 
 
 class TestThisSuiteRunsInCi(unittest.TestCase):
