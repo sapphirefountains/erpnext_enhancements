@@ -20,7 +20,8 @@
 import * as board from "./opportunity_board/board.js";
 
 // 2 since v1.684.0: card_parts / card_text, which the page now calls.
-const VERSION = 2;
+// 3 since v1.688.0: the Closed Won and Lost columns (prepare's `closed`, columns, stream_rows).
+const VERSION = 3;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_opportunity_board && window.sf_opportunity_board.version >= VERSION)) {

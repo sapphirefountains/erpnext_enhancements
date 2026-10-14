@@ -54,14 +54,15 @@ MODULE = "erpnext_enhancements.crm_enhancements.page.opportunity_board.opportuni
 TODAY = "2026-10-13"
 THRESHOLDS = {"amber": 7, "red": 14}
 
+# v1.688.0: the order get_board sends (Nik, 2026-10-14: "Put Lost last and On Hold second to last").
 STAGES = [
 	{"label": "Qualification", "kind": "open"},
 	{"label": "Needs Analysis", "kind": "open"},
 	{"label": "Proposal/Price Quote", "kind": "open"},
 	{"label": "Negotiation/Review", "kind": "open"},
+	{"label": "Closed Won", "kind": "close", "gate": "won"},
 	{"label": "On Hold", "kind": "parked"},
 	{"label": "Lost", "kind": "close", "gate": "lost"},
-	{"label": "Closed Won", "kind": "close", "gate": "won"},
 ]
 
 
@@ -99,9 +100,20 @@ DEALS = [
 	_deal("OPP-10", "Replied", 3000, 60, "2026-11-11", "2026-10-11", ["Fountain Art"]),
 	_deal("OPP-11", "Qualification", 1200, 150, "2026-10-02", None, ["Service"]),
 ]
+# v1.688.0: the Closed Won and Lost columns' deals (get_board's `closed`). OPP-1 again (an open deal's
+# name) and OPP-83 (an open status) are not closing-column deals and must be dropped.
+CLOSED = [
+	_deal("OPP-80", "Closed Won", 20000, 100, "2026-10-01", "2026-10-02", ["Design"]),
+	_deal("OPP-81", "Lost", 8000, 0, None, "2026-09-20", ["Service", "Fountain Art"]),
+	_deal("OPP-82", "Closed Won", None, 100, None, "2026-10-09", []),
+	_deal("OPP-1", "Lost", 1, 0, None, "2026-10-09", []),
+	_deal("OPP-83", "Qualification", 1, 0, None, "2026-10-09", []),
+]
 PAYLOAD = {
 	"stages": STAGES,
 	"deals": DEALS,
+	"closed": CLOSED,
+	"closed_days": 90,
 	"thresholds": THRESHOLDS,
 	"today": TODAY,
 	"currency": "USD",
@@ -220,6 +232,34 @@ out.amounts = [kit.amount_of({ amount: 5 }), kit.amount_of({ amount: 0 }), kit.a
 out.probabilities = [kit.probability_of({ probability: 150 }), kit.probability_of({ probability: -5 }), kit.probability_of({ probability: null }), kit.probability_of({ probability: "25" })];
 out.loads = [[0, 0, 0], [0, 1, 0], [3, 3, 1], [0, 1, 1], [2, 2, 0], [5, 5, 1]].map(([s, e, b]) => kit.load_is_current(s, e, b));
 out.empty = { model: kit.prepare(null).deals.length, columns: kit.columns(kit.prepare({ stages: input.payload.stages })).length, forecast: kit.forecast(kit.prepare({ stages: input.payload.stages })).overall };
+// v1.688.0: the closing columns.
+out.closed = {
+	names: model.closed.map((d) => d.name),
+	kinds: model.closed.map((d) => [d.name, d.stage, d.kind, d.stale]),
+	by_name: model.closed.filter((d) => model.by_name[d.name] && model.by_name[d.name].kind === "close").length,
+	days: model.closed_days,
+	none: kit.prepare({ stages: input.payload.stages }).closed,
+	mine: kit.filtered(model, { stream: "Design" }, "x").closed.map((d) => d.name),
+	attention: kit.attention(model).total,
+	table: kit.table_rows(model, { sort: "closing", desc: false }).map((d) => d.name).filter((n) => ["OPP-80", "OPP-81", "OPP-82"].includes(n)),
+	drop_on_won: kit.drop_action(model, model.by_name["OPP-2"], "closed-won"),
+};
+out.deals_names_closed = model.deals.map((d) => d.name).filter((n) => ["OPP-80", "OPP-81", "OPP-82", "OPP-83"].includes(n));
+const won = kit.close_deal(model, "OPP-2", "Closed Won");
+out.close_deal = {
+	open: won.deals.some((d) => d.name === "OPP-2") || !!won.by_name["OPP-2"],
+	first: [won.closed[0].name, won.closed[0].stage, won.closed[0].kind, won.closed[0].since, won.closed[0].stale, won.closed[0].completeness],
+	column: kit.columns(won).find((c) => c.stage.key === "closed-won").deals.map((d) => d.name),
+	totals: kit.totals(won.deals).count,
+	not_closing: kit.close_deal(model, "OPP-2", "Needs Analysis").closed.length,
+	unknown: kit.close_deal(model, "NOPE", "Lost") === model,
+	old_untouched: model.closed.length,
+};
+const snoozed = kit.prepare(Object.assign({}, input.payload, {
+	closed: [Object.assign({}, input.payload.closed[0], { snoozed_until: "2026-12-01" })],
+}));
+out.closed_snooze = snoozed.closed[0].snooze;
+out.closing_month_closed = kit.filtered(model, { closing_month: true }, "x").closed.map((d) => d.name);
 console.log(JSON.stringify(out));
 """
 
@@ -300,21 +340,79 @@ class TestTheBoardUnderNode(unittest.TestCase):
 				("needs-analysis", "open"),
 				("proposal-price-quote", "open"),
 				("negotiation-review", "open"),
-				# An open status the options no longer list gets its own column, before On Hold.
+				# An open status the options no longer list gets its own column, after the open stages.
 				("replied", "other"),
+				# v1.688.0, Nik: "Put Lost last and On Hold second to last."
+				("closed-won", "close"),
 				("on-hold", "parked"),
 				("lost", "close"),
-				("closed-won", "close"),
 			],
 		)
 		self.assertEqual(
-			[c["key"] for c in self.out["columns"]][-1], "on-hold", "closing stages are not columns"
+			[c["key"] for c in self.out["columns"]][-3:],
+			["closed-won", "on-hold", "lost"],
+			"Closed Won and Lost are columns now",
 		)
 
 	def test_every_open_deal_is_on_the_board_once(self):
-		names = [n for c in self.out["columns"] for n in c["names"]]
+		names = [n for c in self.out["columns"] if c["key"] not in ("closed-won", "lost") for n in c["names"]]
 		self.assertEqual(sorted(names), sorted(d["name"] for d in DEALS))
 		self.assertEqual(len(names), len(set(names)))
+
+	# ---- the closing columns (v1.688.0)
+
+	def test_the_closing_columns_hold_the_recently_closed_deals_most_recent_first(self):
+		cols = {c["key"]: c for c in self.out["columns"]}
+		self.assertEqual(cols["closed-won"]["names"], ["OPP-82", "OPP-80"])
+		self.assertEqual(cols["lost"]["names"], ["OPP-81"])
+		self.assertEqual((cols["closed-won"]["count"], cols["closed-won"]["total"]), (2, 20000))
+		# An open deal's name and an open status are never closing-column deals.
+		self.assertEqual(self.out["closed"]["names"], ["OPP-82", "OPP-80", "OPP-81"])
+		self.assertEqual(
+			self.out["closed"]["kinds"],
+			[
+				["OPP-82", "closed-won", "close", 0],
+				["OPP-80", "closed-won", "close", 0],
+				["OPP-81", "lost", "close", 0],
+			],
+			"a closed deal never glows",
+		)
+		self.assertEqual(self.out["closed"]["days"], 90)
+		self.assertEqual(self.out["closed"]["none"], [], "a payload without them has none")
+
+	def test_a_closed_deal_is_never_an_open_one(self):
+		# Not in by_name (so never dragged, selected or bulk-changed), not in any total, the table or
+		# the attention list; the open board's numbers are what they were.
+		self.assertEqual(self.out["closed"]["by_name"], 0)
+		self.assertEqual(self.out["board_totals"]["count"], len(DEALS))
+		self.assertEqual(self.out["forecast"]["overall"]["count"], len(DEALS))
+		self.assertNotIn("closed-won", [s["key"] for s in self.out["forecast"]["stages"]])
+		self.assertNotIn("lost", [s["key"] for s in self.out["forecast"]["stages"]])
+		self.assertEqual(self.out["closed"]["table"], [])
+		self.assertEqual(self.out["deals_names_closed"], [])
+		# A drop on the Closed Won column still asks for the ranks first.
+		self.assertEqual(self.out["closed"]["drop_on_won"], "close")
+
+	def test_the_filters_narrow_the_closing_columns_too(self):
+		self.assertEqual(self.out["closed"]["mine"], ["OPP-80"])
+		# "Closing this month" on a closed deal means it closed this month (its `since`), so OPP-80
+		# and OPP-82 (October) stay and OPP-81 (September) goes, whatever their expected dates.
+		self.assertEqual(self.out["closing_month_closed"], ["OPP-82", "OPP-80"])
+
+	def test_a_deal_moved_to_a_closing_stage_lands_in_its_column_at_once(self):
+		c = self.out["close_deal"]
+		self.assertFalse(c["open"], "off the open board")
+		self.assertEqual(
+			c["first"], ["OPP-2", "closed-won", "close", TODAY, 0, None], "closed today, at the top, no meter"
+		)
+		self.assertEqual(c["column"], ["OPP-2", "OPP-82", "OPP-80"])
+		self.assertEqual(c["totals"], len(DEALS) - 1)
+		self.assertEqual(c["not_closing"], 3, "an open status only takes it off, as remove_deal does")
+		self.assertIs(c["unknown"], True, "a deal not on the board leaves the model as it was")
+		self.assertEqual(c["old_untouched"], 3, "pure: the old model keeps its closed list")
+
+	def test_a_closed_deal_is_never_snoozed(self):
+		self.assertEqual(self.out["closed_snooze"], "")
 
 	def test_a_column_is_stalest_first(self):
 		qual = next(c for c in self.out["columns"] if c["key"] == "qualification")
@@ -413,7 +511,7 @@ class TestTheBoardUnderNode(unittest.TestCase):
 
 	def test_the_overall_totals_match_the_plain_board(self):
 		"""P6.2 is done when the overall totals match the plain board's."""
-		cols = self.out["columns"]
+		cols = [c for c in self.out["columns"] if c["key"] not in ("closed-won", "lost")]
 		self.assertEqual(sum(c["count"] for c in cols), self.out["board_totals"]["count"])
 		self.assertAlmostEqual(sum(c["total"] for c in cols), self.out["board_totals"]["total"])
 		self.assertEqual(self.out["forecast"]["overall"]["count"], self.out["board_totals"]["count"])
@@ -424,8 +522,10 @@ class TestTheBoardUnderNode(unittest.TestCase):
 		for row in self.out["rows"]:
 			with self.subTest(row=row["stream"]):
 				self.assertEqual([c["key"] for c in row["cells"]], keys)
-				self.assertEqual(sum(c["count"] for c in row["cells"]), row["count"])
-				self.assertAlmostEqual(sum(c["total"] for c in row["cells"]), row["total"])
+				# A row's own figures are its open deals; its closing cells show the recent closes.
+				open_cells = [c for c in row["cells"] if c["key"] not in ("closed-won", "lost")]
+				self.assertEqual(sum(c["count"] for c in open_cells), row["count"])
+				self.assertAlmostEqual(sum(c["total"] for c in open_cells), row["total"])
 
 	# ---- forecast (P6.5)
 
@@ -488,7 +588,7 @@ class TestTheBoardUnderNode(unittest.TestCase):
 
 	def test_an_empty_board(self):
 		self.assertEqual(self.out["empty"]["model"], 0)
-		self.assertEqual(self.out["empty"]["columns"], 5)
+		self.assertEqual(self.out["empty"]["columns"], 7, "the closing columns show, empty")
 		self.assertEqual(self.out["empty"]["forecast"], {"count": 0, "total": 0, "weighted": 0})
 
 	# ---- moving a card
@@ -507,9 +607,9 @@ class TestTheBoardUnderNode(unittest.TestCase):
 				["needs-analysis", "save", False],
 				["proposal-price-quote", "save", False],
 				["negotiation-review", "save", False],
+				["closed-won", "close", False],
 				["on-hold", "save", False],
 				["lost", "close", False],
-				["closed-won", "close", False],
 			],
 		)
 
@@ -573,7 +673,8 @@ class TestTheBoardUnderNode(unittest.TestCase):
 		self.assertEqual(self.out["phone"], [True, True, False, False])
 		self.assertEqual(
 			self.out["current_stage"],
-			["negotiation-review", "qualification", "qualification", "qualification"],
+			# v1.688.0: Lost is a column, so a phone can be on its tab.
+			["negotiation-review", "qualification", "lost", "qualification"],
 		)
 
 	def test_the_gesture_numbers_are_the_planners(self):
@@ -699,6 +800,29 @@ def _opportunity_meta(missing=()):
 	return _Meta([_Field(n, o) for n, o in names if n not in missing])
 
 
+def _day(value):
+	if isinstance(value, datetime.datetime):
+		return value.date()
+	if isinstance(value, datetime.date):
+		return value
+	return datetime.date.fromisoformat(str(value)[:10])
+
+
+def _passes_filters(row, filters):
+	"""The list filters get_board sends, applied as the database would (a ``>=`` by the day)."""
+	for fieldname, op, value in filters or []:
+		have = row.get(fieldname)
+		if op == "in" and have not in value:
+			return False
+		if op == "not in" and have in value:
+			return False
+		if op == "!=" and have == value:
+			return False
+		if op == ">=" and (have is None or _day(have) < _day(value)):
+			return False
+	return True
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe.__path__ = []
@@ -756,7 +880,7 @@ def _install_frappe_stub():
 				"kwargs": kwargs,
 			}
 		)
-		rows = [dict(r) for r in STATE["records"]]
+		rows = [dict(r) for r in STATE["records"] if _passes_filters(r, filters)]
 		return [{f: r.get(f) for f in fields} for r in rows][:limit_page_length]
 
 	frappe.get_list = get_list
@@ -817,6 +941,7 @@ def _install_frappe_stub():
 	utils.cint = cint
 	utils.getdate = getdate
 	utils.nowdate = lambda: TODAY
+	utils.add_days = lambda value, days: str(getdate(value) + datetime.timedelta(days=days))
 	utils.date_diff = lambda a, b: (getdate(a) - getdate(b)).days
 	utils.get_datetime = lambda v: v
 	utils.now_datetime = lambda: datetime.datetime(2026, 10, 13, 12, 0, 0)
@@ -920,12 +1045,77 @@ class TestTheEndpoint(unittest.TestCase):
 	def test_it_reads_through_get_list_with_open_and_not_historical(self):
 		_reset([_record("OPP-1")])
 		self.mod.get_board()
-		(call,) = STATE["get_list"]
+		call, closed = STATE["get_list"]
 		self.assertEqual(call["doctype"], "Opportunity")
 		self.assertIn(["status", "not in", ["Closed Won", "Lost", "Closed", "Converted"]], call["filters"])
 		self.assertIn(["custom_is_historical", "!=", 1], call["filters"])
 		self.assertNotIn("ignore_permissions", call["kwargs"])
 		self.assertEqual(call["limit"], self.mod.MAX_DEALS + 1)
+		# v1.688.0: the closing columns, through get_list too (the caller's permissions apply).
+		self.assertEqual(closed["doctype"], "Opportunity")
+		self.assertEqual(
+			closed["filters"],
+			[
+				["status", "in", ["Closed Won", "Lost"]],
+				["modified", ">=", "2026-07-15"],
+				["custom_is_historical", "!=", 1],
+			],
+		)
+		self.assertNotIn("ignore_permissions", closed["kwargs"])
+		self.assertEqual(closed["limit"], self.mod.MAX_CLOSED)
+		# By the stage date first: a mass edit of old closed deals cannot crowd out the recent ones.
+		self.assertEqual(closed["order_by"], "custom_stage_changed_on desc, modified desc")
+		self.assertEqual(closed["fields"], call["fields"])
+
+	def test_the_closing_columns_get_the_last_90_days_of_closes(self):
+		_reset(
+			[
+				_record("OPP-1"),
+				_record(
+					"WON-NEW",
+					status="Closed Won",
+					custom_stage_changed_on=datetime.datetime(2026, 10, 2, 9, 0),
+					modified=datetime.datetime(2026, 10, 2, 9, 0),
+				),
+				# Closed on the 90th day back: in.
+				_record(
+					"LOST-EDGE",
+					status="Lost",
+					custom_stage_changed_on=datetime.datetime(2026, 7, 15, 17, 0),
+					modified=datetime.datetime(2026, 10, 1, 9, 0),
+				),
+				# Closed long ago and only edited since: out, by its stage date.
+				_record(
+					"WON-OLD",
+					status="Closed Won",
+					custom_stage_changed_on=datetime.datetime(2026, 3, 1, 9, 0),
+					modified=datetime.datetime(2026, 10, 1, 9, 0),
+				),
+				# Never stamped: its modified decides.
+				_record(
+					"LOST-UNSTAMPED",
+					status="Lost",
+					custom_stage_changed_on=None,
+					modified=datetime.datetime(2026, 9, 1, 9, 0),
+				),
+				_record("WON-HIST", status="Closed Won", custom_is_historical=1),
+				_record("CLOSED", status="Closed", modified=datetime.datetime(2026, 10, 12, 9, 0)),
+			],
+			streams={"WON-NEW": ["Design"]},
+		)
+		data = self.mod.get_board()
+		self.assertEqual([d["name"] for d in data["deals"]], ["OPP-1"])
+		self.assertEqual(
+			sorted(d["name"] for d in data["closed"]), ["LOST-EDGE", "LOST-UNSTAMPED", "WON-NEW"]
+		)
+		won = next(d for d in data["closed"] if d["name"] == "WON-NEW")
+		self.assertEqual(
+			(won["status"], won["since"], won["streams"]), ("Closed Won", "2026-10-02", ["Design"])
+		)
+		self.assertIsNone(won["completeness"], "the meter is for open deals")
+		self.assertEqual(data["closed_days"], 90)
+		# Completeness is asked for the open deals only.
+		self.assertEqual(self.calls, [("Opportunity", ["OPP-1"])])
 
 	def test_missing_custom_fields_are_never_named(self):
 		missing = (
@@ -936,7 +1126,7 @@ class TestTheEndpoint(unittest.TestCase):
 		)
 		_reset([_record("OPP-1")], meta=_opportunity_meta(missing=missing))
 		data = self.mod.get_board()
-		(call,) = STATE["get_list"]
+		call, _closed = STATE["get_list"]
 		for fieldname in missing:
 			self.assertNotIn(fieldname, call["fields"])
 		self.assertEqual(
@@ -1260,6 +1450,110 @@ class TestThePage(unittest.TestCase):
 		)
 		board = block[block.index('"link_to": "opportunity-board"') :]
 		self.assertIn('"after": ("Page", "guided-entry")', board)
+
+
+class TestTheColumnsLayout(unittest.TestCase):
+	"""v1.688.0. Nik, 2026-10-14: "Make the Kanban columns uniform width, and scroll horizontally if
+	not all columns fit on the page", and the page ran as long as its longest column (3,989px)."""
+
+	def test_every_column_is_the_same_width(self):
+		code = _code(PAGE_JS)
+		body = code[code.index("grid_style(cols) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn("return `--ob-cols: ${cols.length}`;", body)
+		self.assertNotIn("minmax(", body, "no column gets a width of its own (a folded On Hold was narrow)")
+		css = _code(CSS)
+		self.assertIn(
+			"grid-template-columns: repeat(var(--ob-cols, 1), minmax(var(--ob-col-min), 1fr));", css
+		)
+		self.assertIn("--ob-col-min: 280px;", css)
+		self.assertNotIn("--ob-template", css + code)
+
+	def test_the_board_scrolls_inside_a_box_the_height_of_the_screen(self):
+		css = _code(CSS)
+		fit = css[css.index(".ob-scroll--fit {") :]
+		fit = fit[: fit.index("}")]
+		self.assertIn("height: var(--ob-fit-h, 70vh);", fit)
+		self.assertIn("overflow: auto;", fit)
+		cards = css[css.index(".ob-scroll--cols .ob-col > .ob-cards {") :]
+		cards = cards[: cards.index("}")]
+		self.assertIn("overflow-y: auto;", cards)
+		self.assertIn("min-height: 0;", cards)
+		self.assertIn("position: sticky;", css[css.index(".ob-scroll--rows .ob-grid--heads {") :])
+		code = _code(PAGE_JS)
+		# A phone keeps its one-column page: the box is for wide screens only.
+		self.assertIn('return phone ? "ob-scroll" : `ob-scroll ob-scroll--fit ob-scroll--${kind}`;', code)
+		self.assertIn('<div class="${this.scroll_class(phone, "cols")}">', code)
+		self.assertIn('<div class="${this.scroll_class(phone, "rows")}">', code)
+		# The box is measured after every draw and on resize, against what really scrolls: on Frappe
+		# v16 that is .main-section, never the window (window.scrollY stays 0 there).
+		self.assertIn('return this.$root[0].closest(".main-section") || document.scrollingElement', code)
+		fit = code[code.index("\tset_fit(again) {") :]
+		fit = fit[: fit.index("\n\t}\n")]
+		self.assertIn("const sc = this.scroller();", fit)
+		# A page that does not scroll yet is measured again with the box a full screen tall.
+		self.assertIn("if (!again && sc.scrollHeight <= sc.clientHeight) {", fit)
+		self.assertNotIn("window.scrollY", fit)
+		self.assertIn('this.$root[0].style.setProperty("--ob-fit-h", `${height}px`);', fit)
+		self.assertIn(
+			"if (this.fit_frame || !this.showing()) return;", code, "a hidden box measures as zeros"
+		)
+		render = code[code.index("\trender() {") :]
+		order = [
+			"const scroll = this.scroll_marker();",
+			'this.$root.html(parts.join(""));',
+			"this.set_fit();",
+			"this.restore_scroll(scroll);",
+			"this.restore_focus(focus);",
+		]
+		self.assertEqual(sorted(order, key=render.index), order)
+
+	def test_a_redraw_keeps_where_the_board_was_scrolled(self):
+		# A card's click, a panel save and every realtime refresh redraw the board: the box's sideways
+		# and downward scroll and each column's own scroll come back, and focus never scrolls them.
+		code = _code(PAGE_JS)
+		marker = code[code.index("\tscroll_marker() {") :]
+		marker = marker[: marker.index("\n\t}\n")]
+		self.assertIn('box.querySelectorAll(".ob-col[data-drop] > .ob-cards")', marker)
+		self.assertIn("left: box.scrollLeft, top: box.scrollTop", marker)
+		restore = code[code.index("\trestore_scroll(marker) {") :]
+		restore = restore[: restore.index("\n\t}\n")]
+		self.assertIn("box.scrollLeft = marker.left;", restore)
+		self.assertIn("if (top) el.scrollTop = top;", restore)
+		self.assertIn("if (el) el.focus({ preventScroll: true });", code)
+
+	def test_the_closing_columns_show_when_no_open_deal_does(self):
+		code = _code(PAGE_JS)
+		self.assertIn(
+			"if (!this.vm.deals.length && !this.vm.closed.length) parts.push(this.no_match_html());", code
+		)
+
+	def test_dragging_never_scrolls_by_hovering_a_drop_zone(self):
+		code = _code(PAGE_JS)
+		edge = code[code.index("\tedge_scroll(x, y) {") :]
+		edge = edge[: edge.index("\n\t}\n")]
+		self.assertIn("const page = this.scroller();", edge)
+		self.assertNotIn("window.scrollBy", edge)
+		self.assertIn("const bottom = Math.min(rect.bottom, bar_top);", edge)
+		# A fixed element's offsetParent is always null: whether the bar shows is its client rects.
+		self.assertIn("bar && bar.getClientRects().length ?", edge)
+		self.assertNotIn("offsetParent", edge)
+
+	def test_a_closed_card_has_no_move_and_is_never_picked(self):
+		code = _code(PAGE_JS)
+		card = code[code.index("card_html(deal, also) {") :]
+		card = card[: card.index("\n\t}\n")]
+		self.assertIn('const closed = deal.kind === "close";', card)
+		self.assertIn('const move = closed\n\t\t\t? ""', card)
+		self.assertIn('${closed ? "" : this.pick_html(deal)}', card)
+		self.assertIn("if (this.selecting && this.model.by_name[name]) return this.toggle_pick(name);", code)
+
+	def test_the_saved_views_and_card_fields_share_a_row(self):
+		code = _code(PAGE_JS)
+		row = code[code.index('<div class="ob-filter-row ob-filter-row--views">') :]
+		row = row[: row.index("</div>")]
+		self.assertIn("${this.card_fields_html()}", row)
+		self.assertIn("data-saved-view", row)
 
 
 class TestWhatStaysForLater(unittest.TestCase):

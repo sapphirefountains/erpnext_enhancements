@@ -572,6 +572,29 @@ def _opportunity_meta(missing=()):
 	return _Meta(fields)
 
 
+def _day(value):
+	if isinstance(value, datetime.datetime):
+		return value.date()
+	if isinstance(value, datetime.date):
+		return value
+	return datetime.date.fromisoformat(str(value)[:10])
+
+
+def _passes_filters(row, filters):
+	"""The list filters get_board sends, applied as the database would (a ``>=`` by the day)."""
+	for fieldname, op, value in filters or []:
+		have = row.get(fieldname)
+		if op == "in" and have not in value:
+			return False
+		if op == "not in" and have in value:
+			return False
+		if op == "!=" and have == value:
+			return False
+		if op == ">=" and (have is None or _day(have) < _day(value)):
+			return False
+	return True
+
+
 def _install_frappe_stub():
 	frappe = types.ModuleType("frappe")
 	frappe.__path__ = []
@@ -629,9 +652,8 @@ def _install_frappe_stub():
 			wanted = set(filters["name"][1])
 			rows = [r for r in rows if r["name"] in wanted]
 		else:
-			# get_board's own filters: open, not historical (the records are already that).
-			rows = [r for r in rows if r["status"] not in ("Closed Won", "Lost", "Closed", "Converted")]
-			rows = [r for r in rows if not r.get("custom_is_historical")]
+			# get_board's own filters: open (or, since v1.688.0, recently closed), not historical.
+			rows = [r for r in rows if _passes_filters(r, filters)]
 		return [{f: r.get(f) for f in fields} for r in rows]
 
 	frappe.get_list = get_list
@@ -692,6 +714,7 @@ def _install_frappe_stub():
 	utils.getdate = getdate
 	utils.get_datetime = get_datetime
 	utils.nowdate = lambda: TODAY
+	utils.add_days = lambda value, days: str(getdate(value) + datetime.timedelta(days=days))
 	utils.date_diff = lambda a, b: (getdate(a) - getdate(b)).days
 	utils.now_datetime = lambda: datetime.datetime(2026, 10, 14, 12, 0, 0)
 	utils.escape_html = lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
