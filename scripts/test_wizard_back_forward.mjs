@@ -3815,6 +3815,33 @@ async function planATripSuite() {
 		assert.ok(chip("Ana").includes("tp-on"), "...and was left out on the next trip too");
 	});
 
+	// S3.6: a toggle chip redraws its view, so the chip that had focus is replaced; focus goes to
+	// the chip drawn in its place (matched by data-chip), never to <body>.
+	await test("a toggle chip pressed from the keyboard keeps focus on the redrawn chip", async () => {
+		tripServer({ "TRIP-2": CREW_TRIP });
+		boot("plan-a-trip", "/desk/plan-a-trip?trip=TRIP-2&step=review&view=compare");
+		await settle();
+		const chip = (name) => ui.drawn.find((html) => html.includes('class="tp-chip ') && html.includes(name));
+		const key = (chip("Ana").match(/data-chip="([^"]+)"/) || [])[1];
+		assert.equal(key, "shown:E1", "the chip carries a stable key");
+		const focused = [];
+		const redrawn = { getAttribute: (name) => (name === "data-chip" ? key : null), focus: () => focused.push(key) };
+		const other = { getAttribute: () => "shown:E2", focus: () => focused.push("shown:E2") };
+		FAKE_EL.querySelectorAll = () => [other, redrawn];
+		globalThis.document.activeElement = { getAttribute: (name) => (name === "data-chip" ? key : null) };
+		try {
+			press("&#10003; Ana");
+			assert.deepEqual(focused, ["shown:E1"], "focus went back to the chip drawn in Ana's place");
+			focused.length = 0;
+			globalThis.document.activeElement = globalThis.document.body;
+			press("Ana");
+			assert.deepEqual(focused, [], "a chip pressed without focus moves none");
+		} finally {
+			delete FAKE_EL.querySelectorAll;
+			globalThis.document.activeElement = globalThis.document.body;
+		}
+	});
+
 	await test("the Crew grid counts no night in a room with no check-out day: the missing bed stands alone", async () => {
 		tripServer({ "TRIP-1": TRIP });
 		const views = server.handlers.get_trip_views;

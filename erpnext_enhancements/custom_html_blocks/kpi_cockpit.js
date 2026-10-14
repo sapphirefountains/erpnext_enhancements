@@ -143,9 +143,13 @@
                         ? `<span class="kpi-target">${__("Target")}: ${esc(String(v.target_value))}</span>`
                         : "<span></span>";
                 const stale = v.is_stale ? `<span class="kpi-stale">${__("stale source")}</span>` : "";
+                // The left border's colour is the grade; the word says it too, for anyone who
+                // can't tell the colours apart or can't see them (S3.6).
+                const word = { good: __("Good"), watch: __("Watch"), bad: __("Bad") }[status] || v.status || "";
+                const grade = word ? `<span class="kpi-status">${esc(word)}</span>` : "";
                 return `
                     <div class="kpi-card ${statusClass}">
-                        <div class="kpi-card-label">${esc(v.label || v.kpi_key)}</div>
+                        <div class="kpi-card-label">${grade}${esc(v.label || v.kpi_key)}</div>
                         <div>
                             <div class="kpi-card-value">${esc(v.value_text || String(v.value))}</div>
                             ${stale}

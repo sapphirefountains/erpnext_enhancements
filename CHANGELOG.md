@@ -76,6 +76,187 @@ Block is now on the kit except Desk Shortcuts, which asks the server nothing.
   headings, the Assigned To and Type cells, the Completed tab's status, and the status and
   priority options with their `data-project` attributes. All go through `sf.esc` now.
 
+## [1.656.0] - 2026-10-13
+
+### Changed
+
+- **The custom pages answer the keyboard, name their glyph buttons, and stop saying things in
+  colour alone** (custom pages S3.6, ERPNext TASK-2026-02825). Nothing a click does has changed.
+  - **Keyboard.** The Rental Planner's booking bars were clickable `<div>`s, so Tab never reached a
+    booking and Enter could not open one. They are `<button type="button">`s now, styled as before,
+    with an `aria-label` built from the same facts as the tooltip: the prep and cleaning bars draw no
+    text at all, and without the label a screen reader announced only "button". The wizard's finished
+    steps are buttons too, the current step carries `aria-current="step"`, and steps not reached yet
+    stay plain words. Plan a Trip's three toggle chips (who is on a booking, who stays free, who the
+    comparison shows) were `<span>`s and are `<button type="button" aria-pressed>` now. The Project
+    and Maintenance Planners' day numbers and crew-view date heads keep their markup and gain
+    `role="button"`, `tabindex="0"` and an Enter/Space handler that calls the click's own. The quick
+    looks (P6A) already took Enter on these through a capture-phase handler that stops propagation,
+    so with them on, a key still does what a click does and never both. Every one of these has a
+    2px `--sf-focus` ring on `:focus-visible`.
+  - **Names.** The planners' ‹ › ↻ buttons (toolbar, route view, My week) had a `title` and nothing a
+    screen reader is required to read; they carry an `aria-label` from `__()` now, as do the Rental
+    Planner's ‹ ›, the scanner pages' 📷 and 🔍, the Scanner Audit's × and the Inspection Wizard's 📷.
+  - **Colour alone.** The KPI Cockpit card's left border was the only sign of Good, Watch or Bad, and
+    the Task Dashboard's priority was only a border colour; each now carries the word beside the
+    colour. The progress bars in Design WIP, Build WIP & Aging and Today's Visits gave their percent
+    only in a tooltip, which neither a phone nor a screen reader sees; each is a `progressbar` with
+    `aria-valuenow` now, its label escaped through the kit's `sf.esc` like the rest of the row
+    (S3.3b, v1.649.0, moved these blocks onto the kit).
+  - **Translation.** The GA4 Dashboard's title, section heads, chart titles, table headers, empty and
+    error messages go through `__()`.
+  - **From the review.**
+    - Plan a Trip's chips kept focus only until their own redraw: every toggle runs `render()`,
+      which empties the page body, so focus fell to `<body>` after each key. Each chip now carries
+      a stable `data-chip` key, and the toggle redraws through `render_keeping_focus()`, which
+      focuses the chip drawn in its place.
+    - A screen changed from the keyboard puts focus on the new view's heading. A planner day link
+      opened by Enter or Space focuses the toolbar title (`tabindex="-1"`). A rental wizard step
+      reached by a keyboard click (`detail` 0) focuses the step's `<h4>`. A mouse click still
+      leaves focus where the browser puts it.
+    - A chip on a booking that is on an Expense Claim (`card.protected`) is `disabled`, so it no
+      longer announces as a toggle that does nothing.
+    - The planners' day numbers and crew-view date heads carry an `aria-label` that names the
+      action and the date: "Show the week of …", or "See everyone's day on …" once the quick looks
+      take the click over.
+    - The Rental Planner bar's label truncates on an inner `<span>`. Some engines ignore
+      `text-overflow` on a `<button>`.
+  - **Not in this change.** The department widgets' age, waiting and margin numbers still carry their
+    watch/bad judgement in colour only. Each widget's threshold means something different (days in
+    the pipeline, days waiting, days left, idle days, hours used), so each needs its own word; they
+    are a follow-up on the kit S3.3b put under those rows, where `sf.chip` draws a word. Training Canvas has two × buttons with a title
+    but no `aria-label`, and its pages are another open change's. The Rental Planner's "click an
+    empty day" shortcut stays pointer-only; New Rental is its keyboard path.
+  - **Tests.** `tests/test_s3_6_accessibility.py` names each fixed file and element and fails when one
+    goes back to a click-only `<div>` or `<span>` or a nav button loses its label (CI step "Custom
+    pages S3.6 accessibility"). `scripts/test_rental_planner_history.js` now models Enter and Space as
+    the browser handles them and opens a booking from a bar, and a step from the rail, by keyboard.
+
+## [1.654.1] - 2026-10-13
+
+### Fixed
+
+- **The "Printed" date on the Project Schedule and Project Task List formats** now goes through `ps_date` like every other print date (form kit P3.4, v1.650.0).
+  - v1.650.0 missed it because its argument, `frappe.utils.nowdate()`, has parentheses of its own. That stopped both the rewrite and `test_print_style`'s check at the first `)`.
+  - It printed the same date, so nothing looked wrong. The check was wrong, though, and this one was found by querying the rebuilt formats on prod after the deploy.
+  - The check now bans any date fieldtype literal in a print template, and any `formatdate(` call, however it is nested.
+
+## [1.654.0] - 2026-10-13
+
+Form kit P6, part A (ERPNext TASK-2026-02774, "New Opportunity board"): **a new Opportunity board
+page, `/desk/opportunity-board`**, the board that is to replace the patched stock Kanban. This
+release builds P6.1 (the board and its cards), P6.2 (rows by value stream), P6.5 (the forecast
+strip) and P6.9 (the phone layout). On prod on 2026-10-13 there were 80 open deals, 41 of them On
+Hold, and 58 of the 80 had no amount.
+
+**Nothing is retired yet.** The stock Kanban, its patches (`ee_kanban.bundle.js`) and
+`opportunity_list.js`'s redirect to it are unchanged until P6.10, and the `/sales-pipeline` TV board
+stays as it is. The new board is reached from the CRM sidebar, under Guided Entry. Roles: Sales
+User, Sales Manager, System Manager.
+
+### Added
+
+- **The board** (`crm_enhancements/page/opportunity_board`). Its stage columns are the status
+  options, read the way the Sales Pipeline page reads them (`sales_pipeline._stage_columns`), so a
+  renamed stage reshapes both boards with no deploy. On Hold comes last. An open deal whose status the
+  options no longer list gets a column of its own, so no deal falls out of the totals.
+  - The board refreshes on the existing `sales_pipeline_updated` realtime event. The refresh is
+    debounced, and it waits while a card is being dragged or saved.
+- **Each card shows:**
+  - a band in its value streams' pillar colors, split into one segment per stream;
+  - the stream chips;
+  - the amount, or a plain "No amount";
+  - the expected close date;
+  - the days in stage, counted from `custom_stage_changed_on` on the site's date;
+  - the P4.6 completeness meter, with what is missing in its tooltip.
+- **Stale cards glow.** Past the Sales Pipeline Dashboard thresholds, a card takes an amber and then
+  a red 2px border, and its age chip says "slowing" or "stalled". These are the same settings the TV
+  board reads (ERPNext Enhancements Settings). On Hold never glows, as on the TV board.
+  - The glow is a border, not a shadow: the brand has no shadows.
+- **Rows by value stream** (P6.2), from a "By value stream" switch. The rows are Design, Build,
+  Service and Events, then Products and Delivery, then any other stream, then "No value stream".
+  - A deal with several streams appears in each of its rows, marked "Also in …".
+  - Each row's total counts the deal in full. The column heads and the overall total count it once
+    (Nik, 2026-10-13), so they match the plain board's.
+- **The forecast strip** (P6.5). For each stage it shows the deals, their value, and their value
+  weighted by each deal's own `probability`, which is P5.5's stage default or Sales' override.
+  - On Hold is left out of the weighted figure and shows "Not forecast".
+  - It also shows the deals expected to close this month and next, by `expected_closing`. Their
+    count and value include On Hold deals, and their weighted value does not.
+  - A probability above 100 is capped. A deal with no probability adds nothing to the weighted
+    figure.
+  - The SQL that checks these figures is in `crm_enhancements/README.md`, and the test suite runs
+    that exact query against the same deals.
+- **Moving a card.** With a mouse, drag it; it lifts after 6px. On a touch screen, press and hold
+  for 300 ms; a finger that moves first is scrolling. These are the planners' numbers. Every card
+  also has a **Move** button, which is the keyboard's way in.
+  - A move between open stages, or to On Hold, saves the status through the form kit's own save
+    path (`form_kit.api.save_step`) and carries the card's `modified`. The toast that confirms it
+    has an Undo.
+  - **On a conflict**, nothing is saved. The card goes back, the toast names who changed the deal,
+    and the board reloads. Nothing is ever overwritten silently.
+  - A user who may not change the status sees the card go back, with a message saying so.
+  - **A drop on Closed Won or Lost saves nothing.** Those stages need the ranks or the lost reasons,
+    which the side panel (P6.6) will collect. Until then, the deal's guided page opens on its Close
+    step and the card stays where it was.
+- **Opening a card.** A click opens the record with `frappe.set_route("Form", "Opportunity", …)`,
+  which `guided_default.js` (v1.644.0) sends on to the guided page.
+- **The phone layout** (P6.9). Under 768px the board shows one stage at a time, under a row of stage
+  tabs that wrap instead of scrolling sideways.
+  - To move a card, tap it, then tap a stage in the move panel. The panel also has "Open
+    opportunity".
+  - Checked at 390px: nothing is wider than the screen, and every button is at least 44px.
+- **History.** Every view is a route: the layout, the phone's stage tab, and the move panel
+  (`…/move/<name>`). The panel is pushed over the view it opened from, so Back closes it before it
+  changes the view (Nik's rule: never break Back/Forward).
+- **`get_board`**, a new whitelisted GET endpoint, sends the open deals with exactly what the cards,
+  rows and strip read.
+  - It reads through `frappe.get_list`, so the caller's own permissions apply. The TV board reads
+    permission-free because it is a shared wall display; this board is where a person works their
+    deals.
+  - Historical deals are left out. Each custom field is read only when the meta has it.
+  - Stream rows and completeness are read in batches of 500 names.
+  - **`modified` is sent as `str(modified)`**, the exact string `form_kit.saver` compares. Any other
+    format would turn every move into a conflict.
+- **The board's decisions are one pure ES module**, `public/js/opportunity_board/board.js`, loaded
+  as `opportunity_board.bundle.js`. It holds the routes, the model, the ages, the rows, the forecast,
+  and what a drop means. The pillars come from `form_kit/summary.js`, which `test_guided_entry`
+  holds to `print_style.STREAM_PILLAR`, so there is one source.
+  - The stylesheet, `opportunity_board.bundle.css`, uses `--sf-*` tokens only. Each band segment is
+    edged in `--sf-chip-edge-<pillar>`, so Build's navy and Neutral's blue still show on a
+    dark-theme card.
+- **`tests/test_opportunity_board.py`**, bench-free, in its own CI step:
+  - runs the module under node on a realistic payload;
+  - runs the README's SQL check on SQLite and holds the forecast to it;
+  - calls `get_board` against a frappe stub;
+  - checks the page statically: every request is `sf_kit.call` quiet, reads are GET and the save is
+    POST, there are no `/app/` paths, the CSS uses tokens only, and the Kanban patches and the list
+    redirect are untouched.
+- **Two guards the PR review asked for:**
+  - **A board load from before a move is never drawn.** Suppose a `get_board` is already in flight
+    when a card is dropped, from the realtime event, the 60-second reload or Refresh. It answers
+    with the card's old stage and old `modified`. Drawn, that answer put the card back in its old
+    column, and the save's new `modified` then landed on the stale copy, so Undo did nothing.
+    - Each load now remembers a move counter. Its payload is dropped if a move began since it
+      started, or if a save or a drag is still under way (`load_is_current`, run under node).
+    - A fresh load follows once nothing is busy. Checked in the harness with a delayed GET: the
+      stale answer was dropped, a second GET followed, and the card kept its new stage and
+      `modified`.
+  - **Moving around the board no longer scrolls it to the top.** v16's `container.change_to` ends
+    every route change with `frappe.utils.scroll_to(0)` unless the page wrapper sets
+    `disable_scroll_to_top` (`frappe/public/js/frappe/views/container.js`, checked on
+    `version-16`). Every screen here is a route, so opening Move on a card far down a column
+    jumped the board to the top. The page now sets the flag, and scrolls to the top itself only
+    when it is arrived at from another page.
+
+### Changed
+
+- The CRM sidebar's additions (`setup/workspace_tweaks.py`) gain **Opportunity Board**, placed
+  after Guided Entry. `test_workspace_tweaks` now expects both rows.
+- `crm_enhancements/README.md` no longer says the Sales Pipeline thresholds default to 7 / 14 days.
+  The fallbacks have been 45 / 90 since v1.421.0, and the Opportunity Board reads the same live
+  settings.
+
 ## [1.652.0] - 2026-10-13
 
 ### Changed

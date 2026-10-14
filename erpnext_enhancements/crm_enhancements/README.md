@@ -21,6 +21,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
+| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -217,8 +218,11 @@ deploy), plus a green **Won — awaiting project** column (Closed Won with empty
 `custom_created_project`, the PRO-0204 Step 1→2 gap) and a muted **On Hold** column.
 Cards age by `custom_stage_changed_on` (stamped on every status change; backfilled from
 `modified` by the `backfill_stage_changed_on` patch) and "light up" amber/red past the
-thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard** (defaults
-7/14 days; the won column runs a tighter 1/3-day clock to match the unconverted nag).
+thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard**. When a field is
+unset, `_thresholds` falls back to 45 / 90 days (recalibrated from the original 7 / 14 in
+v1.421.0, which put 34 of 39 cards straight to red); a deliberate 0 switches that tier off. The
+Opportunity Board reads the same live settings through the same `_thresholds`. The won column
+runs a tighter 1/3-day clock to match the unconverted nag.
 Refreshes via the `sales_pipeline_updated` realtime event on every Opportunity save,
 with a 5-minute poll as kiosk fallback. **TV mode** (`/desk/sales-pipeline/tv`, or the
 header button) hides desk chrome and scales type — point the Raspberry Pi at the `/tv`
@@ -232,6 +236,94 @@ is a full page load on v16. Access is page-level (shared portfolio display, like
 `Custom Role` record for page `sales-pipeline` wins if present, else any staff role in
 `DEFAULT_ROLES`; data is then fetched permission-free so User Permissions can't
 silently empty the board.
+
+## Opportunity Board page (`/desk/opportunity-board`)
+
+Form kit P6 (ERPNext TASK-2026-02774): the board that is to replace the patched stock Kanban.
+This first part builds P6.1 (board and cards), P6.2 (rows by value stream), P6.5 (the forecast
+strip) and P6.9 (the phone layout). **The stock Kanban, its patches (`ee_kanban.bundle.js`) and
+`opportunity_list.js`'s redirect to it are untouched** until P6.10, and the `/sales-pipeline` TV
+board stays as it is. Roles: Sales User, Sales Manager, System Manager. It is in the CRM sidebar
+under Guided Entry.
+
+- **Data.** One GET, `opportunity_board.get_board`: the open deals (any status but Closed Won,
+  Lost, Closed and Converted, the guided start screen's own rule), historical deals left out,
+  through `frappe.get_list` so the caller's own permissions decide. Unlike the TV board, which is
+  a shared wall display and reads permission-free, this is where a person works their deals.
+  Each deal carries its value streams (one bound query on the `Value Stream` child table per 500
+  names) and its stage completeness (`form_kit.completeness.completeness_for`, the P4.6 meter).
+- **Stages** are the Sales Pipeline page's own (`sales_pipeline._stage_columns`: the live status
+  options), then On Hold; Closed Won and Lost are drop targets along the bottom while a card is
+  dragged, and choices in the move panel. An open status the options no longer list gets a column
+  of its own, so no deal falls out of the totals.
+- **Cards** show the value-stream band (one segment per stream, in the pillar's closing stop, from
+  `print_style.STREAM_PILLAR` by way of `form_kit/summary.js`), the stream chips, the amount or a
+  plain "No amount", the expected close date, days in stage (from `custom_stage_changed_on`,
+  counted on the site's date) and the completeness meter. Past the **Sales Pipeline Dashboard**
+  thresholds (ERPNext Enhancements Settings, the same ones the TV board reads, 45 / 90 days when
+  unset) a card takes an amber and then a red border, and its age chip says "slowing" or
+  "stalled". On Hold never glows, as on the TV board.
+- **Rows by value stream** (P6.2): Design, Build, Service, Events, Products, Delivery, then any
+  other stream, then "No value stream". A deal with several streams is in each of its rows,
+  marked "Also in ...". Each row's total counts it in full; the column heads and the overall
+  total count it once (Nik, 2026-10-13), so they match the plain board's.
+- **Forecast strip** (P6.5): per stage, the deals, their value, and their value weighted by each
+  deal's own `probability` (P5.5's stage default or Sales' override); On Hold is left out of the
+  weighted figure ("Not forecast"). Then the deals expected to close this month and next, by
+  `expected_closing`: their count and value include On Hold deals, their weighted value does not.
+  The board caps a probability at 100; a deal with no probability adds nothing to the weighted
+  figure.
+- **Moving a card.** Drag with a mouse, or with a 300 ms long press on a touch screen (the
+  planners' numbers). On a phone (under 768px) the board shows one stage at a time under a row of
+  stage tabs, and a tap on a card opens the move panel: tap the stage it goes to. Every card also
+  has a **Move** button that opens the same panel, the keyboard's way in. A move between open
+  stages or to On Hold saves the status with `form_kit.api.save_step`, carrying the card's
+  `modified`; a conflict puts the card back, names who changed the deal and reloads the board, and
+  nothing is overwritten. A drop on **Closed Won or Lost saves nothing**: those need the ranks or
+  the lost reasons, which the side panel (P6.6) will collect, so for now the deal's guided page
+  opens on its Close step and the card stays where it was. A card's click opens the record (which
+  `guided_default.js` sends to the guided page).
+- **History.** Each view is a route: `/desk/opportunity-board/<stages|streams>`, the phone's
+  stage tab as a further segment, and the move panel as `.../move/<name>`, pushed over the view it
+  came from, so Back closes the panel before it changes the view.
+- **Realtime.** The board refreshes on `sales_pipeline_updated` (published on every Opportunity
+  save), debounced, and never while a card is being dragged or saved.
+
+### Forecast check, per stage
+
+The strip's per-stage figures, as SQL. `tests/test_opportunity_board.py` runs this exact query on
+an SQLite copy of its test deals and holds the board's figures to it; run it on the site to check
+the live board (the board caps a probability above 100, which this query does not).
+
+```sql
+select status,
+	count(*) as deals,
+	sum(case when opportunity_amount > 0 then opportunity_amount else 0 end) as total,
+	sum(case when status = 'On Hold' or not opportunity_amount > 0 then 0
+		else opportunity_amount * ifnull(probability, 0) / 100 end) as weighted
+from `tabOpportunity`
+where status not in ('Closed Won', 'Lost', 'Closed', 'Converted')
+	and ifnull(custom_is_historical, 0) = 0
+group by status
+```
+
+### Forecast check, by month
+
+This month and next, by expected close date; put the two months in place of `2026-10` and
+`2026-11`.
+
+```sql
+select substr(expected_closing, 1, 7) as month,
+	count(*) as deals,
+	sum(case when opportunity_amount > 0 then opportunity_amount else 0 end) as total,
+	sum(case when status = 'On Hold' or not opportunity_amount > 0 then 0
+		else opportunity_amount * ifnull(probability, 0) / 100 end) as weighted
+from `tabOpportunity`
+where status not in ('Closed Won', 'Lost', 'Closed', 'Converted')
+	and ifnull(custom_is_historical, 0) = 0
+	and substr(expected_closing, 1, 7) in ('2026-10', '2026-11')
+group by substr(expected_closing, 1, 7)
+```
 
 ## Gotchas
 

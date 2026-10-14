@@ -179,6 +179,13 @@
         return ["urgent", "high", "medium", "low"].includes(p) ? p : "low";
     }
 
+    // The left border's colour is the priority; the word says it too, for anyone who can't
+    // tell the colours apart or can't see them (S3.6).
+    function priority_word(slug) {
+        const words = { urgent: __("Urgent"), high: __("High"), medium: __("Medium"), low: __("Low") };
+        return `<span class="tdb-prio">${esc(words[slug])}</span>`;
+    }
+
     function assignee_chips(assignees) {
         if (!assignees || !assignees.length) {
             return '<span class="tdb-chip tdb-chip-none">Unassigned</span>';
@@ -196,14 +203,15 @@
                    &#128194; ${esc(task.project_label || task.project)}${rank_star(task.project_rank)}
                </a>`
             : '<span class="tdb-task-project tdb-no-project">&#9888; No project linked</span>';
+        const slug = priority_slug(task.priority);
         return `
-            <a class="tdb-task prio-${priority_slug(task.priority)}" href="${frappe.utils.get_form_link("Task", task.name)}">
+            <a class="tdb-task prio-${slug}" href="${frappe.utils.get_form_link("Task", task.name)}">
                 <div class="tdb-task-top">
                     <span class="tdb-task-subject">${esc(task.subject)}</span>
                     ${extra_badge || ""}
                 </div>
                 ${project}
-                <div class="tdb-task-people">${assignee_chips(task.assignees)}</div>
+                <div class="tdb-task-people">${priority_word(slug)}${assignee_chips(task.assignees)}</div>
             </a>
         `;
     }

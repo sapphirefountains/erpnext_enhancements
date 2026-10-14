@@ -518,8 +518,11 @@ class TestPrintDates(unittest.TestCase):
     def test_no_print_template_formats_a_date_by_hand(self):
         """Every print generator and the print-format fixture reach dates through ps_date,
         ps_datetime or ps_time."""
+        # Any date fieldtype literal, not only one inside a simple frappe.format(...): v1.650.0's
+        # first version of this check stopped at the first ")" and so missed
+        # frappe.format(frappe.utils.nowdate(), {"fieldtype": "Date"}) in the Project formats.
         by_hand = re.compile(
-            r'frappe\.format\([^)]*\\?"fieldtype\\?": ?\\?"(?:Date|Datetime|Time)\\?"|frappe\.utils\.formatdate\('
+            r'\\?"fieldtype\\?": ?\\?"(?:Date|Datetime|Time)\\?"|frappe\.utils\.formatdate\(|\bformatdate\('
         )
         sources = [*sorted(APP.rglob("setup_*print_formats.py")), APP / "fixtures" / "print_format.json"]
         self.assertGreater(len(sources), 5)

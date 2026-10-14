@@ -141,6 +141,16 @@ _ADDED_SIDEBAR_ITEMS = {
 			"child": 0,
 			"after": ("DocType", "Opportunity"),
 		},
+		# Form kit P6 (TASK-2026-02774): the new Opportunity board, beside the guided page. Added
+		# after it in this list, so it lands under it: each item is placed after its anchor in turn.
+		{
+			"label": "Opportunity Board",
+			"link_type": "Page",
+			"link_to": "opportunity-board",
+			"icon": "square-kanban",
+			"child": 0,
+			"after": ("Page", "guided-entry"),
+		},
 	],
 }
 

@@ -363,8 +363,8 @@ class InventoryScanner {
 				<div class="isa-scanrow">
 					<input type="text" class="isa-scan" autocomplete="off" autocapitalize="off"
 						spellcheck="false" placeholder="${__('Scan or type a barcode…')}" />
-					<button class="isa-find" title="${__('Find item')}">🔍</button>
-					<button class="isa-cam" title="${__('Camera scan')}">📷</button>
+					<button class="isa-find" title="${__('Find item')}" aria-label="${__('Find item')}">🔍</button>
+					<button class="isa-cam" title="${__('Camera scan')}" aria-label="${__('Camera scan')}">📷</button>
 				</div>
 				<div class="isa-location"></div>
 				<div class="isa-pending"></div>
@@ -531,7 +531,7 @@ class InventoryScanner {
 						<div class="isa-line-sub">${frappe.utils.escape_html(where)} · ${__('count')} ${format_number(ln.counted_qty)} / ${__('sys')} ${format_number(ln.system_qty)}</div>
 					</div>
 					<div class="isa-badge ${cls}">${sign}${format_number(ln.variance)}</div>
-					<button class="isa-rm" data-idx="${ln.idx}" title="${__('Remove')}">×</button>
+					<button type="button" class="isa-rm" data-idx="${ln.idx}" title="${__('Remove')}" aria-label="${__('Remove')}">×</button>
 				</div>`;
 			})
 			.join('');
