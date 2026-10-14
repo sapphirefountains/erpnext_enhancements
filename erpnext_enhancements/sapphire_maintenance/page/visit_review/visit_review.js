@@ -461,6 +461,7 @@ class VisitReview {
 			html += `<tr><td>${esc(pair[0])}</td><td>${esc(pair[1] == null ? "" : pair[1])}</td></tr>`;
 		});
 		html += "</table>";
+		html += this.weekday_html(data.weekday);
 
 		(ctx.blocks || []).forEach((block) => {
 			html += `<div class="vr-block"><h5>${esc(block.heading)}</h5>`;
@@ -519,6 +520,32 @@ class VisitReview {
 			const $select = $(e.currentTarget);
 			$select.siblings(".vr-containers").toggle($select.val() === "Whole Container");
 		});
+	}
+
+	// "Day-specific lines" (v1.678.0): which lines this visit carries because of its weekday
+	// (a template line's On Days), against the day it was done, else scheduled. A visit done a
+	// day late was built for its scheduled day, so its due lines can be missing and another
+	// day's be there: both are said, for the reviewer to send back or accept.
+	weekday_html(weekday) {
+		if (!weekday) return "";
+		const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+		const list = (lines) =>
+			lines.map((line) => `${esc(line.label)} <span class="vr-muted">(${esc(line.days)})</span>`).join("<br>");
+		let html = `<div class="vr-block"><h5>${esc(__("Day-specific lines ({0})", [weekday.day]))}</h5>`;
+		html += (weekday.on_visit || []).length
+			? `<div>${list(weekday.on_visit)}</div>`
+			: `<div class="vr-muted">${esc(__("No day-specific lines are due on {0}.", [weekday.day]))}</div>`;
+		if ((weekday.missing || []).length) {
+			html += `<div class="vr-callout">${esc(__("Due on {0} but not on this visit:", [weekday.day]))}<br>${list(
+				weekday.missing
+			)}</div>`;
+		}
+		if ((weekday.other_days || []).length) {
+			html += `<div class="vr-callout">${esc(
+				__("On this visit but set for other days, so the checklist was built for another day:")
+			)}<br>${list(weekday.other_days)}</div>`;
+		}
+		return html + "</div>";
 	}
 
 	// "Chemicals to bill" (v1.628.0): per dose, whole container or not at all is situational

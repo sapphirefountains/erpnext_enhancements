@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.678.0] - 2026-10-14
+
+### Added
+
+- **Day-specific lines on the Visit Review page.** Since v1.619.0 a checklist line can be set to
+  weekdays, so a daily site's visit carries that day's lines. A visit's checklist is built once, for the
+  day it was scheduled or done. A reviewer could not tell which lines were there because of the day,
+  nor see that a visit done a day late carried its scheduled day's lines.
+  - `get_review_visit` now returns `weekday` (`visit_days.review_lines`), and the page shows it under the
+    summary.
+  - The check uses the day the visit was done, else the day it was scheduled. It names the day-specific
+    lines on the visit, the lines due that day but missing, and the lines set for other days.
+  - Lines are matched by section and label, across water features. Chemical Dosing lines become
+    consumables, which carry an item rather than a label, so they are left out. Disabled sections are
+    left out too, as the checklist builder skips them.
+  - It never stops the page from opening.
+- **Preview a day on a visit form template.** The Sapphire Maintenance Template form has a **Preview a
+  day** button (`preview_day`). Pick a weekday and see each section's lines, in visit order, with those
+  set to other days struck through, plus a count of each. It reads the saved template and says so when
+  the form has unsaved changes. The template doctype gets its first form script.
+
+### Fixed
+
+- **A whole-site chemistry reading no longer shows in every fountain's trend sparkline.**
+  `_chemistry_trends` for a fountain took any untagged row. On a site visit that is a reading for the
+  whole site, which a form ticked Once per Site Visit (v1.634.0) records. An untagged row now counts only
+  on that fountain's own Per Feature visits.
+- **The customer report names a whole-site reading's chart line "Whole site"**, instead of leaving a
+  blank legend line.
+- Both were noted in the review of v1.634.0.
+
+### Tests
+
+- `test_visit_agreement_match`, 8 more:
+  - the day lines on time, a day late, and with none;
+  - dosing and disabled sections never reported missing;
+  - the weekday-number rule;
+  - Preview a day, and its refusal of a non-day;
+  - a fountain's trend without the site-wide reading.
+- `test_visit_report`: the "Whole site" legend.
+- `test_visit_review`: the `weekday` field, and the day block's escaping.
+
 ## [1.677.2] - 2026-10-14
 
 ### Fixed

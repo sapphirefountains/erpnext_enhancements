@@ -543,6 +543,18 @@ class TestOneVisit(_Base):
 		)
 		self.assertEqual(data["context"]["site"], "Highlands Plaza")
 		self.assertIn(("NEW", "read"), STATE["checked"])
+		# v1.678.0: no line of this visit names a day, so there is no day block.
+		self.assertIn("weekday", data)
+		self.assertIsNone(data["weekday"])
+
+	def test_the_day_lines_block_escapes_what_it_shows(self):
+		"""v1.678.0: labels and days are template text a person typed."""
+		source = (APP / "sapphire_maintenance/page/visit_review/visit_review.js").read_text(encoding="utf-8")
+		self.assertIn("html += this.weekday_html(data.weekday);", source)
+		body = source[source.index("\tweekday_html(weekday) {") : source.index("\tchemicals_html(data) {")]
+		for match in re.finditer(r"\$\{([^}]*)\}", body):
+			expression = match.group(1).strip()
+			self.assertRegex(expression, r"^(esc\(|list\(|__\()", expression)
 
 	def test_the_person_who_started_it_cannot_approve_it(self):
 		STATE["visits"]["NEW"].owner = "lisa@example.com"
