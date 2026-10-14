@@ -56,7 +56,8 @@ import {
 
 // 2 (v1.632.0): call()'s quiet path and its rejection shape, the shared toast registry. A page
 // that loaded version 1 first gets this one in its place.
-const VERSION = 2;
+// 3 (v1.651.0): a tile metric with a status tone draws its value as a chip.
+const VERSION = 3;
 
 function install() {
 	if (typeof window === "undefined" || typeof document === "undefined") return;

@@ -20,6 +20,11 @@ System-Manager-only. It reports QuickBooks token state, CDC status and failed sy
 Drive configuration and sync-log failures; Triton/Twilio, Gemini, GA4/GSC; scheduler
 liveness; and a 24-hour Error Log digest.
 
+The page is drawn by the shared health board, `public/js/health_board.bundle.js` (v1.651.0),
+which the Device Fleet Dashboard uses too: every integration is an sf_kit tile whose status is a
+chip with its word, and a metric with a tone is a chip of its value. The page itself adds only the
+scheduler and error-digest tiles and the Drive test.
+
 Two design properties worth preserving:
 
 - **Secrets are read only as "configured?" booleans.** The page never surfaces a credential,

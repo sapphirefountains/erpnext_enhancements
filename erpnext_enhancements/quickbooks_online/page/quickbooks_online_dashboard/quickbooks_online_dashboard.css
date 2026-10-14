@@ -1,0 +1,76 @@
+/*
+ * QuickBooks Online dashboard page styles (v1.651.0).
+ *
+ * What this styles: the toolbar, the two sections, and the entity / sync-log rows (a grid that
+ * collapses to one column on a phone). The four status tiles are sf_kit's (sf_kit.bundle.css),
+ * so nothing here draws a tile, a chip or a status colour.
+ *
+ * Loaded via: this page's own .css, which getpage sends with the page and the Desk appends to
+ * <head> once. Until v1.651.0 it was public/css/quickbooks_online/qbo_dashboard.css, imported by
+ * desk_addons.bundle.scss and so shipped on every Desk page. Once appended it is still global, so
+ * every selector is scoped under .qbo-dashboard, the page's own wrapper
+ * (tests/test_s3_health_tiles.py holds that).
+ *
+ * The app design rules: square edges, no shadow, --sf-* colours, one 767px breakpoint.
+ */
+.qbo-dashboard {
+	padding: var(--sf-space-15) 0;
+}
+
+.qbo-dashboard .qbo-tiles {
+	margin-bottom: var(--sf-space-15);
+}
+
+.qbo-dashboard .qbo-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-20);
+}
+
+.qbo-dashboard .qbo-section {
+	margin-top: var(--sf-space-20);
+}
+
+.qbo-dashboard .qbo-entity-list,
+.qbo-dashboard .qbo-log-list {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	overflow: hidden;
+}
+
+.qbo-dashboard .qbo-entity-row,
+.qbo-dashboard .qbo-log-row {
+	align-items: center;
+	display: grid;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.qbo-dashboard .qbo-entity-row {
+	grid-template-columns: minmax(120px, 1fr) minmax(140px, 240px) auto;
+}
+
+.qbo-dashboard .qbo-log-row {
+	grid-template-columns: minmax(180px, 1fr) minmax(80px, 120px) minmax(120px, 180px);
+}
+
+.qbo-dashboard .qbo-entity-row:last-child,
+.qbo-dashboard .qbo-log-row:last-child {
+	border-bottom: 0;
+}
+
+.qbo-dashboard .qbo-entity-name {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+@media (max-width: 767px) {
+	.qbo-dashboard .qbo-entity-row,
+	.qbo-dashboard .qbo-log-row {
+		grid-template-columns: 1fr;
+	}
+}
