@@ -104,7 +104,7 @@
                         <a class="dwb-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${sf.esc(d.title)}</a>
                         ${blockers}
                         <span class="dwb-meta">${meta}</span>
-                        <span class="dwb-bar" title="${sf.esc(pct + "%")}"><span class="dwb-fill ${fill}" style="width:${pct}%"></span></span>
+                        <span class="dwb-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${sf.esc(__("Progress"))}" title="${pct}%"><span class="dwb-fill ${fill}" style="width:${pct}%"></span></span>
                         <span class="dwb-age ${tone}">${sf.esc(__("{0}d", [d.age_days]))}</span>
                     </div>`;
             })

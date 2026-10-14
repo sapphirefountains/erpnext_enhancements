@@ -192,6 +192,7 @@ const MP_STYLE = `
 .mp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
 .mp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
 .mp-day-num:hover{background:var(--control-bg);}
+.mp-day-num:focus-visible,.mp-crew-head:focus-visible,.mp-title:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
 .mp-day.mp-today .mp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .mp-day.mp-out{background:var(--control-bg);}
 .mp-day.mp-out .mp-day-head{opacity:.55;}
@@ -413,23 +414,39 @@ class MaintenancePlanner {
 		return `${start.format("MMM D")} – ${end.format("D, YYYY")}`;
 	}
 
+	// The words a day link's label reads its date in (S3.6).
+	day_words(ymd) {
+		return moment(ymd, "YYYY-MM-DD").format("dddd, MMMM D");
+	}
+
+	// A week opened from the keyboard (S3.6): the day link that had focus is redrawn away, so the
+	// toolbar title takes it rather than <body>. A mouse click leaves focus where the browser put it.
+	take_title_focus() {
+		if (!(this.focus_title_until > Date.now())) return;
+		this.focus_title_until = 0;
+		const title = this.$title && this.$title[0];
+		if (title && typeof title.focus === "function") title.focus();
+	}
+
 	// ------------------------------------------------------------------ shell
 
 	build_shell() {
 		const $bar = $('<div class="mp-toolbar"></div>').appendTo(this.$body);
-		$('<button class="btn btn-default btn-sm">‹</button>')
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Earlier"))
+			.attr("aria-label", __("Earlier"))
 			.on("click", () => this.shift(-1))
 			.appendTo($bar);
 		$('<button class="btn btn-default btn-sm"></button>')
 			.text(__("Today"))
 			.on("click", () => this.go(this.view, frappe.datetime.get_today()))
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">›</button>')
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
 			.attr("title", __("Later"))
+			.attr("aria-label", __("Later"))
 			.on("click", () => this.shift(1))
 			.appendTo($bar);
-		this.$title = $('<span class="mp-title"></span>').appendTo($bar);
+		this.$title = $('<span class="mp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="mp-seg"></span>').appendTo($bar);
 		this.$view_buttons = {};
@@ -479,8 +496,9 @@ class MaintenancePlanner {
 			.text(__("Undo"))
 			.on("click", () => this.undo())
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">↻</button>')
+		$('<button type="button" class="btn btn-default btn-sm">↻</button>')
 			.attr("title", __("Refresh"))
+			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
 		this.update_undo_button();
@@ -515,6 +533,7 @@ class MaintenancePlanner {
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
+		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("mp-on", view === this.view));
 		this.$body.addClass("mp-loading");
 		return Promise.resolve(
@@ -871,10 +890,19 @@ class MaintenancePlanner {
 					: day.date() === 1
 					? day.format("MMM D")
 					: day.format("D");
-			$('<span class="mp-day-num"></span>')
+			// Enter and Space do what a click does (S3.6); with the quick looks on, their own
+			// capture-phase handlers take both first.
+			$('<span class="mp-day-num" role="button" tabindex="0"></span>')
 				.text(label)
 				.attr("title", __("Show this week"))
+				.attr("aria-label", __("Show the week of {0}", [this.day_words(ymd)]))
 				.on("click", () => this.go("week", ymd))
+				.on("keydown", (e) => {
+					if (e.key !== "Enter" && e.key !== " ") return;
+					e.preventDefault();
+					this.focus_title_until = Date.now() + 2000;
+					this.go("week", ymd);
+				})
 				.appendTo($head);
 			const cell = single ? this.cell_of(this.technician, ymd) : null;
 			const free = single ? this.free_info(this.technician, ymd) : null;
@@ -1065,9 +1093,9 @@ class MaintenancePlanner {
 		const html = [`<div class="mp-crew-corner"></div>`];
 		days.forEach((ymd) => {
 			html.push(
-				`<div class="mp-crew-head${ymd === today ? " mp-today" : ""}" data-week="${mp_esc(ymd)}" title="${mp_esc(
+				`<div class="mp-crew-head${ymd === today ? " mp-today" : ""}" role="button" tabindex="0" data-week="${mp_esc(ymd)}" title="${mp_esc(
 					__("Show this week")
-				)}">${mp_esc(mp_when(ymd))}</div>`
+				)}" aria-label="${mp_esc(__("Show the week of {0}", [this.day_words(ymd)]))}">${mp_esc(mp_when(ymd))}</div>`
 			);
 		});
 		html.push(this.p6d_crew_notes_row(days));
@@ -1107,7 +1135,16 @@ class MaintenancePlanner {
 		}
 		const $scroll = $('<div class="mp-scroll"></div>').appendTo(this.$grid_wrap);
 		const $crew = $('<div class="mp-crew"></div>').html(html.join("")).appendTo($scroll);
-		$crew.find("[data-week]").on("click", (e) => this.go("week", e.currentTarget.getAttribute("data-week")));
+		const open_week = (e) => this.go("week", e.currentTarget.getAttribute("data-week"));
+		$crew
+			.find("[data-week]")
+			.on("click", open_week)
+			.on("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				this.focus_title_until = Date.now() + 2000;
+				open_week(e);
+			});
 	}
 
 	compare(a, b) {
@@ -2447,6 +2484,7 @@ const MP6A_METHODS = {
 			if (num) {
 				num.setAttribute("data-pp6a-day", ymd);
 				num.setAttribute("title", __("See everyone's day"));
+				num.setAttribute("aria-label", __("See everyone's day on {0}", [this.day_words(ymd)]));
 				num.setAttribute("tabindex", "0");
 			}
 			const off = planned.filter((person) => this.is_off(this.cell_of(person.user, ymd)));
@@ -2457,6 +2495,7 @@ const MP6A_METHODS = {
 		root.querySelectorAll(".mp-crew-head[data-week]").forEach((el) => {
 			el.setAttribute("data-pp6a-day", el.getAttribute("data-week"));
 			el.setAttribute("title", __("See everyone's day"));
+			el.setAttribute("aria-label", __("See everyone's day on {0}", [this.day_words(el.getAttribute("data-week"))]));
 			el.setAttribute("tabindex", "0");
 		});
 		const days = this.range_days();

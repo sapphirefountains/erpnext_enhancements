@@ -612,7 +612,7 @@ class InspectionWizard {
 		});
 
 		const photo = $(
-			`<button class="qw-photo-btn ${row.photo ? "qw-has-photo" : ""}" title="${__("Photo")}">&#128247;</button>`
+			`<button type="button" class="qw-photo-btn ${row.photo ? "qw-has-photo" : ""}" title="${__("Photo")}" aria-label="${__("Photo")}">&#128247;</button>`
 		).appendTo(wrap);
 		photo.on("click", () => this.capture_photo(row, photo));
 	}
