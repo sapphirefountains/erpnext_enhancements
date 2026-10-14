@@ -240,6 +240,28 @@ Step 1's create carries, as `prefill`, whatever else step 1 shows that the perso
 summary, a close date): `create_record` assigns only the "create" fields, and before v1.675.0 the
 rest was silently dropped.
 
+## Notes and comments, on every guided DocType (v1.678.2)
+
+**Rule (Nik, 2026-10-14): "We need the comments visible for every doctype we are making the views
+for now and in the future."** A guided view replaces the Desk form, and with it the form's timeline,
+so the record's history has to come with it. Both shells draw an empty `.ge-comments` section under
+the steps, the guided page always and the side panel on every edit, and the shared editor fills it
+(`editor.js mount_comments`) for any saved record of any DocType:
+
+- **Notes**: ERPNext's `notes` table of CRM Note (an Opportunity's Notes tab; 1,049 notes on 235
+  deals on prod), newest first, through `record_notes` (GET; the registry check and read on the
+  record; plain text only, written with `.text()`). Whether a DocType has them is decided by its
+  meta, never by its name. Adding one runs the DocType's own `add_note` through `run_doc_method`,
+  after what is queued has saved, then draws only the Notes list again (no page reload). The
+  record's `modified` moves, but the notes table is in no step, so the next step save's conflict
+  check settles it without asking (`save_queue` `split_conflict`).
+- **Comments**: the Desk's own Comments App (`public/js/comments.js`), mounted with a stand-in
+  `frm` that carries only `doc.doctype`, `doc.name` and the wrapper, which is all it reads. It reads
+  and writes the native Comment rows the form timeline shows, so a comment is the same on both.
+
+A new DocType gets both with no work. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if
+the editor singles a DocType out, or if the Comments App starts reading more of `frm`.
+
 ## No signal (P4.7)
 
 The guided page keeps working when the signal drops while it is open. What has not reached the
@@ -535,3 +557,5 @@ not where an Item opens yet (`open_by_default: False`), and the guided page's ro
    run against it.
 5. Add the DocType to each block in `blocks.py` that it carries (and to the JS twin), with a meta
    fixture in `tests/test_form_kit_blocks.py` built the same way, so every field it names is checked.
+6. Nothing to do for notes and comments: every guided DocType shows them (see "Notes and comments"
+   above). Check them on the new view before it ships.

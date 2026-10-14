@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -1117,7 +1118,7 @@ class TestThePage(unittest.TestCase):
 		for match in re.finditer(r'GE_API \+ "(\w+)"[\s\S]*?\{ quiet: true(?:, method: "GET")? \}', code):
 			with self.subTest(method=match.group(1)):
 				is_get = 'method: "GET"' in match.group(0)
-				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records", "find_created"))
+				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records", "find_created", "record_notes"))
 
 	def test_steps_move_with_set_route(self):
 		code = _page_code()
@@ -1430,6 +1431,128 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 		code = _page_code()
 		self.assertIn("((this.flow.clears || {})[fieldname] || []).forEach", code)
 		self.assertIn("this.distinct_warnings()", code)
+
+
+class TestTheCommentsAreShown(unittest.TestCase):
+	"""Nik, 2026-10-14: "I can't see comments which are extremely important." The guided page
+	replaced the Desk form and with it the form's timeline, where an Opportunity's comments live.
+	The page and the side panel now mount the Desk's own Comments App under the steps."""
+
+	COMMENTS_JS = JS / "comments.js"
+	SIDE_PANEL_JS = FORM_KIT_JS / "ui" / "side_panel.js"
+
+	def test_the_page_draws_a_comments_section_and_mounts_it(self):
+		code = _code(PAGE_JS)
+		self.assertIn('<section class="ge-comments" hidden></section>', code)
+		self.assertIn('if (typeof this.mount_comments === "function") this.mount_comments();', code)
+
+	def test_the_side_panel_mounts_them_on_an_edit(self):
+		code = _code(self.SIDE_PANEL_JS)
+		self.assertIn('<section class="ge-comments fk-comments" hidden></section>', code)
+		self.assertIn("this.mount_comments();", code)
+
+	def test_the_editor_mounts_the_desk_comments_app_for_a_saved_record_only(self):
+		code = _code(EDITOR_JS)
+		body = code[code.index("mount_comments() {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn("window.erpnext_enhancements.render_comments_app", body)
+		self.assertIn("if (this.is_new || !this.name) {", body)
+		self.assertIn("doc: { doctype: this.doctype, name: this.name },", body)
+		self.assertIn("fields_dict: { ge_comments: { wrapper: $mount[0] } },", body)
+		self.assertIn('render(host, "ge_comments");', body)
+
+	def test_the_comments_app_needs_nothing_else_from_the_form(self):
+		# The host the editor hands it is a stand-in, not a Form: only these may be read from it.
+		used = set(re.findall(r"\bfrm\.[\w.]+", _code(self.COMMENTS_JS)))
+		self.assertEqual(used - {"frm.fields_dict", "frm.doc.doctype", "frm.doc.name"}, set())
+
+	def test_the_comments_app_and_vue_are_on_every_desk_page(self):
+		self.assertIn('import "./comments.js";', _code(DESK_BUNDLE))
+		self.assertIn('"/assets/erpnext_enhancements/js/vue.global.js",', _text(APP / "hooks.py"))
+
+	def test_the_section_is_styled(self):
+		css = _text(CSS)
+		self.assertIn(".ge-comments {", css)
+		self.assertIn(".ge-comments[hidden] {", css)
+		self.assertIn(".ge-note-text {", css)
+		self.assertIn("white-space: pre-wrap;", css)
+
+	def test_every_guided_doctype_gets_them_now_and_later(self):
+		# Nik, 2026-10-14: "We need the comments visible for every doctype we are making the views for
+		# now and in the future." They live in the shared editor, which every guided DocType runs, and
+		# nothing in it may single one out: the only thing that hides them is a record not yet saved.
+		editor = _code(EDITOR_JS)
+		for method in (
+			"mount_comments() {",
+			"load_notes($notes) {",
+			"render_notes($notes, data) {",
+			"add_note(text, $notes) {",
+		):
+			with self.subTest(method=method):
+				body = editor[editor.index(method) :]
+				body = body[: body.index("\n\t}\n")]
+				# (A stale-reply check, `this.doctype !== doctype`, compares to the record asked about.)
+				self.assertIsNone(re.search(r"this\.doctype\s*[!=]==\s*[\"']", body))
+				self.assertIsNone(re.search(r'"(Opportunity|Lead|Item|Project|Customer|Supplier)"', body))
+		api = _text(APP / "form_kit" / "api.py")
+		notes = api[api.index("def record_notes(doctype, name):") :]
+		self.assertIn("_require_configured(doctype)", notes)
+		self.assertIsNone(
+			re.search(r'doctype\s*[!=]=\s*"', notes), "notes are decided by the meta, not the name"
+		)
+		# Both shells draw the section: the guided page always, the side panel on every edit.
+		self.assertIn('<section class="ge-comments" hidden></section>', _code(PAGE_JS))
+		self.assertIn('<section class="ge-comments fk-comments" hidden></section>', _code(self.SIDE_PANEL_JS))
+
+	# The Notes tab (ERPNext's `notes` table of CRM Note) is where most of an Opportunity's history is.
+
+	def test_the_notes_are_read_through_one_get_that_checks_the_record(self):
+		api = _text(APP / "form_kit" / "api.py")
+		body = api[api.index("def record_notes(doctype, name):") :]
+		self.assertIn('@frappe.whitelist(methods=["GET"])\ndef record_notes(doctype, name):', api)
+		self.assertIn("_require_configured(doctype)", body)
+		self.assertIn('doc.check_permission("read")', body)
+		self.assertIn('field.options != "CRM Note"', body)
+		self.assertIn('"text": _note_text(row.get("note")),', body)
+		self.assertIn('bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None))', body)
+
+	def test_a_note_is_plain_text_with_its_line_breaks(self):
+		import html as html_lib
+
+		api = _text(APP / "form_kit" / "api.py")
+		fn = api[
+			api.index("def _note_text(value):") : api.index(
+				'@frappe.whitelist(methods=["GET"])\ndef record_notes'
+			)
+		]
+		utils = types.SimpleNamespace(strip_html_tags=lambda s: re.sub(r"<.*?>", "", s))
+		ns = {"re": re, "html": html_lib, "frappe": types.SimpleNamespace(utils=utils)}
+		exec(fn, ns)
+		text = ns["_note_text"]
+		self.assertEqual(
+			text("<p>Called Bob &amp; left a VM</p><p>Follow up<br>next week&nbsp;</p><div><br></div>"),
+			"Called Bob & left a VM\nFollow up\nnext week",
+		)
+		# Tags never survive; the page writes the result with .text().
+		self.assertEqual(text('<p onclick="x()">a</p><script>alert(1)</script>'), "a\nalert(1)")
+		self.assertEqual(text(None), "")
+
+	def test_the_editor_draws_notes_as_text_and_adds_through_the_doctypes_own_method(self):
+		code = _code(EDITOR_JS)
+		self.assertIn('GE_API + "record_notes", { doctype, name }, { quiet: true, method: "GET" }', code)
+		self.assertIn('$(\'<div class="ge-note-text"></div>\').text(note.text || "")', code)
+		add = code[code.index("add_note(text, $notes) {") :]
+		add = add[: add.index("\n\t}\n")]
+		self.assertIn("frappe.utils\n\t\t\t.escape_html(text)", add)
+		self.assertLess(add.index("this.save_before_moving()"), add.index('"frappe.handler.run_doc_method"'))
+		self.assertIn(
+			'{ dt: this.doctype, dn: this.name, method: "add_note", args: JSON.stringify({ note: html }) }',
+			add,
+		)
+		# Only the list is drawn again, where the person is looking; the page is not reloaded.
+		self.assertIn("if ($notes) this.load_notes($notes);", add)
+		self.assertNotIn("this.reload_record()", add)
+		self.assertIn("this.add_note(text, $notes)", code)
 
 
 if __name__ == "__main__":

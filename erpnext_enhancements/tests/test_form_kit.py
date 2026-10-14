@@ -2079,12 +2079,15 @@ class TestEndpoints(unittest.TestCase):
                 "find_created",
                 # P3.2 (v1.677.0): read-only; its own suite is test_form_kit_party.
                 "party_details",
+                # v1.678.2: the guided page's Notes block, read-only; tested in test_guided_entry.
+                "record_notes",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["declare_lost"])
         self.assertIn("methods=['POST']", decorated["save_step"])
         self.assertIn("methods=['GET']", decorated["party_details"], "a read: GET only")
+        self.assertIn("methods=['GET']", decorated["record_notes"], "a read: GET only")
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)
 
@@ -2500,6 +2503,20 @@ class TestItemFieldHelp(unittest.TestCase):
         out = api.get_field_help("Item")
         self.assertEqual(out["fields"]["item_code"]["anchor"], "basics")
         self.assertEqual(out["fields"]["reorder_levels"]["anchor"], "stock")
+
+
+class TestItemNotesAndComments(unittest.TestCase):
+    """v1.678.2: notes and comments show for every guided DocType. A saved Item gets the Comments
+    App from the shared editor; record_notes answers it, with no Notes list, rather than refusing."""
+
+    def setUp(self):
+        _reset()
+
+    def test_a_saved_item_has_no_notes_list_and_is_not_refused(self):
+        item = {"doctype": "Item", "name": "LG-505025", "item_code": "LG-505025", "docstatus": 0}
+        FakeDoc("Item", item)._store()
+        out = api.record_notes("Item", "LG-505025")
+        self.assertEqual(out, {"has_notes": False, "notes": [], "total": 0, "can_add": False})
 
 
 if __name__ == "__main__":

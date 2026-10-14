@@ -688,6 +688,7 @@ class GuidedEntry {
 					<div class="ge-notices" aria-live="polite"></div>
 					<div class="ge-conflict-slot"></div>
 					<section class="ge-stage"></section>
+					<section class="ge-comments" hidden></section>
 				</main>
 				<aside class="ge-summary" aria-label="${frappe.utils.escape_html(__("Summary"))}"></aside>
 			</div>
@@ -730,6 +731,9 @@ class GuidedEntry {
 					.catch(() => {});
 			})
 			.appendTo(this.$root.find(".ge-band-actions"));
+		// Under the steps on every step, once the record exists (editor.js mount_comments). The shell
+		// is drawn again when a new record is created, which mounts them then.
+		if (typeof this.mount_comments === "function") this.mount_comments();
 	}
 
 	// Band, rail, progress, summary and footer: everything that follows the values.

@@ -1003,7 +1003,7 @@ class TestOneRenderer(unittest.TestCase):
 				):
 					self.assertEqual(
 						bool(match.group(2)),
-						match.group(1) in ("get_flow", "find_created"),
+						match.group(1) in ("get_flow", "find_created", "record_notes"),
 						match.group(0)[:80],
 					)
 
