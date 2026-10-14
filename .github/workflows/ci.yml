@@ -3448,6 +3448,18 @@ jobs:
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
+      # S6b (v1.666.0): the scanner kit (public/js/scanner_kit), the camera sheet and the sheets'
+      # Back/Forward handling the Device Console and the Inventory Scanner Audit share. The node
+      # step runs it against stubbed mediaDevices, a BarcodeDetector present / absent (an iPhone) /
+      # without QR, and jsQR: the decoder chosen, jsQR never loaded where the detector reads QR,
+      # every track stopped on close and on page hide, one history entry per sheet popped by Back.
+      # The unittest step fails the build if either page keeps its own camera loop, loads the kit
+      # without its guard, or the kit bundles jsQR. Both pages run on the real kit in the Desk
+      # pages Back/Forward step above.
+      - name: Scanner kit (bench-free, node)
+        run: node scripts/test_scanner_kit.mjs
+      - name: Scanner kit (pages on the kit, iOS rules)
+        run: python -m unittest erpnext_enhancements.tests.test_scanner_kit -v
       # Custom pages S5a (v1.662.0). The Day Board's ?date=, the Rental Planner's ?start= and the
       # Location Timeline's trail live in the address: read from frappe.route_options and consumed
       # key by key, written by one helper per page on the path on screen (never by routing to the
@@ -3503,7 +3515,8 @@ jobs:
       # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       # S3.4b (v1.652.0) added four pages and S3.4c (v1.661.0) Plan a Trip, whose Map colours
-      # are read from the same tokens the page CSS uses.
+      # are read from the same tokens the page CSS uses. S3.4d (v1.664.0) added the Project
+      # Planner, whose task and person colors are data and go in only as --pp-color.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Custom pages S3.6 (v1.656.0), the accessibility pass, pinned file by file: the Rental

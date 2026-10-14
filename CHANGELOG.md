@@ -68,6 +68,174 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_s3_6_accessibility.py` reads the bar label's truncation and the focus rings from the
   stylesheet now.
 
+## [1.666.0] - 2026-10-14
+
+### Added
+
+- **The Device Console's camera now scans on an iPhone** (S6b, ERPNext TASK-2026-02808). The
+  console used `BarcodeDetector` with no fallback, and iPhone Safari has none, so the camera button
+  never appeared there. It now falls back to jsQR, as the Inventory Scanner Audit has since
+  v1.521.0. jsQR reads QR codes only, so a device's 1D barcode on an iPhone still needs the wedge
+  scanner or typing.
+- **A shared scanner kit**, `public/js/scanner_kit/`, loaded as `scanner_kit.bundle.js`, which sets
+  `window.sf_scanner`. The Device Console and the Inventory Scanner Audit each carried their own copy
+  of the camera sheet and of the history handling that makes the phone's Back button close a sheet,
+  and the copies had drifted: that drift is how the console lost the iPhone. Both pages now use the
+  kit.
+  - `sheets.js` is the sheets' Back/Forward handling, moved from the two pages unchanged: one
+    history entry per sheet, marked in `history.state`, shown only once its route has settled;
+    Back pops it; a sheet closed another way steps back off its own entry once.
+  - `reader.js` picks the decoder. Where `BarcodeDetector` reads QR, it is used alone and jsQR is
+    never loaded, so Android and desktop Chrome pay nothing for it. With no `BarcodeDetector`, or one
+    that reads nothing, jsQR is used alone (QR only). Where the detector reads barcodes but not QR,
+    both are used, for barcodes and QR codes.
+  - jsQR is the vendored file /stock-scan already ships. It is loaded raw through `frappe.require`
+    by its bare path, never bundled: it is a UMD file that sets `window.jsQR`. /stock-scan's own
+    scanner is untouched.
+  - `camera.js` is the Camera Scan sheet. It also shows a Torch button where the camera track
+    offers one (Chrome on Android; iOS does not), and says why there is no camera: access blocked
+    for the site, no camera found, or a generic failure.
+  - **iOS handling.** The video is `playsinline`, `muted` and `autoplay`, and `muted` is also set as
+    a property. The camera uses `facingMode: "environment"` with no audio, and is asked for only
+    from a tap, after the sheet is up. Every track is stopped on close, when the document goes
+    hidden, on `pagehide`, and on frappe's `hide` of the page's wrapper, so the camera light goes
+    off.
+  - Each page loads the kit behind a guard, the same pattern it uses for sf_kit. A kit already on
+    the page answers at once, so nothing changes in timing after the first load. On a Desk's first
+    visit, a page show that comes while the kit is loading, and any sheet tapped open, wait for it.
+  - If the kit never arrives, each page falls back to plain dialogs with no history entry. The
+    camera button stays hidden, and scanning, Choose Employee, Find Item and the count still work.
+
+### Fixed
+
+- **Leaving a scanner page while its camera was still fading in left the camera running.** The
+  router closes a displayed dialog on a page change, but not one still fading in. That sheet then
+  finished showing over the next page with the camera on. The kit now stops the camera on the
+  page's `hide`, and closes the sheet as soon as Bootstrap allows.
+- **The Device Console's camera now closes when the phone locks or the app is switched.** It had no
+  `visibilitychange` close. The Scanner Audit had one, and the kit now does this for both pages.
+- **A jsQR file that failed to load can be loaded again without reloading the page.** v16.50's
+  `assets.js` marks a path as executed even when its `<script>` failed, so every later
+  `frappe.require` of it does nothing. The message still said to check the connection, which could
+  never help. On a later open after a failure, the kit now adds a `<script>` of its own: it removes
+  any earlier failed one, and the new one has a `?retry=` query so the browser fetches the file
+  again. The retry settles when the file loads, when it errors, or after 10 seconds.
+- **A scanner kit that throws as it starts no longer leaves its page stuck.** If `kit.sheets()` or
+  `watch()` threw, one of two things happened. With the kit already on the page, the page's own
+  start-up threw. On a first visit, the queue of shows and taps waiting for the kit was never
+  cleared, so the page never decided its first show and no sheet would open. Each page now treats a kit that throws as no
+  kit: it falls back to the plain sheets, and the queue still runs.
+
+### Tests
+
+- `scripts/test_scanner_kit.mjs` (run from the new `tests/test_scanner_kit.py`, and as its own CI
+  step) tests the kit against stubbed `navigator.mediaDevices`, jsQR, and a `BarcodeDetector` that is
+  present, absent, or present without QR. It checks:
+  - the decoder each case picks;
+  - that jsQR is never loaded where the detector reads QR;
+  - that every track stops on each way out;
+  - the inline muted video and the camera constraints;
+  - the failure messages and the torch;
+  - one history entry per sheet, popped by Back.
+- `tests/test_scanner_kit.py` fails the build if:
+  - either page keeps its own camera loop, decoder or history writes;
+  - either page loads the kit without its guard;
+  - the kit imports jsQR or any /stock-scan code.
+- `scripts/test_desk_page_history.js` now runs both pages on the real kit, with ten new
+  scenarios:
+  - the console reading a QR code through jsQR on an iPhone, and jsQR never loaded where the
+    detector reads QR;
+  - the Scanner Audit reading a location label through jsQR on an iPhone;
+  - the page hide during the camera's fade-in;
+  - the phone locking with the camera open;
+  - the blocked and missing camera messages;
+  - a console with no kit;
+  - a first visit where the kit arrives late, with a sheet URL and with a sheet tapped open.
+- `tests/test_desk_page_history.py` now reads the shared history logic from the kit.
+  `tests/test_s3_page_states.py` checks that the S3.1 start-up panel never waits for the scanner
+  kit.
+
+## [1.664.0] - 2026-10-14
+
+### Changed
+
+- **The Project Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4d, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Drag and drop, resizing, tap to move, the calendar, crew and heatmap geometry, the route
+  map, the quick looks and every keyboard path work as before, and the S3.6 labels, `role=button`
+  day numbers and crew heads and their focus rings are kept.
+  - **CSS out of the script.** Eleven `<style>` elements the script wrote into `<head>` (`PP_STYLE`,
+    `PP3B_STYLE` ... `PPT4_STYLE`, 425 rules) are now `project_planner.css` beside the page,
+    which Frappe's page loader sends with the page. One section per phase, in the order the script
+    injected them, so the cascade between them is unchanged. Page CSS stays in `<head>` for the
+    session, so every selector starts with one of the page's own families (`pp-`, `p6b-`, `p6e-`,
+    `t1-`, `t4-`), which nothing else in the app styles. The Maintenance Planner is unchanged (its
+    own PR), and so is planner_kit's shared stylesheet.
+  - **Data colors stay data.** A task's own color and a planner resource's color come from records
+    people edit, so the script still sets them inline, but only as one custom property,
+    `style="--pp-color: ${pp_esc(...)}"`, which the CSS paints with (the card's edge, a person's dot,
+    a crew badge, a Color-by swatch, a timeline bar in the project quick look). Color by keeps
+    `--pp-p6c-c`. No other color is written inline.
+  - **On the tokens.** 205 reads of Frappe's variables and 121 literal colors (50 distinct) became
+    the semantic and status tokens. A load is `--sf-good` up to 75%, `--sf-warn` to 100% and `--sf-danger` over, as a fill or
+    a tint; status as text (a red availability, an overdue date, a missing location) is the token
+    mixed half and half with `--sf-text-strong`, never plain yellow. The bookings from the other
+    planners take their pillar's chip edge: a maintenance visit Service, a rental Rent, travel
+    Neutral (they were slate, amber and dark yellow). Selection (Phase 6B) is `--sf-violet`.
+  - **Shape.** Sections, grids, cards, trays, the stop list and the floating bars are square, with no
+    shadow: a conflict or a drop target is an inset outline, the crew lead's badge is ringed in
+    `--sf-text-strong`, a jumped-to card blinks its focus ring, and a floating bar has a 2px edge.
+    The view switch and the toggles round at `--sf-radius-control`; chips, badges and today's number
+    are pills. Today's number and the view on screen are `--sf-primary` with its navy label and bold.
+  - **Fields.** The toolbar's selects and search and Build out's grid cells are white, square and
+    edged in both themes, with their own focused rule, because Bootstrap's `.form-control:focus`
+    (0,2,0) outranks a plain field rule. On a phone the toolbar's fields are 16px, so iOS does not
+    zoom into them.
+  - **Touch and phones.** On a touch screen every toolbar control, card, day number, strip day and
+    the move bar's buttons are 44px (`--sf-touch-min`; they were 32 to 40px). The seven 760px blocks
+    are the app's one phone width, 767px. The sticky headings were a `min-width: 761px` block; they
+    are written for every width and switched off at 767px. The 1024px block that kept a wide grid
+    from scrolling the page sideways (`overflow-x: clip`) now applies at every width; clip makes no
+    scroll container, so the sticky headings and the fixed bars are unaffected. The move bar sits
+    above a phone's safe area.
+  - **The route map reads the tokens the stop list paints.** Google's markers and line take a color
+    value, so `PP_ROUTE_COLORS()` reads them through `getComputedStyle`, with each token's own value
+    as the fallback: a stop bahama-blue (was `#2563eb`), the shop green (was `#16a34a`), the road
+    fresh-blue. The printed card of an overdue task takes the same red as its edge on screen.
+- **A month cell says its load.** The month view's one-line availability cells were a tint and
+  nothing else; each now carries its words ("3h free", "Over 2h") for a screen reader.
+- **Less motion when asked.** The AI draft spinner and the jumped-to card's blink stop under
+  `prefers-reduced-motion`.
+- **Review follow-ups.**
+  - A highlighted card (Color by's highlight) is now marked by a focus-colored tint, not an outline.
+    The outline rule (0,3,0) outranked the selected, moving and drafted rings and the drop target,
+    so on a highlighted card none of them showed (guarded).
+  - Keyboard focus on a card is a ring drawn inside it on `::after`, not an outline. A card's
+    outline carries its state, and one element has one outline: the focus outline lost to the later
+    state rules, so a selected or drafted card showed no focus at all. On its own channel, a card
+    that is both selected and focused shows both (guarded).
+  - On a touch screen a month cell's day number keeps its 44px height but is 32px wide rather than
+    about 44px, so it fits a phone's 53px cell beside the day's "free" text (guarded).
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Project Planner with the same checks as the other pages, and
+  a new `TestProjectPlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--pp-color` and the CSS paints them; the
+  route map's colors read the tokens the stop list paints; no other color value is left in the
+  script; warn text and thin warn rings are the mix; focused fields keep their own rule; touch
+  targets are 44px; the sticky headings stop at 767px; the S3.6 focus ring moved with the CSS; a
+  month cell says its load; every rule styles a class the script draws; and no other file styles the
+  page's short prefixes. The inline-color check allows exactly one pattern,
+  `--pp-color: ${pp_esc(...)}`, with its own test. Each new page check fails on the pre-change files,
+  except the one that no other file styles the short prefixes, which holds a fact about the repo.
+- The planner suites that read the old `*_STYLE` constants (`test_project_planner_page`,
+  `test_project_planner_phase3a_page`, `test_project_planner_phase4_page`, `test_planner_phase3b`,
+  `test_planner_phase5`, `test_planner_phase6a`, `6b`, `6c`, `6d_ui` and `6e`,
+  `test_planner_build_out`) read their section of `project_planner.css` for the Project Planner and
+  keep reading the script for the Maintenance Planner; `test_s3_6_accessibility` reads the focus ring
+  from the CSS.
+
 ## [1.663.0] - 2026-10-14
 
 Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:
