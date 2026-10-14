@@ -274,6 +274,7 @@ class TestTheDecisionsUnderNode(unittest.TestCase):
 		self.assertIn('"frappe.desk.form.load.get_communications"', body)
 		self.assertIn("frappe.dom.remove_script_and_style(found.content)", body)
 		self.assertIn("if (asked_here()) open(cut);", body)
+		self.assertIn("asked_here() ? new frappe.views.CommunicationComposer(opts) : null", body)
 
 	def test_attachments_follow_the_sidebar(self):
 		f = self.out["files"]
@@ -878,52 +879,101 @@ function tools() {
 		info: { communications: [], emails: {}, attachments: [] },
 	});
 	t.sf = () => ({ call: (method, args) => { read.args = args; return new Promise((res, rej) => Object.assign(read, { res, rej })); } });
-	t.dialog = (make) => make();
+	// Counted: asking for a dialog takes party.js's double-tap token, so a stale reply must not ask.
+	t.dialogs = 0;
+	t.dialog = (make) => {
+		t.dialogs += 1;
+		make();
+	};
 	t.title = () => "Plaza fountain";
 	t.reload = () => {};
 	return { t, read };
 }
 // The editor moves to another record, as the side panel does (and the tools re-mount on it).
-function switch_record(t) {
-	t.ed.name = "CRM-OPP-2";
-	t.name = "CRM-OPP-2";
+function switch_record(t, doctype, name) {
+	Object.assign(t.ed, { doctype, name });
+	Object.assign(t, { doctype, name });
 	t.mount_seq += 1;
 }
+// One case on fresh tools, counting only what it opened.
+async function run(steps) {
+	opened.length = 0;
+	const c = tools();
+	await steps(c);
+	await tick();
+	const first = opened[0];
+	return {
+		opened: opened.length,
+		content: first && first.last_email.content,
+		asked: c.read.args.name,
+		dialogs: c.t.dialogs,
+		made: c.made,
+	};
+}
+// The dialog as party.js open_dialog makes it on the guided page: only after the history guard loads.
+function slow_dialog(c) {
+	const later = [];
+	c.t.dialog = (make) => later.push(make);
+	return () => {
+		c.made = later.length;
+		later.forEach((make) => make());
+	};
+}
+const full = [{ name: "COMM-1", content: "<p>Hi there</p><script>x()</script>" }];
 const out = {};
-const content = (i) => opened[i] && opened[i].last_email && opened[i].last_email.content;
 
-let c = tools();
-c.t.new_email(reply);
-c.read.res([{ name: "COMM-1", content: "<p>Hi there</p><script>x()</script>" }]);
-await tick();
-out.same = { opened: opened.length, content: content(0), asked: c.read.args.name };
-
-c = tools();
-c.t.new_email(reply);
-switch_record(c.t);
-c.read.res([{ name: "COMM-1", content: "<p>Hi there</p>" }]);
-await tick();
-out.switched = opened.length;
-
-c = tools();
-c.t.new_email(reply);
-switch_record(c.t);
-c.read.rej(new Error("offline"));
-await tick();
-out.switched_failed = opened.length;
-
-c = tools();
-c.t.new_email(reply);
-c.read.rej(new Error("offline"));
-await tick();
-out.fallback = { opened: opened.length, content: content(1) };
-
-c = tools();
-c.t.new_email(reply);
-c.t.mount_seq += 1;
-c.read.res([]);
-await tick();
-out.remounted = { opened: opened.length, content: content(2) };
+out.same = await run((c) => {
+	c.t.new_email(reply);
+	c.read.res(full);
+});
+out.switched = await run((c) => {
+	c.t.new_email(reply);
+	switch_record(c.t, "Opportunity", "CRM-OPP-2");
+	c.read.res(full);
+});
+out.switched_failed = await run((c) => {
+	c.t.new_email(reply);
+	switch_record(c.t, "Opportunity", "CRM-OPP-2");
+	c.read.rej(new Error("offline"));
+});
+// The same name under another doctype is another record.
+out.other_doctype = await run((c) => {
+	c.t.new_email(reply);
+	switch_record(c.t, "Project", "CRM-OPP-1");
+	c.read.res(full);
+});
+// Away and back before the read answers: the person is on the record they asked from.
+out.round_trip = await run((c) => {
+	c.t.new_email(reply);
+	switch_record(c.t, "Opportunity", "CRM-OPP-2");
+	switch_record(c.t, "Opportunity", "CRM-OPP-1");
+	c.read.res(full);
+});
+out.fallback = await run((c) => {
+	c.t.new_email(reply);
+	c.read.rej(new Error("offline"));
+});
+// A realtime refresh re-mounts the tools on the same record.
+out.remounted = await run((c) => {
+	c.t.new_email(reply);
+	c.t.mount_seq += 1;
+	c.read.res([]);
+});
+out.slow_dialog_switched = await run(async (c) => {
+	const show = slow_dialog(c);
+	c.t.new_email(reply);
+	c.read.res(full);
+	await tick();
+	switch_record(c.t, "Opportunity", "CRM-OPP-2");
+	show();
+});
+out.slow_dialog_same = await run(async (c) => {
+	const show = slow_dialog(c);
+	c.t.new_email(reply);
+	c.read.res(full);
+	await tick();
+	show();
+});
 
 console.log(JSON.stringify(out));
 """
@@ -953,22 +1003,43 @@ class TestReplyFollowsTheRecord(unittest.TestCase):
 			raise AssertionError(f"node failed:\n{proc.stderr}")
 		cls.out = json.loads(proc.stdout)
 
+	CUT = "Hi &lt;b&gt;there&lt;/b&gt;"
+
 	def test_on_the_same_record_the_full_email_is_quoted(self):
 		self.assertEqual(self.out["same"]["opened"], 1)
 		self.assertEqual(self.out["same"]["content"], "<p>Hi there</p>")
 		self.assertEqual(self.out["same"]["asked"], "CRM-OPP-1")
 
 	def test_after_a_switch_the_old_reply_never_opens(self):
-		self.assertEqual(self.out["switched"], 1, "nothing opened over the new record")
-		self.assertEqual(self.out["switched_failed"], 1, "nor when the read fails")
+		self.assertEqual(self.out["switched"]["opened"], 0, "nothing opened over the new record")
+		self.assertEqual(self.out["switched_failed"]["opened"], 0, "nor when the read fails")
+		# Nor is a dialog asked for: that would hold party.js's double-tap token, and a tap on the new
+		# record's Reply in that moment would be ignored.
+		self.assertEqual(self.out["switched"]["dialogs"], 0)
+		self.assertEqual(self.out["switched_failed"]["dialogs"], 0)
+
+	def test_the_same_name_under_another_doctype_is_another_record(self):
+		self.assertEqual(self.out["other_doctype"]["opened"], 0)
+
+	def test_away_and_back_before_the_answer_still_opens_it(self):
+		self.assertEqual(self.out["round_trip"]["opened"], 1)
+		self.assertEqual(self.out["round_trip"]["content"], "<p>Hi there</p>")
 
 	def test_a_failed_read_still_quotes_the_cut_copy(self):
-		self.assertEqual(self.out["fallback"]["opened"], 2)
-		self.assertEqual(self.out["fallback"]["content"], "Hi &lt;b&gt;there&lt;/b&gt;")
+		self.assertEqual(self.out["fallback"]["opened"], 1)
+		self.assertEqual(self.out["fallback"]["content"], self.CUT)
 
 	def test_a_reload_of_the_same_record_still_opens_it(self):
 		# A realtime refresh re-mounts the tools on the same record: the person still gets the reply.
-		self.assertEqual(self.out["remounted"]["opened"], 3)
+		self.assertEqual(self.out["remounted"]["opened"], 1)
+		self.assertEqual(self.out["remounted"]["content"], self.CUT)
+
+	def test_a_switch_while_the_dialog_loads_opens_nothing(self):
+		# The dialog was asked for while the record was on screen, and is made after it left.
+		self.assertEqual(self.out["slow_dialog_switched"]["made"], 1)
+		self.assertEqual(self.out["slow_dialog_switched"]["opened"], 0)
+		self.assertEqual(self.out["slow_dialog_same"]["made"], 1)
+		self.assertEqual(self.out["slow_dialog_same"]["opened"], 1)
 
 
 if __name__ == "__main__":

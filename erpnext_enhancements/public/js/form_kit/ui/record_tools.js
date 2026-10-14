@@ -871,6 +871,20 @@ export class RecordTools {
 			recipients: reply.sender && reply.sender !== me ? reply.sender : rules.recipient_for(this.config, values),
 			subject: reply.subject,
 		});
+		// The quote is the email as sent, as the timeline's Reply quotes it: its full content from the
+		// timeline's own read (frappe.desk.form.load.get_communications, which checks read on this
+		// record), scripts and styles taken out as the timeline does. record_info carries only a cut
+		// text copy; it is the quote only if that read fails.
+		//
+		// That read is a round trip, and the board's side panel switches records in place: if the
+		// editor is on another record when it answers, this reply never opens over that one (v1.688.1).
+		// The composer is asked again as it is made, because the dialog waits too: on the guided page
+		// the first one loads the history guard (party.js open_dialog), up to four seconds. The record
+		// it was asked from is compared, not the mount: a reload of the same record (a realtime refresh
+		// re-mounts it) still opens the reply the person asked for.
+		const doctype = this.doctype;
+		const name = this.name;
+		const asked_here = () => this.ed.doctype === doctype && this.ed.name === name;
 		const open = (content) => {
 			opts.last_email = {
 				name: reply.name,
@@ -881,20 +895,8 @@ export class RecordTools {
 				communication_date: reply.at,
 				content,
 			};
-			this.dialog(() => new frappe.views.CommunicationComposer(opts));
+			this.dialog(() => (asked_here() ? new frappe.views.CommunicationComposer(opts) : null));
 		};
-		// The quote is the email as sent, as the timeline's Reply quotes it: its full content from the
-		// timeline's own read (frappe.desk.form.load.get_communications, which checks read on this
-		// record), scripts and styles taken out as the timeline does. record_info carries only a cut
-		// text copy; it is the quote only if that read fails.
-		//
-		// That read is a round trip, and the board's side panel switches records in place: if the
-		// editor is on another record when it answers, this reply never opens over that one (v1.688.1).
-		// The record it was asked from is compared, not the mount: a reload of the same record (a
-		// realtime refresh re-mounts it) still opens the reply the person asked for.
-		const doctype = this.doctype;
-		const name = this.name;
-		const asked_here = () => this.ed.doctype === doctype && this.ed.name === name && !this.ed.is_new;
 		const cut = frappe.utils.escape_html(reply.text || "").replace(/\n/g, "<br>");
 		this.sf()
 			.call(
