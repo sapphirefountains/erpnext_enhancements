@@ -21,7 +21,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import os from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -52,9 +53,20 @@ function test(name, fn) {
 
 // ------------------------------------------------------------------ desk stubs
 
+// Since v1.686.0 the controller's party rules live in party_sources.js, shared with the guided
+// page's record tools, and the Desk reaches them as erpnext_enhancements.party_sources (installed
+// by erpnext_enhancements.bundle.js). The module is an ES module in a package that is not
+// "type": "module", so it is imported from a copy beside a package.json that says it is.
+const SOURCES_JS = path.join(path.dirname(CONTROLLER_JS), "party_sources.js");
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "party-sources-"));
+fs.writeFileSync(path.join(tmp, "package.json"), '{"type": "module"}');
+fs.copyFileSync(SOURCES_JS, path.join(tmp, "party_sources.js"));
+const party_sources = await import(pathToFileURL(path.join(tmp, "party_sources.js")).href);
+fs.rmSync(tmp, { recursive: true, force: true });
+
 // Loading the file only registers form handlers and assigns the controller object;
 // nothing else runs at the top level, so these two are all it needs.
-globalThis.erpnext_enhancements = {};
+globalThis.erpnext_enhancements = { party_sources: Object.assign({}, party_sources) };
 globalThis.frappe = {
 	provide: () => {},
 	ui: { form: { on: () => {} } },

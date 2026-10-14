@@ -404,6 +404,11 @@ def _run_node():
 		shutil.copytree(FORM_KIT_JS, folder / "form_kit")
 		shutil.copytree(BOARD_JS, folder / "opportunity_board")
 		shutil.copytree(JS / "info_blocks", folder / "info_blocks")
+		# v1.686.0: the editor mounts the record tools (ui/record_tools.js), which import the record
+		# actions and the directory's party rules the Desk form shares with them.
+		(folder / "global_enhancements").mkdir()
+		for name in ("party_sources.js", "record_actions.js"):
+			shutil.copy(JS / "global_enhancements" / name, folder / "global_enhancements" / name)
 		(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
 		proc = subprocess.run(
 			[node, str(folder / "runner.mjs"), str(folder)],

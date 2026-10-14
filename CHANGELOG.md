@@ -32,6 +32,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nothing changes on an Opportunity, the only DocType with notes that is guided today. Project gets
   all of this the day it becomes guided. Tests: `tests/test_form_kit.py TestNotesFromEveryStore`.
 
+## [1.686.0] - 2026-10-14
+
+### Added
+- **The Desk form's record tools are on the guided page and the board's side panel.** Nik,
+  2026-10-14: "We shouldn't have lost any fidelity or information on any of the UI/UX changes."
+  The guided page is the default way an Opportunity opens, and it had none of the form's sidebar,
+  timeline, dashboard or toolbar: files are attached to 169 Opportunities (11 this month), and the
+  Activities tab and the Contact & Address directory were skipped widgets. A new "About this
+  record" section (`form_kit/ui/record_tools.js`), mounted by the shared editor for any saved
+  record of any guided DocType, brings them back, each through the code path the form uses:
+  - **Attachments:** listed with kind, size, private, who and when; attach with
+    `frappe.ui.FileUploader` on the record ("Home/Attachments", the DocType's public default and
+    `max_attachments`); remove with `remove_attach` after frappe's own question, under the
+    sidebar's `protect_attached_files` rule.
+  - **Activity:** the timeline with "Show all activity" on: created, last edited, Versions as
+    sentences (field by field, with the timeline's own display rule, so a field the person cannot
+    read is never named), emails as text with Reply, the assignment, attachment, info and workflow
+    logs, milestones. Above them ERPNext's CRM Activities: open ToDos and Events with Done. New
+    email (`CommunicationComposer`), New task and New event (`InteractionComposer`, set up as
+    ERPNext's `crm_activities.js` does).
+  - **Assigned to, Follow, Tags, Shared with:** frappe's own Add to ToDo dialog, remove and Done;
+    `update_follow` where the DocType tracks changes; tags with suggestions; who it is shared with
+    (sharing itself stays on the full form, whose Share needs the form).
+  - **People & places,** where the form has the Contact / Address directory: the same lists through
+    the same `sync_contact` endpoints, with New contact / address, Link existing ("Also add to"
+    unticked), Import contacts, Set primary (the record's own field, saved through the editor's
+    queue) and Unlink.
+  - **Connections:** the dashboard's linked documents (this app's Travel Trips included) with
+    counts from `get_open_count`, each opening its list filtered to this record.
+  - **An Actions menu** on the band (side panel: beside "Open full page"): ERPNext's Create menu for
+    the DocType (`frappe.model.open_mapped_doc`; Opportunity: Supplier Quotation, Request For
+    Quotation, Customer unless the party is one, Quotation; none while Lost), Generate Contract, Open
+    Drive Folder, Set Reminder, New Email, Print, Customize, and the full form for rename, duplicate,
+    merge and delete. It is the planner kit's menu, so Back closes it.
+- **`form_kit.api.record_info`** (GET): what the form's sidebar and timeline know, from frappe's own
+  `get_docinfo` (whose read check is the form load's) and the open half of ERPNext's `get_open_activities`. Needed
+  because `get_docinfo` answers in `frappe.response["docinfo"]`, which sf_kit's call never reads.
+  Every stored HTML string (an email body, a ToDo, a log line) comes back as plain text, written
+  with `.text()`; the Drive folder fields, hidden on the form and so in no step, only where the
+  caller may read them.
+
+### Changed
+- **The form's Open Drive Folder, Set Reminder and Generate Contract buttons and the Contact &
+  Address directory's rules moved to shared modules,** unchanged, so the guided page reuses them
+  instead of keeping a copy: `global_enhancements/record_actions.js` and `party_sources.js`,
+  installed by `erpnext_enhancements.bundle.js` as `erpnext_enhancements.record_actions` /
+  `.party_sources` for the form scripts (doctype_js cannot import). A tab still holding the bundle
+  from before this release shows none of those three buttons until it reloads, rather than a button
+  that throws. Generate Contract's "no signed MSA" question now escapes the supplier's name.
+
+### Notes
+- Every decision is the record's meta, permissions and values; the one per-DocType list is
+  `RECORD_TOOLS` (`public/js/form_kit/record_tools.js`), for what a DocType's own form script adds.
+  Every dialog joins the planner kit's history guard as the Party dialogs do: Back closes the dialog
+  and nothing else. Left on the full form: Rename, Duplicate, Delete, Merge, frappe's Remind Me (its
+  `ReminderManager` is not exported), Share, and New Email's "Attach Document Print" and saved draft
+  (the composer offers them only with a form); the record's own files are offered in both
+  composers. Not ported: ERPNext's Opportunity Close / Reopen (they write status "Closed" / "Open",
+  which this site's stage list refuses) and Fetch Latest Exchange Rate (deals are always in the
+  company currency).
+- New Email starts as the Desk's does: To the record's email field (Opportunity: `contact_email`,
+  hidden on the form and so in no step, read by `record_info` under its field permission; else the
+  primary contact's email), and the subject "Re:" the latest email on the record, else its title,
+  always with "(#name)". Reply quotes the email in full, read through the timeline's own
+  `get_communications`; only if that read fails is it the cut text copy.
+- New Task and New Event use frappe's `InteractionComposer`, which reads the global `cur_frm` for its
+  file list and reloads it after the insert. Both shells are Desk Pages, where v16 sets `cur_frm` to
+  null, so normally it is null and the record's own files are passed in. As a defence for the rare
+  case it is another record's form, it is null while the composer is open and put back afterwards,
+  only on the same route; when it is this record's own form, its files are listed from it alone.
+- Generate Contract saves what is typed first, as Create, Print and Customize do. Set primary says
+  "Primary contact updated" only when the save went through.
+- A form tab still holding the bundle from before this release shows an empty Contact & Address
+  directory until it reloads, never a TypeError. The directory's "Also add to" now escapes the
+  party's name in its label and description, and Import Contacts (the form's and the guided page's)
+  gives frappe's MultiCheck row indexes as its values, never Contact names, which it writes into an
+  attribute unescaped (neither did before).
+- `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the shared directory rules
+  under node and `record_info` against a frappe stub.
+
 ## [1.685.0] - 2026-10-14
 
 ### Fixed

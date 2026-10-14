@@ -96,6 +96,13 @@ import "./global_enhancements/address_autocomplete.js";
 // frappe.boot.ee_contacts_ux; must be global — list/awesomebar/link-field
 // create paths fire outside any doctype_js). Server: contacts_ux.py.
 import "./global_enhancements/contact_address_quick_entry.js";
+// v1.686.0: the record actions and directory rules the Desk form scripts share with the guided
+// page's record tools (form_kit/ui/record_tools.js imports the same modules). The form scripts are
+// doctype_js and cannot import, so they read erpnext_enhancements.record_actions (Open Drive
+// Folder, Set Reminder, Generate Contract) and erpnext_enhancements.party_sources (the Contact and
+// Address directory's sources, unified_tab_controller.js).
+import * as record_actions from "./global_enhancements/record_actions.js";
+import * as party_sources from "./global_enhancements/party_sources.js";
 // Customer/Supplier quick-entry dialogs: account fields only, then the saved record
 // opens its full form, where the Address Directory adds addresses (same toggle).
 // Must load after erpnext.bundle.js, whose stock dialog it replaces — app order
@@ -166,3 +173,13 @@ import "./training/desk_assets.js";
 // The guided page is where a guided DocType's records open, new and existing (form kit P5.2):
 // frappe.create_routes for New, and a before_show on the Form factory for the rest. See the file.
 import "./guided_default.js";
+
+// v1.686.0: installed for the form scripts (see record_actions / party_sources above). Plain objects
+// copied from the module namespaces: erpnext_enhancements.record_actions.open_reminder and so on.
+try {
+	window.erpnext_enhancements = window.erpnext_enhancements || {};
+	window.erpnext_enhancements.record_actions = Object.assign({}, record_actions);
+	window.erpnext_enhancements.party_sources = Object.assign({}, party_sources);
+} catch (e) {
+	if (window.console) window.console.warn("record actions failed to install", e);
+}

@@ -46,7 +46,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import os from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -271,7 +272,18 @@ const click = (label) => {
 	button.fn();
 };
 const NEW_DOCS = [];
-globalThis.erpnext_enhancements = {};
+// Since v1.686.0 the directory's party rules live in party_sources.js, which the Desk installs as
+// erpnext_enhancements.party_sources (erpnext_enhancements.bundle.js). An ES module in a package that
+// is not "type": "module": imported from a copy beside a package.json that says it is.
+const PARTY_SOURCES = await (async () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "party-sources-"));
+	fs.writeFileSync(path.join(tmp, "package.json"), '{"type": "module"}');
+	fs.copyFileSync(path.join(DIR, "party_sources.js"), path.join(tmp, "party_sources.js"));
+	const mod = await import(pathToFileURL(path.join(tmp, "party_sources.js")).href);
+	fs.rmSync(tmp, { recursive: true, force: true });
+	return Object.assign({}, mod);
+})();
+globalThis.erpnext_enhancements = { party_sources: PARTY_SOURCES };
 globalThis.frappe = {
 	provide: (ns) => {
 		let obj = globalThis;
@@ -322,7 +334,16 @@ globalThis.frappe = {
 			return row;
 		},
 	},
-	utils: { get_link_title: () => undefined },
+	utils: {
+		get_link_title: () => undefined,
+		escape_html: (v) =>
+			String(v === null || v === undefined ? "" : v)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;"),
+	},
 	prompt: (fields, callback) => {
 		PROMPT = { fields, callback };
 	},
