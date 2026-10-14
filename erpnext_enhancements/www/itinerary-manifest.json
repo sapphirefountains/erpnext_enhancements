@@ -7,8 +7,8 @@
   "scope": "/itinerary",
   "display": "standalone",
   "display_override": ["minimal-ui"],
-  "background_color": "#f6f7f9",
-  "theme_color": "#00a0dd",
+  "background_color": "#f8f8f8",
+  "theme_color": "#00a0df",
   "categories": ["travel", "business"],
   "icons": [
     {

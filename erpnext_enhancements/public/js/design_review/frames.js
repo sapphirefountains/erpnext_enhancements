@@ -18,6 +18,12 @@ const FONT = "/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2";
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'self' data:";
 
 // Inserted into every frame: scrolling inside a screen, the Links and Markup outlines, hover.
+// The colours are literal because a frame is its own sandboxed document: its policy allows no
+// stylesheet, and custom properties do not cross into an iframe, so the app design tokens cannot
+// reach it. Each is a token by value, matched to the code tags drawn over the frame in
+// design_review.bundle.css: #f8f8f8 --sf-off-white (the ground), #00a0df --sf-fresh-blue (links,
+// parts), #ffb819 --sf-yellow (a part with a note), #b14fc5 --sf-violet (the selected part; it was
+// an orange the palette does not have until v1.659.0).
 const FRAME_CSS = `
 html,body{margin:0;overflow:hidden;background:#f8f8f8}
 .ux-scroll{overflow:auto!important;scrollbar-width:thin}
@@ -28,7 +34,7 @@ body:not(.rr-markup) .rr-hot{outline:2px solid #00a0df!important;outline-offset:
 body.rr-markup [data-c]{outline:1px dashed rgba(0,160,223,.75);outline-offset:-1px;cursor:crosshair}
 body.rr-markup [data-c]:hover{outline:2px solid #00a0df;background-color:rgba(0,160,223,.08)}
 body.rr-markup [data-rr-has]{outline:2px solid #ffb819}
-body.rr-markup [data-rr-sel]{outline:3px solid #ff6b35;background-color:rgba(255,107,53,.10)}
+body.rr-markup [data-rr-sel]{outline:3px solid #b14fc5;background-color:rgba(177,79,197,.10)}
 input,textarea,select{pointer-events:none}
 `;
 

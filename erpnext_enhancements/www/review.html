@@ -5,6 +5,11 @@
 
     * load design_review.bundle.css and design_review.bundle.js, resolved through assets.json to
       content-hashed filenames (never raw /assets paths: those are cached for a year with no hash).
+      The app design tokens (sf_tokens.bundle.css) come first: a website page gets only
+      web_include_css, and the tokens are app_include_css (Desk only), so without this link
+      every --sf-* the page reads would be empty. Linked here, not added to web_include_css,
+      which would ship them to every public page. Dark mode: design_review/app.js writes
+      data-theme on <html>, the attribute the tokens switch on.
     * hand the server-computed identity to the front end as window.EE_REVIEW_BOOT.
     * provide the single mount point. Every node inside it is built by the bundle with
       createElement and textContent: notes are text employees wrote, and a template that
@@ -19,8 +24,22 @@
 {% block title %}Design Review{% endblock %}
 
 {% block head_include %}
+{# The stored THEME choice, applied before any stylesheet is parsed, so the loading text never
+   flashes in the device theme first (the way kiosk.html applies tk_theme). LIGHT and DARK set
+   data-theme, the attribute sf_tokens.bundle.css switches on; AUTO leaves it unset. try/catch:
+   localStorage throws in some private and embedded contexts. design_review/app.js applyTheme
+   owns every change after load. #}
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('rr.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* storage blocked: the device theme */ }
+  })();
+</script>
 <meta name="theme-color" content="#00263e">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
 <link rel="stylesheet" href="{{ bundled_asset('design_review.bundle.css') }}">
 {% endblock %}
 
