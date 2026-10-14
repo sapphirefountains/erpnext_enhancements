@@ -1,8 +1,8 @@
 /* KPI Cockpit — Custom HTML Block styles (shadow-DOM scoped).
  *
  * Uses Frappe CSS variables so the widget tracks Frappe Light + Timeless Night
- * automatically; the Good/Watch/Bad status colours are semantic, so they are
- * intentionally literal (per the app's dark-theme convention). */
+ * automatically; the Good/Watch/Bad status colours come from the app's --sf-*
+ * tokens (sf_tokens.bundle.css), so one place sets them in both themes. */
 
 .kpi-root {
     font-family: var(--font-stack, inherit);
@@ -86,9 +86,9 @@
     justify-content: space-between;
 }
 
-.kpi-card.status-good { border-left-color: #28a745; }
-.kpi-card.status-watch { border-left-color: #f0ad4e; }
-.kpi-card.status-bad { border-left-color: #e24c4c; }
+.kpi-card.status-good { border-left-color: var(--sf-good); }
+.kpi-card.status-watch { border-left-color: var(--sf-warn); }
+.kpi-card.status-bad { border-left-color: var(--sf-danger); }
 
 .kpi-card-label {
     font-size: 11px;
@@ -115,8 +115,8 @@
 
 .kpi-target { white-space: nowrap; }
 
-.kpi-trend.up { color: #28a745; }
-.kpi-trend.down { color: #e24c4c; }
+.kpi-trend.up { color: var(--sf-good); }
+.kpi-trend.down { color: var(--sf-danger); }
 .kpi-trend.flat { color: var(--text-muted); }
 
 .kpi-stale {
@@ -124,8 +124,8 @@
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #f0ad4e;
-    border: 1px solid #f0ad4e;
+    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+    border: 1px solid color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
     border-radius: 4px;
     padding: 0 4px;
     margin-top: 4px;

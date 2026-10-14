@@ -285,6 +285,34 @@ await test("a block that registers after you left is filed under the workspace v
 	assert.equal(late.loads, 2);
 });
 
+await test("onScreen: a hidden or detached block is off screen, and what it cannot judge fails open", () => {
+	// One copy of the check the polling blocks ask before each fetch (v1.641.0).
+	const desk = makeDesk();
+	const onScreen = desk.api.onScreen;
+	assert.equal(typeof onScreen, "function", "not exported on erpnext_enhancements.workspace_blocks");
+	const el = (connected, rects) => ({ isConnected: connected, getClientRects: () => ({ length: rects }) });
+	assert.equal(onScreen({ host: el(true, 1) }), true, "a block on screen");
+	assert.equal(onScreen({ host: el(true, 0) }), false, "a block under a display:none ancestor");
+	assert.equal(onScreen({ host: el(false, 1) }), false, "a detached block");
+	assert.equal(onScreen(el(true, 1)), true, "an element answers for itself");
+	assert.equal(onScreen(el(true, 0)), false, "a hidden element");
+	const anchor = { host: "erp.example.com", isConnected: true, getClientRects: () => [] };
+	assert.equal(onScreen(anchor), false, "a string `host` (an anchor's) is not taken for a shadow host");
+	assert.equal(onScreen({ host: { isConnected: true } }), true, "a host without layout APIs fails open");
+	assert.equal(onScreen({ querySelector() {} }), true, "no host (a block's document fallback) fails open");
+	assert.equal(onScreen(null), true, "nothing at all fails open");
+	assert.equal(onScreen(undefined), true, "nothing at all fails open");
+	const broken = {
+		host: {
+			isConnected: true,
+			getClientRects() {
+				throw new Error("layout");
+			},
+		},
+	};
+	assert.equal(onScreen(broken), true, "a throwing layout read fails open");
+});
+
 await test("no router: a no-op that says so, not an exception", () => {
 	const desk = makeDesk({ router: false });
 	const a = makeBlock(desk);
@@ -573,6 +601,52 @@ await test("finance_bank_balances.js: a return while Refresh is out reads nothin
 	assert.ok(desk.calls.length > after, "a return after the refresh asked nothing: the stale-dashboard bug");
 	assert.ok(!desk.calls.slice(after).some((m) => /\.refresh_now$/.test(m)), "a return spent a Plaid call");
 });
+
+// The two polling blocks ask the helper's onScreen before a timer fetches, and a device
+// whose bundle predates it (no onScreen) must keep polling: off screen is only skipped when
+// something can say so. Each case renders the block on a host whose layout says shown or
+// hidden, then fires the block's own poll timer and counts what it asks the server.
+const POLLERS = [
+	// The Task Dashboard's 5-minute interval goes through refresh_if_visible.
+	{ file: "task_dashboard.js", ms: 5 * 60 * 1000, prime() {} },
+	// Who's Working's 15 s heartbeat loads once the minute is up: make it up.
+	{
+		file: "finance_whos_working.js",
+		ms: 15000,
+		prime(desk) {
+			desk.sandbox.__ee_fww.last = 0;
+		},
+	},
+];
+for (const poller of POLLERS) {
+	const source = fs.readFileSync(path.join(BLOCKS_DIR, poller.file), "utf8");
+	for (const [label, helper, shown, asks] of [
+		["on screen, polls", true, true, true],
+		["hidden, skips the poll", true, false, false],
+		["hidden, with an older bundle (no onScreen), still polls", false, false, true],
+	]) {
+		await test(poller.file + ": " + label, async () => {
+			const desk = makeBlockDesk();
+			const timers = [];
+			desk.sandbox.setInterval = (fn, ms) => timers.push([fn, ms]);
+			if (!helper) delete desk.api.onScreen;
+			desk.navigate(["Workspaces", "Dashboard"]);
+			const host = { isConnected: true, getClientRects: () => ({ length: shown ? 1 : 0 }) };
+			const root = { host, querySelector: () => anything(), querySelectorAll: () => [] };
+			new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: poller.file }).runInContext(
+				desk.sandbox,
+			)(root);
+			await settle(20);
+			const poll = timers.find(([, ms]) => ms === poller.ms);
+			assert.ok(poll, "no " + poller.ms + " ms timer was started");
+			poller.prime(desk);
+			const before = desk.calls.length;
+			poll[0]();
+			await settle(20);
+			assert.equal(desk.calls.length > before, asks, asks ? "the poll asked nothing" : "a hidden block polled");
+		});
+	}
+}
 
 await settle(20);
 await test("no block left a promise rejection unhandled", () => {
