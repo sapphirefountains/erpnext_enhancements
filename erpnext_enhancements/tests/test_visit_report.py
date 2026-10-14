@@ -141,6 +141,7 @@ def setUpModule():
 			delattr(package, attr)
 
 	frappe = types.ModuleType("frappe")
+	frappe.__dict__["_"] = lambda text, *a, **k: text
 	frappe._dict = _Dict
 	frappe.get_all = _get_all
 	frappe.get_doc = _get_doc
@@ -326,6 +327,21 @@ class TestCharts(unittest.TestCase):
 		self.assertEqual(svg.count("<polyline"), 2)
 		self.assertIn(">East Courtyard Fountain</text>", svg)
 		self.assertIn(">West Lobby</text>", svg)
+
+	def test_a_reading_for_the_whole_site_is_named_so_in_the_legend(self):
+		"""v1.678.0: a form ticked Once per Site Visit records an untagged reading; its legend line
+		was blank."""
+		_approved("A", "2026-10-06", [("pH", 7.2, "SN-EAST"), ("pH", 7.4, None)])
+		doc = _visit(
+			[
+				{"reading": "pH", "reading_value": 7.5, "serial_no": "SN-EAST"},
+				{"reading": "pH", "reading_value": 7.6, "serial_no": None},
+			]
+		)
+		(svg,) = report.chemistry_charts(doc, {"SN-EAST": "East Courtyard Fountain"})
+		self.assertIn(">East Courtyard Fountain</text>", svg)
+		self.assertIn(">Whole site</text>", svg)
+		self.assertNotIn('fill="' + report.ps.INK_700 + '"></text>', svg, "no blank legend line")
 
 	def test_the_axis_is_labelled_at_the_target_range(self):
 		"""What a customer reads the line against; the extremes only when there is no target."""
