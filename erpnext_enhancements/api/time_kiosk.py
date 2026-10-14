@@ -1036,7 +1036,7 @@ def get_maintenance_context(project=None, since=None):
     alone = not labelled
 
     if draft:
-        form_route = "/app/visit-wizard?record=" + draft
+        form_route = "/desk/visit-wizard/" + draft
         regular_label = _("Open the draft form") if alone else _("Open the regular visit form")
     else:
         from urllib.parse import urlencode
@@ -1054,7 +1054,7 @@ def get_maintenance_context(project=None, since=None):
     forms.extend(
         {
             "label": _("Open the {0} form").format(d.visit_label),
-            "route": "/app/visit-wizard?record=" + d.name,
+            "route": "/desk/visit-wizard/" + d.name,
             "draft": d.name,
         }
         for d in labelled
@@ -1131,7 +1131,7 @@ def get_my_visits_today():
         ))
     for d in drafts:
         d["project_title"] = titles.get(d.project) or d.project
-        d["route"] = "/app/visit-wizard?record=" + d.name
+        d["route"] = "/desk/visit-wizard/" + d.name
     return drafts
 
 

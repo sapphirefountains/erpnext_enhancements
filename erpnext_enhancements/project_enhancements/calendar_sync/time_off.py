@@ -72,7 +72,7 @@ LOCK_SECONDS = 25 * 60
 PAGES = 100
 RUN_SECONDS = 15 * 60
 PREVIEW_MAX_DAYS = 400
-REVIEW_ROUTE = "/app/calendar-time-off-review?status=Open"
+REVIEW_ROUTE = "/desk/calendar-time-off-review?status=Open"
 #: What the event snapshot on a review row keeps: enough to apply a decision without Google.
 SNAPSHOT_KEYS = ("id", "status", "summary", "start", "end", "creator", "organizer", "eventType")
 

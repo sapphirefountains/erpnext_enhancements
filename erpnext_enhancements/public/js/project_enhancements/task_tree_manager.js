@@ -422,7 +422,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 						<div style="padding-left: ${level * 20}px; display: flex; align-items: center; width: 100%;">
 							<i class="fa fa-bars task-drag-handle mr-2 text-muted" style="cursor: grab; flex-shrink: 0;"></i>
 							<i class="fa fa-fw ${iconClass}" style="cursor: pointer; flex-shrink: 0; font-size: 10px;"></i>
-							${milestoneIcon}${recurringIcon}<a href="/app/task/${task.name}" class="task-name-cell-text" title="${task.subject}">${task.subject}</a>
+							${milestoneIcon}${recurringIcon}<a href="/desk/task/${encodeURIComponent(task.name)}" class="task-name-cell-text" title="${frappe.utils.escape_html(task.subject || "")}">${frappe.utils.escape_html(task.subject || "")}</a>
 						</div>
 					</div>
 					<div class="task-grid-cell assignee-cell ${this.columnVisibility.owner ? "" : "hidden-column"}" data-column="owner"><a href="#" class="assignee-link">${task.assigned_to || "Unassigned"}</a></div>

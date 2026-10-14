@@ -84,7 +84,7 @@
                 const tone = d.waiting_days >= 14 ? "dsq-bad" : d.waiting_days >= 7 ? "dsq-warn" : "";
                 return `
                     <div class="dsq-row">
-                        <a class="dsq-name" href="/app/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="dsq-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         <span class="dsq-meta">${meta}</span>
                         <span class="dsq-age ${tone}">${esc(__("{0}d", [d.waiting_days]))}</span>
                     </div>`;

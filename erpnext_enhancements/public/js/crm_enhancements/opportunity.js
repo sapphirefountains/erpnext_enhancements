@@ -142,14 +142,14 @@ frappe.ui.form.on("Opportunity", {
 				}
 				if (data.status === "success") {
 					let success_message = __("Project {0} created successfully.", [
-						`<a href="/app/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
+						`<a href="/desk/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
 					]);
 
 					if (data.drive_success) {
 						success_message = __(
 							"Project {0} created and Google Drive directory provisioned successfully.",
 							[
-								`<a href="/app/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
+								`<a href="/desk/project/${data.project_doc.name}">${data.project_doc.name}</a>`,
 							]
 						);
 					}
@@ -169,7 +169,7 @@ frappe.ui.form.on("Opportunity", {
 								<summary>Technical Error Details</summary>
 								<pre style="margin-top: 10px; padding: 10px; background-color: var(--subtle-fg); border: 1px solid var(--border-color);">${data.drive_error}</pre>
 							</details>
-							<p><a href="/app/error-log">Check Error Log</a></p>
+							<p><a href="/desk/error-log">Check Error Log</a></p>
 						`;
 						frappe.msgprint({
 							title: __("Google Drive Integration Failed"),

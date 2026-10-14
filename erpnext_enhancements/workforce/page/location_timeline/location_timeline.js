@@ -20,9 +20,11 @@
 // Forward goes back to the trail; a reload keeps Live. The filters are not in the
 // URL (route_options never reach it on v16), so a reloaded Trail starts empty.
 //
-// Assets. Leaflet is frappe's vendored copy (/assets/frappe/js/lib/leaflet/,
-// present on v16) and the stylesheet lives in public/css/workforce/; both come in
-// through frappe.require with BARE paths. On v16 frappe.require appends
+// Assets. The map is Google Maps: the API key comes from
+// erpnext_enhancements.api.travel.get_maps_config and window.EEGoogleMaps.load()
+// pulls the library in (loadAssets below). The stylesheet lives in
+// public/css/workforce/ and comes in through frappe.require with a BARE path. On v16
+// frappe.require appends
 // ?v=<build version> to a non-bundled same-origin path itself
 // (frappe/public/js/frappe/assets.js, AssetManager.execute), which is what keeps a
 // raw /assets URL out of the one-year immutable cache — and a path that already
@@ -72,8 +74,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     // the @frappe.whitelist() defs.
     const PAGE_ROUTE = 'location-timeline';
 
-    // Bare paths on purpose — see the header. Leaflet first: the stylesheet does
-    // not depend on it, but the map does, and frappe.require resolves them as one.
+    // Bare path on purpose — see the header. Only the stylesheet goes through
+    // frappe.require; the Google Maps library is loaded separately by loadAssets().
     const ASSETS = [
         '/assets/erpnext_enhancements/css/workforce/location_timeline.css'
     ];
@@ -965,12 +967,14 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                     this.layers.trail.addLayer(poly);
                 }
 
-                // Data Layer for performance of thousands of points
-                // We use two data layers (or just standard markers for simplicity if it's acceptable? 
-                // Wait, "Prefer drawing the individual fixes as a google.maps.Data layer ... State your choice and its scaling limit in a comment.")
-                // "The Leaflet usage includes ... L.canvas({padding: 0.5}) as a renderer — used because the trail can be thousands of points."
-                
-                // Using a Data layer for fixes scales well for thousands of points.
+                // The individual fixes are drawn as features on a google.maps.Data layer
+                // (one per interval) rather than as one Marker per fix: a day's trail can
+                // be thousands of points, and Data styles and hit-tests them as a single
+                // layer. The scaling limit is that this is still one feature per fix, all
+                // added up front -- there is no clustering or level-of-detail thinning, so
+                // a range of many days at a high fix rate will get slow before it breaks.
+                // The accuracy circles below are NOT on this layer: each is its own
+                // google.maps.Circle, shown only while the accuracy toggle is on.
                 const dataLayer = new google.maps.Data();
                 this.layers.trail.addLayer(dataLayer);
                 

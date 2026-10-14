@@ -76,7 +76,7 @@
                 const meta = [v.customer, v.technician].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="olc-row">
-                        <a class="olc-name" href="/app/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${esc(v.title)}</a>
+                        <a class="olc-name" href="/desk/sapphire-maintenance-record/${encodeURIComponent(v.name)}">${esc(v.title)}</a>
                         <span class="olc-meta">${meta}</span>
                         <span class="olc-age">${esc(v.visit_date || "")}</span>
                     </div>`;

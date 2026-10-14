@@ -1,4 +1,4 @@
-"""Server-side logic for the Sales Pipeline page (``/app/sales-pipeline``).
+"""Server-side logic for the Sales Pipeline page (``/desk/sales-pipeline``).
 
 A TV-friendly, realtime funnel view of open Opportunities — the "sales
 pipeline on a screen" from the Jun 9 Projects/Invoice-processing meeting.

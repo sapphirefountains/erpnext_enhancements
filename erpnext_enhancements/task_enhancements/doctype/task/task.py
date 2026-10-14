@@ -13,12 +13,14 @@ The override subclasses the core controller (``BaseTask``) so all stock Task
 behaviour is preserved, adding only one rule: whenever a task is given a
 parent, that parent is automatically promoted to a "group" (``is_group = 1``).
 This keeps ERPNext's NestedSet tree consistent so tasks can be browsed as a
-hierarchy (see the Hierarchical Task View desk page and the in-form child-task
-table rendered by ``get_child_tasks_html``).
+hierarchy (see the in-form child-task table rendered by ``get_child_tasks_html``
+and the Project Planner).
 
 NOTE: recurring-task generation lives elsewhere (``tasks.py`` at the app root,
 wired through ``doc_events``), not in this controller.
 """
+
+from urllib.parse import quote
 
 import frappe
 from erpnext.projects.doctype.task.task import Task as BaseTask
@@ -249,7 +251,7 @@ def _build_task_tree_html(tasks, level=0):
             <div class="task-tree-col task-tree-col-subject">
                 <div style="{indentation_style}">
                     {toggle_icon}
-                    <a href="/app/task/{task.name}">{task.subject}</a>
+                    <a href="/desk/task/{quote(task.name)}">{frappe.utils.escape_html(task.subject or "")}</a>
                 </div>
             </div>
             <div class="task-tree-col task-tree-col-status">{status}</div>

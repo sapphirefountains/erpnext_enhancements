@@ -131,7 +131,7 @@ def _check_quickbooks(key, label, route):
 
 	links = [
 		{"label": "Settings", "route": route},
-		{"label": "Sync Log", "route": "/app/quickbooks-sync-log"},
+		{"label": "Sync Log", "route": "/desk/quickbooks-sync-log"},
 	]
 
 	if not client_configured and not realm:
@@ -183,7 +183,7 @@ def _check_drive(key, label, route):
 	attachment_sync = bool(_single("Project Folder Google Drive Settings", "attachment_sync_enabled"))
 	links = [
 		{"label": "Settings", "route": route},
-		{"label": "Drive Sync Log", "route": "/app/drive-sync-log"},
+		{"label": "Drive Sync Log", "route": "/desk/drive-sync-log"},
 	]
 
 	if not configured:
@@ -221,7 +221,7 @@ def _check_triton(key, label, route):
 	number = _single("Triton Settings", "primary_twilio_number")
 	softphone_raw = _single("Triton Settings", "softphone_users") or ""
 	softphone_count = len([u for u in softphone_raw.replace(",", "\n").split("\n") if u.strip()])
-	links = [{"label": "Settings", "route": route}, {"label": "Call Log", "route": "/app/call-log"}]
+	links = [{"label": "Settings", "route": route}, {"label": "Call Log", "route": "/desk/call-log"}]
 
 	if not gateway and not twilio:
 		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
@@ -260,8 +260,8 @@ def _check_gemini(key, label, route):
 	configured = bool(_single("Project Folder Google Drive Settings", "service_account_json"))
 	links = [
 		{"label": "Service account", "route": route},
-		{"label": "Briefings", "route": "/app/daily-briefing"},
-		{"label": "Usage", "route": "/app/ai-model-usage"},
+		{"label": "Briefings", "route": "/desk/daily-briefing"},
+		{"label": "Usage", "route": "/desk/ai-model-usage"},
 	]
 	if not configured:
 		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
@@ -316,7 +316,7 @@ def _check_ga4(key, label, route):
 	prop = bool(_single("GA4 Settings", "ga4_property_id"))
 	creds = bool(_single("GA4 Settings", "credentials_json"))
 	gsc = bool(_single("GA4 Settings", "gsc_property_url"))
-	links = [{"label": "Settings", "route": route}, {"label": "Dashboard", "route": "/app/ga4-dashboard"}]
+	links = [{"label": "Settings", "route": route}, {"label": "Dashboard", "route": "/desk/ga4-dashboard"}]
 	if not prop and not creds:
 		return _tile(key, label, "neutral", "Not configured", configured=False, links=links,
 			notes=["Add the GA4 property ID and service-account credentials to power the marketing dashboard."])
@@ -420,7 +420,7 @@ def _mdm_provider_tile(key, label, route, *, provider, enabled_field, status_fie
 	mode = _single("MDM Settings", "provider_mode") or "Mock"
 	enabled = bool(_single("MDM Settings", enabled_field))
 	status = _single("MDM Settings", status_field) or "Not Configured"
-	links = [{"label": "Settings", "route": route}, {"label": "Sync Log", "route": "/app/mdm-sync-log"}]
+	links = [{"label": "Settings", "route": route}, {"label": "Sync Log", "route": "/desk/mdm-sync-log"}]
 	if not enabled:
 		return _tile(key, label, "neutral", "Disabled", configured=False, links=links,
 			notes=["Enable this provider in MDM Settings to sync its devices."])
@@ -466,13 +466,13 @@ def _check_action1(key, label, route):
 
 
 _INTEGRATIONS = [
-	("quickbooks", "QuickBooks Online", "/app/quickbooks-online-settings", _check_quickbooks),
-	("drive", "Google Drive", "/app/project-folder-google-drive-settings", _check_drive),
-	("triton", "Telephony (Triton / Twilio)", "/app/triton-settings", _check_triton),
-	("gemini", "AI Drafting (Gemini Enterprise Agent Platform)", "/app/project-folder-google-drive-settings", _check_gemini),
-	("ga4", "Analytics (GA4 / Search Console)", "/app/ga4-settings", _check_ga4),
-	("miradore", "MDM — Miradore (mobile)", "/app/mdm-settings", _check_miradore),
-	("action1", "RMM — Action1 (computers)", "/app/mdm-settings", _check_action1),
+	("quickbooks", "QuickBooks Online", "/desk/quickbooks-online-settings", _check_quickbooks),
+	("drive", "Google Drive", "/desk/project-folder-google-drive-settings", _check_drive),
+	("triton", "Telephony (Triton / Twilio)", "/desk/triton-settings", _check_triton),
+	("gemini", "AI Drafting (Gemini Enterprise Agent Platform)", "/desk/project-folder-google-drive-settings", _check_gemini),
+	("ga4", "Analytics (GA4 / Search Console)", "/desk/ga4-settings", _check_ga4),
+	("miradore", "MDM — Miradore (mobile)", "/desk/mdm-settings", _check_miradore),
+	("action1", "RMM — Action1 (computers)", "/desk/mdm-settings", _check_action1),
 ]
 
 

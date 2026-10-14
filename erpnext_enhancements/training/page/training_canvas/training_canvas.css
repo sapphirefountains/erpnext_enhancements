@@ -367,10 +367,6 @@
 	position: relative;
 }
 
-.tc-blockwrap.is-removed {
-	opacity: 0.5;
-}
-
 /* The per-block tool cluster, revealed on hover/focus of the wrap. */
 .tc-blocktools {
 	position: absolute;
@@ -431,26 +427,6 @@
 .tc-sheet .tr-block-body.tc-rich:focus {
 	box-shadow: inset 0 0 0 2px var(--tr-accent, #7c3aed);
 	border-radius: 8px;
-}
-
-.tc-removed-note {
-	display: none;
-	margin: 6px 0 14px;
-	font-size: 0.85rem;
-	color: var(--tr-muted, #5f6488);
-}
-
-.tc-blockwrap.is-removed .tc-removed-note {
-	display: block;
-}
-
-.tc-undo {
-	border: none;
-	background: none;
-	color: var(--tr-accent, #7c3aed);
-	font: inherit;
-	font-weight: 600;
-	cursor: pointer;
 }
 
 /* ----------------------------------------------------------- block settings */
@@ -838,10 +814,6 @@
 	margin: 0;
 	padding-left: 16px;
 	line-height: 1.5;
-}
-
-.tc-readiness-where {
-	color: var(--text-muted, #6b7280);
 }
 
 .tc-readiness-more {

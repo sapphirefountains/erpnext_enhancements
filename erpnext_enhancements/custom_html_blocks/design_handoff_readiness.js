@@ -83,7 +83,7 @@
                 const meta = [d.customer, d.summary].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="dhr-row">
-                        <a class="dhr-name" href="/app/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="dhr-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
                         ${pills.join("")}
                         <span class="dhr-meta">${meta}</span>
                         <span class="dhr-age">${esc(d.status)}</span>

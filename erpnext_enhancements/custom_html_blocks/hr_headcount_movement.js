@@ -102,7 +102,7 @@
                             .join(" · ");
                         return `
                     <div class="hhm-row">
-                        <a class="hhm-name" href="/app/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
+                        <a class="hhm-name" href="/desk/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
                         <span class="hhm-meta">${meta}</span>
                         <span class="hhm-age">${esc(e.date || "")}</span>
                     </div>`;

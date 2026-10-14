@@ -243,7 +243,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 20:00:00.000000",
+ "modified": "2026-10-13 18:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Marketing Hub",
@@ -308,7 +308,7 @@
   {
    "label": "Marketing Dashboard",
    "type": "URL",
-   "url": "/app/marketing-dashboard"
+   "url": "/desk/marketing-dashboard"
   }
  ],
  "title": "Marketing Hub",

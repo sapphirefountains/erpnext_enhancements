@@ -90,7 +90,7 @@
                 const meta = [l.company, l.status, l.owner].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="mul-row">
-                        <a class="mul-name" href="/app/lead/${encodeURIComponent(l.name)}">${esc(l.title)}</a>
+                        <a class="mul-name" href="/desk/lead/${encodeURIComponent(l.name)}">${esc(l.title)}</a>
                         <span class="mul-meta">${meta}</span>
                         <span class="mul-age">${esc(l.created || "")}</span>
                     </div>`;

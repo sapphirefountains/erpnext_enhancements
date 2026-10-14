@@ -1,7 +1,7 @@
 {#
   Feedback SPA shell (served at /feedback and every sub-path; controller: feedback.py).
 
-  Chrome-free full-viewport application page, following the chat / kiosk / training shells.
+  Chrome-free full-viewport application page, following the kiosk / training shells.
   Its jobs, and only these:
 
     * load feedback.bundle.css and feedback.bundle.js — BUNDLES, resolved through assets.json
@@ -15,7 +15,7 @@
       with a straight path from any employee to every reviewer.
 
   NO VUE. The vendored UMD global is app_include_js, i.e. Desk pages only, and this is a
-  website route. Plain DOM, same as /chat.
+  website route. Plain DOM, same as the kiosk.
 
   Deep links: hooks.py routes /feedback/<path:feedback_path> here, so a hard refresh at
   /feedback/request/ER-2026-00001 renders this same shell and the bundle reads the path out

@@ -15,9 +15,9 @@
  * per card through --lt-swatch and which must NOT shift with the theme: a red gap
  * is red in the dark too.
  *
- * The Leaflet overrides at the bottom exist because Leaflet's own stylesheet is
- * light-only; without them a dark desk gets white zoom buttons and white popups
- * on a dark map.
+ * The map is Google Maps, which draws its own controls and info windows, so this
+ * file carries no map-library overrides; it only styles the page chrome and the
+ * HTML markers/labels the script hands to the map.
  *
  * Class contract: tests/test_location_timeline_page.py asserts every "lt-" class
  * the page script emits has a rule here, so an unstyled element cannot ship
@@ -507,10 +507,10 @@
     margin-top: 4px;
 }
 
-/* ---- map markers (Leaflet divIcons) -------------------------------------- */
+/* ---- map markers (HTML content of Google markers) ------------------------ */
 
-/* Every divIcon uses className "lt-icon" so Leaflet's white div-icon box
-   never appears; the visible shape is the child element. */
+/* Every marker's HTML content is wrapped in an "lt-icon" div that carries no
+   background or border of its own; the visible shape is the child element. */
 .lt-icon {
     background: none;
     border: 0;

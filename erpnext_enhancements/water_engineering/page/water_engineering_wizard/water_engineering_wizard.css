@@ -113,7 +113,6 @@
 	background: var(--bg-green, #e6f4ea);
 	color: var(--text-on-green, #18794e);
 }
-.we-warn-badge,
 .we-badge.we-warn {
 	background: var(--bg-yellow, #fef3c7);
 	color: var(--text-on-yellow, #7a5b00);

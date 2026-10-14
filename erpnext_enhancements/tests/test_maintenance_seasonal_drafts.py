@@ -312,7 +312,7 @@ class TestKioskButton(unittest.TestCase):
             [("New regular visit form", None), ("Open the Winterization form", "WINTER")],
         )
         self.assertEqual(ctx["forms"][0]["route"], ctx["form_route"])
-        self.assertEqual(ctx["forms"][1]["route"], "/app/visit-wizard?record=WINTER")
+        self.assertEqual(ctx["forms"][1]["route"], "/desk/visit-wizard/WINTER")
 
     def test_the_regular_draft_leads_even_when_a_seasonal_one_is_newer(self):
         _site()
@@ -320,7 +320,7 @@ class TestKioskButton(unittest.TestCase):
         _draft("WINTER", "Winterization", modified="2026-10-05 12:40:00")
         ctx = kiosk.get_maintenance_context(project="PRJ-1")
         self.assertEqual(ctx["draft"], "REGULAR")
-        self.assertEqual(ctx["form_route"], "/app/visit-wizard?record=REGULAR")
+        self.assertEqual(ctx["form_route"], "/desk/visit-wizard/REGULAR")
         self.assertEqual(
             [f["label"] for f in ctx["forms"]],
             ["Open the regular visit form", "Open the Winterization form"],

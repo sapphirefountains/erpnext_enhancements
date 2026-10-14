@@ -148,7 +148,7 @@ function renderRecentRuns(frm) {
 				? rows
 						.map((row) => {
 							const colour = STATUS_COLOURS[row.status] || "gray";
-							const link = `/app/offsite-backup-log/${encodeURIComponent(row.name)}`;
+							const link = `/desk/offsite-backup-log/${encodeURIComponent(row.name)}`;
 							return `<tr>
 								<td><a href="${link}">${escapeHtml(row.name)}</a></td>
 								<td>${escapeHtml(row.backup_type)}</td>

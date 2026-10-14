@@ -128,7 +128,7 @@ function warn_about_missing_prerequisites(frm) {
 				// cannot be saved at all no matter what else is filled in.
 				missing.push(
 					__("No {0} exists yet, and an Asset cannot be saved without one.", [
-						`<a href="/app/location/new">${__("Location")}</a>`,
+						`<a href="/desk/location/new">${__("Location")}</a>`,
 					])
 				);
 			}

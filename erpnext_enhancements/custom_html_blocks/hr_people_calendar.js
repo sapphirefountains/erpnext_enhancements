@@ -77,7 +77,7 @@
                 const meta = [e.role, __("{0} years", [e.years])].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="hpc-row">
-                        <a class="hpc-name" href="/app/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
+                        <a class="hpc-name" href="/desk/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
                         <span class="hpc-meta">${meta}</span>
                         <span class="hpc-age">${esc(when)}</span>
                     </div>`;

@@ -1,4 +1,4 @@
-"""Backend for the Project Planner desk page (``/app/project-planner``).
+"""Backend for the Project Planner desk page (``/desk/project-planner``).
 
 The planner books people onto project Tasks by the hour. It answers two questions on one
 screen: *when is each task happening and who is on it*, and *how many hours does each person
@@ -3861,7 +3861,7 @@ def _people_days(start, end, resources=None, google=True):
 
 @frappe.whitelist()
 def get_my_week(date=None):
-	"""The signed-in person's own week, for the phone (P3.10): ``/app/project-planner/my-week``.
+	"""The signed-in person's own week, for the phone (P3.10): ``/desk/project-planner/my-week``.
 
 	Found through Planner Resource ``user``. ``{"resource", "label", "start", "end", "today",
 	"days": [day_entry]}``; with no active Planner Resource, ``resource`` is None and ``message``

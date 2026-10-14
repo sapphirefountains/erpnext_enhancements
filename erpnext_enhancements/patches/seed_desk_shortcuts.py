@@ -76,7 +76,7 @@ DEFAULTS = [
 		# HTML Block. (The standalone desk page this used to link to was retired when
 		# the two dashboards were consolidated — v1.159.8.)
 		"link_type": "URL",
-		"url": "/app/projects",
+		"url": "/desk/projects",
 		"visible_to_all": 1,
 		"roles": [],
 		"sequence": 60,

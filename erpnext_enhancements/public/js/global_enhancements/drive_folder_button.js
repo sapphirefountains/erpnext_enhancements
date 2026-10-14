@@ -42,7 +42,7 @@
 								title: __("Drive Folder Missing"),
 								indicator: "orange",
 								message: __(
-									"The Google Drive folder linked to this record no longer exists, or is no longer shared with the Drive service account. Opening it would show a Google 404.<br><br>Folder ID: <code>{0}</code><br><br>Either re-link this record in the <a href='/app/drive-link-manager'>Drive Link Manager</a>, or restore the folder from the Shared Drive trash and press <b>Check Drive Links</b> on Project Folder Google Drive Settings.",
+									"The Google Drive folder linked to this record no longer exists, or is no longer shared with the Drive service account. Opening it would show a Google 404.<br><br>Folder ID: <code>{0}</code><br><br>Either re-link this record in the <a href='/desk/drive-link-manager'>Drive Link Manager</a>, or restore the folder from the Shared Drive trash and press <b>Check Drive Links</b> on Project Folder Google Drive Settings.",
 									[frappe.utils.escape_html(folder_id)]
 								),
 							});

@@ -392,7 +392,7 @@ erpnext_enhancements.unified_controller = {
 							? `<span class="badge badge-light" style="font-size: 10px; margin-left: 8px; vertical-align: middle;" title="${__("Primary for the account, not for this document")}">${__("Account primary")}</span>`
 							: "";
 
-					const contact_url = frappe.urllib.get_full_url(`/app/contact/${c.name}`);
+					const contact_url = frappe.urllib.get_full_url(`/desk/contact/${encodeURIComponent(c.name)}`);
 					const email_link = c.custom_email
 						? `<a href="mailto:${c.custom_email}">${c.custom_email}</a>`
 						: "";
@@ -402,7 +402,7 @@ erpnext_enhancements.unified_controller = {
 					const linked_to_links = (c.links || [])
 						.map((l) => {
 							const url = frappe.urllib.get_full_url(
-								`/app/${frappe.router.slug(l.doctype)}/${l.name}`,
+								`/desk/${frappe.router.slug(l.doctype)}/${encodeURIComponent(l.name)}`,
 							);
 							return `<a href="${url}" target="_blank">${l.name} (${l.doctype})</a>`;
 						})
@@ -443,7 +443,7 @@ erpnext_enhancements.unified_controller = {
 
 				wrapper.find(".edit-contact").on("click", (e) => {
 					const name = $(e.currentTarget).data("name");
-					window.open(frappe.urllib.get_full_url(`/app/contact/${name}`), "_blank");
+					window.open(frappe.urllib.get_full_url(`/desk/contact/${encodeURIComponent(name)}`), "_blank");
 				});
 
 				wrapper.find(".set-primary-contact").on("click", (e) => {
@@ -548,12 +548,12 @@ erpnext_enhancements.unified_controller = {
 						!is_doc_primary && !on_party_form && a.is_primary_address
 							? `<span class="badge badge-light" style="font-size: 10px; margin-left: 8px; vertical-align: middle;" title="${__("Primary for the account, not for this document")}">${__("Account primary")}</span>`
 							: "";
-					const address_url = frappe.urllib.get_full_url(`/app/address/${a.name}`);
+					const address_url = frappe.urllib.get_full_url(`/desk/address/${encodeURIComponent(a.name)}`);
 
 					const linked_to_links = (a.links || [])
 						.map((l) => {
 							const url = frappe.urllib.get_full_url(
-								`/app/${frappe.router.slug(l.doctype)}/${l.name}`,
+								`/desk/${frappe.router.slug(l.doctype)}/${encodeURIComponent(l.name)}`,
 							);
 							return `<a href="${url}" target="_blank">${l.name} (${l.doctype})</a>`;
 						})
@@ -593,7 +593,7 @@ erpnext_enhancements.unified_controller = {
 
 				wrapper.find(".edit-address").on("click", (e) => {
 					const name = $(e.currentTarget).data("name");
-					window.open(frappe.urllib.get_full_url(`/app/address/${name}`), "_blank");
+					window.open(frappe.urllib.get_full_url(`/desk/address/${encodeURIComponent(name)}`), "_blank");
 				});
 
 				wrapper.find(".set-primary-address").on("click", (e) => {

@@ -351,8 +351,19 @@ def markdown(md_text):
 	The ``.ee-md`` descendant rules in the shell do it instead — premailer
 	inlines them onto the generated elements when the email is sent (verified on
 	this site: ``<h2 id="heading" style="color:#00263E; font-size:18px">``).
+
+	Sanitized (v1.623.0). The one caller, the morning briefing, renders text an AI
+	model wrote from a prompt carrying record text other people type (task subjects,
+	comments), and ``md_to_html`` is markdown2 with no safe mode, so raw HTML in that
+	text passed straight into the email. ``sanitize_html`` (nh3) keeps everything
+	markdown generates — headings, lists, tables, links — and drops scripts, event
+	handlers and unsafe URLs. The Desk copy needs nothing: ``frappe.markdown`` has
+	sanitized its own output since frappe v16.30.0, and prod runs 16.50.
 	"""
-	return f'<div class="ee-md">{frappe.utils.md_to_html(md_text or "")}</div>'
+	from frappe.utils.html_utils import sanitize_html
+
+	html = str(frappe.utils.md_to_html(md_text or "") or "")
+	return f'<div class="ee-md">{sanitize_html(html, always_sanitize=True)}</div>'
 
 
 def raw(html):

@@ -1,4 +1,4 @@
-"""Backend for the Visit Wizard desk page (``/app/visit-wizard``).
+"""Backend for the Visit Wizard desk page (``/desk/visit-wizard``).
 
 Three whitelisted endpoints drive the technician's guided visit flow:
 :func:`get_visit_bootstrap` (load + first-open template instantiation),

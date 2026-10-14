@@ -61,7 +61,7 @@ def _list_link(label, filters):
 	"""Deep link into a filtered Managed Device list view."""
 	from urllib.parse import urlencode
 
-	return {"label": label, "route": "/app/managed-device?" + urlencode(filters)}
+	return {"label": label, "route": "/desk/managed-device?" + urlencode(filters)}
 
 
 @frappe.whitelist()
@@ -92,7 +92,7 @@ def get_fleet_health():
 			"red" if status_counts.get("Lost/Stolen", 0) else "green",
 			f"{active_total} active · {total} total",
 			status_metrics,
-			links=[{"label": "All devices", "route": "/app/managed-device"}],
+			links=[{"label": "All devices", "route": "/desk/managed-device"}],
 		)
 	)
 

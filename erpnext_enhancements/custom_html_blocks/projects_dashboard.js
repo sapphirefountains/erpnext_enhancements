@@ -1144,8 +1144,8 @@
 
             let row = $(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/app/project/${p.name}" class="font-weight-bold">${p.project_name}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/app/project/${p.name}" class="text-muted">${p.name}</a></td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
                     ${build_editable_priority_cell(p.name, 'custom_company_priority', p.custom_company_priority, priority_options.company_priority || [], 'company_priority')}
                     ${build_editable_priority_cell(p.name, 'custom_project_priority', p.custom_project_priority, priority_options.project_priority || [], 'project_priority')}
                     <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
@@ -1294,8 +1294,8 @@
 
             table.find('tbody').append(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/app/project/${p.name}" class="font-weight-bold">${p.project_name}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/app/project/${p.name}" class="text-muted">${p.name}</a></td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
                     <td class="dashcol dashcol-status" style="min-width: 140px;">${status_html}</td>
                     <td class="dashcol dashcol-custom_project_priority" style="min-width: 140px;">${priority_html}</td>
                     <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
@@ -1415,8 +1415,8 @@
 
             table.find('tbody').append(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/app/project/${p.name}" class="font-weight-bold">${p.project_name}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/app/project/${p.name}" class="text-muted">${p.name}</a></td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
                     <td class="dashcol dashcol-status" style="min-width: 120px;"><span class="badge badge-${status_badge}">${p.status}</span></td>
                     <td class="dashcol dashcol-project_type" style="min-width: 150px;">${p.project_type || "Uncategorized"}</td>
                     <td class="dashcol dashcol-project_user text-muted" style="min-width: 150px;">${p.project_user || "Unassigned"}</td>

@@ -89,7 +89,7 @@
                     const meta = [e.designation, e.department].filter(Boolean).map(esc).join(" · ");
                     return `
                     <div class="htk-row">
-                        <a class="htk-name" href="/app/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
+                        <a class="htk-name" href="/desk/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
                         <span class="htk-meta">${meta}</span>
                     </div>`;
                 })

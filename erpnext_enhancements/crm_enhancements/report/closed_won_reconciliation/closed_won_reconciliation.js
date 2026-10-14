@@ -73,7 +73,7 @@ function showCandidateDialog(report, row, candidates) {
 		.map(
 			(c) => `
 		<tr>
-			<td><a href="/app/project/${encodeURIComponent(c.project)}" target="_blank">${frappe.utils.escape_html(
+			<td><a href="/desk/project/${encodeURIComponent(c.project)}" target="_blank">${frappe.utils.escape_html(
 				c.project
 			)}</a><br><span class="text-muted small">${frappe.utils.escape_html(c.project_name || "")}</span></td>
 			<td>${frappe.datetime.str_to_user(c.start_date) || ""}</td>

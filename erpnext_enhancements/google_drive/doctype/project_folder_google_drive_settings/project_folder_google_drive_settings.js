@@ -14,7 +14,7 @@
  *    folder and flags the records whose folder is gone, so their Open Drive
  *    Folder button stops opening a Google 404. Also runs daily.
  *  - Drive Link Manager: opens the reviewed bulk-linking dashboard
- *    (/app/drive-link-manager) — fuzzy-matched, manual-review, fault-tolerant.
+ *    (/desk/drive-link-manager) — fuzzy-matched, manual-review, fault-tolerant.
  */
 frappe.ui.form.on("Project Folder Google Drive Settings", {
 	refresh(frm) {

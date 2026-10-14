@@ -77,7 +77,7 @@
                 const meta = [s.project_title, s.customer, s.role].filter(Boolean).map(esc).join(" · ");
                 return `
                     <div class="pms-row">
-                        <a class="pms-name" href="/app/project/${encodeURIComponent(s.project)}">${esc(s.title)}</a>
+                        <a class="pms-name" href="/desk/project/${encodeURIComponent(s.project)}">${esc(s.title)}</a>
                         <span class="pms-pill ${tone}">${esc(__("{0}d late", [s.overdue_days]))}</span>
                         <span class="pms-meta">${meta}</span>
                         <span class="pms-age">${esc(s.due_by || "")}</span>

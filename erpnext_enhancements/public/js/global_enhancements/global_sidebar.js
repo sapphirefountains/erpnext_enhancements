@@ -5,7 +5,7 @@
  * Loaded via: hooks.py `app_include_js` (global).
  *
  * Injects a custom "Home" entry just above the "Workspaces" group in the left
- * sidebar that routes to /app/home. The item is built by cloning the existing
+ * sidebar that routes to /desk/home. The item is built by cloning the existing
  * "Workspaces" sidebar item (to inherit Frappe's markup/styles), then relabelled
  * and re-iconed. Because Frappe re-renders the sidebar on navigation, injection
  * is re-run on every route change plus a 1s polling fallback (both idempotent,

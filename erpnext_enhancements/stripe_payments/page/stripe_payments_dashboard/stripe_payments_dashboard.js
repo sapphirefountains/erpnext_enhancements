@@ -74,13 +74,13 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		const rows = (data.recent || [])
 			.map(
 				(r) => `<tr>
-				<td><a href="/app/stripe-payment/${encodeURIComponent(r.name)}">${esc(r.name)}</a></td>
+				<td><a href="/desk/stripe-payment/${encodeURIComponent(r.name)}">${esc(r.name)}</a></td>
 				<td>${esc(r.customer)}</td>
-				<td>${r.sales_invoice ? `<a href="/app/sales-invoice/${encodeURIComponent(r.sales_invoice)}">${esc(r.sales_invoice)}</a>` : "—"}</td>
+				<td>${r.sales_invoice ? `<a href="/desk/sales-invoice/${encodeURIComponent(r.sales_invoice)}">${esc(r.sales_invoice)}</a>` : "—"}</td>
 				<td class="text-right">${format_currency(r.amount, r.currency)}</td>
 				<td>${esc(r.payment_method_type || "—")}</td>
 				<td><span class="indicator-pill ${statusColor(r.status)}">${esc(r.status)}</span></td>
-				<td>${r.payment_entry ? `<a href="/app/payment-entry/${encodeURIComponent(r.payment_entry)}">${esc(r.payment_entry)}</a>` : "—"}</td>
+				<td>${r.payment_entry ? `<a href="/desk/payment-entry/${encodeURIComponent(r.payment_entry)}">${esc(r.payment_entry)}</a>` : "—"}</td>
 			</tr>`,
 			)
 			.join("");

@@ -1381,3 +1381,8 @@ erpnext_enhancements.patches.set_desk_date_and_time_format
 # blanks a value. Writes with set_value(update_modified=False) after saving a private undo file; leaves the counts as
 # a comment on the report. Cannot raise, safe twice.
 erpnext_enhancements.patches.normalize_stored_values
+# Custom pages S1 (v1.623.0, TASK-2026-02803): force-imports the 11 workspaces and the Sales Pipeline page this release
+# edits (hub dashboard shortcuts read /desk, Stripe Payments on Finance Hub, Contract Builder on Operations + Sales,
+# the two training review pages, a page title), retires the Hierarchical Task View page (its sidebar/shortcut rows,
+# then the Page, without force) and moves the seeded /app/projects Desk Shortcut to /desk. Cannot raise, safe twice.
+erpnext_enhancements.patches.custom_pages_s1_navigation

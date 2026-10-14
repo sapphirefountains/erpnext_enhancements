@@ -29,7 +29,7 @@
   {
    "fieldname": "intro_html",
    "fieldtype": "HTML",
-   "options": "<p class=\"text-muted\">The Triton <b>connection</b> (Gateway URL + Admin Webhook Secret) is read from the shared <a href=\"/app/triton-settings\">Triton Settings</a>. This page only controls the embedded assistant widget. Use <b>Test Connection</b> (menu) to verify.</p>"
+   "options": "<p class=\"text-muted\">The Triton <b>connection</b> (Gateway URL + Admin Webhook Secret) is read from the shared <a href=\"/desk/triton-settings\">Triton Settings</a>. This page only controls the embedded assistant widget. Use <b>Test Connection</b> (menu) to verify.</p>"
   },
   {
    "fieldname": "behavior_section",

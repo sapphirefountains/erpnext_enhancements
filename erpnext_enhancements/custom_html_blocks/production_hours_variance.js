@@ -94,7 +94,7 @@
                     .join(" · ");
                 return `
                     <div class="phv-row">
-                        <a class="phv-name" href="/app/project/${encodeURIComponent(p.name)}">${esc(p.title)}</a>
+                        <a class="phv-name" href="/desk/project/${encodeURIComponent(p.name)}">${esc(p.title)}</a>
                         <span class="phv-meta">${meta}</span>
                         <span class="phv-bar"><span class="phv-fill ${fill}" style="width:${width}%"></span></span>
                         <span class="phv-age ${tone}">${esc(num(p.used_pct, 0) + "%")}</span>

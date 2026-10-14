@@ -1,5 +1,5 @@
 /**
- * Desk page: GA4 Dashboard (route /app/ga4-dashboard).
+ * Desk page: GA4 Dashboard (route /desk/ga4-dashboard).
  *
  * Loaded by Frappe's page framework on page load (the page is registered by
  * ga4_dashboard.json; visible to System Manager / Sales User / Sales Manager).

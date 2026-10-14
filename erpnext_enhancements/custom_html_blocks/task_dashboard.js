@@ -9,7 +9,9 @@
 //
 // Refresh model: realtime "project_dashboard_updated" (already published on
 // every Project/Task save by project_dashboard.publish_realtime_update),
-// debounced 5s, plus a 5-minute interval as the kiosk fallback. Workspace
+// debounced 5s, plus a 5-minute interval as the kiosk fallback. Both only fetch
+// while the block is on screen (onScreen); a refresh skipped off screen is paid
+// by the return helper, or by the 30 s clock tick after it is back. Workspace
 // re-renders re-run this whole script with a NEW root_element, so all timers
 // and the single realtime subscription are stored on `window` and re-pointed
 // instead of stacked. A re-render is the first visit and coming back from a
@@ -44,14 +46,39 @@
         }
     }
 
+    // Is this render's block actually on screen? The desk is a single-page app: leaving
+    // the Home workspace for a form or list hides the block (display:none on an
+    // ancestor) or, once the workspace re-renders, detaches it, and its timers keep
+    // firing all day. `root_element` is a shadow root, so ask its host element:
+    // isConnected is false once detached and getClientRects() is empty under any
+    // display:none ancestor. That beats comparing frappe.get_route() to a workspace
+    // name, which breaks on a private or renamed Home. Fails open (true) without a host.
+    function onScreen(container) {
+        const host = container && container.host;
+        // No host, or one without layout APIs (a test double), fails open: polling as before.
+        if (!host || typeof host.getClientRects !== "function") return true;
+        return Boolean(host.isConnected && host.getClientRects().length > 0);
+    }
+
     function startApp(container) {
         const state = (window.__ee_task_dashboard = window.__ee_task_dashboard || {});
 
         // Re-point timers at the freshest render; never stack them.
         if (state.refresh_timer) clearInterval(state.refresh_timer);
         if (state.clock_timer) clearInterval(state.clock_timer);
+        state.refresh_timer = state.clock_timer = null;
+
+        // Anything the interval or realtime wanted to do while the block was off screen is
+        // owed one refresh. An ordinary return to the workspace is refreshed at once by the
+        // shared return helper below (the router handler lives there, not in a block); this
+        // flag covers a block that comes back some other way, via the 30 s tick_clock.
+        state.stale = false;
 
         function tick_clock() {
+            // The clock is local, so it keeps ticking; it is also the cheap heartbeat that
+            // notices the block came back and pays the refresh it was owed.
+            if (!onScreen(container)) return;
+            if (state.stale && state.refresh === refresh && !document.hidden) refresh();
             const el = container.querySelector("#tdb-clock");
             if (!el) return;
             const now = new Date();
@@ -61,28 +88,45 @@
         // The interval, a realtime update and a return to the workspace can all ask at
         // once, so each ask takes a ticket and only the newest answer draws.
         function refresh() {
+            state.stale = false;
             const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
             frappe
                 .call("erpnext_enhancements.api.task_dashboard.get_task_dashboard_data")
                 .then((r) => {
                     if (container.__ee_ticket === ticket) render(container, r.message);
                 })
-                .catch((err) => console.error("Task Dashboard refresh failed:", err));
+                .catch((err) => {
+                    console.error("Task Dashboard refresh failed:", err);
+                    // A transient failure never wipes data already showing; only a block
+                    // that has never drawn swaps its "Loading..." for a message.
+                    if (container.__ee_ticket !== ticket || container.__ee_rendered) return;
+                    const el = container.querySelector("#tdb-top-projects");
+                    if (el) el.innerHTML = '<div class="tdb-empty">Could not load the dashboard. It will retry shortly.</div>';
+                });
+        }
+
+        // Interval and realtime both come through here: refresh only while the block is
+        // on screen, skip silently otherwise and remember that a refresh is owed.
+        function refresh_if_visible() {
+            if (document.hidden || !onScreen(container)) {
+                state.stale = true;
+                return;
+            }
+            refresh();
         }
 
         state.refresh = refresh;
-        state.refresh_timer = setInterval(() => {
-            if (!document.hidden) refresh();
-        }, REFRESH_MS);
+        state.refresh_if_visible = refresh_if_visible;
+        state.refresh_timer = setInterval(refresh_if_visible, REFRESH_MS);
         state.clock_timer = setInterval(tick_clock, 30 * 1000);
 
         // One realtime subscription for the lifetime of the tab; it always
-        // calls whatever the latest render registered as state.refresh.
+        // calls whatever the latest render registered as state.refresh_if_visible.
         if (!state.realtime_bound && window.frappe && frappe.realtime) {
             state.realtime_bound = true;
             const debounced = frappe.utils.debounce(() => {
-                if (!document.hidden && window.__ee_task_dashboard.refresh) {
-                    window.__ee_task_dashboard.refresh();
+                if (window.__ee_task_dashboard.refresh_if_visible) {
+                    window.__ee_task_dashboard.refresh_if_visible();
                 }
             }, DEBOUNCE_MS);
             frappe.realtime.on("project_dashboard_updated", debounced);
@@ -117,12 +161,12 @@
 
     function task_row(task, extra_badge) {
         const project = task.project
-            ? `<a class="tdb-task-project" href="/app/project/${encodeURIComponent(task.project)}">
+            ? `<a class="tdb-task-project" href="${frappe.utils.get_form_link("Project", task.project)}">
                    &#128194; ${esc(task.project_label || task.project)}${rank_star(task.project_rank)}
                </a>`
             : '<span class="tdb-task-project tdb-no-project">&#9888; No project linked</span>';
         return `
-            <a class="tdb-task prio-${priority_slug(task.priority)}" href="/app/task/${encodeURIComponent(task.name)}">
+            <a class="tdb-task prio-${priority_slug(task.priority)}" href="${frappe.utils.get_form_link("Task", task.name)}">
                 <div class="tdb-task-top">
                     <span class="tdb-task-subject">${esc(task.subject)}</span>
                     ${extra_badge || ""}
@@ -135,6 +179,7 @@
 
     function render(container, data) {
         if (!data) return;
+        container.__ee_rendered = true;
 
         const updated = container.querySelector("#tdb-updated");
         if (updated) {
@@ -147,7 +192,7 @@
             projects_el.innerHTML = data.top_projects
                 .map(
                     (p) => `
-                    <a class="tdb-project" href="/app/project/${encodeURIComponent(p.name)}">
+                    <a class="tdb-project" href="${frappe.utils.get_form_link("Project", p.name)}">
                         <span class="tdb-project-rank">${esc(p.rank)}</span>
                         <span class="tdb-project-main">
                             <span class="tdb-project-name">${esc(p.project_name || p.name)}</span>

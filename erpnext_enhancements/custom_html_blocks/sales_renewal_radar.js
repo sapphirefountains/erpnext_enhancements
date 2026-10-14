@@ -86,7 +86,7 @@
                 const tone = c.days_left <= 30 ? "srr-bad" : c.days_left <= 60 ? "srr-warn" : "";
                 return `
                     <div class="srr-row">
-                        <a class="srr-name" href="/app/sapphire-maintenance-contract/${encodeURIComponent(c.name)}">${esc(c.name)}</a>
+                        <a class="srr-name" href="/desk/sapphire-maintenance-contract/${encodeURIComponent(c.name)}">${esc(c.name)}</a>
                         ${flag}
                         <span class="srr-meta">${meta}</span>
                         <span class="srr-age ${tone}">${esc(__("{0}d left", [c.days_left]))}</span>

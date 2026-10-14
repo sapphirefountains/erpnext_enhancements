@@ -104,8 +104,8 @@ frappe.provide("erpnext_enhancements");
 		try {
 			const probe = MentionBlot.create({
 				id: "probe",
-				value: '<a class="mention-link" href="/app/user/probe" target="_blank">Probe',
-				link: "/app/user/probe",
+				value: '<a class="mention-link" href="/desk/user/probe" target="_blank">Probe',
+				link: "/desk/user/probe",
 				denotationChar: "@",
 				isGroup: "false",
 			});

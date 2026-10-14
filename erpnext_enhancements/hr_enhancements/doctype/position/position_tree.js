@@ -1,4 +1,4 @@
-// The company ladder as a tree — /app/position/view/tree.
+// The company ladder as a tree — /desk/position/view/tree.
 //
 // This IS the "company tree for positions" ask. It is deliberately the tree view
 // rather than a bespoke chart page: Frappe's own tree gives drag-free reparenting,
@@ -6,7 +6,7 @@
 // that only renders is a chart nobody maintains.
 //
 // The people tree is a different route and already exists in ERPNext core —
-// /app/employee/view/tree, a nested set on `reports_to`. The two answer different
+// /desk/employee/view/tree, a nested set on `reports_to`. The two answer different
 // questions and are linked from the HR workspace side by side: `reports_to` is who
 // runs your week, Position is who is qualified to say you can do the job.
 

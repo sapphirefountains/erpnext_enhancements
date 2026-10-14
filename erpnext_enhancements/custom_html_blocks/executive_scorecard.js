@@ -78,7 +78,7 @@
                     // Only link where the viewer can actually open that dashboard — an
                     // Accounts Manager should not get a link into HR.
                     const href = c.linkable
-                        ? `/app/${frappe.router.slug(c.department + " Dashboard")}`
+                        ? `/desk/${frappe.router.slug(c.department + " Dashboard")}`
                         : null;
                     const tag = href ? "a" : "div";
                     const attrs = href ? ` href="${esc(href)}"` : "";

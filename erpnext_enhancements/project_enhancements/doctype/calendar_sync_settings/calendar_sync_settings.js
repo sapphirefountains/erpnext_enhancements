@@ -138,7 +138,7 @@ function cs_render_time_off(frm, t) {
 	rows.push(
 		cs_line(
 			__("Waiting for review"),
-			waiting ? `<a href="${cs_esc(t.review_route || "/app/calendar-time-off-review")}">${cs_esc(waiting)}</a>` : cs_esc(0)
+			waiting ? `<a href="${cs_esc(t.review_route || "/desk/calendar-time-off-review")}">${cs_esc(waiting)}</a>` : cs_esc(0)
 		)
 	);
 	rows.push(cs_line(__("Alerts go to"), cs_esc((t.recipients || []).join(", ") || __("nobody yet"))));

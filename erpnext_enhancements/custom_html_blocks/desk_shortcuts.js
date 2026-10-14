@@ -55,8 +55,27 @@
                 if (!u) return;
                 if (/^https?:\/\//i.test(u)) {
                     window.open(u, "_blank", "noopener");
+                } else if (/^\/(desk|app)(?:[/?#]|$)/i.test(u)) {
+                    // A Desk path routes in place. A full load boots the whole Desk again, and Back
+                    // reloads it a second time. A legacy /app/... value is the same page.
+                    const rel = u.replace(/^\/(desk|app)\/?/i, "");
+                    const q = rel.indexOf("?");
+                    const path = (q < 0 ? rel : rel.slice(0, q)).split("#")[0];
+                    if (q >= 0) {
+                        const opts = {};
+                        new URLSearchParams(rel.slice(q + 1).split("#")[0]).forEach((v, k) => (opts[k] = v));
+                        frappe.route_options = opts;
+                    }
+                    const segments = path.split("/").filter(Boolean).map((part) => {
+                        try {
+                            return decodeURIComponent(part);
+                        } catch (e) {
+                            return part; // a stray % is part of the name, not an escape
+                        }
+                    });
+                    frappe.set_route(...segments);
                 } else {
-                    window.location.href = u; // site-relative, e.g. /kiosk
+                    window.location.href = u; // site-relative www page, e.g. /kiosk
                 }
             } else if (s.type === "DocType") {
                 const view = s.doc_view || "List";
