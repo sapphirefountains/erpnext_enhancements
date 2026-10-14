@@ -19,7 +19,19 @@ frappe.listview_settings["Stock Scan Log"] = {
 			return [__("Needs Review: Recorded Late"), "orange", "needs_review,=,1|reviewed,=,0|recorded_late,=,1"];
 		}
 		if (doc.needs_review && !doc.reviewed) return [__("Needs Review"), "orange", "needs_review,=,1|reviewed,=,0"];
-		const colors = { Take: "red", Receive: "green", "Add Without PO": "blue", Move: "purple", "Store Run": "orange" };
+		// Bin assignments (v1.689.0): Assign, Unassign, Move To, Count, Boneyard.
+		const colors = {
+			Take: "red",
+			Receive: "green",
+			"Add Without PO": "blue",
+			Move: "purple",
+			"Store Run": "orange",
+			Assign: "cyan",
+			Unassign: "gray",
+			"Move To": "purple",
+			Count: "yellow",
+			Boneyard: "darkgrey",
+		};
 		return [__(doc.action), colors[doc.action] || "gray", `action,=,${doc.action}`];
 	},
 };
