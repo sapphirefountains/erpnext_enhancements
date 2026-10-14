@@ -372,7 +372,9 @@ class TestTheEditorAppliesThem(unittest.TestCase):
 		none on the guided page, so its column does not send the flag."""
 		self.assertIn("this.set_link_reference(control);", self.editor)
 		self.assertIn("control.get_reference_doctype = () => doctype;", self.editor)
-		self.assertIn("delete out.ignore_user_permissions;", self.editor)
+		# A grid cell searches with its child DocType, given when the cell is made (review of #1300).
+		self.assertNotIn("delete out.ignore_user_permissions;", self.editor)
+		self.assertIn("control.get_reference_doctype = () => child_doctype;", self.editor)
 
 	def test_the_field_group_applies_the_docfields_conditions(self):
 		"""v16's Layout.set_dependant_property skips a plain FieldGroup (no frm, not a dialog)."""
@@ -535,7 +537,103 @@ out.cond = {
 	editor.suppress = new Set(["status", "lost_reasons", "competitors"]);
 	editor.fg = fg;
 	await editor.set_initial_values(fg, { status: "Lost", lost_reasons: [{ lost_reason: "Price" }], competitors: [] });
-	out.initial = { suppress: [...editor.suppress], refreshed: refreshed.length };
+	await new Promise((r) => setTimeout(r, 10));
+	out.initial = { suppress: [...editor.suppress], refreshed: refreshed.length > 0 };
+}
+const tick = () => new Promise((r) => setTimeout(r, 10));
+// Review of #1300: the conditions do not wait for the slowest field; a loaded value is not looked up;
+// a slow first draw does not release the next draw's field.
+{
+	const refreshed = [];
+	let validated_at_set = null;
+	const fast = {
+		set_value() {
+			validated_at_set = this._validated === true;
+			return Promise.resolve();
+		},
+	};
+	const never = { set_value: () => new Promise(() => {}) };
+	const fg = { fields_dict: { status: fast, party_name: never }, refresh_dependency: () => refreshed.push(1) };
+	editor.fg = fg;
+	editor.suppress = new Set(["status", "party_name"]);
+	editor.set_initial_values(fg, { status: "Closed Won", party_name: "Disabled Account" });
+	await tick();
+	out.slow = {
+		refreshed_before_all_settled: refreshed.length > 0,
+		suppress: [...editor.suppress],
+		validated_at_set,
+		flag_left: "_validated" in fast,
+	};
+}
+{
+	const first = { set_value: () => tick() };
+	const second = { set_value: () => new Promise(() => {}) };
+	const fg1 = { fields_dict: { status: first }, refresh_dependency: () => {} };
+	const fg2 = { fields_dict: { status: second }, refresh_dependency: () => {} };
+	editor.fg = fg1;
+	editor.suppress = new Set(["status"]);
+	const done = editor.set_initial_values(fg1, { status: "Lost" });
+	editor.fg = fg2; // redrawn (a quick step change) while the first draw is still setting
+	editor.suppress.add("status");
+	editor.set_initial_values(fg2, { status: "Lost" });
+	await done;
+	out.race = { suppress: [...editor.suppress] };
+}
+
+// ---- collect_step reads only a field the person can change. v16's get_value() of a control that is
+// not "Write" is `this.value || undefined`: a 0 there reads back blank.
+{
+	const kit = await import(`file://${root}/form_kit/index.js`);
+	const control = (status, value) => ({
+		status,
+		value,
+		get_status() { return this.status; },
+		get_value() { return this.status === "Write" ? this.value : this.value || undefined; },
+	});
+	const ed = new RecordEditor();
+	const step = {
+		key: "basics",
+		fields: [
+			{ fieldname: "is_stock_item", fieldtype: "Check" },
+			{ fieldname: "is_fixed_asset", fieldtype: "Check", read_only_depends_on: "eval:doc.is_stock_item" },
+			{ fieldname: "is_purchase_item", fieldtype: "Check" },
+			{ fieldname: "is_customer_provided_item", fieldtype: "Check", read_only_depends_on: "eval: doc.is_purchase_item" },
+			{ fieldname: "create_new_batch", fieldtype: "Check", depends_on: "has_batch_no" },
+			{ fieldname: "item_name", fieldtype: "Data" },
+		],
+	};
+	const saved = { is_stock_item: 1, is_fixed_asset: 0, is_purchase_item: 1, is_customer_provided_item: 0, create_new_batch: 0, item_name: "Old" };
+	Object.assign(ed, {
+		kit,
+		doctype: "Item",
+		name: "LG-1",
+		is_new: false,
+		flow: { steps: [step], clears: { is_fixed_asset: ["is_stock_item"], is_stock_item: ["is_fixed_asset"] } },
+		values: Object.assign({}, saved),
+		saved: Object.assign({}, saved),
+		defs: Object.fromEntries(step.fields.map((f) => [f.fieldname, f])),
+		suppress: new Set(),
+		bases: {},
+		$root: [{ contains: () => false }],
+	});
+	const queued = [];
+	ed.queue = { manual: false, change: (f, v) => queued.push([f, v]), discard: () => {}, has_unsaved: () => queued.length > 0 };
+	ed.fg = {
+		fields_dict: {
+			is_stock_item: control("Write", 1),
+			is_fixed_asset: control("Read", 0), // read-only while Maintain Stock is ticked
+			is_purchase_item: control("Write", 1),
+			is_customer_provided_item: control("Read", 0), // read-only while Is Purchase Item is ticked
+			create_new_batch: control("None", 0), // hidden: has_batch_no is not ticked
+			item_name: control("Write", "New"),
+		},
+		refresh_dependency: () => {},
+	};
+	ed.shown_steps = () => [step];
+	["refresh_chrome", "render_saveline", "refresh_notices", "write_journal", "ext_notify", "collect_tables", "show_value"].forEach((m) => (ed[m] = () => {}));
+	globalThis.document = { activeElement: null };
+	ed.collect_step();
+	out.collect = { queued, is_stock_item: ed.values.is_stock_item, is_fixed_asset: ed.values.is_fixed_asset };
 }
 // One page and Tabs (v1.684.0): `this.fg` is a FieldGroups set. A step's group in the set is still on
 // screen, so its conditions are refreshed; one no longer in it is not.
@@ -551,7 +649,8 @@ out.cond = {
 	editor.suppress = new Set(["status", "other"]);
 	const shown = await editor.set_initial_values(close, { status: "Closed Won" });
 	const hidden = await editor.set_initial_values(gone, { other: 1 });
-	out.multi = { shown, hidden, refreshed, suppress: [...editor.suppress] };
+	await tick();
+	out.multi = { shown, hidden, refreshed: [...new Set(refreshed)], suppress: [...editor.suppress] };
 }
 
 // ---- Item's conditions against the Desk: v16's form sets the property to the expression's truth
@@ -672,7 +771,33 @@ class TestTheEditorUnderNode(unittest.TestCase):
 	def test_a_control_that_refuses_its_value_leaves_the_step_listened_to(self):
 		"""v16's read-only or hidden Table MultiSelect rejects a value; before v1.685.0 that left the
 		whole step in `suppress`, so the Close step's status and ranks were never saved."""
-		self.assertEqual(self.out["initial"], {"suppress": [], "refreshed": 1})
+		self.assertEqual(self.out["initial"], {"suppress": [], "refreshed": True})
+
+	def test_conditions_do_not_wait_for_the_slowest_field(self):
+		"""Review of #1300: a Link whose check never answers must not hold back the conditions (the
+		Closed Won asterisks); the other field is listened to again at once."""
+		slow = self.out["slow"]
+		self.assertTrue(slow["refreshed_before_all_settled"])
+		self.assertEqual(slow["suppress"], ["party_name"])
+
+	def test_a_loaded_value_is_not_looked_up(self):
+		"""Review of #1300: link.js validate() is skipped for a value loaded onto the page (a disabled
+		account would raise "did not match any results"), and the flag does not outlive the load."""
+		self.assertIs(self.out["slow"]["validated_at_set"], True)
+		self.assertIs(self.out["slow"]["flag_left"], False)
+
+	def test_a_slow_draw_does_not_release_the_next_draws_field(self):
+		self.assertEqual(self.out["race"]["suppress"], ["status"])
+
+	def test_a_field_the_person_cannot_change_queues_nothing(self):
+		"""Review of #1300: a saved stock Item's Is Fixed Asset (read-only while Maintain Stock is
+		ticked), a purchase Item's Customer Provided (read-only likewise) and a Check hidden at 0 read
+		back blank in v16; collect_step must not queue them, and `clears` must not untick Maintain
+		Stock. A field the person did change is still queued."""
+		collect = self.out["collect"]
+		self.assertEqual(collect["queued"], [["item_name", "New"]])
+		self.assertEqual(collect["is_stock_item"], 1)
+		self.assertEqual(collect["is_fixed_asset"], 0)
 
 	def test_one_page_and_tabs_refresh_each_steps_conditions(self):
 		"""With several FieldGroups on screen (v1.684.0), a step's group is refreshed once its values

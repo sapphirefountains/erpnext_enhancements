@@ -32,9 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A Link searches with its form's DocType, as on the Desk.** search_link honors a docfield's
     `ignore_user_permissions` only with a `reference_doctype`, which a FieldGroup's controls never
     sent. The editor now gives each Link control the record's DocType (only `get_reference_doctype`,
-    so the control's display status is unchanged) and the flow carries the flag. A grid cell has no
-    reference DocType on the guided page, so its column leaves the flag out rather than have the
-    server drop it and log an error on every search.
+    so the control's display status is unchanged) and the flow carries the flag. A grid cell, whose
+    row carries no DocType on the guided page, is given its child DocType when it is made, as the
+    Desk's cell has the row's.
+  - **A loaded value is shown as stored, never looked up.** A step's values were set through the
+    Link control's own `set_value`, which runs `validate_link_and_fetch` with the query's filters:
+    with the account search now limited to enabled accounts, opening a deal whose account is
+    disabled raised a red "Accounts: X did not match any results". The Desk form never checks a value
+    it loads, and neither does the page now.
+  - **A field the person cannot change keeps the record's value.** v16 reads a 0 in a control that
+    is read-only by a condition or hidden by a `depends_on` back as blank. With the conditions now
+    applied, a saved stock Item's Is Fixed Asset (read-only while Maintain Stock is ticked) read back
+    null on the first step change or Ctrl+S, was queued, and `clears` then unticked Maintain Stock and
+    saved it. Since v1.683.0 a Check hidden at 0 (Create New Batch, Has Expiry Date, Retain Sample)
+    already queued a null the same way. The editor now reads only a control whose status is "Write".
   - **Contacts and addresses linked only to the deal can be picked again.** The Desk's Contact &
     Address directory searches Dynamic Link `link_name` in the deal itself, the parties its
     stakeholder rows name and its account (`unified_tab_controller.js` `setup_queries`). The guided
@@ -64,9 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `party_name` with `opportunity_from` ("Customer", which this site translates to "Accounts";
     "Lead"; "Prospect"); the guided page said "Party". A new config key, `label_from`, mirrors it,
     and the label follows the kind as it changes.
-  - **Ctrl/Cmd+S saves now.** frappe's shortcut blurs the field and then runs the current page's
-    `save_action`, which the guided page did not have, so the change waited out the 2.5 s autosave.
-    The editor's `save_now` flushes the queue at once, creates a new record, or commits a side
+  - **Ctrl/Cmd+S saves now, wherever the editor is.** frappe's shortcut blurs the field and then runs
+    the current page's `save_action`, which no page had for the editor, so a side panel's change
+    waited out the 2.5 s autosave. The editor's `save_now` flushes the queue at once, creates a new record, or commits a side
     panel's move. On the guided page v1.684.0's own shortcut handler calls it; each editor also adds
     itself once to its host page's `save_action` (the guided page's own, or the list or board page a
     side panel opens over), which is where frappe's own Ctrl+S ends. Binding is once per editor, so

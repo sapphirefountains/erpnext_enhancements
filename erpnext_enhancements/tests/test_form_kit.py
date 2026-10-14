@@ -1926,13 +1926,13 @@ class TestTheInputsAreTheForms(unittest.TestCase):
         form's directory does (the live party is added on the page)."""
         name = _seed(
             custom_contacts__address_table=[
-                {"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Valley Builders"},
+                {"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Example Builders"},
                 {"name": "s2", "idx": 2, "party_type": "", "party_name": "No type"},
             ]
         )
         context = api.get_flow("Opportunity", name)["query_context"]
         self.assertEqual(context["fields"], {"company": "Sapphire Fountains"})
-        self.assertEqual(context["directory"], [name, "Valley Builders"])
+        self.assertEqual(context["directory"], [name, "Example Builders"])
         self.assertNotIn("Smith Residence", context["directory"], "the party is the page's live one")
 
     def test_a_new_record_has_no_directory(self):
@@ -1955,7 +1955,7 @@ class TestTheInputsAreTheForms(unittest.TestCase):
         metas = build_metas(field_overrides={"custom_contacts__address_table": {"permlevel": 7}})
         _reset(metas)
         name = _seed(
-            custom_contacts__address_table=[{"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Valley Builders"}]
+            custom_contacts__address_table=[{"name": "s1", "idx": 1, "party_type": "Customer", "party_name": "Example Builders"}]
         )
         self.assertEqual(api.get_flow("Opportunity", name)["query_context"]["directory"], [name])
 

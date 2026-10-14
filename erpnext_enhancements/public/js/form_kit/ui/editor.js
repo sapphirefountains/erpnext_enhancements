@@ -711,9 +711,16 @@ export class RecordEditor {
 				delete out.hint;
 				delete out.help;
 				delete out.default;
-				// A grid cell's Link has no reference DocType here (a FieldGroup grid's rows carry no
-				// doctype), so search_link would log and drop the flag on every search; leave it out.
-				delete out.ignore_user_permissions;
+				// A grid cell searches with its child DocType as reference_doctype, as on the Desk (where
+				// the cell's control has the row's doctype): a FieldGroup grid's rows carry none, so the
+				// cell is given it when it is made (base_input calls df.on_make for grid cells too), and
+				// search_link can honor the column's ignore_user_permissions.
+				const child_doctype = field.options;
+				out.on_make = (control) => {
+					if (control && typeof control.get_reference_doctype === "function") {
+						control.get_reference_doctype = () => child_doctype;
+					}
+				};
 				if (read_only) out.read_only = 1;
 				else out.onchange = () => this.table_touched(fieldname);
 				// v1.685.0: the form's query for this column ("table.field" in the config's `queries`).
@@ -915,23 +922,53 @@ export class RecordEditor {
 	// input area to draw its pills in), FieldGroup.set_value then never resolves, and every field of
 	// the step stayed in `suppress`, so field_changed ignored it. On the Close step that was the
 	// status and the three ranks: nothing typed there was saved.
+	//
+	// Review of #1300:
+	//   - The conditions are refreshed as each value lands (one pass per tick), not after the slowest
+	//     one: a Link whose check never answers must not hold back Closed Won's asterisks.
+	//   - A field is listened to again only while this very control is still on screen: a slow first
+	//     draw must not take the field of the next draw (a quick step change, a redraw) off `suppress`.
+	//   - A value shown on load is not checked: v16's Link would run validate_link_and_fetch with the
+	//     query's filters and raise "X did not match any results" for a stored value the filters no
+	//     longer allow (a disabled account). The Desk form never checks a value it loads, either.
 	set_initial_values(fg, initial) {
+		const shown = () => this.fg === fg || !!(this.fg && this.fg.multi && this.fg.owns(fg));
+		let queued = false;
+		const refresh = () => {
+			if (queued) return;
+			queued = true;
+			setTimeout(() => {
+				queued = false;
+				if (shown()) fg.refresh_dependency();
+			}, 0);
+		};
 		const settled = Object.keys(initial).map((fieldname) => {
 			const control = fg.fields_dict[fieldname];
 			const value = initial[fieldname];
 			return Promise.resolve()
-				.then(() => control && control.set_value(value))
+				.then(() => {
+					if (!control) return null;
+					control._validated = true; // link.js validate(): no lookup for a loaded value
+					return control.set_value(value);
+				})
 				.then(() => control && control.set_input && control.set_input(value))
 				.catch(() => {
 					// The control keeps what it could show; the value is still this.values'.
 				})
-				.then(() => this.suppress.delete(fieldname));
+				.then(() => {
+					if (control) delete control._validated;
+					// Another draw's control for the same field is that draw's to release; a field no longer
+					// on screen at all is released here, so it is not left ignored when drawn again.
+					const now = this.fg && this.fg.fields_dict ? this.fg.fields_dict[fieldname] : undefined;
+					if (now === control || !now) this.suppress.delete(fieldname);
+					refresh();
+				});
 		});
 		// Resolves true while the group is still on screen (alone, or one of One page's / Tabs' set).
 		return Promise.all(settled).then(() => {
-			const shown = this.fg === fg || !!(this.fg && this.fg.multi && this.fg.owns(fg));
-			if (shown) fg.refresh_dependency();
-			return shown;
+			const on_screen = shown();
+			if (on_screen) fg.refresh_dependency();
+			return on_screen;
 		});
 	}
 
@@ -1182,6 +1219,12 @@ export class RecordEditor {
 		if (!this.fg || this.suppress.has(fieldname)) return;
 		const control = this.fg.fields_dict[fieldname];
 		if (!control || !control.get_value) return;
+		// Only a field the person can change on screen says what it holds. v16's get_value() of a
+		// control that is not "Write" (read-only by a read_only_depends_on, hidden by a depends_on) is
+		// `this.value || undefined`, so a 0 reads back blank: a saved stock Item's Is Fixed Asset (read-
+		// only while Maintain Stock is ticked) came back null, was queued, and `clears` then unticked
+		// Maintain Stock and saved it (review of #1300). Such a field keeps the record's value.
+		if (typeof control.get_status === "function" && control.get_status() !== "Write") return;
 		let value = control.get_value();
 		if (value === undefined) value = null;
 		const def = this.defs[fieldname];
