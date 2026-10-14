@@ -278,7 +278,7 @@ guided page and the side panel alike:
 | `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it, and one that cannot be read adds neither (a `depends_on` that cannot be read still shows the field). Conditions read the record as the form's `doc` does, `__islocal` included |
 | `set_df_property(<rank>, "reqd", ...)` on Closed Won (`opportunity_migrated_scripts.js`) | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="Closed Won"` (`steps.won_conditions`); the side panel's move marks them required too |
 | ERPNext's `set_dynamic_field_label` (party_name labeled with `opportunity_from`) | the config's `label_from`; relabeled as the kind changes, translated as on the form ("Customer" shows as "Accounts") |
-| Ctrl/Cmd+S saves now | frappe's Ctrl+S ends in `frappe.container.page.save_action`; each editor adds itself to its host page's once (`ge_bind_save_key`): the queue is flushed now, a new record is created, a side panel's move is committed. A dialog keeps the key for itself, as on the form |
+| Ctrl/Cmd+S saves now | the editor's `save_now`: the queue is flushed now, a new record is created, a side panel's move is committed. The guided page's shortcut handler (v1.684.0) calls it; elsewhere frappe's Ctrl+S ends in `frappe.container.page.save_action`, to which each editor adds itself once (`ge_bind_save_key`), so a side panel over a list or board saves too. A dialog keeps the key for itself, as on the form |
 
 Opportunity's `queries`, field by field:
 

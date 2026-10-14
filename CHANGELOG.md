@@ -66,11 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the label follows the kind as it changes.
   - **Ctrl/Cmd+S saves now.** frappe's shortcut blurs the field and then runs the current page's
     `save_action`, which the guided page did not have, so the change waited out the 2.5 s autosave.
-    Each editor now adds itself once to its host page's `save_action` (the guided page's own, or the
-    list or board page a side panel opens over): the queue is flushed at once, a new record is
-    created, and a side panel's move is committed. Binding is once per editor, so showing the page
-    again never binds the key twice, an open dialog keeps Ctrl+S for itself as on the form, and
-    every other page is unchanged.
+    The editor's `save_now` flushes the queue at once, creates a new record, or commits a side
+    panel's move. On the guided page v1.684.0's own shortcut handler calls it; each editor also adds
+    itself once to its host page's `save_action` (the guided page's own, or the list or board page a
+    side panel opens over), which is where frappe's own Ctrl+S ends. Binding is once per editor, so
+    showing the page again never binds the key twice, an open dialog keeps Ctrl+S for itself as on
+    the form, and every other page is unchanged.
   - **Nothing changed on the Close step was saved.** A step's starting values went through
     `FieldGroup.set_values`, which waits for every control. v16's Table MultiSelect rejects a value
     while it is read-only or hidden (it has no input area to draw its pills in), and the Close step's
