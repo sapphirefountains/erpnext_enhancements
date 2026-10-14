@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.678.0] - 2026-10-14
+## [1.679.0] - 2026-10-14
 
 Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
 only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is
