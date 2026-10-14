@@ -190,8 +190,14 @@ Open it from the workspace, the Rental Booking list, or a booking's View menu.
 
 - **The board is the fleet timeline.** It has one row per rentable fountain and one per accessory
   pool, across two weeks, a month or a quarter.
-  - Confirmed rentals are solid blue. Tentative holds are hatched and dashed. Prep and cleaning are
-    thin grey bars. Anything booked by hand on Asset Booking is amber, and out-of-service is red.
+  - Confirmed rentals are solid teal-deep, the Rent pillar. Tentative holds are the same pillar,
+    pale, hatched and dashed. Prep and cleaning are thin grey bars. Anything booked by hand on Asset
+    Booking is yellow (warn), and out-of-service is hatched red (danger). Each bar's kind is in its
+    accessible name and tooltip as well as its color.
+  - The page's styles are `page/rental_planner/rental_planner.css` (S3.4f, v1.670.0), on the
+    `--sf-*` tokens, so the board follows the Desk's light or dark theme. The script writes no
+    stylesheet and no color; the legend's swatches carry the bars' own classes.
+    `tests/test_s3_page_css.py` (`TestRentalPlanner`) holds it there.
   - Clicking a bar opens its record. Clicking an empty day on a fountain starts a new rental with
     that fountain and date filled in.
   - Pool rows show units out per day against what can be booked, shaded as they fill.
