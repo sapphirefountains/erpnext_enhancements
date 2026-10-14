@@ -38,12 +38,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     was not actually being served stale (v16's `frappe.require` appends `?v=<build>` to a non-bundled
     path, `AssetManager.execute` in `assets.js` on `version-16`), but it was a second request behind
     a `frappe.dom.freeze()` for a file the page loader sends with the page for nothing. The page also
-    stacks at the one 767px breakpoint instead of 900px; the markers keep a white ring on the basemap
+    stacks below 991.98px instead of 900px (touch targets at 767px); the markers keep a white ring on the basemap
     instead of a drop shadow.
 - **Status words beside status colours.** The Sales Pipeline days badge now reads "12 days · Aging"
   or "· Stale", and an overdue hand-off chip starts with "Overdue"; a stale Live pin on the Location
   Timeline starts its second line with "Stale"; an unfinished checkpoint pin on the Course Canvas
   says "unfinished" in its tooltip and accessible name.
+
+- **Review follow-ups.**
+  - A stale (red) pipeline card kept its pulse while focused, and the pulse owns the outline, so
+    the keyboard focus ring vanished; `.stale-red:focus-visible` now stops the pulse and draws the
+    `--sf-focus` ring (guarded).
+  - Stale cards and overdue hand-off chips keep their `--sf-rule` hairline. A `--sf-chip-edge-*`
+    border on a whole card flipped with the theme (near-black Aging in light, off-white Stale in
+    dark); the 4px stripe and the badge chip carry the status, and the stripe is the status colour
+    mixed with `--sf-text-strong`, because plain yellow is 1.7:1 on white (guarded).
+  - The red pulse is a 4px ring outside the card in `--sf-danger`, sized for a TV across the room;
+    still off under `prefers-reduced-motion`.
+  - Below 991.98px the Course Canvas's top bar (the save status) and rich-text toolbar stick under
+    the Desk navbar (`--navbar-height`, 48px on v16) instead of scrolling away.
+  - The Location Timeline's gap, stop and geofence strokes are read from `--sf-danger`,
+    `--sf-warn` and `--sf-pillar-service` at runtime (`getComputedStyle`, old hex as fallback),
+    the same tokens the legend swatches read, so the legend matches the map (guarded).
+  - The Location Timeline stacks its map and 340px side panel below 991.98px too, so a portrait
+    tablet's map is not squeezed to a strip.
+  - A stray blank line in `.tc-title:focus` is gone.
 
 ### Fixed
 

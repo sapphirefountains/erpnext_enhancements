@@ -11,12 +11,15 @@
  * EVERY COLOUR IS AN --sf-* TOKEN (docs/app-design-system.md), so the board follows the Desk's
  * light or dark theme with no theme block of its own. Staleness is the status tokens: amber is
  * --sf-warn, red is --sf-danger, and each badge carries its word ("Aging", "Stale") as well as
- * its colour. Edges that must survive a dark card use --sf-chip-edge-*, never a fill colour that
- * sinks into navy.
+ * its colour. The badge is a status chip edged in --sf-chip-edge-*; the card itself keeps its
+ * --sf-rule hairline in every state, because a chip edge on a whole card flips with the theme
+ * (a near-black Aging card in light, an off-white Stale card in dark).
  *
  * Square cards, a hairline, no shadows. The left stripe that marks a stale card is a 4px border,
- * not an inset shadow; the red card's pulse is its outline colour, not a glow, and it stops
- * under prefers-reduced-motion.
+ * not an inset shadow, in the status colour mixed half and half with --sf-text-strong: the yellow
+ * itself is 1.7:1 on a white card and the red 2.8:1 on a navy one, and the mix clears 3:1 on both.
+ * The red card's pulse is a thick outline in the danger colour, sized to be seen across a room;
+ * it stops under prefers-reduced-motion and gives way to the focus ring.
  *
  * THIS IS A WALL DISPLAY. The TV-mode font sizes at the bottom are tuned for reading across a
  * room and are kept exactly as they were; restyle the colours, not the sizes.
@@ -94,8 +97,7 @@
 }
 
 .sales-pipeline-page .rail-chip.rail-overdue {
-	border-color: var(--sf-chip-edge-danger);
-	border-left: 4px solid var(--sf-danger);
+	border-left: 4px solid color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
 /* Danger as TEXT is mixed with the strongest text colour, so it reads on both themes' cards;
@@ -263,10 +265,11 @@
 /* --- Staleness: "it lights up if it's been sitting too long" --- */
 
 /* The badge is a status chip: the status fill, its own label colour, and the tone's chip edge
-   (warn's yellow fill is 1.7:1 on white, so its edge is the navy label colour in light). */
+   (warn's yellow fill is 1.7:1 on white, so its edge is the navy label colour in light). The
+   card keeps its --sf-rule hairline; only its 4px stripe changes, in the status colour mixed
+   with --sf-text-strong so the stripe clears 3:1 on a white card and a navy one. */
 .sales-pipeline-page .pipeline-card.stale-amber {
-	border-color: var(--sf-chip-edge-warn);
-	border-left: 4px solid var(--sf-warn);
+	border-left: 4px solid color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .sales-pipeline-page .pipeline-card.stale-amber .pipeline-card-days {
@@ -277,11 +280,18 @@
 }
 
 .sales-pipeline-page .pipeline-card.stale-red {
-	border-color: var(--sf-chip-edge-danger);
-	border-left: 4px solid var(--sf-danger);
-	outline: 2px solid transparent;
-	outline-offset: 0;
+	border-left: 4px solid color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	outline: 4px solid transparent;
+	outline-offset: 2px;
 	animation: sales-pipeline-pulse 2.4s ease-in-out infinite;
+}
+
+/* The pulse owns the outline, so without this a focused stale card would show no focus ring for
+   half of every cycle: the focus ring wins, and the pulse stops while the card has focus. */
+.sales-pipeline-page .pipeline-card.stale-red:focus-visible {
+	animation: none;
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
 }
 
 .sales-pipeline-page .pipeline-card.stale-red .pipeline-card-days {
@@ -291,8 +301,9 @@
 	font-weight: var(--sf-weight-bold);
 }
 
-/* The across-the-room cue for a deal that has sat past the red line: the outline breathes in the
-   danger colour. A colour change, not movement, and still switched off for reduced motion. */
+/* The across-the-room cue for a deal that has sat past the red line: a 4px ring outside the card
+   that breathes in the danger colour. A colour change, not movement, and switched off for
+   reduced motion, where the stripe and the "Stale" chip still say it. */
 @keyframes sales-pipeline-pulse {
 	0%,
 	100% {

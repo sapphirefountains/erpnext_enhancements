@@ -76,9 +76,24 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         '#2490ef', '#8e44ad', '#28a745', '#f39c12', '#d63384',
         '#16a085', '#fd7e14', '#0dcaf0', '#6610f2', '#e03636'
     ];
-    const GAP_COLOR = '#e03636';
-    const STOP_COLOR = '#f39c12';
-    const SITE_COLOR = '#2490ef';
+    // The three map strokes the legend names are read from the app's tokens, so the legend
+    // swatches (location_timeline.css) and the lines on the map are the same colour. The Maps
+    // API takes a colour value, not var(), so the token's computed value is read once here;
+    // custom properties compute with var() already substituted, so --sf-danger comes back as
+    // the hex of --sf-red. All three are palette values that do not change with the theme.
+    // The hex after each is the old literal, kept as the fallback for a page without the
+    // token stylesheet.
+    function tokenColor(name, fallback) {
+        try {
+            const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return value || fallback;
+        } catch (e) {
+            return fallback;
+        }
+    }
+    const GAP_COLOR = tokenColor('--sf-danger', '#e03636');
+    const STOP_COLOR = tokenColor('--sf-warn', '#f39c12');
+    const SITE_COLOR = tokenColor('--sf-pillar-service', '#2490ef');
     const LOW_ACCURACY = 'Low Accuracy';
 
     // Before anything loads the map shows the Wasatch Front rather than a blank

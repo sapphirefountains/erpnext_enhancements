@@ -677,8 +677,9 @@
     }
 }
 
-/* The one phone breakpoint: the side panel drops under the map. */
-@media (max-width: 767px) {
+/* Below Frappe's own 991.98px the side panel drops under the map: beside it, a 340px panel
+   leaves a portrait tablet's map a strip a few hundred pixels wide. */
+@media (max-width: 991.98px) {
     .lt-layout {
         flex-direction: column;
     }
@@ -691,7 +692,10 @@
     .lt-map {
         height: 420px;
     }
+}
 
+/* The one phone breakpoint: full touch targets on the mode toggle. */
+@media (max-width: 767px) {
     .lt-mode-btn {
         min-height: var(--sf-touch-min);
     }

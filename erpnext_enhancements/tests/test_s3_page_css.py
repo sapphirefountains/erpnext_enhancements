@@ -29,7 +29,8 @@ This fails the build if any of these pages:
 * declares a custom property of its own, uses a shadow, a radius that is not an
   ``--sf-radius-*`` token, or a width breakpoint other than the one phone breakpoint, 767px
   (the two Training pages also keep Frappe's own 991.98px, where the Desk's two-column layout
-  collapses; ``test_training_review`` and ``test_training_canvas`` pin it);
+  collapses, which ``test_training_review`` and ``test_training_canvas`` pin; the Location
+  Timeline stacks its map and side panel there too);
 * reads the learner's Aurora palette (``var(--tr-...)``), which belongs to ``player.css`` and
   the learner surfaces, not to Desk chrome;
 * names a ``@keyframes`` without the page's prefix (animation names are as global as the
@@ -108,6 +109,9 @@ KEYFRAME_PREFIXES = {
 EXTRA_BREAKPOINTS = {
 	"training_review": {"991.98px"},
 	"training_canvas": {"991.98px"},
+	# The map and its 340px side panel stack at the same width, so a portrait tablet (768-991px)
+	# does not get a map squeezed to a strip beside the panel.
+	"location_timeline": {"991.98px"},
 }
 
 # Frappe's own colour scale and its status tints. Theme-aware, but not the app's status
@@ -394,6 +398,22 @@ class TestTheLocationTimelineStylesheetComesWithThePage(unittest.TestCase):
 	def test_the_old_stylesheet_is_gone(self):
 		self.assertFalse((APP / "public" / "css" / "workforce" / "location_timeline.css").exists())
 
+	def test_the_legend_and_the_map_read_the_same_tokens(self):
+		"""The legend swatches are CSS and the map strokes are Maps API colour values; both read
+		the same token, the script through getComputedStyle, so they cannot drift apart."""
+		js = _js_code(_read(self.JS))
+		css = _css_code(_read(PAGES["location_timeline"] / "location_timeline.css"))
+		for const, token, swatch in (
+			("GAP_COLOR", "--sf-danger", ".lt-swatch-gap"),
+			("STOP_COLOR", "--sf-warn", ".lt-swatch-stop"),
+			("SITE_COLOR", "--sf-pillar-service", ".lt-swatch-site"),
+		):
+			with self.subTest(const=const):
+				self.assertRegex(js, rf"const {const} = tokenColor\('{token}', '#[0-9a-f]{{6}}'\)")
+				rule = re.search(re.escape(swatch) + r"\s*\{([^}]*)\}", css).group(1)
+				self.assertIn(f"var({token})", rule)
+		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", js)
+
 	def test_the_page_requires_no_stylesheet(self):
 		js = _js_code(_read(self.JS))
 		self.assertNotIn("location_timeline.css", js)
@@ -409,6 +429,32 @@ class TestTheSalesPipelineWiringIsUntouched(unittest.TestCase):
 		js = _js_code(_read(PAGES["sales_pipeline"] / "sales_pipeline.js"))
 		self.assertIn('frappe.realtime.on("sales_pipeline_updated", debounced)', js)
 		self.assertIn("crm_enhancements.page.sales_pipeline.sales_pipeline.get_pipeline_data", js)
+
+	def _rule(self, selector):
+		css = _css_code(_read(PAGES["sales_pipeline"] / "sales_pipeline.css"))
+		m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+		self.assertIsNotNone(m, f"no rule for {selector}")
+		return m.group(1)
+
+	def test_a_focused_stale_card_keeps_its_focus_ring(self):
+		"""The red pulse animates outline-color, and the stale rule sets its own outline after the
+		generic :focus-visible ring, so a keyboard user lost the ring on every red card."""
+		body = self._rule(".sales-pipeline-page .pipeline-card.stale-red:focus-visible")
+		self.assertIn("animation: none", body)
+		self.assertIn("var(--sf-focus)", body)
+
+	def test_a_stale_card_keeps_its_hairline(self):
+		"""A chip edge on a whole card flips with the theme (near-black Aging in light, off-white
+		Stale in dark). The stripe and the chip carry the status; the card border does not."""
+		for selector in (
+			".sales-pipeline-page .pipeline-card.stale-amber",
+			".sales-pipeline-page .pipeline-card.stale-red",
+			".sales-pipeline-page .rail-chip.rail-overdue",
+		):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertNotIn("chip-edge", body)
+				self.assertNotIn("border-color", body)
 
 	def test_the_hooks_still_name_the_server_functions(self):
 		hooks = _read(APP / "hooks.py")

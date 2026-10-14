@@ -330,7 +330,6 @@
 }
 
 .tc-title:focus {
-
 	outline: 2px solid var(--sf-focus);
 	outline-offset: 2px;
 }
@@ -1485,20 +1484,28 @@
 	.tc-addbtn {
 		opacity: 1;
 	}
+
+	/* Once the page scrolls as one, the top bar (the save status, the way back) and the
+	   rich-text toolbar would scroll away with it. They stick under the Desk navbar instead
+	   (v16 declares --navbar-height: 48px in css_variables.scss), the toolbar under the bar.
+	   49px is the bar's own height: a 32px icon button, 8px padding above and below, and its
+	   1px rule. The bar does not wrap, so that height holds at every width. */
+	.tc-bar {
+		position: sticky;
+		top: var(--navbar-height, 48px);
+		z-index: 4;
+	}
+
+	.tc-rt-toolbar {
+		position: sticky;
+		top: calc(var(--navbar-height, 48px) + 49px);
+		z-index: 4;
+	}
 }
 
-/* The one phone breakpoint. The top bar wraps instead of clipping the course name, the sheet
-   gives its side padding back to the text, and the hover-only lesson delete is always
-   shown, because a phone has no hover to reveal it with. */
+/* The one phone breakpoint. The sheet gives its side padding back to the text, and the
+   hover-only lesson delete is always shown, because a phone has no hover to reveal it with. */
 @media (max-width: 767px) {
-	.tc-bar {
-		flex-wrap: wrap;
-	}
-
-	.tc-course-name {
-		max-width: none;
-	}
-
 	.tc-scroll {
 		padding: 20px 12px 80px;
 	}
