@@ -5,6 +5,8 @@
  *     .then((message) => ...)                 // r.message
  *     .catch((err) => ...);                   // { status, message, exc_type, session_expired }
  *
+ *   { quiet: true, with_messages: true }     resolves { message, server_messages: [...] } instead
+ *
  * The rejection, on both paths:
  *   status           the HTTP status; 0 = the server was never reached, or what answered was not
  *                    the server (a 200 whose body is not JSON: a proxy page, a login page)
@@ -35,15 +37,31 @@
  * ever; the page says it once, in its own panel. It is a separate option rather than what
  * `silent` means because the two differ in more than the dialogs: quiet skips frappe.call's
  * model sync and `freeze`, and the page must handle session expiry itself (frappe's sign-in
- * dialog is not raised). The request is the one frappe.call would make:
- *   - POST by default, the args as a JSON body (Content-Type: application/json, which v16's
- *     make_form_dict reads with orjson, app.py:363); `method: "GET"` sends them as a query string,
- *     for reads. A whitelisted method declared methods=["POST"] refuses a GET (403).
- *   - an object or array arg is sent JSON-encoded, as frappe.request.prepare does, so a method
- *     written for frappe.call receives exactly what it always did;
- *   - X-Frappe-CSRF-Token from frappe.csrf_token (auth.py validate_csrf_token checks it on every
- *     POST), Accept: application/json (so app.py handle_exception answers JSON, not an error
- *     page), X-Requested-With, credentials same-origin, cache no-store.
+ * dialog is not raised). The request carries exactly what frappe.call sends:
+ *   - POST by default, form-encoded (application/x-www-form-urlencoded; charset=UTF-8, jQuery's
+ *     default), or `method: "GET"` with the same pairs as a query string, for reads. ONE encoder
+ *     for both (`form_pairs`), and it is frappe.call's: frappe.request.prepare (request.js:388 on
+ *     version-16) first JSON-stringifies every truthy plain object or array, then jQuery 3.7.1's
+ *     $.param (v16 pins jquery 3.7.1) writes each key as encodeURIComponent(key) "="
+ *     encodeURIComponent(value == null ? "" : value), joined with "&". So 3 goes as "3", true as
+ *     "true", null and undefined as "" (the key is still sent), {a: 1} as '{"a":1}'. A JSON body
+ *     would NOT be the same request (v1.630.0 review): the server would see 3, False and None,
+ *     v16's typing_validations reject an int or None for a `str` parameter with a 417, an
+ *     undefined arg vanishes, and an untyped `== "true"` check changes its answer.
+ *   - A GET to a method whitelisted methods=["POST"] is refused 403 PermissionError, "Not
+ *     permitted" (handler.py is_valid_http_method -> frappe.throw_permission_error). It reads like
+ *     a permission problem and is a wiring one, so a quiet GET that gets one while signed in
+ *     writes a console.warn naming the method, once per method.
+ *   - X-Frappe-CSRF-Token from frappe.csrf_token on a POST only (auth.py validate_csrf_token
+ *     checks it on the unsafe methods; a GET has no use for it and should not carry it),
+ *     Accept: application/json (so app.py handle_exception answers JSON, not an error page),
+ *     X-Requested-With, credentials same-origin, cache no-store, and redirect: "error": a 3xx is
+ *     never followed (it would re-send the token to wherever it points) and reads as status 0.
+ *   - On a 2xx it resolves r.message and drops the rest of the reply: no doc sync into locals,
+ *     no __messages translation sync, and no msgprint of the reply's _server_messages (a
+ *     frappe.msgprint warning from a method that succeeded). A caller that wants those words
+ *     passes `with_messages: true` and gets { message, server_messages } instead, the messages as
+ *     plain text, HTML taken out, in the order the server sent them.
  * NB this is not frappe.call's own `quiet` option (which only hides the spinner); sf_kit never
  * passes `quiet` to frappe.call.
  *
@@ -58,6 +76,11 @@
  * keep going. So, as v16's own frappe.request.is_session_expired does (request.js:416), a
  * 401/403 also counts as expiry when the page was signed in (frappe.session) and the user_id
  * cookie is now gone or "Guest". The test for a caller is `err.session_expired`.
+ * Two more shapes: a 2xx whose body carries session_expired: 1 (an allow_guest method that ran as
+ * Guest because the session had lapsed) REJECTS as expired when the page was signed in, since
+ * what it answered was not this person's request; and a 417 is expiry only when its own body
+ * says so, never from the cookies, so a frappe.throw from a method that ran signed in keeps its
+ * words.
  *
  * Why not frappe.call's own callbacks on the default path: request.js calls `error` with a
  * different argument for nearly every status (417 passes the body, 401/403/404/500/502/504 pass
@@ -81,6 +104,9 @@ const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " }
 const BLOCK_TAG = /<\/?(?:p|div|br|li|ul|ol|h[1-6]|tr|td|th|table|details|summary|section|blockquote|pre|hr)\b[^<>]*>/gi;
 // A real tag: "<" then a letter, "/" or "!" straight after it. "Qty < 5" has a space there and is text.
 const ANY_TAG = /<!--[\s\S]*?-->|<\/?[A-Za-z][^<>]*>/g;
+// Elements whose content is not words: their text is dropped with them. An unclosed one runs to the
+// end, as it does in a browser.
+const NOT_WORDS = /<(script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
 
 function decode_entities(text) {
 	// One pass, so "&amp;lt;" becomes "&lt;" and is never decoded twice into "<".
@@ -96,7 +122,7 @@ function decode_entities(text) {
 
 function tidy(text) {
 	return text
-		.replace(/[\s ]+/g, " ")
+		.replace(/\s+/g, " ")
 		.replace(/ ([.,;:!?)\]])/g, "$1")
 		.replace(/([([]) /g, "$1")
 		.trim();
@@ -104,7 +130,8 @@ function tidy(text) {
 
 // The words of a server message with the markup taken out and the entities decoded. With a DOM,
 // the browser's own parser does it (DOMParser builds an inert tree: no script runs, nothing
-// loads); in node, a tag is only "<" followed by a letter, so "Qty must be < 5 and > 0" survives.
+// loads), after removing script / style / template, whose text is code, not words; in node, a
+// tag is only "<" followed by a letter, so "Qty must be < 5 and > 0" survives.
 export function strip_html(value) {
 	if (value === null || value === undefined) return "";
 	const text = String(value).replace(BLOCK_TAG, (tag) => ` ${tag} `);
@@ -112,12 +139,17 @@ export function strip_html(value) {
 		try {
 			const parsed = new DOMParser().parseFromString(text, "text/html");
 			const body = parsed && parsed.body;
+			if (body && typeof body.querySelectorAll === "function") {
+				for (const node of Array.from(body.querySelectorAll("script, style, template"))) {
+					if (node && typeof node.remove === "function") node.remove();
+				}
+			}
 			if (body && typeof body.textContent === "string") return tidy(body.textContent);
 		} catch (e) {
 			// fall through to the plain-text route
 		}
 	}
-	return tidy(decode_entities(text.replace(ANY_TAG, "")));
+	return tidy(decode_entities(text.replace(NOT_WORDS, " ").replace(ANY_TAG, "")));
 }
 
 function parse_json(value) {
@@ -136,9 +168,10 @@ function exception_text(line) {
 	return match ? match[1].trim() : "";
 }
 
-function server_messages(raw) {
+// The readable text of each entry in a reply's _server_messages, in order, blanks left out.
+function server_message_list(raw) {
 	const list = parse_json(raw);
-	if (!Array.isArray(list)) return "";
+	if (!Array.isArray(list)) return [];
 	return list
 		.map((item) => {
 			const entry = parse_json(item);
@@ -146,8 +179,11 @@ function server_messages(raw) {
 			return typeof item === "string" ? item : "";
 		})
 		.map((text) => strip_html(text))
-		.filter(Boolean)
-		.join(" ");
+		.filter(Boolean);
+}
+
+function server_messages(raw) {
+	return server_message_list(raw).join(" ");
 }
 
 // The readable part of a Frappe error body, or "" when there is none.
@@ -199,15 +235,23 @@ function read_cookie(env, name) {
 	return null;
 }
 
-// Whether a failed reply means the person is signed out (the SESSION EXPIRY note above).
-export function is_session_expired(env, status, body) {
-	if (body && typeof body === "object" && (body.session_expired || body.exc_type === "SessionExpired")) {
-		return true;
-	}
-	if (status !== 401 && status !== 403) return false;
+function signed_in(env) {
 	const session = env && env.frappe && env.frappe.session;
 	const user = session && (session.logged_in_user || session.user);
-	if (!user || user === "Guest") return false;
+	return Boolean(user && user !== "Guest");
+}
+
+// Whether a failed reply means the person is signed out (the SESSION EXPIRY note above).
+// exc_type SessionExpired is the server saying so outright. The session_expired flag alone counts
+// only when this page was signed in: a visitor on a www page with a stale sid cookie gets the flag
+// too, and their frappe.throw is a real one. The cookie reading is only for the 401/403 a lapsed
+// session produces, never a reason to replace a 417's message.
+export function is_session_expired(env, status, body) {
+	const object = body && typeof body === "object" ? body : null;
+	if (object && object.exc_type === "SessionExpired") return true;
+	if (!signed_in(env)) return false;
+	if (object && object.session_expired) return true;
+	if (status !== 401 && status !== 403) return false;
 	if (typeof env.cookie !== "function") return false;
 	const user_id = read_cookie(env, "user_id");
 	return !user_id || user_id === "Guest";
@@ -233,44 +277,107 @@ function settle_once(env, resolve, reject) {
 			: error_text(object, status) || generic_message(env, status);
 		reject({ status, message, exc_type, session_expired: expired });
 	};
-	return { ok, fail };
+	return { ok, fail, expired: (status) => fail(status, { exc_type: "SessionExpired", session_expired: 1 }) };
 }
 
-// The args as frappe.call would send them: an object or array JSON-encoded, undefined left out.
-function wire_args(args) {
-	const out = {};
-	if (!args || typeof args !== "object") return out;
-	for (const key of Object.keys(args)) {
-		const value = args[key];
-		if (value === undefined) continue;
-		out[key] = value !== null && typeof value === "object" ? JSON.stringify(value) : value;
+// ---- frappe.call's encoding, for the quiet path: frappe.request.prepare, then jQuery.param.
+
+// jQuery 3.7.1's class2type: what toType() calls each built-in; anything else is "object".
+const CLASS_TYPES = {};
+for (const name of ["Boolean", "Number", "String", "Function", "Array", "Date", "RegExp", "Object", "Error", "Symbol"]) {
+	CLASS_TYPES[`[object ${name}]`] = name.toLowerCase();
+}
+
+function to_type(value) {
+	if (value === null || value === undefined) return String(value);
+	return typeof value === "object" || typeof value === "function"
+		? CLASS_TYPES[Object.prototype.toString.call(value)] || "object"
+		: typeof value;
+}
+
+// jQuery.isPlainObject: a plain {} or Object.create(null), from this realm or another.
+function is_plain_object(value) {
+	if (!value || Object.prototype.toString.call(value) !== "[object Object]") return false;
+	const proto = Object.getPrototypeOf(value);
+	if (!proto) return true;
+	const ctor = Object.prototype.hasOwnProperty.call(proto, "constructor") && proto.constructor;
+	return typeof ctor === "function" && Function.prototype.toString.call(ctor) === Function.prototype.toString.call(Object);
+}
+
+// jQuery's buildParams, non-traditional: what is left of an arg after prepare.
+function build_params(prefix, value, add) {
+	if (Array.isArray(value)) {
+		value.forEach((item, index) => {
+			if (/\[\]$/.test(prefix)) add(prefix, item);
+			else build_params(`${prefix}[${typeof item === "object" && item != null ? index : ""}]`, item, add);
+		});
+	} else if (to_type(value) === "object") {
+		for (const name in value) build_params(`${prefix}[${name}]`, value[name], add);
+	} else {
+		add(prefix, value);
 	}
-	return out;
+}
+
+// The args as [key, value] string pairs, exactly as frappe.call puts them on the wire.
+export function form_pairs(args) {
+	const pairs = [];
+	if (!args || typeof args !== "object") return pairs;
+	const add = (key, value_or_function) => {
+		const value = typeof value_or_function === "function" ? value_or_function() : value_or_function;
+		pairs.push([key, value == null ? "" : String(value)]);
+	};
+	for (const key in args) {
+		let value = args[key];
+		// frappe.request.prepare: `if (opts.args[key] && ($.isPlainObject(...) || $.isArray(...)))`
+		if (value && (is_plain_object(value) || Array.isArray(value))) value = JSON.stringify(value);
+		build_params(key, value, add);
+	}
+	return pairs;
+}
+
+// $.param's string: encodeURIComponent on both sides, "&" between (jQuery 3 dropped the old
+// %20 -> "+" step, so this is byte for byte what frappe.call sends).
+export function form_encode(args) {
+	return form_pairs(args)
+		.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+		.join("&");
+}
+
+// "A quiet GET got a 403 PermissionError while signed in" is usually a POST-only method; say so
+// once per method, in the console only.
+const WARNED_GET = new Set();
+function warn_get_refused(method) {
+	if (WARNED_GET.has(method)) return;
+	WARNED_GET.add(method);
+	if (typeof console !== "undefined" && typeof console.warn === "function") {
+		console.warn(
+			`sf_kit.call: GET ${method} was refused 403 PermissionError. A method whitelisted ` +
+				'methods=["POST"] refuses GET ("Not permitted"); call it without method: "GET".'
+		);
+	}
 }
 
 function quiet_call(env, method, args, opts) {
 	return new Promise((resolve, reject) => {
-		const { ok, fail } = settle_once(env, resolve, reject);
+		const { ok, fail, expired } = settle_once(env, resolve, reject);
 		const fetch_fn = env.fetch;
 		if (typeof fetch_fn !== "function" || typeof method !== "string" || !method.trim()) {
 			fail(0, null);
 			return;
 		}
+		method = method.trim();
 		const http = String(opts.method || "POST").toUpperCase() === "GET" ? "GET" : "POST";
-		const params = wire_args(args);
+		const encoded = form_encode(args);
 		const headers = { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" };
-		const csrf = env.frappe && env.frappe.csrf_token;
-		if (csrf && typeof csrf === "string") headers["X-Frappe-CSRF-Token"] = csrf;
-		let url = `/api/method/${encodeURIComponent(method.trim())}`;
-		const init = { method: http, headers, credentials: "same-origin", cache: "no-store" };
+		let url = `/api/method/${encodeURIComponent(method)}`;
+		const init = { method: http, headers, credentials: "same-origin", cache: "no-store", redirect: "error" };
 		if (http === "GET") {
-			const query = Object.keys(params)
-				.map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(params[key] === null ? "" : params[key])}`)
-				.join("&");
-			if (query) url += `?${query}`;
+			if (encoded) url += `?${encoded}`;
 		} else {
-			headers["Content-Type"] = "application/json";
-			init.body = JSON.stringify(params);
+			const csrf = env.frappe && env.frappe.csrf_token;
+			if (csrf && typeof csrf === "string") headers["X-Frappe-CSRF-Token"] = csrf;
+			headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
+			init.body = encoded;
 		}
 
 		let pending;
@@ -296,8 +403,22 @@ function quiet_call(env, method, args, opts) {
 						if (status >= 200 && status < 300) {
 							// A 200 that is not frappe's JSON is a proxy or a login page: not the server.
 							if (!object) fail(0, null);
-							else ok(object.message);
+							// An allow_guest method that ran as Guest because the session lapsed.
+							else if (object.session_expired && signed_in(env)) expired(status);
+							else if (opts.with_messages) {
+								ok({ message: object.message, server_messages: server_message_list(object._server_messages) });
+							} else ok(object.message);
 							return;
+						}
+						if (
+							http === "GET" &&
+							status === 403 &&
+							signed_in(env) &&
+							object &&
+							object.exc_type === "PermissionError" &&
+							!is_session_expired(env, status, object)
+						) {
+							warn_get_refused(method);
 						}
 						fail(status, object);
 					});

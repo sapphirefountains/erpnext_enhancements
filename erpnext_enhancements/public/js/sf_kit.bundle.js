@@ -20,9 +20,11 @@
  *
  *   esc(value)                                  HTML-escape; null/undefined -> ""
  *   t(text, args)                               __() when present, else {0} substitution
- *   call(method, args, {silent, quiet, method}) -> Promise of r.message; rejects
+ *   call(method, args, {silent, quiet, method, with_messages})
+ *                                               -> Promise of r.message; rejects
  *                                                  {status, message, exc_type, session_expired};
- *                                                  quiet: true = fetch, no frappe dialog at all
+ *                                                  quiet: true = fetch, form-encoded exactly as
+ *                                                  frappe.call sends it, no frappe dialog at all
  *   state.html(kind, opts) / state.render(el, kind, opts)   loading | empty | error | no-access
  *   chip(label, tone)                           pillar or status pill, always with its word
  *   card.html({title, body_html, pillar}) / card.class_name(pillar)

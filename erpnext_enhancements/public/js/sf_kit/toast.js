@@ -25,7 +25,12 @@
  * timer, focusout to somewhere outside re-arms it. When a toast that holds focus closes (timer,
  * Dismiss, its action, or a newer toast), focus goes back to the element that had it before focus
  * entered the toast, if that element is still in the page; otherwise focus would drop to <body>
- * and a keyboard user would start again from the top.
+ * and a keyboard user would start again from the top. "Had it before" is the focusin's
+ * relatedTarget: when that is null (the person clicked the page background, then the toast),
+ * nothing had focus, so nothing gets it back; jumping to an input they left a while ago would be
+ * worse than staying put. A target that is no longer rendered (display: none, so
+ * getClientRects() is empty) is skipped, and a focus() that does not take is left alone: either
+ * way focus stays where the browser put it, without an error.
  *
  * `env` is { doc, set_timeout, clear_timeout } (a `t` in it is no longer read: the kit's one word
  * here is a literal __() call). `container` (default doc.body) is where the toast goes; a Custom
@@ -56,14 +61,18 @@ export function create_toast(env, options) {
 		return Boolean(active && typeof item.el.contains === "function" && item.el.contains(active));
 	}
 
+	// True when focus landed on `target`. False, quietly, when it was not there to take it.
 	function give_focus_back(target) {
-		if (!target || target.isConnected === false || typeof target.focus !== "function") return;
-		if (target === doc.body) return;
+		if (!target || target.isConnected === false || typeof target.focus !== "function") return false;
+		if (target === doc.body) return false;
+		if (typeof target.getClientRects === "function" && target.getClientRects().length === 0) return false;
 		try {
 			target.focus();
 		} catch (e) {
-			// an element that cannot take focus any more: leave focus where the browser put it
+			return false;
 		}
+		const root = typeof target.getRootNode === "function" ? target.getRootNode() : doc;
+		return Boolean(root && root.activeElement === target);
 	}
 
 	function close_item(item) {
@@ -141,7 +150,8 @@ export function create_toast(env, options) {
 			if (item.closed) return;
 			if (!item.focused) {
 				const from = e && e.relatedTarget;
-				if (from && !(typeof el.contains === "function" && el.contains(from))) item.return_to = from;
+				const outside = from && !(typeof el.contains === "function" && el.contains(from));
+				item.return_to = outside ? from : null;
 				item.focused = true;
 			}
 			pause();

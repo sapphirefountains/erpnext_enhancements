@@ -302,8 +302,9 @@ A toast for a block goes into its own root (`container`), so it sits inside the 
 row.innerHTML = `<b>${sf_kit.esc(doc.customer_name)}</b>`;
 ```
 
-**`sf_kit.call(method, args, { quiet, method, silent, freeze })`**: a server call as a promise
-that always settles, exactly once. It resolves `r.message`, and rejects
+**`sf_kit.call(method, args, { quiet, method, with_messages, silent, freeze })`**: a server call
+as a promise that always settles, exactly once. It resolves `r.message` (or, with
+`with_messages: true` on the quiet path, `{ message, server_messages }`), and rejects
 `{ status, message, exc_type, session_expired }`:
 
 - `status`: the HTTP status, or **0** when the server was never reached (offline, a network
@@ -319,21 +320,38 @@ that always settles, exactly once. It resolves `r.message`, and rejects
   deletes the `sid` and `user_id` cookies, so every call after it arrives as a plain Guest and
   is refused **403** `PermissionError`. The kit therefore also counts a 401/403 as expiry when
   the page was signed in (`frappe.session`) and the `user_id` cookie is now gone or `Guest`, the
-  same test v16's own `frappe.request.is_session_expired` makes. A retry queue stops on it and
-  asks the person to sign in.
+  same test v16's own `frappe.request.is_session_expired` makes. On a signed-in page a **2xx**
+  whose body carries `session_expired: 1` (an `allow_guest` method that ran as Guest because the
+  session had lapsed) rejects as expired too, with its 2xx status. A **417** is expiry only when
+  its own body says so: the cookies never replace a `frappe.throw`'s words from a method that ran
+  signed in. A retry queue stops on `session_expired` and asks the person to sign in.
 
 There are two paths, and they differ in which dialogs frappe shows:
 
 - **`quiet: true` (use it for anything that reports errors in its own panel).** No `frappe.call`:
   a `fetch` to `/api/method/<method>`, so frappe shows **nothing**: no msgprint, no "Server
-  Error" dialog, no session-expired dialog. POST by default, the args as a JSON body
-  (`Content-Type: application/json`), with `X-Frappe-CSRF-Token` from `frappe.csrf_token`,
-  `Accept: application/json` and same-origin credentials; `method: "GET"` sends the args as a
-  query string, for reads (a method whitelisted `methods=["POST"]` refuses a GET with a 403). An
-  object or array argument is JSON-encoded exactly as `frappe.call` sends it, so the server
-  method sees what it always did. What it does not do: sync returned docs into `locals`, run
-  `freeze`, or show a successful call's msgprints. It is not `frappe.call`'s own `quiet` option,
-  which only hides the spinner.
+  Error" dialog, no session-expired dialog. **It sends exactly what `frappe.call` sends**: POST
+  by default, form-encoded (`application/x-www-form-urlencoded; charset=UTF-8`), or `method:
+  "GET"` with the same pairs as a query string, for reads. One encoder for both, and it is
+  frappe.call's: `frappe.request.prepare` JSON-stringifies every truthy plain object or array,
+  then jQuery 3.7.1's `$.param` writes `3` as `"3"`, `true` as `"true"`, and `null` and
+  `undefined` as `""` (the key is still sent). A JSON body would not be the same request: the
+  server would see `3`, `False` and `None`, v16's argument type checks reject an int or `None`
+  for a `str` parameter with a 417, and an untyped `== "true"` changes its answer.
+  - Headers: `X-Frappe-CSRF-Token` from `frappe.csrf_token` on a POST only, `Accept:
+    application/json`, `X-Requested-With`; same-origin credentials, `cache: "no-store"`, and
+    `redirect: "error"`: a 3xx is never followed (it would carry the token wherever it points)
+    and rejects as status 0.
+  - **A GET to a method whitelisted `methods=["POST"]` is refused 403 `PermissionError` "Not
+    permitted"** (`handler.py` `is_valid_http_method` calls `frappe.throw_permission_error`). It
+    reads like a permission problem and is a wiring one, so a quiet GET refused that way while
+    signed in writes one `console.warn` naming the method.
+  - On a 2xx it resolves `r.message` and drops the rest of the reply: no doc sync into `locals`
+    (`docs`), no translation sync (`__messages`), and no msgprint of the reply's
+    `_server_messages`, such as a warning from a method that succeeded. Pass `with_messages:
+    true` to resolve `{ message, server_messages }`, the messages as plain text (HTML out) in the
+    server's order. It does not run `freeze` either.
+  - It is not `frappe.call`'s own `quiet` option, which only hides the spinner.
 - **The default, `frappe.call`.** `silent: true` (passed through, with `freeze` /
   `freeze_message`) stops exactly **one** dialog: the `_server_messages` msgprint in
   `frappe.request.cleanup` (`request.js` on `version-16`), i.e. a `frappe.throw` or msgprint
@@ -358,8 +376,8 @@ shows in place of its content. `kind` is `loading`, `empty`, `error` or `no-acce
 `title`, `body`, `action_label` and `on_action`. It is page content, never an overlay, and it
 pushes no history entry. The one button ("Try again" by default) is drawn when there is an
 `action_label` or an `on_action`: `render()` wires `on_action`, and markup from `html()` with
-only a label is for a caller that delegates clicks on `.sf-state-action`. Loading is `role="status"`, error `role="alert"`; the spinner stops under
-`prefers-reduced-motion`.
+only a label is for a caller that delegates clicks on `.sf-state-action`. Loading is
+`role="status"`, error `role="alert"`; the spinner stops under `prefers-reduced-motion`.
 
 ```js
 sf_kit.state.render(el, "loading");
@@ -394,8 +412,11 @@ get the same, and a `:focus-visible` ring the Desk's `a:focus { outline: 0 }` wo
 **`sf_kit.toast(message, { action_label, on_action, timeout, tone })`**: one at a time, 8 seconds
 by default, held while the pointer is over it **or focus is inside it** (focusin pauses the timer,
 focusout to outside re-arms it), announced politely, one action and a Dismiss. When a toast that
-holds focus closes, focus goes back to the element that had it before, if it is still in the
-page. Inverted, so it shows on the dark page too. `tone` is `success`, `warning` or `info`.
+holds focus closes, focus goes back to the element that had it before (the `relatedTarget` of the
+focusin that brought it in), if that element is still in the page and rendered and the `focus()`
+takes; otherwise focus is left where the browser put it. When focus came in from nowhere (the
+person clicked the page background first), nothing gets it back: jumping to an input they left a
+while ago would be worse. Inverted, so it shows on the dark page too. `tone` is `success`, `warning` or `info`.
 `toast.close()` and `toast.current()` act on that instance's own toast.
 
 "One at a time" is per **document**, across every instance: the page's `sf_kit.toast`, any

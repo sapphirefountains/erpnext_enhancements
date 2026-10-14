@@ -306,6 +306,20 @@ class TestLoading(unittest.TestCase):
 				with self.subTest(name=name, sentence=sentence):
 					self.assertIn(f'__("{sentence}")', code)
 
+	def test_no_irregular_whitespace(self):
+		"""CI's eslint gate (`npx eslint . --quiet`, eslint:recommended) errors on
+		no-irregular-whitespace, and eslint is not installed locally, so a literal no-break space
+		in a regex shipped once (v1.630.0). This is that rule's character set, checked everywhere
+		in the file (eslint skips string literals by default; this does not, so write the escape)."""
+		# Built from code points, so this file holds none of them (and no escape a shell can eat).
+		points = (0x0B, 0x0C, 0xA0, 0x1680, 0x180E, *range(0x2000, 0x200C), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)
+		irregular = re.compile("[" + "".join(map(chr, points)) + "]")
+		for path in [*(KIT_DIR / f"{name}.js" for name in MODULES), BUNDLE, PLANNER_TOAST, HARNESS]:
+			for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+				for match in irregular.finditer(line):
+					with self.subTest(file=path.name, line=number):
+						self.fail(f"{path.name}:{number}:{match.start() + 1} holds U+{ord(match.group()):04X}")
+
 	def test_esc_stays_import_free(self):
 		"""Three planner suites load sf_kit/esc.js as plain script text in front of
 		planner_kit/escape.js; an import line in it would be a SyntaxError there."""

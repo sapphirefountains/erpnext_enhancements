@@ -21,23 +21,29 @@ requirements for its quiet path, all met here.
   (with the exception's last line for system users) on a 500. So a page that drew its own error
   panel also got frappe's modal, and a board refreshing on a timer stacked one a minute. The quiet
   path calls `/api/method/<method>` itself:
-  - POST by default with a JSON body and `X-Frappe-CSRF-Token`; `method: "GET"` sends a query string
-    for reads. Arguments are encoded the way `frappe.request` encodes them.
+  - POST by default, form-encoded byte for byte as `frappe.call` sends it (objects and arrays as JSON
+    strings, numbers and booleans as text, null as empty), so v16's type checks on whitelisted
+    arguments see exactly what they see from `frappe.call`; `method: "GET"` sends the same string as
+    a query. `X-Frappe-CSRF-Token` goes on POST only, and a redirect is refused rather than followed.
   - Rejects `{status, message, exc_type, session_expired}` on both paths. A 417 keeps the
     `frappe.throw` text so a form can show it inline.
   - **A session expiry is recognisable:** `session_expired: true` (and `exc_type: "SessionExpired"`)
-    on v16's 401 SessionExpired reply, and on a later 403 once the `user_id` cookie is gone, which is
-    the same test as `frappe.request.is_session_expired`. A retry queue can stop and ask the person to
-    sign in instead of retrying forever.
+    on v16's 401 SessionExpired reply, on a later 401/403 once the `user_id` cookie is gone (the same
+    test as `frappe.request.is_session_expired`), and on a 2xx carrying `session_expired` while the
+    page was signed in (an allow-guest method that quietly ran as Guest), which rejects instead of
+    passing for a successful save. A retry queue can stop and ask the person to sign in instead of
+    retrying forever. A GET to a POST-only method comes back as 403 "Not permitted" and is logged
+    once to the console by name.
+  - `with_messages: true` also returns a successful call's server messages as plain text.
   - A 2xx that isn't JSON (a proxy or login page), a network failure or an unreadable body reads as
     "Could not reach the server.", not "refused". It settles exactly once.
   - The docs now say exactly what `silent` does and does not suppress, and the test stub models v16's
     per-status handlers, so the difference is tested rather than claimed.
-- **Server messages read cleanly:** HTML is decoded through `DOMParser` (with a node fallback), so
-  entities aren't shown literally, a bare `<` in prose no longer swallows text, and there's no space
-  before punctuation.
-- **Toasts:** the timer pauses while a keyboard user is on the toast and focus returns where it was
-  when the toast closes. There is one toast per document across every instance, sf and planner,
+- **Server messages read cleanly:** HTML is decoded through `DOMParser` (with a node fallback, and
+  without the contents of script or style elements), so entities aren't shown literally, a bare `<`
+  in prose no longer swallows text, and there's no space before punctuation.
+- **Toasts:** the timer pauses while a keyboard user is on the toast, and focus returns where it was
+  when the toast closes (only to an element that is still visible and can take focus). There is one toast per document across every instance, sf and planner,
   so two can never overlap. The planner markup is unchanged, byte for byte.
 - **Chip edges reach 3:1 in both themes.** New `--sf-chip-edge-*` tokens: Build's edge was 2.48:1 on
   a dark card and danger's fill 2.82:1. In dark mode Build and neutral edge in sky-200 and danger in

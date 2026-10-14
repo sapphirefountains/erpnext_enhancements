@@ -18,20 +18,23 @@
  *     traceback, the QueryTimeout / Deadlock dialogs, the session-expired dialog, and cleanup's
  *     _server_messages msgprint, the only one `silent` stops), so the tests show what `silent`
  *     does NOT suppress, and that the quiet path (fetch) shows none of it;
- *   - the quiet path: POST with a JSON body and the CSRF header by default, GET with a query
- *     string on request, frappe.call's argument encoding, a 417's own words, session expiry
- *     recognised from the 401 body and from the 403 that follows it once the cookies are gone, a
- *     200 that is not JSON read as "not the server", a network failure as status 0;
- *   - strip_html decodes entities, keeps a bare "<" in prose, and puts no space before
- *     punctuation; it uses DOMParser when there is one;
+ *   - the quiet path: a form-encoded POST with the CSRF header by default, GET with the same
+ *     pairs as a query string and no token, both byte for byte frappe.call's encoding
+ *     (frappe.request.prepare, then jQuery 3.7.1's $.param), redirect: "error", a 417's own
+ *     words, session expiry recognised from the 401 body, from the 403 that follows it once the
+ *     cookies are gone, and from a 2xx that ran as Guest; a 200 that is not JSON read as "not the
+ *     server", a network failure or a refused redirect as status 0; with_messages; the one
+ *     console warning for a GET refused 403;
+ *   - strip_html decodes entities, keeps a bare "<" in prose, puts no space before punctuation,
+ *     and drops script / style / template; it uses DOMParser when there is one;
  *   - the state panel's roles, its action button whenever it has a label or a function, and an
  *     escaped title;
  *   - a chip always carries its word, an unknown tone is neutral, a wordless chip is not drawn;
  *   - cards and tiles escape everything, only make links of /desk/ routes and http(s) URLs, and
  *     survive malformed tile data;
  *   - the toast: one per document across every instance and every copy of the module, 8 s by
- *     default, held while the pointer or focus is in it, focus handed back when it closes, its
- *     action closes it; and planner_kit's toast (prefix "pk") draws BYTE FOR BYTE what it drew
+ *     default, held while the pointer or focus is in it, focus handed back when it closes (never
+ *     to a stale element, an unrendered one, or one that will not take it), its action closes it; and planner_kit's toast (prefix "pk") draws BYTE FOR BYTE what it drew
  *     before it moved here (SNAPSHOT, taken from the old planner_kit/toast.js with
  *     --print-pk-snapshot);
  *   - styles.js exports exactly the text of sf_kit.bundle.css;
@@ -96,6 +99,10 @@ function make_el(tag, owner) {
 		text: null,
 		html: null,
 		is_root: false,
+		rendered: true,
+		getClientRects() {
+			return el.rendered ? [{ width: 1, height: 1 }] : [];
+		},
 		setAttribute(name, value) {
 			const found = el.attrs.find((a) => a[0] === name);
 			if (found) found[1] = String(value);
@@ -156,11 +163,15 @@ function make_el(tag, owner) {
 	});
 	Object.defineProperty(el, "className", {
 		get: () => el.getAttribute("class") || "",
-		set: (v) => el.setAttribute("class", v),
+		set: (v) => {
+			el.setAttribute("class", v);
+		},
 	});
 	Object.defineProperty(el, "type", {
 		get: () => el.getAttribute("type") || "",
-		set: (v) => el.setAttribute("type", v),
+		set: (v) => {
+			el.setAttribute("type", v);
+		},
 	});
 	Object.defineProperty(el, "textContent", {
 		get: () => (el.text !== null ? el.text : el.children.map((c) => c.textContent).join("")),
@@ -244,7 +255,8 @@ if (process.argv.includes("--print-pk-snapshot")) {
 
 const kit = await import(url(path.join(KIT, "index.js")));
 const { esc, t, call, chip, state_html, render_state, card_html, tiles_html, safe_href, create_toast, CSS } = kit;
-const { strip_html } = await import(url(path.join(KIT, "call.js")));
+const call_module = await import(url(path.join(KIT, "call.js")));
+const { strip_html } = call_module;
 const planner_escape = await import(url(path.join(JS, "planner_kit", "escape.js")));
 const planner_toast = await import(url(path.join(JS, "planner_kit", "toast.js")));
 
@@ -318,17 +330,38 @@ await test("tags out, entities decoded, a bare < in prose kept, no space before 
 	assert.equal(strip_html(0), "0");
 });
 
-await test("with a DOM, the browser's parser does the decoding", () => {
+await test("script, style and template content is code, not words: it goes with its element", () => {
+	assert.equal(strip_html("Saved<script>alert('x < y')</script>."), "Saved.");
+	assert.equal(strip_html("<style>.a{color:red}</style>Row <b>3</b>:"), "Row 3:");
+	assert.equal(strip_html("A<template><p>hidden</p></template>B"), "A B");
+	assert.equal(strip_html('<SCRIPT type="x">1</SCRIPT >Done'), "Done");
+	assert.equal(strip_html("Done<script>never closed"), "Done", "an unclosed script runs to the end");
+});
+
+await test("with a DOM, the browser's parser does the decoding, minus script / style / template", () => {
 	const seen = [];
+	const removed = [];
 	globalThis.DOMParser = class {
 		parseFromString(text, type) {
 			seen.push([text, type]);
-			return { body: { textContent: "Row 3 : done" } };
+			const code = { remove: () => removed.push("script") };
+			const body = {
+				words: "Row 3 :\u00a0done",
+				querySelectorAll(selector) {
+					seen.push(["select", selector]);
+					return [code];
+				},
+			};
+			// textContent is read after the removal, so it must not include the script's text then.
+			Object.defineProperty(body, "textContent", { get: () => (removed.length ? body.words : `${body.words}alert(1)`) });
+			return { body };
 		}
 	};
 	try {
-		assert.equal(strip_html("Row <b>3</b> :&nbsp;done"), "Row 3: done");
+		assert.equal(strip_html("Row <b>3</b> :&nbsp;done<script>alert(1)</script>"), "Row 3: done");
 		assert.equal(seen[0][1], "text/html");
+		assert.deepEqual(seen[1], ["select", "script, style, template"]);
+		assert.deepEqual(removed, ["script"]);
 		globalThis.DOMParser = class {
 			parseFromString() {
 				throw new Error("no");
@@ -600,6 +633,11 @@ function fake_fetch(reply) {
 					reject(new TypeError("Failed to fetch"));
 					return;
 				}
+				// fetch with redirect: "error" rejects on a 3xx instead of following it.
+				if (reply.redirect && init && init.redirect === "error") {
+					reject(new TypeError("Failed to fetch: redirect mode is set to error"));
+					return;
+				}
 				const text = reply.text !== undefined ? reply.text : JSON.stringify(reply.body);
 				resolve({
 					status: reply.status,
@@ -616,13 +654,14 @@ function fake_fetch(reply) {
 function quiet_env(reply, more) {
 	const frappe = frappe_v16({ status: 200, body: { message: "frappe.call was used" } }, more);
 	const net = fake_fetch(reply);
-	const env = { frappe, t, fetch: net.fetch, cookie: () => (more && more.cookie) || "user_id=nik%40example.com; sid=abc" };
+	const cookie = more && "cookie" in more ? more.cookie : "user_id=nik%40example.com; sid=abc";
+	const env = { frappe, t, fetch: net.fetch, cookie: () => cookie };
 	return { env, frappe, seen: net.seen };
 }
 
 const quietly = (env, args, opts) => call(env, "app.api.save", args, { quiet: true, ...(opts || {}) });
 
-await test("POST by default: JSON body, CSRF header, same-origin, nothing from frappe.call", async () => {
+await test("POST by default: form-encoded like frappe.call, CSRF header, no redirects", async () => {
 	const { env, frappe, seen } = quiet_env({ status: 200, body: { message: { saved: true } } });
 	const args = { name: "OPP-1", doc: { a: [1, 2] }, list: ["x"], n: 3, flag: false, none: null, gone: undefined };
 	const result = await outcome(quietly(env, args));
@@ -635,19 +674,74 @@ await test("POST by default: JSON body, CSRF header, same-origin, nothing from f
 	assert.equal(init.method, "POST");
 	assert.equal(init.credentials, "same-origin");
 	assert.equal(init.cache, "no-store");
-	assert.equal(init.headers["Content-Type"], "application/json");
+	assert.equal(init.redirect, "error");
+	assert.equal(init.headers["Content-Type"], "application/x-www-form-urlencoded; charset=UTF-8");
 	assert.equal(init.headers["X-Frappe-CSRF-Token"], "tok-123");
 	assert.equal(init.headers.Accept, "application/json");
 	assert.equal(init.headers["X-Requested-With"], "XMLHttpRequest");
-	// The arguments frappe.call would send: objects and arrays JSON-encoded, undefined left out.
-	assert.deepEqual(JSON.parse(init.body), {
+	// What frappe.call puts on the wire: prepare JSON-stringifies the object and the array, then
+	// $.param writes 3 as "3", false as "false", and null AND undefined as "" (the key stays).
+	assert.equal(
+		init.body,
+		"name=OPP-1&doc=%7B%22a%22%3A%5B1%2C2%5D%7D&list=%5B%22x%22%5D&n=3&flag=false&none=&gone="
+	);
+	assert.deepEqual(Object.fromEntries(new URLSearchParams(init.body)), {
 		name: "OPP-1",
 		doc: '{"a":[1,2]}',
 		list: '["x"]',
-		n: 3,
-		flag: false,
-		none: null,
+		n: "3",
+		flag: "false",
+		none: "",
+		gone: "",
 	});
+});
+
+await test("the encoder is frappe.request.prepare + jQuery 3.7.1 $.param, rule by rule", () => {
+	const { form_pairs, form_encode } = call_module;
+	class Point {
+		constructor() {
+			this.x = 1;
+			this.y = [2, { z: 3 }];
+		}
+	}
+	const when = new Date(Date.UTC(2026, 9, 13));
+	const bare = Object.create(null);
+	bare.k = "v";
+	assert.deepEqual(form_pairs({ t: true, f: false, zero: 0, nan: NaN, s: "", sp: "a b&c=d" }), [
+		["t", "true"],
+		["f", "false"],
+		["zero", "0"],
+		["nan", "NaN"],
+		["s", ""],
+		["sp", "a b&c=d"],
+	]);
+	// prepare: a TRUTHY plain object or array is JSON (so [] and {} too); Object.create(null) is plain.
+	assert.deepEqual(form_pairs({ empty_list: [], empty_obj: {}, bare, nested: { a: { b: null } } }), [
+		["empty_list", "[]"],
+		["empty_obj", "{}"],
+		["bare", '{"k":"v"}'],
+		["nested", '{"a":{"b":null}}'],
+	]);
+	// $.param: a function is called; a Date is a scalar (its String); any other object is not
+	// plain, so prepare leaves it and $.param recurses with brackets, as jQuery does.
+	assert.deepEqual(form_pairs({ fn: () => 7, nothing: () => null, when, point: new Point() }), [
+		["fn", "7"],
+		["nothing", ""],
+		["when", String(when)],
+		["point[x]", "1"],
+		["point[y][]", "2"],
+		["point[y][1][z]", "3"],
+	]);
+	assert.deepEqual(form_pairs(null), []);
+	assert.equal(form_encode({ sp: "a b&c=d", u: "é" }), "sp=a%20b%26c%3Dd&u=%C3%A9");
+	assert.equal(form_encode({}), "");
+});
+
+await test("a 3xx is never followed: it reads as status 0", async () => {
+	const { env, seen } = quiet_env({ redirect: true });
+	const result = await outcome(quietly(env, { a: 1 }));
+	assert.equal(seen[0].init.redirect, "error");
+	assert.deepEqual(result.err, refusal(0, "Could not reach the server."));
 });
 
 await test("method: GET sends the args as a query string and no body", async () => {
@@ -658,8 +752,13 @@ await test("method: GET sends the args as a query string and no body", async () 
 	assert.equal(init.method, "GET");
 	assert.equal(init.body, undefined);
 	assert.equal(init.headers["Content-Type"], undefined);
-	assert.equal(init.headers["X-Frappe-CSRF-Token"], "tok-123");
+	assert.equal("X-Frappe-CSRF-Token" in init.headers, false, "a GET carries no CSRF token");
+	assert.equal(init.redirect, "error");
 	assert.equal(address, "/api/method/app.api.save?flow=opportunity&filters=%7B%22a%22%3A%22b%20c%22%7D&empty=");
+	// One encoder: the GET query is exactly the POST body for the same args.
+	const post = quiet_env({ status: 200, body: {} });
+	await quietly(post.env, { flow: "opportunity", filters: { a: "b c" }, empty: null });
+	assert.equal(address.split("?")[1], post.seen[0].init.body);
 	const bare = quiet_env({ status: 200, body: {} });
 	await quietly(bare.env, {}, { method: "GET" });
 	assert.equal(bare.seen[0].url, "/api/method/app.api.save");
@@ -698,9 +797,78 @@ await test("session expiry, every later reply: a Guest's 403 once the user_id co
 	// A page that was never signed in (a www page, a Guest) is never "expired".
 	const visitor = quiet_env({ status: 403, body: GUEST_REFUSAL_BODY }, { cookie: "", session: { user: "Guest" } });
 	assert.equal((await outcome(quietly(visitor.env, {}))).err.session_expired, false);
-	// A 417 is never expiry, whatever the cookies say.
+});
+
+await test("a 417 keeps its own words unless the body itself says the session expired", async () => {
+	// The cookies say nothing about a 417: a method that ran signed in threw, and its words stand.
 	const thrown = quiet_env({ status: 417, body: THROW_BODY }, { cookie: "" });
-	assert.equal((await outcome(quietly(thrown.env, {}))).err.session_expired, false);
+	assert.deepEqual((await outcome(quietly(thrown.env, {}))).err, refusal(417, "Pick a date first.", "ValidationError"));
+	// An allow_guest method that ran as Guest after the lapse and threw: the body carries the flag.
+	const as_guest = quiet_env({ status: 417, body: { ...THROW_BODY, session_expired: 1 } });
+	assert.deepEqual(
+		(await outcome(quietly(as_guest.env, {}))).err,
+		refusal(417, "Your session has expired. Please sign in again.", "SessionExpired", true)
+	);
+	// The same flag on a visitor's page (a stale sid on a www page) is not this page's expiry.
+	const visitor = quiet_env({ status: 417, body: { ...THROW_BODY, session_expired: 1 } }, { session: { user: "Guest" } });
+	assert.deepEqual((await outcome(quietly(visitor.env, {}))).err, refusal(417, "Pick a date first.", "ValidationError"));
+});
+
+await test("a 2xx carrying session_expired rejects as expired on a signed-in page", async () => {
+	const body = { message: { public: true }, session_expired: 1 };
+	const signed_in = quiet_env({ status: 200, body });
+	assert.deepEqual(
+		(await outcome(quietly(signed_in.env, {}))).err,
+		refusal(200, "Your session has expired. Please sign in again.", "SessionExpired", true)
+	);
+	const visitor = quiet_env({ status: 200, body }, { session: { user: "Guest" } });
+	assert.deepEqual(await outcome(quietly(visitor.env, {})), { ok: { public: true } });
+});
+
+await test("with_messages resolves the message and the reply's server messages, as text", async () => {
+	const body = {
+		message: 5,
+		_server_messages: JSON.stringify([
+			JSON.stringify({ message: "Stock is <b>low</b>.", indicator: "orange" }),
+			JSON.stringify({ message: "" }),
+			"Plain &amp; simple",
+		]),
+	};
+	const { env } = quiet_env({ status: 200, body });
+	assert.deepEqual(await outcome(quietly(env, {}, { with_messages: true })), {
+		ok: { message: 5, server_messages: ["Stock is low.", "Plain & simple"] },
+	});
+	const none = quiet_env({ status: 200, body: { message: null } });
+	assert.deepEqual(await outcome(quietly(none.env, {}, { with_messages: true })), {
+		ok: { message: null, server_messages: [] },
+	});
+	const plain = quiet_env({ status: 200, body });
+	assert.deepEqual(await outcome(quietly(plain.env, {})), { ok: 5 });
+});
+
+await test("a quiet GET refused 403 PermissionError while signed in warns once, naming the method", async () => {
+	const warned = [];
+	const original = console.warn;
+	console.warn = (...args) => warned.push(args.join(" "));
+	try {
+		const refused = { status: 403, body: { exc_type: "PermissionError", _server_messages: JSON.stringify(["Not permitted"]) } };
+		const get = (env, method) => call(env, method, {}, { quiet: true, method: "GET" });
+		assert.equal((await outcome(get(quiet_env(refused).env, "app.api.post_only"))).err.message, "Not permitted");
+		await outcome(get(quiet_env(refused).env, "app.api.post_only"));
+		assert.equal(warned.length, 1, "warned more than once for one method");
+		assert.match(warned[0], /app\.api\.post_only/);
+		assert.match(warned[0], /methods=\["POST"\]/);
+		// Not for a POST, a visitor's page, an expired session, or another status.
+		await outcome(call(quiet_env(refused).env, "app.api.other", {}, { quiet: true }));
+		await outcome(get(quiet_env(refused, { session: { user: "Guest" } }).env, "app.api.guest"));
+		await outcome(get(quiet_env(refused, { cookie: "" }).env, "app.api.lapsed"));
+		await outcome(get(quiet_env({ status: 404, body: {} }).env, "app.api.missing"));
+		assert.equal(warned.length, 1);
+		await outcome(get(quiet_env(refused).env, "app.api.another_post_only"));
+		assert.equal(warned.length, 2);
+	} finally {
+		console.warn = original;
+	}
 });
 
 await test("a 200 that is not frappe's JSON (proxy page, login page) is 'could not reach'", async () => {
@@ -1083,17 +1251,13 @@ await test("closing a toast that holds focus hands focus back to where it was", 
 	shown.el.fire("focusin", { relatedTarget: before });
 	action.fire("click");
 	assert.equal(env.doc.activeElement, before, "the action");
-	// The timer cannot fire while focus is inside (focusin paused it), so: focus in, out, back in
-	// with no relatedTarget (a click on the toast from nowhere), then a close by the page.
+	// close() by the page while focus is inside (the timer cannot fire then: focusin paused it).
 	shown = toast("Saved", { action_label: "Undo", on_action: () => {} });
 	shown.el.find("sf-toast-close").focus();
 	shown.el.fire("focusin", { relatedTarget: before });
-	shown.el.fire("focusout", { relatedTarget: null });
-	shown.el.find("sf-toast-close").focus();
-	shown.el.fire("focusin", { relatedTarget: null });
 	assert.deepEqual(env.timers.pending(), []);
 	shown.close();
-	assert.equal(env.doc.activeElement, before, "close(), with no relatedTarget the second time");
+	assert.equal(env.doc.activeElement, before, "close()");
 	// Replaced by a newer toast while focus is inside.
 	shown = toast("Old", { action_label: "Undo", on_action: () => {} });
 	shown.el.find("sf-toast-action").focus();
@@ -1123,6 +1287,70 @@ await test("focus is left alone when the toast never had it, or the old element 
 	env.doc.body.removeChild(before);
 	action.fire("click");
 	assert.equal(env.doc.activeElement, action, "focus went to an element no longer in the page");
+});
+
+await test("focus that came from nowhere goes back nowhere: a stale element is not revived", () => {
+	const env = toast_env();
+	const toast = create_toast(env);
+	const input = env.doc.createElement("input");
+	env.doc.body.appendChild(input);
+	input.focus();
+	// The person clicks the page background (focus leaves the input, relatedTarget null), then Tab
+	// or a click brings focus into the toast from nowhere.
+	const shown = toast("Saved", { action_label: "Undo", on_action: () => {} });
+	const close = shown.el.find("sf-toast-close");
+	env.doc.activeElement = null;
+	close.focus();
+	shown.el.fire("focusin", { relatedTarget: null });
+	close.fire("click");
+	assert.equal(env.doc.activeElement, close, "focus jumped back to the input left a while ago");
+	// Out and back in with no relatedTarget the second time: the earlier element is forgotten too.
+	const again = toast("Saved", { action_label: "Undo", on_action: () => {} });
+	const undo = again.el.find("sf-toast-action");
+	undo.focus();
+	again.el.fire("focusin", { relatedTarget: input });
+	again.el.fire("focusout", { relatedTarget: null });
+	undo.focus();
+	again.el.fire("focusin", { relatedTarget: null });
+	again.close();
+	assert.equal(env.doc.activeElement, undo);
+});
+
+await test("an unrendered target, or one that will not take focus, is left alone quietly", () => {
+	const env = toast_env();
+	const toast = create_toast(env);
+	const hidden = env.doc.createElement("button");
+	env.doc.body.appendChild(hidden);
+	hidden.rendered = false;
+	let shown = toast("Saved", { action_label: "Undo", on_action: () => {} });
+	let undo = shown.el.find("sf-toast-action");
+	undo.focus();
+	shown.el.fire("focusin", { relatedTarget: hidden });
+	let focus_calls = 0;
+	hidden.focus = () => (focus_calls += 1);
+	assert.doesNotThrow(() => shown.close());
+	assert.equal(focus_calls, 0, "focus() was called on an element with no boxes");
+	// Rendered, but focus() does not take (disabled, inert): no error, focus stays put.
+	const stubborn = env.doc.createElement("button");
+	env.doc.body.appendChild(stubborn);
+	stubborn.focus = () => {};
+	shown = toast("Saved", { action_label: "Undo", on_action: () => {} });
+	undo = shown.el.find("sf-toast-action");
+	undo.focus();
+	shown.el.fire("focusin", { relatedTarget: stubborn });
+	assert.doesNotThrow(() => shown.close());
+	assert.equal(env.doc.activeElement, undo);
+	// One that throws.
+	const throwing = env.doc.createElement("button");
+	env.doc.body.appendChild(throwing);
+	throwing.focus = () => {
+		throw new Error("nope");
+	};
+	shown = toast("Saved", { action_label: "Undo", on_action: () => {} });
+	undo = shown.el.find("sf-toast-action");
+	undo.focus();
+	shown.el.fire("focusin", { relatedTarget: throwing });
+	assert.doesNotThrow(() => shown.close());
 });
 
 await test("the dismiss button has a label and closes; a stale close does not close the next", () => {
