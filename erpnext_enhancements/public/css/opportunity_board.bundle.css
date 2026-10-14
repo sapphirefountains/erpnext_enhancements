@@ -7,9 +7,12 @@
  * semantic tokens follow the Desk theme, so nothing here is written twice for dark.
  *
  * Widths:
- *   >= 768px  every stage a column, side by side; the board scrolls sideways inside its own box
- *             when the columns do not fit. Rows by value stream line their cells up under the
- *             same column heads.
+ *   >= 768px  every stage a column, side by side, every column the same width (v1.688.0); the
+ *             board scrolls sideways inside its own box when the columns do not fit. The box is
+ *             the screen's height under the sticky page head (--ob-fit-top, set by the page), and
+ *             each column scrolls on its own, so the page is never as long as the longest column.
+ *             Rows by value stream line their cells up under the same column heads, which stay
+ *             at the top of the box while the rows scroll.
  *   <  768px  phone: one stage at a time under a wrapping row of stage tabs, nothing wider than
  *             the screen, 44px targets, a 16px side gutter; the move panel is a bottom sheet
  *             above the safe area.
@@ -119,15 +122,46 @@
 }
 
 /* ---- Columns and rows ---- */
+.ob-app {
+	/* One width for every column (v1.688.0): wide enough for a card's facts on one line. */
+	--ob-col-min: 280px;
+}
 .ob-scroll {
 	overflow-x: auto;
 	padding-bottom: var(--sf-space-10);
 }
 .ob-grid {
 	display: grid;
-	/* --ob-template is set by the page: a folded On Hold column is narrow (P6.8). */
-	grid-template-columns: var(--ob-template, repeat(var(--ob-cols, 1), minmax(240px, 1fr)));
+	/* --ob-cols is set by the page: how many columns. Every one the same width. */
+	grid-template-columns: repeat(var(--ob-cols, 1), minmax(var(--ob-col-min), 1fr));
 	gap: var(--sf-space-10);
+}
+/* The fitted board (wide screens): the height of what the page scrolls in, under the sticky page
+   head and less what follows the board, measured by the page (set_fit, --ob-fit-h), so scrolled to
+   the end it fills the screen exactly. 70vh until the first measurement. */
+.ob-scroll--fit {
+	height: var(--ob-fit-h, 70vh);
+	min-height: 360px;
+	overflow: auto;
+}
+.ob-scroll--cols > .ob-grid {
+	height: 100%;
+}
+.ob-scroll--cols .ob-col {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.ob-scroll--cols .ob-col > .ob-cards {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+}
+.ob-scroll--rows .ob-grid--heads {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--sf-bg);
 }
 .ob-col,
 .ob-cell {
@@ -606,6 +640,9 @@ body.ob-drag-active * {
 	align-items: flex-end;
 	gap: var(--sf-space-10);
 }
+.ob-filter-row--views {
+	align-items: center;
+}
 .ob-toggle,
 .ob-filters-toggle {
 	min-height: var(--sf-touch-min);
@@ -696,6 +733,10 @@ body.ob-drag-active * {
 .ob-card.is-snoozed {
 	opacity: 0.7;
 	border-style: dashed;
+}
+/* A closed card (v1.688.0) opens on a click and is never dragged. */
+.ob-card--closed {
+	cursor: pointer;
 }
 
 /* ---- The table (P6.3) ---- */
