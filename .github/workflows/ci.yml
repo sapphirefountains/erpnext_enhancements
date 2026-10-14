@@ -1711,6 +1711,14 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
+      # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
+      # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
+      # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
+      # (figures held to the README's SQL check, run on SQLite), a drop on Closed Won or Lost never
+      # saving a status, ages at the TV board's thresholds; get_board reading through get_list with
+      # the form kit's exact `modified` string, or every move is a conflict. Own frappe stub.
+      - name: Opportunity board (bench-free, node + SQL check)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
