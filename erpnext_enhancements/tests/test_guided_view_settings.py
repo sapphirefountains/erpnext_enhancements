@@ -346,6 +346,51 @@ const s2 = (visible_more, active_design) => {
 	return { changes, collected: ed.collect_steps().map((st) => st.key) };
 };
 out.s2 = { hidden: s2(false, false), shown: s2(true, true) };
+
+// ---- re-review of #1299: a field the person is editing never goes away under them
+const typed = new Set(["custom_billing_email"]);
+const bill = def("custom_billing_email", "Data");
+const person = (missing_now, revealed) => ({ hidden_fields: ["custom_billing_email"], missing: new Set(missing_now), revealed });
+const snap2 = new Set(["notes"]);
+const notes = def("notes", "Small Text");
+const filled = (revealed) => ({ filled_only: true, filled_snapshot: snap2, missing: new Set(), revealed });
+const sec = { key: "more", fields: [bill] };
+out.typing = {
+	// Shown only because the stage needs it; the person types; the save drops it from `missing`.
+	needed: v.field_hidden(bill, "", person(["custom_billing_email"], null)).hidden,
+	after_save_untouched: v.field_hidden(bill, "a@b.co", person([], null)).hidden,
+	after_save_edited: v.field_hidden(bill, "a@b.co", person([], typed)).hidden,
+	// Filled-only: in the snapshot, filled and saved, then cleared to retype with `missing` stale.
+	cleared_untouched: v.field_hidden(notes, "", filled(null)).hidden,
+	cleared_edited: v.field_hidden(notes, "", filled(new Set(["notes"]))).hidden,
+	// A section the person put away keeps showing while a field in it was edited on this visit.
+	section_untouched: v.step_hidden(sec, { custom_billing_email: "a@b.co" }, { hidden_steps: ["more"], missing: new Set() }),
+	section_edited: v.step_hidden(sec, { custom_billing_email: "a@b.co" }, { hidden_steps: ["more"], missing: new Set(), revealed: typed }),
+};
+// The editor tells the shell about a real change only (collect_step re-reads unchanged values too).
+const heard = [];
+const ed2 = Object.create(RecordEditor.prototype);
+Object.assign(ed2, {
+	kit,
+	flow: { steps: S2_STEPS },
+	values: { title: "T" },
+	saved: { title: "T" },
+	bases: {},
+	held: {},
+	retired: [],
+	failed_keys: new Set(),
+	is_new: false,
+	doctype: "Opportunity",
+	name: "OPP-1",
+	queue: { change() {}, discard() {}, pending: () => ({}), in_flight: () => ({}), manual: false, record_key: "" },
+	refresh_chrome() {},
+	render_saveline() {},
+	write_journal() {},
+	on_field_edited: (fieldname) => heard.push(fieldname),
+});
+ed2.set_value_local("title", "T");
+ed2.set_value_local("title", "Typed");
+out.heard = heard;
 console.log(JSON.stringify(out));
 """
 
@@ -547,6 +592,20 @@ class TestTheDecisions(unittest.TestCase):
 		self.assertEqual(shown["collected"], ["basics", "scope_design", "more"])
 		# The same controls on screen do queue: the check above is not vacuous.
 		self.assertEqual(sorted(c[0] for c in shown["changes"]), ["design_kind", "source"])
+
+	def test_a_field_being_edited_never_goes_away(self):
+		# Re-review of #1299. Before the fix each "untouched" case below is what the page did to the
+		# field under the cursor: shown only because the stage needed it, typed in, autosaved, and
+		# put away the moment the save took it off `missing`.
+		t = self.out["typing"]
+		self.assertFalse(t["needed"])
+		self.assertTrue(t["after_save_untouched"], "the regression this guards against")
+		self.assertFalse(t["after_save_edited"])
+		self.assertTrue(t["cleared_untouched"])
+		self.assertFalse(t["cleared_edited"])
+		self.assertTrue(t["section_untouched"])
+		self.assertFalse(t["section_edited"])
+		self.assertEqual(self.out["heard"], ["title"], "only a real change counts as an edit")
 
 	def test_field_groups_answer_for_every_section(self):
 		g = self.out["groups"]
@@ -876,6 +935,16 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 		self.assertIn('!$sec.prop("hidden")', _method(page, "\tstep_visible(step) {"))
 		# S1: every refresh asks again what is put away.
 		self.assertIn("this.apply_visibility(false);", _method(page, "\trefresh_chrome() {"))
+		# ...but never from under the cursor, and an edited field stays for the visit.
+		apply = _method(page, "\tapply_visibility(refresh_filled = true) {")
+		self.assertIn("$w[0].contains(document.activeElement)", apply)
+		self.assertIn("this.on_field_edited(field.fieldname);", apply)
+		self.assertIn("!el.contains(document.activeElement)", _method(page, "\trefresh_section_states() {"))
+		self.assertIn("this.revealed.add(fieldname);", _method(page, "\ton_field_edited(fieldname) {"))
+		self.assertIn(
+			"this.on_field_edited(fieldname)",
+			_method(editor, "\tset_value_local(fieldname, value, quiet_chrome) {"),
+		)
 		self.assertIn("if (this.fg && this.fg.multi) this.fg.add(step, fg);", editor)
 		self.assertIn("this.before_focus(fieldname);", _method(editor, "\tfocus_field(fieldname) {"))
 
@@ -895,7 +964,8 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 		# Nit 4: never over the kept-changes chooser, a conflict or a dialog (the Won nudge).
 		intro = _method(_code(PAGE_JS), "\tmaybe_intro(tries) {")
 		self.assertIn("!!this.conflict", intro)
-		self.assertIn('document.querySelector(".modal.show")', intro)
+		self.assertIn('document.querySelector(".modal.show, .ge-overlay")', intro)
+		self.assertIn("!!this.$overlay", intro)
 		self.assertLess(intro.index("busy"), intro.index("this.view_store.intro_seen = true;"))
 
 	def test_record_tools_are_offered_once_they_exist(self):

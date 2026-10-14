@@ -82,8 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - With hints put away (or in focus mode), a Datetime whose zone differs from the site's gets the
     (i), which carries the zone.
   - The Record tools choice shows only once something has mounted into `.ge-tools`.
-  - The first-time pop-up waits until neither the chooser for kept changes, a conflict, nor a dialog
-    (the Closed Won nudge) is showing.
+  - The first-time pop-up waits until neither the chooser for kept changes, a conflict, a dialog
+    (the Closed Won nudge) nor the page's own shortcuts list is showing.
+  - A field the person is typing in is never put away from under them: a field shown only because
+    the stage needed it, typed in and autosaved, used to vanish (focus and keystrokes with it) when
+    the save took it off the stage's list. A field or section holding the cursor stays, and a field
+    the person changes stays in view for the rest of the visit, under their list and under "only
+    fields with a value" alike.
 
 ## [1.682.1] - 2026-10-14
 

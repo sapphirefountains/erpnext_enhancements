@@ -392,7 +392,9 @@ export function hidden_when_filled_only(def, value) {
 
 // Whether one field is put away right now: by the person's own list (unless it must show), or by
 // "only fields with a value". `reveal` (the "Show hidden" toggle) shows the person's list again;
-// `revealed` (a Set) names single fields brought into view to be filled in.
+// `revealed` (a Set) names single fields that stay in view for the rest of the visit: brought into
+// view to be filled in, or edited by the person. Once someone has typed in a field it never goes
+// away under them, whatever the next save says the stage needs (review of #1299).
 //
 // The page asks again whenever the record moves (a save's new completeness, a status change), so a
 // field that has just become required or stage-needed comes back at once. "Only fields with a value"
@@ -429,12 +431,17 @@ export function filled_snapshot(steps, values) {
 	return out;
 }
 
-// Whether a section is put away: listed by the person, and none of its fields must show.
+// Whether a section is put away: listed by the person, and none of its fields must show, nor was
+// edited on this visit (`revealed`).
 export function step_hidden(step, values, opts) {
 	const o = opts || {};
 	if (o.reveal || !step || !(o.hidden_steps || []).includes(step.key)) return false;
 	const v = values || {};
-	return !(step.fields || []).some((field) => field && field.fieldname && must_show(field, v[field.fieldname], o.missing));
+	const revealed = o.revealed && o.revealed.has ? o.revealed : null;
+	return !(step.fields || []).some(
+		(field) =>
+			field && field.fieldname && (must_show(field, v[field.fieldname], o.missing) || (revealed && revealed.has(field.fieldname)))
+	);
 }
 
 // Whether the person may put a field away at all (the settings list greys out the ones they may not).

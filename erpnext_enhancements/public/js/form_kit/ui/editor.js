@@ -1000,7 +1000,10 @@ export class RecordEditor {
 	// the queue when it is back to it. `quiet_chrome` skips the rail redraw while typing in a list.
 	set_value_local(fieldname, value, quiet_chrome) {
 		const before_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
+		const edited = !this.kit.same_value(value, this.values[fieldname]);
 		this.values[fieldname] = value;
+		// v1.684.0: the shell hears of a real change (collect_step re-reads unchanged values too).
+		if (edited && typeof this.on_field_edited === "function") this.on_field_edited(fieldname);
 		if (this.is_new) {
 			this.new_dirty = true;
 			this.write_new_journal();

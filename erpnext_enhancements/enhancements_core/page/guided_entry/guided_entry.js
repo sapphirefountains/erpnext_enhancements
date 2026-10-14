@@ -1745,7 +1745,8 @@ class GuidedEntry {
 			const step = this.kit.find_step(this.flow.steps, key);
 			if (!step) return;
 			const active = this.kit.step_active(step, this.values);
-			const away = this.kit.step_hidden(step, this.values, opts);
+			// A section with the cursor in it is never put away under the person.
+			const away = this.kit.step_hidden(step, this.values, opts) && !el.contains(document.activeElement);
 			const was_hidden = el.hidden;
 			el.hidden = !active || away;
 			const listed = (opts.hidden_steps || []).includes(key);
@@ -1808,7 +1809,12 @@ class GuidedEntry {
 				if (!control) return;
 				const $w = control.$wrapper || $(control.wrapper);
 				if (!$fields) $fields = $w.closest(".ge-fields");
-				const result = this.kit.field_hidden(field, this.values[field.fieldname], opts);
+				let result = this.kit.field_hidden(field, this.values[field.fieldname], opts);
+				// Never away from under the cursor: the field being typed in stays, and joins `revealed`.
+				if (result.hidden && $w[0] && $w[0].contains(document.activeElement)) {
+					this.on_field_edited(field.fieldname);
+					result = { hidden: false, by: null };
+				}
 				const value = this.values[field.fieldname];
 				const listed =
 					opts.reveal && (opts.hidden_fields || []).includes(field.fieldname) && this.kit.can_hide(field, value, opts.missing);
@@ -1904,6 +1910,14 @@ class GuidedEntry {
 			this.revealed.add(fieldname);
 			$w.removeClass("ge-away").addClass("ge-revealed");
 		}
+	}
+
+	// editor.js set_value_local: a field the person changed stays in view for the rest of this visit,
+	// whatever their list or "only fields with a value" says (view.js field_hidden `revealed`).
+	on_field_edited(fieldname) {
+		if (!fieldname || this.is_new) return;
+		if (!this.revealed) this.revealed = new Set();
+		this.revealed.add(fieldname);
 	}
 
 	// editor.js collect_steps: a drawn section is read back only while it shows (review of #1299).
@@ -2442,7 +2456,12 @@ class GuidedEntry {
 		const doctype = this.doctype;
 		const name = this.name;
 		const n = tries || 0;
-		const busy = !!this.conflict || !!document.querySelector(".modal.show") || !!(window.cur_dialog && window.cur_dialog.display);
+		// This page's own pop-up (the shortcuts list) counts too: the intro would close it.
+		const busy =
+			!!this.conflict ||
+			!!this.$overlay ||
+			!!document.querySelector(".modal.show, .ge-overlay") ||
+			!!(window.cur_dialog && window.cur_dialog.display);
 		if (n === 0 || busy) {
 			if (n > 120) return;
 			clearTimeout(this.intro_timer);
