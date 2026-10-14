@@ -180,21 +180,30 @@ not share a value) and `clears` (a field whose change empties others).
 ## No signal (P4.7)
 
 The guided page keeps working when the signal drops while it is open. What has not reached the
-server is kept on the phone: one localStorage entry per record (`ge-unsent:<DocType>/<name>`, the
-unsent values, each field's server value from before the change, and `modified`), and step 1 of a
-record not created yet (`ge-new:<DocType>`, with the create's `client_id`). The rules are
-`public/js/form_kit/journal.js`, run under node by `test_guided_entry`:
+server is kept on the phone, in localStorage:
+
+- one entry per person and record (`ge-unsent:<user>:<DocType>/<name>`): the unsent values of every
+  queue still holding the record, each field's server value from before the change, and `modified`;
+- one entry per record not created yet (`ge-new:<user>:<DocType>:<client_id>`): step 1 as typed.
+
+Keys carry the user, so on a shared phone nobody sees or saves another person's copy. Entries past
+30 days are swept when the page loads. The rules are `public/js/form_kit/journal.js`, run under
+node by `test_guided_entry`:
 
 - **Opening the record again** puts kept values back by the server's current value: still the old
   one, the kept value is saved; already the kept one, it is dropped; anything else, the person
-  chooses (the conflict chooser).
+  chooses (the conflict chooser), and the phone keeps their value until they have. A kept change to
+  a field they can no longer edit is reported, not silently dropped.
 - **A failed save** that is the network's doing (`try_later`: no answer, 408, 425, 429, 502–504,
   or a 5xx without an exception type) waits for the signal: the browser's `online` event, and every
   20 s.
-- **`create_record(..., client_id)`** answers a resend with the record the first attempt made,
-  remembered per user in the cache after the insert commits (31 days). The deploy's FLUSHDB forgets
-  the ids, which costs at worst the duplicate this exists to prevent; the capture panel's
-  `submit_capture` makes the same trade.
+- **`create_record(..., client_id)`** stores the id on the record (the config's
+  `create.client_id_field`; on Opportunity the hidden, unique, no-copy `custom_guided_client_id`)
+  and answers a resend from the same user with that record, marked `deduped` (the page then saves
+  whatever step 1 holds that differs). In the database, not the cache: the deploy flushes the cache
+  several times a day. The unique index settles a resend racing the first insert: it waits,
+  collides, and a locking read returns the winner. `find_created(doctype, client_id)`, GET, lets a
+  page that put back a kept start ask whether that create arrived after all.
 
 Opening ERPNext from cold with no connection is a separate problem: see
 `docs/offline-cold-start-spike.md` (P4.8).
