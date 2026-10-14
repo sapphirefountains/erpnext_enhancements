@@ -60,6 +60,14 @@ def enabled():
 		return False
 
 
+def ee_rent_form_enabled():
+	"""Jinja global (hooks ``jinja.methods``) for the customer portal's nav bar,
+	``templates/includes/sf_portal_nav.html``: it shows "Rent a Fountain" only while this form is
+	switched on, so the link never leads a customer to the 404 the page gives while it is off.
+	Read-only, and never raises (``enabled`` swallows a missing settings record)."""
+	return enabled()
+
+
 def turnstile_site_key():
 	return frappe.get_cached_doc("ERPNext Enhancements Settings").get(TURNSTILE_SITE_KEY_FIELD) or ""
 

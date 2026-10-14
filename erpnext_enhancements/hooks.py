@@ -2132,6 +2132,10 @@ jinja = {
 		# prefixed and registered on its own like the three above. Notification bodies and
 		# email templates that print a registered phone field call it.
 		"erpnext_enhancements.utils.value_display.sf_phone",
+		# The customer portal's nav bar (templates/includes/sf_portal_nav.html, custom pages S6a)
+		# shows "Rent a Fountain" only while Rental Settings.public_request_form is on: the page
+		# 404s while it is off. Read-only and never raises; ee_ prefixed for the reason above.
+		"erpnext_enhancements.asset_management.rental_requests.ee_rent_form_enabled",
 	],
 }
 

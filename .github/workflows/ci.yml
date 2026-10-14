@@ -3571,6 +3571,25 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
+      # Custom pages S4a (v1.681.0). Hubs link their dashboards and every dashboard's Dashboard
+      # Hub Links block leads back along the same pairs; Operations links Stock Scan; the
+      # Morning Briefing workspace shows the briefing; the kiosk is linked at /kiosk; GA4 and
+      # the Day Board admit their hubs' roles; the patch never raises. Installs its own frappe
+      # stub for the patch and the endpoint, so it gets its own step.
+      - name: Custom pages S4a hub and dashboard links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s4a_hub_links -v
+      # Custom pages S4c (v1.680.0). page_search.js gives the awesomebar and the search dialog a
+      # "Pages" section with aliases ("planner", "kiosk", "scan", "qbo", which full-text search
+      # cannot see at three letters) and binds six Alt+Shift page shortcuts. The node step runs the
+      # real file against a stubbed frappe: matching, role filtering through page_info, routing,
+      # the awesomebar and search-dialog wraps (Frappe's list untouched on error or a missing hook
+      # point), no chord Frappe v16.50 or this app already binds, and nothing fires while typing.
+      # The unittest step holds the map to real pages, Stock Scan's roles to its controller, the
+      # chords to nowhere else in the app, and the bundle and CI wiring. Reads files only.
+      - name: Custom pages S4c page search + shortcuts (node)
+        run: node scripts/test_page_search.js
+      - name: Custom pages S4c page search + shortcuts (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s4c -v
       # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
       # which the page loader sends with the page (never stale from the immutable /assets
       # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
@@ -3605,6 +3624,14 @@ jobs:
       # carry their word, 44px controls, and the itinerary worker keeps the tokens offline.
       - name: Custom pages S3.5a www apps on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_www_app_tokens -v
+      # S6a: the customer portal (/pay, /pay-card, /rentals, /rent-a-fountain), presentation only.
+      # Each template links the tokens through bundled_asset before sf_portal.bundle.css, after the
+      # light pin, and uses the shared nav bar (no Desk links; jinja2 renders it signed in and as a
+      # guest); the CSS has no literal colour, no shadow, token radii, one 767px breakpoint, 44px
+      # controls and 16px fields; every page script is pinned byte for byte by SHA-256, every
+      # selector it reads is still in the markup, field names are unchanged, every field is labelled.
+      - name: Custom pages S6a customer portal polish (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_customer_portal_polish -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads

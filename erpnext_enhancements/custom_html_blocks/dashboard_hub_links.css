@@ -1,0 +1,55 @@
+/* Dashboard Hub Links — a single row of links back to the viewer's hubs.
+   Frappe CSS variables pierce the shadow boundary, so both themes render
+   without hard-coded structural colours. */
+
+.dhl-root {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0 4px;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.dhl-label {
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.dhl-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.dhl-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 4px 12px;
+    color: var(--text-color);
+    text-decoration: none;
+    background: var(--card-bg, var(--fg-color));
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-full, 999px);
+    font-weight: 500;
+}
+
+.dhl-link::before {
+    content: "\2190";
+    margin-right: 6px;
+    color: var(--text-muted);
+}
+
+.dhl-link:hover {
+    color: var(--text-color);
+    text-decoration: none;
+    border-color: var(--text-muted);
+}
+
+.dhl-link:focus-visible {
+    outline: 2px solid var(--primary, #2490ef);
+    outline-offset: 2px;
+}
