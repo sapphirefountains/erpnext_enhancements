@@ -67,12 +67,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composers. Not ported: ERPNext's Opportunity Close / Reopen (they write status "Closed" / "Open",
   which this site's stage list refuses) and Fetch Latest Exchange Rate (deals are always in the
   company currency).
+- New Email starts as the Desk's does: To the record's email field (Opportunity: `contact_email`,
+  hidden on the form and so in no step, read by `record_info` under its field permission; else the
+  primary contact's email), and the subject "Re:" the latest email on the record, else its title,
+  always with "(#name)". Reply quotes the email in full, read through the timeline's own
+  `get_communications`; only if that read fails is it the cut text copy.
 - New Task and New Event use frappe's `InteractionComposer`, which reads the global `cur_frm` for its
-  file list and reloads it after the insert. On these pages that is whatever form was open last, so
-  `cur_frm` is null while the composer is open and until its insert has called back, then put back.
+  file list and reloads it after the insert. Both shells are Desk Pages, where v16 sets `cur_frm` to
+  null, so normally it is null and the record's own files are passed in. As a defence for the rare
+  case it is another record's form, it is null while the composer is open and put back afterwards,
+  only on the same route; when it is this record's own form, its files are listed from it alone.
+- Generate Contract saves what is typed first, as Create, Print and Customize do. Set primary says
+  "Primary contact updated" only when the save went through.
 - A form tab still holding the bundle from before this release shows an empty Contact & Address
   directory until it reloads, never a TypeError. The directory's "Also add to" now escapes the
-  party's name in its label and description (it did not before).
+  party's name in its label and description, and Import Contacts (the form's and the guided page's)
+  gives frappe's MultiCheck row indexes as its values, never Contact names, which it writes into an
+  attribute unescaped (neither did before).
 - `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the shared directory rules
   under node and `record_info` against a frappe stub.
 

@@ -312,10 +312,20 @@ composers. Not ported at all: ERPNext's Opportunity Close / Reopen, which write 
 "Open", values this site's stage list (a Property Setter) refuses, and Fetch Latest Exchange Rate,
 which shows only for a deal in a foreign currency, and deals here are always in the company's.
 
+New Email starts as the Desk's composer does with a form (`setup_subject_and_recipients`, ported as
+`record_tools.js email_start`): To the record's email field, which `record_info` returns under
+`emails` because it is usually hidden and so in no step (Opportunity: `contact_email`, then
+`primary_contact_email`); subject "Re:" the latest email on the record, else the title; always
+"(#name)". Reply quotes the email in full from the timeline's own `get_communications` (read on the
+record); `record_info`'s copy is cut to 1,200 characters and is the quote only if that read fails.
+
 New Task and New Event run frappe's `InteractionComposer`, which also reads the global `cur_frm`
-(its file list and its post-insert `reload_doc`). On these pages `cur_frm` is whatever form was open
-last, so it is set to null while the composer is open and until its insert has called back, then
-put back. `tests/test_guided_record_tools.py`.
+(its file list and its post-insert `reload_doc`). Both shells are Desk Pages and v16's `pageview.js`
+sets `cur_frm` to null whenever a Page shows, so normally it is null and the record's files go in
+as the composer's `attachments`. A defence for the rare case it is set: another record's form is
+nulled while the composer is open and until its insert calls back, then put back only on the same
+route; this record's own form keeps it, and its files are then not passed twice.
+`tests/test_guided_record_tools.py`.
 
 ## View settings (v1.684.0)
 

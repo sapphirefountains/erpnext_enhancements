@@ -77,11 +77,29 @@ out.create = {
 	unconfigured: labels(t.create_items(t.tools_config("Project"), {}, yes)),
 	methods: t.create_items(opp, { status: "Open" }, yes).map((i) => i.method),
 };
+// The real path: the editor's values hold only flow fields (contact_email is hidden on the form, so
+// in no step); record_info's `emails` fill them in.
+const flow_values = { custom_opportunity_name: "Plaza fountain", contact_email: null };
+const comms = [
+	{ type: "Automated Message", medium: "Email", subject: "Reminder", sender: "bot@example.com" },
+	{ type: "Communication", medium: "Phone", subject: "Call", sender: "x@example.com" },
+	{ type: "Communication", medium: "Email", subject: "Quote for the plaza", sender: "client@example.com" },
+	{ type: "Communication", medium: "Email", subject: "Older", sender: "old@example.com" },
+];
 out.recipient = {
-	opp: t.recipient_for(opp, { contact_email: "a@example.com", email_id: "b@example.com" }),
+	flow_only: t.recipient_for(opp, flow_values),
+	from_info: t.recipient_for(opp, t.with_emails(flow_values, { contact_email: "a@example.com", primary_contact_email: "p@example.com" })),
+	fallback: t.recipient_for(opp, t.with_emails(flow_values, { contact_email: "", primary_contact_email: "p@example.com" })),
+	typed_wins: t.recipient_for(opp, t.with_emails({ contact_email: "typed@example.com" }, { contact_email: "a@example.com" })),
 	other: t.recipient_for({}, { email_id: "b@example.com" }),
 	other_email: t.recipient_for({}, { email: "c@example.com" }),
 	none: t.recipient_for({}, {}),
+};
+out.start = {
+	with_email: t.email_start(opp, t.with_emails(flow_values, { contact_email: "a@example.com" }), comms, "Plaza fountain", "CRM-OPP-1"),
+	no_address: t.email_start(opp, flow_values, comms, "Plaza fountain", "CRM-OPP-1"),
+	already_re: t.email_start(opp, {}, [{ type: "Communication", medium: "Email", subject: "RE: Quote", sender: "c@example.com" }], "T", "CRM-OPP-1"),
+	no_email_yet: t.email_start(opp, t.with_emails(flow_values, { contact_email: "a@example.com" }), comms.slice(0, 2), "Plaza fountain", "CRM-OPP-1"),
 };
 out.subject = [t.email_subject("Plaza fountain", "CRM-OPP-1"), t.email_subject("", "CRM-OPP-1"), t.email_subject("About #CRM-OPP-1", "CRM-OPP-1")];
 out.files = {
@@ -219,14 +237,43 @@ class TestTheDecisionsUnderNode(unittest.TestCase):
 
 	def test_a_new_email_starts_as_the_form_s(self):
 		r = self.out["recipient"]
-		self.assertEqual(r["opp"], "a@example.com")
+		# The flow alone never has the address: that was the empty To.
+		self.assertEqual(r["flow_only"], "")
+		self.assertEqual(r["from_info"], "a@example.com")
+		self.assertEqual(r["fallback"], "p@example.com")
+		self.assertEqual(r["typed_wins"], "typed@example.com")
 		self.assertEqual(r["other"], "b@example.com")
 		self.assertEqual(r["other_email"], "c@example.com")
 		self.assertEqual(r["none"], "")
+		s = self.out["start"]
+		# frappe v16 setup_subject_and_recipients: To the email field; "Re:" the latest email.
+		self.assertEqual(
+			s["with_email"],
+			{"recipients": "a@example.com", "subject": "Re: Quote for the plaza (#CRM-OPP-1)"},
+		)
+		# No address on the record: To the latest email's sender.
+		self.assertEqual(s["no_address"]["recipients"], "client@example.com")
+		self.assertEqual(s["already_re"]["subject"], "RE: Quote (#CRM-OPP-1)")
+		self.assertEqual(
+			s["no_email_yet"], {"recipients": "a@example.com", "subject": "Plaza fountain (#CRM-OPP-1)"}
+		)
 		self.assertEqual(
 			self.out["subject"],
 			["Plaza fountain (#CRM-OPP-1)", "CRM-OPP-1 (#CRM-OPP-1)", "About #CRM-OPP-1"],
 		)
+
+	def test_the_ui_fills_the_email_fields_from_record_info(self):
+		code = _code(UI_JS)
+		self.assertIn("return rules.with_emails(this.ed.values, this.info && this.info.emails);", code)
+		self.assertIn("rules.email_start(this.config, values,", code)
+
+	def test_reply_quotes_the_email_in_full(self):
+		code = _code(UI_JS)
+		body = code[code.index("new_email(reply) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn('"frappe.desk.form.load.get_communications"', body)
+		self.assertIn("frappe.dom.remove_script_and_style(found.content)", body)
+		self.assertIn(".catch(() => open(cut));", body)
 
 	def test_attachments_follow_the_sidebar(self):
 		f = self.out["files"]
@@ -539,6 +586,21 @@ class TestRecordInfo(unittest.TestCase):
 		self.assertEqual(out["attachments"][0]["owner_name"], "User One")
 		self.assertEqual(out["drive_folder"], {"id": "abc", "missing": 0})
 
+	def test_the_email_fields_come_back_where_readable(self):
+		STUB.meta = _Meta(
+			[
+				{"fieldname": "contact_email", "permlevel": 0},
+				{"fieldname": "primary_contact_email", "permlevel": 0},
+				{"fieldname": "email_id", "permlevel": 3},
+			]
+		)
+		STUB.values.update({"contact_email": "a@example.com", "primary_contact_email": None, "email_id": "x"})
+		# email_id sits at a permlevel the caller cannot read (the stub reads level 0 only).
+		self.assertEqual(
+			record_info.build("Opportunity", "X")["emails"],
+			{"contact_email": "a@example.com", "primary_contact_email": ""},
+		)
+
 	def test_a_drive_folder_field_the_doctype_lacks_is_empty(self):
 		STUB.meta = _Meta([])
 		self.assertEqual(record_info.build("Opportunity", "X")["drive_folder"], {"id": "", "missing": 0})
@@ -666,11 +728,28 @@ class TestSafety(unittest.TestCase):
 			"const foreign = !!saved && !(saved.doctype === doctype && saved.docname === name);", body
 		)
 		self.assertIn("if (foreign) window.cur_frm = null;", body)
-		self.assertIn("if (window.cur_frm === null) window.cur_frm = saved;", body)
+		self.assertIn("if (window.cur_frm === null && route_str() === route) window.cur_frm = saved;", body)
 		self.assertIn("if (!creating) restore();", body)
 		self.assertIn(".finally(() => setTimeout(restore, 0));", body)
-		self.assertIn("attachments: this.record_files(),", body)
+		# This record's own form lists its files itself: not passed twice.
+		self.assertIn("attachments: own_form ? [] : this.record_files(),", body)
 		self.assertIn("attachments: this.record_files(),", code[code.index("new_email(reply) {") :])
+
+	def test_import_contacts_never_puts_a_name_in_an_attribute(self):
+		# frappe v16's MultiCheck writes option.value unescaped into data-unit="...".
+		for path in (UI_JS, CONTROLLER_JS):
+			with self.subTest(path=path.name):
+				code = _code(path)
+				self.assertIn("value: String(index),", code)
+				self.assertIn(".map((index) => (", code)
+				self.assertNotIn("value: c.name,", code)
+
+	def test_generate_contract_saves_first_and_primary_says_only_what_saved(self):
+		code = _code(UI_JS)
+		self.assertIn(
+			"this.leave(() => this.dialog(() => record_actions.open_generate_contract(doctype, name)))", code
+		)
+		self.assertIn('if (unsaved()) return "unsaved";', code)
 
 	def test_the_assign_dialog_is_kept_per_record(self):
 		code = _code(UI_JS)

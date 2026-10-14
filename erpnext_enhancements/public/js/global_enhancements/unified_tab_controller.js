@@ -730,9 +730,12 @@ erpnext_enhancements.unified_controller = {
 						{
 							fieldtype: "MultiCheck",
 							fieldname: "contacts",
-							options: available.map((c) => ({
+							// frappe v16's MultiCheck also writes `value` unescaped into an attribute
+							// (data-unit="..."), so the value is the row's index, never the Contact's
+							// name, mapped back below (v1.686.0).
+							options: available.map((c, index) => ({
 								label: this.contact_option_label(c),
-								value: c.name,
+								value: String(index),
 								checked: 0,
 							})),
 							columns: "22rem 2",
@@ -741,7 +744,9 @@ erpnext_enhancements.unified_controller = {
 					],
 					primary_action_label: __("Import"),
 					primary_action: () => {
-						const selected = dialog.get_value("contacts") || [];
+						const selected = (dialog.get_value("contacts") || [])
+							.map((index) => (available[Number(index)] || {}).name)
+							.filter(Boolean);
 						if (!selected.length) {
 							frappe.show_alert({
 								message: __("Select at least one contact"),

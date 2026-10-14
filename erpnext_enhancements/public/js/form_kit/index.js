@@ -77,6 +77,8 @@ export {
 	create_items,
 	recipient_for,
 	email_subject,
+	email_start,
+	with_emails,
 	file_url,
 	unique_files,
 	size_text,

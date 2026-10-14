@@ -845,34 +845,66 @@ export class RecordTools {
 	// letter head, get_files, attachments, perm and reload_doc, and announces "form-typing" for it, so a
 	// stand-in would have to be a form. Without one it leaves out "Attach Document Print" and keeps no
 	// draft in local storage; the full form's New Email has both.
+	//
+	// The address comes from the record's email fields as record_info read them (`emails`): the
+	// form's email field (Opportunity: contact_email) is hidden, so it is in no step and never in the
+	// editor's values. The subject follows the Desk's setup_subject_and_recipients (rules.email_start).
 	new_email(reply) {
+		const values = this.email_values();
 		const doc = Object.assign({}, this.ed.values || {}, { doctype: this.doctype, name: this.name });
+		const start = rules.email_start(this.config, values, (this.info && this.info.communications) || [], this.title(), this.name);
 		const opts = {
 			doc,
-			subject: rules.email_subject(this.title(), this.name),
-			recipients: rules.recipient_for(this.config, this.ed.values),
+			subject: start.subject,
+			recipients: start.recipients,
 			attachments: this.record_files(),
 			success: () => this.reload(),
 		};
-		if (reply) {
-			const me = frappe.session && frappe.session.user_email;
-			Object.assign(opts, {
-				title: __("Reply"),
-				is_a_reply: true,
-				recipients: reply.sender && reply.sender !== me ? reply.sender : opts.recipients,
-				subject: reply.subject,
-				last_email: {
-					name: reply.name,
-					subject: reply.subject,
-					sender: reply.sender,
-					recipients: reply.recipients,
-					cc: reply.cc,
-					communication_date: reply.at,
-					content: frappe.utils.escape_html(reply.text || "").replace(/\n/g, "<br>"),
-				},
-			});
+		if (!reply) {
+			this.dialog(() => new frappe.views.CommunicationComposer(opts));
+			return;
 		}
-		this.dialog(() => new frappe.views.CommunicationComposer(opts));
+		const me = frappe.session && frappe.session.user_email;
+		Object.assign(opts, {
+			title: __("Reply"),
+			is_a_reply: true,
+			recipients: reply.sender && reply.sender !== me ? reply.sender : rules.recipient_for(this.config, values),
+			subject: reply.subject,
+		});
+		const open = (content) => {
+			opts.last_email = {
+				name: reply.name,
+				subject: reply.subject,
+				sender: reply.sender,
+				recipients: reply.recipients,
+				cc: reply.cc,
+				communication_date: reply.at,
+				content,
+			};
+			this.dialog(() => new frappe.views.CommunicationComposer(opts));
+		};
+		// The quote is the email as sent, as the timeline's Reply quotes it: its full content from the
+		// timeline's own read (frappe.desk.form.load.get_communications, which checks read on this
+		// record), scripts and styles taken out as the timeline does. record_info carries only a cut
+		// text copy; it is the quote only if that read fails.
+		const cut = frappe.utils.escape_html(reply.text || "").replace(/\n/g, "<br>");
+		this.sf()
+			.call(
+				"frappe.desk.form.load.get_communications",
+				{ doctype: this.doctype, name: this.name, start: 0, limit: 100 },
+				{ quiet: true, method: "GET" }
+			)
+			.then((rows) => {
+				const found = (rows || []).find((row) => row && row.name === reply.name);
+				const content = found && typeof found.content === "string" ? frappe.dom.remove_script_and_style(found.content) : null;
+				open(content || cut);
+			})
+			.catch(() => open(cut));
+	}
+
+	// The record's values with the email fields record_info read filled in where the values have none.
+	email_values() {
+		return rules.with_emails(this.ed.values, this.info && this.info.emails);
 	}
 
 	// New Task / New Event exactly as ERPNext's CRM Activities makes them (crm_activities.js
@@ -881,11 +913,13 @@ export class RecordTools {
 	// attachments.attachment_uploaded for a file added in the dialog).
 	//
 	// The composer also reads the GLOBAL cur_frm: render_attach lists cur_frm.get_files(), and its
-	// insert callback runs cur_frm.reload_doc(). On this page cur_frm is whatever Desk form was open
-	// last, so it would offer another record's files and reload an unrelated form. While this composer
-	// is open, and until its insert has called back, cur_frm is null unless it is this very record; it
-	// is put back afterwards (only if nothing else has set it meanwhile). This record's files come in
-	// through the composer's own `attachments`.
+	// insert callback runs cur_frm.reload_doc(). Both shells are Desk Pages, and v16's pageview.js sets
+	// cur_frm to null whenever a Page is shown, so normally it is null here and this record's files come
+	// in through the composer's own `attachments`. A defence for the rare case it is not: if cur_frm is
+	// another record's form, it is null while this composer is open and until its insert has called
+	// back, then put back, but only if nothing has set it meanwhile and the route has not changed (a
+	// stale form is never put back on a Page). If it is this very record's form, its files are listed
+	// from it, so `attachments` is not passed as well (they would list twice).
 	new_interaction(kind) {
 		const doctype = this.doctype;
 		const name = this.name;
@@ -903,14 +937,26 @@ export class RecordTools {
 				},
 			},
 		};
+		const route_str = () => {
+			try {
+				return frappe.get_route_str ? frappe.get_route_str() : String(frappe.get_route() || "");
+			} catch (e) {
+				return "";
+			}
+		};
 		const saved = window.cur_frm || null;
 		const foreign = !!saved && !(saved.doctype === doctype && saved.docname === name);
+		const own_form = !!saved && !foreign;
+		const route = route_str();
 		let creating = false;
 		let restored = !foreign;
 		const restore = () => {
 			if (restored) return;
 			restored = true;
-			if (window.cur_frm === null) window.cur_frm = saved;
+			// A tick later: a route change closes the dialog before the router has the new route.
+			setTimeout(() => {
+				if (window.cur_frm === null && route_str() === route) window.cur_frm = saved;
+			}, 0);
 		};
 		this.dialog(() => {
 			if (foreign) window.cur_frm = null;
@@ -918,7 +964,7 @@ export class RecordTools {
 				composer = new frappe.views.InteractionComposer({
 					doc: frm.doc,
 					frm,
-					attachments: this.record_files(),
+					attachments: own_form ? [] : this.record_files(),
 					title: kind === "ToDo" ? __("New Task") : __("New Event"),
 				});
 			} catch (e) {
@@ -1192,13 +1238,15 @@ export class RecordTools {
 							{
 								fieldtype: "MultiCheck",
 								fieldname: "contacts",
-								// MultiCheck writes `label` as HTML: every piece is escaped.
-								options: list.map((c) => {
+								// frappe v16's MultiCheck writes `label` as HTML, so every piece of it is escaped,
+								// and writes `value` unescaped into an attribute (data-unit="..."), so the value is
+								// the row's index, never the Contact's name; it is mapped back on Import.
+								options: list.map((c, index) => {
 									const name = [c.first_name, c.last_name].filter(Boolean).join(" ") || c.name;
 									const detail = [c.custom_title, c.custom_email, shown_phone(c.custom_phone_number || c.custom_mobile_number)].filter(Boolean).join(" · ");
 									return {
 										label: detail ? `${esc(name)} <span class="text-muted">— ${esc(detail)}</span>` : esc(name),
-										value: c.name,
+										value: String(index),
 										checked: 0,
 									};
 								}),
@@ -1208,7 +1256,9 @@ export class RecordTools {
 						],
 						primary_action_label: __("Import"),
 						primary_action: () => {
-							const selected = dialog.get_value("contacts") || [];
+							const selected = (dialog.get_value("contacts") || [])
+								.map((index) => (list[Number(index)] || {}).name)
+								.filter(Boolean);
 							if (!selected.length) {
 								this.sf().toast(__("Select at least one contact"), { tone: "warning", timeout: 4000 });
 								return;
@@ -1258,17 +1308,25 @@ export class RecordTools {
 				ed.set_value_local(fieldname, record);
 				ed.show_value(fieldname, record);
 				ed.party_entry().changed(fieldname, before, record);
+				// save_before_moving resolves without saving when the save could not be sent (no signal, a
+				// 5xx): the change then stays queued and the saving line says so, and nothing claims it saved.
+				const unsaved = () => !!(ed.queue && ed.queue.has_unsaved());
 				ed
 					.save_before_moving()
 					.then(() => {
+						if (unsaved()) return "unsaved";
 						if (!is_account_doctype(this.doctype)) return null;
 						const method = doctype === "Contact" ? "set_primary_contact" : "set_primary_address";
 						const args = { account_doctype: this.doctype, account_name: this.name };
 						args[doctype === "Contact" ? "contact_name" : "address_name"] = record;
 						return this.sf().call(SYNC + method, args, { quiet: true });
 					})
-					.then(() => {
-						this.sf().toast(doctype === "Contact" ? __("Primary contact updated") : __("Primary address updated"), { tone: "success", timeout: 3000 });
+					.then((result) => {
+						if (result === "unsaved") {
+							this.sf().toast(__("Not saved yet: it saves with the rest of this record's changes."), { tone: "warning", timeout: 6000 });
+						} else {
+							this.sf().toast(doctype === "Contact" ? __("Primary contact updated") : __("Primary address updated"), { tone: "success", timeout: 3000 });
+						}
 						this.load_people();
 					})
 					.catch((err) => this.people_refused(err, __("The primary was not changed.")));
@@ -1419,7 +1477,8 @@ export class RecordTools {
 			);
 		});
 		if (record_actions.can_generate_contract(doctype)) {
-			add(__("Generate Contract"), () => this.dialog(() => record_actions.open_generate_contract(doctype, name)));
+			// What is typed saves first, as for Create, Print and Customize: the draft is made from the record.
+			add(__("Generate Contract"), () => this.leave(() => this.dialog(() => record_actions.open_generate_contract(doctype, name))));
 		}
 		if (items.length) items.push({ divider: true });
 

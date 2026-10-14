@@ -232,6 +232,23 @@ def _drive_folder(doctype, name):
 	}
 
 
+#: The fields a New Email can start from: the form's own `email_field` (ERPNext's Opportunity sets
+#: "contact_email"), the timeline's fallbacks (email_id, email), and this app's copy of the primary
+#: contact's address. contact_email is hidden on the Opportunity form (a Property Setter), so it is in
+#: no guided step, yet it is exactly what the Desk's New Email starts with.
+EMAIL_FIELDS = ("contact_email", "email_id", "email", "primary_contact_email")
+
+
+def _emails(doctype, name):
+	"""``{fieldname: value}`` for each of ``EMAIL_FIELDS`` the DocType has and the caller may read."""
+	meta = frappe.get_meta(doctype)
+	fields = [fieldname for fieldname in EMAIL_FIELDS if _readable(meta, fieldname)]
+	if not fields:
+		return {}
+	row = frappe.db.get_value(doctype, name, fields, as_dict=True, order_by=None) or {}
+	return {fieldname: row.get(fieldname) or "" for fieldname in fields}
+
+
 def build(doctype, name):
 	"""The record's docinfo, shaped for the guided page (see the module head). Raises
 	PermissionError, as the form's own load does, when the caller cannot read the record."""
@@ -334,4 +351,5 @@ def build(doctype, name):
 		"document_email": docinfo.get("document_email") or "",
 		"open": _open_activities(doctype, name),
 		"drive_folder": _drive_folder(doctype, name),
+		"emails": _emails(doctype, name),
 	}

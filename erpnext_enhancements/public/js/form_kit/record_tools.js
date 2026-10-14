@@ -18,6 +18,7 @@ const OPPORTUNITY = "erpnext.crm.doctype.opportunity.opportunity.";
  *   email_field   the field the form's New Email starts with (frm.email_field; ERPNext's
  *                 opportunity.js sets "contact_email"). Without one, email_id or email, as the
  *                 Desk timeline's get_recipient falls back.
+ *   email_fallbacks  fields tried, in order, when that is empty.
  *   create        the form's Create menu: frappe.model.open_mapped_doc({ method, source_name }) with
  *                 the methods the DocType's form script uses, in its order. `hide_when` hides the
  *                 whole menu; an item's `unless` hides that item.
@@ -35,6 +36,8 @@ export const RECORD_TOOLS = {
 	// company currency (the flow skips conversion_rate for that reason, config/opportunity.py).
 	Opportunity: {
 		email_field: "contact_email",
+		// This app's copy of the primary contact's address (party_mirrors), when contact_email is empty.
+		email_fallbacks: ["primary_contact_email"],
 		create: {
 			hide_when: { field: "status", in: ["Lost"] },
 			items: [
@@ -75,22 +78,64 @@ export function create_items(config, values, can_create) {
 	);
 }
 
-/** Who a New Email goes to: frappe's form_timeline.js get_recipient, against the record's values. */
+/**
+ * Who a New Email goes to: frappe's form_timeline.js get_recipient (the form's email_field, else
+ * email_id or email), then the config's `email_fallbacks`. `values` must carry the email fields
+ * record_info returns (`emails`): the email field is usually hidden on the form, so in no step.
+ */
 export function recipient_for(config, values) {
 	const v = values || {};
-	if (config && config.email_field) return v[config.email_field] || "";
-	return v.email_id || v.email || "";
+	const c = config || {};
+	const first = c.email_field ? v[c.email_field] : v.email_id || v.email;
+	if (first) return first;
+	for (const fieldname of c.email_fallbacks || []) {
+		if (v[fieldname]) return v[fieldname];
+	}
+	return "";
 }
 
 /**
- * A New Email's subject: frappe's CommunicationComposer setup_subject_and_recipients. The record's
- * title (else its name), with "(#<name>)" added so a reply threads back to the record.
+ * The editor's values (the flow's fields only) with the email fields record_info read (`emails`)
+ * filled in wherever the values have nothing: the form's email field is usually hidden, so in no
+ * step, and without this a New Email would open with an empty To.
+ */
+export function with_emails(values, emails) {
+	const out = Object.assign({}, values || {});
+	const e = emails || {};
+	Object.keys(e).forEach((fieldname) => {
+		if (!out[fieldname] && e[fieldname]) out[fieldname] = e[fieldname];
+	});
+	return out;
+}
+
+/**
+ * A New Email's subject with the record's identifier: the record's title (else its name), with
+ * "(#<name>)" added so a reply threads back to the record.
  */
 export function email_subject(title, name) {
 	let subject = String(title || name || "");
 	const identifier = `#${name}`;
 	if (name && subject.indexOf(identifier) === -1) subject = `${subject} (${identifier})`;
 	return subject;
+}
+
+/**
+ * How the Desk's New Email starts, without a reply in hand: frappe v16's CommunicationComposer
+ * setup_subject_and_recipients with a form. To: the record's email field (get_recipient). Subject:
+ * the latest email on the record ("Re: <its subject>", and To its sender when the record has no
+ * email), else the record's title; always with "(#<name>)". `communications` newest first, as
+ * docinfo lists them; the latest email is the first of type Communication and medium Email.
+ */
+export function email_start(config, values, communications, title, name) {
+	let recipients = recipient_for(config, values);
+	const last = (communications || []).find((c) => c && c.type === "Communication" && c.medium === "Email");
+	let subject = "";
+	if (last && last.subject) {
+		subject = String(last.subject);
+		if (!recipients) recipients = last.sender || "";
+		if (subject.toLowerCase().split(":")[0].trim() !== "re") subject = `Re: ${subject}`;
+	}
+	return { recipients, subject: email_subject(subject || title, name) };
 }
 
 // ------------------------------------------------------------------ attachments
