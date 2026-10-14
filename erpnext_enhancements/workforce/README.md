@@ -124,9 +124,10 @@ and there is no canvas renderer, so the fixes go through one `google.maps.Data` 
 single styler instead of thousands of Marker objects -- which is the reason Leaflet's canvas
 renderer was there in the first place.
 
-The stylesheet is `public/css/workforce/location_timeline.css`, loaded through `frappe.require`
-with a **bare** path: v16 appends `?v=<build>` itself, and a path that already carries one loads
-as nothing. Opened pre-filled via `frappe.route_options {employee, from_date, to_date}` from the
+The stylesheet is the page's own `location_timeline.css`, which Frappe's page loader sends with
+the page, on the app's `--sf-*` tokens (v1.652.0; it used to be `public/css/workforce/`, pulled
+in by `frappe.require`). Page CSS stays in `<head>` for the session, so every selector starts
+with an `lt-` class; `tests/test_s3_page_css.py` holds it to that and to the tokens. Opened pre-filled via `frappe.route_options {employee, from_date, to_date}` from the
 Job Interval form's **View on Timeline** button and the Employee form's **Location Timeline**
 button.
 

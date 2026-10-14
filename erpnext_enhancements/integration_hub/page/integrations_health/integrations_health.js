@@ -3,16 +3,16 @@
  *
  * One ops screen for every external service this app depends on — QuickBooks,
  * Google Drive, Telephony (Triton/Twilio), AI drafting (Gemini), Analytics
- * (GA4/GSC) — plus scheduler liveness and a 24 h error digest. Each integration
- * renders as a green/amber/red tile; the data comes from
- * api.integrations_health.get_health (System-Manager-only, DB-only — no
- * outbound calls on load). The Drive tile carries a "Test connection" button
- * that runs the one live check on demand (api.integrations_health.run_drive_test).
+ * (GA4/GSC), the MDM providers — plus scheduler liveness and a 24 h error digest.
+ * The data comes from api.integrations_health.get_health (System-Manager-only,
+ * DB-only — no outbound calls on load). The Drive tile carries a "Test connection"
+ * button that runs the one live check on demand (api.integrations_health.run_drive_test).
  *
- * Theming follows the app convention: Frappe CSS vars for surfaces/text so it
- * works in Frappe Light + Timeless Night; the green/amber/red status colors are
- * semantic and stay literal (Frappe's --green/--yellow/--red palette vars).
- * Every server-supplied string is escaped with frappe.utils.escape_html.
+ * Drawn by the shared health board (public/js/health_board.bundle.js, v1.651.0), as the
+ * Device Fleet Dashboard is: every tile is an sf_kit tile, each status a chip that says its
+ * word, every colour a --sf-* token, and every server string escaped by the kit. This file
+ * only says what to ask for and adds what is particular to this page: the scheduler and
+ * error-digest tiles, and the Drive test.
  */
 frappe.pages['integrations-health'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -21,184 +21,107 @@ frappe.pages['integrations-health'].on_page_load = function (wrapper) {
 		single_column: true,
 	});
 
-	const $body = $(`
-		<div class="integrations-health">
-			<style>
-				.integrations-health { padding: 12px 4px 32px; }
-				.ih-meta { color: var(--text-muted); font-size: 12px; margin: 0 6px 14px; }
-				.ih-grid {
-					display: grid;
-					grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-					gap: 16px;
-					margin-bottom: 22px;
-				}
-				.ih-card {
-					background: var(--card-bg);
-					border: 1px solid var(--border-color);
-					border-radius: var(--border-radius);
-					padding: 14px 16px;
-					box-shadow: var(--card-shadow, none);
-				}
-				.ih-card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
-				.ih-dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
-				.ih-title { font-weight: 600; font-size: 14px; color: var(--text-color); }
-				.ih-headline { font-size: 12px; color: var(--text-muted); margin: 2px 0 10px 20px; }
-				.ih-metrics { display: flex; flex-direction: column; gap: 6px; }
-				.ih-metric { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; }
-				.ih-metric-label { color: var(--text-muted); }
-				.ih-metric-value { display: flex; align-items: center; gap: 6px; color: var(--text-color); font-weight: 500; }
-				.ih-mini-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-				.ih-note { font-size: 12px; color: var(--text-muted); margin-top: 10px; line-height: 1.45; }
-				.ih-links { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 8px; }
-				.ih-links a { font-size: 12px; }
-				.ih-actions { margin-top: 10px; }
-				.ih-test-result { font-size: 12px; margin-top: 8px; line-height: 1.5; }
-				.ih-test-result .ok { color: var(--green-600, var(--green-500)); }
-				.ih-test-result .bad { color: var(--red-600, var(--red-500)); }
-				.ih-lower { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-				@media (max-width: 720px) { .ih-lower { grid-template-columns: 1fr; } }
-				.ih-panel-title { font-weight: 600; font-size: 13px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; color: var(--text-color); }
-				.ih-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; padding: 3px 0; border-bottom: 1px solid var(--border-color); }
-				.ih-row:last-child { border-bottom: none; }
-				.ih-row .muted { color: var(--text-muted); }
-				.ih-empty { color: var(--text-muted); font-size: 12.5px; }
-				.ih-loading { color: var(--text-muted); padding: 30px; text-align: center; }
-			</style>
-			<div class="ih-meta"></div>
-			<div class="ih-content"><div class="ih-loading">${__('Loading integration status…')}</div></div>
-		</div>
-	`).appendTo(page.body);
+	const list = (value) => (Array.isArray(value) ? value : []);
+	const obj = (value) => (value && typeof value === 'object' ? value : {});
 
-	const TONE = {
-		green: 'var(--green-500)',
-		amber: 'var(--yellow-500)',
-		red: 'var(--red-500)',
-		neutral: 'var(--gray-400, #9ca3af)',
-	};
-	const esc = frappe.utils.escape_html;
-	const tone = (t) => TONE[t] || TONE.neutral;
-
-	page.set_primary_action(__('Refresh'), () => load(), 'refresh');
-
-	function load() {
-		const $content = $body.find('.ih-content');
-		$content.html(`<div class="ih-loading">${__('Loading integration status…')}</div>`);
-		frappe.call({
-			method: 'erpnext_enhancements.api.integrations_health.get_health',
-			callback: (r) => {
-				if (!r || !r.message) {
-					$content.html(`<div class="ih-empty">${__('No data returned.')}</div>`);
-					return;
-				}
-				render(r.message);
-			},
-			error: () => {
-				$content.html(`<div class="ih-empty">${__('Failed to load — you may not have permission.')}</div>`);
-			},
-		});
-	}
-
-	function render(data) {
-		$body.find('.ih-meta').text(__('As of') + ' ' + (data.generated_at || ''));
-
-		const tiles = (data.integrations || []).map(tile).join('');
-		const lower = `
-			<div class="ih-lower">
-				<div class="ih-card">${scheduler(data.scheduler || {})}</div>
-				<div class="ih-card">${errors(data.errors || {})}</div>
-			</div>`;
-		$body.find('.ih-content').html(`<div class="ih-grid">${tiles}</div>${lower}`);
-		bindActions();
-	}
-
-	function tile(it) {
-		const metrics = (it.metrics || []).map((m) => `
-			<div class="ih-metric">
-				<span class="ih-metric-label">${esc(m.label)}</span>
-				<span class="ih-metric-value">
-					${m.tone && m.tone !== 'neutral' ? `<span class="ih-mini-dot" style="background:${tone(m.tone)}"></span>` : ''}
-					${esc(String(m.value))}
-				</span>
-			</div>`).join('');
-
-		const links = (it.links || []).map((l) =>
-			`<a href="${esc(l.route)}">${esc(l.label)}</a>`).join('');
-
-		const notes = (it.notes || []).map((n) => `<div class="ih-note">${esc(n)}</div>`).join('');
-
-		const actions = (it.actions || []).includes('drive_test')
-			? `<div class="ih-actions">
-					<button class="btn btn-xs btn-default ih-drive-test">${__('Test connection')}</button>
-					<div class="ih-test-result"></div>
-			   </div>`
-			: '';
-
-		return `
-			<div class="ih-card" data-key="${esc(it.key)}">
-				<div class="ih-card-head">
-					<span class="ih-dot" style="background:${tone(it.status)}"></span>
-					<span class="ih-title">${esc(it.label)}</span>
-				</div>
-				<div class="ih-headline">${esc(it.headline || '')}</div>
-				<div class="ih-metrics">${metrics}</div>
-				${notes}
-				${actions}
-				<div class="ih-links">${links}</div>
-			</div>`;
-	}
-
-	function scheduler(s) {
-		const head = `<div class="ih-panel-title"><span class="ih-dot" style="background:${tone(s.status)}"></span>${__('Background jobs')}</div>`;
-		if (s.enabled === false) {
-			return head + `<div class="ih-note" style="color:${TONE.red}">${__('The Frappe scheduler is DISABLED — no daily/hourly jobs are running.')}</div>`;
+	frappe.require(['health_board.bundle.js'], () => {
+		const board = window.sf_health_board;
+		if (!board) {
+			$(page.body).text(__('This page could not load. Reload the page to try again.'));
+			return;
 		}
-		const summary = `
-			<div class="ih-row"><span class="muted">${__('Scheduler')}</span><span>${s.enabled === null ? '—' : __('enabled')}</span></div>
-			<div class="ih-row"><span class="muted">${__('App jobs registered')}</span><span>${esc(String(s.app_job_count || 0))}</span></div>
-			<div class="ih-row"><span class="muted">${__('Failed (24h)')}</span><span style="color:${s.failed_24h ? TONE.red : 'inherit'}">${esc(String(s.failed_24h || 0))}</span></div>`;
-		const fails = (s.recent_failures || []).map((f) =>
-			`<div class="ih-row"><span>${esc(f.job)}</span><span class="muted">${esc(f.when)}</span></div>`).join('');
-		return head + summary + (fails ? `<div style="margin-top:8px">${fails}</div>` : '');
+		board.mount(page, {
+			method: 'erpnext_enhancements.api.integrations_health.get_health',
+			loading: __('Loading integration status…'),
+			failed: __('Could not load the integration status.'),
+			refused: __('You do not have access to Integrations Health.'),
+			meta: (data) => __('As of {0}', [data.generated_at || '']),
+			tiles: (data) =>
+				list(data.integrations)
+					.map(board.tile)
+					.concat([scheduler_tile(obj(data.scheduler)), errors_tile(obj(data.errors))]),
+			after: ({ sf, data, tile }) =>
+				list(data.integrations)
+					.filter((it) => it && list(it.actions).includes('drive_test'))
+					.forEach((it) => add_drive_test(sf, tile(it.key))),
+		});
+	});
+
+	function scheduler_tile(s) {
+		const enabled = s.enabled === false ? __('disabled') : s.enabled === null || s.enabled === undefined ? '—' : __('enabled');
+		return {
+			key: 'scheduler',
+			title: __('Background jobs'),
+			status: s.status,
+			detail: s.enabled === false ? __('The Frappe scheduler is disabled: no daily or hourly jobs are running.') : '',
+			metrics: [
+				{ label: __('Scheduler'), value: enabled, tone: s.enabled === false ? 'danger' : '' },
+				{ label: __('App jobs registered'), value: s.app_job_count || 0 },
+				{ label: __('Failed (24h)'), value: s.failed_24h || 0, tone: s.failed_24h ? 'danger' : '' },
+			].concat(list(s.recent_failures).map((f) => ({ label: obj(f).job, value: obj(f).when }))),
+		};
 	}
 
-	function errors(e) {
-		const head = `<div class="ih-panel-title"><span class="ih-dot" style="background:${tone(e.status)}"></span>${__('Errors (24h)')}</div>`;
-		const total = `<div class="ih-row"><span class="muted">${__('Total error logs')}</span><span>${esc(String(e.total_24h || 0))}</span></div>`;
-		const top = (e.top || []).map((t) =>
-			`<div class="ih-row"><span>${esc(t.title)}</span><span class="muted">${esc(String(t.count))}</span></div>`).join('');
-		return head + total + (top ? `<div style="margin-top:8px">${top}</div>` : `<div class="ih-empty" style="margin-top:8px">${__('No errors logged in the last 24 hours.')}</div>`);
+	function errors_tile(e) {
+		const top = list(e.top);
+		return {
+			key: 'errors',
+			title: __('Errors (24h)'),
+			status: e.status,
+			detail: top.length ? '' : __('No errors logged in the last 24 hours.'),
+			metrics: [{ label: __('Total error logs'), value: e.total_24h || 0 }].concat(
+				top.map((t) => ({ label: obj(t).title, value: obj(t).count }))
+			),
+		};
 	}
 
-	function bindActions() {
-		$body.find('.ih-drive-test').off('click').on('click', function () {
-			const $btn = $(this);
-			const $out = $btn.siblings('.ih-test-result');
-			$btn.prop('disabled', true).text(__('Testing…'));
+	// The Drive test, added under the kit's Drive tile. Quiet: it reports its own failure in the
+	// tile rather than in a frappe dialog. Each check's result is a chip with its word.
+	function add_drive_test(sf, $tile) {
+		const $out = $('<div class="ih-drive-result" aria-live="polite"></div>');
+		const $button = $('<button type="button" class="sf-btn sf-btn--secondary"></button>').text(__('Test connection'));
+		$tile.append($('<div class="ih-drive-test"></div>').append($button).append($out));
+		$button.on('click', () => {
+			$button.prop('disabled', true).text(__('Testing…'));
 			$out.empty();
-			const done = () => $btn.prop('disabled', false).text(__('Test connection'));
-			frappe.call({
-				method: 'erpnext_enhancements.api.integrations_health.run_drive_test',
-				callback: (r) => {
+			const done = () => $button.prop('disabled', false).text(__('Test connection'));
+			sf.call('erpnext_enhancements.api.integrations_health.run_drive_test', {}, { quiet: true }).then(
+				(message) => {
 					done();
-					const checks = (r && r.message && r.message.checks) || [];
-					if (!checks.length && r && r.message) {
-						$out.html(`<div>${esc(JSON.stringify(r.message))}</div>`);
-						return;
-					}
-					// ok is true (pass), false (fail), or null (not configured).
-					$out.html(checks.map((c) => {
-						const mark = c.ok === true ? '✓' : c.ok === false ? '✗' : '–';
-						const cls = c.ok === true ? 'ok' : c.ok === false ? 'bad' : '';
-						return `<div class="${cls}">${mark} ${esc(c.check || '')}${c.detail ? ' — ' + esc(String(c.detail)) : ''}</div>`;
-					}).join(''));
+					$out.html(drive_checks(sf, message));
 				},
-				error: () => {
+				(err) => {
 					done();
-					$out.html(`<div class="bad">${__('Test failed — see the Error Log.')}</div>`);
-				},
-			});
+					err = err || {};
+					const said = err.session_expired
+						? __('You have been signed out. Reload the page to sign in again.')
+						: err.message || __('The test could not run. See the Error Log.');
+					$out.html(check_line(sf, sf.chip(__('Failed'), 'danger'), said));
+				}
+			);
 		});
 	}
 
-	load();
+	// `mark` is kit markup (a chip); `text` is escaped here.
+	function check_line(sf, mark, text) {
+		return `<p style="margin: var(--sf-space-5) 0 0;">${mark} ${sf.esc(text)}</p>`;
+	}
+
+	// ok is true (pass), false (fail), or null (not configured).
+	function drive_checks(sf, message) {
+		const checks = message && Array.isArray(message.checks) ? message.checks : [];
+		if (!checks.length) return message ? check_line(sf, '', JSON.stringify(message)) : '';
+		return checks
+			.map((c) => {
+				c = obj(c);
+				const mark =
+					c.ok === true
+						? sf.chip(__('Pass'), 'good')
+						: c.ok === false
+							? sf.chip(__('Fail'), 'danger')
+							: sf.chip(__('Not set up'), 'neutral');
+				return check_line(sf, mark, (c.check || '') + (c.detail ? ' — ' + String(c.detail) : ''));
+			})
+			.join('');
+	}
 };

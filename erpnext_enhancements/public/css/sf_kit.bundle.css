@@ -358,7 +358,9 @@
 	font-weight: var(--sf-weight-regular);
 	color: var(--sf-text-muted);
 }
+/* min-width: 0 lets a long toned value's chip shrink and ellipsize inside the flex row. */
 .sf-tile-metric dd {
+	min-width: 0;
 	margin: 0;
 	font-weight: var(--sf-weight-bold);
 	color: var(--sf-text-strong);

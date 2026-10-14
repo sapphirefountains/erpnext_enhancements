@@ -83,7 +83,7 @@ _HEADER = """
       &ndash;
       {{ ps_date(doc.expected_end_date) or "—" }}<br>
     {% endif %}
-    {{ _("Printed") }} {{ frappe.format(frappe.utils.nowdate(), {"fieldtype": "Date"}) }}
+    {{ _("Printed") }} {{ ps_date(frappe.utils.nowdate()) }}
   </div>
 </div>
 """
