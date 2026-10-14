@@ -245,8 +245,8 @@ CONFIG = {
 			"key": "contact",
 			"title": "Contact & site",
 			"intro": (
-				"The person we deal with and the job site, picked from the account's contacts and "
-				"addresses; add new ones on the form."
+				"The person we deal with, the billing address and the job site, picked from the account's "
+				"own or added here with New, which links them to the account."
 			),
 			"sections": ["primary_contact_section", "section_break_map"],
 		},

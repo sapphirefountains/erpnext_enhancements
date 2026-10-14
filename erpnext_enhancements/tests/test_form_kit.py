@@ -300,6 +300,9 @@ class FakeDoc:
             self._d["website"] = "https://" + str(website).strip()
         if self._d.get("custom_opportunity_name"):
             self._d["custom_opportunity_name"] = str(self._d["custom_opportunity_name"]).strip()
+        # A hook that changes a field nobody sent (Opportunity.map_fields, party_mirrors), per test.
+        if STATE.get("on_validate"):
+            STATE["on_validate"](self._d)
         # script_migrations.opportunity.validate_ranks_on_won, reduced.
         if self._d.get("status") == "Closed Won" and not all(
             self._d.get(f) for f in ("custom_scope_rank", "custom_schedule_rank", "custom_budget_rank")
@@ -381,6 +384,7 @@ def _install_frappe_stub(metas):
         raise exc(msg)
 
     frappe.throw = throw
+    frappe.get_traceback = lambda: "Traceback (most recent call last): ..."
 
     def whitelist(*dargs, **dkwargs):
         def wrap(fn):
@@ -1086,6 +1090,28 @@ class TestSaveStep(unittest.TestCase):
         self.assertEqual(result["modified"], STATE["db"][self.name]["modified"])
         self.assertIn("completeness", result)
         self.assertEqual(set(result), {"name", "modified", "values", "completeness"})
+
+    def test_a_field_the_save_itself_changed_comes_back_too(self):
+        """Form kit P3.2: a hook that fills a field the person did not send (map_fields filling an
+        empty contact from the new account) is reported, so the page shows what the record holds."""
+
+        def map_fields(data):
+            if not data.get("primary_contact"):
+                data["primary_contact"] = "Dee Example-Harbor Plaza"
+
+        STATE["on_validate"] = map_fields
+        try:
+            result = self._save({"custom_opportunity_name": "Renamed"})
+        finally:
+            STATE.pop("on_validate", None)
+        self.assertEqual(
+            result["values"],
+            {"custom_opportunity_name": "Renamed", "primary_contact": "Dee Example-Harbor Plaza"},
+        )
+
+    def test_nothing_unchanged_comes_back(self):
+        result = self._save({"custom_opportunity_name": "Smith Residence - Backyard Pond Build"})
+        self.assertEqual(list(result["values"]), ["custom_opportunity_name"])
 
     def test_a_named_step_limits_the_save_to_its_fields(self):
         self._save({"custom_opportunity_name": "Changed", "custom_scope_rank": "1"}, step="close")
@@ -1793,6 +1819,29 @@ class TestEndpoints(unittest.TestCase):
         finally:
             STATE.pop("attrs", None)
         self.assertEqual(fields[-1], "custom_lead_source")
+        # A rule that raises is logged and read as "not required": step 1 still opens, and the
+        # server's own rule still refuses a missing Lead Source on insert (review of #1286).
+        logged = []
+
+        def broken(doctype):
+            raise RuntimeError("Lead Attribution Settings has no such field yet")
+
+        get_attr, log_error = FRAPPE.get_attr, getattr(FRAPPE, "log_error", None)
+        FRAPPE.get_attr = lambda path: broken
+        FRAPPE.log_error = lambda *args, **kwargs: logged.append((args, kwargs))
+        try:
+            fields = api.get_flow("Opportunity")["quick"]["fields"]
+        finally:
+            FRAPPE.get_attr = get_attr
+            if log_error is None:
+                del FRAPPE.log_error
+            else:
+                FRAPPE.log_error = log_error
+        self.assertNotIn("custom_lead_source", fields)
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0][0], (), "keyword arguments only (v16's log_error title heuristic)")
+        self.assertIn(path, logged[0][1]["title"])
+        self.assertIn("message", logged[0][1])
         # The Desk reads no Settings Single for it: get_flow says.
         page = (APP / "public" / "js" / "form_kit" / "panel.js").read_text(encoding="utf-8")
         self.assertNotIn("Settings", page)
@@ -1878,6 +1927,8 @@ class TestEndpoints(unittest.TestCase):
                 "my_records",
                 "declare_lost",
                 "find_created",
+                # P3.2 (v1.677.0): read-only; its own suite is test_form_kit_party.
+                "party_details",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])

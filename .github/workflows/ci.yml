@@ -1719,6 +1719,15 @@ jobs:
       # Python because MariaDB's PAD SPACE hides a trailing space. Own frappe stub.
       - name: Party mirror rule + dry run (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_party_mirrors -v
+      # Form kit P3.2 (v1.677.0), the Party entry component: its decisions under node against the
+      # real information blocks (roles held equal to form_kit/blocks.py; a contact or address the
+      # person chose is never overwritten silently when the account changes), party_details against a
+      # frappe stub (allowlist, read on the account, the account kind the block allows, ERPNext's
+      # default contact/address rules, every read through get_list), and the wiring (one component in
+      # the editor both shells run, sf_kit's quiet GET, no HTML from values, the planner kit's Back
+      # guard, tokens-only styles in the bundle). Own frappe stub, so its own step.
+      - name: Form kit Party entry component (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_party -v
       # Form kit P4-B, the Guided Entry page (enhancements_core/page/guided_entry and the pure ES
       # modules in public/js/form_kit/): routes and history, step activeness against steps.py's own
       # `applies`, the save queue (coalescing, one request in flight, conflicts) under node, and

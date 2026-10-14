@@ -315,6 +315,7 @@ globalThis.frappe = {
 		},
 	},
 	model: {
+		get_new_doc: (doctype) => ({ doctype, __islocal: 1, name: "new-" + doctype.toLowerCase() + "-1" }),
 		add_child: (doc, child_doctype, field) => {
 			const row = { doctype: child_doctype };
 			(doc[field] = doc[field] || []).push(row);
@@ -763,6 +764,122 @@ test("a Project's directory shows the people on the deal it came from", () => {
 	const sources = ctx.get_all_party_sources();
 	assert.ok(sources.some((s) => s.doctype === "Opportunity" && s.name === "OPP-0001"));
 	assert.equal(controller.get_base_links, undefined, "the fan-out helper is back");
+});
+
+// ------------------------- ux.create_for: a record that is not the Form on screen (v1.677.0)
+// Form kit P3.2: the guided page and the board's side panel are not Form routes, so the route gives
+// the dialog no context; create_for hands it the record's, and the dialog does the rest as ever.
+
+const OPPORTUNITY = { doctype: "Opportunity", name: "OPP-0001", opportunity_from: "Customer", party_name: "Harbor Plaza" };
+
+/** The guided page's route: no Form, no formview, and a stale link-field create left behind. */
+function on_guided_page() {
+	ROUTE = ["guided-entry", "Opportunity", "OPP-0001", "contact"];
+	for (const key of Object.keys(FORMS)) delete FORMS[key];
+	frappe._from_link = { field_obj: {}, doc: {}, set_route_args: ["Form", "Project", "PRJ-0009"], scrollY: 0 };
+	frappe.dynamic_link = null;
+}
+
+test("create_for: a Contact for a guided Opportunity is its Customer's and the deal's, and picked after insert", async () => {
+	on_guided_page();
+	const picked = [];
+	const dialog = await ux.create_for("Contact", OPPORTUNITY, { after_insert: (doc) => picked.push(doc), typed: "Dee Example" });
+	await tick();
+	assert.ok(dialog instanceof ContactQuickEntryForm, "not our dialog");
+	assert.equal(frappe._from_link, null, "a stale link-field create would take the new record");
+	assert.equal(dialog.skip_redirect_on_error, true, "a refused insert would open the full form over the page");
+	assert.equal(dialog.fields_dict.custom_account.get_value(), "Harbor Plaza", "Account not pre-filled");
+	assert.equal(dialog.doc.first_name, "Dee", "what was typed in the search is not the name");
+	assert.equal(dialog.doc.last_name, "Example");
+	dialog.fields_dict.first_name.user_sets("Dee");
+	INSERTED.length = 0;
+	await dialog.insert();
+	assert.deepEqual(links_of(INSERTED.at(-1)), [
+		["Customer", "Harbor Plaza"],
+		["Opportunity", "OPP-0001"],
+	]);
+	dialog.after_insert({ name: "Dee Example-Harbor Plaza" });
+	assert.deepEqual(picked, [{ name: "Dee Example-Harbor Plaza" }]);
+});
+
+test("create_for: a billing address starts on 'Also the account's', still changeable", async () => {
+	on_guided_page();
+	const dialog = await ux.create_for("Address", OPPORTUNITY, { prefer_party: true });
+	await tick();
+	const choice = dialog.fields_dict.ee_file_under_party;
+	assert.ok(choice, "the 'whose address' question is gone");
+	assert.equal(choice.df.reqd, 1);
+	assert.equal(choice.get_value(), dialog.ee_choice.also);
+	dialog.fields_dict.address_line1.user_sets("1 Main St");
+	assert.deepEqual(links_of(dialog.update_doc()), [
+		["Customer", "Harbor Plaza"],
+		["Opportunity", "OPP-0001"],
+	]);
+});
+
+test("create_for: a job site has no default (the 2026-10-06 rule) and starts as Shipping", async () => {
+	on_guided_page();
+	const dialog = await ux.create_for("Address", OPPORTUNITY, { address_type: "Shipping", typed: "Lot 12" });
+	await tick();
+	const choice = dialog.fields_dict.ee_file_under_party;
+	assert.equal(choice.df.reqd, 1);
+	assert.ok(!choice.get_value(), "the job site was filed under the account by default");
+	assert.equal(dialog.doc.address_type, "Shipping", "the dialog's Billing default overwrote the site's type");
+	assert.equal(dialog.doc.address_line1, "Lot 12");
+	choice.user_sets(dialog.ee_choice.only);
+	assert.deepEqual(links_of(dialog.update_doc()), [["Opportunity", "OPP-0001"]]);
+});
+
+test("create_for: a record not saved yet links the account only, and asks nothing", async () => {
+	on_guided_page();
+	const dialog = await ux.create_for("Address", Object.assign({}, OPPORTUNITY, { name: null }), {});
+	await tick();
+	assert.ok(!dialog.fields_dict.ee_file_under_party, "asked 'this Opportunity only' of a record that does not exist");
+	dialog.fields_dict.address_line1.user_sets("1 Main St");
+	assert.deepEqual(links_of(dialog.update_doc()), [["Customer", "Harbor Plaza"]]);
+});
+
+test("create_for: a Lead's deal links the Lead and the deal, with no Account", async () => {
+	on_guided_page();
+	const lead = { doctype: "Opportunity", name: "OPP-0002", opportunity_from: "Lead", party_name: "CRM-LEAD-0001" };
+	const dialog = await ux.create_for("Contact", lead, {});
+	await tick();
+	assert.ok(!dialog.fields_dict.custom_account.get_value());
+	dialog.fields_dict.first_name.user_sets("Lee");
+	assert.deepEqual(links_of(dialog.update_doc()), [
+		["Lead", "CRM-LEAD-0001"],
+		["Opportunity", "OPP-0002"],
+	]);
+});
+
+test("create_for: the context is the next dialog's only; a later directory create resolves its own", async () => {
+	on_guided_page();
+	await ux.create_for("Contact", OPPORTUNITY, {});
+	on_form("Project", { name: "PRJ-0001", customer: "Harbor Plaza" });
+	const dialog = await open(ContactQuickEntryForm, "Contact");
+	assert.equal(dialog.ee_context.doctype, "Project", "the guided record's context leaked into the next dialog");
+});
+
+test("create_for: only Contact and Address", async () => {
+	assert.equal(await ux.create_for("Customer", OPPORTUNITY, {}), null);
+});
+
+test("create_for, toggle off: frappe's own flow, given the record's links on the doc", async () => {
+	on_guided_page();
+	frappe.boot.ee_contacts_ux = 0;
+	ROUTED.length = 0;
+	try {
+		await ux.create_for("Contact", OPPORTUNITY, {});
+		await tick();
+		const doc = FRAPPE_DIALOGS ? frappe.quick_entry.doc : ROUTED_DOCS.at(-1);
+		if (FRAPPE_DIALOGS) assert.ok(!(frappe.quick_entry instanceof ContactQuickEntryForm), "the toggle was ignored");
+		assert.deepEqual(links_of(doc), [
+			["Customer", "Harbor Plaza"],
+			["Opportunity", "OPP-0001"],
+		]);
+	} finally {
+		frappe.boot.ee_contacts_ux = 1;
+	}
 });
 
 // ------------------------------------- frappe's own dialogs (v16.50.0) and the toggle

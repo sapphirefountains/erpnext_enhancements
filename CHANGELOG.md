@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.677.0] - 2026-10-14
+
+Form kit P3.2, UI half (ERPNext TASK-2026-02755): **the Party entry component**. On the guided
+Opportunity page and in the board's side panel, the account, the Primary Contact, the Billing Address
+and the job site are picked from the account's own records or made on the spot, linked to the
+account, and re-suggested when the account changes. The server half (the block registry and the
+`contact_person` mirror) shipped in v1.669.0.
+
+### Added
+
+- **`public/js/form_kit/ui/party.js` (`PartyEntry`)**, made once by the record editor
+  (`editor.js` `party_entry()`), so both shells get the same component. Its decisions are the pure
+  `public/js/form_kit/party.js`. The Party and Site blocks' entry faces now name it instead of
+  `pending` (`form_kit/blocks.py` and its JS twin).
+  - **"+ New" under each party field.** A contact or an address opens the app's own quick entry
+    with the deal as its context, so it is linked to the account (and to the deal, as the
+    Opportunity form's New Contact links it) and then picked. Why it matters: until now the field's
+    own "Create a new Contact" ran with no context on the guided page (its route is not a Form), so
+    a contact made there was linked to nothing unless the person typed the Account by hand. Frappe's
+    dropdown entry now takes the same path.
+  - **The job site still asks "Whose address is this?" with no default** (the 2026-10-06 rule, from
+    the link audit: a job site may be the general contractor's), and starts as type Shipping; the
+    billing address starts on "Also <account>'s address". A new account: the Customer quick entry;
+    a Lead or Prospect opens its form in a new tab with a toast, since neither has a quick entry here
+    and leaving the page would lose the step.
+  - **When the account changes on a saved deal**, a value that already belongs to the new account
+    stays; one the person chose in this visit stays, with a note under the field and *Use
+    <suggestion>*, so nothing they chose is overwritten silently; anything else follows the account
+    as ERPNext's own form does.
+  - **Back closes the dialog, and only the dialog.** A frappe Dialog closes on any route change, so on
+    its own Back would also leave the step or close the side panel. The dialog joins the planner
+    kit's history guard as an overlay; the guided page loads `planner_kit.bundle.js` the first time a
+    dialog opens.
+- **`form_kit.api.party_details`** (GET, `form_kit/party.py`): an account's default contact, billing
+  address and site by ERPNext's own rules (`get_default_contact`, `get_default_address`,
+  `get_party_shipping_address`, plus "one address is also the site"), and which of the deal's
+  current values are linked to it. Allowlisted DocType, read on the DocType and on the account, the
+  account kind the Party block allows, at most 20 names, every row through `frappe.get_list`.
+- **`contacts_ux.create_for(doctype, record, opts)`** in `contact_address_quick_entry.js`: the
+  Contact/Address dialogs for a record that is not the Form on screen, handed its context instead of
+  the route's. A refused insert keeps the dialog open rather than opening the full form over the page.
+- `roles` and `accounts` on the Party and Site blocks (`blocks.party_roles`), and `check()` refuses a
+  role naming a field the block does not carry.
+
+### Changed
+
+- **`save_step` returns what the save itself changed.** Without a `step`, it now also returns every
+  field the flow shows that a hook changed (ERPNext's `Opportunity.map_fields` filling an empty
+  contact from a new account, `party_mirrors` copying the hidden contact up). Before, the page kept
+  the old value on screen and its next save could put it back, so the screen and the record (and
+  the two contact fields) could disagree.
+- The Contact & site step's intro says new ones are added there now.
+
+### Fixed
+
+- **Undo fails closed** (`panel.js` `undo_allowed`, review of #1286): with no flow, or one that sends
+  neither `closed` nor `won`, the side panel offers no Undo instead of offering one it cannot check.
+- **A broken `quick.when` rule no longer breaks step 1** (`form_kit/api.py`, review of #1286): it ran
+  on every new-record `get_flow` and an exception took the guided page's start down with it. It is
+  logged (`frappe.log_error`, keyword arguments) and read as "not required"; the server still refuses
+  a missing Lead Source on insert.
+
 ## [1.675.0] - 2026-10-14
 
 Form kit P4.4 part 2, P6.6 and P6.7 (ERPNext TASK-2026-02762, -02780, -02781): **the side panel**,

@@ -13,6 +13,8 @@
  *   - the save queue (../save_queue.js) and its conflict chooser (../conflict.js)
  *   - the phone's copy of anything unsent (../journal.js, P4.7), and a create that waits for signal
  *   - step 1's create (create_record, with the create's client_id), Set as Lost, `distinct`, `clears`
+ *   - the Party entry component (./party.js, P3.2, v1.677.0) on the account, contact and address
+ *     fields: "+ New" inline and linked to the account, re-suggested when the account changes
  *
  * What it asks of the shell that hosts it (the "host" methods; the guided page and the side panel
  * each define their own):
@@ -34,6 +36,8 @@
  * Runs in the browser only (it draws with frappe.ui and jQuery). The decisions it makes are the
  * pure modules beside it in public/js/form_kit/, which tests/test_guided_entry.py runs under node.
  */
+
+import { PartyEntry } from "./party.js";
 
 export const GE_API = "erpnext_enhancements.form_kit.api.";
 export const GE_LIST_SUFFIX = "__ge_list";
@@ -282,6 +286,15 @@ export class RecordEditor {
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.queue = this.is_new ? null : this.make_queue(flow.modified);
 		if (this.is_new && !this.client_id) this.client_id = ge_client_id();
+		this.party_entry().reset();
+	}
+
+	// P3.2: the Party entry component (./party.js), one per editor: the account, contact and
+	// addresses picked from the account's own, made inline and linked to it, re-suggested when the
+	// account changes.
+	party_entry() {
+		if (!this.party_ui) this.party_ui = new PartyEntry(this);
+		return this.party_ui;
 	}
 
 	// The record is fixed when the queue is made: a queue still sending after the page has moved to
@@ -337,6 +350,7 @@ export class RecordEditor {
 			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
 		});
 		this.decorate_controls(step);
+		this.party_entry().decorate(step, editable);
 		// A grid says nothing when a row is removed or moved, and a cell edit may not reach the
 		// table's own onchange: read the grids again after either (delete_rows runs in 0.1 s steps).
 		$fields.on("click", ".grid-remove-rows, .grid-delete-row, .grid-add-row, .grid-move-row", () =>
@@ -655,7 +669,8 @@ export class RecordEditor {
 			value = this.kit.clean_rows(value, (def.child_fields || []).map((child) => child.fieldname));
 		}
 		if (this.intercept_change(fieldname, value)) return;
-		const changed = !this.kit.same_value(value, this.values[fieldname]);
+		const before = this.values[fieldname];
+		const changed = !this.kit.same_value(value, before);
 		this.set_value_local(fieldname, value);
 		if (changed) {
 			((this.flow.clears || {})[fieldname] || []).forEach((cleared) => {
@@ -664,6 +679,7 @@ export class RecordEditor {
 				this.show_value(cleared, null);
 			});
 			this.refresh_distinct();
+			this.party_entry().changed(fieldname, before, value);
 		}
 		this.fg.refresh_dependency();
 	}
