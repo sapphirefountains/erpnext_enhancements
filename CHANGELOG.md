@@ -54,6 +54,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - that none of the 14 retired fields (read from the two removal patches) is back in the
     fixtures, anchored on, ordered, or created by app code.
 
+## [1.682.0] - 2026-10-14
+
+### Fixed
+- **The Item and Purchase Order forms read right again.** Fields that belong to a form's first
+  section were rendering under a heading that has nothing to do with them.
+  - **Item:** Default Unit of Measure, Image, Disabled, Maintain Stock and the fixed-asset ticks
+    sat under **"Maintenance Billing"**.
+  - **Purchase Order:** Company, Is Subcontracted, Supplier Warehouse, Has Unit Price Items and
+    Amended From sat under **"Contracted under"**, and Order Status was cut in two by
+    **"Approval"**.
+  - **Cause:** these forms take their order from a `<DocType>-main-field_order` Property Setter that
+    `scripts/layout/generate_field_order.py` writes from `scripts/layout/specs/*.json`. Custom
+    fields added later never reached those arrays, so v16 placed them by `insert_after`. A Section
+    Break placed that way lands in the middle of the section it follows, and everything after it,
+    up to the next break, renders under the new heading.
+  - **Item** was missing 40 fields:
+    - the Safety Data and Maintenance Billing sections (8 fields), inserted after Item Group;
+    - the Aquatic Equipment block (31 fields), created in code by
+      `water_engineering/setup.create_equipment_item_fields`;
+    - ERPNext 16.50's `use_serial_no_wise_valuation`.
+  - **Purchase Order** was missing 11 fields:
+    - Expected Delivery Date and the "Contracted under" section (7 fixture fields);
+    - Order Stage, created in code through `po_order_stage.field_definition()`;
+    - the Approval stamp section, created by `patches/add_po_approval_stamp_fields`.
+  - **Purchase Receipt** was missing the 3 store-run fields (`patches/add_store_run_receipt_fields`).
+    They rendered in the right place, but the array was stale.
+- **The fix:** the arrays were regenerated with the layout generator, from the specs, against
+  ERPNext v16.50.0's doctype JSON (prod's version). Each new section sits after the section it
+  followed in intent:
+  - **Item:** Safety Data and Maintenance Billing come right after the first section; Aquatic
+    Equipment after the pump block.
+  - **Purchase Order:** "Contracted under" comes after the first section, and Approval after Order
+    Status.
+  - **Registry:** the code-owned fields are registered in `scripts/layout/code_owned_fields.json`.
+  - **No drift:** every array matches prod's live meta field set exactly (188, 170 and 153 fields),
+    and the existing fields keep their relative order.
+  - **One record per form:** `generate_field_order.py` refuses to write while
+    `property_setter.json` is not name-sorted; 16 later records were appended out of order. So the
+    generator's own functions were run, and only the three field_order records were written, with
+    its own dump. Re-sorting the file would have reordered unrelated records.
+  - **Spec cleanup:** the Purchase Order and Supplier Quotation specs no longer name
+    `custom_comments`. v1.159.2 retired that field from the fixtures as an orphan "Comments" tab,
+    so the arrays leave it out, as they already did. A full generator run, with no `--only`, now
+    lints clean on all seven forms. Supplier Quotation's array is unchanged.
+- **New guard:** `tests/test_layout_field_order_coverage.py`, in its own CI step, fails the build if
+  any of these slips into one of the seven generator-owned forms without being in its field_order
+  and placed in its spec:
+  - a fixture Custom Field;
+  - a registered code-owned field;
+  - a field created in app code with `create_custom_fields` that isn't registered. It reads string
+    literals, module constants and `field_definition()`-style helpers with `ast`.
+
 ## [1.681.0] - 2026-10-14
 
 ### Added
