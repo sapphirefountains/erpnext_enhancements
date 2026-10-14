@@ -137,7 +137,7 @@
 
 .oca-pill-warn {
     background: color-mix(in srgb, var(--sf-warn) 12%, transparent);
-    border-color: color-mix(in srgb, var(--sf-warn) 35%, transparent);
+    border-color: color-mix(in srgb, color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong)) 40%, transparent);
     color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 

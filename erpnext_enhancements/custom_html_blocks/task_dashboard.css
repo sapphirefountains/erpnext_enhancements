@@ -3,9 +3,10 @@
  * Runs inside the block's shadow root. Structural colors come from Frappe's
  * CSS custom properties (custom properties inherit through shadow boundaries,
  * so Frappe Light and Timeless Night both render correctly without any
- * [data-theme] selector). Status accents (overdue, urgent, the projects
- * panel's green) come from the app's --sf-* tokens, which inherit the same way;
- * only the rest of the priority scale and the panel accents are literal. */
+ * [data-theme] selector). Status accents (overdue, urgent) come from the app's
+ * --sf-* tokens, which inherit the same way. The panel accents (the Projects
+ * panel's green, its rank circles and progress bars included) and the rest of
+ * the priority scale are categorical, not statuses, so they stay literal. */
 
 .tdb-root {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -102,7 +103,7 @@
 .tdb-overdue .tdb-panel-head { border-top: 3px solid var(--sf-danger); }
 .tdb-today .tdb-panel-head   { border-top: 3px solid #2490ef; }
 .tdb-events .tdb-panel-head  { border-top: 3px solid #8b5cf6; }
-.tdb-projects .tdb-panel-head{ border-top: 3px solid var(--sf-good); }
+.tdb-projects .tdb-panel-head{ border-top: 3px solid #16a34a; }
 
 .tdb-panel-hint {
     font-size: 11px;
@@ -157,8 +158,8 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: var(--sf-good);
-    color: var(--sf-on-good);
+    background: #16a34a;
+    color: #fff;
     font-weight: 800;
     font-size: 13px;
 }
@@ -213,7 +214,7 @@
 .tdb-pct-bar > span {
     display: block;
     height: 100%;
-    background: var(--sf-good);
+    background: #16a34a;
 }
 
 /* --- Task rows (overdue + today) --- */

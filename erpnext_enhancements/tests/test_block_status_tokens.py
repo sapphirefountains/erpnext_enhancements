@@ -35,8 +35,8 @@ TOKENS = APP / "public" / "css" / "sf_tokens.bundle.css"
 BANNED_HEXES = {
 	# good
 	"1e7e51": "--sf-good (the department widgets' green; --sf-green is this value)",
-	"28a745": "--sf-good (KPI Cockpit, Projects Dashboard)",
-	"16a34a": "--sf-good (Task Dashboard)",
+	"28a745": "--sf-good (KPI Cockpit, Projects Dashboard badge)",
+	"16a34a": "--sf-good (any status use; see CATEGORICAL)",
 	"16794c": "--sf-good (My Travel's fallback for --text-on-green)",
 	"e4f5e9": "a --sf-good tint (My Travel's fallback for --bg-green)",
 	# warn
@@ -54,6 +54,19 @@ BANNED_HEXES = {
 	"d9534f": "--sf-danger (Projects Dashboard overdue outline)",
 	"c9302c": "--sf-danger (Projects Dashboard overdue row)",
 	"a32d2a": "--sf-danger (Bank Balances)",
+}
+
+# The sites where a banned green is a CATEGORY colour, not a status, and stays literal: exactly
+# this many uses of that hex in that file, and nowhere else. A status use of the same green (a
+# fourth #16a34a in the Task Dashboard, or #28a745 anywhere else) still fails.
+#   - task_dashboard.css, #16a34a x3: the Projects panel's accent, its rank circles and its
+#     progress bars. The panels are told apart by colour (overdue red, today blue, events purple,
+#     projects green); green here names the panel, not a state.
+#   - projects_dashboard.js, #28a745 x1: the "Avg % Complete" summary card, one of a categorical
+#     row of six (blue, red, green, orange, purple, grey). It is the fallback of --green-500.
+CATEGORICAL = {
+	("task_dashboard.css", "16a34a"): 3,
+	("projects_dashboard.js", "28a745"): 1,
 }
 
 # The same colours written as rgba() tints: now color-mix(in srgb, var(--sf-...) N%, transparent).
@@ -117,13 +130,28 @@ class TestBlockStatusTokens(unittest.TestCase):
 	def test_no_block_writes_a_literal_status_colour(self):
 		for path in block_files():
 			text = code(path)
+			found = {}
 			for match in HEX.finditer(text):
-				with self.subTest(file=path.name, hex=match.group(0)):
-					self.fail(f"{path.name}: {match.group(0)} -> use {BANNED_HEXES[match.group(1).lower()]}")
+				key = match.group(1).lower()
+				found[key] = found.get(key, 0) + 1
+			for key, count in sorted(found.items()):
+				allowed = CATEGORICAL.get((path.name, key), 0)
+				with self.subTest(file=path.name, hex=key):
+					self.assertLessEqual(
+						count, allowed, f"{path.name}: #{key} x{count} -> use {BANNED_HEXES[key]}"
+					)
 			for match in RGB.finditer(text):
 				with self.subTest(file=path.name, rgb=match.group(0)):
 					key = re.sub(r"\s*,\s*", ", ", match.group(1))
 					self.fail(f"{path.name}: {match.group(0)} -> color-mix with {BANNED_RGB[key]}")
+
+	def test_the_categorical_sites_are_exactly_these(self):
+		# Not one more (a status use slipped in) and not one fewer (a stale allowance that would
+		# wave the next status use through).
+		for (name, key), allowed in CATEGORICAL.items():
+			with self.subTest(file=name, hex=key):
+				hits = [m for m in HEX.finditer(code(BLOCKS_DIR / name)) if m.group(1).lower() == key]
+				self.assertEqual(len(hits), allowed)
 
 	def test_the_blocks_read_the_status_tokens(self):
 		# Read from code, not comments: a header saying "uses --sf-good" satisfies nothing.

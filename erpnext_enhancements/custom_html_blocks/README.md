@@ -84,14 +84,16 @@ Frappe's own variables do, and one file sets every block's status colours in bot
 | status text: good, bad | `var(--sf-good)`, `var(--sf-danger)` |
 | status text: watch | `color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))`. `--sf-warn` is a yellow *fill*, 1.7:1 on white; mixed with the theme's strongest text it is 5.3:1 on a white card and 13:1 on a dark one |
 | a fill: a bar, a badge, a stripe | `var(--sf-good)` / `var(--sf-warn)` / `var(--sf-danger)`, with `var(--sf-on-good)` / `--sf-on-warn` / `--sf-on-danger` for a label on it |
-| a light tint behind a pill or a notice | `color-mix(in srgb, var(--sf-danger) 12%, transparent)` (the edge at 35%) |
+| a light tint behind a pill or a notice | `color-mix(in srgb, var(--sf-danger) 12%, transparent)`, the edge at 35%. Warn's edge is the warn-text mix at 40% instead: the yellow at 35% is 1.22:1 on white and the outline vanishes; the mix is 1.76:1 on white and 3:1 on a dark card |
 
 My Travel is the exception that proves it: it uses Frappe's theme-aware indicator pairs
 (`--bg-green` / `--text-on-green` ...), and only their fallbacks are tokens.
 `tests/test_block_status_tokens.py` fails the build on any of the old literal status hexes (or
 their `rgba()` tints) in a block's `.css` or `.js`, and on a `var(--sf-...)` the token file does
 not define. Categorical colours (project types, the priority scale, the panel accents, the Desk
-Shortcuts palette) are not statuses and stay literal.
+Shortcuts palette) are not statuses and stay literal. Two of them happen to be greens the test
+bans as a status colour, the Task Dashboard's Projects panel (`#16a34a`) and the Projects
+Dashboard's "Avg % Complete" card (`#28a745`), so the test allows exactly those sites.
 
 ## Files — Projects Dashboard
 
@@ -117,7 +119,7 @@ event (debounced) plus a 5-minute kiosk fallback; timers/subscriptions are store
 |---|---|
 | `task_dashboard.html` | Panel skeleton: header with live clock, Top-10 projects rail (left), Overdue / Today / Calendar stack (right). |
 | `task_dashboard.js` | Block-sandbox script: fetch + render, clock, guarded realtime/interval refresh. |
-| `task_dashboard.css` | Shadow-root styles. Structural colors from Frappe CSS variables (they pierce the shadow boundary, so both themes work); overdue and urgent from the `--sf-*` status tokens; the rest of the priority scale and the panel accents literal. |
+| `task_dashboard.css` | Shadow-root styles. Structural colors from Frappe CSS variables (they pierce the shadow boundary, so both themes work); overdue and urgent from the `--sf-*` status tokens; the rest of the priority scale and the panel accents (the Projects panel's green included) literal. |
 
 **Install:** `bench migrate` creates the block and auto-places it on **Home**
 (via `sync_custom_html_blocks`). To show it on another workspace too, edit that

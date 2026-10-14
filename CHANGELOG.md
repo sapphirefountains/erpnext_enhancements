@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.641.0] - 2026-10-14
+## [1.641.0] - 2026-10-13
 
 Custom pages S3.3a (TASK-2026-02822): the dashboard blocks' status colours come from the design
 tokens, and the on-screen check the polling blocks use exists once.
@@ -22,12 +22,18 @@ tokens, and the on-screen check the polling blocks use exists once.
   - The tokens in `sf_tokens.bundle.css` are custom properties on `:root`, so they inherit into
     every block's shadow root, as Frappe's own variables do. One file now sets every block's
     status colours, in both themes.
-  - Converted: 34 blocks, 182 literal hex uses and 93 `rgba()` tints. That is 28 department
+  - "Both themes" is only half true today. `--sf-good` and `--sf-danger` have no dark-theme
+    values yet, so on a dark card good and danger text stay about 3–3.5:1, roughly what the old
+    literals gave. Warn text does improve, to about 13:1 (below).
+  - Converted: 34 blocks, 178 literal hex uses and 93 `rgba()` tints. That is 28 department
     widgets, the KPI Cockpit, Task Dashboard, Projects Dashboard, Bank Balances, Who's Working,
     and the fallbacks in My Travel.
   - Good and bad text read `var(--sf-good)` / `var(--sf-danger)`; fills, bars, badges and stripes
     read the same tokens, with `--sf-on-*` for a label on a fill; tints are
-    `color-mix(in srgb, var(--sf-…) 12%, transparent)`.
+    `color-mix(in srgb, var(--sf-…) 12%, transparent)`, edged at 35%.
+  - **Warn's pill edge is darker than the others.** The yellow at 35% is 1.22:1 on white, and the
+    outline all but disappears. It is the warn-text mix (below) at 40% instead: 1.76:1 on white,
+    level with the danger and good edges (1.78:1, 1.64:1), and 3:1 on a dark card.
   - **Watch text is a mix, not the token.** `--sf-warn` is a yellow fill, 1.7:1 on white, which
     the design system says is never text. Warn text is
     `color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))`: 5.3:1 on a white card,
@@ -38,7 +44,10 @@ tokens, and the on-screen check the polling blocks use exists once.
     My Training's overdue red (`#e03636`) is deliberately the same as the training manager
     console's, so it is left for that page's own pass.
   - Categorical colours are not statuses and stay as they were: project types, the priority
-    scale, the panel accents and the Desk Shortcuts palette.
+    scale, the panel accents and the Desk Shortcuts palette. That includes two greens that are
+    banned as status colours elsewhere: the Task Dashboard's Projects panel (`#16a34a`: its
+    accent, rank circles and progress bars) and the Projects Dashboard's "Avg % Complete" card
+    (`#28a745`, one of a row of six category colours). The guard test allows exactly those sites.
 - **The on-screen check is one function in the return helper.** S1.1 copied an
   `onScreen` check into `task_dashboard.js` and `finance_whos_working.js`. It skips a poll while
   the block is hidden or detached, and fails open when it cannot tell.

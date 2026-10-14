@@ -1501,7 +1501,7 @@
         const cards = [
             { label: "Active Projects", value: total_active, color: "var(--blue-500, #2490ef)" },
             { label: "Overdue", value: overdue, color: "var(--sf-danger)" },
-            { label: "Avg % Complete", value: avg_complete + "%", color: "var(--sf-good)" },
+            { label: "Avg % Complete", value: avg_complete + "%", color: "var(--green-500, #28a745)" },
             { label: "Open Tasks", value: open_tasks, color: "var(--orange-500, #f5a623)" },
             { label: "Master Projects", value: masters.size, color: "var(--purple-500, #7574d6)" },
             { label: "Completed", value: completed, color: "var(--gray-600, #6c757d)" }
