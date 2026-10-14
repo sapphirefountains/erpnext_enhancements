@@ -37,6 +37,12 @@
 // NO MONEY. The endpoint sends none to anybody who is not a coordinator (crew see
 // everything about a trip except what it cost), and this script has nowhere to put
 // it if it did.
+//
+// Its loading, error and no-access panels, its status chips and its escaping come from
+// sf_kit, and its "only the newest answer draws" counter from blocks.ticket, both handed
+// over by the shared helper (custom_html_blocks/README.md). "No trips coming up" stays a
+// notice rather than an empty panel: the body is never empty, the link to everyone's trips
+// and any receipts reminder are drawn under it.
 
 (function () {
     const MAX_ATTEMPTS = 50;
@@ -65,25 +71,51 @@
     // scoped to your own trips, so this is the only way to see a colleague's.
     const ALL_TRIPS_URL = "/itinerary?view=trips";
 
+    // A status's word in the kit's chip, in the kit's tone for it: under way is good,
+    // still being planned is a warning, the rest (booked, done) neutral.
+    const CHIP_TONE = {
+        Planning: "warn",
+        "In Progress": "good",
+    };
+
+    // sf_kit (panels, chips, escaping), set by startApp before anything draws.
+    let sf = null;
+
     function getContainer() {
         return typeof root_element !== "undefined" && root_element ? root_element : document;
+    }
+
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
     }
 
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#tvh-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
     }
 
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
-    }
-
     function attr(name, value) {
-        return " " + name + '="' + esc(value) + '"';
+        return " " + name + '="' + sf.esc(value) + '"';
     }
 
     // Only a path on this site or an http(s) address is ever opened. The server
@@ -105,7 +137,7 @@
 
     function pill(status) {
         if (!status) return "";
-        return '<span class="tvh-pill tone-' + esc(toneOf(status)) + '">' + esc(status) + "</span>";
+        return sf.chip(status, CHIP_TONE[status] || "neutral");
     }
 
     // A button that does one thing. `data-action` says which, and bind() below reads
@@ -118,9 +150,9 @@
             '"' +
             attrs +
             ">" +
-            (icon ? '<span class="tvh-btn-icon" aria-hidden="true">' + esc(icon) + "</span>" : "") +
+            (icon ? '<span class="tvh-btn-icon" aria-hidden="true">' + sf.esc(icon) + "</span>" : "") +
             '<span class="tvh-btn-label">' +
-            esc(label) +
+            sf.esc(label) +
             "</span></button>"
         );
     }
@@ -144,11 +176,11 @@
     function notice(icon, text, tone, actions) {
         return (
             '<div class="tvh-notice' +
-            (tone ? " tone-" + esc(tone) : "") +
+            (tone ? " tone-" + sf.esc(tone) : "") +
             '"><span class="tvh-notice-icon" aria-hidden="true">' +
-            esc(icon) +
+            sf.esc(icon) +
             '</span><div class="tvh-notice-body"><div class="tvh-notice-text">' +
-            esc(text) +
+            sf.esc(text) +
             "</div>" +
             (actions ? '<div class="tvh-actions">' + actions + "</div>" : "") +
             "</div></div>"
@@ -167,9 +199,9 @@
                 '<a class="tvh-link-btn"' +
                     attr("href", tel) +
                     '><span class="tvh-link-icon" aria-hidden="true">' +
-                    esc("📞") +
+                    sf.esc("📞") +
                     "</span> " +
-                    esc(row.phone || "Call") +
+                    sf.esc(row.phone || "Call") +
                     "</a>"
             );
         }
@@ -178,9 +210,9 @@
                 '<a class="tvh-link-btn"' +
                     attr("href", mail) +
                     '><span class="tvh-link-icon" aria-hidden="true">' +
-                    esc("📧") +
+                    sf.esc("📧") +
                     "</span> " +
-                    esc(row.email || "Email") +
+                    sf.esc(row.email || "Email") +
                     "</a>"
             );
         }
@@ -194,9 +226,9 @@
                     attr("data-action", "open") +
                     attr("data-url", url) +
                     '><span class="tvh-link-icon" aria-hidden="true">' +
-                    esc("📍") +
+                    sf.esc("📍") +
                     "</span> " +
-                    esc(link.label || "Map") +
+                    sf.esc(link.label || "Map") +
                     "</button>"
             );
         });
@@ -216,11 +248,11 @@
 
         return (
             '<div class="tvh-contact"><div class="tvh-contact-label">' +
-            esc(row.label) +
+            sf.esc(row.label) +
             "</div>" +
-            (name ? '<div class="tvh-contact-name">' + esc(name) + "</div>" : "") +
-            (row.detail ? '<div class="tvh-contact-detail">' + esc(row.detail) + "</div>" : "") +
-            (plain.length ? '<div class="tvh-contact-detail">' + esc(plain.join(" · ")) + "</div>" : "") +
+            (name ? '<div class="tvh-contact-name">' + sf.esc(name) + "</div>" : "") +
+            (row.detail ? '<div class="tvh-contact-detail">' + sf.esc(row.detail) + "</div>" : "") +
+            (plain.length ? '<div class="tvh-contact-detail">' + sf.esc(plain.join(" · ")) + "</div>" : "") +
             (links.length ? '<div class="tvh-contact-links">' + links.join("") + "</div>" : "") +
             "</div>"
         );
@@ -237,10 +269,10 @@
             '<details class="tvh-contacts"><summary class="tvh-contacts-summary">' +
             '<span class="tvh-chevron" aria-hidden="true">&#8250;</span>' +
             '<span aria-hidden="true">' +
-            esc("📞") +
+            sf.esc("📞") +
             "</span> Who to call" +
             '<span class="tvh-count">' +
-            esc(rows.length) +
+            sf.esc(rows.length) +
             "</span></summary>" +
             '<div class="tvh-contact-list">' +
             rows.map(contactRow).join("") +
@@ -253,10 +285,10 @@
     function featuredCard(trip) {
         const tone = toneOf(trip.status);
         const meta = [];
-        if (trip.dates) meta.push('<span class="tvh-meta-item">' + esc(trip.dates) + "</span>");
+        if (trip.dates) meta.push('<span class="tvh-meta-item">' + sf.esc(trip.dates) + "</span>");
         // A job or customer name can be wider than a phone: it may wrap, the dates may not.
         if (trip.travel_for) {
-            meta.push('<span class="tvh-meta-item tvh-meta-for">' + esc(trip.travel_for) + "</span>");
+            meta.push('<span class="tvh-meta-item tvh-meta-for">' + sf.esc(trip.travel_for) + "</span>");
         }
         meta.push(pill(trip.status));
 
@@ -269,14 +301,14 @@
 
         return (
             '<section class="tvh-feature tone-' +
-            esc(tone) +
+            sf.esc(tone) +
             '"><div class="tvh-feature-top">' +
             '<span class="tvh-feature-icon" aria-hidden="true">' +
-            esc("✈️") +
+            sf.esc("✈️") +
             '</span><div class="tvh-feature-text">' +
-            (trip.headline ? '<div class="tvh-headline">' + esc(trip.headline) + "</div>" : "") +
+            (trip.headline ? '<div class="tvh-headline">' + sf.esc(trip.headline) + "</div>" : "") +
             '<div class="tvh-feature-title">' +
-            esc(trip.purpose || trip.trip) +
+            sf.esc(trip.purpose || trip.trip) +
             "</div>" +
             '<div class="tvh-feature-meta">' +
             meta.join("") +
@@ -294,9 +326,9 @@
     function tripRow(trip) {
         const organizing = trip.relation === "organizing";
         const meta = [];
-        if (trip.dates) meta.push('<span class="tvh-meta-item">' + esc(trip.dates) + "</span>");
+        if (trip.dates) meta.push('<span class="tvh-meta-item">' + sf.esc(trip.dates) + "</span>");
         meta.push(pill(trip.status));
-        if (trip.note) meta.push('<span class="tvh-note">' + esc(trip.note) + "</span>");
+        if (trip.note) meta.push('<span class="tvh-note">' + sf.esc(trip.note) + "</span>");
 
         const actions = [
             openButton("🗺️", "Itinerary", trip.itinerary_url),
@@ -306,9 +338,9 @@
 
         return (
             '<div class="tvh-trip"><span class="tvh-trip-icon" aria-hidden="true">' +
-            esc(organizing ? "🗂️" : "✈️") +
+            sf.esc(organizing ? "🗂️" : "✈️") +
             '</span><div class="tvh-trip-main"><div class="tvh-trip-title">' +
-            esc(trip.purpose || trip.trip) +
+            sf.esc(trip.purpose || trip.trip) +
             '</div><div class="tvh-trip-meta">' +
             meta.join("") +
             "</div></div>" +
@@ -329,7 +361,7 @@
         if (!trips.length) return "";
         return (
             '<section class="tvh-section"><div class="tvh-section-title">' +
-            esc(tripsTitle(data, trips)) +
+            sf.esc(tripsTitle(data, trips)) +
             '</div><div class="tvh-trips">' +
             trips.map(tripRow).join("") +
             "</div></section>"
@@ -371,17 +403,17 @@
     function attentionRow(row) {
         const target = row.target === "form" ? "form" : "plan";
         const reasons = (row.reasons || [])
-            .map((reason) => '<li class="tvh-reason">' + esc(reason) + "</li>")
+            .map((reason) => '<li class="tvh-reason">' + sf.esc(reason) + "</li>")
             .join("");
         const meta = [];
-        if (row.dates) meta.push('<span class="tvh-meta-item">' + esc(row.dates) + "</span>");
+        if (row.dates) meta.push('<span class="tvh-meta-item">' + sf.esc(row.dates) + "</span>");
         meta.push(pill(row.status));
         return (
             '<button type="button" class="tvh-attn-row"' +
             attr("data-action", target) +
             attr("data-trip", row.trip) +
             '><span class="tvh-attn-main"><span class="tvh-attn-title">' +
-            esc(row.purpose || row.trip) +
+            sf.esc(row.purpose || row.trip) +
             '</span><span class="tvh-attn-meta">' +
             meta.join("") +
             "</span>" +
@@ -396,9 +428,9 @@
             attr("data-action", "route") +
             attr("data-route", row.route) +
             '><span class="tvh-setup-icon" aria-hidden="true">' +
-            esc("⚙️") +
+            sf.esc("⚙️") +
             '</span><span class="tvh-setup-text">' +
-            esc(row.text) +
+            sf.esc(row.text) +
             '</span><span class="tvh-go" aria-hidden="true">&#8250;</span></button>'
         );
     }
@@ -412,9 +444,9 @@
 
         let html =
             '<section class="tvh-section tvh-attention"><div class="tvh-section-title">' +
-            esc("Needs attention") +
+            sf.esc("Needs attention") +
             '</div><div class="tvh-section-note">' +
-            esc("Only travel coordinators see this list.") +
+            sf.esc("Only travel coordinators see this list.") +
             "</div>";
         if (trips.length) {
             html += '<div class="tvh-attn-list">' + trips.map(attentionRow).join("") + "</div>";
@@ -422,7 +454,7 @@
         if (more > 0) {
             html +=
                 '<div class="tvh-more"><span>' +
-                esc("…and " + more + " more.") +
+                sf.esc("…and " + more + " more.") +
                 "</span>" +
                 button("", "See every trip", attr("data-action", "list"), "is-quiet") +
                 "</div>";
@@ -430,7 +462,7 @@
         if (setup.length) {
             html +=
                 '<div class="tvh-subtitle">' +
-                esc("Setup") +
+                sf.esc("Setup") +
                 '</div><div class="tvh-attn-list">' +
                 setup.map(setupRow).join("") +
                 "</div>";
@@ -446,7 +478,7 @@
         if (!links.length) return "";
         return (
             '<div class="tvh-footer"><span class="tvh-footer-text">' +
-            esc("Questions about a trip? Contact the " + (office.label || "Travel desk") + ":") +
+            sf.esc("Questions about a trip? Contact the " + (office.label || "Travel desk") + ":") +
             "</span>" +
             links.join("") +
             "</div>"
@@ -515,34 +547,39 @@
         });
     }
 
-    function load(container) {
+    function startApp(container, kit, ticket) {
+        sf = kit;
         const body = container.querySelector("#tvh-body");
-        // The refresh button and a return to the hub can both ask while an answer is
-        // on its way, so each ask takes a ticket and only the newest one draws: an
-        // older answer arriving late never paints over a newer one. The ticket lives
-        // on the root itself, which is what the return helper hands back. Each answer
-        // only ever draws into the root it was asked for, so one for a block that has
-        // been replaced lands nowhere seen.
-        const ticket = (container.__tvh_ticket = (container.__tvh_ticket || 0) + 1);
-        frappe
-            .call({ method: METHOD })
-            .then((r) => {
-                if (container.__tvh_ticket === ticket) render(container, (r && r.message) || {});
-            })
-            .catch(() => {
-                // frappe has already shown the server's message. Leave a line behind
-                // so the block is not silently blank.
-                if (container.__tvh_ticket !== ticket) return;
-                body.innerHTML = '<div class="tvh-muted">Could not load your travel.</div>';
-            });
-    }
-
-    function startApp(container) {
         const refresh = container.querySelector("#tvh-refresh");
-        if (refresh) refresh.addEventListener("click", () => load(container));
-        load(container);
+
+        // The refresh button and a return to the hub can both ask while an answer is
+        // on its way, so each ask takes a ticket on the root (blocks.ticket) and only the
+        // newest one draws: an older answer arriving late never paints over a newer one.
+        // Each answer only ever draws into the root it was asked for, so one for a block
+        // that has been replaced lands nowhere seen. Still the viewer's own trips: the
+        // endpoint reads the session user.
+        function load() {
+            const current = ticket(container);
+            frappe
+                .call({ method: METHOD })
+                .then((r) => {
+                    if (current()) render(container, (r && r.message) || {});
+                })
+                .catch((err) => {
+                    // frappe has already shown the server's message. Leave a panel behind
+                    // so the block is not silently blank.
+                    if (!current()) return;
+                    const title = __("Could not load your travel.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
+                });
+        }
+
+        if (refresh) refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
+        load();
         // Coming back to the hub from a form or Plan a Trip does not rebuild this block
-        // (the header above), so the shared helper calls load(container) when the route
+        // (the header above), so the shared helper calls load() when the route
         // comes back to the workspace this block is drawn on, for as long as the block
         // is on the page. It binds the one route handler for the whole desk; this block
         // used to bind its own, which is where the helper came from. A bundle cached
