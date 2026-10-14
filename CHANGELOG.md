@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.633.0] - 2026-10-13
+
+Two follow-ups from Nik's Opportunity field review (2026-10-13, TASK-2026-02771) that change behavior, so they
+ship on their own.
+
+### Added
+
+- **A Billing Address on the Opportunity, beside the job site.**
+  - It is ERPNext's own `customer_address`, which was hidden. It is now relabeled *Billing Address*,
+    shown, and moved next to Primary Address in the field order.
+  - It is the field ERPNext already maps to a Quotation's billing address, and ERPNext's own query
+    filters it to the deal's account.
+  - **Primary Address stays the job site.** The stage checklist's "A site address" now counts only
+    Primary Address: a billing address is not a site.
+  - Its hint and explanation are in the help file, and its description matches the hint.
+- **What a new Project copies from its Opportunity:** Primary Address, Billing Address (into a new
+  Project *Billing Address* field next to its Primary Address), Materials Budget, Time Budget, Time &
+  Materials and Notes Relating to Budget.
+  - `crm_enhancements/project_copy.py` holds the list. Both ways of making a Project call it: the
+    background creator behind the Closed Won prompt and the Hand-Off tab, and the Desk's
+    *Create > Project*.
+  - It is copied once, at creation. A value the Project already holds, say from a template, is never
+    overwritten, and a blank is never copied.
+  - The help for those fields no longer says "not copied".
+- **The Closed Won prompt warns when the deal is still on a Lead.**
+  - A Project made from a Lead takes the Lead as its customer, which fails, and no Google Drive folder
+    is made.
+  - The prompt now opens with "This deal is still on a Lead" and asks for the Lead to be converted to
+    an Account first. It only warns; it doesn't block.
+  - The prompt fires on every way into Closed Won: a form save, a Kanban drag, a list edit or the API.
+    `handoff_state` reports `on_lead` for it.
+- `tests/test_opportunity_project_copy.py` gets its own CI step.
+
 ## [1.632.0] - 2026-10-13
 
 Fixes to `sf_kit` from the review of #1245 (custom pages step 2, TASK-2026-02804), before step 3 moves

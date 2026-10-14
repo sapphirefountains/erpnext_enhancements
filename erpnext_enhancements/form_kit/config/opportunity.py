@@ -58,7 +58,8 @@ NEEDS_ANALYSIS = [
 PROPOSAL = [
 	*NEEDS_ANALYSIS,
 	{"field": "opportunity_amount", "positive": True, "label": "Opportunity Amount"},
-	{"any": ["primary_address", "customer_address"], "label": "A site address"},
+	# The job site only: customer_address is the Billing Address (Nik, 2026-10-13).
+	{"field": "primary_address", "label": "A site address"},
 ]
 CLOSED_WON = [
 	*PROPOSAL,

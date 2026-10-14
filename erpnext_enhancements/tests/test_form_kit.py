@@ -1204,8 +1204,10 @@ class TestCompleteness(unittest.TestCase):
             self.assertIn("A site address", [m["label"] for m in result["missing"]])
         self.assertIn("Opportunity Amount", self._missing(status="Proposal/Price Quote", opportunity_amount=0))
         self.assertNotIn(
-            "A site address", self._missing(status="Proposal/Price Quote", customer_address="ADDR-1")
+            "A site address", self._missing(status="Proposal/Price Quote", primary_address="ADDR-1")
         )
+        # The Billing Address is not a site (Nik, 2026-10-13).
+        self.assertIn("A site address", self._missing(status="Proposal/Price Quote", customer_address="ADDR-2"))
 
     def test_closed_won_wants_the_ranks(self):
         result = self._measure(status="Closed Won")
