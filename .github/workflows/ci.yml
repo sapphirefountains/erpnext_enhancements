@@ -1811,6 +1811,14 @@ jobs:
       # setUpModule.
       - name: Purchase Order PDF filename (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_pdf_filename -v
+      # Opening a Kanban board never writes a document (v1.637.3). frappe v16.50.0's board
+      # init() sends each column's saved order and its update_order set_value()s every card
+      # listed under the wrong column, so a card whose status changed on the form was saved
+      # into its old column and back on every board open -- and re-sent the Closed Won
+      # hand-off email 24 times in a day. The stub's set_value raises: any write is a failure.
+      # Own step: installs its own frappe stub (incl. the kanban_board module) in setUpModule.
+      - name: Kanban update_order override (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_kanban_order -v
       # Print from the Project form's Procurement Tracker: frappe's own multi-document
       # print called once and unchanged, the PDF renamed for the job
       # (PRJ-00706-Open-Purchase-Orders.pdf), Project read checked before anything renders,

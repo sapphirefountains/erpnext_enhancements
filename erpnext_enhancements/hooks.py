@@ -2718,6 +2718,16 @@ override_whitelisted_methods = {
 	# and only rewrites the filename afterwards, for Purchase Order alone. See
 	# po_pdf_filename.py.
 	"frappe.utils.print_format.download_pdf": "erpnext_enhancements.po_pdf_filename.download_pdf",
+	# Opening a Kanban board must never change a document (v1.637.3). frappe v16.50.0's board
+	# init() sends every column's SAVED order to update_order, and the server set_value()s each
+	# card listed under a column that is not its stored value. A status changed on the form
+	# leaves the card's name in its old column's saved order, so every board open re-saved it
+	# into the old column and back: CRM-OPP-2026-00178 flipped Closed Won -> Needs Analysis ->
+	# Closed Won 24 times on 2026-10-13 and sent "Email Team on Opportunity Won" each time. The
+	# replacement only orders -- a card listed under the wrong column is dropped from that
+	# column's saved order, never written -- and mirrors frappe's permission checks, board save
+	# and realtime publish. Every board on the site goes through it. See kanban_order.py.
+	"frappe.desk.doctype.kanban_board.kanban_board.update_order": "erpnext_enhancements.kanban_order.update_order",
 	# Activity Cost's costing_rate is each employee's burdened pay rate (workforce/costing.py,
 	# ADR 0013), and ERPNext's whitelisted get_activity_cost returned it to any logged-in
 	# caller with no permission check (v1.542.0). The permlevel-1 Property Setter on the field
