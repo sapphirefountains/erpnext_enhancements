@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.631.0] - 2026-10-13
+
+Form kit P4.3 and P5.4 (TASK-2026-02761, 02771): field help, and the Opportunity's help text as Nik reviewed
+it. He approved all 86 fields and 13 step introductions on the review page on 2026-10-13, and his answers to
+the review's questions change the form too.
+
+### Added
+
+- **One help file per DocType, in the repo:** `form_kit/help_text/opportunity.json`, read by
+  `form_kit/field_help.py`.
+  - Each field has a short `hint` (always visible under the field) and a longer `help` (behind the
+    ⓘ). The file also names the Knowledge Article the *Learn more* links open.
+  - This follows Nik's 2026-10-13 decision: help text lives in the repo and changes by PR, with no
+    Desk-editable Field Help.
+- **The Opportunity's help text: 77 fields, each with a hint and an explanation.** That is the 76 from Nik's
+  review plus v1.629.0's Historical flag, whose text was agreed with that PR.
+  - Before this, 32 of the 86 fields the flow shows had any description at all.
+  - The text was drafted from `docs/opportunity-field-guide.md`, the form scripts and the server
+    code, then approved field by field.
+  - Two answers sharpened the approved text: rank **1 is the customer's top priority**, and **the
+    PM and Design fill the Deliverables before the hand-off**, because they reach the Project only
+    once, when it is created.
+- **Every hint is also the field's own description.** It is the Custom Field description for this
+  app's fields, or a `description` Property Setter for ERPNext's (23 new setters). So the Desk form,
+  Quick Entry and grids show the same line as the flow. `test_form_kit` fails if a hint and a
+  description ever differ.
+- **The Desk form's ⓘ tooltips now show the longer explanation and a *Learn more* link.**
+  - `field_description_icons.js` already turned descriptions into tooltips. For a DocType listed in
+    `frappe.boot.sf_field_help`, the tooltip now adds the explanation.
+  - The help is fetched once per DocType with a plain `fetch`. `frappe.call` shows its own dialog on
+    a 403, 5xx or timeout even when `silent` is set, and a tooltip must not. If the fetch fails, the
+    tooltip shows the description alone.
+- **The guided flow sends each field's `hint` and `help`** (`steps.field_def`). `get_flow` adds
+  `help_article`.
+- **`form_kit.api.get_field_help(doctype)` (GET)** returns `{"article", "fields": {fieldname:
+  {"help", "anchor"}}}`, only for fields the caller may read. `anchor` is the field's step key.
+  `test_whitelist_placement` pins it.
+
+### Changed
+
+- **New step introductions** for Basics, Contact & site, Scope, Events schedule, Close and Hand-off.
+  Scope no longer mentions contributors, which stay hidden.
+- **Hidden on the Opportunity form and in the flow**, because nothing uses them:
+  - No of Employees, Annual Revenue, Market Segment;
+  - City, State and Country (the addresses hold these);
+  - Company, Amended From, Time & Materials, Created from Travel Trip.
+
+  The stored values are kept. **Company** gets a `Sapphire Fountains` default along with being hidden:
+  it is mandatory, and Frappe refuses to save a DocType or Customize Form whose field is hidden and
+  mandatory without a default. If a second company (the JDH entity) is ever entered in ERPNext,
+  unhide it.
+- **The website and lead attribution fields are read-only on the Desk form and left out of the flow.**
+  These are the UTM fields, the click ID, the landing page and the first referrer. Typing into them
+  rewrote where a deal came from; the capture and the Lead still write them.
+- **Also left out of the flow but still on the Desk form:** Print Language, and Opportunity Amount
+  (Company Currency) and Exchange Rate. Deals are always in the company currency, so those two only
+  repeat Opportunity Amount.
+- **The Opportunity Name example now uses a plain hyphen**
+  (*e.g. Smith Residence - Backyard Pond Build*). The naming rule rejects the en dash it used to show.
+
 ## [1.629.0] - 2026-10-13
 
 Historical Opportunities (WI-024, TASK-2026-00917). Nik, 2026-10-13: the Closed-Won-but-no-project

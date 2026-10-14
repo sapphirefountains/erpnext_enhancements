@@ -74,3 +74,16 @@
 .ee-field-desc-tooltip a {
 	color: var(--primary);
 }
+
+/* Form kit P4.3: the field's longer explanation and its "Learn more" link, after the
+   description in the same tooltip (field_description_icons.js). */
+.ee-field-desc-tooltip .ee-field-desc-more {
+	margin: 6px 0 0;
+	padding-top: 6px;
+	border-top: 1px solid var(--border-color);
+}
+.ee-field-desc-tooltip .ee-field-desc-learn {
+	display: inline-block;
+	margin-top: 4px;
+	font-weight: 600;
+}

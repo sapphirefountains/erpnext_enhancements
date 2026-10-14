@@ -35,6 +35,20 @@ The rule of thumb from the meeting: **requests are the customer's words, deliver
 are our breakdown, comments are the running story.** If requirements change mid-flight,
 update the fields — don't let the latest truth live only in a comment thread.
 
+## Field help and hidden fields (2026-10-13)
+
+Every field the Opportunity shows now has a one-line hint under it and a longer explanation behind
+its ⓘ. The text is in `erpnext_enhancements/form_kit/help_text/opportunity.json`, and each hint is
+also the field's description. Change both by PR, like the layout. Nik reviewed and approved all of it
+on 2026-10-13.
+
+From the same review:
+- **Hidden:** No of Employees, Annual Revenue, Market Segment, City, State, Country, Company, Amended
+  From, Time & Materials and Created from Travel Trip.
+- **Read-only:** the website attribution fields (UTM, click ID, landing page, first referrer).
+- **Ranks:** 1 is the customer's top priority.
+- **Deliverables:** the PM and Design fill them in before the hand-off.
+
 ## Estimates / quotes — revision naming (QuickBooks, for now)
 
 Until accounting moves into ERPNext: never edit an estimate the customer has already
