@@ -38,6 +38,7 @@
  */
 
 import { PartyEntry } from "./party.js";
+import { RecordTools } from "./record_tools.js";
 
 export const GE_API = "erpnext_enhancements.form_kit.api.";
 export const GE_LIST_SUFFIX = "__ge_list";
@@ -157,6 +158,7 @@ export class RecordEditor {
 	//   and the reverse.
 	// The shell draws an empty `.ge-comments` section; a new record has neither yet, so it stays hidden.
 	mount_comments() {
+		this.mount_tools();
 		const $box = this.$root ? this.$root.find(".ge-comments") : $();
 		if (!$box.length) return;
 		if (this.is_new || !this.name) {
@@ -181,6 +183,20 @@ export class RecordEditor {
 		} catch (e) {
 			console.error("Comments could not be shown", e);
 			$comments.remove();
+		}
+	}
+
+	// v1.686.0: the record tools (./record_tools.js): the Desk form's attachments, activity, assigned
+	// to, tags, follow, people and places, connections and its Actions menu, for any saved record of
+	// any guided DocType. They draw into the `.ge-tools` section the shell draws, mounted with the
+	// comments (same moments: a record loaded, a record just created); without the section, nothing.
+	mount_tools() {
+		if (!this.$root) return;
+		if (!this.record_tools) this.record_tools = new RecordTools(this);
+		try {
+			this.record_tools.mount();
+		} catch (e) {
+			console.error("The record tools could not be shown", e);
 		}
 	}
 

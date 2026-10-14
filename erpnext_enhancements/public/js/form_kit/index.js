@@ -67,6 +67,31 @@ export {
 	undo_allowed,
 	undo_values,
 } from "./panel.js";
+// v1.686.0: the record tools' decisions (attachments, activity, connections, the Create menu). The
+// tools themselves (./ui/record_tools.js) draw with frappe; the editor mounts them.
+export {
+	RECORD_TOOLS,
+	tools_config,
+	create_items,
+	recipient_for,
+	email_subject,
+	file_url,
+	unique_files,
+	size_text,
+	kind_text,
+	can_remove_files,
+	can_add_file,
+	version_value,
+	describe_version,
+	activity_feed,
+	clean_tag,
+	connection_groups,
+	connection_doctypes,
+	connection_counts,
+	connection_filters,
+	can_print,
+	directory_widgets,
+} from "./record_tools.js";
 // P3.2: the Party entry component's decisions. The component (./ui/party.js) draws with frappe and
 // reads the information blocks; the bundle adds it.
 export {

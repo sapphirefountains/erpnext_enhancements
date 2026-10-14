@@ -662,6 +662,7 @@ class GuidedEntry {
 					<section class="ge-comments" hidden></section>
 				</main>
 				<aside class="ge-summary" aria-label="${frappe.utils.escape_html(__("Summary"))}"></aside>
+				<section class="ge-tools" hidden></section>
 			</div>
 			<div class="ge-footer">
 				<button type="button" class="sf-btn sf-btn--secondary ge-back"></button>

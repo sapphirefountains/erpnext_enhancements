@@ -1286,8 +1286,12 @@ class TestSchema(unittest.TestCase):
         self.assertIn('$("cs-signature")', js)
 
     def test_generate_contract_opens_the_builder(self):
-        js = (APP / "public" / "js" / "contracts.js").read_text(encoding="utf-8")
+        # v1.686.0: the dialog and the create call moved to record_actions.js, shared by the form's
+        # button (contracts.js) and the guided page's Actions menu.
+        js = (APP / "public" / "js" / "global_enhancements" / "record_actions.js").read_text(encoding="utf-8")
         self.assertIn('frappe.set_route("contract-builder", r.message)', js)
+        button = (APP / "public" / "js" / "contracts.js").read_text(encoding="utf-8")
+        self.assertIn("actions.open_generate_contract(source_doctype, frm.doc.name)", button)
 
     def test_builder_page_is_registered(self):
         page = json.loads(

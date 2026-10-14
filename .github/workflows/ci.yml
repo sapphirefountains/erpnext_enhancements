@@ -1739,6 +1739,13 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
+      # v1.686.0, the guided page's record tools (form_kit/ui/record_tools.js): the Desk form's
+      # attachments, activity, assigned to, tags, follow, people and places, connections and Actions
+      # menu for any guided DocType. The pure decisions and the directory's shared party rules under
+      # node; form_kit.api.record_info against a frappe stub (its own, so its own step); and that the
+      # Desk form's buttons call the same shared code.
+      - name: Guided record tools (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_record_tools -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
