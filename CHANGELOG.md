@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.637.1] - 2026-10-13
+
+Two fixes to the Guided Entry page (v1.637.0), found when it was checked on prod at phone width.
+
+### Fixed
+
+- **The Triton assistant button covered Next.** The button floats bottom-right over every Desk page,
+  which on this page is where the sticky footer's Next button sits; at 375px it hid Next completely.
+  While the page shows, a `ge-page-active` class on the body (set on show, cleared on hide) lifts the
+  button above the footer. Other pages keep it where it was.
+- **Fields sat 30px in from the step title on a phone.** Frappe's own form padding (15px on the section
+  and 15px on the column) narrowed every input. Under 768px the page now zeroes it, so the field uses
+  the full width.
+
+The rest of the live check passed on CRM-OPP-2026-00182:
+- loading, the step list (a stream the deal lacks shows "Not for this record"), and Back/Forward walking the steps;
+- value-stream pills, inline hints, and the (i) placement (on a Check field too);
+- the Billing Address on Contact & site, and the account filter on the Contact and Address pickers;
+- the Lost section hidden until Lost, and the text lists with Add;
+- the hand-off link opening the Hand-Off Process tab.
+
+Nothing was saved during the check.
+
 ## [1.637.0] - 2026-10-13
 
 Form kit P4-B (TASK-2026-02760, 02762): the Guided Entry page, which walks an Opportunity one step at a time.
