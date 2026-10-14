@@ -1379,11 +1379,18 @@ class TestPageSource(unittest.TestCase):
 		self.assertEqual(raw, [])
 		for british in ("colour", "cancelled", "labour", "centre", "behaviour"):
 			self.assertNotIn(british, block.lower(), british)
-		style = block[
-			block.index("const PPT1_STYLE = `") : block.index("`;", block.index("const PPT1_STYLE = `"))
-		]
+		# The block's CSS is its section of project_planner.css (S3.4d, v1.664.0), sent with the
+		# page; the script writes no <style> element. The grid's cells are Bootstrap fields, styled
+		# in the grid as .t1-grid .form-control.
+		self.assertNotIn("PPT1_STYLE", block)
+		raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
+		start = raw.index("*/", raw.index("/* ===", raw.index("(PPT1_STYLE).")))
+		style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
-		self.assertEqual({c for c in classes if not c.startswith(("t1-", "pp-"))}, set(), classes)
+		self.assertTrue(classes)
+		self.assertEqual(
+			{c for c in classes if not c.startswith(("t1-", "pp-"))}, {"form-control"}, classes
+		)
 
 	def test_the_quick_add_dialog_has_the_new_fields_and_stays_collapsed(self):
 		quick = self.code[

@@ -73,6 +73,8 @@ const PP = {
 	drag_px: 6,
 	undo_max: 20,
 	tray_limit: 60,
+	// The color of a task with none of its own. It is data, the same kind of value as Task.color, so it
+	// travels as --pp-color like the rest; the page's own design colors are in project_planner.css.
 	default_color: "#2563eb",
 	undo_reason: "Undo on the Project Planner",
 	// The route map's road line (draw_road): the most stops Google's Directions service takes
@@ -86,7 +88,29 @@ const pp_esc = (value) => frappe.utils.escape_html(value == null ? "" : String(v
 // 2 -> "2", 2.5 -> "2.5", 1.25 -> "1.25": the engine's fmt_hours, so both sides print alike.
 const pp_hours = (value) => String(Math.round((Number(value) || 0) * 100) / 100);
 // Colors come from records people edit; only a plain hex value goes into a style attribute.
+// A task's or a person's own color is the one color the page writes inline, and only ever as the
+// custom property `style="--pp-color: #hex"`, which project_planner.css paints with (S3.4d);
+// tests/test_s3_page_css.py allows exactly that pattern and no other inline color.
 const pp_color = (value, fallback) => (/^#[0-9a-fA-F]{3,8}$/.test(String(value || "")) ? value : fallback);
+// A design token's value, for the Google map, whose markers and lines take a color value and
+// cannot read a CSS variable. The fallback is the token's own value, for a page drawn before
+// sf_tokens.bundle.css (a global include) has loaded.
+const pp_token_color = (name, fallback) => {
+	try {
+		const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return value || fallback;
+	} catch (e) {
+		return fallback;
+	}
+};
+// The route map's colors: a stop's number (bahama-blue) and the shop's "S" (green), each a white
+// number in a white ring, and the road line (fresh-blue, as on Plan a Trip's map).
+const PP_ROUTE_COLORS = () => ({
+	stop: pp_token_color("--sf-bahama-blue", "#00609c"),
+	shop: pp_token_color("--sf-green", "#1e7e51"),
+	ring: pp_token_color("--sf-white", "#ffffff"),
+	line: pp_token_color("--sf-fresh-blue", "#00a0df"),
+});
 const pp_when = (ymd) => moment(ymd, "YYYY-MM-DD").format("ddd, MMM D");
 // 70 -> "1h 10m", 25 -> "25m", 120 -> "2h": drive time as people say it.
 const pp_drive = (minutes) => {
@@ -116,230 +140,9 @@ frappe.pages[PP.route].on_page_show = function (wrapper) {
 	}
 };
 
-const PP_STYLE = `
-.pp-wrap{padding-bottom:48px;color:var(--text-color);}
-.pp-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 10px;}
-.pp-title{font-weight:600;font-size:16px;margin:0 6px;min-width:150px;}
-.pp-seg{display:inline-flex;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;}
-.pp-seg button{border:none;background:var(--card-bg);padding:4px 12px;font-size:13px;color:var(--text-color);}
-.pp-seg button + button{border-left:1px solid var(--border-color);}
-.pp-seg button.pp-on{background:var(--primary,#2490ef);color:#fff;}
-.pp-spacer{flex:1 1 auto;}
-.pp-toolbar select{width:auto;max-width:200px;}
-.pp-toolbar label{display:inline-flex;align-items:center;gap:5px;margin:0;font-size:13px;font-weight:normal;}
-.pp-undo.pp-empty{opacity:.55;}
-.pp-section{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:10px;}
-.pp-section-head{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;}
-.pp-section-head .btn{text-transform:none;letter-spacing:0;}
-.pp-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-.pp-res-grid{display:grid;min-width:0;}
-.pp-res-grid > div{border-top:1px solid var(--border-color);}
-.pp-res-head{font-size:11px;color:var(--text-muted);padding:3px 4px;text-align:center;white-space:nowrap;}
-.pp-res-head.pp-today{color:var(--primary,#2490ef);font-weight:700;}
-.pp-person{display:flex;align-items:center;gap:6px;padding:3px 8px;font-size:12px;min-width:0;cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.pp-person:hover{background:var(--control-bg);}
-.pp-person-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
-.pp-person-group{font-size:10px;color:var(--text-muted);white-space:nowrap;}
-.pp-dot{flex:0 0 auto;width:10px;height:10px;border-radius:50%;}
-.pp-avail{padding:3px 4px;font-size:11px;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;border-left:1px solid var(--border-color);}
-.pp-avail-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-bar{position:relative;height:4px;border-radius:2px;background:var(--control-bg);overflow:hidden;}
-.pp-bar i{display:block;height:100%;}
-.pp-bar b{position:absolute;top:0;bottom:0;background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
-.pp-green .pp-bar i{background:#16a34a;}
-.pp-amber .pp-bar i{background:#d97706;}
-.pp-red .pp-bar i{background:#dc2626;}
-.pp-red .pp-avail-text,.pp-red .pp-cap-text{color:#b91c1c;font-weight:600;}
-.pp-offday{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);color:var(--text-muted);}
-.pp-conflict{box-shadow:inset 0 0 0 2px rgba(220,38,38,.55);}
-.pp-softover{box-shadow:inset 0 0 0 2px rgba(217,119,6,.55);}
-.pp-mini{padding:0;min-height:22px;}
-.pp-mini.pp-green{background:rgba(22,163,74,.22);}
-.pp-mini.pp-amber{background:rgba(217,119,6,.28);}
-.pp-mini.pp-red{background:rgba(220,38,38,.38);}
-.pp-mini.pp-idle{background:transparent;}
-.pp-mini.pp-soft-mini{background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.5) 0 2px,transparent 2px 5px);}
-.pp-tray{border:1px dashed var(--border-color);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
-.pp-tray h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);display:flex;align-items:center;gap:8px;}
-.pp-tray h5 .btn{text-transform:none;letter-spacing:0;}
-.pp-tray-cards{display:flex;flex-wrap:wrap;gap:6px;}
-.pp-tray .pp-card{width:230px;}
-.pp-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--card-bg);}
-.pp-dow{padding:6px 8px;font-size:11px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color);text-transform:uppercase;letter-spacing:.04em;}
-.pp-day{min-height:118px;padding:4px;border-right:1px solid var(--border-color);border-bottom:1px solid var(--border-color);display:flex;flex-direction:column;gap:4px;min-width:0;}
-.pp-day:nth-child(7n){border-right:none;}
-.pp-week .pp-day{min-height:380px;}
-.pp-week .pp-dow{display:none;}
-.pp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
-.pp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
-.pp-day-num:hover{background:var(--control-bg);}
-.pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
-.pp-day.pp-today .pp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.pp-day.pp-out{background:var(--control-bg);}
-.pp-day.pp-out .pp-day-head{opacity:.55;}
-.pp-day.pp-past .pp-day-head{opacity:.6;}
-.pp-day-free{font-size:11px;white-space:nowrap;}
-.pp-over{outline:2px solid var(--primary,#2490ef);outline-offset:-2px;background:rgba(36,144,239,.08);}
-.pp-over-past{outline:2px dashed #d97706;outline-offset:-2px;background:rgba(217,119,6,.08);}
-.pp-card{position:relative;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:6px;background:var(--card-bg);padding:3px 6px;font-size:12px;line-height:1.3;cursor:pointer;min-width:0;}
-.pp-card:hover,.pp-card:focus{box-shadow:0 1px 4px rgba(0,0,0,.18);outline:none;}
-.pp-card.pp-movable{cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
-.pp-card.pp-over{outline:2px solid var(--primary,#2490ef);outline-offset:1px;}
-.pp-card-top{display:flex;align-items:center;gap:4px;}
-.pp-card-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0;}
-.pp-card-sub{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;}
-.pp-card-chips{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-card-chips:empty{display:none;}
-.pp-badges{display:inline-flex;flex:0 0 auto;}
-.pp-badge{width:20px;height:20px;border-radius:50%;font-size:9px;font-weight:700;color:#fff;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--card-bg);margin-left:-4px;}
-.pp-badge:first-child{margin-left:0;}
-.pp-badge.pp-more{background:var(--gray-500,#64748b);}
-.pp-badge.pp-lead{box-shadow:0 0 0 2px #f59e0b;}
-.pp-chip{display:inline-block;font-size:10px;border-radius:8px;padding:0 6px;margin-right:3px;background:var(--control-bg);color:var(--text-muted);}
-.pp-chip.pp-red{background:rgba(220,38,38,.12);color:#b91c1c;}
-.pp-chip.pp-amber{background:rgba(217,119,6,.14);color:#b45309;}
-.pp-chip.pp-pencil{background:rgba(100,116,139,.2);color:var(--text-color);font-style:italic;}
-.pp-card.pp-tentative{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-color:var(--card-bg);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
-.pp-firm-row{margin-top:3px;}
-.pp-card.pp-overdue{border-left-color:#dc2626 !important;}
-.pp-card.pp-saving{opacity:.55;pointer-events:none;}
-.pp-card.pp-dragging{opacity:.3;}
-.pp-card.pp-dim{opacity:.45;}
-.pp-fcard{border:1px dashed var(--border-color);border-left:4px solid #94a3b8;border-radius:6px;background:var(--control-bg);padding:3px 6px;font-size:11px;line-height:1.3;color:var(--text-muted);cursor:pointer;min-width:0;}
-.pp-fcard.pp-k-visit{border-left-color:#64748b;}
-.pp-fcard.pp-k-rental{border-left-color:#d97706;background:rgba(217,119,6,.08);}
-.pp-fcard.pp-k-travel{border-left-color:#a16207;background:rgba(234,179,8,.10);}
-.pp-fcard.pp-tentative{background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);font-style:italic;}
-.pp-fcard-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
-.pp-fcard-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-crew{display:grid;grid-template-columns:160px repeat(7,minmax(118px,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);min-width:980px;}
-.pp-crew > div{border-top:1px solid var(--border-color);}
-.pp-crew-head{padding:6px 8px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;border-left:1px solid var(--border-color);cursor:pointer;border-top:none !important;}
-.pp-crew-head.pp-today{color:var(--primary,#2490ef);}
-.pp-crew-corner{border-top:none !important;}
-.pp-crew .pp-person{align-items:flex-start;flex-direction:column;gap:0;padding:6px 8px;}
-.pp-cell{border-left:1px solid var(--border-color);padding:4px;display:flex;flex-direction:column;gap:3px;min-width:0;min-height:64px;}
-.pp-cell.pp-past{background:rgba(0,0,0,.02);}
-.pp-cap{display:flex;flex-direction:column;gap:2px;font-size:11px;}
-.pp-cap-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted);}
-.pp-cell .pp-card,.pp-cell .pp-fcard{font-size:11px;padding:2px 5px;}
-.pp-ghost{position:fixed;z-index:1100;pointer-events:none;box-shadow:0 10px 28px rgba(0,0,0,.28);transform:rotate(2deg);opacity:.96;margin:0;}
-body.pp-drag-active,body.pp-drag-active *{cursor:grabbing !important;-webkit-user-select:none;user-select:none;}
-.pp-loading .pp-grid,.pp-loading .pp-tray,.pp-loading .pp-crew,.pp-loading .pp-res-grid{opacity:.6;}
-.pp-hint{font-size:12px;color:var(--text-muted);margin-top:8px;}
-.pp-summary{width:100%;font-size:13px;margin-bottom:6px;}
-.pp-summary th{color:var(--text-muted);font-weight:normal;padding:3px 10px 3px 0;vertical-align:top;white-space:nowrap;width:1%;}
-.pp-summary td{padding:3px 0;}
-.pp-links{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;}
-.pp-why{margin:6px 0;}
-.pp-why ul{margin:2px 0 0;padding-left:18px;}
-.pp-empty-note{font-size:12px;color:var(--text-muted);padding:8px 10px;}
-.pp-drive{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-size:10px;color:var(--text-muted);min-width:0;}
-.pp-drive-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-route{display:inline-flex;align-items:center;gap:3px;cursor:pointer;color:var(--text-muted);border-radius:6px;padding:0 3px;}
-.pp-route:hover,.pp-route:focus{color:var(--primary,#2490ef);background:var(--control-bg);outline:none;}
-.pp-route svg{width:12px;height:12px;flex:0 0 auto;}
-.pp-suggest-row{margin-top:3px;}
-.pp-route-view{padding-bottom:24px;}
-.pp-route-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:4px 0 6px;}
-.pp-route-title{font-weight:600;font-size:16px;margin:0 6px;}
-.pp-route-totals{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;margin:0 0 10px;}
-.pp-route-note{font-size:12px;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;padding:6px 10px;margin-bottom:10px;}
-.pp-route-cols{display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr);gap:12px;align-items:start;}
-.pp-stops{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);}
-.pp-stop{display:flex;gap:10px;padding:8px 10px;border-top:1px solid var(--border-color);font-size:13px;}
-.pp-stop:first-child{border-top:none;}
-.pp-stop-num{flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:#2563eb;color:#fff;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
-.pp-stop-num.pp-shop{background:#16a34a;}
-.pp-stop-body{min-width:0;flex:1 1 auto;}
-.pp-stop-time{font-size:12px;color:var(--text-muted);}
-.pp-stop-label{font-weight:600;}
-.pp-stop-sub{font-size:12px;color:var(--text-muted);}
-.pp-stop-leg{font-size:11px;color:var(--text-muted);margin-top:2px;}
-.pp-stop-link{cursor:pointer;color:var(--primary,#2490ef);}
-.pp-stop.pp-unlocated{background:var(--control-bg);}
-.pp-stop.pp-unlocated .pp-stop-num{background:var(--gray-500,#64748b);}
-.pp-stop.pp-unlocated .pp-stop-label,.pp-stop.pp-unlocated .pp-stop-sub{color:var(--text-muted);}
-.pp-stop-missing{font-size:12px;color:#b45309;margin-top:2px;}
-.pp-route-cols.pp-nomap{grid-template-columns:minmax(0,640px);}
-.pp-map{height:460px;border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--control-bg);}
-.pp-sug{width:100%;font-size:13px;border-collapse:collapse;}
-.pp-sug td{padding:6px 8px 6px 0;border-top:1px solid var(--border-color);vertical-align:top;}
-.pp-sug tr:first-child td{border-top:none;}
-.pp-sug-when{white-space:nowrap;font-weight:600;}
-.pp-sug-reason{color:var(--text-muted);font-size:12px;}
-.pp-hm-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-.pp-hm{display:grid;min-width:640px;}
-.pp-hm > div{border-top:1px solid var(--border-color);padding:2px;min-width:0;}
-.pp-hm > .pp-hm-head{border-top:none;font-size:11px;color:var(--text-muted);text-align:center;white-space:nowrap;padding:5px 2px;}
-.pp-hm > .pp-hm-head.pp-today{color:var(--primary,#2490ef);font-weight:700;}
-.pp-hm > .pp-hm-name{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 8px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.pp-hm-name span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-hm-cell{border-radius:6px;padding:4px 6px;min-height:46px;cursor:pointer;font-size:11px;display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0;overflow:hidden;border:1px solid var(--border-color);}
-.pp-hm-cell:hover,.pp-hm-cell:focus{box-shadow:0 1px 4px rgba(0,0,0,.25);outline:none;}
-.pp-hm-cell.pp-green{background:rgba(22,163,74,.22);}
-.pp-hm-cell.pp-amber{background:rgba(217,119,6,.28);}
-.pp-hm-cell.pp-red{background:rgba(220,38,38,.38);}
-.pp-hm-cell.pp-idle{background:transparent;color:var(--text-muted);}
-.pp-hm-pct{font-weight:600;white-space:nowrap;}
-.pp-hm-sub{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-hm-legend{display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:12px;color:var(--text-muted);margin:8px 0 0;}
-.pp-hm-key{display:inline-flex;align-items:center;gap:5px;}
-.pp-hm-key i{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid var(--border-color);}
-.pp-hm-key i.pp-green{background:rgba(22,163,74,.35);}
-.pp-hm-key i.pp-amber{background:rgba(217,119,6,.4);}
-.pp-hm-key i.pp-red{background:rgba(220,38,38,.5);}
-.pp-hm-key i.pp-soft-key{background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
-.pp-od{border:1px solid rgba(220,38,38,.4);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
-.pp-od h5{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#b91c1c;display:flex;align-items:center;gap:8px;}
-.pp-od h5 .btn{text-transform:none;letter-spacing:0;}
-.pp-od-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 2px;}
-.pp-od-count{font-size:12px;color:var(--text-muted);}
-.pp-od-list{max-height:360px;overflow-y:auto;}
-.pp-od-project{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px;margin:8px 0 3px;}
-.pp-od-project input,.pp-od-card input{flex:0 0 auto;margin:0;}
-.pp-od-card{display:flex;align-items:center;gap:8px;border:1px solid var(--border-color);border-left:4px solid #dc2626;border-radius:6px;background:var(--card-bg);padding:3px 8px;font-size:12px;margin-bottom:3px;cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;min-width:0;}
-.pp-od-card.pp-dragging{opacity:.3;}
-.pp-od-main{flex:1 1 auto;min-width:0;}
-.pp-od-subject{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-od-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-od-end{font-size:11px;color:#b91c1c;white-space:nowrap;}
-.pp-copy-list{max-height:300px;overflow-y:auto;border:1px solid var(--border-color);border-radius:8px;padding:4px 8px;}
-.pp-copy-row{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:13px;}
-.pp-copy-row input{margin-top:3px;flex:0 0 auto;}
-.pp-copy-sub{font-size:11px;color:var(--text-muted);}
-.pp-copy-table{width:100%;font-size:13px;border-collapse:collapse;}
-.pp-copy-table td{padding:4px 8px 4px 0;border-top:1px solid var(--border-color);vertical-align:top;}
-.pp-copy-table tr:first-child td{border-top:none;}
-@media (max-width:760px){
-.pp-hm{min-width:560px;}
-.pp-hm-cell{padding:3px 4px;}
-.pp-od-card{flex-wrap:wrap;}
-.pp-title{min-width:0;width:100%;order:-1;margin:0;}
-.pp-toolbar select{max-width:none;flex:1 1 40%;}
-.pp-spacer{display:none;}
-.pp-day{min-height:84px;padding:2px;}
-.pp-month .pp-card{padding:1px 3px;font-size:10px;border-left-width:3px;}
-.pp-month .pp-card-sub,.pp-month .pp-badges,.pp-month .pp-card-chips,.pp-month .pp-fcard-sub{display:none;}
-.pp-week .pp-grid{grid-template-columns:1fr;}
-.pp-week .pp-day{min-height:0;border-right:none;}
-.pp-tray .pp-card{width:100%;}
-.pp-crew{grid-template-columns:110px repeat(7,minmax(104px,1fr));min-width:840px;}
-.pp-route-cols{grid-template-columns:minmax(0,1fr);}
-.pp-map{height:320px;}
-.pp-route-title{min-width:0;width:100%;order:-1;margin:0;}
-.pp-sug td{display:block;border-top:none;padding:2px 0;}
-.pp-sug tr{display:block;border-top:1px solid var(--border-color);padding:6px 0;}
-.pp-sug tr:first-child{border-top:none;}
-}
-`;
-
 class ProjectPlanner {
 	constructor(page) {
 		this.page = page;
-		if (!document.getElementById("pp-style")) {
-			$("<style id='pp-style'>").text(PP_STYLE).appendTo(document.head);
-		}
 		this.view = "week";
 		this.anchor = frappe.datetime.get_today();
 		this.project = this.load_pref(PP.prefs.project, "");
@@ -932,7 +735,7 @@ class ProjectPlanner {
 		return `
 			<div class="pp-person" data-resource="${pp_esc(resource.name)}"
 				title="${pp_esc(__("Drag {0} onto a task to add them to its crew", [resource.label]))}">
-				${compact ? "" : `<span class="pp-dot" style="background:${pp_esc(color)}"></span>`}
+				${compact ? "" : `<span class="pp-dot" style="--pp-color: ${pp_esc(color)}"></span>`}
 				<span class="pp-person-name">${pp_esc(resource.label)}</span>
 				<span class="pp-person-group">${pp_esc(group)}</span>
 			</div>`;
@@ -983,7 +786,12 @@ class ProjectPlanner {
 				const tip = this.day_tip(resource.name, ymd, day);
 				if (month) {
 					const hatch = state.soft > 0.01 ? " pp-soft-mini" : "";
-					html.push(`<div class="pp-avail pp-mini ${state.cls}${hatch}" title="${pp_esc(tip)}"></div>`);
+					// The month's cell is a tint and nothing else on screen, so its words are read aloud.
+					html.push(
+						`<div class="pp-avail pp-mini ${state.cls}${hatch}" title="${pp_esc(tip)}">${
+							state.text ? `<span class="pp-sr">${pp_esc(state.text)}</span>` : ""
+						}</div>`
+					);
 					return;
 				}
 				html.push(`
@@ -1220,7 +1028,7 @@ class ProjectPlanner {
 				<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd)}"
 					data-resource="${pp_esc(resource)}" tabindex="0" title="${pp_esc(
 					[tip, ...this.p4_tip_lines(card)].filter(Boolean).join("\n")
-				)}" style="border-left-color:${pp_esc(color)}">
+				)}" style="--pp-color: ${pp_esc(color)}">
 					<div class="pp-card-title">${pp_esc(card.subject || card.name)}</div>
 					<div class="pp-card-sub">${pp_esc(sub)}</div>
 					<div class="pp-card-chips">${this.p4_card_chips(card).join("")}</div>
@@ -1294,7 +1102,7 @@ class ProjectPlanner {
 			const initials = ((parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 			const tip = member.is_lead ? `${name} (${__("lead")})` : name;
 			const cls = member.is_lead ? "pp-badge pp-lead" : "pp-badge";
-			return `<span class="${cls}" style="background:${pp_esc(
+			return `<span class="${cls}" style="--pp-color: ${pp_esc(
 				this.resource_color(member.resource)
 			)}" title="${pp_esc(tip)}">${pp_esc(initials)}</span>`;
 		});
@@ -1382,7 +1190,7 @@ class ProjectPlanner {
 				: "";
 		return `
 			<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd || "")}"
-				tabindex="0" title="${pp_esc(tip)}" style="border-left-color:${pp_esc(color)}">
+				tabindex="0" title="${pp_esc(tip)}" style="--pp-color: ${pp_esc(color)}">
 				<div class="pp-card-top">
 					<span class="pp-card-title">${pp_esc(card.subject || card.name)}</span>
 					${this.badges_html(card)}
@@ -2762,7 +2570,7 @@ class ProjectPlanner {
 		});
 		rows.forEach((row) => {
 			html.push(
-				`<div class="pp-hm-name"><span class="pp-dot" style="background:${pp_esc(
+				`<div class="pp-hm-name"><span class="pp-dot" style="--pp-color: ${pp_esc(
 					this.resource_color(row.name)
 				)}"></span><span title="${pp_esc(row.label)}">${pp_esc(row.label)}</span></div>`
 			);
@@ -3167,6 +2975,9 @@ class ProjectPlanner {
 		}
 		const start = data.start && pp_valid_point(data.start.lat, data.start.lng) ? data.start : null;
 		const theme = (document.documentElement.dataset && document.documentElement.dataset.theme) || "light";
+		// The markers are the list's own numbers (.pp-stop-num in project_planner.css): the same tokens,
+		// read as values because the map cannot read a CSS variable.
+		const colors = PP_ROUTE_COLORS();
 		window.EEGoogleMaps.load({ apiKey: data.maps_key, libraries: ["maps"] })
 			.then((maps) => {
 				if (token !== this.request || !document.body.contains($map[0])) return;
@@ -3192,13 +3003,13 @@ class ProjectPlanner {
 						position,
 						map,
 						title,
-						label: { text: String(text), color: "#ffffff", fontWeight: "700", fontSize: "12px" },
+						label: { text: String(text), color: colors.ring, fontWeight: "700", fontSize: "12px" },
 						icon: {
 							path: maps.SymbolPath.CIRCLE,
 							scale: 13,
 							fillColor: color,
 							fillOpacity: 1,
-							strokeColor: "#ffffff",
+							strokeColor: colors.ring,
 							strokeWeight: 2,
 						},
 					});
@@ -3221,7 +3032,7 @@ class ProjectPlanner {
 				};
 				const path = [];
 				if (start) {
-					add("shop", start, "S", "#16a34a", start.label || __("Shop"), start.address || "");
+					add("shop", start, "S", colors.shop, start.label || __("Shop"), start.address || "");
 					path.push({ lat: Number(start.lat), lng: Number(start.lng) });
 				}
 				points.forEach((stop) => {
@@ -3229,7 +3040,7 @@ class ProjectPlanner {
 						String(stop.order),
 						stop,
 						stop.order,
-						PP.default_color,
+						colors.stop,
 						stop.label || stop.ref || "",
 						[stop.arrive, stop.address].filter(Boolean).join(" · ")
 					);
@@ -3260,7 +3071,7 @@ class ProjectPlanner {
 	async draw_road(token, data, maps, path, $note) {
 		const state = this.route_map;
 		const stale = () => token !== this.request || this.route_map !== state;
-		const style = { strokeColor: PP.default_color, strokeOpacity: 0.8, strokeWeight: 4 };
+		const style = { strokeColor: PP_ROUTE_COLORS().line, strokeOpacity: 0.8, strokeWeight: 4 };
 		const origin = path[0];
 		const destination = path[path.length - 1];
 		const middle = path.slice(1, -1);
@@ -3370,38 +3181,8 @@ const PP3B = {
 	draft_methods: ["save_task", "add_crew", "swap_crew"],
 };
 
-const PP3B_STYLE = `
-.pp-card.pp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
-.pp-chip.pp-draft-chip{background:rgba(36,144,239,.14);color:var(--primary,#2490ef);font-weight:600;}
-.pp-draft-toggle.pp-draft-on{color:var(--primary,#2490ef);font-weight:600;}
-.pp-draft-bar{position:sticky;bottom:8px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;margin:10px 0;border:1px dashed var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:13px;}
-.pp-draft-text{font-weight:600;}
-.pp-my-week{max-width:720px;padding-bottom:24px;}
-.pp-mw-title{font-weight:600;font-size:16px;margin:0 6px;}
-.pp-mw-day{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:10px;overflow:hidden;}
-.pp-mw-day-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;font-weight:600;font-size:13px;border-bottom:1px solid var(--border-color);}
-.pp-mw-day-head.pp-mw-today{color:var(--primary,#2490ef);}
-.pp-mw-day-head .pp-spacer{flex:1 1 auto;}
-.pp-mw-item{padding:8px 10px;border-top:1px solid var(--border-color);font-size:14px;line-height:1.4;}
-.pp-mw-item:first-of-type{border-top:none;}
-.pp-mw-time{font-size:12px;color:var(--text-muted);font-weight:600;}
-.pp-mw-label{font-weight:600;}
-.pp-mw-sub{font-size:13px;color:var(--text-muted);}
-.pp-mw-addr{display:inline-block;font-size:13px;padding:2px 0;}
-.pp-mw-notes{font-size:12px;color:var(--text-muted);margin-top:2px;white-space:pre-wrap;}
-.pp-mw-empty{padding:8px 10px;font-size:13px;color:var(--text-muted);}
-@media (max-width:760px){
-.pp-mw-title{width:100%;order:-1;margin:0;}
-.pp-mw-item{font-size:15px;}
-.pp-mw-addr{padding:6px 0;}
-}
-`;
-
 const PP3B_METHODS = {
 	init_phase3b() {
-		if (!document.getElementById("pp-style-3b")) {
-			$("<style id='pp-style-3b'>").text(PP3B_STYLE).appendTo(document.head);
-		}
 		this.draft_on = this.load_pref(PP3B.pref, "0") === "1";
 		this.my_week_date = "";
 		this.my_week_data = null;
@@ -3804,39 +3585,8 @@ const PP4 = {
 	unavailable: ["In Shop", "Retired"],
 };
 
-const PP4_STYLE = `
-.pp-chip.pp-equip{background:rgba(37,99,235,.12);color:var(--text-color);}
-.pp-toggle{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-color);border-radius:14px;background:var(--card-bg);padding:3px 11px;font-size:13px;color:var(--text-color);}
-.pp-toggle.pp-on{background:rgba(220,38,38,.12);border-color:#dc2626;color:#b91c1c;font-weight:600;}
-.pp-forecast{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);padding:8px 12px;margin-bottom:10px;font-size:13px;}
-.pp-forecast-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
-.pp-forecast .btn{margin-left:auto;}
-.pp-fc-table{width:100%;font-size:13px;border-collapse:collapse;}
-.pp-fc-table th{color:var(--text-muted);font-weight:normal;text-align:right;padding:3px 0 3px 12px;white-space:nowrap;}
-.pp-fc-table td{padding:4px 0 4px 12px;text-align:right;border-top:1px solid var(--border-color);white-space:nowrap;}
-.pp-fc-table th:first-child,.pp-fc-table td:first-child{text-align:left;padding-left:0;white-space:normal;}
-.pp-actual-row{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--text-muted);}
-.pp-crew-group{grid-column:1 / -1;padding:5px 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--control-bg);}
-.pp-equip-name{display:flex;flex-direction:column;gap:1px;padding:6px 8px;font-size:12px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.pp-equip-name b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-equip-sub{font-size:11px;color:var(--text-muted);}
-.pp-ecell{border-left:1px solid var(--border-color);padding:4px;display:flex;flex-direction:column;gap:3px;min-width:0;min-height:40px;}
-.pp-ecell.pp-unavailable{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);}
-.pp-ecard{border:1px solid var(--border-color);border-left:4px solid #64748b;border-radius:6px;background:var(--card-bg);padding:2px 5px;font-size:11px;line-height:1.3;cursor:pointer;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-ecard:hover,.pp-ecard:focus{box-shadow:0 1px 4px rgba(0,0,0,.18);outline:none;}
-.pp-ecard.pp-clash{border-left-color:#dc2626;box-shadow:inset 0 0 0 1px rgba(220,38,38,.55);}
-@media (max-width:760px){
-.pp-forecast{padding:6px 10px;}
-.pp-forecast .btn{margin-left:0;}
-.pp-equip-name{padding:4px 6px;}
-}
-`;
-
 const PP4_METHODS = {
 	init_phase4() {
-		if (!document.getElementById("pp-style-4")) {
-			$("<style id='pp-style-4'>").text(PP4_STYLE).appendTo(document.head);
-		}
 		this.over_only = false;
 		this.forecast = null;
 		this.forecast_for = "";
@@ -4361,22 +4111,10 @@ const PP5 = {
 	preview_roles: ["System Manager", "Projects Manager"],
 };
 
-const PP5_STYLE = `
-.pp-chip.pp-weather{background:rgba(14,116,144,.14);color:#0e7490;font-weight:600;}
-.pp-p5-meta{font-size:13px;margin-bottom:4px;}
-.pp-p5-notes{margin:6px 0 10px;padding-left:18px;font-size:13px;color:var(--text-muted);}
-.pp-p5-frame{display:block;width:100%;min-height:460px;border:1px solid var(--border-color);border-radius:8px;background:#ffffff;}
-@media (max-width:760px){
-.pp-p5-frame{min-height:340px;}
-}
-`;
-
 const PP5_METHODS = {
-	init_phase5() {
-		if (!document.getElementById("pp-style-5")) {
-			$("<style id='pp-style-5'>").text(PP5_STYLE).appendTo(document.head);
-		}
-	},
+	// The phase's setup hook. It only wrote the phase's stylesheet, which is project_planner.css now
+	// (S3.4d), so there is nothing left to set up; the hook stays so the class calls it as before.
+	init_phase5() {},
 
 	// ------------------------------------------------------------------ weather
 
@@ -4567,48 +4305,8 @@ const PP6A = {
 		'<path d="M5.3 12.5H10a2.5 2.5 0 0 0 0-5H6a2.5 2.5 0 0 1 0-4h4.7"/></svg>',
 };
 
-const PP6A_STYLE = `
-.pp-p6a-hints{display:flex;flex-direction:column;}
-.pp-p6a-help{font-weight:700;min-width:30px;}
-.pp-p6a-name{cursor:pointer;}
-.pp-p6a-name:hover .pp-person-name,.pp-route-title.pp-p6a-name:hover{text-decoration:underline;}
-.pp-p6a-proj{cursor:pointer;border-radius:4px;}
-.pp-p6a-proj:hover{text-decoration:underline;color:var(--text-color);}
-.pp-badge[data-pk-person]{cursor:pointer;}
-.pp-day-num[data-pp6a-day],.pp-crew-head[data-pp6a-day],.pp-res-head[data-pp6a-day]{cursor:pointer;}
-.pp-res-head[data-pp6a-day]:hover,.pp-crew-head[data-pp6a-day]:hover{color:var(--primary,#2490ef);}
-.pp-route-title{cursor:pointer;}
-.pp-p6a-sample{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--border-color);}
-.pp-p6a-sample-card{display:inline-block;width:100px;font-size:11px;padding:1px 6px;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:6px;background:var(--card-bg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6a-sample-card.pp-overdue{border-left-color:#dc2626;}
-.pp-p6a-sample-card.pp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
-.pp-p6a-sample-card.pp-tentative{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
-.pp-p6a-bar{display:inline-block;width:90px;}
-.pp-p6a-bar .pp-bar{display:block;}
-.pp-p6a-row{cursor:pointer;}
-.pp-p6a-row:hover{background:var(--control-bg);}
-.pp-p6a-initials{display:inline-flex;gap:2px;margin-left:4px;vertical-align:middle;}
-.pp-p6a-initials .pp-badge{width:16px;height:16px;font-size:8px;margin-left:0;}
-.pp-p6a-forecast{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;padding:6px 10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;}
-.pp-p6a-forecast-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
-@media (min-width:761px){
-.pp-crew-view .pp-scroll{max-height:calc(100vh - 150px);overflow:auto;}
-.pp-crew-view .pp-crew-head,.pp-crew-view .pp-crew-corner{position:sticky;top:0;z-index:3;background:var(--card-bg);}
-.pp-crew-view .pp-crew-corner{left:0;z-index:4;}
-.pp-week .pp-grid{max-height:calc(100vh - 150px);overflow:auto;}
-.pp-week .pp-day-head{position:sticky;top:0;z-index:2;background:var(--card-bg);padding-top:2px;padding-bottom:2px;}
-.pp-week .pp-day.pp-out .pp-day-head{background:var(--control-bg);}
-.pp-res .pp-scroll{max-height:46vh;overflow:auto;}
-.pp-res .pp-res-head{position:sticky;top:0;z-index:2;background:var(--card-bg);}
-.pp-res .pp-res-grid > .pp-res-head:first-child{left:0;z-index:3;}
-}
-`;
-
 const PP6A_METHODS = {
 	init_phase6a() {
-		if (!document.getElementById("pp-style-6a")) {
-			$("<style id='pp-style-6a'>").text(PP6A_STYLE).appendTo(document.head);
-		}
 		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
 		this.$p6a_hints = $('<div class="pp-p6a-hints"></div>').insertAfter(this.$toolbar);
 		this.$p6a_glance = $('<button type="button" class="btn btn-default btn-sm pp-p6a-glance"></button>')
@@ -5051,7 +4749,7 @@ const PP6A_METHODS = {
 			.slice(0, 3)
 			.map(
 				(member) =>
-					`<span class="pp-badge" style="background:${pp_esc(this.resource_color(member.resource))}" title="${pp_esc(
+					`<span class="pp-badge" style="--pp-color: ${pp_esc(this.resource_color(member.resource))}" title="${pp_esc(
 						this.resource_label(member.resource, member.label)
 					)}">${pp_esc(this.p6a_initials(member.resource, member.label))}</span>`
 			)
@@ -5097,7 +4795,13 @@ const PP6A_METHODS = {
 		if (bar.clipped_end) classes.push("pk-tl-clip-end");
 		const left = Math.max(0, Math.min(100, Number(bar.left_pct) || 0));
 		const width = Math.max(0, Math.min(100 - left, Number(bar.width_pct) || 0));
-		const color = card.tentative || card.over_plan ? "" : `background:${pp_esc(pp_color(card.color, PP.default_color))};`;
+		// The task's own color is data: it rides in as --pp-color, which .pp-tl-colored paints
+		// (project_planner.css). A pencilled or running-over bar keeps the kit's own fill.
+		let color = "";
+		if (!card.tentative && !card.over_plan) {
+			classes.push("pp-tl-colored");
+			color = `--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))};`;
+		}
 		return `<div class="pk-tl-track">${this.p6a_today_mark(data)}<span class="${classes.join(" ")}" style="left:${left}%;width:${width}%;${color}"></span></div>`;
 	},
 
@@ -5188,8 +4892,7 @@ const PP6A_METHODS = {
 		const kit = this.p6a && this.p6a.kit;
 		if (!kit) return;
 		const chip = (cls, text) => `<span class="pp-chip${cls ? ` ${cls}` : ""}">${pp_esc(__(text))}</span>`;
-		const card = (cls, text, style) =>
-			`<span class="pp-p6a-sample-card${cls ? ` ${cls}` : ""}"${style ? ` style="${style}"` : ""}>${pp_esc(__(text))}</span>`;
+		const card = (cls, text) => `<span class="pp-p6a-sample-card${cls ? ` ${cls}` : ""}">${pp_esc(__(text))}</span>`;
 		const bar = (cls, width, soft) =>
 			`<span class="pp-p6a-bar ${cls}"><span class="pp-bar"><i style="width:${width}%"></i>${
 				soft ? `<b style="left:${width}%;width:${soft}%"></b>` : ""
@@ -5239,8 +4942,8 @@ const PP6A_METHODS = {
 				{
 					title: __("People"),
 					items: [
-						item(`<span class="pp-badge" style="background:#2563eb">AH</span>`, "Crew initials. Click one to see that person's week."),
-						item(`<span class="pp-badge pp-lead" style="background:#16a34a">JD</span>`, "The crew lead (ringed)."),
+						item(`<span class="pp-badge pp-p6a-sample-badge">AH</span>`, "Crew initials. Click one to see that person's week."),
+						item(`<span class="pp-badge pp-lead pp-p6a-sample-lead">JD</span>`, "The crew lead (ringed)."),
 						item(`<span class="pp-badge pp-more">+2</span>`, "More people than fit on the card."),
 					],
 				},
@@ -5468,53 +5171,8 @@ const PP6B_PURE = {
 	},
 };
 
-const PP6B_STYLE = `
-.pp-card.p6b-selected{outline:2px solid #7c3aed;outline-offset:1px;}
-.p6b-bar{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:1020;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;max-width:calc(100vw - 24px);padding:6px 10px;border:1px solid #7c3aed;border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px;}
-.p6b-bar-count{font-weight:600;}
-.p6b-bar-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
-.p6b-count{position:absolute;top:-9px;right:-9px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
-.p6b-grip{position:absolute;top:0;bottom:0;width:9px;cursor:ew-resize;touch-action:none;z-index:2;}
-.p6b-grip-l{left:-4px;}
-.p6b-grip-r{right:-4px;}
-.p6b-grip::after{content:"";position:absolute;top:25%;bottom:25%;left:3px;width:3px;border-radius:2px;background:var(--text-muted);opacity:0;}
-.pp-card:hover .p6b-grip::after,.p6b-grip:focus::after{opacity:.55;}
-.p6b-span{background:rgba(124,58,237,.10);box-shadow:inset 0 0 0 2px rgba(124,58,237,.55);}
-.p6b-span-label{position:fixed;z-index:1100;pointer-events:none;padding:3px 8px;border-radius:6px;background:var(--text-color);color:var(--card-bg);font-size:12px;white-space:nowrap;}
-body.p6b-resizing,body.p6b-resizing *{cursor:ew-resize !important;-webkit-user-select:none;user-select:none;}
-.pp-card.p6b-flash{animation:p6b-flash .8s ease-in-out 3;}
-@keyframes p6b-flash{0%,100%{box-shadow:none;}50%{box-shadow:0 0 0 4px rgba(245,158,11,.85);}}
-.p6b-search-wrap{position:relative;display:inline-block;}
-.pp-toolbar input.p6b-search{width:210px;}
-.p6b-results{position:absolute;top:100%;left:0;z-index:1030;margin-top:4px;min-width:300px;max-width:min(420px,calc(100vw - 24px));max-height:60vh;overflow-y:auto;padding:4px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);box-shadow:0 10px 28px rgba(0,0,0,.2);}
-.p6b-result{display:flex;flex-direction:column;padding:5px 10px;cursor:pointer;font-size:13px;}
-.p6b-result.p6b-active,.p6b-result:hover{background:var(--control-bg);}
-.p6b-result-kind{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);}
-.p6b-result-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.p6b-result-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.p6b-results-note{padding:4px 10px;font-size:11px;color:var(--text-muted);}
-.p6b-modes{margin:4px 0 8px;}
-.p6b-modes label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:normal;}
-.p6b-pick{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-bottom:4px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);color:var(--text-color);text-align:left;cursor:pointer;}
-.p6b-pick:hover,.p6b-pick:focus{background:var(--control-bg);outline:none;}
-.p6b-pick-busy{border-style:dashed;}
-.p6b-pick-why{font-size:11px;color:var(--text-muted);}
-.p6b-kbd{display:inline-block;min-width:18px;margin-right:3px;padding:0 5px;border:1px solid var(--border-color);border-bottom-width:2px;border-radius:4px;background:var(--control-bg);font-size:11px;font-family:inherit;text-align:center;}
-.p6b-legend-grip{display:inline-block;position:relative;width:46px;height:16px;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:4px;}
-.p6b-legend-grip::after{content:"";position:absolute;top:3px;bottom:3px;right:2px;width:3px;border-radius:2px;background:var(--text-muted);}
-@media (max-width:760px){
-.p6b-search-wrap{flex:1 1 100%;}
-.pp-toolbar input.p6b-search{width:100%;}
-.pp-week .p6b-grip{display:none;}
-.p6b-bar{bottom:64px;}
-}
-`;
-
 const PP6B_METHODS = {
 	init_phase6b() {
-		if (!document.getElementById("pp-style-6b")) {
-			$("<style id='pp-style-6b'>").text(PP6B_STYLE).appendTo(document.head);
-		}
 		// The registries other phases add to (phase6-wave2): menu items, legend sections, endpoint modules.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_legend_providers = this.p6_legend_providers || [];
@@ -7233,70 +6891,8 @@ const PP6C = {
 	none_color: "#94a3b8",
 };
 
-const PP6C_STYLE = `
-.pp-p6c-color{max-width:190px;}
-.pp-p6c-pill{display:inline-flex;align-items:center;gap:4px;max-width:340px;border:1px solid var(--primary,#2490ef);border-radius:14px;padding:1px 2px 1px 10px;font-size:12px;background:rgba(36,144,239,.08);color:var(--text-color);}
-.pp-p6c-pill-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6c-pill-x{border:none;background:none;color:inherit;font-size:15px;line-height:1;padding:2px 7px;cursor:pointer;border-radius:10px;}
-.pp-p6c-pill-x:hover,.pp-p6c-pill-x:focus{background:var(--control-bg);outline:none;}
-.pp-p6c-tap.pp-p6c-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);color:var(--primary,#2490ef);font-weight:600;}
-.pp-p6c-key{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;font-size:12px;color:var(--text-muted);margin:-2px 0 8px;}
-.pp-p6c-key-title{font-weight:600;}
-.pp-p6c-key-item{display:inline-flex;align-items:center;gap:5px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6c-key-item[data-p6c-hi]{cursor:pointer;border-radius:6px;}
-.pp-p6c-key-item[data-p6c-hi]:hover{color:var(--text-color);text-decoration:underline;}
-.pp-p6c-swatch{flex:0 0 auto;display:inline-block;width:16px;height:11px;border:1px solid var(--border-color);border-left-width:4px;border-radius:3px;background:var(--card-bg);}
-.pp-card.pp-p6c-colored{border-left-color:var(--pp-p6c-c) !important;}
-.pp-p6c-on .pp-card:not(.pp-p6c-hi),.pp-p6c-on .pp-fcard,.pp-p6c-on .pp-ecard{opacity:.22;}
-.pp-p6c-on .pp-card.pp-p6c-hi{box-shadow:0 0 0 2px var(--primary,#2490ef),0 0 10px rgba(36,144,239,.45);}
-.pp-p6c-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:6px;overflow:hidden;}
-.pp-p6c-sday{display:flex;flex-direction:column;gap:2px;min-width:0;padding:3px 6px;font-size:11px;cursor:pointer;border-left:1px solid var(--border-color);}
-.pp-p6c-strip .pp-p6c-sday:first-child{border-left:none;}
-.pp-p6c-sday:hover,.pp-p6c-sday:focus{background-color:var(--control-bg);outline:none;}
-.pp-p6c-slabel{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6c-stext{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6c-sday.pp-red{background-color:rgba(220,38,38,.10);}
-.pp-p6c-sday.pp-red .pp-p6c-stext{color:#b91c1c;}
-.pp-p6c-sday.pp-amber .pp-p6c-stext{color:#b45309;}
-.pp-p6c-scorner{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:3px 8px;font-size:11px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.pp-p6c-scorner span{font-size:10px;color:var(--text-muted);}
-.pp-crew > .pp-p6c-sday{border-left:1px solid var(--border-color);}
-.pp-p6c-movebar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1024;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:min(640px,calc(100vw - 24px));padding:8px 10px 8px 14px;border:1px solid var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 10px 28px rgba(0,0,0,.22);font-size:13px;}
-.pp-p6c-movebar-text{flex:1 1 220px;min-width:0;}
-.pp-p6c-movebar-hint{display:block;font-size:12px;color:var(--text-muted);}
-.pp-card.pp-p6c-moving,.pp-od-card.pp-p6c-moving{outline:2px dashed var(--primary,#2490ef);outline-offset:1px;}
-.pp-p6c-armed .pp-day,.pp-p6c-armed .pp-cell{cursor:copy;}
-.pp-p6c-views-list{list-style:none;margin:0;padding:0;}
-.pp-p6c-views-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border-color);}
-.pp-p6c-views-row:first-child{border-top:none;}
-.pp-p6c-views-main{flex:1 1 auto;min-width:0;}
-.pp-p6c-views-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pp-p6c-views-sub{font-size:12px;color:var(--text-muted);}
-@media (pointer:coarse){
-.pp-toolbar .btn,.pp-toolbar select,.pp-toolbar .pp-toggle,.pp-toolbar label,.pp-seg button{min-height:40px;}
-.pp-week .pp-card,.pp-crew .pp-card,.pp-tray .pp-card{min-height:40px;}
-.pp-day-num{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;}
-.pp-p6c-sday{min-height:40px;}
-.pp-p6c-pill-x{min-width:40px;min-height:36px;}
-.pp-p6c-movebar .btn{min-height:40px;min-width:64px;}
-.pp-p6c-views-row .btn{min-height:40px;}
-}
-@media (max-width:1024px){
-.pp-wrap{max-width:100%;overflow-x:clip;}
-}
-@media (max-width:760px){
-.pp-p6c-pill{max-width:100%;}
-.pp-p6c-movebar{left:12px;right:12px;bottom:12px;transform:none;max-width:none;}
-.pp-p6c-sday{padding:2px 3px;}
-.pp-p6c-key-item{max-width:160px;}
-}
-`;
-
 const PP6C_METHODS = {
 	init_phase6c() {
-		if (!document.getElementById("pp-style-6c")) {
-			$("<style id='pp-style-6c'>").text(PP6C_STYLE).appendTo(document.head);
-		}
 		this.p6c = {
 			color_by: "default",
 			highlight: null,
@@ -7539,7 +7135,7 @@ const PP6C_METHODS = {
 	p6c_swatch_html(color) {
 		const kit = this.p6c_kit();
 		const paint = kit ? kit.big_picture.safe_paint(color, PP6C.none_color) : PP6C.none_color;
-		return `<i class="pp-p6c-swatch" style="border-left-color:${pp_esc(paint)}"></i>`;
+		return `<i class="pp-p6c-swatch" style="--pp-color: ${pp_esc(paint)}"></i>`;
 	},
 
 	p6c_render_key() {
@@ -8330,7 +7926,8 @@ const PP6C_METHODS = {
 	p6c_print_color(card, row) {
 		const color = this.p6c_card_color(card, row);
 		if (color) return color;
-		if (card.overdue) return "#dc2626";
+		// Overdue is the danger edge, the token .pp-card.pp-overdue paints on screen.
+		if (card.overdue) return pp_token_color("--sf-red", "#bd2e2b");
 		return pp_color(card.color, PP.default_color);
 	},
 
@@ -8588,24 +8185,8 @@ const PP6D = {
 	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
 };
 
-const PP6D_STYLE = `
-.pp-p6d-conflicts.pp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
-.pp-chip.pp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
-.pp-day > .pk-notes,.pp-day > .pk-notes-mark{margin:0 2px;}
-.pp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
-.pp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
-.pp-p6d-mw{display:flex;flex-direction:column;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border-color);}
-.pp-p6d-mw .pk-block{font-size:13px;padding:6px 8px;}
-@media (max-width:760px){
-.pp-p6d-mw-btn{padding:4px 10px;font-size:13px;}
-}
-`;
-
 const PP6D_METHODS = {
 	init_phase6d() {
-		if (!document.getElementById("pp-style-6d")) {
-			$("<style id='pp-style-6d'>").text(PP6D_STYLE).appendTo(document.head);
-		}
 		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
@@ -9348,13 +8929,6 @@ const PP6E_PURE = {
 	},
 };
 
-const PP6E_STYLE = `
-.p6e-switch{display:inline-flex;align-items:center;gap:4px;}
-.p6e-switch-label{font-size:12px;color:var(--text-muted);}
-.p6e-opt{border-color:var(--border-color);}
-.p6e-opt.p6e-on{background:#7c3aed;border-color:#7c3aed;color:#fff;}
-`;
-
 const PP6E_METHODS = {
 	// The unit of a multi-select move, read once from the device's preference. Calendar days unless
 	// the person chose working days.
@@ -9374,9 +8948,6 @@ const PP6E_METHODS = {
 
 	// "Move by: Calendar days | Working days", in the selection bar.
 	p6e_bar_switch($bar) {
-		if (!document.getElementById("pp-style-6e")) {
-			$("<style id='pp-style-6e'>").text(PP6E_STYLE).appendTo(document.head);
-		}
 		const unit = this.p6e_unit();
 		const $switch = $('<span class="p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
 		$('<span class="p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
@@ -9498,34 +9069,6 @@ const PPT1 = {
 	columns: ["subject", "hours", "phase", "needs", "crew_size"],
 	check_wait_ms: 150,
 };
-
-const PPT1_STYLE = `
-.t1-wrap{padding:2px 0 8px;}
-.t1-intro{margin:0 0 8px;font-size:12px;color:var(--text-muted);}
-.t1-scroll{overflow-x:auto;}
-.t1-grid{width:100%;min-width:700px;border-collapse:collapse;}
-.t1-grid th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);text-align:left;padding:2px 4px;white-space:nowrap;}
-.t1-grid td{padding:2px 3px;vertical-align:middle;}
-.t1-num{width:28px;text-align:right;font-size:12px;color:var(--text-muted);}
-.t1-grid input,.t1-grid select{width:100%;min-width:0;}
-.t1-c-subject{width:32%;}
-.t1-c-hours{width:70px;}
-.t1-c-phase{width:20%;}
-.t1-c-needs{width:26%;}
-.t1-c-crew_size{width:64px;}
-.t1-c-del{width:30px;}
-.t1-bad input,.t1-bad select{border-color:#dc2626;}
-.t1-del{border:none;background:transparent;color:var(--text-muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;}
-.t1-del:hover{color:#b91c1c;}
-.t1-more{margin-top:2px;font-size:11px;color:var(--text-muted);}
-.t1-status{margin:10px 0 0;font-size:12px;color:var(--text-muted);}
-.t1-problems{margin:6px 0 0;padding-left:18px;font-size:12px;color:#b91c1c;}
-.t1-tray-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border-color);}
-.t1-tray-main{flex:1;min-width:0;}
-.t1-tray-title{font-weight:600;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
-.t1-tray-title:hover{text-decoration:underline;}
-.t1-tray-sub{font-size:11px;color:var(--text-muted);}
-`;
 
 // Pure helpers: no page, no frappe beyond __(). tests/test_planner_build_out.py runs them under node,
 // and checks build_order against the server's (api/planner_actions.build_order).
@@ -9768,9 +9311,6 @@ const PPT1_PURE = {
 
 const PPT1_METHODS = {
 	init_t1() {
-		if (!document.getElementById("pp-style-t1")) {
-			$("<style id='pp-style-t1'>").text(PPT1_STYLE).appendTo(document.head);
-		}
 		this.t1 = { needs: null, needs_token: 0, needs_at: 0, needs_open: false, show_all: false, drafts: {}, ids: 0, grid: null };
 		this.p6_send_modules = this.p6_send_modules || {};
 		PPT1.methods.forEach((method) => (this.p6_send_modules[method] = PPT1.actions));
@@ -10668,14 +10208,6 @@ const PPT4 = {
 	brief_max: 1500,
 };
 
-const PPT4_STYLE = `
-.t4-ai td.t1-num{box-shadow:inset 3px 0 0 var(--primary,#2490ef);}
-.t4-status{margin:6px 0 0;font-size:12px;color:var(--text-muted);}
-.t4-status.t4-bad{color:#b91c1c;}
-.t4-spin{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-2px;border:2px solid var(--border-color,#d1d5db);border-top-color:var(--primary,#2490ef);border-radius:50%;animation:t4-turn .8s linear infinite;}
-@keyframes t4-turn{to{transform:rotate(360deg);}}
-`;
-
 // Pure helpers: no page, no frappe beyond __(). Run under node by tests/test_planner_ai_draft.py.
 const PPT4_PURE = {
 	// The subjects typed in the grid, so an Append is not offered what is already there.
@@ -10713,12 +10245,6 @@ const PPT4_METHODS = {
 		];
 	},
 
-	t4_style() {
-		if (!document.getElementById("pp-style-t4")) {
-			$("<style id='pp-style-t4'>").text(PPT4_STYLE).appendTo(document.head);
-		}
-	},
-
 	// The status line under the dialog's fields: `html` is already escaped text, `bad` colours it.
 	t4_say(dialog, html, bad) {
 		const field = dialog && dialog.fields_dict && dialog.fields_dict.t4_status;
@@ -10732,7 +10258,6 @@ const PPT4_METHODS = {
 
 	t4_open(state) {
 		if (!state || !state.rows || !state.table || state.t4_busy) return null;
-		this.t4_style();
 		const has_rows = state.rows.some((row) => !PPT1_PURE.is_blank(row));
 		const fields = [
 			{

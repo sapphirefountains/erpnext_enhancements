@@ -19,6 +19,12 @@ colour value (the Maps API takes no CSS variable), so the script reads them from
 its CSS uses; ``TestPlanATrip`` holds the two together. A ``style.cssText`` assignment that sets a
 colour now counts as an inline colour too.
 
+S3.4d (v1.664.0) adds the Project Planner, which wrote eleven ``<style>`` elements from its script
+(``PP_STYLE`` ... ``PPT4_STYLE``) and painted people's and tasks' colors inline. Those two colors
+are data from records people edit, so they are the one inline color a page here may write, and only
+as the custom property ``style="--pp-color: ${pp_esc(...)}"`` that its CSS paints with;
+``TestProjectPlanner`` holds the page to that and to the rest of the restyle.
+
 This fails the build if any of these pages:
 
 * writes a ``<style>`` element from JS again, or paints a colour through an inline ``style``,
@@ -76,6 +82,8 @@ PAGES = {
 	"sales_pipeline": APP / "crm_enhancements" / "page" / "sales_pipeline",
 	# S3.4c
 	"plan_a_trip": APP / "travel_management" / "page" / "plan_a_trip",
+	# S3.4d
+	"project_planner": APP / "project_enhancements" / "page" / "project_planner",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -94,6 +102,9 @@ NAMESPACES = {
 	# under the page body (.sales-pipeline-page) or the TV-mode body class.
 	"sales_pipeline": re.compile(r"\.sales-pipeline-[\w-]+"),
 	"plan_a_trip": re.compile(r"\.tp-[\w-]+"),
+	# The planner's own families: pp- for the page, p6b- and p6e- for two of its phases, t1- for
+	# Build out and t4- for AI draft. Short, so TestProjectPlanner checks no other file styles them.
+	"project_planner": re.compile(r"\.(?:pp|p6b|p6e|t1|t4)-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -109,6 +120,7 @@ KEYFRAME_PREFIXES = {
 	"location_timeline": ("lt-",),
 	"sales_pipeline": ("sales-pipeline-",),
 	"plan_a_trip": ("tp-",),
+	"project_planner": ("pp-", "p6b-", "p6e-", "t1-", "t4-"),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages
@@ -213,6 +225,16 @@ def _js_colour_writes(js):
 	return found
 
 
+# The one color a page may write inline: a color that is data (a task's or a person's own, from a
+# record people edit), as the custom property --pp-color, escaped through pp_esc, which the page's
+# CSS paints with var(--pp-color). The Project Planner is the only page that does (S3.4d).
+DATA_COLOR = re.compile(r"(?<![\w-])--pp-color:\s*\$\{pp_esc\(")
+
+
+def _without_data_color(style):
+	return DATA_COLOR.sub("", style)
+
+
 def _defined_tokens():
 	return set(re.findall(r"(--sf-[a-z0-9-]+)\s*:", _css_code(_read(TOKENS))))
 
@@ -227,13 +249,30 @@ class TestTheCssLeftTheJs(unittest.TestCase):
 				self.assertNotIn("_STYLE", js)
 
 	def test_no_page_paints_a_colour_inline(self):
-		"""Layout widths may stay inline (a meter's width is data); a colour may not."""
+		"""Layout widths may stay inline (a meter's width is data); a color may not, except a color
+		that is itself data, handed to the page's CSS as --pp-color (DATA_COLOR)."""
 		for name, folder in PAGES.items():
 			js = _js_code(_read(folder / f"{name}.js"))
 			inline = re.findall(r"style=\"([^\"]*)\"", js) + re.findall(r"style='([^']*)'", js)
-			painted = [s for s in inline if re.search(r"(?i)(color|background|border)\s*:", s)]
+			painted = [s for s in inline if re.search(r"(?i)(color|background|border)\s*:", _without_data_color(s))]
 			with self.subTest(page=name):
 				self.assertEqual(painted, [], f"inline colour in {name}.js")
+
+	def test_the_data_color_allowance_is_exactly_one_pattern(self):
+		"""The allowance takes the custom property through pp_esc and nothing else: a literal, a
+		second property, or the same property written raw is still an inline color."""
+		for allowed in ('--pp-color: ${pp_esc(color)}', "--pp-color: ${pp_esc(\n\t\tthis.resource_color(x)\n\t)}"):
+			with self.subTest(allowed=allowed):
+				self.assertNotRegex(_without_data_color(allowed), r"(?i)(color|background|border)\s*:")
+		for refused in (
+			"--pp-color: #2563eb",
+			"--pp-color: ${color}",
+			"--x-color: ${pp_esc(color)}",
+			"--pp-color: ${pp_esc(color)};background:#fff",
+			"border-left-color:${pp_esc(color)}",
+		):
+			with self.subTest(refused=refused):
+				self.assertRegex(_without_data_color(refused), r"(?i)(color|background|border)\s*:")
 
 	def test_no_page_writes_a_colour_through_jquery_or_a_style_attribute(self):
 		for name, folder in PAGES.items():
@@ -609,6 +648,161 @@ class TestPlanATrip(unittest.TestCase):
 		"""Pick-up and the drive lines changed hue; their fallback is the new colour, not the old."""
 		self.assertIn('tp_token_color("--sf-green", "#1e7e51")', self.js)
 		self.assertEqual(self.js.count('tp_token_color("--sf-fresh-blue", "#00a0df")'), 2)
+
+
+class TestProjectPlanner(unittest.TestCase):
+	"""S3.4d (v1.664.0). The Project Planner wrote eleven <style> elements from its script, in
+	Frappe's palette with a literal hex for every status, a shadow on every hover, four width
+	breakpoints and 32-40px touch targets, and painted a task's and a person's color inline."""
+
+	FOLDER = PAGES["project_planner"]
+
+	@classmethod
+	def setUpClass(cls):
+		cls.raw_js = _read(cls.FOLDER / "project_planner.js")
+		cls.js = _js_code(cls.raw_js)
+		css = cls.FOLDER / "project_planner.css"
+		cls.css = _css_code(_read(css)) if css.exists() else ""
+
+	def _rule(self, selector):
+		m = re.search(r"(?m)^\t*" + re.escape(selector) + r"\s*[,{]", self.css)
+		self.assertIsNotNone(m, f"no rule for {selector} in project_planner.css")
+		return self.css[m.start() :].split("{", 1)[1].split("}", 1)[0]
+
+	def test_the_script_writes_no_stylesheet(self):
+		self.assertNotIn("pp-style", self.js)
+		self.assertNotIn("document.head", self.js)
+		self.assertNotRegex(self.js, r"const PP\w*_STYLE\b")
+
+	def test_every_color_it_reads_is_a_token_or_the_data_color(self):
+		"""No Frappe variable at all (--text-muted, --card-bg, --primary ...), not only the palette
+		ones the shared check refuses: every var() is an --sf-* token or one of the two data
+		colors the script sets."""
+		self.assertTrue(self.css)
+		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
+		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--pp-color", "--pp-p6c-c"])
+
+	def test_the_data_colors_go_in_as_the_custom_property_and_the_css_paints_them(self):
+		# A person's dot (Resources available, the heatmap), a crew badge (a card, a quick look's
+		# task row), a task card (calendar, crew cell), a Color-by swatch and a timeline bar.
+		self.assertGreaterEqual(len(DATA_COLOR.findall(self.js)), 7)
+		# A person's dot, a crew cell's card and a calendar card.
+		self.assertEqual(len(re.findall(r'style="--pp-color: \$\{pp_esc\(color\)\}">', self.js)), 3)
+		self.assertIn('color = `--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))};`;', self.js)
+		self.assertIn('classes.push("pp-tl-colored");', self.js)
+		for selector in (".pp-dot", ".pp-badge", ".pp-card", ".pp-p6c-swatch", ".pk-tl-bar.pp-tl-colored"):
+			with self.subTest(selector=selector):
+				self.assertIn("var(--pp-color", self._rule(selector))
+		self.assertIn("var(--pp-p6c-c)", self._rule(".pp-card.pp-p6c-colored"))
+		self.assertIn('el.style.setProperty("--pp-p6c-c", color);', self.js)
+
+	def test_the_route_map_reads_the_tokens_the_stop_list_paints(self):
+		"""The map's markers and line take a color value, not a variable, so the script reads the
+		same tokens through getComputedStyle; the list's numbers are CSS on those tokens."""
+		helper = re.search(r"const PP_ROUTE_COLORS = \(\) => \(\{(.*?)\}\);", self.js, flags=re.S)
+		self.assertIsNotNone(helper)
+		found = dict(re.findall(r"(\w+): pp_token_color\(\"(--sf-[a-z0-9-]+)\", \"#[0-9a-f]{6}\"\)", helper.group(1)))
+		self.assertEqual(sorted(found), ["line", "ring", "shop", "stop"])
+		self.assertIn(f"var({found['stop']})", self._rule(".pp-stop-num"))
+		self.assertIn(f"var({found['shop']})", self._rule(".pp-stop-num.pp-shop"))
+		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", self.js)
+		for use in ("color: colors.ring", "strokeColor: colors.ring", '"S", colors.shop', "colors.stop,", "PP_ROUTE_COLORS().line"):
+			with self.subTest(use=use):
+				self.assertIn(use, self.js)
+
+	def test_no_other_color_value_is_left_in_the_script(self):
+		"""What remains is data: the color of a task with none of its own and Color by's "nobody"
+		grey (both the same kind of value as a record's color), a person's hashed hsl(), and the
+		token reads' fallbacks."""
+		rest = re.sub(r'pp_token_color\("--sf-[a-z0-9-]+", "#[0-9a-f]{6}"\)', "", self.js)
+		for allowed in ('default_color: "#2563eb",', 'none_color: "#94a3b8",', "return `hsl(${hash},55%,42%)`;"):
+			self.assertIn(allowed, rest)
+			rest = rest.replace(allowed, "")
+		self.assertNotRegex(rest, r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![\w-])")
+		self.assertNotRegex(rest, r"\b(?:rgba?|hsla?)\(")
+
+	def test_warn_text_is_the_mix_never_yellow(self):
+		"""Plain yellow is 1.7:1 on white: warn as text, or as a thin ring, is mixed with
+		--sf-text-strong."""
+		mix = "color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))"
+		checked = 0
+		for prop, value in _declarations(self.css):
+			if prop in ("color", "outline") and "--sf-warn" in value:
+				checked += 1
+				with self.subTest(prop=prop, value=value):
+					self.assertIn(mix, value)
+		self.assertGreaterEqual(checked, 5)
+
+	def test_focused_fields_keep_their_own_rule(self):
+		"""Bootstrap's .form-control:focus (0,2,0) outranks a plain field rule; the toolbar's fields
+		and Build out's grid answer it with a focused rule of their own."""
+		for selector in (".pp-wrap .pp-toolbar .form-control:focus", ".t1-grid .form-control:focus"):
+			with self.subTest(selector=selector):
+				self.assertRegex(self.css, re.escape(selector) + r"\s*\{\s*border-color: var\(--sf-focus\);")
+		for selector in (".pp-wrap .pp-toolbar .form-control", ".t1-grid .form-control"):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertIn("background-color: var(--sf-field-bg)", body)
+				self.assertIn("color: var(--sf-field-text)", body)
+		phone = self.css[self.css.index("@media (max-width: 767px)") :]
+		self.assertRegex(phone, r"\.pp-wrap \.pp-toolbar \.form-control \{\s*font-size: var\(--sf-text-input\);")
+
+	def test_touch_targets_are_44px(self):
+		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
+		self.assertIsNotNone(coarse, "no (pointer: coarse) block")
+		heights = re.findall(r"min-(?:height|width):\s*([^;]+);", coarse.group(1))
+		self.assertGreaterEqual(heights.count("var(--sf-touch-min)"), 8)
+		self.assertEqual([h for h in heights if h not in ("var(--sf-touch-min)", "64px")], [])
+		for selector in (".pp-toolbar .btn", ".pp-seg button", ".pp-week .pp-card", ".pp-day-num", ".pp-p6c-sday"):
+			with self.subTest(selector=selector):
+				self.assertIn(selector, coarse.group(1))
+
+	def test_the_sticky_headings_stop_on_a_phone(self):
+		"""They were a min-width: 761px block. They are written for every width now and switched
+		off at the one phone breakpoint, so a phone still scrolls the page as before."""
+		self.assertNotIn("min-width: 761px", self.css)
+		self.assertIn("position: sticky", self._rule(".pp-crew-view .pp-crew-head"))
+		phones = re.findall(r"@media \(max-width: 767px\) \{(.*?)\n\}", self.css, flags=re.S)
+		reset = [block for block in phones if ".pp-crew-view .pp-crew-head" in block]
+		self.assertEqual(len(reset), 1)
+		self.assertIn("position: static", reset[0])
+		self.assertIn("max-height: none", reset[0])
+
+	def test_the_s3_6_focus_ring_moved_with_the_css(self):
+		self.assertRegex(
+			self.css,
+			r"\.pp-day-num:focus-visible,\s*\.pp-crew-head:focus-visible,\s*\.pp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
+		)
+
+	def test_a_month_cell_says_its_load(self):
+		"""The month's one-line cells were a tint and nothing else; the words are read aloud now."""
+		self.assertIn('state.text ? `<span class="pp-sr">${pp_esc(state.text)}</span>` : ""', self.js)
+		self.assertIn("clip: rect(0, 0, 0, 0)", self._rule(".pp-sr"))
+
+	def test_every_rule_styles_something_the_page_draws(self):
+		"""A rule for a class nothing draws any more is a rename on one side only. pk- classes are
+		planner_kit's (the day notes, a block, a timeline bar), which the page draws through it."""
+		drawn = set(re.findall(r"(?<![\w-])((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
+		styled = set(re.findall(r"\.((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
+		self.assertTrue(styled)
+		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
+
+	def test_its_short_prefixes_are_its_own(self):
+		"""t1- and t4- are short enough for another page to pick; this page's CSS is global for the
+		session, so nothing else may style them (the Maintenance Planner's are mp-p6b- and so on)."""
+		selector = re.compile(r"(?<![\w-])\.(?:pp|p6b|p6e|t1|t4)-[a-z]")
+		found = []
+		for path in APP.rglob("*"):
+			if path.suffix not in (".css", ".scss", ".js", ".html") or "tests" in path.parts:
+				continue
+			if path.parent == self.FOLDER or "node_modules" in path.parts:
+				continue
+			text = _read(path)
+			code = _css_code(text) if path.suffix in (".css", ".scss") else _js_code(text)
+			if selector.search(code):
+				found.append(str(path.relative_to(APP)))
+		self.assertEqual(found, [])
 
 
 class TestThisSuiteRunsInCi(unittest.TestCase):
