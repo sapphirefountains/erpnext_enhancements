@@ -3422,12 +3422,21 @@ jobs:
       # lands after Back never paints over the screen the person went to.
       - name: Marketing app Back/Forward (bench-free, node)
         run: node scripts/test_marketing_history.js
-      # Six Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
-      # QuickBooks record matching, training review, location timeline). Runs the harness
+      # Seven Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
+      # QuickBooks record matching, training review, location timeline, maintenance day board),
+      # under the v16 router both before and after v16.50 for the day and trail in the address. Runs the harness
       # through Python so the source checks and the behaviour run together; node is on PATH
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
+      # Custom pages S5a (v1.662.0). The Day Board's ?date=, the Rental Planner's ?start= and the
+      # Location Timeline's trail live in the address: read from frappe.route_options and consumed
+      # key by key, written by one helper per page on the path on screen (never by routing to the
+      # page it is on, which older v16 routers push without the query), dates checked against the
+      # calendar, and get_day_board_data(date=None) unchanged for today. The behaviour runs in the
+      # Desk pages step above and in the Rental Planner step. Reads files only.
+      - name: Custom pages S5a deep links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_page_deep_links -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

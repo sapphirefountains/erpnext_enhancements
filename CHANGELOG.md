@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.662.0] - 2026-10-14
+
+### Added
+
+- **Links that keep your place: three Desk pages keep what they show in the address** (custom pages
+  S5a, ERPNext TASK-2026-02807). A reload, a pasted link and Back and Forward now land on the same
+  state, where before a reload went back to the default and Back left the page.
+  - **Maintenance Day Board: the day.** `/desk/maintenance-day-board?date=YYYY-MM-DD` shows that day,
+    and the bare address is today. The board gains ‹ › Today and a date box. Each day stepped to is
+    a history entry, so Back returns to the day before. Today's date in the address, or one that is
+    not a real calendar day, leaves the bare address, which keeps following the clock past midnight
+    on a wall screen. `get_day_board_data` takes an optional `date`. With none, or today's, it
+    answers exactly as before. For another day the columns are read as of that day: the drafts
+    scheduled for it (`scheduled_visit_date`), the maintenance clock-ins that started on it, the
+    visits submitted on it, and the flagged visits of the seven days up to it. A day changed while
+    a load is in flight is asked for at once, and the older reply is dropped rather than painted
+    over the newer day. Each scheduled draft also links to its Visit Wizard
+    (`/desk/visit-wizard/<visit>`).
+  - **Rental Planner: the board's dates.** `/desk/rental-planner?start=YYYY-MM-DD` is the board's
+    first day, and the bare address is today. ‹ › and Today push an entry each. The flow's Planner
+    buttons return to the dates it left rather than to today, and the flow's own Back still steps
+    back through history onto them.
+  - **Location Timeline: the trail.** `?employee=…&from_date=…&to_date=…` is the trail on screen, and
+    the bare address is no one's trail. Each person, date or Load picked is an entry. A Live row
+    routes with the trail in its options, and the Trail button carries the trail in the pickers,
+    so Back and Forward onto a trail already drawn load nothing again. The Employee and Job Interval
+    buttons open it the way they did, and their trail now reaches the address too.
+
+### Changed
+
+- **How the three pages keep the address, and why each writes its own.** Frappe v16's router copies
+  the address's query into `frappe.route_options` on every route change, and `set_route(page, {k:
+  v})` puts `k` there too. So each page reads its keys from `route_options` and consumes them as the
+  list view does: it deletes each key and nulls an emptied object, or the next plain `set_route` to
+  the page would replay them. Before v16.50, though, `set_route` pushes the path alone; the query
+  only decides whether to push (frappe PR #40040 changed that in v16.50). Routing to the page on
+  screen to change its query therefore loses the query, which is what broke Plan a Trip in v1.520.0.
+  Each page instead writes its own address through one helper, on `window.location.pathname`, so a
+  workspace shell the router put in front of the page name stays. It uses `pushState` for a state the
+  person chose and `replaceState` to correct the entry on screen, and writes nothing when the
+  address already says it. Back onto such an entry is an ordinary `popstate`: the router re-renders
+  the same page and the show reads the query from `route_options`. The guards that forbade any
+  history write on these pages (`test_desk_page_history`, `test_rental_planner`,
+  `test_location_timeline_page`, `test_s3_page_states`) now allow exactly that one writer.
+- **Both history harnesses model the router on either side of v16.50.**
+  `scripts/test_desk_page_history.js` already modelled the path-only push. It now also models the
+  newer one (`makeDesk({ queryInUrl: true })`): plain values written as themselves, the query pushed
+  with the path, `set_route("/desk/a?x=1")` filling `route_options`. The deep-link scenarios run
+  under both. `scripts/test_rental_planner_history.js` gains what it lacked: `route_options` filled
+  from the address on every route change, a plain object among `set_route`'s parts moved there, the
+  push skipped when path and query are unchanged, and a session history the page can write. The
+  scenarios cover a pasted address, each state change as an entry, Back and Forward, a reload, a
+  malformed date, and another page's `set_route` with options followed by a plain one that must
+  not replay them. The S3.1 harness gives the Day Board its bare address and `get_today`.
+- New bench-free suite `tests/test_page_deep_links.py`, with its own CI step.
+
 ## [1.656.0] - 2026-10-13
 
 ### Changed

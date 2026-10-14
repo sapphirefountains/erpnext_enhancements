@@ -1,4 +1,4 @@
-"""Browser Back and Forward on six Desk pages.
+"""Browser Back and Forward on seven Desk pages.
 
 The product rule: Back returns to the previous step, screen, tab or view of a page, Forward
 restores it, Back from a page's first screen leaves it as it always did, and Back or Forward
@@ -26,7 +26,18 @@ should return to has to be a route segment, and these pages now carry one:
 * Question Review — ``training-review/course/<course>`` and ``/lesson/<lesson>``. A Back or
   Forward that comes while a verdict is in flight is held until the last one lands. A "Stay"
   that keeps an edit holds only while the route names the view it was said to.
-* Location Timeline — ``location-timeline/live`` is Live; the bare route is Trail.
+* Location Timeline — ``location-timeline/live`` is Live; the bare route is Trail. The trail on
+  screen is in the address too (v1.662.0): ``?employee=&from_date=&to_date=``.
+* Maintenance Day Board (v1.662.0) — the day shown is ``?date=YYYY-MM-DD``, the bare address
+  today; each day stepped to is an entry.
+
+Those two keep a page's state in the address's query, which the router does not write for them:
+before v16.50 ``set_route`` pushes the path alone, and routing to the page on screen to change the
+query is what broke Plan a Trip (v1.520.0). So each writes its own address, through one helper,
+``writeAddress``: ``history.pushState`` for a state the person chose, ``replaceState`` to correct
+the entry on screen, always on ``window.location.pathname``. It never fights the router: Back onto
+such an entry fires ``popstate``, the router re-renders the same page, copies the query into
+``frappe.route_options``, and the page's show reads it there.
 
 ``scripts/test_desk_page_history.js`` runs the real page scripts against a model of the v16
 router, Dialog and Bootstrap modal and a fake session history, and is run from here. The static
@@ -52,6 +63,13 @@ PAGES = {
 	"quickbooks-record-matching": APP / "quickbooks_online/page/quickbooks_record_matching/quickbooks_record_matching.js",
 	"training-review": APP / "training/page/training_review/training_review.js",
 	"location-timeline": APP / "workforce/page/location_timeline/location_timeline.js",
+	"maintenance-day-board": APP / "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js",
+}
+# Pages that keep state in their address: the one helper that writes it, from its first line to
+# the line of what follows it in the file.
+ADDRESS_WRITERS = {
+	"location-timeline": ("writeAddress(push) {", "async setSilently(field, value) {"),
+	"maintenance-day-board": ("function writeAddress(push) {", "function drawNav() {"),
 }
 SCANNERS = ("device-console", "inventory-scanner-audit")
 # A scanner's show steps back, rather than replacing, onto its own entry from a sheet URL pushed
@@ -99,11 +117,17 @@ class TestNoPageWritesHistoryBehindTheRouter(unittest.TestCase):
 	``popstate`` the router re-renders as whatever route the URL still names."""
 
 	def test_no_push_state_of_a_pages_own(self):
+		"""Except a page's own address, through its one writer (TestTheAddressWriters)."""
 		for name, path in PAGES.items():
+			code = _code(path)
 			with self.subTest(page=name):
-				self.assertNotIn("history.pushState", _code(path))
-				self.assertNotIn("popstate", _code(path))
-				self.assertNotIn("beforeunload", _code(path))
+				if name in ADDRESS_WRITERS:
+					self.assertEqual(code.count("history.pushState("), 1)
+					self.assertIn("window.history.pushState(null, '', url);", _between(code, *ADDRESS_WRITERS[name]))
+				else:
+					self.assertNotIn("history.pushState", code)
+				self.assertNotIn("popstate", code)
+				self.assertNotIn("beforeunload", code)
 
 	def test_replace_state_only_marks_an_entry_the_page_pushed(self):
 		"""The one direct history write: a mark in `history.state` on the entry set_route has
@@ -126,6 +150,13 @@ class TestNoPageWritesHistoryBehindTheRouter(unittest.TestCase):
 				if name in marks:
 					self.assertEqual(code.count("history.replaceState("), 1)
 					self.assertIn(marks[name], code)
+				elif name in ADDRESS_WRITERS:
+					# The address writer's correction keeps whatever state the entry carries.
+					self.assertEqual(code.count("history.replaceState("), 1)
+					self.assertIn(
+						"window.history.replaceState(window.history.state, '', url);",
+						_between(code, *ADDRESS_WRITERS[name]),
+					)
 				else:
 					self.assertNotIn("history.replaceState(", code)
 
