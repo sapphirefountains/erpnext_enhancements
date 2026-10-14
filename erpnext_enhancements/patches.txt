@@ -1431,3 +1431,14 @@ erpnext_enhancements.patches.custom_pages_s4a_hub_links
 # custom_lost_competitor from v1.159.0) by running those two patches' execute() once more. Data checked
 # on prod first; nothing to migrate. Cannot raise, safe twice. setup/downgrade_guard.py stops the cause.
 erpnext_enhancements.patches.retire_resurrected_customizations
+# Bin assignments (v1.689.0, ER-2026-1319376): one enabled Putaway Rule per (enabled stock item, enabled leaf
+# warehouse) pair with a tabBin row today, so nothing drops off a bin's list when Stock Scan starts listing by
+# assignment instead of by "any Bin row". 536 pairs on 2026-10-14; pairs with a rule already are skipped. The
+# rule's validate is skipped (its checks made here once); per-row savepoints; skipped pairs go to one Error Log.
+# Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_bin_putaway_rules
+# Boneyard (v1.689.0): create the leaf Warehouse "Boneyard" under Inventory - SF (company from the parent; found
+# by warehouse_name + company, never by docname; skipped without the parent), then fill Inventory Scanner Settings'
+# new boneyard_warehouse with it ONLY where tabSingles has no row for it (and never on a never-saved Single). The
+# two older "Bin D2-2-x (Boneyard)" bins are not touched. Per-step savepoints. Cannot raise, safe twice.
+erpnext_enhancements.patches.add_boneyard_warehouse
