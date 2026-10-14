@@ -35,9 +35,11 @@ import { SidePanel } from "./form_kit/ui/side_panel.js";
 import "./guided_item/extension.js";
 
 // 2 since v1.675.0: the editor and the side panel. 3 since v1.683.0 (form kit P8.1): extension_for,
-// ends_core and opens_by_default. A tab still holding an older version (loaded before a deploy)
-// takes this one, so a page that needs SidePanel or an extension finds it.
-const VERSION = 3;
+// ends_core and opens_by_default. 4 since v1.684.0: the view settings (form_kit/view.js) and the
+// FieldGroups of One page and Tabs, which the page now calls. A tab still holding an older version
+// (loaded before a deploy) takes this one, so a page that needs SidePanel, an extension or the view
+// settings finds it.
+const VERSION = 4;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_form_kit && window.sf_form_kit.version >= VERSION)) {
