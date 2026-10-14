@@ -120,11 +120,24 @@ def get_review_visit(record):
 		},
 		# How each chemical bills, chosen on approval (v1.628.0).
 		"chemicals": chemical_billing.review_rows(doc),
+		# The visit's day-specific lines against the day it was done (v1.678.0).
+		"weekday": _weekday_lines(doc),
 		"position": index + 1 if index >= 0 else None,
 		"total": len(names),
 		"next": _after(names, index) if index >= 0 else (others[0] if others else None),
 		"previous": names[index - 1] if index > 0 else None,
 	}
+
+
+def _weekday_lines(doc):
+	"""Never raises: the page opens without the day lines rather than not at all."""
+	try:
+		from erpnext_enhancements.sapphire_maintenance.visit_days import review_lines
+
+		return review_lines(doc)
+	except Exception:
+		frappe.log_error(title="Visit Review: day lines failed", message=frappe.get_traceback())
+		return None
 
 
 @frappe.whitelist(methods=["POST"])
