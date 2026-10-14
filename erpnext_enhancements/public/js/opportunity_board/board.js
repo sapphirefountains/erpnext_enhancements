@@ -23,6 +23,17 @@
  *                   open the guided Close step (Closed Won, Lost: they need ranks or reasons the
  *                   side panel, P6.6, will collect), nothing (its own stage), or refuse
  *
+ * Part B (v1.660.0):
+ *
+ *   views (P6.3)    the board, a sortable table and a timeline of close dates by month, plus the
+ *                   attention list, each its own route; the filters are page state, so switching
+ *                   views keeps them
+ *   attention (P6.4) stale, past the expected close date, no amount, or missing what the stage
+ *                   asks for (P4.6); sorted by value; the README's SQL check names the same deals
+ *   focus (P6.8)    quick filters, On Hold folded, snoozed deals hidden until their date and then
+ *                   marked returning, and the shape of a saved view (VIEW_SCHEMA, held equal to
+ *                   api/planner_views_prefs.SCHEMA["board"])
+ *
  * Pillar colours come from form_kit/summary.js's STREAM_PILLAR, itself held to
  * print_style.STREAM_PILLAR by test_guided_entry: one source.
  */
@@ -73,15 +84,28 @@ export function stage_key(label) {
 	return key || "none";
 }
 
-// What the address asks for: { layout, stage, panel }, or null when it is not this page.
-//   [PAGE]                                  the board, stage columns
-//   [PAGE, layout]                          stages | streams
-//   [PAGE, layout, stage]                   the phone's chosen stage tab
-//   [PAGE, layout, MOVE, name]              the move panel for a deal
+// The views of P6.3 (and P6.4's list), each its own route so Back walks between them. The board's
+// own route segment is its layout, as it was before the other views existed, so an address saved
+// from part A still opens the same screen.
+export const VIEWS = ["board", "table", "timeline", "attention"];
+export const OTHER_VIEWS = ["table", "timeline", "attention"];
+
+// What the address asks for: { view, layout, stage, panel, bare }, or null when it is not this page.
+//   [PAGE]                                  the board, stage columns (bare: a remembered view may apply)
+//   [PAGE, layout]                          the board: stages | streams
+//   [PAGE, layout, stage]                   the board, on the phone's chosen stage tab
+//   [PAGE, layout, MOVE, name]              the deal panel for a deal, over the board
 //   [PAGE, layout, stage, MOVE, name]       the same, over a chosen stage tab
+//   [PAGE, view]                            table | timeline | attention (layout "": the page keeps its own)
+//   [PAGE, view, MOVE, name]                the deal panel over one of them
 export function parse_route(route) {
 	if (!Array.isArray(route) || route[0] !== PAGE) return null;
-	const layout = LAYOUTS.includes(text(route[1])) ? text(route[1]) : DEFAULT_LAYOUT;
+	const first = text(route[1]);
+	if (OTHER_VIEWS.includes(first)) {
+		const panel = text(route[2]) === MOVE ? text(route[3]) : "";
+		return { view: first, layout: "", stage: "", panel, bare: false };
+	}
+	const layout = LAYOUTS.includes(first) ? first : DEFAULT_LAYOUT;
 	let stage = "";
 	let panel = "";
 	if (text(route[2]) === MOVE) {
@@ -90,12 +114,17 @@ export function parse_route(route) {
 		stage = text(route[2]);
 		if (text(route[3]) === MOVE) panel = text(route[4]);
 	}
-	return { layout, stage, panel };
+	return { view: "board", layout, stage, panel, bare: !first };
 }
 
 // The route for a screen, as frappe.set_route takes it.
 export function build_route(target) {
 	const t = target || {};
+	if (OTHER_VIEWS.includes(t.view)) {
+		const route = [PAGE, t.view];
+		if (text(t.panel)) route.push(MOVE, text(t.panel));
+		return route;
+	}
 	const route = [PAGE, LAYOUTS.includes(t.layout) ? t.layout : DEFAULT_LAYOUT];
 	if (text(t.stage)) route.push(text(t.stage));
 	if (text(t.panel)) route.push(MOVE, text(t.panel));
@@ -105,7 +134,9 @@ export function build_route(target) {
 // One string per screen, so "is that the screen already showing?" is a comparison.
 export function route_key(target) {
 	if (!target) return "";
-	return [target.layout || DEFAULT_LAYOUT, target.stage || "", target.panel || ""].join("|");
+	const view = OTHER_VIEWS.includes(target.view) ? target.view : "board";
+	const layout = view === "board" ? target.layout || DEFAULT_LAYOUT : "";
+	return [view, layout, view === "board" ? target.stage || "" : "", target.panel || ""].join("|");
 }
 
 export function is_phone(width) {
@@ -227,7 +258,23 @@ function prepare_deal(raw, stage, today, thresholds) {
 	deal.days = days_between(today, deal.since);
 	deal.stale = stale_level(deal.days, thresholds, stage.kind);
 	deal.modified = text(raw.modified);
+	deal.owner = text(raw.owner);
+	deal.owner_name = text(raw.owner_name) || deal.owner;
+	deal.snoozed_until = text(raw.snoozed_until).slice(0, 10);
+	deal.snooze_reason = text(raw.snooze_reason);
+	deal.snooze = snooze_state(deal, today);
 	return deal;
+}
+
+// P6.8. "" (not snoozed), "snoozed" (hidden until its date, which is after today) or "returning"
+// (the date has come: back on the board, marked, until someone wakes it or snoozes it again).
+export function snooze_state(deal, today) {
+	const until = text((deal || {}).snoozed_until).slice(0, 10);
+	if (!until) return "";
+	const a = day_number(until);
+	const b = day_number(today);
+	if (a === null || b === null) return "";
+	return a > b ? "snoozed" : "returning";
 }
 
 // Stalest first (the TV board's order), then by title, so a column reads the same each time.
@@ -298,6 +345,7 @@ export function prepare(data) {
 		thresholds,
 		currency: text(d.currency) || "USD",
 		truncated: !!d.truncated,
+		can_snooze: !!d.can_snooze,
 	};
 }
 
@@ -475,4 +523,308 @@ export function move_choices(model, deal) {
 				.filter((s) => s.kind !== "other")
 				.map((stage) => ({ stage, action: drop_action(model, deal, stage.key), current: !!deal && deal.stage === stage.key }))
 		: [];
+}
+
+// ------------------------------------------------------------------ focus: filters (P6.8)
+
+// The filter bar the board, table, timeline and attention list share. Kept by the page, not the
+// address, so switching views keeps them (P6.3), and remembered per person on the server with the
+// view and layout (api/planner_views_prefs.py, planner "board": the planners' own saved-views store).
+//   mine           only deals whose Opportunity Owner is the person looking
+//   owner          one owner (a user id)
+//   stream         one value stream, or NO_STREAM_FILTER for deals with none
+//   min_amount     "over $X": an amount above this; a deal with no amount is left out
+//   closing_month  expected to close in the site's current month
+//   show_snoozed   snoozed deals shown (marked) rather than hidden
+//   hold_open      the On Hold column unfolded (folded into a count by default: 36 of 74 open deals
+//                  sat there on 2026-10-14)
+export const NO_STREAM_FILTER = "-";
+export const DEFAULT_FILTERS = {
+	mine: false,
+	owner: "",
+	stream: "",
+	min_amount: "",
+	closing_month: false,
+	show_snoozed: false,
+	hold_open: false,
+};
+export const SORT_KEYS = ["title", "stage", "amount", "probability", "weighted", "closing", "days", "owner", "complete"];
+export const DEFAULT_SORT = { sort: "closing", desc: false };
+
+// What a saved view may hold, key for key api/planner_views_prefs.SCHEMA["board"] (the test holds
+// the two equal): `{key: ["bool"] | ["text"] | ["enum", values]}`.
+export const VIEW_SCHEMA = {
+	view: ["enum", VIEWS],
+	layout: ["enum", LAYOUTS],
+	mine: ["bool"],
+	owner: ["text"],
+	stream: ["text"],
+	min_amount: ["text"],
+	closing_month: ["bool"],
+	show_snoozed: ["bool"],
+	hold_open: ["bool"],
+	sort: ["enum", SORT_KEYS],
+	desc: ["bool"],
+};
+
+function flag(value) {
+	return value === true || value === 1 || value === "1" || value === "true";
+}
+
+// "$25,000" -> 25000; anything that is not a positive number -> 0 (no limit).
+export function amount_limit(value) {
+	const n = Number(text(value).replace(/[$,\s]/g, ""));
+	return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Only the filter keys, each of its type, defaults for the rest.
+export function clean_filters(raw) {
+	const r = raw && typeof raw === "object" ? raw : {};
+	return {
+		mine: flag(r.mine),
+		owner: text(r.owner),
+		stream: text(r.stream),
+		min_amount: amount_limit(r.min_amount) ? String(amount_limit(r.min_amount)) : "",
+		closing_month: flag(r.closing_month),
+		show_snoozed: flag(r.show_snoozed),
+		hold_open: flag(r.hold_open),
+	};
+}
+
+// How many filters narrow the deals (hold_open and show_snoozed only fold or widen: not counted).
+export function active_filters(filters) {
+	const f = clean_filters(filters);
+	return [f.mine, !!f.owner, !!f.stream, !!f.min_amount, f.closing_month].filter(Boolean).length;
+}
+
+// Whether one deal passes the filters, for `user` on `today`. Snoozing is separate (filtered).
+export function passes(deal, filters, user, today) {
+	const f = clean_filters(filters);
+	if (!deal) return false;
+	if (f.mine && (!text(user) || deal.owner !== text(user))) return false;
+	if (f.owner && deal.owner !== f.owner) return false;
+	if (f.stream === NO_STREAM_FILTER) {
+		if ((deal.streams || []).length) return false;
+	} else if (f.stream && !(deal.streams || []).includes(f.stream)) return false;
+	const limit = amount_limit(f.min_amount);
+	if (limit && !((amount_of(deal) || 0) > limit)) return false;
+	if (f.closing_month && (!month_key(today) || month_key(deal.expected_closing) !== month_key(today))) return false;
+	return true;
+}
+
+// The model as the filters show it: the same stages, today and thresholds, `deals` narrowed, and
+// `by_name` still the whole board (a panel may be open on a deal the filters hide). Also `snoozed`,
+// how many snoozed deals pass the filters, and `hidden`, how many of those are hidden. Every view
+// and the forecast strip draw from this, so the strip forecasts what is shown.
+export function filtered(model, filters, user) {
+	const m = model || {};
+	const f = clean_filters(filters);
+	const passing = (m.deals || []).filter((deal) => passes(deal, f, user, m.today));
+	const snoozed = passing.filter((deal) => deal.snooze === "snoozed").length;
+	const deals = f.show_snoozed ? passing : passing.filter((deal) => deal.snooze !== "snoozed");
+	return Object.assign({}, m, { deals, snoozed, hidden: passing.length - deals.length, filters: f });
+}
+
+// The owners on the board, for the owner filter: [{ id, name }] by name.
+export function owners(model) {
+	const seen = {};
+	((model || {}).deals || []).forEach((deal) => {
+		if (deal.owner && !seen[deal.owner]) seen[deal.owner] = deal.owner_name || deal.owner;
+	});
+	return Object.keys(seen)
+		.map((id) => ({ id, name: seen[id] }))
+		.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+// The streams on the board, for the stream filter, in row order; NO_STREAM_FILTER last when a deal
+// has none.
+export function stream_choices(model) {
+	const found = new Set();
+	let none = false;
+	((model || {}).deals || []).forEach((deal) => {
+		if (!(deal.streams || []).length) none = true;
+		(deal.streams || []).forEach((s) => found.add(s));
+	});
+	const known = STREAM_ORDER.filter((s) => found.has(s));
+	const extra = Array.from(found)
+		.filter((s) => !STREAM_ORDER.includes(s))
+		.sort();
+	return known.concat(extra, none ? [NO_STREAM_FILTER] : []);
+}
+
+// Only the keys VIEW_SCHEMA allows, each of its type (a saved view as the page applies it).
+export function pick_view(state) {
+	const out = {};
+	const s = state && typeof state === "object" ? state : {};
+	Object.keys(VIEW_SCHEMA).forEach((key) => {
+		if (!Object.prototype.hasOwnProperty.call(s, key)) return;
+		const rule = VIEW_SCHEMA[key];
+		const value = s[key];
+		if (rule[0] === "bool") out[key] = flag(value);
+		else if (rule[0] === "enum") {
+			if (typeof value === "string" && rule[1].includes(value)) out[key] = value;
+		} else if (value === null || value === undefined) out[key] = "";
+		else if (typeof value === "string" || typeof value === "number") out[key] = text(value).slice(0, 140);
+	});
+	return out;
+}
+
+// ------------------------------------------------------------------ needs attention (P6.4)
+
+// Why a deal needs attention, in a fixed order; [] when it does not:
+//   stale       past the glow thresholds (level 1 or 2; On Hold never glows, so is never stale)
+//   overdue     its expected close date is before today
+//   no_amount   no amount above zero
+//   incomplete  missing what its stage asks for (form kit P4.6's completeness)
+// A deal that is snoozed (its date still ahead) needs nothing until it returns.
+export const REASONS = ["stale", "overdue", "no_amount", "incomplete"];
+
+export function attention_reasons(deal, today) {
+	if (!deal || deal.snooze === "snoozed") return [];
+	const out = [];
+	if (deal.stale > 0) out.push("stale");
+	const close = day_number(deal.expected_closing);
+	const now = day_number(today);
+	if (close !== null && now !== null && close < now) out.push("overdue");
+	if (amount_of(deal) === null) out.push("no_amount");
+	const m = meter(deal.completeness);
+	if (m && m.done < m.total) out.push("incomplete");
+	return out;
+}
+
+// The list, highest value first (no amount last), then by title: { items: [{ deal, reasons }],
+// counts per reason, total (each deal once) }.
+export function attention(model) {
+	const m = model || {};
+	const items = (m.deals || [])
+		.map((deal) => ({ deal, reasons: attention_reasons(deal, m.today) }))
+		.filter((item) => item.reasons.length);
+	items.sort((a, b) => {
+		const va = amount_of(a.deal);
+		const vb = amount_of(b.deal);
+		if (va !== vb) {
+			if (va === null) return 1;
+			if (vb === null) return -1;
+			return vb - va;
+		}
+		return a.deal.title.localeCompare(b.deal.title) || a.deal.name.localeCompare(b.deal.name);
+	});
+	const counts = {};
+	REASONS.forEach((reason) => {
+		counts[reason] = items.filter((item) => item.reasons.includes(reason)).length;
+	});
+	return { items, counts, total: items.length };
+}
+
+// ------------------------------------------------------------------ the table (P6.3)
+
+function sort_value(model, deal, key) {
+	switch (key) {
+		case "title":
+			return deal.title.toLowerCase();
+		case "stage": {
+			const index = ((model || {}).stages || []).findIndex((s) => s.key === deal.stage);
+			return index === -1 ? null : index;
+		}
+		case "amount":
+			return amount_of(deal);
+		case "probability":
+			return deal.probability;
+		case "weighted":
+			return amount_of(deal) === null || deal.kind === "parked" ? null : weighted_of(deal);
+		case "closing":
+			return day_number(deal.expected_closing);
+		case "days":
+			return deal.days === undefined ? null : deal.days;
+		case "owner":
+			return (deal.owner_name || "").toLowerCase() || null;
+		case "complete": {
+			const m = meter(deal.completeness);
+			return m ? m.percent : null;
+		}
+		default:
+			return null;
+	}
+}
+
+// The deals sorted by a column. A blank (no amount, no close date) sorts last whichever way the
+// column is turned, so turning it never buries the deals that have one. Ties go by title.
+export function table_rows(model, sort) {
+	const key = SORT_KEYS.includes((sort || {}).sort) ? sort.sort : DEFAULT_SORT.sort;
+	const desc = flag((sort || {}).desc);
+	const deals = ((model || {}).deals || []).slice();
+	deals.sort((a, b) => {
+		const va = sort_value(model, a, key);
+		const vb = sort_value(model, b, key);
+		const blank_a = va === null || va === undefined || va === "";
+		const blank_b = vb === null || vb === undefined || vb === "";
+		if (blank_a !== blank_b) return blank_a ? 1 : -1;
+		if (!blank_a && va !== vb) {
+			const order = va < vb ? -1 : 1;
+			return desc ? -order : order;
+		}
+		return a.title.localeCompare(b.title) || a.name.localeCompare(b.name);
+	});
+	return deals;
+}
+
+// A click on a column head: the same column turns around; another starts ascending, except the
+// numbers people read biggest-first (amount, probability, weighted, days, complete).
+export function next_sort(sort, key) {
+	const current = sort || DEFAULT_SORT;
+	if (!SORT_KEYS.includes(key)) return { sort: current.sort, desc: !!current.desc };
+	if (current.sort === key) return { sort: key, desc: !current.desc };
+	return { sort: key, desc: ["amount", "probability", "weighted", "days", "complete"].includes(key) };
+}
+
+// ------------------------------------------------------------------ the timeline (P6.3)
+
+// Expected close dates by month: [{ key: "2026-10", past, current, deals (by date, then title),
+// count, total, weighted }], earliest first, then { key: "" } for the deals with no close date.
+// Only months that hold a deal are listed. `past` is a month before the site's current one: every
+// deal in it is overdue.
+export function timeline(model) {
+	const m = model || {};
+	const now = month_key(m.today);
+	const groups = {};
+	(m.deals || []).forEach((deal) => {
+		const key = month_key(deal.expected_closing);
+		(groups[key] = groups[key] || []).push(deal);
+	});
+	const keys = Object.keys(groups)
+		.filter(Boolean)
+		.sort();
+	if (groups[""]) keys.push("");
+	return keys.map((key) => {
+		const deals = groups[key].slice().sort((a, b) => {
+			const da = day_number(a.expected_closing);
+			const db = day_number(b.expected_closing);
+			if (da !== db) return (da === null ? Infinity : da) - (db === null ? Infinity : db);
+			return a.title.localeCompare(b.title) || a.name.localeCompare(b.name);
+		});
+		return Object.assign({ key, past: !!key && !!now && key < now, current: !!key && key === now, deals }, figures(deals));
+	});
+}
+
+// ------------------------------------------------------------------ snoozing (P6.8)
+
+// The earliest date a snooze may run to: tomorrow, on the site's date.
+export function snooze_min(today) {
+	const n = day_number(today);
+	if (n === null) return "";
+	return new Date((n + 1) * 86400000).toISOString().slice(0, 10);
+}
+
+// The model with one deal's snooze set (or cleared, with until ""), as the server saved it.
+export function set_snooze(model, name, until, reason, modified) {
+	const m = model || {};
+	const old = (m.by_name || {})[name];
+	if (!old) return m;
+	const deal = Object.assign({}, old, {
+		snoozed_until: text(until).slice(0, 10),
+		snooze_reason: text(until) ? text(reason) : "",
+		modified: text(modified) || old.modified,
+	});
+	deal.snooze = snooze_state(deal, m.today);
+	return replace_deal(m, deal);
 }

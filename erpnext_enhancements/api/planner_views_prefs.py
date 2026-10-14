@@ -6,7 +6,9 @@ on**. So a view lives on the server, per user, never in the browser.
 
 * **Where it is stored.** Frappe's own per-user settings table, ``__UserSettings`` (one row per
   ``(user, doctype)``, a JSON ``data`` column), under the keys ``Project Planner`` and
-  ``Maintenance Planner`` and inside one top-level key of the row, ``planner_views``. Frappe's
+  ``Maintenance Planner`` (and, since form kit P6.8, ``Opportunity Board``: the board's filter bar,
+  view and table sort, gated by read permission on Opportunity rather than a planner role) and
+  inside one top-level key of the row, ``planner_views``. Frappe's
   ``frappe.model.utils.user_settings.save`` was the obvious tool and is deliberately not used: it
   writes only to the Redis cache, and ``sync_user_settings`` copies the cache to the table later.
   A production deploy ``FLUSHDB``s that cache (CLAUDE.md), so a view saved a few minutes before a
@@ -37,8 +39,9 @@ import re
 import frappe
 from frappe import _
 
-#: The planner a request is about -> its key in ``__UserSettings.doctype``.
-PLANNERS = {"project": "Project Planner", "maintenance": "Maintenance Planner"}
+#: The planner a request is about -> its key in ``__UserSettings.doctype``. ``board`` is the
+#: Opportunity Board (form kit P6.8, v1.660.0), which keeps its saved views in this same store.
+PLANNERS = {"project": "Project Planner", "maintenance": "Maintenance Planner", "board": "Opportunity Board"}
 #: The one top-level key of the row these endpoints own; anything else in the row is kept.
 ROW_KEY = "planner_views"
 STORE_VERSION = 1
@@ -56,6 +59,21 @@ MAX_PRINT_TEXT = 200
 PROJECT_GROUPS = ("", "Field", "PM", "Design", "Subcontractor")
 PROJECT_COLOR_MODES = ("default", "person", "job_type", "project", "pm", "status")
 MAINTENANCE_COLOR_MODES = ("default", "technician", "site", "status", "contract")
+#: The Opportunity Board's views, layouts and table columns (public/js/opportunity_board/board.js
+#: VIEWS, LAYOUTS, SORT_KEYS; tests/test_opportunity_board_focus.py holds the two lists equal).
+BOARD_VIEWS = ("board", "table", "timeline", "attention")
+BOARD_LAYOUTS = ("stages", "streams")
+BOARD_SORT_KEYS = (
+	"title",
+	"stage",
+	"amount",
+	"probability",
+	"weighted",
+	"closing",
+	"days",
+	"owner",
+	"complete",
+)
 
 #: What a view may hold, per planner: ``key -> ("bool",) | ("text",) | ("enum", values)``. The pages'
 #: own constants are checked against this by tests/test_planner_phase6c.py.
@@ -78,13 +96,31 @@ SCHEMA = {
 		"panel": ("bool",),
 		"color_by": ("enum", MAINTENANCE_COLOR_MODES),
 	},
+	# The board's filter bar, view and table sort (board.js VIEW_SCHEMA, key for key).
+	"board": {
+		"view": ("enum", BOARD_VIEWS),
+		"layout": ("enum", BOARD_LAYOUTS),
+		"mine": ("bool",),
+		"owner": ("text",),
+		"stream": ("text",),
+		"min_amount": ("text",),
+		"closing_month": ("bool",),
+		"show_snoozed": ("bool",),
+		"hold_open": ("bool",),
+		"sort": ("enum", BOARD_SORT_KEYS),
+		"desc": ("bool",),
+	},
 }
 #: Never remembered as "last used" (see the module docstring).
 NOT_REMEMBERED = ("over_only",)
 
 #: The print eyebrow and the print design system pillar of each planner.
-PRINT_EYEBROW = {"project": "Project Planner", "maintenance": "Maintenance Planner"}
-PRINT_PILLAR = {"project": None, "maintenance": "service"}
+PRINT_EYEBROW = {
+	"project": "Project Planner",
+	"maintenance": "Maintenance Planner",
+	"board": "Opportunity Board",
+}
+PRINT_PILLAR = {"project": None, "maintenance": "service", "board": None}
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SPACES = re.compile(r"\s+")
@@ -235,6 +271,10 @@ def _require(planner):
 		from erpnext_enhancements.api import project_planner
 
 		project_planner._require_planner()
+	elif planner == "board":
+		# The board shows what the caller may read of Opportunity (get_board reads through
+		# get_list), so its views are for anyone who may read one.
+		frappe.has_permission("Opportunity", "read", throw=True)
 	else:
 		from erpnext_enhancements.api import maintenance_planner
 
