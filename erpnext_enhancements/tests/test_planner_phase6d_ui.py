@@ -49,6 +49,8 @@ APP = Path(__file__).resolve().parents[1]
 PP_JS = APP / "project_enhancements/page/project_planner/project_planner.js"
 MP_JS = APP / "sapphire_maintenance/page/maintenance_planner/maintenance_planner.js"
 KIT_DIR = APP / "public/js/planner_kit"
+# planner_kit/escape.js re-exports this file's esc as `escape`, so the plain-script harness loads it first.
+SF_ESC = APP / "public/js/sf_kit/esc.js"
 BUNDLE = APP / "public/js/planner_kit.bundle.js"
 BLOCKS_API = APP / "api/planner_blocks.py"
 CONFLICTS_API = APP / "api/planner_conflicts.py"
@@ -687,7 +689,9 @@ def _module(name):
 
 
 def _kit_source():
-	escape = re.sub(r"^export (const|function) ", r"\1 ", _kit("escape"), flags=re.M)
+	escape = SF_ESC.read_text(encoding="utf-8") + "\n" + _kit("escape")
+	escape = re.sub(r"^import .*?;\s*$", "", escape, flags=re.M)
+	escape = re.sub(r"^export (const|function) ", r"\1 ", escape, flags=re.M)
 	return escape + "\n" + "".join(_module(name) for name in ("conflicts", "blocks", "peeks"))
 
 

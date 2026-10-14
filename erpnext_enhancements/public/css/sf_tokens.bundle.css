@@ -8,8 +8,9 @@
  * by reading a --sf-* variable. A font only downloads when something renders in it.
  *
  * Two layers:
- *   1. the palette, by the design system's own token names, plus four values the system lacks
- *      (two neutral greys, and the 2016 guide's red and yellow for status fills);
+ *   1. the palette, by the design system's own token names, plus five values the system lacks
+ *      (two neutral greys, the 2016 guide's red and yellow for status fills, and a green for the
+ *      "healthy / done" status fill, which neither source has);
  *   2. semantic tokens (--sf-bg, --sf-text, --sf-field-border ...) that screens actually use.
  *      Only this layer changes with the theme.
  *
@@ -87,6 +88,11 @@
 	   colours from there rather than invent one). Fills carry a label; neither is ever text. */
 	--sf-red: #bd2e2b;
 	--sf-yellow: #ffb819;
+	/* The "good" status fill (healthy, done, synced). Neither the system nor the 2016 guide has a
+	   green, so this is the one the app's dashboard blocks already draw (#1e7e51, 47 uses), kept
+	   clear of teal, which is the Rent pillar. An off-white label on it is 4.76:1; the fill is
+	   5.05:1 against a white card and 3.27:1 against a dark-theme navy-800 card. */
+	--sf-green: #1e7e51;
 
 	/* ---- Pillars. `open` is the gradient's first stop and the flat colour; `deep` is the closing
 	   stop, the only one safe under small text. Equal to print_style.PILLARS (tested). ---- */
@@ -176,6 +182,8 @@
 	--sf-on-danger: var(--sf-off-white);
 	--sf-warn: var(--sf-yellow);
 	--sf-on-warn: var(--sf-navy-900);
+	--sf-good: var(--sf-green);
+	--sf-on-good: var(--sf-off-white);
 }
 
 /* Dark, from the Desk's theme setting. */

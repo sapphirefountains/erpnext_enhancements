@@ -13,7 +13,7 @@ Fountains Design System from the website to the Desk, and it loads on every Desk
 What it pins:
 
 * every hex in the file is a design-system token, a 2016-guide status colour, or one of
-  the two app additions listed here with a reason;
+  the app additions listed here with a reason;
 * the palette, the pillar stops and the gradients equal `print_style`, the one record
   print, email and the project brief already share, so the app cannot drift from paper;
 * every text pairing the guide names clears 4.5:1, and every boundary 3:1, in light and
@@ -72,6 +72,7 @@ GUIDE_STATUS = {"#bd2e2b", "#ffb819"}
 APP_ADDITIONS = {
     "#5c6066",  # ink-500: muted text; the system's only greys are body inks
     "#80858b",  # border-300: a field's edge at 3:1; border-100 is 1.4:1 on white
+    "#1e7e51",  # green: the "good" status fill; neither the system nor the 2016 guide has one
 }
 
 PROD_VALUE_STREAMS = {"Design", "Build", "Products", "Service", "Events", "Delivery"}
@@ -256,6 +257,7 @@ TEXT_PAIRS = (
     ("--sf-on-band-muted", "--sf-band-bottom"),
     ("--sf-on-danger", "--sf-danger"),
     ("--sf-on-warn", "--sf-warn"),
+    ("--sf-on-good", "--sf-good"),
     ("--sf-on-pillar", "--sf-pillar-design-deep"),
     ("--sf-on-pillar", "--sf-pillar-build-deep"),
     ("--sf-on-pillar", "--sf-pillar-service-deep"),
@@ -267,6 +269,9 @@ BOUNDARY_PAIRS = (
     ("--sf-field-border", "--sf-field-bg"),
     ("--sf-focus", "--sf-surface"),
     ("--sf-focus", "--sf-bg"),
+    # a good chip (sf_kit) is a fill whose edge is its own colour, on a card or the page
+    ("--sf-good", "--sf-surface"),
+    ("--sf-good", "--sf-bg"),
 )
 
 

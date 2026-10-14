@@ -72,6 +72,7 @@ Read the semantic layer in screens. Read the palette only to draw a pillar or th
 | `--sf-on-pillar` | off-white | same | a label on a pillar's closing stop |
 | `--sf-danger` / `--sf-on-danger` | red / off-white | same | a status fill and its label |
 | `--sf-warn` / `--sf-on-warn` | yellow / navy-900 | same | a status fill and its label |
+| `--sf-good` / `--sf-on-good` | green / off-white | same | a status fill and its label |
 
 Every text pairing above clears 4.5:1, and every boundary and focus ring 3:1, in both themes.
 The test measures them all.
@@ -84,7 +85,7 @@ The design system's tokens by name (`--sf-deep-sea-blue`, `--sf-bahama-blue`,
 `--sf-white`, `--sf-ink-900`, `--sf-ink-700`, `--sf-border-100`). The values equal
 `print_style`'s constants (tested).
 
-**Four values the design system doesn't have.** The test refuses any other hex, so a new one
+**Five values the design system doesn't have.** The test refuses any other hex, so a new one
 needs its reason here and in the CSS:
 
 | Token | Value | Why |
@@ -93,6 +94,7 @@ needs its reason here and in the CSS:
 | `--sf-border-300` | `#80858b` | A field's edge. The system's border-100 is 1.4:1 on white, and its own FormField notes ask for 3:1; this is 3.7:1. |
 | `--sf-red` | `#bd2e2b` | Status fill (failed, out of range, past due). From the 2016 guide's supportive set, as print uses it. |
 | `--sf-yellow` | `#ffb819` | Status fill (attention, stale). Same source. 1.7:1 on white, so it is never text. |
+| `--sf-green` | `#1e7e51` | Status fill for good (healthy, done, synced), read through `--sf-good` / `--sf-on-good`. Neither the system nor the 2016 guide has a green; this is the one the dashboard blocks already used, and it is clearly not teal (the Rent pillar). An off-white label on it is 4.76:1; the fill is 5.05:1 against a white card and 3.27:1 against a dark-theme navy-800 card. Added in sf_kit (TASK S2.2). |
 
 ## Pillars and value streams
 
@@ -234,6 +236,152 @@ Built in form kit P4 and P6, specified here so they come out the same everywhere
 | **Chip** | A pill in a closing stop with an `--sf-on-pillar` label and a 1px border in the pillar's **opening** stop, or `--sf-danger` / `--sf-warn` with its own label. The border is not decoration: Build's closing stop is navy-800, the same colour as a dark-theme card, so without it a Build chip is a floating word (seen in the 2026-10-13 render). A status always carries its word, not just its colour. |
 | **Button** | `--sf-radius-control`. Primary: `--sf-primary` fill, `--sf-on-primary` label, at most one per panel. Secondary: transparent with a 2px `--sf-text` stroke. Hover changes colour only. |
 | **Toast** | Inverted: a `--sf-text-strong` ground with `--sf-surface` text, so it stands out in both themes (a navy toast would vanish against the dark page). One action. |
+
+## sf_kit: the shared page pieces
+
+The small parts every custom page draws, built once on these tokens: the state panel, chip,
+card, buttons, toast, a status-tile grid, one HTML escape and one `frappe.call` wrapper. The
+modules are `erpnext_enhancements/public/js/sf_kit/` (pure ES modules: no DOM or frappe at
+import time, so `scripts/test_sf_kit.mjs` runs every one under node), the entry point is
+`public/js/sf_kit.bundle.js`, and the styles are `public/css/sf_kit.bundle.css`.
+
+**The rule: a page never writes its own loading, empty or error panel, chip or toast again.**
+It draws them from the kit, so a fix or a colour change reaches every screen at once. Moving the
+existing pages and blocks over is a separate step; new code starts on the kit.
+
+### On a Desk page
+
+Neither file is a global include (nothing in `hooks.py` `app_include_*`; tested): only a page
+that uses the kit loads it, both files together.
+
+```js
+frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () => {
+	const sf = window.sf_kit;
+	sf.state.render(this.body, "loading");
+	...
+});
+```
+
+v16's `frappe.require` passes every name through `frappe.assets.bundled_asset`, which looks it up
+in `frappe.boot.assets_json` (`path = frappe.boot.assets_json[path] || path`, `assets.js` on
+`version-16`), so both names resolve to their content-hashed files; a `.css` name becomes a
+`<link rel="stylesheet">`, and the callback runs once both have loaded. Never write the raw
+`/assets/...` path (the one-year immutable cache in CLAUDE.md). The bundle does not inject CSS
+from JS; the `.css` bundle is the stylesheet. The tokens themselves are already on every page.
+
+### In a Custom HTML Block
+
+A block renders inside a shadow root (`root_element`). The `--sf-*` tokens are custom
+properties, which inherit across the shadow boundary, but a page's stylesheet does not reach
+inside it. So a block loads the script and adopts the kit's CSS text, which `sf_kit.CSS`
+exports (the same text as the `.css` file; tested character for character):
+
+```js
+frappe.require(["sf_kit.bundle.js"], () => {
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(sf_kit.CSS);
+	root_element.adoptedStyleSheets = [...root_element.adoptedStyleSheets, sheet];
+	const toast = sf_kit.create_toast({ container: root_element });
+	...
+});
+```
+
+A toast for a block goes into its own root (`container`), so it sits inside the adopted sheet.
+
+### The pieces
+
+**`sf_kit.esc(value)`**: the one HTML escape (`& < > " ' \``); `null` and `undefined` become
+`""`. Everything a person typed or the server sent goes through it before it becomes markup.
+`planner_kit`'s `escape` is this same function.
+
+```js
+row.innerHTML = `<b>${sf_kit.esc(doc.customer_name)}</b>`;
+```
+
+**`sf_kit.call(method, args, { silent })`**: `frappe.call` as a promise that always settles once.
+It resolves `r.message`, and rejects `{ status, message }`: `status` is the HTTP status, or 0
+when the server was never reached; `message` is the server's own words for a `frappe.throw`
+(HTML taken out), or a plain translated sentence ("Could not reach the server.", and a generic
+one for a 5xx, never the exception text). `silent: true` stops frappe's own pop-up, so the page
+can say it once in its error panel.
+
+```js
+sf_kit.call("erpnext_enhancements.api.x.get_rows", { day }, { silent: true })
+	.then((rows) => draw(rows))
+	.catch((err) => sf_kit.state.render(el, "error", { body: err.message, on_action: load }));
+```
+
+**`sf_kit.state.render(el, kind, opts)`** / **`sf_kit.state.html(kind, opts)`**: the panel a page
+shows in place of its content. `kind` is `loading`, `empty`, `error` or `no-access`; `opts` are
+`title`, `body`, `action_label` and `on_action`. It is page content, never an overlay, and it
+pushes no history entry. The one button ("Try again" by default) is drawn only when there is an
+`on_action` to call. Loading is `role="status"`, error `role="alert"`; the spinner stops under
+`prefers-reduced-motion`.
+
+```js
+sf_kit.state.render(el, "loading");
+sf_kit.state.render(el, "empty", { title: __("No visits this week.") });
+```
+
+**`sf_kit.chip(label, tone)`**: the Chip above, as HTML. A pillar tone (`design`, `build`,
+`service`, `rent`, `neutral`) or a status (`danger`, `warn`, `good`); an unknown tone is
+neutral, and a chip with no word is not drawn, because the word is the meaning.
+
+```js
+`${sf_kit.chip(project.stream, "build")} ${sf_kit.chip(__("Overdue"), "danger")}`
+```
+
+**Card**: the class `sf-card` (square, `--sf-surface`, a `--sf-rule` hairline, no shadow), plus
+`sf-card--pillar-<pillar>` for the leading band in the closing stop. `sf_kit.card.html({ title,
+body_html, pillar })` covers the simple case; the title is escaped and `body_html` is markup the
+caller built (and escaped).
+
+**Buttons**: the classes `sf-btn sf-btn--primary` (at most one per panel), `sf-btn
+sf-btn--secondary` and `sf-btn sf-btn--quiet` (a text button). 44px tall, `--sf-radius-control`,
+a 2px `--sf-focus` ring, and hover changes colour only.
+
+```html
+<button type="button" class="sf-btn sf-btn--primary">Save visit</button>
+```
+
+**`sf_kit.toast(message, { action_label, on_action, timeout, tone })`**: one at a time, 8 seconds
+by default, held while the pointer is over it, announced politely, one action and a Dismiss.
+Inverted, so it shows on the dark page too. `tone` is `success`, `warning` or `info`.
+`toast.close()` and `toast.current()` as in the planner kit, whose toast is now this one.
+
+```js
+sf_kit.toast(__("Visit saved"), { action_label: __("Undo"), on_action: undo });
+```
+
+**`sf_kit.tiles.html(items)`**: the grid of a health dashboard (Integrations Health, the device
+fleet). Each item is `{ key, title, tone | status, status_label, value, detail, metrics: [{ label,
+value }], links: [{ label, href }] }`; `green` / `amber` / `red` are read as `good` / `warn` /
+`danger`. Every text is escaped, and a link becomes a link only for a `/desk/` route or an http(s)
+URL; anything else is shown as plain text.
+
+```js
+el.innerHTML = sf_kit.tiles.html([{ title: "Google Drive", tone: "good", detail: "Synced 4 min ago",
+	links: [{ label: __("Settings"), href: "/desk/google-drive-settings" }] }]);
+```
+
+**`sf_kit.t(text, args)`**: `__()` when the Desk is there, `{0}` substitution otherwise.
+
+As ES modules, the same functions are exported by `public/js/sf_kit/index.js` (`call` and
+`create_toast` take an `env` there: `{ frappe, t }` and `{ doc, t, set_timeout, clear_timeout }`).
+
+### What stays with form kit P4
+
+The head band, step rail, field, help bubble, the guided page and its side panel, and offline
+saving are form kit P4's, specified in the Components table above and built on top of sf_kit
+(they import its modules). sf_kit stays the small shared base: a piece goes in it only when more
+than one kind of page needs it.
+
+### Before you push
+
+```bash
+node scripts/test_sf_kit.mjs
+python -m unittest erpnext_enhancements.tests.test_sf_kit -v
+```
 
 ## The guided-flow engine
 

@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.626.0] - 2026-10-13
+
+Custom pages, step 2 of 7 (TASK-2026-02804; subtasks 02816–02819): `sf_kit`, the shared page pieces,
+built on the Sapphire design tokens from form kit P1. Every custom page and dashboard block had grown
+its own loading line, error state, status colours, escape helper and server-call wrapper, which is
+where most of the app's ~1,000 literal hex colours came from and why some pages hung on "Loading…"
+when a call failed. Step 3 moves the pages onto this kit; form kit P4 builds its guided-entry UI on
+top of it (boundary agreed with the form-kit session on 2026-10-13).
+
+### Added
+
+- **`sf_kit`** (`public/js/sf_kit/*.js`, ES modules; `sf_kit.bundle.js` installs `window.sf_kit`;
+  `sf_kit.bundle.css`). Pages load it with
+  `frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ...)`; it is deliberately not global.
+  v16's `frappe.require` resolves both names through `boot.assets_json`, so each is a content-hashed
+  file and a phone never keeps a stale copy.
+  - `esc()` and `t()`.
+  - `call(method, args, opts)`: resolves `r.message`, rejects `{status, message}` with a readable
+    message (server messages, the exception's text, or a plain "could not reach the server"). It
+    settles through the promise `frappe.call` returns, because v16 passes its `error` callback
+    different arguments per status and never calls it for QueryTimeout or Deadlock, so a page
+    waiting on `error` can hang. A 5xx never shows the exception text.
+  - State panels for loading, empty, error and no-access, with at most one action ("Try again").
+    A panel is page content and pushes no history entry; loading stops animating under
+    `prefers-reduced-motion`.
+  - Chips: pillar tones (closing-stop fill, opening-stop border, so a Build chip doesn't vanish on a
+    dark card) and danger, warn and good. A chip always shows its word, never colour alone.
+  - Cards (square, a hairline, no shadow), buttons (44px, 10px radius, primary / secondary / quiet),
+    a toast (inverted, one action, 8 s, `aria-live="polite"`), and a health-tile grid that
+    Integrations Health and the device dashboard can adopt unchanged.
+  - `styles.js` carries the same CSS text as the bundle (tested), so a Custom HTML Block can adopt
+    it into its shadow root: tokens inherit across the shadow boundary, stylesheets do not.
+- **A "good" status colour**, `--sf-good` / `--sf-on-good`: `#1e7e51`, the green the dashboard
+  blocks already use 47 times, with an off-white label at 4.76:1. The design system has no green,
+  so it goes through the same gate as every app addition (`APP_ADDITIONS`, the doc's table,
+  contrast pairs in both themes).
+- **An `sf_kit` section in `docs/app-design-system.md`**: loading it on a page and in a block, each
+  primitive with an example, and what stays with form kit P4 (head band, step rail, field, help
+  bubble, guided page, side panel, offline).
+
+### Changed
+
+- **planner_kit's `escape` and toast are sf_kit's.** `planner_kit/toast.js` wraps sf_kit's toast
+  with the `pk` prefix, and the markup is held to the old planner toast's output byte for byte, so
+  nothing on the two planners changes. Three planner suites that run `escape.js` as plain script
+  text now load `sf_kit/esc.js` in front of it; no assertion changed.
+
+### Tests
+
+- `tests/test_sf_kit.py` + `scripts/test_sf_kit.mjs`, both in CI. The kit's CSS may use only
+  `var(--sf-*)` colours (no hex, rgb, hsl or named colours), never a shadow, only the 767px and
+  reduced-motion media queries, only `--sf-radius-*` radii and `sf-` classes, and every token it
+  reads must exist. Every primitive is executed: escaping, `call` against 200 / 417 / 500 / network
+  failure / silent, every state kind and tone, hostile labels and hrefs, toast timing and
+  replacement.
+
 ## [1.625.1] - 2026-10-13
 
 Opportunity form and guided-flow config. These are item 2 of Nik's 2026-10-13 decisions on TASK-2026-02742.
