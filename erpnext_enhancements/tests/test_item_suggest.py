@@ -296,6 +296,12 @@ class TestNeverANumberFromTheBlocks(unittest.TestCase):
 			naming.CODE_MISSING, [f["code"] for f in review["findings"]], "the block list gives the code"
 		)
 
+	def test_a_reserved_number_off_a_photo_is_never_a_part_number(self):
+		data = {"family": {"value": "vendor"}, "vendor_part_no": {"value": "PDT0042"}}
+		checked = rules.validate_suggestion(data, description="a part", has_photo=True)
+		self.assertNotIn("vendor_part_no", checked["fields"])
+		self.assertNotIn("0042", json.dumps(checked))
+
 	def test_a_service_names_srv(self):
 		checked = rules.validate_suggestion(
 			{"family": {"value": "service"}, "name": {"CATEGORY": {"value": "FILTER"}}}

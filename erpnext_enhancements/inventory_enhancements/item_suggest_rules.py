@@ -420,7 +420,11 @@ def validate_suggestion(
 			part, why, confirm = "", None, False
 			if proposed:
 				drop("vendor_part_no", "not in what you typed: a part number is never guessed")
-		if part and rules.classify_code_family(part) != rules.FAMILY_VENDOR:
+		# A reserved number written without its hyphen ("PDT0042") still reads as one: never offered.
+		if part and (
+			rules.classify_code_family(part) != rules.FAMILY_VENDOR
+			or (part != typed and _RESERVED_NUMBER.search(part))
+		):
 			drop("vendor_part_no", "PDT-, SRV- and CON- belong to our own families, not a vendor's")
 			part = ""
 		if part:
