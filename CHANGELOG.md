@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.628.0] - 2026-10-13
+
+### Added
+
+- **Chemicals bill per dose, as a whole container, or not at all, chosen when a visit is approved.**
+  - **Why.** Since v1.594.0 a visit records chemicals as the technician counts them ("1 cap full",
+    "2 tablets"). Both invoice builders still billed `qty` of the item at its selling price, so a cap of
+    acid billed a bottle. Nik, 2026-10-13: it "depends on the agreement and such of the items as
+    sometimes a full bottle needs to be billed because we can't use it after it cures or something, so
+    it's entirely situational". He chose to decide at visit approval.
+  - **On the Visit Review page.** A visit with chemicals shows **Chemicals to bill**: each chemical, what
+    was used, and a choice the reviewer sends with Approve. A reviewer who can't approve the visit sees
+    the choices read-only.
+    - **Per Dose:** one line, the doses recorded times the item's Price per Dose. A dose is no unit of the
+      item's, so a quantity in it would not convert; the doses go in the description.
+    - **Whole Container:** the containers opened, 1 unless changed, at the selling price.
+    - **Don't Bill.**
+  - **The item default.** The choice starts from the item's new **Bill On Visits** field (Per Dose or
+    Whole Container) in a **Maintenance Billing** section, beside the new **Price per Dose**. Both are
+    Custom Fields in the fixtures.
+  - **Stored on the visit.** The choice goes on the visit's chemical row (`bill_as`, `containers`).
+    - `approve_visit` checks the choices against the visit's own rows and writes them before the
+      workflow runs, because v16's `apply_workflow` reloads the visit from the database.
+    - A row nobody chose (a visit approved on the desk form) bills its item's default.
+  - **One module.** `sapphire_maintenance/chemical_billing.py` is read by the per-visit invoice
+    (`maintenance_workflow.create_sales_invoice`) and the monthly job (`maintenance_billing`), so both
+    bill a chemical the same way.
+    - A line with no price says so in its description, and the review page says "no price set" rather
+      than "$0.00". Invoices stay drafts.
+    - An out-of-season month drafts chemicals only when a line has a price (v1.625.0).
+    - **Every line carries `price_list_rate` equal to its rate.** Review caught this in erpnext
+      version-16 (`accounts_controller.set_missing_item_details` keeps a set value;
+      `taxes_and_totals.calculate_item_rate` replaces a rate of 0 with the list price). Without it,
+      `set_missing_values` filled the item's list price, so an unpriced per-dose line billed the whole
+      container, and a priced one showed the container price less an invented discount.
+    - **A dose recorded in the item's own stock unit** (1.5 gallons of a gallon item) bills at the
+      selling price when the item has no Price per Dose, as it did before.
+    - The selling price is the newest Item Price by creation, as `frappe.db.get_value` picked it before.
+    - Approval adds a timeline comment saying how each chemical was billed, since a database write leaves
+      no Version row.
+    - Price per Dose keeps four decimals, so 12.5 cents a tablet fits.
+  - **Tests.**
+    - `tests/test_chemical_billing.py` (bench-free, own CI step, 15 tests) covers the lines, the list
+      price on every line, the stock-unit price, defaults, the checked choices and the timeline line. It
+      also checks the wiring of both builders, the page's escaping, and that the fields agree with the
+      module.
+    - `test_visit_review` now runs the approval itself: the choices are written before the workflow,
+      and another visit's chemical is refused before anything is written. It also imports and drops the
+      real module cleanly.
+
+### Still before invoicing is switched on
+
+- Set **Price per Dose** and **Bill On Visits** on the chemicals the templates dose. Until then every
+  per-dose line says it has no price.
+
 ## [1.627.0] - 2026-10-13
 
 Form kit P5.5 (TASK-2026-02772): a default forecast probability for each Opportunity stage, which Sales

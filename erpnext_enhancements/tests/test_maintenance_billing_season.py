@@ -39,7 +39,8 @@ BILLING = "erpnext_enhancements.api.maintenance_billing"
 CONTRACT_MODULE = (
     "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract"
 )
-STUBBED = ("frappe", "frappe.utils", "frappe.model", "frappe.model.document", BILLING, CONTRACT_MODULE)
+CHEMICALS = "erpnext_enhancements.sapphire_maintenance.chemical_billing"
+STUBBED = ("frappe", "frappe.utils", "frappe.model", "frappe.model.document", BILLING, CONTRACT_MODULE, CHEMICALS)
 
 D = datetime.date
 STATE = {}
@@ -162,6 +163,14 @@ def setUpModule():
             return [r["name"] for r in rows]
         if doctype == "Sapphire Maintenance Consumable":
             return [_Row(row) for row in STATE["consumables"].get(filters["parent"], [])]
+        if doctype == "Item":
+            # v1.628.0: chemicals bill as chosen. These tests bill them whole, at the selling price.
+            return [
+                _Row(name=n, item_name=n, custom_maintenance_billing="Whole Container", custom_price_per_dose=0)
+                for n in filters["name"][1]
+            ]
+        if doctype == "Item Price":
+            return [_Row(item_code=n, price_list_rate=STATE["item_price"]) for n in filters["item_code"][1]]
         raise AssertionError(doctype)
 
     def _set_value(doctype, name, field, value=None, update_modified=True):
@@ -182,6 +191,7 @@ def setUpModule():
         get_single_value=lambda doctype, field: 1,
         savepoint=lambda name: None,
         rollback=lambda save_point=None: None,
+        has_column=lambda doctype, column: True,
     )
     frappe.defaults = types.SimpleNamespace(get_global_default=lambda key: "Sapphire")
 
@@ -194,6 +204,7 @@ def setUpModule():
     utils.cint = lambda v: int(v or 0)
     utils.flt = lambda v, *a: float(v or 0)
     utils.formatdate = lambda v=None, fmt=None: str(v)
+    utils.fmt_money = lambda v, *a, **k: f"${float(v or 0):.2f}"
     frappe.utils = utils
 
     model = types.ModuleType("frappe.model")
@@ -213,7 +224,13 @@ def _forget_package_attrs():
     import erpnext_enhancements.api as api_package
     import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract as contract_package
 
-    for owner, attr in ((api_package, "maintenance_billing"), (contract_package, "sapphire_maintenance_contract")):
+    import erpnext_enhancements.sapphire_maintenance as maintenance_package
+
+    for owner, attr in (
+        (api_package, "maintenance_billing"),
+        (contract_package, "sapphire_maintenance_contract"),
+        (maintenance_package, "chemical_billing"),
+    ):
         if attr in vars(owner):
             delattr(owner, attr)
 
