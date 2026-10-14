@@ -43,11 +43,12 @@ function text(value) {
 }
 
 // True when a Text Editor value holds no words: "", "<div><br></div>", "<p>&nbsp;</p>".
-// Only a test for emptiness; the description itself travels exactly as it was written.
+// Only a test for emptiness; the description itself travels exactly as it was written. A typed
+// non-breaking space needs no pattern of its own: String.prototype.trim() removes U+00A0.
 export function is_blank_html(value) {
 	return !text(value)
 		.replace(/<[^>]*>/g, "")
-		.replace(/&nbsp;|&#160;| /gi, "")
+		.replace(/&nbsp;|&#160;/gi, "")
 		.trim();
 }
 

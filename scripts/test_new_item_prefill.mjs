@@ -165,8 +165,11 @@ await check("a name that only repeats the code is left for the person", () => {
 	assert.equal(out.item_code, "PVC-90");
 });
 
+// A real U+00A0, built rather than typed so no editor or linter can turn it into anything else.
+const NBSP = String.fromCharCode(160);
+
 await check("an empty Text Editor is not a description; a real one travels verbatim", () => {
-	for (const blank of ["", "   ", "<div><br></div>", "<p>&nbsp;</p>", "<p> </p>", null, undefined]) {
+	for (const blank of ["", "   ", "<div><br></div>", "<p>&nbsp;</p>", `<p>${NBSP}</p>`, `<p>&nbsp;${NBSP}</p>`, null, undefined]) {
 		assert.equal(is_blank_html(blank), true, JSON.stringify(blank));
 		assert.equal(new_item_values({ description: blank }, {}, "X").description, undefined);
 	}
