@@ -36,6 +36,16 @@ _SERIES = (
 	"its Item Code (POL-0602), so the form hides it."
 )
 
+_ITEM_JS = "erpnext/stock/doctype/item/item.js erpnext.item.setup_queries (version-16)."
+#: The Accounting rows' expense accounts item.js filters to Expense accounts in one loop.
+_EXPENSE_ACCOUNTS = (
+	"purchase_expense_account",
+	"purchase_expense_contra_account",
+	"expenses_added_to_stock_account",
+	"expenses_added_to_stock_contra_account",
+	"default_cogs_account",
+)
+
 #: What every Item should have, stock or not (the start screen's progress).
 BASE = [
 	{"field": "item_code", "label": "Item Code"},
@@ -239,5 +249,83 @@ CONFIG = {
 		"default": 0,
 		"labels": {0: "Non-stock item", 1: "Stock item"},
 		"lists": {0: BASE, 1: STOCKED},
+	},
+	# Every query the Item form's scripts set on a field the flow shows (v1.685.0; form_kit/config's
+	# ``queries``). All of them are ERPNext's item.js ``erpnext.item.setup_queries``, on the grid
+	# columns of the Accounting, Reorder and Tax tables; a ``{"row": ...}`` value is the edited row's
+	# column, as the form reads locals[cdt][cdn]. tests/test_form_kit_inputs.py reads item.js (at
+	# version-16) and this app's Item scripts and fails on one that is neither here nor waived.
+	"queries": {
+		"item_defaults.expense_account": {
+			"query": "erpnext.controllers.queries.get_expense_account",
+			"filters": {"company": {"row": "company"}},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.income_account": {
+			"query": "erpnext.controllers.queries.get_income_account",
+			"filters": {"company": {"row": "company"}},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.default_inventory_account": {
+			"filters": {"is_group": 0, "company": {"row": "company"}, "account_type": "Stock"},
+			"source": _ITEM_JS + " Set twice there, with the same filters; the later set_query wins.",
+		},
+		"item_defaults.default_discount_account": {
+			"filters": {"report_type": "Profit and Loss", "company": {"row": "company"}, "is_group": 0},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.buying_cost_center": {
+			"filters": {"is_group": 0, "company": {"row": "company"}},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.selling_cost_center": {
+			"filters": {"is_group": 0, "company": {"row": "company"}},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.deferred_revenue_account": {
+			"filters": {"company": {"row": "company"}, "root_type": "Liability", "is_group": 0},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.deferred_expense_account": {
+			"filters": {"company": {"row": "company"}, "root_type": "Asset", "is_group": 0},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.default_warehouse": {
+			"filters": {"is_group": 0, "company": {"row": "company"}},
+			"source": _ITEM_JS,
+		},
+		"item_defaults.default_provisional_account": {
+			"filters": {
+				"company": {"row": "company"},
+				"root_type": ["in", ["Liability", "Asset"]],
+				"is_group": 0,
+			},
+			"source": _ITEM_JS,
+		},
+		**{
+			f"item_defaults.{fieldname}": {
+				"filters": {"company": {"row": "company"}, "root_type": "Expense", "is_group": 0},
+				"source": _ITEM_JS + " One set_query for each field of its `fields` list.",
+			}
+			for fieldname in _EXPENSE_ACCOUNTS
+		},
+		"reorder_levels.warehouse_group": {
+			"query": "erpnext.stock.doctype.warehouse.warehouse.get_warehouses_for_reorder",
+			"filters": {"warehouse": {"row": "warehouse"}},
+			"source": _ITEM_JS,
+		},
+		"reorder_levels.warehouse": {
+			"filters": {"is_group": 0},
+			"source": (
+				_ITEM_JS + " It would also filter by parent_warehouse when the row had one, but the Item "
+				"Reorder row has no such column (it is warehouse_group), so it is always is_group 0."
+			),
+		},
+	},
+	"query_waivers": {
+		"taxes.tax_type": (
+			"item.js sets it on the Item Tax grid, but v16's Item Tax row has no tax_type column "
+			"(item_tax_template, tax_category), so on the form it reaches no control either."
+		),
 	},
 }

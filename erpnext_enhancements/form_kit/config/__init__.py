@@ -72,6 +72,26 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     (``public/js/guided_default.js``, ``frappe.boot.sf_guided``). False keeps the Desk form as
     where a record opens, and the guided page is reached on purpose: the form's *Guided* button,
     the guided page's start screen, or ``/desk/guided-entry/<DocType>/new``.
+``queries``  ``{fieldname: query}``
+    Every ``set_query`` the DocType's form scripts set on a field the flow shows, as data, so the
+    guided page offers the same choices as the form (v1.685.0). The page's controls are a
+    FieldGroup with no ``frm``, so ``frm.set_query`` never reaches them. A query is one of:
+    ``{"query": "dotted.path"}`` (a whitelisted search), ``{"filters": {...}}`` (a filter's value
+    may be ``{"field": fieldname}``, the record's value, dropped while it is empty, as a form's
+    Link filters drop an empty value), both, ``{"by": fieldname, "cases": {value: query}}`` (one
+    query per value of another field, as ERPNext's ``setup_queries`` switches on
+    ``opportunity_from``), or ``{"links": "directory"}`` (the Contact & Address directory's own:
+    Dynamic Link ``link_name`` in the record, the parties its tables name, and its live party).
+    Each top-level query says where on the Desk it comes from (``source``).
+    ``tests/test_form_kit_inputs.py`` reads the form scripts and fails on a ``set_query`` that
+    is neither here nor in ``query_waivers``, and on an entry here that no script sets.
+``query_waivers``  ``{key: reason}``
+    A ``set_query`` deliberately not mirrored (``fieldname``, or ``table.fieldname`` for a child
+    table's column), with why: on Opportunity, fields the flow does not show.
+``label_from``  ``{fieldname: {"field", "source"}}``
+    A field whose label is another field's value, as the form's script relabels it (ERPNext's
+    ``set_dynamic_field_label``: Opportunity's ``party_name`` reads "Customer", "Lead" or
+    "Prospect"). The page relabels it as the other field changes.
 """
 
 from erpnext_enhancements.form_kit.config import item, opportunity
@@ -107,6 +127,9 @@ CONFIG_KEYS = {
 	"clears",
 	"won",
 	"quick",
+	"queries",
+	"query_waivers",
+	"label_from",
 	"open_by_default",
 }
 STAGES_KEYS = {"field", "default", "lists", "labels"}
@@ -114,6 +137,8 @@ QUICK_KEYS = {"fields", "fixed", "owner_field", "stage_field", "when"}
 CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields", "client_id_field"}
 MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
+QUERY_KEYS = {"query", "filters", "by", "cases", "links", "source"}
+QUERY_LINKS = ("directory",)
 
 
 def get_config(doctype):
@@ -205,6 +230,24 @@ def check(config):
 		open_rule = mine.get("open")
 		if open_rule is not None and (not open_rule.get("field") or not isinstance(open_rule.get("not_in"), list)):
 			problems.append("mine.open needs a field and a 'not_in' list")
+	queries = config.get("queries") or {}
+	for fieldname, query in queries.items():
+		if not isinstance(query, dict) or not str(query.get("source") or "").strip():
+			problems.append(f"queries.{fieldname} needs a source")
+			continue
+		problems.extend(f"queries.{fieldname}: {problem}" for problem in _query_problems(query))
+	for key, reason in (config.get("query_waivers") or {}).items():
+		if not str(reason or "").strip():
+			problems.append(f"query_waivers.{key} has no reason")
+		if key in queries:
+			problems.append(f"{key} is both mirrored in queries and waived")
+	for fieldname, rule in (config.get("label_from") or {}).items():
+		if (
+			not isinstance(rule, dict)
+			or not str(rule.get("field") or "").strip()
+			or not str(rule.get("source") or "").strip()
+		):
+			problems.append(f"label_from.{fieldname} needs a field and a source")
 	seen_keys, seen_sections, seen_fields = set(), set(), set()
 	for index, step in enumerate(config.get("steps") or []):
 		key = step.get("key")
@@ -265,3 +308,58 @@ def check(config):
 			if not str(requirement.get("label") or "").strip():
 				problems.append(f"{stage}: a requirement has no label")
 	return problems
+
+
+def _query_problems(query):
+	"""What is wrong with one ``queries`` entry (or one of its ``cases``), as phrases."""
+	problems = []
+	unknown = set(query) - QUERY_KEYS
+	if unknown:
+		problems.append(f"unknown keys {sorted(unknown)}")
+	if "by" in query or "cases" in query:
+		cases = query.get("cases")
+		if not str(query.get("by") or "").strip() or not isinstance(cases, dict) or not cases:
+			problems.append("'by' needs a field and a dict of 'cases'")
+			return problems
+		for value, case in cases.items():
+			if not isinstance(case, dict):
+				problems.append(f"case {value} is not a query")
+				continue
+			problems.extend(f"case {value}: {problem}" for problem in _query_problems(case))
+		return problems
+	if "links" in query:
+		if query["links"] not in QUERY_LINKS:
+			problems.append(f"links must be one of {QUERY_LINKS}")
+		return problems
+	if not query.get("query") and "filters" not in query:
+		problems.append("needs a query, filters, by/cases or links")
+	if "filters" in query and not isinstance(query["filters"], dict | list):
+		problems.append("filters must be a dict or a list")
+	if "query" in query and not (isinstance(query["query"], str) and query["query"].count(".") >= 1):
+		problems.append("query must be a dotted path")
+	return problems
+
+
+def query_fieldnames(query):
+	"""Every record field a query reads besides the party: its ``by`` and each ``{"field": ...}``."""
+	out = []
+
+	def walk(node):
+		if isinstance(node, dict):
+			if set(node) == {"field"} and isinstance(node["field"], str):
+				out.append(node["field"])
+				return
+			for value in node.values():
+				walk(value)
+		elif isinstance(node, list):
+			for value in node:
+				walk(value)
+
+	if not isinstance(query, dict):
+		return out
+	if query.get("by"):
+		out.append(query["by"])
+	walk(query.get("filters"))
+	for case in (query.get("cases") or {}).values():
+		out.extend(query_fieldnames(case))
+	return out
