@@ -39,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Dark mode is the tokens' own switch.** The tokens follow `<html data-theme>` and the device
     without it. The Review Room's THEME button wrote a `data-rr-theme` the tokens cannot see; it
     writes `data-theme` now (AUTO removes it), and the app keeps no dark palette of its own, only
-    `color-scheme`. The itinerary had no toggle and still follows the device: nothing writes
+    `color-scheme`. `review.html` applies the stored choice from an inline script at the top of
+    `<head>`, before any stylesheet, as `kiosk.html` does, so the loading text no longer flashes in the
+    device theme while the bundle loads; `applyTheme` owns every change after that. The itinerary had no toggle and still follows the device: nothing writes
     `data-theme` there, so the tokens' `prefers-color-scheme` block applies, with the brand's
     single-palette dark in place of the old grey one.
   - **No status by colour alone.** Your verdict on a screen was a 10px coloured dot in the rail and

@@ -374,6 +374,21 @@ class TestDarkModeIsTheTokens(unittest.TestCase):
 		self.assertIn('root.removeAttribute("data-theme")', body)
 		self.assertNotIn('setAttribute("data-rr-theme"', js)
 
+	def test_the_review_applies_the_stored_theme_before_its_stylesheets(self):
+		"""No flash of the device theme while the bundle loads at the end of <body>."""
+		head = _head(_read(APPS["review"]["template"]))
+		script = head[head.index("<script>") : head.index("</script>")]
+		self.assertLess(head.index("<script>"), head.index(TOKENS_LINK))
+		self.assertIn("try {", script)
+		self.assertIn("localStorage.getItem('rr.theme')", script)
+		self.assertIn(
+			"if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);",
+			script,
+		)
+		self.assertNotIn("data-rr-theme", script)
+		js = _js_code(_read(APP / "public" / "js" / "design_review" / "app.js"))
+		self.assertIn('this.applyTheme(lsGet("rr.theme") || "system");', js)
+
 	def test_the_itinerary_writes_no_theme_attribute(self):
 		"""So the tokens' own prefers-color-scheme block applies, as the old --ti-* one did."""
 		js = _js_code(_read(APP / "public" / "js" / "travel" / "itinerary.js"))
