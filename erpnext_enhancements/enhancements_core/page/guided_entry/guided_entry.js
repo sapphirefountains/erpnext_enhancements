@@ -142,6 +142,31 @@ class GuidedEntry {
 				$open.last().trigger("focus");
 			}
 		});
+		// P4.5. The Closed Won prompt (create_project_prompt.js) changes the record on the server:
+		// "No" un-wins it, "Yes" makes the project. It says so with this event, as it reloads a form.
+		$(document).on("sf-record-changed", (event, doctype, name) => {
+			if (this.showing() && !this.is_new && this.doctype === doctype && this.name === name) this.reload_record();
+		});
+		// The project made in the background reports here, as it does to the form (opportunity.js).
+		frappe.realtime.on("project_creation_status", (data) => this.on_project_status(data || {}));
+		this.nudged = new Set();
+	}
+
+	showing() {
+		return (frappe.get_route() || [])[0] === (this.kit ? this.kit.PAGE : "guided-entry");
+	}
+
+	// The record as the server now has it, after what is queued has gone.
+	reload_record() {
+		if (!this.doctype || !this.name || this.is_new) return;
+		const doctype = this.doctype;
+		const name = this.name;
+		const step = this.step_key;
+		this.save_before_moving()
+			.catch(() => {})
+			.then(() => {
+				if (this.doctype === doctype && this.name === name) this.load(doctype, name, step);
+			});
 	}
 
 	reset() {
@@ -211,7 +236,8 @@ class GuidedEntry {
 
 	open_new(doctype, options) {
 		const started_with = ge_start_key(options);
-		if (this.orphan && this.orphan.doctype === doctype && !started_with) {
+		const orphan_start = this.orphan ? this.orphan.started_with || "" : "";
+		if (this.orphan && this.orphan.doctype === doctype && (!started_with || started_with === orphan_start)) {
 			// Forward onto a "new" entry whose record was created after the person left it.
 			const orphan = this.orphan;
 			this.orphan = null;
@@ -221,7 +247,7 @@ class GuidedEntry {
 			this.go(null, true);
 			return;
 		}
-		if (this.flow && this.is_new && this.doctype === doctype && started_with === this.started_with) {
+		if (this.flow && this.is_new && this.doctype === doctype && (!started_with || started_with === this.started_with)) {
 			// Back to step 1 of the record being started: what was typed is still here.
 			this.show_step(null);
 			return;
@@ -242,6 +268,7 @@ class GuidedEntry {
 		const kept = ((window.history.state || {}).ge || {}).back;
 		const before = window.location.href;
 		if (frappe.route_options) frappe.route_options = null;
+		const toggle = ((window.history.state || {}).sf_toggle || "") || null;
 		if (replace) frappe.route_flags.replace_route = true;
 		frappe.set_route(route);
 		// Read only by push_state, which has already run; left set, frappe clears it only after
@@ -249,6 +276,14 @@ class GuidedEntry {
 		delete frappe.route_flags.replace_route;
 		this.screen_key = next_key;
 		if (window.location.href === before) return;
+		// A replace writes a null history.state; the form/guided switch tag of the entry stays.
+		if (replace && toggle) {
+			try {
+				window.history.replaceState(Object.assign({}, window.history.state, { sf_toggle: toggle }), "");
+			} catch (e) {
+				// Untagged, the form's Guided button pushes rather than steps back.
+			}
+		}
 		const back = replace ? kept : behind;
 		if (!back) return;
 		try {
@@ -338,6 +373,7 @@ class GuidedEntry {
 				this.render_shell();
 				this.show_step(step_key);
 				this.refresh_notices();
+				this.nudge_won_without_project();
 			})
 			.catch((err) => {
 				if (seq !== this.load_seq) return;
@@ -349,20 +385,40 @@ class GuidedEntry {
 	// will take (flow.prefill_fields) go with the create, and a real field it cannot take is
 	// named, with the full form offered instead. A table value must arrive as rows.
 	apply_start(options) {
-		this.started_with = ge_start_key(options);
+		// What equals the new record's own default is not something it was started with (the
+		// Kanban's add card passes its whole draft; the list passes its filters).
+		const defaults = this.flow.values || {};
+		const given = {};
+		Object.keys(options || {}).forEach((key) => {
+			if (!this.kit.same_value(options[key], defaults[key])) given[key] = options[key];
+		});
+		this.started_with = ge_start_key(given);
+		// Once read, the values live here; a long one (a Lead's details) would make the address too
+		// long to reload. Back and Forward to this entry find the record being started in memory.
+		if (window.location.search) {
+			try {
+				window.history.replaceState(window.history.state, "", window.location.pathname + window.location.hash);
+			} catch (e) {
+				// The address keeps its query; nothing is lost.
+			}
+		}
 		if (!this.started_with) return;
 		const step = (this.flow.steps || []).find((s) => s.create) || (this.flow.steps || [])[0] || {};
-		const split = this.kit.split_prefill(options, this.flow.prefill_fields || [], this.kit.editable_fieldnames(step));
-		Object.keys(split.values).forEach((fieldname) => {
+		const split = this.kit.split_prefill(given, this.flow.prefill_fields || [], this.kit.editable_fieldnames(step));
+		const as_value = (fieldname, value) => {
 			const def = this.defs[fieldname] || {};
-			let value = split.values[fieldname];
-			if (def.fieldtype === "Table" || def.fieldtype === "Table MultiSelect") {
-				value = ge_rows(value);
-				if (!value) return;
-			}
-			this.values[fieldname] = value;
+			if (def.fieldtype === "Table" || def.fieldtype === "Table MultiSelect") return ge_rows(value);
+			return value;
+		};
+		Object.keys(split.values).forEach((fieldname) => {
+			const value = as_value(fieldname, split.values[fieldname]);
+			if (value !== null) this.values[fieldname] = value;
 		});
-		this.carry = split.carry;
+		this.carry = {};
+		Object.keys(split.carry).forEach((fieldname) => {
+			const value = as_value(fieldname, split.carry[fieldname]);
+			if (value !== null) this.carry[fieldname] = value;
+		});
 		const known = split.dropped.filter((fieldname) => frappe.meta && frappe.meta.has_field(this.doctype, fieldname));
 		if (known.length) {
 			this.notice = {
@@ -384,9 +440,132 @@ class GuidedEntry {
 
 	// The full form for this record, which this tab then opens it in (guided_default.js).
 	open_in_form(tab) {
-		if (window.sf_guided && window.sf_guided.allow_form) window.sf_guided.allow_form(this.doctype, this.name);
+		if (window.sf_guided && window.sf_guided.to_form) {
+			window.sf_guided.to_form(this.doctype, this.name, tab);
+			return;
+		}
 		if (tab) frappe.route_hash = `#${tab}`;
 		frappe.set_route("Form", this.doctype, this.name);
+	}
+
+	// ------------------------------------------------------------------ what the form's scripts did (P4.5)
+
+	// The Desk form offers to make the project when it opens a won deal that has none
+	// (crm_enhancements/opportunity.js); so does this page, once per record per visit.
+	nudge_won_without_project() {
+		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
+		const v = this.values || {};
+		if (this.is_new || this.doctype !== "Opportunity" || !crm || !crm.confirm_won_next_step) return;
+		if (v.status !== "Closed Won" || v.custom_created_project || v.custom_is_historical) return;
+		if (this.nudged.has(this.name)) return;
+		this.nudged.add(this.name);
+		crm.confirm_won_next_step(this.name, { mode: "reopen" });
+	}
+
+	on_project_status(data) {
+		if (this.doctype !== "Opportunity" || !this.showing() || data.opportunity_name !== this.name) return;
+		// An open form of the same record says this already (opportunity.js binds it there).
+		const view = frappe.views && frappe.views.formview && frappe.views.formview.Opportunity;
+		const form_says = !!(view && view.frm && view.frm.doc && view.frm.doc.name === data.opportunity_name);
+		if (!form_says) {
+			if (data.status === "blocked") {
+				frappe.msgprint({
+					title: __("Hand-Off Required"),
+					indicator: "orange",
+					message: frappe.utils.escape_html(data.blocked_reason || ""),
+				});
+			} else if (data.status === "success" && data.project_doc) {
+				const link = frappe.utils.get_form_link("Project", data.project_doc.name, true);
+				this.sf.toast(__("Project {0} was created.", [data.project_doc.name]), { tone: "success", timeout: 8000 });
+				if (data.drive_error) {
+					frappe.msgprint({
+						title: __("Google Drive Integration Failed"),
+						indicator: "orange",
+						message: `${__("Project {0} was created, but its Drive folder was not.", [link])}<pre>${frappe.utils.escape_html(String(data.drive_error))}</pre>`,
+					});
+				}
+			} else {
+				this.sf.toast(__("Project creation failed. The Error Log has the details."), { tone: "warning", timeout: 8000 });
+			}
+		}
+		this.reload_record();
+	}
+
+	// The form's Set as Lost: choosing Lost asks for the reasons and runs the DocType's own method.
+	// The reasons table is read-only in the flow, so a plain save of Lost could never pass.
+	intercept_change(fieldname, value) {
+		const lost = this.flow && this.flow.lost;
+		if (!lost || this.is_new || fieldname !== lost.status_field) return false;
+		if (value !== lost.status || this.saved[fieldname] === lost.status) return false;
+		this.show_value(fieldname, this.values[fieldname]);
+		this.open_lost_dialog();
+		return true;
+	}
+
+	open_lost_dialog() {
+		const lost = this.flow.lost;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Set as Lost"),
+			fields: [
+				{ fieldtype: "HTML", fieldname: "error" },
+				{ fieldtype: "Table MultiSelect", label: __("Lost Reasons"), fieldname: "reasons", options: lost.reasons, reqd: 1 },
+				{ fieldtype: "Table MultiSelect", label: __("Competitors"), fieldname: "competitors", options: lost.competitors },
+				{ fieldtype: "Small Text", label: __("Detailed Reason"), fieldname: "detail" },
+			],
+			primary_action_label: __("Declare Lost"),
+			primary_action: (values) => this.declare_lost(dialog, values || {}),
+		});
+		dialog.show();
+	}
+
+	declare_lost(dialog, values) {
+		const doctype = this.doctype;
+		const name = this.name;
+		const $error = dialog.fields_dict.error.$wrapper.empty();
+		dialog.disable_primary_action();
+		this.save_before_moving()
+			.then(() =>
+				this.sf.call(
+					GE_API + "declare_lost",
+					{
+						doctype,
+						name,
+						reasons: values.reasons || [],
+						competitors: values.competitors || [],
+						detail: values.detail || "",
+						modified: this.queue ? this.queue.modified : this.flow.modified,
+					},
+					{ quiet: true }
+				)
+			)
+			.then((result) => {
+				dialog.hide();
+				if (result && result.conflict) {
+					this.sf.toast(__("Someone else changed this record, so it has been reloaded. Choose Lost again."), {
+						tone: "warning",
+						timeout: 8000,
+					});
+				} else {
+					this.sf.toast(__("{0} was declared lost.", [name]), { tone: "success", timeout: 4000 });
+				}
+				if (this.doctype === doctype && this.name === name) this.load(doctype, name, this.step_key);
+			})
+			.catch((err) => {
+				dialog.enable_primary_action();
+				$('<p class="ge-lost-error" role="alert"></p>')
+					.text((err && err.message) || __("It could not be declared lost."))
+					.appendTo($error);
+			});
+	}
+
+	// Fields that should not share a value (the config's `distinct`): said, never blocked.
+	distinct_warnings() {
+		return ((this.flow && this.flow.distinct) || [])
+			.filter((rule) => {
+				const seen = rule.fields.map((fieldname) => this.values[fieldname]).filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
+				return new Set(seen.map(String)).size < seen.length;
+			})
+			.map((rule) => rule.message);
 	}
 
 	// A Table MultiSelect reads its link column from the child's meta (frappe.get_meta), which the
@@ -1181,8 +1360,22 @@ class GuidedEntry {
 		if (def && def.fieldtype === "Table MultiSelect") {
 			value = this.kit.clean_rows(value, (def.child_fields || []).map((child) => child.fieldname));
 		}
+		if (this.intercept_change(fieldname, value)) return;
+		const changed = !this.kit.same_value(value, this.values[fieldname]);
 		this.set_value_local(fieldname, value);
+		if (changed) {
+			((this.flow.clears || {})[fieldname] || []).forEach((cleared) => {
+				if (this.kit.same_value(this.values[cleared], null)) return;
+				this.set_value_local(cleared, null);
+				this.show_value(cleared, null);
+			});
+			this.refresh_distinct();
+		}
 		this.fg.refresh_dependency();
+	}
+
+	refresh_distinct() {
+		this.refresh_notices();
 	}
 
 	table_touched(fieldname) {
@@ -1484,6 +1677,7 @@ class GuidedEntry {
 					: value;
 		});
 		const doctype = this.doctype;
+		const started_with = this.started_with;
 		this.creating = true;
 		this.notice = null;
 		this.refresh_notices();
@@ -1518,7 +1712,7 @@ class GuidedEntry {
 				if (!still_here) {
 					// Left while it was being created: nothing to replace. Forward onto that "new"
 					// entry opens this record (open_new) rather than a blank one.
-					this.orphan = { doctype, name: created.name };
+					this.orphan = { doctype, name: created.name, started_with };
 					this.sf.toast(__("{0} {1} was created.", [__(doctype), created.name]), {
 						tone: "success",
 						action_label: __("Open"),
@@ -1552,7 +1746,10 @@ class GuidedEntry {
 	refresh_notices() {
 		const $slot = this.$root.find(".ge-notices");
 		if (!$slot.length) return;
-		const notice = this.notice;
+		// A distinct-values warning shows whenever nothing more urgent does, so a save that clears
+		// the notice does not clear it.
+		const warnings = this.flow ? this.distinct_warnings() : [];
+		const notice = this.notice || (warnings.length ? { kind: "distinct", messages: warnings } : null);
 		if (!notice) {
 			$slot.empty();
 			return;
@@ -1570,6 +1767,10 @@ class GuidedEntry {
 		}
 		if (notice.kind === "create") {
 			this.sf.state.render($slot, "error", { title: notice.title, body: notice.body });
+			return;
+		}
+		if (notice.kind === "distinct") {
+			this.sf.state.render($slot, "empty", { title: notice.messages.join(" ") });
 			return;
 		}
 		if (notice.kind === "carry") {

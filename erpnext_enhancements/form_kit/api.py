@@ -70,6 +70,20 @@ def get_flow(doctype, name=None):
 	}
 	if not name:
 		out["prefill_fields"] = sorted(flow.prefill_fields(doctype, steps))
+	config = CONFIGS[doctype]
+	out["distinct"] = [
+		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
+	]
+	out["clears"] = config.get("clears") or {}
+	lost = config.get("lost")
+	if lost:
+		# What the page's Set as Lost dialog needs: the value that opens it and the child tables.
+		out["lost"] = {
+			"status": lost["status"],
+			"status_field": lost.get("status_field", "status"),
+			"reasons": lost["reasons"]["doctype"],
+			"competitors": lost["competitors"]["doctype"],
+		}
 	return out
 
 
@@ -82,6 +96,18 @@ def create_record(doctype, values, prefill=None):
 	"""
 	_require_configured(doctype)
 	return saver.create_record(doctype, values, prefill)
+
+
+@frappe.whitelist(methods=["POST"])
+def declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None):
+	"""Declare ``name`` lost, as the Desk form's *Set as Lost* dialog does (the config's ``lost``).
+
+	``reasons`` and ``competitors`` are JSON lists of names; ``detail`` is the detailed reason.
+	Returns the save result, or the conflict shape without saving when the record has changed
+	since ``modified``. See ``saver.declare_lost``.
+	"""
+	_require_configured(doctype)
+	return saver.declare_lost(doctype, name, reasons, competitors, detail, modified)
 
 
 @frappe.whitelist(methods=["POST"])

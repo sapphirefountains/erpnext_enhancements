@@ -277,6 +277,18 @@ class FakeDoc:
     def is_new(self):
         return not self._d.get("name")
 
+    def declare_enquiry_lost(self, lost_reasons_list, competitors, detailed_reason=None):
+        """ERPNext v16's Opportunity.declare_enquiry_lost, as far as these tests need it."""
+        STATE["lost_calls"].append((lost_reasons_list, competitors, detailed_reason))
+        if STATE.get("active_quotation"):
+            raise FRAPPE.ValidationError("Cannot declare as Lost because an active Quotation exists.")
+        self._d["status"] = "Lost"
+        self.set("lost_reasons", lost_reasons_list)
+        self.set("competitors", competitors)
+        if detailed_reason:
+            self._d["order_lost_reason"] = detailed_reason
+        self.save()
+
     def check_permission(self, ptype="read"):
         if not FRAPPE.has_permission(self.doctype, ptype, doc=self):
             raise FRAPPE.PermissionError(f"No permission to {ptype}")
@@ -506,6 +518,8 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["inserts"].clear()
     STATE["sql"].clear()
     STATE["get_list"].clear()
+    STATE["lost_calls"] = []
+    STATE["active_quotation"] = False
     FRAPPE.session.user = user
 
 
@@ -1302,6 +1316,102 @@ class TestMyRecords(unittest.TestCase):
             self.assertIn(expected, problems)
 
 
+class TestDeclareLost(unittest.TestCase):
+    """Form kit P4.5: the guided page's Set as Lost. The lost_reasons table is read-only in the
+    flow, so choosing Lost there could never pass validate_close_reason with a plain save."""
+
+    def setUp(self):
+        _reset()
+        self.name = _seed()
+        self.modified = STATE["db"][self.name]["modified"]
+
+    def test_it_runs_the_doctypes_own_method_with_rows(self):
+        result = api.declare_lost(
+            "Opportunity",
+            self.name,
+            json.dumps([{"lost_reason": "Price"}, "Timing", {"lost_reason": "Price"}, "  "]),
+            json.dumps(["Fountain Co"]),
+            "Went with a cheaper bid",
+            self.modified,
+        )
+        reasons, competitors, detail = STATE["lost_calls"][0]
+        self.assertEqual(reasons, [{"lost_reason": "Price"}, {"lost_reason": "Timing"}])
+        self.assertEqual(competitors, [{"competitor": "Fountain Co"}])
+        self.assertEqual(detail, "Went with a cheaper bid")
+        stored = STATE["db"][self.name]
+        self.assertEqual(stored["status"], "Lost")
+        self.assertEqual(result["values"]["status"], "Lost")
+        self.assertEqual(result["modified"], stored["modified"])
+
+    def test_a_changed_record_is_a_conflict_and_nothing_is_declared(self):
+        result = api.declare_lost("Opportunity", self.name, '["Price"]', "[]", "", "2020-01-01 00:00:00")
+        self.assertTrue(result["conflict"])
+        self.assertEqual(STATE["lost_calls"], [])
+        self.assertIn("status", result["server"])
+
+    def test_a_reason_is_required(self):
+        with self.assertRaises(FRAPPE.ValidationError):
+            api.declare_lost("Opportunity", self.name, "[]", "[]", "", self.modified)
+        with self.assertRaises(FRAPPE.ValidationError):
+            api.declare_lost("Opportunity", self.name, '{"lost_reason": "Price"}', "[]", "", self.modified)
+        self.assertEqual(STATE["lost_calls"], [])
+
+    def test_write_permission_and_a_version_are_required(self):
+        with self.assertRaises(FRAPPE.ValidationError):
+            api.declare_lost("Opportunity", self.name, '["Price"]', "[]", "", None)
+        STATE["perm"]["write"] = False
+        with self.assertRaises(FRAPPE.PermissionError):
+            api.declare_lost("Opportunity", self.name, '["Price"]', "[]", "", self.modified)
+        self.assertEqual(STATE["lost_calls"], [])
+
+    def test_the_doctypes_own_refusal_comes_through(self):
+        STATE["active_quotation"] = True
+        with self.assertRaises(FRAPPE.ValidationError):
+            api.declare_lost("Opportunity", self.name, '["Price"]', "[]", "", self.modified)
+        self.assertEqual(STATE["db"][self.name]["status"], "Qualification")
+
+    def test_the_flow_tells_the_page_how_to_ask(self):
+        payload = api.get_flow("Opportunity", self.name)
+        self.assertEqual(
+            payload["lost"],
+            {
+                "status": "Lost",
+                "status_field": "status",
+                "reasons": "Opportunity Lost Reason Detail",
+                "competitors": "Competitor Detail",
+            },
+        )
+        self.assertEqual(_field(steps.flow_steps("Opportunity", _doc(self.name)), "lost_reasons")["read_only"], 1)
+        self.assertEqual(payload["clears"], {"opportunity_from": ["party_name"]})
+        self.assertEqual(
+            payload["distinct"][0]["fields"], ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"]
+        )
+
+    def test_the_configured_tables_and_columns_exist(self):
+        lost = config.CONFIGS["Opportunity"]["lost"]
+        meta = STATE["metas"]["Opportunity"]
+        for key, fieldname in (("reasons", "lost_reasons"), ("competitors", "competitors")):
+            with self.subTest(table=key):
+                self.assertEqual(meta.get_field(fieldname).options, lost[key]["doctype"])
+                self.assertIsNotNone(STATE["metas"][lost[key]["doctype"]].get_field(lost[key]["field"]))
+        for rule in config.CONFIGS["Opportunity"]["distinct"]:
+            for fieldname in rule["fields"]:
+                self.assertIsNotNone(meta.get_field(fieldname))
+        for fieldname, cleared in config.CONFIGS["Opportunity"]["clears"].items():
+            for name in [fieldname, *cleared]:
+                self.assertIsNotNone(meta.get_field(name))
+
+    def test_the_schema_check_holds_lost_distinct_and_clears(self):
+        broken = dict(config.CONFIGS["Opportunity"])
+        broken["lost"] = {"status": "Lost", "reasons": {"doctype": "X"}, "competitors": {}}
+        broken["distinct"] = [{"fields": ["a"], "message": ""}]
+        broken["clears"] = {"opportunity_from": "party_name"}
+        problems = " ".join(config.check(broken))
+        for expected in ("lost needs method", "lost.reasons needs", "lost.competitors needs", "distinct rule 0",
+                         "clears.opportunity_from"):
+            self.assertIn(expected, problems)
+
+
 class TestGuidedBoot(unittest.TestCase):
     """``frappe.boot.sf_guided``: the DocTypes whose records open on the guided page."""
 
@@ -1495,7 +1605,19 @@ class TestEndpoints(unittest.TestCase):
         payload = api.get_flow("Opportunity", name)
         self.assertEqual(
             set(payload),
-            {"doctype", "name", "modified", "steps", "values", "completeness", "can_write", "help_article"},
+            {
+                "doctype",
+                "name",
+                "modified",
+                "steps",
+                "values",
+                "completeness",
+                "can_write",
+                "help_article",
+                "distinct",
+                "clears",
+                "lost",
+            },
         )
         self.assertEqual(payload["name"], name)
         self.assertEqual(payload["modified"], STATE["db"][name]["modified"])
@@ -1559,6 +1681,8 @@ class TestEndpoints(unittest.TestCase):
                     api.completeness_for(doctype, "[]")
                 with self.assertRaises(FRAPPE.PermissionError):
                     api.my_records(doctype)
+                with self.assertRaises(FRAPPE.PermissionError):
+                    api.declare_lost(doctype, "X", "[]")
 
     def test_writes_are_post_only_and_nothing_is_open_to_guests(self):
         tree = ast.parse((KIT / "api.py").read_text(encoding="utf-8"))
@@ -1570,9 +1694,18 @@ class TestEndpoints(unittest.TestCase):
                         decorated[node.name] = ast.unparse(decorator)
         self.assertEqual(
             set(decorated),
-            {"get_flow", "create_record", "save_step", "completeness_for", "get_field_help", "my_records"},
+            {
+                "get_flow",
+                "create_record",
+                "save_step",
+                "completeness_for",
+                "get_field_help",
+                "my_records",
+                "declare_lost",
+            },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
+        self.assertIn("methods=['POST']", decorated["declare_lost"])
         self.assertIn("methods=['POST']", decorated["save_step"])
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)

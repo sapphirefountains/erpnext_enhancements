@@ -109,8 +109,12 @@ frappe.ui.form.on("Opportunity", {
 		// may open the page at all (frappe.boot.page_info lists the Pages their roles reach).
 		if (!frm.is_new() && frappe.boot.page_info && frappe.boot.page_info["guided-entry"]) {
 			frm.add_custom_button(__("Guided"), () => {
-				// This record opens on the guided page again (guided_default.js remembered the form).
-				if (window.sf_guided) window.sf_guided.forget_form(frm.doctype, frm.doc.name);
+				// This record opens on the guided page again (guided_default.js remembered the form),
+				// stepping back rather than pushing when the form was opened from the guided page.
+				if (window.sf_guided && window.sf_guided.to_guided) {
+					window.sf_guided.to_guided(frm.doctype, frm.doc.name);
+					return;
+				}
 				frappe.set_route("guided-entry", frm.doctype, frm.doc.name);
 			});
 		}

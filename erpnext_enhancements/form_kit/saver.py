@@ -53,6 +53,7 @@ from frappe import _
 
 from erpnext_enhancements.form_kit import steps as flow
 from erpnext_enhancements.form_kit.completeness import stage_completeness
+from erpnext_enhancements.form_kit.config import get_config
 
 
 def _plain(value):
@@ -167,6 +168,70 @@ def create_record(doctype, values, prefill=None):
 	doc.insert()
 	create_step = next(step for step in steps if step["create"])
 	return _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
+
+
+def _names(value, column):
+	"""A JSON list (or list) of names, or of rows holding the name under ``column``, as names."""
+	if isinstance(value, str):
+		try:
+			value = json.loads(value or "[]")
+		except ValueError:
+			value = None
+	if value is None:
+		return []
+	if not isinstance(value, list):
+		frappe.throw(_("Could not read the list sent."))
+	out = []
+	for item in value:
+		if isinstance(item, dict):
+			item = item.get(column)
+		if isinstance(item, str) and item.strip() and item.strip() not in out:
+			out.append(item.strip())
+	return out
+
+
+def declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None):
+	"""Declare the record lost the way the Desk form's *Set as Lost* dialog does.
+
+	The config's ``lost`` names the DocType's own method (on Opportunity, ERPNext's
+	``declare_enquiry_lost``, which also refuses while an active Quotation exists) and the child
+	DocType and column of its reasons and competitors. The reasons table is read-only on the form
+	and in the flow, so this is the only way the guided page can fill it, and choosing Lost there
+	would otherwise fail ``validate_close_reason``. Locked on ``modified`` like :func:`save_step`,
+	returning the conflict shape without saving when the record has changed.
+	"""
+	lost = (get_config(doctype) or {}).get("lost")
+	if not lost:
+		frappe.throw(_("{0} has no Declare Lost here.").format(_(doctype)), frappe.PermissionError)
+	reason_names = _names(reasons, lost["reasons"]["field"])
+	competitor_names = _names(competitors, lost["competitors"]["field"])
+	if not reason_names:
+		frappe.throw(_("Choose at least one reason it was lost."))
+	doc = frappe.get_doc(doctype, name)
+	doc.check_permission("write")
+	if doc.docstatus != 0:
+		frappe.throw(_("{0} {1} is no longer a draft, so it cannot be edited here.").format(_(doctype), name))
+	if not modified:
+		frappe.throw(
+			_("The request did not say which version of {0} it was made on. Reload and try again.").format(name)
+		)
+	steps = flow.flow_steps(doctype, doc)
+	shown = flow.value_fields(steps)
+	if str(doc.modified) != str(modified):
+		return {
+			"conflict": True,
+			"name": doc.name,
+			"modified": str(doc.modified),
+			"modified_by": doc.get("modified_by"),
+			"server": serialize(doc, {key: f for key, f in shown.items() if key == lost.get("status_field", "status")}),
+		}
+	method = getattr(doc, lost["method"])
+	method(
+		lost_reasons_list=[{lost["reasons"]["field"]: reason} for reason in reason_names],
+		competitors=[{lost["competitors"]["field"]: competitor} for competitor in competitor_names],
+		detailed_reason=(str(detail).strip() or None) if detail else None,
+	)
+	return _result(doctype, doc, shown)
 
 
 def save_step(doctype, name, values, modified, step=None):

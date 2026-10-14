@@ -170,6 +170,13 @@ record is simply absent) with one bound query per child table, never one per rec
 `frappe.get_list`. The config's `mine` says whose (`owner_field`), which are open (`open.not_in`),
 which to leave out (`hide_flag`: on Opportunity, the historical deals) and what a row shows.
 
+`declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None)`, POST: the
+config's `lost` (on Opportunity, ERPNext's `declare_enquiry_lost`), with `reasons` and
+`competitors` as JSON lists of names or rows. It is locked on `modified` like `save_step` and
+returns the same result or conflict shape. `get_flow` sends `lost` (the status that opens the
+page's Set as Lost dialog, and the two child DocTypes), `distinct` (fields the page warns should
+not share a value) and `clears` (a field whose change empties others).
+
 ## Where a record opens
 
 Nik, 2026-10-13: "I want these guided setups to be the default for new and existing documents of

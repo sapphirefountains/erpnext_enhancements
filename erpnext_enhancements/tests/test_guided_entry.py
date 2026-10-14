@@ -548,8 +548,14 @@ out.queue = q;
 			guided: { Opportunity: { accepts: ["party_name", "customer_address", "contact_person", "custom_value_stream", "opportunity_amount"] } },
 		}),
 		from_link: held({ from_link: true }),
-		bypass: held({ bypass: "Opportunity" }),
-		bypass_other: held({ bypass: "Lead" }),
+		// /desk/opportunity/new?party_name=... : what the address asked for comes along.
+		new_with_options: form("new", { options: { party_name: "CUST-9", lead: "L-1", status: "", rows: [1], __x: 1, name: "N" } }),
+		// 0 is a value when a fresh record holds something else (a Check that defaults to 1).
+		zero_kept: held({
+			local: Object.assign({}, mapped, { custom_flag: 0 }),
+			fresh: Object.assign({}, fresh, { custom_flag: 1 }),
+			guided: { Opportunity: { accepts: ["party_name", "customer_address", "contact_person", "custom_flag"] } },
+		}),
 		plain_local: form("new-opportunity-2", { local: fresh, fresh }),
 		is_new: ["new", "new-opportunity-1", "newsletter", "CRM-OPP-1", "", null].map(kit.is_new_name),
 		carry: kit.carry_over(mapped, fresh, ["party_name", "customer_address"], ["customer_name"]),
@@ -900,7 +906,7 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 	def test_opening_the_form_stays_when_it_should(self):
 		o = self.out["opening"]
 		for key in ("other_doctype", "list_route", "no_name", "not_array", "no_ctx", "page_closed", "hash",
-				"full_form", "renamed", "mapped_left", "mapped_table", "from_link", "bypass"):
+				"full_form", "renamed", "mapped_left", "mapped_table", "from_link"):
 			with self.subTest(case=key):
 				self.assertIsNone(o[key])
 		self.assertIsNotNone(o["full_form_other"])
@@ -913,7 +919,10 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 			"prefill": {"party_name": "CUST-1", "customer_address": "ADDR-1", "contact_person": "CONT-1"},
 		}
 		self.assertEqual(o["mapped"], expected)
-		self.assertEqual(o["bypass_other"], expected)
+		self.assertEqual(o["zero_kept"]["prefill"], dict(expected["prefill"], custom_flag=0))
+		self.assertEqual(
+			o["new_with_options"], {"route": ["guided-entry", "Opportunity", "new"], "prefill": {"party_name": "CUST-9", "lead": "L-1"}}
+		)
 		# Zeros are not values, and accepted tables come along as their own columns.
 		prod = dict(expected["prefill"], custom_value_stream=[{"value_stream": "Design"}, {"value_stream": "Build"}])
 		self.assertEqual(o["mapped_prod"], {"route": expected["route"], "prefill": prod})
@@ -1086,7 +1095,7 @@ class TestTheEntryPoint(unittest.TestCase):
 		self.assertIn('frappe.set_route("guided-entry", frm.doctype, frm.doc.name)', code)
 		self.assertIn('frappe.boot.page_info["guided-entry"]', code)
 		# It brings the record back to the guided page for good, not just this once.
-		self.assertIn("window.sf_guided.forget_form(frm.doctype, frm.doc.name)", code)
+		self.assertIn("window.sf_guided.to_guided(frm.doctype, frm.doc.name)", code)
 
 	def test_the_form_script_is_wired_for_opportunity(self):
 		hooks = _text(APP / "hooks.py")
@@ -1120,7 +1129,14 @@ class TestTheDefaultIsWired(unittest.TestCase):
 	def test_new_goes_through_v16s_create_routes(self):
 		code = _code(DEFAULT_JS)
 		self.assertIn('frappe.create_routes[doctype] = ["guided-entry", doctype, "new"]', code)
-		self.assertIn("frappe.new_doc(doctype, scalar_values(values))", code)
+		# "Open form" on a new record builds the draft itself: frappe.new_doc would open Quick Entry
+		# (Opportunity has it) and drop the tables step 1 held.
+		new_in_form = code[code.index("new_in_form(doctype, values) {") :]
+		new_in_form = new_in_form[: new_in_form.index("\n\t},\n")]
+		self.assertNotIn("frappe.new_doc(", new_in_form)
+		self.assertIn("frappe.model.add_child(doc, df.options, fieldname)", new_in_form)
+		self.assertIn("api.allow_form(doctype, doc.name);", new_in_form)
+		self.assertIn('frappe.set_route("Form", doctype, doc.name);', new_in_form)
 
 	def test_existing_goes_through_the_form_factorys_before_show(self):
 		code = _code(DEFAULT_JS)
@@ -1139,11 +1155,17 @@ class TestTheDefaultIsWired(unittest.TestCase):
 	def test_session_storage_never_breaks_it(self):
 		code = _code(DEFAULT_JS)
 		self.assertEqual(code.count("window.sessionStorage"), 2)
-		self.assertEqual(code.count("try {"), code.count("} catch (e) {"))
+		for name in ("function read_store() {", "function write_store(list) {"):
+			body = code[code.index(name) :]
+			body = body[: body.index("\n}\n")]
+			with self.subTest(function=name):
+				self.assertIn("window.sessionStorage", body)
+				self.assertLess(body.index("try {"), body.index("window.sessionStorage"))
+				self.assertIn("} catch (e) {", body)
 
 	def test_the_page_uses_the_full_form_way_out(self):
 		code = _code(PAGE_JS)
-		self.assertIn("window.sf_guided.allow_form(this.doctype, this.name)", code)
+		self.assertIn("window.sf_guided.to_form(this.doctype, this.name, tab)", code)
 		self.assertIn("window.sf_guided.new_in_form(doctype, values)", code)
 		self.assertIn("this.open_in_form(step.link.tab)", code)
 		# Done goes back to the list: the form is the fallback now, not the destination.
@@ -1155,11 +1177,51 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		self.assertIn('GE_API + "my_records"', code)
 		self.assertIn("frappe.new_doc(doctype)", code)
 
+	def test_switching_between_form_and_guided_never_doubles_a_history_entry(self):
+		code = _code(DEFAULT_JS)
+		self.assertIn("if (!tab && tagged(`form:${key}`)) {", code)
+		self.assertIn("if (tagged(`guided:${key}`)) {", code)
+		self.assertEqual(code.count("window.history.back();"), 2)
+		# The guided page's own replaces keep the tag the router's replaceState(null) would drop.
+		self.assertIn("{ sf_toggle: toggle }", _code(PAGE_JS))
+
+	def test_the_long_start_address_is_tidied(self):
+		self.assertIn("window.location.pathname + window.location.hash", _code(PAGE_JS))
+
 	def test_the_crm_sidebar_links_the_start_screen(self):
 		tweaks = _text(APP / "setup" / "workspace_tweaks.py")
 		block = tweaks[tweaks.index('"CRM": [') :]
 		self.assertIn('"link_to": "guided-entry"', block)
 		self.assertIn('"after": ("DocType", "Opportunity")', block)
+
+
+class TestWhatTheFormScriptsDid(unittest.TestCase):
+	"""Form kit P4.5: what the Opportunity form's own scripts do that the guided page must too."""
+
+	def test_choosing_lost_asks_for_the_reasons(self):
+		code = _code(PAGE_JS)
+		self.assertIn("if (this.intercept_change(fieldname, value)) return;", code)
+		self.assertIn('title: __("Set as Lost"),', code)
+		self.assertIn('GE_API + "declare_lost"', code)
+		self.assertIn("modified: this.queue ? this.queue.modified : this.flow.modified,", code)
+
+	def test_the_closed_won_prompt_reloads_the_page(self):
+		prompt = _code(JS / "crm_enhancements" / "create_project_prompt.js")
+		self.assertIn('$(document).trigger("sf-record-changed", ["Opportunity", opportunity_name]);', prompt)
+		code = _code(PAGE_JS)
+		self.assertIn('$(document).on("sf-record-changed"', code)
+		self.assertIn('frappe.realtime.on("project_creation_status"', code)
+		self.assertIn('crm.confirm_won_next_step(this.name, { mode: "reopen" });', code)
+
+	def test_project_messages_are_escaped(self):
+		code = _code(PAGE_JS)
+		self.assertIn("frappe.utils.escape_html(data.blocked_reason", code)
+		self.assertIn("frappe.utils.escape_html(String(data.drive_error))", code)
+
+	def test_clears_and_distinct_are_applied(self):
+		code = _code(PAGE_JS)
+		self.assertIn("((this.flow.clears || {})[fieldname] || []).forEach", code)
+		self.assertIn("this.distinct_warnings()", code)
 
 
 if __name__ == "__main__":

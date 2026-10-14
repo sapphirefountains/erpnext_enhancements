@@ -70,7 +70,9 @@ export function carry_over(doc, fresh, accepts, ignore) {
 	Object.keys(doc || {}).forEach((key) => {
 		if (key.startsWith("__") || STANDARD_KEYS.has(key) || skipped.has(key)) return;
 		const value = doc[key];
-		if (blank(value) || value === 0) return;
+		if (blank(value)) return;
+		// 0 where a fresh record has nothing (or 0) is the server's filler, not a value.
+		if (value === 0 && (blank(start[key]) || Number(start[key]) === 0)) return;
 		if (Array.isArray(value)) {
 			if (accepted.has(key)) prefill[key] = value.map(plain_row);
 			else left.push(key);
@@ -91,8 +93,8 @@ export function carry_over(doc, fresh, accepts, ignore) {
 //   full_form  full_form_key()s this tab opened in the full form on purpose
 //   hash       location.hash: a link into one tab or field of the form
 //   from_link  a Link field's "Create a new ..." is waiting for the record to come back to it
-//   bypass     the DocType whose next unsaved record was asked for in the full form
 //   renamed    names the Desk just gave unsaved records it saved (frappe.model.new_names)
+//   options    the route options of the address (/desk/opportunity/new?party_name=...)
 //   local      the unsaved record the Desk holds under this name, or null
 //   fresh      a new record of the DocType as the Desk starts one, to compare `local` with
 //   ignore     fields `carry_over` leaves out
@@ -107,13 +109,23 @@ export function redirect_for(route, ctx) {
 	if ((c.full_form || []).includes(full_form_key(doctype, name))) return null;
 	if ((c.renamed || []).includes(name)) return null;
 	if (c.local) {
-		if (c.from_link || c.bypass === doctype) return null;
+		if (c.from_link) return null;
 		const { prefill, left } = carry_over(c.local, c.fresh, config.accepts, c.ignore);
 		// A start the guided page cannot take whole stays on the form, where nothing is lost.
 		if (left.length) return null;
 		return { route: build_route(doctype, null, null), prefill };
 	}
-	if (is_new_name(name)) return { route: build_route(doctype, null, null), prefill: {} };
+	if (is_new_name(name)) {
+		// What the address asked the new record to start with comes along.
+		const options = c.options || {};
+		const prefill = {};
+		Object.keys(options).forEach((key) => {
+			const value = options[key];
+			if (key.startsWith("__") || STANDARD_KEYS.has(key) || blank(value) || typeof value === "object") return;
+			prefill[key] = value;
+		});
+		return { route: build_route(doctype, null, null), prefill };
+	}
 	return { route: build_route(doctype, name, null), prefill: null };
 }
 

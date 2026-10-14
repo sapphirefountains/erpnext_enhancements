@@ -20,14 +20,19 @@
  * node by tests/test_guided_entry.py). The form opens as before:
  *   - for anyone who cannot open the guided page (frappe.boot.page_info);
  *   - for a record this tab opened in the full form on purpose (the guided page's "Open form",
- *     remembered in sessionStorage until the form's Guided button is used);
+ *     new or existing, remembered in sessionStorage until the form's Guided button is used);
  *   - for a link into one tab or field of the form (a #hash);
  *   - for an unsaved record the Desk already holds that the guided page cannot take whole (a
- *     mapped document with a table in it, or a field the flow does not offer), for one a Link
- *     field's "Create a new ..." is waiting on, and for one asked for in the full form;
+ *     table other than the ones the flow takes, or a field the flow does not offer), and for one
+ *     a Link field's "Create a new ..." is waiting on;
  *   - for a record just saved from the full form (frappe.model.new_names).
  * An unsaved record the guided page CAN take whole (ERPNext's own Create > Opportunity on a
- * Customer maps the party, a contact and an address) opens there, with those values.
+ * Customer maps the party, a contact, an address and the value streams) opens there, with them.
+ *
+ * BACK AND FORWARD. The form and the guided page of one record are two screens, and switching
+ * between them twice must not leave two copies of one in history (Nik's rule, 2026-09-24: never
+ * break Back/Forward). Each switch tags the entry it pushes (history.state.sf_toggle); switching
+ * back from a tagged entry steps back instead of pushing.
  *
  * Kill switch: site_config `disable_guided_default` empties frappe.boot.sf_guided.
  */
@@ -36,7 +41,9 @@ import { redirect_for, full_form_key } from "./form_kit/opening.js";
 
 const STORE_KEY = "sf_guided_full_form";
 const STORE_LIMIT = 200;
-const state = { bypass: null, installed: false };
+const state = { installed: false };
+// Every document has these; they are never values a new record is started with.
+const ROW_SKIP = new Set(["name", "doctype", "owner", "creation", "modified", "modified_by", "docstatus", "idx", "parent", "parentfield", "parenttype"]);
 
 function guided() {
 	return (window.frappe && frappe.boot && frappe.boot.sf_guided) || {};
@@ -68,15 +75,17 @@ function write_store(list) {
 	}
 }
 
-function scalar_values(values) {
-	const out = {};
-	Object.keys(values || {}).forEach((key) => {
-		const value = values[key];
-		if (value === null || value === undefined || typeof value === "object") return;
-		if (String(value).trim() === "") return;
-		out[key] = value;
-	});
-	return out;
+// The entry just pushed came from switching away from `from` (see BACK AND FORWARD).
+function tag_entry(from) {
+	try {
+		window.history.replaceState(Object.assign({}, window.history.state, { sf_toggle: from }), "");
+	} catch (e) {
+		// Untagged, switching back pushes a new entry rather than stepping back.
+	}
+}
+
+function tagged(from) {
+	return ((window.history.state || {}).sf_toggle || "") === from;
 }
 
 const api = {
@@ -94,14 +103,61 @@ const api = {
 		const key = full_form_key(doctype, name);
 		write_store(read_store().filter((item) => item !== key));
 	},
-	// A new record in the full form, starting from `values` (what step 1 held): frappe.new_doc
-	// without this file's create route, and the unsaved record it makes is left on the form.
+	// The guided page's "Open form" for a saved record (to `tab`, when given).
+	to_form(doctype, name, tab) {
+		api.allow_form(doctype, name);
+		const key = full_form_key(doctype, name);
+		if (!tab && tagged(`form:${key}`)) {
+			window.history.back();
+			return;
+		}
+		if (tab) frappe.route_hash = `#${tab}`;
+		frappe.set_route("Form", doctype, name);
+		tag_entry(`guided:${key}`);
+	},
+	// The form's Guided button: this record opens on the guided page again, from now on.
+	to_guided(doctype, name) {
+		api.forget_form(doctype, name);
+		const key = full_form_key(doctype, name);
+		if (tagged(`guided:${key}`)) {
+			window.history.back();
+			return;
+		}
+		frappe.set_route("guided-entry", doctype, name);
+		tag_entry(`form:${key}`);
+	},
+	// A new record in the full form, starting from `values` (what step 1 held, tables included).
+	// Made here rather than with frappe.new_doc, which opens Quick Entry for a DocType that has it
+	// (Opportunity does) and would drop the tables; the unsaved record is then left on the form.
 	new_in_form(doctype, values) {
-		const route = frappe.create_routes[doctype];
-		delete frappe.create_routes[doctype];
-		state.bypass = doctype;
-		return Promise.resolve(frappe.new_doc(doctype, scalar_values(values))).finally(() => {
-			if (route && api.is_guided(doctype)) frappe.create_routes[doctype] = route;
+		return new Promise((resolve) => frappe.model.with_doctype(doctype, resolve)).then(() => {
+			const options = frappe.route_options;
+			frappe.route_options = null;
+			let doc;
+			try {
+				doc = frappe.model.get_new_doc(doctype);
+			} finally {
+				frappe.route_options = options;
+			}
+			const fields = (frappe.get_meta(doctype) || {}).fields || [];
+			Object.keys(values || {}).forEach((fieldname) => {
+				const df = fields.find((field) => field.fieldname === fieldname);
+				const value = values[fieldname];
+				if (!df || value === null || value === undefined) return;
+				if (Array.isArray(value)) {
+					if (!frappe.model.table_fields.includes(df.fieldtype)) return;
+					value.forEach((row) => {
+						const child = frappe.model.add_child(doc, df.options, fieldname);
+						Object.keys(row || {}).forEach((key) => {
+							if (!key.startsWith("__") && !ROW_SKIP.has(key)) child[key] = row[key];
+						});
+					});
+				} else if (typeof value !== "object" && String(value).trim() !== "") {
+					doc[fieldname] = value;
+				}
+			});
+			api.allow_form(doctype, doc.name);
+			frappe.set_route("Form", doctype, doc.name);
 		});
 	},
 };
@@ -143,13 +199,12 @@ function redirect(route) {
 		full_form: read_store(),
 		hash: window.location.hash || "",
 		from_link: !!frappe._from_link,
-		bypass: state.bypass,
 		renamed: Object.values(frappe.model.new_names || {}),
+		options: frappe.route_options || {},
 		local,
 		fresh: local ? fresh_doc(doctype) : null,
 		ignore: local ? ignored_fields(doctype) : [],
 	});
-	if (local && state.bypass === doctype) state.bypass = null;
 	if (!plan) return false;
 	// The unsaved record goes: the guided page creates the real one from the same values.
 	if (local) frappe.model.clear_doc(doctype, name);
