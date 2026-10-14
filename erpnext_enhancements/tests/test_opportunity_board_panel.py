@@ -988,7 +988,9 @@ class TestOneRenderer(unittest.TestCase):
 		bundle = _text(GUIDED_BUNDLE)
 		self.assertIn('import { RecordEditor, mix_editor } from "./form_kit/ui/editor.js";', bundle)
 		self.assertIn('import { SidePanel } from "./form_kit/ui/side_panel.js";', bundle)
-		self.assertIn("const VERSION = 2;", bundle)
+		# 2 brought the editor and the panel; a later version (3, form kit P8.1) still carries them.
+		version = re.search(r"const VERSION = (\d+);", bundle)
+		self.assertTrue(version and int(version.group(1)) >= 2, "a tab holding version 1 must take this one")
 
 	def test_every_request_is_quiet(self):
 		for path in (EDITOR_JS, PANEL_JS):

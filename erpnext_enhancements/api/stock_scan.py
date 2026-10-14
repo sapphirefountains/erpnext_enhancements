@@ -1459,6 +1459,14 @@ def check_new_item(item_code, item_name=None, item_group=None, stock_uom=None):
 	* ``checked`` -- False when the corpus was too large to read; the guard still runs on save.
 	"""
 	_check_access()
+	return preview_new_item(item_code, item_name, item_group, stock_uom)
+
+
+def preview_new_item(item_code, item_name=None, item_group=None, stock_uom=None):
+	""":func:`check_new_item`'s answer, with no access check of its own: each caller checks its
+	own. The guided Item flow (``api.item_flow.preview_item``, form kit P8.1) shows the same
+	preview on its name and code step, gated on Item create rather than on Stock Scan's roles, so
+	the preview there and the refusal on save cannot disagree either."""
 	from erpnext_enhancements.inventory_enhancements import item_naming, item_naming_guard
 	from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming
 
