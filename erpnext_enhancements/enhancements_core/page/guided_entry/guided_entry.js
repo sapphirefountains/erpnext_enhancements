@@ -41,6 +41,15 @@
 // A validation error (417) is shown at the top of the step and keeps the person on it; a lapsed
 // session shows a sign-in panel and keeps everything typed in memory.
 //
+// EXTENSIONS (form kit P8.1). A step whose config names an `extension` gets a block above its
+// fields, drawn by the DocType's extension (public/js/form_kit/extensions.js; the Item flow's
+// name builder and its supplier, stock and asset blocks are public/js/guided_item/). The record
+// editor (form_kit/ui/editor.js) mounts it and lends it a ctx; this page only picks the extension
+// when a record opens (open_extension) and drops it on reset. A block that throws is caught, so
+// the step's own fields always show. "More" steps (config `more`) are the rest of the form past a
+// flow's core: Next on the last core step offers Done, with More details beside the step and every
+// step still in the rail.
+//
 // NO SIGNAL (P4.7). What has not reached the server is kept on the phone (localStorage, one
 // entry per record: form_kit/journal.js), with the server's value from before each change. A save
 // that fails for want of signal says "Saved on this phone" rather than "Not saved", and is retried
@@ -236,6 +245,10 @@ class GuidedEntry {
 	}
 
 	reset() {
+		// P8.1: the step blocks' extension goes with the record (editor.js; on the first reset, from
+		// the constructor, the editor's methods are not mixed in yet and there is none to leave).
+		if (this.ext && this.leave_extension) this.leave_extension();
+		this.ext = null;
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.retired = this.retired.filter((queue) => queue.has_unsaved());
 		this.flow = null;
@@ -412,7 +425,8 @@ class GuidedEntry {
 			return;
 		}
 		const next = this.neighbor_screen(1);
-		if (next) {
+		// The last core step's Next is Done; the "more" steps are behind More details (P8.1).
+		if (next && !this.ends_core()) {
 			this.navigate(next);
 			return;
 		}
@@ -430,6 +444,12 @@ class GuidedEntry {
 		this.flush_entry();
 		this.send_position(false);
 		this.save_in_background();
+	}
+
+	ends_core() {
+		// Done after the core steps is Step by step's (P8.1); One page and Tabs show every section.
+		if (this.sections) return false;
+		return !this.is_new && !!this.kit.ends_core && this.kit.ends_core(this.flow.steps, this.values, this.step_key);
 	}
 
 	has_unsaved() {
@@ -459,6 +479,8 @@ class GuidedEntry {
 		this.doctype = doctype;
 		this.name = name || null;
 		this.is_new = !name;
+		// A tab still holding sf_form_kit v2 (before P8.1) mixed in no open_extension: no blocks, as before.
+		if (typeof this.open_extension === "function") this.open_extension(doctype);
 		this.page.set_title(__("Guided Entry"));
 		this.sf.state.render(this.$root, "loading");
 		// The walk that created a record stays step by step until the person leaves that record.
@@ -617,7 +639,16 @@ class GuidedEntry {
 		this.reset();
 		this.clear_view_attrs();
 		this.page.set_title(__("Guided Entry"));
-		const doctypes = Object.keys((frappe.boot && frappe.boot.sf_guided) || {});
+		const guided = (frappe.boot && frappe.boot.sf_guided) || {};
+		// A flow that is not where its records open (Item, P8.1) is listed only for people who can
+		// start one: a salesperson who can read Items has no Item flow to pick up.
+		const doctypes = Object.keys(guided).filter(
+			(doctype) =>
+				// v2 of the kit has no opens_by_default: every flow listed, as before P8.1.
+				!this.kit.opens_by_default ||
+				this.kit.opens_by_default(guided[doctype]) ||
+				(frappe.model.can_create && frappe.model.can_create(doctype))
+		);
 		if (!doctypes.length) doctypes.push("Opportunity");
 		this.$root.html(`
 			<div class="ge-landing">
@@ -647,7 +678,12 @@ class GuidedEntry {
 		$card.find(".ge-mine-title").text(__(doctype));
 		const $new = $card.find(".ge-mine-new");
 		if (can_create) {
-			$new.text(__("New {0}", [__(doctype)])).on("click", () => frappe.new_doc(doctype));
+			// frappe.new_doc reaches this page only for a DocType that opens here by default; one
+			// reached on purpose (Item, P8.1) would open its form, so its New starts here directly.
+			const by_default = window.sf_guided && window.sf_guided.is_guided && window.sf_guided.is_guided(doctype, true);
+			$new.text(__("New {0}", [__(doctype)])).on("click", () =>
+				by_default ? frappe.new_doc(doctype) : frappe.set_route(this.kit.build_route(doctype, null, null))
+			);
 		} else {
 			$new.remove();
 		}
@@ -1018,7 +1054,7 @@ class GuidedEntry {
 	render_footer(steps, pos) {
 		const kit = this.kit;
 		const prev = this.is_new ? null : this.neighbor_screen(-1);
-		const next = this.is_new ? null : this.neighbor_screen(1);
+		const next = this.is_new || this.ends_core() ? null : this.neighbor_screen(1);
 		this.$root.find(".ge-back").toggleClass("is-hidden", !prev).prop("disabled", !prev);
 		let label;
 		if (this.is_new) label = this.creating ? __("Creating…") : __("Create and continue");
@@ -1117,6 +1153,17 @@ class GuidedEntry {
 		}
 
 		this.render_fields(step, $fields, editable);
+		if (this.ends_core()) {
+			// The rest of the form, past the flow's core: one tap on, never in the way of Done (P8.1).
+			const next = this.kit.neighbor(this.flow.steps, this.values, key, 1);
+			$('<button type="button" class="sf-btn sf-btn--secondary ge-more"></button>')
+				.text(__("More details: {0}", [(this.kit.find_step(this.flow.steps, next) || {}).title || ""]))
+				.on("click", () => {
+					const now = this.kit.neighbor(this.flow.steps, this.values, this.step_key, 1);
+					if (now) this.navigate(now);
+				})
+				.appendTo($stage);
+		}
 		this.apply_visibility();
 
 		this.refresh_notices();
@@ -1209,12 +1256,18 @@ class GuidedEntry {
 	// The person's entry for this DocType, and what this record shows.
 	take_view() {
 		this.entry = this.kit.entry_for(this.view_store || { doctypes: {} }, this.doctype);
-		this.view = this.kit.effective_view(this.entry.prefs, this.in_setup());
+		this.view = this.kit.effective_view(this.entry.prefs, this.in_setup(), this.steps_only());
 		this.hints_hidden = this.kit.shell_attrs(this.view).hints === "hidden";
 	}
 
 	layout() {
 		return (this.view && this.view.layout) || "steps";
+	}
+
+	// A DocType with step blocks (form kit P8.1: the Item flow) stays on Step by step (view.js
+	// effective_view). A kit without has_extension (older than P8.1) has no blocks either.
+	steps_only() {
+		return !!(this.kit && this.kit.has_extension && this.doctype && this.kit.has_extension(this.doctype));
 	}
 
 	sections_mode() {
@@ -1381,7 +1434,7 @@ class GuidedEntry {
 		this.setup_for = null;
 		this.store_entry();
 		this.save_entry({ prefs: this.entry.prefs });
-		this.view = this.kit.effective_view(this.entry.prefs, this.in_setup());
+		this.view = this.kit.effective_view(this.entry.prefs, this.in_setup(), this.steps_only());
 		const after = this.kit.shell_attrs(this.view);
 		this.apply_view();
 		if (before.layout !== after.layout || before.hints !== after.hints) this.redraw_stage();
@@ -2060,6 +2113,16 @@ class GuidedEntry {
 			["tabs", __("Tabs")],
 			["steps", __("Step by step")],
 		]);
+		if (this.steps_only()) {
+			// The Item flow's blocks need Step by step (view.js effective_view): say so, and offer nothing
+			// that would not apply.
+			const $layout = $body.find('fieldset[data-key="layout"]');
+			$layout.find("input").prop("disabled", true);
+			$layout.find('input[value="steps"]').prop("checked", true);
+			$('<p class="ge-set-hint"></p>')
+				.text(__("{0} records always open step by step here: their steps have blocks of their own.", [__(this.doctype)]))
+				.appendTo($layout);
+		}
 		group(
 			"nav",
 			__("Where the steps sit"),

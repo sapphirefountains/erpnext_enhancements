@@ -166,9 +166,16 @@ export function view_for(store, doctype) {
 	return entry_for(store, doctype).prefs;
 }
 
-// What the page shows: the choices for a saved record, the setup flow for a new one.
-export function effective_view(prefs, is_new) {
-	return is_new ? Object.assign({}, SETUP_VIEW) : clean_view(prefs);
+// What the page shows: the choices for a saved record, the setup flow for a new one. `steps_only`
+// keeps a DocType whose flow draws step blocks (form kit P8.1, the Item flow's name builder and its
+// supplier, stock and asset blocks) on Step by step whatever the person chose: those blocks hold one
+// step's state at a time, and the flow ends at its core steps with Done and More details, which
+// only Step by step has. Every other choice still applies.
+export function effective_view(prefs, is_new, steps_only) {
+	if (is_new) return Object.assign({}, SETUP_VIEW);
+	const view = clean_view(prefs);
+	if (steps_only) view.layout = "steps";
+	return view;
 }
 
 export function same_view(a, b) {

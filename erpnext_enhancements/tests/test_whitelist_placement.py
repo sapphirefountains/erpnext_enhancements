@@ -251,6 +251,17 @@ EXACT_SURFACE = {
         "snooze",
         "bulk_update",
     },
+    # The guided Item flow's own reads and writes (form kit P8.1). Each checks its DocType
+    # permission before it writes, tested in test_item_flow; a new one has to be listed here.
+    "api/item_flow.py": {
+        "naming_options",
+        "preview_item",
+        "code_blocks",
+        "get_setup",
+        "save_supplier",
+        "save_stock",
+        "create_asset",
+    },
 }
 
 

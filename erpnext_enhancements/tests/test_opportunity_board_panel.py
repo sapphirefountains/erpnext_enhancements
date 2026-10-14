@@ -988,9 +988,10 @@ class TestOneRenderer(unittest.TestCase):
 		bundle = _text(GUIDED_BUNDLE)
 		self.assertIn('import { RecordEditor, mix_editor } from "./form_kit/ui/editor.js";', bundle)
 		self.assertIn('import { SidePanel } from "./form_kit/ui/side_panel.js";', bundle)
-		# 2 since v1.675.0 (the editor and the panel); 3 since v1.684.0 (view settings). Never back.
-		version = int(re.search(r"const VERSION = (\d+);", bundle).group(1))
-		self.assertGreaterEqual(version, 3)
+		# 2 brought the editor and the panel; 3 (form kit P8.1) the extensions; 4 (v1.684.0) the view
+		# settings. A later version still carries them, and a tab holding an older one takes this one.
+		version = re.search(r"const VERSION = (\d+);", bundle)
+		self.assertTrue(version and int(version.group(1)) >= 4, "a tab holding an older kit must take this one")
 
 	def test_every_request_is_quiet(self):
 		for path in (EDITOR_JS, PANEL_JS):

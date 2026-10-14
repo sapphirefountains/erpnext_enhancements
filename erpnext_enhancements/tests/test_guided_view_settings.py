@@ -105,6 +105,7 @@ out.entry_none = v.clean_entry(undefined);
 out.store_missing = v.entry_for({ doctypes: { Other: { prefs: { layout: "tabs" } } } }, "Opportunity").prefs.layout;
 out.effective_new = v.effective_view({ layout: "page", nav: "right" }, true);
 out.effective_saved = v.effective_view({ layout: "tabs" }, false).layout;
+out.effective_blocks = [v.effective_view({ layout: "page", nav: "top" }, false, true).layout, v.effective_view({ layout: "page", nav: "top" }, false, true).nav];
 
 // ---- the shell's attributes
 out.attrs_default = v.shell_attrs(v.VIEW_DEFAULTS);
@@ -437,6 +438,8 @@ class TestTheDecisions(unittest.TestCase):
 		self.assertEqual(self.out["setup"]["layout"], "steps")
 		self.assertEqual(self.out["effective_new"], self.out["setup"])
 		self.assertEqual(self.out["effective_saved"], "tabs")
+		# A DocType with step blocks (the Item flow, P8.1) stays step by step; its other choices apply.
+		self.assertEqual(self.out["effective_blocks"], ["steps", "top"])
 		# Apart from the layout, the setup flow is the defaults, which are the page as it was.
 		setup = dict(self.out["setup"])
 		setup.pop("layout")
@@ -950,7 +953,7 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 
 	def test_a_new_record_keeps_the_setup_flow(self):
 		page = _code(PAGE_JS)
-		self.assertIn("this.view = this.kit.effective_view(this.entry.prefs, this.in_setup());", page)
+		self.assertIn("this.view = this.kit.effective_view(this.entry.prefs, this.in_setup(), this.steps_only());", page)
 		in_setup = _method(page, "\tin_setup() {")
 		self.assertIn("if (this.is_new) return true;", in_setup)
 		self.assertIn("return !this.is_new && !!this.flow", _method(page, "\tsections_mode() {"))
