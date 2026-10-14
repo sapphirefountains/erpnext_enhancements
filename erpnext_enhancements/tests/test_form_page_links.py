@@ -192,9 +192,9 @@ class TestTheProjectPlannerRead(unittest.TestCase):
 		"""The person's remembered project and PM, and their "last used" view, are left alone."""
 		read = self._read()
 		self.assertNotIn("save_pref", read)
-		self.assertIn("else this.url_filters = next;", read)
+		self.assertIn("else this.url_filters = Object.assign({}, next);", read)
 		save_last = _between(_code(PROJECT_PLANNER), "\tp6c_save_last() {", "\tp6c_matching_view() {")
-		self.assertIn("if (this.url_filters) return;", save_last)
+		self.assertIn("state[key] = this.own_filter_values()[key];", save_last)
 
 	def test_the_only_history_write_is_in_place(self):
 		"""One replaceState, on the entry on screen; the planner still moves between screens only

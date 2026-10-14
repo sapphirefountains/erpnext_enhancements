@@ -78,7 +78,13 @@ class TestTheRead(unittest.TestCase):
 				self.assertIn("delete opts[key];", take)
 				self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", take)
 				# What the address gave is marked, unless it is what is already on screen.
-				self.assertIn("else this.url_filters = next;", take)
+				self.assertIn("else this.url_filters = Object.assign({}, next);", take)
+				# The planner's own next screen is no bare address, even with every filter at All.
+				self.assertIn("} else if (this.url_filters && !self_step) {", take)
+				# Back onto the person's own filters makes them theirs again.
+				self.assertIn(
+					"this.url_filters = null;", take.split("const own = this.own_filter_values();")[1]
+				)
 				# Nothing remembered by a read, and the address is brought up to the screen.
 				self.assertNotIn("save_pref", take)
 				self.assertIn("this.write_filter_url();", take)
@@ -100,12 +106,21 @@ class TestStoredPrefs(unittest.TestCase):
 			code = _code(page["path"])
 			with self.subTest(page=name):
 				pick = _method(code, "\tpick_filter(")
-				self.assertIn("this.url_filters = null;", pick)
-				self.assertIn("this.own_filters = this.filters();", pick)
-				self.assertIn("this.save_pref(", pick)
+				# Only the key picked becomes the person's; the address's others stay one-off (S5b).
+				self.assertIn("this.own_filters = Object.assign(this.own_filter_values(), {", pick)
+				self.assertIn("this.release_filter(", pick)
+				self.assertEqual(pick.count("this.save_pref("), 1)
+				self.assertNotIn("forEach((name) => this.save_pref", pick)
 				self.assertIn("this.write_filter_url();", pick)
+				# "Last used" keeps the person's own value for every key the address still holds.
 				save_last = _method(code, "\tp6c_save_last() {")
-				self.assertIn("if (this.url_filters) return;", save_last)
+				self.assertIn("Object.keys(this.url_filters || {}).forEach((key) => {", save_last)
+				self.assertIn("state[key] = this.own_filter_values()[key];", save_last)
+				self.assertNotIn("if (this.url_filters) return;", save_last)
+				self.assertIn("this.self_route = [", _method(code, "\tgo(view, anchor) {"))
+				# A value the loaded planner resets to All stops being the link's.
+				fill = "\tfill_filters() {" if name == "project" else "\tfill_technicians() {"
+				self.assertIn("this.release_filter(", _method(code, fill))
 				apply = _method(code, "\tp6c_apply_state(state, opts) {")
 				self.assertIn("this.url_filters = null;", apply)
 				self.assertIn("this.own_filters = this.filters();", apply)
@@ -145,7 +160,9 @@ class TestTheAddress(unittest.TestCase):
 				)
 				self.assertIn("if (search === window.location.search) return;", write)
 				# Encoded as v16.50's set_route encodes a value.
-				self.assertIn("encodeURIComponent(filters[key])", write)
+				# Encoded as v16.50's set_route encodes a value, an apostrophe as the browser reads it back.
+				self.assertIn('const enc = (text) => encodeURIComponent(text).replace(/\'/g, "%27");', write)
+				self.assertIn("enc(filters[key])", write)
 				watch = _method(code, "\twatch_filter_url() {")
 				self.assertIn(
 					'window.addEventListener("popstate", () => setTimeout(() => this.write_filter_url(), 0));',

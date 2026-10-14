@@ -79,6 +79,7 @@ function makeDesk(options) {
 		timers: [],
 		listeners: [],
 		head: [],
+		replaces: 0,
 	};
 	const current = () => desk.entries[desk.index];
 	const location = {
@@ -94,6 +95,12 @@ function makeDesk(options) {
 		},
 		hash: "",
 	};
+	// The browser percent-encodes an apostrophe in a query (the URL standard's special-query set), so
+	// location.search reads back %27 for a ' written bare.
+	const parsed = (url) => {
+		const q = url.indexOf("?");
+		return q < 0 ? url : url.slice(0, q) + url.slice(q).replace(/'/g, "%27");
+	};
 	const history = {
 		get state() {
 			return current().state;
@@ -103,11 +110,12 @@ function makeDesk(options) {
 		},
 		pushState(state, _title, url) {
 			desk.entries = desk.entries.slice(0, desk.index + 1);
-			desk.entries.push({ url: url == null ? current().url : url, state });
+			desk.entries.push({ url: url == null ? current().url : parsed(url), state });
 			desk.index += 1;
 		},
 		replaceState(state, _title, url) {
-			desk.entries[desk.index] = { url: url == null ? current().url : url, state };
+			desk.replaces += 1;
+			desk.entries[desk.index] = { url: url == null ? current().url : parsed(url), state };
 		},
 	};
 	const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -483,9 +491,9 @@ test("Project Planner: picking a filter rewrites the address in place and is rem
 	check("no history entry for either", desk.entries.length, 1);
 	check("rendered each time", pp.renders, 2);
 	check(
-		"what the bar shows is remembered",
+		"only the filters picked are remembered; the link's PM was never picked",
 		[desk.prefs[PP_PREFS.project], desk.prefs[PP_PREFS.pm], desk.prefs[PP_PREFS.group]],
-		["", "", "Design"]
+		["", undefined, "Design"]
 	);
 	pp.pick_filter("pm", "Pat Lee");
 	check("a name with a space, encoded as set_route encodes it", desk.here(), "/desk/project-planner/week/2026-10-12?pm=Pat%20Lee&group=Design&keep=1");
@@ -504,7 +512,11 @@ test("Project Planner: a reload keeps the address's filters over the remembered 
 	check("the same address", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00002&group=Field");
 	check("one entry past the form", desk.entries.length, 2);
 	pp.p6c_save_last();
-	check("not saved as last used", saved(desk), []);
+	check(
+		"last used keeps the person's own (the restored view), not the address's",
+		saved(desk).map((s) => [s.project, s.pm, s.group]),
+		[["PRJ-OLD", "pm@example.com", "PM"]]
+	);
 	check("not remembered", desk.prefs, MINE);
 });
 
@@ -584,26 +596,87 @@ test("Project Planner: a link's project the planner does not list stays the filt
 	check("in the address", desk.here(), "/desk/project-planner?project=PRJ-ELSEWHERE");
 });
 
-test("Project Planner: a visit from a link saves nothing; a pick saves as before", () => {
+test("Project Planner: a link's filters stay one-off; a pick saves only the filter picked", () => {
+	// Remembered PRJ-MINE and me@, opened from the Project form on PRJ-00001, then Group: Field.
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	Object.assign(desk.prefs, MINE);
 	const last = { view: "week", project: "PRJ-MINE", pm: "me@example.com", group: "" };
-	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: true, last, saved_text: JSON.stringify(last), views: [] } });
-	desk.go("project-planner", { project: "PRJ-00002", pm: "Sam Roe" });
+	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: true, last, saved_text: null, views: [] } });
+	pp.own_filters = { project: "PRJ-MINE", pm: "me@example.com", group: "" };
+	desk.go("project-planner", { project: "PRJ-00001" });
+	check("the link's filters on screen", pp.filters(), { project: "PRJ-00001", pm: "", group: "" });
 	pp.p6c_save_last();
-	check("no last-used save", saved(desk), []);
-	check("no remembered filter", desk.prefs, MINE);
 	pp.go("month", "2026-10-14");
 	pp.p6c_save_last();
-	check("nor on the next screen, which carries them", [saved(desk), desk.prefs], [[], MINE]);
+	check("no remembered filter", desk.prefs, MINE);
 	pp.pick_filter("group", "Field");
+	check("the screen shows the link's project with the picked group", pp.filters(), {
+		project: "PRJ-00001",
+		pm: "",
+		group: "Field",
+	});
 	pp.p6c_save_last();
+	check("only the group is remembered", desk.prefs, Object.assign({}, MINE, { [PP_PREFS.group]: "Field" }));
 	check(
-		"a pick makes what the bar shows theirs",
+		"last used never takes the link's project or its All PM",
 		saved(desk).map((s) => [s.project, s.pm, s.group]),
-		[["PRJ-00002", "Sam Roe", "Field"]]
+		[
+			["PRJ-MINE", "me@example.com", ""],
+			["PRJ-MINE", "me@example.com", ""],
+			["PRJ-MINE", "me@example.com", "Field"],
+		]
 	);
-	check("remembered too", [desk.prefs[PP_PREFS.project], desk.prefs[PP_PREFS.pm], desk.prefs[PP_PREFS.group]], ["PRJ-00002", "Sam Roe", "Field"]);
+	check("the link's other filters are still the link's", Object.keys(pp.url_filters).sort(), ["pm", "project"]);
+	desk.go("Form", "Task", "TASK-0001");
+	desk.go("project-planner");
+	check("a bare address later brings back theirs, with the group they picked", pp.filters(), {
+		project: "PRJ-MINE",
+		pm: "me@example.com",
+		group: "Field",
+	});
+});
+
+test("Project Planner: a link's PM the planner does not list is let go, so the next week keeps All", () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	Object.assign(desk.prefs, MINE);
+	const pp = projectPlanner(desk, { answer: ANSWER });
+	desk.go("project-planner", "week", "2026-10-12", { pm: "Nobody" });
+	check("All once loaded", pp.filters(), { project: "", pm: "", group: "" });
+	check("the address says so", desk.here(), "/desk/project-planner/week/2026-10-12");
+	// The › button: shift(1) is go(view, the next week).
+	pp.go("week", "2026-10-19");
+	check("the next week is still All, not the person's own", pp.filters(), { project: "", pm: "", group: "" });
+	check("on the next week", desk.here(), "/desk/project-planner/week/2026-10-19");
+});
+
+test("Project Planner: Back onto the person's own entry makes the filters theirs again", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12" });
+	Object.assign(desk.prefs, MINE);
+	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: true, last: null, saved_text: null, views: [] } });
+	desk.land();
+	check("their own, in the address", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-MINE&pm=me%40example.com");
+	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00002" });
+	check("a link's", pp.url_filters !== null, true);
+	desk.back();
+	check("Back: their own entry", pp.filters(), { project: "PRJ-MINE", pm: "me@example.com", group: "" });
+	check("theirs, not a link's", pp.url_filters, null);
+	pp.p6c.color_by = "pm";
+	pp.p6c_save_last();
+	check("so last used saves again, colors and all", saved(desk).map((s) => [s.project, s.color_by]), [["PRJ-MINE", "pm"]]);
+});
+
+test("Project Planner: an apostrophe is written as the browser reads it back, once", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	pp.pick_filter("pm", "o'neil@example.com");
+	check("written as %27", desk.here(), "/desk/project-planner/week/2026-10-12?pm=o%27neil%40example.com");
+	const writes = desk.replaces;
+	pp.write_filter_url();
+	pp.go("month", "2026-10-12");
+	desk.back();
+	check("read back as the same name", pp.pm, "o'neil@example.com");
+	check("and never rewritten", desk.replaces, writes);
 });
 
 test("Project Planner: a bare address after a link brings back the person's own filters", () => {
@@ -729,7 +802,7 @@ test("Maintenance Planner: a link with a technician opens the planner on them", 
 	check("not remembered", desk.prefs, { [MP_TECH]: "tech1@example.com" });
 	mp.p6c = { loaded: true, restored: true, last: null, saved_text: null, views: [], color_by: "default" };
 	mp.p6c_save_last();
-	check("not saved as last used", saved(desk), []);
+	check("last used keeps the person's own technician", saved(desk).map((s) => s.technician), ["tech1@example.com"]);
 });
 
 test("Maintenance Planner: picking a technician rewrites the address in place", () => {
@@ -780,6 +853,19 @@ test("Maintenance Planner: an unknown technician is ignored once the planner has
 	const long = "t".repeat(141);
 	desk.go("maintenance-planner", "week", "2026-10-19", { technician: long });
 	check("an overlong value names nothing", mp.technician, "");
+});
+
+test("Maintenance Planner: a link's technician the planner does not list is let go, so the next week keeps All", () => {
+	const desk = makeDesk({ start: "/desk/maintenance-day-board" });
+	desk.prefs[MP_TECH] = "tech1@example.com";
+	const mp = maintenancePlanner(desk, { answer: TECHS });
+	desk.go("maintenance-planner", "week", "2026-10-12", { technician: "gone@example.com" });
+	check("All once loaded", mp.technician, "");
+	check("no longer the link's", mp.url_filters, null);
+	// The › button: shift(1) is go(view, the next week).
+	mp.go("week", "2026-10-19");
+	check("the next week is still All, not tech1", mp.technician, "");
+	check("on the next week", desk.here(), "/desk/maintenance-planner/week/2026-10-19");
 });
 
 test("Maintenance Planner: a reload keeps the address's technician over the last used", () => {

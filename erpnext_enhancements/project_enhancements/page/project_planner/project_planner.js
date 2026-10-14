@@ -268,10 +268,16 @@ class ProjectPlanner {
 	//     (S5b) is such a link: ?project= alone, which also leaves the PM filter at All, where it
 	//     cannot hide the project's cards. An address that names none of them (the sidebar, another
 	//     page's path-only link) keeps the filters on screen.
-	//   - What the address gave is that visit's only. Nothing is saved: not the remembered filters,
-	//     and not the "last used" view while they are on screen (p6c_save_last). A bare address after
-	//     them brings back the person's own. A filter the person picks (pick_filter) makes everything
-	//     the bar then shows theirs, remembered as before.
+	//   - What the address gave is that visit's only (url_filters: the keys it decided, those it named
+	//     and those it left at All). None is saved to the remembered filters, and "last used" keeps the
+	//     person's own value for each of them (p6c_save_last). A bare address after them brings back
+	//     the person's own, except on the planner's own next screen (self_route), which carries what
+	//     is on screen. A filter the person picks (pick_filter) is theirs and remembered as before;
+	//     the address's other keys stay one-off. A key the loaded planner resets to All (a PM it does
+	//     not list) stops being the address's, and so do they all once the filters on screen are the
+	//     person's own again (a Back onto one of their own entries).
+	//   - Back onto an entry the planner left bare (every filter All, and the person's own) names
+	//     nothing, so it keeps whatever filters are on screen by then, the newer ones.
 	//   - Picking a filter rewrites the address in place (write_filter_url, replaceState). A filter is
 	//     not a screen: pushing would make Back step through every pick in a select before it reached
 	//     the week before. The entry keeps saying what it shows, so Back onto it, a reload or a copied
@@ -316,17 +322,25 @@ class ProjectPlanner {
 			});
 			if (!Object.keys(opts).length) frappe.route_options = null;
 		}
+		// The planner's own next screen (go, go_route, go_my_week) carries what is on screen; with every
+		// filter at All it carries nothing, and is no bare address for all that.
+		const self_step = !!this.self_route && this.self_route === (frappe.get_route() || []).join("/");
+		this.self_route = null;
 		const now = this.filters();
+		const own = this.own_filter_values();
+		const same = (a, b) => PP.url_filters.every((key) => a[key] === b[key]);
 		let next = null;
 		if (Object.keys(named).length) {
 			next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };
 			// The planner's own screens carry the filters on screen: nothing changes, nothing is marked.
-			if (PP.url_filters.every((key) => next[key] === now[key])) next = null;
-			else this.url_filters = next;
-		} else if (this.url_filters) {
-			next = Object.assign({ project: "", pm: "", group: "" }, this.own_filters);
+			if (same(next, now)) next = null;
+			else this.url_filters = Object.assign({}, next);
+		} else if (this.url_filters && !self_step) {
+			next = own;
 			this.url_filters = null;
 		}
+		// The person's own filters again (a Back onto one of their own entries): theirs, not a link's.
+		if (this.url_filters && same(next || now, own)) this.url_filters = null;
 		if (next) {
 			if (next.project !== now.project) this.show_all_unscheduled = false;
 			Object.assign(this, next);
@@ -337,13 +351,29 @@ class ProjectPlanner {
 		this.write_filter_url();
 	}
 
-	// A filter picked in the bar, or "Filter to this project" in a project's drawer.
+	own_filter_values() {
+		return Object.assign({ project: "", pm: "", group: "" }, this.own_filters);
+	}
+
+	// A key the address gave stops being the address's: the person picked it, or the loaded planner
+	// reset it to All. With none left, the filters on screen are no longer a link's.
+	release_filter(key) {
+		if (!this.url_filters) return;
+		delete this.url_filters[key];
+		if (!Object.keys(this.url_filters).length) this.url_filters = null;
+	}
+
+	// A filter picked in the bar, or "Filter to this project" in a project's drawer. Only that one
+	// becomes the person's, remembered and in "last used"; the address's other keys stay one-off.
 	pick_filter(key, value) {
 		this[key] = value || "";
 		if (key === "project") this.show_all_unscheduled = false;
-		this.url_filters = null;
-		this.own_filters = this.filters();
-		PP.url_filters.forEach((name) => this.save_pref(PP.prefs[name], this[name]));
+		this.own_filters = Object.assign(this.own_filter_values(), { [key]: this[key] });
+		this.release_filter(key);
+		if (this.url_filters && PP.url_filters.every((name) => this[name] === this.own_filters[name])) {
+			this.url_filters = null;
+		}
+		this.save_pref(PP.prefs[key], this[key]);
 		this.write_filter_url();
 		this.render();
 	}
@@ -353,19 +383,22 @@ class ProjectPlanner {
 	// address) and never over filters the page has not read yet (a Back the router is still routing).
 	// The path as the router wrote it (a shell segment included), any key that is not the planner's,
 	// the hash and history.state are kept. Values are encoded as v16.50's set_route encodes them, so
-	// the router reads the address it would have written and pushes no duplicate.
+	// the router reads the address it would have written and pushes no duplicate, except that an
+	// apostrophe is written as the browser itself writes it in a query (%27): left bare, the address
+	// read back would never equal the one written, and every landing would write it again.
 	write_filter_url() {
 		const path = window.location.pathname;
 		if ((frappe.get_route() || [])[0] !== PP.route || !path.split("/").includes(PP.route)) return;
 		const opts = frappe.route_options;
 		if (opts && PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return;
+		const enc = (text) => encodeURIComponent(text).replace(/'/g, "%27");
 		const pairs = [];
 		const filters = this.filters();
 		PP.url_filters.forEach((key) => {
-			if (filters[key]) pairs.push(`${key}=${encodeURIComponent(filters[key])}`);
+			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
 		});
 		new URLSearchParams(window.location.search).forEach((value, key) => {
-			if (!PP.url_filters.includes(key)) pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+			if (!PP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
 		});
 		const search = pairs.length ? `?${pairs.join("&")}` : "";
 		if (search === window.location.search) return;
@@ -408,6 +441,7 @@ class ProjectPlanner {
 			this.load_route();
 			return;
 		}
+		this.self_route = [PP.route, PP.route_view, resource, ymd].join("/");
 		this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options()), false);
 	}
 
@@ -417,6 +451,7 @@ class ProjectPlanner {
 			this.load();
 			return;
 		}
+		this.self_route = [PP.route, view, anchor].join("/");
 		this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);
 	}
 
@@ -668,7 +703,11 @@ class ProjectPlanner {
 		this.$pm.empty();
 		$("<option></option>").val("").text(__("All project managers")).appendTo(this.$pm);
 		pms.forEach((pm) => $("<option></option>").val(pm).text(pm).appendTo(this.$pm));
-		if (this.pm && !pms.includes(this.pm)) this.pm = "";
+		if (this.pm && !pms.includes(this.pm)) {
+			// A PM a link named that is not listed is ignored: All, and no longer the link's (S5c).
+			if (this.url_filters && this.url_filters.pm === this.pm) this.release_filter("pm");
+			this.pm = "";
+		}
 		this.$pm.val(this.pm);
 	}
 
@@ -3533,6 +3572,7 @@ const PP3B_METHODS = {
 			this.load_my_week();
 			return;
 		}
+		this.self_route = [PP.route, PP3B.my_week, ymd].join("/");
 		this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options()), false);
 	},
 
@@ -7830,10 +7870,12 @@ const PP6C_METHODS = {
 	p6c_save_last() {
 		const p6c = this.p6c;
 		if (!PP6C.schema.view[1].includes(this.view)) return;
-		// Filters the address gave (S5b's form link, S5c's any link) are that visit's, not "last used",
-		// for as long as they are on screen: a filter the person picks ends that (pick_filter).
-		if (this.url_filters) return;
 		const state = this.p6c_state(true);
+		// Filters the address gave (S5b's form link, S5c's any link) are that visit's, not "last used":
+		// each keeps the person's own value until they pick it themselves (pick_filter).
+		Object.keys(this.url_filters || {}).forEach((key) => {
+			if (key in state) state[key] = this.own_filter_values()[key];
+		});
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;

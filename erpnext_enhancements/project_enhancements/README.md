@@ -745,12 +745,18 @@ in the address" block:
   address that names none (the sidebar, another page's path-only link) keeps the filters on screen,
   and they are written into it. A group that is not one of the four, an overlong value or an object
   is ignored; a PM the loaded planner does not list becomes All, and the address follows.
-- **A link's filters are that visit's only** (S5b's rule for the form link, made general). They
-  are not saved to the remembered filters, and the "last used" view is not saved while they are on
-  screen (`url_filters`). A bare planner address after them brings back the person's own. A filter
-  the person picks (`pick_filter`: the three selects, and "Filter to this project" in a project's
-  drawer) makes everything the bar then shows theirs, saved as before. A saved view, used or
-  restored, is theirs too.
+- **A link's filters are that visit's only** (S5b's rule for the form link, made general).
+  `url_filters` holds the keys the address decided. None is saved to the remembered filters, and
+  "last used" keeps the person's own value for each.
+  - A filter the person picks (`pick_filter`: the three selects, and "Filter to this project" in a
+    project's drawer) is theirs and saved as before. Only that one: the link's others stay one-off.
+  - A key the loaded planner resets to All stops being the link's.
+  - Back onto the person's own filters makes them theirs again.
+  - A bare planner address after a link brings back the person's own filters. The planner's own
+    next screen (`self_route`) is not such an address, even when it carries no query.
+  - Back onto an entry the planner left bare (all All, and the person's own) keeps the newer
+    filters on screen.
+  - A saved view, used or restored, is theirs too.
 - **A pick replaces, a screen pushes.** `pick_filter` rewrites the entry on screen in place
   (`write_filter_url`, `history.replaceState`, the page's one history write). A filter is not a
   screen: a push per pick would make Back step through every select change before it reached the

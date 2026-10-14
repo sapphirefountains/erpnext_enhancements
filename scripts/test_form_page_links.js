@@ -488,15 +488,21 @@ test("Project: the link is a one-off and leaves the person's own filters alone",
 	check("the planner shows the form's project", pp.project, "PRJ-00001");
 	check("the remembered filters are untouched", desk.prefs, MINE);
 	pp.p6c_save_last();
-	check("no 'last used' save while the link's project is the filter", desk.calls, []);
+	// S5c (v1.676.0): "last used" may still save (colors, view), but keeps the person's own project.
+	check(
+		"'last used' never takes the link's project",
+		desk.calls.map((c) => JSON.parse(c.args.data).project),
+		["PRJ-MINE"]
+	);
 	// The person picks another filter (the select's own handler, pick_filter, sets it and saves it).
 	pp.pick_filter("project", "");
 	pp.p6c_save_last();
 	check(
-		"a filter they pick is saved as last used again",
-		desk.calls.map((c) => [c.method, JSON.parse(c.args.data).project]),
+		"a filter they pick is saved as last used",
+		desk.calls.map((c) => [c.method, JSON.parse(c.args.data).project]).slice(-1),
 		[["erpnext_enhancements.api.planner_views_prefs.save_last_view", ""]]
 	);
+	check("and remembered", desk.prefs.ee_project_planner_project, "");
 });
 
 test("Project: Back after switching to All does not snap the filter back", () => {

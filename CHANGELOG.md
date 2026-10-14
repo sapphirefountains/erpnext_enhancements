@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     write a form's address, and never over keys the router has put in `route_options` that the page
     has not read yet. It keeps the path as the router wrote it, other keys, the hash and
     `history.state`, and encodes as v16.50's `set_route` does, so the router never pushes a
-    duplicate entry for the same screen. After a popstate the router does not route (the planner
+    duplicate entry for the same screen. An apostrophe is written as `%27`, as the browser reads it
+    back, so a name like o'neil does not rewrite the entry on every landing. After a popstate the router does not route (the planner
     kit closing a drawer), `watch_filter_url` runs it again, so a pick made under a drawer reaches
     the entry below.
   - **On the router before v16.50**, which pushed the path alone, the filters still reach the
@@ -49,13 +50,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **What an address gave is that visit's only** (S5b's rule for the Project form's link, made
-  general). It is never saved to the remembered filters, and the "last used" view is not saved
-  while it is on screen (`url_filters`, replacing `project_link`). A bare planner address after it
-  brings back the person's own filters. A filter the person picks (`pick_filter`: the selects, and
-  "Filter to this project" in a project's drawer) makes everything the bar then shows theirs.
-  On the Project Planner that saves all three to the remembered filters, as the "last used" view
-  already did. Before, only the one picked was saved. A saved view, used or restored, is theirs
-  too.
+  general). `url_filters` (replacing `project_link`) holds the keys the address decided: those it
+  named and those it left at All.
+  - None of them is saved to the remembered filters. "Last used" may still save the view, the
+    colors and so on, but keeps the person's own value for each of those keys.
+  - A filter the person picks (`pick_filter`: the selects, and "Filter to this project" in a
+    project's drawer) is theirs: only that one is remembered and goes into "last used", as before.
+    The address's other keys stay one-off. For example, someone who remembers PRJ-MINE and their own
+    PM opens a project from its form and picks Group: Field. They keep PRJ-MINE, their PM and Field.
+  - A key the loaded planner resets to All (a PM or technician it does not list) stops being the
+    address's. When none is left, nothing is a link's any more, so the next week keeps All instead
+    of bringing back the person's own.
+  - Back onto one of the person's own entries, whose filters are their own, makes them theirs again,
+    and "last used" saves as before.
+  - A bare planner address after a link brings back the person's own filters. The planner's own
+    next screen (`self_route`: ‹ ›, a view, a person's route, My week) is not such an address, even
+    when every filter is All and it carries no query.
+  - Back onto an entry the planner left bare (every filter All, and the person's own) names nothing,
+    so it keeps whatever filters are on screen by then, the newer ones.
+  - A saved view, used or restored, is the person's too.
 - **The Project form's link keeps `?project=` in the address.** S5b took the key out
   (`take_route_project`, now part of `take_route_filters`), so that Back onto the entry would not
   put the filter back over a later pick. A pick now rewrites the entry, which keeps that promise
@@ -84,7 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link, nothing left in `route_options` for the next route, a bare address after a link, the
   last-used view's redirect, a pick made under a drawer, and the writes it must never make. It
   also proves the double `<link>` under the assets model, and one link with `p6a_require`, for
-  6A and 6D in one tick and for both planners at once.
+  6A and 6D in one tick and for both planners at once. Review follow-ups are covered too: a pick
+  from a link keeping the person's other filters, a PM or technician the planner does not list
+  letting go so the next week keeps All, Back onto the person's own entry, and an apostrophe
+  written once.
 - `scripts/test_form_page_links.js` follows the Project link's new address, and a pick goes
   through `pick_filter`. The source checks in the planner suites now allow each page's one
   in-place history write, `write_filter_url`, still never a push, and one `frappe.require` behind

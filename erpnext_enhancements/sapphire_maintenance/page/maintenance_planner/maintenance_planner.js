@@ -217,6 +217,7 @@ class MaintenancePlanner {
 			this.load();
 			return;
 		}
+		this.self_route = [MP.route, view, anchor].join("/");
 		this.p6a_route(() => frappe.set_route(MP.route, view, anchor, this.filter_options()), true);
 	}
 
@@ -226,9 +227,14 @@ class MaintenancePlanner {
 	// rules as the Project Planner's filters (its "filters in the address" says why each is so):
 	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
 	//     address wins over it. An address that does not name it keeps the technician on screen.
-	//   - What the address gave is that visit's only: not remembered, and the "last used" view is not
-	//     saved while it is on screen (p6c_save_last). A bare address after it brings back the
-	//     person's own. A technician the person picks (pick_filter) is theirs, remembered as before.
+	//   - What the address gave is that visit's only: not remembered, and "last used" keeps the
+	//     person's own technician while it is on screen (p6c_save_last). A bare address after it
+	//     brings back the person's own, except on the planner's own next screen (self_route). A
+	//     technician the person picks (pick_filter) is theirs, remembered as before. One the loaded
+	//     planner does not list becomes All and stops being the address's, and so does one that is
+	//     the person's own anyway (a Back onto one of their own entries).
+	//   - Back onto an entry the planner left bare (All, and the person's own) names nothing, so it
+	//     keeps whatever technician is on screen by then, the newer one.
 	//   - Picking one rewrites the address in place (write_filter_url, no new entry): a filter is not
 	//     a screen, and Back steps through months, weeks and views, not through every pick. A month,
 	//     a week or a view moves by set_route as it always has, carrying the filter (filter_options).
@@ -263,16 +269,23 @@ class MaintenancePlanner {
 			});
 			if (!Object.keys(opts).length) frappe.route_options = null;
 		}
+		// The planner's own next screen (go) carries the technician on screen; with All it carries
+		// nothing, and is no bare address for all that.
+		const self_step = !!this.self_route && this.self_route === (frappe.get_route() || []).join("/");
+		this.self_route = null;
+		const own = this.own_filter_values();
 		let next = null;
 		if (Object.keys(named).length) {
 			next = { technician: named.technician || "" };
 			// The planner's own screens carry the filter on screen: nothing changes, nothing is marked.
 			if (next.technician === this.filters().technician) next = null;
-			else this.url_filters = next;
-		} else if (this.url_filters) {
-			next = Object.assign({ technician: "" }, this.own_filters);
+			else this.url_filters = Object.assign({}, next);
+		} else if (this.url_filters && !self_step) {
+			next = own;
 			this.url_filters = null;
 		}
+		// The person's own technician again (a Back onto one of their own entries): theirs, not a link's.
+		if (this.url_filters && (next || this.filters()).technician === own.technician) this.url_filters = null;
 		if (next) {
 			this.technician = next.technician;
 			if (this.$tech) this.$tech.val(this.technician);
@@ -280,11 +293,23 @@ class MaintenancePlanner {
 		this.write_filter_url();
 	}
 
+	own_filter_values() {
+		return Object.assign({ technician: "" }, this.own_filters);
+	}
+
+	// The key the address gave stops being the address's: the person picked one, or the loaded planner
+	// reset it to All.
+	release_filter(key) {
+		if (!this.url_filters) return;
+		delete this.url_filters[key];
+		if (!Object.keys(this.url_filters).length) this.url_filters = null;
+	}
+
 	// A technician picked in the bar.
 	pick_filter(value) {
 		this.technician = value || "";
-		this.url_filters = null;
-		this.own_filters = this.filters();
+		this.own_filters = Object.assign(this.own_filter_values(), { technician: this.technician });
+		this.release_filter("technician");
 		this.save_pref(MP.tech_key, this.technician);
 		this.write_filter_url();
 		this.render();
@@ -293,19 +318,21 @@ class MaintenancePlanner {
 	// The page's one history write: the filter on screen into the entry on screen, in place. Only
 	// while the router is on the planner's own path and never over a filter the page has not read
 	// yet. The path as the router wrote it, any key that is not the planner's, the hash and
-	// history.state are kept; values are encoded as v16.50's set_route encodes them.
+	// history.state are kept; values are encoded as v16.50's set_route encodes them, an apostrophe as
+	// the browser writes it in a query (%27), or the address read back would never match.
 	write_filter_url() {
 		const path = window.location.pathname;
 		if ((frappe.get_route() || [])[0] !== MP.route || !path.split("/").includes(MP.route)) return;
 		const opts = frappe.route_options;
 		if (opts && MP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return;
+		const enc = (text) => encodeURIComponent(text).replace(/'/g, "%27");
 		const pairs = [];
 		const filters = this.filters();
 		MP.url_filters.forEach((key) => {
-			if (filters[key]) pairs.push(`${key}=${encodeURIComponent(filters[key])}`);
+			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
 		});
 		new URLSearchParams(window.location.search).forEach((value, key) => {
-			if (!MP.url_filters.includes(key)) pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+			if (!MP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
 		});
 		const search = pairs.length ? `?${pairs.join("&")}` : "";
 		if (search === window.location.search) return;
@@ -560,6 +587,8 @@ class MaintenancePlanner {
 				.appendTo(this.$tech);
 		});
 		const known = !keep || keep === "__none__" || people.some((person) => person.user === keep);
+		// One a link named that is not listed is ignored: All, and no longer the link's (S5c).
+		if (!known && this.url_filters && this.url_filters.technician === keep) this.release_filter("technician");
 		this.technician = known ? keep : "";
 		this.$tech.val(this.technician);
 	}
@@ -4843,10 +4872,12 @@ const MP6C_METHODS = {
 	p6c_save_last() {
 		const p6c = this.p6c;
 		if (!MP6C.schema.view[1].includes(this.view)) return;
-		// A technician the address gave (S5c) is that visit's, not "last used", for as long as it is
-		// on screen: one the person picks ends that (pick_filter).
-		if (this.url_filters) return;
 		const state = this.p6c_state();
+		// A technician the address gave (S5c) is that visit's, not "last used": it keeps the person's
+		// own until they pick one themselves (pick_filter).
+		Object.keys(this.url_filters || {}).forEach((key) => {
+			if (key in state) state[key] = this.own_filter_values()[key];
+		});
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;
