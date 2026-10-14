@@ -3231,11 +3231,15 @@ def test_pay_page_offers_what_the_endpoints_accept_not_what_the_stamp_says(monke
 		autopay_enrolled=False,
 		csrf_token="tok",
 	)
+	import re
+
 	rows = {}
-	for chunk in html.split("<tr>")[2:]:  # past the header row
+	# Rows and cells carry ARIA roles since v1.679.0 (<tr role="row">), so match the tag, not "<tr>".
+	for chunk in re.split(r"<tr\b[^>]*>", html)[2:]:  # past the header row
 		# The Invoice cell: the name, then its "View invoice (PDF)" link beneath it.
-		name = chunk.split("<td>", 1)[1].split("<", 1)[0].strip()
+		name = re.split(r"<td\b[^>]*>", chunk, maxsplit=1)[1].split("<", 1)[0].strip()
 		rows[name] = chunk.split("</tr>", 1)[0]
+	assert len(rows) == len(context.invoices)
 
 	def offers(name):
 		row = rows[name]
@@ -5619,7 +5623,12 @@ def test_pay_offers_the_invoice_pdf_on_every_row():
 	]
 	for link in links:
 		assert (link["target"], link["rel"]) == ("_blank", "noopener"), link
-	for chunk in html.split("<tr>")[2:]:
+	import re
+
+	# <tr role="row"> since v1.679.0: match the tag, and count the rows so the loop cannot be empty.
+	chunks = re.split(r"<tr\b[^>]*>", html)[2:]
+	assert len(chunks) == len(states)
+	for chunk in chunks:
 		assert chunk.split("</tr>", 1)[0].count("View invoice (PDF)") == 1
 
 	# No invoices, or payments switched off: no list, so no link.

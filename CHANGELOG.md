@@ -59,6 +59,166 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a field created in app code with `create_custom_fields` that isn't registered. It reads string
     literals, module constants and `field_definition()`-style helpers with `ast`.
 
+## [1.680.0] - 2026-10-14
+
+### Added
+
+- **A "Pages" section in search, and keyboard shortcuts to the six busiest pages** (custom pages
+  S4c, ERPNext TASK-2026-02806). One new global module, `public/js/global_enhancements/page_search.js`,
+  holds a single alias table for this app's 26 main pages.
+  - **Awesomebar (Ctrl+K).** Typing a page's title or a short word now finds it: "planner" (the
+    Project, Maintenance and Rental planners), "kiosk" (the Time Kiosk), "scan" (Stock Scan and
+    Inventory Scanner Audit), "trip", "day board", "rental", "health" (the four health dashboards),
+    "qbo" and so on. Each row says "Page" and shows its shortcut. Frappe v16.50 already listed a Page
+    whose title fuzzy-matched, so "Project Planner" was findable by its full name. An alias was not,
+    and Frappe's own row for a page this section also lists is folded into ours, so a page is one row.
+  - **Search dialog (Enter, or Ctrl+G).** A "Pages" section beside the existing "DocTypes" one. The
+    dialog's content search is MariaDB full-text, which skips words under four letters
+    (`ft_min_word_len`), so "QBO" could never match there. This section does its own matching, so it
+    does.
+  - **Shortcuts.** Alt+Shift+P Project Planner, Alt+Shift+M Maintenance Planner, Alt+Shift+D
+    Maintenance Day Board, Alt+Shift+R Rental Planner, Alt+Shift+J Plan a Trip, Alt+Shift+S Stock
+    Scan. They are registered through `frappe.ui.keys.add_shortcut`, so they appear in Frappe's
+    Keyboard Shortcuts dialog (Shift+/). Each also gets a "Go to ..." command in the awesomebar
+    through `search_utils.make_function_searchable`, the API Frappe uses for its own "Background
+    Jobs" command, so typing "go" lists them. v16.50 has no separate command palette: Ctrl+K is it.
+  - **Who sees what.** A Desk page is offered only when `frappe.boot.page_info` has it, which holds
+    only the pages the user's roles allow. Stock Scan is a www page and carries its controller's
+    `SCAN_ROLES`, which the guard test holds equal. A shortcut is registered only for a page the user
+    can open, so the help dialog never lists one that lands on "not permitted".
+  - **Routing.** A Desk page opens with `frappe.set_route(<page name>)`, a www page with a real
+    navigation; both leave a history entry. "kiosk" goes through the `time-kiosk` Desk page, which
+    already redirects to `/kiosk` and is gated by its roles.
+
+### Notes
+
+- **Why a wrap, and why it cannot break search.** v16.50 has no client-side extension point for
+  awesomebar results. `AwesomeBar.build_options` is a fixed list of builders, and the server
+  `awesomebar_search` hook would cost a request on every keystroke for every user. So
+  `AwesomeBar.prototype.build_options` and `SearchDialog.prototype.parse_results` are wrapped
+  narrowly, the way `global_search_doctypes.js` already wraps the latter. Frappe's own list is built
+  first and returned untouched if anything of ours throws, if nothing matches, or in "#tag" mode. A
+  method that is missing or renamed is left alone, so a Frappe upgrade turns the feature off rather
+  than search.
+- **Why Alt+Shift.** Frappe has no key sequences (`g` then a letter), only chords. Frappe's
+  `get_key` spells a chord `alt+shift+<letter>` (ctrl, then shift, then alt), and nothing in Frappe
+  v16.50, ERPNext v16.50 or this app binds one. Frappe's own Alt+<letter> menu accelerators step
+  aside whenever Shift is held, and a workspace's bare and Shift+letter keys, which open the
+  awesomebar, are different chords. `add_shortcut` drops every other global handler on its chord,
+  which is why a collision would be silent. T is avoided because the Triton widget opens on Alt+T
+  without excluding Shift and Chrome uses Shift+Alt+T for its toolbar. I and A are avoided for
+  Chrome's own keys. Plan a Trip takes J.
+- **Never while typing.** `add_shortcut` already skips `input`, `select`, `textarea` and
+  `[contenteditable=true]`. That selector misses `contenteditable=""`, `"plaintext-only"` and the
+  child nodes of an editor, so the action also refuses there. It also refuses on a held-down repeat
+  and while a dialog is open. A refusal leaves the keystroke untouched.
+- **Fixed before release (review).** Two fixes from review:
+  - **Key repeat.** The repeat guard first read `e.repeat`. `frappe.ui.keys` passes a jQuery
+    event, and jQuery 3.7.1 does not copy `repeat` onto it, so the guard could never fire. It now
+    reads `e.originalEvent.repeat`. The harness builds its key events the way jQuery does, so it
+    fails on the old check.
+  - **New tabs from the search dialog.** A Desk page row in the dialog's "Pages" section now
+    carries its route, so it has a real `/desk/<page>` href and opens in a new tab on Ctrl, Cmd or
+    middle click. A plain click still closes the dialog and routes with `set_route`. A
+    Ctrl/Cmd/Shift-click leaves the current tab alone. Stock Scan, a www page, has no Desk href, so
+    its row opens the new tab itself.
+- **Tests.** `scripts/test_page_search.js` runs the real module under node against a stubbed
+  frappe (`page_info`, `ui.keys` with v16.50's handler and `get_key`, `set_route`, a fake
+  AwesomeBar and SearchDialog), with 112 checks. `tests/test_custom_pages_s4c.py` holds the map to
+  real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
+  chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
+
+## [1.679.0] - 2026-10-14
+
+Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
+only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is
+byte-for-byte what it was, and a test now pins each one by SHA-256.
+
+### Changed
+
+- **`/pay`, `/pay-card`, `/rentals` and `/rent-a-fountain` share a nav bar and read the app design
+  tokens.** Until now they showed the website's standard navbar with no customer menu, styled with
+  inline Bootstrap and no phone rules.
+  - **The nav bar** is one include, `templates/includes/sf_portal_nav.html`, in each page's
+    `navbar` block in place of the Standard Navbar. It is the navy head band with the brand name in
+    the display face. A signed-in customer gets Pay Invoices, My Rentals, Rent a Fountain and Sign
+    out (`/logout`); a guest, who can only be on the rent form, gets Rent a Fountain and Sign in
+    (back to the same page). There are no Desk or `/app/` links. The current page is bold and
+    underlined (`aria-current="page"`), so it doesn't rely on colour alone. A skip link leads to the
+    content.
+  - **"Rent a Fountain" shows only while that form is switched on.** The page 404s while
+    `Rental Settings.public_request_form` is off, so the nav asks a new Jinja global,
+    `ee_rent_form_enabled` (in `asset_management/rental_requests.py`, registered in `hooks.py`).
+    It is read-only and never raises, because it returns the existing `enabled()`, which already
+    swallows a missing settings record.
+  - **The tokens reach each page through its own link,** as on `/review` and `/itinerary`
+    (v1.659.0). Each template links `sf_tokens.bundle.css` through `bundled_asset`, then the new
+    `sf_portal.bundle.css`. Both are content-hashed, so a phone never keeps a stale copy from the
+    year-long `/assets` cache. Neither is in `web_include_css`, which would ship them to every
+    public page. `/pay`, `/pay-card` and `/rentals` call `super()` in `head_include`, so they keep
+    the site's own head HTML as before. `/rent-a-fountain` never called it and still does not.
+  - **The pages are pinned light.** The tokens follow the device's dark setting on a page with no
+    `data-theme`, but these pages can't go dark with them, for two reasons. The rest of the website
+    (Frappe's footer and website styles) has no dark theme. And Stripe's Payment Element draws dark
+    grey labels inside its own frame, which no stylesheet reaches; on a navy card they would be
+    unreadable. So a one-line include, `sf_portal_light.html`, writes `data-theme="light"` on
+    `<html>` before the stylesheets load. There is no toggle. It is an include rather than a
+    `<script>` in each page, because tests read `pay.html`'s first `<script>` as the payment code.
+  - **The look.** Square cards, notices and fields with `--sf-rule` hairlines, and no shadows; the
+    CSS only switches Bootstrap's own shadows off. Buttons round at `--sf-radius-control`: the
+    primary is fresh-blue with a navy label, the secondary a 2px stroke. Headings are in the display
+    face. Links are underlined. Notices are a card on the surface with a status rule down the left,
+    and their words are unchanged.
+  - **Status words, not colour alone.** `/pay`'s three payment verdicts are now chips with their
+    unchanged words: "Waiting for bank approval…" in the warn tone, and "Payment received — please
+    contact us" and "Processing…" in neutral. A rental's status ("On hold", "Confirmed",
+    "Delivered" and so on) is a Rent-pillar chip, in the list and on the booking. `/pay-card`'s
+    decline and "tap Back" notes are the danger colour mixed half and half with the strongest text,
+    which is the guide's rule for status text.
+  - **Phones (767px and below).** `/pay`'s invoice table becomes one card per invoice. Each cell is
+    stacked and labelled through `data-label`; the Invoice cell stays a bare `<td>` because
+    `test_stripe_payments` parses it. Card and Bank sit side by side at full width. Fields go to one
+    column. A settled invoice's two ways out on `/pay-card` stack at full width. The nav wraps under
+    the brand. Every button, field and nav link is at least 44px tall, and every field's type is
+    16px, below which iOS zooms in.
+  - **Inline styles moved to classes**: the autopay panel's rule and spacing, the consent text's
+    line breaks, the footnote's margin, the two pages' column widths (520px and 640px), and
+    `/pay-card`'s spacing around the Payment Element, the notes and the review table. Two kinds of
+    inline style stay on purpose. The `display:none` on `#step-review`, `#review-fee-row`,
+    `#review-disclosure` and `#review-nofee` is state: the script shows and hides those through
+    `style.display` and reads it back, and no stylesheet rule sets `display` on them (tested). The
+    rent form's honeypot also stays inline, so it is off screen even if the stylesheet never arrives.
+  - **Keyboard and screen readers.** Each page's content wrapper (`#sf-portal-main`) takes
+    `tabindex="-1"`, so the skip link moves keyboard focus and not just the view; it gets the same
+    focus ring as everything else. `/pay`'s invoice table carries explicit ARIA roles (`table`,
+    `rowgroup`, `row`, `columnheader`, `cell`), because Safari and VoiceOver drop a table's
+    semantics once CSS sets `display: block` on its parts, as the phone card layout does.
+    `test_stripe_payments`' two row parsers now match `<tr …>` and `<td …>` with attributes, and
+    count the rows so they can never pass on an empty match.
+  - **Labels.** `/rentals`' site-prep fields had labels that were not tied to their fields. Each now
+    has `for` and an `id`. The change-request box, which had only a placeholder, is labelled by its
+    card's heading through `aria-labelledby`. The `/pay` consent line is the whole 44px target.
+
+- **Not changed: every inline page script.** That covers the bank (ACH) Checkout call, autopay
+  set-up and cancel, `/pay-card`'s price and charge calls, its timers, idempotency and 3-D Secure
+  handling, the rentals forms' submits, and the rent form's Turnstile and submit. Every form field's
+  `name`, every endpoint, the CSRF handling and the page controllers are unchanged too. **Stripe's
+  Payment Element still has no `appearance` object**, so Stripe draws it in its default light look;
+  its frame cannot read CSS variables. No `stripe_payments` Python was touched.
+
+### Added
+
+- `tests/test_customer_portal_polish.py` (bench-free, own CI step). It checks the token and portal
+  links and their order, the light pin, the shared nav, and that the tokens are not in
+  `web_include_css`. It renders the nav with jinja2 signed in, signed out and with the rent form
+  off, and refuses a Desk link. On the CSS it refuses a literal or named colour, an undefined
+  `--sf-*` or a custom property of its own; it requires token radii, a single 767px breakpoint,
+  44px controls and 16px fields, no status fill as text, no shadow except switching one off, and no
+  `display` rule on what `/pay-card`'s script toggles. On the pages it pins each inline script by
+  SHA-256 to origin/main's bytes. Every id, class and `data-` attribute a script reads must still
+  be in the markup, the form field names must be unchanged, every field must have a label, and an
+  inline style is allowed only where it is state.
+
 ## [1.678.2] - 2026-10-14
 
 ### Fixed

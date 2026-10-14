@@ -1,0 +1,36 @@
+{#-
+  The customer portal's nav bar (custom pages S6a, TASK-2026-02808). Included in place of the
+  website's Standard Navbar (the `navbar` block) by the four customer pages: /pay, /pay-card,
+  /rentals and /rent-a-fountain. Styled by sf_portal.bundle.css, which each of those pages links
+  after sf_tokens.bundle.css.
+
+  Customer links only: never a Desk or /app/ link. A signed-in visitor gets the two pages behind
+  the sign-in (Pay Invoices, My Rentals) and Sign out; a guest, who can only be on
+  /rent-a-fountain, gets Sign in. "Rent a Fountain" shows only while that form is switched on
+  (ee_rent_form_enabled), because the page 404s while it is off.
+
+  The current page is marked with aria-current="page", which the stylesheet draws as bold and
+  underlined, so it never rests on colour alone. /pay-card counts as Pay Invoices.
+-#}
+{%- set sf_here = (path or "").strip("/") -%}
+{%- set sf_signed_in = frappe.session.user != "Guest" -%}
+<a class="sf-portal-skip" href="#sf-portal-main">{{ _("Skip to content") }}</a>
+<nav class="sf-portal-nav" aria-label="{{ _('Customer menu') }}">
+	<div class="sf-portal-nav__inner">
+		<a class="sf-portal-nav__brand" href="/">SAPPHIRE FOUNTAINS</a>
+		<ul class="sf-portal-nav__links">
+			{%- if sf_signed_in %}
+			<li><a href="/pay"{% if sf_here in ("pay", "pay-card") %} aria-current="page"{% endif %}>{{ _("Pay Invoices") }}</a></li>
+			<li><a href="/rentals"{% if sf_here == "rentals" %} aria-current="page"{% endif %}>{{ _("My Rentals") }}</a></li>
+			{%- endif %}
+			{%- if sf_here == "rent-a-fountain" or ee_rent_form_enabled() %}
+			<li><a href="/rent-a-fountain"{% if sf_here == "rent-a-fountain" %} aria-current="page"{% endif %}>{{ _("Rent a Fountain") }}</a></li>
+			{%- endif %}
+			{%- if sf_signed_in %}
+			<li><a href="/logout">{{ _("Sign out") }}</a></li>
+			{%- else %}
+			<li><a href="/login?redirect-to={{ ('/' ~ sf_here) | urlencode }}">{{ _("Sign in") }}</a></li>
+			{%- endif %}
+		</ul>
+	</div>
+</nav>
