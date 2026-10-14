@@ -248,7 +248,7 @@ out.deals_names_closed = model.deals.map((d) => d.name).filter((n) => ["OPP-80",
 const won = kit.close_deal(model, "OPP-2", "Closed Won");
 out.close_deal = {
 	open: won.deals.some((d) => d.name === "OPP-2") || !!won.by_name["OPP-2"],
-	first: [won.closed[0].name, won.closed[0].stage, won.closed[0].kind, won.closed[0].since, won.closed[0].stale],
+	first: [won.closed[0].name, won.closed[0].stage, won.closed[0].kind, won.closed[0].since, won.closed[0].stale, won.closed[0].completeness],
 	column: kit.columns(won).find((c) => c.stage.key === "closed-won").deals.map((d) => d.name),
 	totals: kit.totals(won.deals).count,
 	not_closing: kit.close_deal(model, "OPP-2", "Needs Analysis").closed.length,
@@ -402,7 +402,9 @@ class TestTheBoardUnderNode(unittest.TestCase):
 	def test_a_deal_moved_to_a_closing_stage_lands_in_its_column_at_once(self):
 		c = self.out["close_deal"]
 		self.assertFalse(c["open"], "off the open board")
-		self.assertEqual(c["first"], ["OPP-2", "closed-won", "close", TODAY, 0], "closed today, at the top")
+		self.assertEqual(
+			c["first"], ["OPP-2", "closed-won", "close", TODAY, 0, None], "closed today, at the top, no meter"
+		)
 		self.assertEqual(c["column"], ["OPP-2", "OPP-82", "OPP-80"])
 		self.assertEqual(c["totals"], len(DEALS) - 1)
 		self.assertEqual(c["not_closing"], 3, "an open status only takes it off, as remove_deal does")
@@ -1486,9 +1488,11 @@ class TestTheColumnsLayout(unittest.TestCase):
 		# The box is measured after every draw and on resize, against what really scrolls: on Frappe
 		# v16 that is .main-section, never the window (window.scrollY stays 0 there).
 		self.assertIn('return this.$root[0].closest(".main-section") || document.scrollingElement', code)
-		fit = code[code.index("\tset_fit() {") :]
+		fit = code[code.index("\tset_fit(again) {") :]
 		fit = fit[: fit.index("\n\t}\n")]
 		self.assertIn("const sc = this.scroller();", fit)
+		# A page that does not scroll yet is measured again with the box a full screen tall.
+		self.assertIn("if (!again && sc.scrollHeight <= sc.clientHeight) {", fit)
 		self.assertNotIn("window.scrollY", fit)
 		self.assertIn('this.$root[0].style.setProperty("--ob-fit-h", `${height}px`);', fit)
 		self.assertIn(
@@ -1531,6 +1535,9 @@ class TestTheColumnsLayout(unittest.TestCase):
 		self.assertIn("const page = this.scroller();", edge)
 		self.assertNotIn("window.scrollBy", edge)
 		self.assertIn("const bottom = Math.min(rect.bottom, bar_top);", edge)
+		# A fixed element's offsetParent is always null: whether the bar shows is its client rects.
+		self.assertIn("bar && bar.getClientRects().length ?", edge)
+		self.assertNotIn("offsetParent", edge)
 
 	def test_a_closed_card_has_no_move_and_is_never_picked(self):
 		code = _code(PAGE_JS)

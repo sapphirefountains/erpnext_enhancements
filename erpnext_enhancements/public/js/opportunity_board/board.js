@@ -1064,6 +1064,8 @@ export function close_deal(model, name, status) {
 		days: m.today ? 0 : old.days,
 		stale: 0,
 		snooze: "",
+		// The meter is for open deals; the server sends none for a closed one.
+		completeness: null,
 	});
 	const closed = (m.closed || []).filter((d) => d.name !== name);
 	return Object.assign({}, removed, { closed: sort_closed([deal].concat(closed)) });

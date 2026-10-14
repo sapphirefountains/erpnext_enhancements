@@ -280,7 +280,7 @@ class OpportunityBoard {
 	// the bulk bar while selecting). Neither depends on the box's own height, so one measurement after
 	// each draw holds. Measured against the real scroller: on v16 the window never scrolls, so
 	// window.scrollY is 0 and document.scrollHeight is the screen's.
-	set_fit() {
+	set_fit(again) {
 		const box = this.$root[0].querySelector(".ob-scroll--fit");
 		if (!box) return;
 		const head = this.page && this.page.wrapper ? this.page.wrapper[0].querySelector(".page-head") : null;
@@ -293,6 +293,13 @@ class OpportunityBoard {
 		const whole = sc === document.scrollingElement || sc === document.documentElement;
 		const view_top = whole ? 0 : sc.getBoundingClientRect().top;
 		const view_height = whole ? window.innerHeight : sc.clientHeight;
+		// A page that does not scroll yet (a very tall screen, the 70vh first draw) would count the empty
+		// space under it as "below": make the box a full screen tall, which always overflows, and
+		// measure again.
+		if (!again && sc.scrollHeight <= sc.clientHeight) {
+			this.$root[0].style.setProperty("--ob-fit-h", `${Math.round(view_height)}px`);
+			return this.set_fit(true);
+		}
 		const below = Math.max(0, sc.scrollHeight - (box.getBoundingClientRect().bottom - view_top + sc.scrollTop));
 		const height = Math.max(OB_FIT_MIN, Math.round(view_height - top - below - OB_FIT_GAP));
 		this.$root[0].style.setProperty("--ob-fit-h", `${height}px`);
@@ -2490,7 +2497,8 @@ class OpportunityBoard {
 		// The closing drop bar is fixed along the bottom while dragging: the bands stop above it, so
 		// scrolling never means hovering a "Drop here" zone.
 		const bar = this.$root[0].querySelector(".ob-closebar");
-		const bar_top = bar && bar.offsetParent !== null ? bar.getBoundingClientRect().top : window.innerHeight;
+		// (A fixed element's offsetParent is always null; a shown one has a client rect, a hidden one none.)
+		const bar_top = bar && bar.getClientRects().length ? bar.getBoundingClientRect().top : window.innerHeight;
 		const page = this.scroller();
 		if (y < edge) page.scrollTop -= 14;
 		else if (y > bar_top - edge && y < bar_top) page.scrollTop += 14;
