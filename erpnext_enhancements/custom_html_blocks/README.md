@@ -141,12 +141,39 @@ node harness are unchanged; the 403 is read from the jqXHR's `status`. A switche
 is an *empty* panel, not an error: the widget works, nobody has turned it on.
 `tests/test_block_kit.py` fails the build when a converted block grows any of its old copies
 back or loses the guard, and makes every seeded block either sit on the kit or say why not.
-Still waiting, as a follow-up of the same task: the KPI Cockpit, Morning Briefing, Task
-Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk Shortcuts asks the
-server nothing and has no panel to convert. `scripts/test_workspace_block_return.mjs` runs
-every converted block on the real `sf_kit.bundle.js`: a 500 draws the error panel and its Try
-again asks again, a 403 draws no access, an empty answer the empty panel, and on an older
-bundle the block still draws.
+`scripts/test_workspace_block_return.mjs` runs every converted block on the real
+`sf_kit.bundle.js`: a 500 draws the error panel and its Try again asks again, a 403 draws no
+access, an empty answer the empty panel, and on an older bundle the block still draws.
+
+**The other six (v1.658.0).** The KPI Cockpit, Morning Briefing, Task Dashboard, Projects
+Dashboard, My Training Dashboard and My Travel are on the kit too, so every seeded block is
+except Desk Shortcuts, which asks the server nothing and has no panel to convert. Each kept
+what made it different:
+
+- **KPI Cockpit and Morning Briefing** still register a wrapper, `load(false)`, so a return
+  reads the snapshot or the cached briefing and never recomputes or regenerates, and still skip
+  a return while Refresh is out. Their error panels' Try again is a plain read too.
+- **Task Dashboard** keeps its debounced realtime refresh, its five-minute fallback, its timers
+  on `window` (re-pointed, never stacked), its `onScreen` skip and its clock. Loading, error and
+  no access go in the Top 10 panel, and only until it has drawn once: a failed refresh never
+  wipes rows already showing. Each of the four panels has its own empty sentence. The
+  overdue badge is a `danger` chip.
+- **Projects Dashboard** changed only its panels, escaping and the Completed tab's status
+  chip. Its tables, column selector and resizer, Gantt and saved per-user view are untouched.
+  Its `api_call` now settles on `frappe.call`'s promise rather than the `callback` / `error`
+  options, because v16 calls `error` with no arguments on a 403, so a 403 could not be told
+  apart from any other failure.
+- **My Training and My Travel** still ask the endpoint for the session user's own data and pass
+  no name. An overdue course is a `danger` chip, a trip's status a chip in its tone
+  (`Planning` warn, `In Progress` good, the rest neutral). My Travel's "No trips coming up"
+  is still a notice rather than an empty panel, because the body is never empty: the link to
+  everyone's trips and any receipts reminder are drawn under it.
+
+My Training and My Travel build their rows in helpers outside `startApp`, so they hold the kit
+in a variable that `startApp` sets before anything draws. The KPI Cockpit and the Task
+Dashboard read the kit's escape under the name `esc` (`const { esc } = sf;`, and a variable
+the Task Dashboard's `startApp` sets), so the status words that S3.6 (accessibility) adds to
+their cards keep working unchanged.
 
 ## Status colours come from the `--sf-*` tokens
 
