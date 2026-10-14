@@ -436,7 +436,7 @@ ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
 vm.runInContext(
 	pp_source + "\n" + mp_source +
-	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS); this.MP6E = MP6E;",
+	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS); this.MP6E = MP6E; this.MPTB_M = MPTB_METHODS;",
 	ctx
 );
 const out = {};
@@ -640,13 +640,15 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 	out.mp_undo = [mp.p6e_undo({ p6e: "created", site: "Hotel", record: "SMR-NEW", modified: "mod-1" }), msent.map((s) => [s[0], s[1], s[2].message])];
 	out.mp_legend = mp.p6e_legend_sections().map((s) => s.title);
 	out.mp_methods = Object.keys(ctx.MP6E.methods).sort();
-	// The page's own state: a button that is only there for people who may create visits.
-	mp.$p6e_add = make("<button>");
-	mp.render_phase6e();
-	const shown_for = mp.$p6e_add.node.hidden;
+	// The page's own state: "Add visit…" in the toolbar's Edit menu (v1.687.0; it was a toolbar
+	// button) is only there for people who may create visits.
+	mp.undo_stack = mp.undo_stack || [];
+	mp.p6d_conflict_count = () => null;
+	const add_hidden = () => !ctx.MPTB_M.tb_edit_items.call(mp).some((item) => item.label === "Add visit…");
+	mp.data.can_create_visits = true;
+	const shown_for = add_hidden();
 	mp.data.can_create_visits = false;
-	mp.render_phase6e();
-	out.mp_button_hidden = [shown_for, mp.$p6e_add.node.hidden];
+	out.mp_button_hidden = [shown_for, add_hidden()];
 	process.stdout.write(JSON.stringify(out));
 })().catch((e) => {
 	process.stderr.write(String(e && e.stack ? e.stack : e));
@@ -672,6 +674,10 @@ class TestPagesUnderNode(unittest.TestCase):
 			)
 			+ t6b._phase_source(
 				mp, "const MP6E = {", "Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);"
+			)
+			# The toolbar's Edit menu offers 6E's Add visit… (v1.687.0).
+			+ t6b._phase_source(
+				mp, "const MPTB = {", "Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);"
 			),
 		]
 		result = subprocess.run(
@@ -898,7 +904,7 @@ class TestPagesUnderNode(unittest.TestCase):
 			sent, [["remove_created_visit", {"record": "SMR-NEW", "modified": "mod-2"}, "Undone: Hotel"]]
 		)
 
-	def test_the_toolbar_button_is_only_there_for_people_who_may_create_visits(self):
+	def test_the_edit_menu_item_is_only_there_for_people_who_may_create_visits(self):
 		self.assertEqual(self.out["mp_button_hidden"], [False, True])
 		self.assertEqual(self.out["mp_methods"], ["create_visit", "remove_created_visit"])
 		self.assertEqual(self.out["mp_legend"], ["Adding a visit"])

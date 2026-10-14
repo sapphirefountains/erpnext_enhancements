@@ -224,7 +224,6 @@ class TestHooks(unittest.TestCase):
 		self.assertEqual(PP.count("actions: this.p6d_person_actions(resource),"), 1)
 		self.assertEqual(MP.count("actions: this.p6d_person_actions(user),"), 1)
 		for line in (
-			"this.p6d_set_mode(mode);",
 			"this.p6d_state(day, state);",
 			'if (booking.kind === "block") return this.p6d_block_html(resource, ymd, booking);',
 			"${this.p6d_day_html(ymd, resources)}",
@@ -275,15 +274,25 @@ class TestHooks(unittest.TestCase):
 			self.assertIn('target.kind === "card"', items)
 			self.assertIn('target.kind === "cell"', items)
 			self.assertIn('target.kind === "person"', items)
-			# 6B's menu is not on this branch: every action also has a button of its own.
-			init = _obj_method(block, "init_phase6d")
-			self.assertIn('.text(__("Conflicts"))', init)
-			self.assertIn('.text(__("Block time"))', init)
+			# Every action also has a way in of its own: since the toolbar redesign (v1.687.0) the
+			# Conflicts count is an alert chip and Conflicts… and Block time… are items of Edit.
+			self.assertIn("this.tb_render();", _obj_method(block, "p6d_after_list"))
+			count = _obj_method(block, "p6d_conflict_count")
+			self.assertIn("const count = center ? center.count() : null;", count)
 			self.assertIn('label: __("Block time…")', _obj_method(block, "p6d_person_actions"))
 			self.assertIn('label: __("Add a note")', _obj_method(block, "p6d_day_peek_opts"))
 			self.assertIn('target.closest("[data-pk-note-add]")', _obj_method(block, "p6d_click"))
 			self.assertIn('target.closest("[data-p6d-conflict]")', _obj_method(block, "p6d_click"))
 		self.assertIn("Block my time", PP_BLOCK)
+		for page in (PP, MP):
+			edit = _obj_method(page, "tb_edit_items")
+			self.assertIn('label: __("Block time…"),', edit)
+			self.assertIn("on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),", edit)
+			self.assertIn('label: __("Conflicts…"),', edit)
+			self.assertIn("on_click: () => this.p6d_open_conflicts(null),", edit)
+			alerts = _obj_method(page, "tb_alerts")
+			self.assertIn("if (conflicts > 0) {", alerts)
+			self.assertIn("open: () => this.p6d_open_conflicts(null),", alerts)
 
 	def test_one_conflict_read_per_load_not_per_render(self):
 		for block in (PP_BLOCK, MP_BLOCK):

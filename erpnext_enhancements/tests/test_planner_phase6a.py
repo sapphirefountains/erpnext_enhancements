@@ -1210,7 +1210,11 @@ class TestPages(unittest.TestCase):
 			self.assertIn('kit.hover_glow(this.$body[0], "person")', block)
 			self.assertIn('setAttribute("data-pk-persons"', block)
 			self.assertIn("kit.legend(", block)
-			self.assertIn("kit.hint(key, __(text), {", block)
+			# The tips are the help's first section since the toolbar redesign (v1.687.0), not banners
+			# under the toolbar: no hint is shown on load.
+			self.assertNotIn("kit.hint(", block)
+			self.assertIn("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),", block)
+			self.assertIn('title: __("Tips")', block)
 			self.assertIn(f'class="btn btn-default btn-sm {prefix}-p6a-help">?</button>', block)
 			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
 			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner

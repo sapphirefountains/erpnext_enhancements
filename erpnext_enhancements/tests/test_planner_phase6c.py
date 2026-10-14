@@ -711,8 +711,10 @@ class TestPages(unittest.TestCase):
 			selection = _obj_method(block, "p6c_selection")
 			self.assertIn("this.p6_selection", selection)
 			self.assertIn('typeof selection.has === "function" && selection.size', selection)
-			click = _obj_method(block, "p6c_print_click")
-			self.assertIn('__("Print selection only ({0})", [selected.size])', click)
+			# The toolbar's Print menu (v1.687.0): the view, and the selection when there is one.
+			items = _obj_method(block, "p6c_print_items")
+			self.assertIn('__("Print selection only ({0})", [selected.size])', items)
+			self.assertIn("on_click: () => this.p6c_print(false),", items)
 
 	def test_the_menu_providers_and_entry_points(self):
 		for block in (self.pp_block, self.mp_block):
