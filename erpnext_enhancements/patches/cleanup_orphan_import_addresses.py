@@ -112,6 +112,14 @@ def _in_supplier_batch(row):
 	return SUPPLIER_BATCH_START <= _second(row.get("creation")) < SUPPLIER_BATCH_END
 
 
+def _say(text):
+	"""Print, and never raise: a console that cannot encode a docname must not abort the deploy."""
+	try:
+		print(text)
+	except Exception:
+		pass
+
+
 def _has(doctype, column):
 	try:
 		return bool(frappe.db.has_column(doctype, column))
@@ -129,7 +137,7 @@ def execute():
 			and _has("Address", "city")
 			and _has("Dynamic Link", "link_doctype")
 		):
-			print(f"{LOG}: the Address or Dynamic Link table is missing; nothing to do.")
+			_say(f"{LOG}: the Address or Dynamic Link table is missing; nothing to do.")
 			return _tally(counts)
 		universe = _run(counts, listed)
 	except Exception:
@@ -137,7 +145,7 @@ def execute():
 			frappe.log_error(title="Orphaned address cleanup failed", message=frappe.get_traceback())
 		except Exception:
 			pass
-		print(f"{LOG}: aborted early; see the Error Log.")
+		_say(f"{LOG}: aborted early; see the Error Log.")
 	try:
 		_report(counts, listed, universe)
 	except Exception:
@@ -292,7 +300,7 @@ def _log_row_failure(name, what):
 			reference_name=name,
 		)
 	except Exception:
-		print(f"{LOG}: {what} failed for Address {name}")
+		_say(f"{LOG}: {what} failed for Address {name}")
 
 
 def _tally(counts):
@@ -322,14 +330,11 @@ def _check(counts, universe):
 
 
 def _report(counts, listed, universe):
-	print(f"{LOG}: {_tally(counts)}")
-	print(f"{LOG}: {_check(counts, universe)}")
 	lines = []
 	for bucket in LISTED:
 		for name in listed[bucket]:
 			lines.append(f"{bucket}: {name}")
-	for line in lines:
-		print(f"  {line}")
+	# The Error Log first: it is the copy a person reads.
 	if lines:
 		try:
 			frappe.log_error(
@@ -338,3 +343,7 @@ def _report(counts, listed, universe):
 			)
 		except Exception:
 			pass
+	_say(f"{LOG}: {_tally(counts)}")
+	_say(f"{LOG}: {_check(counts, universe)}")
+	for line in lines:
+		_say(f"  {line}")

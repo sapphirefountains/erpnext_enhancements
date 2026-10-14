@@ -488,6 +488,24 @@ class TestSafety(unittest.TestCase):
 		self.assertEqual(tally["link_skipped_no_supplier"], 1)
 		self.assertIn("consistent", out)
 
+	def test_the_error_log_is_written_even_when_the_console_cannot_print(self):
+		class _Unprintable(io.StringIO):
+			def write(self, text):
+				raise UnicodeEncodeError("ascii", text, 0, 1, "cannot encode")
+
+		_supplier("Shared Name")
+		_customer("Shared Name")
+		_addr("Shared Name-Billing", owner=IMPORTER, creation=SUP_DAY)
+		with redirect_stdout(_Unprintable()):
+			tally = patch.execute()
+		self.assertEqual(tally["link_skipped_ambiguous"], 1)
+		[entry] = [e for e in STATE["errors"] if e["title"] == "Orphaned addresses left for a person"]
+		self.assertIn("link_skipped_ambiguous: Shared Name-Billing", entry["message"])
+		# Nor does the no-op path's message raise.
+		del STATE["tables"]["Dynamic Link"]
+		with redirect_stdout(_Unprintable()):
+			patch.execute()
+
 	def test_an_unexpected_error_is_logged_not_raised(self):
 		_addr("Acme B (Shipping)-Shipping")
 		original = sys.modules["frappe"].get_all
