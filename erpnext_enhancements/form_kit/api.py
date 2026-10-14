@@ -87,7 +87,8 @@ def save_step(doctype, name, values, modified=None, step=None):
 
 @frappe.whitelist()
 def get_field_help(doctype):
-	"""The (i) help for the standard Desk form (``public/js/form_kit/field_help.js``).
+	"""The (i) help for the standard Desk form
+	(``public/js/global_enhancements/field_description_icons.js``).
 
 	``{"article", "fields": {fieldname: {"help", "anchor"}}}``: only fields with an explanation,
 	only fields this user may read (the flow's own permission walk decides), and each field's
