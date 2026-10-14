@@ -56,7 +56,8 @@ def preview_day(template, day):
 			off += 0 if today else 1
 			lines.append(
 				{
-					"label": item.label,
+					# A Chemical Dosing line may have only its item.
+					"label": item.label or item.get("item") or "",
 					"days": item.get("days") or "",
 					"on": today,
 					"mandatory": item.is_mandatory,

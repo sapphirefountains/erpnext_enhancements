@@ -115,6 +115,7 @@ def _reset():
 			"active": {},
 			"serials": {},
 			"template_sections": {},
+			"section_kinds": {},
 			"day_items": [],
 			"records": [],
 			"readings": [],
@@ -150,6 +151,14 @@ def setUpModule():
 		if doctype == "Sapphire Template Section":
 			assert pluck == "section", pluck
 			return list(STATE["template_sections"].get(filters["parent"], []))
+		if doctype == "Sapphire Maintenance Section" and pluck == "name":
+			assert filters["disabled"] == 0 and filters["section_type"] == ["!=", "Chemical Dosing"], filters
+			kinds = STATE["section_kinds"]
+			return [
+				name
+				for name in filters["name"][1]
+				if kinds.get(name, "Cleaning Tasks") != "Chemical Dosing" and kinds.get(name) != "disabled"
+			]
 		if doctype == "Sapphire Section Item":
 			assert filters["days"] == ["is", "set"], filters
 			wanted = filters["parent"][1]
@@ -839,6 +848,17 @@ class TestDayLinesOnReview(unittest.TestCase):
 		STATE["day_items"] = [r for r in STATE["day_items"] if not r["days"]]
 		self.assertIsNone(visit_days.review_lines(self.visit("2026-10-13", ["Basket filters cleaned"])))
 		self.assertIsNone(visit_days.review_lines(_Dict(template=None, cleaning_tasks=[])))
+
+	def test_dosing_and_disabled_sections_are_not_reported_missing(self):
+		"""A dosing line becomes a consumable, and a disabled section is never on a checklist."""
+		STATE["template_sections"]["VF Daily"] += ["VF Dosing", "VF Retired"]
+		STATE["section_kinds"] = {"VF Dosing": "Chemical Dosing", "VF Retired": "disabled"}
+		STATE["day_items"] += [
+			{"parent": "VF Dosing", "label": "", "days": "Tue"},
+			{"parent": "VF Retired", "label": "Old filter check", "days": "Tue"},
+		]
+		lines = visit_days.review_lines(self.visit("2026-10-13", ["Cartridge filters cleaned"]))
+		self.assertEqual(lines["missing"], [])
 
 	def test_a_weekday_number_follows_the_same_rule(self):
 		self.assertTrue(visit_days.scheduled_on_weekday("", 3))

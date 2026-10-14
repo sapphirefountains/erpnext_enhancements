@@ -136,8 +136,11 @@ def review_lines(doc):
 	one of: on the visit and due that day; due that day but missing; or on the visit but set
 	for other days.
 
-	Matched by section and label, across water features. Consumables are left out: they carry
-	an item, not a label. Returns None when nothing on the visit's sections names a day.
+	Matched by section and label, across water features, so a line on one fountain's rows counts
+	for the site. Chemical Dosing is left out: its lines become consumables, which carry an item,
+	not a label. Sections come from the visit's rows and its ``template``, the first one resolved,
+	so on a site visit whose fountains use different templates a section with no rows at all on
+	the visit is not looked at. Returns None when nothing on those sections names a day.
 	"""
 	import frappe
 
@@ -152,6 +155,18 @@ def review_lines(doc):
 			)
 		)
 	sections.discard(None)
+	if sections:
+		# Only the sections a checklist is built from (get_visit_payload skips a disabled one), and
+		# not Chemical Dosing: its lines become consumables, which this cannot match by label.
+		sections = frappe.get_all(
+			"Sapphire Maintenance Section",
+			filters={
+				"name": ["in", sorted(sections)],
+				"disabled": 0,
+				"section_type": ["!=", "Chemical Dosing"],
+			},
+			pluck="name",
+		)
 	if not sections:
 		return None
 	items = frappe.get_all(

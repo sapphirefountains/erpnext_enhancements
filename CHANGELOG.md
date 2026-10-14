@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     summary.
   - The check uses the day the visit was done, else the day it was scheduled. It names the day-specific
     lines on the visit, the lines due that day but missing, and the lines set for other days.
-  - Lines are matched by section and label, across water features. Consumables carry an item, not a
-    label, so they are left out.
+  - Lines are matched by section and label, across water features. Chemical Dosing lines become
+    consumables, which carry an item rather than a label, so they are left out. Disabled sections are
+    left out too, as the checklist builder skips them.
   - It never stops the page from opening.
 - **Preview a day on a visit form template.** The Sapphire Maintenance Template form has a **Preview a
   day** button (`preview_day`). Pick a weekday and see each section's lines, in visit order, with those
@@ -39,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- `test_visit_agreement_match`, 7 more:
+- `test_visit_agreement_match`, 8 more:
   - the day lines on time, a day late, and with none;
+  - dosing and disabled sections never reported missing;
   - the weekday-number rule;
   - Preview a day, and its refusal of a non-day;
   - a fountain's trend without the site-wide reading.
