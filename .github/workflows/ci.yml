@@ -2020,6 +2020,13 @@ jobs:
         run: node scripts/test_workspace_block_return.mjs
       - name: Workspace block return (registration + lifecycle claims)
         run: python -m unittest erpnext_enhancements.tests.test_workspace_block_return -v
+      # Blocks take good / watch / bad from the --sf-* tokens (v1.641.0), so one file sets
+      # every block's status colours in both themes. Fails on any of the literal status hexes
+      # (and their rgba() tints) the blocks used before, comments stripped so a note naming
+      # the old value neither trips it nor satisfies it, and on a var(--sf-...) that
+      # sf_tokens.bundle.css does not define. Reads files only; no frappe stub.
+      - name: Block status colours from tokens
+        run: python -m unittest erpnext_enhancements.tests.test_block_status_tokens -v
       # frappe 16.50 draws module sidebars from `Sidebar` and no longer reads `Workspace
       # Sidebar`, so the hidden "Project" link came back on the 2026-10-06 upgrade (v1.576.1).
       # Replays production's Projects sidebar rows: only ERPNext's own row is flagged hidden,
