@@ -201,8 +201,8 @@ class TestPartyDecisionsUnderNode(unittest.TestCase):
 		cls.out = json.loads(proc.stdout)
 
 	def test_the_dialog_is_unwrapped_from_the_quick_entry_form(self):
-		# v16 QuickEntryForm.setup() resolves the QuickEntryForm, not its Dialog. Taking it as the
-		# dialog skipped the history guard on prod, so Back closed the dialog and left the step.
+		# On v16 the QuickEntryForm is the Dialog itself; an entry wrapping its Dialog in .dialog is
+		# unwrapped, a bare Dialog is taken as it is, anything else is null.
 		d = self.out["dialog_of"]
 		self.assertTrue(d["quick_entry_form"])
 		self.assertTrue(d["bare_dialog"])
@@ -854,9 +854,15 @@ class TestWiring(unittest.TestCase):
 		self.assertIn('frappe.require("planner_kit.bundle.js"', code)
 		self.assertIn("guard.open(overlay);", code)
 		self.assertIn('dialog.$wrapper.one("hidden.bs.modal", () => guard.close(overlay, "user"));', code)
-		# What make_quick_entry resolves with is the QuickEntryForm, unwrapped to its Dialog (v1.677.1).
 		self.assertIn("track(entry, guard) {", code)
 		self.assertIn("const dialog = dialog_of(entry);", code)
+		# make_quick_entry resolves while the modal is still animating in (v16 Dialog.display turns
+		# true only on shown.bs.modal), so the dialog joins the guard once it has shown. Bailing out on
+		# display === false at resolve time meant it never joined on prod (v1.677.2).
+		self.assertIn('else dialog.$wrapper.one("shown.bs.modal", join);', code)
+		self.assertIn("if (dialog.display) join();", code)
+		track = code[code.index("track(entry, guard) {") :]
+		self.assertNotIn('if (dialog.display === false) return; // it did not open', track)
 		self.assertNotIn(
 			"pushState", code, "the guard owns history; the component never pushes its own entry"
 		)

@@ -418,20 +418,28 @@ export class PartyEntry {
 	}
 
 	// The dialog as an overlay of the kit's: Back closes it (and only it); closing it any other way
-	// steps back off the kit's history entry. make_quick_entry resolves with the QuickEntryForm, not
-	// its dialog (v16 QuickEntryForm.setup() resolves `this`; the frappe Dialog is its .dialog), so
-	// the entry is unwrapped first. Taking the entry as the dialog skipped the guard on prod, and Back
-	// closed the dialog AND left the step (v1.677.1).
+	// steps back off the kit's history entry.
+	//
+	// It joins once the dialog has SHOWN. v16's QuickEntryForm is itself the frappe Dialog
+	// (`extends frappe.ui.Dialog`), and make_quick_entry's promise resolves while the modal is still
+	// animating in: Dialog.display turns true only on shown.bs.modal. Joining only when display was
+	// already true (v1.677.0) meant it never joined on prod, so Back closed the dialog AND left the
+	// step; v1.677.1 unwrapped the entry, which was not the cause (v1.677.2). A quick entry that
+	// routed to the full form instead never shows, so it never joins.
 	track(entry, guard) {
 		const dialog = dialog_of(entry);
 		if (!dialog || !dialog.$wrapper || !guard || !guard.enabled) return;
-		if (dialog.display === false) return; // it did not open (the full form instead)
-		const overlay = {
-			close: (how) => {
-				if (how !== "user" && dialog.display) dialog.hide();
-			},
+		const join = () => {
+			if (dialog.display === false) return; // hidden again before it finished showing
+			const overlay = {
+				close: (how) => {
+					if (how !== "user" && dialog.display) dialog.hide();
+				},
+			};
+			guard.open(overlay);
+			dialog.$wrapper.one("hidden.bs.modal", () => guard.close(overlay, "user"));
 		};
-		guard.open(overlay);
-		dialog.$wrapper.one("hidden.bs.modal", () => guard.close(overlay, "user"));
+		if (dialog.display) join();
+		else dialog.$wrapper.one("shown.bs.modal", join);
 	}
 }
