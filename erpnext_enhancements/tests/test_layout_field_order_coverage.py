@@ -6,7 +6,7 @@ Invoice, Supplier Quotation, Request for Quotation) take their field order from 
 writes from ``scripts/layout/specs/*.json``. A custom field added later and left out of that
 array is not lost: v16 places it by its ``insert_after``. But a **Section Break** placed that way
 lands in the middle of whatever section it follows, and every field after it, up to the next
-break, renders under the new heading. On prod's Item form (found 2026-10-14) Default UOM, Image,
+break, renders under the new heading. On prod's Item form (found 2026-10-14, fixed in v1.682.0) Default UOM, Image,
 Disabled, Maintain Stock and the fixed-asset ticks sat under "Maintenance Billing", because the
 Safety Data and Maintenance Billing sections (inserted after Item Group) never reached the array.
 The Purchase Order form had the same fault: Company, Is Subcontracted, Supplier Warehouse and
@@ -82,7 +82,7 @@ def _string(node, constants):
 
 
 def _dict_fieldname(node, constants):
-	for key, value in zip(node.keys, node.values):
+	for key, value in zip(node.keys, node.values, strict=True):
 		if isinstance(key, ast.Constant) and key.value == "fieldname":
 			return _string(value, constants)
 	return None
@@ -92,7 +92,11 @@ def _imports(tree):
 	"""Local name -> (module path, original name) for `from erpnext_enhancements... import x`."""
 	out = {}
 	for node in ast.walk(tree):
-		if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("erpnext_enhancements"):
+		if (
+			isinstance(node, ast.ImportFrom)
+			and node.module
+			and node.module.startswith("erpnext_enhancements")
+		):
 			for alias in node.names:
 				out[alias.asname or alias.name] = (node.module, alias.name)
 	return out
@@ -132,7 +136,7 @@ def code_created_fields(doctypes):
 			name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
 			if name != "create_custom_fields":
 				continue
-			for key, value in zip(node.args[0].keys, node.args[0].values):
+			for key, value in zip(node.args[0].keys, node.args[0].values, strict=True):
 				doctype = _string(key, constants) if key is not None else None
 				if doctype not in doctypes or not isinstance(value, (ast.List, ast.Tuple)):
 					continue
@@ -192,9 +196,15 @@ class TestLayoutFieldOrderCoverage(unittest.TestCase):
 
 	def test_every_field_created_in_code_is_registered(self):
 		created = code_created_fields(set(self.doctypes))
-		self.assertIn("custom_aquatic_section", created.get("Item", {}), "the ast scan no longer sees setup.py")
-		self.assertIn("custom_order_stage", created.get("Purchase Order", {}), "field_definition() not resolved")
-		self.assertIn("custom_store_run", created.get("Purchase Receipt", {}), "module constants not resolved")
+		self.assertIn(
+			"custom_aquatic_section", created.get("Item", {}), "the ast scan no longer sees setup.py"
+		)
+		self.assertIn(
+			"custom_order_stage", created.get("Purchase Order", {}), "field_definition() not resolved"
+		)
+		self.assertIn(
+			"custom_store_run", created.get("Purchase Receipt", {}), "module constants not resolved"
+		)
 		for doctype, fields in created.items():
 			with self.subTest(doctype=doctype):
 				known = {r["fieldname"] for r in self.registry.get(doctype, [])}
@@ -217,7 +227,7 @@ class TestLayoutFieldOrderCoverage(unittest.TestCase):
 		)
 		# In the array but not the spec (a hand edit the generator would undo) is caught too.
 		self.assertEqual(
-			missing_from_layout("Item", ["custom_x"], order + ["custom_x"], spec),
+			missing_from_layout("Item", ["custom_x"], [*order, "custom_x"], spec),
 			["custom_x"],
 		)
 
