@@ -67,7 +67,7 @@ CLOSED_WON = [
 	{"field": "custom_budget_rank", "label": "Budget Rank"},
 ]
 # Lost can happen at any stage, so it asks for the basics and the reason, not a proposal's
-# amount. The reason is ERPNext's ``lost_reasons`` table: the app's own ``custom_lost_reason``
+# amount (owner, 2026-10-13: "Basics + lost reason"). The reason is ERPNext's ``lost_reasons`` table: the app's own ``custom_lost_reason``
 # Select was removed in v1.159.0 (patches/remove_opportunity_lost_reason.py), and
 # ``script_migrations.opportunity.validate_close_reason`` requires the table.
 LOST = [*QUALIFICATION, {"field": "lost_reasons", "row_field": "lost_reason", "label": "A lost reason"}]
@@ -89,7 +89,9 @@ CONFIG = {
 		"notes_html": "ERPNext's CRM notes widget.",
 	},
 	# Fields the form hides that the flow shows, because the form fills them through a widget the
-	# flow cannot draw, or because the owner named them for a step.
+	# flow cannot draw, or because the owner named them for a step. Owner, 2026-10-13: Primary
+	# Contact and the general scope description, and not the scope contributors, which stay hidden
+	# on the form and in the flow alike.
 	"show_hidden": {
 		"primary_contact": (
 			"Its section (primary_contact_section) is hidden on the form, where the Contact Directory "
@@ -97,10 +99,6 @@ CONFIG = {
 		),
 		"custom_general_scope_description": (
 			"Owner, 2026-10-13: the Scope step has the general description. On the form it sits in an "
-			"unlabeled, hidden section."
-		),
-		"custom_scope_contributors": (
-			"Owner, 2026-10-13: the Scope step has the contributors. On the form it sits in an "
 			"unlabeled, hidden section."
 		),
 	},

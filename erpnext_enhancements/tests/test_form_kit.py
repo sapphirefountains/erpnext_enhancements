@@ -745,8 +745,30 @@ class TestSteps(unittest.TestCase):
             "custom_reminder_action",
         ):
             self.assertNotIn(fieldname, offered)
-        for fieldname in ("primary_contact", "custom_general_scope_description", "custom_scope_contributors"):
+        for fieldname in ("primary_contact", "custom_general_scope_description"):
             self.assertIn(fieldname, offered)  # show_hidden
+        # Owner, 2026-10-13: the contributors stay hidden in the flow as on the form.
+        self.assertNotIn("custom_scope_contributors", offered)
+
+    def test_the_initial_invoice_section_is_on_the_budget_step(self):
+        """v1.326.0 meant it for the Budget tab, but the hand-kept field_order never listed its four
+        fields, so v16 placed them after `items`, in the hidden Items tab: on neither the form nor
+        the flow. The field_order Property Setter now lists them after the budget notes."""
+        names = [df.fieldname for df in STATE["metas"]["Opportunity"].fields]
+        at = names.index("custom_notes_relating_to_budget")
+        self.assertEqual(
+            names[at + 1 : at + 6],
+            [
+                "custom_initial_invoice_section",
+                "custom_first_invoice_percentage",
+                "custom_initial_invoice_column_break",
+                "custom_billing_email",
+                "custom_process_tab",
+            ],
+        )
+        budget = _value_names(_step(self.flow, "budget"))
+        self.assertIn("custom_first_invoice_percentage", budget)
+        self.assertIn("custom_billing_email", budget)
 
     def test_step_one_carries_exactly_the_create_fields(self):
         basics = _step(self.flow, "basics")
@@ -1153,6 +1175,8 @@ class TestCompleteness(unittest.TestCase):
         self.assertEqual(labels[-3:], ["Scope Rank", "Schedule Rank", "Budget Rank"])
 
     def test_lost_wants_the_basics_and_a_reason(self):
+        # Owner, 2026-10-13: "Basics + lost reason" -- the six Qualification items and the reason.
+        self.assertEqual(self._measure(status="Lost")["total"], 7)
         self.assertEqual(self._missing(status="Lost"), ["A lost reason"])
         self.assertEqual(self._missing(status="Lost", lost_reasons=[{"lost_reason": "Price"}]), [])
 
