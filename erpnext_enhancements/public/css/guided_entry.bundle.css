@@ -464,6 +464,84 @@
 	color: var(--sf-text-muted);
 }
 
+/* ---- The start screen: a new record, and the person's own open ones (form kit P5.2) ---- */
+.ge-landing {
+	max-width: 880px;
+	margin: 0 auto;
+	padding: var(--sf-space-20);
+}
+.ge-landing-head {
+	margin-bottom: var(--sf-space-15);
+}
+.ge-landing-title {
+	margin: 0;
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-md);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-heading);
+}
+.ge-landing-intro {
+	margin: var(--sf-space-5) 0 0;
+	color: var(--sf-text-muted);
+}
+.ge-mine + .ge-mine {
+	margin-top: var(--sf-space-15);
+}
+.ge-mine-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	flex-wrap: wrap;
+	margin-bottom: var(--sf-space-10);
+}
+.ge-mine-head .sf-card-title {
+	margin: 0;
+}
+.ge-mine-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.ge-mine-list li + li {
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ge-mine-row {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-10) 0;
+	color: var(--sf-text-strong);
+	text-decoration: none;
+}
+.ge-mine-row:hover .ge-mine-name {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+.ge-mine-row:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ge-mine-name {
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ge-mine-details,
+.ge-mine-more {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	overflow-wrap: anywhere;
+}
+.ge-mine-more {
+	margin: var(--sf-space-10) 0 0;
+}
+.ge-mine-all {
+	margin-top: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+}
+
 /* ---- The Triton assistant button ----
    It floats bottom-right over every Desk page (triton_widget.css: bottom 16px, above everything),
    which on this page is exactly where the footer's Next button sits: on a phone it covered Next

@@ -379,6 +379,29 @@ class TestAddCoreSidebarItems(unittest.TestCase):
 		self.assertEqual((report["link_type"], report["link_to"], report["child"]), ("Report", "Crew Utilization", 1))
 		self.assertEqual(report["open_in_new_tab"], 0)
 
+	def test_crm_gets_the_guided_page_under_opportunity(self):
+		"""Production's CRM Sidebar, read on 2026-10-13 (its first rows and a section)."""
+		crm = [
+			("c1", "Link", "Dashboard", "CRM", "Home"),
+			("c2", "Link", "DocType", "Lead", "Lead"),
+			("c3", "Link", "DocType", "Opportunity", "Opportunity"),
+			("c4", "Link", "DocType", "Customer", "Customer"),
+			("c5", "Section Break", "DocType", None, "Reports"),
+			("c6", "Link", "Report", "Sales Analytics", "Sales Analytics"),
+		]
+		rows = [
+			{"name": name, "parent": "CRM", "parenttype": "Sidebar", "idx": idx, "type": type_,
+			 "link_type": link_type, "link_to": link_to, "label": label, "hidden": 0}
+			for idx, (name, type_, link_type, link_to, label) in enumerate(crm, start=1)
+		]
+		db = _AddDb(rows, sidebars=("CRM",))
+		_run_add(db)
+		self.assertEqual(
+			_order(db), ["Home", "Lead", "Opportunity", "Guided Entry", "Customer", "Reports", "Sales Analytics"]
+		)
+		(guided,) = db.inserted
+		self.assertEqual((guided["link_type"], guided["link_to"], guided["child"]), ("Page", "guided-entry", 0))
+
 	def test_icon_is_one_the_desk_can_draw(self):
 		names = {line for line in ICON_NAMES.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")}
 		db = _AddDb(_sidebar_rows())

@@ -3424,7 +3424,7 @@ jobs:
       # all day for every user who had opened the screen once.
       - name: Page polling stops off screen (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_page_polling_lifecycle -v
-      # Custom pages S3.1 (v1.642.0). Seven pages that sat on "Loading" or went blank when a call
+      # Custom pages S3.1 (v1.645.0). Seven pages that sat on "Loading" or went blank when a call
       # failed now draw loading / empty / error / no-access from sf_kit, retry a failed first
       # load in place, and refresh in the background on the quiet path (the Day Board's timer
       # no longer stacks a frappe dialog per 5xx). All seven get the kit from one shared loader,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Custom pages S3.1 (v1.642.0): four Desk pages run against the REAL sf_kit.
+ * Custom pages S3.1 (v1.645.0): four Desk pages run against the REAL sf_kit.
  *
  * The Maintenance Day Board, the Stripe and QuickBooks dashboards and the Water Engineering Wizard
  * are loaded into a vm context the way the Desk loads them: the global bundle's loader
@@ -15,7 +15,7 @@
  * What this pins, per page: a first load that fails 500 draws the kit's error panel with the page's
  * title and the kit's sentence, and its Try again asks again in place; a 403 draws no-access with
  * the server's own words; a lapsed session (401 SessionExpired) draws the signed-out panel; frappe
- * puts up no dialog for any of it. And the review fixes of v1.642.0:
+ * puts up no dialog for any of it. And the review fixes of v1.645.0:
  *   - the Day Board draws its loading panel on the first attempt only, keeps the board (and says so
  *     once in a toast) when a timer refresh fails, and stops its timer on a 403 or a lapsed session;
  *   - the QuickBooks resync poll retries a network or server failure, stops on a 4xx with a toast,

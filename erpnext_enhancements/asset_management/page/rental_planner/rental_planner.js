@@ -47,7 +47,7 @@ const RP_FEES = ["delivery_setup_fee", "pickup_removal_fee", "other_fee", "secur
 // A Date as "YYYY-MM-DD". Not frappe.datetime.obj_to_str, which returns a full ISO timestamp.
 const rp_ymd = (date) => moment(date).format("YYYY-MM-DD");
 
-// sf_kit (v1.642.0): the board's loading, error and no-access panels and its quiet server call,
+// sf_kit (v1.645.0): the board's loading, error and no-access panels and its quiet server call,
 // from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
 // kit that never arrived resolves to a plain stand-in, so the board does not sit on "Loading" for
 // good. A Desk opened before the deploy that added the loader has no sf_kit_ready yet, and asks
@@ -366,7 +366,7 @@ class RentalPlanner {
 		this.$range_label.text(`${frappe.datetime.str_to_user(start)} – ${frappe.datetime.str_to_user(end)}`);
 		const $timeline = this.$timeline;
 		const token = (this._timeline_token = {});
-		// Quiet (v1.642.0): a failed load says so in the board's own panel, with Try again, rather
+		// Quiet (v1.645.0): a failed load says so in the board's own panel, with Try again, rather
 		// than leaving "Loading the fleet" up for good behind a frappe dialog. Each page of the
 		// range is a fresh load (the old range is already off the board), so each gets the panel.
 		rp_kit().then((sf) => {

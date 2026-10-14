@@ -882,6 +882,57 @@ def apply_primary_contact_details(doc, contact=None):
             doc.set(field, value)
 
 
+#: The party's copies of its primary contact, and the Contact fields each is read from (first
+#: non-empty wins), as ``primary_contact.js`` reads them.
+PRIMARY_CONTACT_COPIES = {
+    "primary_contact_job_title": ("custom_title",),
+    "primary_contact_phone": ("custom_phone_number", "custom_mobile_number", "phone", "mobile_no"),
+    "primary_contact_email": ("custom_email",),
+}
+
+
+def refresh_primary_contact_copies(doc, method=None):
+    """When ``primary_contact`` changes in a save, refresh its copies the save did not touch.
+
+    ``primary_contact.js`` does this in the browser: picking a contact copies its title, phone
+    and email, and removing it clears them. A save with no form behind it (the guided entry page,
+    form kit P4.5, which shows the copies read-only; an API call) used to keep the OLD contact's
+    copies, and the next save's :func:`sync_from_main_doc` then pushed them onto the NEW contact,
+    a Contact shared across the account. So, server-side and the same as the form: each copy is
+    set to the new Contact's value, or cleared when it has none or the contact was removed.
+
+    A copy changed in this same save is left as it is: on the Desk the script has already set it,
+    and a person may have typed over it on purpose. On a new record, which has nothing to compare
+    with, only the blank copies are filled, for the same reason. Guarded with ``has_field`` for the reason
+    :func:`apply_primary_contact_details` gives. Never raises: a copy is not worth a failed save.
+    """
+    try:
+        meta = frappe.get_meta(doc.doctype)
+        fields = [field for field in PRIMARY_CONTACT_COPIES if meta.has_field(field)]
+        if not fields or not meta.has_field("primary_contact"):
+            return
+        before = None if doc.is_new() else doc.get_doc_before_save()
+        contact = doc.get("primary_contact") or ""
+        if before is not None and (before.get("primary_contact") or "") == contact:
+            return
+        if before is None and not contact:
+            return
+        values = {}
+        if contact:
+            columns = sorted({column for columns in PRIMARY_CONTACT_COPIES.values() for column in columns})
+            row = frappe.db.get_value("Contact", contact, columns, as_dict=True) or {}
+            for field in fields:
+                values[field] = next((row.get(c) for c in PRIMARY_CONTACT_COPIES[field] if row.get(c)), "")
+        for field in fields:
+            if before is None and doc.get(field):
+                continue  # a new record's copy, already filled
+            if before is not None and (doc.get(field) or "") != (before.get(field) or ""):
+                continue  # set in this save: by the form's script, or by hand
+            doc.set(field, values.get(field, ""))
+    except Exception:
+        frappe.log_error(title="Primary contact copies not refreshed", message=frappe.get_traceback())
+
+
 def sync_from_main_doc(doc, method):
     """Push a party's primary-contact convenience fields down onto the Contact.
 
