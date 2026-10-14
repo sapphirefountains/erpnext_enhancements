@@ -50,6 +50,14 @@ function shown_phone(value) {
 	}
 }
 
+// party_sources.js as erpnext_enhancements.bundle.js installs it (v1.686.0): the directory's party
+// rules, shared with the guided page's record tools. A tab still holding the bundle from before then
+// has none, and the directory shows nothing until it reloads rather than throwing a TypeError. A
+// function declaration, as shown_phone above, because this file may be evaluated more than once.
+function ee_party_rules() {
+	return (typeof erpnext_enhancements !== "undefined" && erpnext_enhancements.party_sources) || null;
+}
+
 frappe.ui.form.on("Customer", {
 	refresh: (frm) => erpnext_enhancements.unified_controller.init(frm),
 });
@@ -112,12 +120,9 @@ erpnext_enhancements.unified_controller = {
 	// while Project / Master Project use the app's custom `primary_address`
 	// Link field.
 	primary_address_link_field: function () {
-		const frm = this.frm;
-		if (frm.fields_dict.customer_primary_address) return "customer_primary_address";
-		if (frm.fields_dict.supplier_primary_address) return "supplier_primary_address";
-		const df = frm.fields_dict.primary_address && frm.fields_dict.primary_address.df;
-		if (df && df.fieldtype === "Link") return "primary_address";
-		return null;
+		// The rule lives in party_sources.js since v1.686.0, shared with the guided page's record tools.
+		const rules = ee_party_rules();
+		return rules ? rules.primary_address_field(this.frm.meta.fields || []) : null;
 	},
 
 	primary_address_name: function () {
@@ -197,64 +202,15 @@ erpnext_enhancements.unified_controller = {
 		}
 	},
 
+	// Every party the directory is drawn from (the form, its Customer or Supplier, an Opportunity's
+	// party, each stakeholder or Dynamic Link row), de-duplicated on the (doctype, name) pair. The rules
+	// moved to party_sources.js in v1.686.0, unchanged, so the guided page's record tools list exactly
+	// what this widget lists; erpnext_enhancements.bundle.js installs them as
+	// erpnext_enhancements.party_sources. scripts/test_party_sources.mjs runs this method.
 	get_all_party_sources: function () {
 		const frm = this.frm;
-		let sources = [];
-
-		sources.push({ doctype: frm.doctype, name: frm.doc.name });
-
-		if (frm.doc.customer) sources.push({ doctype: "Customer", name: frm.doc.customer });
-		if (frm.doc.supplier) sources.push({ doctype: "Supplier", name: frm.doc.supplier });
-		// A Project shows the people on the deal it was won from. Since v1.575.0 Link
-		// Existing on an Opportunity links the Opportunity only (no longer its Customer as
-		// well), so without this a person added on the deal vanished from the job. Display
-		// and Import only, like every source here.
-		if (frm.doc.custom_opportunity) {
-			sources.push({ doctype: "Opportunity", name: frm.doc.custom_opportunity });
-		}
-		if (frm.doc.party_name && frm.doc.party_type) {
-			sources.push({ doctype: frm.doc.party_type, name: frm.doc.party_name });
-		}
-		// Opportunity's party discriminator is opportunity_from, not party_type —
-		// without this its party (Customer/Lead/Prospect) was missing entirely.
-		if (frm.doc.party_name && frm.doc.opportunity_from) {
-			sources.push({ doctype: frm.doc.opportunity_from, name: frm.doc.party_name });
-		}
-
-		(frm.meta.fields || []).forEach((f) => {
-			if (f.fieldtype === "Table" && frm.doc[f.fieldname]) {
-				const grid_rows = frm.doc[f.fieldname];
-				grid_rows.forEach((row) => {
-					if (row.customer) sources.push({ doctype: "Customer", name: row.customer });
-					if (row.supplier) sources.push({ doctype: "Supplier", name: row.supplier });
-					if (row.party_name && row.party_type) {
-						sources.push({ doctype: row.party_type, name: row.party_name });
-					}
-					// Handle standard Dynamic Link child table fields (link_doctype, link_name)
-					if (row.link_doctype && row.link_name) {
-						sources.push({ doctype: row.link_doctype, name: row.link_name });
-					}
-				});
-			}
-		});
-
-		// De-duplicate on the (doctype, name) PAIR. Keying on the name alone dropped the
-		// second of two parties that share a name (a Customer and a Supplier both called
-		// "Harbor Plaza", a Contact named after the Customer it belongs to). That did no
-		// harm while the server matched `link_name` alone, but since v1.561.1 it matches
-		// the pair, so the dropped party's contacts and addresses vanished from the
-		// directory. scripts/test_party_sources.mjs runs this function.
-		const unique_sources = [];
-		const seen = new Set();
-		for (const item of sources) {
-			const key = `${item.doctype}\u0000${item.name}`;
-			if (item.name && !seen.has(key)) {
-				seen.add(key);
-				unique_sources.push(item);
-			}
-		}
-
-		return unique_sources;
+		const rules = ee_party_rules();
+		return rules ? rules.party_sources(frm.doctype, frm.doc, frm.meta.fields || []) : [];
 	},
 
 	render_all: function () {
@@ -629,14 +585,16 @@ erpnext_enhancements.unified_controller = {
 			},
 		];
 		if (party) {
+			// A field's label and description are HTML: the party's name is escaped (v1.686.0).
+			const party_name = frappe.utils.escape_html(party.link_name);
 			fields.push({
-				label: __("Also add to {0} {1}", [__(party.link_doctype), party.link_name]),
+				label: __("Also add to {0} {1}", [__(party.link_doctype), party_name]),
 				fieldname: "also_party",
 				fieldtype: "Check",
 				default: 0,
 				description: __(
 					"Only if this {0} belongs to {1}. A consultant, inspector or subcontractor on the job does not.",
-					[__(doctype), party.link_name],
+					[__(doctype), party_name],
 				),
 			});
 		}
@@ -695,15 +653,9 @@ erpnext_enhancements.unified_controller = {
 	 */
 	get_form_party: function () {
 		const frm = this.frm;
-		const doc = frm.doc || {};
-		if (frm.is_new()) return null;
-		if (frm.doctype === "Project" && doc.customer) {
-			return { link_doctype: "Customer", link_name: doc.customer };
-		}
-		if (frm.doctype === "Opportunity" && doc.opportunity_from && doc.party_name) {
-			return { link_doctype: doc.opportunity_from, link_name: doc.party_name };
-		}
-		return null;
+		const rules = ee_party_rules();
+		if (frm.is_new() || !rules) return null;
+		return rules.form_party(frm.doctype, frm.doc || {});
 	},
 
 	// ------------------------------------------------------------ bulk import
@@ -778,9 +730,12 @@ erpnext_enhancements.unified_controller = {
 						{
 							fieldtype: "MultiCheck",
 							fieldname: "contacts",
-							options: available.map((c) => ({
+							// frappe v16's MultiCheck also writes `value` unescaped into an attribute
+							// (data-unit="..."), so the value is the row's index, never the Contact's
+							// name, mapped back below (v1.686.0).
+							options: available.map((c, index) => ({
 								label: this.contact_option_label(c),
-								value: c.name,
+								value: String(index),
 								checked: 0,
 							})),
 							columns: "22rem 2",
@@ -789,7 +744,9 @@ erpnext_enhancements.unified_controller = {
 					],
 					primary_action_label: __("Import"),
 					primary_action: () => {
-						const selected = dialog.get_value("contacts") || [];
+						const selected = (dialog.get_value("contacts") || [])
+							.map((index) => (available[Number(index)] || {}).name)
+							.filter(Boolean);
 						if (!selected.length) {
 							frappe.show_alert({
 								message: __("Select at least one contact"),

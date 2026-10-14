@@ -2136,6 +2136,8 @@ class TestEndpoints(unittest.TestCase):
                     api.my_records(doctype)
                 with self.assertRaises(FRAPPE.PermissionError):
                     api.declare_lost(doctype, "X", "[]")
+                with self.assertRaises(FRAPPE.PermissionError):
+                    api.record_info(doctype, "X")
 
     def test_writes_are_post_only_and_nothing_is_open_to_guests(self):
         tree = ast.parse((KIT / "api.py").read_text(encoding="utf-8"))
@@ -2160,6 +2162,8 @@ class TestEndpoints(unittest.TestCase):
                 "party_details",
                 # v1.678.2: the guided page's Notes block, read-only; tested in test_guided_entry.
                 "record_notes",
+                # v1.686.0: the record tools' docinfo, read-only; tested in test_guided_record_tools.
+                "record_info",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
@@ -2167,6 +2171,7 @@ class TestEndpoints(unittest.TestCase):
         self.assertIn("methods=['POST']", decorated["save_step"])
         self.assertIn("methods=['GET']", decorated["party_details"], "a read: GET only")
         self.assertIn("methods=['GET']", decorated["record_notes"], "a read: GET only")
+        self.assertIn("methods=['GET']", decorated["record_info"], "a read: GET only")
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)
 
