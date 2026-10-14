@@ -42,7 +42,9 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
   value moves at the item's rate.
 
 :func:`ensure_assignment` is the plain helper underneath, also called by the guided Item flow
-(``api.item_flow.save_stock``). No logging, no ``client_ref``.
+(``api.item_flow.save_stock``), and :func:`release_if_empty` is its other half for that flow:
+the old bin is taken off when the flow moves the item and nothing is left there, as a *Move
+to* that empties its source does. No logging, no ``client_ref``.
 
 The same principles as ``api.stock_scan``, whose helpers this reuses (the reference check, the
 log row, the transfer builder, the rate and the accounts): every Stock Entry and Stock
@@ -476,6 +478,31 @@ def ensure_assignment(item_code, warehouse):
 		_check_capacity(item, location)
 	name, _change = _ensure(item, location)
 	return name
+
+
+def release_if_empty(item_code, warehouse):
+	"""Take ``item_code`` off the bin ``warehouse`` if nothing of it is on hand there (v1.689.1).
+
+	What *Move to* with ``make_home`` does to its source (:func:`_plan_source`, :func:`_release`),
+	for a caller that moved the item's home some other way: the guided Item flow when its bin
+	changes (``api.item_flow.save_stock``). Returns what is still on hand there:
+	``0.0`` when the item was taken off; more when that stock keeps the bin's claim on it (the
+	rule that refuses *unassign* with stock on hand); ``None`` when nothing claims the pair (no
+	enabled rule, and not listed as undecided), so there was nothing to take off. Passes the
+	module gate only when it changes something. Like :func:`ensure_assignment`, writes no log
+	row and takes no ``client_ref``. Keep this signature stable; that flow calls it.
+	"""
+	item = _item(item_code)
+	location = scan._warehouse(warehouse)
+	if not location:
+		return None
+	if not _enabled_rules(item.name, location.name) and not _undecided(item.name, location.name):
+		return None
+	left = _balance(item.name, location.name)
+	if left > rules.TOLERANCE:
+		return left
+	_release(item, location, _defaults_at(item.name, location.name, location.company))
+	return 0.0
 
 
 # ---------------------------------------------------------------------------

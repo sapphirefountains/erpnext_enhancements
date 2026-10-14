@@ -754,6 +754,56 @@ class TestEnsureAssignment(_Base):
 				self.assertEqual(STATE["writes"], [])
 
 
+class TestReleaseIfEmpty(_Base):
+	"""v1.689.1: the Item flow's other half (``api.item_flow.save_stock`` when its bin changes),
+	what *Move to* with ``make_home`` does to a source it empties."""
+
+	def test_an_empty_bin_is_taken_off_and_its_default_cleared(self):
+		name = _rule("PDT-0001", BIN_A)
+		here = _default("PDT-0001", BIN_A)
+		elsewhere = _default("PDT-0001", STORES, idx=2)
+		self.assertEqual(bins.release_if_empty("PDT-0001", BIN_A), 0.0)
+		self.assertEqual(_table("Putaway Rule")[name]["disable"], 1)
+		self.assertIsNone(_table("Item Default")[here]["default_warehouse"])
+		self.assertEqual(_table("Item Default")[elsewhere]["default_warehouse"], STORES)
+
+	def test_stock_on_hand_keeps_the_bin_and_answers_how_much(self):
+		name = _rule("PDT-0001", BIN_A)
+		_bin("PDT-0001", BIN_A, actual_qty=3)
+		self.assertEqual(bins.release_if_empty("PDT-0001", BIN_A), 3)
+		self.assertEqual(_table("Putaway Rule")[name]["disable"], 0)
+		self.assertEqual(STATE["writes"], [])
+
+	def test_a_pair_nothing_claims_is_left_alone(self):
+		# No rule and no Bin row: no record of a decision is made where nobody listed it.
+		self.assertIsNone(bins.release_if_empty("PDT-0001", BIN_A))
+		_rule("PDT-0001", BIN_B, disable=1)
+		self.assertIsNone(bins.release_if_empty("PDT-0001", BIN_B), "already taken off")
+		self.assertEqual(STATE["writes"], [])
+		self.assertIsNone(bins.release_if_empty("PDT-0001", "Nowhere - SF"))
+
+	def test_an_emptied_undecided_pair_is_recorded_as_taken_off(self):
+		_bin("PDT-0001", BIN_A, actual_qty=0)
+		self.assertEqual(bins.release_if_empty("PDT-0001", BIN_A), 0.0)
+		(rule,) = _rules_for("PDT-0001", BIN_A)
+		self.assertEqual(rule["disable"], 1)
+
+	def test_outside_the_gate_only_a_change_is_refused(self):
+		_rule("PDT-0001", BIN_A)
+		_bin("PDT-0001", BIN_A, actual_qty=2)
+		_without_item_read()
+		self.assertEqual(bins.release_if_empty("PDT-0001", BIN_A), 2, "nothing to change: no gate")
+		_table("Bin")["PDT-0001@" + BIN_A]["actual_qty"] = 0
+		self.assertRefused(
+			bins.release_if_empty,
+			"stock role",
+			exc=FRAPPE.PermissionError,
+			item_code="PDT-0001",
+			warehouse=BIN_A,
+		)
+		self.assertEqual(STATE["writes"], [])
+
+
 # --------------------------------------------------------------------------- assign / unassign
 
 

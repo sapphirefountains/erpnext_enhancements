@@ -436,43 +436,55 @@ def save_stock(item_code, warehouse, reorder_level=None, reorder_qty=None):
 		changed = _set(row, "warehouse_reorder_qty", flt(reorder_qty)) or changed
 	if changed:
 		item.save()
-	unlisted = _assign_bin(item.name, name)
+	bin_note = _assign_bin(item.name, name, before if before and before != name else None)
 	out = _setup(frappe.get_doc("Item", item.name))
-	out["note"] = " ".join(n for n in (note, unlisted) if n) or None
+	out["note"] = " ".join(n for n in (note, bin_note) if n) or None
 	return out
 
 
-def _assign_bin(item_code, warehouse):
-	"""Put the item on its bin the way the bin pages do; a sentence when it cannot be, else None.
+def _assign_bin(item_code, warehouse, old_bin=None):
+	"""Put the item on its bin the way the bin pages do, and take it off the bin it left if that is
+	empty. A sentence when something is worth saying, else None.
 
 	A bin is the item's in two records: the Item Default's ``default_warehouse``, written above as
 	the caller, and an enabled Putaway Rule, which is what Stock Scan and the bin page count as
 	assigned and what ERPNext's *Apply Putaway Rule* routes received stock by
-	(``inventory_enhancements.bin_assignments``, v1.689.0). ``ensure_assignment`` is that module's
-	plain helper for this call: idempotent, and it writes the rule past ERPNext's Putaway Rule
-	permission behind the module's own gate (a stock role and Item read; the owner's decision of
-	2026-10-14). The old bin's rule is left alone, as that module's own move leaves it while stock
-	is still there: the bin page takes an item off a bin.
+	(``inventory_enhancements.bin_assignments``, v1.689.0). That module's two plain helpers do the
+	work, past ERPNext's Putaway Rule permission behind the module's own gate (a stock role and Item
+	read; the owner's decision of 2026-10-14): ``ensure_assignment`` puts the item on ``warehouse``
+	(idempotent), and, when the flow moved the item off ``old_bin``, ``release_if_empty`` takes it
+	off there as a *Move to* that empties its source does. Stock still on hand there keeps the old
+	bin's claim, and the sentence says so: two enabled rules is two bins *Apply Putaway Rule* may
+	fill, so it is not left unsaid.
 
-	A refusal (no stock role, a template item) must not undo the bin the person just saved, so it
-	rolls back to a savepoint and comes back as the reason, for ``note``. Messages are muted while
-	it runs, because a caught ``frappe.throw`` would still reach the browser as a red dialog.
-	Anything else is not caught: the request fails and nothing of it is saved.
+	A refusal (no stock role, a template item, a Boneyard) must not undo the bin the person just
+	saved, so it rolls back to a savepoint (both helpers' writes together) and comes back as the
+	reason. Messages are muted while they run, because a caught ``frappe.throw`` would still reach
+	the browser as a red dialog. Anything else is not caught: the request fails and nothing of it is
+	saved.
 	"""
 	# Imported here: the bin module pulls in Stock Scan's, which this flow needs only for this.
-	from erpnext_enhancements.inventory_enhancements.bin_assignments import ensure_assignment
+	from erpnext_enhancements.inventory_enhancements.bin_assignments import (
+		ensure_assignment,
+		release_if_empty,
+	)
 
+	frappe.db.savepoint(ASSIGN_SAVEPOINT)
 	muted = frappe.flags.mute_messages
 	frappe.flags.mute_messages = True
-	frappe.db.savepoint(ASSIGN_SAVEPOINT)
 	try:
 		ensure_assignment(item_code, warehouse)
+		left = release_if_empty(item_code, old_bin) if old_bin else None
 	except (frappe.ValidationError, frappe.PermissionError) as refused:
 		frappe.db.rollback(save_point=ASSIGN_SAVEPOINT)
 		reason = strip_html_tags(cstr(refused)).strip() or _("the bin list refused it.")
-		return _("It is not on the bin's list yet: {0}").format(reason)
+		return _("Stock Scan's bin list was not changed: {0}").format(reason)
 	finally:
 		frappe.flags.mute_messages = muted
+	if left:
+		return _("{0} still has {1} on hand, so the item stays on that bin too until it is moved.").format(
+			old_bin, f"{flt(left):g}"
+		)
 	return None
 
 
