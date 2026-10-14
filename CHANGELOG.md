@@ -18,7 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     here only because on prod on 2026-10-14 nobody who could open a hub was refused the
     dashboard it links; every pair was counted.
   - **Dashboard to hub.** The new **Dashboard Hub Links** Custom HTML Block is the first block on
-    all ten department dashboards. It could not be a URL shortcut. A dashboard is gated on
+    all ten department dashboards. Everything below it keeps the order people see today. On
+    the Design, Executive, HR, Marketing, Production and Sales dashboards the KPI Cockpit has
+    been first on prod since the seeder's write of 2026-08-06, while the files had it last. The
+    files now match prod (Cockpit directly after the hub links), so this release's force-import
+    moves nothing. Finance, Operations and Service keep the Cockpit last, as on prod. It could not be a URL shortcut. A dashboard is gated on
     ERPNext's broad roles and a hub on a team role, so most of a dashboard's viewers cannot open
     its hub: 8 of the 14 who could open the Design Dashboard could not open the Design Hub, 11
     of 14 on Operations, 7 of 14 on Sales and 4 of 7 on Executive and Marketing. A "Design Hub"
@@ -59,15 +63,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - every render added another `document.body` click listener, and these stacked up.
   It is now on sf_kit (panels, chips, ticket), uses the `--sf-*` status tokens instead of its
   gradients, and reloads when you come back to the workspace.
+  - **This replaces a block Nik built and edited by hand on the site** (25 Version rows, last
+    edited 2026-02-07), so it needs his sign-off. The repo holds a rewrite, not the old code
+    (the repo is public). The old version stays recoverable from the block's Version history:
+    the seeder writes with `db.set_value`, which adds no Version rows and removes none.
 - **The Morning Briefing workspace shows the briefing.** It held a `/wall` link and two lists
   that only a System Manager can open (Daily Briefing and the Enhancements Settings). It now
   leads with the Morning Briefing block. `/wall` stays, the two lists are folded into one
-  "Briefing records" card, and the duplicate Daily Briefing shortcut is gone. Note that **the
-  workspace is still visible only to System Managers**. Its module, Morning Briefing, holds one
-  DocType, which only System Manager can read, and a workspace whose module the user has no
-  DocPerm in is silently hidden. Opening it to staff is a gating decision (module-less like the
-  hubs, or a DocPerm), so it is left for a separate change. Everyone already sees the briefing on
-  Home.
+  "Briefing records" card, and the duplicate Daily Briefing shortcut is gone.
+  - **Who sees it.** On 16.50, `Workspace.is_permitted` (`frappe/desk/desktop.py`) checks two
+    things only: that the user has not blocked the workspace's module (`is_module_visible`), then
+    the workspace's own `roles`. The DocPerm-derived `allowed_modules` gate is gone. So with
+    `roles: []` the page reached every system user (17 on prod), even though its one DocType is
+    System Manager only.
+  - **Now gated on `api.task_dashboard.STAFF_ROLES`**, the same roles `get_morning_briefing`
+    and `/wall` serve. 3 of the 17 hold none of them; for those 3 the page would have been a
+    no-access panel and a `/wall` link that refuses them.
+  - The "Briefing records" card needs no gate of its own: `get_links` drops each item the viewer
+    cannot open, and drops the card when none is left, so non-System-Managers never see it.
 - **The kiosk is linked at `/kiosk`**, not through the `time-kiosk` desk page, which is only a
   redirect to it. The Production Hub's Time Kiosk shortcut goes straight there. The Workforce
   workspace drops its redirect-page shortcut and renames "Kiosk PWA" to Time Kiosk, so it has

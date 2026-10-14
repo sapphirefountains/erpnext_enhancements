@@ -13,12 +13,15 @@ its first argument is a module, and the hubs declare none.
 What the files change:
 
 * every department dashboard carries the Dashboard Hub Links block first, the way back to its
-  hub, drawn only for a hub the viewer can open; the Design, Operations, Production and Support
-  hubs gain the dashboard links they lacked (Product, Product, Service, Service), and the
+  hub, drawn only for a hub the viewer can open. Below it each dashboard keeps the order prod
+  shows today: Design, Executive, HR, Marketing, Production and Sales have had the KPI Cockpit
+  first since the seeder's write of 2026-08-06, and their files now say so. The Design,
+  Operations, Production and Support hubs gain the dashboard links they lacked (Product, Product, Service, Service), and the
   Operations Hub gains Stock Scan, Warehouse QR Labels and an Inventory card;
 * the Product Dashboard gets catalogue shortcuts and cards above nothing but its KPI Cockpit;
-* the Morning Briefing workspace shows the briefing itself, keeps /wall, and folds its two
-  System-Manager-only lists into one card;
+* the Morning Briefing workspace shows the briefing itself, keeps /wall, folds its two
+  System-Manager-only lists into one card, and is gated on the staff roles the briefing and
+  /wall serve (16.50's ``is_permitted`` reads only Block Module and the workspace's roles);
 * the Production Hub and the Workforce workspace link the kiosk at /kiosk instead of the
   ``time-kiosk`` desk page, which is only a redirect to it, and Workforce drops the second link;
 * the GA4 Dashboard page admits Marketing Team and Marketing Manager (the Marketing Hub links

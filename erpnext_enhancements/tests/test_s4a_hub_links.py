@@ -195,6 +195,13 @@ class TestMorningBriefingWorkspace(unittest.TestCase):
 		)
 		self.assertEqual([r["custom_block_name"] for r in self.doc["custom_blocks"]], ["Morning Briefing"])
 
+	def test_it_is_gated_on_the_roles_the_briefing_serves(self):
+		"""v16.50's Workspace.is_permitted checks only module visibility (Block Module) and the
+		workspace's roles; the DocPerm module gate is gone. With no roles the page reached all 17
+		system users on prod, and 3 of them hold no staff role: the briefing endpoint and /wall
+		both refuse them, so the page would show them a no-access panel and a dead link."""
+		self.assertEqual(roles_of(self.doc), literal(TASK_DASHBOARD, "STAFF_ROLES"))
+
 	def test_the_seeder_restores_it_there(self):
 		placement = literal(SEEDER, "DEPARTMENT_DASHBOARD_BLOCKS")
 		self.assertEqual(placement.get("Morning Briefing"), ("Morning Briefing",))

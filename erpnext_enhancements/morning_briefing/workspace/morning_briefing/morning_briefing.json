@@ -50,7 +50,32 @@
  "parent_page": "",
  "public": 1,
  "quick_lists": [],
- "roles": [],
+ "roles": [
+  {
+   "role": "Employee"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Projects User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "Sales Master Manager"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Wall Display"
+  }
+ ],
  "sequence_id": 29,
  "shortcuts": [
   {

@@ -37,6 +37,16 @@ WORKSPACES = APP / "kpi_dashboards" / "workspace"
 
 KPI_COCKPIT = "KPI Cockpit"
 DASHBOARD_HUB_LINKS = "Dashboard Hub Links"
+#: Dashboards whose prod layout has carried the KPI Cockpit first since 2026-08-06 (checked
+#: 2026-10-14). The rest show it last, as their files always had it.
+COCKPIT_FIRST = {
+	"Design Dashboard",
+	"Executive Dashboard",
+	"HR Dashboard",
+	"Marketing Dashboard",
+	"Production Dashboard",
+	"Sales Dashboard",
+}
 
 # department -> the api module whose feeds serve that department's widgets.
 FEED_MODULES = {
@@ -169,6 +179,10 @@ class DashboardWidgetWiring(unittest.TestCase):
 				if KPI_COCKPIT in (self.placement.get(workspace) or ()) or path.parent.parent.parent.name == "kpi_dashboards":
 					if KPI_COCKPIT not in expected:
 						expected = expected + [KPI_COCKPIT]
+				# Six dashboards have shown the Cockpit FIRST on prod since the seeder's write of
+				# 2026-08-06; the files keep that order, so a re-import moves nothing people see.
+				if workspace in COCKPIT_FIRST:
+					expected = [KPI_COCKPIT, *(n for n in expected if n != KPI_COCKPIT)]
 				# Every department dashboard opens with the way back to its hub (v1.665.0).
 				if path.parent.parent.parent.name == "kpi_dashboards":
 					expected = [DASHBOARD_HUB_LINKS, *expected]
