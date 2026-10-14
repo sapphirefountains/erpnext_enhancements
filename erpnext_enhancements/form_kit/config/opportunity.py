@@ -163,6 +163,46 @@ CONFIG = {
 		"filled_on_create": {
 			"company": "frappe.new_doc sets it from the user's or the global default company.",
 		},
+		# Hidden fields a deal started elsewhere arrives with (the guided page is where every new
+		# Opportunity opens, Nik, 2026-10-13), taken on create alongside the flow's own fields.
+		"prefill_fields": {
+			"contact_person": (
+				"ERPNext's Create > Opportunity on a Customer sets it (customer._set_missing_values), "
+				"as does Create Opportunity on a Lead (public/js/lead.js); hidden on the form."
+			),
+			"custom_description": "Create Opportunity on a Lead copies the Lead's details into it; hidden.",
+			"company": "Create Opportunity on a Lead copies the Lead's company; hidden, with a default.",
+		},
+	},
+	# ERPNext's own Declare Lost (erpnext/crm/doctype/opportunity/opportunity.py, which also refuses
+	# while an active Quotation exists). Its lost_reasons table is read-only on the form and in the
+	# flow, so choosing Lost asks for the reasons in a dialog, as the form's Set as Lost does
+	# (erpnext/public/js/utils/sales_common.js), and validate_close_reason is satisfied.
+	"lost": {
+		"status": "Lost",
+		"method": "declare_enquiry_lost",
+		"reasons": {"doctype": "Opportunity Lost Reason Detail", "field": "lost_reason"},
+		"competitors": {"doctype": "Competitor Detail", "field": "competitor"},
+	},
+	# What the form's scripts check as a value is chosen, which the page checks the same way (P4.5).
+	# opportunity_migrated_scripts.js warns when two ranks are the same (the server only checks that
+	# each is 1, 2 or 3), and ERPNext's opportunity.js clears the party when its type changes.
+	"distinct": [
+		{
+			"fields": ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"],
+			"message": "Scope, Schedule and Budget each need their own rank: one 1, one 2 and one 3.",
+		},
+	],
+	"clears": {"opportunity_from": ["party_name"]},
+	# The guided page's start screen: the caller's open deals, newest change first. Historical
+	# deals (crm_enhancements/historical.py) are left out; they are not being worked.
+	"mine": {
+		"label": "Your open opportunities",
+		"owner_field": "opportunity_owner",
+		"title_field": "custom_opportunity_name",
+		"detail_fields": ["customer_name", "status"],
+		"open": {"field": "status", "not_in": ["Closed Won", "Lost", "Closed", "Converted"]},
+		"hide_flag": "custom_is_historical",
 	},
 	"steps": [
 		{

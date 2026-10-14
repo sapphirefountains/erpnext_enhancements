@@ -16,9 +16,27 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     Shown, never written by the flow.
 ``site_only_fields``  ``{fieldname}``
     Fieldnames above that exist on the production site but are not created by this repo.
-``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}}``
+``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}, "prefill_fields": {fieldname: reason}}``
     What step 1 asks for before the record exists. Any other required field without a default
     is added to step 1 at run time unless ``filled_on_create`` says how the new record fills it.
+    A record started somewhere else (``frappe.new_doc``'s options, or a mapped document such as
+    ERPNext's *Create > Opportunity* on a Customer) arrives with values of its own. The new
+    record takes those for every field the flow lets the user write, and for the fields in
+    ``prefill_fields``: fields the flow does not show that such a start fills (a hidden Link).
+``lost``  ``{"status", "status_field"?, "method", "reasons": {"doctype", "field"}, "competitors": {...}}``
+    Choosing ``status`` (in ``status_field``, default ``status``) opens a *Set as Lost* dialog
+    and runs the DocType's own ``method`` with the reasons and competitors as rows of the given
+    child DocTypes (``field`` is the row's link column), as the Desk form does.
+``distinct``  ``[{"fields": [...], "message"}]``
+    Fields that should not share a value: the page warns, as the form's script does, without
+    blocking.
+``clears``  ``{fieldname: [fieldnames]}``
+    Changing the first empties the others on the page, as the form's script does (a party whose
+    type changed).
+``mine``  ``{"owner_field", "title_field", "detail_fields"?, "open"?, "hide_flag"?, "label"}``
+    The guided page's start screen lists the caller's records: ``owner_field`` is the caller,
+    ``open`` is ``{"field", "not_in": [...]}`` (closed records are left out), and a record whose
+    ``hide_flag`` Check is set is left out too. ``label`` heads the list.
 ``steps``  ``[{key, title, intro, sections, fields?, applies?, read_only?, final?, link?}]``
     In order. ``sections`` are Section Break fieldnames (``_top`` for the fields before the first
     one; a tab's fieldname for the fields that open a tab before any Section Break). ``fields``
@@ -45,7 +63,13 @@ CONFIG_KEYS = {
 	"create",
 	"steps",
 	"stages",
+	"mine",
+	"lost",
+	"distinct",
+	"clears",
 }
+CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields"}
+MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
 
 
@@ -81,6 +105,40 @@ def check(config):
 		for fieldname, reason in (config.get(key) or {}).items():
 			if not str(reason or "").strip():
 				problems.append(f"{key}.{fieldname} has no reason")
+	create = config.get("create") or {}
+	unknown = set(create) - CREATE_KEYS
+	if unknown:
+		problems.append(f"unknown create keys {sorted(unknown)}")
+	for key in ("filled_on_create", "prefill_fields"):
+		for fieldname, reason in (create.get(key) or {}).items():
+			if not str(reason or "").strip():
+				problems.append(f"create.{key}.{fieldname} has no reason")
+	for index, rule in enumerate(config.get("distinct") or []):
+		if len(rule.get("fields") or []) < 2 or not str(rule.get("message") or "").strip():
+			problems.append(f"distinct rule {index} needs two or more fields and a message")
+	for fieldname, cleared in (config.get("clears") or {}).items():
+		if not isinstance(cleared, list) or not cleared:
+			problems.append(f"clears.{fieldname} needs a list of fields")
+	lost = config.get("lost")
+	if lost is not None:
+		for key in ("status", "method"):
+			if not str(lost.get(key) or "").strip():
+				problems.append(f"lost needs {key}")
+		for key in ("reasons", "competitors"):
+			table = lost.get(key) or {}
+			if not table.get("doctype") or not table.get("field"):
+				problems.append(f"lost.{key} needs a doctype and a field")
+	mine = config.get("mine")
+	if mine is not None:
+		unknown = set(mine) - MINE_KEYS
+		if unknown:
+			problems.append(f"unknown mine keys {sorted(unknown)}")
+		for key in ("owner_field", "title_field", "label"):
+			if not str(mine.get(key) or "").strip():
+				problems.append(f"mine needs {key}")
+		open_rule = mine.get("open")
+		if open_rule is not None and (not open_rule.get("field") or not isinstance(open_rule.get("not_in"), list)):
+			problems.append("mine.open needs a field and a 'not_in' list")
 	seen_keys, seen_sections, seen_fields = set(), set(), set()
 	for index, step in enumerate(config.get("steps") or []):
 		key = step.get("key")

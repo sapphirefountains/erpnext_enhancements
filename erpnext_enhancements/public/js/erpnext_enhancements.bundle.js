@@ -151,3 +151,6 @@ import "./collab/live_form_sync.js";
 // and takes the last segment, so a cache-busted ".css?v=..." loads as neither css
 // nor js -- silently, as an unstyled page.
 import "./training/desk_assets.js";
+// The guided page is where a guided DocType's records open, new and existing (form kit P5.2):
+// frappe.create_routes for New, and a before_show on the Form factory for the rest. See the file.
+import "./guided_default.js";

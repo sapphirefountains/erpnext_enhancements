@@ -434,6 +434,86 @@ class TestApplyPrimaryContactDetails(unittest.TestCase):
 		self.assertEqual(STATE["Contact"]["C-2"]["is_primary_contact"], 0)
 
 
+class _SavingParty(_FakeParty):
+	"""A party mid-save: ``before`` is the stored version (None for a new record)."""
+
+	def __init__(self, before=None, **fields):
+		super().__init__("Opportunity", **fields)
+		self._before = None if before is None else _FakeParty("Opportunity", **before)
+
+	def is_new(self):
+		return self._before is None
+
+	def get_doc_before_save(self):
+		return self._before
+
+
+COPIES = ("primary_contact_job_title", "primary_contact_phone", "primary_contact_email")
+OLD = {"primary_contact": "C-2", "primary_contact_job_title": "Owner", "primary_contact_phone": "801-555-0000",
+	"primary_contact_email": "old@acme.test"}
+
+
+class TestRefreshPrimaryContactCopies(unittest.TestCase):
+	"""Form kit P4.5: a save with no form behind it (the guided entry page) changes
+	``primary_contact`` and leaves the copies as they were. Kept, the next save's
+	``sync_from_main_doc`` pushes the OLD contact's title, phone and email onto the NEW one."""
+
+	def setUp(self):
+		_reset()
+		STATE["fields"]["Opportunity"] = {"primary_contact", *COPIES}
+
+	def _copies(self, doc):
+		return [doc.get(field) for field in COPIES]
+
+	def test_a_new_contact_brings_its_own_copies(self):
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact="C-1"))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["Facilities Director", "801-555-0101", "jane@acme.test"])
+
+	def test_what_the_new_contact_lacks_is_cleared_not_kept(self):
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact="C-3"))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["", "", ""])
+
+	def test_removing_the_contact_clears_them(self):
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact=""))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["", "", ""])
+
+	def test_the_same_contact_changes_nothing(self):
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact_phone="801-555-7777"))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["Owner", "801-555-7777", "old@acme.test"])
+
+	def test_a_copy_set_in_the_same_save_is_kept(self):
+		# The Desk form's script already copied, then a person typed a better phone.
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact="C-1", primary_contact_phone="801-555-4242"))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["Facilities Director", "801-555-4242", "jane@acme.test"])
+
+	def test_a_new_record_fills_only_its_blank_copies(self):
+		doc = _SavingParty(before=None, primary_contact="C-1", primary_contact_phone="801-555-4242")
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["Facilities Director", "801-555-4242", "jane@acme.test"])
+		blank = _SavingParty(before=None, primary_contact="")
+		sync_contact.refresh_primary_contact_copies(blank)
+		self.assertEqual(self._copies(blank), [None, None, None])
+
+	def test_a_site_without_the_fields_is_left_alone(self):
+		STATE["fields"]["Opportunity"] = {"primary_contact"}
+		doc = _SavingParty(before=OLD, **dict(OLD, primary_contact="C-1"))
+		sync_contact.refresh_primary_contact_copies(doc)
+		self.assertEqual(self._copies(doc), ["Owner", "801-555-0000", "old@acme.test"])
+
+	def test_it_runs_before_the_down_sync_on_opportunity(self):
+		hooks = (REPO_ROOT / "erpnext_enhancements" / "hooks.py").read_text(encoding="utf-8")
+		block = hooks[hooks.index('\t"Opportunity": {\n\t\t"before_validate"') :]
+		block = block[: block.index('"on_trash"')]
+		before_save = block[block.index('"before_save"') : block.index('"on_update"')]
+		self.assertIn('"erpnext_enhancements.sync_contact.refresh_primary_contact_copies"', before_save)
+		self.assertIn('"erpnext_enhancements.sync_contact.sync_from_main_doc"', block[block.index('"on_update"') :])
+
+
 class TestRepairPatchWinner(unittest.TestCase):
 	"""The de-duplication rule, isolated from the ORM."""
 

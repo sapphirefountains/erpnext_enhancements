@@ -1066,6 +1066,10 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
 		],
 		"before_save": [
+			# Form kit P4.5: a new primary contact's title, phone and email, copied the way
+			# primary_contact.js copies them, for saves with no form behind them (the guided page).
+			# Must precede on_update's sync_from_main_doc, which pushes the copies onto the Contact.
+			"erpnext_enhancements.sync_contact.refresh_primary_contact_copies",
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
 			# must run after stamp_won_date: both describe the same Closed-Won
