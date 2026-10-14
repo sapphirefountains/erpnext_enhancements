@@ -13,6 +13,11 @@
 //   /desk/project-planner/heatmap/2026-10-12  eight weeks of load per person, one cell per week
 //                                             (the arrows step four weeks; a cell opens its week)
 //
+// The Project, Project manager and Group filters ride along on every one of those as the query
+// (S5c): /desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
+// opens the planner as its sender saw it, and a reload keeps them. Picking a filter rewrites the
+// address in place; it is not a screen of its own. See "filters in the address" below.
+//
 // Every move between weeks, months and views is a route, so Back and Forward step through them
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
 // Forward re-render through on_page_show -> handle_route, exactly like the Maintenance Planner.
@@ -69,6 +74,10 @@ const PP = {
 		foreign: "ee_project_planner_foreign",
 		panel: "ee_project_planner_panel",
 	},
+	// The filters the address carries (S5c), in the order they are written: ?project=&pm=&group=.
+	url_filters: ["project", "pm", "group"],
+	// The longest value the address may give one of them: a document name's limit.
+	url_value_max: 140,
 	hold_ms: 300,
 	drag_px: 6,
 	undo_max: 20,
@@ -185,6 +194,10 @@ class ProjectPlanner {
 		);
 		this.$body = $('<div class="pp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		// The person's own filters, and those the address gave while they are on screen (S5c).
+		this.own_filters = this.filters();
+		this.url_filters = null;
+		this.watch_filter_url();
 		this.init_phase3b();
 		this.init_phase4();
 		this.init_phase5();
@@ -222,7 +235,7 @@ class ProjectPlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
-		this.take_route_project();
+		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
 		if (target.view === PP3B.my_week) {
@@ -245,25 +258,158 @@ class ProjectPlanner {
 		this.load();
 	}
 
-	// A form's "Open in Project Planner" (S5b, v1.667.0) names a project in route_options, as does
-	// ?project= in the address. Read after the "last used" view is restored, so it wins over that,
-	// and consumed like the list view's filters. A one-off: nothing is saved (`project_link` holds off
-	// the "last used" save while it is the filter), the PM filter is cleared so it cannot hide the
-	// project's cards, and the key leaves the address in place, so Back onto this entry does not
-	// put the filter back over whatever was picked since.
-	take_route_project() {
+	// ------------------------------------------------------------------ filters in the address (S5c)
+	//
+	// The Project, Project manager and Group filters are part of the address, as ?project=, ?pm= and
+	// ?group=, on every planner screen. The rules, in one place:
+	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
+	//     address wins over it. An address that names any of them is the whole filter: one it does not
+	//     name is All, so a link shows exactly what its sender saw. A form's "Open in Project Planner"
+	//     (S5b) is such a link: ?project= alone, which also leaves the PM filter at All, where it
+	//     cannot hide the project's cards. An address that names none of them (the sidebar, another
+	//     page's path-only link) keeps the filters on screen.
+	//   - What the address gave is that visit's only (url_filters: the keys it decided, those it named
+	//     and those it left at All). None is saved to the remembered filters, and "last used" keeps the
+	//     person's own value for each of them (p6c_save_last). A bare address after them brings back
+	//     the person's own, except on the planner's own next screen (self_route), which carries what
+	//     is on screen. A filter the person picks (pick_filter) is theirs and remembered as before;
+	//     the address's other keys stay one-off. A key the loaded planner resets to All (a PM it does
+	//     not list) stops being the address's, and so do they all once the filters on screen are the
+	//     person's own again (a Back onto one of their own entries).
+	//   - Back onto an entry the planner left bare (every filter All, and the person's own) names
+	//     nothing, so it keeps whatever filters are on screen by then, the newer ones.
+	//   - Picking a filter rewrites the address in place (write_filter_url, replaceState). A filter is
+	//     not a screen: pushing would make Back step through every pick in a select before it reached
+	//     the week before. The entry keeps saying what it shows, so Back onto it, a reload or a copied
+	//     link all show it again. A week, a view or a person's route is a screen, and moves by
+	//     set_route as it always has, carrying the filters (filter_options).
+	//   - The keys are consumed from route_options, so none is left to be written into the next
+	//     route's address (v16.50's set_route writes whatever is left there). Keys that are not the
+	//     planner's are not its to take.
+
+	filters() {
+		return { project: this.project || "", pm: this.pm || "", group: this.group || "" };
+	}
+
+	// The filters set_route carries to another planner screen: only those that are not All.
+	filter_options() {
+		const out = {};
+		const filters = this.filters();
+		PP.url_filters.forEach((key) => {
+			if (filters[key]) out[key] = filters[key];
+		});
+		return out;
+	}
+
+	// A value the address gives a filter, or null when the filter cannot take it, which ignores it.
+	filter_from_address(key, value) {
+		if (value == null || typeof value === "object") return null;
+		const text = String(value).trim();
+		if (text.length > PP.url_value_max) return null;
+		if (key === "group" && text && !PP.groups.includes(text)) return null;
+		return text;
+	}
+
+	take_route_filters() {
 		const opts = frappe.route_options;
-		if (!opts || !Object.prototype.hasOwnProperty.call(opts, "project")) return;
-		this.project = this.project_link = String(opts.project || "");
-		this.pm = "";
-		this.show_all_unscheduled = false;
-		delete opts.project;
-		if (!Object.keys(opts).length) frappe.route_options = null;
-		const query = new URLSearchParams(window.location.search);
-		if (!query.has("project")) return;
-		query.delete("project");
-		const rest = query.toString();
-		window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : ""));
+		const named = {};
+		if (opts && typeof opts === "object") {
+			PP.url_filters.forEach((key) => {
+				if (!Object.prototype.hasOwnProperty.call(opts, key)) return;
+				const value = this.filter_from_address(key, opts[key]);
+				if (value !== null) named[key] = value;
+				delete opts[key];
+			});
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
+		// The planner's own next screen (go, go_route, go_my_week) carries what is on screen; with every
+		// filter at All it carries nothing, and is no bare address for all that.
+		const self_step = !!this.self_route && this.self_route === (frappe.get_route() || []).join("/");
+		this.self_route = null;
+		const now = this.filters();
+		const own = this.own_filter_values();
+		const same = (a, b) => PP.url_filters.every((key) => a[key] === b[key]);
+		let next = null;
+		if (Object.keys(named).length) {
+			next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };
+			// The planner's own screens carry the filters on screen: nothing changes, nothing is marked.
+			if (same(next, now)) next = null;
+			else this.url_filters = Object.assign({}, next);
+		} else if (this.url_filters && !self_step) {
+			next = own;
+			this.url_filters = null;
+		}
+		// The person's own filters again (a Back onto one of their own entries): theirs, not a link's.
+		if (this.url_filters && same(next || now, own)) this.url_filters = null;
+		if (next) {
+			if (next.project !== now.project) this.show_all_unscheduled = false;
+			Object.assign(this, next);
+			if (this.$project) this.$project.val(this.project);
+			if (this.$pm) this.$pm.val(this.pm);
+			if (this.$group) this.$group.val(this.group);
+		}
+		this.write_filter_url();
+	}
+
+	own_filter_values() {
+		return Object.assign({ project: "", pm: "", group: "" }, this.own_filters);
+	}
+
+	// A key the address gave stops being the address's: the person picked it, or the loaded planner
+	// reset it to All. With none left, the filters on screen are no longer a link's.
+	release_filter(key) {
+		if (!this.url_filters) return;
+		delete this.url_filters[key];
+		if (!Object.keys(this.url_filters).length) this.url_filters = null;
+	}
+
+	// A filter picked in the bar, or "Filter to this project" in a project's drawer. Only that one
+	// becomes the person's, remembered and in "last used"; the address's other keys stay one-off.
+	pick_filter(key, value) {
+		this[key] = value || "";
+		if (key === "project") this.show_all_unscheduled = false;
+		this.own_filters = Object.assign(this.own_filter_values(), { [key]: this[key] });
+		this.release_filter(key);
+		if (this.url_filters && PP.url_filters.every((name) => this[name] === this.own_filters[name])) {
+			this.url_filters = null;
+		}
+		this.save_pref(PP.prefs[key], this[key]);
+		this.write_filter_url();
+		this.render();
+	}
+
+	// The page's one history write: the filters on screen into the entry on screen, in place. Only
+	// while the router is on the planner's own path (a late render must not write another page's
+	// address) and never over filters the page has not read yet (a Back the router is still routing).
+	// The path as the router wrote it (a shell segment included), any key that is not the planner's,
+	// the hash and history.state are kept. Values are encoded as v16.50's set_route encodes them, so
+	// the router reads the address it would have written and pushes no duplicate, except that an
+	// apostrophe is written as the browser itself writes it in a query (%27): left bare, the address
+	// read back would never equal the one written, and every landing would write it again.
+	write_filter_url() {
+		const path = window.location.pathname;
+		if ((frappe.get_route() || [])[0] !== PP.route || !path.split("/").includes(PP.route)) return;
+		const opts = frappe.route_options;
+		if (opts && PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return;
+		const enc = (text) => encodeURIComponent(text).replace(/'/g, "%27");
+		const pairs = [];
+		const filters = this.filters();
+		PP.url_filters.forEach((key) => {
+			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
+		});
+		new URLSearchParams(window.location.search).forEach((value, key) => {
+			if (!PP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
+		});
+		const search = pairs.length ? `?${pairs.join("&")}` : "";
+		if (search === window.location.search) return;
+		window.history.replaceState(window.history.state, "", path + search + window.location.hash);
+	}
+
+	// A Back or Forward the router does not route (the planner kit closing its drawer) lands on an
+	// entry that may still hold the filters from before a pick made while the drawer was open. Once
+	// the router has had its turn, the address is brought up to what is on screen.
+	watch_filter_url() {
+		window.addEventListener("popstate", () => setTimeout(() => this.write_filter_url(), 0));
 	}
 
 	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
@@ -295,7 +441,8 @@ class ProjectPlanner {
 			this.load_route();
 			return;
 		}
-		this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd), false);
+		this.self_route = [PP.route, PP.route_view, resource, ymd].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options()), false);
 	}
 
 	go(view, anchor) {
@@ -304,7 +451,8 @@ class ProjectPlanner {
 			this.load();
 			return;
 		}
-		this.p6a_route(() => frappe.set_route(PP.route, view, anchor), true);
+		this.self_route = [PP.route, view, anchor].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -420,22 +568,9 @@ class ProjectPlanner {
 		});
 
 		$('<span class="pp-spacer"></span>').appendTo($bar);
-		this.$project = this.make_select($bar, __("Project"), (value) => {
-			this.project = value;
-			this.save_pref(PP.prefs.project, value);
-			this.show_all_unscheduled = false;
-			this.render();
-		});
-		this.$pm = this.make_select($bar, __("Project manager"), (value) => {
-			this.pm = value;
-			this.save_pref(PP.prefs.pm, value);
-			this.render();
-		});
-		this.$group = this.make_select($bar, __("Group"), (value) => {
-			this.group = value;
-			this.save_pref(PP.prefs.group, value);
-			this.render();
-		});
+		this.$project = this.make_select($bar, __("Project"), (value) => this.pick_filter("project", value));
+		this.$pm = this.make_select($bar, __("Project manager"), (value) => this.pick_filter("pm", value));
+		this.$group = this.make_select($bar, __("Group"), (value) => this.pick_filter("group", value));
 		$("<option></option>").val("").text(__("All groups")).appendTo(this.$group);
 		PP.groups.forEach((group) => $("<option></option>").val(group).text(__(group)).appendTo(this.$group));
 		this.$group.val(PP.groups.includes(this.group) ? this.group : "");
@@ -508,6 +643,7 @@ class ProjectPlanner {
 				this.$body.removeClass("pp-loading");
 				this.index();
 				this.fill_filters();
+				this.write_filter_url();
 				this.load_phase4();
 				this.render();
 				this.load_overdue();
@@ -554,9 +690,11 @@ class ProjectPlanner {
 			const label = project.title && project.title !== project.name ? `${project.title} (${project.name})` : project.name;
 			$("<option></option>").val(project.name).text(label).appendTo(this.$project);
 		});
-		// A form link's project stays the filter even when the planner does not list it (S5b): the
-		// calendar says it has no work here (render) rather than quietly showing every project.
-		if (this.project && this.project === this.project_link && !this.by_project[this.project]) {
+		// A project the address gave stays the filter even when the planner does not list it (S5b, a
+		// form's link; S5c, any link): the calendar says it has no work here (render) rather than
+		// quietly showing every project. A remembered project the planner no longer lists still resets.
+		const linked = this.url_filters && this.project === this.url_filters.project;
+		if (this.project && linked && !this.by_project[this.project]) {
 			$("<option></option>").val(this.project).text(this.project).appendTo(this.$project);
 		} else if (this.project && !this.by_project[this.project]) this.project = "";
 		this.$project.val(this.project);
@@ -565,7 +703,11 @@ class ProjectPlanner {
 		this.$pm.empty();
 		$("<option></option>").val("").text(__("All project managers")).appendTo(this.$pm);
 		pms.forEach((pm) => $("<option></option>").val(pm).text(pm).appendTo(this.$pm));
-		if (this.pm && !pms.includes(this.pm)) this.pm = "";
+		if (this.pm && !pms.includes(this.pm)) {
+			// A PM a link named that is not listed is ignored: All, and no longer the link's (S5c).
+			if (this.url_filters && this.url_filters.pm === this.pm) this.release_filter("pm");
+			this.pm = "";
+		}
 		this.$pm.val(this.pm);
 	}
 
@@ -3430,7 +3572,8 @@ const PP3B_METHODS = {
 			this.load_my_week();
 			return;
 		}
-		this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd), false);
+		this.self_route = [PP.route, PP3B.my_week, ymd].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options()), false);
 	},
 
 	show_my_week(anchor) {
@@ -4323,7 +4466,9 @@ Object.assign(ProjectPlanner.prototype, PP5_METHODS);
 // p6a_links and p6a_action (open_card).
 
 const PP6A = {
-	kit: "planner_kit.bundle.js",
+	// The kit and its stylesheet, both content-hashed bundles (S3.4e). The stylesheet's <link> lands
+	// after this page's CSS, so the kit's rules come after the page's, as they always have.
+	kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],
 	views: "erpnext_enhancements.api.planner_views",
 	owner: "pp",
 	// Drawer widths on a wide screen; a phone gets the whole screen.
@@ -4372,7 +4517,18 @@ const PP6A_METHODS = {
 			},
 			true
 		);
-		frappe.require(PP6A.kit, () => this.p6a_ready());
+		this.p6a_require(() => this.p6a_ready());
+	},
+
+	// The kit and its stylesheet, asked for once (S5c). v16.50's frappe.require counts a file as loaded
+	// only when it has finished loading (assets.js pushes to `_executed` after onload), so a second call
+	// in the same tick appends a second <script> and a second <link>. 6A and 6D each asked from the
+	// constructor, and the kit's stylesheet was on the page twice. One request per Desk, shared by both
+	// planners (MP6A.kit is the same two files), so opening the other planner while it is still on its
+	// way does not ask again either. frappe.require settles on a failed file too, and so does this.
+	p6a_require(callback) {
+		if (!window.planner_kit_request) window.planner_kit_request = Promise.resolve(frappe.require(PP6A.kit));
+		return window.planner_kit_request.then(callback);
 	},
 
 	p6a_ready() {
@@ -4721,11 +4877,8 @@ const PP6A_METHODS = {
 	},
 
 	p6a_filter_project(project) {
-		this.project = project;
-		this.save_pref(PP.prefs.project, project);
-		this.show_all_unscheduled = false;
 		if (this.$project) this.$project.val(project);
-		this.render();
+		this.pick_filter("project", project);
 	},
 
 	// After every load, a drawer that shows what changed is refreshed: the task in the side panel is
@@ -7694,12 +7847,17 @@ const PP6C_METHODS = {
 			if (this.pm && !(this.data.projects || []).some((project) => project.pm === this.pm)) this.pm = "";
 		}
 		this.show_all_unscheduled = false;
+		// A view of their own (restored or picked) is the person's filters, not an address's (S5c).
+		this.url_filters = null;
+		this.own_filters = this.filters();
 		this.p6c_sync_controls();
 		if (opts.route && view.view && view.view !== this.view) {
 			this.go(view.view, this.anchor);
 			return;
 		}
-		if (opts.render !== false && this.data) this.render();
+		if (opts.render === false) return;
+		this.write_filter_url();
+		if (this.data) this.render();
 	},
 
 	p6c_state_soon() {
@@ -7712,9 +7870,12 @@ const PP6C_METHODS = {
 	p6c_save_last() {
 		const p6c = this.p6c;
 		if (!PP6C.schema.view[1].includes(this.view)) return;
-		// A form link's project (S5b) is a one-off, not "last used", for as long as it is the filter.
-		if (this.project_link && this.project === this.project_link) return;
 		const state = this.p6c_state(true);
+		// Filters the address gave (S5b's form link, S5c's any link) are that visit's, not "last used":
+		// each keeps the person's own value until they pick it themselves (pick_filter).
+		Object.keys(this.url_filters || {}).forEach((key) => {
+			if (key in state) state[key] = this.own_filter_values()[key];
+		});
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;
@@ -8254,7 +8415,7 @@ const PP6D_METHODS = {
 			},
 			true
 		);
-		frappe.require(PP6A.kit, () => this.p6d_ready());
+		this.p6a_require(() => this.p6d_ready());
 	},
 
 	p6d_ready() {

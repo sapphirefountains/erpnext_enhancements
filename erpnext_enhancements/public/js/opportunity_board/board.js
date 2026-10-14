@@ -20,8 +20,16 @@
  *                   (P5.5's stage default or Sales' override); On Hold is left out of the weighted
  *                   figure; and the deals expected to close this month and next
  *   drops           what a drop on a stage means: save the new status (open stages and On Hold),
- *                   open the guided Close step (Closed Won, Lost: they need ranks or reasons the
- *                   side panel, P6.6, will collect), nothing (its own stage), or refuse
+ *                   open the side panel's required fields (Closed Won, Lost: they need ranks or
+ *                   reasons, P6.6), nothing (its own stage), or refuse
+ *
+ * Part C (v1.675.0):
+ *
+ *   panel (P6.6)    the side panel's routes (edit, a closing move, quick add, bulk) and which closing
+ *                   stage needs what
+ *   quick add (P6.7) which columns take a "+"
+ *   bulk (P6.7)     the selection (kept per tab), what a bulk request carries, and what its per-deal
+ *                   answer leaves selected
  *
  * Part B (v1.663.0):
  *
@@ -44,6 +52,19 @@ export const PAGE = "opportunity-board";
 export const LAYOUTS = ["stages", "streams"];
 export const DEFAULT_LAYOUT = "stages";
 export const MOVE = "move";
+// Part C (v1.675.0): the side panel's routes (form kit P4.4, P6.6, P6.7), each over any view.
+//   .../edit/<name>[/<step>]          a deal in the side panel (the step is replaced, never pushed)
+//   .../closing/<name>/<stage key>    a drop on Closed Won or Lost: its required fields, then the move
+//   .../new/<stage key>               quick add, in that column's stage
+//   .../bulk/<action>                 a bulk action on the selected deals
+export const EDIT = "edit";
+export const CLOSING = "closing";
+export const NEW = "new";
+export const BULK = "bulk";
+export const PANEL_WORDS = [MOVE, EDIT, CLOSING, NEW, BULK];
+export const BULK_ACTIONS = ["stage", "owner", "close_date", "snooze"];
+// The most deals one bulk request carries (the server holds the same number).
+export const MAX_BULK = 100;
 
 // The rows of P6.2, in the order the task names them. A stream the site adds later gets a row
 // after these; a deal with no stream gets the "No value stream" row (key NO_STREAM).
@@ -51,10 +72,13 @@ export const STREAM_ORDER = ["Design", "Build", "Service", "Events", "Products",
 export const NO_STREAM = "";
 
 // Stage kinds. open and parked (On Hold) are board columns a card can be dropped on and saved;
-// close (Closed Won, Lost) are drop targets that open the guided Close step; other is an open
+// close (Closed Won, Lost) are drop targets that open their required fields in the side panel
+// (part C; before it, the guided Close step); other is an open
 // status the options no longer list: shown, so its deals are counted, but never a drop target.
 export const KINDS = ["open", "parked", "other", "close"];
 export const BOARD_KINDS = ["open", "parked", "other"];
+// What a closing stage's move must carry (the server's `gate`): Closed Won's ranks, or Lost's reasons.
+export const GATES = ["won", "lost"];
 
 // The phone layout (one stage at a time, tap to move) is below 768px, the design system's
 // --sf-phone-max. The gesture numbers are the Project Planner's (PP.hold_ms, PP.drag_px): a
@@ -81,6 +105,8 @@ export function stage_key(label) {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
+	// A stage called "New" or "Move" would read as a panel in the address.
+	if (PANEL_WORDS.includes(key)) return `${key}-stage`;
 	return key || "none";
 }
 
@@ -90,7 +116,10 @@ export function stage_key(label) {
 export const VIEWS = ["board", "table", "timeline", "attention"];
 export const OTHER_VIEWS = ["table", "timeline", "attention"];
 
-// What the address asks for: { view, layout, stage, panel, bare }, or null when it is not this page.
+// What the address asks for: { view, layout, stage, panel, side, bare }, or null when it is not this
+// page. `panel` is the move panel's deal; `side` the side panel (part C), or null:
+//   { kind: "edit", name, step } | { kind: "closing", name, stage } | { kind: "new", stage }
+//   | { kind: "bulk", action }
 //   [PAGE]                                  the board, stage columns (bare: a remembered view may apply)
 //   [PAGE, layout]                          the board: stages | streams
 //   [PAGE, layout, stage]                   the board, on the phone's chosen stage tab
@@ -98,37 +127,72 @@ export const OTHER_VIEWS = ["table", "timeline", "attention"];
 //   [PAGE, layout, stage, MOVE, name]       the same, over a chosen stage tab
 //   [PAGE, view]                            table | timeline | attention (layout "": the page keeps its own)
 //   [PAGE, view, MOVE, name]                the deal panel over one of them
+//   [..., EDIT, name, step?]                the side panel, editing a deal, over any of the above
+//   [..., CLOSING, name, stage]             the side panel: a move into a closing stage
+//   [..., NEW, stage]                       the side panel: quick add in that stage
+//   [..., BULK, action]                     the side panel: a bulk action on the selected deals
+function parse_panel(parts) {
+	const word = text(parts[0]);
+	if (word === MOVE) return { panel: text(parts[1]), side: null };
+	if (word === EDIT && text(parts[1])) return { panel: "", side: { kind: EDIT, name: text(parts[1]), step: text(parts[2]) } };
+	if (word === CLOSING && text(parts[1]) && text(parts[2])) {
+		return { panel: "", side: { kind: CLOSING, name: text(parts[1]), stage: text(parts[2]) } };
+	}
+	if (word === NEW && text(parts[1])) return { panel: "", side: { kind: NEW, stage: text(parts[1]) } };
+	if (word === BULK && BULK_ACTIONS.includes(text(parts[1]))) return { panel: "", side: { kind: BULK, action: text(parts[1]) } };
+	return { panel: "", side: null };
+}
+
 export function parse_route(route) {
 	if (!Array.isArray(route) || route[0] !== PAGE) return null;
 	const first = text(route[1]);
 	if (OTHER_VIEWS.includes(first)) {
-		const panel = text(route[2]) === MOVE ? text(route[3]) : "";
-		return { view: first, layout: "", stage: "", panel, bare: false };
+		const { panel, side } = parse_panel(route.slice(2));
+		return { view: first, layout: "", stage: "", panel, side, bare: false };
 	}
 	const layout = LAYOUTS.includes(first) ? first : DEFAULT_LAYOUT;
 	let stage = "";
-	let panel = "";
-	if (text(route[2]) === MOVE) {
-		panel = text(route[3]);
-	} else {
+	let rest = route.slice(2);
+	if (!PANEL_WORDS.includes(text(route[2]))) {
 		stage = text(route[2]);
-		if (text(route[3]) === MOVE) panel = text(route[4]);
+		rest = route.slice(3);
 	}
-	return { view: "board", layout, stage, panel, bare: !first };
+	const { panel, side } = parse_panel(rest);
+	return { view: "board", layout, stage, panel, side, bare: !first };
 }
 
-// The route for a screen, as frappe.set_route takes it.
+function side_parts(side) {
+	const s = side || null;
+	if (!s) return [];
+	if (s.kind === EDIT && text(s.name)) return text(s.step) ? [EDIT, text(s.name), text(s.step)] : [EDIT, text(s.name)];
+	if (s.kind === CLOSING && text(s.name) && text(s.stage)) return [CLOSING, text(s.name), text(s.stage)];
+	if (s.kind === NEW && text(s.stage)) return [NEW, text(s.stage)];
+	if (s.kind === BULK && BULK_ACTIONS.includes(s.action)) return [BULK, s.action];
+	return [];
+}
+
+// The route for a screen, as frappe.set_route takes it. A side panel wins over the move panel: one
+// panel at a time.
 export function build_route(target) {
 	const t = target || {};
-	if (OTHER_VIEWS.includes(t.view)) {
-		const route = [PAGE, t.view];
-		if (text(t.panel)) route.push(MOVE, text(t.panel));
-		return route;
-	}
-	const route = [PAGE, LAYOUTS.includes(t.layout) ? t.layout : DEFAULT_LAYOUT];
-	if (text(t.stage)) route.push(text(t.stage));
+	const side = side_parts(t.side);
+	const route = OTHER_VIEWS.includes(t.view) ? [PAGE, t.view] : [PAGE, LAYOUTS.includes(t.layout) ? t.layout : DEFAULT_LAYOUT];
+	if (!OTHER_VIEWS.includes(t.view) && text(t.stage)) route.push(text(t.stage));
+	if (side.length) return route.concat(side);
 	if (text(t.panel)) route.push(MOVE, text(t.panel));
 	return route;
+}
+
+// The side panel's identity, without its step: the step is replaced in the address as the person
+// moves through the deal, and it is still the same panel (so a close still steps back off it).
+export function side_key(side) {
+	const s = side || null;
+	if (!s) return "";
+	if (s.kind === EDIT) return `${EDIT}:${text(s.name)}`;
+	if (s.kind === CLOSING) return `${CLOSING}:${text(s.name)}:${text(s.stage)}`;
+	if (s.kind === NEW) return `${NEW}:${text(s.stage)}`;
+	if (s.kind === BULK) return `${BULK}:${text(s.action)}`;
+	return "";
 }
 
 // One string per screen, so "is that the screen already showing?" is a comparison.
@@ -136,7 +200,8 @@ export function route_key(target) {
 	if (!target) return "";
 	const view = OTHER_VIEWS.includes(target.view) ? target.view : "board";
 	const layout = view === "board" ? target.layout || DEFAULT_LAYOUT : "";
-	return [view, layout, view === "board" ? target.stage || "" : "", target.panel || ""].join("|");
+	const side = side_parts(target.side).join("/");
+	return [view, layout, view === "board" ? target.stage || "" : "", side ? "" : target.panel || "", side].join("|");
 }
 
 // Whether the last-used view's layout may apply on arrival. An explicit board address (/stages,
@@ -321,10 +386,12 @@ export function prepare(data) {
 	const today = text(d.today).slice(0, 10);
 	const stages = [];
 	const by_label = {};
-	const add = (label, kind) => {
+	const add = (label, kind, gate) => {
 		const l = text(label);
 		if (!l || by_label[l]) return;
 		const stage = { key: stage_key(l), label: l, kind: KINDS.includes(kind) ? kind : "open" };
+		// Part C: a closing stage says which required fields its move needs ("won" | "lost").
+		if (stage.kind === "close") stage.gate = GATES.includes(gate) ? gate : "won";
 		// Two labels that slug alike ("On Hold" / "On-Hold") keep the first; the second is a
 		// different status, so it gets a key of its own.
 		let n = 2;
@@ -332,7 +399,7 @@ export function prepare(data) {
 		by_label[l] = stage;
 		stages.push(stage);
 	};
-	(d.stages || []).forEach((s) => add((s || {}).label, (s || {}).kind));
+	(d.stages || []).forEach((s) => add((s || {}).label, (s || {}).kind, (s || {}).gate));
 	const extra = [];
 	(d.deals || []).forEach((raw) => {
 		const status = text((raw || {}).status);
@@ -489,7 +556,9 @@ export function forecast(model) {
 // What dropping `deal` on the stage `to_key` means:
 //   "none"    its own stage, or nothing under the pointer
 //   "save"    an open stage or On Hold: save the new status (form_kit.api.save_step)
-//   "close"   Closed Won or Lost: open the guided page's Close step, and put the card back
+//   "close"   Closed Won or Lost: open the side panel's required fields for it (part C, P6.6); the
+//             card stays where it is until the move is saved (the guided Close step if the panel's
+//             files did not load)
 //   "refuse"  a column for a status the options no longer list
 export function drop_action(model, deal, to_key) {
 	if (!deal) return "none";
@@ -871,4 +940,119 @@ export function set_snooze(model, name, until, reason, modified) {
 	});
 	deal.snooze = snooze_state(deal, m.today);
 	return replace_deal(m, deal);
+}
+
+// ------------------------------------------------------------------ the side panel (part C)
+
+// Whether a column takes quick add's "+" (P6.7): an open stage or On Hold. Never a closing stage
+// (those need their required fields first) nor a status the options no longer list.
+export function can_add(model, key) {
+	const stage = stage_by_key(model, key);
+	return !!stage && (stage.kind === "open" || stage.kind === "parked");
+}
+
+// The closing stage a key names (with its `gate`, "won" | "lost"), or null.
+export function closing_stage(model, key) {
+	const stage = stage_by_key(model, key);
+	return stage && stage.kind === "close" ? stage : null;
+}
+
+// Whether the side panel an address asks for can be shown on this board. When it cannot (a deal
+// that has left the board, a stage that is gone, a bulk action with nothing selected), the page puts
+// the view back in its place, as it does for the move panel. An edit can open any deal the person
+// can read: the panel reads it itself.
+export function side_ok(model, side, picks) {
+	const s = side || null;
+	if (!s) return false;
+	if (s.kind === EDIT) return !!text(s.name);
+	if (s.kind === CLOSING) return !!((model || {}).by_name || {})[text(s.name)] && !!closing_stage(model, s.stage);
+	if (s.kind === NEW) return can_add(model, s.stage);
+	if (s.kind === BULK) return BULK_ACTIONS.includes(s.action) && (picks || []).length > 0;
+	return false;
+}
+
+// The model without one deal: a deal moved to Closed Won or Lost leaves the open board at once,
+// before the refresh confirms it.
+export function remove_deal(model, name) {
+	const m = model || {};
+	if (!(m.by_name || {})[name]) return m;
+	const by_name = Object.assign({}, m.by_name);
+	delete by_name[name];
+	return Object.assign({}, m, { deals: (m.deals || []).filter((d) => d.name !== name), by_name });
+}
+
+// ------------------------------------------------------------------ bulk (P6.7)
+
+// The selection, kept per tab (sessionStorage, guarded by the page) so a reload on a bulk panel's
+// address finds what was selected.
+export const PICKS_KEY = "ob-picks";
+
+export function toggle_pick(picks, name) {
+	const list = (picks || []).filter(Boolean);
+	const n = text(name);
+	if (!n) return list;
+	return list.includes(n) ? list.filter((p) => p !== n) : list.concat([n]);
+}
+
+// Only deals on the board, each once, at most MAX_BULK.
+export function clean_picks(model, picks) {
+	const by_name = (model || {}).by_name || {};
+	const out = [];
+	(Array.isArray(picks) ? picks : []).forEach((value) => {
+		const n = text(value);
+		if (n && by_name[n] && !out.includes(n) && out.length < MAX_BULK) out.push(n);
+	});
+	return out;
+}
+
+// The stages a bulk change of stage offers: every board column but an unlisted status, then Lost
+// (which asks for its reasons first, as a drop does). Never Closed Won: each won deal needs its own
+// ranks and its own hand-off prompt, so deals are won one at a time (a deliberate departure from
+// P6.7's text; the server refuses it too, opportunity_board.WIN_ONE_AT_A_TIME).
+export function bulk_stages(model) {
+	return ((model || {}).stages || []).filter((s) => s.kind !== "other" && !(s.kind === "close" && s.gate === "won"));
+}
+
+// How many deals one bulk request may carry, per action: a stage move runs every hook of the stage,
+// so it takes smaller batches (the server's MAX_BULK_STAGE; the test holds the two equal).
+export const BULK_CAPS = { stage: 25 };
+
+export function bulk_cap(action) {
+	return BULK_CAPS[action] || MAX_BULK;
+}
+
+// What a bulk request carries: the deals, each with the `modified` the board has for it (the same
+// lock a move takes), the action and its values. `over` says how many of the selection are past the
+// action's cap; the page says so and sends nothing until the selection fits.
+export function bulk_request(model, picks, action, values) {
+	const by_name = (model || {}).by_name || {};
+	const all = clean_picks(model, picks);
+	const names = all.slice(0, bulk_cap(action));
+	const modified = {};
+	names.forEach((name) => (modified[name] = by_name[name].modified));
+	return { names, modified, action, values: values || {}, over: all.length - names.length };
+}
+
+// The server's per-deal answer, sorted: { ok: [name], conflicts: [{name, modified_by}], failed:
+// [{name, message}], total }. A deal the answer does not mention failed (it was never reached).
+export function bulk_outcome(names, results) {
+	const by = {};
+	(Array.isArray(results) ? results : []).forEach((r) => {
+		if (r && text(r.name)) by[text(r.name)] = r;
+	});
+	const out = { ok: [], conflicts: [], failed: [], total: (names || []).length };
+	(names || []).forEach((name) => {
+		const r = by[name];
+		if (r && r.ok) out.ok.push(name);
+		else if (r && r.conflict) out.conflicts.push({ name, modified_by: text(r.modified_by) });
+		else out.failed.push({ name, message: text(r && r.message) });
+	});
+	return out;
+}
+
+// What stays selected after a bulk action: the deals it did not change, so the person can look and
+// try again.
+export function after_bulk(picks, outcome) {
+	const done = new Set((outcome || {}).ok || []);
+	return (picks || []).filter((name) => !done.has(name));
 }

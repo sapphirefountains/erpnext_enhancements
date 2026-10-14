@@ -430,33 +430,7 @@ export function create_blocks(env) {
 	return { form, note_form, get_notes };
 }
 
-export const BLOCKS_CSS = `
-.pk-block{display:flex;flex-direction:column;gap:1px;min-width:0;padding:2px 6px;border:1px dashed #94a3b8;border-radius:6px;font-size:11px;line-height:1.3;color:var(--text-muted);background-color:var(--card-bg);background-image:repeating-linear-gradient(135deg,transparent 0 5px,rgba(100,116,139,.22) 5px 7px);cursor:default;}
-.pk-block.pk-block-edit{cursor:pointer;}
-.pk-block.pk-block-edit:hover,.pk-block.pk-block-edit:focus{border-color:var(--primary,#2490ef);outline:none;}
-.pk-block.pk-block-allday{border-style:solid;}
-.pk-block.pk-block-compact{flex-direction:row;padding:0 4px;font-size:10px;}
-.pk-item.pk-k-block{border-left-color:#94a3b8;background-image:repeating-linear-gradient(135deg,transparent 0 5px,rgba(100,116,139,.16) 5px 7px);}
-.pk-block-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.pk-block-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:italic;}
-.pk-notes{display:flex;flex-wrap:wrap;align-items:center;gap:3px;min-width:0;font-size:11px;}
-.pk-note-line{display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;padding:1px 6px;border-radius:6px;background:rgba(234,179,8,.16);color:var(--text-color);cursor:pointer;}
-.pk-note-line:hover,.pk-note-line:focus{background:rgba(234,179,8,.3);outline:none;}
-.pk-note-line.pk-note-full{cursor:default;white-space:normal;}
-.pk-note-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
-.pk-note-full .pk-note-text{white-space:pre-wrap;}
-.pk-note-tag{flex:0 0 auto;font-size:9px;text-transform:uppercase;letter-spacing:.03em;padding:0 4px;border-radius:6px;background:var(--control-bg);color:var(--text-muted);}
-.pk-note-project{flex:0 0 auto;font-size:10px;color:var(--primary,#2490ef);white-space:nowrap;}
-.pk-note-project[data-pk-project]{cursor:pointer;}
-.pk-note-project[data-pk-project]:hover{text-decoration:underline;}
-.pk-note-add{border:1px dashed var(--border-color);border-radius:6px;background:none;color:var(--text-muted);font-size:10px;padding:0 6px;line-height:16px;cursor:pointer;}
-.pk-note-add:hover,.pk-note-add:focus{color:var(--primary,#2490ef);border-color:var(--primary,#2490ef);outline:none;}
-.pk-notes-mark{display:inline-flex;align-items:center;gap:2px;font-size:11px;cursor:pointer;border-radius:6px;padding:0 3px;}
-.pk-notes-mark:hover,.pk-notes-mark:focus{background:var(--control-bg);outline:none;}
-.pk-day-notes{margin:0 0 10px;}
-.pk-day-note-list{list-style:none;margin:0 0 6px;padding:0;}
-.pk-day-note{padding:5px 8px;margin-bottom:4px;border-radius:8px;background:rgba(234,179,8,.14);font-size:12px;}
-.pk-day-note-text{white-space:pre-wrap;}
-.pk-day-note-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:2px;font-size:11px;}
-.pk-form-who{font-weight:600;margin:0 0 6px;}
-`;
+// The styles of blocks and day notes are a section of public/css/planner_kit.bundle.css (S3.4e, v1.673.0).
+// planner_kit.bundle.js still appends this to its <style id="pk-style">; it stays empty, so no rule is
+// injected beside the stylesheet the planners load.
+export const BLOCKS_CSS = "";

@@ -1056,6 +1056,15 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		],
 		"validate": [
+			# v1.677.0: again AFTER ERPNext's own validate. Opportunity.map_fields copies every
+			# empty column from the party by name, and Customer.primary_address is ERPNext's
+			# rendered address (a Text Editor of HTML), so an Opportunity with no job site took
+			# that HTML into its primary_address Link on every save. v16 checks links in
+			# _validate_links BEFORE before_validate and validate, so nothing refused it, and the
+			# before_validate run above had already happened. Production had 28 Customers with
+			# that text and one Opportunity holding it (2026-10-14). Clears a value that is not
+			# an Address name; an Address name is left alone.
+			"erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 			# First-touch inheritance from the originating Lead (or Customer, for
 			# the fountain-move path, which creates Customer-party opportunities
 			# on purpose). Fills blanks only — never overwrites.
@@ -2123,6 +2132,10 @@ jinja = {
 		# prefixed and registered on its own like the three above. Notification bodies and
 		# email templates that print a registered phone field call it.
 		"erpnext_enhancements.utils.value_display.sf_phone",
+		# The customer portal's nav bar (templates/includes/sf_portal_nav.html, custom pages S6a)
+		# shows "Rent a Fountain" only while Rental Settings.public_request_form is on: the page
+		# 404s while it is off. Read-only and never raises; ee_ prefixed for the reason above.
+		"erpnext_enhancements.asset_management.rental_requests.ee_rent_form_enabled",
 	],
 }
 

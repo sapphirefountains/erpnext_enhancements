@@ -1,6 +1,6 @@
 /**
  * page_search.js: find this app's pages by name or by a short word, and jump to the six
- * busiest ones from the keyboard (custom pages S4c, TASK-2026-02806, v1.671.0).
+ * busiest ones from the keyboard (custom pages S4c, TASK-2026-02806, v1.679.0).
  *
  * Three surfaces, one table (PAGE_ENTRIES below):
  *

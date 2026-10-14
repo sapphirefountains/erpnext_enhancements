@@ -187,11 +187,58 @@ class RegistryShapeTest(unittest.TestCase):
 		)
 
 	def test_pending_entry_faces_are_the_ones_the_plan_expects(self):
-		"""Party and Site wait for P3.2's component; nothing else may quietly join them."""
+		"""P3.2 (v1.677.0) built Party's and Site's component; the rest wait for P3's own task."""
 		pending = {k: b["faces"]["entry"].get("pending") for k, b in blocks.BLOCKS.items()}
-		self.assertEqual(pending["party"], "TASK-2026-02755")
-		self.assertEqual(pending["site"], "TASK-2026-02755")
+		self.assertIsNone(pending["party"])
+		self.assertIsNone(pending["site"])
 		self.assertIsNone(pending["scope_by_pillar"])
+		for key in ("schedule_window", "money", "crew"):
+			self.assertEqual(pending[key], blocks.BLOCKS_TASK, key)
+
+	def test_party_and_site_are_entered_by_one_component(self):
+		party = blocks.BLOCKS["party"]["faces"]["entry"]
+		self.assertEqual(party, {"module": "public/js/form_kit/ui/party.js", "export": "PartyEntry"})
+		self.assertEqual(blocks.BLOCKS["site"]["faces"]["entry"], party)
+
+	def test_roles_name_fields_the_block_carries(self):
+		broken = copy.deepcopy(blocks.BLOCKS)
+		broken["party"]["doctypes"]["Opportunity"]["roles"]["contact"] = "contact_person"
+		self.assertIn(
+			"party.Opportunity: role contact names contact_person, which the block does not carry",
+			blocks.check(broken),
+		)
+		broken = copy.deepcopy(blocks.BLOCKS)
+		broken["site"]["doctypes"]["Project"]["roles"] = {"where": "primary_address"}
+		self.assertIn("site.Project: 'where' is not a role", blocks.check(broken))
+		broken = copy.deepcopy(blocks.BLOCKS)
+		broken["party"]["doctypes"]["Project"].pop("accounts")
+		self.assertIn("party.Project: a party with roles names the account kinds it may be", blocks.check(broken))
+
+	def test_party_roles(self):
+		self.assertEqual(
+			blocks.party_roles("Opportunity"),
+			{
+				"account_type": "opportunity_from",
+				"account": "party_name",
+				"accounts": ["Customer", "Lead", "Prospect"],
+				"contact": "primary_contact",
+				# The Billing Address is the Party's address; the job site is the Site block's.
+				"billing": "customer_address",
+				"site": "primary_address",
+			},
+		)
+		self.assertEqual(
+			blocks.party_roles("Project"),
+			{
+				"account_type": None,
+				"account": "customer",
+				"accounts": ["Customer"],
+				"contact": "primary_contact",
+				"billing": "custom_billing_address",
+				"site": "primary_address",
+			},
+		)
+		self.assertIsNone(blocks.party_roles("Lead"))
 
 
 class FacesResolveTest(unittest.TestCase):

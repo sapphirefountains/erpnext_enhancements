@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Custom pages S4c (v1.671.0): page_search.js executed against a stubbed frappe, rather than
+ * Custom pages S4c (v1.679.0): page_search.js executed against a stubbed frappe, rather than
  * grepped. It loads the real file in a vm context with frappe.boot.page_info, frappe.ui.keys,
  * frappe.set_route, a fake AwesomeBar and a fake SearchDialog, fires app_ready, and checks:
  *

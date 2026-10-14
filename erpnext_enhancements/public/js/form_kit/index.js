@@ -52,3 +52,31 @@ export {
 	usable_entry,
 	reconcile,
 } from "./journal.js";
+// P4.4 / P6.6 / P6.7: the side panel's decisions. The panel itself (./ui/side_panel.js) and the
+// record editor both shells run (./ui/editor.js) draw with frappe, so they are not exported here:
+// the bundle adds them (guided_entry.bundle.js).
+export {
+	field_defs,
+	panel_step,
+	gate_for,
+	gate_missing,
+	lost_fields,
+	create_extras,
+	quick_start,
+	panel_key,
+	undo_allowed,
+	undo_values,
+} from "./panel.js";
+// P3.2: the Party entry component's decisions. The component (./ui/party.js) draws with frappe and
+// reads the information blocks; the bundle adds it.
+export {
+	FOLLOWERS,
+	party_roles,
+	role_of,
+	account_type_of,
+	account_of,
+	create_kind,
+	details_args,
+	plan_account_change,
+	same_details_args,
+} from "./party.js";

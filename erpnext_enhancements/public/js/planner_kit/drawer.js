@@ -19,6 +19,10 @@
  *     reopen: () => ...,               // how to open it again (Forward onto its history entry)
  *     on_click: (event, handle) => ..., // one delegated click listener for whatever the body shows
  *     on_close: (how) => ...,          // "user" | "back" | "route" | "replaced" | "parent"
+ *     history: false,                  // the page keeps the drawer in its own route (form kit
+ *                                      // P4.4's side panel): no kit history entry, no kit Esc
+ *     request_close: (handle) => ...,  // the × asks this instead of closing (the side panel saves
+ *                                      // first and its page's address follows)
  *   });
  *   handle.set_title / set_subtitle / set_body / set_tools / set_actions / close / is_open
  *   planner_kit.drawer.current()  ·  .close()  ·  .element()  ·  .route(fn, keep)
@@ -77,7 +81,12 @@ export function create_drawer(env) {
 			body: root.querySelector(".pk-drawer-body"),
 			foot: root.querySelector(".pk-drawer-foot"),
 		};
-		root.querySelector(".pk-drawer-close").addEventListener("click", () => api.close());
+		// `request_close` (form kit P4.4's side panel): the × asks the drawer's owner, which may save
+		// first or keep it open; the planners pass none and the × closes it as before.
+		root.querySelector(".pk-drawer-close").addEventListener("click", () => {
+			if (current && typeof current.opts.request_close === "function") current.opts.request_close(current);
+			else api.close();
+		});
 		// One delegated listener for whatever the drawer shows: `on_click(event, handle)`. Enter or
 		// Space on a role="button" element inside it is a click, as on a button.
 		root.addEventListener("click", (e) => {
@@ -242,7 +251,10 @@ export function create_drawer(env) {
 			doc.body.classList.add("pk-drawer-open");
 			parts.body.scrollTop = 0;
 			apply_push(opts.push);
-			guard.open(overlay);
+			// `history: false` (form kit P4.4, the side panel): the page keeps the drawer in its own
+			// address (/desk/opportunity-board/.../edit/<name>), so reload reopens it and Back is the
+			// router's; the kit pushes no entry of its own and Esc is the page's to handle.
+			if (opts.history !== false) guard.open(overlay);
 			if (!previous) {
 				try {
 					root.focus({ preventScroll: true });

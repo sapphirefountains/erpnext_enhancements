@@ -7,12 +7,20 @@
 
 {% block title %}{{ _("Rent a Fountain") }}{% endblock %}
 
+{#- The customer portal's look (custom pages S6a): the tokens, then the portal's own stylesheet,
+    both content-hashed through bundled_asset; the shared nav bar in place of the website's. This
+    block never called super(), and still does not: the page's head is what it was, plus these. -#}
 {% block head_include %}
 <meta name="robots" content="noindex, nofollow">
+{% include "erpnext_enhancements/templates/includes/sf_portal_light.html" %}
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
+<link rel="stylesheet" href="{{ bundled_asset('sf_portal.bundle.css') }}">
 {% endblock %}
 
+{% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
+
 {% block page_content %}
-<div class="rental-request" style="max-width:640px">
+<div class="rental-request sf-portal sf-portal--form" id="sf-portal-main" tabindex="-1">
 	<h1 class="mb-2">{{ _("Rent a fountain for your event") }}</h1>
 	<p class="text-muted">{{ _("Tell us about the event and we will get back to you with options and a quote.") }}</p>
 

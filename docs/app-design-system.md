@@ -29,6 +29,12 @@ A web page outside the Desk (a `www/` page) can load the same file with
 A page with a theme toggle of its own writes `data-theme` on `<html>`, as the Review Room's THEME
 button does; one without leaves it unset and follows the device.
 
+The customer portal (`/pay`, `/pay-card`, `/rentals`, `/rent-a-fountain`) links the tokens the same
+way, then `sf_portal.bundle.css`, and shares one nav bar, `templates/includes/sf_portal_nav.html`
+(S6a, v1.678.0; `tests/test_customer_portal_polish.py`). It is the one place that pins
+`data-theme="light"` (`templates/includes/sf_portal_light.html`), because the website around it has
+no dark theme and Stripe's Payment Element draws dark labels in a frame no stylesheet reaches.
+
 ## Light and dark
 
 The Desk writes the resolved theme to `<html data-theme="light|dark">`. Frappe v16's
