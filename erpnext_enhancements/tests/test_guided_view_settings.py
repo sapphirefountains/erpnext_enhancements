@@ -953,7 +953,9 @@ class TestOneRendererInEveryLayout(unittest.TestCase):
 
 	def test_a_new_record_keeps_the_setup_flow(self):
 		page = _code(PAGE_JS)
-		self.assertIn("this.view = this.kit.effective_view(this.entry.prefs, this.in_setup(), this.steps_only());", page)
+		self.assertIn(
+			"this.view = this.kit.effective_view(this.entry.prefs, this.in_setup(), this.steps_only());", page
+		)
 		in_setup = _method(page, "\tin_setup() {")
 		self.assertIn("if (this.is_new) return true;", in_setup)
 		self.assertIn("return !this.is_new && !!this.flow", _method(page, "\tsections_mode() {"))

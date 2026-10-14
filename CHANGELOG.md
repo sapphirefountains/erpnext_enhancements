@@ -68,8 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   phone journal, help, Party component and `focus_field` work across every section on screen
   (`shown_steps()`); `collect_step` redraws the chrome once for the lot instead of once per field.
   The side panel is unchanged: still step by step, no settings.
-- `guided_entry.bundle.js` is version 3 and `opportunity_board.bundle.js` version 2, so a tab still
-  holding the older bundle takes the new one.
+- `guided_entry.bundle.js` is version 4 (3 was v1.683.0's step blocks) and `opportunity_board.bundle.js`
+  version 2, so a tab still holding an older bundle takes the new one.
+- **The guided Item flow (v1.683.0) stays step by step.** Its steps draw blocks of their own (the name
+  builder, supplier, stock, asset), which hold one step's state at a time, and it ends at its core
+  steps with Done and More details, which only Step by step has. So a DocType with step blocks keeps
+  that layout whatever the person chose (`view.js effective_view(..., steps_only)`, the settings
+  panel says why), and every other choice (where the steps sit, summary, notes, focus, text size,
+  contrast, pins, where it opens, hidden fields) still applies. A saved Item still opens on its Desk
+  form; the guided view is the Guided button's. For safety the editor also keeps the blocks of
+  sections drawn together (no `leave` between them) and tells a block of a change with the step that
+  draws the field.
 - **Review of #1299.**
   - What the person put away is worked out again on every refresh: after a save brings a new
     completeness, and after a status change. A hidden field the stage now needs comes back at once,

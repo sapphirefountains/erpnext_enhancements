@@ -317,6 +317,9 @@ previous section, Ctrl/Cmd+S save now, C notes and comments, V view settings, F 
   the card as it always was.
 - **The side panel stays step by step** with no settings: it is narrow, and it shares only the
   tightened field styles.
+- **A DocType with step blocks stays step by step** (form kit P8.1, the Item flow): its blocks hold one
+  step's state at a time and its flow ends at Done and More details, which only Step by step has
+  (`view.js effective_view` `steps_only`, from `has_extension`). Every other setting applies.
 - **Field styles, every layout and the side panel.** The (i) stays on its label's line; a form's
   columns wrap at about 240px (four, two, one); inputs at the Desk's height with an edge in both
   themes, 44px on a phone; text boxes start at three lines and grow to 320px (`fit_text`); hints
