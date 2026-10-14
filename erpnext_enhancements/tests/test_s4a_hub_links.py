@@ -1,4 +1,4 @@
-"""Custom pages S4a (v1.680.0, TASK-2026-02806): hubs and dashboards link both ways.
+"""Custom pages S4a (v1.681.0, TASK-2026-02806): hubs and dashboards link both ways.
 
 * **Hub -> dashboard** is a URL shortcut on the hub, ``/desk/<dashboard>``. A URL shortcut is
   never permission-filtered, which is safe here only because nobody who could open a hub was

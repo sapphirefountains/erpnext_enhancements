@@ -1,4 +1,4 @@
-"""Custom pages S4c (v1.679.0, TASK-2026-02806): the "Pages" search section and page shortcuts.
+"""Custom pages S4c (v1.680.0, TASK-2026-02806): the "Pages" search section and page shortcuts.
 
 ``public/js/global_enhancements/page_search.js`` lists this app's main pages under their titles
 and short aliases in the awesomebar and the search dialog, and binds six Alt+Shift shortcuts.

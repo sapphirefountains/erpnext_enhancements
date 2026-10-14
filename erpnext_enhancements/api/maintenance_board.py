@@ -10,7 +10,7 @@ Read-only; restricted to the page's roles (System Manager, Maintenance
 Supervisor, Projects Manager, Maintenance Manager) — enforced here as well as on
 the page, since whitelisted methods are callable directly.
 
-Maintenance Manager joined in v1.680.0. The Production Hub, which links the
+Maintenance Manager joined in v1.681.0. The Production Hub, which links the
 board, is gated on it, so the hub promised a page the role alone could not open;
 the board answered only because, on prod on 2026-10-14, all 14 holders of
 Maintenance Manager also held Projects Manager. Nobody's access changed that day.

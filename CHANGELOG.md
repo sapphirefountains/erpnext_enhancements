@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.680.0] - 2026-10-14
+## [1.681.0] - 2026-10-14
 
 ### Added
 
@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New suite `test_s4a_hub_links` (own CI step). `test_dashboard_widgets`, `test_block_kit`,
   `test_custom_html_blocks` and the node block harness now know the two new blocks.
 
-## [1.679.0] - 2026-10-14
+## [1.680.0] - 2026-10-14
 
 ### Added
 
@@ -190,7 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
   chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
 
-## [1.678.0] - 2026-10-14
+## [1.679.0] - 2026-10-14
 
 Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
 only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is

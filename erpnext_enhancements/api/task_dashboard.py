@@ -425,7 +425,7 @@ def get_wall_dashboard_data():
 # --- My Priority Tasks (the "Home Dashboard Tasks" block) ----------------------------------
 #
 # A block somebody made on the site in 2025-12 and placed on the Projects workspace and the
-# Executive Hub. It lived only in the database until v1.680.0, when its source came into
+# Executive Hub. It lived only in the database until v1.681.0, when its source came into
 # custom_html_blocks/my_priority_tasks.* and its two client-side get_list calls came here.
 # Unlike everything above, it is about the person looking at it: their own open tasks, the
 # company's top-ranked projects first.

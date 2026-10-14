@@ -183,7 +183,7 @@ class DashboardWidgetWiring(unittest.TestCase):
 				# 2026-08-06; the files keep that order, so a re-import moves nothing people see.
 				if workspace in COCKPIT_FIRST:
 					expected = [KPI_COCKPIT, *(n for n in expected if n != KPI_COCKPIT)]
-				# Every department dashboard opens with the way back to its hub (v1.680.0).
+				# Every department dashboard opens with the way back to its hub (v1.681.0).
 				if path.parent.parent.parent.name == "kpi_dashboards":
 					expected = [DASHBOARD_HUB_LINKS, *expected]
 
