@@ -1442,3 +1442,7 @@ erpnext_enhancements.patches.backfill_bin_putaway_rules
 # new boneyard_warehouse with it ONLY where tabSingles has no row for it (and never on a never-saved Single). The
 # two older "Bin D2-2-x (Boneyard)" bins are not touched. Per-step savepoints. Cannot raise, safe twice.
 erpnext_enhancements.patches.add_boneyard_warehouse
+# Bin Manager (v1.693.0): force-import the Operations Hub and the Inventory Enhancements workspace, which now link
+# the new Desk page bin-manager (a shortcut beside Stock Scan; the Inventory and Counts cards). Timestamp-bumped too;
+# this is the belt. Logs each failure, never raises, safe twice.
+erpnext_enhancements.patches.bin_manager_hub_links

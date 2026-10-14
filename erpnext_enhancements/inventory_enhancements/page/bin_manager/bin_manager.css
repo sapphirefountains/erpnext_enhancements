@@ -1,0 +1,268 @@
+/* Bin Manager (v1.693.0). A Desk Page's stylesheet is appended to <head> once and stays for the
+   whole Desk session, so every selector here starts with .bm- (tests/test_bin_manager.py holds
+   it). Colors are the app tokens (sf_tokens.bundle.css, global) with the Desk's own as fallback,
+   so the page follows light and dark with the rest of the Desk. The dialogs' pieces are .bm- too:
+   frappe.ui.Dialog draws them outside the page, on <body>. */
+
+.bm-app {
+	padding: var(--sf-space-20, 16px) 0 var(--sf-space-40, 32px);
+	color: var(--sf-text, var(--text-color));
+}
+
+.bm-toolbar {
+	margin-bottom: var(--sf-space-20, 16px);
+	max-width: 480px;
+}
+
+.bm-group {
+	margin-bottom: var(--sf-space-20, 16px);
+}
+
+.bm-group-title,
+.bm-section-title {
+	font-size: var(--sf-text-sm, 13px);
+	font-weight: var(--sf-weight-bold, 600);
+	color: var(--sf-text-muted, var(--text-muted));
+	margin: 0 0 var(--sf-space-10, 8px);
+}
+
+.bm-bins {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--sf-space-10, 8px);
+}
+
+.bm-bin {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	width: 100%;
+	min-height: var(--sf-touch-min, 44px);
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	border: 1px solid var(--sf-border-hairline, var(--border-color));
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-surface, var(--card-bg));
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.bm-bin:hover,
+.bm-bin:focus-visible {
+	border-color: var(--sf-primary, var(--primary));
+}
+
+.bm-bin:focus-visible,
+.bm-pick:focus-visible {
+	outline: 2px solid var(--sf-focus, var(--primary));
+	outline-offset: 2px;
+}
+
+.bm-bin-name {
+	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-bin-counts,
+.bm-item-code,
+.bm-muted,
+.bm-recent-when {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.bm-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-20, 16px);
+}
+
+.bm-title {
+	flex: 1 1 240px;
+	min-width: 0;
+}
+
+.bm-name {
+	font-size: var(--sf-text-lg, 18px);
+	margin: 0;
+}
+
+.bm-trail {
+	color: var(--sf-text-muted, var(--text-muted));
+	font-size: var(--sf-text-sm, 13px);
+}
+
+.bm-bin-actions {
+	display: flex;
+	gap: var(--sf-space-10, 8px);
+}
+
+.bm-notice-box {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10, 8px);
+	padding: var(--sf-space-10, 8px) var(--sf-space-15, 12px);
+	margin-bottom: var(--sf-space-15, 12px);
+	border-left: 4px solid var(--sf-good, var(--green-500));
+	border-radius: var(--sf-radius-control, 6px);
+	background: var(--sf-surface, var(--card-bg));
+}
+
+.bm-notice-box--error {
+	border-left-color: var(--sf-danger, var(--red-500));
+}
+
+.bm-note {
+	margin: 0 0 var(--sf-space-10, 8px);
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+.bm-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.bm-table th,
+.bm-table td {
+	padding: var(--sf-space-10, 8px);
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+	vertical-align: top;
+	text-align: left;
+}
+
+.bm-table th {
+	font-size: var(--sf-text-sm, 13px);
+	color: var(--sf-text-muted, var(--text-muted));
+	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-table .bm-qty {
+	white-space: nowrap;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.bm-item-name {
+	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-row-actions {
+	text-align: right;
+}
+
+.bm-row-actions .btn {
+	margin: 0 0 4px 4px;
+}
+
+.bm-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+
+.bm-recent {
+	margin-top: var(--sf-space-30, 24px);
+}
+
+.bm-recent-rows {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.bm-recent-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	padding: 6px 0;
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+}
+
+.bm-recent-what {
+	flex: 1 1 260px;
+}
+
+.bm-dialog-msg {
+	margin-bottom: var(--sf-space-10, 8px);
+	padding: var(--sf-space-10, 8px);
+	border-left: 4px solid var(--sf-danger, var(--red-500));
+	background: color-mix(in srgb, var(--sf-danger, #c0392b) 8%, transparent);
+}
+
+.bm-pick-list,
+.bm-similar,
+.bm-advice {
+	list-style: none;
+	margin: 0 0 var(--sf-space-10, 8px);
+	padding: 0;
+	max-height: 260px;
+	overflow-y: auto;
+}
+
+.bm-pick {
+	display: block;
+	width: 100%;
+	padding: 6px var(--sf-space-10, 8px);
+	border: 0;
+	border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.bm-pick:hover {
+	background: color-mix(in srgb, var(--sf-primary, #2490ef) 8%, transparent);
+}
+
+.bm-pick:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.bm-chosen,
+.bm-choices {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10, 8px);
+	margin-bottom: var(--sf-space-10, 8px);
+}
+
+.bm-preview-head {
+	margin: var(--sf-space-10, 8px) 0 4px;
+	font-weight: var(--sf-weight-bold, 600);
+}
+
+.bm-broken {
+	padding: var(--sf-space-20, 16px);
+	color: var(--sf-text-muted, var(--text-muted));
+}
+
+@media (max-width: 767px) {
+	.bm-table thead {
+		display: none;
+	}
+	.bm-table tr {
+		display: block;
+		border-bottom: 1px solid var(--sf-border-hairline, var(--border-color));
+	}
+	.bm-table td {
+		display: block;
+		border: 0;
+		padding: 4px 0;
+	}
+	.bm-table .bm-qty,
+	.bm-row-actions {
+		text-align: left;
+	}
+}

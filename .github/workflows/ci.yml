@@ -3375,6 +3375,13 @@ jobs:
       # Boneyard patch (once, idempotent, never over a stored setting). Own frappe stub, own step.
       - name: Bin assignments, Putaway Rules, boneyard and counts (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_bin_assignments -v
+      # The Bin Manager Desk page (v1.693.0, ER-2026-1320545): create_and_assign and manager_boot on
+      # test_bin_assignments' frappe stub (reused, so its own step), and scripts/test_bin_manager.mjs
+      # under node: picking a bin is one history entry, Back/Forward walk picker and bin, dialogs push
+      # none, a deep link's route_options is read, the make-home default, gating, and every action's
+      # endpoint with its client_ref, the last against the real page script. node is on PATH here.
+      - name: Bin Manager page, create-and-assign and its boot (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the

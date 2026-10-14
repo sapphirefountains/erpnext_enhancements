@@ -736,7 +736,7 @@ held by `test_form_kit`); its core steps and their blocks (`public/js/guided_ite
 | Name & code (creates the Item) | `item_naming`: on a new Item the *Describe it* card (AI suggest, below), then the code helper (vendor part number as printed, `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`, `PDT-####` and `SRV-###` from a block the person chooses) and the name builder (POL-0602's seven segments, pick lists from the catalog narrowed by the CATEGORY), with the naming guard's own preview | Item Code and Item Name, into the step's own fields |
 | Description | — | the form's fields |
 | Supplier & price | `item_supplier` | `api.item_flow.save_supplier`: the Item Supplier row (part number, `purchase_url`), the company's default supplier, the Item Price on the buying list for that supplier |
-| Stock & bin (stock items) | `item_stock` | `save_stock`: the company's default warehouse and its Purchase reorder rule; *Print the bin label* opens `/warehouse-labels?w=<bin>`, Stock Scan's own label page |
+| Stock & bin (stock items) | `item_stock` | `save_stock`: the company's default warehouse and its Purchase reorder rule, and the item put on that bin for Stock Scan and the bin page (`bin_assignments.ensure_assignment`), taken off the bin it left when nothing is on hand there (`release_if_empty`); a refusal, or stock keeping the old bin, is the response's `note`, and the bin stays saved; *Print the bin label* opens `/warehouse-labels?w=<bin>`, Stock Scan's own label page |
 | Fixed asset (fixed assets) | `item_asset` | `create_asset`: a draft Asset (category, location, purchase date, cost, `custom_rentable`), idempotent on the page's id in `Asset.custom_guided_client_id` |
 
 The preview is `api.item_flow.preview_item`, which is Stock Scan's `preview_new_item`: only the

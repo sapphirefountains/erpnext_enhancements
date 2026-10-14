@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"oh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"oh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"oh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"oh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":4}},{\"id\":\"oh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"oh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Order\",\"col\":4}},{\"id\":\"oh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Operations Dashboard\",\"col\":4}},{\"id\":\"oh_s4a_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Product Dashboard\",\"col\":4}},{\"id\":\"oh_s4a_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":4}},{\"id\":\"oh_s4a_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse QR Labels\",\"col\":4}},{\"id\":\"oh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"oh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Projects on the go\",\"col\":6}},{\"id\":\"oh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Tasks running late\",\"col\":6}},{\"id\":\"oh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"oh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Delivery\",\"col\":4}},{\"id\":\"oh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Procurement\",\"col\":4}},{\"id\":\"oh_s4a_04\",\"type\":\"card\",\"data\":{\"card_name\":\"Inventory\",\"col\":4}},{\"id\":\"oh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Field and travel\",\"col\":4}},{\"id\":\"oh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"oh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"oh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"oh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"oh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":4}},{\"id\":\"oh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"oh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Order\",\"col\":4}},{\"id\":\"oh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Operations Dashboard\",\"col\":4}},{\"id\":\"oh_s4a_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Product Dashboard\",\"col\":4}},{\"id\":\"oh_s4a_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":4}},{\"id\":\"oh_s4a_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse QR Labels\",\"col\":4}},{\"id\":\"oh_bm_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bin Manager\",\"col\":4}},{\"id\":\"oh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"oh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Projects on the go\",\"col\":6}},{\"id\":\"oh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Tasks running late\",\"col\":6}},{\"id\":\"oh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"oh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Delivery\",\"col\":4}},{\"id\":\"oh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"Procurement\",\"col\":4}},{\"id\":\"oh_s4a_04\",\"type\":\"card\",\"data\":{\"card_name\":\"Inventory\",\"col\":4}},{\"id\":\"oh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Field and travel\",\"col\":4}},{\"id\":\"oh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -141,7 +141,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Inventory",
-   "link_count": 8,
+   "link_count": 9,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -222,6 +222,16 @@
    "link_count": 0,
    "link_to": "Item Naming Audit",
    "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Bin Manager",
+   "link_count": 0,
+   "link_to": "bin-manager",
+   "link_type": "Page",
    "onboard": 0,
    "type": "Link"
   },
@@ -362,7 +372,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-14 14:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Operations Hub",
@@ -453,6 +463,11 @@
    "label": "Product Dashboard",
    "type": "URL",
    "url": "/desk/product-dashboard"
+  },
+  {
+   "label": "Bin Manager",
+   "type": "URL",
+   "url": "/desk/bin-manager"
   }
  ],
  "title": "Operations Hub",

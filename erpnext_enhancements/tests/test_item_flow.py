@@ -278,10 +278,16 @@ def _install_frappe_stub():
 	frappe._ = lambda s, *a, **k: s
 	frappe.bold = lambda s: f"<b>{s}</b>"
 
+	# As frappe's: the message is queued for the browser before the raise, unless messages are
+	# muted, so a throw that is caught still shows a dialog (v16 utils/messages.py).
 	def throw(msg="", exc=ValidationError, title=None):
+		if not frappe.flags.mute_messages:
+			frappe.message_log.append(msg)
 		raise exc(msg)
 
 	frappe.throw = throw
+	frappe.flags = types.SimpleNamespace(mute_messages=False)
+	frappe.message_log = []
 
 	def whitelist(*dargs, **dkwargs):
 		def wrap(fn):
@@ -358,7 +364,10 @@ def _install_frappe_stub():
 			)
 		return record.get(fieldname)
 
-	def rollback():
+	def rollback(save_point=None):
+		if save_point:
+			STATE["savepoint_rollbacks"].append(save_point)
+			return
 		STATE["rollbacks"] += 1
 		for doctype, record in STATE["after_rollback"]:
 			STATE["db"][doctype][record["name"]] = record
@@ -369,6 +378,7 @@ def _install_frappe_stub():
 		get_value=get_value,
 		get_single_value=lambda doctype, field: STATE["singles"].get((doctype, field)),
 		rollback=rollback,
+		savepoint=lambda name: STATE["savepoints"].append(name),
 		count=lambda doctype: len(STATE["db"].get(doctype, {})),
 	)
 
@@ -396,6 +406,7 @@ def _install_frappe_stub():
 	utils.cstr = lambda value: "" if value is None else str(value)
 	utils.getdate = lambda value=None: str(value or "2026-10-14")[:10]
 	utils.nowdate = lambda: "2026-10-14"
+	utils.strip_html_tags = lambda text: re.sub(r"<[^>]+>", "", text or "")
 	frappe.utils = utils
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
@@ -408,6 +419,10 @@ def setUpModule():
 	stock_scan = types.ModuleType("erpnext_enhancements.api.stock_scan")
 	stock_scan.preview_new_item = lambda *args: {"checked": True, "asked": list(args)}
 	sys.modules["erpnext_enhancements.api.stock_scan"] = stock_scan
+	bins = types.ModuleType("erpnext_enhancements.inventory_enhancements.bin_assignments")
+	bins.ensure_assignment = _ensure_assignment
+	bins.release_if_empty = _release_if_empty
+	sys.modules["erpnext_enhancements.inventory_enhancements.bin_assignments"] = bins
 	for mod in (
 		"erpnext_enhancements.api.item_flow",
 		"erpnext_enhancements.inventory_enhancements.item_naming",
@@ -423,10 +438,33 @@ def tearDownModule():
 		"frappe",
 		"frappe.utils",
 		"erpnext_enhancements.api.stock_scan",
+		"erpnext_enhancements.inventory_enhancements.bin_assignments",
 		"erpnext_enhancements.api.item_flow",
 		"erpnext_enhancements.inventory_enhancements.item_naming",
 	):
 		sys.modules.pop(mod, None)
+
+
+# The bin module's helper (v1.689.0): records the assignment, or refuses as it would, in words
+# through frappe.throw (`assign_refusal`), or fails some other way (`assign_error`).
+def _ensure_assignment(item_code, warehouse):
+	if STATE["assign_error"]:
+		raise STATE["assign_error"]
+	if STATE["assign_refusal"]:
+		exc, message = STATE["assign_refusal"]
+		FRAPPE.throw(message, exc)
+	STATE["assigned"].append((item_code, warehouse))
+	return f"PUTAWAY-{len(STATE['assigned'])}"
+
+
+# Its other half: takes the item off the bin it left, answering what is still on hand there
+# (`left`: 0.0 taken off, more kept, None nothing claimed it), or refuses (`release_refusal`).
+def _release_if_empty(item_code, warehouse):
+	if STATE["release_refusal"]:
+		exc, message = STATE["release_refusal"]
+		FRAPPE.throw(message, exc)
+	STATE["released"].append((item_code, warehouse))
+	return STATE["left"]
 
 
 def _reset(perm=None):
@@ -487,9 +525,19 @@ def _reset(perm=None):
 			"race": False,
 			"after_rollback": [],
 			"rollbacks": 0,
+			"savepoints": [],
+			"savepoint_rollbacks": [],
+			"assigned": [],
+			"assign_refusal": None,
+			"assign_error": None,
+			"released": [],
+			"left": 0.0,
+			"release_refusal": None,
 		}
 	)
 	FRAPPE.session.user = "parker@example.com"
+	FRAPPE.flags.mute_messages = False
+	FRAPPE.message_log.clear()
 	_item("LG-505025", is_stock_item=1)
 	_item("RENTAL-FOUNTAIN-01", is_stock_item=0, is_fixed_asset=1, asset_category="Rental Fountain Fleet")
 
@@ -732,6 +780,125 @@ class TestStock(unittest.TestCase):
 		_reset({("Item", "write"): False})
 		with self.assertRaises(FRAPPE.PermissionError):
 			api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(STATE["assigned"], [])
+
+
+def _bin_b():
+	STATE["db"]["Warehouse"]["Bin B2-1-1 - SF"] = dict(
+		STATE["db"]["Warehouse"]["Bin A1-3-1 - SF"], name="Bin B2-1-1 - SF"
+	)
+
+
+class TestTheBinAssignment(unittest.TestCase):
+	"""v1.692.1: the bin the flow saves is also where the item is assigned, an enabled Putaway Rule
+	through ``bin_assignments.ensure_assignment`` (bins are Putaway Rules: Nik, 2026-10-14)."""
+
+	def setUp(self):
+		_reset()
+
+	def test_the_item_is_put_on_the_bin_it_saved(self):
+		out = api.save_stock("LG-505025", "Bin A1-3-1 - SF", reorder_level="4", reorder_qty="12")
+		self.assertEqual(STATE["assigned"], [("LG-505025", "Bin A1-3-1 - SF")])
+		self.assertIsNone(out["note"])
+		self.assertEqual(STATE["savepoint_rollbacks"], [])
+
+	def test_a_resend_asks_again_and_the_helper_keeps_it_to_one(self):
+		# The helper is idempotent (an existing enabled rule comes back as it is), so asking on every
+		# save is what keeps an item whose rule went missing on its bin.
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(STATE["assigned"], [("LG-505025", "Bin A1-3-1 - SF")] * 2)
+
+	def test_a_refusal_keeps_the_bin_and_says_why_without_a_dialog(self):
+		STATE["assign_refusal"] = (
+			FRAPPE.ValidationError,
+			"<b>PUMP</b> is a template: put its variants on bins.",
+		)
+		out = api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(_stored("LG-505025")["item_defaults"][0]["default_warehouse"], "Bin A1-3-1 - SF")
+		self.assertEqual(
+			out["note"],
+			"Stock Scan's bin list was not changed: PUMP is a template: put its variants on bins.",
+		)
+		self.assertEqual(STATE["savepoint_rollbacks"], [api.ASSIGN_SAVEPOINT])
+		self.assertEqual(STATE["savepoints"], [api.ASSIGN_SAVEPOINT])
+		self.assertEqual(FRAPPE.message_log, [], "a caught throw must not reach the browser")
+		self.assertFalse(FRAPPE.flags.mute_messages, "muting is put back")
+		self.assertEqual(STATE["rollbacks"], 0, "the bin the person saved stays saved")
+
+	def test_a_caller_the_bin_module_turns_away_is_told_so(self):
+		STATE["assign_refusal"] = (FRAPPE.PermissionError, "Changing bins needs a stock role.")
+		out = api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(
+			out["note"], "Stock Scan's bin list was not changed: Changing bins needs a stock role."
+		)
+		self.assertEqual(FRAPPE.message_log, [])
+
+	def test_both_notes_show_when_the_reorder_rule_moved_and_the_bin_refused(self):
+		STATE["db"]["Warehouse"]["Bin B2-1-1 - SF"] = dict(
+			STATE["db"]["Warehouse"]["Bin A1-3-1 - SF"], name="Bin B2-1-1 - SF"
+		)
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF", reorder_level="4", reorder_qty="12")
+		STATE["assign_refusal"] = (FRAPPE.ValidationError, "Changing bins needs a stock role.")
+		note = api.save_stock("LG-505025", "Bin B2-1-1 - SF")["note"]
+		self.assertTrue(note.startswith("The reorder rule moved from Bin A1-3-1 - SF to Bin B2-1-1 - SF."))
+		self.assertTrue(
+			note.endswith("Stock Scan's bin list was not changed: Changing bins needs a stock role.")
+		)
+
+	def test_any_other_failure_is_not_swallowed(self):
+		STATE["assign_error"] = RuntimeError("Lost connection to the database")
+		with self.assertRaises(RuntimeError):
+			api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(STATE["savepoint_rollbacks"], [])
+		self.assertFalse(FRAPPE.flags.mute_messages, "muting is put back on the way out too")
+
+	def test_moving_bins_takes_the_item_off_the_old_one_when_it_is_empty(self):
+		"""Review of #1311: as a Move that empties its source does. Left assigned, the old bin kept
+		an enabled rule beside the new one, and *Apply Putaway Rule* could fill either."""
+		_bin_b()
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(STATE["released"], [], "a first bin leaves nothing behind")
+		out = api.save_stock("LG-505025", "Bin B2-1-1 - SF")
+		self.assertEqual(STATE["assigned"][-1], ("LG-505025", "Bin B2-1-1 - SF"))
+		self.assertEqual(STATE["released"], [("LG-505025", "Bin A1-3-1 - SF")])
+		self.assertIsNone(out["note"])
+
+	def test_stock_left_on_the_old_bin_keeps_it_and_says_so(self):
+		_bin_b()
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		STATE["left"] = 3.0
+		out = api.save_stock("LG-505025", "Bin B2-1-1 - SF")
+		self.assertEqual(
+			out["note"],
+			"Bin A1-3-1 - SF still has 3 on hand, so the item stays on that bin too until it is moved.",
+		)
+
+	def test_the_same_bin_again_takes_nothing_off(self):
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		self.assertEqual(STATE["released"], [])
+
+	def test_a_refused_release_undoes_the_new_assignment_too(self):
+		_bin_b()
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
+		STATE["release_refusal"] = (FRAPPE.PermissionError, "Changing bins needs a stock role.")
+		out = api.save_stock("LG-505025", "Bin B2-1-1 - SF")
+		self.assertEqual(
+			STATE["savepoint_rollbacks"], [api.ASSIGN_SAVEPOINT], "both helpers' writes, together"
+		)
+		self.assertEqual(
+			out["note"], "Stock Scan's bin list was not changed: Changing bins needs a stock role."
+		)
+		self.assertEqual(_stored("LG-505025")["item_defaults"][0]["default_warehouse"], "Bin B2-1-1 - SF")
+		self.assertEqual(FRAPPE.message_log, [])
+
+	def test_a_bin_the_flow_refuses_never_reaches_the_bin_module(self):
+		for warehouse in ("Inventory - SF", "Truck - SF", "Nowhere"):
+			with self.subTest(warehouse=warehouse):
+				with self.assertRaises(FRAPPE.ValidationError):
+					api.save_stock("LG-505025", warehouse)
+		self.assertEqual(STATE["assigned"], [])
 
 
 class TestAsset(unittest.TestCase):

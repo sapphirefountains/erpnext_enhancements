@@ -115,6 +115,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AttributeError`, and a dropped part number beside an unnamed kind of code no longer reads "a
   other code".
 
+## [1.693.0] - 2026-10-14
+
+### Added
+- **Bin Manager: a Desk page to manage one bin's items from a PC, no scanning** (ER-2026-1320545,
+  TASK-2026-02827; stacked on the bin-assignment server side, v1.689.0). `/desk/bin-manager` lists
+  every bin (a leaf, enabled, non-transit Warehouse) grouped under its parent, with how many items
+  are on hand and how many are assigned there, and a filter box. Picking one opens
+  `/desk/bin-manager/<warehouse>`: every item the bin lists (the same `api.stock_scan.get_location`
+  rows /stock-scan shows, each saying why it is listed: on this bin, default bin, on order, not
+  decided, stock only) with its quantity, and per row:
+  - **Change quantity** -> `bin_assignments.set_count`, a submitted **Stock Reconciliation**. A
+    count correction is not consumption: it must not charge a job, it has to be able to go up as well
+    as down, and the ledger should say it was a count. A Material Issue does none of those.
+  - **Move** -> `bin_assignments.move_to`, to any other bin picked in the dialog, with "Make <bin>
+    this item's bin" ticked by default when the whole quantity moves and unticked for a partial move,
+    decided again on every change of quantity until the person touches it; never offered for the
+    boneyard.
+  - **Unassign** -> `bin_assignments.unassign`. With stock still here the server refuses it, so the
+    page offers Move or **Send to boneyard** (`send_to_boneyard`) first; the boneyard button is
+    hidden when Inventory Scanner Settings has none.
+  - **Keep on this bin** (an item listed here but not on the bin: undecided, default-only, stock
+    only) -> `bin_assignments.assign`.
+  and for the bin: **Add existing item** (search, `api.stock_scan.search_items`, then `assign`) and
+  **New item** (below). Every save writes a Stock Scan Log row, and the page lists your recent saves
+  on this bin with Undo (`api.stock_scan.undo`), as /stock-scan's Recent does; the last save's
+  sentence sits above the items with its own Undo.
+- **`bin_assignments.create_and_assign(warehouse, client_ref, item_code, item_name, item_group,
+  stock_uom)`** (POST): New item. The Item is created through the store run's quick-item path
+  unchanged (`_quick_item_spec`, `_check_quick_item`, `_quick_item`: the same checks, the same
+  refusals, inserted as the user, the naming guard judging it on insert, its Item Default for the
+  bin's company set to this bin), then put on the bin with a Putaway Rule, in one transaction, logged
+  as an *Assign* with `created_item` and idempotent on `client_ref`. Every refusal about the bin and
+  the module gate comes before the Item exists. The dialog shows `check_new_item`'s preview as it is
+  typed (already in ERPNext, what the naming guard will refuse, similar items with "Add this one
+  instead", advice). Undo takes the item off the bin: the rule is disabled and the Item Default it
+  set is cleared while it still names this bin (a new `rule_changes` kind, `item_default_set`, which
+  `bin_assignments.restore` reverses), and **the Item stays**, as a store run's quick Item does; the
+  undo's sentence says so. The log row also carries `needs_review`, so the new Item joins the weekly
+  "New Items From Store Runs" review (without it the row could never be ticked reviewed:
+  `StockScanLog._stamp_review` clears `reviewed` on a row that does not need review).
+- **`bin_assignments.manager_boot()`** (GET, role-checked): the page's one read of its own. The
+  bins with their counts and breadcrumbs (two grouped derived tables in one `frappe.db.sql`, the
+  trails from one read of the group warehouses), and what the caller may do: `can_manage` (the
+  bin-assignment gate), `can_count` (Stock Reconciliation create and submit), `can_move` (Stock
+  Entry create and submit), `can_create_items` (Item create), the boneyard (read from Inventory
+  Scanner Settings on the server, so the page never reads a Settings Single), and the quick Item's
+  groups and units.
+- **Who sees what**, from that payload and never a role list in the page: Change quantity needs
+  `can_count`; Move needs `can_move` (and "make it the item's bin" the gate); Keep, Unassign, Send
+  to boneyard, Add existing item and New item need the gate, the last also Item create. Server
+  refusals are already sentences and show inline in the dialog that asked; a dropped reply keeps
+  the save's reference so the next try cannot post twice.
+- **Back and Forward**: the picker and each bin are their own history entry (one `set_route` per
+  pick); Back from a bin returns to the picker and Forward returns to the bin. Dialogs push nothing,
+  and the router closes an open one on Back. `?warehouse=<name>` (from the address or a
+  `frappe.set_route("bin-manager", {warehouse})`) is read from `frappe.route_options` and opens that
+  bin in place of the picker entry, and `?q=` fills the filter.
+- **Where to find it**: a Bin Manager shortcut beside Stock Scan on the Operations Hub and a link in
+  its Inventory card, a link in the Inventory Enhancements workspace's Counts card (both files
+  timestamp-bumped, and force-imported by `patches/bin_manager_hub_links`), and the "Pages" search
+  (`page_search.js`: bins, shelf, putaway, boneyard). The Page admits the Stock Scan roles
+  (`stock_scan_rules.SCAN_ROLES`); all four already read Stock Scan Log, a doctype of the page's
+  module. No link from /stock-scan, as decided.
+- Review fixes, before release: the Move dialog's destination list shows the first 30 bins that
+  match what is typed, and a click was looked up in the first 30 of the *unfiltered* list, so a bin
+  past #30 (production has 221) could not be chosen; it is now looked up in the full list
+  (`controller.bin`). "Keep on this bin" and a preview's "Add this one instead" keep their
+  `client_ref` per bin and item until the save lands or is refused (`controller.quick`), as a
+  dialog does, so a click after a dropped reply returns the first save instead of "already on this
+  bin". `create_and_assign` turns a concurrent retry's lost Item insert (`DuplicateEntryError`,
+  "Item X already exists") into `_begin_log`'s "still being recorded" 409, so the page keeps the
+  same reference; `store_run` is unchanged. Item, warehouse and bin names are escaped wherever they
+  reach frappe's own HTML: dialog titles (v16's `Dialog.set_title` is `.html()`), field labels and
+  descriptions, and the make-home label.
+- The page's decisions are a pure module and a DOM-free controller
+  (`public/js/bin_manager/logic.js`, `controller.js`, loaded as `bin_manager.bundle.js`); its CSS is
+  the page folder's `bin_manager.css`, every selector under `.bm-`.
+
+### Tests
+- `tests/test_bin_manager.py` (own CI step): `create_and_assign` and `manager_boot` on
+  `test_bin_assignments`' frappe stub (the Item inserted as the user, every refusal before any write,
+  a resend posts once, undo clears what it set and leaves the Item, the boot from permissions), and
+  `scripts/test_bin_manager.mjs` under node, including the real page script in a vm over a modelled
+  v16.50 router: a bin pick is one entry, Back/Forward, dialogs push none, route options read and the
+  address cleaned, the make-home default, gating and each action's endpoint with its `client_ref`.
+  `test_bin_assignments`' source checks now know the two new endpoints (the GET read, and the one
+  write allowed before the log row: the quick Item, whose code the log row links).
+
+## [1.692.1] - 2026-10-14
+
+### Changed
+- **The guided Item flow puts the item on the bin it saves, not only as its default.** v1.683.0's
+  stock step (`api.item_flow.save_stock`) recorded the bin only as the Item Default's
+  `default_warehouse`. Since v1.689.0, an item is assigned to a bin by an enabled Putaway Rule,
+  per Nik's 2026-10-14 decision.
+  - Before this change, Stock Scan's bin list showed such an item only as the default
+    (`is_default`), not as `assigned`.
+  - A new item with no stock there yet dropped off the bin as soon as its default changed.
+  - ERPNext's *Apply Putaway Rule*, which routes received stock by the rule, had nothing to go
+    by.
+  
+  The stock step now also calls `bin_assignments.ensure_assignment`. v1.689.0 kept that helper,
+  with a stable signature, for this call.
+  - **Idempotent:** an existing enabled rule comes back as it is, and a disabled one is
+    re-enabled. Asking on every save keeps an item whose rule went missing on its bin.
+  - **Moving the item to another bin takes it off the old one when nothing is left there**, as
+    v1.689.0's *Move to* with "make this the item's bin" does to a source it empties. This uses
+    `bin_assignments.release_if_empty`, the new other half of `ensure_assignment`: the same
+    `_release`, gated only when it changes something, no log row, and a stable signature.
+    - Stock still on hand keeps the old bin's claim, and the note says so: "Bin A still has 3 on
+      hand, so the item stays on that bin too until it is moved."
+    - Two enabled rules means two bins *Apply Putaway Rule* may fill, so this is not left unsaid.
+    - A pair nothing claims (no enabled rule, not undecided) is left alone, so no record of a
+      decision is made where nobody listed the item.
+    - Found in this change's review: the first draft left the old rule enabled in every case.
+  - **A refusal never undoes the bin the person saved.** Examples are a caller without a stock
+    role (the bin module's gate is a Stock Scan role plus Item read; the flow's own is Item write)
+    or a template item.
+    - Both helpers' writes roll back together to a savepoint (`item_flow_bin_assignment`), which
+      is taken before messages are muted.
+    - The reason is added to the response's `note` ("Stock Scan's bin list was not changed:
+      ..."), which the page already shows as a warning toast after "Bin saved."
+    - Messages are muted while they run. A caught `frappe.throw` has already queued its message
+      for the browser, so it would otherwise still show a red dialog.
+    - Any other failure is not caught: the request fails and nothing of it is saved.
+  - The Putaway Rule is the one write in this flow that is not the caller's own: the bin module
+    writes it behind its own gate, as it does for Stock Scan. The module docstring says so.
+- **Tests.**
+  - `tests/test_item_flow.py TestTheBinAssignment` covers the flow side.
+  - `tests/test_bin_assignments.py TestReleaseIfEmpty` covers the helper: an emptied bin is taken
+    off and its default cleared, stock keeps the bin, a pair nothing claims is left alone, an
+    emptied undecided pair is recorded, and only a change meets the gate.
+  - The Item flow stub's `frappe.throw` now queues its message unless muted, as frappe's does.
+    So a swallowed throw that would still show a dialog fails the build.
+  - Removing any one safeguard fails its own test. In the flow: the call, the release call,
+    releasing on a same-bin save, the kept-stock note, the mute, restoring the mute, the
+    savepoint rollback, the narrow `except`, catching `PermissionError`, and the note. In the
+    helper: the stock check, the claim check, and clearing the default.
+
 ## [1.692.0] - 2026-10-14
 
 ### Added
