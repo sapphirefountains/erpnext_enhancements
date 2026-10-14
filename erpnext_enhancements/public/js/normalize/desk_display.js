@@ -26,6 +26,16 @@
 //    as typed; clearing the field clears it. While the person is still typing, the input keeps
 //    their own text as long as it means the stored value, so the caret never jumps.
 //
+// 3. A soft warning (form kit P2-C, part two; Nik, 2026-10-13: no Phone/Email/URL typing). A
+//    registered phone, email or website field whose value the rules cannot read is marked: the
+//    sf-normalize-unreadable class (a red border, desk_enhancements.bundle.css) and a one-line
+//    note under the input. The record still saves. It is never Frappe's df.invalid, which blocks
+//    a dialog's primary action (FieldGroup.get_values: Quick Entry, the planner kit) and a web
+//    form's submit. It is refreshed when the control refreshes and after every change
+//    (refresh_input and set_invalid), so a stored unreadable value shows on load as well as
+//    while typing. A read-only field, a filter, and a field Frappe already validates (options
+//    Email or URL) are never marked.
+//
 // Fail open: every wrapper runs the original behaviour if its own part throws, and logs to the
 // console once. Kill switch: no frappe.boot.sf_normalize (site_config
 // disable_value_normalization, read by boot) and nothing is installed.
@@ -33,7 +43,7 @@
 // The decisions are the pure functions exported below, so tests/test_desk_display.py runs them
 // under node with no DOM; the Frappe wiring at the bottom is kept thin.
 
-import { phone, phone_display } from "./normalize.js";
+import { normalize, phone, phone_display } from "./normalize.js";
 
 // Exactly what normalize.phone stores for a North American number, with or without an
 // extension. Anything else is not assumed to be a phone without a registry match.
@@ -104,6 +114,51 @@ export function escape_html(text) {
 		.replace(/'/g, "&#39;");
 }
 
+// The soft warning's text, per kind. A kind not listed here is never marked.
+export const WARNINGS = {
+	phone: "This doesn't look like a phone number. It will be saved exactly as typed.",
+	email: "This doesn't look like an email address. It will be saved exactly as typed.",
+	website: "This doesn't look like a website address. It will be saved exactly as typed.",
+};
+
+export const MARK_CLASS = "sf-normalize-unreadable";
+export const NOTE_CLASS = "sf-normalize-note";
+
+// The warning for a value the rules cannot read, or null.
+export function warning_for(df, value, registry, doctype = null) {
+	if (!df || df.is_filter || OWN_OPTIONS.has(df.options)) return null;
+	if (!EDIT_FIELDTYPES.has(df.fieldtype)) return null;
+	const kind = registered_kind(df, registry, doctype);
+	if (!kind || !own(WARNINGS, kind)) return null;
+	if (typeof value !== "string" || !value.trim()) return null;
+	return normalize(kind, value).ok ? null : WARNINGS[kind];
+}
+
+// Mark or unmark one control. `make` builds the note element (jQuery's $ on the Desk).
+export function mark(control, registry, make) {
+	const $wrapper = control && control.$wrapper;
+	if (!$wrapper || typeof $wrapper.toggleClass !== "function") return;
+	const writable = control.disp_status !== "Read" && control.disp_status !== "None";
+	const message = writable
+		? warning_for(control.df, control.value, registry, control.doctype || null)
+		: null;
+	$wrapper.toggleClass(MARK_CLASS, Boolean(message));
+	const text = message && typeof __ === "function" ? __(message) : message;
+	const $existing = $wrapper.find("." + NOTE_CLASS);
+	if (!message) {
+		if ($existing.length) $existing.remove();
+		return;
+	}
+	if ($existing.length) {
+		$existing.text(text);
+		return;
+	}
+	const $host = $wrapper.find(".control-input-wrapper").first();
+	($host && $host.length ? $host : $wrapper).append(
+		make(`<p class="${NOTE_CLASS}"></p>`).text(text)
+	);
+}
+
 export function is_phone_control(control, registry) {
 	const df = control && control.df;
 	if (!df || df.is_filter || !EDIT_FIELDTYPES.has(df.fieldtype)) return false;
@@ -146,15 +201,21 @@ function wrap_formatter(f, registry) {
 function wrap_control(f, registry) {
 	const proto = f.ui.form.ControlData && f.ui.form.ControlData.prototype;
 	if (!proto || proto.__sf_normalize) return;
+	wrap_warning(proto, registry);
 	const original_format = proto.format_for_input;
 	const original_parse = proto.parse;
-	if (typeof original_format !== "function" || typeof original_parse !== "function") return;
+	if (typeof original_format !== "function" || typeof original_parse !== "function") {
+		proto.__sf_normalize = true;
+		return;
+	}
 
 	proto.format_for_input = function (val) {
 		try {
 			if (is_phone_control(this, registry)) {
 				const focused =
-					this.input && typeof document !== "undefined" && document.activeElement === this.input;
+					this.input &&
+					typeof document !== "undefined" &&
+					document.activeElement === this.input;
 				return input_value(val, focused && this.$input ? this.$input.val() : undefined);
 			}
 		} catch (e) {
@@ -172,6 +233,24 @@ function wrap_control(f, registry) {
 		return parsed;
 	};
 	proto.__sf_normalize = true;
+}
+
+function wrap_warning(proto, registry) {
+	const make = typeof $ === "function" ? $ : null;
+	if (!make) return;
+	for (const method of ["refresh_input", "set_invalid"]) {
+		const original = proto[method];
+		if (typeof original !== "function") continue;
+		proto[method] = function () {
+			const out = original.apply(this, arguments);
+			try {
+				mark(this, registry, make);
+			} catch (e) {
+				warn_once(e);
+			}
+			return out;
+		};
+	}
 }
 
 export function install(f) {

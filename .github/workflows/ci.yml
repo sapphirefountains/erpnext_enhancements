@@ -1677,7 +1677,8 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_normalize_hook -v
       # The Desk shows a stored +18015550100 as (801) 555-0100 (public/js/normalize/
       # desk_display.js): the formatter and control decisions run under node, the bundle
-      # imports the module, and boot honours the kill switch.
+      # imports the module, and boot honours the kill switch. Also the P2-C soft warning on a
+      # phone, email or website no rule can read, which must never be df.invalid.
       - name: Desk phone display (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_desk_display -v
       # The dry-run report the cleanup is approved from: writes nothing, skips submitted
@@ -1692,6 +1693,15 @@ jobs:
       # the report, and neither it nor the patch can raise. Own frappe stub.
       - name: Normalization cleanup patch (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_normalize_cleanup -v
+      # Form kit P2-C part two: the proposed fixes for values no rule can read
+      # (utils/normalize_fixes.py), shown in the report and applied only for ticked rows. The
+      # international rule asks Google's phonenumbers whether "+" + the value is a real number, so
+      # the library is installed at the version Frappe v16 pins (pyproject.toml:
+      # "phonenumbers~=9.0.23"); without it those tests skip and the rule proposes nothing.
+      - name: Normalization proposed fixes (bench-free)
+        run: |
+          python -m pip install "phonenumbers~=9.0.23"
+          python -m unittest erpnext_enhancements.tests.test_normalize_fixes -v
       # The patch moving the Desk to mm/dd/yyyy and HH:mm: only old values change, both the
       # Single and the global default the boot payload reads are written, and it can never
       # raise (a raising patch aborts bench migrate, which is the deploy). Own frappe stub.

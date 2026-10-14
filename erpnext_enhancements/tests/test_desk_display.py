@@ -13,6 +13,12 @@ module syntax from a ``.js`` file without it. Skips cleanly when ``node`` is not
 Also pinned: the global bundle imports the module, and boot honours the kill switch (the
 server half is in ``test_normalize_hook``).
 
+P2-C part two adds the soft warning: a registered phone, email or website the rules cannot read
+gets a class and a note, and the record still saves. Checked here: which values are marked, that
+the note is added, updated and removed, that read-only fields and filters never are, that it is
+never ``df.invalid`` (which would block a dialog), and that ``refresh_input`` and ``set_invalid``
+both mark.
+
 Run: python -m unittest erpnext_enhancements.tests.test_desk_display -v
 """
 
@@ -36,7 +42,13 @@ DESK_DISPLAY = JS_DIR / "normalize" / "desk_display.js"
 NORMALIZE_JS = JS_DIR / "normalize" / "normalize.js"
 BUNDLE = JS_DIR / "erpnext_enhancements.bundle.js"
 
-REGISTRY = {"fields": {"Contact": {"mobile_no": "phone"}, "Contact Phone": {"phone": "phone"}}}
+REGISTRY = {
+    "fields": {
+        "Contact": {"mobile_no": "phone", "email_id": "email"},
+        "Contact Phone": {"phone": "phone"},
+        "Customer": {"website": "website"},
+    }
+}
 
 RUNNER = r"""
 import { pathToFileURL } from "node:url";
@@ -98,11 +110,72 @@ out.is_phone_control = {
 	other_field: d.is_phone_control({ df: other }, registry),
 };
 
+// The soft warning (P2-C part two).
+const email = { parent: "Contact", fieldname: "email_id", fieldtype: "Data" };
+const site = { parent: "Customer", fieldname: "website", fieldtype: "Data" };
+out.warning = {
+	phone_bad: d.warning_for(contact, "801-979-500", registry),
+	phone_good: d.warning_for(contact, "801-555-0100", registry),
+	phone_stored: d.warning_for(contact, "+18015550100,12", registry),
+	email_bad: d.warning_for(email, "someone@example", registry),
+	email_good: d.warning_for(email, "Someone@Example.com", registry),
+	website_bad: d.warning_for(site, "not a site", registry),
+	website_good: d.warning_for(site, "example.com", registry),
+	blank: d.warning_for(contact, "   ", registry),
+	unregistered: d.warning_for(other, "801-979-500", registry),
+	filter: d.warning_for({ ...contact, is_filter: 1 }, "801-979-500", registry),
+	own_option: d.warning_for({ ...email, options: "Email" }, "someone@example", registry),
+	link: d.warning_for({ ...contact, fieldtype: "Link" }, "801-979-500", registry),
+	grid_doctype: d.warning_for({ fieldname: "phone", fieldtype: "Data" }, "801", registry, "Contact Phone"),
+};
+
+// A tiny jQuery stand-in: enough of $wrapper for mark().
+function el(tag) {
+	const node = { classes: new Set(), children: [], text_value: "", tag, removed: false };
+	const api = {
+		node,
+		length: 1,
+		toggleClass(name, on) { on ? node.classes.add(name) : node.classes.delete(name); return api; },
+		find(selector) {
+			const cls = selector.replace(/^\./, "");
+			const hits = node.children.filter((c) => !c.node.removed && c.node.classes.has(cls));
+			const found = hits[0];
+			if (!found) return { length: 0, first() { return { length: 0 }; } };
+			return Object.assign(Object.create(found), { length: 1, first() { return found; } });
+		},
+		append(child) { node.children.push(child); return api; },
+		text(value) { node.text_value = value; return api; },
+		remove() { node.removed = true; return api; },
+	};
+	return api;
+}
+function make(html) {
+	const child = el("p");
+	const m = html.match(/class="([^"]+)"/);
+	if (m) child.node.classes.add(m[1]);
+	return child;
+}
+const wrapper = el("div");
+const ctl = { $wrapper: wrapper, df: contact, value: "801-979-500", disp_status: "Write" };
+d.mark(ctl, registry, make);
+const note = () => wrapper.node.children.find((c) => !c.node.removed && c.node.classes.has(d.NOTE_CLASS));
+out.mark = { marked: wrapper.node.classes.has(d.MARK_CLASS), note: note() ? note().node.text_value : null };
+ctl.value = "801-555-0100";
+d.mark(ctl, registry, make);
+out.mark.cleared = !wrapper.node.classes.has(d.MARK_CLASS) && !note();
+ctl.value = "nope";
+ctl.disp_status = "Read";
+d.mark(ctl, registry, make);
+out.mark.read_only_unmarked = !wrapper.node.classes.has(d.MARK_CLASS) && !note();
+out.mark.never_invalid = ctl.df.invalid === undefined;
+
 // The wiring, against a fake frappe with the three surfaces it patches.
 function fake(withRegistry) {
 	class ControlData {
 		format_for_input(v) { return v == null ? "" : v; }
 		parse(v) { return v; }
+		refresh_input() { this.refreshed = (this.refreshed || 0) + 1; }
+		set_invalid() { this.invalid_set = (this.invalid_set || 0) + 1; }
 	}
 	const f = {
 		boot: withRegistry ? { sf_normalize: registry } : {},
@@ -119,6 +192,7 @@ const off = fake(false);
 const offData = off.form.formatters.Data;
 out.kill_switch = { installed: d.install(off), formatter_untouched: off.form.formatters.Data === offData };
 
+globalThis.$ = make;
 const on = fake(true);
 out.installed = d.install(on);
 out.installed_twice_is_harmless = d.install(on);
@@ -143,6 +217,22 @@ out.control = {
 	other_parse: plain.parse("801.555.0100"),
 };
 out.published_phone_display = typeof globalThis.erpnext_enhancements?.normalize?.phone_display;
+
+// The warning rides on refresh_input and set_invalid, after the originals.
+const wired = new on.ui.form.ControlData();
+wired.df = email;
+wired.value = "someone@example";
+wired.disp_status = "Write";
+wired.$wrapper = el("div");
+wired.refresh_input();
+out.wired = {
+	original_ran: wired.refreshed === 1,
+	marked_on_refresh: wired.$wrapper.node.classes.has(d.MARK_CLASS),
+};
+wired.value = "someone@example.com";
+wired.set_invalid();
+out.wired.original_set_invalid_ran = wired.invalid_set === 1;
+out.wired.unmarked_after_change = !wired.$wrapper.node.classes.has(d.MARK_CLASS);
 
 // Fail open: a registry whose lookups throw must leave the original behaviour.
 const realWarn = console.warn;
@@ -249,6 +339,39 @@ class TestDeskDisplayUnderNode(unittest.TestCase):
         self.assertFalse(c["phone_type"])
         self.assertFalse(c["other_field"])
 
+    def test_an_unreadable_value_gets_the_soft_warning(self):
+        w = self.out["warning"]
+        self.assertIn("phone number", w["phone_bad"])
+        self.assertIn("email address", w["email_bad"])
+        self.assertIn("website", w["website_bad"])
+        self.assertIn("saved exactly as typed", w["phone_bad"])
+        self.assertIn("phone number", w["grid_doctype"], "a grid row is matched on its own doctype")
+        for key in ("phone_good", "phone_stored", "email_good", "website_good", "blank"):
+            with self.subTest(key=key):
+                self.assertIsNone(w[key])
+        for key in ("unregistered", "filter", "own_option", "link"):
+            with self.subTest(key=key):
+                self.assertIsNone(w[key], "never marked")
+
+    def test_the_note_is_added_updated_and_removed(self):
+        m = self.out["mark"]
+        self.assertTrue(m["marked"])
+        self.assertIn("phone number", m["note"])
+        self.assertTrue(m["cleared"], "a readable value removes the mark and the note")
+        self.assertTrue(m["read_only_unmarked"], "a read-only field is never marked")
+        self.assertTrue(m["never_invalid"], "df.invalid would block a dialog's primary action")
+
+    def test_the_warning_is_wired_after_refresh_and_after_a_change(self):
+        self.assertEqual(
+            self.out["wired"],
+            {
+                "original_ran": True,
+                "marked_on_refresh": True,
+                "original_set_invalid_ran": True,
+                "unmarked_after_change": True,
+            },
+        )
+
     def test_the_kill_switch_installs_nothing(self):
         self.assertEqual(self.out["kill_switch"], {"installed": False, "formatter_untouched": True})
 
@@ -302,7 +425,21 @@ class TestShipping(unittest.TestCase):
         imports = [
             line for line in DESK_DISPLAY.read_text(encoding="utf-8").splitlines() if line.startswith("import ")
         ]
-        self.assertEqual(imports, ['import { phone, phone_display } from "./normalize.js";'])
+        self.assertEqual(imports, ['import { normalize, phone, phone_display } from "./normalize.js";'])
+
+    def test_the_warning_never_uses_frappes_invalid_flag(self):
+        source = DESK_DISPLAY.read_text(encoding="utf-8")
+        code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("//"))
+        self.assertNotIn("df.invalid", code)
+        self.assertNotIn("has-error", code)
+
+    def test_the_warning_is_styled_with_frappes_theme_aware_colours(self):
+        css = (REPO_ROOT / "erpnext_enhancements" / "public" / "css" / "desk_enhancements.bundle.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".frappe-control.sf-normalize-unreadable .form-control", css)
+        self.assertIn("var(--error-border)", css)
+        self.assertIn("var(--alert-text-danger)", css)
 
     def test_boot_reads_the_kill_switch(self):
         source = (REPO_ROOT / "erpnext_enhancements" / "utils" / "normalize_hook.py").read_text(encoding="utf-8")
