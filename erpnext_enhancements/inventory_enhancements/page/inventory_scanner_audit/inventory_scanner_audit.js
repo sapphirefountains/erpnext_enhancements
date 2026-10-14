@@ -47,50 +47,16 @@ const ISA_QR_DECODER = '/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.
 const ISA_QR_FRAME_WIDTH = 480;
 
 // sf_kit (v1.638.0): the shared loading / error / no-access panel and the quiet server call,
-// loaded once with frappe.require. v16's loader resolves even when a file fails to load
-// (assets.js: "resolve even on error"), so a kit that never arrived leaves window.sf_kit unset
-// and the count carries on with isa_plain_kit instead of stopping. The jsQR decoder stays a
-// require of its own on first camera use: most counts never open the camera.
-let isa_kit_loading = null;
+// from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
+// kit that never arrived resolves to a plain stand-in, so the count carries on. A Desk opened
+// before the deploy that added the loader has no sf_kit_ready yet, and asks frappe.require for
+// the kit itself. The jsQR decoder stays a require of its own on first camera use: most counts
+// never open the camera.
 function isa_kit() {
-	if (!isa_kit_loading) {
-		isa_kit_loading = new Promise((resolve) => {
-			const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : isa_plain_kit());
-			try {
-				frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], ready);
-			} catch (e) {
-				ready();
-			}
-		});
-	}
-	return isa_kit_loading;
-}
-
-// The kit's shape without the kit: calls go through frappe.call (its dialogs included) and a
-// state is a line of plain text, with its one action as a plain button.
-function isa_plain_kit() {
-	return {
-		esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)),
-		call: (method, args, opts) =>
-			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-				(r) => r && r.message,
-				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: '', exc_type: '', session_expired: false })
-			),
-		state: {
-			render(el, kind, opts) {
-				opts = opts || {};
-				const $el = $(el).empty();
-				$('<div class="text-muted"></div>').text(opts.title || '').appendTo($el);
-				if (typeof opts.on_action === 'function') {
-					$('<button class="btn btn-default btn-sm"></button>')
-						.text(opts.action_label || __('Try again'))
-						.on('click', opts.on_action)
-						.appendTo($el);
-				}
-			},
-		},
-		toast: (message) => frappe.show_alert({ message, indicator: 'orange' }),
-	};
+	if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () => resolve(window.sf_kit))
+	);
 }
 
 // A failed load's panel: no access on a 403; a way back in when the session has lapsed (the
@@ -147,19 +113,23 @@ class InventoryScanner {
 		return frappe.call({ method: ISA_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
-	// Quiet (v1.638.0): a failed start-up says so where the count's lines go, with Try again,
-	// instead of leaving an empty page behind a frappe dialog.
+	// Quiet (v1.638.0): a failed start-up says so in its own slot above the count's lines, with
+	// Try again, instead of leaving an empty page behind a frappe dialog. Its own slot, not the
+	// lines': the clerk can start a count (Start, or a scan) while it is still loading, and its
+	// loading panel, its error or a retry must not paint over lines already counted. For the same
+	// reason a late reply never replaces a session started meanwhile.
 	boot() {
 		isa_kit().then((sf) => {
-			sf.state.render(this.$list, 'loading', { title: __('Loading the count…') });
+			sf.state.render(this.$boot, 'loading', { title: __('Loading the count…') });
 			sf.call(ISA_METHOD + 'get_bootstrap', {}, { quiet: true }).then(
 				(d) => {
+					this.$boot.empty();
 					this.state.settings = (d && d.settings) || {};
-					this.state.session = (d && d.session) || null;
+					if (!this.state.session) this.state.session = (d && d.session) || null;
 					this.renderAll();
 					this.focusScan();
 				},
-				(err) => isa_failed(sf, this.$list, err, () => this.boot())
+				(err) => isa_failed(sf, this.$boot, err, () => this.boot())
 			);
 		});
 	}
@@ -379,6 +349,7 @@ class InventoryScanner {
 				</div>
 				<div class="isa-location"></div>
 				<div class="isa-pending"></div>
+				<div class="isa-boot"></div>
 				<div class="isa-list"></div>
 			</div>
 			<div class="isa-finbar">
@@ -393,6 +364,7 @@ class InventoryScanner {
 		this.$find = $b.find('.isa-find');
 		this.$loc = $b.find('.isa-location');
 		this.$pending = $b.find('.isa-pending');
+		this.$boot = $b.find('.isa-boot');
 		this.$list = $b.find('.isa-list');
 		this.$start = $b.find('.isa-start');
 		this.$cancel = $b.find('.isa-cancel');

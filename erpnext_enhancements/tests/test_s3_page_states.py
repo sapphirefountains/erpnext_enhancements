@@ -11,34 +11,48 @@ Each of these pages sat on "Loading…" for good, or went blank, when its server
 * Water Engineering Wizard — four calls, none with an error path.
 * Device Console and Inventory Scanner Audit — the start-up call had no error path.
 
-Now each loads sf_kit once with ``frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"])``,
-falls back to a plain stand-in when the kit never arrives (v16's loader resolves on a failed
-file), renders the kit's loading panel, and on a failed load renders an error panel whose
-"Try again" runs the load again (or the no-access panel on a 403). A background refresh uses the
-kit's quiet path, so frappe puts up no dialog for it.
+Now each gets sf_kit from ONE shared loader, ``window.sf_kit_ready()`` in
+``public/js/sf_kit_loader.js`` (imported by the global bundle): a memoized
+``frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"])`` that falls back to a plain stand-in
+when the kit never arrives (v16's loader resolves on a failed file). A page guards with
+``typeof window.sf_kit_ready === "function"`` and otherwise requires the kit itself (a Desk opened
+before the loader shipped). Each renders the kit's loading panel, and on a failed load an error
+panel whose "Try again" runs the load again (or the no-access panel on a 403). A background
+refresh uses the kit's quiet path, so frappe puts up no dialog for it.
 
-The behaviour is run too: ``scripts/test_rental_planner_history.js`` (a failed board, Try again)
-and ``scripts/test_desk_page_history.js`` (a failed start-up on both scanner pages). These are the
+The behaviour is run too, against the REAL kit as well as the stand-in:
+``scripts/test_s3_page_states.mjs`` (the Day Board, Stripe, QuickBooks and Water pages, run by
+TestTheRealKitHarness below), ``scripts/test_rental_planner_history.js`` and
+``scripts/test_desk_page_history.js`` (the Rental Planner and both scanner pages). These are the
 static checks. Bench-free: the scripts are read as text, comments stripped.
 
 Run: python -m unittest erpnext_enhancements.tests.test_s3_page_states
 """
 
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
+REPO = APP.parent
+LOADER = APP / "public/js/sf_kit_loader.js"
+GLOBAL_BUNDLE = APP / "public/js/erpnext_enhancements.bundle.js"
+HARNESS = REPO / "scripts/test_s3_page_states.mjs"
 
 PAGES = {
 	"rental-planner": APP / "asset_management/page/rental_planner/rental_planner.js",
 	"maintenance-day-board": APP / "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js",
-	"stripe-payments-dashboard": APP / "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
+	"stripe-payments-dashboard": APP
+	/ "stripe_payments/page/stripe_payments_dashboard/stripe_payments_dashboard.js",
 	"quickbooks-online-dashboard": APP
 	/ "quickbooks_online/page/quickbooks_online_dashboard/quickbooks_online_dashboard.js",
-	"water-engineering-wizard": APP / "water_engineering/page/water_engineering_wizard/water_engineering_wizard.js",
+	"water-engineering-wizard": APP
+	/ "water_engineering/page/water_engineering_wizard/water_engineering_wizard.js",
 	"device-console": APP / "device_management/page/device_console/device_console.js",
-	"inventory-scanner-audit": APP / "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
+	"inventory-scanner-audit": APP
+	/ "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
 }
 
 # The call each page makes on the way in, which must report its failure in the page's own panel.
@@ -85,16 +99,63 @@ class TestEveryPageLoadsTheKit(unittest.TestCase):
 			with self.subTest(page=name):
 				self.assertNotIn("/assets/erpnext_enhancements/js/sf_kit", _code(path))
 
-	def test_a_kit_that_never_arrived_leaves_the_page_working(self):
-		"""v16's loader resolves on a failed file, so the callback runs with no window.sf_kit."""
+	def test_every_page_goes_through_the_shared_loader(self):
+		"""One loader for all seven, behind a guard for a Desk whose global bundle predates it."""
+		for name, path in PAGES.items():
+			with self.subTest(page=name):
+				self.assertRegex(
+					_code(path),
+					r"""if \(typeof window\.sf_kit_ready === (['"])function\1\) return window\.sf_kit_ready\(\);""",
+				)
+
+	def test_no_page_carries_its_own_stand_in(self):
+		"""The fallback lives in the loader; a page-local copy is the duplication it replaced."""
 		for name, path in PAGES.items():
 			with self.subTest(page=name):
 				code = _code(path)
-				self.assertRegex(code, r"window\.sf_kit && window\.sf_kit\.state \? window\.sf_kit : \w+\(\)")
-				# A missing frappe.require (or one that throws) is not a stuck page either.
-				require_at = REQUIRE.search(code).start()
-				self.assertIn("try {", code[max(0, require_at - 120) : require_at])
-				self.assertIn("catch (e) {", code[require_at : require_at + 200])
+				self.assertNotRegex(code, r"(?i)plain_?kit")
+				self.assertNotIn("window.sf_kit && window.sf_kit.state", code)
+
+
+class TestTheSharedLoader(unittest.TestCase):
+	def setUp(self):
+		self.code = _code(LOADER)
+
+	def test_it_installs_one_memoized_global(self):
+		self.assertIn("window.sf_kit_ready = function () {", self.code)
+		self.assertIn("if (!loading) {", self.code)
+		self.assertEqual(len(REQUIRE.findall(self.code)), 1)
+
+	def test_a_kit_that_never_arrived_resolves_to_the_stand_in(self):
+		"""v16's loader resolves on a failed file, so the callback runs with no window.sf_kit."""
+		self.assertIn("window.sf_kit && window.sf_kit.state ? window.sf_kit : plain_kit()", self.code)
+		require_at = REQUIRE.search(self.code).start()
+		self.assertIn("try {", self.code[max(0, require_at - 120) : require_at])
+		self.assertIn("catch (e) {", self.code[require_at : require_at + 200])
+
+	def test_the_stand_in_has_what_the_pages_use(self):
+		stand_in = self.code[
+			self.code.index("function plain_kit() {") : self.code.index("window.sf_kit_ready")
+		]
+		for piece in ("esc:", "call:", "state: {", "render(el, kind, opts) {", "toast:"):
+			with self.subTest(piece=piece):
+				self.assertIn(piece, stand_in)
+		# A failed call rejects in the kit's own shape.
+		self.assertIn("status: (xhr && xhr.status) || 0", stand_in)
+		self.assertIn("session_expired: false", stand_in)
+
+	def test_the_global_bundle_imports_it_after_workspace_block_return(self):
+		"""Its own line straight after workspace_block_return, so imports added at the end of the
+		bundle by other work never conflict with it."""
+		lines = [ln.strip() for ln in _code(GLOBAL_BUNDLE).splitlines() if ln.strip()]
+		at = lines.index('import "./global_enhancements/workspace_block_return.js";')
+		self.assertEqual(lines[at + 1], 'import "./sf_kit_loader.js";')
+		self.assertEqual(sum(ln == 'import "./sf_kit_loader.js";' for ln in lines), 1)
+
+	def test_the_kit_itself_stays_out_of_the_global_bundle(self):
+		code = _code(GLOBAL_BUNDLE)
+		self.assertNotIn("sf_kit.bundle", code)
+		self.assertNotIn("sf_kit/index.js", code)
 
 
 class TestTheStates(unittest.TestCase):
@@ -147,17 +208,32 @@ class TestRefreshes(unittest.TestCase):
 		tick = code[code.index("setInterval(") :]
 		tick = tick[: tick.index("}, 60000);")]
 		self.assertIn("refresh()", tick)
-		refresh = code[code.index("function refresh() {") : code.index("function stop() {")]
+		refresh = code[code.index("function refresh(opts) {") : code.index("function stop() {")]
 		self.assertIn("{ quiet: true }", refresh)
 		# frappe.call is no longer how the board loads; the kit's quiet path is.
 		self.assertNotIn("frappe.call({ method: 'erpnext_enhancements.api.maintenance_board", code)
 		self.assertNotIn("silent: Boolean(", code)
 
+	def _day_board_refresh(self):
+		code = _code(PAGES["maintenance-day-board"])
+		return code[code.index("function refresh(opts) {") : code.index("function stop() {")]
+
 	def test_the_day_boards_failed_refresh_keeps_the_board(self):
-		refresh = _code(PAGES["maintenance-day-board"])
-		refresh = refresh[refresh.index("function refresh() {") : refresh.index("function stop() {")]
+		refresh = self._day_board_refresh()
 		self.assertIn("if (!state.loaded) return failed(sf, err);", refresh)
 		self.assertIn("$stale.text(", refresh)
+		self.assertIn("sf.toast(", refresh)
+
+	def test_the_day_board_draws_loading_on_the_first_attempt_only(self):
+		"""A timer tick must not blank the board, nor the error panel of a board that never loaded."""
+		refresh = self._day_board_refresh()
+		self.assertIn("const first = !state.attempted;", refresh)
+		self.assertIn("if (first || (opts && opts.asked)) sf.state.render($board, 'loading'", refresh)
+		self.assertNotIn("if (!state.loaded) sf.state.render($board, 'loading'", refresh)
+
+	def test_the_day_board_stops_polling_a_refusal(self):
+		refresh = self._day_board_refresh()
+		self.assertIn("if (err.status === 403 || err.session_expired) stop();", refresh)
 
 	def test_a_failed_refresh_with_data_showing_keeps_it(self):
 		for name in ("stripe-payments-dashboard", "device-console"):
@@ -175,6 +251,38 @@ class TestRefreshes(unittest.TestCase):
 		code = _code(PAGES["quickbooks-online-dashboard"])
 		self.assertIn("{ quiet: true }", _call_of(code, "get_sync_log_summary"))
 
+	def test_the_qbo_resync_poll_retries_only_the_network_or_the_server(self):
+		code = _code(PAGES["quickbooks-online-dashboard"])
+		poll = code[code.index("function pollResyncPreview(") : code.index("function offerRunResync(")]
+		self.assertIn("if (status === 0 || status >= 500) {", poll)
+		self.assertEqual(
+			poll.count("setTimeout(() => pollResyncPreview("), 2, "a running preview, and a hiccup"
+		)
+		self.assertIn("qboSignedOut(sf, qbo_root.find(", poll)
+
+	def test_a_stale_design_reply_never_paints(self):
+		code = _code(PAGES["water-engineering-wizard"])
+		block = code[code.index("function load_design_state(") : code.index("function render_design_state(")]
+		self.assertIn('const picked = () => $body.find("#we-design-pick").val() === design;', block)
+		self.assertIn("if (picked()) render_design_state($state, message);", block)
+		self.assertIn("if (!picked()) return;", block)
+
+	def test_design_options_are_not_built_as_markup(self):
+		code = _code(PAGES["water-engineering-wizard"])
+		block = code[code.index("function load_design_list(") : code.index("function load_design_state(")]
+		self.assertNotIn("<option value=", block)
+		self.assertIn('$("<option></option>").val(d.name).text(label)', block)
+
+	def test_the_scanner_start_up_has_its_own_slot(self):
+		"""Its loading or error panel must not paint over the lines of a count already started."""
+		code = _code(PAGES["inventory-scanner-audit"])
+		boot = code[code.index("\tboot() {") : code.index("activeWarehouse() {")]
+		self.assertIn("sf.state.render(this.$boot, 'loading'", boot)
+		self.assertIn("isa_failed(sf, this.$boot, err", boot)
+		self.assertNotIn("this.$list", boot)
+		self.assertIn("if (!this.state.session) this.state.session =", boot)
+		self.assertIn('<div class="isa-boot"></div>', code)
+
 	def test_a_stale_timeline_reply_never_paints(self):
 		code = _code(PAGES["rental-planner"])
 		block = code[code.index("load_timeline() {") : code.index("timeline_failed(sf, $timeline, err) {")]
@@ -184,7 +292,9 @@ class TestRefreshes(unittest.TestCase):
 class TestQuickBooksLogRowsAreEscaped(unittest.TestCase):
 	def setUp(self):
 		code = _code(PAGES["quickbooks-online-dashboard"])
-		self.rows = code[code.index("function renderLogs(root, logs) {") : code.index("function connectQuickBooks()")]
+		self.rows = code[
+			code.index("function renderLogs(sf, root, logs) {") : code.index("function connectQuickBooks()")
+		]
 
 	def test_every_server_value_goes_through_the_kits_escape(self):
 		self.assertIn("const esc = sf.esc;", self.rows)
@@ -207,6 +317,25 @@ class TestQuickBooksLogRowsAreEscaped(unittest.TestCase):
 		self.assertRegex(self.rows, r"state\.render\(list,\s*\"empty\"")
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class TestTheRealKitHarness(unittest.TestCase):
+	"""The Day Board, Stripe, QuickBooks and Water pages against the real sf_kit bundle."""
+
+	def test_the_real_kit_harness_passes(self):
+		result = subprocess.run(
+			[shutil.which("node"), str(HARNESS)], capture_output=True, text=True, timeout=300
+		)
+		output = (result.stdout + result.stderr)[-6000:]
+		self.assertEqual(result.returncode, 0, output)
+		self.assertIn("checks passed", result.stdout, output)
+
+	def test_the_loader_parses(self):
+		result = subprocess.run(
+			[shutil.which("node"), "--check", str(LOADER)], capture_output=True, text=True
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class TestThePagesStayInTheDesk(unittest.TestCase):
 	def test_no_hard_coded_app_paths(self):
 		for name, path in PAGES.items():
@@ -214,8 +343,13 @@ class TestThePagesStayInTheDesk(unittest.TestCase):
 				self.assertNotRegex(_code(path), r"['\"`(]/app/")
 
 	def test_no_history_writes_were_added(self):
-		for name in ("rental-planner", "maintenance-day-board", "stripe-payments-dashboard",
-				"quickbooks-online-dashboard", "water-engineering-wizard"):
+		for name in (
+			"rental-planner",
+			"maintenance-day-board",
+			"stripe-payments-dashboard",
+			"quickbooks-online-dashboard",
+			"water-engineering-wizard",
+		):
 			with self.subTest(page=name):
 				code = _code(PAGES[name])
 				for token in ("pushState", "replaceState", "popstate"):

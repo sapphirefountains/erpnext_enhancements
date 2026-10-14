@@ -38,45 +38,15 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	// A refresh that failed while the board was showing says so here, and leaves the board be.
 	const $stale = $('<div class="mdb-empty mdb-stale" role="status"></div>').hide().insertBefore($board);
 
-	// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
-	// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
-	// board carries on with frappe.call and a line of plain text instead of stopping.
-	let kitLoading = null;
+	// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+	// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of
+	// plain text), so the board carries on. A Desk opened before the deploy that added the loader
+	// has no sf_kit_ready yet, and asks frappe.require for the kit itself.
 	function kit() {
-		if (!kitLoading) {
-			kitLoading = new Promise((resolve) => {
-				const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : plainKit());
-				try {
-					frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], ready);
-				} catch (e) {
-					ready();
-				}
-			});
-		}
-		return kitLoading;
-	}
-
-	function plainKit() {
-		return {
-			call: (method, args, opts) =>
-				Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-					(r) => r && r.message,
-					(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: '', exc_type: '', session_expired: false })
-				),
-			state: {
-				render(el, kind, opts) {
-					opts = opts || {};
-					const $el = $(el).empty();
-					$('<div class="mdb-empty"></div>').text(opts.title || '').appendTo($el);
-					if (typeof opts.on_action === 'function') {
-						$('<button class="btn btn-default btn-sm"></button>')
-							.text(opts.action_label || __('Try again'))
-							.on('click', opts.on_action)
-							.appendTo($el);
-					}
-				},
-			},
-		};
+		if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
+		return new Promise((resolve) =>
+			frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () => resolve(window.sf_kit))
+		);
 	}
 
 	function esc(value) {
@@ -116,14 +86,17 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		return html + '</div>';
 	}
 
-	const state = { timer: null, loaded: false, loadedAt: '', inflight: false };
+	// attempted: a load has been asked for at least once (the loading panel is drawn only before
+	// the first). stale: the last refresh failed over a board already showing (toast once a run).
+	const state = { timer: null, loaded: false, attempted: false, stale: false, loadedAt: '', inflight: false };
 
 	function isCurrent() {
 		return frappe.get_route()[0] === 'maintenance-day-board';
 	}
 
 	// A board that never loaded: no access on a 403, a way back in when the session has lapsed,
-	// otherwise what went wrong with Try again (and the timer keeps retrying meanwhile).
+	// otherwise what went wrong with Try again (and the timer keeps retrying meanwhile; a 403 or a
+	// lapsed session has stopped it, see refresh).
 	function failed(sf, err) {
 		err = err || {};
 		if (err.session_expired) {
@@ -142,7 +115,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 			sf.state.render($board, 'error', {
 				title: __('Could not load the day board.'),
 				body: err.message || __('It tries again every minute.'),
-				on_action: () => refresh(),
+				on_action: () => refresh({ asked: true }),
 			});
 		}
 	}
@@ -151,14 +124,22 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	// not stack a frappe dialog every minute while the server is unhappy. frappe.call's `silent`,
 	// used here before, stops only the msgprint of a 417; a 500, 502, 504 or a lapsed session
 	// still put up a dialog of their own on every tick.
-	function refresh() {
+	//
+	// The loading panel is drawn on the first attempt only, or when someone presses Try again
+	// (`asked`): a timer tick must never blank what is on screen, the board or the error panel. A
+	// 403 or a lapsed session stops the timer, since asking again every minute cannot change the
+	// answer; the next show of the page tries once more and starts it again.
+	function refresh(opts) {
 		if (state.inflight) return;
 		state.inflight = true;
+		const first = !state.attempted;
+		state.attempted = true;
 		kit().then((sf) => {
-			if (!state.loaded) sf.state.render($board, 'loading', { title: __('Loading the day board…') });
+			if (first || (opts && opts.asked)) sf.state.render($board, 'loading', { title: __('Loading the day board…') });
 			return sf.call('erpnext_enhancements.api.maintenance_board.get_day_board_data', {}, { quiet: true }).then((message) => {
 				const data = message || {};
 				state.loaded = true;
+				state.stale = false;
 				state.loadedAt = frappe.datetime.now_time();
 				$stale.hide().text('');
 				$board.html([
@@ -173,12 +154,18 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
 				].join(''));
 			}, (err) => {
-				// A failure keeps the board already showing and says so above it; only a board that
-				// never loaded gets the panel.
+				err = err || {};
+				if (err.status === 403 || err.session_expired) stop();
+				// A failure keeps the board already showing, says so in a toast (once per run of
+				// failures, not every minute) and in the line above it, which stays for a wall screen
+				// nobody was watching when the toast went; only a board that never loaded gets the panel.
 				if (!state.loaded) return failed(sf, err);
-				$stale.text(err && err.session_expired
+				const said = err.session_expired
 					? __('You have been signed out. Reload the page to sign in again.')
-					: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt])).show();
+					: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt]);
+				if (!state.stale || err.session_expired) sf.toast(said, { tone: 'warning' });
+				state.stale = true;
+				$stale.text(said).show();
 			});
 		}).finally(() => {
 			state.inflight = false;

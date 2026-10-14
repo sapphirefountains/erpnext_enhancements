@@ -33,49 +33,15 @@ const DC_SHEETS = ['camera', 'employee'];
 const DC_BACK_TIMEOUT_MS = 1500;
 
 // sf_kit (v1.638.0): the shared loading / error / no-access panel, the toast and the quiet
-// server call, loaded once with frappe.require. v16's loader resolves even when a file fails
-// to load (assets.js: "resolve even on error"), so a kit that never arrived leaves
-// window.sf_kit unset and the console carries on with dc_plain_kit instead of stopping.
-let dc_kit_loading = null;
+// server call, from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It
+// never rejects: a kit that never arrived resolves to a plain stand-in, so the console carries
+// on. A Desk opened before the deploy that added the loader has no sf_kit_ready yet, and asks
+// frappe.require for the kit itself.
 function dc_kit() {
-	if (!dc_kit_loading) {
-		dc_kit_loading = new Promise((resolve) => {
-			const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : dc_plain_kit());
-			try {
-				frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], ready);
-			} catch (e) {
-				ready();
-			}
-		});
-	}
-	return dc_kit_loading;
-}
-
-// The kit's shape without the kit: calls go through frappe.call (its dialogs included) and a
-// state is a line of plain text, with its one action as a plain button.
-function dc_plain_kit() {
-	return {
-		esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)),
-		call: (method, args, opts) =>
-			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-				(r) => r && r.message,
-				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: '', exc_type: '', session_expired: false })
-			),
-		state: {
-			render(el, kind, opts) {
-				opts = opts || {};
-				const $el = $(el).empty();
-				$('<div class="text-muted"></div>').text(opts.title || '').appendTo($el);
-				if (typeof opts.on_action === 'function') {
-					$('<button class="btn btn-default btn-sm"></button>')
-						.text(opts.action_label || __('Try again'))
-						.on('click', opts.on_action)
-						.appendTo($el);
-				}
-			},
-		},
-		toast: (message) => frappe.show_alert({ message, indicator: 'orange' }),
-	};
+	if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () => resolve(window.sf_kit))
+	);
 }
 
 // A failed load's panel: no access on a 403; a way back in when the session has lapsed (the

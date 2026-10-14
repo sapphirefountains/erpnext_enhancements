@@ -48,49 +48,15 @@ const RP_FEES = ["delivery_setup_fee", "pickup_removal_fee", "other_fee", "secur
 const rp_ymd = (date) => moment(date).format("YYYY-MM-DD");
 
 // sf_kit (v1.638.0): the board's loading, error and no-access panels and its quiet server call,
-// loaded once with frappe.require. v16's loader resolves even when a file fails to load
-// (assets.js: "resolve even on error"), so a kit that never arrived leaves window.sf_kit unset
-// and the board carries on with rp_plain_kit instead of sitting on "Loading" for good.
-let rp_kit_loading = null;
+// from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
+// kit that never arrived resolves to a plain stand-in, so the board does not sit on "Loading" for
+// good. A Desk opened before the deploy that added the loader has no sf_kit_ready yet, and asks
+// frappe.require for the kit itself.
 function rp_kit() {
-	if (!rp_kit_loading) {
-		rp_kit_loading = new Promise((resolve) => {
-			const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : rp_plain_kit());
-			try {
-				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
-			} catch (e) {
-				ready();
-			}
-		});
-	}
-	return rp_kit_loading;
-}
-
-// The kit's shape without the kit: calls go through frappe.call (its dialogs included) and a
-// state is a line of plain text, with its one action as a plain button.
-function rp_plain_kit() {
-	return {
-		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
-		call: (method, args, opts) =>
-			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-				(r) => r && r.message,
-				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false })
-			),
-		state: {
-			render(el, kind, opts) {
-				opts = opts || {};
-				const $el = $(el).empty();
-				$('<div class="rp-empty"></div>').text(opts.title || "").appendTo($el);
-				if (typeof opts.on_action === "function") {
-					$('<button class="btn btn-default btn-sm"></button>')
-						.text(opts.action_label || __("Try again"))
-						.on("click", opts.on_action)
-						.appendTo($el);
-				}
-			},
-		},
-		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
-	};
+	if (typeof window.sf_kit_ready === "function") return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () => resolve(window.sf_kit))
+	);
 }
 
 frappe.pages[RP.route].on_page_load = function (wrapper) {

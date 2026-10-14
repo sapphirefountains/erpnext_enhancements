@@ -49,8 +49,12 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { pathToFileURL } = require("url");
 
 const APP = path.join(__dirname, "..", "erpnext_enhancements");
+const LOADER = path.join(APP, "public", "js", "sf_kit_loader.js");
+const SF_BUNDLE = path.join(APP, "public", "js", "sf_kit.bundle.js");
+let kitCopies = 0;
 const SCRIPTS = {
 	"device-console": "device_management/page/device_console/device_console.js",
 	"inventory-scanner-audit": "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
@@ -167,6 +171,19 @@ function makeDesk(options) {
 				// Question Review's editor puts the caret at the end of the stem it opens on.
 				value: "",
 				setSelectionRange() {},
+				// The real sf_kit (makeDesk({ kit: true })) writes its state panel into innerHTML,
+				// then looks up the panel's one action button in it: a fresh button per panel, whose
+				// click listeners the test calls.
+				querySelector(sel) {
+					const html = String(this.innerHTML || "");
+					if (sel !== ".sf-state-action" || !html.includes("sf-state-action")) return null;
+					if (this.__actionFor !== html) {
+						const button = { clicks: [], addEventListener: (type, fn) => type === "click" && button.clicks.push(fn) };
+						this.__action = button;
+						this.__actionFor = html;
+					}
+					return this.__action;
+				},
 			},
 			extra || {}
 		);
@@ -518,8 +535,9 @@ function makeDesk(options) {
 	desk.closeDialog = (title) => desk.dialog(title).dismiss();
 
 	// ---- server calls
-	function server(method, args) {
-		const req = { method: method.split(".").pop(), args: args || {}, settled: false };
+	// `quiet`: the real kit's quiet call (a fetch), which frappe's after_ajax does not wait on.
+	function server(method, args, quiet) {
+		const req = { method: method.split(".").pop(), args: args || {}, settled: false, quiet: !!quiet };
 		req.promise = new Promise((resolve, reject) => {
 			req.resolve = (m) => {
 				if (req.settled) return;
@@ -547,10 +565,24 @@ function makeDesk(options) {
 		return req;
 	}
 	desk.sent = (method) => desk.requests.filter((r) => r.method === method);
+	// The real kit's quiet path (makeDesk({ kit: true })): a fetch to /api/method/<method>, answered
+	// by `respond` like any request. A reply() rejection is that HTTP answer; anything else that
+	// fails is a fetch that never reached the server.
+	function fetch_(url) {
+		const method = decodeURIComponent(String(url).split("/api/method/")[1].split("?")[0]);
+		return server(method, {}, true).promise.then(
+			(m) => ({ status: 200, text: () => Promise.resolve(JSON.stringify({ message: m })) }),
+			(e) => {
+				if (!e || !e.status) throw new TypeError("Failed to fetch");
+				return { status: e.status, text: () => Promise.resolve(JSON.stringify(e.body || {})) };
+			}
+		);
+	}
 	// request.js's waiting_for_ajax: run once no request is in flight (see `after_ajax`).
 	const ajaxWaiting = [];
+	const inflight = () => desk.requests.some((r) => !r.settled && !r.quiet);
 	function flushAjax() {
-		if (desk.requests.some((r) => !r.settled)) return;
+		if (inflight()) return;
 		ajaxWaiting.splice(0).forEach((fn) => fn());
 	}
 
@@ -726,7 +758,7 @@ function makeDesk(options) {
 		get_route: () => router.current_route,
 		set_route: (...a) => router.set_route(...a),
 		after_ajax(fn) {
-			if (opts.ajax && desk.requests.some((r) => !r.settled)) ajaxWaiting.push(fn);
+			if (opts.ajax && inflight()) ajaxWaiting.push(fn);
 			else fn();
 		},
 		provide(ns) {
@@ -911,10 +943,21 @@ function makeDesk(options) {
 		flt: (v) => parseFloat(v) || 0,
 		cint: (v) => parseInt(v, 10) || 0,
 	};
+	if (opts.kit) ctx.fetch = fetch_;
 	ctx.window = ctx;
 	vm.createContext(ctx);
+	// The global bundle's sf_kit loader (window.sf_kit_ready), as the Desk boots with it. With no
+	// window.sf_kit after frappe.require (opts.kit unset), pages get its plain stand-in.
+	vm.runInContext(fs.readFileSync(LOADER, "utf8"), ctx, { filename: LOADER });
 	desk.ctx = ctx;
 	desk.frappe = frappe;
+	// The real sf_kit.bundle.js, installed on this page before it loads (a fresh copy of the module
+	// per Desk, so it installs again): frappe.require then finds window.sf_kit, as on a live Desk.
+	desk.installKit = async function () {
+		globalThis.window = ctx;
+		globalThis.document = document;
+		await import(pathToFileURL(SF_BUNDLE).href + `?desk=${++kitCopies}`);
+	};
 
 	// ---- pages: views/pageview.js + views/container.js
 	let current = null;
@@ -1412,6 +1455,72 @@ test("Scanner Audit: a start-up that failed says so, and Try again boots it in p
 	check("asked again", desk.sent("get_bootstrap").length, 2);
 	check("still the count's one entry", [desk.route(), desk.urls()], ["inventory-scanner-audit", ["/desk/home", "/desk/inventory-scanner-audit"]]);
 	check("no push without a tap", desk.violations, []);
+});
+
+// The REAL sf_kit (v1.638.0): the bundle installed on the page, its quiet call answered by the same
+// `respond`, every panel drawn by its own state.render and every failure in its own rejection
+// shape. A page that reads the kit wrong fails here, where the plain stand-in above would not.
+const reply = (status, body) => Object.assign(new Error(`HTTP ${status}`), { status, body });
+const pressAction = (el) => el.querySelector(".sf-state-action").clicks.forEach((fn) => fn({ preventDefault() {} }));
+
+test("Device Console, real kit: a 500 draws the kit's error panel, and Try again boots it in place", async () => {
+	const desk = makeDesk({ kit: true });
+	await desk.installKit();
+	desk.respond.get_console_bootstrap = () => reply(500, { exc_type: "Exception", exception: "pymysql.err.OperationalError" });
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	const panel = dc(desk).$load[0];
+	check("the kit's error panel, with the page's title", [panel.innerHTML.includes("sf-state--error"), panel.innerHTML.includes("Could not load the Device Console.")], [true, true]);
+	check("the kit's sentence, never the exception", [panel.innerHTML.includes("The server could not finish this request."), panel.innerHTML.includes("pymysql")], [true, false]);
+	check("no frappe dialog", desk.shown(), []);
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 0, counts: {} });
+	await desk.tap(() => pressAction(panel));
+	check("asked again", desk.sent("get_console_bootstrap").length, 2);
+	check("still the console's one entry", [desk.route(), desk.urls()], ["device-console", ["/desk/home", "/desk/device-console"]]);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Scanner Audit, real kit: a 403 draws no-access, and a lapsed session the signed-out panel", async () => {
+	const refused = makeDesk({ kit: true });
+	await refused.installKit();
+	refused.respond.get_bootstrap = () =>
+		reply(403, { exc_type: "PermissionError", _server_messages: JSON.stringify([JSON.stringify({ message: "<b>Not permitted</b> to count." })]) });
+	await refused.load("/desk/home");
+	await refused.tap(() => refused.frappe.set_route("inventory-scanner-audit"));
+	const boot = isa(refused).$boot[0].innerHTML;
+	check("no access, with the page's title", [boot.includes("sf-state--no-access"), boot.includes("You do not have access to the Inventory Scanner Audit.")], [true, true]);
+	check("and the server's words", boot.includes("Not permitted to count."), true);
+	check("no frappe dialog", refused.shown(), []);
+
+	const lapsed = makeDesk({ kit: true });
+	await lapsed.installKit();
+	lapsed.respond.get_bootstrap = () => reply(401, { exc_type: "SessionExpired", session_expired: 1 });
+	await lapsed.load("/desk/home");
+	await lapsed.tap(() => lapsed.frappe.set_route("inventory-scanner-audit"));
+	const signedOut = isa(lapsed).$boot[0].innerHTML;
+	check("signed out, with Reload", [signedOut.includes("You have been signed out."), signedOut.includes(">Reload</button>")], [true, true]);
+});
+
+// v1.638.0 review: the start-up has its own slot. A count started while it loads keeps its lines and
+// its session, whether the start-up then fails or answers with no session.
+test("Scanner Audit, real kit: a start-up that lands after a count began neither paints over it nor replaces it", async () => {
+	const session = { name: "ICS-9", lines: [], summary: { lines: 0, with_variance: 0 } };
+	for (const late of ["fails", "answers"]) {
+		const desk = makeDesk({ kit: true });
+		await desk.installKit();
+		desk.respond.start_session = () => session;
+		await desk.load("/desk/home");
+		await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit"));
+		await desk.tap(() => isa(desk).startSession());
+		check(`${late}: the count began`, isa(desk).state.session && isa(desk).state.session.name, "ICS-9");
+		const req = desk.sent("get_bootstrap")[0];
+		if (late === "fails") req.reject(reply(500, {}));
+		else req.resolve({ settings: {}, session: null });
+		await desk.settle();
+		check(`${late}: the session stands`, isa(desk).state.session && isa(desk).state.session.name, "ICS-9");
+		check(`${late}: the kit never wrote where the lines go`, isa(desk).$list[0].innerHTML, undefined);
+		if (late === "fails") check("the error is in the start-up's slot", isa(desk).$boot[0].innerHTML.includes("Could not load the count."), true);
+	}
 });
 
 test("Scanner Audit: Back closes Find Item and stays; Forward reopens it", async () => {

@@ -24,6 +24,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { pathToFileURL } = require("url");
 
 const SCRIPT = path.join(
 	__dirname,
@@ -34,6 +35,9 @@ const SCRIPT = path.join(
 	"rental_planner",
 	"rental_planner.js"
 );
+const LOADER = path.join(__dirname, "..", "erpnext_enhancements", "public", "js", "sf_kit_loader.js");
+const SF_BUNDLE = path.join(__dirname, "..", "erpnext_enhancements", "public", "js", "sf_kit.bundle.js");
+let kitCopies = 0;
 
 let checks = 0;
 let failures = 0;
@@ -59,11 +63,27 @@ async function settle() {
 
 function makeJQuery(registry) {
 	function element() {
-		const state = { text: "", handlers: {}, value: "" };
+		// `node` is what the real sf_kit is handed (el[0]): it writes its state panel into innerHTML,
+		// then looks up the panel's one action button there, a fresh one per panel.
+		const node = {
+			innerHTML: "",
+			querySelector(sel) {
+				if (sel !== ".sf-state-action" || !node.innerHTML.includes("sf-state-action")) return null;
+				if (node.actionFor !== node.innerHTML) {
+					const button = { clicks: [], addEventListener: (type, fn) => type === "click" && button.clicks.push(fn) };
+					node.action = button;
+					node.actionFor = node.innerHTML;
+				}
+				return node.action;
+			},
+		};
+		const state = { text: "", handlers: {}, value: "", node };
 		const self = new Proxy(function () {}, {
 			get(_target, prop) {
 				if (prop === "__state") return state;
 				if (prop === "then") return undefined;
+				if (prop === "jquery") return "3.7.1-stand-in";
+				if (prop === "0") return node;
 				if (prop === "text") {
 					return (value) => {
 						if (value === undefined) return state.text;
@@ -113,13 +133,19 @@ function makeWorld() {
 		created: [],
 		// Methods whose calls fail as a 500 would (v1.638.0: the board's error panel).
 		down: new Set(),
+		// Methods answered with this HTTP status and body instead (the real kit's quiet path only).
+		replies: new Map(),
 		confirmAnswer: true,
 	};
 	world.route = () => world.entries[world.index].replace(/^\/desk\//, "").split("/").filter(Boolean);
 	return world;
 }
 
-function loadPage(world) {
+// `options.kit`: the page gets the REAL sf_kit (desk.installKit() before the first show), whose
+// quiet call is a fetch answered here; otherwise this fake frappe has no require, and the loader
+// hands the page its plain stand-in.
+function loadPage(world, options) {
+	const opts = options || {};
 	const registry = [];
 	const $ = makeJQuery(registry);
 	// Frappe's pageview creates the page wrapper as frappe.pages[name] before it evaluates the
@@ -246,7 +272,24 @@ function loadPage(world) {
 		utils: { escape_html: (s) => s },
 	};
 
+	if (opts.kit) {
+		frappe.session = { user: "planner@example.com" };
+		frappe.require = (_paths, cb) => cb();
+	}
+
+	const reply = (status, body) => ({ status, text: () => Promise.resolve(JSON.stringify(body)) });
 	const window = {
+		frappe,
+		// The real kit's quiet call: a fetch to /api/method/<method>, form-encoded.
+		fetch(url) {
+			const method = decodeURIComponent(String(url).split("/api/method/")[1].split("?")[0]);
+			world.requests.push(method);
+			if (world.down.has(method)) return Promise.resolve(reply(500, { exc_type: "Exception", exception: "Traceback" }));
+			const answer = world.replies.get(method);
+			if (answer) return Promise.resolve(reply(answer.status, answer.body));
+			const respond = responders[method];
+			return Promise.resolve(reply(200, { message: respond ? respond({}) : null }));
+		},
 		sessionStorage: storage(world.session),
 		localStorage: storage(world.local),
 		history: {
@@ -267,12 +310,24 @@ function loadPage(world) {
 		console,
 	};
 	vm.createContext(context);
+	// The global bundle's sf_kit loader (window.sf_kit_ready), as the Desk boots with it. This fake
+	// frappe has no require, so pages get the loader's plain stand-in.
+	vm.runInContext(fs.readFileSync(LOADER, "utf8"), context, { filename: LOADER });
 	vm.runInContext(fs.readFileSync(SCRIPT, "utf8"), context, { filename: SCRIPT });
 
 	const desk = {
 		world,
 		registry,
 		show,
+		// The real sf_kit.bundle.js installed on this page's window (a fresh copy of the module per
+		// page, so it installs again).
+		async installKit() {
+			globalThis.window = window;
+			// Signed in: the kit reads a 401/403 with no user_id cookie as a lapsed session.
+			context.document.cookie = "sid=abc; user_id=planner%40example.com";
+			globalThis.document = context.document;
+			await import(pathToFileURL(SF_BUNDLE).href + `?planner=${++kitCopies}`);
+		},
 		planner: () => pages["rental-planner"].rental_planner,
 		open(pathname) {
 			world.entries = world.entries.slice(0, world.index + 1);
@@ -427,6 +482,43 @@ test("A board that failed to load says so, and Try again loads it in place", asy
 	check("Try again asked again", world.requests.filter((m) => m === timeline).length, 2);
 	check("the board drew what came back", shown("No fountains are marked Available for Event Rental yet. Tick it on each fleet Asset."), true);
 	check("no history entry for a retry", [desk.here(), desk.length()], ["/desk/rental-planner", entries]);
+});
+
+// The REAL sf_kit (v1.638.0): the board's panels drawn by the kit's own state.render, its failures
+// in the kit's own rejection shape. A page that reads the kit wrong fails here.
+test("Real kit: a failed board is the kit's error panel, Try again loads it, and a 403 is no access", async () => {
+	const timeline = "erpnext_enhancements.asset_management.rental_planner.get_timeline";
+	const world = makeWorld();
+	world.down.add(timeline);
+	const desk = loadPage(world, { kit: true });
+	await desk.installKit();
+	desk.open("/desk/rental-planner");
+	await settle();
+	const panel = desk.planner().$timeline[0];
+	check("the kit's error panel", [panel.innerHTML.includes("sf-state--error"), panel.innerHTML.includes("Could not load the fleet.")], [true, true]);
+	check("the kit's sentence, never the exception", [panel.innerHTML.includes("The server could not finish this request."), panel.innerHTML.includes("Traceback")], [true, false]);
+	check("frappe put up no message", world.lastMessage, undefined);
+	const entries = desk.length();
+	world.down.delete(timeline);
+	panel.querySelector(".sf-state-action").clicks.forEach((fn) => fn({ preventDefault() {} }));
+	await settle();
+	check("Try again asked again", world.requests.filter((m) => m === timeline).length, 2);
+	const shown = (text) => desk.registry.some((e) => e.__state.text === text);
+	check("the board drew what came back", shown("No fountains are marked Available for Event Rental yet. Tick it on each fleet Asset."), true);
+	check("no history entry for a retry", [desk.here(), desk.length()], ["/desk/rental-planner", entries]);
+
+	const refused = makeWorld();
+	refused.replies.set(timeline, {
+		status: 403,
+		body: { exc_type: "PermissionError", _server_messages: JSON.stringify([JSON.stringify({ message: "Not permitted to read Asset." })]) },
+	});
+	const other = loadPage(refused, { kit: true });
+	await other.installKit();
+	other.open("/desk/rental-planner");
+	await settle();
+	const denied = other.planner().$timeline[0].innerHTML;
+	check("no access", [denied.includes("sf-state--no-access"), denied.includes("You do not have access to the rental fleet.")], [true, true]);
+	check("with the server's words", denied.includes("Not permitted to read Asset."), true);
 });
 
 test("Starting over after a started draft asks first", async () => {

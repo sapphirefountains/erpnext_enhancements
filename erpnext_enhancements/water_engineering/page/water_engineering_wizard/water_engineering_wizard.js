@@ -75,85 +75,42 @@ frappe.pages["water-engineering-wizard"].on_page_load = function (wrapper) {
 		title: __("Water Engineering Wizard"),
 		single_column: true,
 	});
-	const $body = $(page.body);
-	we_kit().then(() => we_open(page, $body));
+	we_open(page, $(page.body));
 };
 
 function we_open(page, $body) {
-	const sf = we_sf();
-	sf.state.render($body, "loading", { title: __("Loading the Water Engineering Wizard…") });
-	sf.call(WE_API + "check_permission", {}, { quiet: true }).then(
-		(allowed) => {
-			if (!allowed) {
-				sf.state.render($body, "no-access", {
-					title: __("You do not have access to Water Feature Designs."),
-				});
-				return;
-			}
-			render_shell(page, $body);
-		},
-		(err) => we_failed($body, err, __("Could not open the Water Engineering Wizard."), () => we_open(page, $body))
-	);
-}
-
-// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
-// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
-// wizard carries on with we_plain_kit: frappe.call and a line of plain text.
-let we_kit_loading = null;
-let we_kit_ready = null;
-function we_kit() {
-	if (!we_kit_loading) {
-		we_kit_loading = new Promise((resolve) => {
-			const ready = () => {
-				we_kit_ready = window.sf_kit && window.sf_kit.state ? window.sf_kit : we_plain_kit();
-				resolve(we_kit_ready);
-			};
-			try {
-				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
-			} catch (e) {
-				ready();
-			}
-		});
-	}
-	return we_kit_loading;
-}
-
-function we_plain_kit() {
-	return {
-		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
-		call: (method, args, opts) =>
-			Promise.resolve(
-				frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet), freeze: !!(opts && opts.freeze) })
-			).then(
-				(r) => r && r.message,
-				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false })
-			),
-		state: {
-			render(el, kind, opts) {
-				opts = opts || {};
-				const $el = $(el).empty();
-				$('<div class="we-muted"></div>').text(opts.title || "").appendTo($el);
-				if (typeof opts.on_action === "function") {
-					$('<button class="btn btn-default btn-xs"></button>')
-						.text(opts.action_label || __("Try again"))
-						.on("click", opts.on_action)
-						.appendTo($el);
+	we_kit().then((sf) => {
+		sf.state.render($body, "loading", { title: __("Loading the Water Engineering Wizard…") });
+		sf.call(WE_API + "check_permission", {}, { quiet: true }).then(
+			(allowed) => {
+				if (!allowed) {
+					sf.state.render($body, "no-access", {
+						title: __("You do not have access to Water Feature Designs."),
+					});
+					return;
 				}
+				render_shell(page, $body);
 			},
-		},
-		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
-	};
+			(err) =>
+				we_failed(sf, $body, err, __("Could not open the Water Engineering Wizard."), () => we_open(page, $body))
+		);
+	});
 }
 
-// The kit, or the plain stand-in until it has loaded.
-function we_sf() {
-	return we_kit_ready || we_plain_kit();
+// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of plain
+// text), so the wizard carries on. A Desk opened before the deploy that added the loader has no
+// sf_kit_ready yet, and asks frappe.require for the kit itself.
+function we_kit() {
+	if (typeof window.sf_kit_ready === "function") return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () => resolve(window.sf_kit))
+	);
 }
 
 // A load that failed: no access on a 403, a way back in when the session has lapsed (the quiet
 // path puts up no sign-in dialog of frappe's), otherwise what went wrong with Try again.
-function we_failed($el, err, title, retry) {
-	const sf = we_sf();
+function we_failed(sf, $el, err, title, retry) {
 	err = err || {};
 	if (err.session_expired) {
 		return sf.state.render($el, "error", {
@@ -215,6 +172,9 @@ function render_shell(page, $body) {
 	load_design_list($body);
 	$body.find("#we-design-pick").on("change", function () {
 		if (this.value) load_design_state($body, this.value);
+		// Back to "Select a design…": a load still in flight is dropped (load_design_state), so its
+		// loading panel goes too.
+		else $body.find("#we-design-state").empty();
 	});
 }
 
@@ -243,12 +203,14 @@ function run_calc($body) {
 		inputs[name] = v;
 	});
 	// frappe.call's own dialog says why a calculation failed; the last result stays.
-	we_sf()
-		.call(WE_API + "run_calc", { calc: calc, inputs: JSON.stringify(inputs) }, { freeze: true })
-		.then(
-			(message) => render_result($body.find("#we-calc-result"), message),
-			() => {}
-		);
+	we_kit().then((sf) =>
+		sf
+			.call(WE_API + "run_calc", { calc: calc, inputs: JSON.stringify(inputs) }, { freeze: true })
+			.then(
+				(message) => render_result($body.find("#we-calc-result"), message),
+				() => {}
+			)
+	);
 }
 
 function render_result($el, res) {
@@ -300,41 +262,55 @@ function we_status_class(status) {
 }
 
 // The list fills the picker; its loading, empty and error states show where a design's state
-// goes, which is empty until one is picked.
+// goes, which is empty until one is picked. Each option is built with jQuery's val() and text(),
+// so a design name with a quote or a "<" in it stays one option with its own value.
 function load_design_list($body) {
-	const sf = we_sf();
-	const $state = $body.find("#we-design-state");
-	sf.state.render($state, "loading", { title: __("Loading designs…") });
-	sf.call(WE_API + "get_design_state", {}, { quiet: true }).then(
-		(message) => {
-			const designs = (message || {}).designs || [];
-			const $pick = $body.find("#we-design-pick");
-			$pick.html(`<option value="">${__("Select a design…")}</option>`);
-			designs.forEach((d) => {
-				const label = `${d.name} — ${d.design_title || d.project || ""} (${d.status})`;
-				$pick.append(`<option value="${d.name}">${frappe.utils.escape_html(label)}</option>`);
-			});
-			if (designs.length) {
-				$state.empty();
-			} else {
-				sf.state.render($state, "empty", {
-					title: __("No Water Feature Designs yet."),
-					body: __("Start one with New Design."),
+	we_kit().then((sf) => {
+		const $state = $body.find("#we-design-state");
+		sf.state.render($state, "loading", { title: __("Loading designs…") });
+		sf.call(WE_API + "get_design_state", {}, { quiet: true }).then(
+			(message) => {
+				const designs = (message || {}).designs || [];
+				const $pick = $body.find("#we-design-pick");
+				$pick.empty();
+				$("<option></option>").val("").text(__("Select a design…")).appendTo($pick);
+				designs.forEach((d) => {
+					const label = `${d.name} — ${d.design_title || d.project || ""} (${d.status})`;
+					$("<option></option>").val(d.name).text(label).appendTo($pick);
 				});
-			}
-		},
-		(err) => we_failed($state, err, __("Could not load the designs."), () => load_design_list($body))
-	);
+				if (designs.length) {
+					$state.empty();
+				} else {
+					sf.state.render($state, "empty", {
+						title: __("No Water Feature Designs yet."),
+						body: __("Start one with New Design."),
+					});
+				}
+			},
+			(err) => we_failed(sf, $state, err, __("Could not load the designs."), () => load_design_list($body))
+		);
+	});
 }
 
+// A reply is drawn only while the picker still shows the design it was asked for: pick one, then
+// another before the first answers, and the first reply (or its error) must not paint over the
+// second. A reply for a design no longer picked is dropped, since the later request owns the panel.
 function load_design_state($body, design) {
-	const sf = we_sf();
-	const $state = $body.find("#we-design-state");
-	sf.state.render($state, "loading", { title: __("Loading {0}…", [design]) });
-	sf.call(WE_API + "get_design_state", { design }, { quiet: true }).then(
-		(message) => render_design_state($state, message),
-		(err) => we_failed($state, err, __("Could not load {0}.", [design]), () => load_design_state($body, design))
-	);
+	const picked = () => $body.find("#we-design-pick").val() === design;
+	we_kit().then((sf) => {
+		if (!picked()) return;
+		const $state = $body.find("#we-design-state");
+		sf.state.render($state, "loading", { title: __("Loading {0}…", [design]) });
+		sf.call(WE_API + "get_design_state", { design }, { quiet: true }).then(
+			(message) => {
+				if (picked()) render_design_state($state, message);
+			},
+			(err) => {
+				if (!picked()) return;
+				we_failed(sf, $state, err, __("Could not load {0}.", [design]), () => load_design_state($body, design));
+			}
+		);
+	});
 }
 
 function render_design_state($el, st) {

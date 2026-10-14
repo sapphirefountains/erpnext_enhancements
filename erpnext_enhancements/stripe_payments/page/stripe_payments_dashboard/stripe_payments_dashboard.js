@@ -33,46 +33,15 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		return frappe.utils.escape_html(v == null ? "" : String(v));
 	}
 
-	// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
-	// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
-	// dashboard carries on with frappe.call and a line of plain text instead of stopping.
-	let kitLoading = null;
+	// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+	// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of
+	// plain text), so the dashboard carries on. A Desk opened before the deploy that added the
+	// loader has no sf_kit_ready yet, and asks frappe.require for the kit itself.
 	function kit() {
-		if (!kitLoading) {
-			kitLoading = new Promise((resolve) => {
-				const ready = () => resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : plainKit());
-				try {
-					frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
-				} catch (e) {
-					ready();
-				}
-			});
-		}
-		return kitLoading;
-	}
-
-	function plainKit() {
-		return {
-			call: (method, args, opts) =>
-				Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-					(r) => r && r.message,
-					(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false }),
-				),
-			state: {
-				render(el, kind, opts) {
-					opts = opts || {};
-					const $el = $(el).empty();
-					$('<div class="text-muted"></div>').text(opts.title || "").appendTo($el);
-					if (typeof opts.on_action === "function") {
-						$('<button class="btn btn-default btn-sm"></button>')
-							.text(opts.action_label || __("Try again"))
-							.on("click", opts.on_action)
-							.appendTo($el);
-					}
-				},
-			},
-			toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
-		};
+		if (typeof window.sf_kit_ready === "function") return window.sf_kit_ready();
+		return new Promise((resolve) =>
+			frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () => resolve(window.sf_kit)),
+		);
 	}
 
 	// A dashboard that never loaded: no access on a 403, a way back in when the session has

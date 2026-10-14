@@ -26,7 +26,8 @@
  *
  * The status load and the resync-preview poll run on sf_kit's quiet path (v1.638.0): the load
  * draws its loading, empty, error and no-access states from the kit where the sync logs go, and
- * the poll, which no one is watching, never puts up a frappe dialog. The buttons keep
+ * the poll, which no one is watching, never puts up a frappe dialog (it retries a network or
+ * server failure, and stops on a 4xx or a lapsed session). The buttons keep
  * frappe.call and its dialogs: those failures answer a click.
  */
 frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
@@ -101,59 +102,32 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	});
 
 	renderEntities(root);
-	qboKit().then(() => refresh(root));
+	qbo_root = root;
+	refresh(root);
 };
 
-// sf_kit, loaded once. v16's frappe.require runs its callback even when a file fails to load
-// (assets.js resolves on error), so a kit that never arrived leaves window.sf_kit unset and the
-// dashboard carries on with qboPlainKit: frappe.call and a line of plain text.
-let qbo_kit_loading = null;
-let qbo_sf = null;
+// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of plain
+// text), so the dashboard carries on. A Desk opened before the deploy that added the loader has no
+// sf_kit_ready yet, and asks frappe.require for the kit itself.
 function qboKit() {
-	if (!qbo_kit_loading) {
-		qbo_kit_loading = new Promise((resolve) => {
-			const ready = () => {
-				qbo_sf = window.sf_kit && window.sf_kit.state ? window.sf_kit : qboPlainKit();
-				resolve(qbo_sf);
-			};
-			try {
-				frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], ready);
-			} catch (e) {
-				ready();
-			}
-		});
-	}
-	return qbo_kit_loading;
+	if (typeof window.sf_kit_ready === "function") return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () => resolve(window.sf_kit)),
+	);
 }
 
-function qboPlainKit() {
-	return {
-		esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
-		call: (method, args, opts) =>
-			Promise.resolve(frappe.call({ method, args: args || {}, silent: !!(opts && opts.quiet) })).then(
-				(r) => r && r.message,
-				(xhr) => Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false }),
-			),
-		state: {
-			render(el, kind, opts) {
-				opts = opts || {};
-				const $el = $(el).empty();
-				$('<div class="text-muted"></div>').text(opts.title || "").appendTo($el);
-				if (typeof opts.on_action === "function") {
-					$('<button class="btn btn-default btn-sm"></button>')
-						.text(opts.action_label || __("Try again"))
-						.on("click", opts.on_action)
-						.appendTo($el);
-				}
-			},
-		},
-		toast: (message) => frappe.show_alert({ message, indicator: "orange" }),
-	};
-}
+// The dashboard on screen, for the resync poll: a lapsed session ends the poll with the same
+// signed-out panel the status load draws where the sync logs go.
+let qbo_root = null;
 
-// The kit, or the plain stand-in until it has loaded.
-function qboSf() {
-	return qbo_sf || qboPlainKit();
+function qboSignedOut(sf, list) {
+	sf.state.render(list, "error", {
+		title: __("You have been signed out."),
+		body: __("Reload the page to sign in again."),
+		action_label: __("Reload"),
+		on_action: () => window.location.reload(),
+	});
 }
 
 // Keep in sync with ACCOUNTING_ENTITIES in quickbooks_online/core/constants.py.
@@ -199,47 +173,42 @@ function renderEntities(root) {
 
 // Loaded once, on the way in: the tiles keep their "-" and the log list carries the state.
 function refresh(root) {
-	const sf = qboSf();
-	const list = root.find(".qbo-log-list");
-	sf.state.render(list, "loading", { title: __("Loading QuickBooks status…") });
-	sf.call("erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status", {}, { quiet: true }).then(
-		(message) => {
-			const data = message || {};
-			const settings = data.settings || {};
-			root.find("[data-field='status']").text(settings.status || "-");
-			root.find("[data-field='environment']").text(settings.environment || "-");
-			root.find("[data-field='realm_id']").text(settings.realm_id || "-");
-			root.find("[data-field='failed_records']").text(data.failed_records || 0);
-			renderLogs(root, data.latest_logs || []);
-		},
-		(err) => {
-			err = err || {};
-			if (err.session_expired) {
-				sf.state.render(list, "error", {
-					title: __("You have been signed out."),
-					body: __("Reload the page to sign in again."),
-					action_label: __("Reload"),
-					on_action: () => window.location.reload(),
-				});
-			} else if (err.status === 403) {
-				sf.state.render(list, "no-access", {
-					title: __("You do not have access to the QuickBooks Online dashboard."),
-					body: err.message,
-				});
-			} else {
-				sf.state.render(list, "error", {
-					title: __("Could not load the QuickBooks status."),
-					body: err.message,
-					on_action: () => refresh(root),
-				});
-			}
-		},
-	);
+	qboKit().then((sf) => {
+		const list = root.find(".qbo-log-list");
+		sf.state.render(list, "loading", { title: __("Loading QuickBooks status…") });
+		sf.call("erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status", {}, { quiet: true }).then(
+			(message) => {
+				const data = message || {};
+				const settings = data.settings || {};
+				root.find("[data-field='status']").text(settings.status || "-");
+				root.find("[data-field='environment']").text(settings.environment || "-");
+				root.find("[data-field='realm_id']").text(settings.realm_id || "-");
+				root.find("[data-field='failed_records']").text(data.failed_records || 0);
+				renderLogs(sf, root, data.latest_logs || []);
+			},
+			(err) => {
+				err = err || {};
+				if (err.session_expired) {
+					qboSignedOut(sf, list);
+				} else if (err.status === 403) {
+					sf.state.render(list, "no-access", {
+						title: __("You do not have access to the QuickBooks Online dashboard."),
+						body: err.message,
+					});
+				} else {
+					sf.state.render(list, "error", {
+						title: __("Could not load the QuickBooks status."),
+						body: err.message,
+						on_action: () => refresh(root),
+					});
+				}
+			},
+		);
+	});
 }
 
 // Every value in a row is the server's, so every one goes through the kit's escape (v1.638.0).
-function renderLogs(root, logs) {
-	const sf = qboSf();
+function renderLogs(sf, root, logs) {
 	const esc = sf.esc;
 	const list = root.find(".qbo-log-list");
 	list.empty();
@@ -367,31 +336,48 @@ function pollResyncPreview(previewId, attempts) {
 		);
 		return;
 	}
-	// Quiet (v1.638.0): a poll every 3 s must not put up a frappe dialog for each failed tick. A
-	// failed tick counts as an attempt and tries again; a lapsed session ends the poll with a toast.
-	const sf = qboSf();
-	sf.call("erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary", { name: previewId }, { quiet: true }).then(
-		(message) => {
-			const data = message || {};
-			if (data.status === "Completed") {
-				offerRunResync(previewId, data.summary || {});
-			} else if (data.status === "Failed") {
-				frappe.msgprint({
-					title: __("Resync preview failed"),
-					indicator: "red",
-					message: frappe.utils.escape_html(data.error_message || __("See Sync Log {0}.", [previewId])),
-				});
-			} else {
-				setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
-			}
-		},
-		(err) => {
-			if (err && err.session_expired) {
-				sf.toast(__("You have been signed out. Sign in again and review Sync Log {0}.", [previewId]), { tone: "warning" });
-				return;
-			}
-			setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
-		},
+	// Quiet (v1.638.0): a poll every 3 s must not put up a frappe dialog for each failed tick. Only
+	// a failure that can pass is retried, as an attempt: the network (status 0) or the server
+	// (5xx). A 4xx is an answer rather than a hiccup (a refusal, a log that is not there) and asking
+	// again every 3 s cannot change it, so the poll stops and says why in a toast. A lapsed session
+	// stops it too, with the signed-out panel the status load draws.
+	qboKit().then((sf) =>
+		sf.call("erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary", { name: previewId }, { quiet: true }).then(
+			(message) => {
+				const data = message || {};
+				if (data.status === "Completed") {
+					offerRunResync(previewId, data.summary || {});
+				} else if (data.status === "Failed") {
+					frappe.msgprint({
+						title: __("Resync preview failed"),
+						indicator: "red",
+						message: frappe.utils.escape_html(data.error_message || __("See Sync Log {0}.", [previewId])),
+					});
+				} else {
+					setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+				}
+			},
+			(err) => {
+				err = err || {};
+				const status = Number(err.status) || 0;
+				if (err.session_expired) {
+					if (qbo_root) qboSignedOut(sf, qbo_root.find(".qbo-log-list"));
+					sf.toast(__("You have been signed out. Sign in again and review Sync Log {0}.", [previewId]), { tone: "warning" });
+					return;
+				}
+				if (status === 0 || status >= 500) {
+					setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+					return;
+				}
+				sf.toast(
+					__("Stopped checking the resync preview: {0} Review Sync Log {1}.", [
+						err.message || __("The server refused this request."),
+						previewId,
+					]),
+					{ tone: "warning" },
+				);
+			},
+		),
 	);
 }
 

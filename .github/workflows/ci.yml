@@ -3404,7 +3404,10 @@ jobs:
       # Custom pages S3.1 (v1.638.0). Seven pages that sat on "Loading" or went blank when a call
       # failed now draw loading / empty / error / no-access from sf_kit, retry a failed first
       # load in place, and refresh in the background on the quiet path (the Day Board's timer
-      # no longer stacks a frappe dialog per 5xx). The behaviour runs in the two node harnesses.
+      # no longer stacks a frappe dialog per 5xx). All seven get the kit from one shared loader,
+      # window.sf_kit_ready (public/js/sf_kit_loader.js). This step also runs
+      # scripts/test_s3_page_states.mjs, four of the pages against the REAL sf_kit bundle; the
+      # other three run against it in the two history harnesses.
       - name: Custom pages S3.1 page states (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_states -v
       # Every Page has a title (the awesomebar indexes by it), the S1 patch covers every file
