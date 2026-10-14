@@ -50,7 +50,9 @@ class TestCrewsPageSource(unittest.TestCase):
 		# A lone person is not ringed, and a crew-view row already says who it is.
 		self.assertIn("people.length > 1", badges)
 		self.assertIn("in_row && people.length < 2", badges)
-		self.assertIn(".mp-tech.mp-lead{", code)
+		# The ring is drawn by the page's stylesheet, maintenance_planner.css (S3.4e, v1.673.0).
+		css = PAGE.with_suffix(".css").read_text(encoding="utf-8")
+		self.assertRegex(css, r"(?m)^\.mp-tech\.mp-lead \{\s*outline: 2px solid var\(--sf-text-strong\);")
 		# Names and initials go through mp_esc on their way into the markup.
 		self.assertIn("mp_esc(initials.toUpperCase())", code)
 		self.assertIn("mp_esc(role ? `${name} (${role})` : name)", code)

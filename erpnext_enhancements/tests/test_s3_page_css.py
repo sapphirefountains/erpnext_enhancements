@@ -25,6 +25,14 @@ are data from records people edit, so they are the one inline color a page here 
 as the custom property ``style="--pp-color: ${pp_esc(...)}"`` that its CSS paints with;
 ``TestProjectPlanner`` holds the page to that and to the rest of the restyle.
 
+S3.4e (v1.673.0) adds the Maintenance Planner, which wrote seven ``<style>`` elements (``MP_STYLE``
+... ``MPC1_STYLE``) and painted a technician's color, its legend and its email preview inline. A
+technician's color and Color by's are data, so the page may write them only as
+``style="--mp-color: ${mp_esc(...)}"``; ``TestMaintenancePlanner`` holds the rest. planner_kit's
+stylesheet, which both planners share, left its three JS template strings for a real bundle,
+``public/css/planner_kit.bundle.css``; ``TestPlannerKitStylesheet`` holds it to the same rules (its
+selectors are the kit's ``pk-``) and the three modules to carrying no CSS.
+
 This fails the build if any of these pages:
 
 * writes a ``<style>`` element from JS again, or paints a colour through an inline ``style``,
@@ -84,6 +92,8 @@ PAGES = {
 	"plan_a_trip": APP / "travel_management" / "page" / "plan_a_trip",
 	# S3.4d
 	"project_planner": APP / "project_enhancements" / "page" / "project_planner",
+	# S3.4e
+	"maintenance_planner": APP / "sapphire_maintenance" / "page" / "maintenance_planner",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -105,6 +115,8 @@ NAMESPACES = {
 	# The planner's own families: pp- for the page, p6b- and p6e- for two of its phases, t1- for
 	# Build out and t4- for AI draft. Short, so TestProjectPlanner checks no other file styles them.
 	"project_planner": re.compile(r"\.(?:pp|p6b|p6e|t1|t4)-[\w-]+"),
+	# Every class of the Maintenance Planner is mp-, its phases' too (mp-p6a-, mp-p6b- ...).
+	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -121,6 +133,7 @@ KEYFRAME_PREFIXES = {
 	"sales_pipeline": ("sales-pipeline-",),
 	"plan_a_trip": ("tp-",),
 	"project_planner": ("pp-", "p6b-", "p6e-", "t1-", "t4-"),
+	"maintenance_planner": ("mp-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages
@@ -226,9 +239,10 @@ def _js_colour_writes(js):
 
 
 # The one color a page may write inline: a color that is data (a task's or a person's own, from a
-# record people edit), as the custom property --pp-color, escaped through pp_esc, which the page's
-# CSS paints with var(--pp-color). The Project Planner is the only page that does (S3.4d).
-DATA_COLOR = re.compile(r"(?<![\w-])--pp-color:\s*\$\{pp_esc\(")
+# record people edit), as a custom property escaped through the page's own escape, which the page's
+# CSS paints with: --pp-color through pp_esc on the Project Planner (S3.4d), --mp-color through
+# mp_esc on the Maintenance Planner (S3.4e). No other page does.
+DATA_COLOR = re.compile(r"(?<![\w-])(?:--pp-color:\s*\$\{pp_esc\(|--mp-color:\s*\$\{mp_esc\()")
 
 
 def _without_data_color(style):
@@ -266,6 +280,7 @@ class TestTheCssLeftTheJs(unittest.TestCase):
 		for allowed in (
 			"--pp-color: ${pp_esc(color)}",
 			"--pp-color: ${pp_esc(\n\t\tthis.resource_color(x)\n\t)}",
+			"--mp-color: ${mp_esc(this.tech_color(user))}",
 		):
 			with self.subTest(allowed=allowed):
 				self.assertNotRegex(_without_data_color(allowed), r"(?i)(color|background|border)\s*:")
@@ -275,6 +290,10 @@ class TestTheCssLeftTheJs(unittest.TestCase):
 			"--x-color: ${pp_esc(color)}",
 			"--pp-color: ${pp_esc(color)};background:#fff",
 			"border-left-color:${pp_esc(color)}",
+			"--mp-color: ${pp_esc(color)}",
+			"--pp-color: ${mp_esc(color)}",
+			"--mp-color: #2563eb",
+			"background:${mp_esc(this.tech_color(user))}",
 		):
 			with self.subTest(refused=refused):
 				self.assertRegex(_without_data_color(refused), r"(?i)(color|background|border)\s*:")
@@ -873,6 +892,429 @@ class TestProjectPlanner(unittest.TestCase):
 			if selector.search(code):
 				found.append(str(path.relative_to(APP)))
 		self.assertEqual(found, [])
+
+
+class TestMaintenancePlanner(unittest.TestCase):
+	"""S3.4e (v1.673.0). The Maintenance Planner wrote seven <style> elements from its script, in
+	Frappe's palette with a literal hex for every status, 11 shadows, three width breakpoints (760, 761
+	and 1024px) and 32-40px touch targets; painted a technician's color, both legends' swatches and
+	the email preview inline; and printed its cards with hex values of its own."""
+
+	FOLDER = PAGES["maintenance_planner"]
+
+	@classmethod
+	def setUpClass(cls):
+		cls.raw_js = _read(cls.FOLDER / "maintenance_planner.js")
+		cls.js = _js_code(cls.raw_js)
+		css = cls.FOLDER / "maintenance_planner.css"
+		cls.css = _css_code(_read(css)) if css.exists() else ""
+
+	def _rule(self, selector):
+		m = re.search(r"(?m)^\t*" + re.escape(selector) + r"\s*[,{]", self.css)
+		self.assertIsNotNone(m, f"no rule for {selector} in maintenance_planner.css")
+		return self.css[m.start() :].split("{", 1)[1].split("}", 1)[0]
+
+	def _coarse(self):
+		m = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
+		self.assertIsNotNone(m, "no (pointer: coarse) block")
+		return m.group(1)
+
+	def test_the_script_writes_no_stylesheet(self):
+		self.assertNotIn("mp-style", self.js)
+		self.assertNotIn("document.head", self.js)
+		self.assertNotRegex(self.js, r"const MP\w*_STYLE\b")
+
+	def test_every_color_it_reads_is_a_token_or_the_data_color(self):
+		"""No Frappe variable at all (--text-muted, --card-bg, --primary ...): every var() is an
+		--sf-* token or one of the two data colors the script sets."""
+		self.assertTrue(self.css)
+		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
+		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--mp-color", "--mp-p6c-c"])
+
+	def test_the_data_colors_go_in_as_the_custom_property_and_the_css_paints_them(self):
+		# A technician's dot and badge, and a Color-by key's swatch.
+		self.assertEqual(len(DATA_COLOR.findall(self.js)), 3)
+		self.assertIn(
+			'<span class="mp-dot" style="--mp-color: ${mp_esc(this.tech_color(person.user))}">', self.js
+		)
+		self.assertIn('<i class="mp-p6c-swatch" style="--mp-color: ${mp_esc(paint)}"></i>', self.js)
+		for selector in (".mp-dot", ".mp-tech", ".mp-p6c-swatch"):
+			with self.subTest(selector=selector):
+				self.assertIn("var(--mp-color", self._rule(selector))
+		self.assertIn("var(--mp-p6c-c)", self._rule(".mp-card.mp-p6c-colored"))
+		self.assertIn('el.style.setProperty("--mp-p6c-c", color);', self.js)
+		# What goes into --mp-color: a record's color only when it is a plain hex value, else an hsl()
+		# hashed from the user; big_picture's safe_paint guards Color by's.
+		body = self.js[self.js.index("tech_color(user) {") :]
+		body = body[: body.index("\n\t}")]
+		self.assertIn('mp_color(person.color, "")', body)
+		self.assertIn("return `hsl(${hash},55%,42%)`;", body)
+		self.assertIn("const mp_color = (value, fallback) => (/^#[0-9a-fA-F]{3,8}$/.test(", self.js)
+		self.assertIn("kit.big_picture.safe_paint(color, MP6C.none_color)", self.js)
+
+	def test_the_legends_draw_the_cards_own_classes(self):
+		"""Both legends painted a hex per kind: the toolbar's through jQuery .css(), the help's through
+		the kit's swatch. Each is the card's own kind class now, so the legend and the calendar cannot
+		drift apart, and both follow the theme."""
+		self.assertIn("$('<i class=\"mp-swatch\"></i>').addClass(kind)", self.js)
+		kinds = re.findall(
+			r'\["(mp-[a-z-]+)", __\("',
+			self.js[self.js.index('const $legend = $(\'<div class="mp-legend">') :][:1200],
+		)
+		self.assertEqual(
+			kinds,
+			[
+				"mp-seasonal",
+				"mp-extra",
+				"mp-pending",
+				"mp-done",
+				"mp-projected",
+				"mp-overdue",
+				"mp-bk-task",
+				"mp-bk-rental",
+				"mp-bk-travel",
+			],
+		)
+		for kind in kinds:
+			with self.subTest(kind=kind):
+				self.assertRegex(self.css, rf"\.mp-swatch\.{kind}\s*[,{{]")
+		self.assertNotIn("swatch(", self.js)
+		self.assertIn('`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">', self.js)
+		self.assertIn('<span class="mp-tech mp-p6a-sample-badge">AH</span>', self.js)
+
+	def test_the_printed_edges_read_the_tokens(self):
+		"""The print window takes a color value, so the default mode's edges are the palette tokens
+		behind the screen's, read through getComputedStyle; each fallback is the token's own value."""
+		values = dict(re.findall(r"(--sf-[a-z0-9-]+):\s*(#[0-9a-f]{6});", _css_code(_read(TOKENS))))
+		body = self.js[self.js.index("p6c_kind_color(card) {") :]
+		body = body[: body.index("\n\t},")]
+		reads = re.findall(r'mp_token_color\("(--sf-[a-z0-9-]+)", "(#[0-9a-f]{6})"\)', body)
+		self.assertEqual(
+			sorted({token for token, _ in reads}),
+			[
+				"--sf-bahama-blue",
+				"--sf-deep-sea-blue",
+				"--sf-fresh-blue",
+				"--sf-green",
+				"--sf-ink-500",
+				"--sf-red",
+				"--sf-teal",
+				"--sf-violet",
+				"--sf-yellow",
+			],
+		)
+		for token, fallback in reads:
+			with self.subTest(token=token):
+				self.assertEqual(fallback, values[token])
+		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", self.js)
+
+	def test_no_other_color_value_is_left_in_the_script(self):
+		"""What remains is data: Color by's "nobody" grey (the same kind of value as a technician's
+		color, and the Project Planner's), a technician's hashed hsl(), and the token reads' fallbacks."""
+		rest = re.sub(r'mp_token_color\("--sf-[a-z0-9-]+", "#[0-9a-f]{6}"\)', "", self.js)
+		for allowed in ('none_color: "#94a3b8",', "return `hsl(${hash},55%,42%)`;"):
+			self.assertIn(allowed, rest)
+			rest = rest.replace(allowed, "")
+		self.assertNotRegex(rest, r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![\w-])")
+		self.assertNotRegex(rest, r"\b(?:rgba?|hsla?)\(")
+
+	def test_nothing_but_a_width_or_a_data_color_is_inline(self):
+		"""The Unassigned row's cursor, the email frame's look and the Pencil legend's sample size
+		were inline styles; they are classes now. What stays inline is a width (data) or the data color."""
+		self.assertIn('<div class="mp-person mp-person-static">', self.js)
+		self.assertIn(
+			'<iframe class="mp-p5-frame" sandbox="" title="${mp_esc(__("Email preview"))}"></iframe>', self.js
+		)
+		self.assertIn('`<span class="mp-card mp-c1-sample ${classes}">', self.js)
+		for style in re.findall(r"style=\"([^\"]*)\"", self.js):
+			with self.subTest(style=style):
+				self.assertRegex(
+					style,
+					r"^(?:--mp-color: \$\{mp_esc\(|width:\$\{width\}%|left:\$\{width\}%;width:\$\{soft\}%|font-family:sans-serif)",
+				)
+		self.assertIn("background: var(--sf-white)", self._rule(".mp-p5-frame"))
+
+	def test_warn_text_is_the_mix_never_yellow(self):
+		"""Plain yellow is 1.7:1 on white: warn as text, or as a thin edge that stands alone, is mixed
+		with --sf-text-strong."""
+		mix = "color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong))"
+		checked = 0
+		for prop, value in _declarations(self.css):
+			if prop in ("color", "outline") and "--sf-warn" in value:
+				checked += 1
+				with self.subTest(prop=prop, value=value):
+					self.assertIn(mix, value)
+		# A day's "Full" in the picked technician's head, and the team strip's amber day.
+		self.assertGreaterEqual(checked, 2)
+		self.assertIn(mix, self._rule(".mp-card.mp-seasonal"))
+
+	def test_status_text_is_mixed_with_the_strong_text(self):
+		"""Danger and good as text are mixed too, so they read on a white card and a navy one. (A
+		day's free hours were #15803d, "Over" and a red day #b91c1c.)"""
+		checked = 0
+		for prop, value in _declarations(self.css):
+			if prop == "color" and re.search(r"--sf-(?:danger|good)\b", value):
+				checked += 1
+				with self.subTest(value=value):
+					self.assertRegex(
+						value,
+						r"^color-mix\(in srgb, var\(--sf-(?:danger|good)\) 50%, var\(--sf-text-strong\)\)$",
+					)
+		# A red day's text, a red chip, a free day, an over day, the strip's red day, the hot button.
+		self.assertGreaterEqual(checked, 6)
+
+	def test_a_visit_is_on_the_service_edge_and_a_booking_on_its_pillars(self):
+		self.assertIn("border-left: 4px solid var(--sf-chip-edge-service)", self._rule(".mp-card"))
+		self.assertIn("var(--sf-chip-edge-service)", self._rule(".mp-card.mp-projected.mp-movable"))
+		for kind, edge in (("task", "build"), ("rental", "rent"), ("travel", "neutral")):
+			with self.subTest(kind=kind):
+				self.assertIn(f"var(--sf-chip-edge-{edge})", self._rule(f".mp-card.mp-booking.mp-bk-{kind}"))
+
+	def test_focused_fields_keep_their_own_rule(self):
+		"""Bootstrap's .form-control:focus (0,2,0) outranks a plain field rule; the toolbar's fields
+		(the technician filter, the search, Color by) answer it with a focused rule of their own."""
+		self.assertRegex(
+			self.css, r"\.mp-wrap \.mp-toolbar \.form-control:focus\s*\{\s*border-color: var\(--sf-focus\);"
+		)
+		body = self._rule(".mp-wrap .mp-toolbar .form-control")
+		self.assertIn("background-color: var(--sf-field-bg)", body)
+		self.assertIn("color: var(--sf-field-text)", body)
+		phone = self.css[self.css.index("@media (max-width: 767px)") :]
+		self.assertRegex(
+			phone, r"\.mp-wrap \.mp-toolbar \.form-control \{\s*font-size: var\(--sf-text-input\);"
+		)
+
+	def test_touch_targets_are_44px(self):
+		coarse = self._coarse()
+		heights = re.findall(r"min-(?:height|width):\s*([^;]+);", coarse)
+		self.assertGreaterEqual(heights.count("var(--sf-touch-min)"), 8)
+		# 64px is the move bar's button width; 32px a month day number's (a tall, narrow target).
+		self.assertEqual([h for h in heights if h not in ("var(--sf-touch-min)", "64px", "32px")], [])
+		for selector in (
+			".mp-toolbar .btn",
+			".mp-seg button",
+			".mp-week .mp-card",
+			".mp-day-num",
+			".mp-p6c-sday",
+		):
+			with self.subTest(selector=selector):
+				self.assertIn(selector, coarse)
+		month = re.search(r"\.mp-month \.mp-day-num \{([^}]*)\}", coarse)
+		self.assertIsNotNone(month)
+		self.assertIn("min-width: 32px", month.group(1))
+
+	def test_the_sticky_headings_stop_on_a_phone(self):
+		"""They were a min-width: 761px block. They are written for every width now and switched off
+		at the one phone breakpoint, so a phone still scrolls the page as before."""
+		self.assertNotIn("min-width: 761px", self.css)
+		self.assertIn("position: sticky", self._rule(".mp-crew-view .mp-crew-head"))
+		phones = re.findall(r"@media \(max-width: 767px\) \{(.*?)\n\}", self.css, flags=re.S)
+		reset = [block for block in phones if ".mp-crew-view .mp-crew-head" in block]
+		self.assertEqual(len(reset), 1)
+		self.assertIn("position: static", reset[0])
+		self.assertIn("max-height: none", reset[0])
+		# The 1024px overflow-x: clip applies at every width (clip makes no scroll container).
+		self.assertIn("overflow-x: clip", self._rule(".mp-wrap"))
+
+	def test_the_s3_6_focus_ring_moved_with_the_css(self):
+		self.assertRegex(
+			self.css,
+			r"\.mp-day-num:focus-visible,\s*\.mp-crew-head:focus-visible,\s*\.mp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
+		)
+		# And the S3.6 markup it rings is still there.
+		self.assertIn('$(\'<span class="mp-day-num" role="button" tabindex="0"></span>\')', self.js)
+		self.assertIn('role="button" tabindex="0" data-week=', self.js)
+
+	def test_a_highlight_is_a_tint_never_a_ring(self):
+		body = self._rule(".mp-p6c-on .mp-card.mp-p6c-hi")
+		self.assertNotIn("outline", body)
+		self.assertIn("color-mix(in srgb, var(--sf-focus)", body)
+
+	def test_keyboard_focus_on_a_card_is_never_hidden_by_its_state(self):
+		"""A card's state is its outline; keyboard focus is a ring on ::after, so a selected, moving,
+		drafted or targeted card shows both. No card rule puts focus on the outline, and nothing else
+		draws a card's ::after."""
+		for selector in (
+			".mp-card.mp-p6b-selected",
+			".mp-card.mp-p6c-moving",
+			".mp-card.mp-drafted",
+			".mp-card.mp-over",
+		):
+			with self.subTest(selector=selector):
+				self.assertIn("outline:", self._rule(selector))
+		ring = self._rule(".mp-card:focus-visible::after")
+		self.assertIn('content: ""', ring)
+		self.assertIn("border: 2px solid var(--sf-focus)", ring)
+		self.assertIn("pointer-events: none", ring)
+		self.assertIn("position: relative", self._rule(".mp-card"))
+		# The drop target used to come before `.mp-card:focus { outline: none }` and lose to it.
+		self.assertLess(self.css.index(".mp-card:focus {"), self.css.index(".mp-card.mp-over {"))
+		for prelude, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css):
+			if ".mp-card" not in prelude:
+				continue
+			for selector in prelude.split(","):
+				selector = selector.strip()
+				if ":focus-visible" in selector and "::after" not in selector:
+					with self.subTest(selector=selector):
+						self.assertNotIn("outline", body)
+				if selector.endswith("::after"):
+					with self.subTest(selector=selector):
+						self.assertEqual(selector, ".mp-card:focus-visible::after")
+
+	def test_a_month_cell_says_its_load(self):
+		self.assertIn('state.text ? `<span class="mp-sr">${mp_esc(state.text)}</span>` : ""', self.js)
+		self.assertIn("clip: rect(0, 0, 0, 0)", self._rule(".mp-sr"))
+
+	def test_every_rule_styles_something_the_page_draws(self):
+		"""A rule for a class nothing draws any more is a rename on one side only."""
+		drawn = set(re.findall(r"(?<![\w-])(mp-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
+		styled = set(re.findall(r"\.(mp-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
+		self.assertTrue(styled)
+		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
+
+	def test_its_prefix_is_its_own(self):
+		"""This page's CSS is global for the session; nothing else in the app may style mp-."""
+		selector = re.compile(r"(?<![\w-])\.mp-[a-z]")
+		found = []
+		for path in APP.rglob("*"):
+			if path.suffix not in (".css", ".scss", ".js", ".html") or "tests" in path.parts:
+				continue
+			if path.parent == self.FOLDER or "node_modules" in path.parts:
+				continue
+			text = _read(path)
+			code = _css_code(text) if path.suffix in (".css", ".scss") else _js_code(text)
+			if selector.search(code):
+				found.append(str(path.relative_to(APP)))
+		self.assertEqual(found, [])
+
+
+KIT_CSS = APP / "public" / "css" / "planner_kit.bundle.css"
+KIT_DIR = APP / "public" / "js" / "planner_kit"
+KIT_BUNDLE = APP / "public" / "js" / "planner_kit.bundle.js"
+
+
+class TestPlannerKitStylesheet(unittest.TestCase):
+	"""S3.4e (v1.673.0). planner_kit's stylesheet was three JS template strings (styles.js's CSS,
+	conflicts.js's CONFLICTS_CSS, blocks.js's BLOCKS_CSS) the kit wrote into <style id="pk-style">,
+	in Frappe's palette with literal hex, 8 shadows and no touch sizes. It is a real bundle now, on
+	the tokens, which the kit's one <style> element @imports by its hashed path."""
+
+	@classmethod
+	def setUpClass(cls):
+		cls.raw = _read(KIT_CSS) if KIT_CSS.exists() else ""
+		cls.css = _css_code(cls.raw)
+		cls.tokens = _defined_tokens()
+
+	def test_it_is_a_bundle_on_the_tokens(self):
+		self.assertTrue(self.css, "public/css/planner_kit.bundle.css is missing or empty")
+		used = set(re.findall(r"var\(\s*(--sf-[a-z0-9-]+)", self.css))
+		self.assertTrue(used)
+		self.assertEqual(sorted(used - self.tokens), [], "not defined in sf_tokens.bundle.css")
+		# The one other variable it reads is the drawer's width, which drawer.js sets.
+		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
+		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--pk-w"])
+
+	def test_no_literal_or_frappe_colors(self):
+		self.assertTrue(self.css)
+		for body in _bodies(self.css):
+			with self.subTest(block=body.strip()[:60]):
+				self.assertNotRegex(body, r"#[0-9a-fA-F]{3,8}\b")
+				self.assertNotRegex(body, r"(?i)\b(?:rgba?|hsla?)\(")
+				self.assertNotRegex(body, FRAPPE_PALETTE)
+		for prop, value in _declarations(self.css):
+			if prop == "content":
+				continue
+			with self.subTest(declaration=f"{prop}: {value}"):
+				self.assertNotRegex(value, NAMED_COLOURS)
+
+	def test_every_selector_is_the_kits(self):
+		selectors = _selectors(self.css)
+		self.assertTrue(selectors)
+		for selector in selectors:
+			with self.subTest(selector=selector):
+				self.assertRegex(_first_compound(selector), r"\.pk-[\w-]+")
+		for frames in re.findall(r"@keyframes\s+([\w-]+)", self.css):
+			with self.subTest(keyframes=frames):
+				self.assertTrue(frames.startswith("pk-"))
+
+	def test_square_no_shadows_one_breakpoint(self):
+		self.assertTrue(self.css)
+		self.assertNotIn("shadow", self.css)
+		self.assertEqual([prop for prop, _ in _declarations(self.css) if prop.startswith("--")], [])
+		for prop, value in _declarations(self.css):
+			if prop.startswith("border") and "radius" in prop:
+				for part in re.findall(r"var\([^)]*\)|\S+", value):
+					with self.subTest(value=value):
+						self.assertTrue(part == "0" or part.startswith("var(--sf-radius-"))
+		widths = re.findall(r"@media[^{]*\((?:max|min)-width\s*:\s*([^)]+)\)", self.css)
+		self.assertEqual(set(widths), {"767px"})
+
+	def test_touch_and_motion(self):
+		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
+		self.assertIsNotNone(coarse)
+		for selector in (".pk-drawer-close", ".pk-menu-item", ".pk-cc-person"):
+			with self.subTest(selector=selector):
+				self.assertIn(selector, coarse.group(1))
+		self.assertIn("min-height: var(--sf-touch-min)", coarse.group(1))
+		reduced = re.search(r"@media \(prefers-reduced-motion: reduce\) \{(.*?)\n\}", self.css, flags=re.S)
+		self.assertIsNotNone(reduced)
+		self.assertIn(".pk-drawer.pk-open", reduced.group(1))
+		self.assertIn("animation: none", reduced.group(1))
+
+	def test_the_hover_glow_is_a_tint_not_a_ring(self):
+		"""pk-glow lands on cards whose outline is their state, and on badges painted with a person's
+		color: it is laid over them as a tint."""
+		body = re.search(r"(?m)^\.pk-glow \{([^}]*)\}", self.css)
+		self.assertIsNotNone(body)
+		self.assertIn("background-image: linear-gradient(", body.group(1))
+		self.assertNotIn("outline", body.group(1))
+
+	def test_its_sections_keep_the_order_the_strings_were_joined_in(self):
+		"""The bundle wrote CSS + CONFLICTS_CSS + BLOCKS_CSS; equal-specificity kit rules resolve as
+		before only if the sections keep that order."""
+		order = [
+			self.raw.index(tag)
+			for tag in ("(styles.js CSS)", "(conflicts.js CONFLICTS_CSS)", "(blocks.js BLOCKS_CSS)")
+		]
+		self.assertEqual(order, sorted(order))
+
+	def test_the_comments_are_well_formed(self):
+		self.assertTrue(self.raw)
+		for body in re.findall(r"/\*(.*?)\*/", self.raw, flags=re.S):
+			with self.subTest(comment=body.strip()[:60]):
+				self.assertNotIn("/*", body)
+		self.assertNotIn("*/", self.css)
+
+	def test_the_three_modules_carry_no_css(self):
+		for name in ("styles", "conflicts", "blocks"):
+			text = _read(KIT_DIR / f"{name}.js")
+			with self.subTest(module=name):
+				self.assertNotRegex(
+					text, r"`[^`]*\.pk-[\w-]+[^`]*\{[^`]*`", "a stylesheet in a template string"
+				)
+		self.assertIn('export const CONFLICTS_CSS = "";', _read(KIT_DIR / "conflicts.js"))
+		self.assertIn('export const BLOCKS_CSS = "";', _read(KIT_DIR / "blocks.js"))
+
+	def test_the_kit_imports_the_hashed_bundle_where_its_style_was(self):
+		"""The kit's one <style id="pk-style"> now holds an @import of the bundle, resolved the way
+		frappe.require resolves a name (frappe.assets.bundled_asset, i.e. boot.assets_json), so the
+		file is content-hashed and its rules sit where the injected text did: after the planner
+		page's own stylesheet. The empty CONFLICTS_CSS and BLOCKS_CSS keep the @import first."""
+		styles = _js_code(_read(KIT_DIR / "styles.js"))
+		self.assertIn('export const CSS_BUNDLE = "planner_kit.bundle.css";', styles)
+		self.assertIn("assets.bundled_asset(CSS_BUNDLE)", styles)
+		self.assertIn('return `@import url("${path}");`;', styles)
+		self.assertIn('!path.startsWith("/assets/")', styles)
+		self.assertIn(
+			'export const CSS = stylesheet_import(typeof window !== "undefined" ? window.frappe : null);',
+			styles,
+		)
+		bundle = _read(KIT_BUNDLE)
+		self.assertIn('import { CSS, STYLE_ID } from "./planner_kit/styles.js";', bundle)
+		self.assertIn("style.textContent = CSS + conflicts.CONFLICTS_CSS + blocks.BLOCKS_CSS;", bundle)
+		# Loaded only by the kit, never on every Desk page.
+		self.assertNotIn("planner_kit.bundle.css", _read(APP / "hooks.py"))
 
 
 class TestThisSuiteRunsInCi(unittest.TestCase):

@@ -1083,7 +1083,10 @@ node, drives the kit's history handling against a fake browser history.
 planner pages share, and that Phases 6B–6D build on. A content-hashed esbuild bundle (raw `/assets`
 paths are cached for a year), loaded only by the two planner pages with
 `frappe.require("planner_kit.bundle.js", callback)`, and deliberately **not** in `app_include_js`.
-It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
+Its stylesheet is a bundle of its own, `public/css/planner_kit.bundle.css` (custom pages S3.4e,
+v1.673.0), on the `--sf-*` tokens: the kit's one `<style id="pk-style">` holds an `@import` of its
+hashed path (`planner_kit/styles.js`), so a page needs only the one require, and the kit's rules
+still come after the page's own stylesheet, as the injected text did. It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
 
 | Part | Use | Notes |
 |---|---|---|

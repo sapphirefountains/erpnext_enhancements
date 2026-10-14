@@ -1025,11 +1025,17 @@ class TestKitFiles(unittest.TestCase):
 		self.assertIn("frappe.route_flags.replace_route = true", bundle)
 
 	def test_the_kit_never_publishes_a_frappe_global_and_its_styles_are_namespaced(self):
-		css = (KIT_DIR / "styles.js").read_text(encoding="utf-8")
-		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css.split("export const CSS = `")[1]))
+		# The kit's CSS is a bundle of its own, public/css/planner_kit.bundle.css (S3.4e, v1.673.0);
+		# styles.js only resolves its hashed path, and writes no rule.
+		raw = (APP / "public/css/planner_kit.bundle.css").read_text(encoding="utf-8")
+		css = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
 		self.assertTrue(classes)
 		self.assertEqual({c for c in classes if not c.startswith("pk-")}, {"form-layout", "frappe-control"})
-		self.assertIn("@media (max-width:767px)", css)
+		self.assertIn("@media (max-width: 767px)", css)
+		self.assertNotIn(
+			"{", (KIT_DIR / "styles.js").read_text(encoding="utf-8").split("export const CSS =")[1]
+		)
 		for path in KIT_DIR.glob("*.js"):
 			text = path.read_text(encoding="utf-8")
 			self.assertNotIn("\r", text, path.name)
@@ -1186,24 +1192,20 @@ class TestPages(unittest.TestCase):
 			self.assertIn("kit.legend(", block)
 			self.assertIn("kit.hint(key, __(text), {", block)
 			self.assertIn(f'class="btn btn-default btn-sm {prefix}-p6a-help">?</button>', block)
-			if prefix == "pp":
-				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
-				# section of it, from its banner to the next.
-				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
-				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6A_STYLE).")))
-				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertRegex(
-					style, r"\.pp-crew-view \.pp-crew-head,[^{]*\{\s*position: sticky;\s*top: 0;"
-				)
-				self.assertRegex(style, r"\.pp-week \.pp-grid \{\s*max-height:")
-				# planner_kit's timeline bar takes the task's color from the page (--pp-color).
-				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}
-			else:
-				self.assertIn(f".{prefix}-crew-view .{prefix}-crew-head", block)
-				self.assertIn("position:sticky;top:0", block)
-				self.assertIn(f".{prefix}-week .{prefix}-grid{{max-height:", block)
-				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
-				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner
+			# to the next.
+			js = PP_JS if prefix == "pp" else MP_JS
+			raw = js.with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({prefix.upper()}6A_STYLE).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
+			self.assertRegex(
+				style, rf"\.{prefix}-crew-view \.{prefix}-crew-head,[^{{]*\{{\s*position: sticky;\s*top: 0;"
+			)
+			self.assertRegex(style, rf"\.{prefix}-week \.{prefix}-grid \{{\s*max-height:")
+			# planner_kit's timeline bar takes the task's color from the Project Planner (--pp-color).
+			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}
 			self.assertEqual({c for c in classes if not c.startswith(f"{prefix}-")}, set(), classes)
 		self.assertIn('kit.hover_glow(this.$body[0], "project")', self.pp_block)
 		self.assertIn('el.setAttribute("data-pk-projects"', self.pp_block)
@@ -1558,6 +1560,53 @@ class TestKitUnderNode(unittest.TestCase):
 		if result.returncode != 0:
 			raise AssertionError(result.stderr)
 		cls.out = json.loads(result.stdout)
+
+	def test_the_stylesheet_is_imported_by_its_hashed_path_or_not_at_all(self):
+		"""S3.4e (v1.673.0): styles.js's CSS is one @import of public/css/planner_kit.bundle.css, by
+		the content-hashed path frappe.assets.bundled_asset gives (boot.assets_json). With no Desk, a
+		name the build does not know, a lookup that throws or a path that could end url() early, it is
+		"" and the kit draws unstyled rather than failing."""
+		source = re.sub(
+			r"^export (const|function) ",
+			r"\1 ",
+			(KIT_DIR / "styles.js").read_text(encoding="utf-8"),
+			flags=re.M,
+		)
+		harness = """
+const fs = require("fs");
+const vm = require("vm");
+const ctx = {};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + "\\nthis.kit = { CSS, CSS_BUNDLE, stylesheet_import };", ctx);
+const k = ctx.kit;
+const hashed = "/assets/erpnext_enhancements/dist/css/planner_kit.bundle.ABC123.css";
+const map = (path) => ({ assets: { bundled_asset: (name) => (name === k.CSS_BUNDLE ? path : name) } });
+console.log(JSON.stringify({
+	css: k.CSS,
+	hashed: k.stylesheet_import(map(hashed)),
+	boot_only: k.stylesheet_import({ boot: { assets_json: { "planner_kit.bundle.css": hashed } } }),
+	unbuilt: k.stylesheet_import({ assets: { bundled_asset: (name) => name } }),
+	none: k.stylesheet_import(null),
+	throws: k.stylesheet_import({ assets: { bundled_asset: () => { throw new Error("x"); } } }),
+	quote: k.stylesheet_import(map('/assets/x.css"); body{x:1'))
+}));
+"""
+		result = subprocess.run(
+			[self.node, "-e", harness],
+			input=source,
+			capture_output=True,
+			text=True,
+			encoding="utf-8",
+			timeout=60,
+		)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		out = json.loads(result.stdout)
+		expected = '@import url("/assets/erpnext_enhancements/dist/css/planner_kit.bundle.ABC123.css");'
+		self.assertEqual(out["hashed"], expected)
+		self.assertEqual(out["boot_only"], expected)
+		for key in ("css", "unbuilt", "none", "throws", "quote"):
+			with self.subTest(case=key):
+				self.assertEqual(out[key], "")
 
 	def test_the_javascript_parses(self):
 		for path in [*sorted(KIT_DIR.glob("*.js")), BUNDLE, PP_JS, MP_JS]:

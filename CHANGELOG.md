@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.673.0] - 2026-10-14
+
+### Changed
+
+- **The Maintenance Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4e, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Dragging, tap to move, the calendar and crew geometry, the quick looks, Color by, the
+  Conflict center and every keyboard path work as before, and the S3.6 labels on ‹ › ↻, the
+  `role=button` day numbers and crew date heads, their focus rings and the focus move to the title
+  are kept.
+  - **CSS out of the script.** Seven `<style>` elements the script wrote into `<head>` (`MP_STYLE`,
+    `MP6A_STYLE` ... `MPC1_STYLE`) are now `maintenance_planner.css` beside the page, which Frappe's
+    page loader sends with the page. One section per phase, in the order the script injected them,
+    so the cascade between them is unchanged. Every selector starts with an `mp-` class, which
+    nothing else in the app styles.
+  - **Data colors stay data.** A technician's color (their dot and initials) and a Color-by key's
+    swatch go in only as `style="--mp-color: ${mp_esc(...)}"` (a plain hex from the record or an
+    `hsl()` hashed from the user); Color by keeps `--mp-p6c-c`. No other color is written inline: the
+    email preview's frame, the Unassigned row and the Pencil legend's samples are classes now.
+  - **On the tokens.** Every Frappe variable and literal color became an `--sf-*` token. A visit's
+    edge says its kind: a scheduled visit (and a contract's next one) is on the Service pillar's
+    edge (it was blue), a seasonal one the warn mix (amber), one pending review the warn fill on a
+    warn tint (dark yellow), an extra visit or follow-up violet, a done one green, an overdue one
+    danger, a projected one a dashed muted edge (slate). The read-only bookings take their pillar's
+    chip edge on a tint: a project task Build (it was teal), a rental Rent (amber), travel Neutral
+    (gray). Status as text (a red day, "Full", a free day's hours) is the token mixed half and half
+    with `--sf-text-strong`, never plain yellow. The hint under the calendar now names the bookings
+    by their chips rather than their colors.
+  - **The legends draw the cards.** The toolbar legend painted each swatch with jQuery `.css()` and
+    a hex; it now gives the swatch the card's own kind class. The help legend's visit samples are
+    real cards (`.mp-card` with the kind's class), and its initials samples are classes, so both
+    legends follow the theme and cannot drift from the calendar.
+  - **Printed cards read the tokens.** The printed page takes color values, so `p6c_kind_color`
+    reads the palette tokens behind the screen's edges through `getComputedStyle`, each with the
+    token's own value as its fallback. The old `booking_colors` table is gone.
+  - **Shape.** Sections, grids, cards, trays and bars are square, with no shadows (there were 11):
+    a conflict is an inset danger ring, a drop target an outline, the lead technician's ring an
+    outline in `--sf-text-strong`, a card a search jumped to blinks its focus ring, a highlighted
+    card (Color by) is a tint, and the selection bar, the move bar and the Draft bar have a 2px edge.
+    Keyboard focus on a card is a ring on `::after`, so a selected, moving, drafted or targeted card
+    shows its state and its focus at once; the drop-target rule now comes after `.mp-card:focus`,
+    which used to cancel it on a focused card. The view switch, toggles and the move-by switch round
+    at `--sf-radius-control`; chips and today's number are pills. The move-by switch's chosen unit
+    is the primary fill (it was violet), as on the Project Planner.
+  - **Fields.** The toolbar's technician filter, search and Color by are white, square and edged in
+    both themes, with their own focused rule (Bootstrap's `.form-control:focus` is (0,2,0)); 16px on
+    a phone.
+  - **Touch and phones.** On a touch screen the toolbar's controls, the cards in the week, crew and
+    tray, the day numbers, the team strip and the move bar's buttons are 44px (they were 32 to
+    40px); a month cell's day number keeps 44px of height and is 32px wide. The 760px blocks are the
+    app's one phone width, 767px; the sticky headings (a `min-width: 761px` block) are written for
+    every width and switched off at 767px; the 1024px `overflow-x: clip` applies at every width; the
+    move bar sits above a phone's safe area.
+- **planner_kit's stylesheet is a real bundle on the tokens**, `public/css/planner_kit.bundle.css`
+  (both planners' drawer, side panel, toast, menu, hints, hover glow, legend, quick looks,
+  timeline, Conflict center, personal blocks and day notes). It was three template strings,
+  `styles.js`'s `CSS`, `conflicts.js`'s `CONFLICTS_CSS` and `blocks.js`'s `BLOCKS_CSS`, injected
+  into `<style id="pk-style">` with literal hex, Frappe variables and 8 shadows.
+  - **How it loads, and why the cascade is unchanged.** `planner_kit.bundle.js` still writes its
+    one `<style id="pk-style">` from `CSS + CONFLICTS_CSS + BLOCKS_CSS`, untouched. `CSS` is now a
+    single `@import` of the bundle's content-hashed path, which `styles.js` resolves through
+    `frappe.assets.bundled_asset` (the lookup `frappe.require` makes, so an edit is never served
+    stale), and the other two are empty, so the import stays the sheet's first rule. The kit's rules
+    therefore sit exactly where the injected text did: after the planner page's stylesheet, which
+    Frappe appended when the page loaded. Equal-specificity pairs across the two resolve as before
+    in both directions (`.pk-tl-bar.pp-tl-colored` against `.pk-tl-bar.pk-tl-pencil` and
+    `.pk-tl-over`; `.pp-p6d-mw .pk-block` against `.pk-block.pk-block-compact`). It is not a second
+    `frappe.require`: that freezes the screen until every file has loaded, so a slow or missing
+    stylesheet would hold the freeze over the planner. If the name is not in the build, the kit
+    draws unstyled and nothing throws.
+  - **The look.** Square drawer, menu, columns, timeline and conflict cards; the drawer and the
+    menu have an edge instead of a drop shadow; the toast is sf_kit's (inverted, with a status
+    edge); the hover glow is a focus tint laid over a card or a badge rather than a ring, so it
+    never hides a card's state outline or a person's color; a late timeline bar is a danger ring; a
+    day with a conflict has a danger bar on its left (an inset shadow before). A booking in a quick
+    look takes its pillar's chip edge, as on the planners. A stop's number is the route view's
+    bahama-blue. The drawer's close button, menu items, a hint's Got it, a person's day head and the
+    Conflict center's people are 44px on a touch screen, and the drawer stops sliding in under
+    `prefers-reduced-motion`.
+- **Fixes on the way.** An off technician's initials were meant to be faded *and striped*; the
+  inline `background:` that painted their color also painted over the stripes, which never showed.
+  The color is a custom property now and the stripes draw. A month cell's load, a tint and nothing
+  else on screen, is read aloud. Two rules for classes nothing draws (`mp-avail-row`,
+  `mp-cap-row`) are gone.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Maintenance Planner with every shared check, and a new
+  `TestMaintenancePlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--mp-color` and the CSS paints them; a
+  technician's color is a plain hex or its hashed `hsl()`; both legends draw the cards' own classes;
+  the printed edges read the tokens, each fallback the token's own value; no other color value is
+  left in the script; nothing but a width or a data color is inline; warn, danger and good text are
+  the mix; a visit is on the Service edge and a booking on its pillar's; focused fields keep their
+  own rule; touch targets are 44px; the sticky headings stop at 767px; the S3.6 ring moved with the
+  CSS; a highlight is a tint; keyboard focus on a card is never hidden by its state; a month cell
+  says its load; every rule styles a class the page draws; and no other file styles `mp-`. The
+  inline-color allowance takes `--mp-color: ${mp_esc(...)}` beside `--pp-color: ${pp_esc(...)}` and
+  nothing crossed or raw.
+- A new `TestPlannerKitStylesheet` holds `planner_kit.bundle.css` to the same rules (tokens only, no
+  literal, named or Frappe color, every selector `pk-`, square, no shadow, one 767px breakpoint,
+  44px touch, reduced motion, a tint for the glow, sections in the old join order, well-formed
+  comments), the three modules to carrying no CSS, and `styles.js` to importing the hashed bundle
+  where the old style element was. `test_planner_phase6a` runs `stylesheet_import` under node: the
+  hashed path through `bundled_asset` or `boot.assets_json`, and `""` with no Desk, an unbuilt name,
+  a throwing lookup or a path that could end `url()` early.
+- Run against the pre-change files, every new Maintenance Planner and planner_kit check fails except
+  the one that no other file styles `mp-`, which holds a fact about the repo.
+- The planner suites that read `MP*_STYLE` from the script (`test_planner_phase6a`, `6b`, `6c`,
+  `6d_ui`, `6e`, `test_maintenance_planner_crews_page`) read their section of
+  `maintenance_planner.css`; `test_s3_6_accessibility` reads the Maintenance Planner's focus ring
+  from it; `6a` and `6d_ui` read the kit's rules from the bundle.
+
 ## [1.669.0] - 2026-10-14
 
 Form kit P3.1 and the server half of P3.2 (ERPNext TASK-2026-02754 and TASK-2026-02755): one
