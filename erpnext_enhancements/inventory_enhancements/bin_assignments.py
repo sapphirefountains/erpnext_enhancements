@@ -844,7 +844,17 @@ def create_and_assign(warehouse, client_ref, item_code=None, item_name=None, ite
 	)
 	scan._check_quick_item(spec)
 
-	created = scan._quick_item(spec, location)
+	try:
+		created = scan._quick_item(spec, location)
+	except frappe.DuplicateEntryError:
+		# A retry with this client_ref sent while the first attempt is still mid-request: its Item
+		# insert waited on the first one's primary key and lost. That attempt is about to commit, so
+		# this is the same answer _begin_log gives a duplicate log row (HTTP 409): the page keeps the
+		# SAME reference, and the next tap gets the first save back from _already_saved.
+		frappe.throw(
+			_("This save is still being recorded. Wait a moment, then try again."),
+			frappe.DuplicateEntryError,
+		)
 	item = _item(created.name)
 	log = scan._begin_log(ref, rules.ACTION_ASSIGN, item, 0, location, created_item=1, needs_review=1)
 	rule, change = _ensure(item, location)

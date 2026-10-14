@@ -88,7 +88,8 @@ function location_of(warehouse) {
 
 // ------------------------------------------------------------------ the server
 
-function makeServer() {
+function makeServer(options) {
+	const fixture = options || {};
 	const server = {
 		calls: [],
 		fail: new Map(), // method -> error object (rejects once per entry in a list, else always)
@@ -106,8 +107,12 @@ function makeServer() {
 				if (Array.isArray(failure) && !failure.length) server.fail.delete(name);
 				if (err) return Promise.reject(err);
 			}
-			if (name === "manager_boot") return JSON.parse(JSON.stringify(BOOT));
-			if (name === "get_location") return location_of(args.warehouse);
+			if (name === "manager_boot") return JSON.parse(JSON.stringify(fixture.boot || BOOT));
+			if (name === "get_location") {
+				const loc = location_of(args.warehouse);
+				if (fixture.items) loc.items = JSON.parse(JSON.stringify(fixture.items));
+				return loc;
+			}
 			if (name === "get_recent") return [];
 			if (name === "search_items") return [{ item_code: "PDT-0009", item_name: "VALVE", is_stock_item: 1, on_hand_here: 0 }];
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
@@ -564,8 +569,8 @@ function makeJQuery(registry) {
 	return (html) => element(html);
 }
 
-function loadPage() {
-	const server = makeServer();
+function loadPage(options) {
+	const server = makeServer(options);
 	const world = makeWorld(server);
 	const registry = { dialogs: [], requires: [] };
 	const $ = makeJQuery(registry);
@@ -624,7 +629,11 @@ function loadPage() {
 			make_app_page: () => ({ main: $("<div>"), set_secondary_action: () => {}, set_title: (t) => (registry.title = t) }),
 			Dialog,
 		},
-		utils: { escape_html: (s) => String(s) },
+		// frappe.utils.escape_html, as v16 writes it: the five characters, & first.
+		utils: {
+			escape_html: (s) =>
+				String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
+		},
 		datetime: { comment_when: () => "just now" },
 	};
 	const esc = (v) =>
@@ -748,6 +757,113 @@ test("the real page: loads its bundles, a bin click is one entry, a dialog is no
 	world.back();
 	await settle();
 	check("Back: picker", page.bin_manager.ctl.state.target, { screen: "picker" });
+});
+
+// Review fix 1: production has 221 bins, and the Move list shows the first 30 that match. A bin
+// clicked after filtering must be found in the whole list, not in the first 30 of an empty filter.
+const MANY = [];
+for (let n = 1; n <= 60; n++) {
+	const id = String(n).padStart(2, "0");
+	MANY.push({ warehouse: `Rack D2-${id} - SF`, warehouse_name: `Rack D2-${id}`, trail: "Row D", on_hand_items: 0, assigned_items: 0, is_boneyard: false });
+}
+const MANY_BOOT = Object.assign({}, BOOT, { bins: BOOT.bins.concat(MANY) });
+
+test("Move picks a bin past the first 30 after filtering (the dialog and the Unassign path)", async () => {
+	const { server, world, registry, click } = loadPage({ boot: MANY_BOOT });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	check("the controller finds bin 45 in the full list", !!registry.root && logic.destinations(MANY_BOOT.bins, BIN_A, "").length, 30);
+	for (const via of ["move", "unassign"]) {
+		click({ "data-act": via, "data-item": "PDT-0001" });
+		let m = registry.dialogs.pop();
+		if (via === "unassign") {
+			const next = m.fields_dict.bm_text.$wrapper.__state.handlers.find((h) => h.selector === "[data-bm-next]");
+			next.fn({ currentTarget: { getAttribute: () => "move" } });
+			m = registry.dialogs.pop();
+		}
+		m.values.dest_search = "D2-4";
+		m.fields_dict.dest_search.$input.__state.handlers.find((h) => h.evt === "input").fn();
+		check(`${via}: the filtered list shows bin 45`, /data-bm-dest="Rack D2-45 - SF"/.test(m.fields_dict.dest_list.$wrapper.__state.html), true);
+		const pick = m.fields_dict.dest_list.$wrapper.__state.handlers.find((h) => h.selector === "[data-bm-dest]");
+		pick.fn({ currentTarget: { getAttribute: () => "Rack D2-45 - SF" } });
+		check(`${via}: chosen`, /Moving to/.test(m.fields_dict.dest_list.$wrapper.__state.html), true);
+		check(`${via}: make-home names it`, m.props["make_home.label"], "Make Rack D2-45 this item's bin");
+		m.opts.primary_action();
+		await settle();
+		const move = server.writes().pop();
+		check(`${via}: move_to bin 45`, [move.method.split(".").pop(), move.args.to_warehouse], ["move_to", "Rack D2-45 - SF"]);
+		check(`${via}: closed`, m.shown, false);
+	}
+});
+
+test("Keep on this bin keeps its reference after a dropped reply, and mints a new one after", async () => {
+	const { server, world, ctl } = makeController();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const row = ctl.state.location.items[1];
+	server.fail.set("assign", [{ status: 0, message: "Could not reach the server." }]);
+	const err = await ctl.quick("keep", row, {}).catch((e) => e);
+	check("dropped reply keeps the ref", err.keep_ref, true);
+	const first = server.calls.filter((c) => c.method.endsWith(".assign")).pop().args.client_ref;
+	await ctl.quick("keep", row, {});
+	const second = server.calls.filter((c) => c.method.endsWith(".assign")).pop().args.client_ref;
+	check("the retry sends the SAME reference", second, first);
+	await ctl.quick("keep", row, {});
+	const third = server.calls.filter((c) => c.method.endsWith(".assign")).pop().args.client_ref;
+	check("a new save after a landed one gets a new reference", third !== second, true);
+	server.fail.set("assign", [{ status: 417, message: "Refused." }]);
+	await ctl.quick("keep", row, {}).catch(() => null);
+	const refused = server.calls.filter((c) => c.method.endsWith(".assign")).pop().args.client_ref;
+	await ctl.quick("keep", row, {});
+	const after = server.calls.filter((c) => c.method.endsWith(".assign")).pop().args.client_ref;
+	check("a refusal frees the reference", after !== refused, true);
+	check("one item's ref is not another's", (await ctl.quick("keep", ctl.state.location.items[0], {})) && true, true);
+});
+
+test("the real page: Keep on this bin retried after a dropped reply sends the same reference", async () => {
+	const { server, world, click } = loadPage();
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	server.fail.set("assign", [{ status: 0, message: "Could not reach the server." }]);
+	click({ "data-act": "keep", "data-item": "PDT-0002" });
+	await settle();
+	click({ "data-act": "keep", "data-item": "PDT-0002" });
+	await settle();
+	const refs = server.calls.filter((c) => c.method.endsWith(".assign")).map((c) => c.args.client_ref);
+	check("two clicks, one reference", [refs.length, refs[0] === refs[1]], [2, true]);
+});
+
+test("names are data: titles, labels and descriptions escape them", async () => {
+	const NASTY = "<b>Bold</b> &amp; Co";
+	const items = [
+		{ item_code: "PDT-0001", item_name: NASTY, stock_uom: "Unit", on_hand: 4, on_order: 0, assigned: true, is_default: false, undecided: false },
+	];
+	const boot = Object.assign({}, BOOT, {
+		boneyard_name: NASTY,
+		bins: BOOT.bins.concat([{ warehouse: "Odd - SF", warehouse_name: NASTY, trail: "", on_hand_items: 0, assigned_items: 0, is_boneyard: false }]),
+	});
+	const { world, registry, click } = loadPage({ boot, items });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	const ESCAPED = "&lt;b&gt;Bold&lt;/b&gt; &amp;amp; Co";
+	const clean = (label, text) => {
+		check(`${label}: escaped`, String(text).includes(ESCAPED), true);
+		check(`${label}: no raw tag`, /<b>Bold/.test(String(text)), false);
+	};
+	for (const act of ["count", "move", "boneyard", "unassign"]) {
+		click({ "data-act": act, "data-item": "PDT-0001" });
+		const d = registry.dialogs.pop();
+		clean(`${act} title`, d.opts.title);
+		if (act === "boneyard") clean("boneyard description", d.opts.fields.find((f) => f.fieldname === "qty").description);
+		if (act === "move") {
+			const pick = d.fields_dict.dest_list.$wrapper.__state.handlers.find((h) => h.selector === "[data-bm-dest]");
+			pick.fn({ currentTarget: { getAttribute: () => "Odd - SF" } });
+			clean("make-home label", d.props["make_home.label"]);
+		}
+		if (act === "unassign") check("unassign body: no raw tag", /<b>Bold/.test(d.opts.fields[0].options), false);
+	}
+	check("row name escaped in the table", registry.found[".bm-items"][0].innerHTML.includes(ESCAPED), true);
+	check("no raw tag in the table", /<b>Bold/.test(registry.found[".bm-items"][0].innerHTML), false);
 });
 
 // ------------------------------------------------------------------ run

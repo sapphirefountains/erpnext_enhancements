@@ -27,6 +27,7 @@ Two halves:
 Run: python -m unittest erpnext_enhancements.tests.test_bin_manager -v
 """
 
+import ast
 import json
 import re
 import shutil
@@ -53,6 +54,8 @@ INV_WS = (
 )
 PATCH = APP / "patches" / "bin_manager_hub_links.py"
 PATCHES_TXT = APP / "patches.txt"
+MODULE = APP / "inventory_enhancements" / "bin_assignments.py"
+API = APP / "api" / "stock_scan.py"
 
 BIN_A, BIN_B, BONEYARD, STORES = base.BIN_A, base.BIN_B, base.BONEYARD, base.STORES
 STATE = base.STATE
@@ -134,6 +137,14 @@ def _bin_rows_answer():
 			)
 		)
 	return out
+
+
+def _function(path, name):
+	return next(
+		n
+		for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+		if isinstance(n, ast.FunctionDef) and n.name == name
+	)
 
 
 def _seed_quick_item_lists():
@@ -219,6 +230,45 @@ class TestCreateAndAssign(_Base):
 				self.assertIn(words, str(caught.exception))
 				self.assertEqual(STATE["writes"], [])
 				self.assertEqual(base._table("Stock Scan Log"), {})
+
+	def test_a_concurrent_retry_is_still_being_recorded_not_item_exists(self):
+		"""A retry sent while the first attempt is mid-request: its Item insert loses on the primary
+		key with Frappe's "Item X already exists". It must read as the 409 _begin_log gives a
+		duplicate log row, so the page keeps the same reference and the next tap finds the first
+		save, never as a refusal that would make the page mint a new one."""
+		original = base.scan._quick_item
+
+		def lost_the_race(spec, location):
+			raise base.FRAPPE.DuplicateEntryError(f"Item {spec['item_code']} already exists")
+
+		base.scan._quick_item = lost_the_race
+		try:
+			with self.assertRaises(base.FRAPPE.DuplicateEntryError) as caught:
+				self.create()
+		finally:
+			base.scan._quick_item = original
+		self.assertEqual(
+			str(caught.exception), "This save is still being recorded. Wait a moment, then try again."
+		)
+		self.assertEqual(base._table("Stock Scan Log"), {})
+		self.assertEqual(base._table("Putaway Rule"), {})
+
+	def test_only_the_item_insert_is_caught(self):
+		"""The catch wraps _quick_item and nothing else: a duplicate anywhere else is not this race."""
+		fn = next(
+			n
+			for n in ast.walk(ast.parse(MODULE.read_text(encoding="utf-8")))
+			if isinstance(n, ast.FunctionDef) and n.name == "create_and_assign"
+		)
+		tries = [n for n in ast.walk(fn) if isinstance(n, ast.Try)]
+		self.assertEqual(len(tries), 1)
+		self.assertEqual(
+			[ast.unparse(s) for s in tries[0].body], ["created = scan._quick_item(spec, location)"]
+		)
+		self.assertEqual([ast.unparse(h.type) for h in tries[0].handlers], ["frappe.DuplicateEntryError"])
+		self.assertNotIn(
+			"DuplicateEntryError", ast.unparse(_function(API, "store_run")), "store_run unchanged"
+		)
 
 	def test_without_item_create_it_is_refused_before_anything_is_written(self):
 		STATE["perm"][("Item", "create")] = False

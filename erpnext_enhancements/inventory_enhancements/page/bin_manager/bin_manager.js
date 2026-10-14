@@ -137,6 +137,12 @@ class BinManagerPage {
 		return this.sf.esc(value);
 	}
 
+	// For a name that goes into frappe's own HTML: a dialog title (Dialog.set_title is .html()), a
+	// field's label or description. Item, warehouse and bin names are data, never markup.
+	safe(value) {
+		return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
+	}
+
 	// ------------------------------------------------------------------ clicks
 
 	bind() {
@@ -420,10 +426,11 @@ class BinManagerPage {
 		});
 	}
 
-	// "Keep on this bin": one click, undoable from the notice.
+	// "Keep on this bin": one click, undoable from the notice. Its reference is the controller's
+	// (quick): the same one again after a dropped reply, so a second click cannot save twice.
 	keep(row, el) {
 		if (el) el.disabled = true;
-		this.ctl.submit("keep", row, {}, this.ctl.new_ref()).catch((err) => {
+		this.ctl.quick("keep", row, {}).catch((err) => {
 			this.ctl.state.notice = { message: err.message || __("Could not save."), error: true };
 			this.render();
 		});
@@ -476,18 +483,18 @@ class BinManagerPage {
 		this.save_dialog({
 			kind: "count",
 			row,
-			title: __("Change the quantity of {0}", [row.item_name]),
+			title: __("Change the quantity of {0}", [this.safe(row.item_name)]),
 			primary_label: __("Save count"),
 			fields: [
 				{
 					fieldtype: "Float",
 					fieldname: "qty",
-					label: __("Counted quantity ({0})", [row.stock_uom]),
+					label: __("Counted quantity ({0})", [this.safe(row.stock_uom)]),
 					default: row.on_hand,
 					reqd: 1,
 					description: __(
 						"The system shows {0}. Saving posts a Stock Reconciliation: a count correction, not parts used, so it charges no job and can go up as well as down.",
-						[this.bm.amount(row.on_hand, row.stock_uom)]
+						[this.safe(this.bm.amount(row.on_hand, row.stock_uom))]
 					),
 				},
 			],
@@ -499,16 +506,16 @@ class BinManagerPage {
 		this.save_dialog({
 			kind: "boneyard",
 			row,
-			title: __("Send {0} to the boneyard", [row.item_name]),
+			title: __("Send {0} to the boneyard", [this.safe(row.item_name)]),
 			primary_label: __("Send to boneyard"),
 			fields: [
 				{
 					fieldtype: "Float",
 					fieldname: "qty",
-					label: __("Quantity ({0})", [row.stock_uom]),
+					label: __("Quantity ({0})", [this.safe(row.stock_uom)]),
 					default: row.on_hand,
 					reqd: 1,
-					description: __("Moves the stock to {0}. If that empties this bin, the item comes off it.", [perms.boneyard_name]),
+					description: __("Moves the stock to {0}. If that empties this bin, the item comes off it.", [this.safe(perms.boneyard_name)]),
 				},
 			],
 		});
@@ -522,7 +529,7 @@ class BinManagerPage {
 			const offered = this.bm.make_home_offered(perms, chosen && chosen.warehouse);
 			d.set_df_property("make_home", "hidden", offered ? 0 : 1);
 			if (!offered) return;
-			d.set_df_property("make_home", "label", __("Make {0} this item's bin", [chosen.warehouse_name]));
+			d.set_df_property("make_home", "label", __("Make {0} this item's bin", [this.safe(chosen.warehouse_name)]));
 			if (!!d.get_value("make_home") !== make_home.value) d.set_value("make_home", make_home.value ? 1 : 0);
 		};
 		const draw_dest = (d) => {
@@ -550,7 +557,7 @@ class BinManagerPage {
 		this.save_dialog({
 			kind: "move",
 			row,
-			title: __("Move {0}", [row.item_name]),
+			title: __("Move {0}", [this.safe(row.item_name)]),
 			primary_label: __("Move"),
 			fields: [
 				{ fieldtype: "Data", fieldname: "dest_search", label: __("Move to bin"), placeholder: __("Type part of a bin's name") },
@@ -558,10 +565,10 @@ class BinManagerPage {
 				{
 					fieldtype: "Float",
 					fieldname: "qty",
-					label: __("Quantity ({0})", [row.stock_uom]),
+					label: __("Quantity ({0})", [this.safe(row.stock_uom)]),
 					default: row.on_hand,
 					reqd: 1,
-					description: __("{0} here.", [this.bm.amount(row.on_hand, row.stock_uom)]),
+					description: __("{0} here.", [this.safe(this.bm.amount(row.on_hand, row.stock_uom))]),
 				},
 				{
 					fieldtype: "Check",
@@ -580,7 +587,8 @@ class BinManagerPage {
 				d.fields_dict.dest_search.$input.on("input", () => draw_dest(d));
 				d.fields_dict.dest_list.$wrapper.on("click", "[data-bm-dest]", (e) => {
 					const name = e.currentTarget.getAttribute("data-bm-dest");
-					chosen = this.ctl.destinations("").find((b) => b.warehouse === name) || null;
+					// The full list, never the capped one on screen: a bin past the first 30 is still a bin.
+					chosen = this.ctl.bin(name);
 					draw_dest(d);
 					sync_home(d);
 				});
@@ -612,7 +620,7 @@ class BinManagerPage {
 			this.save_dialog({
 				kind: "unassign",
 				row,
-				title: __("Unassign {0}", [row.item_name]),
+				title: __("Unassign {0}", [this.safe(row.item_name)]),
 				primary_label: __("Unassign"),
 				fields: [
 					{
@@ -628,7 +636,7 @@ class BinManagerPage {
 		}
 		// Stock is still here, and unassign refuses that: first empty the bin, by Move or the boneyard.
 		const d = new frappe.ui.Dialog({
-			title: __("Unassign {0}", [row.item_name]),
+			title: __("Unassign {0}", [this.safe(row.item_name)]),
 			fields: [
 				{
 					fieldtype: "HTML",
@@ -777,7 +785,7 @@ class BinManagerPage {
 				preview.on("click", "[data-bm-instead]", (e) => {
 					const code = e.currentTarget.getAttribute("data-bm-instead");
 					d.hide();
-					this.ctl.submit("add", null, { item_code: code }, this.ctl.new_ref()).catch((err) => {
+					this.ctl.quick("add", null, { item_code: code }).catch((err) => {
 						this.ctl.state.notice = { message: err.message || __("Could not save."), error: true };
 						this.render();
 					});

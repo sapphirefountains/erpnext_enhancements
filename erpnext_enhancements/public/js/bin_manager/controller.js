@@ -225,6 +225,35 @@ export class Controller {
 		);
 	}
 
+	// A save with no dialog of its own (Keep on this bin, a preview's "Add this one instead"). Its
+	// reference is kept per action, bin and item until the save lands or is refused, exactly as a
+	// dialog keeps its own: after a dropped reply (status 0, 409) the next click must send the SAME
+	// reference, so the server answers with the first save instead of "already on this bin".
+	quick(kind, row, values) {
+		const warehouse = this.state.target && this.state.target.warehouse;
+		const item_code = (row && row.item_code) || (values && values.item_code) || "";
+		const key = `${kind}|${warehouse}|${item_code}`;
+		if (!this.quick_refs) this.quick_refs = new Map();
+		if (!this.quick_refs.has(key)) this.quick_refs.set(key, this.new_ref());
+		return this.submit(kind, row, values || {}, this.quick_refs.get(key)).then(
+			(done) => {
+				this.quick_refs.delete(key);
+				return done;
+			},
+			(err) => {
+				if (!err || !err.keep_ref) this.quick_refs.delete(key);
+				return Promise.reject(err);
+			}
+		);
+	}
+
+	// Every bin, uncapped: a clicked destination is looked up here, never in a filtered or capped
+	// list (logic.destinations shows the first 30 that match what is typed).
+	bin(warehouse) {
+		const bins = (this.state.boot && this.state.boot.bins) || [];
+		return bins.find((b) => b.warehouse === warehouse) || null;
+	}
+
 	undo(log_name) {
 		return this.submit("undo", null, { log: log_name }, null);
 	}

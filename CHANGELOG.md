@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`page_search.js`: bins, shelf, putaway, boneyard). The Page admits the Stock Scan roles
   (`stock_scan_rules.SCAN_ROLES`); all four already read Stock Scan Log, a doctype of the page's
   module. No link from /stock-scan, as decided.
+- Review fixes, before release: the Move dialog's destination list shows the first 30 bins that
+  match what is typed, and a click was looked up in the first 30 of the *unfiltered* list, so a bin
+  past #30 (production has 221) could not be chosen; it is now looked up in the full list
+  (`controller.bin`). "Keep on this bin" and a preview's "Add this one instead" keep their
+  `client_ref` per bin and item until the save lands or is refused (`controller.quick`), as a
+  dialog does, so a click after a dropped reply returns the first save instead of "already on this
+  bin". `create_and_assign` turns a concurrent retry's lost Item insert (`DuplicateEntryError`,
+  "Item X already exists") into `_begin_log`'s "still being recorded" 409, so the page keeps the
+  same reference; `store_run` is unchanged. Item, warehouse and bin names are escaped wherever they
+  reach frappe's own HTML: dialog titles (v16's `Dialog.set_title` is `.html()`), field labels and
+  descriptions, and the make-home label.
 - The page's decisions are a pure module and a DOM-free controller
   (`public/js/bin_manager/logic.js`, `controller.js`, loaded as `bin_manager.bundle.js`); its CSS is
   the page folder's `bin_manager.css`, every selector under `.bm-`.
