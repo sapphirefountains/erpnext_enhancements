@@ -41,17 +41,30 @@
   itinerary.py / kiosk.py::get_deploy_version). The worker's precache list is
   exactly the two ?v= assets below (tests/test_itinerary_service_worker.py). The
   icons are the Sapphire mark the kiosk uses, unversioned on purpose.
+
+  Design tokens (S3.5a, v1.659.0): itinerary.css paints in the app's --sf-* tokens,
+  which a website page does not get (sf_tokens.bundle.css is app_include_css, Desk
+  only; web_include_css would ship it to every public page). So the page links it
+  itself, before its own stylesheet, through bundled_asset: a content-hashed address,
+  so it needs no ?v=. The same address goes to the worker as ITIN_TOKENS_CSS, which
+  itinerary.js puts in the worker's script URL (&tokens=), and the worker keeps it
+  beside the stylesheet, or the offline itinerary would lose its colours. Dark mode
+  follows the device: nothing here writes data-theme on <html>, so the tokens' own
+  prefers-color-scheme block applies. The theme-color meta and the manifest's colours
+  cannot read a CSS variable, so they are the tokens by value: fresh-blue #00a0df and
+  off-white #f8f8f8.
 #}
 {% extends "templates/web.html" %}
 
 {% block title %}My Itinerary{% endblock %}
 
 {% block head_include %}
-<meta name="theme-color" content="#00a0dd">
+<meta name="theme-color" content="#00a0df">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/itinerary-manifest.json?v={{ deploy_version }}">
 <meta name="apple-mobile-web-app-title" content="Itinerary">
 <link rel="apple-touch-icon" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
 <link rel="stylesheet" href="/assets/erpnext_enhancements/css/travel/itinerary.css?v={{ deploy_version }}">
 {% endblock %}
 
@@ -71,7 +84,7 @@
   .navbar, nav.navbar, .web-footer, footer:not(.ti-footer), .footer,
   .page-breadcrumbs, .breadcrumb-container,
   .page-header, .page-content-wrapper > .page-header { display: none !important; }
-  body { background: var(--ti-bg, #f6f7f9); margin: 0; }
+  body { background: var(--sf-bg); margin: 0; }
   main, .main-section, #body, .page_content,
   .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
 </style>
@@ -95,6 +108,7 @@
   window.ITIN_BOOT = {{ boot_json | safe }};
   window.ITIN_CSRF = "{{ csrf_token }}";
   window.ITIN_BUILD = "{{ deploy_version }}";
+  window.ITIN_TOKENS_CSS = {{ bundled_asset('sf_tokens.bundle.css') | tojson }};
 </script>
 <script src="/assets/erpnext_enhancements/js/travel/itinerary.js?v={{ deploy_version }}"></script>
 {% endblock %}

@@ -2749,7 +2749,12 @@
 		try {
 			if (!('serviceWorker' in navigator)) return;
 			var build = window.ITIN_BUILD || '';
-			itinWorker = navigator.serviceWorker.register('/itinerary-sw.js?v=' + encodeURIComponent(build), { scope: '/itinerary' })
+			// The design tokens' stylesheet (itinerary.html links it through bundled_asset): a
+			// content-hashed address the worker cannot know, so it travels in the worker's own
+			// address, and the worker keeps it with the page's stylesheet. It changes only with a
+			// build, which is a deploy, which is a new ?v= anyway.
+			var tokens = window.ITIN_TOKENS_CSS ? '&tokens=' + encodeURIComponent(window.ITIN_TOKENS_CSS) : '';
+			itinWorker = navigator.serviceWorker.register('/itinerary-sw.js?v=' + encodeURIComponent(build) + tokens, { scope: '/itinerary' })
 				.then(newestWorker)
 				.catch(function () {
 					// No worker: the page works online as it always has.

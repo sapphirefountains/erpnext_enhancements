@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.659.0] - 2026-10-13
+
+### Changed
+
+- **The `/review` and `/itinerary` staff web apps paint in the app design tokens** (custom pages
+  S3.5a, ERPNext TASK-2026-02824). Styling only: no endpoint, route or Python changed.
+  - **The tokens reach a website page by the page's own link.** `sf_tokens.bundle.css` is
+    `app_include_css`, so only the Desk had it; a `www/` page gets `web_include_css` alone, and adding
+    the tokens there would ship them to every public page (/pay, /contract-sign, the login page). Each
+    template now links them through `bundled_asset` (content-hashed, so never served stale from the
+    year-long `/assets` cache), before its own stylesheet.
+  - **Each app keeps its own names, mapped in one place.** `design_review.bundle.css` keeps `--rr-*` and
+    `itinerary.css` keeps `--ti-*`, each declared once on `:root` as a `--sf-*` token or a mix of them;
+    no rule in either file holds a literal colour any more. Cards, panels, fields and rows are square,
+    buttons take `--sf-radius-control` and chips are pills; every shadow is gone (the frame previews
+    take a hairline outline, which uses no layout space, so the scaled concept inside keeps its size).
+    Both use Lato and the display face from the tokens, and the Review Room's duplicate `@font-face`
+    is dropped. Fields stay white in dark, as the guide says.
+  - **Colour that was wrong in one theme.** The itinerary's accent was fresh-blue, 3:1 as words on
+    white; words and edges in the accent are `--sf-link` now (6.4:1, and 8.5:1 in dark). The Review
+    Room's selected screen in the rail was navy on a navy card in dark (1.06:1): it is the primary fill.
+    Its "Decided" pill was white on light blue in dark; it is the neutral chip, edged sky-200. Status
+    words (accepted, rejected, the 911 role, offline notes, "not saved" in the bar) are their status
+    colour mixed half and half with the strongest text of their ground, never the fill itself. The 911
+    button is the danger fill, edged off-white in dark, where red alone is 2.8:1 on the navy card. The
+    toast is inverted, as the guide's is. The selected part's tag and its in-frame outline are violet
+    (the old orange is not in the palette); the frame outlines stay literal in `frames.js`, because a
+    concept frame is a sandboxed document no stylesheet reaches, and they are palette values by
+    construction (tested).
+  - **Dark mode is the tokens' own switch.** The tokens follow `<html data-theme>` and the device
+    without it. The Review Room's THEME button wrote a `data-rr-theme` the tokens cannot see; it
+    writes `data-theme` now (AUTO removes it), and the app keeps no dark palette of its own, only
+    `color-scheme`. `review.html` applies the stored choice from an inline script at the top of
+    `<head>`, before any stylesheet, as `kiosk.html` does, so the loading text no longer flashes in the
+    device theme while the bundle loads; `applyTheme` owns every change after that. The itinerary had no toggle and still follows the device: nothing writes
+    `data-theme` there, so the tokens' `prefers-color-scheme` block applies, with the brand's
+    single-palette dark in place of the old grey one.
+  - **No status by colour alone.** Your verdict on a screen was a 10px coloured dot in the rail and
+    the compare grid; it is a small chip with its word (Yes, Maybe, No). A part with a note in the
+    element list was a yellow dot; it says Noted.
+  - **Touch targets.** Every itinerary control is at least 44px tall (the map, copy, reload and person
+    buttons, the maps and footer links, the place-notes toggle). The Review Room keeps its desktop
+    sizes and its layout breakpoints (1599, 1299 and 900px) and gains the phone one, 767px, where
+    every control is 44px and a text field's type is 16px, below which iOS zooms in.
+  - **The offline itinerary keeps its colours.** The service worker precaches the page's stylesheet
+    and script by path, but the tokens' address is content-hashed and changes with every build. The
+    page passes it as `ITIN_TOKENS_CSS`, `itinerary.js` puts it in the worker's own address
+    (`&tokens=`), and the worker accepts only this site's `sf_tokens.bundle.<hash>.css`, precaches it
+    with the shell and answers it cache-first; a page kept from an earlier build that asks for the old
+    hash gets this build's copy. The theme-color meta and the manifest's colours are the tokens by
+    value (fresh-blue, off-white), since neither can read a CSS variable.
+  - `tests/test_www_app_tokens.py` (bench-free, own CI step) holds both apps to all of it: the link
+    and its order, no tokens in `web_include_css`, no literal or Frappe palette colour, every `--sf-*`
+    defined, own names on `:root` only, no shadow, token radii, the breakpoints, no status fill as
+    text, the dark-mode traps (`--sf-pillar-neutral` edges, `--sf-pillar-build-deep` fills), dark mode
+    on the tokens' switch, the verdict words, 44px controls, and the worker keeping the tokens. The
+    worker's node run in `test_itinerary_service_worker` now covers the tokens online, offline and
+    across a build. The Review Room's browser harness links the tokens too.
+
 ## [1.658.0] - 2026-10-13
 
 Custom pages S3.3c (TASK-2026-02822): the last six data blocks draw their panels, chips and

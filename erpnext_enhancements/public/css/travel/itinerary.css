@@ -1,44 +1,42 @@
 /*
  * Traveler itinerary styles (/itinerary — www/itinerary.html + js/travel/itinerary.js).
  *
- * Website pages have no desk data-theme attribute, so theming follows the
- * kiosk convention: a local --ti-* palette with a prefers-color-scheme dark
- * block (see public/css/kiosk/kiosk.css). Semantic status colors stay literal.
- * Mobile-first: single column, large tap targets.
+ * Colours are the app design tokens (docs/app-design-system.md, S3.5a, v1.659.0). A website page
+ * does not get sf_tokens.bundle.css (it is app_include_css, Desk only), so itinerary.html links
+ * it itself, through bundled_asset, before this file; the service worker keeps both for the
+ * offline itinerary (www/itinerary-sw.js). The --ti-* names below are this page's own
+ * vocabulary, mapped onto --sf-* in this one block; no rule in the file holds a literal colour
+ * (tests/test_www_app_tokens.py).
+ *
+ * Theme: the device's, as before. Nothing on this page writes data-theme on <html> (a website
+ * page has no Desk theme switcher, and the page has no toggle of its own), so the tokens' own
+ * prefers-color-scheme block, :root:not([data-theme]), is the one that applies: the same switch
+ * the old --ti-* dark block made, now with the brand's single-palette dark.
+ *
+ * Mobile-first: single column, square cards, controls at least 44px tall.
  */
 
 :root {
-	--ti-bg: #f6f7f9;
-	--ti-surface: #ffffff;
-	--ti-text: #1f272e;
-	--ti-muted: #6c7680;
-	--ti-border: #e2e6ea;
-	--ti-accent: #00a0dd;
-	--ti-accent-soft: #e6f6fd;
-	/* Accent as small words ("All trips", "You're on it"): 4.9:1 on --ti-accent-soft, 5.4:1 on
-	   the surface (dark: 8:1 and 9:1). The accent itself is too light for text that size. */
-	--ti-accent-text: #00729e;
-	/* Emergency, as words on the page (the 911 button itself is the literal red below). */
-	--ti-danger-text: #c62828;
-	/* "You're offline — showing your itinerary as saved …": 6.8:1 (dark: 10:1). */
-	--ti-offline-bg: #fff4e5;
-	--ti-offline-text: #7a4b00;
-}
-
-@media (prefers-color-scheme: dark) {
-	:root {
-		--ti-bg: #161a1f;
-		--ti-surface: #1f262e;
-		--ti-text: #e8ecef;
-		--ti-muted: #97a1ab;
-		--ti-border: #313a44;
-		--ti-accent: #29b6f6;
-		--ti-accent-soft: #103244;
-		--ti-accent-text: #7fd3fb;
-		--ti-danger-text: #ff8a80;
-		--ti-offline-bg: #3a2a0d;
-		--ti-offline-text: #ffd58a;
-	}
+	--ti-bg: var(--sf-bg);
+	--ti-surface: var(--sf-surface);
+	--ti-text: var(--sf-text);
+	--ti-muted: var(--sf-text-muted);
+	--ti-border: var(--sf-rule);
+	/* The accent as words, edges and marks: the link colour (bahama-blue in light, sky-200 in
+	   dark), 6.4:1 and 8.5:1 on a card. The old fresh-blue was 3:1 as words on white. */
+	--ti-accent: var(--sf-link);
+	--ti-accent-text: var(--sf-link);
+	/* The pressed and selected ground: a tint of the primary in the card colour. The link colour
+	   on it is 5.8:1 in light and 7.1:1 in dark. */
+	--ti-accent-soft: color-mix(in srgb, var(--sf-primary) 12%, var(--sf-surface));
+	--ti-focus: var(--sf-focus);
+	/* Status words. A status fill is never text; mixed half-and-half with the strongest text
+	   colour it is (the guide's warn rule): danger 11:1 in light, 6.6:1 in dark. */
+	--ti-danger-text: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	/* "You're offline — showing your itinerary as saved ...": warn words on a warn tint, 4.8:1
+	   in light and 8.5:1 in dark. */
+	--ti-offline-bg: color-mix(in srgb, var(--sf-warn) 14%, var(--sf-surface));
+	--ti-offline-text: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 .ti-shell {
@@ -46,7 +44,7 @@
 	margin: 0 auto;
 	padding: 0 12px 48px;
 	color: var(--ti-text);
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	font-family: var(--sf-font-sans);
 }
 
 /* Frappe's website stylesheet (Bootstrap's $headings-color, #171717) colors h1-h6 outright and
@@ -63,7 +61,7 @@
 	padding: 40px 16px;
 }
 
-.ti-error { color: #e03636; }
+.ti-error { color: var(--ti-danger-text); }
 
 /* "Your session has expired. Sign in again" — the one way out of that screen. */
 .ti-signin {
@@ -82,10 +80,11 @@
 .ti-refused .ti-empty { padding-bottom: 12px; }
 
 .ti-reload {
+	min-height: var(--sf-touch-min);
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-accent);
-	border-radius: 8px;
+	border-radius: var(--sf-radius-control);
 	padding: 8px 18px;
 	font: inherit;
 	font-weight: 600;
@@ -95,7 +94,7 @@
 .ti-offline {
 	margin: 0 0 10px;
 	padding: 10px 12px;
-	border-radius: 10px;
+	border-radius: var(--sf-radius-none);
 	background: var(--ti-offline-bg);
 	color: var(--ti-offline-text);
 	font-size: 0.88rem;
@@ -133,7 +132,7 @@
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-text);
-	border-radius: 12px;
+	border-radius: var(--sf-radius-control);
 	padding: 8px 14px;
 	font: inherit;
 	cursor: pointer;
@@ -165,7 +164,7 @@
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-accent-text);
-	border-radius: 12px;
+	border-radius: var(--sf-radius-control);
 	padding: 8px 14px;
 	font: inherit;
 	font-size: 0.92rem;
@@ -198,11 +197,11 @@
 
 .ti-person-chip {
 	flex: 0 0 auto;
-	min-height: 36px;
+	min-height: var(--sf-touch-min);
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-text);
-	border-radius: 999px;
+	border-radius: var(--sf-radius-pill);
 	padding: 6px 14px;
 	font: inherit;
 	font-size: 0.86rem;
@@ -213,14 +212,14 @@
 .ti-person-chip.active {
 	border-color: var(--ti-accent);
 	background: var(--ti-accent-soft);
-	color: var(--ti-accent);
+	color: var(--ti-accent-text);
 	font-weight: 650;
 }
 
 .ti-person-chip:focus-visible,
 .ti-trip-chip:focus-visible,
 .ti-all-chip:focus-visible {
-	outline: 2px solid var(--ti-accent);
+	outline: 2px solid var(--ti-focus);
 	outline-offset: 2px;
 }
 
@@ -243,21 +242,23 @@
 
 .ti-day.today .ti-day-date { color: var(--ti-accent); }
 
+/* "Today": the primary fill with its own label (navy-900 on fresh-blue, 7:1 in both themes). */
 .ti-today-badge {
-	background: var(--ti-accent);
-	color: #fff;
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
 	font-size: 0.7rem;
 	font-weight: 700;
-	border-radius: 999px;
+	border-radius: var(--sf-radius-pill);
 	padding: 2px 8px;
 }
 
 .ti-map-btn {
 	margin-left: auto;
+	min-height: var(--sf-touch-min);
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-text);
-	border-radius: 8px;
+	border-radius: var(--sf-radius-control);
 	padding: 4px 10px;
 	font-size: 0.82rem;
 	cursor: pointer;
@@ -266,17 +267,17 @@
 .ti-day-map {
 	display: none;
 	height: 240px;
-	border-radius: 12px;
+	border-radius: var(--sf-radius-none);
 	border: 1px solid var(--ti-border);
 	margin-top: 8px;
 	overflow: hidden;
 }
 
-/* Cards */
+/* Cards: square, a hairline, no shadow. */
 .ti-card {
 	background: var(--ti-surface);
 	border: 1px solid var(--ti-border);
-	border-radius: 12px;
+	border-radius: var(--sf-radius-none);
 	padding: 12px 14px;
 	margin-bottom: 8px;
 }
@@ -329,9 +330,12 @@
 	overflow-wrap: anywhere;
 }
 
+/* 44px tall as a tap target: one line of 36px between 4px of padding, so the cut-to-fit line
+   still truncates as one run of text. */
 summary.ti-place-notes-head {
 	display: block;
 	padding: 4px 0;
+	line-height: calc(var(--sf-touch-min) - 8px);
 	cursor: pointer;
 	list-style: none;
 	white-space: nowrap;
@@ -345,7 +349,7 @@ details[open] > summary.ti-place-notes-head::before { content: "▾ "; }
 details[open] .ti-place-notes-first { display: none; }
 
 summary.ti-place-notes-head:focus-visible {
-	outline: 2px solid var(--ti-accent);
+	outline: 2px solid var(--ti-focus);
 	outline-offset: 2px;
 }
 
@@ -359,10 +363,11 @@ summary.ti-place-notes-head:focus-visible {
 }
 
 .ti-copy {
+	min-height: var(--sf-touch-min);
 	border: 1px solid var(--ti-border);
 	background: transparent;
 	color: var(--ti-accent);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-control);
 	padding: 2px 10px;
 	font-size: 0.78rem;
 	cursor: pointer;
@@ -416,7 +421,9 @@ summary.ti-place-notes-head:focus-visible {
 }
 
 .ti-maps-link {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
 	margin-top: 8px;
 	margin-right: 12px;
 	color: var(--ti-accent);
@@ -438,7 +445,7 @@ summary.ti-place-notes-head:focus-visible {
 	border: 1px solid var(--ti-border);
 	background: var(--ti-surface);
 	color: var(--ti-text);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-control);
 	padding: 8px 10px;
 	font: inherit;
 	font-size: 0.9rem;
@@ -449,19 +456,19 @@ summary.ti-place-notes-head:focus-visible {
 .ti-screen-tab.active {
 	border-color: var(--ti-accent);
 	background: var(--ti-accent-soft);
-	color: var(--ti-accent);
+	color: var(--ti-accent-text);
 }
 
 /* Contacts: the card at the top of the trip. Who to call, each as a 44px tap target that
    wraps onto the next line on a 320px phone. Shut until its heading's button opens it.
    No overflow: hidden. The toggle fills the card edge to edge, so clipping the card clipped
    the toggle's focus ring (drawn just outside it), and a keyboard user saw no focus on the one
-   control that opens the emergency card. Nothing inside paints into the rounded corners: the
-   toggle and the rows are transparent, and the body has only a top border. */
+   control that opens the emergency card. The card is square now, so nothing can paint past a
+   corner either. */
 .ti-contacts {
 	background: var(--ti-surface);
 	border: 1px solid var(--ti-border);
-	border-radius: 12px;
+	border-radius: var(--sf-radius-none);
 	margin: 0 0 14px;
 }
 
@@ -505,7 +512,7 @@ summary.ti-place-notes-head:focus-visible {
 	flex: 0 0 auto;
 	margin-left: auto;
 	color: var(--ti-muted);
-	transition: transform 0.15s ease;
+	transition: transform var(--sf-duration) var(--sf-ease);
 }
 
 .ti-contacts:not(.open) .ti-contacts-chevron { transform: rotate(-90deg); }
@@ -562,7 +569,7 @@ summary.ti-place-notes-head:focus-visible {
 	min-height: 44px;
 	padding: 6px 12px;
 	border: 1px solid var(--ti-border);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-control);
 	background: var(--ti-bg);
 	color: var(--ti-accent);
 	font-size: 0.88rem;
@@ -574,17 +581,20 @@ summary.ti-place-notes-head:focus-visible {
 .ti-contact-icon { flex: 0 0 auto; line-height: 1; }
 .ti-contact-text { min-width: 0; overflow-wrap: anywhere; }
 
-/* 911: first on the card and the one red button on the page. White on #c62828 is 5.6:1 in
-   both themes. */
+/* 911: first on the card and the one red button on the page: the danger fill with its own
+   off-white label (5.5:1 in both themes), edged off-white in dark, where the red fill alone is
+   2.8:1 on the navy card. Pressed, it darkens toward navy. */
 .ti-contact-emergency .ti-contact-role { color: var(--ti-danger-text); }
 
 .ti-contact-emergency .ti-contact-link {
-	border-color: #c62828;
-	background: #c62828;
-	color: #fff;
+	border-color: var(--sf-chip-edge-danger);
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
 }
 
-.ti-contact-emergency .ti-contact-link:active { background: #a31f1f; }
+.ti-contact-emergency .ti-contact-link:active {
+	background: color-mix(in srgb, var(--sf-danger) 80%, var(--sf-navy-900));
+}
 
 /* "Print / save as PDF": the trip sheet, under the screens. */
 .ti-print { padding: 0 4px 14px; }
@@ -599,7 +609,7 @@ summary.ti-place-notes-head:focus-visible {
 	min-height: 44px;
 	padding: 6px 14px;
 	border: 1px solid var(--ti-border);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-control);
 	background: var(--ti-surface);
 	color: var(--ti-accent);
 	text-decoration: none;
@@ -620,7 +630,7 @@ summary.ti-place-notes-head:focus-visible {
 .ti-contacts-toggle:focus-visible,
 .ti-contact-link:focus-visible,
 .ti-print-link:focus-visible {
-	outline: 2px solid var(--ti-accent);
+	outline: 2px solid var(--ti-focus);
 	outline-offset: 2px;
 }
 
@@ -640,7 +650,7 @@ summary.ti-place-notes-head:focus-visible {
 	min-height: 48px;
 	padding: 8px 12px;
 	border: 1px solid var(--ti-border);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-none);
 	background: var(--ti-bg);
 	color: var(--ti-text);
 	text-decoration: none;
@@ -682,7 +692,8 @@ summary.ti-place-notes-head:focus-visible {
 	padding: 2px 4px;
 }
 
-.ti-viewer .ti-doc-note { color: #ffd58a; }
+/* The viewer is dark in both themes, so its strongest text is off-white whatever the page's. */
+.ti-viewer .ti-doc-note { color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-off-white)); }
 
 /* The Documents screen: "For the whole trip", then a group per booking. */
 .ti-doc-group { margin-bottom: 18px; }
@@ -704,7 +715,7 @@ summary.ti-place-notes-head:focus-visible {
 
 .ti-screen-tab:focus-visible,
 .ti-doc:focus-visible {
-	outline: 2px solid var(--ti-accent);
+	outline: 2px solid var(--ti-focus);
 	outline-offset: 2px;
 }
 
@@ -714,7 +725,7 @@ summary.ti-place-notes-head:focus-visible {
 	margin: 0 0 14px;
 	padding: 8px 12px;
 	border: 1px dashed var(--ti-border);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-none);
 	color: var(--ti-muted);
 	font-size: 0.86rem;
 	line-height: 1.4;
@@ -729,6 +740,8 @@ summary.ti-place-notes-head:focus-visible {
 
 .ti-all-link {
 	display: inline-block;
+	box-sizing: border-box;
+	min-height: var(--sf-touch-min);
 	padding: 10px 4px;
 	color: var(--ti-accent-text);
 	font-weight: 600;
@@ -740,7 +753,7 @@ summary.ti-place-notes-head:focus-visible {
 .ti-list-note {
 	margin: 0 0 12px;
 	padding: 10px 12px;
-	border-radius: 10px;
+	border-radius: var(--sf-radius-none);
 	background: var(--ti-offline-bg);
 	color: var(--ti-offline-text);
 	font-size: 0.88rem;
@@ -773,7 +786,7 @@ summary.ti-place-notes-head:focus-visible {
 .ti-list-count {
 	min-width: 1.6em;
 	padding: 1px 8px;
-	border-radius: 999px;
+	border-radius: var(--sf-radius-pill);
 	background: var(--ti-surface);
 	border: 1px solid var(--ti-border);
 	color: var(--ti-muted);
@@ -796,7 +809,7 @@ summary.ti-place-notes-head:focus-visible {
 	min-height: 44px;
 	padding: 12px 34px 12px 14px;
 	border: 1px solid var(--ti-border);
-	border-radius: 12px;
+	border-radius: var(--sf-radius-none);
 	background: var(--ti-surface);
 	color: var(--ti-text);
 	text-decoration: none;
@@ -838,7 +851,7 @@ summary.ti-place-notes-head:focus-visible {
 .ti-list-row:focus-visible,
 .ti-list-more:focus-visible,
 .ti-all-link:focus-visible {
-	outline: 2px solid var(--ti-accent);
+	outline: 2px solid var(--ti-focus);
 	outline-offset: 2px;
 }
 
@@ -866,7 +879,7 @@ summary.ti-place-notes-head:focus-visible {
 .ti-tag {
 	padding: 2px 8px;
 	border: 1px solid var(--ti-border);
-	border-radius: 999px;
+	border-radius: var(--sf-radius-pill);
 	color: var(--ti-muted);
 	font-size: 0.72rem;
 	font-weight: 700;
@@ -899,7 +912,7 @@ summary.ti-place-notes-head:focus-visible {
 	min-height: 44px;
 	margin-top: 8px;
 	border: 1px solid var(--ti-border);
-	border-radius: 10px;
+	border-radius: var(--sf-radius-control);
 	background: var(--ti-surface);
 	color: var(--ti-accent-text);
 	font: inherit;
@@ -929,7 +942,8 @@ summary.ti-place-notes-head:focus-visible {
 	border: 0;
 }
 
-/* Picture viewer: the whole screen, dark in both themes. Under the "Report a problem"
+/* Picture viewer: the whole screen, dark in both themes (the palette's navy-900, off-white and
+   sky-200, never the theme's). Under the "Report a problem"
    launcher (z-index 1025) and its panel (3000), so a picture that will not show can be
    reported from right here. */
 body.ti-viewer-open { overflow: hidden; }
@@ -944,9 +958,9 @@ body.ti-viewer-open { overflow: hidden; }
 	display: flex;
 	flex-direction: column;
 	padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-	background: rgba(0, 0, 0, 0.92);
-	color: #fff;
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	background: color-mix(in srgb, var(--sf-navy-900) 92%, transparent);
+	color: var(--sf-off-white);
+	font-family: var(--sf-font-sans);
 }
 
 .ti-viewer-bar {
@@ -959,16 +973,16 @@ body.ti-viewer-open { overflow: hidden; }
 
 .ti-viewer-heading { flex: 1 1 auto; min-width: 0; }
 .ti-viewer-title { font-weight: 650; font-size: 1rem; overflow-wrap: anywhere; }
-.ti-viewer-sub { color: rgba(255, 255, 255, 0.72); font-size: 0.82rem; overflow-wrap: anywhere; }
+.ti-viewer-sub { color: var(--sf-sky-200); font-size: 0.82rem; overflow-wrap: anywhere; }
 
 .ti-viewer-close {
 	flex: 0 0 auto;
 	min-width: 76px;
 	min-height: 44px;
-	border: 1px solid rgba(255, 255, 255, 0.45);
-	background: rgba(255, 255, 255, 0.14);
-	color: #fff;
-	border-radius: 10px;
+	border: 1px solid var(--sf-sky-200);
+	background: color-mix(in srgb, var(--sf-off-white) 14%, transparent);
+	color: var(--sf-off-white);
+	border-radius: var(--sf-radius-control);
 	padding: 8px 16px;
 	font: inherit;
 	font-weight: 650;
@@ -992,14 +1006,14 @@ body.ti-viewer-open { overflow: hidden; }
 	max-width: 100%;
 	max-height: 100%;
 	object-fit: contain;
-	background: #fff;
-	border-radius: 4px;
+	background: var(--sf-white);
+	border-radius: var(--sf-radius-none);
 }
 
 .ti-viewer-error {
 	padding: 24px;
 	text-align: center;
-	color: rgba(255, 255, 255, 0.85);
+	color: var(--sf-off-white);
 }
 
 .ti-viewer-foot {
@@ -1014,14 +1028,14 @@ body.ti-viewer-open { overflow: hidden; }
 	align-items: center;
 	min-height: 44px;
 	padding: 0 12px;
-	color: #fff;
+	color: var(--sf-off-white);
 	font-weight: 600;
 	text-decoration: underline;
 }
 
 .ti-viewer-close:focus-visible,
 .ti-viewer-original:focus-visible {
-	outline: 2px solid #fff;
+	outline: 2px solid var(--sf-off-white);
 	outline-offset: 2px;
 }
 
@@ -1032,6 +1046,9 @@ body.ti-viewer-open { overflow: hidden; }
 }
 
 .ti-footer-link {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
 	color: var(--ti-muted);
 	font-size: 0.84rem;
 	text-decoration: underline;
