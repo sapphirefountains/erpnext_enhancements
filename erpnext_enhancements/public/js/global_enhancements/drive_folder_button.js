@@ -31,34 +31,19 @@
 			refresh(frm) {
 				const folder_id = frm.doc.custom_drive_folder_id;
 				if (!folder_id || frm.is_new()) return;
+				// What the button does lives in record_actions.js since v1.686.0
+				// (erpnext_enhancements.record_actions), shared with the guided page's
+				// Actions menu. A tab still holding the bundle from before then has no
+				// record_actions: no button until it reloads, rather than one that throws.
+				const actions = window.erpnext_enhancements && erpnext_enhancements.record_actions;
+				if (!actions) return;
 				// Still a button rather than nothing: the link being dead is
 				// information the person wants, and silently hiding it just makes
 				// them hunt for a button that used to be there.
-				if (frm.doc.custom_drive_folder_missing) {
-					frm.add_custom_button(
-						__("Drive Folder Missing"),
-						() => {
-							frappe.msgprint({
-								title: __("Drive Folder Missing"),
-								indicator: "orange",
-								message: __(
-									"The Google Drive folder linked to this record no longer exists, or is no longer shared with the Drive service account. Opening it would show a Google 404.<br><br>Folder ID: <code>{0}</code><br><br>Either re-link this record in the <a href='/desk/drive-link-manager'>Drive Link Manager</a>, or restore the folder from the Shared Drive trash and press <b>Check Drive Links</b> on Project Folder Google Drive Settings.",
-									[frappe.utils.escape_html(folder_id)]
-								),
-							});
-						},
-						group ? __(group) : undefined
-					);
-					return;
-				}
+				const missing = !!frm.doc.custom_drive_folder_missing;
 				frm.add_custom_button(
-					__("Open Drive Folder"),
-					() => {
-						window.open(
-							`https://drive.google.com/drive/folders/${encodeURIComponent(folder_id)}`,
-							"_blank"
-						);
-					},
+					missing ? __("Drive Folder Missing") : __("Open Drive Folder"),
+					() => actions.open_drive_folder(folder_id, missing),
 					group ? __(group) : undefined
 				);
 			},

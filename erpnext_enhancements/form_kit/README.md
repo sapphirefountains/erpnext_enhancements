@@ -27,6 +27,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `completeness.py` | `stage_completeness(doctype, doc)`, pure; `completeness_for(doctype, names)`, the batch for the board |
 | `api.py` | The whitelisted endpoints, and the DocType allowlist in front of them |
 | `party.py` | The Party entry component's one read (P3.2): an account's default contact and addresses, and which of the record's are the account's. See *The Party entry component* below |
+| `record_info.py` | The record tools' one read (v1.686.0): frappe's `get_docinfo` and ERPNext's open activities, shaped for a page that writes text. See *The record tools* below |
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
@@ -248,10 +249,25 @@ so the record's history has to come with it. Both shells draw an empty `.ge-comm
 the steps, the guided page always and the side panel on every edit, and the shared editor fills it
 (`editor.js mount_comments`) for any saved record of any DocType:
 
-- **Notes**: ERPNext's `notes` table of CRM Note (an Opportunity's Notes tab; 1,049 notes on 235
-  deals on prod), newest first, through `record_notes` (GET; the registry check and read on the
-  record; plain text only, written with `.text()`). Whether a DocType has them is decided by its
-  meta, never by its name. Adding one runs the DocType's own `add_note` through `run_doc_method`,
+- **Notes**: every notes store the DocType has, through `record_notes` (GET; the registry check and
+  read on the record; plain text only, written with `.text()`). Notes and Comments are separate
+  stores and both show (Nik, 2026-10-14: "just include both where appropriate"). The stores
+  (`_note_sources`, `NOTE_TABLES`):
+  - a table of **CRM Note**, ERPNext's Notes tab (an Opportunity has 1,049 notes on 235 deals on
+    prod; Lead and Prospect have the table too);
+  - a table of **Project Notes**, Project's imported history (`custom_comments_table`, 283 rows,
+    hidden on the Desk form);
+  - a **`notes` Text Editor field** (Project has one), listed first as one note labelled "Notes
+    field", with no author or date. Only a Text Editor: the tag stripper would eat a plain-text
+    field's "a<b and c>d".
+
+  Table rows are merged newest first. A store at a permlevel the user cannot read is left out. A
+  record with nothing to show and nothing to add (no notes, no readable store, no `add_note`)
+  answers `has_notes: false`, so a Project with no notes gets no empty block. Which stores a
+  DocType has is decided by its meta, never by its name. The "newest N of M" line no longer says
+  the form has the rest: Project Notes are hidden on the Desk form. Adding one runs the DocType's own
+  `add_note` through `run_doc_method` (only CRM Note DocTypes have it; elsewhere a new note is a
+  Comment),
   after what is queued has saved, then draws only the Notes list again (no page reload). The
   record's `modified` moves, but the notes table is in no step, so the next step save's conflict
   check settles it without asking (`save_queue` `split_conflict`).
@@ -261,6 +277,70 @@ the steps, the guided page always and the side panel on every edit, and the shar
 
 A new DocType gets both with no work. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if
 the editor singles a DocType out, or if the Comments App starts reading more of `frm`.
+
+## The record tools, on every guided DocType (v1.686.0)
+
+**Rule (Nik, 2026-10-14): "We shouldn't have lost any fidelity or information on any of the UI/UX
+changes."** Beyond the timeline's comments, the Desk form carries a sidebar (attachments, assigned
+to, tags, follow, shared with), the rest of its timeline (versions, emails, logs), ERPNext's CRM
+Activities tab, its dashboard's connections, the Contact & Address directory and a toolbar. The
+guided page and the side panel bring all of it back for any saved record, in `public/js/form_kit/
+ui/record_tools.js` (`RecordTools`), which the editor mounts with the comments (`mount_tools`, called
+from `mount_comments`). The shells only draw an empty `<section class="ge-tools">`: the guided page
+inside the view settings' `.ge-block--tools`, which each person places beside the step, below it,
+or collapsed behind its "Record tools" bar (`apply_view`, *View settings* below); the side panel
+under its notes and comments. The tools add an **Actions** button beside the shell's own head
+button (`.ge-band-actions`, `.fk-head-row`).
+
+| Tool | What it shows and does | Code path it reuses |
+|---|---|---|
+| Assigned to | assignees; Assign, remove (yours, or anyone's with write), Done on your own | `frappe.ui.form.AssignToDialog` (no form needed), `frappe.desk.form.assign_to.add/remove/close` |
+| Follow | Follow / Unfollow, where the DocType tracks changes and the person gets follow emails | `frappe.desk.form.document_follow.update_follow`, the form menu's rule |
+| Tags | tags; add (with suggestions) and remove, with write | `frappe.desk.doctype.tag.tag.add_tag/remove_tag/get_tags` |
+| Shared with | who has it shared, read only; sharing itself is on the full form | docinfo `shared` (frappe's Share is the form's own) |
+| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
+| Activity | created, last edited, Versions as sentences (the timeline's display rule per field), emails (as text, Reply), assignment / attachment / info / workflow logs, milestones; ERPNext's open ToDos and Events with Done; New email, New task, New event | `frappe.desk.form.load.get_docinfo` and the open half of `erpnext.crm.utils.get_open_activities` (`get_open_todos` / `get_open_events`, behind its own permission check) through `record_info`; `frappe.views.CommunicationComposer`; `frappe.views.InteractionComposer` set up as `crm_activities.js` does; `frappe.client.set_value` for Done |
+| People & places | where the form has `contact_list_html` / `address_list_html`: the same lists, New contact / address, Link existing (with "Also add to"), Import contacts, Set primary, Unlink | `sync_contact.get_contacts_for_context` and the rest of the widget's endpoints; `global_enhancements/party_sources.js`, which `unified_tab_controller.js` calls too; `contacts_ux.create_for`; Set primary writes the record's own field through the editor's save queue |
+| Connections | the dashboard's linked documents with counts, each opening its list filtered to this record | `meta.__dashboard` (this app's `override_doctype_dashboards` included), `frappe.desk.notifications.get_open_count`, `dashboard.js`'s list filter |
+| Actions menu | Create (the DocType's own form script's list), Generate Contract, Open Drive Folder, Set Reminder, New Email, Print, Customize, and the full form for rename, duplicate, merge, delete | `RECORD_TOOLS` + `frappe.model.open_mapped_doc({method, source_name})`; `global_enhancements/record_actions.js`, which the form's buttons call too; the planner kit's menu |
+
+Everything is decided by the record's meta, its permissions (docinfo's `get_doc_permissions`) and
+its values. The one per-DocType list is `RECORD_TOOLS` in `public/js/form_kit/record_tools.js`: the
+Create menu and the email field are what a DocType's own form script adds (Opportunity: ERPNext's
+`make_supplier_quotation`, `make_request_for_quotation`, `make_customer` unless the party is a
+Customer, `make_quotation`; none while Lost). A DocType without an entry gets every other tool.
+
+`record_info(doctype, name)` (GET) runs frappe's own `get_docinfo`, whose read check is the form
+load's, because that function answers in `frappe.response["docinfo"]` and sf_kit's call reads only
+`message`. It returns every stored HTML string (an email body, a ToDo, a log line) as plain text,
+names beside user ids, and the record's Drive folder fields (hidden on the form, so in no step)
+where the caller may read them. The page writes everything with `.text()`.
+
+Every dialog joins the planner kit's history guard through the Party component's `open_dialog`:
+Back closes the dialog and nothing else. The Actions menu is the planner kit's menu, an overlay of
+the same guard. Left on the full form, reached from the menu: Rename, Duplicate, Delete, Merge,
+frappe's Remind Me (its `ReminderManager` is not exported; Set Reminder covers Opportunity), Share,
+Repeat, Copy to Clipboard, Undo/Redo, and New Email's "Attach Document Print" and saved draft (the
+composer offers them only with a form, and a stand-in would have to be one: it reads the form's
+timeline, events, meta, print formats and letter head). The record's own files are offered in both
+composers. Not ported at all: ERPNext's Opportunity Close / Reopen, which write status "Closed" /
+"Open", values this site's stage list (a Property Setter) refuses, and Fetch Latest Exchange Rate,
+which shows only for a deal in a foreign currency, and deals here are always in the company's.
+
+New Email starts as the Desk's composer does with a form (`setup_subject_and_recipients`, ported as
+`record_tools.js email_start`): To the record's email field, which `record_info` returns under
+`emails` because it is usually hidden and so in no step (Opportunity: `contact_email`, then
+`primary_contact_email`); subject "Re:" the latest email on the record, else the title; always
+"(#name)". Reply quotes the email in full from the timeline's own `get_communications` (read on the
+record); `record_info`'s copy is cut to 1,200 characters and is the quote only if that read fails.
+
+New Task and New Event run frappe's `InteractionComposer`, which also reads the global `cur_frm`
+(its file list and its post-insert `reload_doc`). Both shells are Desk Pages and v16's `pageview.js`
+sets `cur_frm` to null whenever a Page shows, so normally it is null and the record's files go in
+as the composer's `attachments`. A defence for the rare case it is set: another record's form is
+nulled while the composer is open and until its insert calls back, then put back only on the same
+route; this record's own form keeps it, and its files are then not passed twice.
+`tests/test_guided_record_tools.py`.
 
 ## The inputs are the form's (v1.685.0)
 

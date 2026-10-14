@@ -230,6 +230,10 @@ EXACT_SURFACE = {
         # v1.678.2: the guided page's Notes block, GET. Checks the registry and read on the
         # record; returns plain text only (tested in test_guided_entry).
         "record_notes",
+        # v1.686.0: the guided page's record tools, GET. Checks the registry, then runs frappe's own
+        # get_docinfo (read on the record); stored HTML comes back as plain text (tested in
+        # test_guided_record_tools).
+        "record_info",
     },
     # The planners' and the board's saved views, and since v1.684.0 the guided page's view
     # settings: every endpoint acts only on the caller's own __UserSettings row (tested in

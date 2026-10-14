@@ -352,6 +352,10 @@ class TestTheModules(unittest.TestCase):
 			shutil.copytree(ITEM_JS, folder / "guided_item")
 			# The bundle carries the record editor (v1.675.0), whose Party component reads the blocks.
 			shutil.copytree(JS / "info_blocks", folder / "info_blocks")
+			# v1.686.0: and its record tools import the record actions and party rules the Desk shares.
+			(folder / "global_enhancements").mkdir()
+			for name in ("party_sources.js", "record_actions.js"):
+				shutil.copy(JS / "global_enhancements" / name, folder / "global_enhancements" / name)
 			shutil.copy(BUNDLE, folder / "guided_entry.bundle.js")
 			(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
 			payload = json.dumps({"names": NAMES, "codes": CODES, "answer": ANSWER, "mirror": MIRROR})

@@ -1277,6 +1277,8 @@ body.ge-page-active .triton-fab {
 	border: 1px solid var(--sf-rule);
 	padding: var(--sf-space-15);
 	min-width: 0;
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
 }
 /* A comment in a narrow side column: its author over its text, not beside it. */
 .ge-aside .comment-item {
@@ -2096,4 +2098,286 @@ body.ge-page-active .triton-fab {
 		flex-basis: 100%;
 		order: -1;
 	}
+}
+
+/* ---- The record tools (v1.686.0, form_kit/ui/record_tools.js) ----
+ * The Desk form's sidebar, timeline, dashboard and toolbar for a saved record: assigned to, follow,
+ * tags, shared with, attachments, activity, people and places, connections. Where the section sits
+ * is the view settings' (v1.684.0): the guided page draws it in .ge-block--tools, placed beside or
+ * below the step and collapsible behind its bar (the `.ge-tools` box itself is the one rule under
+ * "Notes and comments, and the record tools" above). The side panel draws it under the notes and
+ * comments. Here only what is inside it. Tokens only. */
+.fk-panel .ge-tools {
+	padding: var(--sf-space-15) 0 0;
+	border: 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	background: transparent;
+}
+/* Behind the view settings' bar ("Record tools"), the section's own heading would say it twice. */
+.ge-block.is-collapsible > .ge-tools > .ge-tools-title {
+	display: none;
+}
+.ge-tools-title {
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+.ge-tools-head {
+	margin: var(--sf-space-10) 0 var(--sf-space-5);
+	color: var(--sf-label);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-tools-meta .ge-tools-head {
+	margin-top: 0;
+}
+.ge-tools-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	padding: var(--sf-space-10) 0;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ge-tools-row > .ge-tools-head {
+	flex: 0 0 100%;
+}
+.ge-tools-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ge-tools-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+	padding: 0 0 0 var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-sm);
+}
+.ge-tools-chip-btn {
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	border: 0;
+	background: transparent;
+	color: var(--sf-text-muted);
+	font: inherit;
+	font-size: var(--sf-text-md);
+	cursor: pointer;
+}
+.ge-tools-chip-btn:hover,
+.ge-tools-chip-btn:focus-visible {
+	color: var(--sf-text-strong);
+}
+.ge-tools-chip-btn:focus-visible,
+.ge-tools-summary:focus-visible,
+.ge-tools-connection:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+.ge-tools-none,
+.ge-tools-note,
+.ge-tools-text {
+	margin: 0;
+	font-size: var(--sf-text-sm);
+}
+.ge-tools .sf-btn {
+	min-height: var(--sf-touch-min);
+}
+.ge-tools-tag-add {
+	display: flex;
+	flex: 1 1 100%;
+	gap: var(--sf-space-5);
+	min-width: 0;
+}
+.ge-tools-tag-add .sf-btn {
+	flex: none;
+	white-space: nowrap;
+}
+.ge-tools-tag-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-input);
+}
+.ge-tools-group {
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ge-tools-summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-5) 0;
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+	list-style: none;
+}
+.ge-tools-summary::-webkit-details-marker {
+	display: none;
+}
+.ge-tools-summary::after {
+	content: "+";
+	color: var(--sf-text-muted);
+	font-weight: var(--sf-weight-regular);
+}
+.ge-tools-group[open] > .ge-tools-summary::after {
+	content: "\2212";
+}
+.ge-tools-label {
+	flex: 1 1 auto;
+}
+.ge-tools-count {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-regular);
+}
+.ge-tools-body {
+	padding: 0 0 var(--sf-space-15);
+}
+.ge-tools-buttons {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-10);
+}
+.ge-tools-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ge-tools-item,
+.ge-tools-event {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	padding: var(--sf-space-10) 0;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ge-tools-event {
+	display: block;
+}
+.ge-tools-item:first-child,
+.ge-tools-event:first-child {
+	border-top: 0;
+}
+.ge-tools-item-main {
+	flex: 1 1 160px;
+	min-width: 0;
+}
+.ge-tools-item-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5);
+}
+.ge-tools-item-title,
+.ge-tools-file {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	color: var(--sf-link);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+}
+.ge-tools-item-meta {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ge-tools-item-tools {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+}
+.ge-tools-reach {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+}
+.ge-tools-reach a {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	color: var(--sf-link);
+}
+.ge-tools-badge {
+	padding: 0 var(--sf-space-5);
+	border: var(--sf-border-hairline) solid var(--sf-focus);
+	border-radius: var(--sf-radius-control);
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-tools-badge--quiet {
+	border-color: var(--sf-rule);
+	color: var(--sf-text-muted);
+	font-weight: var(--sf-weight-regular);
+}
+.ge-tools-event-text {
+	color: var(--sf-text);
+}
+.ge-tools-event--card .ge-tools-event-text {
+	padding: var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-bg);
+}
+.ge-tools-email-text {
+	max-height: 12em;
+	margin-top: var(--sf-space-5);
+	overflow: auto;
+	white-space: pre-wrap;
+	font-size: var(--sf-text-sm);
+}
+.ge-tools-reply,
+.ge-tools-more,
+.ge-tools-link {
+	padding-left: 0;
+}
+.ge-tools-connection {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-link);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.ge-tools-connection:disabled {
+	color: var(--sf-text-muted);
+	cursor: default;
+}
+.ge-tools-connection-name {
+	text-decoration: underline;
+}
+.ge-tools-connection-count {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ge-tools .sf-state {
+	padding: var(--sf-space-10) 0;
+	text-align: left;
+	align-items: flex-start;
+}
+.ge-tools-actions {
+	min-height: var(--sf-touch-min);
 }
