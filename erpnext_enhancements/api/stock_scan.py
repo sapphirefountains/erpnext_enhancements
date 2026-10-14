@@ -1684,7 +1684,8 @@ def undo(log):
 	after the window only Purchasing or Accounts.
 
 	A bin assignment (v1.689.0: *Assign*, *Unassign*, and *Move To* with "make it the item's
-	home") changes Putaway Rules and Item Defaults, which have no voucher to cancel. Its log row
+	home"; v1.693.0: the Bin Manager's *New item*, an Assign that also created the Item, which
+	stays) changes Putaway Rules and Item Defaults, which have no voucher to cancel. Its log row
 	keeps what they were before (``rule_changes``) and ``bin_assignments.restore`` puts that
 	back, behind the same module gate the change needed (``bin_assignments.require_manage``).
 	A *Move To* that moved the
@@ -1820,9 +1821,18 @@ def _bin_message(doc, amount, item, undone=False):
 	here = names.get(doc.warehouse) or doc.warehouse
 	there = names.get(doc.from_warehouse) or doc.from_warehouse
 	if doc.action == rules.ACTION_ASSIGN:
+		# The Bin Manager's New item (v1.693.0, bin_assignments.create_and_assign) made the Item
+		# with this save; undo takes it off the bin and the Item stays, as a store run's does.
+		created = cint(doc.get("created_item"))
 		if undone:
-			return _("Undone: {0} is no longer on {1}.").format(item, here)
-		return _("{0} is now on {1}.").format(item, here)
+			text = _("Undone: {0} is no longer on {1}.").format(item, here)
+			if created:
+				text += " " + _("The new item {0} stays in ERPNext.").format(doc.item_code)
+			return text
+		text = _("{0} is now on {1}.").format(item, here)
+		if created:
+			text += " " + _("New item {0} created.").format(doc.item_code)
+		return text
 	if doc.action == rules.ACTION_UNASSIGN:
 		if undone:
 			return _("Undone: {0} is back on {1}.").format(item, here)

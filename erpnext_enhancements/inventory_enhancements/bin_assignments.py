@@ -40,6 +40,15 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
 * :func:`set_count` -- correct what is on hand: a submitted **Stock Reconciliation** for one
   item at one bin, never a Material Issue, so the ledger says it was a count and the stock
   value moves at the item's rate.
+* :func:`create_and_assign` (v1.693.0, the Bin Manager page) -- create a new Item through the
+  store run's quick-item path (``api.stock_scan._check_quick_item`` / ``_quick_item``: the same
+  checks, the same refusals, the naming guard on insert, as the user) and put it on the bin, in
+  one request. Logged as an *Assign* with ``created_item``; Undo takes it off the bin again and
+  the Item stays, as a store run's quick Item does.
+
+:func:`manager_boot` (v1.693.0) is the Bin Manager page's one read of its own: every bin with
+how many items are on hand and assigned there, and what the caller may do. Everything else the
+page shows comes from ``api.stock_scan`` (``get_location``, ``get_recent``, the searches).
 
 :func:`ensure_assignment` is the plain helper underneath, also called by the guided Item flow
 (``api.item_flow.save_stock``). No logging, no ``client_ref``.
@@ -108,6 +117,9 @@ PRIORITY = 1
 #: The two kinds of change a save records in ``Stock Scan Log.rule_changes``.
 CHANGE_RULE = "rule"
 CHANGE_ITEM_DEFAULT = "item_default"
+#: An Item Default that a save *set* to the bin (v1.693.0): the quick Item's own row, which
+#: ``api.stock_scan._quick_item`` points at the bin it is created for. Undo clears it again.
+CHANGE_ITEM_DEFAULT_SET = "item_default_set"
 #: Not a change: what a move or a boneyard trip did about its source bin (released, or kept
 #: because stock is still there), for the result's sentence. Undo skips it.
 CHANGE_SOURCE = "source"
@@ -167,6 +179,13 @@ def _assignable(item_code, warehouse):
 		frappe.throw(_("{0} is not kept in stock, so it cannot be put on a bin.").format(label))
 	if cint(item.has_variants):
 		frappe.throw(_("{0} is a template. Put one of its variants on the bin instead.").format(label))
+	return item, _assignable_location(warehouse)
+
+
+def _assignable_location(warehouse):
+	"""The location an item may be put on, or throw: a usable leaf of a company, not the
+	boneyard. Shared by :func:`_assignable` and :func:`create_and_assign`, which has to know
+	before it creates the Item."""
 	name = cstr(warehouse).strip()
 	location = scan._warehouse(name)
 	problem = scan._location_problem(location, name)
@@ -175,7 +194,7 @@ def _assignable(item_code, warehouse):
 	if not location.company:
 		frappe.throw(_("{0} belongs to no company, so nothing can be put on it.").format(name))
 	_refuse_boneyard(location)
-	return item, location
+	return location
 
 
 def _refuse_boneyard(location):
@@ -410,6 +429,8 @@ def restore(changes):
 	* A rule the save enabled or disabled gets its previous ``disable`` back.
 	* An Item Default the save cleared gets its warehouse back, but only while it is still
 	  blank: if somebody has since given the item another default warehouse, theirs stands.
+	* An Item Default the save **set** to the bin (:func:`create_and_assign`'s new Item) is
+	  cleared again, but only while it still names that bin: the same "theirs stands" rule.
 
 	A rule deleted in the Desk since is skipped, and so is the ``source`` marker. Called by
 	``api.stock_scan.undo`` after :func:`require_manage` and after any voucher is canceled, in
@@ -445,6 +466,17 @@ def restore(changes):
 				"default_warehouse",
 				change.get("warehouse"),
 				update_modified=False,
+			)
+			touched.add(row.parent)
+		elif change.get("kind") == CHANGE_ITEM_DEFAULT_SET:
+			row = frappe.db.get_value(
+				"Item Default", change.get("row"), ["parent", "default_warehouse"], as_dict=True
+			)
+			if not row or row.parent != change.get("item") or row.default_warehouse != change.get("warehouse"):
+				continue
+			require_manage()
+			frappe.db.set_value(
+				"Item Default", change.get("row"), "default_warehouse", None, update_modified=False
 			)
 			touched.add(row.parent)
 	for item_code in touched:
@@ -768,3 +800,162 @@ def set_count(item_code, warehouse, qty, client_ref):
 	scan._post(sr)
 	scan._finish_log(log, "Stock Reconciliation", sr.name)
 	return scan._result(log.name)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_and_assign(warehouse, client_ref, item_code=None, item_name=None, item_group=None, stock_uom=None):
+	"""Create a new Item and put it on the bin ``warehouse``, in one request (v1.693.0, the Bin
+	Manager page's *New item*).
+
+	The Item is made by the store run's quick-item path, unchanged: ``_quick_item_spec`` reads
+	the four fields, ``_check_quick_item`` refuses what an insert would (a missing or overlong
+	code or name, a group or unit not offered, a code already in ERPNext, no Item create), and
+	``_quick_item`` inserts it **as the user**, with no ``ignore_permissions`` and no way past
+	the naming guard, as a stock item whose Item Default for the bin's company is this bin.
+	Then the bin gets its Putaway Rule (:func:`_ensure`), past the module gate like every
+	assignment. All of it is one transaction: a refusal anywhere leaves no Item behind.
+
+	Every refusal about the bin comes first (a group, transit or disabled location, the
+	boneyard, a bin of no company), then the gate, then the Item's own. The log row is an
+	*Assign* with ``created_item`` and ``needs_review`` set, so the new Item lands in the same
+	weekly review a store run's does (Inventory Scanner Settings, "New Items From Store Runs";
+	without ``needs_review`` the row could never be ticked reviewed and would sit there for
+	good). It is written after the Item exists, because its ``item_code`` is a Link; a retry with
+	the same ``client_ref`` still finds this save first (``_already_saved``).
+
+	Undo (``api.stock_scan.undo``) restores what ``rule_changes`` records: the rule it made is
+	disabled and the Item Default it set is cleared while it still names this bin. **The Item
+	stays**, exactly as a store run's quick Item does, and the undo says so.
+	"""
+	scan._check_access()
+	ref = scan._client_ref(client_ref)
+	done = scan._already_saved(ref)
+	if done:
+		return done
+
+	location = _assignable_location(warehouse)
+	require_manage()
+	spec = scan._quick_item_spec(
+		{"item_code": item_code, "item_name": item_name, "item_group": item_group, "stock_uom": stock_uom}
+	)
+	scan._check_quick_item(spec)
+
+	created = scan._quick_item(spec, location)
+	item = _item(created.name)
+	log = scan._begin_log(ref, rules.ACTION_ASSIGN, item, 0, location, created_item=1, needs_review=1)
+	rule, change = _ensure(item, location)
+	changes = [change] + [
+		{"kind": CHANGE_ITEM_DEFAULT_SET, "row": row, "item": item.name, "warehouse": location.name}
+		for row in _defaults_at(item.name, location.name, location.company)
+	]
+	scan._finish_log(log, None, None, putaway_rule=rule, rule_changes=_dump(changes))
+	return scan._result(log.name)
+
+
+# ---------------------------------------------------------------------------
+# The Bin Manager page's read (v1.693.0)
+# ---------------------------------------------------------------------------
+
+
+def _bin_rows():
+	"""Every bin a person could manage: a leaf Warehouse, enabled, not transit, with how many
+	items are on hand there (``tabBin.actual_qty > 0``) and how many are assigned there (an
+	enabled Putaway Rule). Two grouped derived tables in one ``frappe.db.sql``: Frappe 16
+	refuses ``count(...)`` as a string field in ``get_all``."""
+	return frappe.db.sql(
+		"""
+		select w.name, w.warehouse_name, w.company, w.lft, w.rgt,
+			coalesce(b.items, 0) as on_hand_items,
+			coalesce(r.items, 0) as assigned_items
+		from `tabWarehouse` w
+		left join (
+			select warehouse, count(*) as items from `tabBin`
+			where actual_qty > 0 group by warehouse
+		) b on b.warehouse = w.name
+		left join (
+			select warehouse, count(distinct item_code) as items from `tabPutaway Rule`
+			where disable = 0 group by warehouse
+		) r on r.warehouse = w.name
+		where w.is_group = 0 and w.disabled = 0 and coalesce(w.warehouse_type, '') <> 'Transit'
+		""",
+		as_dict=True,
+	)
+
+
+def _trails(rows):
+	"""Each bin's breadcrumb (``stock_scan_rules.location_trail``), worked out from one read of
+	the group warehouses rather than one query per bin (production had 221 bins on 2026-10-14)."""
+	groups = frappe.get_all("Warehouse", filters={"is_group": 1}, fields=["name", "warehouse_name", "lft", "rgt"])
+	groups.sort(key=lambda g: cint(g.lft))
+	out = {}
+	for row in rows:
+		if row.lft is None:
+			out[row.name] = ""
+			continue
+		names = [
+			g.warehouse_name or g.name
+			for g in groups
+			if g.lft is not None and cint(g.lft) < cint(row.lft) and cint(g.rgt) > cint(row.rgt)
+		]
+		out[row.name] = rules.location_trail(names)
+	return out
+
+
+@frappe.whitelist(methods=["GET"])
+def manager_boot():
+	"""What the Bin Manager Desk page (``inventory_enhancements/page/bin_manager``) needs before
+	it can draw anything: the bins, and what the caller may do there.
+
+	* ``bins`` -- :func:`_bin_rows` with each one's ``trail``, in shelf-number order
+	  (``natural_key``), the boneyard marked ``is_boneyard``.
+	* ``can_manage`` -- the module gate (:func:`can_manage`): put on, take off, boneyard, new item.
+	* ``can_count`` -- Stock Reconciliation create **and** submit (:func:`set_count` posts one as
+	  the user); ``can_move`` -- Stock Entry create and submit (a move posts a transfer).
+	* ``can_create_items`` -- Item create, which the quick Item is inserted with.
+	* ``boneyard_warehouse`` / ``boneyard_name`` -- from Inventory Scanner Settings, read here so
+	  the page never reads a Settings Single from the browser (a non-System-Manager would be
+	  refused). ``None`` when it is unset or disabled, which hides *Send to boneyard*.
+	* ``item_groups`` / ``uoms`` / ``refuse_from`` -- the quick Item's pick lists and the naming
+	  guard's go-live date, the same ones the store run offers.
+
+	Role-checked like every endpoint here (``api.stock_scan._check_access``). Read-only, GET.
+	"""
+	scan._check_access()
+	settings = scan.get_settings()
+	boneyard = cstr(settings.get("boneyard_warehouse")).strip() or None
+	boneyard_row = scan._warehouse(boneyard) if boneyard else None
+	if not boneyard_row or cint(boneyard_row.disabled):
+		boneyard, boneyard_row = None, None
+	rows = _bin_rows()
+	trails = _trails(rows)
+	bins = [
+		{
+			"warehouse": row.name,
+			"warehouse_name": row.warehouse_name or row.name,
+			"trail": trails.get(row.name) or "",
+			"company": row.company,
+			"on_hand_items": cint(row.on_hand_items),
+			"assigned_items": cint(row.assigned_items),
+			"is_boneyard": bool(boneyard and row.name == boneyard),
+		}
+		for row in rows
+	]
+	bins.sort(key=lambda b: rules.natural_key(b["warehouse_name"]))
+	return {
+		"bins": bins,
+		"can_manage": can_manage(),
+		"can_count": bool(
+			frappe.has_permission("Stock Reconciliation", "create")
+			and frappe.has_permission("Stock Reconciliation", "submit")
+		),
+		"can_move": bool(
+			frappe.has_permission("Stock Entry", "create") and frappe.has_permission("Stock Entry", "submit")
+		),
+		"can_create_items": bool(frappe.has_permission("Item", "create")),
+		"boneyard_warehouse": boneyard,
+		"boneyard_name": (boneyard_row.warehouse_name or boneyard_row.name) if boneyard_row else None,
+		"undo_window_minutes": cint(settings.get("undo_window_minutes")),
+		"item_groups": scan._item_groups_by_use(),
+		"uoms": scan._quick_uoms(),
+		"refuse_from": scan._naming_go_live(),
+	}
