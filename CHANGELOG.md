@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.662.1] - 2026-10-14
+
+### Fixed
+
+- **CI: the secret scan no longer times out.** The `secret-scan` job reads every version of every
+  file in history. CHANGELOG.md alone is now 3.7 MB with more than 1,400 versions, because every PR
+  adds one, so each run scans about 5 GB of text. That took about 22 seconds when the job was
+  written and 5 to 10 minutes by 2026-10-14. That night two runs were cancelled at the 10-minute
+  limit while the scan itself was still clean, failing PRs that had nothing wrong with them. The
+  limit is now 30 minutes.
+  - This is headroom, not a fix. The real fix is to skip blobs already scanned clean: a blob is
+    content-addressed, so a blob clean once stays clean under the same rules.
+
 ## [1.661.0] - 2026-10-14
 
 ### Changed
