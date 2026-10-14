@@ -1707,8 +1707,12 @@ class TestPage(unittest.TestCase):
 		self.assertIn("${PP.api}.get_my_week", self.block)
 		self.assertIn("this.go_route(data.resource, entry.date)", self.block)
 		self.assertRegex(self.block, r"step = \(sign\) => this\.go_my_week\(")
+		# The page's one history write (S5b, v1.667.0) is take_route_project's in-place removal of a
+		# form link's ?project=, checked in tests/test_form_page_links.py.
+		start = self.bare.index("\ttake_route_project() {")
+		bare = self.bare[:start] + self.bare[self.bare.index("\n\t}\n", start) :]
 		for forbidden in ("pushState", "replaceState", "window.location", "location.href", "history."):
-			self.assertNotIn(forbidden, self.bare)
+			self.assertNotIn(forbidden, bare)
 
 	def test_my_week_links_only_to_google_maps_without_an_opener(self):
 		self.assertIn(r"/^https:\/\/www\.google\.com\/maps\//.test(stop.maps_url)", self.block)

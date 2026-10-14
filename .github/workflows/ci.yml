@@ -3474,6 +3474,15 @@ jobs:
       # it always sent; no date it can be handed raises. Its own step: installs a frappe stub.
       - name: Day Board feed for another day (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_board_days -v
+      # Custom pages S5b (v1.667.0). Each form opens the page that works on the same record:
+      # Project -> Project Planner (?project=, consumed by the planner), Project Quality Inspection
+      # -> Inspection Wizard, Rental Booking -> Rental Planner (?start=), and the Day Board's
+      # submitted visits -> Visit Review plus its toolbar -> the Maintenance Planner's week. Each is
+      # a route (a history entry), shown only when frappe.boot.page_info lists the page, never an
+      # /app/ link. Runs scripts/test_form_page_links.js, the real form and page scripts against a
+      # model of v16.50's router; node is on PATH in this job, so the harness cannot skip here.
+      - name: Custom pages S5b form links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_form_page_links -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

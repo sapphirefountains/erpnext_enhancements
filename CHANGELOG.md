@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.667.0] - 2026-10-14
+
+### Added
+
+- **Links between related pages, from the forms** (custom pages S5b, ERPNext TASK-2026-02807). Each
+  form now opens the page that works on the same record, in the right state. Every link is a route,
+  so it is a history entry and Back returns to where it was pressed. Each shows only to those whose
+  roles open the target page (`frappe.boot.page_info`); anyone else would only be refused by it.
+  - **Project: View > Open in Project Planner.** The planner opens with the project as its Project
+    filter, as `/desk/project-planner?project=…`. A project that has not started yet opens on the
+    week it starts (`/week/<expected_start_date>`), where its work is. The button is only on a
+    project the planner plans: its type is one of `crew_availability.PLANNER_PROJECT_TYPES` (the
+    test holds the form's copy of the list to the engine's), and it is not Completed or Canceled.
+    New `public/js/project_enhancements/project_planner_link.js`, registered in
+    `doctype_js["Project"]`. It declares nothing at the top level, because doctype_js concatenates
+    every Project script into one.
+  - **Project Quality Inspection: Open in Inspection Wizard**, on a saved draft. It opens
+    `/desk/inspection-wizard/<inspection>/0`, the wizard's own path form, at the first section. A
+    submitted inspection has nothing to step through in the wizard, so it gets no button. This is
+    the DocType's first form script. Frappe loads it from the DocType folder, so it is not in
+    doctype_js, which would load it twice.
+  - **Rental Booking: View > Open in Rental Planner** replaces the bare "Rental Planner" link. The
+    board opens on the booking's first day (delivery, else setup, else the event) as `?start=`,
+    which the planner reads since v1.662.0. A booking with no dates opens the bare board.
+  - **Maintenance Day Board: a submitted visit links to Visit Review.** Cards in Submitted and
+    Flagged get "Open in Visit Review" (`/desk/visit-review/<visit>`) under the card, beside the
+    drafts' Visit Wizard link from v1.662.0. A card is itself a link and cannot hold another. A
+    Projects Manager reads the board but is not a reviewer, so the link depends on the page's roles.
+  - **Maintenance Day Board: Open in Maintenance Planner** in the toolbar opens the planner's week
+    holding the day shown (`/desk/maintenance-planner/week/<day>`). That is the planner's own
+    route, so the Maintenance Planner is unchanged.
+- **The Project Planner takes a project from `frappe.route_options`** (`take_route_project`, called
+  from `handle_route`). It reads the key after the planner restores its last-used view, so the
+  form's project wins over a remembered one. The key is consumed the way the list view consumes its
+  filters, and an emptied object is nulled. The PM filter is cleared so it cannot hide that
+  project's cards. A remembered last-used Month view still applies: it replaces the entry and keeps
+  the query until the planner reads it.
+  - **It is a one-off.** Nothing is saved to the remembered Project and PM filters, and the "last
+    used" view is not saved while the link's project is still the filter (`project_link`). A
+    filter the person picks afterwards is saved as before.
+  - **The key leaves the address in place** (`history.replaceState`, the planner's only history
+    write). Otherwise Back onto that entry, after switching to All and opening a task, would put
+    the link's filter back.
+  - **A linked project the planner does not list stays the filter**, offered in the select under
+    its name, instead of the filter quietly resetting to all projects. A picked filter the planner
+    no longer lists still resets, as before. When the filtered project has nothing in the range on
+    screen and nothing unscheduled, the calendar says "No work for <project> in this range."
+- **The new links that route without options clear `frappe.route_options` first.** The router
+  copies every address's query into it and nothing clears it. On v16.50, `set_route` writes
+  whatever is left there into the next address. An options object replaces it, so only the
+  path-only routes need this: the Inspection Wizard, a dateless booking and the Maintenance
+  Planner. The wizard's own `route_to` already does the same.
+
+### Changed
+
+- New bench-free suite `tests/test_form_page_links.py`, with its own CI step. It checks the source
+  shape and runs `scripts/test_form_page_links.js`, which loads the real form and page scripts
+  against a model of v16.50's router. That model puts an options object in `route_options` and
+  writes it to the address as the query. It pushes or replaces the entry, and copies the query back
+  into `route_options` on every route change. The harness presses each button and checks the
+  target page's state. It covers Back and Forward, a name that needs escaping, a leftover option,
+  the planner's last-used view and the Day Board on another day.
+
 ## [1.666.0] - 2026-10-14
 
 ### Added
