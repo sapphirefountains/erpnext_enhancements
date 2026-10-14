@@ -3453,6 +3453,16 @@ jobs:
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
+      # Custom pages S3.6 (v1.653.0), the accessibility pass, pinned file by file: the Rental
+      # Planner's booking bars and finished steps and Plan a Trip's toggle chips are real buttons;
+      # the planners' day numbers and crew-view date heads take role, tab stop and Enter/Space;
+      # every glyph-only button it touched (the planners' ‹ › ↻, the scanners' camera, find and
+      # remove, the inspection photo) has an aria-label; the KPI Cockpit grade and the Task
+      # Dashboard priority carry their word beside the border colour; three progress bars are
+      # progressbars; the GA4 dashboard's strings go through __(). The keyboard path itself runs
+      # in scripts/test_rental_planner_history.js (from test_rental_planner). Reads files only.
+      - name: Custom pages S3.6 accessibility (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s3_6_accessibility -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads

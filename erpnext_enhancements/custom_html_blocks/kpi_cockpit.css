@@ -97,6 +97,17 @@
     margin-bottom: 6px;
 }
 
+/* The grade in words, beside the border colour that also shows it. */
+.kpi-status {
+    float: right;
+    margin-left: 6px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sf-text-strong, var(--text-color));
+}
+
 .kpi-card-value {
     font-size: 22px;
     font-weight: 600;

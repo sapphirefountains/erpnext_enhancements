@@ -192,6 +192,7 @@ const MP_STYLE = `
 .mp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
 .mp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
 .mp-day-num:hover{background:var(--control-bg);}
+.mp-day-num:focus-visible,.mp-crew-head:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
 .mp-day.mp-today .mp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .mp-day.mp-out{background:var(--control-bg);}
 .mp-day.mp-out .mp-day-head{opacity:.55;}
@@ -417,16 +418,18 @@ class MaintenancePlanner {
 
 	build_shell() {
 		const $bar = $('<div class="mp-toolbar"></div>').appendTo(this.$body);
-		$('<button class="btn btn-default btn-sm">‹</button>')
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
 			.attr("title", __("Earlier"))
+			.attr("aria-label", __("Earlier"))
 			.on("click", () => this.shift(-1))
 			.appendTo($bar);
 		$('<button class="btn btn-default btn-sm"></button>')
 			.text(__("Today"))
 			.on("click", () => this.go(this.view, frappe.datetime.get_today()))
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">›</button>')
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
 			.attr("title", __("Later"))
+			.attr("aria-label", __("Later"))
 			.on("click", () => this.shift(1))
 			.appendTo($bar);
 		this.$title = $('<span class="mp-title"></span>').appendTo($bar);
@@ -479,8 +482,9 @@ class MaintenancePlanner {
 			.text(__("Undo"))
 			.on("click", () => this.undo())
 			.appendTo($bar);
-		$('<button class="btn btn-default btn-sm">↻</button>')
+		$('<button type="button" class="btn btn-default btn-sm">↻</button>')
 			.attr("title", __("Refresh"))
+			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
 		this.update_undo_button();
@@ -871,10 +875,17 @@ class MaintenancePlanner {
 					: day.date() === 1
 					? day.format("MMM D")
 					: day.format("D");
-			$('<span class="mp-day-num"></span>')
+			// Enter and Space do what a click does (S3.6); with the quick looks on, their own
+			// capture-phase handlers take both first.
+			$('<span class="mp-day-num" role="button" tabindex="0"></span>')
 				.text(label)
 				.attr("title", __("Show this week"))
 				.on("click", () => this.go("week", ymd))
+				.on("keydown", (e) => {
+					if (e.key !== "Enter" && e.key !== " ") return;
+					e.preventDefault();
+					this.go("week", ymd);
+				})
 				.appendTo($head);
 			const cell = single ? this.cell_of(this.technician, ymd) : null;
 			const free = single ? this.free_info(this.technician, ymd) : null;
@@ -1065,7 +1076,7 @@ class MaintenancePlanner {
 		const html = [`<div class="mp-crew-corner"></div>`];
 		days.forEach((ymd) => {
 			html.push(
-				`<div class="mp-crew-head${ymd === today ? " mp-today" : ""}" data-week="${mp_esc(ymd)}" title="${mp_esc(
+				`<div class="mp-crew-head${ymd === today ? " mp-today" : ""}" role="button" tabindex="0" data-week="${mp_esc(ymd)}" title="${mp_esc(
 					__("Show this week")
 				)}">${mp_esc(mp_when(ymd))}</div>`
 			);
@@ -1107,7 +1118,15 @@ class MaintenancePlanner {
 		}
 		const $scroll = $('<div class="mp-scroll"></div>').appendTo(this.$grid_wrap);
 		const $crew = $('<div class="mp-crew"></div>').html(html.join("")).appendTo($scroll);
-		$crew.find("[data-week]").on("click", (e) => this.go("week", e.currentTarget.getAttribute("data-week")));
+		const open_week = (e) => this.go("week", e.currentTarget.getAttribute("data-week"));
+		$crew
+			.find("[data-week]")
+			.on("click", open_week)
+			.on("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				open_week(e);
+			});
 	}
 
 	compare(a, b) {

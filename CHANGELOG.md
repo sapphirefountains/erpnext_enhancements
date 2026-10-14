@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.653.0] - 2026-10-13
+
+### Changed
+
+- **The custom pages answer the keyboard, name their glyph buttons, and stop saying things in
+  colour alone** (custom pages S3.6, ERPNext TASK-2026-02825). Nothing a click does has changed.
+  - **Keyboard.** The Rental Planner's booking bars were clickable `<div>`s, so Tab never reached a
+    booking and Enter could not open one. They are `<button type="button">`s now, styled as before,
+    with an `aria-label` built from the same facts as the tooltip: the prep and cleaning bars draw no
+    text at all, and without the label a screen reader announced only "button". The wizard's finished
+    steps are buttons too, the current step carries `aria-current="step"`, and steps not reached yet
+    stay plain words. Plan a Trip's three toggle chips (who is on a booking, who stays free, who the
+    comparison shows) were `<span>`s and are `<button type="button" aria-pressed>` now. The Project
+    and Maintenance Planners' day numbers and crew-view date heads keep their markup and gain
+    `role="button"`, `tabindex="0"` and an Enter/Space handler that calls the click's own. The quick
+    looks (P6A) already took Enter on these through a capture-phase handler that stops propagation,
+    so with them on, a key still does what a click does and never both. Every one of these has a
+    2px `--sf-focus` ring on `:focus-visible`.
+  - **Names.** The planners' ‹ › ↻ buttons (toolbar, route view, My week) had a `title` and nothing a
+    screen reader is required to read; they carry an `aria-label` from `__()` now, as do the Rental
+    Planner's ‹ ›, the scanner pages' 📷 and 🔍, the Scanner Audit's × and the Inspection Wizard's 📷.
+  - **Colour alone.** The KPI Cockpit card's left border was the only sign of Good, Watch or Bad, and
+    the Task Dashboard's priority was only a border colour; each now carries the word beside the
+    colour. The progress bars in Design WIP, Build WIP & Aging and Today's Visits gave their percent
+    only in a tooltip, which neither a phone nor a screen reader sees; each is a `progressbar` with
+    `aria-valuenow` now, its label escaped through the kit's `sf.esc` like the rest of the row
+    (S3.3b, v1.649.0, moved these blocks onto the kit).
+  - **Translation.** The GA4 Dashboard's title, section heads, chart titles, table headers, empty and
+    error messages go through `__()`.
+  - **Not in this change.** The department widgets' age, waiting and margin numbers still carry their
+    watch/bad judgement in colour only. Each widget's threshold means something different (days in
+    the pipeline, days waiting, days left, idle days, hours used), so each needs its own word; they
+    are a follow-up on the kit S3.3b put under those rows, where `sf.chip` draws a word. Training Canvas has two × buttons with a title
+    but no `aria-label`, and its pages are another open change's. The Rental Planner's "click an
+    empty day" shortcut stays pointer-only; New Rental is its keyboard path.
+  - **Tests.** `tests/test_s3_6_accessibility.py` names each fixed file and element and fails when one
+    goes back to a click-only `<div>` or `<span>` or a nav button loses its label (CI step "Custom
+    pages S3.6 accessibility"). `scripts/test_rental_planner_history.js` now models Enter and Space as
+    the browser handles them and opens a booking from a bar, and a step from the rail, by keyboard.
+
 ## [1.649.0] - 2026-10-13
 
 Custom pages S3.3b (TASK-2026-02822): the 34 department dashboard widgets draw their panels,

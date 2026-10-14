@@ -172,6 +172,8 @@ const TP_STYLE = `
 .tp-chips{display:flex;flex-wrap:wrap;gap:8px;}
 .tp-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;user-select:none;}
 .tp-chip.tp-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);font-weight:600;}
+button.tp-chip{font-family:inherit;line-height:inherit;margin:0;}
+.tp-chip:focus-visible{outline:2px solid var(--sf-focus);outline-offset:2px;}
 .tp-chip.tp-ok{background:#e7f7ed;border-color:#15803d;color:#15803d;cursor:default;}
 .tp-chip.tp-miss{background:#fde8e8;border-color:#dc2626;color:#b91c1c;cursor:default;}
 .tp-refs{display:flex;flex-direction:column;gap:6px;}
@@ -4024,9 +4026,10 @@ class TripPlanner {
 		}
 		this.crew().forEach((t) => {
 			const checked = whole_crew || on.has(t.employee);
-			$(`<span class="tp-chip ${checked ? "tp-on" : ""}">${checked ? "&#10003; " : ""}${tp_esc(
-				t.employee_name || t.employee
-			)}</span>`)
+			// A real toggle button (S3.6): Tab reaches it, Enter or Space flips it as a click does.
+			$(`<button type="button" class="tp-chip ${checked ? "tp-on" : ""}" aria-pressed="${checked}">${
+				checked ? "&#10003; " : ""
+			}${tp_esc(t.employee_name || t.employee)}</button>`)
 				.appendTo($chips)
 				.on("click", () => {
 					if (card.protected) return;
@@ -4645,7 +4648,9 @@ class TripPlanner {
 		const $chips = $('<div class="tp-chips"></div>').appendTo($field);
 		card.members.forEach((member) => {
 			const on = !!member.guest;
-			$(`<span class="tp-chip ${on ? "tp-on" : ""}">${on ? "&#10003; " : ""}${tp_esc(this.crew_name(member.traveler))}</span>`)
+			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}">${on ? "&#10003; " : ""}${tp_esc(
+				this.crew_name(member.traveler)
+			)}</button>`)
 				.appendTo($chips)
 				.on("click", () => {
 					if (card.protected) return;
@@ -5657,7 +5662,9 @@ class TripPlanner {
 		const $pick = $('<div class="tp-chips" style="margin-bottom:12px;"></div>').appendTo($view);
 		crew.forEach((person) => {
 			const on = !hidden.has(person.employee);
-			$(`<span class="tp-chip ${on ? "tp-on" : ""}">${on ? "&#10003; " : ""}${tp_esc(person.employee_name)}</span>`)
+			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}">${on ? "&#10003; " : ""}${tp_esc(
+				person.employee_name
+			)}</button>`)
 				.appendTo($pick)
 				.on("click", () => {
 					// Who is shown is a choice on this screen, not a screen: no history entry.

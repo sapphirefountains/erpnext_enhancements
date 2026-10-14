@@ -315,7 +315,7 @@ class DeviceConsole {
 				<div class="dc-scanrow">
 					<input type="text" class="dc-scan" autocomplete="off" autocapitalize="characters"
 						spellcheck="false" placeholder="${__('Scan or type a barcode / IMEI / asset tag…')}" />
-					<button class="dc-cam" title="${__('Camera scan')}">📷</button>
+					<button class="dc-cam" title="${__('Camera scan')}" aria-label="${__('Camera scan')}">📷</button>
 				</div>
 				<div class="dc-device"></div>
 				<div class="dc-hint">${__('Scan a device to check it in or out.')}</div>
