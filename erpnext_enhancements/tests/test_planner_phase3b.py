@@ -1725,15 +1725,15 @@ class TestPage(unittest.TestCase):
 			self.assertNotIn(forbidden, self.block)
 
 	def test_styles_are_namespaced(self):
-		style = self.code[
-			self.code.index("const PP3B_STYLE = `") : self.code.index(
-				"`;", self.code.index("const PP3B_STYLE = `")
-			)
-		]
+		# The block's CSS is its section of project_planner.css (S3.4d, v1.664.0), which Frappe
+		# sends with the page; the script writes no <style> element.
+		raw = PAGE_JS.with_suffix(".css").read_text(encoding="utf-8")
+		start = raw.index("*/", raw.index("/* ===", raw.index("(PP3B_STYLE).")))
+		style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 		self.assertTrue(classes)
 		self.assertEqual({c for c in classes if not c.startswith("pp-")}, set())
-		self.assertIn("id='pp-style-3b'", self.block)
+		self.assertNotIn("pp-style-3b", self.block)
 
 	def test_no_record_field_is_interpolated_raw(self):
 		raw = [

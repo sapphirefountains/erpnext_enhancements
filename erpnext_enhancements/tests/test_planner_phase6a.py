@@ -1183,14 +1183,27 @@ class TestPages(unittest.TestCase):
 		for block, prefix in ((self.pp_block, "pp"), (self.mp_block, "mp")):
 			self.assertIn('kit.hover_glow(this.$body[0], "person")', block)
 			self.assertIn('setAttribute("data-pk-persons"', block)
-			self.assertIn(f".{prefix}-crew-view .{prefix}-crew-head", block)
-			self.assertIn("position:sticky;top:0", block)
-			self.assertIn(f".{prefix}-week .{prefix}-grid{{max-height:", block)
 			self.assertIn("kit.legend(", block)
 			self.assertIn("kit.hint(key, __(text), {", block)
 			self.assertIn(f'class="btn btn-default btn-sm {prefix}-p6a-help">?</button>', block)
-			style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
-			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
+			if prefix == "pp":
+				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
+				# section of it, from its banner to the next.
+				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
+				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6A_STYLE).")))
+				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+				self.assertRegex(
+					style, r"\.pp-crew-view \.pp-crew-head,[^{]*\{\s*position: sticky;\s*top: 0;"
+				)
+				self.assertRegex(style, r"\.pp-week \.pp-grid \{\s*max-height:")
+				# planner_kit's timeline bar takes the task's color from the page (--pp-color).
+				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}
+			else:
+				self.assertIn(f".{prefix}-crew-view .{prefix}-crew-head", block)
+				self.assertIn("position:sticky;top:0", block)
+				self.assertIn(f".{prefix}-week .{prefix}-grid{{max-height:", block)
+				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertEqual({c for c in classes if not c.startswith(f"{prefix}-")}, set(), classes)
 		self.assertIn('kit.hover_glow(this.$body[0], "project")', self.pp_block)
 		self.assertIn('el.setAttribute("data-pk-projects"', self.pp_block)

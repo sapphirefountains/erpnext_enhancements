@@ -130,6 +130,17 @@ def _code():
 	return PAGE_JS.read_text(encoding="utf-8")
 
 
+def _css_section(tag):
+	"""One section of the page's stylesheet: what the script used to write as ``tag`` (PP_STYLE,
+	PP4_STYLE ...), from its banner to the next one, comments out (S3.4d, v1.664.0)."""
+	raw = PAGE_JS.with_suffix(".css").read_text(encoding="utf-8")
+	start = raw.index(f"({tag}).")
+	start = raw.index("*/", raw.index("/* ===", start)) + 2
+	end = raw.find("\n/* ===", start)
+	body = raw[start:] if end < 0 else raw[start:end]
+	return re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+
+
 def _code_without_comments():
 	# A comment that explains why something is absent names it; strip comments before asserting
 	# that the code does not use it.
@@ -397,12 +408,15 @@ class TestEscaping(unittest.TestCase):
 
 	def test_styles_are_namespaced_and_prefs_are_guarded(self):
 		code = _code()
-		self.assertIn("id='pp-style'", code)
-		style = code[code.index("const PP_STYLE = `") : code.index("`;", code.index("const PP_STYLE = `"))]
+		# The page's CSS is project_planner.css, sent with the page (S3.4d, v1.664.0); the script
+		# no longer writes a <style> element.
+		self.assertNotIn("id='pp-style'", code)
+		style = _css_section("PP_STYLE")
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
-		# Frappe's own button classes are styled inside the planner's sections, nothing else.
-		self.assertEqual({c for c in classes if not c.startswith("pp-")}, {"btn"})
-		self.assertIn("@media (max-width:760px)", style)
+		# Frappe's own button classes and the toolbar's form fields are styled inside the planner's
+		# sections, nothing else.
+		self.assertEqual({c for c in classes if not c.startswith("pp-")}, {"btn", "form-control"})
+		self.assertIn("@media (max-width: 767px)", style)
 		self.assertEqual(code.count("window.localStorage"), 2)
 		for accessor in ("window.localStorage.getItem", "window.localStorage.setItem"):
 			before = code[: code.index(accessor)]
