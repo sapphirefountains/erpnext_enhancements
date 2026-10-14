@@ -123,7 +123,9 @@ class TestNoPageWritesHistoryBehindTheRouter(unittest.TestCase):
 			with self.subTest(page=name):
 				if name in ADDRESS_WRITERS:
 					self.assertEqual(code.count("history.pushState("), 1)
-					self.assertIn("window.history.pushState(null, '', url);", _between(code, *ADDRESS_WRITERS[name]))
+					self.assertIn(
+						"window.history.pushState(null, '', url);", _between(code, *ADDRESS_WRITERS[name])
+					)
 				else:
 					self.assertNotIn("history.pushState", code)
 				self.assertNotIn("popstate", code)
