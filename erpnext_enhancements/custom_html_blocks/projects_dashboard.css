@@ -35,11 +35,12 @@
 @keyframes pulse-bg { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 
 /* Status Badges — saturated brand colours read on both themes; text colour is
-   chosen for contrast against each fill, so these stay literal. */
+   chosen for contrast against each fill. Success, danger and warning are the
+   app's --sf-* status fills with their own label colours; the rest stay literal. */
 .badge-primary { background-color: #007bff; color: #fff; }
-.badge-success { background-color: #28a745; color: #fff; }
-.badge-danger { background-color: #dc3545; color: #fff; }
-.badge-warning { background-color: #ffc107; color: #212529; }
+.badge-success { background-color: var(--sf-good); color: var(--sf-on-good); }
+.badge-danger { background-color: var(--sf-danger); color: var(--sf-on-danger); }
+.badge-warning { background-color: var(--sf-warn); color: var(--sf-on-warn); }
 .badge-info { background-color: #17a2b8; color: #fff; }
 .badge-secondary { background-color: #6c757d; color: #fff; }
 
@@ -102,8 +103,8 @@
 .pg-widget-host .gantt_task_line .gantt_task_progress { background: rgba(0, 0, 0, 0.25); }
 
 /* --- overdue: past the end date and not complete --- */
-.pg-widget-host .gantt_task_line.pg-overdue { box-shadow: 0 0 0 2px #d9534f; }
-.pg-widget-host .gantt_row.pg-overdue .gantt_tree_content { color: #c9302c; }
+.pg-widget-host .gantt_task_line.pg-overdue { box-shadow: 0 0 0 2px var(--sf-danger); }
+.pg-widget-host .gantt_row.pg-overdue .gantt_tree_content { color: var(--sf-danger); }
 
 /* grid rows: weight the grouping levels */
 .pg-widget-host .gantt_row.pg-master .gantt_tree_content { font-weight: 700; }
@@ -137,7 +138,7 @@
 .pg-legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .pg-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .pg-swatch-task { background: #7fcf9f; }
-.pg-swatch-overdue { background: transparent; box-shadow: 0 0 0 2px #d9534f; }
+.pg-swatch-overdue { background: transparent; box-shadow: 0 0 0 2px var(--sf-danger); }
 
 .check-dropdown .dropdown-menu.show { display: block !important; }
 

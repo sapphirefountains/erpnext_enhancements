@@ -49,15 +49,15 @@
     // Is this render's block actually on screen? The desk is a single-page app: leaving
     // the Home workspace for a form or list hides the block (display:none on an
     // ancestor) or, once the workspace re-renders, detaches it, and its timers keep
-    // firing all day. `root_element` is a shadow root, so ask its host element:
-    // isConnected is false once detached and getClientRects() is empty under any
-    // display:none ancestor. That beats comparing frappe.get_route() to a workspace
-    // name, which breaks on a private or renamed Home. Fails open (true) without a host.
+    // firing all day. The shared helper asks the shadow root's host (detached, or no
+    // client rects under a display:none ancestor), which beats comparing
+    // frappe.get_route() to a workspace name: that breaks on a private or renamed Home.
+    // A device whose bundle predates the helper has no answer, so it fails open (true):
+    // polling as before.
     function onScreen(container) {
-        const host = container && container.host;
-        // No host, or one without layout APIs (a test double), fails open: polling as before.
-        if (!host || typeof host.getClientRects !== "function") return true;
-        return Boolean(host.isConnected && host.getClientRects().length > 0);
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (!blocks || typeof blocks.onScreen !== "function") return true;
+        return blocks.onScreen(container);
     }
 
     function startApp(container) {
