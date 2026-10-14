@@ -19,7 +19,8 @@
 
 import * as board from "./opportunity_board/board.js";
 
-const VERSION = 1;
+// 2 since v1.684.0: card_parts / card_text, which the page now calls.
+const VERSION = 2;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_opportunity_board && window.sf_opportunity_board.version >= VERSION)) {

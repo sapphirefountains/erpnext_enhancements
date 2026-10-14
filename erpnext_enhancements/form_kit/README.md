@@ -319,6 +319,70 @@ Datetime, Percent, Check, Text Editor and Table MultiSelect (their controls read
 Currency (formatted in the record's currency only through a form; every deal is in the company
 currency, so the system currency is the same), Dynamic Link (`get_options` reads the live type).
 
+## View settings (v1.684.0)
+
+**Nik, 2026-10-14:** "once a document has been created via the flow, the presentation could be
+better ... Let's make it somewhat flexible and customizable by the user and their preferences", with
+"all sections on one page, but leave the ability for tabs to be used and visible" as the default for
+a saved record, and "Preferences should be saved to their instance and not change it for everyone
+else's views." A **View** button (a gear) in a saved record's band opens the settings, applied as
+they change; a person's first saved record shows a short pop-up about them, once.
+
+**A layout is a presentation of the flow, never a different form.** Every layout draws the same
+steps with the same fields and the same controls through the editor's one renderer
+(`render_fields`), with the same save queue, conflicts, phone journal, completeness, help, Party
+component and notes and comments. One page and Tabs draw one FieldGroup per step, held together by
+`public/js/form_kit/field_groups.js` (`FieldGroups`: one `fields_dict` for them all, and every
+step's `refresh_dependency`), so `collect_step`, `collect_tables`, `field_changed`, `show_value`,
+the conflict chooser and `focus_field` work across all of them; `shown_steps()` is "the steps on
+screen" and `current_step()` stays "the step in view" (scroll-spy, or the section being typed in).
+
+| Setting | Values (first is the default) |
+|---|---|
+| Layout | One page (every step a section, under its Desk tab; the tab bar a sticky jump menu with scroll-spy; sections collapse) · Tabs (one tab at a time; a tab is a route) · Step by step (the setup flow's page) |
+| Where the steps sit | left · right · top (always top on a phone) |
+| Summary | right · left · hidden (folds above the form on a phone) |
+| Notes and comments | below the form · side column · collapsed behind a "Notes and comments (N)" bar |
+| Record tools (`.ge-tools`) | side column · below the form · collapsed |
+| Focus mode | off · on (only the form and its nav; notes and tools behind their bars) |
+| Text size, contrast, spacing | normal/large/larger · normal/high · comfortable/compact (CSS tokens only) |
+| Field hints | under each field · only in the (i) (which then holds the hint) |
+| Fields | all · only fields with a value (never hides a required field, or one the stage still needs) |
+
+Besides those: **pinned sections** (drawn first in One page and Tabs, marked in the nav); **where a
+record opens** (where the person left it, the first section, or a chosen one); **fields and sections
+put away** per person (never a required field that is empty, never one in `completeness.missing`;
+the bar over the form counts them, with "Show hidden"); **summary fields** (up to 12 of the record's
+fields instead of the DocType's summary); **saved views** (named presets of the settings) and
+**Reset to defaults**; and **shortcuts**, none of which fire while typing except Save: J/K next and
+previous section, Ctrl/Cmd+S save now, C notes and comments, V view settings, F focus mode, ? the list.
+
+- **Routes.** Step by step and Tabs are routes (a step, or a tab's first step), so Back and Forward
+  walk them. One page is one screen, the record's own address; scrolling is not a history entry.
+  Reload opens where the person left off (`remember_guided_section`, sent as a beacon on leaving).
+- **A new record's setup flow is always step by step** (`view.js SETUP_VIEW`), and so is the rest of
+  the walk its step 1 starts, until the person leaves the record or changes a setting.
+- **The store.** The person's own `__UserSettings` row under `Guided Entry`, key `guided_view`, through
+  `api/planner_views_prefs.py`, written straight to the table (never frappe's Redis-only user
+  settings, which the deploy flushes): `get_guided_view()` GET; `save_guided_view(doctype, data)`
+  POST, replacing only the parts sent; `remember_guided_section(doctype, name, step)` POST, the last
+  50 records; `mark_guided_intro_seen()` POST. A DocType outside `CONFIGS` is refused and read on it
+  is checked. Everything is cleaned on the way in and out (`GUIDED_SCHEMA`, `GUIDED_MAX`; the page's
+  twin is `view.js`, held equal by `tests/test_guided_view_settings.py`).
+- **The board's cards** (`opportunity_board`): a "Card fields" picker in the filter bar, saved with
+  the board's own views as the text key `card` (`board.js card_parts`). A view that never chose shows
+  the card as it always was.
+- **The side panel stays step by step** with no settings: it is narrow, and it shares only the
+  tightened field styles.
+- **A DocType with step blocks stays step by step** (form kit P8.1, the Item flow): its blocks hold one
+  step's state at a time and its flow ends at Done and More details, which only Step by step has
+  (`view.js effective_view` `steps_only`, from `has_extension`). Every other setting applies.
+- **Field styles, every layout and the side panel.** The (i) stays on its label's line; a form's
+  columns wrap at about 240px (four, two, one); inputs at the Desk's height with an edge in both
+  themes, 44px on a phone; text boxes start at three lines and grow to 320px (`fit_text`); hints
+  clamp to two lines (a longer one is whole in the (i)); the Datetime time-zone line only when the
+  user's zone is not the site's (`df.hide_timezone`); the fields' left edge on the step title's.
+
 ## No signal (P4.7)
 
 The guided page keeps working when the signal drops while it is open. What has not reached the

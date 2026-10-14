@@ -379,6 +379,12 @@ class TestTheEditorAppliesThem(unittest.TestCase):
 		self.assertIn("set_dependant_property(condition, fieldname, property) {", self.editor)
 		self.assertIn("editor.apply_condition(this, condition, fieldname, property);", self.editor)
 		self.assertIn("this.condition(df[key], CONDITION_FALLBACK[key])", self.editor)
+		# Every step's own FieldGroup gets it, alone or one of One page's / Tabs' set (v1.684.0).
+		body = self.editor[self.editor.index("render_fields(step, $fields, editable) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertLess(body.index("set_dependant_property(condition"), body.index("this.fg.add(step, fg)"))
+		self.assertIn("this.set_initial_values(fg, initial)", body)
+		self.assertNotIn("fg.set_values(", body)
 
 	def test_the_label_follows_its_field(self):
 		self.assertIn("this.relabel(fieldname);", self.editor)
@@ -531,6 +537,22 @@ out.cond = {
 	await editor.set_initial_values(fg, { status: "Lost", lost_reasons: [{ lost_reason: "Price" }], competitors: [] });
 	out.initial = { suppress: [...editor.suppress], refreshed: refreshed.length };
 }
+// One page and Tabs (v1.684.0): `this.fg` is a FieldGroups set. A step's group in the set is still on
+// screen, so its conditions are refreshed; one no longer in it is not.
+{
+	const { FieldGroups } = await import(`file://${root}/form_kit/field_groups.js`);
+	const refreshed = [];
+	const group = (name) => ({ fields_dict: { [name]: { set_value: () => Promise.resolve() } }, refresh_dependency: () => refreshed.push(name) });
+	const close = group("status");
+	const gone = group("other");
+	const set = new FieldGroups();
+	set.add({ key: "close" }, close);
+	editor.fg = set;
+	editor.suppress = new Set(["status", "other"]);
+	const shown = await editor.set_initial_values(close, { status: "Closed Won" });
+	const hidden = await editor.set_initial_values(gone, { other: 1 });
+	out.multi = { shown, hidden, refreshed, suppress: [...editor.suppress] };
+}
 
 // ---- Item's conditions against the Desk: v16's form sets the property to the expression's truth
 // (Layout.set_dependant_property on frm.doc); the guided editor must land on the same value for a
@@ -651,6 +673,13 @@ class TestTheEditorUnderNode(unittest.TestCase):
 		"""v16's read-only or hidden Table MultiSelect rejects a value; before v1.685.0 that left the
 		whole step in `suppress`, so the Close step's status and ranks were never saved."""
 		self.assertEqual(self.out["initial"], {"suppress": [], "refreshed": 1})
+
+	def test_one_page_and_tabs_refresh_each_steps_conditions(self):
+		"""With several FieldGroups on screen (v1.684.0), a step's group is refreshed once its values
+		settle, so its mandatory/read-only conditions apply; a group no longer shown is not."""
+		self.assertEqual(
+			self.out["multi"], {"shown": True, "hidden": False, "refreshed": ["status"], "suppress": []}
+		)
 
 	def test_items_conditions_are_the_desks(self):
 		"""Every mandatory_depends_on / read_only_depends_on on the Item lands where the Desk form

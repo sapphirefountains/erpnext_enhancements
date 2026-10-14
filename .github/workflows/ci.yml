@@ -1760,6 +1760,15 @@ jobs:
       # the config, no frappe stub.
       - name: Form kit inputs match the form (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit_inputs -v
+      # v1.684.0, the guided page's view settings: each person's layout (One page, Tabs, Step by
+      # step), nav, summary, notes, record tools, density, hints, text size, contrast, focus mode,
+      # pins, landing, hidden fields, summary fields, presets and shortcuts, as pure decisions under
+      # node (form_kit/view.js, field_groups.js) and the board's card parts; the store
+      # (planner_views_prefs, key "Guided Entry") against a frappe stub: only the caller's own
+      # __UserSettings row, straight to the table, cleaned in and out, capped; and fidelity (every
+      # layout through the editor's one renderer, a new record always the setup flow). Own stub.
+      - name: Guided Entry view settings (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_view_settings -v
       # Form kit P8.1, the guided Item flow's page side (public/js/guided_item/ and the page's
       # extension point): the name builder's punctuation held to item_naming_rules.check_name, the
       # code helper's families held to classify_code_family, only the guard's two findings shown as
