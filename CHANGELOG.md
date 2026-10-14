@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.637.2] - 2026-10-13
+
+### Changed
+
+- **The Guided Entry page no longer shows Series** (Nik, 2026-10-13: "it doesn't change").
+  - The Opportunity has one naming series, and it is fixed once the deal exists, so on every step
+    it was a field nobody could change.
+  - It is now in the flow's `skip_fields` (`form_kit/config/opportunity.py`). A deal created from
+    step 1 still gets its series from `frappe.new_doc`, the same as the Desk's New form, and a
+    series sent to the create endpoint is ignored.
+  - The Desk form still shows Series, with its (i) help.
+  - `test_form_kit` checks that the series is in no step, new or saved, and that a created deal
+    gets `CRM-OPP-.YYYY.-`. The set-only-once test, which used Series because it was the form's
+    only set-only-once field, now marks a different field the same way.
+
 ## [1.637.1] - 2026-10-13
 
 Two fixes to the Guided Entry page (v1.637.0), found when it was checked on prod at phone width.
