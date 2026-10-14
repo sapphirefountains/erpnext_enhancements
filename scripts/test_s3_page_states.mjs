@@ -392,7 +392,7 @@ function openPage(name, options) {
 			escape_html,
 			get_form_link: (doctype, docname) => `/desk/${doctype.toLowerCase().replace(/ /g, "-")}/${docname}`,
 		},
-		datetime: { now_time: () => "12:00:00", str_to_user: (s) => String(s || "") },
+		datetime: { now_time: () => "12:00:00", str_to_user: (s) => String(s || ""), get_today: () => "2026-10-13" },
 	};
 	frappe.pages[name] = new El("wrapper");
 
@@ -419,7 +419,8 @@ function openPage(name, options) {
 		__: (text, args) => String(text).replace(/\{(\d+)\}/g, (m, i) => (args && i in args ? String(args[i]) : m)),
 		document,
 		fetch,
-		location: { reload() {} },
+		// The page's own bare address, as the router left it (the Day Board keeps its day there).
+		location: { reload() {}, pathname: `/desk/${name}`, search: "" },
 		format_currency: (v) => String(v),
 		// Ids from 1, as a browser's are: a page may test `if (timer)`.
 		setTimeout: (fn, ms) => world.timeouts.push({ fn, ms, done: false }),
