@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.632.0] - 2026-10-13
+
+Fixes to `sf_kit` from the review of #1245 (custom pages step 2, TASK-2026-02804), before step 3 moves
+any page onto it. The form-kit session's P4 offline queue builds on `call()`, and set three
+requirements for its quiet path, all met here.
+
+### Fixed
+
+- **`call(method, args, {quiet: true})` is really quiet.** v16's `silent` only stops the
+  `_server_messages` popup (`request.js` cleanup, about line 477). Frappe still shows its own dialog for
+  403, 404, 413, 502, 504 and 508, for QueryTimeout and Deadlock, and the "Server Error" dialog
+  (with the exception's last line for system users) on a 500. So a page that drew its own error
+  panel also got frappe's modal, and a board refreshing on a timer stacked one a minute. The quiet
+  path calls `/api/method/<method>` itself:
+  - POST by default, form-encoded byte for byte as `frappe.call` sends it (objects and arrays as JSON
+    strings, numbers and booleans as text, null as empty), so v16's type checks on whitelisted
+    arguments see exactly what they see from `frappe.call`; `method: "GET"` sends the same string as
+    a query. `X-Frappe-CSRF-Token` goes on POST only, and a redirect is refused rather than followed.
+  - Rejects `{status, message, exc_type, session_expired}` on both paths. A 417 keeps the
+    `frappe.throw` text so a form can show it inline.
+  - **A session expiry is recognisable:** `session_expired: true` (and `exc_type: "SessionExpired"`)
+    on v16's 401 SessionExpired reply, on a later 401/403 once the `user_id` cookie is gone (the same
+    test as `frappe.request.is_session_expired`), and on a 2xx carrying `session_expired` while the
+    page was signed in (an allow-guest method that quietly ran as Guest), which rejects instead of
+    passing for a successful save. A retry queue can stop and ask the person to sign in instead of
+    retrying forever. A GET to a POST-only method comes back as 403 "Not permitted" and is logged
+    once to the console by name.
+  - `with_messages: true` also returns a successful call's server messages as plain text.
+  - A 2xx that isn't JSON (a proxy or login page), a network failure or an unreadable body reads as
+    "Could not reach the server.", not "refused". It settles exactly once.
+  - The docs now say exactly what `silent` does and does not suppress, and the test stub models v16's
+    per-status handlers, so the difference is tested rather than claimed.
+- **Server messages read cleanly:** HTML is decoded through `DOMParser` (with a node fallback, and
+  without the contents of script or style elements), so entities aren't shown literally, a bare `<`
+  in prose no longer swallows text, and there's no space before punctuation.
+- **Toasts:** the timer pauses while a keyboard user is on the toast, and focus returns where it was
+  when the toast closes (only to an element that is still visible and can take focus). There is one toast per document across every instance, sf and planner,
+  so two can never overlap. The planner markup is unchanged, byte for byte.
+- **Chip edges reach 3:1 in both themes.** New `--sf-chip-edge-*` tokens: Build's edge was 2.48:1 on
+  a dark card and danger's fill 2.82:1. In dark mode Build and neutral edge in sky-200 and danger in
+  off-white; in light, warn's yellow chip gets a navy edge (its fill is 1.7:1 on white). A test now
+  requires every tone's fill or edge to reach 3:1 on surface and page, in both themes.
+- **Desk's link hover no longer recolours kit buttons and tile links** (rules at higher specificity,
+  plus a focus ring on tile links).
+- **Tiles tolerate bad data** (non-array metrics or links, a blank `href` with a valid `route`, no
+  title); `state.html` draws its action button for an `action_label` alone.
+- **The kit's 14 strings are literal `__()` calls**, confirmed with v16's own JavaScript extractor,
+  so they reach the translation files.
+
+### Changed
+
+- `window.sf_kit` is version 2, so a newer kit replaces an older one already installed on the page.
+
 ## [1.631.0] - 2026-10-13
 
 Form kit P4.3 and P5.4 (TASK-2026-02761, 02771): field help, and the Opportunity's help text as Nik reviewed

@@ -18,6 +18,8 @@ What it pins:
   print, email and the project brief already share, so the app cannot drift from paper;
 * every text pairing the guide names clears 4.5:1, and every boundary 3:1, in light and
   dark;
+* every sf_kit chip tone has a boundary, its fill or its edge, at 3:1 on a card and the page
+  in both themes;
 * the device-dark @media block is identical to the Desk-dark block;
 * `print_style.STREAM_PILLAR` names every prod value stream and only real pillars.
 
@@ -272,7 +274,36 @@ BOUNDARY_PAIRS = (
     # a good chip (sf_kit) is a fill whose edge is its own colour, on a card or the page
     ("--sf-good", "--sf-surface"),
     ("--sf-good", "--sf-bg"),
+    # a chip's edge, where the edge alone must carry the boundary in both themes (v1.632.0):
+    # Build's fill is the dark card itself, Neutral's and danger's fills sink into the navy
+    # ground, warn's yellow is 1.7:1 on white. Service's and rent's light edges are not here:
+    # their fills are the boundary (CHIP_PARTS below).
+    ("--sf-chip-edge-design", "--sf-surface"),
+    ("--sf-chip-edge-design", "--sf-bg"),
+    ("--sf-chip-edge-build", "--sf-surface"),
+    ("--sf-chip-edge-build", "--sf-bg"),
+    ("--sf-chip-edge-neutral", "--sf-surface"),
+    ("--sf-chip-edge-neutral", "--sf-bg"),
+    ("--sf-chip-edge-danger", "--sf-surface"),
+    ("--sf-chip-edge-danger", "--sf-bg"),
+    ("--sf-chip-edge-warn", "--sf-surface"),
+    ("--sf-chip-edge-warn", "--sf-bg"),
+    ("--sf-chip-edge-good", "--sf-surface"),
+    ("--sf-chip-edge-good", "--sf-bg"),
 )
+# Every sf_kit chip tone: (fill, edge). A chip is visible when whichever of the two meets the
+# ground, its fill or its 1px edge, clears 3:1 against a card and the page, in both themes. The
+# label on the fill is in TEXT_PAIRS.
+CHIP_PARTS = {
+    "design": ("--sf-pillar-design-deep", "--sf-chip-edge-design"),
+    "build": ("--sf-pillar-build-deep", "--sf-chip-edge-build"),
+    "service": ("--sf-pillar-service-deep", "--sf-chip-edge-service"),
+    "rent": ("--sf-pillar-rent-deep", "--sf-chip-edge-rent"),
+    "neutral": ("--sf-pillar-neutral-deep", "--sf-chip-edge-neutral"),
+    "danger": ("--sf-danger", "--sf-chip-edge-danger"),
+    "warn": ("--sf-warn", "--sf-chip-edge-warn"),
+    "good": ("--sf-good", "--sf-chip-edge-good"),
+}
 
 
 class TestContrast(unittest.TestCase):
@@ -289,6 +320,26 @@ class TestContrast(unittest.TestCase):
                 a, b = resolve(fg, theme), resolve(bg, theme)
                 with self.subTest(theme=theme, pair=f"{fg} against {bg}"):
                     self.assertGreaterEqual(contrast(a, b), 3.0, f"{a} on {b} is {contrast(a, b):.2f}:1")
+
+    def test_every_chip_has_a_boundary_in_both_themes(self):
+        for theme in ("light", "dark"):
+            for tone, (fill, edge) in CHIP_PARTS.items():
+                for ground in ("--sf-surface", "--sf-bg"):
+                    g = resolve(ground, theme)
+                    best = max(contrast(resolve(fill, theme), g), contrast(resolve(edge, theme), g))
+                    with self.subTest(theme=theme, tone=tone, ground=ground):
+                        self.assertGreaterEqual(best, 3.0, f"{tone} chip on {g}: {best:.2f}:1")
+
+    def test_the_chip_edges_the_review_measured_now_clear(self):
+        """The review of v1.626.0 measured Build's edge at 2.48:1 on navy-800 and 2.88:1 on
+        navy-900, and danger's fill at 2.82:1: the dark edges are what fixes them, so the
+        dark theme must override them."""
+        for name in ("--sf-chip-edge-build", "--sf-chip-edge-neutral", "--sf-chip-edge-danger"):
+            with self.subTest(name):
+                self.assertIn(name, DESK_DARK)
+        self.assertLess(contrast(ps.BAHAMA_BLUE, ps.NAVY_800), 3.0, "the override would be stale")
+        self.assertLess(contrast(ps.RED, ps.NAVY_800), 3.0, "the override would be stale")
+        self.assertLess(contrast(ps.YELLOW, "#ffffff"), 3.0, "warn's light edge would be stale")
 
     def test_a_white_field_on_a_dark_card_is_its_own_boundary(self):
         self.assertGreaterEqual(contrast(resolve("--sf-field-bg", "dark"), resolve("--sf-surface", "dark")), 3.0)

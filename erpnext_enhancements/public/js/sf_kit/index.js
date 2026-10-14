@@ -5,8 +5,8 @@
  */
 
 export { esc } from "./esc.js";
-export { t } from "./t.js";
-export { call, error_text, generic_message } from "./call.js";
+export { t, __ } from "./t.js";
+export { call, error_text, generic_message, strip_html, is_session_expired } from "./call.js";
 export { STATE_KINDS, state_kind, state_html, render_state } from "./state.js";
 export { PILLAR_TONES, STATUS_TONES, CHIP_TONES, chip_tone, chip } from "./chip.js";
 export { CARD_PILLARS, card_class, card_html } from "./card.js";

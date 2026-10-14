@@ -164,25 +164,63 @@ class TestTheStylesheet(unittest.TestCase):
 		for pillar in ("design", "build", "service", "rent"):
 			with self.subTest(pillar):
 				self.assertEqual(decls[(f".sf-chip--{pillar}", "background")], f"var(--sf-pillar-{pillar}-deep)")
-				# The edge is the OPENING stop: without it a Build chip vanishes on a dark card.
-				self.assertEqual(decls[(f".sf-chip--{pillar}", "border-color")], f"var(--sf-pillar-{pillar})")
+				# The edge is the tone's chip-edge token (the opening stop in light, lighter in dark
+				# where the opening stop sinks into the navy card): without it a Build chip vanishes
+				# on a dark card. test_app_design_tokens measures it.
+				self.assertEqual(decls[(f".sf-chip--{pillar}", "border-color")], f"var(--sf-chip-edge-{pillar})")
 			self.assertEqual(
 				decls[(f".sf-card--pillar-{pillar}", "border-top")],
 				f"var(--sf-space-5) solid var(--sf-pillar-{pillar}-deep)",
 			)
-		self.assertIn("var(--sf-border-hairline) solid", decls[(".sf-chip", "border")])
+		self.assertEqual(decls[(".sf-chip", "border")], "var(--sf-border-hairline) solid var(--sf-chip-edge-neutral)")
+		self.assertEqual(decls[(".sf-chip", "background")], "var(--sf-pillar-neutral-deep)")
 		for status in ("danger", "warn", "good"):
 			self.assertEqual(decls[(f".sf-chip--{status}", "background")], f"var(--sf-{status})")
 			self.assertEqual(decls[(f".sf-chip--{status}", "color")], f"var(--sf-on-{status})")
+			self.assertEqual(decls[(f".sf-chip--{status}", "border-color")], f"var(--sf-chip-edge-{status})")
 		self.assertEqual(decls[(".sf-btn", "min-height")], "var(--sf-touch-min)")
 		self.assertEqual(decls[(".sf-btn", "text-transform")], "none")
 		self.assertEqual(decls[(".sf-btn--primary", "background")], "var(--sf-primary)")
 		self.assertEqual(decls[(".sf-btn--primary", "color")], "var(--sf-on-primary)")
 		self.assertEqual(decls[(".sf-btn--secondary", "border-color")], "var(--sf-text)")
 		self.assertEqual(decls[(".sf-btn:focus-visible", "outline")], "var(--sf-border-control) solid var(--sf-focus)")
+		self.assertEqual(decls[(".sf-tile-link:focus-visible", "outline")], "var(--sf-border-control) solid var(--sf-focus)")
 		# The toast is inverted, so it shows on the dark page too.
 		self.assertEqual(decls[(".sf-toast", "background")], "var(--sf-text-strong)")
 		self.assertEqual(decls[(".sf-toast", "color")], "var(--sf-surface)")
+
+	def test_link_colours_beat_the_desks_a_hover(self):
+		"""Desk's `a:hover, a:focus` (0,1,1; color var(--text-color), plus bootstrap's underline)
+		outranks one class, so an sf-btn or tile link written as an <a> lost its colour on hover
+		(v1.632.0). Each needs a rule of at least (0,2,0) for hover AND focus that sets its colour,
+		and the variants must come after `.sf-btn`'s own, which they override at equal weight."""
+		rules = {}
+		order = []
+		for selector, prop, value in _declarations(CSS):
+			for one in (s.strip() for s in selector.split(",")):
+				rules.setdefault(one, {})[prop] = value
+				if one not in order:
+					order.append(one)
+		expected = {
+			".sf-btn": "var(--sf-text)",
+			".sf-btn--primary": "var(--sf-on-primary)",
+			".sf-btn--secondary": "var(--sf-text)",
+			".sf-btn--quiet": "var(--sf-link)",
+			".sf-tile-link": "var(--sf-link)",
+		}
+		for cls, colour in expected.items():
+			for state in ("hover", "focus"):
+				selector = f"{cls}:{state}"
+				with self.subTest(selector):
+					self.assertIn(selector, rules, f"no {selector} rule: Desk's a:{state} wins")
+					self.assertEqual(rules[selector].get("color"), colour)
+		for variant in (".sf-btn--primary", ".sf-btn--secondary", ".sf-btn--quiet"):
+			self.assertGreater(order.index(f"{variant}:hover"), order.index(".sf-btn:hover"), variant)
+		self.assertEqual(rules[".sf-btn:hover"].get("text-decoration"), "none")
+		self.assertEqual(rules[".sf-btn--quiet:hover"].get("text-decoration"), "underline")
+		# The plain-text stand-in shares .sf-tile-link and must not light up like a link.
+		self.assertEqual(rules[".sf-tile-link--plain:hover"].get("color"), "var(--sf-text-muted)")
+		self.assertGreater(order.index(".sf-tile-link--plain:hover"), order.index(".sf-tile-link:hover"))
 
 	def test_the_spinner_stops_for_reduced_motion(self):
 		block = CSS[CSS.index("@media (prefers-reduced-motion: reduce)") :]
@@ -236,6 +274,51 @@ class TestLoading(unittest.TestCase):
 				self.assertNotRegex(code, r"\bwindow\b|\bdocument\b", "use env, so node can run it")
 		for text in [bundle] + [(KIT_DIR / f"{n}.js").read_text(encoding="utf-8") for n in MODULES]:
 			self.assertNotIn('createElement("style")', text, "CSS ships in sf_kit.bundle.css, not from JS")
+
+	def test_the_kits_own_words_are_extractable(self):
+		"""frappe v16's JS extractor (frappe/gettext/extractors/javascript.py) keeps a call only
+		when the name before `(` is `__` and the first argument is a string literal, so a word
+		the kit says through t("...") or env.t("...") never reaches the translation files."""
+		for name in MODULES:
+			if name == "t":
+				continue
+			code = _strip_js_comments((KIT_DIR / f"{name}.js").read_text(encoding="utf-8"))
+			with self.subTest(name):
+				self.assertNotRegex(code, r"(?<![\w.])t\(\s*[\"'`]", "a literal through t(): use __()")
+				self.assertNotRegex(code, r"env\.t\(", "env.t(): use __()")
+				if re.search(r"\b__\(", code):
+					self.assertIn('import { __ } from "./t.js";', code)
+		words = {
+			"state": ("Loading…", "Something went wrong.", "You do not have access to this.", "Nothing here yet.", "Try again"),
+			"tiles": ("Healthy", "Needs attention", "Failing"),
+			"toast": ("Dismiss",),
+			"call": (
+				"Could not reach the server.",
+				"You do not have permission to do that.",
+				"The server could not finish this request. Please try again.",
+				"The server refused this request.",
+				"Your session has expired. Please sign in again.",
+			),
+		}
+		for name, sentences in words.items():
+			code = (KIT_DIR / f"{name}.js").read_text(encoding="utf-8")
+			for sentence in sentences:
+				with self.subTest(name=name, sentence=sentence):
+					self.assertIn(f'__("{sentence}")', code)
+
+	def test_no_irregular_whitespace(self):
+		"""CI's eslint gate (`npx eslint . --quiet`, eslint:recommended) errors on
+		no-irregular-whitespace, and eslint is not installed locally, so a literal no-break space
+		in a regex shipped once (v1.632.0). This is that rule's character set, checked everywhere
+		in the file (eslint skips string literals by default; this does not, so write the escape)."""
+		# Built from code points, so this file holds none of them (and no escape a shell can eat).
+		points = (0x0B, 0x0C, 0xA0, 0x1680, 0x180E, *range(0x2000, 0x200C), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)
+		irregular = re.compile("[" + "".join(map(chr, points)) + "]")
+		for path in [*(KIT_DIR / f"{name}.js" for name in MODULES), BUNDLE, PLANNER_TOAST, HARNESS]:
+			for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+				for match in irregular.finditer(line):
+					with self.subTest(file=path.name, line=number):
+						self.fail(f"{path.name}:{number}:{match.start() + 1} holds U+{ord(match.group()):04X}")
 
 	def test_esc_stays_import_free(self):
 		"""Three planner suites load sf_kit/esc.js as plain script text in front of
