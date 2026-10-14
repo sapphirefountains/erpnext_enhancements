@@ -98,6 +98,32 @@ byte-for-byte what it was, and a test now pins each one by SHA-256.
   be in the markup, the form field names must be unchanged, every field must have a label, and an
   inline style is allowed only where it is state.
 
+## [1.678.1] - 2026-10-14
+
+### Fixed
+- **The Lead Source field can be picked again** on Lead, Opportunity and Customer, and in the
+  guided Opportunity flow. Picking one failed with "Insufficient Permission for Lead Source",
+  System Managers included (Nik, 2026-10-14).
+  - **Cause:** the port of 17 DB-only DocTypes into the app (2026-06-09) declared `Lead Source`
+    a **child table** (`istable: 1`, no permissions), although its 24 records were always
+    standalone, with no parent. A child table has no permissions of its own, so frappe refuses
+    every direct read of it: link search, link validation, `get_list`.
+  - **Impact:** since then one person managed to set a lead source by hand (August). The 825
+    Opportunities reading "Unknown (pre-Aug 2026)" were set by the backfill patch, which goes
+    past permissions.
+  - **Fix:** `Lead Source` is a standalone list again. It is named by the source itself
+    (`autoname: Prompt`, as the existing records are) and has Quick Entry.
+    - **Every Desk user** (v16's `Desk User`) may read and pick from it.
+    - **System Manager and Sales Manager** may add, edit and remove sources. Marketing Manager
+      is left out on purpose: `test_marketing_approval` pins that role to the publishing surface.
+    - **On migrate**, the DocType sync adds the list columns a standalone table needs
+      (`_user_tags`, `_comments`, `_assign`, `_liked_by`; v16 `DBTable.get_columns_from_docfields`)
+      and leaves the old `parent*` columns in place, unused.
+  - **New guard:** `tests/test_link_targets_not_child_tables.py`, in its own CI step, fails the
+    build when any Link field (in the fixtures or this app's DocTypes) points at a child table
+    this app owns. It found one more, `Value Streams.value_stream_link`: a dead field, empty on
+    all six records, which is allow-listed with its reason.
+
 ## [1.678.0] - 2026-10-14
 
 ### Added
