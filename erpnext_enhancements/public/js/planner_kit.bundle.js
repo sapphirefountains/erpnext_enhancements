@@ -22,6 +22,12 @@
  *   blocks.form / note_form / chip_html / notes_html   personal blocks and day notes (Phase 6D)
  *   glow_key / glow_keys / format.{hours, drive, day_label, add_days}
  *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
+ *   toolbar.menu(button, opts) / sheet(opts)  the toolbar's menu buttons (no history entry) and the
+ *                                       phone's "Filters and tools" sheet (one, like a drawer)
+ *   quiet_call(method, args, opts)      sf_kit's call on its quiet path: a fetch, so frappe shows no
+ *                                       dialog; resolves r.message, rejects {status, message,
+ *                                       exc_type, session_expired} (docs/app-design-system.md)
+ *   state_html(kind, opts)              sf_kit's state panel markup (loading, empty, error, no-access)
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -41,6 +47,9 @@ import * as conflicts from "./planner_kit/conflicts.js";
 import * as blocks from "./planner_kit/blocks.js";
 import { CSS, STYLE_ID } from "./planner_kit/styles.js";
 import * as big_picture from "./planner_kit/big_picture.js";
+import { create_toolbar } from "./planner_kit/toolbar.js";
+import { call as sf_call } from "./sf_kit/call.js";
+import { state_html } from "./sf_kit/state.js";
 
 const VERSION = 1;
 
@@ -112,6 +121,15 @@ function install() {
 			Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => (r && r.message) || null),
 	};
 
+	// sf_kit's quiet call reads frappe, fetch and the cookie when a call is made, as sf_kit's own
+	// bundle does; planner_kit carries it so a planner need not load sf_kit for one request.
+	const call_env = { cookie: () => document.cookie };
+	Object.defineProperty(call_env, "frappe", { get: () => window.frappe, enumerable: true });
+	Object.defineProperty(call_env, "fetch", {
+		get: () => (typeof window.fetch === "function" ? (url, init) => window.fetch(url, init) : undefined),
+		enumerable: true,
+	});
+
 	env.guard = create_guard(env).install();
 	env.drawer = create_drawer(env);
 	env.toast = create_toast(env);
@@ -156,6 +174,11 @@ function install() {
 		}),
 		render: { person_week_html, day_overview_html, day_state },
 		big_picture,
+		// The planner toolbar redesign (v1.687.0): menu buttons and the phone's sheet.
+		toolbar: create_toolbar(env),
+		// A request whose refusal the page reports in its own panel (the Utilization view).
+		quiet_call: (method, args, opts) => sf_call(call_env, method, args, Object.assign({}, opts, { quiet: true })),
+		state_html,
 	};
 
 	// Esc closes the topmost kit overlay (a menu before the drawer under it), unless something
