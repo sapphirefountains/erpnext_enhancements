@@ -149,7 +149,7 @@ class TestProjectsLayout(unittest.TestCase):
 	def test_layout_blocks_are_all_seeded(self):
 		# Every block the layout names must be one the seeder creates, or the page would
 		# depend on a record that a fresh site never gets. "Home Dashboard Tasks" was made
-		# on the site and was the one exception until v1.665.0 brought its source in.
+		# on the site and was the one exception until v1.680.0 brought its source in.
 		seeded = {name for name, _prefix in self.ns["BLOCKS"]}
 		missing = set(self.ns["PROJECTS_LAYOUT"]) - seeded
 		self.assertEqual(missing, set())

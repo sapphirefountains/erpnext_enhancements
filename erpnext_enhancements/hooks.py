@@ -260,6 +260,10 @@ doctype_js = {
 		# (due, and nobody has written the checklist) and `unknown` (the build status is not a
 		# recognised option, so due-ness is not knowable). Generates nothing.
 		"public/js/quality/project_inspections.js",
+		# custom pages S5b (v1.667.0): View > Open in Project Planner, the planner filtered to
+		# this project (it reads `project` from frappe.route_options). Only for those whose
+		# roles open the page.
+		"public/js/project_enhancements/project_planner_link.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
@@ -1052,6 +1056,15 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.website_cleanup.add_missing_scheme",
 		],
 		"validate": [
+			# v1.677.0: again AFTER ERPNext's own validate. Opportunity.map_fields copies every
+			# empty column from the party by name, and Customer.primary_address is ERPNext's
+			# rendered address (a Text Editor of HTML), so an Opportunity with no job site took
+			# that HTML into its primary_address Link on every save. v16 checks links in
+			# _validate_links BEFORE before_validate and validate, so nothing refused it, and the
+			# before_validate run above had already happened. Production had 28 Customers with
+			# that text and one Opportunity holding it (2026-10-14). Clears a value that is not
+			# an Address name; an Address name is left alone.
+			"erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 			# First-touch inheritance from the originating Lead (or Customer, for
 			# the fountain-move path, which creates Customer-party opportunities
 			# on purpose). Fills blanks only — never overwrites.
@@ -1066,6 +1079,16 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
 		],
 		"before_save": [
+			# Form kit P3.2 (v1.669.0): ERPNext's hidden contact_person kept equal to the visible
+			# Primary Contact, because Create > Quotation and the Prospect row copy the hidden one.
+			# The field changed in the save wins (a new record: the visible one, else the hidden one
+			# copied up); a save that changes neither leaves a disagreeing pair alone until Nik
+			# approves the Party Mirror Preview. Changing contact_person also refreshes
+			# contact_display/_mobile/_email, which v16 fetched from the old one. Not the address
+			# pair: customer_address is the Billing Address, not the job site (v1.633.0). Must
+			# precede refresh_primary_contact_copies, so a contact copied up gets its copies in the
+			# same save. Rule and reasons: crm_enhancements/party_mirrors.py. Never raises.
+			"erpnext_enhancements.crm_enhancements.party_mirrors.keep_in_step",
 			# Form kit P4.5: a new primary contact's title, phone and email, copied the way
 			# primary_contact.js copies them, for saves with no form behind them (the guided page).
 			# Must precede on_update's sync_from_main_doc, which pushes the copies onto the Contact.
@@ -2109,6 +2132,10 @@ jinja = {
 		# prefixed and registered on its own like the three above. Notification bodies and
 		# email templates that print a registered phone field call it.
 		"erpnext_enhancements.utils.value_display.sf_phone",
+		# The customer portal's nav bar (templates/includes/sf_portal_nav.html, custom pages S6a)
+		# shows "Rent a Fountain" only while Rental Settings.public_request_form is on: the page
+		# 404s while it is off. Read-only and never raises; ee_ prefixed for the reason above.
+		"erpnext_enhancements.asset_management.rental_requests.ee_rent_form_enabled",
 	],
 }
 

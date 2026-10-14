@@ -1705,6 +1705,29 @@ jobs:
       # lists. Own frappe stub, so its own step.
       - name: Form kit engine (steps, saves, completeness)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
+      # Form kit P3.1, the information-block registry (form_kit/blocks.py): every block (Party,
+      # Site, Schedule window, Scope by pillar, Money, Crew) declares its entry, report and print
+      # faces (a pending one names its task), each face resolves to a real export, report-face kind
+      # or print helper, every field it names is on the v16 Opportunity / Project meta plus this
+      # app's fixtures, and the JavaScript twin (public/js/info_blocks/blocks.js) equals it under
+      # node. Own frappe stub (utils/date_pairs imports frappe).
+      - name: Form kit information blocks (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_blocks -v
+      # Form kit P3.2: Opportunity's hidden contact_person kept equal to the visible Primary
+      # Contact on every save (crm_enhancements/party_mirrors.py), ahead of the contact copies,
+      # never raising; and the Party Mirror Preview dry run, which writes nothing and compares in
+      # Python because MariaDB's PAD SPACE hides a trailing space. Own frappe stub.
+      - name: Party mirror rule + dry run (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_party_mirrors -v
+      # Form kit P3.2 (v1.677.0), the Party entry component: its decisions under node against the
+      # real information blocks (roles held equal to form_kit/blocks.py; a contact or address the
+      # person chose is never overwritten silently when the account changes), party_details against a
+      # frappe stub (allowlist, read on the account, the account kind the block allows, ERPNext's
+      # default contact/address rules, every read through get_list), and the wiring (one component in
+      # the editor both shells run, sf_kit's quiet GET, no HTML from values, the planner kit's Back
+      # guard, tokens-only styles in the bundle). Own frappe stub, so its own step.
+      - name: Form kit Party entry component (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_party -v
       # Form kit P4-B, the Guided Entry page (enhancements_core/page/guided_entry and the pure ES
       # modules in public/js/form_kit/): routes and history, step activeness against steps.py's own
       # `applies`, the save queue (coalescing, one request in flight, conflicts) under node, and
@@ -1719,6 +1742,20 @@ jobs:
       # the form kit's exact `modified` string, or every move is a conflict. Own frappe stub.
       - name: Opportunity board (bench-free, node + SQL check)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board -v
+      # Form kit P6 part B (P6.3, P6.4, P6.8): the needs-attention list held deal for deal to the
+      # README's SQL (run on SQLite with the child tables, through the real get_board and the form
+      # kit's real completeness), the quick filters, a snoozed deal hidden until its date then
+      # back, the snooze endpoint's write check and modified lock (never save(), so no unrelated
+      # validation blocks it), and saved views in the planners' own store. Own frappe stub.
+      - name: Opportunity board part B (views, attention, snooze, saved views)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
+      # Form kit P4.4 / P6.6 / P6.7 (v1.675.0): the side panel's pure decisions and the save
+      # queue's manual mode under node (a move's required fields wait for the commit), the board's
+      # panel routes, quick add and bulk selection, bulk_update taking every deal through the
+      # single-change save with its own lock and savepoint, and the guided page and the side panel
+      # running one record editor. Own frappe stub; the form kit's saver is a recorder.
+      - name: Opportunity board part C (side panel, quick add, bulk)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_panel -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
@@ -3434,12 +3471,59 @@ jobs:
       # lands after Back never paints over the screen the person went to.
       - name: Marketing app Back/Forward (bench-free, node)
         run: node scripts/test_marketing_history.js
-      # Six Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
-      # QuickBooks record matching, training review, location timeline). Runs the harness
+      # Seven Desk pages' Back and Forward (device console, scanner audit, sales pipeline,
+      # QuickBooks record matching, training review, location timeline, maintenance day board),
+      # under the v16 router both before and after v16.50 for the day and trail in the address. Runs the harness
       # through Python so the source checks and the behaviour run together; node is on PATH
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
+      # S6b (v1.666.0): the scanner kit (public/js/scanner_kit), the camera sheet and the sheets'
+      # Back/Forward handling the Device Console and the Inventory Scanner Audit share. The node
+      # step runs it against stubbed mediaDevices, a BarcodeDetector present / absent (an iPhone) /
+      # without QR, and jsQR: the decoder chosen, jsQR never loaded where the detector reads QR,
+      # every track stopped on close and on page hide, one history entry per sheet popped by Back.
+      # The unittest step fails the build if either page keeps its own camera loop, loads the kit
+      # without its guard, or the kit bundles jsQR. Both pages run on the real kit in the Desk
+      # pages Back/Forward step above.
+      - name: Scanner kit (bench-free, node)
+        run: node scripts/test_scanner_kit.mjs
+      - name: Scanner kit (pages on the kit, iOS rules)
+        run: python -m unittest erpnext_enhancements.tests.test_scanner_kit -v
+      # Custom pages S5a (v1.662.0). The Day Board's ?date=, the Rental Planner's ?start= and the
+      # Location Timeline's trail live in the address: read from frappe.route_options and consumed
+      # key by key, written by one helper per page on the path on screen (never by routing to the
+      # page it is on, which older v16 routers push without the query), dates checked against the
+      # calendar, and get_day_board_data(date=None) unchanged for today. The behaviour runs in the
+      # Desk pages step above and in the Rental Planner step. Reads files only.
+      - name: Custom pages S5a deep links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_page_deep_links -v
+      # The Day Board's feed for another day (v1.662.0), its SQL run against an in-memory SQLite
+      # copy of the columns: a visit is on the day it was done (visit_date, else its clock-in),
+      # never the day billing or the sign-off last moved `modified`; today's queries are the ones
+      # it always sent; no date it can be handed raises. Its own step: installs a frappe stub.
+      - name: Day Board feed for another day (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_board_days -v
+      # Custom pages S5b (v1.667.0). Each form opens the page that works on the same record:
+      # Project -> Project Planner (?project=, consumed by the planner), Project Quality Inspection
+      # -> Inspection Wizard, Rental Booking -> Rental Planner (?start=), and the Day Board's
+      # submitted visits -> Visit Review plus its toolbar -> the Maintenance Planner's week. Each is
+      # a route (a history entry), shown only when frappe.boot.page_info lists the page, never an
+      # /app/ link. Runs scripts/test_form_page_links.js, the real form and page scripts against a
+      # model of v16.50's router; node is on PATH in this job, so the harness cannot skip here.
+      - name: Custom pages S5b form links (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_form_page_links -v
+      # Custom pages S5c (v1.676.0). The Project Planner's Project / PM / Group filters and the
+      # Maintenance Planner's Technician live in the address (?project=&pm=&group=, ?technician=):
+      # read from route_options on every landing and consumed key by key, a pick rewrites the entry
+      # in place (replaceState, never a push), every planner screen carries them, and what an
+      # address gave is never remembered or saved as "last used". Also the planner kit's
+      # stylesheet linked once: v16.50's frappe.require marks a file loaded only after it loads,
+      # so 6A's and 6D's requires in one tick each added a <link>. Runs
+      # scripts/test_planner_url_filters.js, the real page scripts against a model of v16.50's
+      # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
+      - name: Custom pages S5c planner filters in the address (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
@@ -3473,13 +3557,25 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
-      # Custom pages S4a (v1.665.0). Hubs link their dashboards and every dashboard's Dashboard
+      # Custom pages S4a (v1.680.0). Hubs link their dashboards and every dashboard's Dashboard
       # Hub Links block leads back along the same pairs; Operations links Stock Scan; the
       # Morning Briefing workspace shows the briefing; the kiosk is linked at /kiosk; GA4 and
       # the Day Board admit their hubs' roles; the patch never raises. Installs its own frappe
       # stub for the patch and the endpoint, so it gets its own step.
       - name: Custom pages S4a hub and dashboard links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s4a_hub_links -v
+      # Custom pages S4c (v1.679.0). page_search.js gives the awesomebar and the search dialog a
+      # "Pages" section with aliases ("planner", "kiosk", "scan", "qbo", which full-text search
+      # cannot see at three letters) and binds six Alt+Shift page shortcuts. The node step runs the
+      # real file against a stubbed frappe: matching, role filtering through page_info, routing,
+      # the awesomebar and search-dialog wraps (Frappe's list untouched on error or a missing hook
+      # point), no chord Frappe v16.50 or this app already binds, and nothing fires while typing.
+      # The unittest step holds the map to real pages, Stock Scan's roles to its controller, the
+      # chords to nowhere else in the app, and the bundle and CI wiring. Reads files only.
+      - name: Custom pages S4c page search + shortcuts (node)
+        run: node scripts/test_page_search.js
+      - name: Custom pages S4c page search + shortcuts (wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s4c -v
       # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
       # which the page loader sends with the page (never stale from the immutable /assets
       # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
@@ -3488,7 +3584,10 @@ jobs:
       # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       # S3.4b (v1.652.0) added four pages and S3.4c (v1.661.0) Plan a Trip, whose Map colours
-      # are read from the same tokens the page CSS uses.
+      # are read from the same tokens the page CSS uses. S3.4d (v1.664.0) added the Project
+      # Planner, whose task and person colors are data and go in only as --pp-color. S3.4e
+      # (v1.673.0) added the Maintenance Planner (--mp-color) and planner_kit's own stylesheet,
+      # public/css/planner_kit.bundle.css, which both planners load beside the kit.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Custom pages S3.6 (v1.656.0), the accessibility pass, pinned file by file: the Rental
@@ -3511,6 +3610,14 @@ jobs:
       # carry their word, 44px controls, and the itinerary worker keeps the tokens offline.
       - name: Custom pages S3.5a www apps on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_www_app_tokens -v
+      # S6a: the customer portal (/pay, /pay-card, /rentals, /rent-a-fountain), presentation only.
+      # Each template links the tokens through bundled_asset before sf_portal.bundle.css, after the
+      # light pin, and uses the shared nav bar (no Desk links; jinja2 renders it signed in and as a
+      # guest); the CSS has no literal colour, no shadow, token radii, one 767px breakpoint, 44px
+      # controls and 16px fields; every page script is pinned byte for byte by SHA-256, every
+      # selector it reads is still in the markup, field names are unchanged, every field is labelled.
+      - name: Custom pages S6a customer portal polish (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_customer_portal_polish -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:
       # no innerHTML at all, no Vue, no frappe.*, cross-module names resolve, bundles only, every
       # list renderer reaches the one placeholder writer when empty, every surface that reads

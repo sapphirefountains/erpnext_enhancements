@@ -25,10 +25,12 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `steps.py` | `flow_steps(doctype, doc=None, user=None)`: the meta walked into steps, with each field's permission worked out for the user |
 | `saver.py` | `create_record` (step 1 inserts the draft) and `save_step` (one step, optimistic lock on `modified`) |
 | `completeness.py` | `stage_completeness(doctype, doc)`, pure; `completeness_for(doctype, names)`, the batch for the board |
-| `api.py` | The five whitelisted endpoints, and the DocType allowlist in front of them |
+| `api.py` | The whitelisted endpoints, and the DocType allowlist in front of them |
+| `party.py` | The Party entry component's one read (P3.2): an account's default contact and addresses, and which of the record's are the account's. See *The Party entry component* below |
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
+| `blocks.py` | The information blocks (P3.1): Party, Site, Schedule window, Scope by pillar, Money, Crew, with their fields per DocType and their three faces. JavaScript twin: `public/js/info_blocks/blocks.js`. See *Information blocks* below |
 
 ## How the steps are built
 
@@ -136,7 +138,10 @@ Step 1's own fields are never taken from it: step 1 is what the person saw and s
 
 `values` are read back after the save, so they are what the hooks stored (the `"*"` normalize
 hook's phones and websites, for one); the page replaces what it shows with them, and keeps
-`modified` for the next save.
+`modified` for the next save. Since v1.677.0 a `save_step` without `step` also returns every field
+the flow shows that **the save itself** changed besides the ones sent (ERPNext's
+`Opportunity.map_fields` filling an empty contact from a new account, `party_mirrors` copying the
+hidden contact up): before, the page kept showing the old value, and its next save put it back.
 
 **The conflict shape.** When the record's `modified` is no longer the one sent, nothing is saved
 and the call returns, not raises:
@@ -170,12 +175,69 @@ record is simply absent) with one bound query per child table, never one per rec
 `frappe.get_list`. The config's `mine` says whose (`owner_field`), which are open (`open.not_in`),
 which to leave out (`hide_flag`: on Opportunity, the historical deals) and what a row shows.
 
+`get_flow` also sends `won` (`{"status", "status_field", "fields"}`: what a move into Closed Won must
+carry, the config's `won`; the side panel asks for these fields before it saves the move), `closed`
+(`{"field", "in"}`: the statuses that close a record, from the config's `mine.open`) and, for a
+new record only, `quick` (`{"fields", "fixed", "owner_field", "stage_field"}`: the board's quick
+add, the config's `quick`). A `quick.when` rule that raises never takes step 1 down: the field is
+**offered** (read as "not required", Lead Source would be hidden while `enforce_source` may still
+refuse the insert without it), and the failure is logged once per process, not on every page open.
+
+`party_details(doctype, party_type, party, contacts=None, addresses=None)`, GET: the Party entry
+component's question when the account changes. See *The Party entry component (P3.2)* below.
+
 `declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None)`, POST: the
 config's `lost` (on Opportunity, ERPNext's `declare_enquiry_lost`), with `reasons` and
 `competitors` as JSON lists of names or rows. It is locked on `modified` like `save_step` and
 returns the same result or conflict shape. `get_flow` sends `lost` (the status that opens the
 page's Set as Lost dialog, and the two child DocTypes), `distinct` (fields the page warns should
 not share a value) and `clears` (a field whose change empties others).
+
+## One editor, two shells (P4.4)
+
+The page that walks a record and the side panel that edits one from a list or board run **the same
+record editor**, `public/js/form_kit/ui/editor.js` (`RecordEditor`, v1.675.0): one step's fields in
+a `frappe.ui.FieldGroup`, the values as shown and as saved, the save queue and its conflict chooser,
+the phone's journal, step 1's create and Set as Lost. It draws with frappe and jQuery, so it is
+not among the pure modules in `public/js/form_kit/*.js` (those are what the node suites import);
+`guided_entry.bundle.js` carries it.
+
+- **The guided page** keeps what only it has: its routes, the band, rail, summary and footer, the
+  start screen. Its class is defined before the bundle loads, so the editor's methods are mixed onto
+  it when the bundle arrives (`mix_editor`), never over a method the page defines.
+- **The side panel**, `public/js/form_kit/ui/side_panel.js` (`class SidePanel extends
+  RecordEditor`), lives in the planner kit's drawer, full screen on a phone. The page that opens it
+  owns the address (the drawer is opened with `history: false`): each panel is a route, Back closes
+  it, reload reopens it, and a step change *replaces* the address. Three kinds:
+  - **edit**: a record, one step at a time, autosaved as on the guided page; closing it offers an
+    Undo toast that puts back what this panel changed, locked on `modified`, and then sends
+    `sf-record-changed` so an open guided page reloads. **No Undo** when the edit moved the record
+    into or out of a closing status (`get_flow`'s `closed`, plus `won` and `lost`; `panel.js`
+    `undo_allowed`): a plain save back out of Closed Won would skip `revert_won_status`'s refusal
+    once a project exists and leave the won date set. It fails closed (v1.677.0): no flow, or one
+    that sends neither `closed` nor `won`, offers no Undo.
+  - **move**: what a move into a stage must carry (`won`'s fields, or `lost`'s reasons), then the
+    move, in one save. The queue is `manual` (`save_queue.js`: nothing autosaves) and the journal
+    keeps nothing (`hold_saves`), so nothing reaches the record until the person commits.
+  - **new**: the config's `quick`, created through `create_record` with the create's `client_id`.
+    `quick.when` adds a field while the server says a new record needs it (on Opportunity the Lead
+    Source, while `crm_enhancements.attribution.lead_source_required`); `get_flow` decides, so the
+    Desk never reads the Settings Single.
+- **Known limitation: one journal union per editor.** The phone's entry for a record is written by
+  whichever editor last saved it, from that editor's own queues (`write_journal`). The guided page
+  and a side panel open on the same record in one tab (or two tabs) each hold their own queues, so
+  one can rewrite the entry without the other's unsent values. A shared, module-level registry of
+  live queues per user and record would close it, but the bases and held choices would have to be
+  shared too; left for a later change. In practice the two are rarely open on one record at once,
+  and a lost entry only matters when the signal drops at that moment.
+- What a shell must provide (`showing`, `load`, `refresh_chrome`, `after_create`, `show_created`,
+  `still_new`) is listed at the head of `editor.js`. The panel's pure decisions are
+  `public/js/form_kit/panel.js` (`gate_for`, `field_defs`, `quick_start`, `create_extras`,
+  `undo_values`), run under node by `tests/test_opportunity_board_panel.py`.
+
+Step 1's create carries, as `prefill`, whatever else step 1 shows that the person changed (the
+summary, a close date): `create_record` assigns only the "create" fields, and before v1.675.0 the
+rest was silently dropped.
 
 ## No signal (P4.7)
 
@@ -269,6 +331,135 @@ behind an (i); the text lives in the repository and changes by PR, never from th
 - `get_field_help(doctype)`, GET: `{"article", "fields": {fieldname: {"help", "anchor"}}}`, only
   fields with an explanation that the caller may read; `anchor` is the field's step key.
 
+## Information blocks
+
+P3 (TASK-2026-02753): the same piece of information is entered, shown in a report and printed the
+same way. `blocks.py` is the one definition (P3.1, TASK-2026-02754, v1.669.0). For each block it
+names the fields that carry it on each DocType, and its three faces:
+
+- **entry**: the kit component that enters it, as `{"module", "export"}` (an ES module under
+  `public/`), or `{"pending": "<task>", "builds": "<what>"}` when the component is not built yet;
+- **report**: the report face's column kinds (`public/js/report_face/cells.js` `KINDS`);
+- **print**: the helpers a print format calls (`print_style` / `print_lookup`, registered as Jinja
+  globals), Frappe's own `frappe.format` (listed in `FRAMEWORK_HELPERS` with the reason), or pending.
+
+| Block | Opportunity | Project | Entry | Report | Print |
+|---|---|---|---|---|---|
+| Party | `opportunity_from`, `party_name`, `primary_contact`, `customer_address`; mirror `primary_contact` → `contact_person` | `customer`, `primary_contact`, `custom_billing_address` | `form_kit/ui/party.js` `PartyEntry` (P3.2) | `party` | `ps_party` |
+| Site | `primary_address` | `primary_address` | `form_kit/ui/party.js` `PartyEntry` (P3.2) | `party` | `ps_address` |
+| Schedule window | `utils/date_pairs.PAIRS["Opportunity"]` | `PAIRS["Project"]` + ERPNext's `expected_*` and `actual_*` pairs | pending TASK-2026-02753 | `date`, `datetime` | `ps_date`, `ps_datetime` |
+| Scope by pillar | `custom_value_stream` + each stream's Customer Requests and Deliverables table | the same | `form_kit/fields.js` `text_list_column` | `pillar` | `print_style.STREAM_PILLAR`, `pillar` |
+| Money | `opportunity_amount`, `custom_materials_budget`, in `currency` | `custom_project_dollar_amount`, `estimated_costing`, `custom_materials_budget`, `custom_bid_cost`, company currency | pending TASK-2026-02753 | `money` | `frappe.format` |
+| Crew | `opportunity_owner`, `custom_scope_contributors` | `custom_project_owner`, `custom_technical_lead`, `custom_scope_contributors` | pending TASK-2026-02753 | `party` | pending TASK-2026-02753 |
+
+Decisions:
+
+- **A face is never left out; it may be pending.** A component that does not exist yet is declared
+  with the task that builds it and a sentence saying what it is. `check()` refuses a block with no
+  face declared at all, a pending face without a task, and an unknown report kind;
+  `tests/test_form_kit_blocks.py` also fails when a named module does not export what it names, a
+  print helper is not defined (or a `ps_` helper not registered in `hooks.py`'s Jinja globals), or a
+  block names a field the DocType's meta does not have.
+- **Point at the rules, don't copy them.** The Schedule window is `utils/date_pairs.PAIRS` (P2.2) plus
+  the pairs ERPNext validates itself, which `date_pairs` deliberately leaves out. Scope by pillar is
+  built from `config/opportunity.REQUEST_TABLES` and each stream's pillar is `print_style.STREAM_PILLAR`.
+  Money has no app print helper because Frappe's currency formatting is already the one answer.
+- **Party's address is the Billing Address; Site is the job site.** The plan wrote Party as
+  `party_name` + `primary_contact` + `primary_address`, before v1.633.0 made `customer_address` the
+  visible *Billing Address* and kept Primary Address as the job site (Nik, 2026-10-13). So Party
+  carries the account, the contact and where invoices go, and Site carries where the work is. The
+  P3.2 component picks both.
+- **Mirrors.** `mirrors` names a hidden stock field kept equal to a visible one, read by
+  `crm_enhancements/party_mirrors.py` on save. Opportunity's `primary_contact` → `contact_person` is
+  the only one: Project has no stock contact field. Project's equivalent pair for P7 is the address:
+  `primary_address` beside the older `custom_customer__lead_address` link, which `api/pickup_routing.py`
+  and `api/travel.py` still read as a fallback; it is left alone until P7 makes Project guided.
+- **The meta in the test is the v16 one.** ERPNext's DocType JSON at `origin/version-16`, trimmed
+  into `tests/fixtures/form_kit/erpnext_v16_opportunity.json` and `erpnext_v16_project.json` (each
+  `_source` says how), plus this app's Custom Fields and the fields `setup/custom_fields.py` adds on
+  migrate. The sibling `erpnext` checkout's working tree is `develop` (v17), the wrong tree.
+- **The JS twin** (`public/js/info_blocks/blocks.js`) is `resolved()` written out, held equal under
+  node. Change the Python first.
+- **Roles** (v1.677.0). The Party and Site blocks say what each field *is* to the entry component:
+  `roles` (`account_type`, `account`, `contact`, `address`) and `accounts`, the account kinds the
+  record may name. `check()` refuses a role that names a field the block does not carry. The
+  component reads them through `blocks.party_roles(doctype)` (JS twin: `form_kit/party.js`
+  `party_roles`), never fieldnames of its own, so Project (P7) gets it by adding its rows here.
+
+## The Party entry component (P3.2)
+
+TASK-2026-02755, v1.677.0. One component, `public/js/form_kit/ui/party.js` (`PartyEntry`), made by
+the record editor (`editor.js` `party_entry()`), so the guided page and the side panel get the same
+thing. Its decisions are `public/js/form_kit/party.js`, pure, run under node by
+`tests/test_form_kit_party.py`. On Opportunity:
+
+| Field | Search | "+ New" |
+|---|---|---|
+| Account (`party_name`, kind `opportunity_from`) | Frappe's own | Customer: the app's quick entry (`party_quick_entry.js`), then picked. Lead or Prospect: its form in a new tab, with a toast saying to pick it here once saved (neither has a quick entry on this site, and leaving the page would lose the step) |
+| Primary Contact | the account's own (`fields.js` `link_query`, ERPNext's `contact_query`) | the app's Contact quick entry, linked to the account and the deal, then picked |
+| Billing Address (`customer_address`) | the account's own (`address_query`) | the app's Address quick entry, starting on "Also <account>'s address" |
+| Primary Address (the site) | the account's own | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
+
+Decisions, for review:
+
+- **The dialogs are the Desk's own, not a copy.** `contact_address_quick_entry.js` gained
+  `contacts_ux.create_for(doctype, record, opts)`: the guided route is not a Form, so the dialog is
+  handed the record's context (`PARTY_CONTEXT`, the same table the Opportunity form uses) instead of
+  resolving one from the route. Everything else is unchanged: the Account field, links[0] naming
+  the record, the custom_* phone and email fields, Google Places, the coordinates. Frappe's own
+  "Create a new Contact" in a Link's dropdown is routed through it too (the control's `new_doc`), so
+  nothing created from these pages is ever unlinked. A refused insert keeps the dialog open
+  (`skip_redirect_on_error`) instead of opening the full form over the page.
+- **Phones and emails** typed in a dialog are normalized once, by the server's `"*"` hook on insert
+  (`utils/normalize_hook.normalize_doc`); the component does not reformat them.
+- **When the account changes on a saved record**, `party_details` answers which of the current
+  contact, billing address and site are linked to the new account **or to the record itself**, and
+  the account's defaults by ERPNext's own rules (`party.py`). Then, field by field (`party.js`
+  `plan_account_change`): an **empty** field takes the account's default; a **stored value is never
+  overwritten and never emptied**. One linked to the new account or to the deal (a general
+  contractor's job site is linked to the Opportunity only) stays quietly; any other stays with a
+  note under the field ("not one of <account>'s", and *Use <suggestion>*). Review of #1291: an
+  earlier rule replaced or cleared a stored site nobody had touched, on a step nobody was looking
+  at, and the hand-off then copied the wrong site into the Project. ERPNext's own `party_name`
+  handler, which does overwrite `contact_person` and `customer_address`, is the Desk form's client
+  script; nothing runs it here, and on the server `map_fields` fills only empty fields, so the same
+  rule holds for all three. An answer for values that changed while it was in flight is asked again.
+  On a new record nothing is suggested: the contact and addresses are on later steps, and the
+  insert's own `map_fields` fills them from the account.
+- **`map_fields` and the job site** (found in review, older than this component).
+  `Opportunity.map_fields` copies every empty column from the party by name, and
+  `Customer.primary_address` is ERPNext's rendered address HTML, so a deal with no site took that HTML
+  into its `primary_address` Link on every save: v16 checks links in `_validate_links` *before*
+  `before_validate` and `validate`, and `sanitize_primary_address_link` ran only on
+  `before_validate`. It now runs on Opportunity's `validate` too, after ERPNext's (hooks.py).
+  Production had 28 Customers with that text and one Opportunity holding it (2026-10-14); that row
+  is cleared on its next save.
+- **The defaults.** Contact: flagged `is_primary_contact`, else `is_billing_contact` (ERPNext's
+  `get_default_contact`), else the account's own `primary_contact` / `customer_primary_contact` when
+  that Contact is linked to it (what `map_fields` copies anyway). Billing: flagged
+  `is_primary_address`, else the newest (ERPNext's `get_default_address`). Site: ERPNext has none;
+  `get_party_shipping_address`'s rule (flagged shipping, else the only Shipping address), and an
+  account with exactly one enabled address offers it as the site too. Production had 23 Shipping
+  addresses to 843 Billing on 2026-10-14, which is why a new site address starts as Shipping.
+- **The two contact fields cannot disagree.** The page shows and saves `primary_contact`; the server
+  keeps ERPNext's hidden `contact_person` equal to it on every save
+  (`crm_enhancements/party_mirrors.py`), and `save_step` now returns what that (or `map_fields`)
+  changed, so the screen shows what the record holds. `customer_address` is the visible Billing
+  Address and is never mirrored onto the site.
+- **Back closes the dialog first.** A quick entry is a frappe Dialog, which the router closes on any
+  route change: alone, Back would close it *and* leave the step (or close the side panel). The
+  dialog joins the planner kit's history guard (`planner_kit/history.js`) as an overlay, so Back
+  closes the dialog and nothing else, and Save or Cancel steps back off the guard's entry. The guided
+  page loads `planner_kit.bundle.js` the first time a dialog opens; where the guard cannot work,
+  Back falls back to frappe's behavior.
+- `party_details(doctype, party_type, party, contacts=None, addresses=None, name=None)`, GET only:
+  `{"defaults": {"contact", "billing", "site"}, "linked": {"Contact": [...], "Address": [...]}}`.
+  The DocType allowlist, read on the DocType, `party_type` one of the Party block's `accounts`, read
+  on the account (and on the record `name`, when sent), at most 20 names of each kind, and every
+  Contact and Address through `frappe.get_list` with `distinct` (a record linked twice to one party,
+  as the Zoho import left some, is counted once), so user permissions and sharing decide what is
+  offered. Writes nothing.
+
 ## Adding a DocType
 
 1. Write `config/<doctype>.py` with a `CONFIG` dict (the schema is in `config/__init__.py`'s
@@ -280,3 +471,5 @@ behind an (i); the text lives in the repository and changes by PR, never from th
    Setters the way it builds Opportunity's, so the schema checks (every fieldname exists, every
    section exists, every step key is unique) and "every field the form shows is in exactly one step"
    run against it.
+5. Add the DocType to each block in `blocks.py` that it carries (and to the JS twin), with a meta
+   fixture in `tests/test_form_kit_blocks.py` built the same way, so every field it names is checked.

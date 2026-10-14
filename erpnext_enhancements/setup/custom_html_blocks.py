@@ -62,7 +62,7 @@ BLOCKS = [
 	("Morning Briefing", "morning_briefing"),
 	# "My Priority Tasks": the viewer's own open tasks, top company priority first. Made on
 	# the site in 2025-12 under this name and placed on the Projects workspace and the
-	# Executive Hub; its source came into the repo in v1.665.0, so from then on the seeder
+	# Executive Hub; its source came into the repo in v1.680.0, so from then on the seeder
 	# overwrites the site copy like every other block here. The name is kept because both
 	# placements join on it.
 	("Home Dashboard Tasks", "my_priority_tasks"),
@@ -129,7 +129,7 @@ HOME_WORKSPACE = "Home"
 # edit, so the 2026-10-06 upgrade re-imported it and the page went back to ERPNext's
 # onboarding, chart and number cards. A re-import writes no Version. This is the layout
 # from the last edit before that (2026-06-12), in order. "Home Dashboard Tasks" (My
-# Priority Tasks) was made on the site; it has been seeded from the repo since v1.665.0,
+# Priority Tasks) was made on the site; it has been seeded from the repo since v1.680.0,
 # and the layout still places only the blocks that exist, so a seed that failed leaves a
 # gap rather than an empty div.
 PROJECTS_WORKSPACE = "Projects"
@@ -220,7 +220,7 @@ DEPARTMENT_DASHBOARD_BLOCKS = {
 	# The learner workspace. One block, and no KPI Cockpit beside it: this page is
 	# for the person looking at it, not for reading the business.
 	"My Training": ("My Training Dashboard",),
-	# The briefing itself, on the workspace named after it (v1.665.0). Until then the
+	# The briefing itself, on the workspace named after it (v1.680.0). Until then the
 	# page held a /wall link and two lists only a System Manager could open.
 	"Morning Briefing": ("Morning Briefing",),
 	"HR Dashboard": (

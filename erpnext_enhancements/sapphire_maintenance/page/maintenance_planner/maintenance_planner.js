@@ -12,6 +12,12 @@
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
 // Forward re-render through on_page_show -> handle_route.
 //
+// The Technician filter rides along on every one of those as the query (S5c):
+// /desk/maintenance-planner/week/2026-10-05?technician=<user> (__none__ for Unassigned). A link
+// with it opens the planner on that technician, and a reload keeps it. Picking a technician rewrites
+// the address in place; it is not a screen of its own. See "the filter in the address" below. The
+// two boxes beside it (Projected visits, Project work) are display switches and stay remembered only.
+//
 // Cards come from erpnext_enhancements.api.maintenance_planner.get_planner:
 //   visit      a Sapphire Maintenance Record. It carries `technician` (the lead, who fills it in),
 //              `crew` ([{user, name, hours}]: the others booked on it), `planned_hours`, `full_day` and
@@ -27,8 +33,9 @@
 // Maintenance and Projects share technicians, so the same response also carries `bookings`: each
 // technician's project tasks, rental crew tasks and travel days, their free hours and days off,
 // and (when the engine provides them) their drive time, all from the shared availability engine
-// (project_enhancements.crew_availability). The bookings are read-only here: shown as teal /
-// amber / gray cards that open the Task or Travel Trip, never dragged. The free hours are the
+// (project_enhancements.crew_availability). The bookings are read-only here: shown as Project /
+// Rental / Travel cards on their pillar's edge (Build, Rent, Neutral; maintenance_planner.css) that
+// open the Task or Travel Trip, never dragged. The free hours are the
 // engine's figure and must match the Project Planner's, so this page never works them out itself.
 // Projects moves its own bookings on the Project Planner.
 //
@@ -70,6 +77,10 @@ const MP = {
 	projected_key: "ee_maintenance_planner_projected",
 	project_key: "ee_maintenance_planner_project_work",
 	panel_key: "ee_maintenance_planner_panel",
+	// The filter the address carries (S5c): ?technician=<user>, or __none__ for Unassigned.
+	url_filters: ["technician"],
+	// The longest value the address may give it: a document name's limit.
+	url_value_max: 140,
 	hold_ms: 300,
 	drag_px: 6,
 	undo_max: 20,
@@ -106,7 +117,21 @@ const mp_drive = (minutes) => {
 	return m ? `${h}h ${m}m` : `${h}h`;
 };
 // Colors come from records people edit; only a plain hex value goes into a style attribute.
+// A technician's color (or Color by's) is the one color the page writes inline, and only ever as the
+// custom property `style="--mp-color: <hex or hsl>"`, which maintenance_planner.css paints with
+// (S3.4e); tests/test_s3_page_css.py allows exactly that pattern and no other inline color.
 const mp_color = (value, fallback) => (/^#[0-9a-fA-F]{3,8}$/.test(String(value || "")) ? value : fallback);
+// A design token's value, for the printed page, which is drawn in a window of its own and takes a
+// color value rather than a CSS variable. The fallback is the token's own value, for a page drawn
+// before sf_tokens.bundle.css (a global include) has loaded.
+const mp_token_color = (name, fallback) => {
+	try {
+		const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return value || fallback;
+	} catch (e) {
+		return fallback;
+	}
+};
 // The same pin-and-route glyph the Project Planner uses on a person's day.
 const MP_ROUTE_ICON =
 	'<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -128,164 +153,9 @@ frappe.pages[MP.route].on_page_show = function (wrapper) {
 	}
 };
 
-const MP_STYLE = `
-.mp-wrap{padding-bottom:48px;color:var(--text-color);}
-.mp-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 10px;}
-.mp-title{font-weight:600;font-size:16px;margin:0 6px;min-width:150px;}
-.mp-seg{display:inline-flex;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;}
-.mp-seg button{border:none;background:var(--card-bg);padding:4px 12px;font-size:13px;color:var(--text-color);}
-.mp-seg button + button{border-left:1px solid var(--border-color);}
-.mp-seg button.mp-on{background:var(--primary,#2490ef);color:#fff;}
-.mp-spacer{flex:1 1 auto;}
-.mp-toolbar select{width:auto;max-width:220px;}
-.mp-toolbar label{display:inline-flex;align-items:center;gap:5px;margin:0;font-size:13px;font-weight:normal;}
-.mp-undo.mp-empty{opacity:.55;}
-.mp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--text-muted);margin:0 0 10px;align-items:center;}
-.mp-legend span{display:inline-flex;align-items:center;gap:5px;}
-.mp-swatch{display:inline-block;width:16px;height:11px;border-radius:3px;border:1px solid var(--border-color);border-left-width:4px;}
-.mp-section{border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:10px;}
-.mp-section-head{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;}
-.mp-section-head .btn{text-transform:none;letter-spacing:0;}
-.mp-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-.mp-res-grid{display:grid;min-width:0;}
-.mp-res-grid > div{border-top:1px solid var(--border-color);}
-.mp-res-head{font-size:11px;color:var(--text-muted);padding:3px 4px;text-align:center;white-space:nowrap;}
-.mp-res-head.mp-today{color:var(--primary,#2490ef);font-weight:700;}
-.mp-person{display:flex;align-items:center;gap:6px;padding:3px 8px;font-size:12px;min-width:0;cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.mp-person:hover{background:var(--control-bg);}
-.mp-person.mp-selected .mp-person-name{color:var(--primary,#2490ef);}
-.mp-person-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
-.mp-person-group{font-size:10px;color:var(--text-muted);white-space:nowrap;}
-.mp-dot{flex:0 0 auto;width:10px;height:10px;border-radius:50%;}
-.mp-avail{padding:3px 4px;font-size:11px;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;border-left:1px solid var(--border-color);}
-.mp-avail-row{display:flex;align-items:center;justify-content:space-between;gap:2px;min-width:0;}
-.mp-avail-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-bar{height:4px;border-radius:2px;background:var(--control-bg);overflow:hidden;}
-.mp-bar i{display:block;height:100%;}
-.mp-green .mp-bar i{background:#16a34a;}
-.mp-amber .mp-bar i{background:#d97706;}
-.mp-red .mp-bar i{background:#dc2626;}
-.mp-red .mp-avail-text,.mp-red .mp-cap-text{color:#b91c1c;font-weight:600;}
-.mp-offday{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);color:var(--text-muted);}
-.mp-conflict{box-shadow:inset 0 0 0 2px rgba(220,38,38,.55);}
-.mp-mini{padding:0;min-height:22px;}
-.mp-mini.mp-green{background:rgba(22,163,74,.22);}
-.mp-mini.mp-amber{background:rgba(217,119,6,.28);}
-.mp-mini.mp-red{background:rgba(220,38,38,.38);}
-.mp-mini.mp-idle{background:transparent;}
-.mp-mini[data-route-resource]{cursor:pointer;}
-.mp-drive{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-size:10px;color:var(--text-muted);min-width:0;}
-.mp-drive-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-route{display:inline-flex;align-items:center;gap:3px;cursor:pointer;color:var(--text-muted);border:none;background:transparent;border-radius:6px;padding:0 3px;line-height:1;}
-.mp-route:hover,.mp-route:focus{color:var(--primary,#2490ef);background:var(--control-bg);outline:none;}
-.mp-route svg{width:12px;height:12px;flex:0 0 auto;}
-.mp-tray{border:1px dashed var(--border-color);border-radius:10px;padding:8px 10px;margin-bottom:10px;}
-.mp-tray h5{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);}
-.mp-tray-cards{display:flex;flex-wrap:wrap;gap:6px;}
-.mp-tray .mp-card{width:230px;}
-.mp-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--card-bg);}
-.mp-dow{padding:6px 8px;font-size:11px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color);text-transform:uppercase;letter-spacing:.04em;}
-.mp-day{min-height:118px;padding:4px;border-right:1px solid var(--border-color);border-bottom:1px solid var(--border-color);display:flex;flex-direction:column;gap:4px;min-width:0;}
-.mp-day:nth-child(7n){border-right:none;}
-.mp-week .mp-day{min-height:440px;}
-.mp-week .mp-dow{display:none;}
-.mp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
-.mp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
-.mp-day-num:hover{background:var(--control-bg);}
-.mp-day-num:focus-visible,.mp-crew-head:focus-visible,.mp-title:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
-.mp-day.mp-today .mp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.mp-day.mp-out{background:var(--control-bg);}
-.mp-day.mp-out .mp-day-head{opacity:.55;}
-.mp-day.mp-past .mp-day-head{opacity:.6;}
-.mp-day.mp-off-day,.mp-cell.mp-off-day{background:repeating-linear-gradient(135deg,transparent 0 6px,var(--control-bg) 6px 8px);}
-.mp-off-label{font-size:11px;color:var(--text-muted);padding:0 2px;}
-.mp-off-badges{display:flex;flex-wrap:wrap;gap:2px;padding:0 2px;}
-.mp-day-count{font-size:11px;}
-.mp-day.mp-over,.mp-cell.mp-over{outline:2px solid var(--primary,#2490ef);outline-offset:-2px;background:rgba(36,144,239,.08);}
-.mp-day.mp-over-no,.mp-cell.mp-over-no{outline:2px dashed #dc2626;outline-offset:-2px;}
-.mp-card.mp-over{outline:2px solid var(--primary,#2490ef);outline-offset:1px;}
-.mp-card{position:relative;border:1px solid var(--border-color);border-left:4px solid #2563eb;border-radius:6px;background:var(--card-bg);padding:3px 6px;font-size:12px;line-height:1.3;cursor:pointer;min-width:0;}
-.mp-card:hover,.mp-card:focus{box-shadow:0 1px 4px rgba(0,0,0,.18);outline:none;}
-.mp-card.mp-movable{cursor:grab;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
-.mp-card-top{display:flex;align-items:center;gap:4px;}
-.mp-card-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0;}
-.mp-card-sub{color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;}
-.mp-card-who{color:var(--text-muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-card-who:empty{display:none;}
-.mp-month .mp-card-who{display:none;}
-.mp-tech{flex:0 0 auto;width:20px;height:20px;border-radius:50%;font-size:9px;font-weight:700;color:#fff;display:inline-flex;align-items:center;justify-content:center;}
-.mp-tech.mp-tech-off{opacity:.45;background-image:repeating-linear-gradient(135deg,transparent 0 3px,rgba(255,255,255,.55) 3px 5px);}
-.mp-techs{flex:0 0 auto;display:inline-flex;align-items:center;gap:3px;}
-.mp-tech.mp-lead{box-shadow:0 0 0 1.5px var(--card-bg),0 0 0 3px var(--text-color);margin-right:2px;}
-.mp-more{font-size:10px;color:var(--text-muted);}
-.mp-cm-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-bottom:6px;}
-.mp-cm-row{display:flex;align-items:center;gap:8px;}
-.mp-cm-row label{flex:1 1 auto;margin:0;font-weight:normal;display:flex;align-items:center;gap:6px;}
-.mp-cm-row input[type=number]{width:84px;flex:0 0 auto;}
-.mp-cm-row.mp-cm-lead{opacity:.5;}
-.mp-chip{display:inline-block;font-size:10px;border-radius:8px;padding:0 6px;margin-right:3px;background:var(--control-bg);color:var(--text-muted);}
-.mp-chip.mp-red{background:rgba(220,38,38,.12);color:#b91c1c;}
-.mp-card.mp-seasonal{border-left-color:#d97706;}
-.mp-card.mp-extra{border-left-color:#7c3aed;}
-.mp-card.mp-pending{border-left-color:#ca8a04;background:rgba(234,179,8,.10);}
-.mp-card.mp-done{border-left-color:#16a34a;background:rgba(22,163,74,.08);}
-.mp-card.mp-projected{border-style:dashed;border-left:4px dashed #94a3b8;background:transparent;}
-.mp-card.mp-projected .mp-card-title{font-weight:500;}
-.mp-card.mp-projected.mp-movable{border-left-color:#2563eb;}
-.mp-card.mp-projected.mp-seasonal{border-left-color:#d97706;}
-.mp-card.mp-overdue{border-left-color:#dc2626;}
-.mp-card.mp-saving{opacity:.55;pointer-events:none;}
-.mp-card.mp-booking{background:rgba(13,148,136,.07);}
-.mp-card.mp-booking.mp-bk-task{border-left-color:#0d9488;}
-.mp-card.mp-booking.mp-bk-rental{border-left-color:#b45309;background:rgba(180,83,9,.08);}
-.mp-card.mp-booking.mp-bk-travel{border-left-color:#6b7280;background:rgba(107,114,128,.10);}
-.mp-day-free{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:#15803d;}
-.mp-day-free.mp-free-full{color:#b45309;}
-.mp-day-free.mp-free-over{color:#b91c1c;font-weight:600;}
-.mp-day-free.mp-free-off{color:var(--text-muted);}
-.mp-card.mp-dragging,.mp-person.mp-dragging{opacity:.3;}
-.mp-ghost{position:fixed;z-index:1100;pointer-events:none;box-shadow:0 10px 28px rgba(0,0,0,.28);transform:rotate(2deg);opacity:.96;margin:0;}
-body.mp-drag-active,body.mp-drag-active *{cursor:grabbing !important;-webkit-user-select:none;user-select:none;}
-.mp-loading .mp-grid,.mp-loading .mp-tray,.mp-loading .mp-crew,.mp-loading .mp-res-grid{opacity:.6;}
-.mp-crew{display:grid;grid-template-columns:160px repeat(7,minmax(118px,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);min-width:980px;}
-.mp-crew > div{border-top:1px solid var(--border-color);}
-.mp-crew-head{padding:6px 8px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;border-left:1px solid var(--border-color);cursor:pointer;border-top:none !important;}
-.mp-crew-head.mp-today{color:var(--primary,#2490ef);}
-.mp-crew-corner{border-top:none !important;}
-.mp-crew .mp-person{align-items:flex-start;flex-direction:column;gap:0;padding:6px 8px;}
-.mp-cell{border-left:1px solid var(--border-color);padding:4px;display:flex;flex-direction:column;gap:3px;min-width:0;min-height:64px;}
-.mp-cell.mp-past{background:rgba(0,0,0,.02);}
-.mp-cap{display:flex;flex-direction:column;gap:2px;font-size:11px;}
-.mp-cap-row{display:flex;align-items:center;justify-content:space-between;gap:2px;min-width:0;}
-.mp-cap-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted);}
-.mp-cell .mp-card{font-size:11px;padding:2px 5px;}
-.mp-hint{font-size:12px;color:var(--text-muted);margin-top:8px;}
-.mp-summary{width:100%;font-size:13px;margin-bottom:6px;}
-.mp-summary th{color:var(--text-muted);font-weight:normal;padding:3px 10px 3px 0;vertical-align:top;white-space:nowrap;width:1%;}
-.mp-summary td{padding:3px 0;}
-.mp-links{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;}
-.mp-why{margin:6px 0;}
-.mp-why ul{margin:2px 0 0;padding-left:18px;}
-.mp-empty-note{font-size:12px;color:var(--text-muted);padding:8px 10px;}
-@media (max-width:760px){
-.mp-day{min-height:84px;padding:2px;}
-.mp-month .mp-card{padding:1px 3px;font-size:10px;border-left-width:3px;}
-.mp-month .mp-card-sub,.mp-month .mp-tech,.mp-month .mp-techs{display:none;}
-.mp-month .mp-off-badges{display:none;}
-.mp-week .mp-grid{grid-template-columns:1fr;}
-.mp-week .mp-day{min-height:0;border-right:none;}
-.mp-tray .mp-card{width:100%;}
-.mp-title{min-width:0;}
-.mp-crew{grid-template-columns:110px repeat(7,minmax(104px,1fr));min-width:840px;}
-}
-`;
-
 class MaintenancePlanner {
 	constructor(page) {
 		this.page = page;
-		if (!document.getElementById("mp-style")) {
-			$("<style id='mp-style'>").text(MP_STYLE).appendTo(document.head);
-		}
 		this.view = "month";
 		this.anchor = frappe.datetime.get_today();
 		this.technician = this.load_pref(MP.tech_key, "");
@@ -308,6 +178,10 @@ class MaintenancePlanner {
 		this.page.set_secondary_action(__("Day Board"), () => frappe.set_route("maintenance-day-board"));
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		// The person's own filter, and the one the address gave while it is on screen (S5c).
+		this.own_filters = this.filters();
+		this.url_filters = null;
+		this.watch_filter_url();
 		this.init_phase6a();
 		this.init_phase6b();
 		this.init_phase6c();
@@ -331,6 +205,7 @@ class MaintenancePlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
 		this.load();
@@ -342,7 +217,132 @@ class MaintenancePlanner {
 			this.load();
 			return;
 		}
-		this.p6a_route(() => frappe.set_route(MP.route, view, anchor), true);
+		this.self_route = [MP.route, view, anchor].join("/");
+		this.p6a_route(() => frappe.set_route(MP.route, view, anchor, this.filter_options()), true);
+	}
+
+	// ------------------------------------------------------------------ the filter in the address (S5c)
+	//
+	// The Technician filter is part of the address, as ?technician=, on every planner screen. The same
+	// rules as the Project Planner's filters (its "filters in the address" says why each is so):
+	//   - Read on every landing (take_route_filters), after the "last used" view is restored, so the
+	//     address wins over it. An address that does not name it keeps the technician on screen.
+	//   - What the address gave is that visit's only: not remembered, and "last used" keeps the
+	//     person's own technician while it is on screen (p6c_save_last). A bare address after it
+	//     brings back the person's own, except on the planner's own next screen (self_route). A
+	//     technician the person picks (pick_filter) is theirs, remembered as before. One the loaded
+	//     planner does not list becomes All and stops being the address's, and so does one that is
+	//     the person's own anyway (a Back onto one of their own entries).
+	//   - Back onto an entry the planner left bare (All, and the person's own) names nothing, so it
+	//     keeps whatever technician is on screen by then, the newer one.
+	//   - Picking one rewrites the address in place (write_filter_url, no new entry): a filter is not
+	//     a screen, and Back steps through months, weeks and views, not through every pick. A month,
+	//     a week or a view moves by set_route as it always has, carrying the filter (filter_options).
+	//   - The key is consumed from route_options, so it is never written into the next route's
+	//     address. Keys that are not the planner's are not its to take.
+
+	filters() {
+		return { technician: this.technician || "" };
+	}
+
+	filter_options() {
+		return this.technician ? { technician: this.technician } : {};
+	}
+
+	// A value the address gives the filter, or null when it cannot take it, which ignores it. Whether
+	// that person is on the list is only known once the planner has loaded (fill_technicians).
+	filter_from_address(key, value) {
+		if (value == null || typeof value === "object") return null;
+		const text = String(value).trim();
+		return text.length > MP.url_value_max ? null : text;
+	}
+
+	take_route_filters() {
+		const opts = frappe.route_options;
+		const named = {};
+		if (opts && typeof opts === "object") {
+			MP.url_filters.forEach((key) => {
+				if (!Object.prototype.hasOwnProperty.call(opts, key)) return;
+				const value = this.filter_from_address(key, opts[key]);
+				if (value !== null) named[key] = value;
+				delete opts[key];
+			});
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
+		// The planner's own next screen (go) carries the technician on screen; with All it carries
+		// nothing, and is no bare address for all that.
+		const self_step = !!this.self_route && this.self_route === (frappe.get_route() || []).join("/");
+		this.self_route = null;
+		const own = this.own_filter_values();
+		let next = null;
+		if (Object.keys(named).length) {
+			next = { technician: named.technician || "" };
+			// The planner's own screens carry the filter on screen: nothing changes, nothing is marked.
+			if (next.technician === this.filters().technician) next = null;
+			else this.url_filters = Object.assign({}, next);
+		} else if (this.url_filters && !self_step) {
+			next = own;
+			this.url_filters = null;
+		}
+		// The person's own technician again (a Back onto one of their own entries): theirs, not a link's.
+		if (this.url_filters && (next || this.filters()).technician === own.technician) this.url_filters = null;
+		if (next) {
+			this.technician = next.technician;
+			if (this.$tech) this.$tech.val(this.technician);
+		}
+		this.write_filter_url();
+	}
+
+	own_filter_values() {
+		return Object.assign({ technician: "" }, this.own_filters);
+	}
+
+	// The key the address gave stops being the address's: the person picked one, or the loaded planner
+	// reset it to All.
+	release_filter(key) {
+		if (!this.url_filters) return;
+		delete this.url_filters[key];
+		if (!Object.keys(this.url_filters).length) this.url_filters = null;
+	}
+
+	// A technician picked in the bar.
+	pick_filter(value) {
+		this.technician = value || "";
+		this.own_filters = Object.assign(this.own_filter_values(), { technician: this.technician });
+		this.release_filter("technician");
+		this.save_pref(MP.tech_key, this.technician);
+		this.write_filter_url();
+		this.render();
+	}
+
+	// The page's one history write: the filter on screen into the entry on screen, in place. Only
+	// while the router is on the planner's own path and never over a filter the page has not read
+	// yet. The path as the router wrote it, any key that is not the planner's, the hash and
+	// history.state are kept; values are encoded as v16.50's set_route encodes them, an apostrophe as
+	// the browser writes it in a query (%27), or the address read back would never match.
+	write_filter_url() {
+		const path = window.location.pathname;
+		if ((frappe.get_route() || [])[0] !== MP.route || !path.split("/").includes(MP.route)) return;
+		const opts = frappe.route_options;
+		if (opts && MP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return;
+		const enc = (text) => encodeURIComponent(text).replace(/'/g, "%27");
+		const pairs = [];
+		const filters = this.filters();
+		MP.url_filters.forEach((key) => {
+			if (filters[key]) pairs.push(`${key}=${enc(filters[key])}`);
+		});
+		new URLSearchParams(window.location.search).forEach((value, key) => {
+			if (!MP.url_filters.includes(key)) pairs.push(`${enc(key)}=${enc(value)}`);
+		});
+		const search = pairs.length ? `?${pairs.join("&")}` : "";
+		if (search === window.location.search) return;
+		window.history.replaceState(window.history.state, "", path + search + window.location.hash);
+	}
+
+	// A Back the router does not route (the planner kit closing its drawer) may land on an entry that
+	// still holds the technician from before a pick; once the router has had its turn, it is updated.
+	watch_filter_url() {
+		window.addEventListener("popstate", () => setTimeout(() => this.write_filter_url(), 0));
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -464,11 +464,7 @@ class MaintenancePlanner {
 		$('<span class="mp-spacer"></span>').appendTo($bar);
 		this.$tech = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", __("Technician"))
-			.on("change", () => {
-				this.technician = this.$tech.val() || "";
-				this.save_pref(MP.tech_key, this.technician);
-				this.render();
-			})
+			.on("change", () => this.pick_filter(this.$tech.val() || ""))
 			.appendTo($bar);
 		const $projected = $("<label></label>").appendTo($bar);
 		$('<input type="checkbox">')
@@ -503,21 +499,23 @@ class MaintenancePlanner {
 			.appendTo($bar);
 		this.update_undo_button();
 
+		// Each swatch carries the card's own kind class, so maintenance_planner.css draws it with the
+		// same edge as the card it names (S3.4e; it used to be painted here with a hex value).
 		const $legend = $('<div class="mp-legend"></div>').appendTo(this.$body);
 		[
-			["#2563eb", "solid", __("Scheduled visit")],
-			["#d97706", "solid", __("Seasonal")],
-			["#7c3aed", "solid", __("Extra / follow-up")],
-			["#ca8a04", "solid", __("Pending review")],
-			["#16a34a", "solid", __("Done")],
-			["#94a3b8", "dashed", __("Projected from the contract")],
-			["#dc2626", "solid", __("Overdue")],
-			["#0d9488", "solid", __("Project task (read-only)")],
-			["#b45309", "solid", __("Rental crew (read-only)")],
-			["#6b7280", "solid", __("Travel (read-only)")],
-		].forEach(([color, style, label]) => {
+			["", __("Scheduled visit")],
+			["mp-seasonal", __("Seasonal")],
+			["mp-extra", __("Extra / follow-up")],
+			["mp-pending", __("Pending review")],
+			["mp-done", __("Done")],
+			["mp-projected", __("Projected from the contract")],
+			["mp-overdue", __("Overdue")],
+			["mp-bk-task", __("Project task (read-only)")],
+			["mp-bk-rental", __("Rental crew (read-only)")],
+			["mp-bk-travel", __("Travel (read-only)")],
+		].forEach(([kind, label]) => {
 			const $item = $("<span></span>").appendTo($legend);
-			$('<i class="mp-swatch"></i>').css({ "border-left-color": color, "border-style": style }).appendTo($item);
+			$('<i class="mp-swatch"></i>').addClass(kind).appendTo($item);
 			$item.append(document.createTextNode(label));
 		});
 
@@ -548,6 +546,8 @@ class MaintenancePlanner {
 				this.$body.removeClass("mp-loading");
 				this.index();
 				this.fill_technicians();
+				// A technician the planner does not list has just become All: the address says so too.
+				this.write_filter_url();
 				this.render();
 			})
 			.catch(() => {
@@ -587,6 +587,8 @@ class MaintenancePlanner {
 				.appendTo(this.$tech);
 		});
 		const known = !keep || keep === "__none__" || people.some((person) => person.user === keep);
+		// One a link named that is not listed is ignored: All, and no longer the link's (S5c).
+		if (!known && this.url_filters && this.url_filters.technician === keep) this.release_filter("technician");
 		this.technician = known ? keep : "";
 		this.$tech.val(this.technician);
 	}
@@ -839,7 +841,7 @@ class MaintenancePlanner {
 						"Drag a visit to another day on the same row to move it, or onto another technician's row to hand it over. On a touch screen, hold for a moment first. A visit with a crew shows in every crew member's row: drag one person's card to another row to swap only that person. Drag a technician onto a visit to add them to its crew. Dashed visits follow the technician on the site's Maintenance Profile, so they only change day."
 				  )
 				: __(
-						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Teal, amber and gray cards are project, rental and travel bookings of the same people: they open the task but are moved on the Project Planner."
+						"Drag a card to another day to move the visit. Drag a technician from Resources available onto a visit to add them to its crew (a visit with nobody on it gets them as its technician). The ringed initials are the technician who fills the visit in. On a touch screen, hold the card for a moment first. A dashed card with a blue edge is a contract's next visit: moving it moves the contract's next visit date, and the dashed cards after it follow. Cards marked Project, Rental and Travel are bookings of the same people: they open the task but are moved on the Project Planner."
 				  )
 		);
 		this.render_phase6a();
@@ -989,7 +991,7 @@ class MaintenancePlanner {
 		const selected = this.technician === person.user ? " mp-selected" : "";
 		return `
 			<div class="mp-person${selected}" data-user="${mp_esc(person.user)}" title="${mp_esc(tip)}">
-				${compact ? "" : `<span class="mp-dot" style="background:${mp_esc(this.tech_color(person.user))}"></span>`}
+				${compact ? "" : `<span class="mp-dot" style="--mp-color: ${mp_esc(this.tech_color(person.user))}"></span>`}
 				<span class="mp-person-name">${mp_esc(person.name)}</span>
 				<span class="mp-person-group">${mp_esc(group)}</span>
 			</div>`;
@@ -1039,7 +1041,12 @@ class MaintenancePlanner {
 						person.resource && this.has_route(person.user, ymd, cell)
 							? ` data-route-resource="${mp_esc(person.resource)}" data-route-date="${mp_esc(ymd)}"`
 							: "";
-					html.push(`<div class="mp-avail mp-mini ${state.cls}"${route} title="${mp_esc(tip)}"></div>`);
+					// The month's cell is a tint and nothing else on screen, so its words are read aloud.
+					html.push(
+						`<div class="mp-avail mp-mini ${state.cls}"${route} title="${mp_esc(tip)}">${
+							state.text ? `<span class="mp-sr">${mp_esc(state.text)}</span>` : ""
+						}</div>`
+					);
 					return;
 				}
 				const width = Math.round(Math.min(1, state.ratio) * 100);
@@ -1103,7 +1110,7 @@ class MaintenancePlanner {
 			html.push(
 				person
 					? this.person_html(person, true)
-					: `<div class="mp-person" style="cursor:default"><span class="mp-person-name">${mp_esc(__("Unassigned"))}</span></div>`
+					: `<div class="mp-person mp-person-static"><span class="mp-person-name">${mp_esc(__("Unassigned"))}</span></div>`
 			);
 			days.forEach((ymd) => {
 				const cell = person ? this.cell_of(user, ymd) : null;
@@ -1291,7 +1298,7 @@ class MaintenancePlanner {
 		const name = this.tech_name(user);
 		const parts = String(name).split(/\s+/).filter(Boolean);
 		const initials = (parts[0] || "?")[0] + (parts.length > 1 ? parts[parts.length - 1][0] : "");
-		return `<span class="mp-tech${extra ? ` ${mp_esc(extra)}` : ""}" style="background:${mp_esc(
+		return `<span class="mp-tech${extra ? ` ${mp_esc(extra)}` : ""}" style="--mp-color: ${mp_esc(
 			this.tech_color(user)
 		)}" title="${mp_esc(role ? `${name} (${role})` : name)}">${mp_esc(initials.toUpperCase())}</span>`;
 	}
@@ -2207,10 +2214,8 @@ const MP5_METHODS = {
 		if (answer.subject) parts.push(`<div class="mp-p5-meta">${mp_esc(__("Subject: {0}", [answer.subject]))}</div>`);
 		if (notes) parts.push(`<ul class="mp-p5-meta">${notes}</ul>`);
 		if (answer.error) parts.push(`<div class="mp-p5-meta"><b>${mp_esc(answer.error)}</b></div>`);
-		parts.push(
-			`<iframe class="mp-p5-frame" sandbox="" title="${mp_esc(__("Email preview"))}" ` +
-				'style="display:block;width:100%;min-height:420px;border:1px solid var(--border-color);border-radius:8px;background:#ffffff"></iframe>'
-		);
+		// The frame's look is .mp-p5-frame in maintenance_planner.css (S3.4e): white, as an email is.
+		parts.push(`<iframe class="mp-p5-frame" sandbox="" title="${mp_esc(__("Email preview"))}"></iframe>`);
 		const dialog = new frappe.ui.Dialog({
 			title: __("Customer email preview"),
 			size: "large",
@@ -2253,7 +2258,9 @@ Object.assign(MaintenancePlanner.prototype, MP5_METHODS);
 // p6a_close_toast (undo), and p6a_dialog, p6a_links and p6a_action (open_card).
 
 const MP6A = {
-	kit: "planner_kit.bundle.js",
+	// The kit and its stylesheet, both content-hashed bundles (S3.4e). The stylesheet's <link> lands
+	// after maintenance_planner.css, so the kit's rules come after the page's, as they always have.
+	kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],
 	site_method: "erpnext_enhancements.api.planner_views.get_site_overview",
 	owner: "mp",
 	widths: { person: 460, day: 760, site: 520, panel: 540 },
@@ -2265,36 +2272,8 @@ const MP6A = {
 	status: { draft: "Scheduled", pending: "Pending review", done: "Done", projected: "Projected" },
 };
 
-const MP6A_STYLE = `
-.mp-p6a-hints{display:flex;flex-direction:column;}
-.mp-p6a-help{font-weight:700;min-width:30px;}
-.mp-p6a-name{cursor:pointer;}
-.mp-p6a-name:hover .mp-person-name{text-decoration:underline;}
-.mp-tech[data-pk-person]{cursor:pointer;}
-.mp-day-num[data-pp6a-day],.mp-crew-head[data-pp6a-day],.mp-res-head[data-pp6a-day]{cursor:pointer;}
-.mp-res-head[data-pp6a-day]:hover,.mp-crew-head[data-pp6a-day]:hover{color:var(--primary,#2490ef);}
-.mp-p6a-sample{display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--border-color);}
-.mp-p6a-bar{display:inline-block;width:90px;}
-.mp-p6a-bar .mp-bar{display:block;}
-.mp-p6a-row{cursor:pointer;}
-@media (min-width:761px){
-.mp-crew-view .mp-scroll{max-height:calc(100vh - 150px);overflow:auto;}
-.mp-crew-view .mp-crew-head,.mp-crew-view .mp-crew-corner{position:sticky;top:0;z-index:3;background:var(--card-bg);}
-.mp-crew-view .mp-crew-corner{left:0;z-index:4;}
-.mp-week .mp-grid{max-height:calc(100vh - 150px);overflow:auto;}
-.mp-week .mp-day-head{position:sticky;top:0;z-index:2;background:var(--card-bg);padding-top:2px;padding-bottom:2px;}
-.mp-week .mp-day.mp-out .mp-day-head{background:var(--control-bg);}
-.mp-res .mp-scroll{max-height:46vh;overflow:auto;}
-.mp-res .mp-res-head{position:sticky;top:0;z-index:2;background:var(--card-bg);}
-.mp-res .mp-res-grid > .mp-res-head:first-child{left:0;z-index:3;}
-}
-`;
-
 const MP6A_METHODS = {
 	init_phase6a() {
-		if (!document.getElementById("mp-style-6a")) {
-			$("<style id='mp-style-6a'>").text(MP6A_STYLE).appendTo(document.head);
-		}
 		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
 		const $bar = this.$body.find(".mp-toolbar").first();
 		this.$p6a_hints = $('<div class="mp-p6a-hints"></div>').insertAfter($bar);
@@ -2319,7 +2298,14 @@ const MP6A_METHODS = {
 			},
 			true
 		);
-		frappe.require(MP6A.kit, () => this.p6a_ready());
+		this.p6a_require(() => this.p6a_ready());
+	},
+
+	// The kit and its stylesheet, asked for once (S5c); see the Project Planner's twin for why. Both
+	// planners share the one request (window.planner_kit_request), since PP6A.kit is the same two files.
+	p6a_require(callback) {
+		if (!window.planner_kit_request) window.planner_kit_request = Promise.resolve(frappe.require(MP6A.kit));
+		return window.planner_kit_request.then(callback);
 	},
 
 	p6a_ready() {
@@ -2767,9 +2753,12 @@ const MP6A_METHODS = {
 	p6a_legend() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!kit) return;
-		const swatch = (color, text, style, fill) => ({ swatch: { color, style: style || "solid", fill }, text: __(text) });
 		const chip = (cls, text) => `<span class="mp-chip${cls ? ` ${cls}` : ""}">${mp_esc(__(text))}</span>`;
 		const item = (sample_html, text) => ({ sample_html, text: __(text) });
+		// A sample visit is a real card with its kind's class (S3.4e), so the legend shows exactly the
+		// edge and ground the calendar draws (maintenance_planner.css), in either theme.
+		const card = (cls, label, text) =>
+			item(`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">${mp_esc(__(label))}</span>`, text);
 		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
 		kit.legend(
 			[
@@ -2787,17 +2776,17 @@ const MP6A_METHODS = {
 				{
 					title: __("Visit cards"),
 					items: [
-						swatch("#2563eb", "A scheduled visit. Drag it to another day; only a draft nobody has started moves."),
-						swatch("#d97706", "A seasonal visit (startup, winterization). Before it is drafted it sits on the 1st of its month."),
-						swatch("#7c3aed", "An extra visit or a chemistry follow-up."),
-						swatch("#ca8a04", "Pending review: the technician has sent it to the office.", "solid", "#fef9c3"),
-						swatch("#16a34a", "Done.", "solid", "#dcfce7"),
-						swatch("#94a3b8", "Projected from the contract, not drafted yet. It follows whenever the visit before it is done.", "dashed"),
-						swatch("#2563eb", "The contract's next visit (dashed, blue edge): moving it moves the contract's next visit date.", "dashed"),
-						swatch("#dc2626", "Overdue: a draft whose day has passed."),
-						swatch("#0d9488", "A project task of the same person (read-only here; moved on the Project Planner)."),
-						swatch("#b45309", "A rental crew task (read-only here)."),
-						swatch("#6b7280", "A travel day (read-only here)."),
+						card("", "Visit", "A scheduled visit. Drag it to another day; only a draft nobody has started moves."),
+						card("mp-seasonal", "Startup", "A seasonal visit (startup, winterization). Before it is drafted it sits on the 1st of its month."),
+						card("mp-extra", "Follow-up", "An extra visit or a chemistry follow-up."),
+						card("mp-pending", "Visit", "Pending review: the technician has sent it to the office."),
+						card("mp-done", "Visit", "Done."),
+						card("mp-projected", "Projected", "Projected from the contract, not drafted yet. It follows whenever the visit before it is done."),
+						card("mp-projected mp-movable", "Next visit", "The contract's next visit (dashed, blue edge): moving it moves the contract's next visit date."),
+						card("mp-overdue", "Visit", "Overdue: a draft whose day has passed."),
+						card("mp-booking mp-bk-task", "Project", "A project task of the same person (read-only here; moved on the Project Planner)."),
+						card("mp-booking mp-bk-rental", "Rental", "A rental crew task (read-only here)."),
+						card("mp-booking mp-bk-travel", "Travel", "A travel day (read-only here)."),
 					],
 				},
 				{
@@ -2815,9 +2804,9 @@ const MP6A_METHODS = {
 				{
 					title: __("People"),
 					items: [
-						item(`<span class="mp-tech" style="background:#2563eb">AH</span>`, "Everyone on the visit. Click one to see their week."),
-						item(`<span class="mp-tech mp-lead" style="background:#16a34a">JD</span>`, "Ringed: the technician who fills the visit in."),
-						item(`<span class="mp-tech mp-tech-off" style="background:#64748b">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
+						item(`<span class="mp-tech mp-p6a-sample-badge">AH</span>`, "Everyone on the visit. Click one to see their week."),
+						item(`<span class="mp-tech mp-lead mp-p6a-sample-lead">JD</span>`, "Ringed: the technician who fills the visit in."),
+						item(`<span class="mp-tech mp-tech-off">KF</span>`, "Faded and striped: off that day (shown with All technicians)."),
 					],
 				},
 				{
@@ -2968,42 +2957,8 @@ const MP6B_PURE = {
 	},
 };
 
-const MP6B_STYLE = `
-.mp-card.mp-p6b-selected{outline:2px solid #7c3aed;outline-offset:1px;}
-.mp-p6b-bar{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:1020;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;max-width:calc(100vw - 24px);padding:6px 10px;border:1px solid #7c3aed;border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px;}
-.mp-p6b-bar-count{font-weight:600;}
-.mp-p6b-bar-note{flex:1 1 100%;font-size:11px;color:var(--text-muted);}
-.mp-p6b-count{position:absolute;top:-9px;right:-9px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
-.mp-card.mp-p6b-flash{animation:mp-p6b-flash .8s ease-in-out 3;}
-@keyframes mp-p6b-flash{0%,100%{box-shadow:none;}50%{box-shadow:0 0 0 4px rgba(245,158,11,.85);}}
-.mp-p6b-search-wrap{position:relative;display:inline-block;}
-.mp-toolbar input.mp-p6b-search{width:210px;}
-.mp-p6b-results{position:absolute;top:100%;left:0;z-index:1030;margin-top:4px;min-width:300px;max-width:min(420px,calc(100vw - 24px));max-height:60vh;overflow-y:auto;padding:4px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);box-shadow:0 10px 28px rgba(0,0,0,.2);}
-.mp-p6b-result{display:flex;flex-direction:column;padding:5px 10px;cursor:pointer;font-size:13px;}
-.mp-p6b-result.mp-p6b-active,.mp-p6b-result:hover{background:var(--control-bg);}
-.mp-p6b-result-kind{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);}
-.mp-p6b-result-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6b-result-sub{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6b-results-note{padding:4px 10px;font-size:11px;color:var(--text-muted);}
-.mp-p6b-modes{margin:4px 0 8px;}
-.mp-p6b-modes label{display:flex;align-items:center;gap:6px;margin:2px 0;font-weight:normal;}
-.mp-p6b-pick{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;margin-bottom:4px;padding:6px 8px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);color:var(--text-color);text-align:left;cursor:pointer;}
-.mp-p6b-pick:hover,.mp-p6b-pick:focus{background:var(--control-bg);outline:none;}
-.mp-p6b-pick-busy{border-style:dashed;}
-.mp-p6b-pick-why{font-size:11px;color:var(--text-muted);}
-.mp-p6b-kbd{display:inline-block;min-width:18px;margin-right:3px;padding:0 5px;border:1px solid var(--border-color);border-bottom-width:2px;border-radius:4px;background:var(--control-bg);font-size:11px;font-family:inherit;text-align:center;}
-@media (max-width:760px){
-.mp-p6b-search-wrap{flex:1 1 100%;}
-.mp-toolbar input.mp-p6b-search{width:100%;}
-.mp-p6b-bar{bottom:64px;}
-}
-`;
-
 const MP6B_METHODS = {
 	init_phase6b() {
-		if (!document.getElementById("mp-style-6b")) {
-			$("<style id='mp-style-6b'>").text(MP6B_STYLE).appendTo(document.head);
-		}
 		// The registries other phases add to (phase6-wave2): menu items and legend sections.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_legend_providers = this.p6_legend_providers || [];
@@ -4051,7 +4006,7 @@ const MP6B_METHODS = {
 				items: [
 					item("", "Right-click a visit, an empty spot or a name (on a touch screen, hold it still for a moment) for a menu: assign someone, move to the technician's next free day, the site at a glance."),
 					item(
-						`<span class="mp-p6a-sample mp-p6b-selected" style="outline:2px solid #7c3aed">${mp_esc(__("Visit"))}</span>`,
+						`<span class="mp-p6a-sample mp-p6b-selected">${mp_esc(__("Visit"))}</span>`,
 						"Shift-click (or Ctrl- or ⌘-click) draft visits to select several. Drag one and they all move by the same number of calendar days, or of weekdays if you switch the bar to working days."
 					),
 					item("", "Assign to… lists the technicians who are free that day. Nobody is picked for you."),
@@ -4127,77 +4082,13 @@ const MP6C = {
 		["contract", "Contract"],
 	],
 	view_labels: { month: "Month", week: "Week", crew: "Crew" },
+	// Color by's "nobody" grey: data, the same kind of value as a technician's color (the Project
+	// Planner keeps the same one). A booking's printed color is read from the tokens (p6c_kind_color).
 	none_color: "#94a3b8",
-	booking_colors: { task: "#0d9488", rental: "#b45309", travel: "#6b7280" },
 };
-
-const MP6C_STYLE = `
-.mp-p6c-color{width:auto;max-width:200px;}
-.mp-p6c-pill{display:inline-flex;align-items:center;gap:4px;max-width:340px;border:1px solid var(--primary,#2490ef);border-radius:14px;padding:1px 2px 1px 10px;font-size:12px;background:rgba(36,144,239,.08);color:var(--text-color);}
-.mp-p6c-pill-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6c-pill-x{border:none;background:none;color:inherit;font-size:15px;line-height:1;padding:2px 7px;cursor:pointer;border-radius:10px;}
-.mp-p6c-pill-x:hover,.mp-p6c-pill-x:focus{background:var(--control-bg);outline:none;}
-.mp-p6c-tap{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-color);border-radius:14px;background:var(--card-bg);padding:3px 11px;font-size:13px;color:var(--text-color);}
-.mp-p6c-tap.mp-p6c-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);color:var(--primary,#2490ef);font-weight:600;}
-.mp-p6c-key{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;font-size:12px;color:var(--text-muted);margin:-2px 0 8px;}
-.mp-p6c-key-title{font-weight:600;}
-.mp-p6c-key-item{display:inline-flex;align-items:center;gap:5px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6c-key-item[data-p6c-hi]{cursor:pointer;border-radius:6px;}
-.mp-p6c-key-item[data-p6c-hi]:hover{color:var(--text-color);text-decoration:underline;}
-.mp-p6c-swatch{flex:0 0 auto;display:inline-block;width:16px;height:11px;border:1px solid var(--border-color);border-left-width:4px;border-radius:3px;background:var(--card-bg);}
-.mp-card.mp-p6c-colored{border-left-color:var(--mp-p6c-c) !important;}
-.mp-p6c-on .mp-card:not(.mp-p6c-hi){opacity:.22;}
-.mp-p6c-on .mp-card.mp-p6c-hi{box-shadow:0 0 0 2px var(--primary,#2490ef),0 0 10px rgba(36,144,239,.45);}
-.mp-p6c-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--border-color);border-radius:10px;background:var(--card-bg);margin-bottom:6px;overflow:hidden;}
-.mp-p6c-sday{display:flex;flex-direction:column;gap:2px;min-width:0;padding:3px 6px;font-size:11px;cursor:pointer;border-left:1px solid var(--border-color);}
-.mp-p6c-strip .mp-p6c-sday:first-child{border-left:none;}
-.mp-p6c-sday:hover,.mp-p6c-sday:focus{background-color:var(--control-bg);outline:none;}
-.mp-p6c-slabel{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6c-stext{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6c-sday.mp-red{background-color:rgba(220,38,38,.10);}
-.mp-p6c-sday.mp-red .mp-p6c-stext{color:#b91c1c;}
-.mp-p6c-sday.mp-amber .mp-p6c-stext{color:#b45309;}
-.mp-p6c-sday .mp-bar{position:relative;}
-.mp-p6c-sday .mp-bar b{position:absolute;top:0;bottom:0;background-image:repeating-linear-gradient(135deg,rgba(100,116,139,.85) 0 2px,transparent 2px 4px);}
-.mp-p6c-scorner{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:3px 8px;font-size:11px;min-width:0;position:sticky;left:0;background:var(--card-bg);z-index:1;}
-.mp-p6c-scorner span{font-size:10px;color:var(--text-muted);}
-.mp-p6c-movebar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1024;display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:min(640px,calc(100vw - 24px));padding:8px 10px 8px 14px;border:1px solid var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);color:var(--text-color);box-shadow:0 10px 28px rgba(0,0,0,.22);font-size:13px;}
-.mp-p6c-movebar-text{flex:1 1 220px;min-width:0;}
-.mp-p6c-movebar-hint{display:block;font-size:12px;color:var(--text-muted);}
-.mp-card.mp-p6c-moving{outline:2px dashed var(--primary,#2490ef);outline-offset:1px;}
-.mp-p6c-armed .mp-day,.mp-p6c-armed .mp-cell{cursor:copy;}
-.mp-p6c-views-list{list-style:none;margin:0;padding:0;}
-.mp-p6c-views-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border-color);}
-.mp-p6c-views-row:first-child{border-top:none;}
-.mp-p6c-views-main{flex:1 1 auto;min-width:0;}
-.mp-p6c-views-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mp-p6c-views-sub{font-size:12px;color:var(--text-muted);}
-@media (pointer:coarse){
-.mp-toolbar .btn,.mp-toolbar select,.mp-toolbar label,.mp-seg button,.mp-p6c-tap{min-height:40px;}
-.mp-week .mp-card,.mp-crew .mp-card,.mp-tray .mp-card{min-height:40px;}
-.mp-day-num{display:inline-flex;align-items:center;min-height:32px;padding:0 10px;}
-.mp-p6c-sday{min-height:40px;}
-.mp-p6c-pill-x{min-width:40px;min-height:36px;}
-.mp-p6c-movebar .btn{min-height:40px;min-width:64px;}
-.mp-p6c-views-row .btn{min-height:40px;}
-}
-@media (max-width:1024px){
-.mp-wrap{max-width:100%;overflow-x:clip;}
-}
-@media (max-width:760px){
-.mp-toolbar select{max-width:none;flex:1 1 40%;}
-.mp-p6c-pill{max-width:100%;}
-.mp-p6c-movebar{left:12px;right:12px;bottom:12px;transform:none;max-width:none;}
-.mp-p6c-sday{padding:2px 3px;}
-.mp-p6c-key-item{max-width:160px;}
-}
-`;
 
 const MP6C_METHODS = {
 	init_phase6c() {
-		if (!document.getElementById("mp-style-6c")) {
-			$("<style id='mp-style-6c'>").text(MP6C_STYLE).appendTo(document.head);
-		}
 		this.p6c = {
 			color_by: "default",
 			highlight: null,
@@ -4342,7 +4233,7 @@ const MP6C_METHODS = {
 	},
 
 	// The color of a card in the current mode; null keeps the card's own (and a read-only project
-	// booking keeps its teal, amber or gray unless the mode is Technician). `row`: the crew-view row.
+	// booking keeps its pillar's edge unless the mode is Technician). `row`: the crew-view row.
 	p6c_card_color(card, row) {
 		const kit = this.p6c_kit();
 		const mode = this.p6c.color_by;
@@ -4362,15 +4253,28 @@ const MP6C_METHODS = {
 		return null;
 	},
 
-	// Today's edge color of a card (MP_STYLE), for the printed page in the default mode.
+	// A card's edge color as on screen (maintenance_planner.css), for the printed page in the default
+	// mode. Paper is light whatever the Desk theme is, so these are the palette tokens behind the
+	// screen's edges, read as values (the print window cannot read a CSS variable): a visit the
+	// Service pillar's fresh-blue, a seasonal or pending one yellow, an extra one violet, a done one
+	// green, an overdue one red, a projected one the muted grey; a booking its pillar's opening stop.
 	p6c_kind_color(card) {
-		if (card.kind === "booking") return MP6C.booking_colors[card.booking_kind] || MP6C.booking_colors.task;
-		if (card.kind === "visit" && card.overdue) return "#dc2626";
-		const labelled = card.label ? (MP.extra_labels.includes(card.label) ? "#7c3aed" : "#d97706") : "";
-		if (card.kind === "projected") return labelled || (card.movable ? "#2563eb" : "#94a3b8");
-		if (card.status === "pending") return "#ca8a04";
-		if (card.status === "done") return "#16a34a";
-		return labelled || "#2563eb";
+		if (card.kind === "booking") {
+			if (card.booking_kind === "rental") return mp_token_color("--sf-teal", "#62cbc9");
+			if (card.booking_kind === "travel") return mp_token_color("--sf-deep-sea-blue", "#00263e");
+			return mp_token_color("--sf-bahama-blue", "#00609c");
+		}
+		if (card.kind === "visit" && card.overdue) return mp_token_color("--sf-red", "#bd2e2b");
+		const labelled = card.label
+			? MP.extra_labels.includes(card.label)
+				? mp_token_color("--sf-violet", "#b14fc5")
+				: mp_token_color("--sf-yellow", "#ffb819")
+			: "";
+		const visit = mp_token_color("--sf-fresh-blue", "#00a0df");
+		if (card.kind === "projected") return labelled || (card.movable ? visit : mp_token_color("--sf-ink-500", "#5c6066"));
+		if (card.status === "pending") return mp_token_color("--sf-yellow", "#ffb819");
+		if (card.status === "done") return mp_token_color("--sf-green", "#1e7e51");
+		return labelled || visit;
 	},
 
 	p6c_paint() {
@@ -4437,7 +4341,7 @@ const MP6C_METHODS = {
 	p6c_swatch_html(color) {
 		const kit = this.p6c_kit();
 		const paint = kit ? kit.big_picture.safe_paint(color, MP6C.none_color) : MP6C.none_color;
-		return `<i class="mp-p6c-swatch" style="border-left-color:${mp_esc(paint)}"></i>`;
+		return `<i class="mp-p6c-swatch" style="--mp-color: ${mp_esc(paint)}"></i>`;
 	},
 
 	p6c_render_key() {
@@ -4945,12 +4849,17 @@ const MP6C_METHODS = {
 			const known = ((this.data && this.data.technicians) || []).some((person) => person.user === this.technician);
 			if (!known) this.technician = "";
 		}
+		// A view of their own (restored or picked) is the person's filter, not an address's (S5c).
+		this.url_filters = null;
+		this.own_filters = this.filters();
 		this.p6c_sync_controls();
 		if (opts.route && view.view && view.view !== this.view) {
 			this.go(view.view, this.anchor);
 			return;
 		}
-		if (opts.render !== false && this.data) this.render();
+		if (opts.render === false) return;
+		this.write_filter_url();
+		if (this.data) this.render();
 	},
 
 	p6c_state_soon() {
@@ -4964,6 +4873,11 @@ const MP6C_METHODS = {
 		const p6c = this.p6c;
 		if (!MP6C.schema.view[1].includes(this.view)) return;
 		const state = this.p6c_state();
+		// A technician the address gave (S5c) is that visit's, not "last used": it keeps the person's
+		// own until they pick one themselves (pick_filter).
+		Object.keys(this.url_filters || {}).forEach((key) => {
+			if (key in state) state[key] = this.own_filter_values()[key];
+		});
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;
@@ -5402,18 +5316,8 @@ const MP6D = {
 	targets: "[data-pk-block], [data-pk-note-open], [data-p6d-conflict]",
 };
 
-const MP6D_STYLE = `
-.mp-p6d-conflicts.mp-p6d-hot{color:#b91c1c;border-color:rgba(220,38,38,.55);font-weight:600;}
-.mp-chip.mp-p6d-link{cursor:pointer;text-decoration:underline dotted;}
-.mp-p6d-crew-notes{border-left:1px solid var(--border-color);padding:3px 4px;min-width:0;}
-.mp-p6d-crew-corner{position:sticky;left:0;z-index:1;border-left:none;background:var(--card-bg);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);padding:4px 8px;}
-`;
-
 const MP6D_METHODS = {
 	init_phase6d() {
-		if (!document.getElementById("mp-style-6d")) {
-			$("<style id='mp-style-6d'>").text(MP6D_STYLE).appendTo(document.head);
-		}
 		this.p6d = { center: null, counted: null, notes: {}, asked: {}, notes_for: null };
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
@@ -5444,7 +5348,7 @@ const MP6D_METHODS = {
 			},
 			true
 		);
-		frappe.require(MP6A.kit, () => this.p6d_ready());
+		this.p6a_require(() => this.p6d_ready());
 	},
 
 	p6d_ready() {
@@ -6105,19 +6009,8 @@ const MP6E_PURE = {
 	},
 };
 
-const MP6E_STYLE = `
-.mp-p6e-switch{display:inline-flex;align-items:center;gap:4px;}
-.mp-p6e-switch-label{font-size:12px;color:var(--text-muted);}
-.mp-p6e-opt{border-color:var(--border-color);}
-.mp-p6e-opt.mp-p6e-on{background:#7c3aed;border-color:#7c3aed;color:#fff;}
-.mp-p6e-note{font-size:12px;color:var(--text-muted);margin:2px 0 8px;}
-`;
-
 const MP6E_METHODS = {
 	init_phase6e() {
-		if (!document.getElementById("mp-style-6e")) {
-			$("<style id='mp-style-6e'>").text(MP6E_STYLE).appendTo(document.head);
-		}
 		// send() looks a method up in MP.methods.
 		Object.assign(MP.methods, MP6E.methods);
 		this.p6_menu_providers = this.p6_menu_providers || [];
@@ -6500,22 +6393,8 @@ const MPC1 = {
 	},
 };
 
-const MPC1_STYLE = `
-.mp-card.mp-pencil{border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(100,116,139,.16) 6px 8px);}
-.mp-chip.mp-pencil-chip{background:rgba(100,116,139,.2);color:var(--text-color);font-style:italic;}
-.mp-card.mp-drafted{outline:2px dashed var(--primary,#2490ef);outline-offset:-2px;}
-.mp-chip.mp-draft-chip{background:rgba(36,144,239,.14);color:var(--primary,#2490ef);font-weight:600;}
-.mp-toolbar label.mp-draft-toggle.mp-draft-on{color:var(--primary,#2490ef);font-weight:600;}
-.mp-draft-bar{position:sticky;bottom:8px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;margin:10px 0;border:1px dashed var(--primary,#2490ef);border-radius:10px;background:var(--card-bg);box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:13px;}
-.mp-draft-text{font-weight:600;}
-.mp-draft-bar .mp-chip{font-size:11px;}
-`;
-
 const MPC1_METHODS = {
 	init_phase_c1() {
-		if (!document.getElementById("mp-style-c1")) {
-			$("<style id='mp-style-c1'>").text(MPC1_STYLE).appendTo(document.head);
-		}
 		this.draft_on = this.load_pref(MPC1.pref, "0") === "1";
 		this.$draft_toggle = $('<label class="mp-draft-toggle"></label>')
 			.attr("title", __("Keep your changes to yourself until you publish them"))
@@ -6729,7 +6608,7 @@ const MPC1_METHODS = {
 
 	c1_legend_sections() {
 		const sample = (classes, title) =>
-			`<span class="mp-card ${classes}" style="display:inline-block;width:64px;padding:1px 5px;font-size:11px;">${mp_esc(__(title))}</span>`;
+			`<span class="mp-card mp-c1-sample ${classes}">${mp_esc(__(title))}</span>`;
 		return [
 			{
 				title: __("Pencil and Draft mode"),

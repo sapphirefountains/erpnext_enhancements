@@ -1,6 +1,6 @@
 # Custom HTML Block — block sources (source of truth)
 
-This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. There are 43 blocks here (one `<name>.{html,js,css}` triple each, registered in `setup/custom_html_blocks.py` `BLOCKS`): the original four — *Projects Dashboard*, *Task Dashboard*, *Morning Briefing* and *Desk Shortcuts* — plus *KPI Cockpit*, the per-viewer *My Training Dashboard* and *My Travel*, the 34 department dashboard widgets described below, and since v1.665.0 *Home Dashboard Tasks* (My Priority Tasks) and *Dashboard Hub Links* ([below](#files--my-priority-tasks-and-dashboard-hub-links-v16650)).
+This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. There are 43 blocks here (one `<name>.{html,js,css}` triple each, registered in `setup/custom_html_blocks.py` `BLOCKS`): the original four — *Projects Dashboard*, *Task Dashboard*, *Morning Briefing* and *Desk Shortcuts* — plus *KPI Cockpit*, the per-viewer *My Training Dashboard* and *My Travel*, the 34 department dashboard widgets described below, and since v1.680.0 *Home Dashboard Tasks* (My Priority Tasks) and *Dashboard Hub Links* ([below](#files--my-priority-tasks-and-dashboard-hub-links-v16650)).
 
 > ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** every block in `BLOCKS` from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append), and the Projects Dashboard leads ERPNext's **Projects** workspace (`PROJECTS_LAYOUT`, restored whenever an ERPNext upgrade puts that page back to stock; see [`setup/README.md`](../setup/README.md#erpnexts-projects-workspace-replaced-only-while-it-is-erpnexts)). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
 
@@ -147,7 +147,7 @@ access, an empty answer the empty panel, and on an older bundle the block still 
 
 **The other six (v1.658.0).** The KPI Cockpit, Morning Briefing, Task Dashboard, Projects
 Dashboard, My Training Dashboard and My Travel are on the kit too, so every seeded block is
-except Desk Shortcuts and (since v1.665.0) Dashboard Hub Links, which ask the server nothing and have no panel to convert. Each kept
+except Desk Shortcuts and (since v1.680.0) Dashboard Hub Links, which ask the server nothing and have no panel to convert. Each kept
 what made it different:
 
 - **KPI Cockpit and Morning Briefing** still register a wrapper, `load(false)`, so a return
@@ -326,10 +326,10 @@ so both themes work, and where the colour *is* the meaning (good / watch / bad) 
 Registered in `setup/custom_html_blocks.py` `BLOCKS` only. The Travel workspace JSON places it, as the
 [Travel README](../travel_management/README.md#the-travel-hub) explains.
 
-## Files — My Priority Tasks and Dashboard Hub Links (v1.665.0)
+## Files — My Priority Tasks and Dashboard Hub Links (v1.680.0)
 
 **Home Dashboard Tasks** (it draws as *My Priority Tasks*) was made on the site in 2025-12 and
-placed on the Projects workspace and the Executive Hub; until v1.665.0 it existed only in the
+placed on the Projects workspace and the Executive Hub; until v1.680.0 it existed only in the
 database. Its source is `my_priority_tasks.{html,js,css}` now, under the same block name so both
 placements still join on it, and the seeder overwrites the site copy. It is not a copy of the
 Task Dashboard: that one is the shared morning screen, this one is the viewer's own open tasks,

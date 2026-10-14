@@ -251,7 +251,12 @@ class TestHooks(unittest.TestCase):
 
 	def test_the_kit_is_the_one_loaded_by_frappe_require(self):
 		for block, constant in ((PP_BLOCK, "PP6A"), (MP_BLOCK, "MP6A")):
-			self.assertIn(f"frappe.require({constant}.kit, () => this.p6d_ready());", block)
+			# The same request as 6A's (S5c, v1.676.0): two requires in one tick linked the CSS twice.
+			self.assertIn("this.p6a_require(() => this.p6d_ready());", block)
+			self.assertNotIn("frappe.require(", block)
+			self.assertIn(
+				f"Promise.resolve(frappe.require({constant}.kit))", PP if constant == "PP6A" else MP
+			)
 			self.assertIn("kit.conflicts.center({", block)
 		bundle = BUNDLE.read_text(encoding="utf-8")
 		for name in ("conflicts", "blocks"):
@@ -614,15 +619,32 @@ class TestHouseRules(unittest.TestCase):
 
 	def test_styles_are_namespaced_and_text_is_american(self):
 		for block, prefix in ((PP_BLOCK, ("pp-", "pk-")), (MP_BLOCK, ("mp-", "pk-"))):
-			style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner
+			# to the next.
+			js, tag = (PP_JS, "PP6D_STYLE") if block is PP_BLOCK else (MP_JS, "MP6D_STYLE")
+			raw = js.with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({tag}).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual({c for c in classes if not c.startswith(prefix)}, set(), classes)
+		# The two modules' CSS is a section each of public/css/planner_kit.bundle.css (S3.4e,
+		# v1.673.0), which the planners load beside the kit. The constants stay, empty, because the
+		# bundle still appends them to its own <style>, and no rule may be injected twice.
 		for name in ("CONFLICTS_CSS", "BLOCKS_CSS"):
 			text = _kit("conflicts" if name == "CONFLICTS_CSS" else "blocks")
-			css = text[text.index(f"export const {name} = `") :]
+			self.assertIn(f'export const {name} = "";', text)
+		raw = (APP / "public/css/planner_kit.bundle.css").read_text(encoding="utf-8")
+		for tag in ("(conflicts.js CONFLICTS_CSS).", "(blocks.js BLOCKS_CSS)."):
+			start = raw.index("*/", raw.index("/* ===", raw.index(tag)))
+			end = raw.find("\n/* ===", start)
+			css = re.sub(r"/\*.*?\*/", "", raw[start + 2 : end], flags=re.S)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
-			self.assertEqual({c for c in classes if not c.startswith("pk-")}, set(), classes)
+			with self.subTest(section=tag):
+				self.assertTrue(classes)
+				self.assertEqual({c for c in classes if not c.startswith("pk-")}, set(), classes)
 		for text in (PP_BLOCK, MP_BLOCK, _kit("conflicts"), _kit("blocks")):
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour", "favour"):
 				self.assertNotIn(british, text.lower(), british)

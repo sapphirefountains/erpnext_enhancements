@@ -58,6 +58,10 @@
  * that row's party; a suggested Customer is linked only while it is still the
  * Account; and New Address on a job or a Contact asks "Whose address is this?"
  * with no default.
+ *
+ * Since v1.677.0 (form kit P3.2): ux.create_for(doctype, record, opts) opens the same dialogs for a
+ * record that is not the Form on screen (the guided page, the board's side panel), handing them the
+ * record's context instead of the route's.
  */
 
 frappe.provide("erpnext_enhancements.contacts_ux");
@@ -308,6 +312,86 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 		return Object.assign({}, df, overrides || {});
 	}
 
+	// The context ux.create_for hands the next dialog, taken (once) by its constructor. Set and
+	// taken in the same synchronous run: make_quick_entry constructs the dialog before it returns.
+	let explicit_context = null;
+	const take_explicit_context = () => {
+		const context = explicit_context;
+		explicit_context = null;
+		return context;
+	};
+
+	/**
+	 * The context a record gives a new Contact or Address, as if it were the Form on screen: the
+	 * same PARTY_CONTEXT the route-resolved dialogs use, so an Opportunity's contact is linked to
+	 * its party and to the Opportunity exactly as the Opportunity form's own New Contact links it.
+	 * `record` carries its doctype, its name (null while unsaved: then only the party is linked)
+	 * and its fields. null for a doctype with no context.
+	 */
+	ux.context_for = function (record) {
+		if (!record || !record.doctype || !PARTY_CONTEXT[record.doctype]) return null;
+		const resolved = PARTY_CONTEXT[record.doctype](record);
+		const links = (resolved.links || []).filter(([link_doctype, link_name]) => link_doctype && link_name);
+		return Object.assign({ doctype: record.doctype, name: record.name || null }, resolved, { links });
+	};
+
+	/**
+	 * New Contact / New Address for a record that is not the Form on screen (form kit P3.2,
+	 * TASK-2026-02755: the guided page and the Opportunity board's side panel). The route there is
+	 * not a Form, so resolve_party_context finds nothing; this hands the dialog the record's context
+	 * instead, and everything else (the Account, the link order that names the record, "Whose
+	 * address is this?", Google Places, the coordinates) is the dialog as it is everywhere.
+	 *
+	 *   opts.after_insert(doc)   called with the saved record (the caller picks it)
+	 *   opts.typed               what was typed in the search: the Contact's name, Address line 1
+	 *   opts.prefer_party        an Address starts on "Also <party>'s address" (still changeable);
+	 *                            without it there is no default, the 2026-10-06 rule
+	 *   opts.address_type        an Address's type to start with (the dialog defaults to Billing)
+	 *
+	 * Returns make_quick_entry's promise (the dialog). With the toggle off, frappe's own dialog
+	 * opens, given the context's links on the doc itself, since it cannot take a context.
+	 */
+	ux.create_for = function (doctype, record, opts) {
+		const o = opts || {};
+		if (doctype !== "Contact" && doctype !== "Address") return Promise.resolve(null);
+		const context = ux.context_for(record);
+		if (context && o.prefer_party) context.prefer_party = true;
+		const open = () => {
+			const doc = frappe.model.get_new_doc(doctype, null, null, true);
+			if (doctype === "Contact" && o.typed) doc.custom_full_name_and_role = o.typed;
+			if (doctype === "Address") {
+				if (o.address_type) doc.address_type = o.address_type;
+				if (o.typed) doc.address_line1 = o.typed;
+			}
+			if (!ux.enabled() && context) {
+				doc.links = [];
+				context.links.forEach(([link_doctype, link_name]) => {
+					const row = frappe.model.add_child(doc, "Dynamic Link", "links");
+					row.link_doctype = link_doctype;
+					row.link_name = link_name;
+				});
+			}
+			// A link-field create left behind would take the new record instead of after_insert
+			// (quick_entry.js process_after_insert).
+			frappe._from_link = null;
+			// A refused insert keeps the dialog open with what was typed, rather than opening the
+			// full form over the page (quick_entry.js insert's error path).
+			const keep_open = (dialog) => {
+				if (dialog instanceof frappe.ui.form.QuickEntryForm) dialog.skip_redirect_on_error = true;
+			};
+			explicit_context = ux.enabled() ? context : null;
+			try {
+				return frappe.ui.form.make_quick_entry(doctype, o.after_insert, keep_open, doc);
+			} finally {
+				explicit_context = null;
+			}
+		};
+		if (frappe.model.with_doctype) {
+			return new Promise((resolve) => frappe.model.with_doctype(doctype, () => resolve(open())));
+		}
+		return Promise.resolve(open());
+	};
+
 	class ContactAddressQuickEntry extends frappe.ui.form.QuickEntryForm {
 		constructor(doctype, after_insert, init_callback, doc, force, skip_insert) {
 			if (!ux.enabled()) {
@@ -319,7 +403,7 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				return new Stock(doctype, after_insert, init_callback, doc, force, skip_insert);
 			}
 			super(doctype, after_insert, init_callback, doc, force, skip_insert);
-			this.ee_context = resolve_party_context(after_insert);
+			this.ee_context = take_explicit_context() || resolve_party_context(after_insert);
 			if (!this.after_insert && this.ee_context) {
 				// Also suppresses open_form_if_not_list(), which would route away
 				// from the party form to the freshly created record.
@@ -663,7 +747,9 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				label: __("Whose address is this?"),
 				options: ["", this.ee_choice.only, this.ee_choice.also],
 				reqd: 1,
-				default: ctx.from_row ? this.ee_choice.also : undefined,
+				// Pre-answered only where the user already said whose it is: a stakeholder row, or
+				// the billing address of a guided record (ux.create_for's prefer_party).
+				default: ctx.from_row || ctx.prefer_party ? this.ee_choice.also : undefined,
 				description: __(
 					"A job site that belongs to someone else (e.g. a general contractor's project) is this {0}'s only.",
 					[__(ctx.doctype)]

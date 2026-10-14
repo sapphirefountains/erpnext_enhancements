@@ -300,6 +300,9 @@ class FakeDoc:
             self._d["website"] = "https://" + str(website).strip()
         if self._d.get("custom_opportunity_name"):
             self._d["custom_opportunity_name"] = str(self._d["custom_opportunity_name"]).strip()
+        # A hook that changes a field nobody sent (Opportunity.map_fields, party_mirrors), per test.
+        if STATE.get("on_validate"):
+            STATE["on_validate"](self._d)
         # script_migrations.opportunity.validate_ranks_on_won, reduced.
         if self._d.get("status") == "Closed Won" and not all(
             self._d.get(f) for f in ("custom_scope_rank", "custom_schedule_rank", "custom_budget_rank")
@@ -381,6 +384,7 @@ def _install_frappe_stub(metas):
         raise exc(msg)
 
     frappe.throw = throw
+    frappe.get_traceback = lambda: "Traceback (most recent call last): ..."
 
     def whitelist(*dargs, **dkwargs):
         def wrap(fn):
@@ -431,6 +435,8 @@ def _install_frappe_stub(metas):
         return FakeDoc(doctype, data)
 
     frappe.new_doc = new_doc
+    # The config's `quick.when` paths (form kit P6.7): what the server would answer, per test.
+    frappe.get_attr = lambda path: lambda doctype: bool(STATE.get("attrs", {}).get(path))
 
     def get_doc(doctype, name=None):
         if name not in STATE["db"]:
@@ -1085,6 +1091,28 @@ class TestSaveStep(unittest.TestCase):
         self.assertIn("completeness", result)
         self.assertEqual(set(result), {"name", "modified", "values", "completeness"})
 
+    def test_a_field_the_save_itself_changed_comes_back_too(self):
+        """Form kit P3.2: a hook that fills a field the person did not send (map_fields filling an
+        empty contact from the new account) is reported, so the page shows what the record holds."""
+
+        def map_fields(data):
+            if not data.get("primary_contact"):
+                data["primary_contact"] = "Dee Example-Harbor Plaza"
+
+        STATE["on_validate"] = map_fields
+        try:
+            result = self._save({"custom_opportunity_name": "Renamed"})
+        finally:
+            STATE.pop("on_validate", None)
+        self.assertEqual(
+            result["values"],
+            {"custom_opportunity_name": "Renamed", "primary_contact": "Dee Example-Harbor Plaza"},
+        )
+
+    def test_nothing_unchanged_comes_back(self):
+        result = self._save({"custom_opportunity_name": "Smith Residence - Backyard Pond Build"})
+        self.assertEqual(list(result["values"]), ["custom_opportunity_name"])
+
     def test_a_named_step_limits_the_save_to_its_fields(self):
         self._save({"custom_opportunity_name": "Changed", "custom_scope_rank": "1"}, step="close")
         stored = STATE["db"][self.name]
@@ -1734,9 +1762,14 @@ class TestEndpoints(unittest.TestCase):
                 "distinct",
                 "clears",
                 "lost",
+                # Form kit P6.6 (v1.675.0): what a move into Closed Won must carry.
+                "won",
+                # The statuses that close a record: the side panel offers no Undo across them.
+                "closed",
             },
         )
         self.assertEqual(payload["name"], name)
+        self.assertNotIn("quick", payload, "quick add is for a new record only")
         self.assertEqual(payload["modified"], STATE["db"][name]["modified"])
         self.assertEqual(payload["can_write"], 1)
         self.assertEqual(payload["values"]["custom_value_stream"][0]["value_stream"], "Design")
@@ -1748,6 +1781,85 @@ class TestEndpoints(unittest.TestCase):
         self.assertIsNone(payload["modified"])
         self.assertEqual(payload["values"]["status"], "Qualification")
         self.assertEqual(payload["steps"][0]["create"], 1)
+
+    def test_the_moves_and_quick_add_the_side_panel_reads(self):
+        """Form kit P6.6 / P6.7 (v1.675.0): ``won`` names fields the flow offers on a saved record,
+        and ``quick`` (new records only) asks for fields step 1 shows, filling the rest itself."""
+        name = _seed()
+        saved = api.get_flow("Opportunity", name)
+        won = saved["won"]
+        self.assertEqual(won["status"], "Closed Won")
+        self.assertEqual(won["status_field"], "status")
+        names = set(_all_values(saved["steps"]))
+        self.assertEqual(won["fields"], ["custom_scope_rank", "custom_schedule_rank", "custom_budget_rank"])
+        self.assertTrue(set(won["fields"]) <= names, "every rank is in the flow")
+        new = api.get_flow("Opportunity")
+        quick = new["quick"]
+        step_one = next(step for step in new["steps"] if step["create"])
+        shown = {f["fieldname"]: f for f in step_one["fields"] if f.get("fieldname")}
+        for fieldname in quick["fields"]:
+            with self.subTest(field=fieldname):
+                self.assertIn(fieldname, shown, "quick add asks only for what step 1 shows")
+        # What step 1 needs that quick add does not ask for, it fills: fixed, the owner, or a default.
+        required = {f for f, d in shown.items() if d.get("reqd") and not d.get("read_only")}
+        filled = set(quick["fields"]) | set(quick["fixed"]) | {quick["owner_field"]}
+        self.assertEqual(required - filled, set(), "a quick add could never be created")
+        self.assertEqual(quick["fixed"], {"opportunity_from": "Customer"})
+        self.assertEqual(quick["stage_field"], "status")
+        self.assertIn("status", new["prefill_fields"], "the column's stage goes with the create")
+        self.assertIn("custom_opportunity_summary", new["prefill_fields"], "so does the summary")
+        self.assertNotIn("custom_lead_source", quick["fields"], "not asked while nothing requires it")
+
+    def test_quick_add_asks_for_the_lead_source_while_the_server_requires_one(self):
+        path = "erpnext_enhancements.crm_enhancements.attribution.lead_source_required"
+        self.assertEqual(config.CONFIGS["Opportunity"]["quick"]["when"], {"custom_lead_source": path})
+        STATE["attrs"] = {path: True}
+        try:
+            fields = api.get_flow("Opportunity")["quick"]["fields"]
+        finally:
+            STATE.pop("attrs", None)
+        self.assertEqual(fields[-1], "custom_lead_source")
+        # A rule that raises never takes step 1 down (review of #1286), and the field is OFFERED
+        # (review of #1291): read as "not required" it would hide the one field enforce_source may
+        # still refuse the insert without. Logged once per process, not on every page open.
+        logged = []
+
+        def broken(doctype):
+            raise RuntimeError("Lead Attribution Settings has no such field yet")
+
+        get_attr, log_error = FRAPPE.get_attr, getattr(FRAPPE, "log_error", None)
+        FRAPPE.get_attr = lambda path: broken
+        FRAPPE.log_error = lambda *args, **kwargs: logged.append((args, kwargs))
+        api._QUICK_RULES_LOGGED.clear()
+        try:
+            fields = api.get_flow("Opportunity")["quick"]["fields"]
+            again = api.get_flow("Opportunity")["quick"]["fields"]
+        finally:
+            FRAPPE.get_attr = get_attr
+            api._QUICK_RULES_LOGGED.clear()
+            if log_error is None:
+                del FRAPPE.log_error
+            else:
+                FRAPPE.log_error = log_error
+        self.assertEqual(fields[-1], "custom_lead_source")
+        self.assertEqual(again, fields)
+        self.assertEqual(len(logged), 1, "logged once, not on every page open")
+        self.assertEqual(logged[0][0], (), "keyword arguments only (v16's log_error title heuristic)")
+        self.assertIn(path, logged[0][1]["title"])
+        self.assertIn("message", logged[0][1])
+        # The Desk reads no Settings Single for it: get_flow says.
+        page = (APP / "public" / "js" / "form_kit" / "panel.js").read_text(encoding="utf-8")
+        self.assertNotIn("Settings", page)
+
+    def test_the_schema_check_holds_won_and_quick(self):
+        broken = copy.deepcopy(config.CONFIGS["Opportunity"])
+        broken["won"] = {"status": "", "fields": []}
+        broken["quick"] = {"fields": [], "extra": 1}
+        problems = " ".join(config.check(broken))
+        self.assertIn("won needs status", problems)
+        self.assertIn("won needs a list of fields", problems)
+        self.assertIn("quick needs a list of fields", problems)
+        self.assertIn("unknown quick keys", problems)
 
     def test_get_flow_needs_create_for_a_new_record_and_read_for_an_existing_one(self):
         name = _seed()
@@ -1820,11 +1932,14 @@ class TestEndpoints(unittest.TestCase):
                 "my_records",
                 "declare_lost",
                 "find_created",
+                # P3.2 (v1.677.0): read-only; its own suite is test_form_kit_party.
+                "party_details",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["declare_lost"])
         self.assertIn("methods=['POST']", decorated["save_step"])
+        self.assertIn("methods=['GET']", decorated["party_details"], "a read: GET only")
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)
 

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.665.0] - 2026-10-14
+## [1.680.0] - 2026-10-14
 
 ### Added
 
@@ -120,6 +120,1212 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other seven hubs.
 - New suite `test_s4a_hub_links` (own CI step). `test_dashboard_widgets`, `test_block_kit`,
   `test_custom_html_blocks` and the node block harness now know the two new blocks.
+
+## [1.679.0] - 2026-10-14
+
+### Added
+
+- **A "Pages" section in search, and keyboard shortcuts to the six busiest pages** (custom pages
+  S4c, ERPNext TASK-2026-02806). One new global module, `public/js/global_enhancements/page_search.js`,
+  holds a single alias table for this app's 26 main pages.
+  - **Awesomebar (Ctrl+K).** Typing a page's title or a short word now finds it: "planner" (the
+    Project, Maintenance and Rental planners), "kiosk" (the Time Kiosk), "scan" (Stock Scan and
+    Inventory Scanner Audit), "trip", "day board", "rental", "health" (the four health dashboards),
+    "qbo" and so on. Each row says "Page" and shows its shortcut. Frappe v16.50 already listed a Page
+    whose title fuzzy-matched, so "Project Planner" was findable by its full name. An alias was not,
+    and Frappe's own row for a page this section also lists is folded into ours, so a page is one row.
+  - **Search dialog (Enter, or Ctrl+G).** A "Pages" section beside the existing "DocTypes" one. The
+    dialog's content search is MariaDB full-text, which skips words under four letters
+    (`ft_min_word_len`), so "QBO" could never match there. This section does its own matching, so it
+    does.
+  - **Shortcuts.** Alt+Shift+P Project Planner, Alt+Shift+M Maintenance Planner, Alt+Shift+D
+    Maintenance Day Board, Alt+Shift+R Rental Planner, Alt+Shift+J Plan a Trip, Alt+Shift+S Stock
+    Scan. They are registered through `frappe.ui.keys.add_shortcut`, so they appear in Frappe's
+    Keyboard Shortcuts dialog (Shift+/). Each also gets a "Go to ..." command in the awesomebar
+    through `search_utils.make_function_searchable`, the API Frappe uses for its own "Background
+    Jobs" command, so typing "go" lists them. v16.50 has no separate command palette: Ctrl+K is it.
+  - **Who sees what.** A Desk page is offered only when `frappe.boot.page_info` has it, which holds
+    only the pages the user's roles allow. Stock Scan is a www page and carries its controller's
+    `SCAN_ROLES`, which the guard test holds equal. A shortcut is registered only for a page the user
+    can open, so the help dialog never lists one that lands on "not permitted".
+  - **Routing.** A Desk page opens with `frappe.set_route(<page name>)`, a www page with a real
+    navigation; both leave a history entry. "kiosk" goes through the `time-kiosk` Desk page, which
+    already redirects to `/kiosk` and is gated by its roles.
+
+### Notes
+
+- **Why a wrap, and why it cannot break search.** v16.50 has no client-side extension point for
+  awesomebar results. `AwesomeBar.build_options` is a fixed list of builders, and the server
+  `awesomebar_search` hook would cost a request on every keystroke for every user. So
+  `AwesomeBar.prototype.build_options` and `SearchDialog.prototype.parse_results` are wrapped
+  narrowly, the way `global_search_doctypes.js` already wraps the latter. Frappe's own list is built
+  first and returned untouched if anything of ours throws, if nothing matches, or in "#tag" mode. A
+  method that is missing or renamed is left alone, so a Frappe upgrade turns the feature off rather
+  than search.
+- **Why Alt+Shift.** Frappe has no key sequences (`g` then a letter), only chords. Frappe's
+  `get_key` spells a chord `alt+shift+<letter>` (ctrl, then shift, then alt), and nothing in Frappe
+  v16.50, ERPNext v16.50 or this app binds one. Frappe's own Alt+<letter> menu accelerators step
+  aside whenever Shift is held, and a workspace's bare and Shift+letter keys, which open the
+  awesomebar, are different chords. `add_shortcut` drops every other global handler on its chord,
+  which is why a collision would be silent. T is avoided because the Triton widget opens on Alt+T
+  without excluding Shift and Chrome uses Shift+Alt+T for its toolbar. I and A are avoided for
+  Chrome's own keys. Plan a Trip takes J.
+- **Never while typing.** `add_shortcut` already skips `input`, `select`, `textarea` and
+  `[contenteditable=true]`. That selector misses `contenteditable=""`, `"plaintext-only"` and the
+  child nodes of an editor, so the action also refuses there. It also refuses on a held-down repeat
+  and while a dialog is open. A refusal leaves the keystroke untouched.
+- **Fixed before release (review).** Two fixes from review:
+  - **Key repeat.** The repeat guard first read `e.repeat`. `frappe.ui.keys` passes a jQuery
+    event, and jQuery 3.7.1 does not copy `repeat` onto it, so the guard could never fire. It now
+    reads `e.originalEvent.repeat`. The harness builds its key events the way jQuery does, so it
+    fails on the old check.
+  - **New tabs from the search dialog.** A Desk page row in the dialog's "Pages" section now
+    carries its route, so it has a real `/desk/<page>` href and opens in a new tab on Ctrl, Cmd or
+    middle click. A plain click still closes the dialog and routes with `set_route`. A
+    Ctrl/Cmd/Shift-click leaves the current tab alone. Stock Scan, a www page, has no Desk href, so
+    its row opens the new tab itself.
+- **Tests.** `scripts/test_page_search.js` runs the real module under node against a stubbed
+  frappe (`page_info`, `ui.keys` with v16.50's handler and `get_key`, `set_route`, a fake
+  AwesomeBar and SearchDialog), with 112 checks. `tests/test_custom_pages_s4c.py` holds the map to
+  real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
+  chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
+
+## [1.678.0] - 2026-10-14
+
+Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
+only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is
+byte-for-byte what it was, and a test now pins each one by SHA-256.
+
+### Changed
+
+- **`/pay`, `/pay-card`, `/rentals` and `/rent-a-fountain` share a nav bar and read the app design
+  tokens.** Until now they showed the website's standard navbar with no customer menu, styled with
+  inline Bootstrap and no phone rules.
+  - **The nav bar** is one include, `templates/includes/sf_portal_nav.html`, in each page's
+    `navbar` block in place of the Standard Navbar. It is the navy head band with the brand name in
+    the display face. A signed-in customer gets Pay Invoices, My Rentals, Rent a Fountain and Sign
+    out (`/logout`); a guest, who can only be on the rent form, gets Rent a Fountain and Sign in
+    (back to the same page). There are no Desk or `/app/` links. The current page is bold and
+    underlined (`aria-current="page"`), so it doesn't rely on colour alone. A skip link leads to the
+    content.
+  - **"Rent a Fountain" shows only while that form is switched on.** The page 404s while
+    `Rental Settings.public_request_form` is off, so the nav asks a new Jinja global,
+    `ee_rent_form_enabled` (in `asset_management/rental_requests.py`, registered in `hooks.py`).
+    It is read-only and never raises, because it returns the existing `enabled()`, which already
+    swallows a missing settings record.
+  - **The tokens reach each page through its own link,** as on `/review` and `/itinerary`
+    (v1.659.0). Each template links `sf_tokens.bundle.css` through `bundled_asset`, then the new
+    `sf_portal.bundle.css`. Both are content-hashed, so a phone never keeps a stale copy from the
+    year-long `/assets` cache. Neither is in `web_include_css`, which would ship them to every
+    public page. `/pay`, `/pay-card` and `/rentals` call `super()` in `head_include`, so they keep
+    the site's own head HTML as before. `/rent-a-fountain` never called it and still does not.
+  - **The pages are pinned light.** The tokens follow the device's dark setting on a page with no
+    `data-theme`, but these pages can't go dark with them, for two reasons. The rest of the website
+    (Frappe's footer and website styles) has no dark theme. And Stripe's Payment Element draws dark
+    grey labels inside its own frame, which no stylesheet reaches; on a navy card they would be
+    unreadable. So a one-line include, `sf_portal_light.html`, writes `data-theme="light"` on
+    `<html>` before the stylesheets load. There is no toggle. It is an include rather than a
+    `<script>` in each page, because tests read `pay.html`'s first `<script>` as the payment code.
+  - **The look.** Square cards, notices and fields with `--sf-rule` hairlines, and no shadows; the
+    CSS only switches Bootstrap's own shadows off. Buttons round at `--sf-radius-control`: the
+    primary is fresh-blue with a navy label, the secondary a 2px stroke. Headings are in the display
+    face. Links are underlined. Notices are a card on the surface with a status rule down the left,
+    and their words are unchanged.
+  - **Status words, not colour alone.** `/pay`'s three payment verdicts are now chips with their
+    unchanged words: "Waiting for bank approval…" in the warn tone, and "Payment received — please
+    contact us" and "Processing…" in neutral. A rental's status ("On hold", "Confirmed",
+    "Delivered" and so on) is a Rent-pillar chip, in the list and on the booking. `/pay-card`'s
+    decline and "tap Back" notes are the danger colour mixed half and half with the strongest text,
+    which is the guide's rule for status text.
+  - **Phones (767px and below).** `/pay`'s invoice table becomes one card per invoice. Each cell is
+    stacked and labelled through `data-label`; the Invoice cell stays a bare `<td>` because
+    `test_stripe_payments` parses it. Card and Bank sit side by side at full width. Fields go to one
+    column. A settled invoice's two ways out on `/pay-card` stack at full width. The nav wraps under
+    the brand. Every button, field and nav link is at least 44px tall, and every field's type is
+    16px, below which iOS zooms in.
+  - **Inline styles moved to classes**: the autopay panel's rule and spacing, the consent text's
+    line breaks, the footnote's margin, the two pages' column widths (520px and 640px), and
+    `/pay-card`'s spacing around the Payment Element, the notes and the review table. Two kinds of
+    inline style stay on purpose. The `display:none` on `#step-review`, `#review-fee-row`,
+    `#review-disclosure` and `#review-nofee` is state: the script shows and hides those through
+    `style.display` and reads it back, and no stylesheet rule sets `display` on them (tested). The
+    rent form's honeypot also stays inline, so it is off screen even if the stylesheet never arrives.
+  - **Keyboard and screen readers.** Each page's content wrapper (`#sf-portal-main`) takes
+    `tabindex="-1"`, so the skip link moves keyboard focus and not just the view; it gets the same
+    focus ring as everything else. `/pay`'s invoice table carries explicit ARIA roles (`table`,
+    `rowgroup`, `row`, `columnheader`, `cell`), because Safari and VoiceOver drop a table's
+    semantics once CSS sets `display: block` on its parts, as the phone card layout does.
+    `test_stripe_payments`' two row parsers now match `<tr …>` and `<td …>` with attributes, and
+    count the rows so they can never pass on an empty match.
+  - **Labels.** `/rentals`' site-prep fields had labels that were not tied to their fields. Each now
+    has `for` and an `id`. The change-request box, which had only a placeholder, is labelled by its
+    card's heading through `aria-labelledby`. The `/pay` consent line is the whole 44px target.
+
+- **Not changed: every inline page script.** That covers the bank (ACH) Checkout call, autopay
+  set-up and cancel, `/pay-card`'s price and charge calls, its timers, idempotency and 3-D Secure
+  handling, the rentals forms' submits, and the rent form's Turnstile and submit. Every form field's
+  `name`, every endpoint, the CSRF handling and the page controllers are unchanged too. **Stripe's
+  Payment Element still has no `appearance` object**, so Stripe draws it in its default light look;
+  its frame cannot read CSS variables. No `stripe_payments` Python was touched.
+
+### Added
+
+- `tests/test_customer_portal_polish.py` (bench-free, own CI step). It checks the token and portal
+  links and their order, the light pin, the shared nav, and that the tokens are not in
+  `web_include_css`. It renders the nav with jinja2 signed in, signed out and with the rent form
+  off, and refuses a Desk link. On the CSS it refuses a literal or named colour, an undefined
+  `--sf-*` or a custom property of its own; it requires token radii, a single 767px breakpoint,
+  44px controls and 16px fields, no status fill as text, no shadow except switching one off, and no
+  `display` rule on what `/pay-card`'s script toggles. On the pages it pins each inline script by
+  SHA-256 to origin/main's bytes. Every id, class and `data-` attribute a script reads must still
+  be in the markup, the form field names must be unchanged, every field must have a label, and an
+  inline style is allowed only where it is state.
+
+## [1.677.2] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open closes only the dialog, for real this time.** v1.677.1
+  shipped the wrong cause and changed nothing on prod: Back still closed the New Contact dialog
+  and left the step.
+  - **The cause:** v16's `QuickEntryForm` *is* the frappe Dialog (`extends frappe.ui.Dialog`; its
+    `.dialog` is itself), so the entry never needed unwrapping. What stopped it was timing.
+    `make_quick_entry`'s promise resolves while the modal is still animating in, and
+    `Dialog.display` turns true only on `shown.bs.modal`. `PartyEntry.track` read
+    `display === false` at that moment as "the full form opened instead" and returned before
+    joining the planner kit's history guard.
+  - **The fix:** it now joins once the dialog has shown (`shown.bs.modal`), or at once if it is
+    already showing. A quick entry that routed to the full form never shows, so it never joins.
+  - **Measured on prod before the change:** the resolved entry had `display: false`, which was
+    `true` 1.5 s later. Registering the shown dialog with `planner_kit.guard` by hand made Back
+    close only the dialog, and Cancel stay on the step.
+  - **Corrected below:** the v1.677.1 entry's explanation is wrong; `dialog_of` stays as a
+    harmless normalizer.
+
+## [1.677.1] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open now closes only the dialog.** On prod, Back on the
+  guided page closed the New Contact / New Address dialog and *also* left the step (Contact &
+  site → Basics); in the board's side panel it would have closed the panel too.
+  - The dialog never joined the planner kit's history guard. `PartyEntry.track` took what
+    `frappe.ui.form.make_quick_entry` resolves with as the dialog, but v16's
+    `QuickEntryForm.setup()` resolves the **QuickEntryForm itself**; its frappe Dialog is
+    `.dialog`. With no `$wrapper` on the entry, `track` returned early, no history entry was
+    pushed, and frappe's router closed the dialog on the route change as it always does.
+  - The test harness passed because its stand-in resolved with the dialog. The new pure
+    `form_kit/party.js` `dialog_of(entry)` unwraps the QuickEntryForm (a bare Dialog is taken
+    as it is, and an entry with no dialog — the full form routed to instead — gives null),
+    tested under node.
+
+## [1.677.0] - 2026-10-14
+
+Form kit P3.2, UI half (ERPNext TASK-2026-02755): **the Party entry component**. On the guided
+Opportunity page and in the board's side panel, the account, the Primary Contact, the Billing Address
+and the job site are picked from the account's own records or made on the spot, linked to the
+account, and re-suggested when the account changes. The server half (the block registry and the
+`contact_person` mirror) shipped in v1.669.0.
+
+### Added
+
+- **`public/js/form_kit/ui/party.js` (`PartyEntry`)**, made once by the record editor
+  (`editor.js` `party_entry()`), so both shells get the same component. Its decisions are the pure
+  `public/js/form_kit/party.js`. The Party and Site blocks' entry faces now name it instead of
+  `pending` (`form_kit/blocks.py` and its JS twin).
+  - **"+ New" under each party field.** A contact or an address opens the app's own quick entry
+    with the deal as its context, so it is linked to the account (and to the deal, as the
+    Opportunity form's New Contact links it) and then picked. Why it matters: until now the field's
+    own "Create a new Contact" ran with no context on the guided page (its route is not a Form), so
+    a contact made there was linked to nothing unless the person typed the Account by hand. Frappe's
+    dropdown entry now takes the same path.
+  - **The job site still asks "Whose address is this?" with no default** (the 2026-10-06 rule, from
+    the link audit: a job site may be the general contractor's), and starts as type Shipping; the
+    billing address starts on "Also <account>'s address". A new account: the Customer quick entry;
+    a Lead or Prospect opens its form in a new tab with a toast, since neither has a quick entry here
+    and leaving the page would lose the step.
+  - **When the account changes on a saved deal**, an empty contact, billing address or site takes the
+    new account's default, and **a stored value is never overwritten or emptied**. One linked to the
+    new account, or to the deal itself (a general contractor's job site), stays quietly; any other
+    stays with a note under the field and *Use <suggestion>*. Why (review of #1291): the first
+    version replaced or cleared a stored site nobody had touched, on a step nobody was looking at,
+    and the hand-off would then have copied the wrong site into the Project. An answer for values
+    changed while it was in flight is asked again.
+  - **Back closes the dialog, and only the dialog.** A frappe Dialog closes on any route change, so on
+    its own Back would also leave the step or close the side panel. The dialog joins the planner
+    kit's history guard as an overlay; the guided page loads `planner_kit.bundle.js` the first time a
+    dialog opens.
+- **`form_kit.api.party_details`** (GET only, `form_kit/party.py`): an account's default contact,
+  billing address and site by ERPNext's own rules (`get_default_contact`, `get_default_address`,
+  `get_party_shipping_address`, plus "one address is also the site"), and which of the deal's
+  current values are linked to it or to the deal. Allowlisted DocType, read on the DocType, the
+  account and the deal, the account kind the Party block allows, at most 20 names, every row through
+  `frappe.get_list` with `distinct`: the Dynamic Link filter is a join, and a record linked twice to
+  one party (the Zoho import left some) would otherwise come back twice and push another out.
+- **`contacts_ux.create_for(doctype, record, opts)`** in `contact_address_quick_entry.js`: the
+  Contact/Address dialogs for a record that is not the Form on screen, handed its context instead of
+  the route's. A refused insert keeps the dialog open rather than opening the full form over the page.
+- `roles` and `accounts` on the Party and Site blocks (`blocks.party_roles`), and `check()` refuses a
+  role naming a field the block does not carry.
+
+### Changed
+
+- **`save_step` returns what the save itself changed.** Without a `step`, it now also returns every
+  field the flow shows that a hook changed (ERPNext's `Opportunity.map_fields` filling an empty
+  contact from a new account, `party_mirrors` copying the hidden contact up). Before, the page kept
+  the old value on screen and its next save could put it back, so the screen and the record (and
+  the two contact fields) could disagree.
+- The Contact & site step's intro says new ones are added there now.
+
+### Fixed
+
+- **Undo fails closed** (`panel.js` `undo_allowed`, review of #1286): with no flow, or one that sends
+  neither `closed` nor `won`, the side panel offers no Undo instead of offering one it cannot check.
+- **A broken `quick.when` rule no longer breaks step 1** (`form_kit/api.py`, review of #1286): it ran
+  on every new-record `get_flow` and an exception took the guided page's start down with it. The
+  field is now offered (read as "not required", Lead Source would be hidden while `enforce_source`
+  may still refuse the insert without it, review of #1291), and the failure is logged once per
+  process (`frappe.log_error`, keyword arguments) rather than on every page open.
+- **An Opportunity with no job site no longer takes the Customer's address HTML into it.** ERPNext's
+  `Opportunity.validate` runs `map_fields`, which copies every empty column from the party by name,
+  and `Customer.primary_address` is ERPNext's rendered address (a Text Editor of HTML). v16 checks
+  links in `_validate_links` before `before_validate` and `validate`, and
+  `sync_contact.sanitize_primary_address_link` ran only on `before_validate`, so the HTML reached the
+  `primary_address` Link on every save of a deal with no site. It now also runs on Opportunity's
+  `validate`, after ERPNext's own. Production had 28 Customers with that text and one Opportunity
+  holding it (2026-10-14); that one is cleared on its next save. Found in review; older than P3.2.
+- **"+ New" can never stay held**: it is let go after 8 s even when the dialog never opens (frappe's
+  `with_doctype` never calls back on a failed request).
+
+## [1.676.0] - 2026-10-14
+
+### Added
+
+- **The planners' filters are in the address** (custom pages S5c, ERPNext TASK-2026-02807). A
+  copied link opens the planner as its sender saw it, and a reload keeps the filters.
+  - **Project Planner:** the Project, Project manager and Group filters ride on every planner
+    screen as `?project=`, `?pm=` and `?group=`, e.g.
+    `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`.
+  - **Maintenance Planner:** the Technician filter, as `?technician=<user>` (`__none__` for
+    Unassigned). Its Projected visits and Project work boxes are display switches, like the
+    Project Planner's "Maintenance, rentals, travel", and stay remembered only.
+  - **Read on every landing** (`take_route_filters`, from `handle_route`), from
+    `frappe.route_options`, after the "last used" view is restored, so the address wins over it.
+    The keys are consumed, so none is left for v16.50's `set_route` to write into the next route's
+    address. Keys that are not the planner's are left alone, as S5b decided. An address that names
+    any filter is the whole filter: one it does not name is All, so a link names exactly what it
+    shows. An address that names none (the sidebar, another page's path-only link) keeps the filters
+    on screen, and they are written into it.
+  - **Ignored:** a group that is not one of the four, a value longer than a document name, an
+    object or a null. A PM or technician the loaded planner does not list becomes All, and the
+    address follows. A project the planner does not list stays the filter, as since S5b.
+  - **A pick replaces, a screen pushes.** Picking a filter rewrites the entry on screen in place
+    (`write_filter_url`, `history.replaceState`, each page's one history write). A filter is not a
+    screen. A push per pick would make Back step through every select change before it reached the
+    week before, and Nik's rule is one entry per screen. Because the entry keeps saying what it
+    shows, Back onto it, a reload and a copied link all show it again. A week, month, view, heatmap,
+    My week or a person's route is a screen. It moves by `set_route` as before, now carrying the
+    filters (`filter_options`), so Back and Forward walk the screens, each with the filters it had.
+  - **The write is guarded.** It happens only on the planner's own path, so a late load cannot
+    write a form's address, and never over keys the router has put in `route_options` that the page
+    has not read yet. It keeps the path as the router wrote it, other keys, the hash and
+    `history.state`, and encodes as v16.50's `set_route` does, so the router never pushes a
+    duplicate entry for the same screen. An apostrophe is written as `%27`, as the browser reads it
+    back, so a name like o'neil does not rewrite the entry on every landing. After a popstate the router does not route (the planner
+    kit closing a drawer), `watch_filter_url` runs it again, so a pick made under a drawer reaches
+    the entry below.
+  - **On the router before v16.50**, which pushed the path alone, the filters still reach the
+    address: the planner reads them from `route_options` and writes them itself.
+
+### Changed
+
+- **What an address gave is that visit's only** (S5b's rule for the Project form's link, made
+  general). `url_filters` (replacing `project_link`) holds the keys the address decided: those it
+  named and those it left at All.
+  - None of them is saved to the remembered filters. "Last used" may still save the view, the
+    colors and so on, but keeps the person's own value for each of those keys.
+  - A filter the person picks (`pick_filter`: the selects, and "Filter to this project" in a
+    project's drawer) is theirs: only that one is remembered and goes into "last used", as before.
+    The address's other keys stay one-off. For example, someone who remembers PRJ-MINE and their own
+    PM opens a project from its form and picks Group: Field. They keep PRJ-MINE, their PM and Field.
+  - A key the loaded planner resets to All (a PM or technician it does not list) stops being the
+    address's. When none is left, nothing is a link's any more, so the next week keeps All instead
+    of bringing back the person's own.
+  - Back onto one of the person's own entries, whose filters are their own, makes them theirs again,
+    and "last used" saves as before.
+  - A bare planner address after a link brings back the person's own filters. The planner's own
+    next screen (`self_route`: ‹ ›, a view, a person's route, My week) is not such an address, even
+    when every filter is All and it carries no query.
+  - Back onto an entry the planner left bare (every filter All, and the person's own) names nothing,
+    so it keeps whatever filters are on screen by then, the newer ones.
+  - A saved view, used or restored, is the person's too.
+- **The Project form's link keeps `?project=` in the address.** S5b took the key out
+  (`take_route_project`, now part of `take_route_filters`), so that Back onto the entry would not
+  put the filter back over a later pick. A pick now rewrites the entry, which keeps that promise
+  while the address stays shareable. The link still clears the PM filter: it names only the
+  project, so the PM is All.
+
+### Fixed
+
+- **The planner kit's stylesheet was linked twice on both planners** (since v1.673.0). v16.50's
+  `frappe.require` counts a file as loaded only after it has loaded: `assets.js` pushes it to
+  `_executed` in the element's `onload`. Phase 6A's and Phase 6D's start-up each called
+  `frappe.require(PP6A.kit)` (or `MP6A.kit`) from the constructor in the same tick, and each
+  appended a `<script>` and a `<link>` for `planner_kit.bundle.*`. The second script was harmless,
+  because the bundle installs itself once. The stylesheet, though, was on the page twice. Both now
+  go through `p6a_require`, each page's only `frappe.require`. It keeps the request on
+  `window.planner_kit_request`, one per Desk, which both planners share, so opening the other
+  planner while the kit is on its way does not ask again either.
+
+### Tests
+
+- New bench-free suite `tests/test_planner_url_filters.py`, with its own CI step. It runs
+  `scripts/test_planner_url_filters.js`, the real page scripts against a model of v16.50's router
+  (and the one before it) and of its `assets.js`. It covers opening with the filters, a pick
+  rewriting the address, a reload over the remembered and "last used" filters, Back and Forward
+  across real screen changes, malformed and unknown values, the remembered filters untouched by a
+  link, nothing left in `route_options` for the next route, a bare address after a link, the
+  last-used view's redirect, a pick made under a drawer, and the writes it must never make. It
+  also proves the double `<link>` under the assets model, and one link with `p6a_require`, for
+  6A and 6D in one tick and for both planners at once. Review follow-ups are covered too: a pick
+  from a link keeping the person's other filters, a PM or technician the planner does not list
+  letting go so the next week keeps All, Back onto the person's own entry, and an apostrophe
+  written once.
+- `scripts/test_form_page_links.js` follows the Project link's new address, and a pick goes
+  through `pick_filter`. The source checks in the planner suites now allow each page's one
+  in-place history write, `write_filter_url`, still never a push, and one `frappe.require` behind
+  `p6a_require`, including when the Opportunity board's side panel (v1.675.0) has already loaded
+  the kit's stylesheet, or loads it after a planner has.
+
+## [1.675.0] - 2026-10-14
+
+Form kit P4.4 part 2, P6.6 and P6.7 (ERPNext TASK-2026-02762, -02780, -02781): **the side panel**,
+and on the Opportunity board **tap to edit, required fields on a drop, quick add and bulk
+actions**. Still out of scope: P6.10, retiring the stock Kanban's patches and the list's redirect,
+which waits for Nik's sign-off on the board.
+
+### Added
+
+- **The side panel** (P4.4), `public/js/form_kit/ui/side_panel.js`: a record edited from a list or
+  board without leaving it, in the planner kit's drawer. It runs **the guided page's own record
+  editor**, not a copy: the same fields and help, the same save queue and conflict chooser, the
+  same phone journal (P4.7), the same Set as Lost dialog.
+  - Full screen on a phone (under 768px); beside the board on a wide screen, which it pushes aside.
+  - **Every panel is a route of the page that opens it**, so reload reopens it, Back closes it and
+    Forward reopens it. Moving between a deal's steps *replaces* the address (`…/edit/<name>/<step>`),
+    so Back still closes the panel instead of walking its steps; the step survives a reload.
+  - **Undo toast.** Closing an edit that saved something offers Undo, which saves each changed field
+    back to what it was when the panel opened, locked on `modified`: someone else's save since is
+    reported and never overwritten, and a field the other person changed (a conflict) becomes what
+    Undo returns to. **No Undo is offered when the edit moved the deal into or out of a closing
+    status** (Closed Won, Lost, Closed, Converted; `get_flow`'s new `closed`): a plain save back out
+    of Closed Won would skip `revert_won_status`'s refusal once a project exists and leave the won
+    date set. After an Undo the page sends `sf-record-changed`, so an open guided page reloads.
+  - The drawer's own × goes through the panel's close (an edit saves first), via the drawer's new
+    `request_close` option; the planners pass none and keep their ×.
+  - Its files load on demand the first time a panel opens (`frappe.require` of
+    `planner_kit.bundle.js` and `.css`, `guided_entry.bundle.js` and `.css`), as the planners load
+    theirs; since v1.673.0 the drawer's styles are `planner_kit.bundle.css`, no longer injected by
+    the kit's script. If they do not arrive, a deal
+    opens the normal way and a closing drop opens the guided Close step, as before.
+- **Tap to edit** (P6.6). A tap or click on a card, or on a row of the table, the timeline or the
+  attention list, opens the deal in the side panel (`…/edit/<name>`). On a phone too: the card's
+  Move button is now the way to the move panel. The move panel's "Open opportunity" and the side
+  panel's "Open full page" open the guided page, in place of the panel's history entry.
+- **Required fields on a drop** (P6.6). A drop on Closed Won or Lost (or choosing either in the move
+  panel) opens that stage's required fields in the side panel (`…/closing/<name>/<stage>`):
+  - **Closed Won**: Scope, Schedule and Budget Rank, from the flow's own field definitions
+    (prefilled where the deal has them), with the ranks' "each its own rank" warning. "Move to
+    Closed Won" saves the ranks **and** the status in one `save_step`, locked on `modified`. Nothing
+    is saved before that: the panel's queue is `manual` (no autosave) and keeps no phone copy, so a
+    move nobody committed can never be put back later.
+  - **Lost**: Lost Reasons, Competitors and Detailed Reason, the Set as Lost dialog's fields, then
+    the record's own Declare Lost (`form_kit.api.declare_lost`), locked the same way.
+  - **Commit or cancel.** The card stays in its column, marked "Moving to …", until the move is
+    saved; Cancel, Esc or Back drops what was typed and the card never moved. A refused save keeps
+    the panel open with the reason; a conflict shows the guided page's chooser. **No drop ends in a
+    save error with the card jumping back.**
+  - The hand-off steps keep working: the save is an ordinary `save()`, so the hand-off gate's
+    stamps run, and the Closed-Won project prompt arrives from the server as it does for any save
+    into Closed Won. The panel closes before it can, so the route change does not dismiss it.
+- **Quick add** (P6.7). A "+" at the head of each open column and On Hold opens quick add in the
+  side panel (`…/new/<stage>`): the account, a name, the value streams and a summary, nothing else.
+  It creates through `form_kit.api.create_record` with the create's `client_id` (a resend returns
+  the deal the first attempt made), already in that column's stage, owned by the person adding; the
+  panel then shows the new deal for anything else (its entry replaced, so Back never lands on an
+  empty quick add). The config's new `quick` says what it asks for and what it fills itself; its
+  `when` adds the Lead Source while Lead Attribution Settings require one on a new Opportunity
+  (`attribution.lead_source_required`, which `enforce_source` now uses too). The server decides, in
+  `get_flow`; the Desk reads no Settings Single.
+- **Bulk actions** (P6.7). "Select" (page state, like the filters) puts a 44px box on every card
+  and row and a bar along the bottom: **Change stage**, **Reassign**, **Set close date**,
+  **Snooze**, each in the side panel's drawer (`…/bulk/<action>`; the selection is kept for the tab
+  in guarded `sessionStorage`, so a reload finds it). Lost asks for the lost reasons first, as a
+  drop does. The answer is deal by deal; what failed or conflicted stays selected, with each
+  reason, and "Try the rest again" is one tap.
+  - **Closed Won is not a bulk move** (a deliberate departure from P6.7's text, after review): it is
+    not offered, and the server refuses it ("Win deals one at a time: each needs its own ranks and
+    hand-off."). Each win fires its own "Schedule the hand-off meeting now?" prompt, none naming its
+    deal, and closing one with Esc un-wins its deal; and one set of ranks for many deals is wrong.
+  - A stage move takes at most 25 deals a request; owner, close date and snooze take 100. Over the
+    cap, the panel says so and sends nothing.
+  - Reassign takes an enabled **System User** only.
+- **`opportunity_board.bulk_update`**, POST: up to 100 deals (25 for a stage move), each with the
+  `modified` the board loaded. Every deal goes through the path a single change takes (`form_kit.saver.save_step`,
+  `saver.declare_lost`, or the board's own `snooze`): write permission on that deal, the lock and
+  its conflict shape, a real `save()`. Each runs in a savepoint, so a refusal rolls back that deal
+  only; a database error fails the whole request. A value the flow would not let the person write
+  is reported as a refusal, not a success. Listed in `test_whitelist_placement`'s exact surfaces.
+- `get_flow` sends `won` (what a move into Closed Won must carry), `closed` (the statuses that close
+  a record) and, for a new record, `quick`; `get_board` sends each closing stage's `gate` ("won" or
+  "lost").
+- **`tests/test_opportunity_board_panel.py`**, bench-free, with its own CI step: the panel's pure
+  decisions and the save queue's `manual` mode under node, the board's part C, `bulk_update` against
+  a frappe stub, one renderer for both shells, and the wiring.
+
+### Changed
+
+- **The guided page's record editor moved to `public/js/form_kit/ui/editor.js`** (P4.4: "do not
+  fork a second renderer"). Drawing a step's fields, values, the save queue, conflicts, the phone
+  journal, step 1's create and Set as Lost are `RecordEditor`, which the side panel extends; the
+  guided page keeps its routes, band, rail, summary, footer and start screen, and the editor's
+  methods are mixed onto it when `guided_entry.bundle.js` arrives (`mix_editor`; the class is
+  defined before the bundle loads). The moved code is unchanged except at four seams, each marked
+  "P4.4": the step on screen (`current_step`), the help ids' prefix, step 1's create handing its
+  routing to the shell (`after_create`, `show_created`, `still_new`), and `send_lost`. `open_login`
+  moved too, so the panel's "Sign in" works; a move's `manual` queue (not a flag on the editor) is
+  what keeps the phone's journal untouched. `test_guided_entry` reads the page and the editor
+  together where code moved; no assertion was loosened.
+  - Known limitation, documented in `form_kit/README.md`: the guided page and a side panel open on
+    the same record each keep their own journal union, so one can rewrite the record's phone entry
+    without the other's unsent values. `guided_entry.bundle.js` is version 2 and carries `RecordEditor`, `mix_editor` and
+  `SidePanel`.
+- **The planner kit's drawer takes `history: false` and `request_close`** (additive): the page keeps
+  the drawer in its own route, so the kit pushes no entry and leaves Esc to the page, and the ×
+  asks the owner instead of closing. The planners pass neither and behave as before.
+- The board's move panel says what a closing stage asks for ("Asks for the ranks" / "Asks why it
+  was lost") rather than "Opens the close step".
+
+### Fixed
+
+- **A new record's step 1 dropped what it showed but did not create.** `create_record` assigns only
+  the step's "create" fields, so the summary, a close date or a probability typed on the guided
+  page's step 1 was silently lost. They now go with the create as `prefill` (only what differs from
+  the new record's defaults), which the server already takes for any field the flow lets the
+  person write.
+
+## [1.673.0] - 2026-10-14
+
+### Changed
+
+- **The Maintenance Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4e, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Dragging, tap to move, the calendar and crew geometry, the quick looks, Color by, the
+  Conflict center and every keyboard path work as before, and the S3.6 labels on ‹ › ↻, the
+  `role=button` day numbers and crew date heads, their focus rings and the focus move to the title
+  are kept.
+  - **CSS out of the script.** Seven `<style>` elements the script wrote into `<head>` (`MP_STYLE`,
+    `MP6A_STYLE` ... `MPC1_STYLE`) are now `maintenance_planner.css` beside the page, which Frappe's
+    page loader sends with the page. One section per phase, in the order the script injected them,
+    so the cascade between them is unchanged. Every selector starts with an `mp-` class, which
+    nothing else in the app styles.
+  - **Data colors stay data.** A technician's color (their dot and initials) and a Color-by key's
+    swatch go in only as `style="--mp-color: ${mp_esc(...)}"` (a plain hex from the record or an
+    `hsl()` hashed from the user); Color by keeps `--mp-p6c-c`. No other color is written inline: the
+    email preview's frame, the Unassigned row and the Pencil legend's samples are classes now.
+  - **On the tokens.** Every Frappe variable and literal color became an `--sf-*` token. A visit's
+    edge says its kind: a scheduled visit (and a contract's next one) is on the Service pillar's
+    edge (it was blue), a seasonal one the warn mix (amber), one pending review the warn fill on a
+    warn tint (dark yellow), an extra visit or follow-up violet, a done one green, an overdue one
+    danger, a projected one a dashed muted edge (slate). The read-only bookings take their pillar's
+    chip edge on a tint: a project task Build (it was teal), a rental Rent (amber), travel Neutral
+    (gray). Status as text (a red day, "Full", a free day's hours) is the token mixed half and half
+    with `--sf-text-strong`, never plain yellow. The hint under the calendar now names the bookings
+    by their chips rather than their colors.
+  - **The legends draw the cards.** The toolbar legend painted each swatch with jQuery `.css()` and
+    a hex; it now gives the swatch the card's own kind class. The help legend's visit samples are
+    real cards (`.mp-card` with the kind's class), and its initials samples are classes, so both
+    legends follow the theme and cannot drift from the calendar.
+  - **Printed cards read the tokens.** The printed page takes color values, so `p6c_kind_color`
+    reads the palette tokens behind the screen's edges through `getComputedStyle`, each with the
+    token's own value as its fallback. The old `booking_colors` table is gone.
+  - **Shape.** Sections, grids, cards, trays and bars are square, with no shadows (there were 11):
+    a conflict is an inset danger ring, a drop target an outline, the lead technician's ring an
+    outline in `--sf-text-strong`, a card a search jumped to blinks its focus ring, a highlighted
+    card (Color by) is a tint, and the selection bar, the move bar and the Draft bar have a 2px edge.
+    Keyboard focus on a card is a ring on `::after`, so a selected, moving, drafted or targeted card
+    shows its state and its focus at once; the drop-target rule now comes after `.mp-card:focus`,
+    which used to cancel it on a focused card. The view switch, toggles and the move-by switch round
+    at `--sf-radius-control`; chips and today's number are pills. The move-by switch's chosen unit
+    is the primary fill (it was violet), as on the Project Planner.
+  - **Fields.** The toolbar's technician filter, search and Color by are white, square and edged in
+    both themes, with their own focused rule (Bootstrap's `.form-control:focus` is (0,2,0)); 16px on
+    a phone.
+  - **Touch and phones.** On a touch screen the toolbar's controls, the cards in the week, crew and
+    tray, the day numbers, the team strip and the move bar's buttons are 44px (they were 32 to
+    40px); a month cell's day number keeps 44px of height and is 32px wide. The 760px blocks are the
+    app's one phone width, 767px; the sticky headings (a `min-width: 761px` block) are written for
+    every width and switched off at 767px; the 1024px `overflow-x: clip` applies at every width; the
+    move bar sits above a phone's safe area.
+- **planner_kit's stylesheet is a real bundle on the tokens**, `public/css/planner_kit.bundle.css`
+  (both planners' drawer, side panel, toast, menu, hints, hover glow, legend, quick looks,
+  timeline, Conflict center, personal blocks and day notes). It was three template strings,
+  `styles.js`'s `CSS`, `conflicts.js`'s `CONFLICTS_CSS` and `blocks.js`'s `BLOCKS_CSS`, injected
+  into `<style id="pk-style">` with literal hex, Frappe variables and 8 shadows.
+  - **How it loads, and why the cascade is unchanged.** Both planners ask for it in the same
+    `frappe.require` as the kit's script: `PP6A.kit` and `MP6A.kit` are now
+    `["planner_kit.bundle.js", "planner_kit.bundle.css"]` (the one line the Project Planner's page
+    script changes). `frappe.require` resolves both names through `boot.assets_json`, so they are
+    content-hashed and never served stale, and appends the stylesheet as a `<link>` after the
+    planner page's own CSS, which Frappe added when the page loaded. The kit's rules therefore
+    still come after the page's: equal-specificity pairs across the two resolve as before in both
+    directions (`.pk-tl-bar.pp-tl-colored` against `.pk-tl-bar.pk-tl-pencil` and `.pk-tl-over`;
+    `.pp-p6d-mw .pk-block` against `.pk-block.pk-block-compact`). The callback waits for both files,
+    so the hints and legends drawn at `p6a_ready` never flash unstyled. If the stylesheet fails,
+    `frappe.require` still calls back: the kit is plain and nothing throws.
+    `planner_kit.bundle.js` is untouched and still writes `<style id="pk-style">` from
+    `CSS + CONFLICTS_CSS + BLOCKS_CSS`; all three are `""` now, so no rule is injected twice.
+  - **The look.** Square drawer, menu, columns, timeline and conflict cards; the drawer and the
+    menu have an edge instead of a drop shadow; the toast is sf_kit's (inverted, with a status
+    edge); the hover glow is a focus tint on a booking's ground color, never a ring (a card's
+    outline is its state) and never a background image (the stripes of an off technician, a
+    pencilled card or a block stay visible while it glows), and an inset focus ring on a name or a
+    badge, whose own color a tint would wash out; a late timeline bar is a danger ring; a
+    day with a conflict has a danger bar on its left (an inset shadow before). A booking in a quick
+    look takes its pillar's chip edge, as on the planners. A stop's number is the route view's
+    bahama-blue. The drawer's close button, menu items, a hint's Got it, a person's day head and the
+    Conflict center's people are 44px on a touch screen, and the drawer stops sliding in under
+    `prefers-reduced-motion`.
+- **Fixes on the way.** An off technician's initials were meant to be faded *and striped*; the
+  inline `background:` that painted their color also painted over the stripes, which never showed.
+  The color is a custom property now and the stripes draw. A month cell's load, a tint and nothing
+  else on screen, is read aloud. Two rules for classes nothing draws (`mp-avail-row`,
+  `mp-cap-row`) are gone.
+- **Review follow-ups** (before release):
+  - Merged `origin/main` (S3.4f, the Rental Planner, v1.670.0): `test_s3_page_css.py` keeps both
+    pages' entries, docstring paragraphs and test classes.
+  - The kit's stylesheet is loaded as a stylesheet, beside the kit in one `frappe.require`, not by
+    an `@import` written into the kit's `<style>` element: the `@import` arrived one round trip after
+    the kit's script, so hints and legends drawn at `p6a_ready` flashed unstyled. `styles.js`'s
+    `CSS` is `""`.
+  - The hover glow was a `background-image` with `!important`, which hid the stripes of an off
+    technician, a pencilled card and a blocked day while it glowed. It is a `background-color` tint
+    on a booking and an inset focus ring on a name or a badge.
+  - The 44px touch cards stay on tablets: a week column or a crew cell on a tablet fits a 44px card,
+    and a tablet is a touch screen like a phone.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Maintenance Planner with every shared check, and a new
+  `TestMaintenancePlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--mp-color` and the CSS paints them; a
+  technician's color is a plain hex or its hashed `hsl()`; both legends draw the cards' own classes;
+  the printed edges read the tokens, each fallback the token's own value; no other color value is
+  left in the script; nothing but a width or a data color is inline; warn, danger and good text are
+  the mix; a visit is on the Service edge and a booking on its pillar's; focused fields keep their
+  own rule; touch targets are 44px; the sticky headings stop at 767px; the S3.6 ring moved with the
+  CSS; a highlight is a tint; keyboard focus on a card is never hidden by its state; a month cell
+  says its load; every rule styles a class the page draws; and no other file styles `mp-`. The
+  inline-color allowance takes `--mp-color: ${mp_esc(...)}` beside `--pp-color: ${pp_esc(...)}` and
+  nothing crossed or raw.
+- A new `TestPlannerKitStylesheet` holds `planner_kit.bundle.css` to the same rules (tokens only, no
+  literal, named or Frappe color, every selector `pk-`, square, no shadow, one 767px breakpoint,
+  44px touch, reduced motion, a glow that tints a booking's ground and rings a name but never sets
+  a background image, sections in the old join order, well-formed comments), the three modules to
+  carrying no CSS, and both planners to loading it in the kit's own `frappe.require`.
+  `test_planner_phase6a` runs `styles.js` under node with a Desk present and finds it injects
+  nothing, and pins `kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"]` in both planners.
+- Run against the pre-change files, every new Maintenance Planner and planner_kit check fails except
+  the one that no other file styles `mp-`, which holds a fact about the repo.
+- The planner suites that read `MP*_STYLE` from the script (`test_planner_phase6a`, `6b`, `6c`,
+  `6d_ui`, `6e`, `test_maintenance_planner_crews_page`) read their section of
+  `maintenance_planner.css`; `test_s3_6_accessibility` reads the Maintenance Planner's focus ring
+  from it; `6a` and `6d_ui` read the kit's rules from the bundle.
+
+## [1.670.0] - 2026-10-14
+
+### Changed
+
+- **The Rental Planner is on the design tokens, and its CSS is out of its script** (custom pages
+  S3.4f, ERPNext TASK-2026-02823). The page wrote its stylesheet into `<head>` from the script
+  (`RP_STYLE`), in Frappe's palette with a literal hex for every bar, and painted its legend's
+  swatches with a jQuery `.css("background", ...)`. Its styles are now
+  `asset_management/page/rental_planner/rental_planner.css`, which Frappe's page loader sends with
+  the page, so an edit is never served stale from the `/assets` cache. Page CSS stays in `<head>`
+  for the rest of the session, so every selector starts with an `rp-` class. Behaviour is unchanged:
+  routing, `?start=`, the draft, the bars' buttons and labels (S3.6) and the states (S3.1) are as
+  they were, and the history harness passes untouched.
+  - **The board follows the Desk's light or dark theme.** The colors are the `--sf-*` tokens
+    (`docs/app-design-system.md`). Rental chrome is the Rent pillar: a confirmed rental is teal-deep
+    with an off-white label and the Rent chip edge (it was blue), a hold is the same pillar pale and
+    hatched with a dashed edge, and the board and the flow's card carry the pillar's teal stripe
+    along the top. A hand booking on Asset Booking is the warn fill with its navy label (it was
+    amber), out-of-service is the danger fill, hatched against red mixed with the fixed ink-900, and
+    prep and cleaning stay grey. (Not with `--sf-text-strong`: that is off-white in the dark theme,
+    so the stripe would turn lighter and the off-white label fall to 3.65:1; with ink it is about
+    7.7:1 in both themes. Text-strong is for text and edges, never a fill behind a label.) Pool days
+    are tinted with the pillar, warn and danger as they fill. Free and Taken are good and danger
+    chips. What holds a taken fountain is in the danger text color (red mixed with the strong text,
+    which reads on a white card and a navy one).
+  - **The legend is drawn by the bars' own rules.** Each swatch carries its bar's classes, so the
+    key cannot drift from the board. The old held swatch was a narrower hatch than the bar and the
+    out-of-service one solid where the bar is hatched; both now match.
+  - **Square and flat.** The board, its rows, bars, pool cells, the card and the page's fields are
+    square, the step rail rounds at the control radius and the chips are pills. The bar's hover
+    shadow is gone (hover brightens the color only), and outline is used for focus alone.
+  - **Nothing is said by color alone.** Today's column has a 3px bar along its top and its weight,
+    and says "Today" to a screen reader; a pool day that is full or nearly full says so. Today's bar
+    and line are the neutral chip edge (deep-sea-blue in light, sky-200 in dark), not `--sf-focus`,
+    so a focused booking on today's column still stands out from the line behind it.
+  - **Fields.** The range picker, the pick list's quantity and rate boxes, and the wizard's own Frappe
+    controls (its field groups and the package picker) are white and square in both themes, where
+    the wizard's fields used to keep the Desk's dark field. Bootstrap's `.form-control:focus` (0,2,0) would grey a focused field, so the focused
+    field has its own rule; and the page's field rule would make a disabled rate (its fountain not
+    ticked) look live, so a disabled one has its own rule too. On a phone they are 16px, so iOS does
+    not zoom into them.
+  - **Touch and phones.** On a touch screen a booking bar is 44px tall (a row grows to 52px to hold
+    it), and the steps, the toolbar's and the flow's buttons and the review's Edit links are 44px.
+    The breakpoint is the app's one phone width, 767px (it was 640px), and on a phone the flow's
+    Back and Next stay in reach at the bottom of the screen. The last inline layout styles (the range
+    picker's width, the package box, a heading's margin, two button rows, the Edit link) are classes.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Rental Planner: the shared checks (no `<style>` from the
+  script, no inline or jQuery color, tokens only, prefixed selectors, token radii, no shadow, one
+  767px breakpoint) and `TestRentalPlanner`, which holds every bar kind the server sends
+  (`_bar_kind` and out-of-service) to a rule, the legend to the bars' rules, the Rent pillar, status
+  fills with their label and edge, status text as the mix, no bar, swatch or cell fill mixed with
+  the themed `--sf-text-strong`, today's marker off the focus color, outline for focus only, the
+  focused and disabled field rules, 44px touch targets, the screen-reader words, every drawn class styled and
+  every rule drawn, and the `rp-` prefix to this page alone. Run against the old page, every check
+  on the page itself fails (the prefix check reads the other files, and passes on both).
+  `tests/test_s3_6_accessibility.py` reads the bar label's truncation and the focus rings from the
+  stylesheet now.
+
+## [1.669.0] - 2026-10-14
+
+Form kit P3.1 and the server half of P3.2 (ERPNext TASK-2026-02754 and TASK-2026-02755): one
+definition per piece of information, and Opportunity's two contact fields kept equal by every save
+that sets either one.
+No UI changes: the Party entry component is next, once the side panel (P4.4) has landed.
+
+### Added
+
+- **The information-block registry** (`form_kit/blocks.py`, P3.1). It defines Party, Site,
+  Schedule window, Scope by pillar, Money and Crew once each. Each block names the fields that carry
+  it on Opportunity and Project, and its three faces: the kit's entry component, the report face's
+  column kind and the print helper.
+  - It points at what exists rather than copying it. The Schedule window is
+    `utils/date_pairs.PAIRS` plus the pairs ERPNext validates itself. Scope by pillar is built from
+    the Opportunity config's request tables, with each stream's pillar from
+    `print_style.STREAM_PILLAR`. Money prints through Frappe's own formatter.
+  - **A face may be pending, never missing.** The Party and Site entry component is pending on
+    TASK-2026-02755. The Schedule window, Money and Crew entry components, and Crew's print helper,
+    are pending on TASK-2026-02753. Each names its task and what it will build.
+  - **Party's address is the Billing Address, and Site is the job site.** The plan put
+    `primary_address` in Party. That was written before v1.633.0 made ERPNext's `customer_address`
+    the visible Billing Address and kept Primary Address as the job site.
+  - The JavaScript twin is `public/js/info_blocks/blocks.js`. Nothing bundles it yet; the Party
+    component will be its first reader.
+- `tests/test_form_kit_blocks.py`, with its own CI step. It fails when a block is missing a face,
+  when a pending face names no task, or when a face points at an export, a report kind or a print
+  helper that does not exist. It also fails when a block names a field that the DocType's meta does
+  not have, or when the JS twin differs from the Python registry (checked under node).
+  - The meta is the v16 one: ERPNext's DocType JSON at `origin/version-16`, plus this app's Custom
+    Fields and the fields `setup/custom_fields.py` adds on migrate.
+  - `tests/fixtures/form_kit/erpnext_v16_project.json` is new, made the same way as the Opportunity
+    fixture. Its `_source` key records the commit and how it was produced.
+- **Opportunity's hidden Contact Person now follows the visible Primary Contact**
+  (`crm_enhancements/party_mirrors.py`, P3.2).
+  - **Why it matters.** People pick Primary Contact. ERPNext's own code reads the hidden
+    `contact_person`: *Create > Quotation* maps fields by name, and the Prospect's opportunity row
+    copies it too. So when the two disagreed, a Quotation went to someone other than the person on
+    the deal.
+  - It runs first in Opportunity `before_save`, ahead of
+    `sync_contact.refresh_primary_contact_copies`. A contact copied up therefore gets its title,
+    phone and email in the same save.
+  - **Which side wins.**
+    - A new record takes the visible field. If only the hidden one is set (by a mapping or an API
+      insert), it is copied up.
+    - On a saved record, the field a person changed in that save wins. Emptying Primary Contact
+      empties both, though on a Customer's deal ERPNext's `map_fields` (in `Opportunity.validate`,
+      before `before_save`) usually refills it from the account's own Primary Contact first.
+    - If only the hidden field changed, and to a value, it is copied up. This covers ERPNext's form,
+      which sets `contact_person` when the account changes, and an API call that only knows the
+      stock field.
+    - **A save that changes neither field leaves the pair exactly as it is**, and so does a saved
+      record whose stored copy cannot be read. So a board move, a guided step, ERPNext's daily
+      `auto_close_opportunity` or a bulk status change never rewrites the rows waiting for approval.
+  - **When it changes Contact Person it also refreshes ERPNext's copies of it**: `contact_display`
+    and `contact_mobile` (as v16's `get_contact_details` fills them) and `contact_email` (from
+    `custom_email`, as this app's Property Setter fetches it). Emptying Contact Person empties them.
+    v16 fills `fetch_from` values in `_validate_links`, before `before_save`, so without this the
+    email would still be the old person's. The other two are set only by the form's script. *Create
+    > Quotation* copies all three by name, so the Quotation would have had the new contact with the
+    old person's name and email.
+  - It copies only to a Contact that exists. It skips fields the meta does not have yet (ERPNext's
+    test bootstrap). It never raises: a failure goes to the Error Log with its traceback, against the
+    record.
+- **Party Mirror Preview**, a dry-run report (CRM Enhancements; System Manager and Sales Manager).
+  - It lists every Opportunity whose two contact fields disagree, with both values and what the
+    fix would make them (the visible contact, else the hidden one copied up). It writes nothing and
+    has no apply button.
+  - It reads with SQL, so User Permissions on Opportunity do not narrow it. Its roles (System
+    Manager, Sales Manager) see every Opportunity anyway, and it shows names only.
+  - It compares in Python, not SQL: under MariaDB's PAD SPACE collation `a <> b` ignores trailing
+    spaces, so a SQL check would report clean on a pair that is not.
+  - On production on 2026-10-14, 9 Opportunities had the two fields set to different contacts. The
+    plan counted 8 on 2026-10-13. Another 20 had only the hidden field set and 11 only the visible
+    one.
+  - **Nothing is fixed yet.** As with the normalization cleanup, Nik approves this list first. The
+    fix will then ship as a patch that runs the same rule.
+
+### Not changed, on purpose
+
+- **The address pair is not synced.** The plan asked for `customer_address` to follow Primary
+  Address. Since v1.633.0 `customer_address` is the visible Billing Address, which *Create >
+  Quotation* copies into the Quotation's billing address. Overwriting it with the job site would
+  undo that decision, so the two addresses stay independent.
+- **Project has no hidden contact field** (ERPNext's Project has no `contact_person`), so it has
+  nothing to mirror. Its equivalent pair for P7 is `primary_address` beside the older
+  `custom_customer__lead_address`, which `api/pickup_routing.py` and `api/travel.py` still read as a
+  fallback.
+
+## [1.667.0] - 2026-10-14
+
+### Added
+
+- **Links between related pages, from the forms** (custom pages S5b, ERPNext TASK-2026-02807). Each
+  form now opens the page that works on the same record, in the right state. Every link is a route,
+  so it is a history entry and Back returns to where it was pressed. Each shows only to those whose
+  roles open the target page (`frappe.boot.page_info`); anyone else would only be refused by it.
+  - **Project: View > Open in Project Planner.** The planner opens with the project as its Project
+    filter, as `/desk/project-planner?project=…`. A project that has not started yet opens on the
+    week it starts (`/week/<expected_start_date>`), where its work is. The button is only on a
+    project the planner plans: its type is one of `crew_availability.PLANNER_PROJECT_TYPES` (the
+    test holds the form's copy of the list to the engine's), and it is not Completed or Canceled.
+    New `public/js/project_enhancements/project_planner_link.js`, registered in
+    `doctype_js["Project"]`. It declares nothing at the top level, because doctype_js concatenates
+    every Project script into one.
+  - **Project Quality Inspection: Open in Inspection Wizard**, on a saved draft. It opens
+    `/desk/inspection-wizard/<inspection>/0`, the wizard's own path form, at the first section. A
+    submitted inspection has nothing to step through in the wizard, so it gets no button. This is
+    the DocType's first form script. Frappe loads it from the DocType folder, so it is not in
+    doctype_js, which would load it twice.
+  - **Rental Booking: View > Open in Rental Planner** replaces the bare "Rental Planner" link. The
+    board opens on the booking's first day (delivery, else setup, else the event) as `?start=`,
+    which the planner reads since v1.662.0. A booking with no dates opens the bare board.
+  - **Maintenance Day Board: a submitted visit links to Visit Review.** Cards in Submitted and
+    Flagged get "Open in Visit Review" (`/desk/visit-review/<visit>`) under the card, beside the
+    drafts' Visit Wizard link from v1.662.0. A card is itself a link and cannot hold another. A
+    Projects Manager reads the board but is not a reviewer, so the link depends on the page's roles.
+  - **Maintenance Day Board: Open in Maintenance Planner** in the toolbar opens the planner's week
+    holding the day shown (`/desk/maintenance-planner/week/<day>`). That is the planner's own
+    route, so the Maintenance Planner is unchanged.
+- **The Project Planner takes a project from `frappe.route_options`** (`take_route_project`, called
+  from `handle_route`). It reads the key after the planner restores its last-used view, so the
+  form's project wins over a remembered one. The key is consumed the way the list view consumes its
+  filters, and an emptied object is nulled. The PM filter is cleared so it cannot hide that
+  project's cards. A remembered last-used Month view still applies: it replaces the entry and keeps
+  the query until the planner reads it.
+  - **It is a one-off.** Nothing is saved to the remembered Project and PM filters, and the "last
+    used" view is not saved while the link's project is still the filter (`project_link`). A
+    filter the person picks afterwards is saved as before.
+  - **The key leaves the address in place** (`history.replaceState`, the planner's only history
+    write). Otherwise Back onto that entry, after switching to All and opening a task, would put
+    the link's filter back.
+  - **A linked project the planner does not list stays the filter**, offered in the select under
+    its name, instead of the filter quietly resetting to all projects. A picked filter the planner
+    no longer lists still resets, as before. When the filtered project has nothing in the range on
+    screen and nothing unscheduled, the calendar says "No work for <project> in this range."
+- **The new links that route without options clear `frappe.route_options` first.** The router
+  copies every address's query into it and nothing clears it. On v16.50, `set_route` writes
+  whatever is left there into the next address. An options object replaces it, so only the
+  path-only routes need this: the Inspection Wizard, a dateless booking and the Maintenance
+  Planner. The wizard's own `route_to` already does the same.
+
+### Changed
+
+- New bench-free suite `tests/test_form_page_links.py`, with its own CI step. It checks the source
+  shape and runs `scripts/test_form_page_links.js`, which loads the real form and page scripts
+  against a model of v16.50's router. That model puts an options object in `route_options` and
+  writes it to the address as the query. It pushes or replaces the entry, and copies the query back
+  into `route_options` on every route change. The harness presses each button and checks the
+  target page's state. It covers Back and Forward, a name that needs escaping, a leftover option,
+  the planner's last-used view and the Day Board on another day.
+
+## [1.666.0] - 2026-10-14
+
+### Added
+
+- **The Device Console's camera now scans on an iPhone** (S6b, ERPNext TASK-2026-02808). The
+  console used `BarcodeDetector` with no fallback, and iPhone Safari has none, so the camera button
+  never appeared there. It now falls back to jsQR, as the Inventory Scanner Audit has since
+  v1.521.0. jsQR reads QR codes only, so a device's 1D barcode on an iPhone still needs the wedge
+  scanner or typing.
+- **A shared scanner kit**, `public/js/scanner_kit/`, loaded as `scanner_kit.bundle.js`, which sets
+  `window.sf_scanner`. The Device Console and the Inventory Scanner Audit each carried their own copy
+  of the camera sheet and of the history handling that makes the phone's Back button close a sheet,
+  and the copies had drifted: that drift is how the console lost the iPhone. Both pages now use the
+  kit.
+  - `sheets.js` is the sheets' Back/Forward handling, moved from the two pages unchanged: one
+    history entry per sheet, marked in `history.state`, shown only once its route has settled;
+    Back pops it; a sheet closed another way steps back off its own entry once.
+  - `reader.js` picks the decoder. Where `BarcodeDetector` reads QR, it is used alone and jsQR is
+    never loaded, so Android and desktop Chrome pay nothing for it. With no `BarcodeDetector`, or one
+    that reads nothing, jsQR is used alone (QR only). Where the detector reads barcodes but not QR,
+    both are used, for barcodes and QR codes.
+  - jsQR is the vendored file /stock-scan already ships. It is loaded raw through `frappe.require`
+    by its bare path, never bundled: it is a UMD file that sets `window.jsQR`. /stock-scan's own
+    scanner is untouched.
+  - `camera.js` is the Camera Scan sheet. It also shows a Torch button where the camera track
+    offers one (Chrome on Android; iOS does not), and says why there is no camera: access blocked
+    for the site, no camera found, or a generic failure.
+  - **iOS handling.** The video is `playsinline`, `muted` and `autoplay`, and `muted` is also set as
+    a property. The camera uses `facingMode: "environment"` with no audio, and is asked for only
+    from a tap, after the sheet is up. Every track is stopped on close, when the document goes
+    hidden, on `pagehide`, and on frappe's `hide` of the page's wrapper, so the camera light goes
+    off.
+  - Each page loads the kit behind a guard, the same pattern it uses for sf_kit. A kit already on
+    the page answers at once, so nothing changes in timing after the first load. On a Desk's first
+    visit, a page show that comes while the kit is loading, and any sheet tapped open, wait for it.
+  - If the kit never arrives, each page falls back to plain dialogs with no history entry. The
+    camera button stays hidden, and scanning, Choose Employee, Find Item and the count still work.
+
+### Fixed
+
+- **Leaving a scanner page while its camera was still fading in left the camera running.** The
+  router closes a displayed dialog on a page change, but not one still fading in. That sheet then
+  finished showing over the next page with the camera on. The kit now stops the camera on the
+  page's `hide`, and closes the sheet as soon as Bootstrap allows.
+- **The Device Console's camera now closes when the phone locks or the app is switched.** It had no
+  `visibilitychange` close. The Scanner Audit had one, and the kit now does this for both pages.
+- **A jsQR file that failed to load can be loaded again without reloading the page.** v16.50's
+  `assets.js` marks a path as executed even when its `<script>` failed, so every later
+  `frappe.require` of it does nothing. The message still said to check the connection, which could
+  never help. On a later open after a failure, the kit now adds a `<script>` of its own: it removes
+  any earlier failed one, and the new one has a `?retry=` query so the browser fetches the file
+  again. The retry settles when the file loads, when it errors, or after 10 seconds.
+- **A scanner kit that throws as it starts no longer leaves its page stuck.** If `kit.sheets()` or
+  `watch()` threw, one of two things happened. With the kit already on the page, the page's own
+  start-up threw. On a first visit, the queue of shows and taps waiting for the kit was never
+  cleared, so the page never decided its first show and no sheet would open. Each page now treats a kit that throws as no
+  kit: it falls back to the plain sheets, and the queue still runs.
+
+### Tests
+
+- `scripts/test_scanner_kit.mjs` (run from the new `tests/test_scanner_kit.py`, and as its own CI
+  step) tests the kit against stubbed `navigator.mediaDevices`, jsQR, and a `BarcodeDetector` that is
+  present, absent, or present without QR. It checks:
+  - the decoder each case picks;
+  - that jsQR is never loaded where the detector reads QR;
+  - that every track stops on each way out;
+  - the inline muted video and the camera constraints;
+  - the failure messages and the torch;
+  - one history entry per sheet, popped by Back.
+- `tests/test_scanner_kit.py` fails the build if:
+  - either page keeps its own camera loop, decoder or history writes;
+  - either page loads the kit without its guard;
+  - the kit imports jsQR or any /stock-scan code.
+- `scripts/test_desk_page_history.js` now runs both pages on the real kit, with ten new
+  scenarios:
+  - the console reading a QR code through jsQR on an iPhone, and jsQR never loaded where the
+    detector reads QR;
+  - the Scanner Audit reading a location label through jsQR on an iPhone;
+  - the page hide during the camera's fade-in;
+  - the phone locking with the camera open;
+  - the blocked and missing camera messages;
+  - a console with no kit;
+  - a first visit where the kit arrives late, with a sheet URL and with a sheet tapped open.
+- `tests/test_desk_page_history.py` now reads the shared history logic from the kit.
+  `tests/test_s3_page_states.py` checks that the S3.1 start-up panel never waits for the scanner
+  kit.
+
+## [1.664.0] - 2026-10-14
+
+### Changed
+
+- **The Project Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4d, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Drag and drop, resizing, tap to move, the calendar, crew and heatmap geometry, the route
+  map, the quick looks and every keyboard path work as before, and the S3.6 labels, `role=button`
+  day numbers and crew heads and their focus rings are kept.
+  - **CSS out of the script.** Eleven `<style>` elements the script wrote into `<head>` (`PP_STYLE`,
+    `PP3B_STYLE` ... `PPT4_STYLE`, 425 rules) are now `project_planner.css` beside the page,
+    which Frappe's page loader sends with the page. One section per phase, in the order the script
+    injected them, so the cascade between them is unchanged. Page CSS stays in `<head>` for the
+    session, so every selector starts with one of the page's own families (`pp-`, `p6b-`, `p6e-`,
+    `t1-`, `t4-`), which nothing else in the app styles. The Maintenance Planner is unchanged (its
+    own PR), and so is planner_kit's shared stylesheet.
+  - **Data colors stay data.** A task's own color and a planner resource's color come from records
+    people edit, so the script still sets them inline, but only as one custom property,
+    `style="--pp-color: ${pp_esc(...)}"`, which the CSS paints with (the card's edge, a person's dot,
+    a crew badge, a Color-by swatch, a timeline bar in the project quick look). Color by keeps
+    `--pp-p6c-c`. No other color is written inline.
+  - **On the tokens.** 205 reads of Frappe's variables and 121 literal colors (50 distinct) became
+    the semantic and status tokens. A load is `--sf-good` up to 75%, `--sf-warn` to 100% and `--sf-danger` over, as a fill or
+    a tint; status as text (a red availability, an overdue date, a missing location) is the token
+    mixed half and half with `--sf-text-strong`, never plain yellow. The bookings from the other
+    planners take their pillar's chip edge: a maintenance visit Service, a rental Rent, travel
+    Neutral (they were slate, amber and dark yellow). Selection (Phase 6B) is `--sf-violet`.
+  - **Shape.** Sections, grids, cards, trays, the stop list and the floating bars are square, with no
+    shadow: a conflict or a drop target is an inset outline, the crew lead's badge is ringed in
+    `--sf-text-strong`, a jumped-to card blinks its focus ring, and a floating bar has a 2px edge.
+    The view switch and the toggles round at `--sf-radius-control`; chips, badges and today's number
+    are pills. Today's number and the view on screen are `--sf-primary` with its navy label and bold.
+  - **Fields.** The toolbar's selects and search and Build out's grid cells are white, square and
+    edged in both themes, with their own focused rule, because Bootstrap's `.form-control:focus`
+    (0,2,0) outranks a plain field rule. On a phone the toolbar's fields are 16px, so iOS does not
+    zoom into them.
+  - **Touch and phones.** On a touch screen every toolbar control, card, day number, strip day and
+    the move bar's buttons are 44px (`--sf-touch-min`; they were 32 to 40px). The seven 760px blocks
+    are the app's one phone width, 767px. The sticky headings were a `min-width: 761px` block; they
+    are written for every width and switched off at 767px. The 1024px block that kept a wide grid
+    from scrolling the page sideways (`overflow-x: clip`) now applies at every width; clip makes no
+    scroll container, so the sticky headings and the fixed bars are unaffected. The move bar sits
+    above a phone's safe area.
+  - **The route map reads the tokens the stop list paints.** Google's markers and line take a color
+    value, so `PP_ROUTE_COLORS()` reads them through `getComputedStyle`, with each token's own value
+    as the fallback: a stop bahama-blue (was `#2563eb`), the shop green (was `#16a34a`), the road
+    fresh-blue. The printed card of an overdue task takes the same red as its edge on screen.
+- **A month cell says its load.** The month view's one-line availability cells were a tint and
+  nothing else; each now carries its words ("3h free", "Over 2h") for a screen reader.
+- **Less motion when asked.** The AI draft spinner and the jumped-to card's blink stop under
+  `prefers-reduced-motion`.
+- **Review follow-ups.**
+  - A highlighted card (Color by's highlight) is now marked by a focus-colored tint, not an outline.
+    The outline rule (0,3,0) outranked the selected, moving and drafted rings and the drop target,
+    so on a highlighted card none of them showed (guarded).
+  - Keyboard focus on a card is a ring drawn inside it on `::after`, not an outline. A card's
+    outline carries its state, and one element has one outline: the focus outline lost to the later
+    state rules, so a selected or drafted card showed no focus at all. On its own channel, a card
+    that is both selected and focused shows both (guarded).
+  - On a touch screen a month cell's day number keeps its 44px height but is 32px wide rather than
+    about 44px, so it fits a phone's 53px cell beside the day's "free" text (guarded).
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Project Planner with the same checks as the other pages, and
+  a new `TestProjectPlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--pp-color` and the CSS paints them; the
+  route map's colors read the tokens the stop list paints; no other color value is left in the
+  script; warn text and thin warn rings are the mix; focused fields keep their own rule; touch
+  targets are 44px; the sticky headings stop at 767px; the S3.6 focus ring moved with the CSS; a
+  month cell says its load; every rule styles a class the script draws; and no other file styles the
+  page's short prefixes. The inline-color check allows exactly one pattern,
+  `--pp-color: ${pp_esc(...)}`, with its own test. Each new page check fails on the pre-change files,
+  except the one that no other file styles the short prefixes, which holds a fact about the repo.
+- The planner suites that read the old `*_STYLE` constants (`test_project_planner_page`,
+  `test_project_planner_phase3a_page`, `test_project_planner_phase4_page`, `test_planner_phase3b`,
+  `test_planner_phase5`, `test_planner_phase6a`, `6b`, `6c`, `6d_ui` and `6e`,
+  `test_planner_build_out`) read their section of `project_planner.css` for the Project Planner and
+  keep reading the script for the Maintenance Planner; `test_s3_6_accessibility` reads the focus ring
+  from the CSS.
+
+## [1.663.0] - 2026-10-14
+
+Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:
+
+- **P6.3:** the board, a table and a timeline under one filter bar.
+- **P6.4:** the needs-attention list.
+- **P6.8:** focus, meaning On Hold folded, snooze, quick filters and saved views.
+
+Part A (v1.654.0) matched SQL on prod at 74 open deals: $293,725, and $101,663 weighted.
+
+Still out of scope:
+
+- **P6.6:** the side panel.
+- **P6.7:** quick add and bulk.
+- **P6.10:** retiring the stock Kanban's patches and the list's redirect, which waits for Nik's
+  sign-off on the board. The Kanban, its patches and the redirect are untouched.
+
+### Added
+
+- **Three views under one filter bar** (P6.3). The views are the board, a sortable table, and a
+  timeline of expected close dates by month. Past months are marked, and deals with no date come
+  last.
+  - Each view is its own route: `/desk/opportunity-board/<stages|streams>`, `/table`, `/timeline`
+    and `/attention`. The deal panel sits at `…/move/<name>` over any of them.
+  - The filters are page state, not the address, so switching views keeps them and Back returns to
+    the view before.
+  - The table's column heads sort, and a turned column keeps blanks (no amount, no date) last
+    either way.
+  - On a phone the table stacks into one block per deal, each value under its column's name.
+    Nothing scrolls sideways at 390px.
+  - Part A's addresses still open the same screens.
+- **Needs attention** (P6.4) lists every open deal that matches any of these rules:
+  - **stale**: past the glow thresholds; On Hold is never stale, as it never glows;
+  - **past its expected close date**;
+  - **missing an amount**;
+  - **missing what its stage asks for**: the P4.6 completeness, from the form kit's own lists.
+
+  The list is sorted by value, with no amount last, and each deal carries a chip for each reason.
+  A snoozed deal stays off it until its date. The SQL that checks it is in
+  `crm_enhancements/README.md`. The test suite runs that exact query on SQLite, child tables
+  included, against deals that go through the real `get_board` and the form kit's real
+  `completeness_for`. Both must name the same deals in the same order.
+
+  A deal opens the normal way (the guided page by default). The task says "in the side panel";
+  that waits for P6.6, and the code says so where the deal opens.
+- **On Hold folds into a count by default** (P6.8). On prod on 2026-10-14, 36 of 74 open deals sat
+  there.
+  - "Show them" unfolds the column and "Fold" folds it again.
+  - A folded column is narrower, is still a drop target, and its deals still count in every total.
+- **Snooze** (P6.8), in the deal panel. Pick a date to "Hide it until", and add a reason if you
+  like.
+  - A snoozed deal is hidden from every view until its date. On that date it comes back marked
+    **Back from snooze**, until someone wakes it or snoozes it again.
+  - "Show snoozed (N)" shows the snoozed deals, dimmed and marked. The head says how many are
+    hidden.
+  - **Two new Opportunity custom fields**, `custom_snoozed_until` (Date) and
+    `custom_snooze_reason` (Small Text). Both are hidden on the form, `no_copy` and have no
+    default; they are in `fixtures/custom_field.json`, after `custom_guided_client_id`.
+  - Hidden fields are not in the guided flow, so the guided page never shows them and
+    `save_step` cannot write them. Snoozing has its own endpoint instead.
+- **`opportunity_board.snooze`**, POST. It checks write permission on the deal and takes the same
+  `modified` lock and conflict shape as `save_step`.
+  - It refuses a date that is not after today or is more than a year out, and it refuses a closed
+    deal.
+  - It writes only the two fields, with `db_set`, never `save()`. A focus tool must not be stopped
+    by an unrelated validation (an old deal missing a field that became required since), nor re-run
+    the stage clock or the probability hooks.
+  - It leaves an Info comment on the deal's timeline and sends the board's realtime event.
+  - **It returns `str(get_datetime(modified))`.** `db_set` stamps `now()`'s text, which always
+    carries `.000000`, but the table's datetime prints without microseconds when they are zero.
+    Returning the raw text would turn the next move into a false conflict once in a million saves.
+- **Quick filters** (P6.8): My deals, an owner, a value stream (or "No value stream"), "Over $" an
+  amount, and Closing this month.
+  - The forecast strip, the column totals and the head's count follow the filters, so the strip
+    forecasts what is shown. With no filter and Show snoozed on, they are the whole board that the
+    SQL checks measure.
+  - On a phone the bar folds behind one button.
+- **Saved views** (P6.8) live in the planners' own store, `api/planner_views_prefs.py`, under a
+  new planner key, `board`.
+  - That is the caller's `__UserSettings` row, written straight to the table. A deploy's Redis
+    FLUSHDB cannot lose a view, which frappe's own `user_settings.save` would.
+  - A view holds the filters, the view, the board's layout and the table's sort. The server's
+    schema is held equal to the page's by test.
+  - "Last used" is saved a moment after anything changes, and a bare `/desk/opportunity-board`
+    opens it. Any other address wins.
+  - "Save this view" names one, and the Saved views list applies or deletes it. Up to 20 per
+    person.
+  - The board's views are gated by read permission on Opportunity, not a planner role. The
+    planners' own schemas and gates are unchanged.
+- **`get_board` sends more** per deal: `owner` and `owner_name`, `snoozed_until` and
+  `snooze_reason`. It also sends `can_snooze`, so a site that has not migrated the fields yet
+  shows no snooze controls.
+- **`tests/test_opportunity_board_focus.py`**, bench-free, with its own CI step:
+  - the filters, snooze states, attention rules and order, table sort, timeline months, routes and
+    saved-view shape, under node;
+  - the attention SQL check;
+  - the snooze endpoint against a frappe stub;
+  - the prefs `board` key;
+  - the two fields;
+  - the page's wiring.
+
+- **What the PR review found, fixed before merge:**
+  - An explicit `/stages` address no longer comes up as value-stream rows because the last-used
+    view was "By value stream". The remembered layout applies only to a bare address or another
+    view (`last_layout_applies`).
+  - A click on the layout already shown now redraws. There is no route change for it, so it used
+    to do nothing (`layout_change`).
+  - A saved owner or stream that no deal has any more stays a selected choice, instead of reading
+    "Anyone" while it still filters.
+  - The snooze controls appear only to someone who may write an Opportunity.
+  - The snooze's `db_set` passes `notify=True`, so a form open on the deal hears of it
+    (`doc_update`, which is a different event from the board's own).
+  - The date input stops at the server's one-year cap.
+
+### Changed
+
+- `tests/test_opportunity_board.py`, part A's suite, expects the routes' new `view` and `bare`
+  keys, the deal's new fields, and seven quiet requests where there were two.
+
+## [1.662.0] - 2026-10-14
+
+### Added
+
+- **Links that keep your place: three Desk pages keep what they show in the address** (custom pages
+  S5a, ERPNext TASK-2026-02807). A reload, a pasted link and Back and Forward now land on the same
+  state, where before a reload went back to the default and Back left the page.
+  - **Maintenance Day Board: the day.** `/desk/maintenance-day-board?date=YYYY-MM-DD` shows that day,
+    and the bare address is today. The board gains ‹ › Today and a date box. Each day stepped to is
+    a history entry, so Back returns to the day before. Today's date in the address, or one that is
+    not a real calendar day, leaves the bare address, which keeps following the clock past midnight
+    on a wall screen. `get_day_board_data` takes an optional `date`. With none, or today's, it runs
+    exactly the queries it always has. For another day the columns are read as of that day: the
+    drafts scheduled for it (`scheduled_visit_date`), the maintenance clock-ins that started on it,
+    the visits done on it, and the flagged visits done in the seven days up to it. A day changed
+    while a load is in flight is asked for at once, and the older reply is dropped rather than
+    painted over the newer day. Each scheduled draft also links to its Visit Wizard
+    (`/desk/visit-wizard/<visit>`).
+  - **Another day's visits are dated by the visit, not by `modified`.** Billing writes the Sales
+    Invoice link onto a submitted visit (`api/maintenance_billing.py`) and the sign-off writes its
+    stamps (`sapphire_maintenance/sign_off.py`). Both move `modified`, so a visit done on the 1st
+    and invoiced on the 3rd would have shown on the 3rd's board and not on the 1st's. A visit's day
+    is its `visit_date`, the day the work was done, which the move into review stamps when blank
+    (v1.595.1). An older visit with none falls back to the day of its `clock_in_time`. The record
+    has no submitted timestamp, and `visit_date` is the field the contract cadence already rolls
+    forward from. "Submitted" and the 7-day "Flagged" window both use it.
+    `tests/test_maintenance_board_days.py` runs those queries against an in-memory SQLite copy of
+    the columns, with a visit whose `modified` is two days after its visit date. Today's queries
+    are unchanged and are pinned by the arguments they send.
+  - **No date the board can be handed raises.** A malformed `date` used to be a 417 from
+    `frappe.throw`, and `9999-12-31` a 500 when stepping a day past it overflowed. The server now
+    applies the client's rule: a YYYY-MM-DD calendar day from 1900 to 2999, and anything else is
+    today.
+  - **A past day is not polled.** Its data cannot change, so the 60 s poll stops while one is
+    shown. It starts again when the board moves to today or a later day, or on the next show.
+  - **A later day left on screen past midnight becomes the bare today.** It gets today's labels,
+    a disabled Today button, the server's own today, and the bare address, corrected in place. This
+    is the same thing the bare address already did at midnight.
+  - **Rental Planner: the board's dates.** `/desk/rental-planner?start=YYYY-MM-DD` is the board's
+    first day, and the bare address is today. ‹ › and Today push an entry each. The flow's Planner
+    buttons return to the dates it left rather than to today, and the flow's own Back still steps
+    back through history onto them.
+  - **Location Timeline: the trail.** `?employee=…&from_date=…&to_date=…` is the trail on screen, and
+    the bare address is no one's trail. Each person, date or Load picked is an entry. A Live row
+    routes with the trail in its options, and the Trail button carries the trail in the pickers,
+    so Back and Forward onto a trail already drawn load nothing again. The Employee and Job Interval
+    buttons open it the way they did, and their trail now reaches the address too.
+  - **Security: an `employee` from the address can no longer inject markup into the picker.** An
+    employee the picker does not list was admitted with the raw value as its label. v16.50's
+    Autocomplete draws labels with `.html()`, so `?employee=<img onerror=…>` would have run script.
+    The hole predates this release, but this release makes the address the shareable way in. Now
+    only an employee the picker lists, or one that looks like an Employee name, is accepted. That
+    means letters, digits, space and `. _ - /`, at most 140 characters; anything else is dropped
+    and the address corrected. The admitted label is escaped as well. The desk harness checks that
+    a markup-bearing param is neither picked, listed nor written to the page.
+
+### Changed
+
+- **How the three pages keep the address, and why each writes its own.** Frappe v16's router copies
+  the address's query into `frappe.route_options` on every route change, and `set_route(page, {k:
+  v})` puts `k` there too. So each page reads its keys from `route_options` and consumes them as the
+  list view does: it deletes each key and nulls an emptied object, or the next plain `set_route` to
+  the page would replay them. Before v16.50, though, `set_route` pushes the path alone; the query
+  only decides whether to push (frappe PR #40040 changed that in v16.50). Routing to the page on
+  screen to change its query therefore loses the query, which is what broke Plan a Trip in v1.520.0.
+  Each page instead writes its own address through one helper, on `window.location.pathname`, so a
+  workspace shell the router put in front of the page name stays. It uses `pushState` for a state the
+  person chose and `replaceState` to correct the entry on screen, and writes nothing when the
+  address already says it. Back onto such an entry is an ordinary `popstate`: the router re-renders
+  the same page and the show reads the query from `route_options`. The guards that forbade any
+  history write on these pages (`test_desk_page_history`, `test_rental_planner`,
+  `test_location_timeline_page`, `test_s3_page_states`) now allow exactly that one writer.
+- **Both history harnesses model the router on either side of v16.50.**
+  `scripts/test_desk_page_history.js` already modelled the path-only push. It now also models the
+  newer one (`makeDesk({ queryInUrl: true })`): plain values written as themselves, the query pushed
+  with the path, `set_route("/desk/a?x=1")` filling `route_options`. The deep-link scenarios run
+  under both. `scripts/test_rental_planner_history.js` gains what it lacked: `route_options` filled
+  from the address on every route change, a plain object among `set_route`'s parts moved there, the
+  push skipped when path and query are unchanged, and a session history the page can write. The
+  scenarios cover a pasted address, each state change as an entry, Back and Forward, a reload, a
+  malformed date, and another page's `set_route` with options followed by a plain one that must
+  not replay them. The S3.1 harness gives the Day Board its bare address and `get_today`.
+- New bench-free suites `tests/test_page_deep_links.py` and `tests/test_maintenance_board_days.py`
+  (a `frappe` stub, so its own step), each with its own CI step. The desk harness gains opt-in
+  intervals on its clock (`makeDesk({ intervals: true })`) and a settable `desk.today`, so the Day
+  Board's poll and midnight run there.
 
 ## [1.661.1] - 2026-10-14
 

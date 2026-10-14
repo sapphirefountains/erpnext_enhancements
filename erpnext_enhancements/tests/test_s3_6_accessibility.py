@@ -64,6 +64,10 @@ def _statement(code, start):
 	raise AssertionError(f"no end to the statement at {code[start : start + 80]!r}")
 
 
+def _rental_css():
+	return re.sub(r"/\*[\s\S]*?\*/", "", RENTAL.with_suffix(".css").read_text(encoding="utf-8"))
+
+
 GLYPH_BUTTON = re.compile(r"<button\b[^>]*>\s*(?:[‹›↻×✕🔍📷]|&#\d+;|&times;)\s*</button>")
 
 
@@ -103,14 +107,20 @@ class TestTheRentalPlannerAnswersTheKeyboard(unittest.TestCase):
 		"""Some engines ignore text-overflow on a <button>, so the ellipsis is on a span inside it."""
 		code = _code(RENTAL)
 		self.assertIn("$('<span class=\"rp-bar-text\"></span>').text(text).appendTo($bar)", code)
-		self.assertIn(
-			".rp-bar-text{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}", code
+		# The page's CSS moved out of the script into rental_planner.css in S3.4f (v1.670.0).
+		self.assertRegex(
+			_rental_css(),
+			r"(?m)^\.rp-bar-text \{\s*display: block;\s*overflow: hidden;\s*white-space: nowrap;"
+			r"\s*text-overflow: ellipsis;\s*\}",
 		)
 
 	def test_focus_is_visible(self):
-		code = _code(RENTAL)
-		self.assertIn(".rp-bar:focus-visible{outline:2px solid var(--sf-focus);", code)
-		self.assertIn(".rp-step:focus-visible{outline:2px solid var(--sf-focus);", code)
+		css = _rental_css()
+		for selector in (".rp-bar:focus-visible", ".rp-step:focus-visible"):
+			with self.subTest(selector=selector):
+				self.assertRegex(
+					css, r"(?m)^" + re.escape(selector) + r" \{\s*outline: 2px solid var\(--sf-focus\);"
+				)
 
 	def test_the_board_nav_buttons_are_labelled(self):
 		code = _code(RENTAL)
@@ -203,9 +213,12 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		self.assertIn("open(e);", binder)
 		self.assertEqual(code.count("this.bind_week_links($"), 2)
 		self.assertNotIn('find("[data-week]").on("click", (e) =>', code)
-		self.assertIn(
-			".pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);",
-			code,
+		# The page's CSS moved out of the script into project_planner.css in S3.4d (v1.664.0).
+		css = re.sub(r"/\*[\s\S]*?\*/", "", PROJECT.with_suffix(".css").read_text(encoding="utf-8"))
+		self.assertRegex(
+			css,
+			r"(?m)^\.pp-day-num:focus-visible,\s*\.pp-crew-head:focus-visible,\s*\.pp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
 		)
 
 	def test_maintenance_planner(self):
@@ -222,9 +235,12 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		crew = _statement(code, code.index('.find("[data-week]")'))
 		self.assertIn('.on("click", open_week)', crew)
 		self.assertIn("open_week(e);", crew)
-		self.assertIn(
-			".mp-day-num:focus-visible,.mp-crew-head:focus-visible,.mp-title:focus-visible{outline:2px solid var(--sf-focus);",
-			code,
+		# The page's CSS moved out of the script into maintenance_planner.css in S3.4e (v1.673.0).
+		css = re.sub(r"/\*[\s\S]*?\*/", "", MAINTENANCE.with_suffix(".css").read_text(encoding="utf-8"))
+		self.assertRegex(
+			css,
+			r"(?m)^\.mp-day-num:focus-visible,\s*\.mp-crew-head:focus-visible,\s*\.mp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
 		)
 
 

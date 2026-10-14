@@ -54,12 +54,22 @@ class TestTheBehaviourHarness(unittest.TestCase):
 
 class TestTheRouterOwnsHistory(unittest.TestCase):
 	"""Frappe's router owns the Desk's history; a page writing its own gets a popstate the
-	router re-renders as whatever the URL still names."""
+	router re-renders as whatever the URL still names.
+
+	One exception since v1.662.0: the board's dates are its address's query (``?start=``), which
+	the router does not write on older v16 builds, so the board writes its own address through
+	one helper. A popstate onto such an entry is the board again, re-rendered with its ``start``
+	(tests/test_page_deep_links.py)."""
 
 	def test_no_history_writes_of_its_own(self):
 		code = _code(SCRIPT)
-		for token in ("pushState", "replaceState", "popstate", "beforeunload", "location.href ="):
+		for token in ("popstate", "beforeunload", "location.href ="):
 			self.assertNotIn(token, code)
+		writer = code[code.index("write_board_address(push) {") : code.index("go(route, replace) {")]
+		for token in ("pushState(", "replaceState("):
+			with self.subTest(token=token):
+				self.assertEqual(code.count(token), 1)
+				self.assertIn(token, writer)
 
 	def test_every_screen_is_a_route(self):
 		code = _code(SCRIPT)

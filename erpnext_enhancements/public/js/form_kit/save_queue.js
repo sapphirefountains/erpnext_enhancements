@@ -32,6 +32,9 @@
  *   after the person signs in). Waiting flush() calls reject with the error, so the page keeps the
  *   person on the step for a validation message.
  *
+ * - `manual: true` (form kit P4.4, the side panel's required fields on a move) never autosaves:
+ *   changes wait until flush(), so nothing reaches the record until the person commits the move.
+ *
  * States, for the always-visible saving line: "saved", "dirty", "saving", "error", "conflict",
  * "expired". Pure: no frappe, no DOM, timers injected.
  */
@@ -75,7 +78,7 @@ export function create_save_queue(opts) {
 
 	function schedule() {
 		cancel_timer();
-		if (state === "expired" || state === "conflict") return;
+		if (opts.manual || state === "expired" || state === "conflict") return;
 		timer = set_timeout(() => {
 			timer = null;
 			flush().catch(() => {});

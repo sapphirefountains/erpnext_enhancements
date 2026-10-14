@@ -426,6 +426,23 @@ def backfill_opportunity_to_customer(doc, method=None):
 # ------------------------------------------------------------------ the gate
 
 
+def lead_source_required(doctype):
+	"""Whether a NEW ``doctype`` record must carry a Lead Source: the settings that
+	:func:`enforce_source` refuses a save by. The form kit's quick add asks for the field
+	only while this is true (``form_kit/config/opportunity.py`` ``quick.when``), so the
+	server decides and the Desk never reads the Settings Single."""
+	if not _has_attribution_fields(doctype):
+		return False
+	settings = _settings()
+	if not _flag("lead_attribution_enabled", settings):
+		return False
+	toggle = {
+		"Lead": "require_lead_source_on_lead",
+		"Opportunity": "require_lead_source_on_opportunity",
+	}.get(doctype)
+	return bool(toggle and _flag(toggle, settings))
+
+
 def enforce_source(doc, method=None):
 	"""``validate``: require a Lead Source on NEW Leads/Opportunities.
 
@@ -448,16 +465,7 @@ def enforce_source(doc, method=None):
 		return
 	if _bulk_context():
 		return
-
-	settings = _settings()
-	if not _flag("lead_attribution_enabled", settings):
-		return
-
-	toggle = {
-		"Lead": "require_lead_source_on_lead",
-		"Opportunity": "require_lead_source_on_opportunity",
-	}.get(doc.doctype)
-	if not toggle or not _flag(toggle, settings):
+	if not lead_source_required(doc.doctype):
 		return
 
 	if _get(doc, "custom_lead_source"):

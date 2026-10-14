@@ -5,6 +5,23 @@
 // never removed, so a timer left running would poll all day); on_page_show refreshes at
 // once on the way back. Cards link to the underlying documents. Its loading, error and
 // no-access panels and its server call come from sf_kit (v1.645.0).
+//
+// Links on to the pages that work on the same visits (v1.667.0): a submitted visit's card also
+// opens it in Visit Review, and the toolbar opens the Maintenance Planner on the week of the day
+// shown, each only for those whose roles open that page.
+//
+// The day shown lives in the address (v1.662.0): /desk/maintenance-day-board is today, whatever
+// day that is, and ?date=YYYY-MM-DD is that day. Each day stepped to with ‹ › Today or the date
+// box is a history entry of its own, so Back returns to the day before it and Forward comes back;
+// a reload or a pasted link opens the same day. The router copies the address's query into
+// frappe.route_options on every route change, and a link from another page puts its options
+// there too, so every show reads the date from route_options and consumes it. A date that is not
+// a real calendar day is ignored, and so is today's own date: both leave the bare address, which
+// keeps following the clock past midnight on a wall screen, as does a later day left on screen
+// until it becomes today. A past day cannot change, so it is not polled. The page writes the
+// address itself (history.pushState for a new day, replaceState to tidy the one on screen):
+// routing to the page it is already on would make the router's push_state drop the query on
+// older v16 builds.
 
 frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -12,6 +29,23 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		title: __('Maintenance Day Board'),
 		single_column: true,
 	});
+
+	// The pages a card or the toolbar links to, for those whose roles open them (S5b, v1.667.0):
+	// frappe.boot.page_info lists the Pages a person's roles reach. A Projects Manager reads this
+	// board but is not a reviewer.
+	const pages = (frappe.boot && frappe.boot.page_info) || {};
+	// The Maintenance Planner's week holding the day shown. A route, so it is a history entry and
+	// Back returns to this board. The day comes from the board when it keeps one, else today.
+	// route_options is cleared first: nothing else clears it, and on v16.50 set_route writes what
+	// is left there into the planner's address.
+	if (pages['maintenance-planner']) {
+		page.add_inner_button(__('Open in Maintenance Planner'), () => {
+			const board = wrapper.mdb_day_board;
+			const day = board && typeof board.day === 'function' ? board.day() : frappe.datetime.get_today();
+			frappe.route_options = null;
+			frappe.set_route('maintenance-planner', 'week', day);
+		});
+	}
 
 	const $board = $('<div class="mdb-board"></div>').appendTo(page.body);
 	$('<style>\n' +
@@ -34,7 +68,19 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		// A state panel is the whole board, not one column of it.
 		'.mdb-board > .sf-state{grid-column:1/-1;}\n' +
 		'.mdb-stale{margin:4px 0 0;}\n' +
+		'.mdb-nav{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0;}\n' +
+		'.mdb-nav .mdb-date{width:auto;}\n' +
+		'.mdb-sublink{display:block;font-size:12px;margin:-4px 0 8px 10px;}\n' +
 	'</style>').appendTo(page.body);
+	// The day shown, and the way to another: ‹ and › step a day, Today comes back, the box jumps.
+	const $nav = $(
+		'<div class="mdb-nav">' +
+		'<button type="button" class="btn btn-default btn-sm mdb-prev" title="' + esc(__('Previous day')) + '" aria-label="' + esc(__('Previous day')) + '">‹</button>' +
+		'<input type="date" class="form-control input-sm mdb-date" aria-label="' + esc(__('Day shown')) + '">' +
+		'<button type="button" class="btn btn-default btn-sm mdb-next" title="' + esc(__('Next day')) + '" aria-label="' + esc(__('Next day')) + '">›</button>' +
+		'<button type="button" class="btn btn-default btn-sm mdb-today">' + esc(__('Today')) + '</button>' +
+		'</div>'
+	).insertBefore($board);
 	// A refresh that failed while the board was showing says so here, and leaves the board be.
 	const $stale = $('<div class="mdb-empty mdb-stale" role="status"></div>').hide().insertBefore($board);
 
@@ -81,6 +127,12 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		);
 	}
 
+	// A draft visit is filled in through the Visit Wizard; its own address opens it there.
+	function wizardLink(row) {
+		return '<a class="mdb-sublink" href="/desk/visit-wizard/' + encodeURIComponent(row.name) + '">' +
+			esc(__('Open in Visit Wizard')) + '</a>';
+	}
+
 	function pctBadge(row) {
 		const pct = row.completion_percent || 0;
 		const cls = pct >= 100 ? 'mdb-green' : pct >= 50 ? 'mdb-orange' : 'mdb-red';
@@ -94,6 +146,14 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		return html;
 	}
 
+	// A submitted visit opens in Visit Review: its answers, each reading beside the site's last
+	// approved one. Only for those whose roles open that page.
+	function reviewLink(row) {
+		if (!pages['visit-review']) return '';
+		return '<a class="mdb-sublink" href="/desk/visit-review/' + encodeURIComponent(row.name) + '">' +
+			esc(__('Open in Visit Review')) + '</a>';
+	}
+
 	function column(title, rows, render) {
 		let html = '<div class="mdb-col"><h5>' + esc(title) + '<span>' + rows.length + '</span></h5>';
 		html += rows.length ? rows.map(render).join('') : '<div class="mdb-empty">' + __('Nothing here.') + '</div>';
@@ -102,10 +162,92 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 
 	// attempted: a load has been asked for at least once (the loading panel is drawn only before
 	// the first). stale: the last refresh failed over a board already showing (toast once a run).
-	const state = { timer: null, loaded: false, attempted: false, stale: false, loadedAt: '', inflight: false };
+	// date: the day shown as YYYY-MM-DD, or null for today (the bare address). seq: the newest
+	// load; a reply for an older one (the day has changed since it was asked) is dropped.
+	const state = { timer: null, loaded: false, attempted: false, stale: false, loadedAt: '', inflight: false, date: null, seq: 0 };
 
 	function isCurrent() {
 		return frappe.get_route()[0] === 'maintenance-day-board';
+	}
+
+	function today() {
+		return frappe.datetime.get_today();
+	}
+
+	// "YYYY-MM-DD" when the value is a real calendar day, else null: 2026-02-30 is not one.
+	function validDay(value) {
+		const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value == null ? '' : value).trim());
+		if (!m || +m[1] < 1900 || +m[1] > 2999) return null;
+		const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+		return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? m[0] : null;
+	}
+
+	function addDays(day, n) {
+		const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+		const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+		return d.toISOString().slice(0, 10);
+	}
+
+	function shownDay() {
+		return state.date || today();
+	}
+
+	// The date the route asks for, taken out of frappe.route_options as the list view takes its
+	// filters: the key goes, and an emptied object goes too, or a later plain set_route to this
+	// page would replay it. Today's date and anything malformed come back as null (today).
+	function takeRouteDate() {
+		const opts = frappe.route_options;
+		let asked = null;
+		if (opts && Object.prototype.hasOwnProperty.call(opts, 'date')) {
+			asked = validDay(opts.date);
+			delete opts.date;
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
+		return asked && asked !== today() ? asked : null;
+	}
+
+	// The address for the day shown, on the path the router put on screen (which may carry a
+	// workspace shell in front of the page name).
+	function addressFor(date) {
+		return window.location.pathname + (date ? '?date=' + encodeURIComponent(date) : '');
+	}
+
+	// push: a new day the person chose, so a new entry. Otherwise the entry on screen is corrected
+	// in place. Nothing is written once the page has been left, or when the address already says it.
+	function writeAddress(push) {
+		if (!isCurrent()) return;
+		const url = addressFor(state.date);
+		if (url === window.location.pathname + window.location.search) return;
+		if (push) window.history.pushState(null, '', url);
+		else window.history.replaceState(window.history.state, '', url);
+	}
+
+	function drawNav() {
+		const day = shownDay();
+		$nav.find('.mdb-date').val(day);
+		$nav.find('.mdb-today').prop('disabled', !state.date);
+	}
+
+	// Another day is on its way: what is on screen is the old day's, so the next load draws the
+	// loading panel and a failure draws the error panel rather than keeping the old board.
+	function dayChanged() {
+		state.loaded = false;
+		state.stale = false;
+		$stale.hide().text('');
+		drawNav();
+		refresh({ asked: true, force: true });
+	}
+
+	// A day the person chose: its own history entry, then its board.
+	function go(day) {
+		const next = validDay(day);
+		const date = next && next !== today() ? next : null;
+		if (!next || date === state.date) return drawNav();
+		state.date = date;
+		writeAddress(true);
+		dayChanged();
+		// Stops the poll for a past day, starts it again for today or a later one.
+		start();
 	}
 
 	// A board that never loaded: no access on a 403, a way back in when the session has lapsed,
@@ -143,31 +285,42 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	// (`asked`): a timer tick must never blank what is on screen, the board or the error panel. A
 	// 403 or a lapsed session stops the timer, since asking again every minute cannot change the
 	// answer; the next show of the page tries once more and starts it again.
+	//
+	// A new day (`force`) is asked for even with a load in flight; seq drops the older reply.
 	function refresh(opts) {
-		if (state.inflight) return;
+		if (state.inflight && !(opts && opts.force)) return;
 		state.inflight = true;
+		const seq = ++state.seq;
+		const date = state.date;
 		const first = !state.attempted;
 		state.attempted = true;
 		kit().then((sf) => {
+			if (seq !== state.seq) return;
 			if (first || (opts && opts.asked)) sf.state.render($board, 'loading', { title: __('Loading the day board…') });
-			return sf.call('erpnext_enhancements.api.maintenance_board.get_day_board_data', {}, { quiet: true }).then((message) => {
+			// Today goes unnamed, so the server's own today answers it, as it always has.
+			return sf.call('erpnext_enhancements.api.maintenance_board.get_day_board_data', date ? { date } : {}, { quiet: true }).then((message) => {
+				if (seq !== state.seq) return;
 				const data = message || {};
 				state.loaded = true;
 				state.stale = false;
 				state.loadedAt = frappe.datetime.now_time();
 				$stale.hide().text('');
+				// Past midnight the bare address is a new today: the box follows it.
+				drawNav();
 				$board.html([
-					column(__('Scheduled'), data.scheduled || [], (row) => recordCard(row, pctBadge(row))),
+					column(__('Scheduled'), data.scheduled || [], (row) =>
+						recordCard(row, pctBadge(row)) + wizardLink(row)),
 					column(__('Clocked In'), data.in_progress || [], (row) =>
 						'<a class="mdb-card" href="' + frappe.utils.get_form_link('Job Interval', row.name) + '">' +
 						'<div class="mdb-title">' + esc(row.employee_name) + '</div>' +
 						'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
 						__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
-					column(__('Submitted Today'), data.submitted_today || [], (row) =>
-						recordCard(row, pctBadge(row) + flagBadges(row))),
-					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
+					column(date ? __('Submitted') : __('Submitted Today'), data.submitted_today || [], (row) =>
+						recordCard(row, pctBadge(row) + flagBadges(row)) + reviewLink(row)),
+					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row)) + reviewLink(row)),
 				].join(''));
 			}, (err) => {
+				if (seq !== state.seq) return;
 				err = err || {};
 				if (err.status === 403 || err.session_expired) stop();
 				// A failure keeps the board already showing, says so in a toast (once per run of
@@ -185,7 +338,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 				$stale.text(said).show();
 			});
 		}).finally(() => {
-			state.inflight = false;
+			if (seq === state.seq) state.inflight = false;
 		});
 	}
 
@@ -197,19 +350,58 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	// Poll only while this is the current route and the tab is visible. Desk pages are never
 	// removed (a 'remove' handler never fires), so the timer stops itself on its first tick
 	// after the user has left, and on_page_show starts it again.
+	//
+	// A past day cannot change, so it is not polled at all; a move to today or a later day (go) and
+	// the next show start the poll again.
 	function start() {
 		stop();
+		if (isPast()) return;
 		state.timer = setInterval(() => {
 			if (!isCurrent()) return stop();
+			reachedToday();
 			if (!document.hidden) refresh();
 		}, 60000);
 	}
 
+	function isPast() {
+		return !!state.date && state.date < today();
+	}
+
+	// A later day left on screen until midnight has become today: from here on it is the bare today
+	// (its labels, a disabled Today, the server's own today), the address corrected in place.
+	function reachedToday() {
+		if (!state.date || state.date !== today()) return;
+		state.date = null;
+		writeAddress(false);
+		drawNav();
+	}
+
+	$nav.find('.mdb-prev').on('click', () => go(addDays(shownDay(), -1)));
+	$nav.find('.mdb-next').on('click', () => go(addDays(shownDay(), 1)));
+	$nav.find('.mdb-today').on('click', () => go(today()));
+	$nav.find('.mdb-date').on('change', (e) => go(e.currentTarget.value));
+
 	wrapper.mdb_day_board = {
+		// Every show reads the day from the route: a reload, a link, or Back and Forward between
+		// days (the router re-renders this page for each entry, and copies its ?date= into
+		// route_options). A show of the day already on screen refreshes it as before.
 		show() {
-			refresh();
+			const date = takeRouteDate();
+			const changed = date !== state.date;
+			state.date = date;
+			// A malformed date, or today's, leaves the bare address: corrected in place, no entry.
+			writeAddress(false);
+			drawNav();
+			if (changed && state.attempted) {
+				dayChanged();
+			} else {
+				refresh();
+			}
 			start();
 		},
+		go,
+		step: (n) => go(addDays(shownDay(), n)),
+		day: shownDay,
 	};
 };
 

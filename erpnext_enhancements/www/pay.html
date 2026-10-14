@@ -2,8 +2,19 @@
 
 {% block title %}{{ _("Pay Invoices") }}{% endblock %}
 
+{#- The customer portal's look (custom pages S6a): the tokens, then the portal's own stylesheet,
+    both content-hashed through bundled_asset; the shared nav bar in place of the website's. -#}
+{% block head_include %}
+{{ super() }}
+{% include "erpnext_enhancements/templates/includes/sf_portal_light.html" %}
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
+<link rel="stylesheet" href="{{ bundled_asset('sf_portal.bundle.css') }}">
+{% endblock %}
+
+{% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
+
 {% block page_content %}
-<div class="pay-portal">
+<div class="pay-portal sf-portal" id="sf-portal-main" tabindex="-1">
 	<h1 class="mb-4">{{ _("Pay Invoices") }}</h1>
 
 	{% if not enabled %}
@@ -13,19 +24,23 @@
 	{% else %}
 		<p class="text-muted">{{ _("Select an invoice to pay securely by card or bank (ACH).") }}</p>
 		<div class="table-responsive">
-			<table class="table table-bordered">
-				<thead>
-					<tr>
-						<th>{{ _("Invoice") }}</th>
-						<th>{{ _("Due Date") }}</th>
-						<th class="text-right">{{ _("Amount Due") }}</th>
-						<th></th>
+			{#- On a phone each row is drawn as a card, and data-label names the cell it stacks (the
+			    header row is hidden there). The Invoice cell has no label: it is the card's title.
+			    The explicit ARIA roles keep it a table to a screen reader once CSS sets display:block
+			    on its parts, which Safari takes as leave to drop the table semantics. -#}
+			<table class="table table-bordered sf-portal-invoices" role="table">
+				<thead role="rowgroup">
+					<tr role="row">
+						<th role="columnheader">{{ _("Invoice") }}</th>
+						<th role="columnheader">{{ _("Due Date") }}</th>
+						<th class="text-right" role="columnheader">{{ _("Amount Due") }}</th>
+						<th role="columnheader"></th>
 					</tr>
 				</thead>
-				<tbody>
+				<tbody role="rowgroup">
 					{% for inv in invoices %}
-					<tr>
-						<td>{{ inv.name }}
+					<tr role="row">
+						<td role="cell">{{ inv.name }}
 							{# The invoice itself, whatever its payment state, from
 							   stripe_payments.core.api.portal_invoice_pdf, which checks again that it
 							   is this customer's submitted invoice. A new tab: the phone's PDF viewer,
@@ -34,19 +49,21 @@
 								<a href="/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf?invoice={{ inv.name | urlencode }}" target="_blank" rel="noopener">{{ _("View invoice (PDF)") }}</a>
 							</div>
 						</td>
-						<td>{{ inv.due_display }}</td>
-						<td class="text-right">{{ inv.amount_display }}</td>
-						<td class="text-right">
+						<td role="cell" data-label="{{ _('Due Date') }}">{{ inv.due_display }}</td>
+						<td class="text-right" role="cell" data-label="{{ _('Amount Due') }}">{{ inv.amount_display }}</td>
+						<td class="text-right sf-portal-actions" role="cell">
 							{# payment_block is the verdict every payment path enforces
 							   (card_element.invoice_payment_block, see pay.py), so no button
 							   shows here that its endpoint would refuse. Any verdict at all
 							   blocks: only an empty one reaches the buttons. #}
+							{#- Each verdict is a chip with its words: waiting on the payer's bank is the
+							    warn tone, the other two neutral. -#}
 							{% if inv.payment_block == "Paid" %}
-								<span class="text-muted">{{ _("Payment received — please contact us") }}</span>
+								<span class="sf-portal-chip sf-portal-chip--neutral">{{ _("Payment received — please contact us") }}</span>
 							{% elif inv.payment_block == "Awaiting" %}
-								<span class="text-muted">{{ _("Waiting for bank approval…") }}</span>
+								<span class="sf-portal-chip sf-portal-chip--warn">{{ _("Waiting for bank approval…") }}</span>
 							{% elif inv.payment_block %}
-								<span class="text-muted">{{ _("Processing…") }}</span>
+								<span class="sf-portal-chip sf-portal-chip--neutral">{{ _("Processing…") }}</span>
 							{% else %}
 								{# Card and bank go to genuinely different implementations, not to
 								   different prices: cards are collected on our own page so the card's
@@ -74,7 +91,7 @@
 	{% endif %}
 
 	{% if enabled %}
-	<div class="stripe-autopay" style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border-color, #d1d8dd);">
+	<div class="stripe-autopay">
 		<h5>{{ _("Autopay") }}</h5>
 		{% if autopay_enrolled %}
 			<p class="text-muted">{{ _("Autopay is on") }}{% if autopay_label %} — {{ autopay_label }}{% endif %}.</p>
@@ -82,9 +99,9 @@
 		{% else %}
 			<p class="text-muted">{{ _("Save a card or bank account to automatically pay future maintenance invoices.") }}</p>
 			{% if autopay_consent %}
-			<p class="small text-muted" style="white-space: pre-line;">{{ autopay_consent }}</p>
+			<p class="small text-muted sf-portal-consent">{{ autopay_consent }}</p>
 			{% endif %}
-			<label style="display:block; margin-bottom:8px;">
+			<label class="sf-portal-check">
 				<input type="checkbox" id="stripe-autopay-consent">
 				{{ _("I authorize Sapphire Fountains to charge my saved payment method as described above and in the Payment Terms.") }}
 			</label>
@@ -92,7 +109,7 @@
 		{% endif %}
 	</div>
 
-	<p class="small text-muted" style="margin-top:24px;">
+	<p class="small text-muted sf-portal-footnote">
 		<a href="/payment-terms" target="_blank">{{ _("Payment & Surcharge Terms") }}</a> ·
 		<a href="/refund-policy" target="_blank">{{ _("Refund & Cancellation Policy") }}</a>
 	</p>

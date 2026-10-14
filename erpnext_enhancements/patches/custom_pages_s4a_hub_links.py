@@ -1,4 +1,4 @@
-"""Custom pages S4a (v1.665.0, TASK-2026-02806): hub <-> dashboard links, the Morning Briefing
+"""Custom pages S4a (v1.680.0, TASK-2026-02806): hub <-> dashboard links, the Morning Briefing
 workspace, and the small workspace fixes. Lands the file changes on an existing site.
 
 Workspaces, Pages and Reports are **timestamp-gated** by ``import_file``: a file is imported only

@@ -189,6 +189,7 @@ ENFORCED = frozenset(
 		"crm_enhancements/hand_off_process_coverage",
 		"crm_enhancements/named_account_targets",
 		"crm_enhancements/opportunity_loss_reasons",
+		"crm_enhancements/party_mirror_preview",
 		"crm_enhancements/party_naming_audit",
 		"kpi_dashboards/value_stream_performance",
 	}

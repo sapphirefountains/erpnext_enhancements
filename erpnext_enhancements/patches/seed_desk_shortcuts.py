@@ -21,7 +21,7 @@ DEFAULTS = [
 		"icon": "⏱️",  # ⏱️
 		"color": "Blue",
 		# The kiosk itself, not the time-kiosk desk page: that page is only a redirect
-		# here (v1.665.0 moved the existing row the same way).
+		# here (v1.680.0 moved the existing row the same way).
 		"link_type": "URL",
 		"url": "/kiosk",
 		"visible_to_all": 1,

@@ -1,21 +1,30 @@
 #!/usr/bin/env node
 /**
- * Browser Back / Forward on six Desk pages, run against a model of Frappe v16's router.
+ * Browser Back / Forward on seven Desk pages, run against a model of Frappe v16's router.
  *
  * Loads the REAL page scripts — Device Console, Inventory Scanner Audit, Sales Pipeline,
- * QuickBooks Record Matching, Question Review and Location Timeline — into a vm context over a
- * small fake Desk, then taps, scans and presses Back and Forward. Plain node, no runner, no
- * npm install.
+ * QuickBooks Record Matching, Question Review, Location Timeline and the Maintenance Day Board —
+ * into a vm context over a small fake Desk, then taps, scans and presses Back and Forward. Plain
+ * node, no runner, no npm install.
+ * The two scanner pages run on the REAL scanner kit (public/js/scanner_kit, v1.666.0),
+ * installed on the fake Desk's window when they ask frappe.require for it; a Desk can be made
+ * without it ({ scanner: false }), with it arriving late ({ scannerLate: true }), or as an
+ * iPhone ({ iphone: true }: no BarcodeDetector, so the kit loads the vendored jsQR).
  *
  * The Desk is modelled on `git show origin/version-16:frappe/public/js/frappe/…`, never the
  * develop tree, in the places these pages depend on:
  *
  *   - router.js: `popstate` runs `frappe.router.route()`, which awaits `parse()`, sets
  *     `current_route`, then `set_history()` (which closes the open dialog), `render()` and
- *     triggers "change". `set_route()` pushes the PATH only (`history.pushState(null, null,
- *     path)`), replaces instead when `frappe.route_flags.replace_route` is set, skips an
- *     unchanged path, and resolves after a 100 ms timeout and `frappe.after_ajax`, clearing
- *     `route_flags` only then. `after_ajax` runs at once here unless the desk is made with
+ *     triggers "change". `parse()` copies the address's query into `frappe.route_options` (merged
+ *     into what is there) on every route change. `set_route()` moves a plain-object argument into
+ *     `frappe.route_options` (`make_url`) and pushes the PATH only (`history.pushState(null, null,
+ *     path)`), replaces instead when `frappe.route_flags.replace_route` is set, skips an unchanged
+ *     path and query (the query JSON-encoded, quotes and all), and resolves after a 100 ms timeout
+ *     and `frappe.after_ajax`, clearing `route_flags` only then. v16.50 changed that (frappe PR
+ *     #40040, `fb2e7370ba`): a plain value is encoded as itself and the query is pushed WITH the
+ *     path. `makeDesk({ queryInUrl: true })` models the newer router; the deep-link scenarios run
+ *     under both, since a site may be on either side of it. `after_ajax` runs at once here unless the desk is made with
  *     `{ ajax: true }`: then it waits, as request.js's does, until no request is in flight, so a
  *     flag set for one route change is still set for the next while any reply is outstanding.
  *     It is opt-in because most scenarios hold a reply open and still tap a sheet open meanwhile.
@@ -55,6 +64,13 @@ const APP = path.join(__dirname, "..", "erpnext_enhancements");
 const LOADER = path.join(APP, "public", "js", "sf_kit_loader.js");
 const SF_BUNDLE = path.join(APP, "public", "js", "sf_kit.bundle.js");
 let kitCopies = 0;
+// The scanner kit both scanner pages load (v1.666.0): its index module, imported once before the
+// scenarios run, and installed on each Desk's window when a page asks frappe.require for
+// "scanner_kit.bundle.js", as the bundle installs it on a live Desk. Each install is bound to its
+// own Desk's window, so a reload's new Desk gets a copy of its own.
+const SCANNER_KIT = path.join(APP, "public", "js", "scanner_kit", "index.js");
+const JSQR_PATH = "/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js";
+let scannerKit = null;
 const SCRIPTS = {
 	"device-console": "device_management/page/device_console/device_console.js",
 	"inventory-scanner-audit": "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
@@ -62,6 +78,7 @@ const SCRIPTS = {
 	"quickbooks-record-matching": "quickbooks_online/page/quickbooks_record_matching/quickbooks_record_matching.js",
 	"training-review": "training/page/training_review/training_review.js",
 	"location-timeline": "workforce/page/location_timeline/location_timeline.js",
+	"maintenance-day-board": "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js",
 };
 
 // Page code swallows a failed server call the way the Desk does; a rejection nobody handles is
@@ -107,6 +124,7 @@ function makeDesk(options) {
 		alerts: [],
 		messages: [],
 		cameras: [],
+		required: [], // every path frappe.require was asked for
 		violations: [],
 		respond: {}, // server method (last dotted part) -> (args) => message | Error | undefined
 		cameraAuto: "allow",
@@ -129,6 +147,25 @@ function makeDesk(options) {
 	function clearTimeout_(id) {
 		timers.delete(id);
 	}
+	// A repeating timer on the same clock; its ids are its own, apart from the timeouts'.
+	const intervals = new Map();
+	let intervalSeq = 1000000;
+	function setInterval_(fn, ms) {
+		const id = ++intervalSeq;
+		const tick = () => {
+			if (!intervals.has(id)) return;
+			intervals.set(id, setTimeout_(tick, ms));
+			fn();
+		};
+		intervals.set(id, setTimeout_(tick, ms));
+		return id;
+	}
+	function clearInterval_(id) {
+		if (intervals.has(id)) clearTimeout_(intervals.get(id));
+		intervals.delete(id);
+	}
+	desk.liveIntervals = () => intervals.size;
+	desk.today = "2026-09-24";
 	desk.wait = async function (ms) {
 		const end = now + (ms || 0);
 		for (;;) {
@@ -367,7 +404,13 @@ function makeDesk(options) {
 		head: makeElement("head"),
 		body,
 		getElementById: () => null,
-		createElement: (tag) => makeElement(tag),
+		createElement: (tag) =>
+			makeElement(
+				tag,
+				tag === "canvas"
+					? { getContext: () => ({ drawImage() {}, getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }) }
+					: {}
+			),
 		createTextNode: (text) => makeElement("#text", { textContent: String(text) }),
 		addEventListener(type, fn) {
 			(docListeners[type] = docListeners[type] || []).push(fn);
@@ -631,7 +674,15 @@ function makeDesk(options) {
 			return new Promise((resolve) => {
 				if (route.length === 1 && Array.isArray(route[0])) route = route[0];
 				if (route.length === 1 && typeof route[0] === "string" && route[0].includes("/")) {
-					route = route[0].split("/").map((c) => decodeURIComponent(c));
+					let given = route[0];
+					// v16.50+ (`queryInUrl`): "/desk/a/b?x=1" puts x into route_options.
+					const q = given.indexOf("?");
+					if (opts.queryInUrl && q >= 0) {
+						frappe.route_options = frappe.route_options || {};
+						new URLSearchParams(given.slice(q + 1)).forEach((v, k) => (frappe.route_options[k] = v));
+						given = given.slice(0, q);
+					}
+					route = given.split("/").map((c) => decodeURIComponent(c));
 				}
 				if (route[0] === "") route.shift();
 				if (route[0] === "desk" || route[0] === "app") route.shift();
@@ -649,8 +700,12 @@ function makeDesk(options) {
 				});
 				const sub_path = parts.length ? "/desk/" + parts.join("/") : "/desk";
 				const route_options = frappe.route_options || {};
+				// Before v16.50 every value was JSON-encoded, quotes and all, and the query only decided
+				// whether to push; from v16.50 (frappe PR #40040) a plain value is written as itself
+				// and the query goes into the address with the path.
+				const encode = (v) => (opts.queryInUrl && (v === null || typeof v !== "object") ? String(v) : JSON.stringify(v));
 				const query = Object.entries(route_options)
-					.map(([k, v]) => `${k}=` + encodeURIComponent(JSON.stringify(v)))
+					.map(([k, v]) => `${k}=` + encodeURIComponent(encode(v)))
 					.join("&");
 				this.push_state(sub_path, query ? `?${query}` : "");
 				setTimeout_(() => frappe.after_ajax(() => resolve()), 100);
@@ -661,7 +716,7 @@ function makeDesk(options) {
 		push_state(path, query) {
 			if (location.pathname !== path || location.search !== (query || "")) {
 				const method = frappe.route_flags.replace_route ? "replaceState" : "pushState";
-				history[method](null, null, path);
+				history[method](null, null, opts.queryInUrl ? path + (query || "") : path);
 				this.route();
 			}
 		},
@@ -850,11 +905,37 @@ function makeDesk(options) {
 			},
 		},
 		datetime: {
-			get_today: () => "2026-09-24",
+			// The clock's date; a test moves it past midnight by setting desk.today.
+			get_today: () => desk.today,
 			now_time: () => "12:00",
 			str_to_user: (s) => s,
 		},
+		// The scanner kit arrives on request (unless the Desk is made with { scanner: false }, a file
+		// that failed to load, or { scannerLate: true }, which holds it until desk.scannerArrives()),
+		// and so does the vendored jsQR, as window.jsQR. v16 runs the callback either way.
 		require(paths, cb) {
+			const list = [].concat(paths);
+			desk.required.push(...list);
+			if (list.includes("scanner_kit.bundle.js")) {
+				if (opts.scannerLate) {
+					desk.scannerArrives = () => {
+						scannerKit.install(ctx);
+						if (typeof cb === "function") cb();
+					};
+					return new Promise(() => {});
+				}
+				// { scannerThrows: true }: a kit that arrives but throws as a page starts it.
+				if (opts.scannerThrows) {
+					ctx.sf_scanner = {
+						version: 1,
+						sheets() {
+							throw new Error("scanner kit broke");
+						},
+						camera: { available: () => true },
+					};
+				} else if (opts.scanner !== false) scannerKit.install(ctx);
+			}
+			if (list.includes(JSQR_PATH)) ctx.jsQR = jsQR;
 			if (typeof cb === "function") cb();
 			return Promise.resolve();
 		},
@@ -875,6 +956,15 @@ function makeDesk(options) {
 			out = out.split(`{${i}}`).join(String(a));
 		});
 		return out;
+	}
+
+	// An iPhone's decoder (makeDesk({ iphone: true }): no BarcodeDetector): jsQR reads what the
+	// camera shows, the code the test put in front of it.
+	function jsQR() {
+		const code = desk.nextCode;
+		if (!code) return null;
+		desk.nextCode = null;
+		return { data: code };
 	}
 
 	class BarcodeDetector {
@@ -900,11 +990,18 @@ function makeDesk(options) {
 						req.stream = { stopped: 0, getTracks: () => [{ stop: () => (req.stream.stopped += 1) }] };
 						resolve(req.stream);
 					};
-					req.deny = () => reject(new Error("NotAllowedError"));
+					// A bare Error by default; with a name, getUserMedia's own DOMException name.
+					req.deny = (name) => {
+						const err = new Error(name || "NotAllowedError");
+						if (name) err.name = name;
+						reject(err);
+					};
 				});
 				desk.cameras.push(req);
 				if (desk.cameraAuto === "allow") setTimeout_(() => req.allow(), 10);
 				if (desk.cameraAuto === "deny") setTimeout_(() => req.deny(), 10);
+				if (desk.cameraAuto === "blocked") setTimeout_(() => req.deny("NotAllowedError"), 10);
+				if (desk.cameraAuto === "none") setTimeout_(() => req.deny("NotFoundError"), 10);
 				return req.promise;
 			},
 		},
@@ -917,8 +1014,9 @@ function makeDesk(options) {
 		URLSearchParams,
 		setTimeout: setTimeout_,
 		clearTimeout: clearTimeout_,
-		setInterval: () => 0,
-		clearInterval() {},
+		// Intervals are opt-in (`makeDesk({ intervals: true })`): a page's poll then runs on this clock.
+		setInterval: opts.intervals ? setInterval_ : () => 0,
+		clearInterval: opts.intervals ? clearInterval_ : () => {},
 		$,
 		jQuery: $,
 		frappe,
@@ -944,6 +1042,7 @@ function makeDesk(options) {
 		cint: (v) => parseInt(v, 10) || 0,
 	};
 	if (opts.kit) ctx.fetch = fetch_;
+	if (opts.iphone) delete ctx.BarcodeDetector;
 	ctx.window = ctx;
 	vm.createContext(ctx);
 	// The global bundle's sf_kit loader (window.sf_kit_ready), as the Desk boots with it. With no
@@ -971,7 +1070,7 @@ function makeDesk(options) {
 				vm.runInContext(fs.readFileSync(file, "utf8"), ctx, { filename: file });
 				desk.loaded[name] = true;
 			}
-			if (opts.onLoad && opts.onLoad[name]) wrapper.on_page_load = opts.onLoad[name];
+			if (opts.onLoad && opts.onLoad[name]) wrapper.on_page_load = (w) => opts.onLoad[name](w, desk);
 			if (wrapper.on_page_load) wrapper.on_page_load(wrapper);
 			jq(wrapper).on("show", () => {
 				if (wrapper.on_page_show) wrapper.on_page_show(wrapper);
@@ -1066,6 +1165,26 @@ async function deviceConsole(extra) {
 
 const dc = (desk) => desk.wrapper("device-console").device_console;
 
+// The console on a Desk made with `opts` (iphone, scanner, scannerLate), reached from Home.
+async function deviceConsoleWith(opts) {
+	const desk = makeDesk(opts);
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	desk.respond.resolve_device_scan = ({ code }) =>
+		code.startsWith("DEV")
+			? { type: "device", device: { name: code, device_name: "Phone " + code, status: "In Stock" } }
+			: { type: "unknown" };
+	desk.respond.check_out = (args) => ({ name: args.device, status: "Assigned", assigned_to_employee: args.employee });
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	return desk;
+}
+
+// The last show/hide the console's camera button was given.
+const camButton = (desk, label) => {
+	const toggles = desk.calls.filter((c) => c.label === label && c.method === "toggle");
+	return toggles.length ? toggles[toggles.length - 1].args[0] : undefined;
+};
+
 test("Device Console: Back closes the camera and stays; Forward opens it again", async () => {
 	const desk = await deviceConsole();
 	check("on the console", [desk.current(), desk.route()], ["device-console", "device-console"]);
@@ -1158,7 +1277,8 @@ test("Device Console: a reload on the camera's own entry steps back onto the con
 	let desk = await deviceConsole();
 	await desk.tap(() => dc(desk).openCamera());
 	check("the camera's entry is marked as the console's own", desk.ctx.history.state, { dc_sheet: "camera" });
-	// A tab discarded with the camera open: the console's camera has no visibilitychange close.
+	// A tab discarded with the camera open, before it could close (the kit closes the camera on
+	// visibilitychange and pagehide, but a discard need not fire either).
 	desk = await desk.reload();
 	check("no camera nobody tapped for", [desk.shown(), desk.cameras.length], [[], 0]);
 	check("stepped back onto the console's own entry, the camera's still ahead", [desk.route(), desk.at(), desk.urls()], [
@@ -1297,6 +1417,142 @@ test("Device Console: a camera refused shows why, after the step back", async ()
 	check("it says the camera", desk.messages.slice(-1), ["Could not access the camera."]);
 });
 
+// S6b (v1.666.0): the console's camera is the scanner kit's, the same as the count's.
+
+test("Device Console: on an iPhone (no BarcodeDetector) the camera reads a QR code through jsQR", async () => {
+	const desk = await deviceConsoleWith({ iphone: true });
+	check("the camera button shows", camButton(desk, ".dc-cam"), true);
+	check("jsQR is not loaded until the camera is opened", desk.required.filter((p) => p.includes("jsQR")), []);
+	await desk.tap(() => dc(desk).openCamera());
+	check("opening it loads the vendored jsQR, by its bare path", desk.required.filter((p) => p.includes("jsQR")), [
+		"/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js",
+	]);
+	check("the camera is its own entry, and running", [desk.route(), desk.shown(), desk.cameraLive()], ["device-console/camera", ["Camera Scan"], 1]);
+	check("the back camera, no microphone", desk.cameras[0].constraints, { video: { facingMode: "environment" }, audio: false });
+	desk.nextCode = "DEV-7";
+	await desk.settle();
+	check("the read closed the sheet and stepped back off its entry", [desk.shown(), desk.route(), desk.at().index], [[], "device-console", 1]);
+	check("the device is on the card", dc(desk).state.device && dc(desk).state.device.name, "DEV-7");
+	check("the camera is off", desk.cameraLive(), 0);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: where BarcodeDetector reads QR, jsQR is never loaded", async () => {
+	const desk = await deviceConsole();
+	await desk.tap(() => dc(desk).openCamera());
+	desk.nextCode = "DEV-3";
+	await desk.settle();
+	check("read natively", dc(desk).state.device && dc(desk).state.device.name, "DEV-3");
+	check("no jsQR", desk.required.filter((p) => p.includes("jsQR")), []);
+});
+
+test("Device Console: another Desk page shown while the camera fades in stops it", async () => {
+	const desk = await deviceConsole();
+	desk.press(() => dc(desk).openCamera());
+	await desk.wait(150); // the route has settled (100 ms), the camera started, the sheet fading in
+	check("the camera is running under a sheet still fading in", [desk.cameraLive(), desk.ctx.cur_dialog], [1, null]);
+	desk.press(() => desk.frappe.set_route("home"));
+	await desk.settle();
+	check("on Home, with no sheet left over it and the camera off", [desk.current(), desk.shown(), desk.cameraLive()], ["home", [], 0]);
+});
+
+test("Device Console: the phone locking with the camera open turns it off and closes the sheet", async () => {
+	const desk = await deviceConsole();
+	await desk.tap(() => dc(desk).openCamera());
+	check("running", desk.cameraLive(), 1);
+	desk.document.hidden = true;
+	desk.fire("visibilitychange");
+	check("the light goes off at once", desk.cameraLive(), 0);
+	desk.document.hidden = false;
+	await desk.settle();
+	check("the sheet closed and stepped back off its entry", [desk.shown(), desk.route(), desk.at().index], [[], "device-console", 1]);
+	check("nothing said: nothing failed", desk.messages, []);
+});
+
+test("Device Console: a camera blocked for the site says how to allow it", async () => {
+	const desk = await deviceConsole();
+	desk.cameraAuto = "blocked";
+	await desk.tap(() => dc(desk).openCamera());
+	check("the message is up, on the console's entry", [desk.shown(), desk.route()], [["Message"], "device-console"]);
+	check("it says what to do", desk.messages.slice(-1), [
+		"Camera access is blocked for this site. Allow the camera in the browser's settings, then try again.",
+	]);
+});
+
+test("Device Console: a device with no camera says so", async () => {
+	const desk = await deviceConsole();
+	desk.cameraAuto = "none";
+	await desk.tap(() => dc(desk).openCamera());
+	check("it says there is none", desk.messages.slice(-1), ["No camera was found on this device."]);
+});
+
+test("Device Console: with no scanner kit the console still scans, picks and checks out", async () => {
+	const desk = await deviceConsoleWith({ scanner: false });
+	check("no camera button", camButton(desk, ".dc-cam"), false);
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("the picker opens as a plain dialog, with no entry of its own", [desk.shown(), desk.route(), desk.at().length], [["Choose Employee"], "device-console", 2]);
+	const pick = desk.handler("click", ".dc-emp-pick");
+	await desk.tap(() => pick({ currentTarget: { __data: { emp: "EMP-9" } } }));
+	check("check_out went with the picked employee", desk.sent("check_out").map((r) => r.args.employee), ["EMP-9"]);
+	check("no step back off an entry it never had", [desk.route(), desk.at().index], ["device-console", 1]);
+	await desk.tap(() => dc(desk).openCamera());
+	check("the camera says it could not be loaded", desk.messages.slice(-1), [
+		"Camera scanning could not be loaded. Reload the page, or use a hardware/Bluetooth scanner.",
+	]);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: a kit that throws as it starts leaves the console usable, on plain sheets", async () => {
+	const desk = await deviceConsoleWith({ scannerThrows: true });
+	check("on the console, its counts loaded", [desk.current(), desk.route(), desk.sent("get_console_bootstrap").length], ["device-console", "device-console", 1]);
+	check("no camera button", camButton(desk, ".dc-cam"), false);
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("the picker opens as a plain dialog", [desk.shown(), desk.route()], [["Choose Employee"], "device-console"]);
+	const pick = desk.handler("click", ".dc-emp-pick");
+	await desk.tap(() => pick({ currentTarget: { __data: { emp: "EMP-9" } } }));
+	check("and checks out", desk.sent("check_out").map((r) => r.args.employee), ["EMP-9"]);
+});
+
+test("Scanner Audit: a kit that throws as it starts leaves the count usable, on plain sheets", async () => {
+	const desk = await inventory(null, { scannerThrows: true });
+	check("on the count", [desk.current(), desk.route()], ["inventory-scanner-audit", "inventory-scanner-audit"]);
+	check("no camera button", camButton(desk, ".isa-cam"), false);
+	await desk.tap(() => isa(desk).openItemSearch(""));
+	check("Find Item opens as a plain dialog", [desk.shown(), desk.route()], [["Find Item"], "inventory-scanner-audit"]);
+});
+
+test("Device Console: a first visit waits for the kit before it decides what a sheet URL is", async () => {
+	const desk = makeDesk({ scannerLate: true });
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	await desk.load("/desk/device-console/camera");
+	check("still the camera's URL while the kit loads, no camera", [desk.route(), desk.cameras.length, desk.shown()], ["device-console/camera", 0, []]);
+	check("the counts came anyway", desk.sent("get_console_bootstrap").length, 1);
+	check("the camera button waits for the kit", camButton(desk, ".dc-cam"), false);
+	desk.scannerArrives();
+	await desk.settle();
+	check("then the entry became the console", [desk.route(), desk.at()], ["device-console", { index: 0, length: 1, url: "/desk/device-console" }]);
+	check("and the camera button shows", camButton(desk, ".dc-cam"), true);
+	check("no camera nobody tapped for", desk.cameras.length, 0);
+});
+
+test("Device Console: a sheet tapped open while the kit loads opens once it has arrived", async () => {
+	const desk = makeDesk({ scannerLate: true });
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	desk.respond.resolve_device_scan = ({ code }) => ({ type: "device", device: { name: code, device_name: code, status: "In Stock" } });
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("nothing pushed yet", [desk.route(), desk.shown()], ["device-console", []]);
+	desk.scannerArrives();
+	await desk.settle();
+	check("the picker is up on its own entry", [desk.route(), desk.shown(), desk.at().index], ["device-console/employee", ["Choose Employee"], 2]);
+	await desk.back();
+	check("Back closes it and stays", [desk.route(), desk.shown()], ["device-console", []]);
+});
+
 test("Device Console: a sheet's URL reached from another page opens the console, not the sheet", async () => {
 	const desk = await deviceConsole();
 	await desk.key(() => dc(desk).handleScan("DEV-1"));
@@ -1422,8 +1678,8 @@ test("Device Console: Forward onto a picker whose action no longer applies steps
 
 // ---------------------------------------------------------------------------- Inventory Scanner Audit
 
-async function inventory(settings) {
-	const desk = makeDesk();
+async function inventory(settings, opts) {
+	const desk = makeDesk(opts);
 	desk.respond.get_bootstrap = () => ({
 		settings: Object.assign({ enable_camera_scan: 1, allow_unknown_item: 1, default_warehouse: "Stores" }, settings || {}),
 		session: { name: "ICS-1", lines: [], summary: { lines: 0, with_variance: 0 } },
@@ -1561,6 +1817,19 @@ test("Scanner Audit: a Find Item pick is looked up after the step back and focus
 	check("the pending card is ITEM-5", isa(desk).state.pendingItem && isa(desk).state.pendingItem.item_code, "ITEM-5");
 	check("the counted-qty box has focus", desk.focused(".isa-qty"), 1);
 	check("the scan box did not take it back", desk.focused(".isa-scan"), scanFocus);
+});
+
+test("Scanner Audit: on an iPhone the camera reads a location's QR label through jsQR (the kit's)", async () => {
+	const desk = await inventory(null, { iphone: true });
+	check("the camera button shows", camButton(desk, ".isa-cam"), true);
+	await desk.tap(() => isa(desk).openCamera());
+	check("jsQR loaded once, on first use", desk.required.filter((p) => p.includes("jsQR")).length, 1);
+	check("the camera is its own entry", [desk.route(), desk.shown(), desk.cameraLive()], ["inventory-scanner-audit/camera", ["Camera Scan"], 1]);
+	desk.nextCode = "LOC-A";
+	await desk.settle();
+	check("the location is set, back on the count's own entry", [desk.route(), desk.at().index, desk.alerts.slice(-1)], ["inventory-scanner-audit", 1, ["Location: LOC-A"]]);
+	check("the camera is off", desk.cameraLive(), 0);
+	check("no push without a tap", desk.violations, []);
 });
 
 test("Scanner Audit: a camera read of an item is looked up on the camera's entry, then steps back", async () => {
@@ -2285,37 +2554,51 @@ function timeline(desk) {
 		page: desk.makeAppPage(),
 		wrapper: null,
 		mode: "trail",
-		map: null,
+		// A map that has loaded: the pickers' changes load a trail only once there is one.
+		map: {},
 		data: null,
+		filters: null,
+		loadSeq: 0,
 		silence: 0,
 		employees: [{ value: "E1", label: "E1" }],
 		live: { timer: null, data: { employees: [{ employee: "E2", employee_name: "Bo" }] } },
 		$root: desk.$("lt-root"),
 		employeeField: desk.makeField({ fieldname: "employee" }),
-		fromField: desk.makeField({ fieldname: "from_date" }),
-		toField: desk.makeField({ fieldname: "to_date" }),
+		fromField: desk.makeField({ fieldname: "from_date", default: "2026-09-24" }),
+		toField: desk.makeField({ fieldname: "to_date", default: "2026-09-24" }),
 		log: [],
 		gate: Promise.resolve(),
 	});
 	lt.init = () => lt.gate;
-	["pausePlayback", "renderTrail", "renderHint", "applyAccuracyLayer", "clearMapLayers", "loadTrail", "startLivePolling", "stopLivePolling"].forEach((name) => {
+	["pausePlayback", "renderTrail", "renderHint", "applyAccuracyLayer", "clearMapLayers", "startLivePolling", "stopLivePolling"].forEach((name) => {
 		lt[name] = () => lt.log.push(name);
 	});
-	lt.applyRouteOptions = (o) => {
-		lt.log.push("applyRouteOptions:" + o.employee);
-		lt.setMode("trail");
+	// The real loadTrail's bookkeeping, without the server: what it asked for, and (the reply
+	// having landed) a trail drawn for it. No one picked is the hint, and nothing is asked.
+	lt.loadTrail = () => {
+		const employee = lt.employeeField.get_value();
+		if (!employee) return lt.log.push("hint");
+		const from = lt.fromField.get_value();
+		const to = lt.toField.get_value() || from;
+		lt.filters = { employee, from_datetime: from + " 00:00:00", to_datetime: to + " 23:59:59" };
+		lt.data = { intervals: [] };
+		lt.log.push(`loadTrail:${employee}:${from}:${to}`);
 	};
+	lt.loads = () => lt.log.filter((x) => x.startsWith("loadTrail:"));
 	return lt;
 }
 
-async function locationTimeline(url) {
-	const desk = makeDesk({
-		onLoad: {
-			"location-timeline": (wrapper) => {
-				wrapper.location_timeline = timeline(desk);
+async function locationTimeline(url, options) {
+	const desk = makeDesk(
+		Object.assign({}, options || {}, {
+			onLoad: {
+				// The desk the page is loading on: after a reload, that is the new one.
+				"location-timeline": (wrapper, on) => {
+					wrapper.location_timeline = timeline(on);
+				},
 			},
-		},
-	});
+		})
+	);
 	await desk.load(url || "/desk/home");
 	if (!url) await desk.tap(() => desk.frappe.set_route("location-timeline"));
 	return desk;
@@ -2362,12 +2645,261 @@ test("Location Timeline: the Employee form's route_options still open a trail", 
 	await desk.tap(() => desk.frappe.set_route("employee", "E7"));
 	desk.frappe.route_options = { employee: "E7" };
 	await desk.tap(() => desk.frappe.set_route("location-timeline"));
-	check("applied, in Trail", [lt(desk).log.includes("applyRouteOptions:E7"), lt(desk).mode], [true, "trail"]);
+	check("applied, in Trail", [lt(desk).employeeField.value, lt(desk).loads(), lt(desk).mode], ["E7", ["loadTrail:E7:2026-09-24:2026-09-24"], "trail"]);
+	check("the trail is in the address, corrected in place", desk.at().url, "/desk/location-timeline?employee=E7&from_date=2026-09-24&to_date=2026-09-24");
+	check("route_options consumed", desk.frappe.route_options, null);
+});
+
+// The trail in the address (v1.662.0). Each runs under the router before v16.50, which pushes
+// the path only, and after, which pushes the query with it.
+const ROUTERS = [
+	["v16 before 50", {}],
+	["v16.50+", { queryInUrl: true }],
+];
+const TRAIL = (e, from, to) => `/desk/location-timeline?employee=${e}&from_date=${from}&to_date=${to || from}`;
+
+ROUTERS.forEach(([router, options]) => {
+	test(`Location Timeline (${router}): a pasted trail address opens that trail; a reload keeps it`, async () => {
+		let desk = await locationTimeline(TRAIL("E1", "2026-09-20", "2026-09-21"), options);
+		check("the trail", [lt(desk).employeeField.value, lt(desk).fromField.value, lt(desk).toField.value], ["E1", "2026-09-20", "2026-09-21"]);
+		check("loaded once", lt(desk).loads(), ["loadTrail:E1:2026-09-20:2026-09-21"]);
+		check("the address untouched, no entry added", [desk.at().url, desk.at().length], [TRAIL("E1", "2026-09-20", "2026-09-21"), 1]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		desk = await desk.reload();
+		check("a reload: the same trail", [lt(desk).employeeField.value, lt(desk).fromField.value, lt(desk).toField.value], ["E1", "2026-09-20", "2026-09-21"]);
+	});
+
+	test(`Location Timeline (${router}): each trail picked is an entry; Back and Forward walk them`, async () => {
+		const desk = await locationTimeline(null, options);
+		check("bare Trail", [desk.at().url, lt(desk).employeeField.value], ["/desk/location-timeline", ""]);
+		lt(desk).employeeField.value = "E1";
+		await desk.tap(() => lt(desk).onFilterChange());
+		check("a person picked: an entry with the trail in it", [desk.at().url, desk.at().length], [TRAIL("E1", "2026-09-24"), 3]);
+		lt(desk).fromField.value = "2026-09-20";
+		await desk.tap(() => lt(desk).onFilterChange());
+		check("a date picked: another", [desk.at().url, desk.at().length], [TRAIL("E1", "2026-09-20", "2026-09-24"), 4]);
+		lt(desk).setMode("trail", { force: true }); // puts up the Load button
+		await desk.tap(() => lt(desk).page.buttons.Load());
+		check("Load on the trail already shown adds nothing", desk.at().length, 4);
+		await desk.back();
+		check("Back: the trail before", [lt(desk).fromField.value, desk.at().url], ["2026-09-24", TRAIL("E1", "2026-09-24")]);
+		await desk.back();
+		check("Back onto the bare address: no one's trail", [lt(desk).employeeField.value, lt(desk).data, lt(desk).log.includes("hint")], ["", null, true]);
+		await desk.forward();
+		check("Forward: the trail again", [lt(desk).employeeField.value, lt(desk).fromField.value], ["E1", "2026-09-24"]);
+		check("no push without a tap", desk.violations, []);
+	});
+
+	test(`Location Timeline (${router}): a Live row's trail is in its address; Back and Forward reload nothing`, async () => {
+		const desk = await locationTimeline(null, options);
+		await desk.tap(() => lt(desk).pickMode("live"));
+		await desk.tap(() => lt(desk).openTrailFor(0));
+		check("the trail's own entry", [desk.at().url, desk.at().length, lt(desk).mode], [TRAIL("E2", "2026-09-24"), 4, "trail"]);
+		await desk.back();
+		check("Back: Live", [desk.route(), lt(desk).mode], ["location-timeline/live", "live"]);
+		await desk.tap(() => lt(desk).pickMode("trail"));
+		check("the Trail button returns to that trail, as a new entry", [desk.at().url, desk.at().length, lt(desk).employeeField.value], [TRAIL("E2", "2026-09-24"), 4, "E2"]);
+		await desk.back();
+		await desk.forward();
+		check("Forward onto it: shown, not loaded again", [lt(desk).mode, lt(desk).loads().length], ["trail", 1]);
+		check("no push without a tap", desk.violations, []);
+	});
+
+	test(`Location Timeline (${router}): a malformed date is today, and the address is corrected in place`, async () => {
+		const desk = await locationTimeline("/desk/location-timeline?employee=E1&from_date=2026-02-30&to_date=yesterday", options);
+		check("today, quietly", [lt(desk).fromField.value, lt(desk).toField.value, desk.messages], ["2026-09-24", "2026-09-24", []]);
+		check("corrected in place", [desk.at().url, desk.at().length], [TRAIL("E1", "2026-09-24"), 1]);
+	});
+
+	test(`Location Timeline (${router}): another page's route options open the trail and reach the address`, async () => {
+		const desk = await locationTimeline(null, options);
+		await desk.tap(() => desk.frappe.set_route("job-interval", "JI-1"));
+		await desk.tap(() => desk.frappe.set_route("location-timeline", { employee: "E1", from_date: "2026-09-10", to_date: "2026-09-11" }));
+		check("the trail", [lt(desk).employeeField.value, lt(desk).fromField.value, lt(desk).toField.value], ["E1", "2026-09-10", "2026-09-11"]);
+		check("in the address", desk.at().url, TRAIL("E1", "2026-09-10", "2026-09-11"));
+		check("route_options consumed", desk.frappe.route_options, null);
+		await desk.tap(() => desk.frappe.set_route("home"));
+		await desk.tap(() => desk.frappe.set_route("location-timeline"));
+		check("a later plain route replays nothing", [lt(desk).employeeField.value, desk.at().url], ["", "/desk/location-timeline"]);
+	});
+});
+
+test("Location Timeline: an employee param carrying markup never reaches the picker", async () => {
+	const evil = '<img src=x onerror="alert(1)">';
+	const desk = await locationTimeline(`/desk/location-timeline?employee=${encodeURIComponent(evil)}&from_date=2026-09-20`);
+	const lti = lt(desk);
+	check("not picked", lti.employeeField.value, "");
+	check("not admitted to the list", lti.employees.map((e) => e.value), ["E1"]);
+	check("no label anywhere carries markup", lti.employees.some((e) => /[<>"]/.test(e.label)), false);
+	check("no request for it", lti.loads(), []);
+	check("the address corrected to the bare one, in place", [desk.at().url, desk.at().length], ["/desk/location-timeline", 1]);
+	const html = desk.calls.filter((c) => c.method === "html" || c.method === "append").map((c) => String(c.args[0]));
+	check("nothing written to the page holds it", html.some((h) => h.includes("onerror")), false);
+	check("quietly", desk.messages, []);
+});
+
+test("Location Timeline: an unlisted employee that looks like a name is admitted, its label plain text", async () => {
+	const desk = await locationTimeline("/desk/location-timeline?employee=HR-EMP-00042&from_date=2026-09-20");
+	const lti = lt(desk);
+	check("picked and loaded", [lti.employeeField.value, lti.loads()], ["HR-EMP-00042", ["loadTrail:HR-EMP-00042:2026-09-20:2026-09-20"]]);
+	check("admitted with its name as the label", lti.employees.slice(-1), [{ value: "HR-EMP-00042", label: "HR-EMP-00042" }]);
+});
+
+// ---------------------------------------------------------------------------- Maintenance Day Board
+
+// The REAL page script, on the loader's plain stand-in kit (so its calls go through frappe.call).
+// Each reply names the day it is for, so a test can tell which day's board was drawn.
+function dayBoardDesk(options) {
+	const desk = makeDesk(options);
+	desk.respond.get_day_board_data = (args) => ({
+		scheduled: [{ name: `SMR-${args.date || "today"}` }],
+		in_progress: [],
+		submitted_today: [],
+		flagged: [],
+	});
+	return desk;
+}
+
+const mdb = (desk) => desk.wrapper("maintenance-day-board").mdb_day_board;
+const asked = (desk) => desk.sent("get_day_board_data").map((r) => r.args.date || "today");
+// The board as last drawn: the markup of the last html() written into it.
+const drawn = (desk) => {
+	const writes = desk.calls.filter((c) => c.method === "html" && /mdb-board/.test(c.label));
+	return writes.length ? String(writes[writes.length - 1].args[0]) : "";
+};
+const BOARD = "/desk/maintenance-day-board";
+
+ROUTERS.forEach(([router, options]) => {
+	test(`Day Board (${router}): a pasted ?date= opens that day; a reload keeps it`, async () => {
+		let desk = dayBoardDesk(options);
+		await desk.load(`${BOARD}?date=2026-09-20`);
+		check("that day", [mdb(desk).day(), asked(desk)], ["2026-09-20", ["2026-09-20"]]);
+		check("its board", drawn(desk).includes("SMR-2026-09-20"), true);
+		check("the address untouched, no entry added", [desk.at().url, desk.at().length], [`${BOARD}?date=2026-09-20`, 1]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		desk = await desk.reload();
+		check("a reload: the same day", [mdb(desk).day(), asked(desk)], ["2026-09-20", ["2026-09-20"]]);
+	});
+
+	test(`Day Board (${router}): no date is today; each day stepped to is an entry; Back and Forward walk them`, async () => {
+		const desk = dayBoardDesk(options);
+		await desk.load("/desk/home");
+		await desk.tap(() => desk.frappe.set_route("maintenance-day-board"));
+		check("today, on the bare address, asked of the server unnamed", [mdb(desk).day(), desk.at().url, asked(desk)], ["2026-09-24", BOARD, ["today"]]);
+		await desk.tap(() => mdb(desk).step(-1));
+		check("‹: the day before, its own entry", [mdb(desk).day(), desk.at().url, desk.at().length], ["2026-09-23", `${BOARD}?date=2026-09-23`, 3]);
+		await desk.tap(() => mdb(desk).step(-1));
+		check("‹ again", [desk.at().url, desk.at().length, drawn(desk).includes("SMR-2026-09-22")], [`${BOARD}?date=2026-09-22`, 4, true]);
+		await desk.back();
+		check("Back: the day before it", [mdb(desk).day(), desk.at().url, drawn(desk).includes("SMR-2026-09-23")], ["2026-09-23", `${BOARD}?date=2026-09-23`, true]);
+		await desk.back();
+		check("Back: today", [mdb(desk).day(), desk.at().url, drawn(desk).includes("SMR-today")], ["2026-09-24", BOARD, true]);
+		await desk.forward();
+		check("Forward: the 23rd again", [mdb(desk).day(), desk.at().index], ["2026-09-23", 2]);
+		await desk.tap(() => mdb(desk).go("2026-09-24"));
+		check("Today is the bare address, as an entry", [desk.at().url, desk.at().length], [BOARD, 4]);
+		await desk.tap(() => mdb(desk).go("2026-09-24"));
+		check("the day already shown adds nothing", desk.at().length, 4);
+		await desk.tap(() => mdb(desk).step(1));
+		check("›: tomorrow", desk.at().url, `${BOARD}?date=2026-09-25`);
+		await desk.back();
+		await desk.back();
+		await desk.back();
+		await desk.back();
+		check("and Back leaves the board", desk.current(), "home");
+		check("no push without a tap", desk.violations, []);
+	});
+
+	test(`Day Board (${router}): a malformed date or today's own is today, corrected in place`, async () => {
+		for (const bad of ["2026-02-30", "garbage", "2026-9-1", "2026-09-24"]) {
+			const desk = dayBoardDesk(options);
+			await desk.load(`${BOARD}?date=${bad}`);
+			check(`?date=${bad}: today, quietly`, [mdb(desk).day(), asked(desk), desk.messages, desk.alerts], ["2026-09-24", ["today"], [], []]);
+			check(`?date=${bad}: the bare address, no entry`, [desk.at().url, desk.at().length], [BOARD, 1]);
+		}
+	});
+
+	test(`Day Board (${router}): another page's route options open that day and reach the address`, async () => {
+		const desk = dayBoardDesk(options);
+		await desk.load("/desk/home");
+		await desk.tap(() => desk.frappe.set_route("maintenance-day-board", { date: "2026-09-10" }));
+		check("that day", [mdb(desk).day(), drawn(desk).includes("SMR-2026-09-10")], ["2026-09-10", true]);
+		check("in the address", desk.at().url, `${BOARD}?date=2026-09-10`);
+		check("route_options consumed", desk.frappe.route_options, null);
+		await desk.tap(() => desk.frappe.set_route("home"));
+		await desk.tap(() => desk.frappe.set_route("maintenance-day-board"));
+		check("a later plain route replays nothing: today", [mdb(desk).day(), desk.at().url], ["2026-09-24", BOARD]);
+		await desk.back();
+		await desk.back();
+		check("Back to the dated entry: that day again", [mdb(desk).day(), desk.at().url], ["2026-09-10", `${BOARD}?date=2026-09-10`]);
+	});
+
+	test(`Day Board (${router}): a slow reply for the day left never paints over the day shown`, async () => {
+		const desk = dayBoardDesk(options);
+		await desk.load(BOARD);
+		const release = hold(desk, "get_day_board_data");
+		await desk.tap(() => mdb(desk).step(-1));
+		await desk.tap(() => mdb(desk).step(-1));
+		check("both days asked for, the new one not held up by the old", asked(desk), ["today", "2026-09-23", "2026-09-22"]);
+		release();
+		await desk.settle();
+		check("the day shown is the one drawn", [mdb(desk).day(), drawn(desk).includes("SMR-2026-09-22")], ["2026-09-22", true]);
+		check("one entry per day", desk.at().length, 3);
+	});
+});
+
+// The Today button's state as last drawn: disabled on today.
+const todayDisabled = (desk) => {
+	const props = desk.calls.filter((c) => c.label === ".mdb-today" && c.method === "prop" && c.args[0] === "disabled");
+	return props.length ? props[props.length - 1].args[1] : null;
+};
+
+test("Day Board: a past day is not polled; today and a later day are, and the poll comes back with them", async () => {
+	const desk = dayBoardDesk({ intervals: true });
+	await desk.load(`${BOARD}?date=2026-09-20`);
+	check("a past day: no poll", desk.liveIntervals(), 0);
+	await desk.wait(180000);
+	check("and three minutes ask nothing more", asked(desk), ["2026-09-20"]);
+	await desk.tap(() => mdb(desk).go("2026-09-24"));
+	check("back to today: polled again", desk.liveIntervals(), 1);
+	await desk.wait(60000);
+	check("the poll asks for today", asked(desk).slice(-1), ["today"]);
+	await desk.tap(() => mdb(desk).step(1));
+	check("a later day is polled (drafts can still be scheduled for it)", desk.liveIntervals(), 1);
+	await desk.tap(() => mdb(desk).step(-2));
+	check("a past day stops it", desk.liveIntervals(), 0);
+	await desk.back();
+	check("Back onto the later day starts it again", [mdb(desk).day(), desk.liveIntervals()], ["2026-09-25", 1]);
+});
+
+test("Day Board: a later day left on screen past midnight becomes the bare today", async () => {
+	const desk = dayBoardDesk({ intervals: true });
+	await desk.load(`${BOARD}?date=2026-09-25`);
+	check("the 25th, Today enabled, Submitted", [mdb(desk).day(), todayDisabled(desk), /Submitted Today/.test(drawn(desk))], ["2026-09-25", false, false]);
+	desk.today = "2026-09-25"; // midnight
+	await desk.wait(60000);
+	check("now today, on the bare address, corrected in place", [mdb(desk).day(), desk.at().url, desk.at().length], ["2026-09-25", BOARD, 1]);
+	check("asked of the server as today", asked(desk).slice(-1), ["today"]);
+	check("Today disabled, Submitted Today", [todayDisabled(desk), /Submitted Today/.test(drawn(desk))], [true, true]);
+	desk.today = "2026-09-26";
+	await desk.wait(60000);
+	check("and it follows the clock from here", mdb(desk).day(), "2026-09-26");
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Day Board: a draft visit links to its record and to the Visit Wizard, both in the Desk", async () => {
+	const desk = dayBoardDesk();
+	await desk.load(BOARD);
+	const html = drawn(desk);
+	check("the record", html.includes('href="/desk/sapphire-maintenance-record/SMR-today"'), true);
+	check("the wizard", html.includes('href="/desk/visit-wizard/SMR-today"'), true);
+	check("no /app link", /href="\/app\//.test(html), false);
 });
 
 // ---------------------------------------------------------------------------- run
 
 (async () => {
+	scannerKit = await import(pathToFileURL(SCANNER_KIT).href);
 	for (const t of tests) {
 		console.log(t.name);
 		try {

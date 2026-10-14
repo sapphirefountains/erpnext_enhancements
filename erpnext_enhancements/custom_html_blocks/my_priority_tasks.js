@@ -2,7 +2,7 @@
 //
 // The viewer's own open tasks, the company's top-ranked projects first, from
 // erpnext_enhancements.api.task_dashboard.get_my_priority_tasks. The block was made on
-// the site in 2025-12 and lived only in the database until v1.665.0; this is its source
+// the site in 2025-12 and lived only in the database until v1.680.0; this is its source
 // now, and the seeder overwrites the site copy with it. What changed in the move: the two
 // client-side get_list calls became one endpoint that does the sorting, every value is
 // escaped, a task opens in place instead of reloading the Desk, it binds nothing on

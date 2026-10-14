@@ -81,7 +81,7 @@ ON_KIT = (
 	"training_my_dashboard",
 	"travel_home",
 	# The site-made "Home Dashboard Tasks", on the kit from the day it came into the repo
-	# (v1.665.0).
+	# (v1.680.0).
 	"my_priority_tasks",
 )
 

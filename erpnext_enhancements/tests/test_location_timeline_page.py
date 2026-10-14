@@ -189,9 +189,12 @@ class TestRouteOptions(unittest.TestCase):
         body = _js(PAGE_JS)
         self.assertIn("on_page_show = function", body)
         at = body.index("onShow() {")
-        block = body[at : body.index("init() {")]
-        self.assertIn("const opts = frappe.route_options", block)
-        self.assertIn("frappe.route_options = null", block)
+        self.assertIn("const opts = this.takeRouteOptions();", body[at : body.index("takeRouteOptions() {")])
+        # Consumed key by key, as the list view does (v1.662.0): other keys are left alone.
+        take = body[body.index("takeRouteOptions() {") : body.index("init() {")]
+        self.assertIn("const opts = frappe.route_options", take)
+        self.assertIn("delete opts[key];", take)
+        self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", take)
 
 
 class TestTheMapFollowsTheDeskTheme(unittest.TestCase):
@@ -431,14 +434,17 @@ class TestTheTrailDrawsWhatTheContractDescribes(unittest.TestCase):
         self.assertIn("healthPill(s.health)", block)
 
     def test_a_live_row_opens_todays_trail_for_that_person(self):
-        """pickMode, not setMode: the drill-down is a history entry of its own, so Back
-        from the trail returns to the Live list."""
+        """A route, not setMode: the drill-down is a history entry of its own, so Back
+        from the trail returns to the Live list. Since v1.662.0 the person and today go
+        in the route's options, and the show that follows loads the trail from them."""
         body = _js(PAGE_JS)
         at = body.index("openTrailFor(idx) {")
-        block = body[at : at + 1000]
-        self.assertIn("pickMode('trail')", block)
-        self.assertIn("today()", block)
-        self.assertIn("loadTrail(", block)
+        block = body[at : at + 1200]
+        self.assertIn(
+            "frappe.set_route([PAGE_ROUTE, { employee: String(r.employee), from_date: today(), to_date: today() }]);",
+            block,
+        )
+        self.assertNotIn("this.setMode(", block)
 
 
 class TestTheModeIsARouteSegment(unittest.TestCase):
@@ -453,7 +459,8 @@ class TestTheModeIsARouteSegment(unittest.TestCase):
         at = body.index("pickMode(mode) {")
         block = body[at : body.index("setMode(mode, opts) {")]
         self.assertIn("this.setMode(mode);", block)
-        self.assertIn("frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : [PAGE_ROUTE])", block)
+        # Trail carries the trail in the pickers, so it comes back as it was left (v1.662.0).
+        self.assertIn("frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : this.trailRoute())", block)
         # Tapping the mode already routed must not push a second entry for it.
         self.assertIn("this.routeMode() !== mode", block)
 
@@ -471,12 +478,31 @@ class TestTheModeIsARouteSegment(unittest.TestCase):
         body = _js(PAGE_JS)
         self.assertIn("return (frappe.get_route() || [])[1] === 'live' ? 'live' : 'trail';", body)
 
-    def test_the_filters_never_go_into_the_url_by_hand(self):
-        """v16's push_state drops a query string; the page must not write one of its own."""
+    def test_the_trail_is_written_into_the_url_by_one_writer(self):
+        """v16 before 50 pushes a set_route's path without its query, so the trail in the
+        address (v1.662.0) is written by the page: one writer, on the path the router put
+        there, pushing a trail the manager chose and correcting the entry on screen. The
+        query is read back only through route_options (tests/test_page_deep_links.py)."""
         body = _js(PAGE_JS)
-        for token in ("pushState", "replaceState", "location.search", "location.href ="):
+        self.assertNotIn("location.href =", body)
+        writer = body[body.index("writeAddress(push) {") : body.index("async setSilently(field, value) {")]
+        for token in ("pushState(", "replaceState("):
             with self.subTest(token=token):
-                self.assertNotIn(token, body)
+                self.assertEqual(body.count(token), 1)
+                self.assertIn(token, writer)
+        self.assertIn("if (!pageIsCurrent() || this.routeMode() !== 'trail') return;", writer)
+
+    def test_a_picked_trail_is_an_entry(self):
+        body = _js(PAGE_JS)
+        change = body[body.index("onFilterChange() {") :][:400]
+        self.assertLess(change.index("this.writeAddress(true);"), change.index("this.loadTrail("))
+        self.assertIn("this.writeAddress(true);", body[body.index("set_primary_action(__('Load')") :][:200])
+
+    def test_the_bare_trail_address_is_no_ones_trail(self):
+        """Back onto the entry from before a person was picked must not keep the last trail."""
+        body = _js(PAGE_JS)
+        block = body[body.index("onShow() {") : body.index("takeRouteOptions() {")]
+        self.assertIn("return this.applyRouteOptions({});", block)
 
 
 class TestTheStylesheetCoversWhatTheScriptEmits(unittest.TestCase):

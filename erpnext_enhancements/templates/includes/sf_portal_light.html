@@ -1,0 +1,15 @@
+{#-
+  The customer portal is light (custom pages S6a, TASK-2026-02808). Included first in the
+  head_include block of /pay, /pay-card, /rentals and /rent-a-fountain, before the tokens'
+  stylesheet, so the page never paints dark first.
+
+  sf_tokens.bundle.css follows the device's dark setting on a page with no data-theme on <html>.
+  These pages cannot go dark with it: the rest of the website (the footer, Frappe's own website
+  styles) has no dark theme, and Stripe's Payment Element on /pay-card draws dark grey labels in a
+  frame no stylesheet reaches, which would sit unreadable on a navy card. So the page pins the
+  tokens' own switch to light. There is no toggle.
+
+  It lives in this include, not in each page, so a page's own first <script> is still its own
+  (tests split pay.html at its first <script> to read the payment code).
+-#}
+<script>document.documentElement.setAttribute("data-theme", "light");</script>
