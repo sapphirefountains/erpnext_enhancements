@@ -101,6 +101,12 @@ import "./global_enhancements/contact_address_quick_entry.js";
 // Must load after erpnext.bundle.js, whose stock dialog it replaces — app order
 // guarantees that.
 import "./global_enhancements/party_quick_entry.js";
+// ER-2026-520743: a new record made from a grid keeps what was typed. "Add multiple" ->
+// "Create a new X" carries its search text (and adds the record to the grid); "Create a new
+// Item" from a buying grid row carries the row's description, unit and price. Global because
+// LinkSelector serves every grid; the buying half registers frappe.ui.form.on handlers.
+import "./global_enhancements/link_selector_create.js";
+import "./buying/new_item_prefill.js";
 import "./telephony_client.js";
 // global_enhancements
 import "./global_enhancements/quill_mentions.js";
