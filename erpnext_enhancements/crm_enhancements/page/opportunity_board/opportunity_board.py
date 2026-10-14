@@ -15,9 +15,15 @@ Things it is careful about, including the ones that look like bugs:
   rows and completeness are then read only for the names that list returned.
 * **Stages come from the status options, as the Sales Pipeline page reads them**
   (``sales_pipeline._stage_columns``: the live meta, so a renamed stage reshapes both boards
-  with no deploy). Closed Won and Lost are sent as ``close`` stages: drop targets whose required
-  fields the side panel asks for before the move is saved (part C; ``gate`` says which), never
-  columns, because the board shows open deals only.
+  with no deploy). Closed Won and Lost are sent as ``close`` stages: columns since v1.688.0, and
+  drop targets whose required fields the side panel asks for before the move is saved (part C;
+  ``gate`` says which). The order is the open stages, Closed Won, On Hold, then Lost (Nik,
+  2026-10-14: "Put Lost last and On Hold second to last").
+* **The closing columns show recent closes, not every deal ever closed** (``closed``): Closed Won
+  and Lost whose stage changed in the last :data:`CLOSED_DAYS` days, historical deals left out.
+  On 2026-10-14 that was 24 won and 15 lost, of 104 and 89 (and 577 historical). They are a list
+  apart from ``deals``, so no open total, forecast, table, timeline or attention count ever
+  includes them.
 * **Bulk changes take the single-change path** (:func:`bulk_update`, part C): each deal through
   ``form_kit.saver`` or :func:`snooze`, with its own permission check, ``modified`` lock and
   savepoint, answered deal by deal.
@@ -43,7 +49,7 @@ Things it is careful about, including the ones that look like bugs:
 """
 
 import frappe
-from frappe.utils import date_diff, escape_html, flt, formatdate, get_datetime, getdate, nowdate
+from frappe.utils import add_days, date_diff, escape_html, flt, formatdate, get_datetime, getdate, nowdate
 
 from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD
 from erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline import (
@@ -66,6 +72,15 @@ CLOSING_STATUSES = (WON_STATUS, LOST_STATUS)
 
 #: The most deals the board loads. 80 were open on 2026-10-13; past this the board says so.
 MAX_DEALS = 1000
+
+#: The Closed Won and Lost columns show deals whose stage changed within this many days.
+CLOSED_DAYS = 90
+
+#: The most closed deals the board loads (53 changed in 90 days on 2026-10-14).
+MAX_CLOSED = 500
+
+#: When a deal last changed stage: what ``since`` is, and what the closing columns' window reads.
+STAGE_CHANGED_FIELD = "custom_stage_changed_on"
 
 #: Read when the meta has them. ``name``, ``status`` and ``modified`` are always there.
 OPTIONAL_FIELDS = (
@@ -96,19 +111,25 @@ MAX_REASON = 500
 
 
 def _stages():
-	"""``[{"label", "kind"}]``: open stages, then On Hold, then the closing stages."""
+	"""``[{"label", "kind"}]``: the open stages, Closed Won, On Hold, then Lost.
+
+	Nik, 2026-10-14: "Put Lost last and On Hold second to last." The board draws its columns, and
+	the move panel its choices, in this order.
+	"""
 	open_stages, parked = _stage_columns()
 	field = frappe.get_meta(DOCTYPE).get_field("status")
 	options = [opt.strip() for opt in ((field.options if field else "") or "").split("\n") if opt.strip()]
-	stages = [{"label": label, "kind": "open"} for label in open_stages]
-	stages += [{"label": label, "kind": "parked"} for label in parked]
 	# ``gate`` (part C, v1.675.0): which required fields a move into the stage needs, which the side
 	# panel asks for before the move is saved: Closed Won's ranks, or Lost's reasons.
-	stages += [
+	closing = [
 		{"label": label, "kind": "close", "gate": "lost" if label == LOST_STATUS else "won"}
 		for label in options
 		if label in CLOSING_STATUSES
 	]
+	stages = [{"label": label, "kind": "open"} for label in open_stages]
+	stages += [stage for stage in closing if stage["label"] != LOST_STATUS]
+	stages += [{"label": label, "kind": "parked"} for label in parked]
+	stages += [stage for stage in closing if stage["label"] == LOST_STATUS]
 	return stages
 
 
@@ -171,68 +192,104 @@ def _owner_names(records):
 	return names
 
 
+def _deal(record, streams, completeness, owner_names):
+	"""One deal as the board reads it, from a ``get_list`` row."""
+	name = record.get("name")
+	account = record.get("customer_name") or record.get("party_name") or ""
+	amount = flt(record.get("opportunity_amount"))
+	probability = record.get("probability")
+	return {
+		"name": name,
+		"title": record.get("custom_opportunity_name") or account or name,
+		"account": account,
+		"status": record.get("status") or "",
+		"amount": amount if amount > 0 else None,
+		"probability": flt(probability) if probability not in (None, "") else None,
+		"expected_closing": _date(record.get("expected_closing")),
+		"since": _date(record.get("custom_stage_changed_on") or record.get("modified")),
+		"modified": str(record.get("modified")),
+		"streams": streams.get(name, []),
+		"completeness": completeness.get(name),
+		"owner": record.get("opportunity_owner") or "",
+		"owner_name": owner_names.get(record.get("opportunity_owner"), ""),
+		"snoozed_until": _date(record.get(SNOOZE_UNTIL)),
+		"snooze_reason": record.get(SNOOZE_REASON) or "",
+	}
+
+
+def _recently_closed(meta, fields):
+	"""Closed Won and Lost deals whose stage changed in the last :data:`CLOSED_DAYS` days, newest first.
+
+	A stage change saves the deal, so ``modified`` is never before ``custom_stage_changed_on``:
+	filtering on ``modified`` in SQL keeps every deal that can qualify, and the stage date (the
+	deal's ``since``) then decides, here, exactly as the card shows it. The SQL orders by the stage
+	date first, so a mass edit of old closed deals (a patch touching ``modified`` on hundreds) can
+	never push the real recent closes past :data:`MAX_CLOSED`.
+	"""
+	cutoff = add_days(nowdate(), -CLOSED_DAYS)
+	filters = [["status", "in", list(CLOSING_STATUSES)], ["modified", ">=", cutoff]]
+	if meta.has_field(HISTORICAL_FIELD):
+		filters.append([HISTORICAL_FIELD, "!=", 1])
+	order_by = "modified desc"
+	if meta.has_field(STAGE_CHANGED_FIELD):
+		order_by = f"{STAGE_CHANGED_FIELD} desc, modified desc"
+	records = frappe.get_list(
+		DOCTYPE,
+		filters=filters,
+		fields=fields,
+		order_by=order_by,
+		limit_page_length=MAX_CLOSED,
+	)
+	return [
+		record
+		for record in records
+		if getdate(record.get("custom_stage_changed_on") or record.get("modified")) >= getdate(cutoff)
+	]
+
+
 @frappe.whitelist(methods=["GET"])
 def get_board():
 	"""The open deals, with exactly what the board's views, filters and forecast strip read.
 
-	Returns ``{"stages": [{"label", "kind"}], "deals": [...], "thresholds": {"amber", "red"},
-	"today", "currency", "truncated", "can_snooze"}``; each deal is ``{"name", "title", "account",
-	"status", "amount", "probability", "expected_closing", "since", "modified", "streams",
-	"completeness", "owner", "owner_name", "snoozed_until", "snooze_reason"}``. ``amount`` is None
-	when the deal has none above zero. Snoozed deals are sent too: the page hides them (and says how
-	many), so "Show snoozed" needs no second request. See the module docstring for what is read and
-	why.
+	Returns ``{"stages": [{"label", "kind"}], "deals": [...], "closed": [...], "closed_days",
+	"thresholds": {"amber", "red"}, "today", "currency", "truncated", "can_snooze"}``; each deal is
+	``{"name", "title", "account", "status", "amount", "probability", "expected_closing", "since",
+	"modified", "streams", "completeness", "owner", "owner_name", "snoozed_until",
+	"snooze_reason"}``. ``amount`` is None when the deal has none above zero. Snoozed deals are sent
+	too: the page hides them (and says how many), so "Show snoozed" needs no second request.
+	``closed`` is the Closed Won and Lost columns' deals (:func:`_recently_closed`), in the same
+	shape with no completeness; ``since`` is the day each one closed. See the module docstring for
+	what is read and why.
 	"""
 	frappe.has_permission(DOCTYPE, "read", throw=True)
 	meta = frappe.get_meta(DOCTYPE)
 	present = [fieldname for fieldname in OPTIONAL_FIELDS if meta.has_field(fieldname)]
+	fields = ["name", "status", "modified", *present]
 	filters = [["status", "not in", list(CLOSED_STATUSES)]]
 	if meta.has_field(HISTORICAL_FIELD):
 		filters.append([HISTORICAL_FIELD, "!=", 1])
 	records = frappe.get_list(
 		DOCTYPE,
 		filters=filters,
-		fields=["name", "status", "modified", *present],
+		fields=fields,
 		order_by="modified desc",
 		limit_page_length=MAX_DEALS + 1,
 	)
 	truncated = len(records) > MAX_DEALS
 	records = records[:MAX_DEALS]
+	closed_records = _recently_closed(meta, fields)
 	names = [record.get("name") for record in records]
-	streams = _streams(meta, names)
+	closed_names = [record.get("name") for record in closed_records]
+	streams = _streams(meta, names + closed_names)
 	completeness = _completeness(names)
-	owner_names = _owner_names(records)
+	owner_names = _owner_names(records + closed_records)
 	amber, red = _thresholds()
-
-	deals = []
-	for record in records:
-		name = record.get("name")
-		account = record.get("customer_name") or record.get("party_name") or ""
-		amount = flt(record.get("opportunity_amount"))
-		probability = record.get("probability")
-		deals.append(
-			{
-				"name": name,
-				"title": record.get("custom_opportunity_name") or account or name,
-				"account": account,
-				"status": record.get("status") or "",
-				"amount": amount if amount > 0 else None,
-				"probability": flt(probability) if probability not in (None, "") else None,
-				"expected_closing": _date(record.get("expected_closing")),
-				"since": _date(record.get("custom_stage_changed_on") or record.get("modified")),
-				"modified": str(record.get("modified")),
-				"streams": streams.get(name, []),
-				"completeness": completeness.get(name),
-				"owner": record.get("opportunity_owner") or "",
-				"owner_name": owner_names.get(record.get("opportunity_owner"), ""),
-				"snoozed_until": _date(record.get(SNOOZE_UNTIL)),
-				"snooze_reason": record.get(SNOOZE_REASON) or "",
-			}
-		)
 
 	return {
 		"stages": _stages(),
-		"deals": deals,
+		"deals": [_deal(record, streams, completeness, owner_names) for record in records],
+		"closed": [_deal(record, streams, {}, owner_names) for record in closed_records],
+		"closed_days": CLOSED_DAYS,
 		"thresholds": {"amber": amber, "red": red},
 		"today": nowdate(),
 		"currency": frappe.defaults.get_global_default("currency") or "USD",
