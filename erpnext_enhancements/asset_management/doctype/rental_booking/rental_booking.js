@@ -74,7 +74,7 @@ frappe.ui.form.on("Rental Booking", {
 		}
 		add_sales_buttons(frm);
 		add_deposit_buttons(frm);
-		frm.add_custom_button(__("Rental Planner"), () => frappe.set_route("rental-planner"), __("View"));
+		add_planner_button(frm);
 		frm.add_custom_button(__("Fountain Calendar"), () => {
 			frappe.route_options = { rental_booking: frm.doc.name };
 			frappe.set_route("List", "Asset Booking", "Calendar");
@@ -144,6 +144,40 @@ function add_status_button(frm, status) {
 	} else {
 		frm.add_custom_button(action.label, handler, __("Status"));
 	}
+}
+
+// View > Open in Rental Planner (custom pages S5b, v1.667.0): the board opens on this booking's
+// dates, its first day the booking's first (delivery, else setup, else the event), as the
+// planner's ?start=YYYY-MM-DD (S5a). An options object, so v16.50's set_route both fills
+// frappe.route_options, where the planner reads and consumes `start`, and writes it to the
+// address; and a history entry of its own, so Back returns here. Only for those whose roles
+// open the page (frappe.boot.page_info lists the Pages a person's roles reach).
+//
+// A booking with no dates yet opens the bare board. route_options is cleared first: the router
+// copies every address's query into it and nothing clears it, so whatever an earlier page left
+// there would ride into this address (an options object replaces it, so the other path needs
+// nothing).
+function add_planner_button(frm) {
+	const pages = (frappe.boot && frappe.boot.page_info) || {};
+	if (!pages["rental-planner"]) {
+		return;
+	}
+	frm.add_custom_button(__("Open in Rental Planner"), () => {
+		const start = booking_start_day(frm.doc);
+		if (start) {
+			frappe.set_route("rental-planner", { start });
+		} else {
+			frappe.route_options = null;
+			frappe.set_route("rental-planner");
+		}
+	}, __("View"));
+}
+
+// The booking's first day as YYYY-MM-DD, or "" when it has no dates yet.
+function booking_start_day(doc) {
+	const first = doc.delivery_datetime || doc.setup_datetime || doc.event_start_datetime || "";
+	const day = String(first).slice(0, 10);
+	return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
 }
 
 function schedule_or_warn(frm) {
