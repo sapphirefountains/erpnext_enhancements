@@ -1719,6 +1719,15 @@ jobs:
       # Python because MariaDB's PAD SPACE hides a trailing space. Own frappe stub.
       - name: Party mirror rule + dry run (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_party_mirrors -v
+      # Form kit P3.2 (v1.677.0), the Party entry component: its decisions under node against the
+      # real information blocks (roles held equal to form_kit/blocks.py; a contact or address the
+      # person chose is never overwritten silently when the account changes), party_details against a
+      # frappe stub (allowlist, read on the account, the account kind the block allows, ERPNext's
+      # default contact/address rules, every read through get_list), and the wiring (one component in
+      # the editor both shells run, sf_kit's quiet GET, no HTML from values, the planner kit's Back
+      # guard, tokens-only styles in the bundle). Own frappe stub, so its own step.
+      - name: Form kit Party entry component (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_party -v
       # Form kit P4-B, the Guided Entry page (enhancements_core/page/guided_entry and the pure ES
       # modules in public/js/form_kit/): routes and history, step activeness against steps.py's own
       # `applies`, the save queue (coalescing, one request in flight, conflicts) under node, and
@@ -1740,6 +1749,13 @@ jobs:
       # validation blocks it), and saved views in the planners' own store. Own frappe stub.
       - name: Opportunity board part B (views, attention, snooze, saved views)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
+      # Form kit P4.4 / P6.6 / P6.7 (v1.675.0): the side panel's pure decisions and the save
+      # queue's manual mode under node (a move's required fields wait for the commit), the board's
+      # panel routes, quick add and bulk selection, bulk_update taking every deal through the
+      # single-change save with its own lock and savepoint, and the guided page and the side panel
+      # running one record editor. Own frappe stub; the form kit's saver is a recorder.
+      - name: Opportunity board part C (side panel, quick add, bulk)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_panel -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
@@ -3497,6 +3513,17 @@ jobs:
       # model of v16.50's router; node is on PATH in this job, so the harness cannot skip here.
       - name: Custom pages S5b form links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_form_page_links -v
+      # Custom pages S5c (v1.676.0). The Project Planner's Project / PM / Group filters and the
+      # Maintenance Planner's Technician live in the address (?project=&pm=&group=, ?technician=):
+      # read from route_options on every landing and consumed key by key, a pick rewrites the entry
+      # in place (replaceState, never a push), every planner screen carries them, and what an
+      # address gave is never remembered or saved as "last used". Also the planner kit's
+      # stylesheet linked once: v16.50's frappe.require marks a file loaded only after it loads,
+      # so 6A's and 6D's requires in one tick each added a <link>. Runs
+      # scripts/test_planner_url_filters.js, the real page scripts against a model of v16.50's
+      # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
+      - name: Custom pages S5c planner filters in the address (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
@@ -3539,7 +3566,9 @@ jobs:
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       # S3.4b (v1.652.0) added four pages and S3.4c (v1.661.0) Plan a Trip, whose Map colours
       # are read from the same tokens the page CSS uses. S3.4d (v1.664.0) added the Project
-      # Planner, whose task and person colors are data and go in only as --pp-color.
+      # Planner, whose task and person colors are data and go in only as --pp-color. S3.4e
+      # (v1.673.0) added the Maintenance Planner (--mp-color) and planner_kit's own stylesheet,
+      # public/css/planner_kit.bundle.css, which both planners load beside the kit.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Custom pages S3.6 (v1.656.0), the accessibility pass, pinned file by file: the Rental

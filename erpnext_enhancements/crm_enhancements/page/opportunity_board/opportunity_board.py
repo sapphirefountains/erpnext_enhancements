@@ -15,8 +15,12 @@ Things it is careful about, including the ones that look like bugs:
   rows and completeness are then read only for the names that list returned.
 * **Stages come from the status options, as the Sales Pipeline page reads them**
   (``sales_pipeline._stage_columns``: the live meta, so a renamed stage reshapes both boards
-  with no deploy). Closed Won and Lost are sent as ``close`` stages: drop targets that open the
-  guided page's Close step, never columns, because the board shows open deals only.
+  with no deploy). Closed Won and Lost are sent as ``close`` stages: drop targets whose required
+  fields the side panel asks for before the move is saved (part C; ``gate`` says which), never
+  columns, because the board shows open deals only.
+* **Bulk changes take the single-change path** (:func:`bulk_update`, part C): each deal through
+  ``form_kit.saver`` or :func:`snooze`, with its own permission check, ``modified`` lock and
+  savepoint, answered deal by deal.
 * **Open** is the guided start screen's own rule (``form_kit/config/opportunity.py``
   ``mine.open``): any status but Closed Won, Lost, Closed and Converted. A deal whose status the
   options no longer list is still sent; the board gives it a column of its own, so the totals
@@ -98,7 +102,13 @@ def _stages():
 	options = [opt.strip() for opt in ((field.options if field else "") or "").split("\n") if opt.strip()]
 	stages = [{"label": label, "kind": "open"} for label in open_stages]
 	stages += [{"label": label, "kind": "parked"} for label in parked]
-	stages += [{"label": label, "kind": "close"} for label in options if label in CLOSING_STATUSES]
+	# ``gate`` (part C, v1.675.0): which required fields a move into the stage needs, which the side
+	# panel asks for before the move is saved: Closed Won's ranks, or Lost's reasons.
+	stages += [
+		{"label": label, "kind": "close", "gate": "lost" if label == LOST_STATUS else "won"}
+		for label in options
+		if label in CLOSING_STATUSES
+	]
 	return stages
 
 
@@ -314,3 +324,180 @@ def snooze(name, until=None, reason=None, modified=None):
 	# table, a datetime with none prints without them. str(get_datetime(...)) is the form the next
 	# lock check (save_step, or this one) compares against.
 	return {"name": doc.name, "modified": str(get_datetime(doc.modified)), **_snooze_values(doc)}
+
+
+# ---------------------------------------------------------------------------------- bulk (P6.7)
+
+#: The most deals one bulk request may change (``board.js`` MAX_BULK holds the same number).
+MAX_BULK = 100
+
+#: The most deals one bulk change of STAGE may move (``board.js`` BULK_CAPS.stage). A stage move
+#: runs every save hook of the stage, and the person reads each refusal; a smaller batch keeps that
+#: readable. Owner, close date and snooze keep :data:`MAX_BULK`.
+MAX_BULK_STAGE = 25
+
+#: Why Closed Won is never a bulk move (a deliberate departure from P6.7's text, review of #1286).
+#: Each won deal needs its own ranks and its own Closed-Won prompt ("Schedule the hand-off meeting
+#: now?"); twenty of those stacked, none naming its deal, and closing one with Esc un-wins it.
+WIN_ONE_AT_A_TIME = "Win deals one at a time: each needs its own ranks and hand-off."
+
+#: What a bulk request may do to the selected deals.
+BULK_ACTIONS = ("stage", "owner", "close_date", "snooze")
+
+#: Each deal's work runs inside this savepoint, so a deal refused half way leaves nothing behind
+#: while the deals before it keep their changes.
+BULK_SAVEPOINT = "opportunity_board_bulk"
+
+
+def _json(value, kind, default):
+	if value in (None, ""):
+		return default
+	if isinstance(value, str):
+		try:
+			value = frappe.parse_json(value)
+		except ValueError:
+			value = None
+	if not isinstance(value, kind):
+		frappe.throw(frappe._("Could not read the request."))
+	return value
+
+
+def _bulk_plan(action, values):
+	"""What every deal gets, checked once before any deal is touched. Raises on a bad request."""
+	if action == "stage":
+		status = str(values.get("status") or "").strip()
+		field = frappe.get_meta(DOCTYPE).get_field("status")
+		options = [o.strip() for o in ((field.options if field else "") or "").split("\n") if o.strip()]
+		closed_for_good = set(CLOSED_STATUSES) - set(CLOSING_STATUSES)
+		if not status or status not in options or status in closed_for_good:
+			frappe.throw(frappe._("Choose a stage to move them to."))
+		if status == WON_STATUS:
+			frappe.throw(frappe._(WIN_ONE_AT_A_TIME))
+		plan = {"status": status}
+		if status == LOST_STATUS:
+			plan["reasons"] = values.get("reasons") or []
+			plan["competitors"] = values.get("competitors") or []
+			plan["detail"] = values.get("detail") or ""
+			if not plan["reasons"]:
+				frappe.throw(frappe._("Choose at least one reason they were lost."))
+		return plan
+	if action == "owner":
+		owner = str(values.get("owner") or "").strip()
+		# A desk user: a Website User cannot work a deal (review of #1286).
+		user = {"name": owner, "enabled": 1, "user_type": "System User"}
+		if not owner or not frappe.db.exists("User", user):
+			frappe.throw(frappe._("Choose the person who will own them."))
+		return {"owner": owner}
+	if action == "close_date":
+		if not values.get("date"):
+			frappe.throw(frappe._("Choose the expected close date."))
+		return {"date": str(getdate(values.get("date")))}
+	if action == "snooze":
+		return {"until": values.get("until") or "", "reason": values.get("reason") or ""}
+	frappe.throw(frappe._("That is not something the board can do to several deals."))
+
+
+def _saved(result, fieldname, value, name):
+	"""save_step assigns only what the flow lets this person write: a value it did not take is a
+	refusal for this deal, not a success."""
+	if result.get("conflict"):
+		return result
+	if str((result.get("values") or {}).get(fieldname) or "") != str(value or ""):
+		frappe.throw(frappe._("You cannot change that on {0}.").format(name), frappe.PermissionError)
+	return result
+
+
+def _bulk_apply(name, action, plan, modified):
+	"""One deal, through the same paths a single change takes: ``form_kit.saver.save_step`` (the
+	permission check, the ``modified`` lock, the normal ``save()`` with every validation and hook),
+	``saver.declare_lost``, or :func:`snooze`. Returns the result or the conflict shape; raises a
+	refusal."""
+	from erpnext_enhancements.form_kit import saver
+
+	if action == "snooze":
+		return snooze(name, plan["until"], plan["reason"], modified)
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("write")
+	if doc.get("status") in CLOSED_STATUSES:
+		frappe.throw(frappe._("{0} is closed, so the board does not change it.").format(name))
+	if action == "owner":
+		result = saver.save_step(DOCTYPE, name, {"opportunity_owner": plan["owner"]}, modified)
+		return _saved(result, "opportunity_owner", plan["owner"], name)
+	if action == "close_date":
+		result = saver.save_step(DOCTYPE, name, {"expected_closing": plan["date"]}, modified)
+		return _saved(result, "expected_closing", plan["date"], name)
+	status = plan["status"]
+	if doc.get("status") == status:
+		return {"name": name, "modified": str(doc.modified), "unchanged": 1}
+	if status == LOST_STATUS:
+		return saver.declare_lost(
+			DOCTYPE, name, plan["reasons"], plan["competitors"], plan["detail"], modified
+		)
+	# An open stage or On Hold. Closed Won never reaches here: _bulk_plan refuses it.
+	result = saver.save_step(DOCTYPE, name, {"status": status}, modified)
+	return _saved(result, "status", status, name)
+
+
+def _refusal(exc):
+	"""The refusal as a sentence: frappe.throw's message, without its markup."""
+	return frappe.utils.strip_html(str(exc or "")).strip() or frappe._("It could not be changed.")
+
+
+@frappe.whitelist(methods=["POST"])
+def bulk_update(names, action, values=None, modified=None):
+	"""Change several deals at once (form kit P6.7): their stage, owner, expected close date, or a
+	snooze. ``names`` is a JSON list of up to :data:`MAX_BULK` deals, ``modified`` a JSON object of
+	each deal's ``modified`` as the board loaded it, ``values`` what the action needs:
+
+	* ``stage``: ``{"status"}``, an open stage, On Hold or Lost, for at most :data:`MAX_BULK_STAGE`
+	  deals; for Lost also ``reasons`` and ``competitors`` (lists of names) and ``detail``. **Closed
+	  Won is refused** (:data:`WIN_ONE_AT_A_TIME`): each won deal needs its own ranks and its own
+	  hand-off prompt, which a bulk move would stack one per deal.
+	* ``owner``: ``{"owner"}``, an enabled System User. ``close_date``: ``{"date"}``.
+	  ``snooze``: ``{"until", "reason"}`` (a blank ``until`` wakes them).
+
+	Returns ``{"results": [{"name", "ok": 1, "modified"} | {"name", "conflict": 1, "modified_by"} |
+	{"name", "ok": 0, "message"}]}``, one per deal in the order sent: some may fail while the rest
+	go through.
+
+	Careful about:
+
+	* **Nothing is bypassed.** Every deal goes through the path a single change takes
+	  (:func:`_bulk_apply`): write permission on that deal, the ``modified`` lock and its conflict
+	  shape, and a real ``save()`` (or ERPNext's own Declare Lost), so the stage rules (Lost's
+	  reasons) and every save hook run as they do for one deal.
+	* **A refusal is one deal's.** Each deal runs in a savepoint: a validation or permission refusal
+	  rolls back that deal only and is reported; the deals before it keep their changes. Anything
+	  else (a database error) fails the whole request, which Frappe rolls back as one.
+	* **A missing ``modified`` is a refusal**, as in ``save_step``: a change that cannot be checked
+	  could overwrite someone silently.
+	"""
+	frappe.has_permission(DOCTYPE, "write", throw=True)
+	if action not in BULK_ACTIONS:
+		frappe.throw(frappe._("That is not something the board can do to several deals."))
+	names = [str(n).strip() for n in _json(names, list, []) if str(n or "").strip()]
+	names = list(dict.fromkeys(names))
+	if not names:
+		frappe.throw(frappe._("Select the deals to change first."))
+	cap = MAX_BULK_STAGE if action == "stage" else MAX_BULK
+	if len(names) > cap:
+		frappe.throw(frappe._("Change at most {0} deals at once.").format(cap))
+	values = _json(values, dict, {})
+	modified = _json(modified, dict, {})
+	plan = _bulk_plan(action, values)
+
+	results = []
+	for name in names:
+		frappe.db.savepoint(BULK_SAVEPOINT)
+		try:
+			result = _bulk_apply(name, action, plan, modified.get(name))
+		except (frappe.ValidationError, frappe.PermissionError) as exc:
+			frappe.db.rollback(save_point=BULK_SAVEPOINT)
+			frappe.clear_messages()
+			results.append({"name": name, "ok": 0, "message": _refusal(exc)})
+			continue
+		if result.get("conflict"):
+			results.append({"name": name, "conflict": 1, "modified_by": result.get("modified_by") or ""})
+		else:
+			results.append({"name": name, "ok": 1, "modified": result.get("modified")})
+	return {"results": results}

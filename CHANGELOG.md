@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.674.0] - 2026-10-14
+## [1.678.0] - 2026-10-14
 
 Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
 only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is
@@ -97,6 +97,465 @@ byte-for-byte what it was, and a test now pins each one by SHA-256.
   SHA-256 to origin/main's bytes. Every id, class and `data-` attribute a script reads must still
   be in the markup, the form field names must be unchanged, every field must have a label, and an
   inline style is allowed only where it is state.
+
+## [1.677.2] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open closes only the dialog, for real this time.** v1.677.1
+  shipped the wrong cause and changed nothing on prod: Back still closed the New Contact dialog
+  and left the step.
+  - **The cause:** v16's `QuickEntryForm` *is* the frappe Dialog (`extends frappe.ui.Dialog`; its
+    `.dialog` is itself), so the entry never needed unwrapping. What stopped it was timing.
+    `make_quick_entry`'s promise resolves while the modal is still animating in, and
+    `Dialog.display` turns true only on `shown.bs.modal`. `PartyEntry.track` read
+    `display === false` at that moment as "the full form opened instead" and returned before
+    joining the planner kit's history guard.
+  - **The fix:** it now joins once the dialog has shown (`shown.bs.modal`), or at once if it is
+    already showing. A quick entry that routed to the full form never shows, so it never joins.
+  - **Measured on prod before the change:** the resolved entry had `display: false`, which was
+    `true` 1.5 s later. Registering the shown dialog with `planner_kit.guard` by hand made Back
+    close only the dialog, and Cancel stay on the step.
+  - **Corrected below:** the v1.677.1 entry's explanation is wrong; `dialog_of` stays as a
+    harmless normalizer.
+
+## [1.677.1] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open now closes only the dialog.** On prod, Back on the
+  guided page closed the New Contact / New Address dialog and *also* left the step (Contact &
+  site → Basics); in the board's side panel it would have closed the panel too.
+  - The dialog never joined the planner kit's history guard. `PartyEntry.track` took what
+    `frappe.ui.form.make_quick_entry` resolves with as the dialog, but v16's
+    `QuickEntryForm.setup()` resolves the **QuickEntryForm itself**; its frappe Dialog is
+    `.dialog`. With no `$wrapper` on the entry, `track` returned early, no history entry was
+    pushed, and frappe's router closed the dialog on the route change as it always does.
+  - The test harness passed because its stand-in resolved with the dialog. The new pure
+    `form_kit/party.js` `dialog_of(entry)` unwraps the QuickEntryForm (a bare Dialog is taken
+    as it is, and an entry with no dialog — the full form routed to instead — gives null),
+    tested under node.
+
+## [1.677.0] - 2026-10-14
+
+Form kit P3.2, UI half (ERPNext TASK-2026-02755): **the Party entry component**. On the guided
+Opportunity page and in the board's side panel, the account, the Primary Contact, the Billing Address
+and the job site are picked from the account's own records or made on the spot, linked to the
+account, and re-suggested when the account changes. The server half (the block registry and the
+`contact_person` mirror) shipped in v1.669.0.
+
+### Added
+
+- **`public/js/form_kit/ui/party.js` (`PartyEntry`)**, made once by the record editor
+  (`editor.js` `party_entry()`), so both shells get the same component. Its decisions are the pure
+  `public/js/form_kit/party.js`. The Party and Site blocks' entry faces now name it instead of
+  `pending` (`form_kit/blocks.py` and its JS twin).
+  - **"+ New" under each party field.** A contact or an address opens the app's own quick entry
+    with the deal as its context, so it is linked to the account (and to the deal, as the
+    Opportunity form's New Contact links it) and then picked. Why it matters: until now the field's
+    own "Create a new Contact" ran with no context on the guided page (its route is not a Form), so
+    a contact made there was linked to nothing unless the person typed the Account by hand. Frappe's
+    dropdown entry now takes the same path.
+  - **The job site still asks "Whose address is this?" with no default** (the 2026-10-06 rule, from
+    the link audit: a job site may be the general contractor's), and starts as type Shipping; the
+    billing address starts on "Also <account>'s address". A new account: the Customer quick entry;
+    a Lead or Prospect opens its form in a new tab with a toast, since neither has a quick entry here
+    and leaving the page would lose the step.
+  - **When the account changes on a saved deal**, an empty contact, billing address or site takes the
+    new account's default, and **a stored value is never overwritten or emptied**. One linked to the
+    new account, or to the deal itself (a general contractor's job site), stays quietly; any other
+    stays with a note under the field and *Use <suggestion>*. Why (review of #1291): the first
+    version replaced or cleared a stored site nobody had touched, on a step nobody was looking at,
+    and the hand-off would then have copied the wrong site into the Project. An answer for values
+    changed while it was in flight is asked again.
+  - **Back closes the dialog, and only the dialog.** A frappe Dialog closes on any route change, so on
+    its own Back would also leave the step or close the side panel. The dialog joins the planner
+    kit's history guard as an overlay; the guided page loads `planner_kit.bundle.js` the first time a
+    dialog opens.
+- **`form_kit.api.party_details`** (GET only, `form_kit/party.py`): an account's default contact,
+  billing address and site by ERPNext's own rules (`get_default_contact`, `get_default_address`,
+  `get_party_shipping_address`, plus "one address is also the site"), and which of the deal's
+  current values are linked to it or to the deal. Allowlisted DocType, read on the DocType, the
+  account and the deal, the account kind the Party block allows, at most 20 names, every row through
+  `frappe.get_list` with `distinct`: the Dynamic Link filter is a join, and a record linked twice to
+  one party (the Zoho import left some) would otherwise come back twice and push another out.
+- **`contacts_ux.create_for(doctype, record, opts)`** in `contact_address_quick_entry.js`: the
+  Contact/Address dialogs for a record that is not the Form on screen, handed its context instead of
+  the route's. A refused insert keeps the dialog open rather than opening the full form over the page.
+- `roles` and `accounts` on the Party and Site blocks (`blocks.party_roles`), and `check()` refuses a
+  role naming a field the block does not carry.
+
+### Changed
+
+- **`save_step` returns what the save itself changed.** Without a `step`, it now also returns every
+  field the flow shows that a hook changed (ERPNext's `Opportunity.map_fields` filling an empty
+  contact from a new account, `party_mirrors` copying the hidden contact up). Before, the page kept
+  the old value on screen and its next save could put it back, so the screen and the record (and
+  the two contact fields) could disagree.
+- The Contact & site step's intro says new ones are added there now.
+
+### Fixed
+
+- **Undo fails closed** (`panel.js` `undo_allowed`, review of #1286): with no flow, or one that sends
+  neither `closed` nor `won`, the side panel offers no Undo instead of offering one it cannot check.
+- **A broken `quick.when` rule no longer breaks step 1** (`form_kit/api.py`, review of #1286): it ran
+  on every new-record `get_flow` and an exception took the guided page's start down with it. The
+  field is now offered (read as "not required", Lead Source would be hidden while `enforce_source`
+  may still refuse the insert without it, review of #1291), and the failure is logged once per
+  process (`frappe.log_error`, keyword arguments) rather than on every page open.
+- **An Opportunity with no job site no longer takes the Customer's address HTML into it.** ERPNext's
+  `Opportunity.validate` runs `map_fields`, which copies every empty column from the party by name,
+  and `Customer.primary_address` is ERPNext's rendered address (a Text Editor of HTML). v16 checks
+  links in `_validate_links` before `before_validate` and `validate`, and
+  `sync_contact.sanitize_primary_address_link` ran only on `before_validate`, so the HTML reached the
+  `primary_address` Link on every save of a deal with no site. It now also runs on Opportunity's
+  `validate`, after ERPNext's own. Production had 28 Customers with that text and one Opportunity
+  holding it (2026-10-14); that one is cleared on its next save. Found in review; older than P3.2.
+- **"+ New" can never stay held**: it is let go after 8 s even when the dialog never opens (frappe's
+  `with_doctype` never calls back on a failed request).
+
+## [1.676.0] - 2026-10-14
+
+### Added
+
+- **The planners' filters are in the address** (custom pages S5c, ERPNext TASK-2026-02807). A
+  copied link opens the planner as its sender saw it, and a reload keeps the filters.
+  - **Project Planner:** the Project, Project manager and Group filters ride on every planner
+    screen as `?project=`, `?pm=` and `?group=`, e.g.
+    `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`.
+  - **Maintenance Planner:** the Technician filter, as `?technician=<user>` (`__none__` for
+    Unassigned). Its Projected visits and Project work boxes are display switches, like the
+    Project Planner's "Maintenance, rentals, travel", and stay remembered only.
+  - **Read on every landing** (`take_route_filters`, from `handle_route`), from
+    `frappe.route_options`, after the "last used" view is restored, so the address wins over it.
+    The keys are consumed, so none is left for v16.50's `set_route` to write into the next route's
+    address. Keys that are not the planner's are left alone, as S5b decided. An address that names
+    any filter is the whole filter: one it does not name is All, so a link names exactly what it
+    shows. An address that names none (the sidebar, another page's path-only link) keeps the filters
+    on screen, and they are written into it.
+  - **Ignored:** a group that is not one of the four, a value longer than a document name, an
+    object or a null. A PM or technician the loaded planner does not list becomes All, and the
+    address follows. A project the planner does not list stays the filter, as since S5b.
+  - **A pick replaces, a screen pushes.** Picking a filter rewrites the entry on screen in place
+    (`write_filter_url`, `history.replaceState`, each page's one history write). A filter is not a
+    screen. A push per pick would make Back step through every select change before it reached the
+    week before, and Nik's rule is one entry per screen. Because the entry keeps saying what it
+    shows, Back onto it, a reload and a copied link all show it again. A week, month, view, heatmap,
+    My week or a person's route is a screen. It moves by `set_route` as before, now carrying the
+    filters (`filter_options`), so Back and Forward walk the screens, each with the filters it had.
+  - **The write is guarded.** It happens only on the planner's own path, so a late load cannot
+    write a form's address, and never over keys the router has put in `route_options` that the page
+    has not read yet. It keeps the path as the router wrote it, other keys, the hash and
+    `history.state`, and encodes as v16.50's `set_route` does, so the router never pushes a
+    duplicate entry for the same screen. An apostrophe is written as `%27`, as the browser reads it
+    back, so a name like o'neil does not rewrite the entry on every landing. After a popstate the router does not route (the planner
+    kit closing a drawer), `watch_filter_url` runs it again, so a pick made under a drawer reaches
+    the entry below.
+  - **On the router before v16.50**, which pushed the path alone, the filters still reach the
+    address: the planner reads them from `route_options` and writes them itself.
+
+### Changed
+
+- **What an address gave is that visit's only** (S5b's rule for the Project form's link, made
+  general). `url_filters` (replacing `project_link`) holds the keys the address decided: those it
+  named and those it left at All.
+  - None of them is saved to the remembered filters. "Last used" may still save the view, the
+    colors and so on, but keeps the person's own value for each of those keys.
+  - A filter the person picks (`pick_filter`: the selects, and "Filter to this project" in a
+    project's drawer) is theirs: only that one is remembered and goes into "last used", as before.
+    The address's other keys stay one-off. For example, someone who remembers PRJ-MINE and their own
+    PM opens a project from its form and picks Group: Field. They keep PRJ-MINE, their PM and Field.
+  - A key the loaded planner resets to All (a PM or technician it does not list) stops being the
+    address's. When none is left, nothing is a link's any more, so the next week keeps All instead
+    of bringing back the person's own.
+  - Back onto one of the person's own entries, whose filters are their own, makes them theirs again,
+    and "last used" saves as before.
+  - A bare planner address after a link brings back the person's own filters. The planner's own
+    next screen (`self_route`: ‹ ›, a view, a person's route, My week) is not such an address, even
+    when every filter is All and it carries no query.
+  - Back onto an entry the planner left bare (every filter All, and the person's own) names nothing,
+    so it keeps whatever filters are on screen by then, the newer ones.
+  - A saved view, used or restored, is the person's too.
+- **The Project form's link keeps `?project=` in the address.** S5b took the key out
+  (`take_route_project`, now part of `take_route_filters`), so that Back onto the entry would not
+  put the filter back over a later pick. A pick now rewrites the entry, which keeps that promise
+  while the address stays shareable. The link still clears the PM filter: it names only the
+  project, so the PM is All.
+
+### Fixed
+
+- **The planner kit's stylesheet was linked twice on both planners** (since v1.673.0). v16.50's
+  `frappe.require` counts a file as loaded only after it has loaded: `assets.js` pushes it to
+  `_executed` in the element's `onload`. Phase 6A's and Phase 6D's start-up each called
+  `frappe.require(PP6A.kit)` (or `MP6A.kit`) from the constructor in the same tick, and each
+  appended a `<script>` and a `<link>` for `planner_kit.bundle.*`. The second script was harmless,
+  because the bundle installs itself once. The stylesheet, though, was on the page twice. Both now
+  go through `p6a_require`, each page's only `frappe.require`. It keeps the request on
+  `window.planner_kit_request`, one per Desk, which both planners share, so opening the other
+  planner while the kit is on its way does not ask again either.
+
+### Tests
+
+- New bench-free suite `tests/test_planner_url_filters.py`, with its own CI step. It runs
+  `scripts/test_planner_url_filters.js`, the real page scripts against a model of v16.50's router
+  (and the one before it) and of its `assets.js`. It covers opening with the filters, a pick
+  rewriting the address, a reload over the remembered and "last used" filters, Back and Forward
+  across real screen changes, malformed and unknown values, the remembered filters untouched by a
+  link, nothing left in `route_options` for the next route, a bare address after a link, the
+  last-used view's redirect, a pick made under a drawer, and the writes it must never make. It
+  also proves the double `<link>` under the assets model, and one link with `p6a_require`, for
+  6A and 6D in one tick and for both planners at once. Review follow-ups are covered too: a pick
+  from a link keeping the person's other filters, a PM or technician the planner does not list
+  letting go so the next week keeps All, Back onto the person's own entry, and an apostrophe
+  written once.
+- `scripts/test_form_page_links.js` follows the Project link's new address, and a pick goes
+  through `pick_filter`. The source checks in the planner suites now allow each page's one
+  in-place history write, `write_filter_url`, still never a push, and one `frappe.require` behind
+  `p6a_require`, including when the Opportunity board's side panel (v1.675.0) has already loaded
+  the kit's stylesheet, or loads it after a planner has.
+
+## [1.675.0] - 2026-10-14
+
+Form kit P4.4 part 2, P6.6 and P6.7 (ERPNext TASK-2026-02762, -02780, -02781): **the side panel**,
+and on the Opportunity board **tap to edit, required fields on a drop, quick add and bulk
+actions**. Still out of scope: P6.10, retiring the stock Kanban's patches and the list's redirect,
+which waits for Nik's sign-off on the board.
+
+### Added
+
+- **The side panel** (P4.4), `public/js/form_kit/ui/side_panel.js`: a record edited from a list or
+  board without leaving it, in the planner kit's drawer. It runs **the guided page's own record
+  editor**, not a copy: the same fields and help, the same save queue and conflict chooser, the
+  same phone journal (P4.7), the same Set as Lost dialog.
+  - Full screen on a phone (under 768px); beside the board on a wide screen, which it pushes aside.
+  - **Every panel is a route of the page that opens it**, so reload reopens it, Back closes it and
+    Forward reopens it. Moving between a deal's steps *replaces* the address (`…/edit/<name>/<step>`),
+    so Back still closes the panel instead of walking its steps; the step survives a reload.
+  - **Undo toast.** Closing an edit that saved something offers Undo, which saves each changed field
+    back to what it was when the panel opened, locked on `modified`: someone else's save since is
+    reported and never overwritten, and a field the other person changed (a conflict) becomes what
+    Undo returns to. **No Undo is offered when the edit moved the deal into or out of a closing
+    status** (Closed Won, Lost, Closed, Converted; `get_flow`'s new `closed`): a plain save back out
+    of Closed Won would skip `revert_won_status`'s refusal once a project exists and leave the won
+    date set. After an Undo the page sends `sf-record-changed`, so an open guided page reloads.
+  - The drawer's own × goes through the panel's close (an edit saves first), via the drawer's new
+    `request_close` option; the planners pass none and keep their ×.
+  - Its files load on demand the first time a panel opens (`frappe.require` of
+    `planner_kit.bundle.js` and `.css`, `guided_entry.bundle.js` and `.css`), as the planners load
+    theirs; since v1.673.0 the drawer's styles are `planner_kit.bundle.css`, no longer injected by
+    the kit's script. If they do not arrive, a deal
+    opens the normal way and a closing drop opens the guided Close step, as before.
+- **Tap to edit** (P6.6). A tap or click on a card, or on a row of the table, the timeline or the
+  attention list, opens the deal in the side panel (`…/edit/<name>`). On a phone too: the card's
+  Move button is now the way to the move panel. The move panel's "Open opportunity" and the side
+  panel's "Open full page" open the guided page, in place of the panel's history entry.
+- **Required fields on a drop** (P6.6). A drop on Closed Won or Lost (or choosing either in the move
+  panel) opens that stage's required fields in the side panel (`…/closing/<name>/<stage>`):
+  - **Closed Won**: Scope, Schedule and Budget Rank, from the flow's own field definitions
+    (prefilled where the deal has them), with the ranks' "each its own rank" warning. "Move to
+    Closed Won" saves the ranks **and** the status in one `save_step`, locked on `modified`. Nothing
+    is saved before that: the panel's queue is `manual` (no autosave) and keeps no phone copy, so a
+    move nobody committed can never be put back later.
+  - **Lost**: Lost Reasons, Competitors and Detailed Reason, the Set as Lost dialog's fields, then
+    the record's own Declare Lost (`form_kit.api.declare_lost`), locked the same way.
+  - **Commit or cancel.** The card stays in its column, marked "Moving to …", until the move is
+    saved; Cancel, Esc or Back drops what was typed and the card never moved. A refused save keeps
+    the panel open with the reason; a conflict shows the guided page's chooser. **No drop ends in a
+    save error with the card jumping back.**
+  - The hand-off steps keep working: the save is an ordinary `save()`, so the hand-off gate's
+    stamps run, and the Closed-Won project prompt arrives from the server as it does for any save
+    into Closed Won. The panel closes before it can, so the route change does not dismiss it.
+- **Quick add** (P6.7). A "+" at the head of each open column and On Hold opens quick add in the
+  side panel (`…/new/<stage>`): the account, a name, the value streams and a summary, nothing else.
+  It creates through `form_kit.api.create_record` with the create's `client_id` (a resend returns
+  the deal the first attempt made), already in that column's stage, owned by the person adding; the
+  panel then shows the new deal for anything else (its entry replaced, so Back never lands on an
+  empty quick add). The config's new `quick` says what it asks for and what it fills itself; its
+  `when` adds the Lead Source while Lead Attribution Settings require one on a new Opportunity
+  (`attribution.lead_source_required`, which `enforce_source` now uses too). The server decides, in
+  `get_flow`; the Desk reads no Settings Single.
+- **Bulk actions** (P6.7). "Select" (page state, like the filters) puts a 44px box on every card
+  and row and a bar along the bottom: **Change stage**, **Reassign**, **Set close date**,
+  **Snooze**, each in the side panel's drawer (`…/bulk/<action>`; the selection is kept for the tab
+  in guarded `sessionStorage`, so a reload finds it). Lost asks for the lost reasons first, as a
+  drop does. The answer is deal by deal; what failed or conflicted stays selected, with each
+  reason, and "Try the rest again" is one tap.
+  - **Closed Won is not a bulk move** (a deliberate departure from P6.7's text, after review): it is
+    not offered, and the server refuses it ("Win deals one at a time: each needs its own ranks and
+    hand-off."). Each win fires its own "Schedule the hand-off meeting now?" prompt, none naming its
+    deal, and closing one with Esc un-wins its deal; and one set of ranks for many deals is wrong.
+  - A stage move takes at most 25 deals a request; owner, close date and snooze take 100. Over the
+    cap, the panel says so and sends nothing.
+  - Reassign takes an enabled **System User** only.
+- **`opportunity_board.bulk_update`**, POST: up to 100 deals (25 for a stage move), each with the
+  `modified` the board loaded. Every deal goes through the path a single change takes (`form_kit.saver.save_step`,
+  `saver.declare_lost`, or the board's own `snooze`): write permission on that deal, the lock and
+  its conflict shape, a real `save()`. Each runs in a savepoint, so a refusal rolls back that deal
+  only; a database error fails the whole request. A value the flow would not let the person write
+  is reported as a refusal, not a success. Listed in `test_whitelist_placement`'s exact surfaces.
+- `get_flow` sends `won` (what a move into Closed Won must carry), `closed` (the statuses that close
+  a record) and, for a new record, `quick`; `get_board` sends each closing stage's `gate` ("won" or
+  "lost").
+- **`tests/test_opportunity_board_panel.py`**, bench-free, with its own CI step: the panel's pure
+  decisions and the save queue's `manual` mode under node, the board's part C, `bulk_update` against
+  a frappe stub, one renderer for both shells, and the wiring.
+
+### Changed
+
+- **The guided page's record editor moved to `public/js/form_kit/ui/editor.js`** (P4.4: "do not
+  fork a second renderer"). Drawing a step's fields, values, the save queue, conflicts, the phone
+  journal, step 1's create and Set as Lost are `RecordEditor`, which the side panel extends; the
+  guided page keeps its routes, band, rail, summary, footer and start screen, and the editor's
+  methods are mixed onto it when `guided_entry.bundle.js` arrives (`mix_editor`; the class is
+  defined before the bundle loads). The moved code is unchanged except at four seams, each marked
+  "P4.4": the step on screen (`current_step`), the help ids' prefix, step 1's create handing its
+  routing to the shell (`after_create`, `show_created`, `still_new`), and `send_lost`. `open_login`
+  moved too, so the panel's "Sign in" works; a move's `manual` queue (not a flag on the editor) is
+  what keeps the phone's journal untouched. `test_guided_entry` reads the page and the editor
+  together where code moved; no assertion was loosened.
+  - Known limitation, documented in `form_kit/README.md`: the guided page and a side panel open on
+    the same record each keep their own journal union, so one can rewrite the record's phone entry
+    without the other's unsent values. `guided_entry.bundle.js` is version 2 and carries `RecordEditor`, `mix_editor` and
+  `SidePanel`.
+- **The planner kit's drawer takes `history: false` and `request_close`** (additive): the page keeps
+  the drawer in its own route, so the kit pushes no entry and leaves Esc to the page, and the ×
+  asks the owner instead of closing. The planners pass neither and behave as before.
+- The board's move panel says what a closing stage asks for ("Asks for the ranks" / "Asks why it
+  was lost") rather than "Opens the close step".
+
+### Fixed
+
+- **A new record's step 1 dropped what it showed but did not create.** `create_record` assigns only
+  the step's "create" fields, so the summary, a close date or a probability typed on the guided
+  page's step 1 was silently lost. They now go with the create as `prefill` (only what differs from
+  the new record's defaults), which the server already takes for any field the flow lets the
+  person write.
+
+## [1.673.0] - 2026-10-14
+
+### Changed
+
+- **The Maintenance Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4e, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Dragging, tap to move, the calendar and crew geometry, the quick looks, Color by, the
+  Conflict center and every keyboard path work as before, and the S3.6 labels on ‹ › ↻, the
+  `role=button` day numbers and crew date heads, their focus rings and the focus move to the title
+  are kept.
+  - **CSS out of the script.** Seven `<style>` elements the script wrote into `<head>` (`MP_STYLE`,
+    `MP6A_STYLE` ... `MPC1_STYLE`) are now `maintenance_planner.css` beside the page, which Frappe's
+    page loader sends with the page. One section per phase, in the order the script injected them,
+    so the cascade between them is unchanged. Every selector starts with an `mp-` class, which
+    nothing else in the app styles.
+  - **Data colors stay data.** A technician's color (their dot and initials) and a Color-by key's
+    swatch go in only as `style="--mp-color: ${mp_esc(...)}"` (a plain hex from the record or an
+    `hsl()` hashed from the user); Color by keeps `--mp-p6c-c`. No other color is written inline: the
+    email preview's frame, the Unassigned row and the Pencil legend's samples are classes now.
+  - **On the tokens.** Every Frappe variable and literal color became an `--sf-*` token. A visit's
+    edge says its kind: a scheduled visit (and a contract's next one) is on the Service pillar's
+    edge (it was blue), a seasonal one the warn mix (amber), one pending review the warn fill on a
+    warn tint (dark yellow), an extra visit or follow-up violet, a done one green, an overdue one
+    danger, a projected one a dashed muted edge (slate). The read-only bookings take their pillar's
+    chip edge on a tint: a project task Build (it was teal), a rental Rent (amber), travel Neutral
+    (gray). Status as text (a red day, "Full", a free day's hours) is the token mixed half and half
+    with `--sf-text-strong`, never plain yellow. The hint under the calendar now names the bookings
+    by their chips rather than their colors.
+  - **The legends draw the cards.** The toolbar legend painted each swatch with jQuery `.css()` and
+    a hex; it now gives the swatch the card's own kind class. The help legend's visit samples are
+    real cards (`.mp-card` with the kind's class), and its initials samples are classes, so both
+    legends follow the theme and cannot drift from the calendar.
+  - **Printed cards read the tokens.** The printed page takes color values, so `p6c_kind_color`
+    reads the palette tokens behind the screen's edges through `getComputedStyle`, each with the
+    token's own value as its fallback. The old `booking_colors` table is gone.
+  - **Shape.** Sections, grids, cards, trays and bars are square, with no shadows (there were 11):
+    a conflict is an inset danger ring, a drop target an outline, the lead technician's ring an
+    outline in `--sf-text-strong`, a card a search jumped to blinks its focus ring, a highlighted
+    card (Color by) is a tint, and the selection bar, the move bar and the Draft bar have a 2px edge.
+    Keyboard focus on a card is a ring on `::after`, so a selected, moving, drafted or targeted card
+    shows its state and its focus at once; the drop-target rule now comes after `.mp-card:focus`,
+    which used to cancel it on a focused card. The view switch, toggles and the move-by switch round
+    at `--sf-radius-control`; chips and today's number are pills. The move-by switch's chosen unit
+    is the primary fill (it was violet), as on the Project Planner.
+  - **Fields.** The toolbar's technician filter, search and Color by are white, square and edged in
+    both themes, with their own focused rule (Bootstrap's `.form-control:focus` is (0,2,0)); 16px on
+    a phone.
+  - **Touch and phones.** On a touch screen the toolbar's controls, the cards in the week, crew and
+    tray, the day numbers, the team strip and the move bar's buttons are 44px (they were 32 to
+    40px); a month cell's day number keeps 44px of height and is 32px wide. The 760px blocks are the
+    app's one phone width, 767px; the sticky headings (a `min-width: 761px` block) are written for
+    every width and switched off at 767px; the 1024px `overflow-x: clip` applies at every width; the
+    move bar sits above a phone's safe area.
+- **planner_kit's stylesheet is a real bundle on the tokens**, `public/css/planner_kit.bundle.css`
+  (both planners' drawer, side panel, toast, menu, hints, hover glow, legend, quick looks,
+  timeline, Conflict center, personal blocks and day notes). It was three template strings,
+  `styles.js`'s `CSS`, `conflicts.js`'s `CONFLICTS_CSS` and `blocks.js`'s `BLOCKS_CSS`, injected
+  into `<style id="pk-style">` with literal hex, Frappe variables and 8 shadows.
+  - **How it loads, and why the cascade is unchanged.** Both planners ask for it in the same
+    `frappe.require` as the kit's script: `PP6A.kit` and `MP6A.kit` are now
+    `["planner_kit.bundle.js", "planner_kit.bundle.css"]` (the one line the Project Planner's page
+    script changes). `frappe.require` resolves both names through `boot.assets_json`, so they are
+    content-hashed and never served stale, and appends the stylesheet as a `<link>` after the
+    planner page's own CSS, which Frappe added when the page loaded. The kit's rules therefore
+    still come after the page's: equal-specificity pairs across the two resolve as before in both
+    directions (`.pk-tl-bar.pp-tl-colored` against `.pk-tl-bar.pk-tl-pencil` and `.pk-tl-over`;
+    `.pp-p6d-mw .pk-block` against `.pk-block.pk-block-compact`). The callback waits for both files,
+    so the hints and legends drawn at `p6a_ready` never flash unstyled. If the stylesheet fails,
+    `frappe.require` still calls back: the kit is plain and nothing throws.
+    `planner_kit.bundle.js` is untouched and still writes `<style id="pk-style">` from
+    `CSS + CONFLICTS_CSS + BLOCKS_CSS`; all three are `""` now, so no rule is injected twice.
+  - **The look.** Square drawer, menu, columns, timeline and conflict cards; the drawer and the
+    menu have an edge instead of a drop shadow; the toast is sf_kit's (inverted, with a status
+    edge); the hover glow is a focus tint on a booking's ground color, never a ring (a card's
+    outline is its state) and never a background image (the stripes of an off technician, a
+    pencilled card or a block stay visible while it glows), and an inset focus ring on a name or a
+    badge, whose own color a tint would wash out; a late timeline bar is a danger ring; a
+    day with a conflict has a danger bar on its left (an inset shadow before). A booking in a quick
+    look takes its pillar's chip edge, as on the planners. A stop's number is the route view's
+    bahama-blue. The drawer's close button, menu items, a hint's Got it, a person's day head and the
+    Conflict center's people are 44px on a touch screen, and the drawer stops sliding in under
+    `prefers-reduced-motion`.
+- **Fixes on the way.** An off technician's initials were meant to be faded *and striped*; the
+  inline `background:` that painted their color also painted over the stripes, which never showed.
+  The color is a custom property now and the stripes draw. A month cell's load, a tint and nothing
+  else on screen, is read aloud. Two rules for classes nothing draws (`mp-avail-row`,
+  `mp-cap-row`) are gone.
+- **Review follow-ups** (before release):
+  - Merged `origin/main` (S3.4f, the Rental Planner, v1.670.0): `test_s3_page_css.py` keeps both
+    pages' entries, docstring paragraphs and test classes.
+  - The kit's stylesheet is loaded as a stylesheet, beside the kit in one `frappe.require`, not by
+    an `@import` written into the kit's `<style>` element: the `@import` arrived one round trip after
+    the kit's script, so hints and legends drawn at `p6a_ready` flashed unstyled. `styles.js`'s
+    `CSS` is `""`.
+  - The hover glow was a `background-image` with `!important`, which hid the stripes of an off
+    technician, a pencilled card and a blocked day while it glowed. It is a `background-color` tint
+    on a booking and an inset focus ring on a name or a badge.
+  - The 44px touch cards stay on tablets: a week column or a crew cell on a tablet fits a 44px card,
+    and a tablet is a touch screen like a phone.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Maintenance Planner with every shared check, and a new
+  `TestMaintenancePlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--mp-color` and the CSS paints them; a
+  technician's color is a plain hex or its hashed `hsl()`; both legends draw the cards' own classes;
+  the printed edges read the tokens, each fallback the token's own value; no other color value is
+  left in the script; nothing but a width or a data color is inline; warn, danger and good text are
+  the mix; a visit is on the Service edge and a booking on its pillar's; focused fields keep their
+  own rule; touch targets are 44px; the sticky headings stop at 767px; the S3.6 ring moved with the
+  CSS; a highlight is a tint; keyboard focus on a card is never hidden by its state; a month cell
+  says its load; every rule styles a class the page draws; and no other file styles `mp-`. The
+  inline-color allowance takes `--mp-color: ${mp_esc(...)}` beside `--pp-color: ${pp_esc(...)}` and
+  nothing crossed or raw.
+- A new `TestPlannerKitStylesheet` holds `planner_kit.bundle.css` to the same rules (tokens only, no
+  literal, named or Frappe color, every selector `pk-`, square, no shadow, one 767px breakpoint,
+  44px touch, reduced motion, a glow that tints a booking's ground and rings a name but never sets
+  a background image, sections in the old join order, well-formed comments), the three modules to
+  carrying no CSS, and both planners to loading it in the kit's own `frappe.require`.
+  `test_planner_phase6a` runs `styles.js` under node with a Desk present and finds it injects
+  nothing, and pins `kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"]` in both planners.
+- Run against the pre-change files, every new Maintenance Planner and planner_kit check fails except
+  the one that no other file styles `mp-`, which holds a fact about the repo.
+- The planner suites that read `MP*_STYLE` from the script (`test_planner_phase6a`, `6b`, `6c`,
+  `6d_ui`, `6e`, `test_maintenance_planner_crews_page`) read their section of
+  `maintenance_planner.css`; `test_s3_6_accessibility` reads the Maintenance Planner's focus ring
+  from it; `6a` and `6d_ui` read the kit's rules from the bundle.
 
 ## [1.670.0] - 2026-10-14
 

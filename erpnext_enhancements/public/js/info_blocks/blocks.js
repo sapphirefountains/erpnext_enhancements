@@ -12,12 +12,13 @@
  * fails the build if the two differ by a single key, so change the Python first and copy the
  * result here.
  *
- * A face that is `pending` names the task that builds it. Pure: no frappe, no DOM. Nothing
- * bundles it yet; P3.2's Party component is its first reader.
+ * A face that is `pending` names the task that builds it. Pure: no frappe, no DOM. P3.2's Party
+ * component (form_kit/ui/party.js, v1.677.0) is its first reader: it takes the Party and Site
+ * blocks' `roles` from here, through form_kit/party.js party_roles.
  */
 
-const PARTY_TASK = "TASK-2026-02755";
 const BLOCKS_TASK = "TASK-2026-02753";
+const PARTY_ENTRY = { module: "public/js/form_kit/ui/party.js", export: "PartyEntry" };
 
 const SCOPE_STREAMS = {
 	Design: { requests: "custom_design_customer_requests", deliverables: "custom_design_deliverables" },
@@ -56,10 +57,7 @@ export const BLOCKS = {
 		label: "Party",
 		what: "Who the record is for: the account, the person we deal with, and where invoices go.",
 		faces: {
-			entry: {
-				pending: PARTY_TASK,
-				builds: "One component that finds or creates the Account, Contact and Address (P3.2).",
-			},
+			entry: { ...PARTY_ENTRY },
 			report: { kinds: ["party"] },
 			print: { helpers: ["erpnext_enhancements.print_lookup.ps_party"] },
 		},
@@ -67,24 +65,32 @@ export const BLOCKS = {
 			Opportunity: {
 				fields: ["opportunity_from", "party_name", "primary_contact", "customer_address"],
 				mirrors: { primary_contact: "contact_person" },
+				roles: {
+					account_type: "opportunity_from",
+					account: "party_name",
+					contact: "primary_contact",
+					address: "customer_address",
+				},
+				accounts: ["Customer", "Lead", "Prospect"],
 			},
-			Project: { fields: ["customer", "primary_contact", "custom_billing_address"] },
+			Project: {
+				fields: ["customer", "primary_contact", "custom_billing_address"],
+				roles: { account: "customer", contact: "primary_contact", address: "custom_billing_address" },
+				accounts: ["Customer"],
+			},
 		},
 	},
 	site: {
 		label: "Site",
 		what: "Where the work is: the job site address.",
 		faces: {
-			entry: {
-				pending: PARTY_TASK,
-				builds: "The Party component's address picker, offering the account's addresses (P3.2).",
-			},
+			entry: { ...PARTY_ENTRY },
 			report: { kinds: ["party"] },
 			print: { helpers: ["erpnext_enhancements.print_style.ps_address"] },
 		},
 		doctypes: {
-			Opportunity: { fields: ["primary_address"] },
-			Project: { fields: ["primary_address"] },
+			Opportunity: { fields: ["primary_address"], roles: { address: "primary_address" } },
+			Project: { fields: ["primary_address"], roles: { address: "primary_address" } },
 		},
 	},
 	schedule_window: {

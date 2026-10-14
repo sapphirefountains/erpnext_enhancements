@@ -14,7 +14,7 @@ tokens, and have a phone layout (``public/css/sf_portal.bundle.css``). This fail
   ``display`` on an element /pay-card's script shows and hides;
 * a control is under 44px or a field's type under 16px (iOS zooms in);
 * **any page script changes by one byte.** The inline scripts are pinned by SHA-256 to what
-  origin/main held when this landed (v1.674.0). They build, submit and confirm payments; a change to
+  origin/main held when this landed (v1.678.0). They build, submit and confirm payments; a change to
   one belongs in a change of its own, with this pin moved in the same commit and the reason given;
 * a selector a page script reads (an id, a class, a ``data-`` attribute) is gone from its markup,
   or a form field's ``name`` changed;

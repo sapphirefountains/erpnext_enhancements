@@ -95,6 +95,7 @@ function makeDesk(options) {
 			const q = url.indexOf("?");
 			return q < 0 ? "" : url.slice(q);
 		},
+		hash: "",
 	};
 	const history = {
 		state: null,
@@ -361,7 +362,11 @@ function projectPlanner(desk, init, extra) {
 	const ProjectPlanner = vm.runInContext("ProjectPlanner", context);
 	const pp = Object.create(ProjectPlanner.prototype);
 	Object.assign(pp, { project: "", pm: "", group: "", show_all_unscheduled: true, p6c: null, loads: [] }, init || {});
+	// The constructor's: the person's own filters, none from an address yet (S5c).
+	pp.own_filters = pp.filters();
+	pp.url_filters = null;
 	pp.set_mode = () => {};
+	pp.render = () => {};
 	pp.load = () => pp.loads.push({ view: pp.view, anchor: pp.anchor, project: pp.project, pm: pp.pm });
 	pp.p6c_kit = () => null;
 	pp.p6c_sync_controls = () => {};
@@ -459,9 +464,10 @@ test("Project: View > Open in Project Planner opens the planner on that project"
 	check("the unscheduled tray is back to its short list", pp.show_all_unscheduled, false);
 	check("route_options is consumed", desk.frappe.route_options, null);
 	check("one load, this week", pp.loads, [{ view: "week", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
-	check("a history entry of its own, its ?project= taken out in place", desk.entries, [
+	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there.
+	check("a history entry of its own, its ?project= kept as the filter on screen", desk.entries, [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner",
+		"/desk/project-planner?project=PRJ-00001",
 	]);
 	desk.back();
 	check("Back returns to the form", desk.route, ["project", "PRJ-00001"]);
@@ -482,15 +488,21 @@ test("Project: the link is a one-off and leaves the person's own filters alone",
 	check("the planner shows the form's project", pp.project, "PRJ-00001");
 	check("the remembered filters are untouched", desk.prefs, MINE);
 	pp.p6c_save_last();
-	check("no 'last used' save while the link's project is the filter", desk.calls, []);
-	// The person picks another filter (the select's own handler sets it and saves it).
-	pp.project = "";
+	// S5c (v1.676.0): "last used" may still save (colors, view), but keeps the person's own project.
+	check(
+		"'last used' never takes the link's project",
+		desk.calls.map((c) => JSON.parse(c.args.data).project),
+		["PRJ-MINE"]
+	);
+	// The person picks another filter (the select's own handler, pick_filter, sets it and saves it).
+	pp.pick_filter("project", "");
 	pp.p6c_save_last();
 	check(
-		"a filter they pick is saved as last used again",
-		desk.calls.map((c) => [c.method, JSON.parse(c.args.data).project]),
+		"a filter they pick is saved as last used",
+		desk.calls.map((c) => [c.method, JSON.parse(c.args.data).project]).slice(-1),
 		[["erpnext_enhancements.api.planner_views_prefs.save_last_view", ""]]
 	);
+	check("and remembered", desk.prefs.ee_project_planner_project, "");
 });
 
 test("Project: Back after switching to All does not snap the filter back", () => {
@@ -498,14 +510,16 @@ test("Project: Back after switching to All does not snap the filter back", () =>
 	const pp = projectPlanner(desk);
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
 	check("arrived filtered", pp.project, "PRJ-00001");
-	// "All projects" in the select, then a task opened from the calendar.
-	pp.project = "";
+	// "All projects" in the select, then a task opened from the calendar. The pick rewrites the
+	// entry's address in place (S5c), so the entry Back lands on says All.
+	pp.pick_filter("project", "");
+	check("the pick took the project out of the address", desk.here(), "/desk/project-planner");
 	desk.frappe.set_route("Form", "Task", "TASK-0001");
 	check("on the task", desk.route, ["Form", "Task", "TASK-0001"]);
 	desk.back();
 	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner");
 	check("the filter stays All", pp.project, "");
-	check("and nothing is left in route_options to apply later", desk.frappe.route_options, {});
+	check("and nothing is left in route_options to apply later", desk.frappe.route_options, null);
 });
 
 test("Project: a project that starts later opens on the week it starts", () => {
@@ -515,7 +529,7 @@ test("Project: a project that starts later opens on the week it starts", () => {
 		"Open in Project Planner"
 	);
 	check("the week holding its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "week", "2026-11-02"]);
-	check("its address once the project is taken", desk.here(), "/desk/project-planner/week/2026-11-02");
+	check("its address keeps the project", desk.here(), "/desk/project-planner/week/2026-11-02?project=PRJ-00002");
 	check("loaded there with the filter", pp.loads.slice(-1)[0], {
 		view: "week",
 		anchor: "2026-11-02",
@@ -526,7 +540,7 @@ test("Project: a project that starts later opens on the week it starts", () => {
 	openForm(desk, "Project", project({ name: "PRJ-00003", expected_start_date: "2026-09-01" })).press(
 		"Open in Project Planner"
 	);
-	check("a started project opens on this week", desk.here(), "/desk/project-planner");
+	check("a started project opens on this week", desk.here(), "/desk/project-planner?project=PRJ-00003");
 	check("filtered to it", pp.project, "PRJ-00003");
 });
 
@@ -536,7 +550,7 @@ test("Project: the planner's last-used view still applies, and the project wins 
 		p6c: { loaded: true, restored: false, last: { view: "month", project: "PRJ-OLD", pm: "pm@example.com" } },
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
-	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/month/2026-10-14");
+	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-00001");
 	check("still one entry past the form", desk.entries.length, 2);
 	check("the form's project, not the remembered one", pp.project, "PRJ-00001");
 	check("and no remembered PM hiding it", pp.pm, "");
@@ -552,7 +566,7 @@ test("Project: a name that needs escaping arrives whole, and other options are l
 	// Another page's key in the same options is not the planner's to take.
 	desk.frappe.set_route("project-planner", { project: "PRJ-00009", other: "x" });
 	check("only `project` is taken", desk.frappe.route_options, { other: "x" });
-	check("and only it leaves the address", desk.here(), "/desk/project-planner?other=x");
+	check("and the other key stays in the address beside it", desk.here(), "/desk/project-planner?project=PRJ-00009&other=x");
 	check("the new project applies", pp.project, "PRJ-00009");
 });
 

@@ -60,8 +60,8 @@ STAGES = [
 	{"label": "Proposal/Price Quote", "kind": "open"},
 	{"label": "Negotiation/Review", "kind": "open"},
 	{"label": "On Hold", "kind": "parked"},
-	{"label": "Lost", "kind": "close"},
-	{"label": "Closed Won", "kind": "close"},
+	{"label": "Lost", "kind": "close", "gate": "lost"},
+	{"label": "Closed Won", "kind": "close", "gate": "won"},
 ]
 
 
@@ -532,10 +532,12 @@ class TestTheBoardUnderNode(unittest.TestCase):
 	def test_routes(self):
 		r = self.out["routes"]
 		# Part B (v1.663.0) added `view` (and `bare`, the address with no segment at all, where the
-		# remembered view may apply); the board's own routes read as they did in part A.
-		board = {"view": "board", "bare": False}
+		# remembered view may apply); part C (v1.675.0) `side`, the side panel, none on these. The
+		# board's own routes read as they did in part A.
+		board = {"view": "board", "bare": False, "side": None}
 		self.assertEqual(
-			r["bare"], {"view": "board", "layout": "stages", "stage": "", "panel": "", "bare": True}
+			r["bare"],
+			{"view": "board", "layout": "stages", "stage": "", "panel": "", "side": None, "bare": True},
 		)
 		self.assertIsNone(r["other"])
 		self.assertIsNone(r["not_array"])
@@ -1088,8 +1090,9 @@ class TestThePage(unittest.TestCase):
 		):
 			self.assertNotIn(forbidden, code)
 		calls = [m.start() for m in re.finditer(r"\.call\(\s*OB_", code)]
-		# get_board, save_step; part B: snooze, and the four saved-view calls.
-		self.assertEqual(len(calls), 7)
+		# get_board, save_step; part B: snooze, and the four saved-view calls; part C: bulk_update,
+		# and get_flow for the bulk panel's closing fields.
+		self.assertEqual(len(calls), 9)
 		for start in calls:
 			depth, end = 0, start
 			for end in range(code.index("(", start), len(code)):
@@ -1122,8 +1125,13 @@ class TestThePage(unittest.TestCase):
 		self.assertNotIn("save_step", conflict, "a conflict is never retried with the new modified")
 
 	def test_closing_drops_open_the_guided_close_step(self):
+		"""Part C (v1.675.0): a closing drop opens the side panel's required fields
+		(test_opportunity_board_panel); the guided Close step stays as its fallback, for when the
+		panel's files do not load."""
 		code = _code(PAGE_JS)
 		self.assertIn("frappe.set_route(OB_GUIDED_PAGE, OB_DOCTYPE, name, OB_CLOSE_STEP);", code)
+		fallback = code[code.index("\tside_fallback(side) {") :]
+		self.assertIn("this.open_close_step(side.name, true);", fallback[: fallback.index("\n\t}\n")])
 		self.assertIn('const OB_GUIDED_PAGE = "guided-entry";', code)
 		self.assertIn('const OB_CLOSE_STEP = "close";', code)
 		keys = re.findall(r'"key": "(\w+)"', _text(APP / "form_kit" / "config" / "opportunity.py"))
@@ -1163,9 +1171,13 @@ class TestThePage(unittest.TestCase):
 			self.assertNotIn(forbidden, code)
 
 	def test_the_phone_taps_to_move(self):
+		"""Part C (v1.675.0, P6.6): a tap opens the deal in the side panel, on a phone too; the move
+		panel is the card's Move button, on every width."""
 		code = _code(PAGE_JS)
 		self.assertIn('window.matchMedia("(max-width: 767px)")', code)
-		self.assertIn("if (this.is_phone()) this.open_panel(name);", code)
+		self.assertIn('hit = el.closest("[data-move]");\n\t\tif (hit) return this.open_panel(hit.getAttribute("data-move"));', code)
+		self.assertIn("this.open_side({ kind: this.kit.EDIT, name, step: \"\" });", code)
+		self.assertNotIn("if (this.is_phone()) this.open_panel(name);", code)
 		self.assertIn("ob_panel", code)
 
 	def test_a_stale_load_is_dropped_and_followed_by_a_fresh_one(self):

@@ -39,6 +39,7 @@ CSS = APP / "public" / "css" / "guided_entry.bundle.css"
 PAGE_DIR = APP / "enhancements_core" / "page" / "guided_entry"
 PAGE_JSON = PAGE_DIR / "guided_entry.json"
 PAGE_JS = PAGE_DIR / "guided_entry.js"
+EDITOR_JS = FORM_KIT_JS / "ui" / "editor.js"
 ICONS = JS / "global_enhancements" / "field_description_icons.js"
 OPPORTUNITY_JS = JS / "crm_enhancements" / "opportunity.js"
 DEFAULT_JS = JS / "guided_default.js"
@@ -55,6 +56,14 @@ def _code(path):
 	the comment that explains it."""
 	src = re.sub(r"/\*[\s\S]*?\*/", "", _text(path))
 	return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
+
+
+def _page_code():
+	"""The guided page as it runs: its own script and the record editor mixed onto it (form kit P4.4,
+	v1.675.0: the fields, the save queue, conflicts, the journal and step 1's create moved to
+	public/js/form_kit/ui/editor.js, which the side panel runs too). A check on what the page does
+	reads both; what moved is held to the same lines it was held to before."""
+	return _code(PAGE_JS) + "\n" + _code(EDITOR_JS)
 
 
 def _python_applies():
@@ -1064,7 +1073,7 @@ class TestThePage(unittest.TestCase):
 			self.assertNotEqual(name.lower().replace(" ", "-"), "guided-entry", path)
 
 	def test_it_loads_the_kit_and_its_own_bundles(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		for asset in (
 			"sf_kit.bundle.js",
 			"sf_kit.bundle.css",
@@ -1077,7 +1086,7 @@ class TestThePage(unittest.TestCase):
 		self.assertIn("window.sf_form_kit", _text(BUNDLE))
 
 	def test_every_request_goes_through_sf_kit_quietly(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		for forbidden in (
 			"frappe.call(",
 			"frappe.xcall(",
@@ -1104,14 +1113,14 @@ class TestThePage(unittest.TestCase):
 			self.assertIn(f'GE_API + "{method}"', code)
 
 	def test_reads_are_get_and_writes_are_post(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		for match in re.finditer(r'GE_API \+ "(\w+)"[\s\S]*?\{ quiet: true(?:, method: "GET")? \}', code):
 			with self.subTest(method=match.group(1)):
 				is_get = 'method: "GET"' in match.group(0)
 				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records", "find_created"))
 
 	def test_steps_move_with_set_route(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("frappe.set_route(route)", code)
 		self.assertIn("frappe.route_flags.replace_route = true", code)
 		self.assertIn("delete frappe.route_flags.replace_route", code)
@@ -1132,7 +1141,7 @@ class TestThePage(unittest.TestCase):
 				self.assertIsNone(pattern.search(_code(path)))
 
 	def test_unsaved_work_is_never_lost_silently(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('window.addEventListener("beforeunload"', code)
 		self.assertIn("this.has_unsaved()", code)
 		self.assertIn('$(wrapper).on("hide"', code)
@@ -1143,10 +1152,11 @@ class TestThePage(unittest.TestCase):
 		decorate = icons[icons.index("function decorate(control)") :]
 		decorate = decorate[: decorate.index("\n\t}\n")]
 		self.assertIn("if (control.df.ee_desc_inline) return;", decorate)
-		self.assertIn("df.ee_desc_inline = 1;", _code(PAGE_JS))
+		# Set where the fields are drawn: the record editor both shells run (P4.4, v1.675.0).
+		self.assertIn("df.ee_desc_inline = 1;", _code(EDITOR_JS))
 		# Nothing else in the app sets it.
 		for path in APP.rglob("*.js"):
-			if path in (ICONS, PAGE_JS) or "node_modules" in path.parts:
+			if path in (ICONS, EDITOR_JS) or "node_modules" in path.parts:
 				continue
 			with self.subTest(file=str(path.relative_to(APP))):
 				self.assertNotIn("ee_desc_inline", _text(path))
@@ -1156,13 +1166,13 @@ class TestThePage(unittest.TestCase):
 			self.assertNotIn("ee_desc_inline", _text(path), path)
 
 	def test_the_help_button_is_a_real_button(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('<button type="button" class="ge-help-btn" aria-expanded="false">', code)
 		self.assertIn('.attr("aria-label", __("More about {0}", [label]))', code)
 		self.assertIn('frappe.utils.get_form_link("Knowledge Article", article)', code)
 
 	def test_no_settings_single_is_read(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertNotIn("get_single_value", code)
 		self.assertNotIn('"Settings"', code)
 
@@ -1260,7 +1270,7 @@ class TestTheDefaultIsWired(unittest.TestCase):
 				self.assertIn("} catch (e) {", body)
 
 	def test_the_page_uses_the_full_form_way_out(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("window.sf_guided.to_form(this.doctype, this.name, tab)", code)
 		self.assertIn("window.sf_guided.new_in_form(doctype, values)", code)
 		self.assertIn("this.open_in_form(step.link.tab)", code)
@@ -1269,7 +1279,7 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		self.assertNotIn('.then(() => frappe.set_route("Form", this.doctype, this.name))', code)
 
 	def test_the_start_screen_lists_the_callers_records(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('GE_API + "my_records"', code)
 		self.assertIn("frappe.new_doc(doctype)", code)
 
@@ -1279,10 +1289,10 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		self.assertIn("if (tagged(`guided:${key}`)) {", code)
 		self.assertEqual(code.count("window.history.back();"), 2)
 		# The guided page's own replaces keep the tag the router's replaceState(null) would drop.
-		self.assertIn("{ sf_toggle: toggle }", _code(PAGE_JS))
+		self.assertIn("{ sf_toggle: toggle }", _page_code())
 
 	def test_the_long_start_address_is_tidied(self):
-		self.assertIn("window.location.pathname + window.location.hash", _code(PAGE_JS))
+		self.assertIn("window.location.pathname + window.location.hash", _page_code())
 
 	def test_the_crm_sidebar_links_the_start_screen(self):
 		tweaks = _text(APP / "setup" / "workspace_tweaks.py")
@@ -1295,7 +1305,7 @@ class TestNoSignal(unittest.TestCase):
 	"""Form kit P4.7: the guided page keeps working when the connection drops."""
 
 	def test_every_change_and_every_save_state_is_journaled(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("this.write_journal(doctype, name);", code)
 		self.assertIn("this.write_journal(this.doctype, this.name);", code)
 		# Every queue still holding the record goes into its one entry, retired ones included,
@@ -1310,19 +1320,19 @@ class TestNoSignal(unittest.TestCase):
 		self.assertLess(on_state.index("this.write_journal"), on_state.index("if (current())"))
 
 	def test_the_phone_copy_is_put_back_through_reconcile(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("const plan = this.kit.reconcile(entry, this.flow.values);", code)
 		self.assertIn("const kept = this.is_new ? null : this.restore_kept();", code)
 		self.assertIn("this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }", code)
 
 	def test_signal_coming_back_sends_what_waited(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('window.addEventListener("online", () => this.signal_back());', code)
 		self.assertIn("this.wait_for_signal();", code)
 		self.assertIn("queue.retry().catch(() => {});", code)
 
 	def test_storage_is_always_guarded_and_closing_warns_only_when_needed(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertEqual(code.count("window.localStorage"), 1)
 		for name in ("function ge_storage() {", "function ge_read_kept(key) {", "function ge_write_kept(key, entry) {"):
 			body = code[code.index(name) :]
@@ -1332,7 +1342,7 @@ class TestNoSignal(unittest.TestCase):
 		self.assertIn("if (!this.has_unsaved() || this.kept_on_phone()) return;", code)
 
 	def test_a_create_without_signal_is_kept_and_sent_again_with_its_id(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("const args = { doctype, values, client_id: this.client_id };", code)
 		self.assertIn("if (this.kit.try_later(err) && this.write_new_journal()) {", code)
 		self.assertIn('this.notice.kind === "create-offline" && !this.creating && this.showing()', code)
@@ -1348,22 +1358,22 @@ class TestNoSignal(unittest.TestCase):
 		self.assertIn("if (entry.client_id) this.client_id = entry.client_id;", code)
 
 	def test_an_older_queues_waiting_values_come_over_on_a_reload(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		restore = code[code.index("restore_kept() {") :]
 		self.assertIn("old.forEach((queue) => Object.keys(queue.pending()).forEach((fieldname) => queue.discard(fieldname)));", restore)
 		# Through the same reconcile, so a newer server edit is still asked about.
 		self.assertLess(restore.index("entry = { unsent, base:"), restore.index("this.kit.reconcile(entry, this.flow.values)"))
 
 	def test_typing_after_a_restore_reaches_the_record_found_for_it(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("this.pending_resend = { doctype, name: found.name, values: typed };", code)
 		self.assertIn("this.resend_typed(resend.values);", code)
 
 	def test_start_over_drops_every_kept_start(self):
-		self.assertIn("ge_keys(prefix).forEach((key) => ge_write_kept(key, null));", _code(PAGE_JS))
+		self.assertIn("ge_keys(prefix).forEach((key) => ge_write_kept(key, null));", _page_code())
 
 	def test_the_saving_line_says_kept_on_the_phone(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('tone = "offline";', code)
 		self.assertIn(".ge-saveline--offline", _text(CSS))
 
@@ -1372,7 +1382,7 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 	"""Form kit P4.5: what the Opportunity form's own scripts do that the guided page must too."""
 
 	def test_choosing_lost_asks_for_the_reasons(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("if (this.intercept_change(fieldname, value)) return;", code)
 		self.assertIn('title: __("Set as Lost"),', code)
 		self.assertIn('GE_API + "declare_lost"', code)
@@ -1381,13 +1391,13 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 	def test_the_closed_won_prompt_reloads_the_page(self):
 		prompt = _code(JS / "crm_enhancements" / "create_project_prompt.js")
 		self.assertIn('$(document).trigger("sf-record-changed", ["Opportunity", opportunity_name]);', prompt)
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn('$(document).on("sf-record-changed"', code)
 		self.assertIn('frappe.realtime.on("project_creation_status"', code)
 		self.assertIn('crm.confirm_won_next_step(this.name, { mode: "reopen" });', code)
 
 	def test_the_reminder_is_only_for_a_deal_won_before_the_visit(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		body = code[code.index("nudge_won_without_project() {") :]
 		body = body[: body.index("\n\t}\n")]
 		# Marked on the first load whatever the status, so a reload after the prompt's Yes (the
@@ -1396,19 +1406,19 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 		self.assertIn("this.nudged.delete(this.name);", code)
 
 	def test_nothing_unsaved_is_dropped_by_a_reload_or_declare_lost(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		reload = code[code.index("reload_record() {") :]
 		self.assertLess(reload.index("this.queue.has_unsaved()) return;"), reload.index("this.load(doctype, name, step)"))
 		declare = code[code.index("declare_lost(dialog, values) {") :]
 		self.assertLess(declare.index("this.queue.has_unsaved()"), declare.index('GE_API + "declare_lost"'))
 
 	def test_project_messages_are_escaped(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("frappe.utils.escape_html(data.blocked_reason", code)
 		self.assertIn("frappe.utils.escape_html(String(data.drive_error))", code)
 
 	def test_clears_and_distinct_are_applied(self):
-		code = _code(PAGE_JS)
+		code = _page_code()
 		self.assertIn("((this.flow.clears || {})[fieldname] || []).forEach", code)
 		self.assertIn("this.distinct_warnings()", code)
 

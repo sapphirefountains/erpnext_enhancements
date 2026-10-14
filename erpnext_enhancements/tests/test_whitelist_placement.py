@@ -220,6 +220,19 @@ EXACT_SURFACE = {
         "my_records",
         "declare_lost",
         "find_created",
+        # Form kit P3.2 (v1.677.0): the Party component's one read, GET. Checks the registry, read
+        # on the DocType and on the account, the account kind against the Party block, and reads
+        # every Contact and Address through get_list (tested in test_form_kit_party).
+        "party_details",
+    },
+    # The Opportunity board (form kit P6). Part C (v1.675.0) added bulk_update, which changes many
+    # deals at once and so must check write permission and the `modified` lock deal by deal, through
+    # the form kit's own save path (tested in test_opportunity_board_panel). `_bulk_plan`,
+    # `_bulk_apply`, `_saved` and `_refusal` sit directly above it and must never be exposed.
+    "crm_enhancements/page/opportunity_board/opportunity_board.py": {
+        "get_board",
+        "snooze",
+        "bulk_update",
     },
 }
 
