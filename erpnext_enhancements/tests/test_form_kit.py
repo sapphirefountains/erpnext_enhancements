@@ -895,7 +895,8 @@ class TestSteps(unittest.TestCase):
     def test_field_defs_carry_only_control_keys_and_the_hint_hook(self):
         field = _field(self.flow, "custom_design_customer_requests")
         self.assertEqual(field["hint"], STATE["metas"]["Opportunity"].get_field("custom_design_customer_requests").description)
-        self.assertIsNone(field["help"])
+        help_file = json.loads(HELP_FILE.read_text(encoding="utf-8"))["fields"]
+        self.assertEqual(field["help"], help_file["custom_design_customer_requests"]["help"])
         self.assertNotIn("insert_after", field)
         self.assertEqual([c["fieldname"] for c in field["child_fields"]], ["design_customer_requests"])
         self.assertNotIn("default", _field(self.flow, "transaction_date"))  # "Today" is dynamic
@@ -1378,10 +1379,22 @@ class TestFieldHelp(unittest.TestCase):
         self.help = json.loads(HELP_FILE.read_text(encoding="utf-8"))
         self.field_help = sys.modules["erpnext_enhancements.form_kit.field_help"]
 
-    def test_the_file_covers_exactly_the_fields_the_flow_shows(self):
+    def test_the_file_covers_every_field_the_flow_shows_and_only_fields_on_the_form(self):
+        """Every flow field has help; an extra entry is a field the Desk form still shows that the
+        flow leaves out (Language, the attribution fields), whose ⓘ tooltip reads it. A field hidden
+        on the form and absent from the flow has no entry."""
         name = _seed()
         offered = set(_all_values(steps.flow_steps("Opportunity", _doc(name))))
-        self.assertEqual(set(self.help["fields"]), offered)
+        listed = set(self.help["fields"])
+        self.assertEqual(offered - listed, set(), "flow fields without help")
+        meta = STATE["metas"]["Opportunity"]
+        skipped = set(config.CONFIGS["Opportunity"]["skip_fields"])
+        for fieldname in listed - offered:
+            with self.subTest(fieldname=fieldname):
+                df = meta.get_field(fieldname)
+                self.assertIsNotNone(df)
+                self.assertFalse(df.get("hidden"), "a hidden field needs no help")
+                self.assertIn(fieldname, skipped)
         self.assertEqual(self.help["doctype"], "Opportunity")
         for fieldname, entry in self.help["fields"].items():
             with self.subTest(fieldname=fieldname):
@@ -1414,6 +1427,36 @@ class TestFieldHelp(unittest.TestCase):
         # A field the file is silent about keeps its own description and has no (i).
         status = _field(flow, "status")
         self.assertIsNone(status["help"])
+
+    def test_every_field_has_a_hint_and_an_explanation_within_bounds(self):
+        """P5.4, reviewed and approved by Nik on 2026-10-13 (all 86 fields and 13 step intros)."""
+        for fieldname, entry in self.help["fields"].items():
+            with self.subTest(fieldname=fieldname):
+                self.assertTrue(entry["hint"].strip())
+                self.assertTrue(entry["help"].strip())
+                self.assertLessEqual(len(entry["hint"]), 90)
+                self.assertLessEqual(len(entry["help"]), 350)
+                self.assertNotIn("\u2014", entry["hint"] + entry["help"])
+
+    def test_the_ranks_say_which_end_is_the_top(self):
+        for kind in ("scope", "schedule", "budget"):
+            with self.subTest(kind=kind):
+                self.assertIn("1 is the customer's top priority", self.help["fields"][f"custom_{kind}_rank"]["hint"])
+
+    def test_the_review_decisions_reach_the_form(self):
+        meta = STATE["metas"]["Opportunity"]
+        for fieldname in (
+            "no_of_employees", "annual_revenue", "market_segment", "city", "state", "country",
+            "company", "amended_from", "custom_time__materials", "custom_travel_trip",
+        ):
+            with self.subTest(hidden=fieldname):
+                self.assertEqual(int(meta.get_field(fieldname).get("hidden") or 0), 1)
+        self.assertEqual(meta.get_field("company").get("default"), "Sapphire Fountains",
+                         "hidden and mandatory needs a default, or Customize Form refuses to save")
+        for fieldname in config.opportunity.ATTRIBUTION_FIELDS:
+            with self.subTest(read_only=fieldname):
+                self.assertEqual(int(meta.get_field(fieldname).get("read_only") or 0), 1)
+        self.assertNotIn("\u2013", meta.get_field("custom_opportunity_name").get("placeholder"))
 
     def test_the_loader_reads_the_file_and_tolerates_a_missing_one(self):
         loaded = self.field_help.load("Opportunity")

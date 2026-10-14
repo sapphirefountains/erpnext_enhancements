@@ -9,33 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.631.0] - 2026-10-13
 
-Form kit P4.3: field help, the plumbing (TASK-2026-02761). The Opportunity help text itself (P5.4) follows
-in its own PR, once Nik has approved each field on the review page.
+Form kit P4.3 and P5.4 (TASK-2026-02761, 02771): field help, and the Opportunity's help text as Nik reviewed
+it. He approved all 86 fields and 13 step introductions on the review page on 2026-10-13, and his answers to
+the review's questions change the form too.
 
 ### Added
 
 - **One help file per DocType, in the repo:** `form_kit/help_text/opportunity.json`, read by
-  `form_kit/field_help.py`. Each field has a short `hint` and a longer `help`, and the file names
-  the Knowledge Article the *Learn more* links open. This follows Nik's 2026-10-13 decision that help
-  text lives in the repo and changes by PR, with no Desk-editable Field Help.
-  - **The seed copies today's descriptions:** 32 of the 86 fields the flow shows have one, and no
-    field has a `help` yet. So nothing a person sees changes in this release.
-  - **Tests:** `test_form_kit` checks that the file covers exactly the fields the flow shows, and
-    that every hint equals the field's own description. The hint is also what the Desk form,
-    Quick Entry and grids show, so the two can never drift.
-- **The guided flow sends each field's `hint` and `help` from the file** (`steps.field_def`), with
-  the docfield description as the fallback. `get_flow` adds `help_article`.
-- **`form_kit.api.get_field_help(doctype)` (GET):** `{"article", "fields": {fieldname: {"help",
-  "anchor"}}}`. It returns only fields that have an explanation and that the caller may read.
-  `anchor` is the field's step key, which matches the section anchors the KB seeding uses.
+  `form_kit/field_help.py`.
+  - Each field has a short `hint` (always visible under the field) and a longer `help` (behind the
+    ⓘ). The file also names the Knowledge Article the *Learn more* links open.
+  - This follows Nik's 2026-10-13 decision: help text lives in the repo and changes by PR, with no
+    Desk-editable Field Help.
+- **The Opportunity's help text: 76 fields, each with a hint and an explanation.**
+  - Before this, 32 of the 86 fields the flow shows had any description at all.
+  - The text was drafted from `docs/opportunity-field-guide.md`, the form scripts and the server
+    code, then approved field by field.
+  - Two answers sharpened the approved text: rank **1 is the customer's top priority**, and **the
+    PM and Design fill the Deliverables before the hand-off**, because they reach the Project only
+    once, when it is created.
+- **Every hint is also the field's own description.** It is the Custom Field description for this
+  app's fields, or a `description` Property Setter for ERPNext's (23 new setters). So the Desk form,
+  Quick Entry and grids show the same line as the flow. `test_form_kit` fails if a hint and a
+  description ever differ.
+- **The Desk form's ⓘ tooltips now show the longer explanation and a *Learn more* link.**
+  - `field_description_icons.js` already turned descriptions into tooltips. For a DocType listed in
+    `frappe.boot.sf_field_help`, the tooltip now adds the explanation.
+  - The help is fetched once per DocType with a plain `fetch`. `frappe.call` shows its own dialog on
+    a 403, 5xx or timeout even when `silent` is set, and a tooltip must not. If the fetch fails, the
+    tooltip shows the description alone.
+- **The guided flow sends each field's `hint` and `help`** (`steps.field_def`). `get_flow` adds
+  `help_article`.
+- **`form_kit.api.get_field_help(doctype)` (GET)** returns `{"article", "fields": {fieldname:
+  {"help", "anchor"}}}`, only for fields the caller may read. `anchor` is the field's step key.
   `test_whitelist_placement` pins it.
-- **The Desk form's ⓘ tooltips show the longer explanation.**
-  - `field_description_icons.js` already turns a description into an ⓘ tooltip. For a DocType
-    listed in `frappe.boot.sf_field_help`, the tooltip now adds the field's explanation and a
-    *Learn more* link to its section of the article.
-  - **No error dialogs:** the help is fetched once per DocType with a plain `fetch`. `frappe.call`
-    shows its own dialog on a 403, 5xx or timeout even when `silent` is set, and a tooltip must
-    never do that. A failed fetch leaves the tooltip showing just the description.
+
+### Changed
+
+- **New step introductions** for Basics, Contact & site, Scope, Events schedule, Close and Hand-off.
+  Scope no longer mentions contributors, which stay hidden.
+- **Hidden on the Opportunity form and in the flow**, because nothing uses them:
+  - No of Employees, Annual Revenue, Market Segment;
+  - City, State and Country (the addresses hold these);
+  - Company, Amended From, Time & Materials, Created from Travel Trip.
+
+  The stored values are kept. **Company** gets a `Sapphire Fountains` default along with being hidden:
+  it is mandatory, and Frappe refuses to save a DocType or Customize Form whose field is hidden and
+  mandatory without a default. If a second company (the JDH entity) is ever entered in ERPNext,
+  unhide it.
+- **The website and lead attribution fields are read-only on the Desk form and left out of the flow.**
+  These are the UTM fields, the click ID, the landing page and the first referrer. Typing into them
+  rewrote where a deal came from; the capture and the Lead still write them.
+- **Also left out of the flow but still on the Desk form:** Print Language, and Opportunity Amount
+  (Company Currency) and Exchange Rate. Deals are always in the company currency, so those two only
+  repeat Opportunity Amount.
+- **The Opportunity Name example now uses a plain hyphen**
+  (*e.g. Smith Residence - Backyard Pond Build*). The naming rule rejects the en dash it used to show.
 
 ## [1.629.0] - 2026-10-13
 
