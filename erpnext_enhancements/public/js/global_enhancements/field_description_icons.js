@@ -29,6 +29,10 @@
  * DocType per page load, with a plain fetch() rather than frappe.call: frappe.call shows its
  * own error dialog on a 403, a 5xx or a timeout whatever `silent` says, and a tooltip must
  * never do that. A failed fetch simply leaves the tooltip as it was: the description alone.
+ *
+ * One opt-out: a control whose docfield carries `ee_desc_inline` is left exactly as Frappe drew
+ * it (description inline under the field). The guided entry page (form kit P4-B) sets it on its
+ * own FieldGroup fields; everywhere else nothing sets it, so nothing else changes.
  */
 frappe.provide("erpnext_enhancements.field_description_icons");
 
@@ -108,6 +112,11 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 	function decorate(control) {
 		if (!is_enabled()) return;
 		if (!control || !control.df) return;
+		// The opt-out (form kit P4-B): a docfield built with `ee_desc_inline` keeps its description
+		// inline, always visible under the control. Only the guided entry page sets it, on the
+		// dfs it hands its FieldGroups, because there the description is the field's hint and the
+		// page draws its own (i) for the longer help. No DocType field carries the key.
+		if (control.df.ee_desc_inline) return;
 		if (!control.df.description && !extra_for(control.doctype || control.df.parent, control.df.fieldname)) {
 			return;
 		}

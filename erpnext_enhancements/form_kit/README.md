@@ -2,7 +2,9 @@
 
 The server half of form kit P4 (ERPNext TASK-2026-02742): a DocType's form, walked one step at a
 time, saved one step at a time onto the real record, with a running measure of how complete the
-record is for its stage. The page that draws it is P4-B; the components it draws with are in
+record is for its stage. The page that draws it is P4-B, the Desk page **Guided Entry**
+(`enhancements_core/page/guided_entry`, `/desk/guided-entry/<DocType>/<name>/<step>`), whose pure
+decisions are ES modules in `public/js/form_kit/`; the components it draws with are in
 [`docs/app-design-system.md`](../../docs/app-design-system.md). This is a plain Python package, not
 a Frappe module: no DocTypes, nothing in `modules.txt`.
 

@@ -1697,6 +1697,12 @@ jobs:
       # lists. Own frappe stub, so its own step.
       - name: Form kit engine (steps, saves, completeness)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
+      # Form kit P4-B, the Guided Entry page (enhancements_core/page/guided_entry and the pure ES
+      # modules in public/js/form_kit/): routes and history, step activeness against steps.py's own
+      # `applies`, the save queue (coalescing, one request in flight, conflicts) under node, and
+      # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
+      - name: Guided Entry page (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
