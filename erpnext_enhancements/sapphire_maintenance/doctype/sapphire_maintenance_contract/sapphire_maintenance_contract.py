@@ -61,6 +61,7 @@ class SapphireMaintenanceContract(Document):
 		self._materialize_feature_defaults()
 		self._derive_end_date()
 		self._renewal_rate_housekeeping()
+		self._validate_billing_season()
 		self._recurring_billing_setup()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
@@ -91,6 +92,16 @@ class SapphireMaintenanceContract(Document):
 		else:
 			self.non_renewal_notice_date = None
 
+	def _validate_billing_season(self):
+		"""Bill From and Bill Through come as a pair: blank both to bill all year (v1.625.0).
+
+		Only for Monthly, the one cadence the fields show for and the season applies to.
+		"""
+		if self.get("invoicing_frequency") != "Monthly":
+			return
+		if bool(self.get("billing_season_start")) != bool(self.get("billing_season_end")):
+			frappe.throw(_("Set both Bill From and Bill Through, or leave both blank to bill all year."))
+
 	def _recurring_billing_setup(self):
 		"""Initialise recurring-billing fields for a non-Per-Visit contract (§4.2).
 
@@ -101,7 +112,11 @@ class SapphireMaintenanceContract(Document):
 		in the past, so switching an old contract onto recurring billing does not
 		generate a backlog of catch-up drafts. Only Monthly/Quarterly/Annually.
 		"""
-		from erpnext_enhancements.api.maintenance_billing import PERIODS_PER_YEAR, add_period
+		from erpnext_enhancements.api.maintenance_billing import (
+			PERIODS_PER_YEAR,
+			add_period,
+			billed_periods_per_year,
+		)
 
 		freq = self.get("invoicing_frequency")
 		periods = PERIODS_PER_YEAR.get(freq)
@@ -110,6 +125,12 @@ class SapphireMaintenanceContract(Document):
 
 		before = self.get_doc_before_save()
 		cadence_changed = bool(before and before.get("invoicing_frequency") != freq)
+		# A season bills fewer periods a year, so it changes the Annual Fee's share (v1.625.0).
+		season = (self.get("billing_season_start"), self.get("billing_season_end"))
+		season_changed = bool(
+			before and (before.get("billing_season_start"), before.get("billing_season_end")) != season
+		)
+		periods = billed_periods_per_year(freq, *season)
 		annual = (
 			flt(frappe.db.get_value("Project Contract", self.project_contract, "annual_maintenance_fee"))
 			if self.get("project_contract")
@@ -121,8 +142,12 @@ class SapphireMaintenanceContract(Document):
 		# the stored value still equals what the previous cadence would derive.
 		current = flt(self.get("recurring_amount"))
 		derivable = not current
-		if not derivable and cadence_changed:
-			prev_periods = PERIODS_PER_YEAR.get(before.get("invoicing_frequency"))
+		if not derivable and (cadence_changed or season_changed):
+			prev_periods = billed_periods_per_year(
+				before.get("invoicing_frequency"),
+				before.get("billing_season_start"),
+				before.get("billing_season_end"),
+			)
 			prev_computed = flt(annual / prev_periods, 2) if (prev_periods and annual) else None
 			derivable = prev_computed is not None and current == prev_computed
 		if derivable and computed:
