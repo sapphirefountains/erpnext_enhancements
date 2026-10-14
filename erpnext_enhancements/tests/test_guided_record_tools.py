@@ -370,7 +370,7 @@ class _Meta:
 
 def setUpModule():
 	global record_info, STUB
-	STUB = types.SimpleNamespace(docinfo=None, todos=[], events=[], meta=_Meta([]), values={})
+	STUB = types.SimpleNamespace(docinfo=None, todos=[], events=[], meta=_Meta([]), values={}, checked=[])
 	frappe = types.ModuleType("frappe")
 	frappe._dict = _Dict
 	frappe.response = _Dict()
@@ -399,7 +399,20 @@ def setUpModule():
 	erpnext = types.ModuleType("erpnext")
 	crm = types.ModuleType("erpnext.crm")
 	utils = types.ModuleType("erpnext.crm.utils")
-	utils.get_open_activities = lambda doctype, name: {"tasks": STUB.todos, "events": STUB.events}
+	# Only the open half of get_open_activities is read (the closed history is never shown).
+	utils.get_open_todos = lambda doctype, name: STUB.todos
+	utils.get_open_events = lambda doctype, name: STUB.events
+
+	def get_open_activities(doctype, name):
+		raise AssertionError("record_info must not run the closed-history queries")
+
+	utils.get_open_activities = get_open_activities
+
+	def has_permission(doctype, ptype="read", doc=None, throw=False, **kwargs):
+		STUB.checked.append((doctype, doc, throw))
+		return True
+
+	frappe.has_permission = has_permission
 	sys.modules.update(
 		{
 			"frappe": frappe,
@@ -504,6 +517,11 @@ class TestRecordInfo(unittest.TestCase):
 		self.assertEqual(out["assignments"][0]["user_name"], "User One")
 		self.assertEqual(out["logs"][0]["text"], "u2 assigned")
 		self.assertEqual(out["open"]["tasks"][0]["text"], "Site visit")
+
+	def test_open_activities_keep_erpnext_s_permission_check(self):
+		STUB.checked.clear()
+		record_info.build("Opportunity", "CRM-OPP-1")
+		self.assertIn(("Opportunity", "CRM-OPP-1", True), STUB.checked)
 
 	def test_it_answers_in_message_and_leaves_the_response_clean(self):
 		import frappe
@@ -638,6 +656,27 @@ class TestSafety(unittest.TestCase):
 			before = code[max(0, match.start() - 40) : match.start()]
 			self.assertIn("this.dialog(() =>", before)
 
+	def test_new_task_never_touches_another_record_s_form(self):
+		# frappe v16's InteractionComposer reads the GLOBAL cur_frm (render_attach lists its files; the
+		# insert callback reloads it). On this page it is whatever form was open last.
+		code = _code(UI_JS)
+		body = code[code.index("new_interaction(kind) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn(
+			"const foreign = !!saved && !(saved.doctype === doctype && saved.docname === name);", body
+		)
+		self.assertIn("if (foreign) window.cur_frm = null;", body)
+		self.assertIn("if (window.cur_frm === null) window.cur_frm = saved;", body)
+		self.assertIn("if (!creating) restore();", body)
+		self.assertIn(".finally(() => setTimeout(restore, 0));", body)
+		self.assertIn("attachments: this.record_files(),", body)
+		self.assertIn("attachments: this.record_files(),", code[code.index("new_email(reply) {") :])
+
+	def test_the_assign_dialog_is_kept_per_record(self):
+		code = _code(UI_JS)
+		self.assertIn("kept && kept.doctype === doctype && kept.docname === name", code)
+		self.assertIn("this.assign_to = assign;", code)
+
 	def test_the_menu_is_the_planner_kit_s(self):
 		code = _code(UI_JS)
 		self.assertIn('frappe.require(["planner_kit.bundle.js", "planner_kit.bundle.css"]', code)
@@ -664,14 +703,24 @@ class TestTheDeskFormSharesTheCode(unittest.TestCase):
 
 	def test_the_widget_calls_party_sources(self):
 		code = _code(CONTROLLER_JS)
+		self.assertIn("rules ? rules.party_sources(frm.doctype, frm.doc, frm.meta.fields || []) : []", code)
+		self.assertIn("rules ? rules.primary_address_field(this.frm.meta.fields || []) : null", code)
+		self.assertIn("return rules.form_party(frm.doctype, frm.doc || {});", code)
+
+	def test_a_tab_on_the_old_bundle_gets_an_empty_directory_not_a_type_error(self):
+		code = _code(CONTROLLER_JS)
+		self.assertIn("function ee_party_rules() {", code)
 		self.assertIn(
-			"erpnext_enhancements.party_sources.party_sources(frm.doctype, frm.doc, frm.meta.fields || [])",
+			'return (typeof erpnext_enhancements !== "undefined" && erpnext_enhancements.party_sources) || null;',
 			code,
 		)
-		self.assertIn(
-			"erpnext_enhancements.party_sources.primary_address_field(this.frm.meta.fields || [])", code
-		)
-		self.assertIn("erpnext_enhancements.party_sources.form_party(frm.doctype, frm.doc || {})", code)
+		# Every use goes through the guard.
+		self.assertNotIn("erpnext_enhancements.party_sources.", code)
+
+	def test_party_names_in_link_existing_are_escaped(self):
+		for path in (CONTROLLER_JS, UI_JS):
+			with self.subTest(path=path.name):
+				self.assertIn("const party_name = frappe.utils.escape_html(party.link_name);", _code(path))
 
 	def test_the_desk_bundle_installs_both(self):
 		code = _code(DESK_BUNDLE)

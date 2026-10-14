@@ -388,17 +388,24 @@ export class RecordTools {
 
 	// frappe's own Add to ToDo dialog (form/sidebar/assign_to.js), which needs no form: it posts
 	// frappe.desk.form.assign_to.add with the doctype and name, and calls back with the new list.
+	// One per record, kept and cleared on each open, as the sidebar keeps its own (assign_to.js add).
 	open_assign() {
 		const doctype = this.doctype;
 		const name = this.name;
 		const title = this.title();
 		this.dialog(() => {
-			const assign = new frappe.ui.form.AssignToDialog({
-				method: "frappe.desk.form.assign_to.add",
-				doctype,
-				docname: name,
-				callback: () => this.reload(),
-			});
+			const kept = this.assign_to;
+			const assign =
+				kept && kept.doctype === doctype && kept.docname === name
+					? kept
+					: new frappe.ui.form.AssignToDialog({
+							method: "frappe.desk.form.assign_to.add",
+							doctype,
+							docname: name,
+							callback: () => this.reload(),
+					  });
+			if (kept && kept !== assign && kept.dialog && kept.dialog.$wrapper) kept.dialog.$wrapper.remove();
+			this.assign_to = assign;
 			assign.dialog.clear();
 			assign.dialog.show();
 			// The sidebar starts the comment from the record's title field; here, its title.
@@ -819,15 +826,32 @@ export class RecordTools {
 		}
 	}
 
+	// This record's files, as the composers list them (each its own copy: InteractionComposer's
+	// render_attach rewrites file_url on the objects it is given).
+	record_files() {
+		return rules.unique_files((this.info && this.info.attachments) || []).map((f) => ({
+			name: f.name,
+			file_name: f.file_name,
+			file_url: f.file_url,
+		}));
+	}
+
 	// frappe's CommunicationComposer on the record, with the subject and recipient the form's own
-	// New Email starts with (form_timeline.js compose_mail; the composer's subject rule). A reply
-	// starts from the email it answers, as the timeline's Reply does.
+	// New Email starts with (form_timeline.js compose_mail; the composer's subject rule), and the
+	// record's files to pick from (the composer's `attachments`). A reply starts from the email it
+	// answers, as the timeline's Reply does.
+	//
+	// No `frm` is passed, on purpose: the composer reads a form's timeline, events, meta, print formats,
+	// letter head, get_files, attachments, perm and reload_doc, and announces "form-typing" for it, so a
+	// stand-in would have to be a form. Without one it leaves out "Attach Document Print" and keeps no
+	// draft in local storage; the full form's New Email has both.
 	new_email(reply) {
 		const doc = Object.assign({}, this.ed.values || {}, { doctype: this.doctype, name: this.name });
 		const opts = {
 			doc,
 			subject: rules.email_subject(this.title(), this.name),
 			recipients: rules.recipient_for(this.config, this.ed.values),
+			attachments: this.record_files(),
 			success: () => this.reload(),
 		};
 		if (reply) {
@@ -855,20 +879,55 @@ export class RecordTools {
 	// create_task / create_event): frappe's InteractionComposer on the record, with the Reference
 	// fixed. Its `frm` is a stand-in carrying only what the composer reads (doc, doctype, docname, and
 	// attachments.attachment_uploaded for a file added in the dialog).
+	//
+	// The composer also reads the GLOBAL cur_frm: render_attach lists cur_frm.get_files(), and its
+	// insert callback runs cur_frm.reload_doc(). On this page cur_frm is whatever Desk form was open
+	// last, so it would offer another record's files and reload an unrelated form. While this composer
+	// is open, and until its insert has called back, cur_frm is null unless it is this very record; it
+	// is put back afterwards (only if nothing else has set it meanwhile). This record's files come in
+	// through the composer's own `attachments`.
 	new_interaction(kind) {
 		const doctype = this.doctype;
 		const name = this.name;
+		let composer = null;
 		const frm = {
 			doc: { doctype, name },
 			doctype,
 			docname: name,
-			attachments: { attachment_uploaded: () => this.reload() },
+			attachments: {
+				attachment_uploaded: (file) => {
+					if (composer && file && file.name) {
+						composer.attachments.push({ name: file.name, file_name: file.file_name, file_url: file.file_url });
+					}
+					this.reload();
+				},
+			},
+		};
+		const saved = window.cur_frm || null;
+		const foreign = !!saved && !(saved.doctype === doctype && saved.docname === name);
+		let creating = false;
+		let restored = !foreign;
+		const restore = () => {
+			if (restored) return;
+			restored = true;
+			if (window.cur_frm === null) window.cur_frm = saved;
 		};
 		this.dialog(() => {
-			const composer = new frappe.views.InteractionComposer({
-				doc: frm.doc,
-				frm,
-				title: kind === "ToDo" ? __("New Task") : __("New Event"),
+			if (foreign) window.cur_frm = null;
+			try {
+				composer = new frappe.views.InteractionComposer({
+					doc: frm.doc,
+					frm,
+					attachments: this.record_files(),
+					title: kind === "ToDo" ? __("New Task") : __("New Event"),
+				});
+			} catch (e) {
+				restore();
+				throw e;
+			}
+			// Closed without creating: cur_frm comes back now. Closed by its own create: after the insert.
+			composer.dialog.$wrapper.on("hidden.bs.modal", () => {
+				if (!creating) restore();
 			});
 			composer.dialog.get_field("interaction_type").set_value(kind);
 			if (kind === "ToDo") {
@@ -883,10 +942,19 @@ export class RecordTools {
 			// by a reload of the activity instead.
 			const create = composer.create_interaction.bind(composer);
 			composer.create_interaction = (...args) => {
-				const pending = create(...args);
+				creating = true;
+				let pending;
+				try {
+					pending = create(...args);
+				} catch (e) {
+					restore();
+					throw e;
+				}
 				Promise.resolve(pending)
 					.then(() => this.reload())
-					.catch(() => {});
+					.catch(() => {})
+					// frappe.call runs its callback (the composer's reload_doc) before its promise settles.
+					.finally(() => setTimeout(restore, 0));
 				return pending;
 			};
 			return composer;
@@ -1052,14 +1120,16 @@ export class RecordTools {
 		const party = form_party(this.doctype, Object.assign({}, this.ed.values || {}, { name: this.name }));
 		const fields = [{ label: __("Select {0}", [__(doctype)]), fieldname: "record", fieldtype: "Link", options: doctype, reqd: 1 }];
 		if (party) {
+			// A frappe field's label and description are HTML: the party's name is escaped.
+			const party_name = frappe.utils.escape_html(party.link_name);
 			fields.push({
-				label: __("Also add to {0} {1}", [__(party.link_doctype), party.link_name]),
+				label: __("Also add to {0} {1}", [__(party.link_doctype), party_name]),
 				fieldname: "also_party",
 				fieldtype: "Check",
 				default: 0,
 				description: __("Only if this {0} belongs to {1}. A consultant, inspector or subcontractor on the job does not.", [
 					__(doctype),
-					party.link_name,
+					party_name,
 				]),
 			});
 		}

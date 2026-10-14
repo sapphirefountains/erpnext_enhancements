@@ -26,6 +26,13 @@ export const RECORD_TOOLS = {
 	// ERPNext v16 erpnext/crm/doctype/opportunity/opportunity.js refresh(): on a saved deal that is not
 	// Lost, Supplier Quotation and Request For Quotation (under `if (doc.items)`, an array and so
 	// always true), Customer unless the party is already one, and Quotation.
+	//
+	// Not ported, on purpose: the same refresh() adds Close (status "Closed") and Reopen (status
+	// "Open", lost reasons cleared), but this site's status options are its own stages (a Property
+	// Setter: Qualification ... Lost, Closed Won, On Hold), so both would write a value the Select
+	// refuses; a stage is set in the Close step, and Lost through Set as Lost. Fetch Latest Exchange
+	// Rate shows only when the deal's currency is not the company's, and deals here are always in the
+	// company currency (the flow skips conversion_rate for that reason, config/opportunity.py).
 	Opportunity: {
 		email_field: "contact_email",
 		create: {

@@ -14,7 +14,7 @@ record), and hands back what it found, shaped for a page that writes text:
 - users come back with their full names beside the ids;
 - an email body is cut to ``BODY_LIMIT`` characters; the Communication itself is one tap away.
 
-Plus what ERPNext's CRM Activities tab shows on top (``erpnext.crm.utils.get_open_activities``: the
+Plus what ERPNext's CRM Activities tab shows on top (the open half of ``erpnext.crm.utils.get_open_activities``: the
 record's open ToDos and Events), the record's own created / last-edited stamps, which the timeline
 draws from ``frm.doc``, and its Google Drive folder (the form's "Open Drive Folder" reads two hidden
 fields no guided step carries), each field only where the caller may read it.
@@ -170,10 +170,12 @@ def _logs(docinfo, people):
 def _open_activities(doctype, name):
 	"""ERPNext's CRM Activities: the record's open ToDos and Events (empty without ERPNext)."""
 	try:
-		from erpnext.crm.utils import get_open_activities
+		from erpnext.crm.utils import get_open_events, get_open_todos
 	except ImportError:
 		return {"tasks": [], "events": []}
-	found = get_open_activities(doctype, name) or {}
+	# get_open_activities' own check, without its closed-ToDo/Event history, which nothing here shows.
+	frappe.has_permission(doctype, doc=name, throw=True)
+	found = {"tasks": get_open_todos(doctype, name), "events": get_open_events(doctype, name)}
 	people = _names([row.get("allocated_to") for row in found.get("tasks") or []])
 	tasks = [
 		{

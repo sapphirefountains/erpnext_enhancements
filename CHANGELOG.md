@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Drive Folder, Set Reminder, New Email, Print, Customize, and the full form for rename, duplicate,
     merge and delete. It is the planner kit's menu, so Back closes it.
 - **`form_kit.api.record_info`** (GET): what the form's sidebar and timeline know, from frappe's own
-  `get_docinfo` (whose read check is the form load's) and ERPNext's `get_open_activities`. Needed
+  `get_docinfo` (whose read check is the form load's) and the open half of ERPNext's `get_open_activities`. Needed
   because `get_docinfo` answers in `frappe.response["docinfo"]`, which sf_kit's call never reads.
   Every stored HTML string (an email body, a ToDo, a log line) comes back as plain text, written
   with `.text()`; the Drive folder fields, hidden on the form and so in no step, only where the
@@ -62,9 +62,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RECORD_TOOLS` (`public/js/form_kit/record_tools.js`), for what a DocType's own form script adds.
   Every dialog joins the planner kit's history guard as the Party dialogs do: Back closes the dialog
   and nothing else. Left on the full form: Rename, Duplicate, Delete, Merge, frappe's Remind Me (its
-  `ReminderManager` is not exported), Share, and New Email's print attachment (the composer offers
-  it only with a form). `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the
-  shared directory rules under node and `record_info` against a frappe stub.
+  `ReminderManager` is not exported), Share, and New Email's "Attach Document Print" and saved draft
+  (the composer offers them only with a form); the record's own files are offered in both
+  composers. Not ported: ERPNext's Opportunity Close / Reopen (they write status "Closed" / "Open",
+  which this site's stage list refuses) and Fetch Latest Exchange Rate (deals are always in the
+  company currency).
+- New Task and New Event use frappe's `InteractionComposer`, which reads the global `cur_frm` for its
+  file list and reloads it after the insert. On these pages that is whatever form was open last, so
+  `cur_frm` is null while the composer is open and until its insert has called back, then put back.
+- A form tab still holding the bundle from before this release shows an empty Contact & Address
+  directory until it reloads, never a TypeError. The directory's "Also add to" now escapes the
+  party's name in its label and description (it did not before).
+- `tests/test_guided_record_tools.py` (new CI step) runs the decisions and the shared directory rules
+  under node and `record_info` against a frappe stub.
 
 ## [1.682.1] - 2026-10-14
 

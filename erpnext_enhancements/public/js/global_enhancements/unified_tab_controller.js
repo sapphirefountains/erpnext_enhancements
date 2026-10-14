@@ -50,6 +50,14 @@ function shown_phone(value) {
 	}
 }
 
+// party_sources.js as erpnext_enhancements.bundle.js installs it (v1.686.0): the directory's party
+// rules, shared with the guided page's record tools. A tab still holding the bundle from before then
+// has none, and the directory shows nothing until it reloads rather than throwing a TypeError. A
+// function declaration, as shown_phone above, because this file may be evaluated more than once.
+function ee_party_rules() {
+	return (typeof erpnext_enhancements !== "undefined" && erpnext_enhancements.party_sources) || null;
+}
+
 frappe.ui.form.on("Customer", {
 	refresh: (frm) => erpnext_enhancements.unified_controller.init(frm),
 });
@@ -113,7 +121,8 @@ erpnext_enhancements.unified_controller = {
 	// Link field.
 	primary_address_link_field: function () {
 		// The rule lives in party_sources.js since v1.686.0, shared with the guided page's record tools.
-		return erpnext_enhancements.party_sources.primary_address_field(this.frm.meta.fields || []);
+		const rules = ee_party_rules();
+		return rules ? rules.primary_address_field(this.frm.meta.fields || []) : null;
 	},
 
 	primary_address_name: function () {
@@ -200,7 +209,8 @@ erpnext_enhancements.unified_controller = {
 	// erpnext_enhancements.party_sources. scripts/test_party_sources.mjs runs this method.
 	get_all_party_sources: function () {
 		const frm = this.frm;
-		return erpnext_enhancements.party_sources.party_sources(frm.doctype, frm.doc, frm.meta.fields || []);
+		const rules = ee_party_rules();
+		return rules ? rules.party_sources(frm.doctype, frm.doc, frm.meta.fields || []) : [];
 	},
 
 	render_all: function () {
@@ -575,14 +585,16 @@ erpnext_enhancements.unified_controller = {
 			},
 		];
 		if (party) {
+			// A field's label and description are HTML: the party's name is escaped (v1.686.0).
+			const party_name = frappe.utils.escape_html(party.link_name);
 			fields.push({
-				label: __("Also add to {0} {1}", [__(party.link_doctype), party.link_name]),
+				label: __("Also add to {0} {1}", [__(party.link_doctype), party_name]),
 				fieldname: "also_party",
 				fieldtype: "Check",
 				default: 0,
 				description: __(
 					"Only if this {0} belongs to {1}. A consultant, inspector or subcontractor on the job does not.",
-					[__(doctype), party.link_name],
+					[__(doctype), party_name],
 				),
 			});
 		}
@@ -641,8 +653,9 @@ erpnext_enhancements.unified_controller = {
 	 */
 	get_form_party: function () {
 		const frm = this.frm;
-		if (frm.is_new()) return null;
-		return erpnext_enhancements.party_sources.form_party(frm.doctype, frm.doc || {});
+		const rules = ee_party_rules();
+		if (frm.is_new() || !rules) return null;
+		return rules.form_party(frm.doctype, frm.doc || {});
 	},
 
 	// ------------------------------------------------------------ bulk import

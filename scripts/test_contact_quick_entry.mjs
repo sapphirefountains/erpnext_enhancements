@@ -334,7 +334,16 @@ globalThis.frappe = {
 			return row;
 		},
 	},
-	utils: { get_link_title: () => undefined },
+	utils: {
+		get_link_title: () => undefined,
+		escape_html: (v) =>
+			String(v === null || v === undefined ? "" : v)
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+				.replace(/"/g, "&quot;")
+				.replace(/'/g, "&#39;"),
+	},
 	prompt: (fields, callback) => {
 		PROMPT = { fields, callback };
 	},
