@@ -46,12 +46,24 @@ frappe.pages["opportunity-board"].on_page_load = function (wrapper) {
 		title: __("Opportunity Board"),
 		single_column: true,
 	});
+	// v16's container.change_to ends every route change with frappe.utils.scroll_to(0) unless the page
+	// wrapper sets disable_scroll_to_top (frappe/public/js/frappe/views/container.js, version-16).
+	// Every screen of this page is a route (the move panel, the phone's stage tabs, the layout), so
+	// opening Move on a card far down a column would jump the board to the top. The page scrolls to
+	// the top itself only when it is arrived at from somewhere else (on_page_show, below).
+	wrapper.disable_scroll_to_top = true;
 	wrapper.opportunity_board = new OpportunityBoard(page, wrapper);
 	$(wrapper).on("hide", () => wrapper.opportunity_board.on_hide());
 };
 
 frappe.pages["opportunity-board"].on_page_show = function (wrapper) {
-	if (wrapper.opportunity_board) wrapper.opportunity_board.route_changed();
+	const board = wrapper.opportunity_board;
+	if (!board) return;
+	if (board.arriving) {
+		board.arriving = false;
+		if (frappe.utils && typeof frappe.utils.scroll_to === "function") frappe.utils.scroll_to(0);
+	}
+	board.route_changed();
 };
 
 const OB_ASSETS = [
@@ -84,6 +96,11 @@ class OpportunityBoard {
 		this.refresh_waiting = false;
 		this.refresh_timer = null;
 		this._route_timer = null;
+		// True until the first show and again after every hide: the one show that scrolls to the top.
+		this.arriving = true;
+		// Bumped when a move starts. A get_board load remembers the value it started under, and its
+		// payload is dropped if a move began since (or one is still saving): see kit.load_is_current.
+		this.move_epoch = 0;
 		this.saving = new Set();
 		this.drag = null;
 		this.click_blocked_until = 0;
@@ -124,6 +141,7 @@ class OpportunityBoard {
 	}
 
 	on_hide() {
+		this.arriving = true;
 		this.end_drag();
 		clearTimeout(this.refresh_timer);
 		this.refresh_timer = null;
@@ -233,9 +251,20 @@ class OpportunityBoard {
 		this.refresh_waiting = false;
 		this.stale = false;
 		if (!this.model) this.sf.state.render(this.$root[0], "loading");
+		// A load that was already in flight when a card was dropped answers with the card's old stage
+		// and old `modified`; drawn, it would put the card back in the wrong column and the save's new
+		// `modified` would land on that stale copy (so Undo did nothing). Such a payload is dropped,
+		// and a fresh load follows once nothing is saving or being dragged.
+		const started = this.move_epoch;
+		let dropped = false;
 		this.loading = this.sf
 			.call(OB_API + "get_board", {}, { quiet: true, method: "GET" })
 			.then((data) => {
+				if (!this.kit.load_is_current(started, this.move_epoch, this.saving.size + (this.drag ? 1 : 0))) {
+					dropped = true;
+					this.refresh_waiting = true;
+					return;
+				}
 				this.model = this.kit.prepare(data);
 				this.loaded_at = Date.now();
 				if (this.showing()) this.render();
@@ -243,6 +272,7 @@ class OpportunityBoard {
 			.catch((err) => this.load_failed(err || {}))
 			.finally(() => {
 				this.loading = null;
+				if (dropped && this.refresh_waiting && !this.saving.size && !this.drag) this.refresh();
 			});
 		return this.loading;
 	}
@@ -850,6 +880,8 @@ class OpportunityBoard {
 		if (!deal || !stage || this.saving.has(deal.name)) return;
 		const before = deal;
 		const from = this.kit.stage_by_key(this.model, deal.stage);
+		// Any get_board already in flight now answers for a board from before this move (refresh()).
+		this.move_epoch += 1;
 		this.saving.add(deal.name);
 		this.model = this.kit.move_deal(this.model, deal.name, stage.label);
 		this.render();

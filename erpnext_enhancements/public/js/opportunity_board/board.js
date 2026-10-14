@@ -449,6 +449,15 @@ export function move_deal(model, name, status) {
 	return replace_deal(m, deal);
 }
 
+// Whether a get_board payload may be drawn. `started` is the move counter when the load began,
+// `epoch` its value now, `busy` how many saves (and drags) are under way. A load that began before a
+// move, or that lands while one is saving, describes the board from before it: drawing it would put
+// the moved card back in its old column with its old `modified`, and the save's new `modified`
+// would then land on that stale copy. The page drops it and loads again once nothing is busy.
+export function load_is_current(started, epoch, busy) {
+	return Number(started) === Number(epoch) && !(Number(busy) > 0);
+}
+
 // The model with `deal` (same name) in place of the one it has.
 export function replace_deal(model, deal) {
 	const m = model || {};

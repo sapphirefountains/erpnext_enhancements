@@ -218,8 +218,11 @@ deploy), plus a green **Won — awaiting project** column (Closed Won with empty
 `custom_created_project`, the PRO-0204 Step 1→2 gap) and a muted **On Hold** column.
 Cards age by `custom_stage_changed_on` (stamped on every status change; backfilled from
 `modified` by the `backfill_stage_changed_on` patch) and "light up" amber/red past the
-thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard** (defaults
-7/14 days; the won column runs a tighter 1/3-day clock to match the unconverted nag).
+thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard**. When a field is
+unset, `_thresholds` falls back to 45 / 90 days (recalibrated from the original 7 / 14 in
+v1.421.0, which put 34 of 39 cards straight to red); a deliberate 0 switches that tier off. The
+Opportunity Board reads the same live settings through the same `_thresholds`. The won column
+runs a tighter 1/3-day clock to match the unconverted nag.
 Refreshes via the `sales_pipeline_updated` realtime event on every Opportunity save,
 with a 5-minute poll as kiosk fallback. **TV mode** (`/desk/sales-pipeline/tv`, or the
 header button) hides desk chrome and scales type — point the Raspberry Pi at the `/tv`

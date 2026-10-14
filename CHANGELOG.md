@@ -98,11 +98,30 @@ User, Sales Manager, System Manager.
   - checks the page statically: every request is `sf_kit.call` quiet, reads are GET and the save is
     POST, there are no `/app/` paths, the CSS uses tokens only, and the Kanban patches and the list
     redirect are untouched.
+- **Two guards the PR review asked for:**
+  - **A board load from before a move is never drawn.** Suppose a `get_board` is already in flight
+    when a card is dropped, from the realtime event, the 60-second reload or Refresh. It answers
+    with the card's old stage and old `modified`. Drawn, that answer put the card back in its old
+    column, and the save's new `modified` then landed on the stale copy, so Undo did nothing.
+    - Each load now remembers a move counter. Its payload is dropped if a move began since it
+      started, or if a save or a drag is still under way (`load_is_current`, run under node).
+    - A fresh load follows once nothing is busy. Checked in the harness with a delayed GET: the
+      stale answer was dropped, a second GET followed, and the card kept its new stage and
+      `modified`.
+  - **Moving around the board no longer scrolls it to the top.** v16's `container.change_to` ends
+    every route change with `frappe.utils.scroll_to(0)` unless the page wrapper sets
+    `disable_scroll_to_top` (`frappe/public/js/frappe/views/container.js`, checked on
+    `version-16`). Every screen here is a route, so opening Move on a card far down a column
+    jumped the board to the top. The page now sets the flag, and scrolls to the top itself only
+    when it is arrived at from another page.
 
 ### Changed
 
 - The CRM sidebar's additions (`setup/workspace_tweaks.py`) gain **Opportunity Board**, placed
   after Guided Entry. `test_workspace_tweaks` now expects both rows.
+- `crm_enhancements/README.md` no longer says the Sales Pipeline thresholds default to 7 / 14 days.
+  The fallbacks have been 45 / 90 since v1.421.0, and the Opportunity Board reads the same live
+  settings.
 
 ## [1.648.0] - 2026-10-13
 

@@ -218,6 +218,7 @@ out.phone = [kit.is_phone(390), kit.is_phone(767), kit.is_phone(768), kit.is_pho
 out.consts = { HOLD_MS: kit.HOLD_MS, DRAG_PX: kit.DRAG_PX, PHONE_MAX: kit.PHONE_MAX, STREAM_ORDER: kit.STREAM_ORDER, PAGE: kit.PAGE, MOVE: kit.MOVE };
 out.amounts = [kit.amount_of({ amount: 5 }), kit.amount_of({ amount: 0 }), kit.amount_of({ amount: -3 }), kit.amount_of({ amount: null }), kit.amount_of({ amount: "12.5" })];
 out.probabilities = [kit.probability_of({ probability: 150 }), kit.probability_of({ probability: -5 }), kit.probability_of({ probability: null }), kit.probability_of({ probability: "25" })];
+out.loads = [[0, 0, 0], [0, 1, 0], [3, 3, 1], [0, 1, 1], [2, 2, 0], [5, 5, 1]].map(([s, e, b]) => kit.load_is_current(s, e, b));
 out.empty = { model: kit.prepare(null).deals.length, columns: kit.columns(kit.prepare({ stages: input.payload.stages })).length, forecast: kit.forecast(kit.prepare({ stages: input.payload.stages })).overall };
 console.log(JSON.stringify(out));
 """
@@ -468,6 +469,22 @@ class TestTheBoardUnderNode(unittest.TestCase):
 		self.assertAlmostEqual(november["total"], 12000.5 + 40000 + 3000)
 		self.assertAlmostEqual(november["weighted"], 12000.5 * 0.25 + 40000 * 0.5 + 3000 * 0.6)
 		self.assertEqual(self.out["months"], ["2026-10", "2026-10", "", "2027-01", "2025-12", "2026-10"])
+
+	def test_a_load_from_before_a_move_is_never_drawn(self):
+		"""Review of #1266: a get_board in flight when a card is dropped answers with the old stage
+		and old `modified`; drawn, the card jumps back and the save's `modified` lands on the stale
+		copy, so Undo does nothing."""
+		self.assertEqual(
+			self.out["loads"],
+			[
+				True,  # nothing moved, nothing saving
+				False,  # a move began after the load did
+				False,  # same epoch, but a save is still in flight
+				False,  # a move began and is still saving
+				True,  # the fresh load started after the save settled
+				False,  # a drag counts as busy
+			],
+		)
 
 	def test_an_empty_board(self):
 		self.assertEqual(self.out["empty"]["model"], 0)
@@ -1125,6 +1142,37 @@ class TestThePage(unittest.TestCase):
 		self.assertIn('window.matchMedia("(max-width: 767px)")', code)
 		self.assertIn("if (this.is_phone()) this.open_panel(name);", code)
 		self.assertIn("ob_panel", code)
+
+	def test_a_stale_load_is_dropped_and_followed_by_a_fresh_one(self):
+		code = _code(PAGE_JS)
+		refresh = code[code.index("\trefresh() {") :]
+		refresh = refresh[: refresh.index("\n\t}\n")]
+		self.assertIn("const started = this.move_epoch;", refresh)
+		self.assertIn(
+			"if (!this.kit.load_is_current(started, this.move_epoch, this.saving.size + (this.drag ? 1 : 0))) {",
+			refresh,
+		)
+		drop = refresh[refresh.index("load_is_current") :]
+		drop = drop[: drop.index("return;")]
+		self.assertIn("this.refresh_waiting = true;", drop)
+		self.assertNotIn("this.model =", drop, "a stale payload never becomes the model")
+		self.assertIn(
+			"if (dropped && this.refresh_waiting && !this.saving.size && !this.drag) this.refresh();", refresh
+		)
+		move = code[code.index("\tmove(deal, key) {") :]
+		self.assertLess(move.index("this.move_epoch += 1;"), move.index("this.saving.add(deal.name);"))
+		self.assertIn("if (reload || this.refresh_waiting) this.refresh();", move)
+
+	def test_in_page_routes_do_not_scroll_to_the_top(self):
+		"""v16's container.change_to scrolls to 0 on every route change unless the wrapper says not to."""
+		code = _code(PAGE_JS)
+		self.assertIn("wrapper.disable_scroll_to_top = true;", code)
+		show = code[code.index('frappe.pages["opportunity-board"].on_page_show') :]
+		show = show[: show.index("\n};")]
+		self.assertIn("if (board.arriving) {", show)
+		self.assertIn("frappe.utils.scroll_to(0)", show)
+		hide = code[code.index("\ton_hide() {") :]
+		self.assertIn("this.arriving = true;", hide[: hide.index("\n\t}\n")])
 
 	def test_a_bundle_that_never_arrived_is_said_not_waited_on(self):
 		"""v16's frappe.require calls back even when a file failed, so the callback proves nothing."""
