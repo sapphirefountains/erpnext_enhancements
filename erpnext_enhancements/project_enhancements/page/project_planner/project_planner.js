@@ -419,6 +419,19 @@ class ProjectPlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		// A form's "Open in Project Planner" (S5b, v1.667.0) names a project in route_options, as does
+		// ?project= in the address. Applied after the "last used" view above, consumed like the list
+		// view's filters, and the PM filter cleared so it cannot hide that project's cards.
+		const opts = frappe.route_options;
+		if (opts && Object.prototype.hasOwnProperty.call(opts, "project")) {
+			this.project = String(opts.project || "");
+			this.pm = "";
+			this.show_all_unscheduled = false;
+			this.save_pref(PP.prefs.project, this.project);
+			this.save_pref(PP.prefs.pm, "");
+			delete opts.project;
+			if (!Object.keys(opts).length) frappe.route_options = null;
+		}
 		this.view = target.view;
 		this.anchor = target.anchor;
 		if (target.view === PP3B.my_week) {

@@ -719,6 +719,14 @@ the core **Projects** module sidebar right after Task, with Crew Utilization amo
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
+**Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
+(`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
+or to `/week/<expected_start_date>` for a project that has not started yet, since the planner
+drops a filter for a project with no tasks in the range on screen. `handle_route` reads `project`
+from `frappe.route_options` after the last-used view is restored, consumes it, and clears the PM
+filter so it cannot hide that project's cards. The button shows only to those whose roles open the
+page.
+
 **Who can be booked.** A **Planner Resource** per person or outside crew, not Employee: the pool
 includes subcontractors, who have no HR record, and only some staff (field techs, PMs on site,
 designers). `patches/seed_planner_resources` created one for each active technician, Project

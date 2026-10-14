@@ -260,8 +260,12 @@ doctype_js = {
 		# (due, and nobody has written the checklist) and `unknown` (the build status is not a
 		# recognised option, so due-ness is not knowable). Generates nothing.
 		"public/js/quality/project_inspections.js",
+		# custom pages S5b (v1.667.0): View > Open in Project Planner, the planner filtered to
+		# this project (it reads `project` from frappe.route_options). Only for those whose
+		# roles open the page.
+		"public/js/project_enhancements/project_planner_link.js",
 	],
-	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
+	"Master Project":["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
 	# filled in. Loaded on the two forms that offer it (Preview Contract on the
 	# agreement itself, View Agreement on the operational maintenance contract);

@@ -6,6 +6,10 @@
 // once on the way back. Cards link to the underlying documents. Its loading, error and
 // no-access panels and its server call come from sf_kit (v1.645.0).
 //
+// Links on to the pages that work on the same visits (v1.667.0): a submitted visit's card also
+// opens it in Visit Review, and the toolbar opens the Maintenance Planner on the week of the day
+// shown, each only for those whose roles open that page.
+//
 // The day shown lives in the address (v1.662.0): /desk/maintenance-day-board is today, whatever
 // day that is, and ?date=YYYY-MM-DD is that day. Each day stepped to with ‹ › Today or the date
 // box is a history entry of its own, so Back returns to the day before it and Forward comes back;
@@ -25,6 +29,23 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		title: __('Maintenance Day Board'),
 		single_column: true,
 	});
+
+	// The pages a card or the toolbar links to, for those whose roles open them (S5b, v1.667.0):
+	// frappe.boot.page_info lists the Pages a person's roles reach. A Projects Manager reads this
+	// board but is not a reviewer.
+	const pages = (frappe.boot && frappe.boot.page_info) || {};
+	// The Maintenance Planner's week holding the day shown. A route, so it is a history entry and
+	// Back returns to this board. The day comes from the board when it keeps one, else today.
+	// route_options is cleared first: nothing else clears it, and on v16.50 set_route writes what
+	// is left there into the planner's address.
+	if (pages['maintenance-planner']) {
+		page.add_inner_button(__('Open in Maintenance Planner'), () => {
+			const board = wrapper.mdb_day_board;
+			const day = board && typeof board.day === 'function' ? board.day() : frappe.datetime.get_today();
+			frappe.route_options = null;
+			frappe.set_route('maintenance-planner', 'week', day);
+		});
+	}
 
 	const $board = $('<div class="mdb-board"></div>').appendTo(page.body);
 	$('<style>\n' +
@@ -123,6 +144,14 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		if (row.has_out_of_range_readings) html += '<span class="mdb-badge mdb-red">Chemistry</span>';
 		if (row.warranty_rma_flag) html += '<span class="mdb-badge mdb-orange">Warranty</span>';
 		return html;
+	}
+
+	// A submitted visit opens in Visit Review: its answers, each reading beside the site's last
+	// approved one. Only for those whose roles open that page.
+	function reviewLink(row) {
+		if (!pages['visit-review']) return '';
+		return '<a class="mdb-sublink" href="/desk/visit-review/' + encodeURIComponent(row.name) + '">' +
+			esc(__('Open in Visit Review')) + '</a>';
 	}
 
 	function column(title, rows, render) {
@@ -287,8 +316,8 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 						'<div class="mdb-sub">' + esc(row.project_title || '') + ' · ' +
 						__('since {0}', [frappe.datetime.str_to_user(row.start_time)]) + '</div></a>'),
 					column(date ? __('Submitted') : __('Submitted Today'), data.submitted_today || [], (row) =>
-						recordCard(row, pctBadge(row) + flagBadges(row))),
-					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row))),
+						recordCard(row, pctBadge(row) + flagBadges(row)) + reviewLink(row)),
+					column(__('Flagged (7 days)'), data.flagged || [], (row) => recordCard(row, flagBadges(row)) + reviewLink(row)),
 				].join(''));
 			}, (err) => {
 				if (seq !== state.seq) return;
