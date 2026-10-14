@@ -333,6 +333,9 @@ New Email starts as the Desk's composer does with a form (`setup_subject_and_rec
 `primary_contact_email`); subject "Re:" the latest email on the record, else the title; always
 "(#name)". Reply quotes the email in full from the timeline's own `get_communications` (read on the
 record); `record_info`'s copy is cut to 1,200 characters and is the quote only if that read fails.
+The reply opens only while the editor still shows the record it was asked from (DocType and name),
+checked when the read answers and again when the composer is made: the board's side panel switches
+records in place, and on the guided page the first dialog waits for the history guard to load.
 
 New Task and New Event run frappe's `InteractionComposer`, which also reads the global `cur_frm`
 (its file list and its post-insert `reload_doc`). Both shells are Desk Pages and v16's `pageview.js`
