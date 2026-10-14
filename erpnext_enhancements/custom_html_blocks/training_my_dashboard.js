@@ -29,22 +29,40 @@
     const MAX_ATTEMPTS = 50;
     const METHOD = "erpnext_enhancements.training.dashboard.get_my_dashboard";
     let attempts = 0;
+    // sf_kit (panels, chips, escaping), set by startApp before anything draws.
+    let sf = null;
 
     function getContainer() {
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#tmd-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function pct(value) {
@@ -90,9 +108,9 @@
                     '<div class="tmd-tile' +
                     (t.bad ? " is-bad" : "") +
                     '"><div class="tmd-tile-value">' +
-                    esc(t.value) +
+                    sf.esc(t.value) +
                     '</div><div class="tmd-tile-label">' +
-                    esc(t.label) +
+                    sf.esc(t.label) +
                     "</div></div>"
             )
             .join("");
@@ -101,13 +119,13 @@
     function courseRow(row) {
         const bits = [];
         if (row.overdue) {
-            bits.push('<span class="tmd-flag is-bad">Overdue</span>');
+            bits.push(sf.chip(__("Overdue"), "danger"));
         } else if (row.due_date) {
-            bits.push("<span>Due " + esc(frappe.datetime.str_to_user(row.due_date)) + "</span>");
+            bits.push("<span>Due " + sf.esc(frappe.datetime.str_to_user(row.due_date)) + "</span>");
         } else if (row.status) {
-            bits.push("<span>" + esc(row.status) + "</span>");
+            bits.push("<span>" + sf.esc(row.status) + "</span>");
         }
-        if (row.minutes) bits.push("<span>" + esc(row.minutes) + " min</span>");
+        if (row.minutes) bits.push("<span>" + sf.esc(row.minutes) + " min</span>");
 
         const done = pct(row.percent_complete);
         const bar = done > 0
@@ -115,9 +133,9 @@
             : "";
         return (
             '<button type="button" class="tmd-row" data-course="' +
-            esc(row.course) +
+            sf.esc(row.course) +
             '"><span class="tmd-row-title">' +
-            esc(row.title) +
+            sf.esc(row.title) +
             '</span><span class="tmd-row-meta">' +
             bits.join(" · ") +
             "</span>" +
@@ -130,8 +148,8 @@
         if (!rows.length && !emptyText) return "";
         const body = rows.length
             ? rows.map(courseRow).join("")
-            : '<div class="tmd-muted">' + esc(emptyText) + "</div>";
-        return '<div class="tmd-section"><div class="tmd-section-title">' + esc(title) + "</div>" + body + "</div>";
+            : '<div class="tmd-muted">' + sf.esc(emptyText) + "</div>";
+        return '<div class="tmd-section"><div class="tmd-section-title">' + sf.esc(title) + "</div>" + body + "</div>";
     }
 
     function render(container, data) {
@@ -143,7 +161,7 @@
             // a statement about this person and would be wrong.
             sub.textContent = "";
             container.querySelector("#tmd-stats").innerHTML = "";
-            body.innerHTML = '<div class="tmd-muted">' + esc(data.message || "Training is switched off.") + "</div>";
+            sf.state.render(body, "empty", { title: data.message || __("Training is switched off.") });
             return;
         }
 
@@ -152,6 +170,11 @@
         const optional = data.optional || [];
         const completed = data.completed || [];
         sub.textContent = required.length ? required.length + " required outstanding" : "nothing outstanding";
+
+        if (!required.length && !optional.length && !completed.length) {
+            sf.state.render(body, "empty", { title: __("Nothing required of you right now.") });
+            return;
+        }
 
         body.innerHTML =
             section("Required", required, "Nothing required of you right now.") +
@@ -169,31 +192,37 @@
         });
     }
 
-    function load(container) {
+    function startApp(container, kit, ticket) {
+        sf = kit;
         const body = container.querySelector("#tmd-body");
-        // The refresh button and a return to the workspace can both ask while an
-        // answer is on its way, so each ask takes a ticket and only the newest one
-        // draws. The ticket lives on the root, which is what the helper hands back.
-        const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-        frappe
-            .call({ method: METHOD })
-            .then((r) => {
-                if (container.__ee_ticket === ticket) render(container, (r && r.message) || {});
-            })
-            .catch(() => {
-                // frappe has already shown the server's message. Leave a line behind
-                // so the widget is not silently blank.
-                if (container.__ee_ticket !== ticket) return;
-                body.innerHTML = '<div class="tmd-muted">Could not load your training.</div>';
-            });
-    }
-
-    function startApp(container) {
         const refresh = container.querySelector("#tmd-refresh");
-        if (refresh) refresh.addEventListener("click", () => load(container));
-        load(container);
+
+        // The refresh button and a return to the workspace can both ask while an
+        // answer is on its way, so each ask takes a ticket on the root (blocks.ticket)
+        // and only the newest one draws. Still the viewer's own record: the endpoint
+        // reads the session user, and nothing here names anybody.
+        function load() {
+            const current = ticket(container);
+            frappe
+                .call({ method: METHOD })
+                .then((r) => {
+                    if (current()) render(container, (r && r.message) || {});
+                })
+                .catch((err) => {
+                    // frappe has already shown the server's message. Leave a panel behind
+                    // so the widget is not silently blank.
+                    if (!current()) return;
+                    const title = __("Could not load your training.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
+                });
+        }
+
+        if (refresh) refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
+        load();
         // Coming back to My Training runs nothing again (the header): the shared helper
-        // calls load(container) then. A bundle cached from before the helper has none,
+        // calls load() then. A bundle cached from before the helper has none,
         // and the block still draws; it just keeps its first answer.
         const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
         if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);

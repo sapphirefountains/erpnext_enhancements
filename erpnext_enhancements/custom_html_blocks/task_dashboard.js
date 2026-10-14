@@ -20,6 +20,10 @@
 // refresh() to the shared return helper,
 // public/js/global_enhancements/workspace_block_return.js, which runs it then, so
 // a desk user does not wait up to five minutes to see a task they just closed.
+//
+// Its panels (loading, empty, error, no access), chips and escaping come from sf_kit,
+// and its "only the newest answer draws" counter from blocks.ticket, both handed over
+// by the same helper (custom_html_blocks/README.md).
 
 (function () {
     const REFRESH_MS = 5 * 60 * 1000;
@@ -27,18 +31,38 @@
     const MAX_ATTEMPTS = 50;
     let attempts = 0;
 
+    // The kit's escape (sf.esc), set by startApp before anything draws. The row helpers
+    // below read it by this name.
+    let esc;
+
     function getContainer() {
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
-    function esc(value) {
-        return frappe.utils.escape_html(String(value == null ? "" : value));
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
     }
 
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#tdb-top-projects")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         } else {
@@ -60,7 +84,8 @@
         return blocks.onScreen(container);
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
+        esc = sf.esc;
         const state = (window.__ee_task_dashboard = window.__ee_task_dashboard || {});
 
         // Re-point timers at the freshest render; never stack them.
@@ -86,22 +111,26 @@
         }
 
         // The interval, a realtime update and a return to the workspace can all ask at
-        // once, so each ask takes a ticket and only the newest answer draws.
+        // once, so each ask takes a ticket on the root (blocks.ticket) and only the newest
+        // answer draws.
         function refresh() {
             state.stale = false;
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
+            const current = ticket(container);
             frappe
                 .call("erpnext_enhancements.api.task_dashboard.get_task_dashboard_data")
                 .then((r) => {
-                    if (container.__ee_ticket === ticket) render(container, r.message);
+                    if (current()) render(container, r.message, sf);
                 })
                 .catch((err) => {
                     console.error("Task Dashboard refresh failed:", err);
                     // A transient failure never wipes data already showing; only a block
-                    // that has never drawn swaps its "Loading..." for a message.
-                    if (container.__ee_ticket !== ticket || container.__ee_rendered) return;
+                    // that has never drawn swaps its loading panel for an error one.
+                    if (!current() || container.__ee_rendered) return;
                     const el = container.querySelector("#tdb-top-projects");
-                    if (el) el.innerHTML = '<div class="tdb-empty">Could not load the dashboard. It will retry shortly.</div>';
+                    if (!el) return;
+                    const title = __("Could not load the dashboard. It will retry shortly.");
+                    if (err && err.status === 403) sf.state.render(el, "no-access");
+                    else sf.state.render(el, "error", { title, on_action: refresh });
                 });
         }
 
@@ -133,6 +162,8 @@
         }
 
         tick_clock();
+        const first = container.querySelector("#tdb-top-projects");
+        if (first) sf.state.render(first, "loading");
         refresh();
 
         // No timer and no subscription here: the helper binds its one route handler
@@ -177,9 +208,25 @@
         `;
     }
 
-    function render(container, data) {
-        if (!data) return;
+    // Each panel's own sentence in the kit's empty panel.
+    function empty(el, sf, title) {
+        if (el) sf.state.render(el, "empty", { title });
+    }
+
+    function render(container, data, sf) {
+        if (!data) {
+            // An empty answer never wipes data already showing; a block that has never
+            // drawn says there is nothing to show rather than loading forever.
+            if (!container.__ee_rendered) {
+                empty(container.querySelector("#tdb-top-projects"), sf, __("Nothing to show yet."));
+            }
+            return;
+        }
         container.__ee_rendered = true;
+        const top_projects = data.top_projects || [];
+        const overdue_tasks = data.overdue_tasks || [];
+        const today_tasks = data.today_tasks || [];
+        const events = data.events || [];
 
         const updated = container.querySelector("#tdb-updated");
         if (updated) {
@@ -188,8 +235,8 @@
 
         // --- Top 10 priority projects: the all-at-once list ---
         const projects_el = container.querySelector("#tdb-top-projects");
-        if (data.top_projects.length) {
-            projects_el.innerHTML = data.top_projects
+        if (top_projects.length) {
+            projects_el.innerHTML = top_projects
                 .map(
                     (p) => `
                     <a class="tdb-project" href="${frappe.utils.get_form_link("Project", p.name)}">
@@ -210,50 +257,51 @@
                 )
                 .join("");
         } else {
-            projects_el.innerHTML = '<div class="tdb-empty">No ranked projects (set Company Priority 1&ndash;30).</div>';
+            empty(projects_el, sf, __("No ranked projects (set Company Priority 1–30)."));
         }
 
         // --- Overdue / at-risk ---
         const overdue_el = container.querySelector("#tdb-overdue");
         const overdue_count = container.querySelector("#tdb-overdue-count");
         if (overdue_count) {
-            overdue_count.textContent = `${data.overdue_tasks.length}${data.overdue_overflow ? "+" : ""}`;
+            overdue_count.textContent = `${overdue_tasks.length}${data.overdue_overflow ? "+" : ""}`;
         }
-        overdue_el.innerHTML = data.overdue_tasks.length
-            ? data.overdue_tasks
-                    .map((t) =>
-                        task_row(t, `<span class="tdb-overdue-badge">${esc(t.days_overdue)}d overdue</span>`)
-                    )
-                    .join("")
-            : '<div class="tdb-empty tdb-empty-good">Nothing overdue &#127881;</div>';
+        if (overdue_tasks.length) {
+            overdue_el.innerHTML = overdue_tasks
+                .map((t) => task_row(t, sf.chip(__("{0}d overdue", [t.days_overdue]), "danger")))
+                .join("");
+        } else {
+            empty(overdue_el, sf, __("Nothing overdue."));
+        }
 
         // --- Today's tasks, with the technicians on them ---
         const today_el = container.querySelector("#tdb-today");
         const today_count = container.querySelector("#tdb-today-count");
-        if (today_count) today_count.textContent = String(data.today_tasks.length);
-        today_el.innerHTML = data.today_tasks.length
-            ? data.today_tasks.map((t) => task_row(t)).join("")
-            : '<div class="tdb-empty">No tasks scheduled for today.</div>';
+        if (today_count) today_count.textContent = String(today_tasks.length);
+        if (today_tasks.length) today_el.innerHTML = today_tasks.map((t) => task_row(t)).join("");
+        else empty(today_el, sf, __("No tasks scheduled for today."));
 
         // --- Today's calendar ---
         const events_el = container.querySelector("#tdb-events");
-        events_el.innerHTML = data.events.length
-            ? data.events
-                    .map((ev) => {
-                        const when = ev.all_day
-                            ? "All day"
-                            : new Date(ev.starts_on.replace(" ", "T")).toLocaleTimeString([], {
-                                    hour: "numeric",
-                                    minute: "2-digit",
-                                });
-                        return `
-                            <div class="tdb-event">
-                                <span class="tdb-event-time">${esc(when)}</span>
-                                <span class="tdb-event-subject">${esc(ev.subject)}</span>
-                            </div>`;
-                    })
-                    .join("")
-            : '<div class="tdb-empty">No events today.</div>';
+        if (!events.length) {
+            empty(events_el, sf, __("No events today."));
+            return;
+        }
+        events_el.innerHTML = events
+            .map((ev) => {
+                const when = ev.all_day
+                    ? "All day"
+                    : new Date(ev.starts_on.replace(" ", "T")).toLocaleTimeString([], {
+                            hour: "numeric",
+                            minute: "2-digit",
+                        });
+                return `
+                    <div class="tdb-event">
+                        <span class="tdb-event-time">${esc(when)}</span>
+                        <span class="tdb-event-subject">${esc(ev.subject)}</span>
+                    </div>`;
+            })
+            .join("");
     }
 
     waitForDOM();

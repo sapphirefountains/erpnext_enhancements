@@ -132,8 +132,7 @@
     align-self: flex-start;
 }
 
-.kpi-loading,
-.kpi-disabled {
+.kpi-loading {
     color: var(--text-muted);
     font-size: 13px;
     padding: 16px 0;

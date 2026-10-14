@@ -145,6 +145,7 @@ _RETURN_JS = r"""
 const fs = require("fs");
 const src = fs.readFileSync(__BLOCK_JS__, "utf8");
 const helper = fs.readFileSync(__HELPER_JS__, "utf8");
+globalThis.__ = (text) => text;
 const handlers = [];
 const pending = [];
 let route = ["Workspaces", "Travel"];
@@ -182,6 +183,8 @@ const answer = async (i, name) => {
 	const seen = {};
 	const a = makeRoot();
 	run(a);
+	// The block waits for the kit (here the helper's plain stand-in: no frappe.require).
+	await tick();
 	seen.first_load = pending.length;
 	await answer(0, "A0");
 	seen.a_drawn = a.sub.textContent;
@@ -200,6 +203,7 @@ const answer = async (i, name) => {
 	a.host.isConnected = false;
 	const b = makeRoot();
 	run(b);
+	await tick();
 	seen.handlers = handlers.length;
 	seen.b_load = pending.length;
 	change(["Workspaces", "Travel"]);
@@ -222,6 +226,7 @@ const answer = async (i, name) => {
 #: bodies as JSON. ``__BLOCK_JS__`` is the script's path, as a JSON string.
 _DRAW_JS = r"""
 const src = require("fs").readFileSync(__BLOCK_JS__, "utf8");
+globalThis.__ = (text) => text;
 const pending = [];
 const frappe = {
 	utils: { escape_html: (value) => String(value) },
@@ -481,7 +486,7 @@ class TestTheBlock(unittest.TestCase):
 				self.assertIn(declaration, wrap)
 		# Same specificity as the nowrap rule, so it must come after it to win.
 		self.assertGreater(css.index(".tvh-meta-for"), css.index(".tvh-meta-item"))
-		self.assertIn('class="tvh-meta-item tvh-meta-for">\' + esc(trip.travel_for)', js_code(BLOCK_JS))
+		self.assertIn('class="tvh-meta-item tvh-meta-for">\' + sf.esc(trip.travel_for)', js_code(BLOCK_JS))
 
 	def test_every_modifier_it_renders_has_a_rule(self):
 		code = js_code(BLOCK_JS)

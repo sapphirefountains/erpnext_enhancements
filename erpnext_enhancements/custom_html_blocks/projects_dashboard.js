@@ -39,6 +39,12 @@
  * the workspace already shown), so the script hands fetch_data() to the shared
  * return helper, public/js/global_enhancements/workspace_block_return.js, which runs
  * it again then.
+ *
+ * Its loading, empty, error and no-access panels, its status chips and its escaping
+ * come from sf_kit, and its "only the newest answer draws" counter from
+ * blocks.ticket, both handed over by the same helper (custom_html_blocks/README.md).
+ * Only those: the tables, the column selector and resizer, the Gantt and the saved
+ * per-user view are as they were.
  */
 (function() {
     // The ColumnSelector / ColumnResizer classes live in separate assets registered
@@ -51,11 +57,31 @@
             "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
             "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_resizer.js",
         ],
-        init_dashboard
+        () => withKit(root_element)
     );
 
-    function init_dashboard() {
-    const $root = $(root_element);
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
+    function startApp(container, sf, ticket) {
+    const $root = $(container);
 
     let current_tab = "priority-overview";
     let project_data = [];
@@ -230,14 +256,16 @@
     // Project ID header is non-sortable; built inline to sit beside Project Name.
     const project_id_th = '<th class="dashcol dashcol-project_id" style="min-width: 120px; white-space: nowrap;">Project ID</th>';
 
+    // frappe.call's own promise, not its callback / error options: v16 calls `error` with
+    // no arguments on a 403 (request.js statusCode[403]) and not at all on some failures,
+    // while the promise always settles and rejects with the jqXHR, whose `status` tells a
+    // 403 (no access) from any other failure.
     const api_call = (method, args = {}) => {
         return new Promise((resolve, reject) => {
             frappe.call({
                 method: `erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.${method}`,
                 args: args,
-                callback: (r) => resolve(r),
-                error: (r) => reject(r)
-            });
+            }).then(resolve, reject);
         });
     };
 
@@ -245,19 +273,21 @@
         return String(str || "").replace(/[^a-zA-Z0-9\-_]/g, '_');
     }
 
-    function show_skeleton() {
-        $root.find('#dashboard-content').html(`
-            <div class="skeleton-list p-4">
-                <div class="skeleton-line" style="width: 100%; height: 20px; margin-bottom: 10px;"></div>
-                <div class="skeleton-line" style="width: 100%; height: 20px; margin-bottom: 10px;"></div>
-                <div class="skeleton-line" style="width: 100%; height: 20px; margin-bottom: 10px;"></div>
-                <div class="skeleton-line" style="width: 100%; height: 20px;"></div>
-            </div>
-        `);
+    // The element the tabs draw into: the kit's panels are written into an element, never
+    // a jQuery set, so the older bundle's plain-text stand-in can write it too.
+    function content_el() {
+        return $root.find('#dashboard-content')[0];
+    }
+
+    // A tab with nothing to list: the kit's empty panel, under whatever the tab has
+    // already drawn (its column toolbar, the Dashboard's zero cards).
+    function empty_panel($container, title) {
+        const el = $('<div class="dashboard-empty-state"></div>').appendTo($container)[0];
+        sf.state.render(el, "empty", { title });
     }
 
     async function fetch_initial_data() {
-        show_skeleton();
+        sf.state.render(content_el(), "loading");
         init_gantt_filters();
         await fetch_data();
     }
@@ -265,10 +295,10 @@
     // The fetch half on its own, so a return to the workspace can run it again
     // without re-binding the Gantt toolbar (init_gantt_filters binds its handlers,
     // and a second call would stack them). A return and the first load can overlap,
-    // so each fetch takes a ticket and only the newest one draws.
+    // so each fetch takes a ticket on the root (blocks.ticket) and only the newest
+    // one draws.
     async function fetch_data() {
-        const ticket = (root_element.__ee_ticket = (root_element.__ee_ticket || 0) + 1);
-        const current = () => root_element.__ee_ticket === ticket;
+        const current = ticket(container);
         try {
             const [projectsRes, priorityRes, statusRes] = await Promise.all([
                 api_call('get_project_data'),
@@ -287,11 +317,14 @@
                 project_data = projectsRes.message;
                 render_current_tab();
             } else {
-                $root.find('#dashboard-content').html('<div class="alert alert-danger">Error loading projects.</div>');
+                const title = __("Could not load the projects.");
+                sf.state.render(content_el(), "error", { title, on_action: fetch_data });
             }
         } catch (err) {
             if (!current()) return;
-            $root.find('#dashboard-content').html('<div class="alert alert-danger">Network Error.</div>');
+            const title = __("Could not load the projects: the request failed.");
+            if (err && err.status === 403) sf.state.render(content_el(), "no-access");
+            else sf.state.render(content_el(), "error", { title, on_action: fetch_data });
         }
     }
 
@@ -301,7 +334,7 @@
     // absolutely-positioned input strands the tick as soon as a long value
     // (customer names) wraps to a second line. Styles: .pg-check in the CSS.
     const checkbox_row = (cls, value, checked) => {
-        const label = frappe.utils.escape_html(value);
+        const label = sf.esc(value);
         return `
             <label class="pg-check" data-name="${label.toLowerCase()}">
                 <input type="checkbox" class="${cls}" value="${label}" ${checked ? 'checked' : ''}>
@@ -555,10 +588,10 @@
         const sorted = [...projects].sort((a, b) => (a.project_name || a.name).localeCompare(b.project_name || b.name));
         sorted.forEach((p) => {
             const isChecked = gantt_selected_projects.size === 0 || gantt_selected_projects.has(p.name);
-            const label = frappe.utils.escape_html(p.project_name || p.name);
+            const label = sf.esc(p.project_name || p.name);
             container.append(`
                 <label class="pg-check gantt-proj-filter-item" data-name="${label.toLowerCase()}">
-                    <input type="checkbox" class="gantt-proj-cb" value="${frappe.utils.escape_html(p.name)}" ${isChecked ? 'checked' : ''}>
+                    <input type="checkbox" class="gantt-proj-cb" value="${sf.esc(p.name)}" ${isChecked ? 'checked' : ''}>
                     <span>${label}</span>
                 </label>
             `);
@@ -885,7 +918,7 @@
         if (!$legend.length) return;
         let html = '<span class="pg-legend-label">Project type:</span>';
         GANTT_TYPE_COLORS.forEach((t) => {
-            html += `<span class="pg-legend-item"><i class="pg-swatch" style="background:${t.color}"></i>${frappe.utils.escape_html(t.type)}</span>`;
+            html += `<span class="pg-legend-item"><i class="pg-swatch" style="background:${t.color}"></i>${sf.esc(t.type)}</span>`;
         });
         html += '<span class="pg-legend-item"><i class="pg-swatch pg-swatch-task"></i>Tasks (lighter shade of their project)</span>';
         html += '<span class="pg-legend-item"><i class="pg-swatch pg-swatch-overdue"></i>Past its end date</span>';
@@ -942,7 +975,9 @@
     async function fetch_and_render_portfolio_gantt() {
         const container = $root.find('#dashboard-content');
         if (!window.erpnext_enhancements || !erpnext_enhancements.gantt) {
-            container.html('<div class="alert alert-danger">The Gantt widget is not loaded. Please refresh the page.</div>');
+            sf.state.render(container[0], "error", {
+                title: __("The Gantt widget is not loaded. Please refresh the page."),
+            });
             return;
         }
         let host = container.find('.pg-widget-host')[0];
@@ -1049,17 +1084,17 @@
         let num = parseInt(p, 10);
         if (!isNaN(num)) {
             let hue = ((Math.max(1, Math.min(30, num)) - 1) / 29) * 120;
-            return `<span class="badge" style="background-color: hsl(${hue}, 100%, 45%); color: white;">${frappe.utils.escape_html(p)}</span>`;
+            return `<span class="badge" style="background-color: hsl(${hue}, 100%, 45%); color: white;">${sf.esc(p)}</span>`;
         }
-        return `<span class="badge badge-secondary">${frappe.utils.escape_html(p)}</span>`;
+        return `<span class="badge badge-secondary">${sf.esc(p)}</span>`;
     }
 
     function build_editable_priority_cell(project_name, field, current_val, options_array, col_key) {
         let opts_html = '<option value="">Not Assigned</option>' +
-            options_array.map(opt => `<option value="${opt}" ${opt === current_val ? 'selected' : ''}>${opt}</option>`).join('');
+            options_array.map(opt => `<option value="${sf.esc(opt)}" ${opt === current_val ? 'selected' : ''}>${sf.esc(opt)}</option>`).join('');
 
         return `
-            <td class="editable-priority dashcol dashcol-${col_key}" data-project="${project_name}" data-field="${field}" style="min-width: 140px;">
+            <td class="editable-priority dashcol dashcol-${col_key}" data-project="${sf.esc(project_name)}" data-field="${field}" style="min-width: 140px;">
                 <div class="static-view" style="cursor: pointer;" title="Click to edit">
                     ${get_priority_badge(current_val)}
                 </div>
@@ -1144,8 +1179,8 @@
 
             let row = $(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
                     ${build_editable_priority_cell(p.name, 'custom_company_priority', p.custom_company_priority, priority_options.company_priority || [], 'company_priority')}
                     ${build_editable_priority_cell(p.name, 'custom_project_priority', p.custom_project_priority, priority_options.project_priority || [], 'project_priority')}
                     <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
@@ -1213,6 +1248,10 @@
             p.status !== "Completed" &&
             p.status !== "Canceled"
         );
+        if (!projects_to_show.length) {
+            empty_panel(container, __("No active client projects."));
+            return;
+        }
 
         if (state.col === "project_priority") {
             let groups = {};
@@ -1231,7 +1270,7 @@
                     if (diff === 0) diff = String(a.project_name || "").localeCompare(String(b.project_name || ""));
                     return state.order === 'asc' ? diff : -diff;
                 });
-                container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${stream}</h5>`);
+                container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${sf.esc(stream)}</h5>`);
                 container.append(build_priority_table(stream_projects));
             });
         } else {
@@ -1282,20 +1321,20 @@
         `);
 
         projects.forEach(p => {
-            let status_html = `<select class="form-control form-control-sm project-inline-edit" data-field="status" data-project="${p.name}">
-                ${status_options.map(s => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+            let status_html = `<select class="form-control form-control-sm project-inline-edit" data-field="status" data-project="${sf.esc(p.name)}">
+                ${status_options.map(s => `<option value="${sf.esc(s)}" ${p.status === s ? 'selected' : ''}>${sf.esc(s)}</option>`).join('')}
             </select>`;
 
             let priority_opts = priority_options.project_priority || [];
-            let priority_html = `<select class="form-control form-control-sm project-inline-edit" data-field="custom_project_priority" data-project="${p.name}">
+            let priority_html = `<select class="form-control form-control-sm project-inline-edit" data-field="custom_project_priority" data-project="${sf.esc(p.name)}">
                 <option value="">Not Assigned</option>
-                ${priority_opts.map(opt => `<option value="${opt}" ${p.custom_project_priority === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+                ${priority_opts.map(opt => `<option value="${sf.esc(opt)}" ${p.custom_project_priority === opt ? 'selected' : ''}>${sf.esc(opt)}</option>`).join('')}
             </select>`;
 
             table.find('tbody').append(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
                     <td class="dashcol dashcol-status" style="min-width: 140px;">${status_html}</td>
                     <td class="dashcol dashcol-custom_project_priority" style="min-width: 140px;">${priority_html}</td>
                     <td class="dashcol dashcol-percent_complete" style="min-width: 150px;">
@@ -1306,7 +1345,7 @@
                             <span class="small font-weight-bold">${Math.round(p.percent_complete || 0)}%</span>
                         </div>
                     </td>
-                    <td class="dashcol dashcol-project_user" style="min-width: 150px;">${p.project_user || "Unassigned"}</td>
+                    <td class="dashcol dashcol-project_user" style="min-width: 150px;">${sf.esc(p.project_user || "Unassigned")}</td>
                 </tr>
             `);
         });
@@ -1330,6 +1369,10 @@
         let internal_projects = project_data.filter(
             p => p.is_active === "Yes" && INTERNAL_PROJECT_TYPES.includes(p.project_type)
         );
+        if (!internal_projects.length) {
+            empty_panel(container, __("No active internal projects."));
+            return;
+        }
 
         let groups = {};
         internal_projects.forEach(p => {
@@ -1357,7 +1400,7 @@
                 return state.order === 'asc' ? diff : -diff;
             });
             
-            container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${master}</h5>`);
+            container.append(`<h5 class="mt-4 mb-3 text-muted border-bottom pb-2">${sf.esc(master)}</h5>`);
             container.append(build_internal_table(master_projects));
         });
 
@@ -1408,18 +1451,16 @@
         `);
 
         completed_projects.forEach(p => {
-            let status_badge = 'secondary';
-            if (p.status === 'Completed' || p.status === 'Paid') status_badge = 'success';
-            else if (p.status === 'Active') status_badge = 'primary';
-            else if (p.status === 'Invoiced') status_badge = 'info';
+            // The status word in a kit chip: finished and paid is good, the rest neutral.
+            const status_tone = p.status === 'Completed' || p.status === 'Paid' ? 'good' : 'neutral';
 
             table.find('tbody').append(`
                 <tr>
-                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${frappe.utils.escape_html(p.project_name || "")}</a></td>
-                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${frappe.utils.escape_html(p.name)}</a></td>
-                    <td class="dashcol dashcol-status" style="min-width: 120px;"><span class="badge badge-${status_badge}">${p.status}</span></td>
-                    <td class="dashcol dashcol-project_type" style="min-width: 150px;">${p.project_type || "Uncategorized"}</td>
-                    <td class="dashcol dashcol-project_user text-muted" style="min-width: 150px;">${p.project_user || "Unassigned"}</td>
+                    <td class="dashcol dashcol-project_name project-name-cell" style="min-width: 200px;"><a href="/desk/project/${encodeURIComponent(p.name)}" class="font-weight-bold">${sf.esc(p.project_name || "")}</a></td>
+                    <td class="dashcol dashcol-project_id project-id-cell"><a href="/desk/project/${encodeURIComponent(p.name)}" class="text-muted">${sf.esc(p.name)}</a></td>
+                    <td class="dashcol dashcol-status" style="min-width: 120px;">${sf.chip(p.status, status_tone)}</td>
+                    <td class="dashcol dashcol-project_type" style="min-width: 150px;">${sf.esc(p.project_type || "Uncategorized")}</td>
+                    <td class="dashcol dashcol-project_user text-muted" style="min-width: 150px;">${sf.esc(p.project_user || "Unassigned")}</td>
                     <td class="dashcol dashcol-completed_on" style="min-width: 130px;">${p.completed_on ? frappe.datetime.str_to_user(p.completed_on) : '<span class="text-muted">—</span>'}</td>
                 </tr>
             `);
@@ -1428,7 +1469,7 @@
         bind_sortable_headers(table);
         wrapper.append(table);
 
-        if (completed_projects.length === 0) container.html('<div class="p-4 text-center text-muted">No completed projects found.</div>');
+        if (completed_projects.length === 0) empty_panel(container, __("No completed projects found."));
         else {
             container.append(wrapper);
             column_selectors['completed-projects'].apply(container);
@@ -1450,7 +1491,7 @@
             rows += `
                 <div class="mb-2">
                     <div class="d-flex justify-content-between" style="font-size: 0.85rem;">
-                        <span>${frappe.utils.escape_html(l)}</span>
+                        <span>${sf.esc(l)}</span>
                         <span class="text-muted">${v}</span>
                     </div>
                     <div style="height: 8px; background: var(--control-bg, #f0f4f7); border-radius: 4px; overflow: hidden;">
@@ -1462,7 +1503,7 @@
         return `
             <div class="${full ? 'col-12' : 'col-12 col-lg-6'} mb-4 px-2">
                 <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
-                    <h6 class="text-muted mb-3">${frappe.utils.escape_html(title)}</h6>
+                    <h6 class="text-muted mb-3">${sf.esc(title)}</h6>
                     ${rows}
                 </div>
             </div>`;
@@ -1512,7 +1553,7 @@
             cardRow.append(`
                 <div class="col-6 col-md-4 col-lg-2 mb-3 px-2">
                     <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
-                        <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #6c757d);">${frappe.utils.escape_html(c.label)}</div>
+                        <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #6c757d);">${sf.esc(c.label)}</div>
                         <div style="font-size: 1.7rem; font-weight: 700; line-height: 1.3; color: ${c.color};">${c.value}</div>
                     </div>
                 </div>
@@ -1527,7 +1568,7 @@
         container.append(chartRow);
 
         if (total_active === 0) {
-            container.append('<div class="p-4 text-center text-muted">No active projects.</div>');
+            empty_panel(container, __("No active projects."));
         }
     }
 
@@ -1603,6 +1644,6 @@
     // included, with the tab, the filters and the expanded projects kept. A bundle
     // cached from before the helper has none, and the block still draws.
     const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
-    if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(root_element, fetch_data);
+    if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, fetch_data);
     }
 })();

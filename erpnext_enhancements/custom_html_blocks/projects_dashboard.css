@@ -5,7 +5,7 @@
  * this repo copy is the source of truth / backup — edit here, paste back into the
  * UI to deploy. Pairs with projects_dashboard.html (shell) + projects_dashboard.js.
  *
- * Covers: the tab bar, skeleton-loader pulse, status badges, inline-editable cells,
+ * Covers: the tab bar, priority badges, inline-editable cells,
  * sortable table headers, the column-selector dropdown, and the level styling for
  * the Portfolio Gantt tab (rendered by the embeddable Gantt widget — DHTMLX — via
  * erpnext_enhancements.gantt.mount; the widget lazy-loads its own skin CSS).
@@ -28,11 +28,6 @@
 
 .dashboard-tabs .nav-link { font-weight: 600; color: var(--text-muted); }
 .dashboard-tabs .nav-link.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
-
-/* Skeleton Loader */
-.skeleton-list { animation: pulse-bg 1.5s infinite; }
-.skeleton-line { background-color: var(--skeleton-bg, var(--control-bg)); border-radius: 4px; }
-@keyframes pulse-bg { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 
 /* Status Badges — saturated brand colours read on both themes; text colour is
    chosen for contrast against each fill. Success, danger and warning are the

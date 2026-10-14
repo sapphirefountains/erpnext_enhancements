@@ -36,7 +36,7 @@ HELPER = APP / "public" / "js" / "global_enhancements" / "workspace_block_return
 README = BLOCKS_DIR / "README.md"
 CI = APP.parent / ".github" / "workflows" / "ci.yml"
 
-#: The blocks on sf_kit: the 34 department dashboard widgets.
+#: The blocks on sf_kit: the 34 department dashboard widgets (v1.649.0), then the other six.
 ON_KIT = (
 	"design_handoff_readiness",
 	"design_hydraulic_headroom",
@@ -72,17 +72,19 @@ ON_KIT = (
 	"service_chemistry_alerts",
 	"service_day_board",
 	"service_labor_capture",
+	# The rest, since v1.658.0: the cockpit, the briefing, the morning TV screen, the
+	# Projects Dashboard, and the two per-viewer blocks.
+	"kpi_cockpit",
+	"morning_briefing",
+	"projects_dashboard",
+	"task_dashboard",
+	"training_my_dashboard",
+	"travel_home",
 )
 
 #: Blocks not converted yet, and why. Move one to ON_KIT in the change that converts it.
 NOT_YET = {
 	"desk_shortcuts": "Asks the server nothing and builds its tiles with createElement: no panel, no escape.",
-	"kpi_cockpit": "Its own tabbed shell and load(force) wrapper; a follow-up of TASK-2026-02822.",
-	"morning_briefing": "Markdown body and a load(false) wrapper; a follow-up of TASK-2026-02822.",
-	"projects_dashboard": "1,600 lines of tables and the Gantt; a follow-up of TASK-2026-02822.",
-	"task_dashboard": "The morning TV screen with its own polling panels; a follow-up of TASK-2026-02822.",
-	"training_my_dashboard": "Per-viewer cards with their own empty states; a follow-up of TASK-2026-02822.",
-	"travel_home": "Five hundred lines of trip cards; a follow-up of TASK-2026-02822.",
 }
 
 #: What a converted block must not contain, and why.
