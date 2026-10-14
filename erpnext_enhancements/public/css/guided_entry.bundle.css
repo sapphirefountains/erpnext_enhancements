@@ -231,10 +231,10 @@
 .ge-app[data-ge-summary="hidden"] .ge-summary {
 	display: none;
 }
-/* The side column holds the summary and, when chosen, the record tools and the notes: it scrolls
-   with the page rather than sticking, so a long thread is never cut off. */
-.ge-app[data-ge-notes="side"] .ge-aside,
-.ge-app[data-ge-tools="side"] .ge-aside {
+/* The side column sticks while it holds only the summary. With the record tools or the notes in
+   it as well (data-ge-aside-blocks, set by the page when one of them has something to show) it
+   scrolls with the page, so a long thread is never cut off. */
+.ge-app[data-ge-aside-blocks="1"] .ge-aside {
 	position: static;
 }
 
@@ -516,6 +516,24 @@
 .ge-fields .form-group > .clearfix > .ge-help-btn,
 .ge-fields .ge-list > .clearfix > .ge-help-btn {
 	flex: none;
+}
+/* A Check's (i) sits after its label too, on the same line; its hint goes under both. */
+.ge-fields .checkbox {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: 2px;
+}
+.ge-fields .checkbox > label {
+	flex: 0 1 auto;
+	min-width: 0;
+	margin-bottom: 0;
+}
+.ge-fields .checkbox > .ge-help-btn {
+	flex: none;
+}
+.ge-fields .checkbox > .help-box {
+	flex: 0 0 100%;
 }
 .ge-fields .form-control,
 .ge-fields .ge-list-input {

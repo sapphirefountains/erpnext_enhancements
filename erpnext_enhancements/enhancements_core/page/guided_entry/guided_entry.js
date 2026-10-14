@@ -113,9 +113,10 @@ const GE_GEAR_ICON =
 	'<path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" ' +
 	'stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 const GE_PIN_ICON =
-	'<svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" focusable="false">' +
-	'<path d="M6 2h4l-.6 4 2.6 2.4V10H4V8.4L6.6 6 6 2zM8 10v4" stroke="currentColor" stroke-width="1.4" ' +
-	'stroke-linejoin="round"/></svg>';
+	'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" focusable="false">' +
+	'<path d="M10 1.8 14.2 6l-1.5.4-2.7 2.7.4 3-1.2 1.2-6.3-6.3 1.2-1.2 3 .4 2.7-2.7z" stroke="currentColor" ' +
+	'stroke-width="1.4" stroke-linejoin="round"/><path d="M5.2 10.8 1.8 14.2" stroke="currentColor" stroke-width="1.4" ' +
+	'stroke-linecap="round"/></svg>';
 
 function ge_clone(value) {
 	return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -1275,6 +1276,7 @@ class GuidedEntry {
 	refresh_blocks() {
 		if (!this.$shell) return;
 		const attrs = this.kit.shell_attrs(this.view || {});
+		let side_blocks = 0;
 		[
 			["notes", ".ge-block--notes", ".ge-comments", __("Notes and comments")],
 			["tools", ".ge-block--tools", ".ge-tools", __("Record tools")],
@@ -1286,6 +1288,7 @@ class GuidedEntry {
 			const open = !collapsible || !!this.block_open[kind];
 			$block.toggleClass("is-collapsible", collapsible).toggleClass("is-collapsed", collapsible && !open);
 			$block.prop("hidden", !has);
+			if (has && $block.parent().hasClass("ge-aside")) side_blocks += 1;
 			const count = kind === "notes" ? this.comments_count() : 0;
 			$block
 				.children(".ge-block-bar")
@@ -1293,6 +1296,8 @@ class GuidedEntry {
 				.attr("aria-expanded", open ? "true" : "false")
 				.text(count ? __("{0} ({1})", [label, count]) : label);
 		});
+		// The side column sticks only while it holds the summary alone (guided_entry.bundle.css).
+		this.$root.attr("data-ge-aside-blocks", side_blocks ? "1" : "0");
 	}
 
 	// How many notes and comments the record has, as drawn (the Notes list's total, and the Comments
@@ -2243,7 +2248,11 @@ class GuidedEntry {
 				})
 				.appendTo($show);
 			$("<span></span>").text(__("Show")).appendTo($show);
-			const fields = (step.fields || []).filter((field) => field && field.fieldname && !this.kit.is_layout(field));
+			// A section with a field the record still needs shows whatever is ticked: say so.
+			if (!this.kit.step_hidden(step, this.values, { hidden_steps: [step.key], missing })) {
+				$('<span class="ge-set-why"></span>').text(__("(shows while a needed field is empty)")).appendTo($row);
+			}
+			const fields =(step.fields || []).filter((field) => field && field.fieldname && !this.kit.is_layout(field));
 			if (!fields.length) return;
 			const $details = $('<details class="ge-set-fields"></details>').appendTo($item);
 			$("<summary></summary>").text(__("Fields ({0})", [fields.length])).appendTo($details);
