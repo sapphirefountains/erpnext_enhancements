@@ -249,10 +249,25 @@ so the record's history has to come with it. Both shells draw an empty `.ge-comm
 the steps, the guided page always and the side panel on every edit, and the shared editor fills it
 (`editor.js mount_comments`) for any saved record of any DocType:
 
-- **Notes**: ERPNext's `notes` table of CRM Note (an Opportunity's Notes tab; 1,049 notes on 235
-  deals on prod), newest first, through `record_notes` (GET; the registry check and read on the
-  record; plain text only, written with `.text()`). Whether a DocType has them is decided by its
-  meta, never by its name. Adding one runs the DocType's own `add_note` through `run_doc_method`,
+- **Notes**: every notes store the DocType has, through `record_notes` (GET; the registry check and
+  read on the record; plain text only, written with `.text()`). Notes and Comments are separate
+  stores and both show (Nik, 2026-10-14: "just include both where appropriate"). The stores
+  (`_note_sources`, `NOTE_TABLES`):
+  - a table of **CRM Note**, ERPNext's Notes tab (an Opportunity has 1,049 notes on 235 deals on
+    prod; Lead and Prospect have the table too);
+  - a table of **Project Notes**, Project's imported history (`custom_comments_table`, 283 rows,
+    hidden on the Desk form);
+  - a **`notes` Text Editor field** (Project has one), listed first as one note labelled "Notes
+    field", with no author or date. Only a Text Editor: the tag stripper would eat a plain-text
+    field's "a<b and c>d".
+
+  Table rows are merged newest first. A store at a permlevel the user cannot read is left out. A
+  record with nothing to show and nothing to add (no notes, no readable store, no `add_note`)
+  answers `has_notes: false`, so a Project with no notes gets no empty block. Which stores a
+  DocType has is decided by its meta, never by its name. The "newest N of M" line no longer says
+  the form has the rest: Project Notes are hidden on the Desk form. Adding one runs the DocType's own
+  `add_note` through `run_doc_method` (only CRM Note DocTypes have it; elsewhere a new note is a
+  Comment),
   after what is queued has saved, then draws only the Notes list again (no page reload). The
   record's `modified` moves, but the notes table is in no step, so the next step save's conflict
   check settles it without asking (`save_queue` `split_conflict`).
