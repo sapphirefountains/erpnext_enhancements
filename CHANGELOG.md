@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Each is either pinned in the bar or run from its menu or chip, and the method it reaches is
     checked.
   - `scripts/test_planner_url_filters.js` gains the Utilization view's route and address.
+
 ## [1.682.1] - 2026-10-14
 
 ### Fixed
