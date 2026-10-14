@@ -463,6 +463,11 @@ class GuidedEntry {
 				if (this.is_new) this.apply_start(options);
 				if (this.is_new) this.restore_new();
 				const kept = this.is_new ? null : this.restore_kept();
+				const resend = this.pending_resend;
+				if (resend && !this.is_new && resend.doctype === this.doctype && resend.name === this.name) {
+					this.pending_resend = null;
+					this.resend_typed(resend.values);
+				}
 				this.render_shell();
 				this.show_step(step_key);
 				this.refresh_notices();
@@ -1694,6 +1699,15 @@ class GuidedEntry {
 			.call(GE_API + "find_created", { doctype, client_id }, { quiet: true, method: "GET" })
 			.then((found) => {
 				if (!found || !found.name || !this.is_new || this.doctype !== doctype || this.client_id !== client_id) return;
+				// Step 1 as it stands now (typed since the restore, maybe) goes onto the record.
+				this.collect_step();
+				const steps = this.flow.steps || [];
+				const step = steps.find((s) => s.create) || steps[0] || {};
+				const typed = {};
+				this.kit.editable_fieldnames(step).forEach((fieldname) => {
+					if (ge_has(this.values, fieldname)) typed[fieldname] = ge_clone(this.values[fieldname]);
+				});
+				this.pending_resend = { doctype, name: found.name, values: typed };
 				this.forget_new(client_id);
 				this.new_dirty = false;
 				this.sf.toast(__("{0} was created after all; it is open now.", [found.name]), { tone: "info", timeout: 6000 });
@@ -1708,14 +1722,27 @@ class GuidedEntry {
 	// the person may still change. Returns what to tell them once the step is on screen, or null.
 	restore_kept() {
 		const key = this.record_key(this.doctype, this.name);
-		const entry = ge_read_kept(key);
-		if (!entry) return null;
-		if (!this.kit.usable_entry(entry, Date.now())) {
-			ge_write_kept(key, null);
-			return null;
+		// An older queue for this record still in this page's memory (a reload, Set as Lost or Back
+		// while it could not send) is newer than the phone's copy: what it waits to send comes over
+		// to this queue, through the same reconcile, and leaves the old one. What it has in flight
+		// stays with it and settles on its own.
+		const old = this.retired.filter((queue) => queue.record_key === key && Object.keys(queue.pending()).length);
+		let entry;
+		if (old.length) {
+			const unsent = {};
+			old.forEach((queue) => Object.assign(unsent, queue.pending()));
+			entry = { unsent, base: Object.assign({}, this.bases[key] || {}) };
+			old.forEach((queue) => Object.keys(queue.pending()).forEach((fieldname) => queue.discard(fieldname)));
+		} else {
+			entry = ge_read_kept(key);
+			if (!entry) return null;
+			if (!this.kit.usable_entry(entry, Date.now())) {
+				ge_write_kept(key, null);
+				return null;
+			}
+			// A queue still sending for this record holds the rest: the phone's copy is not newer.
+			if (this.retired.some((queue) => queue.record_key === key && queue.has_unsaved())) return null;
 		}
-		// A queue still in this page's memory for the record is newer than the phone's copy.
-		if (this.retired.some((queue) => queue.record_key === key && queue.has_unsaved())) return null;
 		const editable = new Set();
 		(this.flow.steps || []).forEach((step) => {
 			if (!step.read_only) this.kit.editable_fieldnames(step).forEach((fieldname) => editable.add(fieldname));
@@ -2165,7 +2192,10 @@ class GuidedEntry {
 				action_label: __("Start over"),
 				on_action: () => {
 					const doctype = this.doctype;
-					this.forget_new();
+					// Every start kept for this DocType, or the next-newest would come back in its place.
+					const prefix = this.kit.new_key_prefix(doctype, ge_user());
+					ge_keys(prefix).forEach((key) => ge_write_kept(key, null));
+					[...this.failed_keys].forEach((key) => key.startsWith(prefix) && this.failed_keys.delete(key));
 					this.load(doctype, null, null);
 				},
 			});

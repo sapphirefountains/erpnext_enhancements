@@ -154,19 +154,13 @@ def client_id_field(doctype):
 	return None
 
 
-def already_created(doctype, client_id, for_update=False):
-	"""The record a create with this id already made for the session user, if they may read it.
-
-	``for_update`` reads the latest committed row rather than this request's snapshot: after a
-	unique-index collision, the row that won was committed by another request after this one began.
-	"""
+def already_created(doctype, client_id):
+	"""The record a create with this id already made for the session user, if they may read it."""
 	fieldname = client_id_field(doctype)
 	client_id = _client_id(client_id)
 	if not fieldname or not client_id:
 		return None
-	name = frappe.db.get_value(
-		doctype, {fieldname: client_id, "owner": frappe.session.user}, "name", for_update=for_update
-	)
+	name = frappe.db.get_value(doctype, {fieldname: client_id, "owner": frappe.session.user}, "name")
 	if not name:
 		return None
 	doc = frappe.get_doc(doctype, name)
@@ -201,8 +195,10 @@ def create_record(doctype, values, prefill=None, client_id=None):
 	config's ``create.client_id_field``, a hidden unique column), and a create whose id this user's
 	earlier create used returns that record, marked ``deduped``, rather than a second one. In the
 	database, not the cache: the deploy flushes the cache several times a day. The unique index
-	also settles a resend that arrives while the first insert is still running: it waits for that
-	one, collides, and returns it.
+	also settles a resend that arrives while the first insert is still running: its insert waits for
+	that one and collides (``UniqueValidationError``; the transaction carries on). This request's
+	snapshot predates the winner's commit, so no read here could see it: the transaction is rolled
+	back (which also returns the naming-series number this insert took), and a fresh one finds it.
 	"""
 	values = _parse(values)
 	prefill = _parse(prefill) if prefill not in (None, "", "null") else {}
@@ -228,10 +224,13 @@ def create_record(doctype, values, prefill=None, client_id=None):
 		doc.set(id_field, client_id)
 	try:
 		doc.insert()
-	except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
-		# Another request with this id won the unique index: return its record. Anything else
-		# that collided is not ours to answer, so it is raised as it was.
-		won = already_created(doctype, client_id, for_update=True) if id_field else None
+	except frappe.UniqueValidationError:
+		if not id_field:
+			raise
+		# Another request with this id may have won the unique index (see above): a fresh
+		# transaction sees its commit. Anything else that collided is raised as it was.
+		frappe.db.rollback()
+		won = already_created(doctype, client_id)
 		if won is None:
 			raise
 		return _as_created(doctype, won)

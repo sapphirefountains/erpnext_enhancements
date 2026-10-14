@@ -486,20 +486,21 @@ def _install_frappe_stub(metas):
             return bool(record) and all(record.get(k) == v for k, v in filters.items())
         return filters in STATE["db"]
 
-    def db_get_value(doctype, filters, fieldname="name", for_update=False, **kwargs):
-        # A plain read sees the request's snapshot (snapshot_hides: rows committed after it began);
-        # a locking read sees the latest committed row.
-        if for_update:
-            STATE["for_update_reads"] += 1
-        hidden = set() if for_update else STATE["snapshot_hides"]
+    def db_get_value(doctype, filters, fieldname="name", **kwargs):
+        # A read sees the transaction's snapshot (snapshot_hides: rows committed after it began),
+        # until a rollback starts a fresh one.
         for name, record in STATE["db"].items():
-            if name in hidden:
+            if name in STATE["snapshot_hides"]:
                 continue
             if all(record.get(k) == v for k, v in filters.items()):
                 return record.get(fieldname)
         return None
 
-    frappe.db = types.SimpleNamespace(sql=sql, exists=db_exists, get_value=db_get_value)
+    def db_rollback():
+        STATE["rollbacks"] += 1
+        STATE["snapshot_hides"] = set()
+
+    frappe.db = types.SimpleNamespace(sql=sql, exists=db_exists, get_value=db_get_value, rollback=db_rollback)
 
     utils = types.ModuleType("frappe.utils")
     utils.cint = lambda value: int(float(value or 0)) if str(value or "0").strip() not in ("",) else 0
@@ -554,7 +555,7 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["lost_calls"] = []
     STATE["active_quotation"] = False
     STATE["snapshot_hides"] = set()
-    STATE["for_update_reads"] = 0
+    STATE["rollbacks"] = 0
     STATE["unique_fail"] = None
     FRAPPE.session.user = user
 
@@ -1387,13 +1388,14 @@ class TestCreateIsNeverRepeated(unittest.TestCase):
         self.assertEqual(again["values"]["custom_opportunity_name"], "Jones Ranch - Fountain Service")
 
     def test_a_resend_racing_the_first_insert_returns_it(self):
-        # The second request read its snapshot before the first committed: it sees nothing, its
-        # insert collides on the unique index, and the locking read finds the winner.
+        # The second request's snapshot predates the first one's commit: it sees nothing, its
+        # insert collides on the unique index, and only a fresh transaction can see the winner.
         first = self._create()
         STATE["snapshot_hides"] = {first["name"]}
         again = self._create()
         self.assertEqual((again["name"], again["deduped"]), (first["name"], 1))
-        self.assertEqual(STATE["for_update_reads"], 1)
+        self.assertEqual(STATE["rollbacks"], 1)
+        self.assertEqual(STATE["inserts"], [first["name"]])
 
     def test_a_record_that_is_gone_is_made_again(self):
         first = self._create()
@@ -1407,6 +1409,7 @@ class TestCreateIsNeverRepeated(unittest.TestCase):
         FRAPPE.session.user = "boss@example.com"
         with self.assertRaises(FRAPPE.UniqueValidationError):
             self._create()
+        self.assertEqual(STATE["rollbacks"], 1)
 
     def test_a_collision_on_something_else_is_raised(self):
         STATE["unique_fail"] = "custom_opportunity_name"

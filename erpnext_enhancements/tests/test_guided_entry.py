@@ -1347,6 +1347,21 @@ class TestNoSignal(unittest.TestCase):
 		self.assertIn("if (created.deduped && this.queue) this.resend_typed(values);", code)
 		self.assertIn("if (entry.client_id) this.client_id = entry.client_id;", code)
 
+	def test_an_older_queues_waiting_values_come_over_on_a_reload(self):
+		code = _code(PAGE_JS)
+		restore = code[code.index("restore_kept() {") :]
+		self.assertIn("old.forEach((queue) => Object.keys(queue.pending()).forEach((fieldname) => queue.discard(fieldname)));", restore)
+		# Through the same reconcile, so a newer server edit is still asked about.
+		self.assertLess(restore.index("entry = { unsent, base:"), restore.index("this.kit.reconcile(entry, this.flow.values)"))
+
+	def test_typing_after_a_restore_reaches_the_record_found_for_it(self):
+		code = _code(PAGE_JS)
+		self.assertIn("this.pending_resend = { doctype, name: found.name, values: typed };", code)
+		self.assertIn("this.resend_typed(resend.values);", code)
+
+	def test_start_over_drops_every_kept_start(self):
+		self.assertIn("ge_keys(prefix).forEach((key) => ge_write_kept(key, null));", _code(PAGE_JS))
+
 	def test_the_saving_line_says_kept_on_the_phone(self):
 		code = _code(PAGE_JS)
 		self.assertIn('tone = "offline";', code)
