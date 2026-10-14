@@ -8,12 +8,14 @@
   "naming_series",
   "supplier",
   "supplier_name",
+  "custom_order_stage",
   "order_confirmation_no",
   "order_confirmation_date",
   "column_break_7",
   "transaction_date",
   "transaction_time",
   "schedule_date",
+  "custom_expected_delivery_date",
   "project",
   "column_break1",
   "company",
@@ -21,6 +23,12 @@
   "supplier_warehouse",
   "has_unit_price_items",
   "amended_from",
+  "custom_contract_section",
+  "custom_msa_contract",
+  "custom_sow_contract",
+  "custom_column_break_contract",
+  "custom_scope_of_work",
+  "custom_change_order",
   {
    "section": "currency_and_price_list"
   },
@@ -67,6 +75,9 @@
   {
    "section": "tracking_section"
   },
+  "custom_approval_stamp_section",
+  "custom_approved_by",
+  "custom_approved_on",
   {
    "section": "accounting_dimensions_section"
   },
@@ -91,8 +102,7 @@
    "tab": "connections_tab"
   },
   "custom_comments_tab",
-  "custom_comments_field",
-  "custom_comments"
+  "custom_comments_field"
  ],
  "setters": []
 }
