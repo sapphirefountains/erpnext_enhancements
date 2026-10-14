@@ -41,6 +41,14 @@
 // A validation error (417) is shown at the top of the step and keeps the person on it; a lapsed
 // session shows a sign-in panel and keeps everything typed in memory.
 //
+// NO SIGNAL (P4.7). What has not reached the server is kept on the phone (localStorage, one
+// entry per record: form_kit/journal.js), with the server's value from before each change. A save
+// that fails for want of signal says "Saved on this phone" rather than "Not saved", and is retried
+// when the signal returns (the window's "online" event, and every 20 s while waiting). Opening the
+// record again puts kept changes back: still the server's old value, saved; already there,
+// dropped; changed by someone else, asked, with the same chooser as any conflict. Closing the tab
+// warns only when the phone could not keep something (storage refused, or a record not created).
+//
 // Every request this page makes goes through sf_kit.call(..., { quiet: true }): frappe.call's own
 // dialogs (403, 5xx, QueryTimeout) would interrupt a page that already says it once, in its
 // own panel. The one framework loader it uses is frappe.model.with_doctype, for the child-table
@@ -85,6 +93,39 @@ function ge_has(object, key) {
 	return !!object && Object.prototype.hasOwnProperty.call(object, key);
 }
 
+// localStorage, which a private window or blocked site data can refuse: every read and write is
+// guarded, and a refused write reports false so the page warns before the tab closes.
+function ge_storage() {
+	try {
+		return window.localStorage || null;
+	} catch (e) {
+		return null;
+	}
+}
+
+function ge_read_kept(key) {
+	const store = ge_storage();
+	if (!store) return null;
+	try {
+		return JSON.parse(store.getItem(key) || "null");
+	} catch (e) {
+		return null;
+	}
+}
+
+// Keep `entry` under `key`, or forget it (null). True when the phone holds what it should.
+function ge_write_kept(key, entry) {
+	const store = ge_storage();
+	if (!store) return !entry;
+	try {
+		if (entry) store.setItem(key, JSON.stringify(entry));
+		else store.removeItem(key);
+		return true;
+	} catch (e) {
+		return false;
+	}
+}
+
 // One string for what a new record was started with, "" for nothing.
 function ge_start_key(options) {
 	if (!options || typeof options !== "object") return "";
@@ -124,11 +165,17 @@ class GuidedEntry {
 		// count wherever the person is on the Desk (they are only in this page's memory); an
 		// uncreated step 1 counts only while this page is showing.
 		window.addEventListener("beforeunload", (event) => {
-			if (!this.has_unsaved()) return;
+			if (!this.has_unsaved() || this.kept_on_phone()) return;
 			event.preventDefault();
 			event.returnValue = "";
 			return "";
 		});
+		// P4.7: the signal is back; send what waited for it.
+		window.addEventListener("online", () => this.signal_back());
+		// The server's value from before each unsent change, per record (journal.js `base`).
+		this.bases = {};
+		this.journal_failed = false;
+		this.signal_timer = null;
 		// Back from signing in on another tab: try the save that the lapsed session refused.
 		window.addEventListener("focus", () => {
 			if (this.queue && this.queue.state === "expired") this.queue.retry().catch(() => {});
@@ -375,9 +422,11 @@ class GuidedEntry {
 				if (seq !== this.load_seq) return;
 				this.take_flow(flow);
 				if (this.is_new) this.apply_start(options);
+				const kept = this.is_new ? null : this.restore_kept();
 				this.render_shell();
 				this.show_step(step_key);
 				this.refresh_notices();
+				if (kept) this.after_restore(kept);
 				this.nudge_won_without_project();
 			})
 			.catch((err) => {
@@ -622,13 +671,18 @@ class GuidedEntry {
 			delay: 2500,
 			send: (values, at) =>
 				this.sf.call(GE_API + "save_step", { doctype, name, values, modified: at }, { quiet: true }),
-			on_state: (state, error) => current() && this.on_save_state(state, error),
+			on_state: (state, error) => {
+				this.write_journal(doctype, name, queue);
+				if (state === "error" && this.kit.try_later(error)) this.wait_for_signal();
+				if (current()) this.on_save_state(state, error);
+			},
 			on_saved: (result, sent) => current() && this.on_saved(result, sent),
 			on_conflict: (result, sent) => (current() ? this.on_conflict(result, sent) : Promise.resolve(null)),
 			set_timeout: (fn, ms) => window.setTimeout(fn, ms),
 			clear_timeout: (id) => window.clearTimeout(id),
 		});
 		queue.set_modified(modified);
+		queue.record_key = this.kit.journal_key(doctype, name);
 		return queue;
 	}
 
@@ -981,7 +1035,12 @@ class GuidedEntry {
 			if (state === "saved") text = __("Saved");
 			else if (state === "dirty" || state === "saving") text = __("Saving…");
 			else if (state === "conflict") text = __("Not saved — choose above");
-			else {
+			else if (state === "error" && this.kit.try_later(this.queue.error) && !this.journal_failed) {
+				// No signal, and the phone holds it: it is safe, just not sent.
+				text = __("Saved on this phone — sends when there is signal");
+				tone = "offline";
+				retry = true;
+			} else {
 				text = __("Not saved — retry");
 				retry = true;
 			}
@@ -1434,8 +1493,13 @@ class GuidedEntry {
 		if (this.is_new) {
 			this.new_dirty = true;
 		} else if (this.queue) {
-			if (this.kit.same_value(value, this.saved[fieldname])) this.queue.discard(fieldname);
-			else this.queue.change(fieldname, value);
+			if (this.kit.same_value(value, this.saved[fieldname])) {
+				this.queue.discard(fieldname);
+			} else {
+				this.note_base(fieldname);
+				this.queue.change(fieldname, value);
+			}
+			this.write_journal(this.doctype, this.name, this.queue);
 		}
 		const after_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
 		if (!quiet_chrome || before_active !== after_active) this.refresh_chrome();
@@ -1469,6 +1533,105 @@ class GuidedEntry {
 		);
 	}
 
+	// ------------------------------------------------------------------ no signal (P4.7)
+
+	// The server's value from before this field's first unsent change: what reconcile compares with.
+	note_base(fieldname) {
+		const key = this.kit.journal_key(this.doctype, this.name);
+		const bases = this.bases[key] || (this.bases[key] = {});
+		if (!ge_has(bases, fieldname)) bases[fieldname] = ge_clone(this.saved[fieldname]);
+	}
+
+	// Keep what `queue` has not stored for this record on the phone, or forget it once stored.
+	// During a conflict the queue holds the sent values in its prompt, so the last entry stays.
+	write_journal(doctype, name, queue) {
+		if (!doctype || !name || !queue || !this.kit || queue.state === "conflict") return;
+		const key = this.kit.journal_key(doctype, name);
+		const unsent = Object.assign({}, queue.in_flight() || {}, queue.pending());
+		const bases = this.bases[key] || {};
+		Object.keys(bases).forEach((fieldname) => {
+			if (!ge_has(unsent, fieldname)) delete bases[fieldname];
+		});
+		const entry = this.kit.make_entry({ doctype, name, modified: queue.modified, unsent, base: bases, at: Date.now() });
+		this.journal_failed = !ge_write_kept(key, entry);
+	}
+
+	// Whether closing the tab now loses nothing: the phone holds every record's unsent changes,
+	// and no record is half-started on step 1 (that is created, not kept).
+	kept_on_phone() {
+		if (this.journal_failed || !ge_storage()) return false;
+		return !(this.is_new && (this.new_dirty || this.creating));
+	}
+
+	// The record just loaded: put back what this phone kept for it (journal.js reconcile). Returns
+	// what to tell the person once the step is on screen, or null.
+	restore_kept() {
+		const key = this.kit.journal_key(this.doctype, this.name);
+		const entry = ge_read_kept(key);
+		if (!entry) return null;
+		if (!this.kit.usable_entry(entry, Date.now())) {
+			ge_write_kept(key, null);
+			return null;
+		}
+		// A queue still in this page's memory for the record is newer than the phone's copy.
+		if (this.retired.some((queue) => queue.record_key === key && queue.has_unsaved())) return null;
+		const plan = this.kit.reconcile(entry, this.flow.values);
+		const bases = (this.bases[key] = {});
+		Object.keys(plan.reapply).forEach((fieldname) => {
+			bases[fieldname] = ge_clone(this.saved[fieldname]);
+			this.values[fieldname] = ge_clone(plan.reapply[fieldname]);
+			this.queue.change(fieldname, plan.reapply[fieldname]);
+		});
+		this.write_journal(this.doctype, this.name, this.queue);
+		const put_back = Object.keys(plan.reapply).length;
+		if (!put_back && !plan.conflicts.length) return null;
+		return { put_back, conflicts: plan.conflicts, key };
+	}
+
+	after_restore(kept) {
+		if (kept.put_back) {
+			this.sf.toast(__("Put back {0} change(s) this phone kept from before.", [kept.put_back]), {
+				tone: "info",
+				timeout: 6000,
+			});
+		}
+		if (!kept.conflicts.length) return;
+		// Changed on the server since: the person chooses, as with any conflict. Until then the
+		// phone keeps its copy (the entry is only rewritten once the choice is made).
+		const doctype = this.doctype;
+		const name = this.name;
+		this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }, (decision) => {
+			if (!decision || this.doctype !== doctype || this.name !== name) return;
+			const bases = this.bases[kept.key] || (this.bases[kept.key] = {});
+			Object.keys(decision.save || {}).forEach((fieldname) => {
+				const value = decision.save[fieldname];
+				bases[fieldname] = ge_clone(this.saved[fieldname]);
+				this.values[fieldname] = ge_clone(value);
+				this.show_value(fieldname, value);
+				this.queue.change(fieldname, value);
+			});
+			this.write_journal(doctype, name, this.queue);
+			this.refresh_chrome();
+		});
+	}
+
+	// Saves that failed for want of signal try again every 20 s until one gets through.
+	wait_for_signal() {
+		if (this.signal_timer) return;
+		this.signal_timer = window.setTimeout(() => {
+			this.signal_timer = null;
+			this.signal_back();
+		}, 20000);
+	}
+
+	signal_back() {
+		[this.queue, ...this.retired].forEach((queue) => {
+			if (queue && queue.state === "error" && this.kit && this.kit.try_later(queue.error)) {
+				queue.retry().catch(() => {});
+			}
+		});
+	}
+
 	// ------------------------------------------------------------------ saving
 
 	save_in_background() {
@@ -1499,7 +1662,12 @@ class GuidedEntry {
 		if (state === "saved" || state === "saving") {
 			if (this.notice && this.notice.kind !== "create") this.notice = null;
 		} else if (state === "error") {
-			this.notice = { kind: "save", error: error || {} };
+			if (this.kit.try_later(error) && !this.journal_failed) {
+				// Kept on the phone and retried when the signal returns: the saving line says so.
+				if (this.notice && this.notice.kind === "save") this.notice = null;
+			} else {
+				this.notice = { kind: "save", error: error || {} };
+			}
 		} else if (state === "expired") {
 			this.notice = { kind: "expired" };
 		}
@@ -1534,8 +1702,12 @@ class GuidedEntry {
 	on_conflict(result, sent) {
 		const server = result.server || {};
 		const split = this.kit.split_conflict(this.saved, sent, server);
-		// What the server holds now is the base from here on.
-		Object.keys(server).forEach((fieldname) => (this.saved[fieldname] = ge_clone(server[fieldname])));
+		// What the server holds now is the base from here on, on screen and on the phone.
+		const bases = this.bases[this.kit.journal_key(this.doctype, this.name)] || {};
+		Object.keys(server).forEach((fieldname) => {
+			this.saved[fieldname] = ge_clone(server[fieldname]);
+			if (ge_has(bases, fieldname)) bases[fieldname] = ge_clone(server[fieldname]);
+		});
 		this.after_conflict = true;
 		if (!split.conflicts.length) {
 			return Promise.resolve({ save: split.resend, modified: result.modified });

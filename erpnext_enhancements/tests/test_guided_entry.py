@@ -577,6 +577,51 @@ out.queue = q;
 		split_nothing: kit.split_prefill(null, null, null),
 	};
 }
+// ---- what the phone keeps while there is no signal (P4.7)
+{
+	const entry = kit.make_entry({
+		doctype: "Opportunity",
+		name: "CRM-OPP-1",
+		modified: "m1",
+		unsent: { custom_opportunity_summary: "Pond, 3 pumps", opportunity_amount: 5000, territory: "Utah", status: "Needs Analysis" },
+		base: { custom_opportunity_summary: "Pond", opportunity_amount: 4000, territory: "Idaho", status: "Qualification", gone: "x" },
+		at: 1000,
+	});
+	out.journal = {
+		key: kit.journal_key("Opportunity", "CRM-OPP-1"),
+		entry,
+		empty: kit.make_entry({ doctype: "Opportunity", name: "X", unsent: {}, base: {} }),
+		no_base: kit.make_entry({ doctype: "Opportunity", name: "X", unsent: { a: 1 }, base: null, at: 5 }),
+		usable: [
+			kit.usable_entry(entry, 2000),
+			kit.usable_entry(entry, 1000 + kit.JOURNAL_MAX_AGE_MS + 1),
+			kit.usable_entry(null, 1),
+			kit.usable_entry({ unsent: {} }, 1),
+			kit.usable_entry("junk", 1),
+		],
+		// The server since: the summary untouched (put back), the amount already saved (dropped),
+		// the territory changed by someone else (asked), the status untouched (put back).
+		reconciled: kit.reconcile(entry, { custom_opportunity_summary: "Pond", opportunity_amount: 5000, territory: "Nevada", status: "Qualification" }),
+		reconciled_rows: kit.reconcile(
+			{ unsent: { t: [{ c: "a" }, { c: "b" }] }, base: { t: [{ c: "a" }] } },
+			{ t: [{ name: "r1", idx: 1, c: "a" }] }
+		),
+		reconciled_nothing: kit.reconcile(null, {}),
+		try_later: [
+			{ status: 0 },
+			{ status: 502 },
+			{ status: 503 },
+			{ status: 504 },
+			{ status: 429 },
+			{ status: 500 },
+			{ status: 500, exc_type: "ValidationError" },
+			{ status: 417, exc_type: "ValidationError" },
+			{ status: 403 },
+			{ status: 401, session_expired: true },
+			null,
+		].map(kit.try_later),
+	};
+}
 console.log(JSON.stringify(out));
 """
 
@@ -886,6 +931,33 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(t["state"], "error")
 		self.assertEqual(t["pending"], {"a": 1})
 
+	# ---- what the phone keeps while there is no signal (P4.7)
+
+	def test_journal_entries_keep_only_the_unsent_fields_and_their_base(self):
+		j = self.out["journal"]
+		self.assertEqual(j["key"], "ge-unsent:Opportunity/CRM-OPP-1")
+		self.assertEqual(j["entry"]["base"], {
+			"custom_opportunity_summary": "Pond", "opportunity_amount": 4000, "territory": "Idaho", "status": "Qualification"
+		})
+		self.assertEqual((j["entry"]["modified"], j["entry"]["at"]), ("m1", 1000))
+		self.assertIsNone(j["empty"])
+		self.assertEqual(j["no_base"]["base"], {"a": None})
+		self.assertEqual(j["usable"], [True, False, False, False, False])
+
+	def test_reconcile_never_overwrites_a_newer_server_edit(self):
+		r = self.out["journal"]["reconciled"]
+		self.assertEqual(r["reapply"], {"custom_opportunity_summary": "Pond, 3 pumps", "status": "Needs Analysis"})
+		self.assertEqual(r["drop"], ["opportunity_amount"])
+		self.assertEqual(r["conflicts"], [{"fieldname": "territory", "mine": "Utah", "theirs": "Nevada"}])
+		rows = self.out["journal"]["reconciled_rows"]
+		self.assertEqual(rows["reapply"], {"t": [{"c": "a"}, {"c": "b"}]})
+		self.assertEqual(self.out["journal"]["reconciled_nothing"], {"reapply": {}, "drop": [], "conflicts": []})
+
+	def test_only_the_networks_failures_wait_for_signal(self):
+		self.assertEqual(
+			self.out["journal"]["try_later"], [True, True, True, True, True, True, False, False, False, False, True]
+		)
+
 	# ---- where a record opens (P5.2). Nik, 2026-10-13: "I want these guided setups to be the
 	# default for new and existing documents of the DocTypes we are making guided setups for."
 
@@ -1193,6 +1265,47 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		block = tweaks[tweaks.index('"CRM": [') :]
 		self.assertIn('"link_to": "guided-entry"', block)
 		self.assertIn('"after": ("DocType", "Opportunity")', block)
+
+
+class TestNoSignal(unittest.TestCase):
+	"""Form kit P4.7: the guided page keeps working when the connection drops."""
+
+	def test_every_change_and_every_save_state_is_journaled(self):
+		code = _code(PAGE_JS)
+		self.assertIn("this.write_journal(doctype, name, queue);", code)
+		self.assertIn("this.write_journal(this.doctype, this.name, this.queue);", code)
+		self.assertIn("this.note_base(fieldname);", code)
+		# The journal is written for every queue, the retired ones included (not only current()).
+		on_state = code[code.index("on_state: (state, error) => {") :]
+		on_state = on_state[: on_state.index("},")]
+		self.assertLess(on_state.index("this.write_journal"), on_state.index("if (current())"))
+
+	def test_the_phone_copy_is_put_back_through_reconcile(self):
+		code = _code(PAGE_JS)
+		self.assertIn("const plan = this.kit.reconcile(entry, this.flow.values);", code)
+		self.assertIn("const kept = this.is_new ? null : this.restore_kept();", code)
+		self.assertIn("this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }", code)
+
+	def test_signal_coming_back_sends_what_waited(self):
+		code = _code(PAGE_JS)
+		self.assertIn('window.addEventListener("online", () => this.signal_back());', code)
+		self.assertIn("this.wait_for_signal();", code)
+		self.assertIn("queue.retry().catch(() => {});", code)
+
+	def test_storage_is_always_guarded_and_closing_warns_only_when_needed(self):
+		code = _code(PAGE_JS)
+		self.assertEqual(code.count("window.localStorage"), 1)
+		for name in ("function ge_storage() {", "function ge_read_kept(key) {", "function ge_write_kept(key, entry) {"):
+			body = code[code.index(name) :]
+			body = body[: body.index("\n}\n")]
+			with self.subTest(function=name):
+				self.assertIn("} catch (e) {", body)
+		self.assertIn("if (!this.has_unsaved() || this.kept_on_phone()) return;", code)
+
+	def test_the_saving_line_says_kept_on_the_phone(self):
+		code = _code(PAGE_JS)
+		self.assertIn('tone = "offline";', code)
+		self.assertIn(".ge-saveline--offline", _text(CSS))
 
 
 class TestWhatTheFormScriptsDid(unittest.TestCase):

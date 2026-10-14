@@ -592,6 +592,12 @@ body.ge-page-active .triton-fab {
 	text-decoration: underline;
 	cursor: pointer;
 }
+/* P4.7: kept on the phone, waiting for signal. Safe, not alarming; tapping retries now. */
+.ge-saveline--offline {
+	color: var(--sf-warn);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+}
 .ge-saveline--conflict {
 	color: var(--sf-text-strong);
 	font-weight: var(--sf-weight-bold);

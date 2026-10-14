@@ -38,3 +38,4 @@ export { same_value, split_conflict, resolve, value_text } from "./conflict.js";
 export { STATES, create_save_queue } from "./save_queue.js";
 export { STREAM_PILLAR, SUMMARY, pillar_for, streams_of, lead_pillar, summary_model } from "./summary.js";
 export { is_new_name, full_form_key, carry_over, redirect_for, split_prefill } from "./opening.js";
+export { JOURNAL_PREFIX, JOURNAL_MAX_AGE_MS, journal_key, try_later, make_entry, usable_entry, reconcile } from "./journal.js";
