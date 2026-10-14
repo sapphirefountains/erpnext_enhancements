@@ -66,6 +66,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
   chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
 
+## [1.667.0] - 2026-10-14
+
+### Added
+
+- **Links between related pages, from the forms** (custom pages S5b, ERPNext TASK-2026-02807). Each
+  form now opens the page that works on the same record, in the right state. Every link is a route,
+  so it is a history entry and Back returns to where it was pressed. Each shows only to those whose
+  roles open the target page (`frappe.boot.page_info`); anyone else would only be refused by it.
+  - **Project: View > Open in Project Planner.** The planner opens with the project as its Project
+    filter, as `/desk/project-planner?project=…`. A project that has not started yet opens on the
+    week it starts (`/week/<expected_start_date>`), where its work is. The button is only on a
+    project the planner plans: its type is one of `crew_availability.PLANNER_PROJECT_TYPES` (the
+    test holds the form's copy of the list to the engine's), and it is not Completed or Canceled.
+    New `public/js/project_enhancements/project_planner_link.js`, registered in
+    `doctype_js["Project"]`. It declares nothing at the top level, because doctype_js concatenates
+    every Project script into one.
+  - **Project Quality Inspection: Open in Inspection Wizard**, on a saved draft. It opens
+    `/desk/inspection-wizard/<inspection>/0`, the wizard's own path form, at the first section. A
+    submitted inspection has nothing to step through in the wizard, so it gets no button. This is
+    the DocType's first form script. Frappe loads it from the DocType folder, so it is not in
+    doctype_js, which would load it twice.
+  - **Rental Booking: View > Open in Rental Planner** replaces the bare "Rental Planner" link. The
+    board opens on the booking's first day (delivery, else setup, else the event) as `?start=`,
+    which the planner reads since v1.662.0. A booking with no dates opens the bare board.
+  - **Maintenance Day Board: a submitted visit links to Visit Review.** Cards in Submitted and
+    Flagged get "Open in Visit Review" (`/desk/visit-review/<visit>`) under the card, beside the
+    drafts' Visit Wizard link from v1.662.0. A card is itself a link and cannot hold another. A
+    Projects Manager reads the board but is not a reviewer, so the link depends on the page's roles.
+  - **Maintenance Day Board: Open in Maintenance Planner** in the toolbar opens the planner's week
+    holding the day shown (`/desk/maintenance-planner/week/<day>`). That is the planner's own
+    route, so the Maintenance Planner is unchanged.
+- **The Project Planner takes a project from `frappe.route_options`** (`take_route_project`, called
+  from `handle_route`). It reads the key after the planner restores its last-used view, so the
+  form's project wins over a remembered one. The key is consumed the way the list view consumes its
+  filters, and an emptied object is nulled. The PM filter is cleared so it cannot hide that
+  project's cards. A remembered last-used Month view still applies: it replaces the entry and keeps
+  the query until the planner reads it.
+  - **It is a one-off.** Nothing is saved to the remembered Project and PM filters, and the "last
+    used" view is not saved while the link's project is still the filter (`project_link`). A
+    filter the person picks afterwards is saved as before.
+  - **The key leaves the address in place** (`history.replaceState`, the planner's only history
+    write). Otherwise Back onto that entry, after switching to All and opening a task, would put
+    the link's filter back.
+  - **A linked project the planner does not list stays the filter**, offered in the select under
+    its name, instead of the filter quietly resetting to all projects. A picked filter the planner
+    no longer lists still resets, as before. When the filtered project has nothing in the range on
+    screen and nothing unscheduled, the calendar says "No work for <project> in this range."
+- **The new links that route without options clear `frappe.route_options` first.** The router
+  copies every address's query into it and nothing clears it. On v16.50, `set_route` writes
+  whatever is left there into the next address. An options object replaces it, so only the
+  path-only routes need this: the Inspection Wizard, a dateless booking and the Maintenance
+  Planner. The wizard's own `route_to` already does the same.
+
+### Changed
+
+- New bench-free suite `tests/test_form_page_links.py`, with its own CI step. It checks the source
+  shape and runs `scripts/test_form_page_links.js`, which loads the real form and page scripts
+  against a model of v16.50's router. That model puts an options object in `route_options` and
+  writes it to the address as the query. It pushes or replaces the entry, and copies the query back
+  into `route_options` on every route change. The harness presses each button and checks the
+  target page's state. It covers Back and Forward, a name that needs escaping, a leftover option,
+  the planner's last-used view and the Day Board on another day.
+
+## [1.666.0] - 2026-10-14
+
+### Added
+
+- **The Device Console's camera now scans on an iPhone** (S6b, ERPNext TASK-2026-02808). The
+  console used `BarcodeDetector` with no fallback, and iPhone Safari has none, so the camera button
+  never appeared there. It now falls back to jsQR, as the Inventory Scanner Audit has since
+  v1.521.0. jsQR reads QR codes only, so a device's 1D barcode on an iPhone still needs the wedge
+  scanner or typing.
+- **A shared scanner kit**, `public/js/scanner_kit/`, loaded as `scanner_kit.bundle.js`, which sets
+  `window.sf_scanner`. The Device Console and the Inventory Scanner Audit each carried their own copy
+  of the camera sheet and of the history handling that makes the phone's Back button close a sheet,
+  and the copies had drifted: that drift is how the console lost the iPhone. Both pages now use the
+  kit.
+  - `sheets.js` is the sheets' Back/Forward handling, moved from the two pages unchanged: one
+    history entry per sheet, marked in `history.state`, shown only once its route has settled;
+    Back pops it; a sheet closed another way steps back off its own entry once.
+  - `reader.js` picks the decoder. Where `BarcodeDetector` reads QR, it is used alone and jsQR is
+    never loaded, so Android and desktop Chrome pay nothing for it. With no `BarcodeDetector`, or one
+    that reads nothing, jsQR is used alone (QR only). Where the detector reads barcodes but not QR,
+    both are used, for barcodes and QR codes.
+  - jsQR is the vendored file /stock-scan already ships. It is loaded raw through `frappe.require`
+    by its bare path, never bundled: it is a UMD file that sets `window.jsQR`. /stock-scan's own
+    scanner is untouched.
+  - `camera.js` is the Camera Scan sheet. It also shows a Torch button where the camera track
+    offers one (Chrome on Android; iOS does not), and says why there is no camera: access blocked
+    for the site, no camera found, or a generic failure.
+  - **iOS handling.** The video is `playsinline`, `muted` and `autoplay`, and `muted` is also set as
+    a property. The camera uses `facingMode: "environment"` with no audio, and is asked for only
+    from a tap, after the sheet is up. Every track is stopped on close, when the document goes
+    hidden, on `pagehide`, and on frappe's `hide` of the page's wrapper, so the camera light goes
+    off.
+  - Each page loads the kit behind a guard, the same pattern it uses for sf_kit. A kit already on
+    the page answers at once, so nothing changes in timing after the first load. On a Desk's first
+    visit, a page show that comes while the kit is loading, and any sheet tapped open, wait for it.
+  - If the kit never arrives, each page falls back to plain dialogs with no history entry. The
+    camera button stays hidden, and scanning, Choose Employee, Find Item and the count still work.
+
+### Fixed
+
+- **Leaving a scanner page while its camera was still fading in left the camera running.** The
+  router closes a displayed dialog on a page change, but not one still fading in. That sheet then
+  finished showing over the next page with the camera on. The kit now stops the camera on the
+  page's `hide`, and closes the sheet as soon as Bootstrap allows.
+- **The Device Console's camera now closes when the phone locks or the app is switched.** It had no
+  `visibilitychange` close. The Scanner Audit had one, and the kit now does this for both pages.
+- **A jsQR file that failed to load can be loaded again without reloading the page.** v16.50's
+  `assets.js` marks a path as executed even when its `<script>` failed, so every later
+  `frappe.require` of it does nothing. The message still said to check the connection, which could
+  never help. On a later open after a failure, the kit now adds a `<script>` of its own: it removes
+  any earlier failed one, and the new one has a `?retry=` query so the browser fetches the file
+  again. The retry settles when the file loads, when it errors, or after 10 seconds.
+- **A scanner kit that throws as it starts no longer leaves its page stuck.** If `kit.sheets()` or
+  `watch()` threw, one of two things happened. With the kit already on the page, the page's own
+  start-up threw. On a first visit, the queue of shows and taps waiting for the kit was never
+  cleared, so the page never decided its first show and no sheet would open. Each page now treats a kit that throws as no
+  kit: it falls back to the plain sheets, and the queue still runs.
+
+### Tests
+
+- `scripts/test_scanner_kit.mjs` (run from the new `tests/test_scanner_kit.py`, and as its own CI
+  step) tests the kit against stubbed `navigator.mediaDevices`, jsQR, and a `BarcodeDetector` that is
+  present, absent, or present without QR. It checks:
+  - the decoder each case picks;
+  - that jsQR is never loaded where the detector reads QR;
+  - that every track stops on each way out;
+  - the inline muted video and the camera constraints;
+  - the failure messages and the torch;
+  - one history entry per sheet, popped by Back.
+- `tests/test_scanner_kit.py` fails the build if:
+  - either page keeps its own camera loop, decoder or history writes;
+  - either page loads the kit without its guard;
+  - the kit imports jsQR or any /stock-scan code.
+- `scripts/test_desk_page_history.js` now runs both pages on the real kit, with ten new
+  scenarios:
+  - the console reading a QR code through jsQR on an iPhone, and jsQR never loaded where the
+    detector reads QR;
+  - the Scanner Audit reading a location label through jsQR on an iPhone;
+  - the page hide during the camera's fade-in;
+  - the phone locking with the camera open;
+  - the blocked and missing camera messages;
+  - a console with no kit;
+  - a first visit where the kit arrives late, with a sheet URL and with a sheet tapped open.
+- `tests/test_desk_page_history.py` now reads the shared history logic from the kit.
+  `tests/test_s3_page_states.py` checks that the S3.1 start-up panel never waits for the scanner
+  kit.
+
 ## [1.664.0] - 2026-10-14
 
 ### Changed
