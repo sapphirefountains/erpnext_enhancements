@@ -913,10 +913,20 @@ class TestSteps(unittest.TestCase):
                     self.assertFalse(before["fieldtype"] == after["fieldtype"] == "Column Break")
 
     def test_set_only_once_is_editable_only_while_new(self):
-        self.assertEqual(_field(self.flow, "naming_series")["read_only"], 1)
+        # Series was the form's one set-only-once field, and the flow now leaves it out, so
+        # mark another field the same way.
+        _reset(build_metas(field_overrides={"opportunity_from": {"set_only_once": 1}}))
+        saved_flow = steps.flow_steps("Opportunity", _doc(_seed()))
+        self.assertEqual(_field(saved_flow, "opportunity_from")["read_only"], 1)
         new_flow = steps.flow_steps("Opportunity", FRAPPE.new_doc("Opportunity"))
-        self.assertEqual(_field(new_flow, "naming_series")["read_only"], 0)
+        self.assertEqual(_field(new_flow, "opportunity_from")["read_only"], 0)
         self.assertFalse(_step(new_flow, "scope_design")["active"])
+
+    def test_the_series_is_left_out_of_every_step(self):
+        """Nik, 2026-10-13: there is one series and it never changes."""
+        new_flow = steps.flow_steps("Opportunity", FRAPPE.new_doc("Opportunity"))
+        for flow in (self.flow, new_flow):
+            self.assertIsNone(_field(flow, "naming_series"))
 
 
 class TestFieldPermissions(unittest.TestCase):
@@ -1095,6 +1105,7 @@ class TestCreateRecord(unittest.TestCase):
                     "opportunity_amount": 99999,  # not a step-1 field
                     "custom_general_scope_description": "not yet",
                     "status": "Closed Won",  # not a step-1 field either
+                    "naming_series": "OTHER-.YYYY.-",  # not in the flow at all
                     "name": "CHOSEN-NAME",
                 }
             ),
@@ -1108,6 +1119,7 @@ class TestCreateRecord(unittest.TestCase):
         self.assertIsNone(stored.get("custom_general_scope_description"))
         self.assertEqual(stored["status"], "Qualification")  # the new record's default
         self.assertEqual(stored["opportunity_from"], "Customer")
+        self.assertEqual(stored["naming_series"], "CRM-OPP-.YYYY.-")  # the one option, from new_doc
         self.assertEqual(stored["company"], "Sapphire Fountains")
         self.assertEqual(result["modified"], stored["modified"])
         self.assertIn("custom_opportunity_name", result["values"])
