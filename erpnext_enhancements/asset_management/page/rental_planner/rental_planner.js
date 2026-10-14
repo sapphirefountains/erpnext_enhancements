@@ -112,6 +112,7 @@ const RP_STYLE = `
 .rp-bar{position:absolute;top:7px;height:24px;border-radius:5px;font-size:11px;line-height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;cursor:pointer;z-index:2;box-sizing:border-box;display:block;margin:0;border:0;font-family:inherit;text-align:left;}
 .rp-bar:hover{filter:brightness(1.08);box-shadow:0 1px 4px rgba(0,0,0,.25);}
 .rp-bar:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;z-index:4;}
+.rp-bar-text{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .rp-bar.rp-rental{background:#2563eb;}
 .rp-bar.rp-rental.rp-held{background:repeating-linear-gradient(45deg,#93c5fd,#93c5fd 6px,#bfdbfe 6px,#bfdbfe 12px);color:#1e3a8a;border:1px dashed #2563eb;}
 .rp-bar.rp-prep,.rp-bar.rp-turnaround{background:#94a3b8;color:#0f172a;top:12px;height:14px;line-height:14px;font-size:10px;}
@@ -491,7 +492,8 @@ class RentalPlanner {
 					.css({ left: left + "px", width: Math.max(right - left, 3) + "px" })
 					.appendTo($track);
 				const text = bar.kind === "prep" ? __("Prep") : bar.kind === "turnaround" ? __("Cleaning") : bar.label;
-				if (bar.kind !== "prep" && bar.kind !== "turnaround") $bar.text(text);
+				// The label truncates on an inner span: some engines ignore text-overflow on a <button>.
+				if (bar.kind !== "prep" && bar.kind !== "turnaround") $('<span class="rp-bar-text"></span>').text(text).appendTo($bar);
 				const until = bar.open_ended ? __("until further notice") : frappe.datetime.str_to_user(bar.to);
 				const facts = [
 					text,
@@ -559,7 +561,14 @@ class RentalPlanner {
 				.text(`${i + 1}. ${RP_STEP_TITLES[key]}`)
 				.appendTo($steps);
 			if (i === current) $s.addClass("rp-active").attr("aria-current", "step");
-			else if (done) $s.addClass("rp-done").on("click", () => this.go_step(key));
+			else if (done) {
+				$s.addClass("rp-done").on("click", (event) => {
+					// Enter or Space on a button is a click with detail 0. The step that comes next
+					// replaces the rail, so focus would fall to <body>: put it on the step's heading.
+					if (event && event.detail === 0) this.focus_heading_until = Date.now() + 2000;
+					this.go_step(key);
+				});
+			}
 		});
 
 		this.$card = $('<div class="rp-card"></div>').appendTo(this.$body);
@@ -571,6 +580,12 @@ class RentalPlanner {
 		this.$next = $('<div></div>').appendTo($nav);
 
 		this[`render_${step}`]();
+		// A step reached from the keyboard (S3.6): its heading takes focus, a mouse click leaves it.
+		if (this.focus_heading_until > Date.now()) {
+			this.focus_heading_until = 0;
+			const heading = this.$card.find("h4").first().attr("tabindex", "-1")[0];
+			if (heading && typeof heading.focus === "function") heading.focus();
+		}
 	}
 
 	// Keep what was typed on this step before moving, whichever way.

@@ -173,7 +173,7 @@ const PP_STYLE = `
 .pp-day-head{font-size:12px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;gap:4px;padding:0 2px;}
 .pp-day-num{border-radius:10px;padding:0 6px;cursor:pointer;}
 .pp-day-num:hover{background:var(--control-bg);}
-.pp-day-num:focus-visible,.pp-crew-head:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
+.pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;}
 .pp-day.pp-today .pp-day-num{background:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .pp-day.pp-out{background:var(--control-bg);}
 .pp-day.pp-out .pp-day-head{opacity:.55;}
@@ -578,7 +578,7 @@ class ProjectPlanner {
 			.attr("aria-label", __("Later"))
 			.on("click", () => this.shift(1))
 			.appendTo($bar);
-		this.$title = $('<span class="pp-title"></span>').appendTo($bar);
+		this.$title = $('<span class="pp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="pp-seg"></span>').appendTo($bar);
 		this.$view_buttons = {};
@@ -668,6 +668,7 @@ class ProjectPlanner {
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
+		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
@@ -1090,7 +1091,9 @@ class ProjectPlanner {
 			html.push(`
 				<div class="${classes.join(" ")}" data-date="${pp_esc(ymd)}">
 					<div class="pp-day-head">
-						<span class="pp-day-num" role="button" tabindex="0" data-week="${pp_esc(ymd)}" title="${pp_esc(__("Show this week"))}">${pp_esc(label)}</span>
+						<span class="pp-day-num" role="button" tabindex="0" data-week="${pp_esc(ymd)}" title="${pp_esc(
+							__("Show this week")
+						)}" aria-label="${pp_esc(__("Show the week of {0}", [this.day_words(ymd)]))}">${pp_esc(label)}</span>
 						${
 							this.view === "week" && resources.length
 								? `<span class="pp-day-free" title="${pp_esc(__("Free hours of the people shown"))}">${pp_esc(
@@ -1118,7 +1121,7 @@ class ProjectPlanner {
 			html.push(
 				`<div class="pp-crew-head${ymd === today ? " pp-today" : ""}" role="button" tabindex="0" data-week="${pp_esc(ymd)}" title="${pp_esc(
 					__("Show this week")
-				)}">${pp_esc(pp_when(ymd))}</div>`
+				)}" aria-label="${pp_esc(__("Show the week of {0}", [this.day_words(ymd)]))}">${pp_esc(pp_when(ymd))}</div>`
 			);
 		});
 		html.push(this.p6d_crew_notes_row(days));
@@ -1156,6 +1159,20 @@ class ProjectPlanner {
 		this.bind_week_links($crew);
 	}
 
+	// The words a day link's label reads its date in (S3.6).
+	day_words(ymd) {
+		return moment(ymd, "YYYY-MM-DD").format("dddd, MMMM D");
+	}
+
+	// A week opened from the keyboard (S3.6): the day link that had focus is redrawn away, so the
+	// toolbar title takes it rather than <body>. A mouse click leaves focus where the browser put it.
+	take_title_focus() {
+		if (!(this.focus_title_until > Date.now())) return;
+		this.focus_title_until = 0;
+		const title = this.$title && this.$title[0];
+		if (title && typeof title.focus === "function") title.focus();
+	}
+
 	// A day number or a crew-view date head opens that week. Enter and Space do what a click does
 	// (S3.6); with the quick looks on, their own capture-phase handlers take both first.
 	bind_week_links($root) {
@@ -1166,6 +1183,7 @@ class ProjectPlanner {
 			.on("keydown", (e) => {
 				if (e.key !== "Enter" && e.key !== " ") return;
 				e.preventDefault();
+				this.focus_title_until = Date.now() + 2000;
 				open(e);
 			});
 	}
@@ -2608,6 +2626,7 @@ class ProjectPlanner {
 		const { start } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
+		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
@@ -4798,6 +4817,7 @@ const PP6A_METHODS = {
 		root.querySelectorAll("[data-week]").forEach((el) => {
 			el.setAttribute("data-pp6a-day", el.getAttribute("data-week"));
 			el.setAttribute("title", __("See everyone's day"));
+			el.setAttribute("aria-label", __("See everyone's day on {0}", [this.day_words(el.getAttribute("data-week"))]));
 			el.setAttribute("tabindex", "0");
 		});
 		const heads = root.querySelectorAll(".pp-res-grid > .pp-res-head");

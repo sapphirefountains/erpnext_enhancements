@@ -36,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (S3.3b, v1.649.0, moved these blocks onto the kit).
   - **Translation.** The GA4 Dashboard's title, section heads, chart titles, table headers, empty and
     error messages go through `__()`.
+  - **From the review.**
+    - Plan a Trip's chips kept focus only until their own redraw: every toggle runs `render()`,
+      which empties the page body, so focus fell to `<body>` after each key. Each chip now carries
+      a stable `data-chip` key, and the toggle redraws through `render_keeping_focus()`, which
+      focuses the chip drawn in its place.
+    - A screen changed from the keyboard puts focus on the new view's heading. A planner day link
+      opened by Enter or Space focuses the toolbar title (`tabindex="-1"`). A rental wizard step
+      reached by a keyboard click (`detail` 0) focuses the step's `<h4>`. A mouse click still
+      leaves focus where the browser puts it.
+    - A chip on a booking that is on an Expense Claim (`card.protected`) is `disabled`, so it no
+      longer announces as a toggle that does nothing.
+    - The planners' day numbers and crew-view date heads carry an `aria-label` that names the
+      action and the date: "Show the week of …", or "See everyone's day on …" once the quick looks
+      take the click over.
+    - The Rental Planner bar's label truncates on an inner `<span>`. Some engines ignore
+      `text-overflow` on a `<button>`.
   - **Not in this change.** The department widgets' age, waiting and margin numbers still carry their
     watch/bad judgement in colour only. Each widget's threshold means something different (days in
     the pipeline, days waiting, days left, idle days, hours used), so each needs its own word; they

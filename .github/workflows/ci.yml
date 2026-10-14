@@ -3459,8 +3459,10 @@ jobs:
       # every glyph-only button it touched (the planners' ‹ › ↻, the scanners' camera, find and
       # remove, the inspection photo) has an aria-label; the KPI Cockpit grade and the Task
       # Dashboard priority carry their word beside the border colour; three progress bars are
-      # progressbars; the GA4 dashboard's strings go through __(). The keyboard path itself runs
-      # in scripts/test_rental_planner_history.js (from test_rental_planner). Reads files only.
+      # progressbars; the GA4 dashboard's strings go through __(). Focus survives a chip's redraw
+      # and moves to the new heading after a keyboard screen change. The keyboard paths run in
+      # scripts/test_rental_planner_history.js (from test_rental_planner) and the chip focus in
+      # scripts/test_wizard_back_forward.mjs. Reads files only.
       - name: Custom pages S3.6 accessibility (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_6_accessibility -v
       # Build-blocking source rules for the same client, adapted from the retired chat SPA's:

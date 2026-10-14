@@ -72,6 +72,10 @@ function makeJQuery(registry) {
 		// then looks up the panel's one action button there, a fresh one per panel.
 		const node = {
 			innerHTML: "",
+			// Focus moved here by the page (S3.6): the registry remembers which element has it.
+			focus() {
+				registry.focused = self;
+			},
 			querySelector(sel) {
 				if (sel !== ".sf-state-action" || !node.innerHTML.includes("sf-state-action")) return null;
 				if (node.actionFor !== node.innerHTML) {
@@ -381,7 +385,8 @@ function loadPage(world, options) {
 		// and a keydown handler of its own. Throws when the element has no keyboard path.
 		async press(el, key) {
 			const s = el.__state;
-			const event = { key, preventDefault() {}, stopPropagation() {} };
+			// A key's click on a button has detail 0; a mouse click's is 1 or more.
+			const event = { key, detail: 0, preventDefault() {}, stopPropagation() {} };
 			if (/^<button\b[^>]*\btype="button"/.test(s.html) && s.handlers.click) {
 				s.handlers.click(event);
 			} else if (/role="button"/.test(s.html) && /tabindex="0"/.test(s.html) && s.handlers.keydown) {
@@ -391,7 +396,8 @@ function loadPage(world, options) {
 			}
 			await desk.flush();
 		},
-		made: (cls) => registry.filter((e) => new RegExp(`class="[^"]*\\b${cls}\\b`).test(e.__state.html)),
+		// Elements made with this class: whole class names only, so rp-bar is not rp-bar-text.
+		made: (cls) => registry.filter((e) => new RegExp(`class="(?:[^"]*\\s)?${cls}[\\s"]`).test(e.__state.html)),
 		here: () => world.entries[world.index],
 		length: () => world.entries.length,
 	};
@@ -635,8 +641,19 @@ test("Keyboard: a finished step on the rail is a button; the current one is mark
 		refused = true;
 	}
 	check("a step not reached yet is not a control", refused, true);
+	desk.registry.focused = null;
 	await desk.press(dates, "Enter");
 	check("Enter on step 1 goes back to it", desk.here(), "/desk/rental-planner/new/dates");
+	const heading = desk.registry.focused;
+	check("and focus is on the step's heading, not dropped to <body>", Boolean(heading) && heading.__state.attrs.tabindex, "-1");
+	// A mouse click (detail 1) leaves focus where the browser puts it.
+	await throughDates(desk);
+	const again = desk.made("rp-step").slice(-4)[0];
+	desk.registry.focused = null;
+	again.__state.handlers.click({ detail: 1, preventDefault() {}, stopPropagation() {} });
+	await desk.flush();
+	check("a mouse click on step 1 goes back to it too", desk.here(), "/desk/rental-planner/new/dates");
+	check("without moving focus", desk.registry.focused, null);
 });
 
 (async () => {

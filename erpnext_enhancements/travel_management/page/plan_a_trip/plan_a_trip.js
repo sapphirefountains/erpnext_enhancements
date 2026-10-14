@@ -173,6 +173,7 @@ const TP_STYLE = `
 .tp-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;user-select:none;}
 .tp-chip.tp-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);font-weight:600;}
 button.tp-chip{font-family:inherit;line-height:inherit;margin:0;}
+button.tp-chip:disabled{cursor:default;}
 .tp-chip:focus-visible{outline:2px solid var(--sf-focus);outline-offset:2px;}
 .tp-chip.tp-ok{background:#e7f7ed;border-color:#15803d;color:#15803d;cursor:default;}
 .tp-chip.tp-miss{background:#fde8e8;border-color:#dc2626;color:#b91c1c;cursor:default;}
@@ -3132,6 +3133,19 @@ class TripPlanner {
 		this.render_nav();
 	}
 
+	// A toggle chip redraws the step or view it sits in (render() empties the body), so the chip
+	// that had focus is gone and focus would fall to <body>. Redraw, then focus the chip drawn in
+	// its place, found by its data-chip key (S3.6). A chip clicked without focus moves none.
+	render_keeping_focus() {
+		const active = document.activeElement;
+		const key = active && active.getAttribute ? active.getAttribute("data-chip") : null;
+		this.render();
+		const root = this.body && this.body[0];
+		if (!key || !root || !root.querySelectorAll) return;
+		const chip = Array.from(root.querySelectorAll("[data-chip]")).find((el) => el.getAttribute("data-chip") === key);
+		if (chip) chip.focus();
+	}
+
 	render_header() {
 		const s = this.state;
 		const title = s.trip.purpose || __("New trip");
@@ -4027,9 +4041,10 @@ class TripPlanner {
 		this.crew().forEach((t) => {
 			const checked = whole_crew || on.has(t.employee);
 			// A real toggle button (S3.6): Tab reaches it, Enter or Space flips it as a click does.
-			$(`<button type="button" class="tp-chip ${checked ? "tp-on" : ""}" aria-pressed="${checked}">${
-				checked ? "&#10003; " : ""
-			}${tp_esc(t.employee_name || t.employee)}</button>`)
+			// On a booking that is on an Expense Claim the chip is disabled, not a toggle that does nothing.
+			$(`<button type="button" class="tp-chip ${checked ? "tp-on" : ""}" aria-pressed="${checked}" data-chip="${tp_esc(
+				`member:${card.group}:${t.employee}`
+			)}"${card.protected ? " disabled" : ""}>${checked ? "&#10003; " : ""}${tp_esc(t.employee_name || t.employee)}</button>`)
 				.appendTo($chips)
 				.on("click", () => {
 					if (card.protected) return;
@@ -4045,7 +4060,7 @@ class TripPlanner {
 						const ref = card.same_ref && card.members[0] ? card.members[0].ref : "";
 						card.members.push({ name: null, traveler: t.employee, ref: ref });
 					}
-					this.render();
+					this.render_keeping_focus();
 				});
 		});
 	}
@@ -4648,14 +4663,14 @@ class TripPlanner {
 		const $chips = $('<div class="tp-chips"></div>').appendTo($field);
 		card.members.forEach((member) => {
 			const on = !!member.guest;
-			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}">${on ? "&#10003; " : ""}${tp_esc(
-				this.crew_name(member.traveler)
-			)}</button>`)
+			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}" data-chip="${tp_esc(
+				`guest:${card.group}:${member.traveler}`
+			)}"${card.protected ? " disabled" : ""}>${on ? "&#10003; " : ""}${tp_esc(this.crew_name(member.traveler))}</button>`)
 				.appendTo($chips)
 				.on("click", () => {
 					if (card.protected) return;
 					member.guest = on ? 0 : 1;
-					this.render();
+					this.render_keeping_focus();
 				});
 		});
 		card.members
@@ -5662,15 +5677,15 @@ class TripPlanner {
 		const $pick = $('<div class="tp-chips" style="margin-bottom:12px;"></div>').appendTo($view);
 		crew.forEach((person) => {
 			const on = !hidden.has(person.employee);
-			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}">${on ? "&#10003; " : ""}${tp_esc(
-				person.employee_name
-			)}</button>`)
+			$(`<button type="button" class="tp-chip ${on ? "tp-on" : ""}" aria-pressed="${on}" data-chip="${tp_esc(
+				`shown:${person.employee}`
+			)}">${on ? "&#10003; " : ""}${tp_esc(person.employee_name)}</button>`)
 				.appendTo($pick)
 				.on("click", () => {
 					// Who is shown is a choice on this screen, not a screen: no history entry.
 					if (on) hidden.add(person.employee);
 					else hidden.delete(person.employee);
-					this.render();
+					this.render_keeping_focus();
 				});
 		});
 		const shown = crew.filter((person) => !hidden.has(person.employee));

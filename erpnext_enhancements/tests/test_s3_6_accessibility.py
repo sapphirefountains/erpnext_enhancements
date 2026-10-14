@@ -86,8 +86,26 @@ class TestTheRentalPlannerAnswersTheKeyboard(unittest.TestCase):
 			'$(done ? \'<button type="button" class="rp-step"></button>\' : \'<div class="rp-step"></div>\')',
 			code,
 		)
-		self.assertIn('else if (done) $s.addClass("rp-done").on("click", () => this.go_step(key));', code)
+		self.assertIn('$s.addClass("rp-done").on("click", (event) => {', code)
 		self.assertIn('$s.addClass("rp-active").attr("aria-current", "step")', code)
+
+	def test_a_step_reached_from_the_keyboard_focuses_its_heading(self):
+		"""A keyboard click (detail 0) moves focus to the new step's heading; a mouse click leaves
+		it. The harness drives both."""
+		code = _code(RENTAL)
+		self.assertIn("if (event && event.detail === 0) this.focus_heading_until = Date.now() + 2000;", code)
+		show = code[code.index("show_step(step) {") :]
+		show = show[: show.index("\n\t}\n")]
+		self.assertIn('this.$card.find("h4").first().attr("tabindex", "-1")[0]', show)
+		self.assertIn("heading.focus();", show)
+
+	def test_a_bar_label_truncates_on_an_inner_span(self):
+		"""Some engines ignore text-overflow on a <button>, so the ellipsis is on a span inside it."""
+		code = _code(RENTAL)
+		self.assertIn("$('<span class=\"rp-bar-text\"></span>').text(text).appendTo($bar)", code)
+		self.assertIn(
+			".rp-bar-text{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}", code
+		)
 
 	def test_focus_is_visible(self):
 		code = _code(RENTAL)
@@ -108,10 +126,31 @@ class TestPlanATripChipsAreToggleButtons(unittest.TestCase):
 	def test_the_three_toggle_chips_are_buttons(self):
 		code = _code(TRIP)
 		toggles = re.findall(
-			r'<button type="button" class="tp-chip \$\{(\w+) \? "tp-on" : ""\}" aria-pressed="\$\{\1\}">',
+			r'<button type="button" class="tp-chip \$\{(\w+) \? "tp-on" : ""\}" aria-pressed="\$\{\1\}" data-chip=',
 			code,
 		)
 		self.assertEqual(sorted(toggles), ["checked", "on", "on"])
+
+	def test_a_redraw_keeps_focus_on_the_chip(self):
+		"""Each chip has a stable data-chip key and redraws through render_keeping_focus, which
+		puts focus back on the chip drawn in its place (scripts/test_wizard_back_forward.mjs
+		drives it)."""
+		code = _code(TRIP)
+		for key in (
+			"`member:${card.group}:${t.employee}`",
+			"`guest:${card.group}:${member.traveler}`",
+			"`shown:${person.employee}`",
+		):
+			self.assertIn(key, code)
+		self.assertEqual(code.count("this.render_keeping_focus();"), 3)
+		keeper = code[code.index("render_keeping_focus() {") :]
+		keeper = keeper[: keeper.index("\n\t}\n")]
+		self.assertIn('active.getAttribute("data-chip")', keeper)
+		self.assertIn("if (chip) chip.focus();", keeper)
+
+	def test_a_chip_on_a_protected_booking_is_disabled(self):
+		"""On an Expense Claim the booking cannot change; its chips must not announce as toggles."""
+		self.assertEqual(_code(TRIP).count('${card.protected ? " disabled" : ""}'), 2)
 
 	def test_no_chip_with_a_click_is_a_span(self):
 		code = _code(TRIP)
@@ -161,7 +200,8 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		self.assertEqual(code.count("this.bind_week_links($"), 2)
 		self.assertNotIn('find("[data-week]").on("click", (e) =>', code)
 		self.assertIn(
-			".pp-day-num:focus-visible,.pp-crew-head:focus-visible{outline:2px solid var(--sf-focus);", code
+			".pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);",
+			code,
 		)
 
 	def test_maintenance_planner(self):
@@ -179,8 +219,30 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		self.assertIn('.on("click", open_week)', crew)
 		self.assertIn("open_week(e);", crew)
 		self.assertIn(
-			".mp-day-num:focus-visible,.mp-crew-head:focus-visible{outline:2px solid var(--sf-focus);", code
+			".mp-day-num:focus-visible,.mp-crew-head:focus-visible,.mp-title:focus-visible{outline:2px solid var(--sf-focus);",
+			code,
 		)
+
+
+class TestPlannerDayLinksNameTheirActionAndMoveFocus(unittest.TestCase):
+	"""A day link's aria-label says what it does (and changes with the quick looks' "See
+	everyone's day"), and a week opened from the keyboard focuses the toolbar title."""
+
+	def check(self, path, prefix, see_everyone, keyboard_paths):
+		code = _code(path)
+		self.assertEqual(code.count('__("Show the week of {0}", [this.day_words(ymd)])'), 2, path.name)
+		self.assertEqual(code.count('__("See everyone\'s day on {0}", ['), see_everyone, path.name)
+		self.assertIn(f'this.$title = $(\'<span class="{prefix}-title" tabindex="-1"></span>\')', code)
+		self.assertEqual(code.count("this.focus_title_until = Date.now() + 2000;"), keyboard_paths, path.name)
+		self.assertIn("this.$title.text(this.title());\n\t\tthis.take_title_focus();", code)
+		taker = code[code.index("take_title_focus() {") :]
+		self.assertIn("title.focus();", taker[: taker.index("\n\t}\n")])
+
+	def test_project_planner(self):
+		self.check(PROJECT, "pp", see_everyone=1, keyboard_paths=1)
+
+	def test_maintenance_planner(self):
+		self.check(MAINTENANCE, "mp", see_everyone=2, keyboard_paths=2)
 
 
 class TestGlyphButtonsAreNamed(unittest.TestCase):
