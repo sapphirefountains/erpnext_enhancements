@@ -1,4 +1,4 @@
-"""Custom pages S3.4a (v1.646.0, TASK-2026-02823): page CSS out of JS, onto the tokens.
+"""Custom pages S3.4a/b (v1.646.0, v1.652.0, TASK-2026-02823): page CSS out of JS, on the tokens.
 
 Five Desk pages used to style themselves from JS: a ``<style>`` block in a markup string, a
 ``QW_STYLE`` constant appended to the page, or inline ``style="color: ..."`` attributes. Their
@@ -7,6 +7,11 @@ JS and sends with the page itself (``Page.load_assets`` in ``frappe/core/doctype
 on ``version-16``, through ``desk_page.getpage``), so an edit is never served stale from the
 one-year immutable ``/assets`` cache. And the colours are the app's ``--sf-*`` tokens
 (``docs/app-design-system.md``), which follow the Desk's light or dark theme.
+
+S3.4b (v1.652.0) adds four more: Question Review and the Course Canvas, which already had
+their own ``.css`` but painted it in Frappe's palette and the learner's Aurora palette; the
+Sales Pipeline TV board; and the Location Timeline, whose stylesheet lived in
+``public/css/workforce/`` and came in by ``frappe.require`` of a raw ``/assets`` path.
 
 This fails the build if any of these pages:
 
@@ -22,7 +27,18 @@ This fails the build if any of these pages:
 * reads a ``var(--sf-...)`` that ``sf_tokens.bundle.css`` does not define, which would resolve
   to nothing and fail silently;
 * declares a custom property of its own, uses a shadow, a radius that is not an
-  ``--sf-radius-*`` token, or a width breakpoint other than the one phone breakpoint, 767px.
+  ``--sf-radius-*`` token, or a width breakpoint other than the one phone breakpoint, 767px
+  (the two Training pages also keep Frappe's own 991.98px, where the Desk's two-column layout
+  collapses, which ``test_training_review`` and ``test_training_canvas`` pin; the Location
+  Timeline stacks its map and side panel there too);
+* reads the learner's Aurora palette (``var(--tr-...)``), which belongs to ``player.css`` and
+  the learner surfaces, not to Desk chrome;
+* names a ``@keyframes`` without the page's prefix (animation names are as global as the
+  stylesheet is);
+* leaves a comment that opens inside another comment or closes twice. The Course Canvas had
+  one: a section was pasted into the middle of the narrow-screens comment, so the comment
+  ended early, its second half sat in the stylesheet as a selector, and the browser threw the
+  whole ``@media (max-width: 991.98px)`` block away with it. The tablet layout never applied.
 
 It also holds every Training page's ``TR.loadAssets`` call to passing the deploy version. The
 Glossary Review page passed none, so it asked for ``desk_nav.css?v=`` (one unchanging URL) and a
@@ -47,6 +63,11 @@ PAGES = {
 	"inspection_wizard": APP / "quality" / "page" / "inspection_wizard",
 	"training_insights": APP / "training" / "page" / "training_insights",
 	"training_glossary_review": APP / "training" / "page" / "training_glossary_review",
+	# S3.4b
+	"training_review": APP / "training" / "page" / "training_review",
+	"training_canvas": APP / "training" / "page" / "training_canvas",
+	"location_timeline": APP / "workforce" / "page" / "location_timeline",
+	"sales_pipeline": APP / "crm_enhancements" / "page" / "sales_pipeline",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -58,6 +79,39 @@ NAMESPACES = {
 	"inspection_wizard": re.compile(r"\.qw-[\w-]+"),
 	"training_insights": re.compile(r"\.ti-[\w-]+"),
 	"training_glossary_review": re.compile(r"\.gr-page\b"),
+	"training_review": re.compile(r"\.tq-[\w-]+"),
+	"training_canvas": re.compile(r"\.(?:tc-[\w-]+|training-canvas-fullbleed\b)"),
+	"location_timeline": re.compile(r"\.lt-[\w-]+"),
+	# The board's own class names (.pipeline-card, .rail-chip) are generic, so every rule sits
+	# under the page body (.sales-pipeline-page) or the TV-mode body class.
+	"sales_pipeline": re.compile(r"\.sales-pipeline-[\w-]+"),
+}
+
+# A @keyframes name is global in the same way a selector is: two pages that both define
+# `pulse` animate with whichever loaded last.
+KEYFRAME_PREFIXES = {
+	"drive_link_manager": ("dlm-",),
+	"ga4_dashboard": ("ga4-", "gsc-"),
+	"inspection_wizard": ("qw-",),
+	"training_insights": ("ti-",),
+	"training_glossary_review": ("gr-",),
+	"training_review": ("tq-",),
+	"training_canvas": ("tc-",),
+	"location_timeline": ("lt-",),
+	"sales_pipeline": ("sales-pipeline-",),
+}
+
+# Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages
+# (the Training rail is page.sidebar), and Frappe collapses that layout at its own
+# media-breakpoint-down, 991.98px; their split panes stack at the same width. The .98 is
+# load-bearing (991 leaves a gap at the fractional widths browser zoom produces), and
+# test_training_review / test_training_canvas pin it.
+EXTRA_BREAKPOINTS = {
+	"training_review": {"991.98px"},
+	"training_canvas": {"991.98px"},
+	# The map and its 340px side panel stack at the same width, so a portrait tablet (768-991px)
+	# does not get a map squeezed to a strip beside the panel.
+	"location_timeline": {"991.98px"},
 }
 
 # Frappe's own colour scale and its status tints. Theme-aware, but not the app's status
@@ -278,7 +332,40 @@ class TestTheCssIsOnTheTokens(unittest.TestCase):
 			widths = re.findall(r"@media[^{]*\((?:max|min)-width\s*:\s*([^)]+)\)", css)
 			with self.subTest(page=name):
 				self.assertIn("767px", widths, f"{name}.css has no phone breakpoint")
-				self.assertEqual(set(widths), {"767px"})
+				self.assertLessEqual(set(widths), {"767px"} | EXTRA_BREAKPOINTS.get(name, set()))
+
+	def test_no_learner_palette(self):
+		"""--tr-* is the learner's Aurora palette (player.css). The Course Canvas read it for its
+		chrome, with a literal fallback beside every read; the Desk chrome is on --sf-* now. The
+		learner render inside the canvas still takes player.css, which is the point of it."""
+		for name, css in self.css.items():
+			with self.subTest(page=name):
+				self.assertNotRegex(css, r"var\(\s*--tr-")
+
+	def test_every_keyframes_name_is_prefixed(self):
+		for name, css in self.css.items():
+			for frames in re.findall(r"@keyframes\s+([\w-]+)", css):
+				with self.subTest(page=name, keyframes=frames):
+					self.assertTrue(frames.startswith(KEYFRAME_PREFIXES[name]))
+
+
+class TestTheCommentsAreWellFormed(unittest.TestCase):
+	"""CSS comments do not nest. A `/*` inside a comment is text, so the comment ends at the
+	first `*/`, and the rest of the prose becomes a selector that swallows the next rule. That
+	is how training_canvas.css lost its whole tablet layout (see the module docstring), and the
+	selector check above only catches it when the prose happens to land before a rule."""
+
+	def test_no_comment_opens_inside_a_comment(self):
+		for name, folder in PAGES.items():
+			raw = _read(folder / f"{name}.css")
+			for body in re.findall(r"/\*(.*?)\*/", raw, flags=re.S):
+				with self.subTest(page=name, comment=body.strip()[:60]):
+					self.assertNotIn("/*", body)
+
+	def test_no_comment_closes_twice(self):
+		for name, folder in PAGES.items():
+			with self.subTest(page=name):
+				self.assertNotIn("*/", _css_code(_read(folder / f"{name}.css")))
 
 
 class TestTrainingAssetsCarryTheVersion(unittest.TestCase):
@@ -297,6 +384,83 @@ class TestTrainingAssetsCarryTheVersion(unittest.TestCase):
 		js = _js_code(_read(PAGES["training_glossary_review"] / "training_glossary_review.js"))
 		self.assertIn("TR.loadAssets(GR_NAV_ASSETS, version)", js)
 		self.assertIn("frappe.boot.versions.erpnext_enhancements", js)
+
+
+class TestTheLocationTimelineStylesheetComesWithThePage(unittest.TestCase):
+	"""It used to be public/css/workforce/location_timeline.css, pulled in by frappe.require of a
+	raw /assets path. v16's frappe.require does append ?v=<build> to such a path (assets.js,
+	AssetManager.execute), so it was not served stale; but it was a second request behind a
+	frappe.dom.freeze(), on a stylesheet path the page loader would have delivered with the page
+	for nothing. One way in, the same as every other page here."""
+
+	JS = PAGES["location_timeline"] / "location_timeline.js"
+
+	def test_the_old_stylesheet_is_gone(self):
+		self.assertFalse((APP / "public" / "css" / "workforce" / "location_timeline.css").exists())
+
+	def test_the_legend_and_the_map_read_the_same_tokens(self):
+		"""The legend swatches are CSS and the map strokes are Maps API colour values; both read
+		the same token, the script through getComputedStyle, so they cannot drift apart."""
+		js = _js_code(_read(self.JS))
+		css = _css_code(_read(PAGES["location_timeline"] / "location_timeline.css"))
+		for const, token, swatch in (
+			("GAP_COLOR", "--sf-danger", ".lt-swatch-gap"),
+			("STOP_COLOR", "--sf-warn", ".lt-swatch-stop"),
+			("SITE_COLOR", "--sf-pillar-service", ".lt-swatch-site"),
+		):
+			with self.subTest(const=const):
+				self.assertRegex(js, rf"const {const} = tokenColor\('{token}', '#[0-9a-f]{{6}}'\)")
+				rule = re.search(re.escape(swatch) + r"\s*\{([^}]*)\}", css).group(1)
+				self.assertIn(f"var({token})", rule)
+		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", js)
+
+	def test_the_page_requires_no_stylesheet(self):
+		js = _js_code(_read(self.JS))
+		self.assertNotIn("location_timeline.css", js)
+		self.assertNotRegex(js, r"['\"]/assets/[^'\"]+\.css")
+
+
+class TestTheSalesPipelineWiringIsUntouched(unittest.TestCase):
+	"""The new Opportunity board reuses the board's server method and its realtime event, and
+	hooks.py calls publish_pipeline_update / stamp_stage_change. S3.4b restyled the board and must
+	not have moved any of it."""
+
+	def test_the_page_still_listens_and_fetches(self):
+		js = _js_code(_read(PAGES["sales_pipeline"] / "sales_pipeline.js"))
+		self.assertIn('frappe.realtime.on("sales_pipeline_updated", debounced)', js)
+		self.assertIn("crm_enhancements.page.sales_pipeline.sales_pipeline.get_pipeline_data", js)
+
+	def _rule(self, selector):
+		css = _css_code(_read(PAGES["sales_pipeline"] / "sales_pipeline.css"))
+		m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+		self.assertIsNotNone(m, f"no rule for {selector}")
+		return m.group(1)
+
+	def test_a_focused_stale_card_keeps_its_focus_ring(self):
+		"""The red pulse animates outline-color, and the stale rule sets its own outline after the
+		generic :focus-visible ring, so a keyboard user lost the ring on every red card."""
+		body = self._rule(".sales-pipeline-page .pipeline-card.stale-red:focus-visible")
+		self.assertIn("animation: none", body)
+		self.assertIn("var(--sf-focus)", body)
+
+	def test_a_stale_card_keeps_its_hairline(self):
+		"""A chip edge on a whole card flips with the theme (near-black Aging in light, off-white
+		Stale in dark). The stripe and the chip carry the status; the card border does not."""
+		for selector in (
+			".sales-pipeline-page .pipeline-card.stale-amber",
+			".sales-pipeline-page .pipeline-card.stale-red",
+			".sales-pipeline-page .rail-chip.rail-overdue",
+		):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertNotIn("chip-edge", body)
+				self.assertNotIn("border-color", body)
+
+	def test_the_hooks_still_name_the_server_functions(self):
+		hooks = _read(APP / "hooks.py")
+		for fn in ("sales_pipeline.publish_pipeline_update", "sales_pipeline.stamp_stage_change"):
+			with self.subTest(fn=fn):
+				self.assertIn(fn, hooks)
 
 
 class TestThisSuiteRunsInCi(unittest.TestCase):

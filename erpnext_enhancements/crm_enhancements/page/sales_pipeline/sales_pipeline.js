@@ -23,8 +23,9 @@
  *
  * Staleness: cards carry `stale` 0/1/2 from the server (days-in-stage vs the
  * thresholds in ERPNext Enhancements Settings); this maps to amber/red card
- * classes defined in sales_pipeline.css (theme-aware, per the app's
- * dark-theme convention).
+ * classes defined in sales_pipeline.css (the --sf-warn / --sf-danger status
+ * tokens, which follow the Desk theme), and the days badge carries the word
+ * ("Aging" / "Stale") as well as the colour.
  */
 
 frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
@@ -118,8 +119,12 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 
 			stage.opportunities.forEach((opp) => {
 				const stale_class = opp.stale === 2 ? "stale-red" : opp.stale === 1 ? "stale-amber" : "";
+				// The badge says the staleness in a word as well as a colour: amber and red
+				// are not a meaning on their own, and on a wall TV not everyone sees them.
+				const stale_word = opp.stale === 2 ? __("Stale") : opp.stale === 1 ? __("Aging") : "";
 				const days_label =
-					opp.days_in_stage === 1 ? __("1 day") : __("{0} days", [opp.days_in_stage]);
+					(opp.days_in_stage === 1 ? __("1 day") : __("{0} days", [opp.days_in_stage])) +
+					(stale_word ? " · " + stale_word : "");
 				cards.append(`
 					<a class="pipeline-card ${stale_class}" href="${frappe.utils.get_form_link("Opportunity", opp.name)}">
 						<div class="pipeline-card-top">
@@ -167,7 +172,7 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 			rail.append(`
 				<a class="rail-chip ${p.overdue ? "rail-overdue" : ""}" href="${frappe.utils.get_form_link("Project", p.project)}">
 					<span class="rail-chip-label">${esc(p.label)}</span>
-					<span class="rail-chip-step">${__("Step {0}/{1}", [p.step_number, p.total])} · ${esc(p.step_title)}</span>
+					<span class="rail-chip-step">${p.overdue ? __("Overdue") + " · " : ""}${__("Step {0}/{1}", [p.step_number, p.total])} · ${esc(p.step_title)}</span>
 				</a>
 			`);
 		});
