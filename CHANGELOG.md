@@ -115,6 +115,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AttributeError`, and a dropped part number beside an unnamed kind of code no longer reads "a
   other code".
 
+## [1.688.1] - 2026-10-14
+
+### Fixed
+- **A reply never opens over a different record.** Since v1.686.0, the record tools' Reply reads the
+  full email first (`frappe.desk.form.load.get_communications`, a round trip) and then opens the
+  composer. The Opportunity board's side panel switches records in place, so switching deals during
+  that read opened the old deal's reply over the new one. It still sent against the right record,
+  because the record is captured up front, but it looked like a reply to the deal on screen.
+  - When the read answers, success or failure, the reply now opens only if the editor still shows
+    the record it was asked from. A stale answer does not ask for a dialog at all, so it never holds
+    `party.js`'s double-tap token against a Reply on the new record.
+  - It is checked again when the composer is made. `open_dialog` waits for the history guard first,
+    and on the guided page the first dialog loads `planner_kit.bundle.js` for it (up to four
+    seconds), so a switch inside that wait opened the old reply too.
+  - The check compares that record (DocType and name), not the tools' mount: a realtime refresh
+    re-mounts the tools on the same record, and the person still gets the reply they asked for. So
+    does someone who switches away and back before the read answers.
+  - Found in the second review of PR #1301; the dialog wait was found in this fix's own review.
+  - `tests/test_guided_record_tools.py TestReplyFollowsTheRecord` runs the real `new_email` under node
+    against a stand-in editor and settles the read by hand. Its cases: the same record, a switch on
+    success and on failure, the same name under another DocType, away and back, the cut-copy
+    fallback, a same-record re-mount, and a dialog made after a switch. Each case counts only what it
+    opened. Dropping any one of the three checks, or the DocType clause, fails its own test, and so
+    does comparing the mount instead of the record.
+
 ## [1.688.0] - 2026-10-14
 
 ### Added
