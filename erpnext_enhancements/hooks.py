@@ -265,7 +265,7 @@ doctype_js = {
 		# roles open the page.
 		"public/js/project_enhancements/project_planner_link.js",
 	],
-	"Master Project":["public/js/global_enhancements/unified_tab_controller.js"],
+	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data
 	# filled in. Loaded on the two forms that offer it (Preview Contract on the
 	# agreement itself, View Agreement on the operational maintenance contract);
