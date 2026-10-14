@@ -61,6 +61,7 @@ class SapphireMaintenanceContract(Document):
 		self._materialize_feature_defaults()
 		self._derive_end_date()
 		self._renewal_rate_housekeeping()
+		self._validate_billing_season()
 		self._recurring_billing_setup()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
@@ -90,6 +91,11 @@ class SapphireMaintenanceContract(Document):
 				self.non_renewal_notice_date = nowdate()
 		else:
 			self.non_renewal_notice_date = None
+
+	def _validate_billing_season(self):
+		"""Bill From and Bill Through come as a pair: blank both to bill all year (v1.624.0)."""
+		if bool(self.get("billing_season_start")) != bool(self.get("billing_season_end")):
+			frappe.throw(_("Set both Bill From and Bill Through, or leave both blank to bill all year."))
 
 	def _recurring_billing_setup(self):
 		"""Initialise recurring-billing fields for a non-Per-Visit contract (§4.2).

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.624.0] - 2026-10-13
+
+### Added
+
+- **Billing seasons for recurring maintenance billing.** Nik, 2026-10-13: "add the season limit to recurring
+  billing". The recurring-billing job billed a Monthly contract's base fee every month of the year. Valley
+  Fair Mall's agreement ("service starts May 1st through September 30th, billed monthly", $7,920) and Day
+  Dairy's ($1,330) would have been billed through the winter. Valley Fair's first period, 9 September to
+  9 October 2026, would also have billed a September before its agreement starts on 5 October.
+  - **The fields.** A Monthly or Quarterly Sapphire Maintenance Contract now has **Bill From** and **Bill
+    Through** months (`billing_season_start` / `billing_season_end`). Blank both to bill all year, as
+    before. The contract refuses one without the other, and the season may wrap the year end.
+  - **The rule** (`maintenance_billing.period_is_billable`). A period bills its base fee when at least half
+    its days are service days: in season and on or after the contract's Start Date.
+    - Half, not "any day", because a period runs from billing date to billing date. One ending 5 May
+      holds five days of May, and billing it would make six invoices out of five months. With the half
+      rule it is five whatever day of the month the contract bills on.
+    - Counting from the Start Date keeps a contract signed for next season from billing the end of this
+      one. This also applies to year-round contracts, whose first period can now skip when most of it
+      falls before they start.
+  - **Out of season** (`_bill_out_of_season`).
+    - The base fee is not billed, but chemicals are always extra. A period whose visits used chemicals
+      gets a chemicals-only draft, and its visits are stamped as billed.
+    - A period with none drafts nothing. Its visits roll into the next invoice like any other.
+    - Either way the next billing date moves on and the contract gets a comment saying why.
+    - The README's caveat still applies before invoicing is switched on: chemical lines bill the dose
+      unit's quantity at the item's selling price.
+  - **Unchanged.** Annually ignores the season, because its one period is the whole year. Recurring
+    billing is still off ("Recurring Maintenance Billing" in ERPNext Enhancements Settings).
+  - **Tests.** `tests/test_maintenance_billing_season.py` (bench-free, own CI step) runs the real module.
+    It covers the season, five bills for each of five billing days, the start date, a wrapping season,
+    quarterly, the chemicals-only draft, a visit waiting for the next invoice, year-round and annual
+    contracts, and the half-season refusal.
+
 ## [1.623.0] - 2026-10-13
 
 Custom pages, step 1 of 7 (TASK-2026-02802, step S1 = TASK-2026-02803). Nik picked the scope on

@@ -19,6 +19,21 @@ contract is billed inside a savepoint so a partial failure rolls back cleanly
 
 Gated by "Recurring Maintenance Billing" in ERPNext Enhancements Settings (off
 by default), so a migrate bills no one until it is switched on.
+
+**Billing seasons (v1.624.0).** A seasonal agreement bills only in season: Valley
+Fair Mall's reads "service starts May 1st through September 30th, billed monthly",
+and before this the job billed its $7,920 base every month of the year. A Monthly or
+Quarterly contract with **Bill From** / **Bill Through** months bills a period only
+when at least half its days are service days (:func:`service_days`): in those months
+and on or after the contract's Start Date. Half, not "any day", because a period runs
+from billing date to billing date: one ending 5 May holds five days of May, and
+billing it would make six May-to-September invoices out of five months. Counting
+from the Start Date stops a contract signed for next season from billing the end of
+this one (Valley Fair's first period would have been 9 September to 9 October 2026,
+for an agreement that starts on 5 October). Outside the season the base fee is not
+billed, but chemicals are always extra, so a visit's consumables still go on a
+chemicals-only draft (a Day Dairy winterization in October). Annually is unaffected:
+its one period is the whole year.
 """
 
 import frappe
@@ -27,6 +42,22 @@ from frappe.utils import add_days, add_months, add_years, cint, flt, formatdate,
 
 RECURRING_FREQUENCIES = ("Monthly", "Quarterly", "Annually")
 PERIODS_PER_YEAR = {"Monthly": 12, "Quarterly": 4, "Annually": 1}
+#: The cadences a billing season applies to, with their length in months.
+SEASONAL_MONTHS = {"Monthly": 1, "Quarterly": 3}
+MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 
 
 def add_period(day, frequency):
@@ -39,6 +70,53 @@ def add_period(day, frequency):
     if frequency == "Annually":
         return add_years(day, 1)
     return None
+
+
+def season_months(start, end):
+    """The month numbers (1-12) from ``start`` through ``end``, wrapping the year end.
+
+    None when neither is set: no season, bill all year. The contract's ``validate``
+    refuses one without the other, so half a season never reaches here.
+    """
+    if not (start and end):
+        return None
+    first, last = MONTHS.index(start) + 1, MONTHS.index(end) + 1
+    months = {first}
+    month = first
+    while month != last:
+        month = month % 12 + 1
+        months.add(month)
+    return months
+
+
+def service_days(period_start, period_end, months=None, start_date=None):
+    """Days in ``[period_start, period_end)`` in ``months`` (every month when None) and
+    on or after ``start_date``."""
+    day = getdate(period_start)
+    end = getdate(period_end)
+    first = getdate(start_date) if start_date else None
+    count = 0
+    while day < end:
+        if (months is None or day.month in months) and (first is None or day >= first):
+            count += 1
+        day = add_days(day, 1)
+    return count
+
+
+def period_is_billable(contract, period_end):
+    """Whether the period ending ``period_end`` bills its base fee (v1.624.0).
+
+    Monthly and Quarterly: when at least half its days are service days, in the
+    contract's billing season and from its Start Date. Annually: always.
+    """
+    length = SEASONAL_MONTHS.get(contract.get("invoicing_frequency"))
+    if not length:
+        return True
+    period_end = getdate(period_end)
+    period_start = add_months(period_end, -length)
+    total = (period_end - getdate(period_start)).days
+    months = season_months(contract.get("billing_season_start"), contract.get("billing_season_end"))
+    return 2 * service_days(period_start, period_end, months, contract.get("start_date")) >= total
 
 
 def generate_recurring_invoices(today=None):
@@ -103,15 +181,11 @@ def _bill_period(contract_name):
         )
         return
 
-    invoice = frappe.new_doc("Sales Invoice")
-    invoice.customer = contract.customer
-    invoice.project = contract.project
-    if contract.project:
-        invoice.company = frappe.db.get_value("Project", contract.project, "company") or (
-            frappe.defaults.get_global_default("company")
-        )
-    invoice.posting_date = nowdate()
-    invoice.due_date = nowdate()
+    if not period_is_billable(contract, period_end):
+        _bill_out_of_season(contract, period_end)
+        return
+
+    invoice = _new_invoice(contract)
 
     # 1. Base recurring line (always present — fee_item is guaranteed above).
     invoice.append(
@@ -138,6 +212,63 @@ def _bill_period(contract_name):
         _("Recurring Sales Invoice {0} drafted for the period ending {1} ({2} visit(s) rolled up).").format(
             frappe.get_link_to_form("Sales Invoice", invoice.name), formatdate(period_end), len(covered_records)
         ),
+    )
+
+
+def _new_invoice(contract):
+    invoice = frappe.new_doc("Sales Invoice")
+    invoice.customer = contract.customer
+    invoice.project = contract.project
+    if contract.project:
+        invoice.company = frappe.db.get_value("Project", contract.project, "company") or (
+            frappe.defaults.get_global_default("company")
+        )
+    invoice.posting_date = nowdate()
+    invoice.due_date = nowdate()
+    return invoice
+
+
+def _bill_out_of_season(contract, period_end):
+    """A period outside the billing season: no base fee, but the chemicals used on its
+    visits still bill (they are always extra), on a draft of their own. With nothing to
+    bill the period is skipped and nothing is drafted; its visits stay unbilled and roll
+    into the next invoice like any other."""
+    invoice = _new_invoice(contract)
+    covered_records = _append_unbilled_consumables(invoice, contract, period_end)
+    season = _season_text(contract)
+    if invoice.get("items"):
+        invoice.set_missing_values()
+        invoice.insert()
+        for record in covered_records:
+            frappe.db.set_value("Sapphire Maintenance Record", record, "sales_invoice", invoice.name)
+        _advance_period(contract, period_end)
+        message = _(
+            "No base fee for the period ending {0}: {1}. Sales Invoice {2} drafted for the chemicals used on {3} visit(s)."
+        ).format(
+            formatdate(period_end),
+            season,
+            frappe.get_link_to_form("Sales Invoice", invoice.name),
+            len(covered_records),
+        )
+    else:
+        frappe.db.set_value(
+            "Sapphire Maintenance Contract",
+            contract.name,
+            "next_billing_date",
+            add_period(period_end, contract.invoicing_frequency),
+        )
+        message = _("No invoice for the period ending {0}: {1}.").format(formatdate(period_end), season)
+    contract.add_comment("Comment", message)
+
+
+def _season_text(contract):
+    start, end = contract.get("billing_season_start"), contract.get("billing_season_end")
+    if start and end:
+        return _("fewer than half its days are in the billing season ({0} to {1}) and on or after the start date").format(
+            _(start), _(end)
+        )
+    return _("fewer than half its days are on or after the contract's start date ({0})").format(
+        formatdate(contract.get("start_date"))
     )
 
 

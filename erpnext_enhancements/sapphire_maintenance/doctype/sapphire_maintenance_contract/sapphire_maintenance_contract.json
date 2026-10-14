@@ -28,6 +28,8 @@
   "invoicing_frequency",
   "visit_rate",
   "recurring_amount",
+  "billing_season_start",
+  "billing_season_end",
   "next_billing_date",
   "last_billed_on",
   "column_break_billing",
@@ -220,6 +222,22 @@
    "label": "Recurring Amount (per period)"
   },
   {
+   "depends_on": "eval:in_list(['Monthly', 'Quarterly'], doc.invoicing_frequency)",
+   "description": "A seasonal agreement's first billed month, e.g. May for \"service starts May 1st through September 30th, billed monthly\". Leave Bill From and Bill Through blank to bill all year. A Monthly or Quarterly period is billed when at least half its days fall in these months, on or after the Start Date; outside them only the chemicals used are invoiced.",
+   "fieldname": "billing_season_start",
+   "fieldtype": "Select",
+   "label": "Bill From",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "depends_on": "eval:in_list(['Monthly', 'Quarterly'], doc.invoicing_frequency)",
+   "description": "The season's last billed month, e.g. September. The season may wrap the year end (November to March).",
+   "fieldname": "billing_season_end",
+   "fieldtype": "Select",
+   "label": "Bill Through",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
    "depends_on": "eval:doc.invoicing_frequency && doc.invoicing_frequency != 'Per Visit'",
    "description": "When the next recurring invoice is due (end of the current period). Blank = not yet on recurring billing. Advances when a period is drafted; if you discard a recurring draft, reset this manually so the period re-bills.",
    "fieldname": "next_billing_date",
@@ -399,7 +417,7 @@
   }
  ],
  "links": [],
- "modified": "2026-10-13 10:00:00.000000",
+ "modified": "2026-10-13 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Contract",

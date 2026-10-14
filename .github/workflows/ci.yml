@@ -759,6 +759,13 @@ jobs:
       # This suite is bench-free, installs its own frappe stub, and RUNS the sweeps.
       - name: Maintenance expiry/billing filters (nullable columns)
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_expiry_filters -v
+      # Recurring billing bills a seasonal agreement only in season (v1.624.0): the season's
+      # months (wrapping the year end), a period billed when at least half its days are service
+      # days (five May-to-September invoices whatever the billing day), nothing before the Start
+      # Date, a chemicals-only draft out of season, Annually and year-round unchanged. Own step:
+      # it loads its own copy of the billing module, which the suite above monkeypatches.
+      - name: Recurring billing seasons
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_billing_season -v
       # The visit roll-forward had no off-season: a drained fountain kept drafting
       # November-March visits, and a weekly site kept drafting one every week. The
       # winter pause defers those to spring. Bench-free, own frappe stub, own step.
