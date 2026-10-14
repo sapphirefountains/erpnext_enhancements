@@ -99,6 +99,19 @@ def create_record(doctype, values, prefill=None, client_id=None):
 	return saver.create_record(doctype, values, prefill, client_id)
 
 
+@frappe.whitelist()
+def find_created(doctype, client_id):
+	"""``{"name"}`` of the record the caller's create with ``client_id`` made, or ``{}``.
+
+	The guided page asks when it puts back a create it kept on the phone (P4.7): the first attempt
+	may have arrived with its answer lost, and the record should open rather than be typed again.
+	"""
+	_require_configured(doctype)
+	frappe.has_permission(doctype, "read", throw=True)
+	doc = saver.already_created(doctype, client_id)
+	return {"name": doc.name} if doc is not None else {}
+
+
 @frappe.whitelist(methods=["POST"])
 def declare_lost(doctype, name, reasons, competitors=None, detail=None, modified=None):
 	"""Declare ``name`` lost, as the Desk form's *Set as Lost* dialog does (the config's ``lost``).

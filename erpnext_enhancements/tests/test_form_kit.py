@@ -327,6 +327,12 @@ class FakeDoc:
         if not FRAPPE.has_permission(self.doctype, "create"):
             raise FRAPPE.PermissionError("No permission to create")
         self._validate()
+        # The unique index on custom_guided_client_id, and a collision a test asks for.
+        client_id = self._d.get("custom_guided_client_id")
+        if client_id and any(r.get("custom_guided_client_id") == client_id for r in STATE["db"].values()):
+            raise FRAPPE.UniqueValidationError("Duplicate entry for custom_guided_client_id")
+        if STATE.get("unique_fail"):
+            raise FRAPPE.UniqueValidationError(f"Duplicate entry for {STATE['unique_fail']}")
         STATE["seq"] += 1
         self._d["name"] = f"CRM-OPP-2026-{STATE['seq']:05d}"
         self._d["docstatus"] = 0
@@ -347,9 +353,17 @@ def _install_frappe_stub(metas):
     class DoesNotExistError(ValidationError):
         pass
 
+    class UniqueValidationError(ValidationError):
+        pass
+
+    class DuplicateEntryError(Exception):
+        pass
+
     frappe.ValidationError = ValidationError
     frappe.PermissionError = PermissionError
     frappe.DoesNotExistError = DoesNotExistError
+    frappe.UniqueValidationError = UniqueValidationError
+    frappe.DuplicateEntryError = DuplicateEntryError
 
     class _dict(dict):
         def __getattr__(self, key):
@@ -472,12 +486,20 @@ def _install_frappe_stub(metas):
             return bool(record) and all(record.get(k) == v for k, v in filters.items())
         return filters in STATE["db"]
 
-    after_commit = types.SimpleNamespace(add=lambda fn: STATE["after_commit"].append(fn))
-    frappe.db = types.SimpleNamespace(sql=sql, exists=db_exists, after_commit=after_commit)
-    frappe.cache = types.SimpleNamespace(
-        get_value=lambda key: STATE["cache"].get(key),
-        set_value=lambda key, value, expires_in_sec=None: STATE["cache"].__setitem__(key, value),
-    )
+    def db_get_value(doctype, filters, fieldname="name", for_update=False, **kwargs):
+        # A plain read sees the request's snapshot (snapshot_hides: rows committed after it began);
+        # a locking read sees the latest committed row.
+        if for_update:
+            STATE["for_update_reads"] += 1
+        hidden = set() if for_update else STATE["snapshot_hides"]
+        for name, record in STATE["db"].items():
+            if name in hidden:
+                continue
+            if all(record.get(k) == v for k, v in filters.items()):
+                return record.get(fieldname)
+        return None
+
+    frappe.db = types.SimpleNamespace(sql=sql, exists=db_exists, get_value=db_get_value)
 
     utils = types.ModuleType("frappe.utils")
     utils.cint = lambda value: int(float(value or 0)) if str(value or "0").strip() not in ("",) else 0
@@ -531,8 +553,9 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["get_list"].clear()
     STATE["lost_calls"] = []
     STATE["active_quotation"] = False
-    STATE["cache"] = {}
-    STATE["after_commit"] = []
+    STATE["snapshot_hides"] = set()
+    STATE["for_update_reads"] = 0
+    STATE["unique_fail"] = None
     FRAPPE.session.user = user
 
 
@@ -1331,61 +1354,80 @@ class TestMyRecords(unittest.TestCase):
 
 class TestCreateIsNeverRepeated(unittest.TestCase):
     """Form kit P4.7: a create sent with no signal is kept on the phone and sent again when the
-    signal returns. The first attempt may have arrived, its answer lost, so the same client id
-    must come back with that record rather than a second one."""
+    signal returns. The first attempt may have arrived, its answer lost, so the same client id must
+    come back with that record rather than a second one. Kept on the record (a hidden unique
+    column), not in the cache, which every deploy flushes."""
 
-    VALUES = json.dumps(
-        {
-            "party_name": "Jones Ranch",
-            "custom_opportunity_name": "Jones Ranch - Fountain Service",
-            "custom_value_stream": [{"value_stream": "Service"}],
-            "opportunity_owner": "ae@example.com",
-        }
-    )
+    VALUES = {
+        "party_name": "Jones Ranch",
+        "custom_opportunity_name": "Jones Ranch - Fountain Service",
+        "custom_value_stream": [{"value_stream": "Service"}],
+        "opportunity_owner": "ae@example.com",
+    }
     ID = "4f9c2b1e-7a3d-4e8f-9b6a-0c1d2e3f4a5b"
 
     def setUp(self):
         _reset()
 
-    def _commit(self):
-        callbacks, STATE["after_commit"] = STATE["after_commit"], []
-        for callback in callbacks:
-            callback()
+    def _create(self, client_id=ID, **changes):
+        return api.create_record("Opportunity", json.dumps(dict(self.VALUES, **changes)), None, client_id)
+
+    def test_the_id_is_kept_on_the_record_it_made(self):
+        first = self._create()
+        self.assertEqual(STATE["db"][first["name"]]["custom_guided_client_id"], self.ID)
+        self.assertNotIn("deduped", first)
 
     def test_a_resent_create_returns_the_first_record(self):
-        first = api.create_record("Opportunity", self.VALUES, None, self.ID)
-        self._commit()
-        again = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        first = self._create()
+        again = self._create(custom_opportunity_name="Jones Ranch - Fountain Service, renamed")
         self.assertEqual(again["name"], first["name"])
+        self.assertEqual(again["deduped"], 1)
         self.assertEqual(STATE["inserts"], [first["name"]])
+        # The page re-sends what step 1 holds now; the server answers with what it has.
         self.assertEqual(again["values"]["custom_opportunity_name"], "Jones Ranch - Fountain Service")
 
-    def test_the_id_is_remembered_only_once_committed(self):
-        api.create_record("Opportunity", self.VALUES, None, self.ID)
-        self.assertEqual(STATE["cache"], {})
-        self._commit()
-        self.assertEqual(len(STATE["cache"]), 1)
+    def test_a_resend_racing_the_first_insert_returns_it(self):
+        # The second request read its snapshot before the first committed: it sees nothing, its
+        # insert collides on the unique index, and the locking read finds the winner.
+        first = self._create()
+        STATE["snapshot_hides"] = {first["name"]}
+        again = self._create()
+        self.assertEqual((again["name"], again["deduped"]), (first["name"], 1))
+        self.assertEqual(STATE["for_update_reads"], 1)
 
-    def test_a_record_that_is_gone_or_another_users_is_never_returned(self):
-        first = api.create_record("Opportunity", self.VALUES, None, self.ID)
-        self._commit()
+    def test_a_record_that_is_gone_is_made_again(self):
+        first = self._create()
         del STATE["db"][first["name"]]
-        second = api.create_record("Opportunity", self.VALUES, None, self.ID)
+        second = self._create()
         self.assertNotEqual(second["name"], first["name"])
-        self._commit()
+        self.assertNotIn("deduped", second)
+
+    def test_another_users_record_is_never_returned(self):
+        self._create()
         FRAPPE.session.user = "boss@example.com"
-        third = api.create_record("Opportunity", self.VALUES, None, self.ID)
-        self.assertNotIn(third["name"], (first["name"], second["name"]))
+        with self.assertRaises(FRAPPE.UniqueValidationError):
+            self._create()
+
+    def test_a_collision_on_something_else_is_raised(self):
+        STATE["unique_fail"] = "custom_opportunity_name"
+        with self.assertRaises(FRAPPE.UniqueValidationError):
+            self._create()
 
     def test_an_id_not_of_the_pages_shape_is_ignored(self):
         for bad in ("short", "x" * 65, "has space in it", "semi;colon-1234", 12345678):
             with self.subTest(client_id=bad):
                 _reset()
-                api.create_record("Opportunity", self.VALUES, None, bad)
-                self._commit()
-                api.create_record("Opportunity", self.VALUES, None, bad)
+                self._create(bad)
+                self._create(bad)
                 self.assertEqual(len(STATE["inserts"]), 2)
-                self.assertEqual(STATE["cache"], {})
+
+    def test_find_created_answers_only_for_the_callers_own_record(self):
+        first = self._create()
+        self.assertEqual(api.find_created("Opportunity", self.ID), {"name": first["name"]})
+        self.assertEqual(api.find_created("Opportunity", "0000-not-made-0000"), {})
+        self.assertEqual(api.find_created("Opportunity", "bad id"), {})
+        FRAPPE.session.user = "boss@example.com"
+        self.assertEqual(api.find_created("Opportunity", self.ID), {})
 
 
 class TestDeclareLost(unittest.TestCase):
@@ -1774,6 +1816,7 @@ class TestEndpoints(unittest.TestCase):
                 "get_field_help",
                 "my_records",
                 "declare_lost",
+                "find_created",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])

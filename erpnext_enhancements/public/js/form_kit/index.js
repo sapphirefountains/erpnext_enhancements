@@ -44,6 +44,8 @@ export {
 	NEW_PREFIX,
 	journal_key,
 	new_key,
+	new_key_prefix,
+	stale_entry,
 	usable_new,
 	try_later,
 	make_entry,

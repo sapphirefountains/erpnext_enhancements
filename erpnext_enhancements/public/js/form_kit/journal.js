@@ -16,6 +16,9 @@
  *   server is never overwritten without saying so.
  * - A save that fails for want of signal (try_later) is retried when the signal comes back.
  *
+ * Keys carry the signed-in user, so on a phone two people share, one never sees or saves the
+ * other's kept changes; what is kept for someone else waits for them (or expires).
+ *
  * Pure: no frappe, no DOM, no storage. The page owns localStorage and the timers.
  */
 
@@ -27,15 +30,26 @@ export const JOURNAL_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TRY_LATER = [0, 408, 425, 429, 502, 503, 504];
 
-export function journal_key(doctype, name) {
-	return `${JOURNAL_PREFIX}${doctype}/${name}`;
+export function journal_key(doctype, name, user) {
+	return `${JOURNAL_PREFIX}${user || ""}:${doctype}/${name}`;
 }
 
-// A record not created yet: one per DocType on a phone, step 1's values and the create's id.
+// A record not created yet: step 1's values and the create's id, one entry per create, so two
+// tabs starting two records never overwrite each other.
 export const NEW_PREFIX = "ge-new:";
 
-export function new_key(doctype) {
-	return `${NEW_PREFIX}${doctype}`;
+export function new_key(doctype, user, client_id) {
+	return `${new_key_prefix(doctype, user)}${client_id || ""}`;
+}
+
+export function new_key_prefix(doctype, user) {
+	return `${NEW_PREFIX}${user || ""}:${doctype}:`;
+}
+
+// Whether a stored entry (of either kind) is past keeping: unreadable, or older than the limit.
+export function stale_entry(entry, now) {
+	if (!entry || typeof entry !== "object") return true;
+	return !!(Number(now) && Number(entry.at) && Number(now) - Number(entry.at) > JOURNAL_MAX_AGE_MS);
 }
 
 // Whether a kept new record is one this page wrote and still worth putting back.

@@ -588,7 +588,8 @@ out.queue = q;
 		at: 1000,
 	});
 	out.journal = {
-		key: kit.journal_key("Opportunity", "CRM-OPP-1"),
+		key: kit.journal_key("Opportunity", "CRM-OPP-1", "ae@example.com"),
+		other_user: kit.journal_key("Opportunity", "CRM-OPP-1", "boss@example.com"),
 		entry,
 		empty: kit.make_entry({ doctype: "Opportunity", name: "X", unsent: {}, base: {} }),
 		no_base: kit.make_entry({ doctype: "Opportunity", name: "X", unsent: { a: 1 }, base: null, at: 5 }),
@@ -607,7 +608,14 @@ out.queue = q;
 			{ t: [{ name: "r1", idx: 1, c: "a" }] }
 		),
 		reconciled_nothing: kit.reconcile(null, {}),
-		new_key: kit.new_key("Opportunity"),
+		new_key: kit.new_key("Opportunity", "ae@example.com", "cid-1"),
+		new_prefix: kit.new_key_prefix("Opportunity", "ae@example.com"),
+		stale: [
+			kit.stale_entry({ at: 1000 }, 2000),
+			kit.stale_entry({ at: 1000 }, 1000 + kit.JOURNAL_MAX_AGE_MS + 1),
+			kit.stale_entry(null, 1),
+			kit.stale_entry("junk", 1),
+		],
 		usable_new: [
 			kit.usable_new({ values: { party_name: "X" }, at: 1000 }, 2000),
 			kit.usable_new({ values: { party_name: "X" }, at: 1000 }, 1000 + kit.JOURNAL_MAX_AGE_MS + 1),
@@ -942,7 +950,9 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_journal_entries_keep_only_the_unsent_fields_and_their_base(self):
 		j = self.out["journal"]
-		self.assertEqual(j["key"], "ge-unsent:Opportunity/CRM-OPP-1")
+		self.assertEqual(j["key"], "ge-unsent:ae@example.com:Opportunity/CRM-OPP-1")
+		# A shared phone: another person's copy of the same record is a different entry.
+		self.assertNotEqual(j["other_user"], j["key"])
 		self.assertEqual(j["entry"]["base"], {
 			"custom_opportunity_summary": "Pond", "opportunity_amount": 4000, "territory": "Idaho", "status": "Qualification"
 		})
@@ -962,8 +972,10 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 
 	def test_a_record_not_created_yet_is_kept_once_per_doctype(self):
 		j = self.out["journal"]
-		self.assertEqual(j["new_key"], "ge-new:Opportunity")
+		self.assertEqual(j["new_key"], "ge-new:ae@example.com:Opportunity:cid-1")
+		self.assertTrue(j["new_key"].startswith(j["new_prefix"]))
 		self.assertEqual(j["usable_new"], [True, False, False, False])
+		self.assertEqual(j["stale"], [False, True, True, True])
 
 	def test_only_the_networks_failures_wait_for_signal(self):
 		self.assertEqual(
@@ -1096,7 +1108,7 @@ class TestThePage(unittest.TestCase):
 		for match in re.finditer(r'GE_API \+ "(\w+)"[\s\S]*?\{ quiet: true(?:, method: "GET")? \}', code):
 			with self.subTest(method=match.group(1)):
 				is_get = 'method: "GET"' in match.group(0)
-				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records"))
+				self.assertEqual(is_get, match.group(1) in ("get_flow", "my_records", "find_created"))
 
 	def test_steps_move_with_set_route(self):
 		code = _code(PAGE_JS)
@@ -1284,8 +1296,13 @@ class TestNoSignal(unittest.TestCase):
 
 	def test_every_change_and_every_save_state_is_journaled(self):
 		code = _code(PAGE_JS)
-		self.assertIn("this.write_journal(doctype, name, queue);", code)
-		self.assertIn("this.write_journal(this.doctype, this.name, this.queue);", code)
+		self.assertIn("this.write_journal(doctype, name);", code)
+		self.assertIn("this.write_journal(this.doctype, this.name);", code)
+		# Every queue still holding the record goes into its one entry, retired ones included,
+		# with what a conflict prompt holds and what waits on the person's choice.
+		self.assertIn("[...this.retired, this.queue].forEach((queue) => {", code)
+		self.assertIn("queue.in_flight() || {}, queue.conflict_sent || {}, queue.pending()", code)
+		self.assertIn("unsent[fieldname] = held[fieldname].mine;", code)
 		self.assertIn("this.note_base(fieldname);", code)
 		# The journal is written for every queue, the retired ones included (not only current()).
 		on_state = code[code.index("on_state: (state, error) => {") :]
@@ -1319,9 +1336,15 @@ class TestNoSignal(unittest.TestCase):
 		self.assertIn("const args = { doctype, values, client_id: this.client_id };", code)
 		self.assertIn("if (this.kit.try_later(err) && this.write_new_journal()) {", code)
 		self.assertIn('this.notice.kind === "create-offline" && !this.creating && this.showing()', code)
-		# The kept copy is dropped once created, and whenever the full form takes over.
-		self.assertIn("ge_write_kept(this.kit.new_key(doctype), null);", code)
+		# The kept copy is dropped once created (that create's own, never a newer start's), and
+		# whenever the full form takes over.
+		self.assertIn("ge_write_kept(this.kit.new_key(doctype, ge_user(), args.client_id), null);", code)
 		self.assertIn("this.forget_new();", code)
+		# A kept start asks whether its create arrived after all, and an answer that it did opens it.
+		self.assertIn("this.check_created(entry.client_id);", code)
+		self.assertIn('GE_API + "find_created"', code)
+		# A resend answered with the earlier record saves what step 1 holds now.
+		self.assertIn("if (created.deduped && this.queue) this.resend_typed(values);", code)
 		self.assertIn("if (entry.client_id) this.client_id = entry.client_id;", code)
 
 	def test_the_saving_line_says_kept_on_the_phone(self):

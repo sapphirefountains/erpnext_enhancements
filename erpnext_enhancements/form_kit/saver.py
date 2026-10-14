@@ -138,11 +138,6 @@ def _result(doctype, doc, fields):
 	}
 
 
-#: How long a create's client id is remembered: as long as the guided page keeps a create that
-#: could not be sent (form_kit/journal.js, 30 days), with a day to spare.
-CLIENT_ID_TTL_SECONDS = 31 * 24 * 3600
-
-
 def _client_id(value):
 	"""The page's id for one create, or "" when it is absent or not the shape the page makes."""
 	text = value.strip() if isinstance(value, str) else ""
@@ -151,44 +146,41 @@ def _client_id(value):
 	return ""
 
 
-def _client_id_key(doctype, client_id):
-	# No make_key here: get_value and set_value add the site prefix themselves.
-	return f"ee_form_kit_created:{frappe.session.user}:{doctype}:{client_id}"
+def client_id_field(doctype):
+	"""The config's ``create.client_id_field``, when the DocType has it: where a create's id is kept."""
+	fieldname = ((get_config(doctype) or {}).get("create") or {}).get("client_id_field")
+	if fieldname and frappe.get_meta(doctype).has_field(fieldname):
+		return fieldname
+	return None
 
 
-def _already_created(doctype, client_id):
-	"""The record this create already made for the session user, or None.
+def already_created(doctype, client_id, for_update=False):
+	"""The record a create with this id already made for the session user, if they may read it.
 
-	Checked against the table, so a name remembered for an insert that was rolled back is not taken
-	for proof that the record exists.
+	``for_update`` reads the latest committed row rather than this request's snapshot: after a
+	unique-index collision, the row that won was committed by another request after this one began.
 	"""
-	if not client_id:
+	fieldname = client_id_field(doctype)
+	client_id = _client_id(client_id)
+	if not fieldname or not client_id:
 		return None
-	name = frappe.cache.get_value(_client_id_key(doctype, client_id))
-	if not name or not frappe.db.exists(doctype, {"name": name, "owner": frappe.session.user}):
+	name = frappe.db.get_value(
+		doctype, {fieldname: client_id, "owner": frappe.session.user}, "name", for_update=for_update
+	)
+	if not name:
 		return None
-	return frappe.get_doc(doctype, name)
+	doc = frappe.get_doc(doctype, name)
+	return doc if frappe.has_permission(doctype, "read", doc=doc) else None
 
 
-def _remember_created(doctype, client_id, name):
-	"""Remember the insert once it is committed (api/feedback.py's capture panel does the same).
-
-	After commit, not now: a remembered name for an insert that then rolled back would turn the
-	page's resend into a silent no-op. The deploy's FLUSHDB forgets every id, which costs at worst
-	the duplicate this exists to prevent.
-	"""
-	if not client_id:
-		return
-	key = _client_id_key(doctype, client_id)
-
-	def remember():
-		frappe.cache.set_value(key, name, expires_in_sec=CLIENT_ID_TTL_SECONDS)
-
-	after_commit = getattr(frappe.db, "after_commit", None)
-	if after_commit is not None and hasattr(after_commit, "add"):
-		after_commit.add(remember)
-	else:
-		remember()
+def _as_created(doctype, doc):
+	"""The create result for a record an earlier attempt made (``deduped``: the page re-sends
+	whatever step 1 holds that differs, since it may have changed after that attempt)."""
+	steps = flow.flow_steps(doctype, doc)
+	create_step = next(step for step in steps if step["create"])
+	out = _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
+	out["deduped"] = 1
+	return out
 
 
 def create_record(doctype, values, prefill=None, client_id=None):
@@ -205,18 +197,21 @@ def create_record(doctype, values, prefill=None, client_id=None):
 
 	``client_id`` is the page's id for this one create (form kit P4.7). A create sent with no signal
 	is kept on the phone and sent again when the signal returns, and the first attempt may have
-	arrived after all, its answer lost on the way back. So an id this user's create already used
-	returns that record rather than inserting it twice.
+	arrived after all, its answer lost on the way back. So the id is stored on the record (the
+	config's ``create.client_id_field``, a hidden unique column), and a create whose id this user's
+	earlier create used returns that record, marked ``deduped``, rather than a second one. In the
+	database, not the cache: the deploy flushes the cache several times a day. The unique index
+	also settles a resend that arrives while the first insert is still running: it waits for that
+	one, collides, and returns it.
 	"""
 	values = _parse(values)
 	prefill = _parse(prefill) if prefill not in (None, "", "null") else {}
 	frappe.has_permission(doctype, "create", throw=True)
 	client_id = _client_id(client_id)
-	existing = _already_created(doctype, client_id)
+	id_field = client_id_field(doctype) if client_id else None
+	existing = already_created(doctype, client_id) if id_field else None
 	if existing is not None:
-		steps = flow.flow_steps(doctype, existing)
-		create_step = next(step for step in steps if step["create"])
-		return _result(doctype, existing, flow.value_fields(steps, create_step["key"]))
+		return _as_created(doctype, existing)
 	doc = frappe.new_doc(doctype)
 	steps = flow.flow_steps(doctype, doc)
 	allowed = flow.editable_fields(steps, create_only=True)
@@ -229,8 +224,17 @@ def create_record(doctype, values, prefill=None, client_id=None):
 			if fieldname not in allowed
 		}
 		assign(doc, extra, prefill)
-	doc.insert()
-	_remember_created(doctype, client_id, doc.name)
+	if id_field:
+		doc.set(id_field, client_id)
+	try:
+		doc.insert()
+	except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
+		# Another request with this id won the unique index: return its record. Anything else
+		# that collided is not ours to answer, so it is raised as it was.
+		won = already_created(doctype, client_id, for_update=True) if id_field else None
+		if won is None:
+			raise
+		return _as_created(doctype, won)
 	create_step = next(step for step in steps if step["create"])
 	return _result(doctype, doc, flow.value_fields(steps, create_step["key"]))
 

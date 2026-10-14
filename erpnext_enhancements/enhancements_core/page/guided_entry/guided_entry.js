@@ -116,6 +116,27 @@ function ge_read_kept(key) {
 	}
 }
 
+// The signed-in user: journal keys carry it, so a shared phone never mixes two people's copies.
+function ge_user() {
+	return (frappe.session && frappe.session.user) || "";
+}
+
+// Every stored key that starts with `prefix`.
+function ge_keys(prefix) {
+	const store = ge_storage();
+	const out = [];
+	if (!store) return out;
+	try {
+		for (let i = 0; i < store.length; i += 1) {
+			const key = store.key(i);
+			if (key && key.startsWith(prefix)) out.push(key);
+		}
+	} catch (e) {
+		// Unreadable storage: nothing to find.
+	}
+	return out;
+}
+
 // Keep `entry` under `key`, or forget it (null). True when the phone holds what it should.
 function ge_write_kept(key, entry) {
 	const store = ge_storage();
@@ -187,8 +208,12 @@ class GuidedEntry {
 		window.addEventListener("online", () => this.signal_back());
 		// The server's value from before each unsent change, per record (journal.js `base`).
 		this.bases = {};
-		this.journal_failed = false;
+		// Kept values waiting on the person's choice after a restore, per record (write_journal).
+		this.held = {};
+		// Keys the phone refused to write: closing the tab warns while any remain (kept_on_phone).
+		this.failed_keys = new Set();
 		this.signal_timer = null;
+		this.ready.then(() => this.sweep_journal());
 		// Back from signing in on another tab: try the save that the lapsed session refused.
 		window.addEventListener("focus", () => {
 			if (this.queue && this.queue.state === "expired") this.queue.retry().catch(() => {});
@@ -690,7 +715,7 @@ class GuidedEntry {
 			send: (values, at) =>
 				this.sf.call(GE_API + "save_step", { doctype, name, values, modified: at }, { quiet: true }),
 			on_state: (state, error) => {
-				this.write_journal(doctype, name, queue);
+				this.write_journal(doctype, name);
 				if (state === "error" && this.kit.try_later(error)) this.wait_for_signal();
 				if (current()) this.on_save_state(state, error);
 			},
@@ -700,7 +725,7 @@ class GuidedEntry {
 			clear_timeout: (id) => window.clearTimeout(id),
 		});
 		queue.set_modified(modified);
-		queue.record_key = this.kit.journal_key(doctype, name);
+		queue.record_key = this.record_key(doctype, name);
 		return queue;
 	}
 
@@ -1056,7 +1081,7 @@ class GuidedEntry {
 			if (state === "saved") text = __("Saved");
 			else if (state === "dirty" || state === "saving") text = __("Saving…");
 			else if (state === "conflict") text = __("Not saved — choose above");
-			else if (state === "error" && this.kit.try_later(this.queue.error) && !this.journal_failed) {
+			else if (state === "error" && this.kit.try_later(this.queue.error) && this.kept_on_phone()) {
 				// No signal, and the phone holds it: it is safe, just not sent.
 				text = __("Saved on this phone — sends when there is signal");
 				tone = "offline";
@@ -1521,7 +1546,7 @@ class GuidedEntry {
 				this.note_base(fieldname);
 				this.queue.change(fieldname, value);
 			}
-			this.write_journal(this.doctype, this.name, this.queue);
+			this.write_journal(this.doctype, this.name);
 		}
 		const after_active = this.kit.active_steps(this.flow.steps, this.values).map((s) => s.key).join();
 		if (!quiet_chrome || before_active !== after_active) this.refresh_chrome();
@@ -1557,31 +1582,60 @@ class GuidedEntry {
 
 	// ------------------------------------------------------------------ no signal (P4.7)
 
+	record_key(doctype, name) {
+		return this.kit.journal_key(doctype, name, ge_user());
+	}
+
 	// The server's value from before this field's first unsent change: what reconcile compares with.
 	note_base(fieldname) {
-		const key = this.kit.journal_key(this.doctype, this.name);
+		const key = this.record_key(this.doctype, this.name);
 		const bases = this.bases[key] || (this.bases[key] = {});
 		if (!ge_has(bases, fieldname)) bases[fieldname] = ge_clone(this.saved[fieldname]);
 	}
 
-	// Keep what `queue` has not stored for this record on the phone, or forget it once stored.
-	// During a conflict the queue holds the sent values in its prompt, so the last entry stays.
-	write_journal(doctype, name, queue) {
-		if (!doctype || !name || !queue || !this.kit || queue.state === "conflict") return;
-		const key = this.kit.journal_key(doctype, name);
-		const unsent = Object.assign({}, queue.in_flight() || {}, queue.pending());
+	// Keep on the phone everything not stored for this record, or forget it once all is stored. It is
+	// the union of every queue still holding the record (one retired by a reload or Back keeps
+	// sending), each its own: in flight, held by a conflict prompt, and typed since. Kept values that
+	// wait on the person's choice (`held`) come first; the newest typing wins.
+	write_journal(doctype, name) {
+		if (!doctype || !name || !this.kit) return;
+		const key = this.record_key(doctype, name);
+		const held = this.held[key] || {};
+		const unsent = {};
+		const base = {};
+		Object.keys(held).forEach((fieldname) => {
+			unsent[fieldname] = held[fieldname].mine;
+			base[fieldname] = held[fieldname].base;
+		});
+		let modified = null;
+		[...this.retired, this.queue].forEach((queue) => {
+			if (!queue || queue.record_key !== key) return;
+			Object.assign(unsent, queue.in_flight() || {}, queue.conflict_sent || {}, queue.pending());
+			modified = queue.modified || modified;
+		});
 		const bases = this.bases[key] || {};
 		Object.keys(bases).forEach((fieldname) => {
 			if (!ge_has(unsent, fieldname)) delete bases[fieldname];
+			else if (!ge_has(base, fieldname)) base[fieldname] = bases[fieldname];
 		});
-		const entry = this.kit.make_entry({ doctype, name, modified: queue.modified, unsent, base: bases, at: Date.now() });
-		this.journal_failed = !ge_write_kept(key, entry);
+		const entry = this.kit.make_entry({ doctype, name, modified, unsent, base, at: Date.now() });
+		this.mark_kept(key, ge_write_kept(key, entry));
+	}
+
+	// Which keys the phone failed to write: any one of them means closing the tab would lose it.
+	mark_kept(key, kept) {
+		if (kept) this.failed_keys.delete(key);
+		else this.failed_keys.add(key);
 	}
 
 	// Whether closing the tab now loses nothing: the phone holds every record's unsent changes, and
 	// step 1 of a record not created yet.
 	kept_on_phone() {
-		return !this.journal_failed && !!ge_storage();
+		return this.failed_keys.size === 0 && !!ge_storage();
+	}
+
+	new_key(client_id) {
+		return this.kit.new_key(this.doctype, ge_user(), client_id || this.client_id);
 	}
 
 	// Step 1 of a record not created yet, as typed, with the create's id and what it carries.
@@ -1593,38 +1647,67 @@ class GuidedEntry {
 		this.kit.editable_fieldnames(step).forEach((fieldname) => {
 			if (ge_has(this.values, fieldname)) values[fieldname] = ge_clone(this.values[fieldname]);
 		});
+		const key = this.new_key();
 		const entry = { doctype: this.doctype, client_id: this.client_id, values, carry: this.carry || {}, at: Date.now() };
-		const kept = ge_write_kept(this.kit.new_key(this.doctype), entry);
-		this.journal_failed = !kept;
+		const kept = ge_write_kept(key, entry);
+		this.mark_kept(key, kept);
 		return kept;
 	}
 
-	forget_new() {
-		if (this.kit && this.doctype) ge_write_kept(this.kit.new_key(this.doctype), null);
+	// Only this create's own copy: another tab's start, or a newer one, is left alone.
+	forget_new(client_id) {
+		if (!this.kit || !this.doctype) return;
+		const key = this.new_key(client_id);
+		ge_write_kept(key, null);
+		this.failed_keys.delete(key);
 	}
 
-	// A record this phone started and did not create: put step 1 back, with the same create id (so a
-	// create that did arrive is found, not repeated). Not over a start from somewhere else.
+	// The newest start this person kept for `doctype` on this phone, or null.
+	newest_kept_new(doctype) {
+		const prefix = this.kit.new_key_prefix(doctype, ge_user());
+		let newest = null;
+		ge_keys(prefix).forEach((key) => {
+			const entry = ge_read_kept(key);
+			if (this.kit.usable_new(entry, Date.now()) && (!newest || Number(entry.at) > Number(newest.at))) newest = entry;
+		});
+		return newest;
+	}
+
+	// A record this phone started and did not create: put step 1 back, with the same create id. Not
+	// over a start from somewhere else. The first attempt may have arrived with its answer lost, so
+	// the server is asked; if it made the record, that opens instead of being typed again.
 	restore_new() {
 		if (this.started_with) return;
-		const key = this.kit.new_key(this.doctype);
-		const entry = ge_read_kept(key);
+		const entry = this.newest_kept_new(this.doctype);
 		if (!entry) return;
-		if (!this.kit.usable_new(entry, Date.now())) {
-			ge_write_kept(key, null);
-			return;
-		}
 		Object.keys(entry.values).forEach((fieldname) => (this.values[fieldname] = ge_clone(entry.values[fieldname])));
 		this.carry = entry.carry || {};
 		if (entry.client_id) this.client_id = entry.client_id;
 		this.new_dirty = true;
 		this.notice = { kind: "kept-new", at: entry.at };
+		if (entry.client_id) this.check_created(entry.client_id);
 	}
 
-	// The record just loaded: put back what this phone kept for it (journal.js reconcile). Returns
-	// what to tell the person once the step is on screen, or null.
+	check_created(client_id) {
+		const doctype = this.doctype;
+		this.sf
+			.call(GE_API + "find_created", { doctype, client_id }, { quiet: true, method: "GET" })
+			.then((found) => {
+				if (!found || !found.name || !this.is_new || this.doctype !== doctype || this.client_id !== client_id) return;
+				this.forget_new(client_id);
+				this.new_dirty = false;
+				this.sf.toast(__("{0} was created after all; it is open now.", [found.name]), { tone: "info", timeout: 6000 });
+				frappe.route_flags.replace_route = true;
+				frappe.set_route(this.kit.build_route(doctype, found.name, null));
+				delete frappe.route_flags.replace_route;
+			})
+			.catch(() => {});
+	}
+
+	// The record just loaded: put back what this phone kept for it (journal.js reconcile), for fields
+	// the person may still change. Returns what to tell them once the step is on screen, or null.
 	restore_kept() {
-		const key = this.kit.journal_key(this.doctype, this.name);
+		const key = this.record_key(this.doctype, this.name);
 		const entry = ge_read_kept(key);
 		if (!entry) return null;
 		if (!this.kit.usable_entry(entry, Date.now())) {
@@ -1633,17 +1716,30 @@ class GuidedEntry {
 		}
 		// A queue still in this page's memory for the record is newer than the phone's copy.
 		if (this.retired.some((queue) => queue.record_key === key && queue.has_unsaved())) return null;
+		const editable = new Set();
+		(this.flow.steps || []).forEach((step) => {
+			if (!step.read_only) this.kit.editable_fieldnames(step).forEach((fieldname) => editable.add(fieldname));
+		});
 		const plan = this.kit.reconcile(entry, this.flow.values);
+		const lost = Object.keys(plan.reapply).filter((fieldname) => !editable.has(fieldname)).length +
+			plan.conflicts.filter((item) => !editable.has(item.fieldname)).length;
 		const bases = (this.bases[key] = {});
+		const held = (this.held[key] = {});
 		Object.keys(plan.reapply).forEach((fieldname) => {
+			if (!editable.has(fieldname)) return;
 			bases[fieldname] = ge_clone(this.saved[fieldname]);
 			this.values[fieldname] = ge_clone(plan.reapply[fieldname]);
 			this.queue.change(fieldname, plan.reapply[fieldname]);
 		});
-		this.write_journal(this.doctype, this.name, this.queue);
-		const put_back = Object.keys(plan.reapply).length;
-		if (!put_back && !plan.conflicts.length) return null;
-		return { put_back, conflicts: plan.conflicts, key };
+		const conflicts = plan.conflicts.filter((item) => editable.has(item.fieldname));
+		// Until the person chooses, the phone keeps "mine" for these: closing first loses nothing.
+		conflicts.forEach((item) => {
+			held[item.fieldname] = { mine: ge_clone(item.mine), base: ge_clone((entry.base || {})[item.fieldname]) };
+		});
+		this.write_journal(this.doctype, this.name);
+		const put_back = Object.keys(plan.reapply).filter((fieldname) => editable.has(fieldname)).length;
+		if (!put_back && !conflicts.length && !lost) return null;
+		return { put_back, conflicts, lost, key };
 	}
 
 	after_restore(kept) {
@@ -1653,13 +1749,19 @@ class GuidedEntry {
 				timeout: 6000,
 			});
 		}
+		if (kept.lost) {
+			this.sf.toast(__("{0} kept change(s) could not be put back: those fields can no longer be changed here.", [kept.lost]), {
+				tone: "warning",
+				timeout: 8000,
+			});
+		}
 		if (!kept.conflicts.length) return;
-		// Changed on the server since: the person chooses, as with any conflict. Until then the
-		// phone keeps its copy (the entry is only rewritten once the choice is made).
+		// Changed on the server since: the person chooses, as with any conflict.
 		const doctype = this.doctype;
 		const name = this.name;
 		this.show_conflict({ modified_by: null }, { conflicts: kept.conflicts, resend: {} }, (decision) => {
 			if (!decision || this.doctype !== doctype || this.name !== name) return;
+			delete this.held[kept.key];
 			const bases = this.bases[kept.key] || (this.bases[kept.key] = {});
 			Object.keys(decision.save || {}).forEach((fieldname) => {
 				const value = decision.save[fieldname];
@@ -1668,8 +1770,19 @@ class GuidedEntry {
 				this.show_value(fieldname, value);
 				this.queue.change(fieldname, value);
 			});
-			this.write_journal(doctype, name, this.queue);
+			this.write_journal(doctype, name);
 			this.refresh_chrome();
+		});
+	}
+
+	// Entries past keeping, for anyone, go when the page first loads: a record nobody reopened
+	// would otherwise keep its entry for good.
+	sweep_journal() {
+		const now = Date.now();
+		[this.kit.JOURNAL_PREFIX, this.kit.NEW_PREFIX].forEach((prefix) => {
+			ge_keys(prefix).forEach((key) => {
+				if (this.kit.stale_entry(ge_read_kept(key), now)) ge_write_kept(key, null);
+			});
 		});
 	}
 
@@ -1723,7 +1836,7 @@ class GuidedEntry {
 		if (state === "saved" || state === "saving") {
 			if (this.notice && this.notice.kind !== "create") this.notice = null;
 		} else if (state === "error") {
-			if (this.kit.try_later(error) && !this.journal_failed) {
+			if (this.kit.try_later(error) && this.kept_on_phone()) {
 				// Kept on the phone and retried when the signal returns: the saving line says so.
 				if (this.notice && this.notice.kind === "save") this.notice = null;
 			} else {
@@ -1763,17 +1876,25 @@ class GuidedEntry {
 	on_conflict(result, sent) {
 		const server = result.server || {};
 		const split = this.kit.split_conflict(this.saved, sent, server);
+		// Until the person chooses, what was sent lives only in this prompt: the phone keeps it too.
+		const queue = this.queue;
+		if (queue) queue.conflict_sent = sent;
+		this.write_journal(this.doctype, this.name);
+		const done = (decision) => {
+			if (queue) delete queue.conflict_sent;
+			return decision;
+		};
 		// What the server holds now is the base from here on, on screen and on the phone.
-		const bases = this.bases[this.kit.journal_key(this.doctype, this.name)] || {};
+		const bases = this.bases[this.record_key(this.doctype, this.name)] || {};
 		Object.keys(server).forEach((fieldname) => {
 			this.saved[fieldname] = ge_clone(server[fieldname]);
 			if (ge_has(bases, fieldname)) bases[fieldname] = ge_clone(server[fieldname]);
 		});
 		this.after_conflict = true;
 		if (!split.conflicts.length) {
-			return Promise.resolve({ save: split.resend, modified: result.modified });
+			return Promise.resolve({ save: split.resend, modified: result.modified }).then(done);
 		}
-		return new Promise((resolve) => this.show_conflict(result, split, resolve));
+		return new Promise((resolve) => this.show_conflict(result, split, resolve)).then(done);
 	}
 
 	show_conflict(result, split, resolve) {
@@ -1943,7 +2064,8 @@ class GuidedEntry {
 			.then(({ created, flow }) => {
 				this.creating = false;
 				this.new_dirty = false;
-				ge_write_kept(this.kit.new_key(doctype), null);
+				// This create's own copy only: a newer start typed meanwhile keeps its own.
+				ge_write_kept(this.kit.new_key(doctype, ge_user(), args.client_id), null);
 				const still_here = (() => {
 					const target = this.kit.parse_route(frappe.get_route());
 					return !!target && target.is_new && target.doctype === doctype;
@@ -1956,6 +2078,9 @@ class GuidedEntry {
 					this.take_flow(Object.assign({}, this.flow, { values: Object.assign({}, this.values, created.values) }));
 				}
 				if (created.completeness) this.completeness = created.completeness;
+				// An earlier attempt made the record; step 1 may have changed since, so what differs is
+				// saved on it now.
+				if (created.deduped && this.queue) this.resend_typed(values);
 				if (!still_here) {
 					// Left while it was being created: nothing to replace. Forward onto that "new"
 					// entry opens this record (open_new) rather than a blank one.
@@ -1994,6 +2119,17 @@ class GuidedEntry {
 				this.refresh_notices();
 				this.refresh_chrome();
 			});
+	}
+
+	// Step 1 as typed, over a record an earlier attempt of the same create made.
+	resend_typed(values) {
+		Object.keys(values || {}).forEach((fieldname) => {
+			if (this.kit.same_value(values[fieldname], this.values[fieldname])) return;
+			this.note_base(fieldname);
+			this.values[fieldname] = ge_clone(values[fieldname]);
+			this.queue.change(fieldname, values[fieldname]);
+		});
+		this.write_journal(this.doctype, this.name);
 	}
 
 	refresh_notices() {

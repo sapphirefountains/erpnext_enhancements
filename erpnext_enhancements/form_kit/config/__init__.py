@@ -23,6 +23,8 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     ERPNext's *Create > Opportunity* on a Customer) arrives with values of its own. The new
     record takes those for every field the flow lets the user write, and for the fields in
     ``prefill_fields``: fields the flow does not show that such a start fills (a hidden Link).
+    ``client_id_field`` is a hidden unique Data field holding the page's id for the create, so a
+    create resent after a lost answer returns the record rather than a second one.
 ``lost``  ``{"status", "status_field"?, "method", "reasons": {"doctype", "field"}, "competitors": {...}}``
     Choosing ``status`` (in ``status_field``, default ``status``) opens a *Set as Lost* dialog
     and runs the DocType's own ``method`` with the reasons and competitors as rows of the given
@@ -68,7 +70,7 @@ CONFIG_KEYS = {
 	"distinct",
 	"clears",
 }
-CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields"}
+CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields", "client_id_field"}
 MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
 
