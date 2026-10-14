@@ -55,8 +55,25 @@ function money_for(w) {
 	};
 }
 
+// Frappe v16's own Datetime formatter (form/formatters.js) shows
+// moment(frappe.datetime.convert_to_user_tz(value)): stored system time, moved into the person's
+// time zone. The face does the same move before the twin formats it (cells.user_datetime).
+function to_user_tz_for(f) {
+	return (value) => {
+		const dt = f.datetime;
+		if (!dt || typeof dt.convert_to_user_tz !== "function") return value;
+		try {
+			return dt.convert_to_user_tz(value);
+		} catch (e) {
+			warn_once(e);
+			return value;
+		}
+	};
+}
+
 export function make_face(f, w) {
 	const form_link = form_link_for(f);
+	const to_user_tz = to_user_tz_for(f);
 
 	function format(value, row, column, data, default_formatter, filter) {
 		const fallback = () => default_formatter(value, row, column, data, filter);
@@ -66,6 +83,7 @@ export function make_face(f, w) {
 				money: () =>
 					default_formatter(value, row, Object.assign({}, column, { fieldtype: "Currency" }), data, filter),
 				form_link,
+				to_user_tz,
 			});
 		} catch (e) {
 			warn_once(e);
@@ -78,7 +96,7 @@ export function make_face(f, w) {
 		kind: cells.face_kind,
 		phone: cells.phone_text,
 		date: cells.date_text,
-		datetime: cells.datetime_text,
+		datetime: (value) => cells.datetime_text(value, to_user_tz),
 		time: cells.time_text,
 		pillar: cells.pillar_html,
 		chip: cells.chip_html,

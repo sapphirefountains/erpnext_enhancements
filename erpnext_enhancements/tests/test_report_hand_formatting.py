@@ -84,8 +84,8 @@ RULES = (
 	(
 		"date:strftime",
 		PY,
-		re.compile(r"\.strftime\s*\("),
-		"strftime",
+		"strftime",  # see _strftime_with_a_day: a key like %Y-%m or %b %Y shows no date
+		"strftime with a day in it (%d, %e, %a, %A, %j, %x, %c, %D): a date shown by hand",
 	),
 	(
 		"date:frappe-utils",
@@ -100,7 +100,7 @@ RULES = (
 	(
 		"date:in-text",
 		PY,
-		None,  # see _date_in_text: a bare *_date variable passed to str.format prints ISO
+		"in-text",  # see _date_in_text: a bare *_date variable passed to str.format prints ISO
 		"a date passed straight into .format(...), which prints 2026-10-14",
 	),
 	(
@@ -112,8 +112,9 @@ RULES = (
 	(
 		"phone:slices",
 		PY,
-		re.compile(r"\[\s*3\s*:\s*6\s*\]"),
-		"a phone rebuilt from [3:6]-style slices",
+		# Only on a phone-ish name: [3:6] on anything else is just a slice.
+		re.compile(r"\b\w*(?:phone|mobile|cell|tel|fax|digits)\w*\s*\[\s*3\s*:\s*6\s*\]", re.I),
+		"a phone rebuilt from [3:6]-style slices of a phone-ish name",
 	),
 	(
 		"phone:phonenumbers",
@@ -125,13 +126,54 @@ RULES = (
 
 RULE_IDS = {rule[0] for rule in RULES}
 
-# str.format on a string or on _("..."), not frappe.format(...).
-_FORMAT_CALL = re.compile(r"[\)\"']\s*\.format\(([^()]*)\)")
-_BARE_DATE = re.compile(r"(?<![\w.\"'])(?:\w+_date|as_of)(?![\w(\"'])")
+_STRFTIME = re.compile(r"\.strftime\s*\(\s*[rRbBuUfF]{0,2}([\"'])(.*?)\1")
+_DAY_DIRECTIVE = re.compile(r"%[-#]?[deaAjxcD]")
 
 
-def _date_in_text(code):
-	return [m for m in _FORMAT_CALL.finditer(code) if _BARE_DATE.search(m.group(1))]
+def _strftime_with_a_day(code, _source):
+	"""strftime whose (literal) format shows a day. A month or year bucket (%Y-%m, %b %Y) is a key,
+	not a date anyone reads as one, and a format that is not a literal cannot be judged."""
+	return [
+		(code.count("\n", 0, m.start()) + 1, m.group(0))
+		for m in _STRFTIME.finditer(code)
+		if _DAY_DIRECTIVE.search(m.group(2))
+	]
+
+
+_BARE_DATE = re.compile(r"^(?:\w+_date|as_of)$")
+
+
+def _date_in_text(code, source):
+	"""str.format(...) handed a bare ``*_date`` (or ``as_of``) variable, positional or as a keyword's
+	VALUE, which prints the ISO form. Read with ast, so nested parentheses are fine and a keyword's
+	NAME (``.format(from_date=fd)``) is not a date. ``frappe.format(...)`` is a different function."""
+	try:
+		tree = ast.parse(source if source is not None else code)
+	except SyntaxError:
+		return []
+	out = []
+	for node in ast.walk(tree):
+		if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+			continue
+		if node.func.attr != "format":
+			continue
+		receiver = node.func.value
+		if isinstance(receiver, ast.Name) and receiver.id == "frappe":
+			continue
+		values = list(node.args) + [kw.value for kw in node.keywords]
+		if any(isinstance(v, ast.Name) and _BARE_DATE.match(v.id) for v in values):
+			out.append((node.lineno, ".format(" + ", ".join(ast.unparse(v) for v in values) + ")"))
+	return out
+
+
+def _regex(pattern):
+	def find(code, _source):
+		return [(code.count("\n", 0, m.start()) + 1, m.group(0)) for m in pattern.finditer(code)]
+
+	return find
+
+
+FINDERS = {"strftime": _strftime_with_a_day, "in-text": _date_in_text}
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +200,23 @@ ENFORCED = frozenset(
 #: no rule flags.) An entry needs its reason, and fails once the rule stops finding anything.
 ALLOWED = {}
 
-#: Still to move, "as they are touched" (2026-10-13). {report: {rules found}}. Only shrinks.
+#: Still to move, "as they are touched": {report: {rule: how many places}}, pinned exactly.
+#:
+#: ONLY REMOVALS. Move a report onto the face and lower its count or delete its entry; never add a
+#: report, a rule or a higher count. A report not listed that starts formatting by hand fails; a
+#: listed report with more findings than pinned fails; one with fewer fails until the count is
+#: lowered, so the list is always the truth. _CEILING is the 2026-10-14 snapshot this list may
+#: never exceed, and it is never edited either.
 KNOWN_REMAINING = {
-	"hr_enhancements/crew_qualification_roster": {"date:frappe-datetime", "date:frappe-format"},
-	"kpi_dashboards/marketing_spend_rollup": {"date:in-text"},
-	"project_enhancements/supplier_pickup_list": {"date:frappe-datetime"},
+	"hr_enhancements/crew_qualification_roster": {"date:frappe-datetime": 2, "date:frappe-format": 9},
+	"kpi_dashboards/marketing_spend_rollup": {"date:in-text": 2},
+	"project_enhancements/supplier_pickup_list": {"date:frappe-datetime": 2},
+}
+
+_CEILING = {
+	"hr_enhancements/crew_qualification_roster": {"date:frappe-datetime": 2, "date:frappe-format": 9},
+	"kpi_dashboards/marketing_spend_rollup": {"date:in-text": 2},
+	"project_enhancements/supplier_pickup_list": {"date:frappe-datetime": 2},
 }
 
 
@@ -245,17 +299,20 @@ def code_of(path):
 	return _strip_py(source) if path.suffix == ".py" else _strip_js(source)
 
 
-def findings_in(path, code=None):
-	"""[(rule id, line number, the text matched)] for one file."""
-	code = code_of(path) if code is None else code
+def findings_in(path, code=None, source=None):
+	"""[(rule id, line number, the text matched)] for one file. ``code`` is the stripped text the
+	regex rules read; ``source`` the file as written, which the ast rule parses (stripping docstrings
+	can leave a body empty, and ast ignores comments anyway)."""
+	if code is None:
+		source = path.read_text(encoding="utf-8")
+		code = _strip_py(source) if path.suffix == ".py" else _strip_js(source)
 	found = []
-	for rule_id, kinds, pattern, _why in RULES:
+	for rule_id, kinds, matcher, _why in RULES:
 		if path.suffix not in kinds:
 			continue
-		matches = _date_in_text(code) if pattern is None else list(pattern.finditer(code))
-		for m in matches:
-			line = code.count("\n", 0, m.start()) + 1
-			found.append((rule_id, line, m.group(0).strip()[:80]))
+		find = FINDERS[matcher] if isinstance(matcher, str) else _regex(matcher)
+		for line, text in find(code, source):
+			found.append((rule_id, line, text.strip()[:80]))
 	return found
 
 
@@ -311,8 +368,11 @@ FACE_CALL = re.compile(
 class RulesTest(unittest.TestCase):
 	"""Each rule fires on the hand formatting it names and not on the face, or on prose about it."""
 
-	def _ids(self, suffix, code):
-		return {rule for rule, _line, _text in findings_in(Path("x" + suffix), code)}
+	def _ids(self, suffix, code, source=None):
+		return {rule for rule, _line, _text in findings_in(Path("x" + suffix), code, source)}
+
+	def _py(self, source):
+		return self._ids(".py", _strip_py(source), source)
 
 	def test_each_js_rule_fires(self):
 		samples = {
@@ -330,17 +390,57 @@ class RulesTest(unittest.TestCase):
 
 	def test_each_python_rule_fires(self):
 		samples = {
-			"date:strftime": "x = d.strftime('%m/%d/%Y')\n",
-			"date:frappe-utils": "from frappe.utils import formatdate\nx = formatdate(d)\n",
-			"date:frappe-format": 'x = frappe.format(d, {"fieldtype": "Date"})\n',
-			"date:in-text": 'x = _("{0} to {1}").format(from_date, to_date)\n',
-			"phone:regex": 'x = re.sub(r"(\\d{3})(\\d{3})(\\d{4})", r"(\\1) \\2-\\3", p)\n',
-			"phone:slices": 'x = f"({d[:3]}) {d[3:6]}-{d[6:]}"\n',
-			"phone:phonenumbers": "x = phonenumbers.format_number(n, 1)\n",
+			"date:strftime": [
+				"x = d.strftime('%m/%d/%Y')\n",
+				'x = d.strftime("%b %-d, %Y")\n',
+				"x = d.strftime('%A')\n",
+			],
+			"date:frappe-utils": ["from frappe.utils import formatdate\nx = formatdate(d)\n"],
+			"date:frappe-format": ['x = frappe.format(d, {"fieldtype": "Date"})\n'],
+			"date:in-text": [
+				'x = _("{0} to {1}").format(from_date, to_date)\n',
+				# Nested parentheses in the other arguments.
+				'x = _("{0} rows to {1}").format(len(rows), to_date)\n',
+				'x = "{0}: {1}".format(cint(len(a)), as_of)\n',
+				# A keyword whose VALUE is the date.
+				'x = _("from {start}").format(start=from_date)\n',
+			],
+			"phone:regex": ['x = re.sub(r"(\\d{3})(\\d{3})(\\d{4})", r"(\\1) \\2-\\3", p)\n'],
+			"phone:slices": [
+				'x = f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"\n',
+				'x = f"({row.phone[:3]}) {row.phone[3:6]}"\n',
+			],
+			"phone:phonenumbers": ["x = phonenumbers.format_number(n, 1)\n"],
 		}
-		for rule, code in samples.items():
-			with self.subTest(rule=rule):
-				self.assertIn(rule, self._ids(".py", _strip_py(code)))
+		for rule, codes in samples.items():
+			for code in codes:
+				with self.subTest(rule=rule, code=code):
+					self.assertIn(rule, self._py(code))
+
+	def test_each_python_rule_stays_quiet_on_what_is_not_hand_formatting(self):
+		samples = {
+			"date:strftime": [
+				"key = d.strftime('%Y-%m')\n",
+				"key = d.strftime('%Y')\n",
+				"label = d.strftime('%b %Y')\n",
+				"key = d.strftime(fmt)\n",
+			],
+			"date:in-text": [
+				'x = _("{0}").format(fd)\n',
+				'x = _("{from_date}").format(from_date=fd)\n',
+				'x = _("{0}").format(normalize.format_date(to_date))\n',
+				'x = frappe.format(as_of, {"fieldtype": "Data"})\n',
+				'x = _("{0} of {1}").format(len(rows), total)\n',
+			],
+			"phone:slices": [
+				"x = items[3:6]\n",
+				"code = name[3:6]\n",
+			],
+		}
+		for rule, codes in samples.items():
+			for code in codes:
+				with self.subTest(rule=rule, code=code):
+					self.assertNotIn(rule, self._py(code))
 
 	def test_every_rule_has_a_sample(self):
 		# The two sample tables above cover every rule, so none can be added untested.
@@ -369,14 +469,14 @@ class RulesTest(unittest.TestCase):
 			"if (frappe.datetime.get_day_diff(a, b) > 0) {}\n"
 		)
 		self.assertEqual(self._ids(".js", js), set())
-		py = _strip_py(
+		py = (
 			"from erpnext_enhancements.utils import normalize\n"
 			"x = normalize.format_date(d) + normalize.format_datetime(t)\n"
 			"y = print_style.ps_date(d) + ps.ps_phone(p)\n"
 			'z = _("{0} to {1}").format(normalize.format_date(from_date), normalize.format_date(to_date))\n'
 			'w = frappe.format_value(total, {"fieldtype": "Currency"})\n'
 		)
-		self.assertEqual(self._ids(".py", py), set())
+		self.assertEqual(self._py(py), set())
 
 	def test_comments_and_docstrings_are_not_code(self):
 		js = _strip_js(
@@ -385,8 +485,8 @@ class RulesTest(unittest.TestCase):
 		self.assertEqual(self._ids(".js", js), set())
 		html = _strip_js("<!-- frappe.datetime.str_to_user(x) -->\n<p>ok</p>\n")
 		self.assertEqual(self._ids(".html", html), set())
-		py = _strip_py('"""Never d.strftime(\'%m\')."""\nx = 1  # formatdate(d)\n')
-		self.assertEqual(self._ids(".py", py), set())
+		py = '"""Never d.strftime(\'%m/%d\')."""\nx = 1  # formatdate(d)\n'
+		self.assertEqual(self._py(py), set())
 
 
 class ReportFormattingScanTest(unittest.TestCase):
@@ -415,34 +515,53 @@ class ReportFormattingScanTest(unittest.TestCase):
 					f"{name} formats a phone or a date by hand; call the report face (form kit P3.3)",
 				)
 
-	def test_no_other_report_starts_formatting_by_hand(self):
-		for name, findings in sorted(self.found.items()):
+	def _counts(self, name):
+		counts = {}
+		for rule, _where, _text in _unallowed(name, self.found.get(name, [])):
+			counts[rule] = counts.get(rule, 0) + 1
+		return counts
+
+	def test_no_other_report_grows_hand_formatting(self):
+		for name in sorted(self.found):
 			if name in ENFORCED:
 				continue
-			left = {rule for rule, _where, _text in _unallowed(name, findings)}
-			if not left:
+			counts = self._counts(name)
+			if not counts:
 				continue
 			with self.subTest(report=name):
 				known = KNOWN_REMAINING.get(name)
 				self.assertIsNotNone(
 					known,
-					f"{name} formats by hand ({sorted(left)}): use the report face instead; "
+					f"{name} formats by hand ({counts}): use the report face instead; "
 					"the known-remaining list only shrinks",
 				)
-				self.assertLessEqual(
-					left, known, f"{name} picked up new hand formatting: {sorted(left - known)}"
-				)
+				for rule, n in counts.items():
+					self.assertLessEqual(
+						n,
+						known.get(rule, 0),
+						f"{name} has {n} {rule} findings, pinned at {known.get(rule, 0)}",
+					)
 
 	def test_the_known_remaining_list_is_current(self):
-		"""An entry whose report no longer finds a rule is deleted, so the list is the truth."""
+		"""A count the report no longer reaches is lowered, an empty entry deleted: the list is the truth."""
 		for name, rules in sorted(KNOWN_REMAINING.items()):
-			found = {rule for rule, _where, _text in _unallowed(name, self.found.get(name, []))}
 			with self.subTest(report=name):
 				self.assertEqual(
-					found,
+					self._counts(name),
 					rules,
-					f"{name} no longer formats {sorted(rules - found)} by hand: take it off KNOWN_REMAINING",
+					f"{name} formats less by hand than pinned: lower or delete its KNOWN_REMAINING entry",
 				)
+
+	def test_the_known_remaining_list_only_shrinks(self):
+		"""No report, rule or count above the 2026-10-14 snapshot: only removals."""
+		self.assertLessEqual(set(KNOWN_REMAINING), set(_CEILING), "a report was added to KNOWN_REMAINING")
+		for name, rules in KNOWN_REMAINING.items():
+			with self.subTest(report=name):
+				self.assertTrue(rules, "delete an entry with nothing left rather than emptying it")
+				for rule, n in rules.items():
+					self.assertIn(rule, _CEILING[name], f"{rule} was added to {name}")
+					self.assertGreater(n, 0)
+					self.assertLessEqual(n, _CEILING[name][rule], f"{name} {rule} was raised")
 
 	def test_every_allowance_is_still_needed(self):
 		for name, rules in sorted(ALLOWED.items()):
@@ -486,11 +605,14 @@ class EnforcedColumnsTest(unittest.TestCase):
 						continue
 					with self.subTest(report=name, column=column.get("fieldname")):
 						self.assertIn(face, self.kinds)
-						if face == "party":
-							self.assertIn(
-								column.get("fieldtype"),
-								("Link", "Dynamic Link"),
-								"a party column is a Link or a Dynamic Link, so Frappe still draws a link without the face",
+						if face == "party" and column.get("fieldtype") not in ("Link", "Dynamic Link"):
+							# The other shape: the cell holds the name, the row the docname and doctype.
+							self.assertTrue(
+								column.get("sf_name"), "a Data party column names its docname field"
+							)
+							self.assertTrue(
+								column.get("sf_doctype") or column.get("sf_doctype_field"),
+								"a Data party column says which doctype it links to",
 							)
 
 	def test_phone_party_and_stream_columns_are_marked(self):

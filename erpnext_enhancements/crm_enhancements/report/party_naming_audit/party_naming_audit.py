@@ -53,13 +53,13 @@ def get_columns():
 		{"label": _("Record"), "fieldname": "record", "fieldtype": "Dynamic Link", "options": "doctype", "width": 190},
 		{"label": _("Doctype"), "fieldname": "doctype", "fieldtype": "Data", "width": 110},
 		{"label": _("Name it carries"), "fieldname": "value", "fieldtype": "Data", "width": 300},
-		# The report face (form kit P3.3): the party's title, linked to the party itself.
-		{"label": _("Party it belongs to"), "fieldname": "party", "fieldtype": "Dynamic Link", "options": "party_doctype",
-		 "width": 220, "sf_face": "party", "sf_label": "party_label"},
+		# The report face (form kit P3.3): the party's title, linked to the party itself. The cell
+		# holds the TITLE, so export, sort and search stay on the name people know; the face reads
+		# the docname and doctype for the link from the row (party_id, party_doctype).
+		{"label": _("Party it belongs to"), "fieldname": "party", "fieldtype": "Data", "width": 220,
+		 "sf_face": "party", "sf_name": "party_id", "sf_doctype_field": "party_doctype"},
 		{"label": _("Findings"), "fieldname": "findings", "fieldtype": "Data", "width": 260},
 		{"label": _("What to do"), "fieldname": "first_message", "fieldtype": "Data", "width": 460},
-		# Hidden support column for the Dynamic Link above.
-		{"label": _("Party Doctype"), "fieldname": "party_doctype", "fieldtype": "Data", "width": 1, "hidden": 1},
 	]
 
 
@@ -71,10 +71,10 @@ def _shape(row):
 		"record": row.get("name"),
 		"doctype": row.get("doctype"),
 		"value": row.get("value"),
-		# The record the party is (linked), and the title shown for it: the name on the form.
-		"party": party_docname,
+		# The title shown (the name on the form), and the record it links to.
+		"party": row.get("party") or "—",
+		"party_id": party_docname,
 		"party_doctype": party_doctype,
-		"party_label": row.get("party") or "—",
 		# Codes rather than prose so the column stays scannable and the finding_code filter
 		# has something to match; the sentence goes in `What to do`.
 		"findings": ", ".join(f.get("code") for f in findings),

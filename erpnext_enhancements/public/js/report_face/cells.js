@@ -16,9 +16,12 @@
  * A column says what it is with one key, `sf_face`:
  *
  *   phone     (801) 555-0100 x12 from the stored +18015550100,12
- *   party     a link to the record, showing its human name (`sf_label` names the row field
- *             holding it). The column is a Link or a Dynamic Link, so Frappe's own formatter
- *             still draws a working link on a device that never got this file.
+ *   party     a link to the record, showing its human name. Two shapes (party_of, below):
+ *             a Link or Dynamic Link column holding the docname, with `sf_label` naming the row
+ *             field that holds the name; or a Data column holding the NAME, with `sf_name`
+ *             naming the row field that holds the docname and `sf_doctype` (a doctype) or
+ *             `sf_doctype_field` (a row field naming it) saying what it is. The second keeps a
+ *             party column's export, sort and search on the name people know.
  *   pillar    a value stream (or a comma-separated list of them) as chips in the pillars' colors
  *   money     Frappe's currency formatting, with the column's own currency options
  *   date, datetime, time
@@ -34,6 +37,9 @@ import { phone_display, format_date, format_datetime, format_time } from "../nor
 
 export const FACE_KEY = "sf_face";
 export const LABEL_KEY = "sf_label";
+export const NAME_KEY = "sf_name";
+export const DOCTYPE_KEY = "sf_doctype";
+export const DOCTYPE_FIELD_KEY = "sf_doctype_field";
 export const KINDS = ["phone", "party", "pillar", "money", "date", "datetime", "time"];
 
 // The kind a column takes when it carries no marker.
@@ -66,8 +72,22 @@ export function date_text(value) {
 	return esc(format_date(value));
 }
 
-export function datetime_text(value) {
-	return esc(format_datetime(value));
+// A stored datetime is in the system time zone; Frappe's own Datetime formatter moves it into the
+// person's (frappe.datetime.convert_to_user_tz) before showing it, and so does the face.
+// `to_user_tz` is that function (report_face.js passes it); only a full date-and-time string is
+// converted, and an answer that is not one again is ignored rather than shown.
+const DATETIME_STR = /^\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{1,2}:[0-9]{2}/;
+
+export function user_datetime(value, to_user_tz) {
+	if (typeof to_user_tz !== "function" || typeof value !== "string" || !DATETIME_STR.test(value)) {
+		return value;
+	}
+	const converted = to_user_tz(value);
+	return typeof converted === "string" && DATETIME_STR.test(converted) ? converted : value;
+}
+
+export function datetime_text(value, to_user_tz) {
+	return esc(format_datetime(user_datetime(value, to_user_tz)));
 }
 
 export function time_text(value) {
@@ -157,9 +177,18 @@ export function chip_tone(tone) {
 	return CHIP_TONES.includes(tone) ? tone : "neutral";
 }
 
+// Each tone's declarations joined once, at load: a report draws a chip per row.
+const CHIP_STYLES = Object.fromEntries(
+	CHIP_TONES.map((tone) => [
+		tone,
+		CHIP_BASE.concat(CHIP_TONE_RULES[tone] || [])
+			.map(([property, value]) => `${property}: ${value}`)
+			.join("; "),
+	])
+);
+
 export function chip_style(tone) {
-	const rules = CHIP_BASE.concat(CHIP_TONE_RULES[chip_tone(tone)] || []);
-	return rules.map(([property, value]) => `${property}: ${value}`).join("; ");
+	return CHIP_STYLES[chip_tone(tone)];
 }
 
 // A chip with no word is not drawn: the word is the meaning and the color only repeats it.
@@ -207,15 +236,28 @@ function text_of(value) {
 	return value === null || value === undefined ? "" : String(value);
 }
 
-// Which record a party cell points at, and the name to show for it. The doctype is the Link
-// column's options, or for a Dynamic Link the row field its options name, as in Frappe.
+// Which record a party cell points at, and the name to show for it.
+//   Link / Dynamic Link column: the value is the docname. The doctype is the Link's options, or
+//     for a Dynamic Link the row field its options name, as in Frappe; the name shown is the
+//     `sf_label` row field.
+//   Any other column (Data): the value is the name shown. The docname is the `sf_name` row field,
+//     the doctype `sf_doctype`, or the `sf_doctype_field` row field. With no docname the name is
+//     still shown, unlinked.
 export function party_of(value, column, data) {
 	const row = data || {};
 	const col = column || {};
-	const name = text_of(value).trim();
-	const doctype = text_of(col.fieldtype === "Dynamic Link" ? row[col.options] : col.options).trim();
-	const label_field = col[LABEL_KEY];
-	const label = text_of(label_field ? row[label_field] : "").trim() || name;
+	if (col.fieldtype === "Link" || col.fieldtype === "Dynamic Link") {
+		const name = text_of(value).trim();
+		const doctype = text_of(col.fieldtype === "Dynamic Link" ? row[col.options] : col.options).trim();
+		const label_field = col[LABEL_KEY];
+		const label = text_of(label_field ? row[label_field] : "").trim() || name;
+		return { doctype, name, label };
+	}
+	const name = text_of(col[NAME_KEY] ? row[col[NAME_KEY]] : "").trim();
+	const doctype = text_of(
+		col[DOCTYPE_KEY] || (col[DOCTYPE_FIELD_KEY] ? row[col[DOCTYPE_FIELD_KEY]] : "")
+	).trim();
+	const label = text_of(value).trim() || name;
 	return { doctype, name, label };
 }
 
@@ -239,6 +281,7 @@ export function party_html({ doctype, name, label, href, new_tab } = {}) {
 //   fallback()              the report's default formatter on the original column
 //   money()                 the default formatter on the column read as Currency
 //   form_link(doctype, name) the record's route, or "" when the person cannot open it
+//   to_user_tz(value)       optional: a system-time datetime string in the person's time zone
 // A row with no data (the total row) is left to Frappe, which knows how to draw it.
 export function format_cell(value, column, data, env) {
 	const kind = face_kind(column);
@@ -249,7 +292,7 @@ export function format_cell(value, column, data, env) {
 		case "date":
 			return date_text(value);
 		case "datetime":
-			return datetime_text(value);
+			return datetime_text(value, env.to_user_tz);
 		case "time":
 			return time_text(value);
 		case "money":

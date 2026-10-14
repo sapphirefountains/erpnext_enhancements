@@ -108,6 +108,8 @@ out.tables = { base: c.CHIP_BASE, tones: c.CHIP_TONE_RULES, all: c.CHIP_TONES };
 
 const link = { fieldtype: "Link", options: "Customer", sf_face: "party", sf_label: "customer_name" };
 const dyn = { fieldtype: "Dynamic Link", options: "party_type", sf_face: "party", sf_label: "party_label" };
+// The other shape: the cell holds the name; the row carries the docname and doctype.
+const named = { fieldtype: "Data", sf_face: "party", sf_name: "party_id", sf_doctype_field: "party_type" };
 out.party_of = {
 	link: c.party_of("CUST-1", link, { customer_name: "Acme Fountains" }),
 	link_no_label: c.party_of("CUST-1", link, {}),
@@ -115,6 +117,10 @@ out.party_of = {
 	dynamic_no_type: c.party_of("LEAD-9", dyn, { party_label: "Jo Smith" }),
 	none: c.party_of("", dyn, { party_label: "—" }),
 	no_data: c.party_of("X", link, undefined),
+	data_column: c.party_of("Acme Fountains", named, { party_id: "CUST-1", party_type: "Customer" }),
+	data_fixed_doctype: c.party_of("Acme", { fieldtype: "Data", sf_face: "party", sf_name: "cust", sf_doctype: "Customer" }, { cust: "CUST-1" }),
+	data_no_docname: c.party_of("Acme Fountains", named, { party_id: "", party_type: "Opportunity" }),
+	data_no_label: c.party_of("", named, { party_id: "CUST-1", party_type: "Customer" }),
 };
 out.party_html = {
 	link: c.party_html({ doctype: "Customer", name: "CUST-1", label: "Acme", href: "/desk/customer/CUST-1" }),
@@ -135,6 +141,18 @@ const env = {
 	},
 };
 const row = { customer_name: "Acme", party_type: "Lead", party_label: "Jo" };
+// A stand-in for convert_to_user_tz: system time 14:05 is 08:05 for the person.
+const shift = (v) => v.replace(/ 14:05/, " 08:05");
+out.tz = {
+	converted: c.user_datetime("2026-10-14 14:05:00", shift),
+	t_separator: c.user_datetime("2026-10-14T14:05:00", (v) => "2026-10-14 08:05:00"),
+	date_only_untouched: c.user_datetime("2026-10-14", () => "WRONG"),
+	invalid_answer_ignored: c.user_datetime("2026-10-14 14:05:00", () => "Invalid date"),
+	not_a_string: c.user_datetime(null, () => "WRONG"),
+	no_converter: c.user_datetime("2026-10-14 14:05:00"),
+	text: c.datetime_text("2026-10-14 14:05:00", shift),
+};
+out.chip_cached = c.chip_style("build") === c.chip_style("build") && c.chip_style("magenta") === c.chip_style("neutral");
 out.cell = {
 	date: c.format_cell("2026-10-14", { fieldtype: "Date" }, row, env),
 	datetime: c.format_cell("2026-10-14 14:05:00", { fieldtype: "Datetime" }, row, env),
@@ -145,6 +163,10 @@ out.cell = {
 	party: c.format_cell("CUST-1", link, row, env),
 	party_dynamic: c.format_cell("LEAD-9", dyn, row, env),
 	party_none: c.format_cell("", dyn, { party_label: "—" }, env),
+	party_data: c.format_cell("Acme Fountains", named, { party_id: "CUST-9", party_type: "Customer" }, env),
+	party_data_unlinked: c.format_cell("Acme Fountains", named, { party_id: "", party_type: "Lead" }, env),
+	datetime_no_tz: c.format_cell("2026-10-14 14:05:00", { fieldtype: "Datetime" }, row, env),
+	datetime_tz: c.format_cell("2026-10-14 14:05:00", { fieldtype: "Datetime" }, row, { ...env, to_user_tz: shift }),
 	plain: c.format_cell("x", { fieldtype: "Data" }, row, env),
 	total_row: c.format_cell("2026-10-14", { fieldtype: "Date" }, undefined, env),
 	opt_out: c.format_cell("2026-10-14", { fieldtype: "Date", sf_face: "none" }, row, env),
@@ -153,6 +175,7 @@ out.form_link_calls = calls;
 
 // ---- the Desk half
 const warnings = [];
+const tz_calls = [];
 console.warn = (...args) => warnings.push(args.map(String).join(" "));
 const readable = new Set(["Customer", "Lead", "Project"]);
 const routes = [];
@@ -168,6 +191,13 @@ const fakeFrappe = {
 		},
 	},
 	model: { can_read: (doctype) => readable.has(doctype) },
+	datetime: {
+		convert_to_user_tz(value) {
+			tz_calls.push(value);
+			if (value === "2026-01-01 00:00:00") throw new Error("no moment-timezone");
+			return value.replace(/ 14:05/, " 08:05");
+		},
+	},
 };
 const fakeWindow = globalThis;
 fakeWindow.format_currency = (v, cur) => `${cur || "$"}${Number(v).toFixed(2)}`;
@@ -182,6 +212,13 @@ const default_formatter = (value, r, column, data) => {
 	return `DEFAULT(${column.fieldtype}:${value})`;
 };
 const amount = { fieldname: "amount", fieldtype: "Currency", options: "currency", width: 120 };
+out.desk_tz = {
+	cell: f.format("2026-10-14 14:05:00", 0, { fieldname: "at", fieldtype: "Datetime" }, { at: 1 }, default_formatter),
+	helper: f.datetime("2026-10-14 14:05:00"),
+	date_not_converted: f.date("2026-10-14"),
+	converter_throws: f.datetime("2026-01-01 00:00:00"),
+	calls: tz_calls.slice(),
+};
 out.desk = {
 	money: f.format(1500, 0, amount, { currency: "USD" }, default_formatter),
 	money_marker: f.format("99", 0, { fieldname: "x", fieldtype: "Data", sf_face: "money" }, { a: 1 }, default_formatter),
@@ -395,6 +432,37 @@ class PureCellsTest(unittest.TestCase):
 		self.assertEqual(p["none"], {"doctype": "", "name": "", "label": "—"})
 		self.assertEqual(p["no_data"]["label"], "X")
 
+	def test_a_data_party_column_holds_the_name_and_links_from_the_row(self):
+		"""The shape that keeps export, sort and search on the name people know."""
+		p = self.out["party_of"]
+		self.assertEqual(
+			p["data_column"], {"doctype": "Customer", "name": "CUST-1", "label": "Acme Fountains"}
+		)
+		self.assertEqual(p["data_fixed_doctype"], {"doctype": "Customer", "name": "CUST-1", "label": "Acme"})
+		# An Opportunity with no party_name but a customer_name: still the name, unlinked.
+		self.assertEqual(p["data_no_docname"]["label"], "Acme Fountains")
+		self.assertEqual(p["data_no_docname"]["name"], "")
+		self.assertEqual(p["data_no_label"]["label"], "CUST-1")
+		c = self.out["cell"]
+		self.assertIn('href="/desk/customer/CUST-9"', c["party_data"])
+		self.assertIn(">Acme Fountains</a>", c["party_data"])
+		self.assertEqual(c["party_data_unlinked"], "Acme Fountains")
+
+	def test_a_datetime_is_moved_into_the_persons_time_zone_first(self):
+		tz = self.out["tz"]
+		self.assertEqual(tz["converted"], "2026-10-14 08:05:00")
+		self.assertEqual(tz["t_separator"], "2026-10-14 08:05:00")
+		self.assertEqual(tz["date_only_untouched"], "2026-10-14")
+		self.assertEqual(tz["invalid_answer_ignored"], "2026-10-14 14:05:00")
+		self.assertIsNone(tz["not_a_string"])
+		self.assertEqual(tz["no_converter"], "2026-10-14 14:05:00")
+		self.assertEqual(tz["text"], "10/14/2026 8:05 AM")
+		self.assertEqual(self.out["cell"]["datetime_no_tz"], "10/14/2026 2:05 PM")
+		self.assertEqual(self.out["cell"]["datetime_tz"], "10/14/2026 8:05 AM")
+
+	def test_chip_styles_are_built_once(self):
+		self.assertTrue(self.out["chip_cached"])
+
 	def test_party_html(self):
 		h = self.out["party_html"]
 		self.assertEqual(
@@ -423,7 +491,9 @@ class PureCellsTest(unittest.TestCase):
 		self.assertEqual(c["plain"], "FALLBACK")
 		self.assertEqual(c["total_row"], "FALLBACK", "the total row is Frappe's to draw")
 		self.assertEqual(c["opt_out"], "FALLBACK")
-		self.assertEqual(self.out["form_link_calls"], [["Customer", "CUST-1"], ["Lead", "LEAD-9"]])
+		self.assertEqual(
+			self.out["form_link_calls"], [["Customer", "CUST-1"], ["Lead", "LEAD-9"], ["Customer", "CUST-9"]]
+		)
 
 
 class DeskHalfTest(unittest.TestCase):
@@ -471,11 +541,20 @@ class DeskHalfTest(unittest.TestCase):
 		self.assertNotIn(["Supplier", "SUP-1"], self.out["routes"])
 		self.assertIn(["Customer", "CUST-1"], self.out["routes"])
 
+	def test_datetimes_use_frappes_convert_to_user_tz(self):
+		"""As v16's own Datetime formatter does: moment(frappe.datetime.convert_to_user_tz(value))."""
+		tz = self.out["desk_tz"]
+		self.assertEqual(tz["cell"], "10/14/2026 8:05 AM")
+		self.assertEqual(tz["helper"], "10/14/2026 8:05 AM")
+		self.assertEqual(tz["date_not_converted"], "10/14/2026")
+		self.assertEqual(tz["converter_throws"], "01/01/2026 12:00 AM", "unconverted rather than an error")
+		self.assertEqual(tz["calls"], ["2026-10-14 14:05:00", "2026-10-14 14:05:00", "2026-01-01 00:00:00"])
+
 	def test_the_helpers(self):
 		h = self.out["desk"]["helpers"]
 		self.assertEqual(h["phone"], "(801) 555-0100")
 		self.assertEqual(h["date"], "10/14/2026")
-		self.assertEqual(h["datetime"], "10/14/2026 2:05 PM")
+		self.assertEqual(h["datetime"], "10/14/2026 8:05 AM", "converted into the person's time zone")
 		self.assertEqual(h["time"], "2:05 PM")
 		self.assertIn("sf-report-chip--service", h["pillar"])
 		self.assertIn("sf-report-chip--danger", h["chip"])

@@ -43,7 +43,7 @@ frappe.query_reports["Party Naming Audit"] = {
 			const colour = data.severity === "STOP" ? "var(--red-500)" : "var(--orange-500)";
 			return `<span style="color: ${colour}; font-weight: 600;">${formatted}</span>`;
 		}
-		if (column.fieldname === "party" && data && data.party_label === "—") {
+		if (column.fieldname === "party" && data && data.party === "—") {
 			return `<span style="color: var(--text-muted);" title="${__(
 				"No party is linked — the name may well be right and the link is what is missing"
 			)}">${formatted}</span>`;

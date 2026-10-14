@@ -88,16 +88,24 @@ function showCandidateDialog(report, row, candidates) {
 	// runners-up and their reasons have to be on the same screen.
 	// The link, the start date and the value come from the report face (form kit P3.3), so
 	// they read exactly as the same things do in the report behind the dialog.
-	const face = window.erpnext_enhancements.report_face;
+	// A Desk tab opened before the face shipped has no face: then the cells are the plain,
+	// escaped values (unlinked), never an error that leaves the dialog closed.
+	const face = window.erpnext_enhancements?.report_face;
+	const plain = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+	const cell = {
+		project: (c) => (face?.party ? face.party("Project", c.project, c.project, { new_tab: true }) : plain(c.project)),
+		date: (c) => (face?.date ? face.date(c.start_date) : plain(c.start_date)),
+		money: (c) => (face?.money ? face.money(c.value) : plain(c.value)),
+	};
 	const rows = candidates
 		.map(
 			(c) => `
 		<tr>
-			<td>${face.party("Project", c.project, c.project, {
-				new_tab: true,
-			})}<br><span class="text-muted small">${frappe.utils.escape_html(c.project_name || "")}</span></td>
-			<td>${face.date(c.start_date)}</td>
-			<td>${face.money(c.value)}</td>
+			<td>${cell.project(c)}<br><span class="text-muted small">${frappe.utils.escape_html(
+				c.project_name || ""
+			)}</span></td>
+			<td>${cell.date(c)}</td>
+			<td>${cell.money(c)}</td>
 			<td><b>${c.score}</b></td>
 			<td class="small text-muted">${frappe.utils.escape_html(c.reasons.join("; "))}</td>
 			<td><button class="btn btn-xs btn-primary ee-link-btn" data-project="${frappe.utils.escape_html(

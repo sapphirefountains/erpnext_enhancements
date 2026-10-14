@@ -249,13 +249,15 @@ tint, the red gap, the orange untracked hand-off, the severity colors). The colu
 markers (`"sf_face": "party", "sf_label": "customer_name"` and so on), so a report's Python says
 what each column is.
 
-Two reports changed shape for it. **Hand-Off Process Coverage**'s party column is now a Dynamic
-Link to the Opportunity's party (`opportunity_from` + `party_name`, a hidden Party Type column)
-showing `customer_name`. **Party Naming Audit**'s party column links to the party record, which
-`party_naming_rules.party_record` returns beside `party_of` (Project: its Customer; Opportunity:
-`opportunity_from` + `party_name`, read for this; Address: the Dynamic Link it is named after); the
-title shown is unchanged. In both, an export now carries the party's docname in that column, as a
-Link column always does.
+Two reports' party columns gained a link and kept their value. **Hand-Off Process Coverage**'s
+"Customer / Party" still holds `customer_name` (else `party_name`) and links through the row's
+`party_id` / `party_type` (`party_name` / `opportunity_from`); an Opportunity with no `party_name`
+shows its `customer_name` unlinked. **Party Naming Audit**'s "Party it belongs to" still holds the
+title and links through `party_id` / `party_doctype`, which come from
+`party_naming_rules.party_record`, beside `party_of` (Project: its Customer; Opportunity:
+`opportunity_from` + `party_name`, read for this; Address: the Dynamic Link it is named after).
+Both are Data columns of the face's second party shape, so export, sorting and the column search
+stay on the name; a Link column would have put the docname in all three.
 
 `tests/test_report_hand_formatting.py` fails the build if any of these reports formats a phone or
 a date by hand again, stops calling the face, or leaves a phone, party or value-stream column

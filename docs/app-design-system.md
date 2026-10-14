@@ -218,10 +218,10 @@ same way in every report, and the way print already shows it (`print_style.ps_ph
 | Kind | A cell shows | From |
 |---|---|---|
 | `phone` | `(801) 555-0100 x12` from the stored `+18015550100,12`; a value the rules can't read, as stored | `phone_display` in the normalization twin |
-| `party` | the record's human name (the `sf_label` row field), linked to the record | `frappe.utils.get_form_link`; plain text when the person can't read the doctype, as Frappe's Link cells do |
+| `party` | the record's human name, linked to the record (two column shapes, below) | `frappe.utils.get_form_link`; plain text when the person can't read the doctype, as Frappe's Link cells do |
 | `pillar` | each value stream as a chip in its pillar's colors (`Build, Service` is two chips); a word that is not a stream ("Unallocated") stays plain text | `STREAM_PILLAR` (above) and the Chip (below) |
 | `money` | the column's own currency formatting | Frappe's Currency formatter, with the column's `options` |
-| `date` / `datetime` / `time` | `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM` | `format_date` / `format_datetime` / `format_time` in the twin |
+| `date` / `datetime` / `time` | `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM`; a datetime in the person's time zone | `format_date` / `format_datetime` / `format_time` in the twin, after `frappe.datetime.convert_to_user_tz` for a datetime (as v16's own Datetime formatter does) |
 
 **A column says what it is** with one key in the report's Python, `sf_face`. With no key, a
 `Date`, `Datetime`, `Time`, `Currency` or `Phone` column takes its kind from its fieldtype, so a
@@ -232,11 +232,22 @@ column).
 ```python
 {"label": _("Phone"), "fieldname": "phone", "fieldtype": "Data", "sf_face": "phone"},
 {"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "sf_face": "pillar"},
-# A party column is a Link (options = the doctype) or a Dynamic Link (options = the row field
-# naming it), so Frappe still draws a working link on a device that never got the face.
+# A party, shape 1: the column is a Link (options = the doctype) or a Dynamic Link (options = the
+# row field naming it) holding the DOCNAME; sf_label names the row field with the name. For a
+# column that is the record itself (an account list's own Customer).
 {"label": _("Account"), "fieldname": "name", "fieldtype": "Link", "options": "Customer",
  "sf_face": "party", "sf_label": "customer_name"},
+# A party, shape 2: a Data column holding the NAME; sf_name names the row field with the docname,
+# and sf_doctype (a doctype) or sf_doctype_field (a row field naming one) says what it is.
+{"label": _("Customer / Party"), "fieldname": "party", "fieldtype": "Data",
+ "sf_face": "party", "sf_name": "party_id", "sf_doctype_field": "party_type"},
 ```
+
+**Prefer shape 2 for a party that belongs to the row** (an Opportunity's customer, an address's
+party). A cell's value is what export writes (`build_xlsx_data` takes the raw value), what the
+datatable sorts on and what its column search matches, so a Link cell exports and sorts by the
+docname while showing the name. Shape 2 keeps all three on the name, shows the name unlinked when
+there is no docname, and still shows it when the face is missing.
 
 **The report's formatter is two lines**, plus anything of its own (a status color, a threshold
 glow) wrapped around what the face returns:
@@ -279,14 +290,16 @@ the cell gets the report's default formatter and the console one warning.
 **Moving the reports.** The CRM and sales reports moved first (all seven in CRM Enhancements,
 plus Value Stream Performance). `tests/test_report_hand_formatting.py` reads every Script
 Report's `.js`, `.py` and `.html`, comments stripped, for a phone or a date formatted by hand:
-`frappe.datetime.str_to_user`, `moment(...).format`, `toLocaleDateString`, `strftime`,
-`formatdate`, `frappe.format(x, {fieldtype: "Date"})`, a `*_date` passed straight into
-`.format(...)`, and a phone rebuilt with a regex or slices. The CRM and sales reports fail the
-build on a finding, on not calling the face, or on a phone, party or value-stream column left
-unmarked. Every other report is listed in the CI log and on `KNOWN_REMAINING`, which can only
-shrink: a new report formatting by hand fails, and so does an entry that no longer finds
-anything, until it is deleted. Move a report when you next touch it, and take it off the list.
-`ALLOWED` takes a report that legitimately differs, with its reason; it is empty today.
+`frappe.datetime.str_to_user`, `moment(...).format`, `toLocaleDateString`, `strftime` with a day
+in its format (a `%Y-%m` or `%b %Y` key is not a shown date), `formatdate`,
+`frappe.format(x, {fieldtype: "Date"})`, a bare `*_date` passed into `.format(...)` (read with
+`ast`, so a keyword's name is not one), and a phone rebuilt with a regex or `[3:6]` slices of a
+phone-ish name. The CRM and sales reports fail the build on a finding, on not calling the face,
+or on a phone, party or value-stream column left unmarked. Every other report is listed in the
+CI log and on `KNOWN_REMAINING`, which pins a count per report and rule and **takes only
+removals**: a new report, a new rule or a higher count fails, and so does a count the report no
+longer reaches, until it is lowered. Move a report when you next touch it, and take it off the
+list. `ALLOWED` takes a report that legitimately differs, with its reason; it is empty today.
 
 ## Space and shape
 
