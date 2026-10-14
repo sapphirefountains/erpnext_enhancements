@@ -9,7 +9,23 @@
  * `.tr-*` class belongs to player.css and must not be redefined here.
  *
  * This is the class registry for training_canvas.js: a class the JS invents that
- * is not defined here renders as an unstyled div. Prefix is `tc-`.
+ * is not defined here renders as an unstyled div. Prefix is `tc-`, and it is not
+ * optional: a Desk page's CSS is appended to <head> once and never removed, so a
+ * rule without it would style every page visited after this one
+ * (tests/test_s3_page_css.py).
+ *
+ * THE CHROME IS ON THE APP'S --sf-* TOKENS (docs/app-design-system.md; v1.650.0,
+ * S3.4b). It used to read the learner's Aurora palette (--tr-*) with a literal
+ * fallback beside every read, plus a handful of Frappe colours. The learner render
+ * inside the sheet still takes player.css, because the author must see what a
+ * learner sees; everything this file draws around and over it is Desk chrome and
+ * follows the Desk theme like the rest of the app. Status is the status tokens
+ * (saved --sf-good, unsaved and unreviewed --sf-warn, conflict --sf-danger), with
+ * the word beside or inside the colour; as text a status colour is mixed half and
+ * half with --sf-text-strong so it reads on both themes. Structure is square,
+ * controls round at --sf-radius-control, chips are pills, and there are no
+ * shadows: the floating tool cluster and the type menu are separated by their
+ * hairline, and the hover and focus rings are outlines.
  *
  * FULL-BLEED: the desk page is created with make_app_page (single_column). Two
  * things box it in — the Bootstrap `.container` inside .page-body (max-width +
@@ -42,7 +58,7 @@
 	flex-direction: column;
 	height: calc(100vh - 115px);
 	min-height: 420px;
-	background: var(--bg-color, #f4f5f6);
+	background: var(--sf-bg);
 }
 
 /* ------------------------------------------------------------------- top bar */
@@ -53,15 +69,15 @@
 	align-items: center;
 	gap: 12px;
 	padding: 8px 14px;
-	background: var(--card-bg, #fff);
-	border-bottom: 1px solid var(--border-color, #e2e2e2);
+	background: var(--sf-surface);
+	border-bottom: 1px solid var(--sf-rule);
 }
 
 .tc-icon {
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
-	border-radius: 8px;
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
 	width: 32px;
 	height: 32px;
 	font-size: 1rem;
@@ -69,14 +85,14 @@
 }
 
 .tc-icon:hover {
-	border-color: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent, #7c3aed);
+	border-color: var(--sf-focus);
+	color: var(--sf-link);
 }
 
 .tc-course-name {
 	font-weight: 700;
 	letter-spacing: -0.01em;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -100,8 +116,8 @@
 	min-width: 0;
 	overflow: auto;
 	padding: 12px;
-	border-right: 1px solid var(--border-color, #e2e2e2);
-	background: var(--card-bg, #fff);
+	border-right: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
 }
 
 .training-canvas-fullbleed .is-rail-collapsed .tc-rail {
@@ -125,7 +141,7 @@
 	font-weight: 700;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
-	color: var(--text-muted, #6c7680);
+	color: var(--sf-text-muted);
 }
 
 .tc-rail-chapter:first-child {
@@ -136,19 +152,20 @@
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 8px 10px;
-	border-radius: 9px;
+	padding: 8px 10px 8px 7px;
+	border-radius: var(--sf-radius-none);
 	cursor: pointer;
-	color: var(--text-color, #1a1830);
+	color: var(--sf-text);
+	border-left: 3px solid transparent;
 }
 
 .tc-rail-row:hover {
-	background: var(--tr-accent-soft, #ede9fe);
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
 }
 
 .tc-rail-row.is-current {
-	background: var(--tr-accent-soft, #ede9fe);
-	box-shadow: inset 3px 0 0 var(--tr-accent, #7c3aed);
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
+	border-left-color: var(--sf-focus);
 }
 
 .tc-rail-title {
@@ -161,12 +178,16 @@
 	font-weight: 600;
 }
 
+.tc-rail-row.is-current .tc-rail-title {
+	font-weight: var(--sf-weight-bold);
+}
+
 .tc-rail-del {
 	flex: 0 0 auto;
 	border: none;
 	background: transparent;
-	color: var(--text-muted, #6c7680);
-	border-radius: 6px;
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
 	width: 24px;
 	height: 22px;
 	font-size: 0.75rem;
@@ -179,8 +200,8 @@
 }
 
 .tc-rail-del:hover {
-	background: rgba(224, 54, 54, 0.12);
-	color: #e03636;
+	background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
 /* ------------------------------------------------------- lesson settings */
@@ -188,9 +209,9 @@
 .tc-lessonsettings {
 	margin: 0 0 24px;
 	padding: 16px;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	border-radius: var(--tr-radius, 16px);
-	background: var(--tr-surface-alt, #eceaf6);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
@@ -205,7 +226,7 @@
 	font-weight: 700;
 	letter-spacing: 0.05em;
 	text-transform: uppercase;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
 
 .tc-quizset {
@@ -213,9 +234,9 @@
 	flex-direction: column;
 	gap: 10px;
 	padding: 12px;
-	border-radius: 12px;
-	background: var(--tr-surface, #fff);
-	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
 }
 
 .tc-status {
@@ -223,24 +244,24 @@
 	align-items: center;
 	gap: 7px;
 	font-size: 0.85rem;
-	color: var(--text-muted, #6c7680);
+	color: var(--sf-text-muted);
 	white-space: nowrap;
 }
 
 .tc-status .tc-pip {
 	width: 8px;
 	height: 8px;
-	border-radius: 50%;
-	background: #3ecf7e;
-	transition: background 0.2s ease;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-good);
+	transition: background var(--sf-duration) var(--sf-ease);
 }
 
 .tc-status.is-dirty .tc-pip {
-	background: #e0a458;
+	background: var(--sf-warn);
 }
 
 .tc-status.is-saving .tc-pip {
-	background: #29b6f6;
+	background: var(--sf-focus);
 	animation: tc-pulse 0.8s ease infinite;
 }
 
@@ -248,7 +269,7 @@
    and 'not saved' are one fact -- what you are looking at is not what is stored. */
 .tc-status.is-conflict .tc-pip,
 .tc-status.is-error .tc-pip {
-	background: #e03636;
+	background: var(--sf-danger);
 }
 
 @keyframes tc-pulse {
@@ -265,9 +286,9 @@
 	align-items: center;
 	gap: 10px;
 	padding: 10px 16px;
-	background: rgba(224, 54, 54, 0.1);
-	border-bottom: 1px solid #e03636;
-	color: #a12020;
+	background: color-mix(in srgb, var(--sf-danger) 10%, var(--sf-surface));
+	border-bottom: var(--sf-border-hairline) solid var(--sf-danger);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 	font-size: 0.9rem;
 }
 
@@ -294,7 +315,7 @@
 	font-weight: 700;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	color: var(--text-muted, #6c7680);
+	color: var(--sf-text-muted);
 }
 
 .tc-title {
@@ -303,13 +324,15 @@
 	font-weight: 800;
 	letter-spacing: -0.02em;
 	line-height: 1.2;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 	outline: none;
-	border-radius: 6px;
+	border-radius: var(--sf-radius-none);
 }
 
 .tc-title:focus {
-	box-shadow: 0 0 0 3px var(--tr-accent-soft, #ede9fe);
+
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
 }
 
 /* The learner render lives inside .tr-shell so every player.css rule applies.
@@ -330,16 +353,16 @@
 	display: flex;
 	gap: 4px;
 	padding: 6px 14px;
-	background: var(--card-bg, #fff);
-	border-bottom: 1px solid var(--border-color, #e2e2e2);
+	background: var(--sf-surface);
+	border-bottom: 1px solid var(--sf-rule);
 	overflow-x: auto;
 }
 
 .tc-rt-btn {
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-text, #1a1830);
-	border-radius: 7px;
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border-radius: var(--sf-radius-control);
 	min-width: 30px;
 	padding: 4px 9px;
 	font: inherit;
@@ -349,8 +372,8 @@
 }
 
 .tc-rt-btn:hover {
-	border-color: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent, #7c3aed);
+	border-color: var(--sf-focus);
+	color: var(--sf-link);
 }
 
 /* An explicit `display` on a class beats the `[hidden]` attribute's UA
@@ -376,12 +399,11 @@
 	display: flex;
 	gap: 3px;
 	padding: 2px;
-	border-radius: 9px;
-	background: var(--tr-surface, #fff);
-	border: 1px solid var(--tr-border, #e2e0f0);
-	box-shadow: var(--tr-shadow);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
 	opacity: 0;
-	transition: opacity 0.14s ease;
+	transition: opacity var(--sf-duration) var(--sf-ease);
 }
 
 .tc-blockwrap:hover .tc-blocktools,
@@ -392,8 +414,8 @@
 .tc-tool {
 	border: none;
 	background: transparent;
-	color: var(--tr-muted, #5f6488);
-	border-radius: 6px;
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
 	width: 26px;
 	height: 24px;
 	font-size: 0.8rem;
@@ -402,22 +424,25 @@
 }
 
 .tc-tool:hover {
-	background: var(--tr-accent-soft, #ede9fe);
-	color: var(--tr-accent, #7c3aed);
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
+	color: var(--sf-link);
 }
 
 .tc-tool-danger:hover {
-	background: rgba(224, 54, 54, 0.12);
-	color: #e03636;
+	background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
 /* The editable render sits here; a subtle hover ring signals "you can edit this". */
 .tc-blockmount .tc-live {
-	transition: box-shadow 0.15s ease;
+	transition: outline-color var(--sf-duration) var(--sf-ease);
+	outline: 1px solid transparent;
+	outline-offset: 2px;
 }
 
 .tc-blockmount .tc-live:hover {
-	box-shadow: 0 0 0 1px var(--tr-accent-soft, #ede9fe), var(--tr-shadow);
+
+	outline-color: color-mix(in srgb, var(--sf-focus) 45%, transparent);
 }
 
 .tc-sheet [contenteditable="true"]:focus {
@@ -425,8 +450,9 @@
 }
 
 .tc-sheet .tr-block-body.tc-rich:focus {
-	box-shadow: inset 0 0 0 2px var(--tr-accent, #7c3aed);
-	border-radius: 8px;
+	border-radius: var(--sf-radius-none);
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
 }
 
 /* ----------------------------------------------------------- block settings */
@@ -434,9 +460,9 @@
 .tc-blocksettings {
 	margin: 4px 0 14px;
 	padding: 12px 14px;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	border-radius: 12px;
-	background: var(--tr-surface-alt, #eceaf6);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
@@ -452,7 +478,7 @@
 .tc-set > span {
 	flex: 0 0 auto;
 	min-width: 90px;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 	font-weight: 600;
 }
 
@@ -462,20 +488,20 @@
 
 .tc-seg {
 	display: inline-flex;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	border-radius: 8px;
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-control);
 	overflow: hidden;
 }
 
 .tc-seg button {
 	border: none;
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
 	padding: 5px 11px;
 	font: inherit;
 	font-size: 0.82rem;
 	cursor: pointer;
-	border-left: 1px solid var(--tr-border, #e2e0f0);
+	border-left: 1px solid var(--sf-rule);
 }
 
 .tc-seg button:first-child {
@@ -483,8 +509,8 @@
 }
 
 .tc-seg button.is-on {
-	background: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent-text, #fff);
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
 }
 
 /* ------------------------------------------------------ interactive editors */
@@ -492,9 +518,9 @@
 .tc-ied {
 	margin: 8px 0 4px;
 	padding: 12px;
-	border: 1px dashed var(--tr-border, #e2e0f0);
-	border-radius: 12px;
-	background: var(--tr-surface-alt, #eceaf6);
+	border: 1px dashed var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 }
 
 .tc-ied-rows {
@@ -531,26 +557,26 @@
 
 .tc-ied-del {
 	flex: 0 0 auto;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
-	border-radius: 7px;
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
 	width: 30px;
 	height: 30px;
 	cursor: pointer;
 }
 
 .tc-ied-del:hover {
-	border-color: #e03636;
-	color: #e03636;
+	border-color: var(--sf-danger);
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
 .tc-ied-add {
 	margin-top: 10px;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
-	border-radius: 8px;
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
+	border-radius: var(--sf-radius-control);
 	padding: 6px 12px;
 	font: inherit;
 	font-weight: 600;
@@ -558,8 +584,8 @@
 }
 
 .tc-ied-add:hover {
-	border-color: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent, #7c3aed);
+	border-color: var(--sf-focus);
+	color: var(--sf-link);
 }
 
 /* ---------------------------------------------------------- external embed */
@@ -573,7 +599,7 @@
 	font-weight: 700;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 	margin-bottom: 6px;
 }
 
@@ -586,19 +612,19 @@
 	width: 100%;
 	aspect-ratio: 16 / 9;
 	border: 0;
-	border-radius: 10px;
-	background: #000;
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-ink-900);
 }
 
 .tc-muted {
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 	padding: 10px 0;
 }
 
 .tc-hint {
 	margin-top: 8px;
 	font-size: 0.82rem;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
 
 /* ----------------------------------------------------- add-block affordance */
@@ -618,9 +644,9 @@
 	left: 0;
 	right: 0;
 	height: 1px;
-	background: var(--tr-border, #e2e0f0);
+	background: var(--sf-rule);
 	opacity: 0;
-	transition: opacity 0.14s ease;
+	transition: opacity var(--sf-duration) var(--sf-ease);
 }
 
 .tc-addline:hover::before {
@@ -632,10 +658,10 @@
 	z-index: 1;
 	width: 24px;
 	height: 24px;
-	border-radius: 50%;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	background: var(--tr-surface, #fff);
-	color: var(--tr-muted, #5f6488);
+	border-radius: var(--sf-radius-circle);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
 	font-size: 1rem;
 	line-height: 1;
 	cursor: pointer;
@@ -646,7 +672,7 @@
 	   that a lesson is built by pressing something between the blocks. 0.35 keeps
 	   it quiet between blocks an author is reading, and hover still brings it up. */
 	opacity: 0.35;
-	transition: opacity 0.14s ease, transform 0.14s ease;
+	transition: opacity var(--sf-duration) var(--sf-ease), transform var(--sf-duration) var(--sf-ease);
 }
 
 .tc-addline:hover .tc-addbtn,
@@ -657,8 +683,8 @@
 }
 
 .tc-addbtn:hover {
-	border-color: var(--tr-accent, #7c3aed);
-	color: var(--tr-accent, #7c3aed);
+	border-color: var(--sf-focus);
+	color: var(--sf-link);
 	transform: scale(1.1);
 }
 
@@ -667,10 +693,9 @@
 	z-index: 1100;
 	min-width: 180px;
 	padding: 6px;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	border-radius: 12px;
-	background: var(--tr-surface, #fff);
-	box-shadow: var(--tr-shadow-lg);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
@@ -680,16 +705,16 @@
 	text-align: left;
 	border: none;
 	background: transparent;
-	color: var(--tr-text, #1a1830);
-	border-radius: 8px;
+	color: var(--sf-text);
+	border-radius: var(--sf-radius-none);
 	padding: 8px 12px;
 	font: inherit;
 	cursor: pointer;
 }
 
 .tc-menu button:hover {
-	background: var(--tr-accent-soft, #ede9fe);
-	color: var(--tr-accent, #7c3aed);
+	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
+	color: var(--sf-link);
 }
 
 /* ----------------------------------------------------------------- media */
@@ -701,9 +726,9 @@
 	flex-direction: column;
 	gap: 10px;
 	padding: 14px;
-	border: 1px solid var(--tr-border, #e2e0f0);
-	border-radius: var(--tr-radius, 16px);
-	background: var(--tr-surface-alt, #eceaf6);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 }
 
 .tc-media .tc-set > .form-control,
@@ -718,12 +743,12 @@
 .tc-media-img {
 	max-width: 100%;
 	max-height: 320px;
-	border-radius: 10px;
+	border-radius: var(--sf-radius-none);
 	display: block;
 }
 
 .tc-media-link {
-	color: var(--tr-accent, #7c3aed);
+	color: var(--sf-link);
 	font-weight: 600;
 	word-break: break-all;
 }
@@ -737,7 +762,7 @@
 
 .tc-hotspot-row span {
 	font-size: 0.75rem;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
 
 .tc-hotspot-row .tc-xy {
@@ -756,14 +781,14 @@
 	max-width: 460px;
 	margin: 12vh auto 0;
 	text-align: center;
-	color: var(--text-muted, #6c7680);
+	color: var(--sf-text-muted);
 	line-height: 1.6;
 }
 
 .tc-empty h2 {
 	margin: 0 0 8px;
 	font-size: 1.2rem;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 }
 
 /* Chapter manager rows (WI-074 S1). One title input and three small buttons; the
@@ -795,14 +820,15 @@
 .tc-readiness {
 	margin: 16px 8px 8px;
 	padding: 10px 12px;
-	border-radius: 8px;
-	border: 1px solid var(--border-color, #e2e8f0);
-	background: var(--fg-color, #fff);
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
 	font-size: 12px;
 }
 
 .tc-readiness.is-ready {
-	border-color: var(--green-300, #86efac);
+	border-color: var(--sf-rule);
+	border-left: 4px solid var(--sf-good);
 }
 
 .tc-readiness-head {
@@ -818,7 +844,7 @@
 
 .tc-readiness-more {
 	margin-top: 6px;
-	color: var(--text-muted, #6b7280);
+	color: var(--sf-text-muted);
 }
 
 /* ------------------------------------------- in-video checkpoints (S4b) */
@@ -833,8 +859,8 @@
 	position: relative;
 	height: 26px;
 	padding: 0 10px;
-	border-radius: 13px;
-	background: var(--control-bg, #f1f5f9);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 	cursor: copy;
 }
 
@@ -842,7 +868,7 @@
 .tc-timeline-help {
 	margin-top: 4px;
 	font-size: 11px;
-	color: var(--text-muted, #6b7280);
+	color: var(--sf-text-muted);
 }
 
 .tc-pin {
@@ -852,29 +878,29 @@
 	height: 20px;
 	margin-left: -5px;
 	padding: 0;
-	border: 1px solid var(--blue-500, #2490ef);
-	border-radius: 3px;
-	background: var(--blue-500, #2490ef);
+	border: var(--sf-border-hairline) solid var(--sf-focus);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-focus);
 	cursor: pointer;
 }
 
 /* Unfinished is the common state for the first few seconds of a pin's life, so it
    is marked rather than alarming. The publish gate is what refuses it. */
 .tc-pin.is-unfinished {
-	background: var(--yellow-300, #fde047);
-	border-color: var(--yellow-500, #eab308);
+	background: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
 }
 
 .tc-pin.is-active {
-	outline: 2px solid var(--gray-900, #111827);
+	outline: 2px solid var(--sf-text-strong);
 	outline-offset: 1px;
 }
 
 .tc-pin-inspector:not(:empty) {
 	margin-top: 10px;
 	padding: 10px;
-	border: 1px solid var(--border-color, #e2e8f0);
-	border-radius: 8px;
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 }
 
 .tc-pin-at {
@@ -906,8 +932,8 @@
 .tc-ai {
 	margin-top: 10px;
 	padding: 10px;
-	border: 1px dashed var(--border-color, #e2e8f0);
-	border-radius: 8px;
+	border: 1px dashed var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 }
 
 .tc-ai-head {
@@ -921,8 +947,8 @@
 .tc-ai-card {
 	margin-top: 8px;
 	padding: 8px;
-	border-radius: 6px;
-	background: var(--control-bg, #f8fafc);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 }
 
 .tc-ai-card.is-accepted {
@@ -933,12 +959,12 @@
    already drops what it cannot trace back to the lesson, so this is belt and
    braces -- but it must not look like the others. */
 .tc-ai-card.is-ungrounded {
-	border-left: 3px solid var(--orange-500, #f97316);
+	border-left: 3px solid var(--sf-warn);
 }
 
 .tc-ai-at {
 	font-size: 11px;
-	color: var(--text-muted, #6b7280);
+	color: var(--sf-text-muted);
 }
 
 .tc-ai-q {
@@ -957,12 +983,12 @@
 .tc-ai-quote {
 	margin-top: 6px;
 	font-style: italic;
-	color: var(--text-muted, #6b7280);
+	color: var(--sf-text-muted);
 }
 
 .tc-ai-warn {
 	margin-top: 6px;
-	color: var(--orange-600, #ea580c);
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
 /* ------------------------------------------------- video asset diagnostics */
@@ -974,12 +1000,13 @@
 .tc-asset-warn {
 	margin-top: 8px;
 	padding: 8px 10px;
-	border-radius: 8px;
+	border-radius: var(--sf-radius-none);
 	font-size: 0.82rem;
 	line-height: 1.45;
-	background: var(--orange-50, #fff7ed);
-	border: 1px solid var(--orange-200, #fed7aa);
-	color: var(--orange-700, #c2410c);
+	background: color-mix(in srgb, var(--sf-warn) 14%, var(--sf-surface));
+	border: var(--sf-border-hairline) solid var(--sf-warn);
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+	border-left: 4px solid var(--sf-warn);
 }
 
 .tc-asset-warn > div + div {
@@ -992,7 +1019,7 @@
 
 .tc-ai-done {
 	margin-top: 6px;
-	color: var(--green-600, #16a34a);
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
 }
 
 .tc-ai-actions {
@@ -1015,13 +1042,13 @@
 .tc-chapters {
 	margin-top: 10px;
 	padding-top: 8px;
-	border-top: 1px solid var(--border-color, #e2e2e2);
+	border-top: 1px solid var(--sf-rule);
 }
 
 .tc-chapters-head {
 	font-weight: 600;
 	font-size: 0.8125rem;
-	color: var(--text-muted, #6c7680);
+	color: var(--sf-text-muted);
 	margin-bottom: 4px;
 }
 
@@ -1073,9 +1100,9 @@
 	gap: 10px;
 	margin-top: 4px;
 	padding: 12px;
-	border-radius: 12px;
-	background: var(--tr-surface, #fff);
-	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
 }
 
 .tc-quizpool-head {
@@ -1087,7 +1114,7 @@
 
 .tc-quizpool-count {
 	font-size: 12px;
-	color: var(--text-muted);
+	color: var(--sf-text-muted);
 }
 
 .tc-quizq {
@@ -1095,23 +1122,24 @@
 	flex-direction: column;
 	gap: 6px;
 	padding: 10px;
-	border-radius: 10px;
-	background: var(--tr-bg, #f7f6fb);
-	border: 1px solid var(--tr-border, #e2e0f0);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
+	border: 1px solid var(--sf-rule);
 }
 
-/* Literal amber rather than a token, and for the same reason the overdue colours
-   in this module are literal: "this has not been reviewed" is a fact about the
-   publish gate, not a theme decision, and it must not quietly become a different
-   idea because somebody edited a palette. */
+/* The warn status chip (fill, its own label colour, the tone's chip edge). It used to be a
+   literal amber, kept off the theme because "this has not been reviewed" is a fact about the
+   publish gate rather than a theme decision. The status tokens keep that promise: --sf-warn is
+   the brand's one "attention" colour, the same fill in both themes. */
 .tc-quizq-flag {
 	align-self: flex-start;
 	padding: 1px 8px;
-	border-radius: 9px;
-	background: var(--orange-50, #fff6e9);
-	color: var(--orange-700, #92400e);
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-warn);
+	color: var(--sf-on-warn);
 	font-size: 11px;
 	font-weight: 600;
+	border: var(--sf-border-hairline) solid var(--sf-chip-edge-warn);
 }
 
 .tc-quizq-del {
@@ -1129,18 +1157,6 @@
 	flex: 1;
 	min-width: 0;
 }
-
-/* ------------------------------------------------------------ narrow screens */
-
-/* There were ZERO media queries in this file. `.tc-app` is a fixed
-   `calc(100vh - 115px)` and `.tc-rail` a fixed 248px column, so on a tablet the
-   lesson list took a third of the width from the thing being written, and in
-   portrait there was barely a column left to write in.
-
-   What makes that an inconsistency rather than a preference: this page's own
-   `visibilitychange` handler exists because "a tablet locking its screen" was
-   anticipated — so the script assumed a tablet while the stylesheet assumed one
-   could not happen.
 
 /* ============================================================== home screen
 
@@ -1168,13 +1184,13 @@
 	margin: 0 0 4px;
 	font-size: 1.35rem;
 	letter-spacing: -0.01em;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 }
 
 .tc-home-head p {
 	margin: 0;
 	padding: 0;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
 
 .tc-home-back {
@@ -1208,7 +1224,7 @@
 	font-weight: 700;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
 
 .tc-home-group:first-child {
@@ -1220,16 +1236,16 @@
 	align-items: center;
 	gap: 12px;
 	padding: 10px 12px;
-	border: 1px solid var(--border-color, #e2e2e2);
-	border-radius: var(--border-radius-md, 8px);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 	margin-bottom: 6px;
 	cursor: pointer;
-	background: var(--card-bg, #fff);
+	background: var(--sf-surface);
 }
 
 .tc-home-row:hover,
 .tc-home-row:focus-visible {
-	border-color: var(--primary, #4b3ce8);
+	border-color: var(--sf-focus);
 	outline: none;
 }
 
@@ -1240,7 +1256,7 @@
 
 .tc-home-title {
 	font-weight: 600;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1256,40 +1272,46 @@
 	text-align: center;
 }
 
-/* Status at a glance, same four states and the same colours as the Training
-   Course list view's indicators. Two surfaces disagreeing about what "In Review"
-   looks like is a small thing that makes both feel unreliable. */
+/* Status at a glance, the same four states, in the same hues as the Training Course list
+   view's indicators (green, amber, blue, grey), now drawn as the app's status chips: Published
+   is --sf-good, Draft --sf-warn, In Review the neutral pillar's closing stop. Two surfaces
+   disagreeing about what "In Review" looks like is a small thing that makes both feel
+   unreliable. Every pill is the status word itself. */
 .tc-home-pill {
 	flex: 0 0 auto;
 	font-size: 0.72rem;
 	font-weight: 600;
 	padding: 2px 8px;
-	border-radius: 999px;
-	background: var(--bg-light-gray, #f4f5f6);
-	color: var(--tr-muted, #5f6488);
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-bg);
+	color: var(--sf-text-muted);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
 }
 
 .tc-home-pill.is-published {
-	background: var(--bg-green, #e3f5e9);
-	color: var(--text-on-green, #1f7a44);
+	background: var(--sf-good);
+	color: var(--sf-on-good);
+	border-color: var(--sf-chip-edge-good);
 }
 
 .tc-home-pill.is-draft {
-	background: var(--bg-orange, #fdf1e0);
-	color: var(--text-on-orange, #9a5b06);
+	background: var(--sf-warn);
+	color: var(--sf-on-warn);
+	border-color: var(--sf-chip-edge-warn);
 }
 
 .tc-home-pill.is-in-review {
-	background: var(--bg-blue, #e8eefc);
-	color: var(--text-on-blue, #2f4faa);
+	background: var(--sf-pillar-neutral-deep);
+	color: var(--sf-on-pillar);
+	border-color: var(--sf-chip-edge-neutral);
 }
 
 /* Retired is the one that most needs to not look like Published, and the one a
    hard-coded three-status test left unguarded. Deliberately the flattest of the
    four: out of service is not a state anybody should have to read twice. */
 .tc-home-pill.is-retired {
-	background: var(--bg-light-gray, #f4f5f6);
-	color: var(--text-light, #8d99a6);
+	background: var(--sf-bg);
+	color: var(--sf-text-muted);
 }
 
 /* Both are hidden on the home screen, and both need saying explicitly. The
@@ -1332,33 +1354,35 @@
 
 .tc-starter,
 .tc-shape {
-	border: 1px solid var(--border-color, #e2e2e2);
-	border-radius: var(--border-radius-md, 8px);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 	padding: 10px 12px;
 	cursor: pointer;
-	background: var(--card-bg, #fff);
+	background: var(--sf-surface);
 }
 
 .tc-starter:hover,
 .tc-shape:hover,
 .tc-starter:focus-visible,
 .tc-shape:focus-visible {
-	border-color: var(--primary, #4b3ce8);
+	border-color: var(--sf-focus);
 	outline: none;
 }
 
-/* An inset ring rather than a thicker border: a border that changes width on
-   selection reflows the grid, and every other card shifts by a pixel. */
+/* An inset ring (an outline drawn inside the edge) rather than a thicker border: a
+   border that changes width on selection reflows the grid, and every other card shifts by
+   a pixel. */
 .tc-starter.is-chosen,
 .tc-shape.is-chosen {
-	border-color: var(--primary, #4b3ce8);
-	box-shadow: inset 0 0 0 1px var(--primary, #4b3ce8);
+	border-color: var(--sf-focus);
+	outline: 1px solid var(--sf-focus);
+	outline-offset: -2px;
 }
 
 .tc-starter-label,
 .tc-shape-label {
 	font-weight: 600;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 }
 
 .tc-starter-blurb,
@@ -1377,7 +1401,7 @@
 /* --------------------------------------------- AI drafting, in the dialog */
 
 .tc-newai {
-	border-top: 1px solid var(--border-color, #e2e2e2);
+	border-top: 1px solid var(--sf-rule);
 	padding-top: 12px;
 	margin-top: 4px;
 }
@@ -1385,7 +1409,7 @@
 .tc-newai-head {
 	font-weight: 600;
 	margin-bottom: 6px;
-	color: var(--heading-color, #1a1830);
+	color: var(--sf-text-strong);
 }
 
 .tc-newai textarea {
@@ -1400,20 +1424,40 @@
 .tc-newai-done {
 	margin-top: 10px;
 	padding: 8px 10px;
-	border-radius: var(--border-radius-md, 8px);
-	background: var(--bg-light-gray, #f4f5f6);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 }
 
 .tc-newai-list {
 	margin: 6px 0 4px;
 	padding-left: 18px;
 	font-size: 0.82rem;
-	color: var(--tr-muted, #5f6488);
+	color: var(--sf-text-muted);
 }
+
+/* ------------------------------------------------------------ narrow screens */
+
+/* There were ZERO media queries in this file. `.tc-app` is a fixed
+   `calc(100vh - 115px)` and `.tc-rail` a fixed 248px column, so on a tablet the
+   lesson list took a third of the width from the thing being written, and in
+   portrait there was barely a column left to write in.
+
+   What makes that an inconsistency rather than a preference: this page's own
+   `visibilitychange` handler exists because "a tablet locking its screen" was
+   anticipated — so the script assumed a tablet while the stylesheet assumed one
+   could not happen.
 
    991.98px is frappe's own `media-breakpoint-down` value, and the `.98` matters
    for the same reason it does on the learner rail: written as 991 it leaves a
-   fractional gap that browser zoom lands in routinely. */
+   fractional gap that browser zoom lands in routinely.
+
+   v1.650.0: this comment used to be split in two. The home-screen section (v1.489.0) was
+   pasted into its middle, and CSS comments do not nest, so the comment ended at that
+   section's own closing marker and this paragraph sat in the stylesheet as a selector. A
+   rule whose selector is invalid is dropped whole, and the rule it swallowed was the
+   tablet block below: from v1.489.0 to v1.650.0 none of it applied. The tests that pinned
+   the breakpoint read the text and passed. tests/test_s3_page_css.py now fails the build on
+   a comment that opens inside another one. */
 @media (max-width: 991.98px) {
 	.tc-app {
 		/* Let the page scroll instead of trapping everything in one viewport-high
@@ -1434,11 +1478,42 @@
 		   forty lessons would otherwise push the sheet entirely off the screen. */
 		max-height: 34vh;
 		border-right: 0;
-		border-bottom: 1px solid var(--border-color, #e2e2e2);
+		border-bottom: 1px solid var(--sf-rule);
 	}
 
 	/* The add button stops being a hover affordance when there is no hover. */
 	.tc-addbtn {
 		opacity: 1;
+	}
+}
+
+/* The one phone breakpoint. The top bar wraps instead of clipping the course name, the sheet
+   gives its side padding back to the text, and the hover-only lesson delete is always
+   shown, because a phone has no hover to reveal it with. */
+@media (max-width: 767px) {
+	.tc-bar {
+		flex-wrap: wrap;
+	}
+
+	.tc-course-name {
+		max-width: none;
+	}
+
+	.tc-scroll {
+		padding: 20px 12px 80px;
+	}
+
+	.tc-rail-del {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tc-status.is-saving .tc-pip {
+		animation: none;
+	}
+
+	.tc-addbtn:hover {
+		transform: none;
 	}
 }

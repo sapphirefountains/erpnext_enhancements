@@ -1,0 +1,698 @@
+/*
+ * Location Timeline (workforce/page/location_timeline) — desk page styles.
+ *
+ * The page's own stylesheet, so Frappe's page loader sends it with the page (getpage) and an
+ * edit reaches every device on the next deploy. It used to be public/css/workforce/
+ * location_timeline.css, pulled in by frappe.require of a raw /assets path (v1.650.0 moved it).
+ * Page CSS is appended to <head> once and never removed, so it is GLOBAL: every selector here
+ * starts with an lt- class. tests/test_s3_page_css.py holds it to that.
+ *
+ * Every colour is an --sf-* token (docs/app-design-system.md), so the page follows the Desk's
+ * light or dark theme with no theme block of its own. Status is the status tokens: good is
+ * --sf-good, gaps and stops are --sf-warn, no fixes / stale / the clock-out anchor are
+ * --sf-danger, and every pill carries its word. The interval swatches are data, set per card
+ * through --lt-swatch by the script; they must NOT shift with the theme.
+ *
+ * Structure is square; the mode toggle and the speed buttons are controls and round at
+ * --sf-radius-control; pills are pills. No shadows: the map markers keep a white ring, which
+ * is what separates them from the basemap.
+ *
+ * The map is Google Maps, which draws its own controls and info windows, so this file carries
+ * no map-library overrides; it only styles the page chrome and the HTML markers/labels the
+ * script hands to the map. The map's own strokes (gaps, stops, the geofence, the interval
+ * colours) are hex values in the script, because the Maps API takes a value, not a variable;
+ * the legend swatches below read the nearest status token.
+ *
+ * Class contract: tests/test_location_timeline_page.py asserts every "lt-" class the page
+ * script emits has a rule here, so an unstyled element cannot ship silently (the training
+ * player once shipped 130 of them).
+ */
+
+.lt-root {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--sf-text);
+}
+
+/* ---- toolbar ------------------------------------------------------------- */
+
+.lt-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 18px;
+    min-height: 32px;
+}
+
+.lt-modes {
+    display: inline-flex;
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    border-radius: var(--sf-radius-control);
+    overflow: hidden;
+    background: var(--sf-surface);
+}
+
+.lt-mode-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--sf-text-muted);
+    font-size: 13px;
+    font-weight: var(--sf-weight-bold);
+    padding: 5px 14px;
+    cursor: pointer;
+    min-height: 30px;
+}
+
+.lt-mode-btn + .lt-mode-btn {
+    border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+/* The current mode is a fill and the label's colour, and it is the only one with a fill. */
+.lt-mode-btn.active {
+    background: var(--sf-primary);
+    color: var(--sf-on-primary);
+}
+
+.lt-mode-btn:focus-visible {
+    outline: 2px solid var(--sf-focus);
+    outline-offset: -2px;
+}
+
+.lt-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--sf-text-muted);
+    margin: 0;
+    cursor: pointer;
+}
+
+.lt-check .lt-accuracy-toggle {
+    margin: 0;
+}
+
+.lt-legend {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 11px;
+    color: var(--sf-text-muted);
+}
+
+.lt-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.lt-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: var(--sf-radius-circle);
+    background: var(--sf-text-muted);
+    box-sizing: border-box;
+}
+
+.lt-swatch-start {
+    border-radius: 0;
+    background: var(--sf-good);
+}
+
+.lt-swatch-end {
+    border-radius: 0;
+    background: var(--sf-danger);
+}
+
+.lt-swatch-hollow {
+    background: transparent;
+    border: 2px solid var(--sf-text-muted);
+}
+
+.lt-swatch-gap {
+    width: 18px;
+    height: 0;
+    border-radius: 0;
+    background: transparent;
+    border-top: 2px dashed var(--sf-danger);
+}
+
+.lt-swatch-stop {
+    background: var(--sf-white);
+    border: 3px solid var(--sf-warn);
+}
+
+.lt-swatch-site {
+    background: color-mix(in srgb, var(--sf-pillar-service) 15%, transparent);
+    border: var(--sf-border-hairline) dashed var(--sf-pillar-service);
+}
+
+.lt-live-status {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+}
+
+/* Mode switching hides the other mode's controls in CSS so the script only
+   flips one class on the root. */
+.lt-mode-live .lt-trail-only,
+.lt-mode-trail .lt-live-only {
+    display: none !important;
+}
+
+/* ---- layout -------------------------------------------------------------- */
+
+.lt-layout {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+}
+
+.lt-map-col {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-map {
+    height: 640px;
+    border-radius: var(--sf-radius-none);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    background: var(--sf-bg);
+    z-index: 0; /* below the desk navbar and any dialog */
+}
+
+.lt-side {
+    flex: 0 0 340px;
+    max-height: 700px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ---- playback ------------------------------------------------------------ */
+
+.lt-playback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    padding: 8px 12px;
+}
+
+.lt-playback.lt-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.lt-play-btn {
+    min-width: 34px;
+}
+
+.lt-speeds {
+    display: inline-flex;
+    gap: 2px;
+}
+
+.lt-speed-btn {
+    appearance: none;
+    border: var(--sf-border-hairline) solid var(--sf-field-border);
+    background: var(--sf-surface);
+    color: var(--sf-text-muted);
+    font-size: 11px;
+    border-radius: var(--sf-radius-control);
+    padding: 2px 7px;
+    cursor: pointer;
+}
+
+.lt-speed-btn.active {
+    background: var(--sf-primary);
+    border-color: var(--sf-primary);
+    color: var(--sf-on-primary);
+}
+
+.lt-speed-btn:focus-visible {
+    outline: 2px solid var(--sf-focus);
+    outline-offset: 1px;
+}
+
+.lt-scrubber {
+    flex: 1 1 auto;
+    min-width: 120px;
+    margin: 0;
+    accent-color: var(--sf-focus);
+}
+
+.lt-clock {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--sf-text-strong);
+    min-width: 7em;
+    text-align: right;
+}
+
+/* ---- side panel ---------------------------------------------------------- */
+
+.lt-side-head {
+    padding: 2px 2px 0;
+}
+
+.lt-side-title {
+    font-size: 14px;
+    font-weight: var(--sf-weight-bold);
+    color: var(--sf-heading);
+}
+
+.lt-side-sub {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+}
+
+.lt-side-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.lt-side-actions .lt-export {
+    flex: 1 1 0;
+}
+
+.lt-state {
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) dashed var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    padding: 14px 14px;
+}
+
+.lt-state-title {
+    font-weight: var(--sf-weight-bold);
+    font-size: 13px;
+    color: var(--sf-text-strong);
+}
+
+.lt-state-body {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+    margin-top: 4px;
+}
+
+.lt-state-empty {
+    border-color: var(--sf-rule);
+}
+
+/* The title says which of the two it is in words; the edge is the status colour, through the
+   chip-edge token so it still shows on a dark card. */
+.lt-state-denied {
+    border-color: var(--sf-chip-edge-danger);
+    border-left: 4px solid var(--sf-danger);
+}
+
+.lt-state-error {
+    border-color: var(--sf-chip-edge-warn);
+    border-left: 4px solid var(--sf-warn);
+}
+
+.lt-state-loading .lt-state-title::after {
+    content: "…";
+}
+
+.lt-totals {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+}
+
+.lt-total {
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    padding: 8px 10px;
+}
+
+.lt-total-value {
+    font-size: 16px;
+    font-weight: var(--sf-weight-bold);
+    color: var(--sf-text-strong);
+    font-variant-numeric: tabular-nums;
+}
+
+.lt-total-label {
+    font-size: 11px;
+    color: var(--sf-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lt-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-card {
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-left: 4px solid var(--lt-swatch, var(--sf-focus));
+    border-radius: var(--sf-radius-none);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color var(--sf-duration) var(--sf-ease);
+}
+
+.lt-card:hover,
+.lt-card.active {
+    border-color: var(--sf-focus);
+    border-left-color: var(--lt-swatch, var(--sf-focus));
+}
+
+.lt-card:focus-visible {
+    outline: 2px solid var(--sf-focus);
+    outline-offset: 1px;
+}
+
+.lt-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.lt-card-title {
+    font-weight: var(--sf-weight-bold);
+    font-size: 13px;
+    color: var(--sf-text-strong);
+}
+
+.lt-card-sub {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+    margin-top: 1px;
+}
+
+.lt-card-stats {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+    margin-top: 6px;
+    line-height: 1.5;
+}
+
+.lt-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lt-badges:empty {
+    display: none;
+}
+
+/* ---- pills: state words, never colour alone ------------------------------
+   The sf_kit chip: a pill in the status fill with its own label colour and the tone's chip
+   edge, so each one keeps its boundary on a dark card. A neutral pill is the page ground with
+   a hairline. */
+
+.lt-pill {
+    display: inline-block;
+    font-size: 11px;
+    line-height: 18px;
+    border-radius: var(--sf-radius-pill);
+    padding: 0 8px;
+    white-space: nowrap;
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    background: var(--sf-bg);
+    color: var(--sf-text-muted);
+}
+
+.lt-pill-good,
+.lt-pill-live {
+    background: var(--sf-good);
+    border-color: var(--sf-chip-edge-good);
+    color: var(--sf-on-good);
+}
+
+.lt-pill-gaps,
+.lt-pill-warn {
+    background: var(--sf-warn);
+    border-color: var(--sf-chip-edge-warn);
+    color: var(--sf-on-warn);
+}
+
+.lt-pill-none,
+.lt-pill-stale {
+    background: var(--sf-danger);
+    border-color: var(--sf-chip-edge-danger);
+    color: var(--sf-on-danger);
+}
+
+.lt-pill-off,
+.lt-pill-pending,
+.lt-pill-muted {
+    background: var(--sf-bg);
+    color: var(--sf-text-muted);
+    border-color: var(--sf-rule);
+}
+
+.lt-pill-info {
+    background: var(--sf-pillar-neutral-deep);
+    border-color: var(--sf-chip-edge-neutral);
+    color: var(--sf-on-pillar);
+}
+
+/* ---- live list ----------------------------------------------------------- */
+
+.lt-live-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lt-live-row {
+    background: var(--sf-surface);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+    border-radius: var(--sf-radius-none);
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color var(--sf-duration) var(--sf-ease);
+}
+
+.lt-live-row:hover,
+.lt-live-row:focus-visible {
+    border-color: var(--sf-focus);
+    outline: none;
+}
+
+.lt-live-name {
+    font-weight: var(--sf-weight-bold);
+    font-size: 13px;
+    color: var(--sf-text-strong);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+}
+
+.lt-live-sub {
+    font-size: 12px;
+    color: var(--sf-text-muted);
+    margin-top: 1px;
+}
+
+.lt-live-meta {
+    font-size: 11px;
+    color: var(--sf-text-muted);
+    margin-top: 4px;
+}
+
+/* ---- map markers (HTML content of Google markers) ------------------------
+   These sit on Google's basemap, not on our card, so the ring that separates each from the
+   tiles is the palette's fixed white rather than a themed token: a dark-theme ring would sink
+   into a dark basemap. */
+
+/* Every marker's HTML content is wrapped in an "lt-icon" div that carries no
+   background or border of its own; the visible shape is the child element. */
+.lt-icon {
+    background: none;
+    border: 0;
+}
+
+.lt-anchor {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: var(--sf-weight-bold);
+    line-height: 16px;
+    padding: 0 5px;
+    border-radius: var(--sf-radius-none);
+    color: var(--sf-white);
+    background: var(--lt-swatch, var(--sf-bahama-blue));
+    border: 2px solid var(--sf-white);
+    white-space: nowrap;
+    transform: translate(-50%, -50%);
+}
+
+.lt-anchor-start {
+    border-color: var(--sf-good);
+}
+
+.lt-anchor-end {
+    border-color: var(--sf-danger);
+}
+
+.lt-stop-label {
+    font-size: 11px;
+    font-weight: var(--sf-weight-bold);
+    padding: 2px 6px;
+    background: var(--sf-surface);
+    color: var(--sf-text-strong);
+    border: var(--sf-border-hairline) solid var(--sf-chip-edge-warn);
+    border-radius: var(--sf-radius-none);
+}
+
+.lt-stop-label::before {
+    border-top-color: var(--sf-chip-edge-warn);
+}
+
+/* The replay's moving dot. Its pulse is a ring (the outline) that widens and fades, not a
+   shadow. */
+.lt-play-marker {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--sf-radius-circle);
+    background: var(--sf-focus);
+    border: 3px solid var(--sf-white);
+    outline: 3px solid color-mix(in srgb, var(--sf-focus) 45%, transparent);
+    outline-offset: 0;
+    transform: translate(-50%, -50%);
+    animation: lt-pulse 1.4s ease-out infinite;
+}
+
+@keyframes lt-pulse {
+    0% {
+        outline-offset: 0;
+        outline-color: color-mix(in srgb, var(--sf-focus) 45%, transparent);
+    }
+    100% {
+        outline-offset: 9px;
+        outline-color: transparent;
+    }
+}
+
+.lt-live-pin {
+    position: relative;
+    display: block;
+    white-space: nowrap;
+}
+
+.lt-live-dot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--sf-radius-circle);
+    background: var(--sf-good);
+    border: 3px solid var(--sf-white);
+    transform: translate(-50%, -50%);
+}
+
+.lt-live-pin.stale .lt-live-dot {
+    background: var(--sf-danger);
+}
+
+.lt-live-label {
+    position: absolute;
+    left: 10px;
+    top: -10px;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: var(--sf-radius-none);
+    background: var(--sf-surface);
+    color: var(--sf-text-strong);
+    border: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.lt-live-label small {
+    font-size: 10px;
+    color: var(--sf-text-muted);
+}
+
+/* A stale pin also starts its second line with the word "Stale". */
+.lt-live-pin.stale .lt-live-label {
+    border-color: var(--sf-chip-edge-danger);
+    border-left: 3px solid var(--sf-danger);
+}
+
+
+/* ---- Google InfoWindow ---------------------------------------------------
+   Google renders the InfoWindow on ITS OWN light surface, even on a map whose
+   colorScheme is DARK. Our popup content inherits the page's text colour, which
+   in dark mode is near-white -- so the bubble came up white with near-invisible
+   text on it.
+
+   So this reads the palette's fixed ink, not a themed token: the content sits on
+   Google's surface rather than ours, and readability there beats matching the app
+   theme. That is the same call public/js/travel/travel_trip_map.js makes for its
+   label chips, and for the same reason.
+
+   The wrapper class is applied in JS where the InfoWindow content is built; the
+   .gm-style-iw selectors cover Google's own chrome around it (the close button
+   and the padding container), which otherwise keeps inheriting too. */
+.lt-popup,
+.lt-map .gm-style-iw,
+.lt-map .gm-style-iw-d {
+    color: var(--sf-ink-900);
+}
+
+.lt-popup {
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.lt-popup b {
+    display: block;
+    margin-bottom: 2px;
+}
+
+/* ---- motion + small screens ---------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .lt-play-marker {
+        animation: none;
+    }
+
+    .lt-card,
+    .lt-live-row {
+        transition: none;
+    }
+}
+
+/* The one phone breakpoint: the side panel drops under the map. */
+@media (max-width: 767px) {
+    .lt-layout {
+        flex-direction: column;
+    }
+
+    .lt-side {
+        flex-basis: auto;
+        max-height: none;
+    }
+
+    .lt-map {
+        height: 420px;
+    }
+
+    .lt-mode-btn {
+        min-height: var(--sf-touch-min);
+    }
+}

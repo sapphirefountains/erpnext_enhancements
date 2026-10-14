@@ -18,12 +18,12 @@ class TestLocationTimelineMap(unittest.TestCase):
     def setUp(self):
         base_dir = os.path.dirname(os.path.dirname(__file__))
         self.js_path = os.path.join(base_dir, 'workforce', 'page', 'location_timeline', 'location_timeline.js')
-        self.css_path = os.path.join(base_dir, 'public', 'css', 'workforce', 'location_timeline.css')
+        self.css_path = os.path.join(base_dir, 'workforce', 'page', 'location_timeline', 'location_timeline.css')
 
-        with open(self.js_path, 'r') as f:
+        with open(self.js_path, 'r', encoding='utf-8') as f:
             self.js_content = f.read()
 
-        with open(self.css_path, 'r') as f:
+        with open(self.css_path, 'r', encoding='utf-8') as f:
             self.css_content = f.read()
 
     def strip_comments(self, text):
@@ -67,14 +67,12 @@ class TestLocationTimelineMap(unittest.TestCase):
     def test_no_leaflet_css(self):
         self.assertNotIn('.leaflet-', self.css_content)
 
-    def test_bare_paths_in_frappe_require(self):
+    def test_no_versioned_asset_paths(self):
+        # The stylesheet is the page's own .css since v1.650.0, so there is no ASSETS list
+        # left; whatever the page loads must still carry no ?v= of its own.
         clean_js = self.strip_comments(self.js_content)
-        # Check that assets list exists and has no ?v=
-        self.assertIn('const ASSETS = [', clean_js)
-        match = re.search(r'const ASSETS = \[(.*?)\];', clean_js, re.DOTALL)
-        self.assertIsNotNone(match, "ASSETS array not found")
-        assets_content = match.group(1)
-        self.assertNotIn('?v=', assets_content)
+        self.assertNotIn('const ASSETS = [', clean_js)
+        self.assertNotIn('?v=', clean_js)
 
 
 class TestNoLeafletMethodsSurvive(unittest.TestCase):

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.650.0] - 2026-10-13
+
+### Changed
+
+- **Four more Desk pages draw their CSS from the `--sf-*` tokens** (custom pages S3.4b, ERPNext
+  TASK-2026-02823): Question Review, the Course Canvas, the Sales Pipeline TV board and the Location
+  Timeline. Styling and file layout only; no endpoint, route, realtime event or Python changed.
+  - **Question Review** (`training_review.css`) painted itself in Frappe's palette (`--red-500`,
+    `--green-500`, `--yellow-500`, `--primary`). It is on the semantic and status tokens now: a status
+    as text is mixed half and half with `--sf-text-strong` so it reads on a white card and a navy one;
+    Draft and Published are status chips; cards are square; the focused card's bar is a 4px rule
+    instead of an inset shadow. 767px gives the verdict buttons a 44px touch target.
+  - **Course Canvas** (`training_canvas.css`) read the learner's Aurora palette (`--tr-*`) for its
+    chrome, with a literal fallback beside nearly every read (151 lines carried a literal colour),
+    plus Frappe colours. The
+    chrome is on `--sf-*`; the learner render inside the sheet still takes `player.css`, which is the
+    point of the canvas. Shadows became hairlines and outlines; the save pip, the conflict banner, the
+    asset warnings, the unreviewed-question flag and the home-screen status pills take the status
+    tokens. The current lesson in the rail is a 3px focus bar and a heavier weight.
+  - **Sales Pipeline** (`sales_pipeline.css`). Every rule now sits under `.sales-pipeline-page` or
+    `body.sales-pipeline-tv`: the board's class names (`.pipeline-card`, `.rail-chip`) are generic,
+    and a Desk page's CSS stays in `<head>` for the whole session, so they styled any element of the
+    same name on every page opened afterwards. The `pipeline-pulse` keyframes became
+    `sales-pipeline-pulse` for the same reason. Amber and red staleness are `--sf-warn` / `--sf-danger`
+    chips edged in `--sf-chip-edge-*`; the red card pulses its outline colour instead of a glow. The TV
+    font sizes are unchanged: it is a wall display. Phones get one column at a time, swiped sideways.
+  - **Location Timeline.** Its stylesheet moves from `public/css/workforce/location_timeline.css` into
+    the page folder as `location_timeline.css`, and the page no longer `frappe.require`s it. That path
+    was not actually being served stale (v16's `frappe.require` appends `?v=<build>` to a non-bundled
+    path, `AssetManager.execute` in `assets.js` on `version-16`), but it was a second request behind
+    a `frappe.dom.freeze()` for a file the page loader sends with the page for nothing. The page also
+    stacks at the one 767px breakpoint instead of 900px; the markers keep a white ring on the basemap
+    instead of a drop shadow.
+- **Status words beside status colours.** The Sales Pipeline days badge now reads "12 days · Aging"
+  or "· Stale", and an overdue hand-off chip starts with "Overdue"; a stale Live pin on the Location
+  Timeline starts its second line with "Stale"; an unfinished checkpoint pin on the Course Canvas
+  says "unfinished" in its tooltip and accessible name.
+
+### Fixed
+
+- **The Course Canvas's tablet layout never applied, from v1.489.0 until now.** The home-screen
+  section was pasted into the middle of the narrow-screens comment. CSS comments do not nest, so the
+  comment ended at the home-screen section's own closing marker and its second paragraph sat in the
+  stylesheet as a selector, which made the next rule invalid. That rule was
+  `@media (max-width: 991.98px)`, and a browser drops an invalid rule whole: below 992px the rail
+  stayed a fixed 248px column and the canvas a fixed viewport-high box. The tests that pinned the
+  breakpoint searched the text and passed. The comment is whole again, and
+  `tests/test_s3_page_css.py` now fails on a comment that opens inside another one or closes twice.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the four pages: no injected styles, the `.css` exists, no literal
+  colours or Frappe palette variables, every `--sf-*` read defined, selectors namespaced, one 767px
+  breakpoint (the two Training pages also keep Frappe's 991.98px, which their own suites pin). New
+  checks for every page: no `var(--tr-...)`, every `@keyframes` name prefixed, comments well formed,
+  the Location Timeline's old stylesheet gone, and the Sales Pipeline's realtime event, server method
+  and hooks untouched. Each check fails on the pre-change files.
+- `test_location_timeline_page` / `test_location_timeline_map` follow the stylesheet into the page
+  folder and onto the tokens.
+
 ## [1.648.0] - 2026-10-13
 
 Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.
