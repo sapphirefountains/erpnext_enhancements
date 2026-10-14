@@ -3680,10 +3680,16 @@ jobs:
   # three; removing them returned it to 0 over 2,187 working-tree files and 7,437
   # history blobs in ~22s. Scanning this repo's real history found nothing.
   # ---------------------------------------------------------------------------
+  # The history scan reads every version of every file, and CHANGELOG.md alone is now a
+  # 3.7 MB file with 1,400+ versions (every PR adds one): about 5 GB of text per run. That
+  # took ~22s when this job was written and 5-10 minutes by 2026-10-14, when two runs were
+  # cancelled at the old 10-minute limit with the scan itself still clean. 30 minutes is
+  # headroom, not a fix; the fix is to skip blobs already scanned clean (a blob is
+  # content-addressed, so clean once is clean for the same rules).
   secret-scan:
     name: No committed secrets (working tree + full git history)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
