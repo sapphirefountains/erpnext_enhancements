@@ -59,6 +59,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a field created in app code with `create_custom_fields` that isn't registered. It reads string
     literals, module constants and `field_definition()`-style helpers with `ast`.
 
+## [1.681.0] - 2026-10-14
+
+### Added
+
+- **Hubs and dashboards link both ways** (custom pages S4a, ERPNext TASK-2026-02806, part 1).
+  - **Hub to dashboard.** The Design and Operations hubs link the Product Dashboard, and the
+    Production and Support hubs link the Service Dashboard. Every other hub already linked its
+    own dashboard. These are URL shortcuts, which are never permission-filtered. That is safe
+    here only because on prod on 2026-10-14 nobody who could open a hub was refused the
+    dashboard it links; every pair was counted.
+  - **Dashboard to hub.** The new **Dashboard Hub Links** Custom HTML Block is the first block on
+    all ten department dashboards. Everything below it keeps the order people see today. On
+    the Design, Executive, HR, Marketing, Production and Sales dashboards the KPI Cockpit has
+    been first on prod since the seeder's write of 2026-08-06, while the files had it last. The
+    files now match prod (Cockpit directly after the hub links), so this release's force-import
+    moves nothing. Finance, Operations and Service keep the Cockpit last, as on prod. It could not be a URL shortcut. A dashboard is gated on
+    ERPNext's broad roles and a hub on a team role, so most of a dashboard's viewers cannot open
+    its hub: 8 of the 14 who could open the Design Dashboard could not open the Design Hub, 11
+    of 14 on Operations, 7 of 14 on Sales and 4 of 7 on Executive and Marketing. A "Design Hub"
+    shortcut would have been a dead tile for them. The block reads `frappe.workspaces`, the
+    workspaces this session may open, draws only those hubs, and hides itself when none is
+    left. It asks the server nothing, routes in place, and is restored by the seeder on a site
+    whose dashboard lost it.
+- **Operations Hub: inventory.** Stock Scan (`/stock-scan`), Warehouse QR Labels and the
+  Product Dashboard as shortcuts, and an Inventory card: Stock Entry, Storage Location,
+  Inventory Count Session, Stock Scan Log, Inventory Scanner Audit, Stock Balance, Stock Ageing,
+  Item Naming Audit. All three Operations Team holders can use the scan and label pages.
+- **Product Dashboard content.** It held the KPI Cockpit and nothing else. It now also has
+  shortcuts to Item, Configurable Product, Product Configuration, BOM and the Rental Planner,
+  plus a Catalog card and a Reports card (Item Naming Audit, Item-wise Sales History, Item
+  Prices, Stock Balance, BOM Explorer). Every one of these is permission-filtered.
+- **`api.task_dashboard.get_my_priority_tasks`**, the endpoint behind the block below. It
+  returns the session user's own open tasks with `frappe.get_list`, matched on `_assign` with the
+  JSON quotes so one user id cannot match inside another. It sorts by company rank, then
+  project, then urgency. Project names and ranks are read with `get_all`, and only for the
+  projects those tasks already name, because the Employee user-permission cascade on Project
+  would otherwise leave most people's tasks unranked.
+- **Top Company Priority Projects is a standard report** of Project Enhancements. Until now it
+  was a non-standard Query Report that existed only on prod and was linked from the Executive
+  Hub. The SQL is copied unchanged, including its `'Cancelled'` spelling, even though prod's
+  Task statuses spell it with one l. The roles are copied too. The letterhead link is left
+  out. Model sync replaces the site row, because the file's stamp is newer.
+
+### Changed
+
+- **The site-made "Home Dashboard Tasks" block has a source** (`custom_html_blocks/my_priority_tasks.*`),
+  and from now on the seeder overwrites the site copy with it. It is not a duplicate of the Task
+  Dashboard. That block is the shared morning screen; this one is the viewer's own task list,
+  so it stays on the Executive Hub and the Projects workspace under its old name. Moving it
+  fixed four problems:
+  - its two `get_list` calls became one endpoint;
+  - task subjects and project names went into `innerHTML` unescaped, and now they are escaped;
+  - task links were `/app/task/...` full reloads, and now a task opens in place;
+  - every render added another `document.body` click listener, and these stacked up.
+  It is now on sf_kit (panels, chips, ticket), uses the `--sf-*` status tokens instead of its
+  gradients, and reloads when you come back to the workspace.
+  - **This replaces a block Nik built and edited by hand on the site** (25 Version rows, last
+    edited 2026-02-07), so it needs his sign-off. The repo holds a rewrite, not the old code
+    (the repo is public). The old version stays recoverable from the block's Version history:
+    the seeder writes with `db.set_value`, which adds no Version rows and removes none.
+- **The Morning Briefing workspace shows the briefing.** It held a `/wall` link and two lists
+  that only a System Manager can open (Daily Briefing and the Enhancements Settings). It now
+  leads with the Morning Briefing block. `/wall` stays, the two lists are folded into one
+  "Briefing records" card, and the duplicate Daily Briefing shortcut is gone.
+  - **Who sees it.** On 16.50, `Workspace.is_permitted` (`frappe/desk/desktop.py`) checks two
+    things only: that the user has not blocked the workspace's module (`is_module_visible`), then
+    the workspace's own `roles`. The DocPerm-derived `allowed_modules` gate is gone. So with
+    `roles: []` the page reached every system user (17 on prod), even though its one DocType is
+    System Manager only.
+  - **Now gated on `api.task_dashboard.STAFF_ROLES`**, the same roles `get_morning_briefing`
+    and `/wall` serve. 3 of the 17 hold none of them; for those 3 the page would have been a
+    no-access panel and a `/wall` link that refuses them.
+  - The "Briefing records" card needs no gate of its own: `get_links` drops each item the viewer
+    cannot open, and drops the card when none is left, so non-System-Managers never see it.
+- **The kiosk is linked at `/kiosk`**, not through the `time-kiosk` desk page, which is only a
+  redirect to it. The Production Hub's Time Kiosk shortcut goes straight there. The Workforce
+  workspace drops its redirect-page shortcut and renames "Kiosk PWA" to Time Kiosk, so it has
+  one link instead of two. The patch moves the seeded Time Kiosk Desk Shortcut and the Workforce
+  sidebar's Time Kiosk item to `/kiosk` too. It also removes that sidebar's "Kiosk PWA" item,
+  a URL link with no URL that was dead on prod. Fresh sites seed the tile at `/kiosk`.
+
+### Fixed
+
+- **Pages admit the roles their hubs gate on.** Both gaps were latent, and nobody's access
+  changed on 2026-10-14:
+  - The Marketing Hub (gated on Marketing Team) links the GA4 Dashboard, whose page admitted
+    only System Manager, Sales User and Sales Manager. The page now admits Marketing Team and
+    Marketing Manager too. Its API needs only a login.
+  - The Production Hub (gated on Production Team and Maintenance Manager) links the
+    Maintenance Day Board, which admitted System Manager, Maintenance Supervisor and Projects
+    Manager. The page and `api.maintenance_board.BOARD_ROLES` now admit Maintenance Manager as
+    well. All 14 holders of Maintenance Manager also held Projects Manager.
+  - The premise that no Role Profile grants Maintenance Supervisor or Reviewer is out of date.
+    Prod has single-role profiles for both, held by 5 and 4 people. They were left alone.
+
+### Notes
+
+- `patches/custom_pages_s4a_hub_links` force-imports the 16 workspaces, 2 pages and 1 report
+  this release edits, because `import_file` is timestamp-gated. Every file is stamped
+  2026-10-14 12:00, past the prod rows. The patch then moves the kiosk rows. Every step logs
+  its own failure, so the patch cannot raise. `tests/test_s4a_hub_links.py` runs it with every
+  frappe call raising.
+- Not done: **"Active Projects w/ TL and PM"**, the other prod-only report the Operations Hub
+  links, stays a site record. Its name contains a slash, which `frappe.scrub` keeps, so no
+  report folder can hold it (`test_report_modules` pins folder = `scrub(name)`). Renaming it
+  would break the existing links and bookmarks.
+- Found, not changed: on prod the **Sales Hub** carries a custom module "Sales Hub". Someone set
+  it at 18:47 on 2026-10-13, after the S1 deploy had re-imported the hub with no module. The
+  **Support Hub** carries "Custom Workspaces" from the 16.50 upgrade's backfill. This release
+  does not touch the Sales Hub. The Support Hub's re-import puts it back to no module, like the
+  other seven hubs.
+- New suite `test_s4a_hub_links` (own CI step). `test_dashboard_widgets`, `test_block_kit`,
+  `test_custom_html_blocks` and the node block harness now know the two new blocks.
+
 ## [1.680.0] - 2026-10-14
 
 ### Added

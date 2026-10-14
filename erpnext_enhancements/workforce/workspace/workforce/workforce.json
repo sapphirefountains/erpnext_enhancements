@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"wf_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"wf_sc_kiosk\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"wf_sc_loc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Location Timeline\",\"col\":4}},{\"id\":\"wf_sc_pwa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kiosk PWA\",\"col\":4}},{\"id\":\"wf_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"wf_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Time Tracking</b></span>\",\"col\":12}},{\"id\":\"wf_card_tt\",\"type\":\"card\",\"data\":{\"card_name\":\"Time Tracking\",\"col\":4}}]",
+ "content": "[{\"id\":\"wf_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"wf_sc_loc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Location Timeline\",\"col\":4}},{\"id\":\"wf_sc_pwa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"wf_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"wf_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Time Tracking</b></span>\",\"col\":12}},{\"id\":\"wf_card_tt\",\"type\":\"card\",\"data\":{\"card_name\":\"Time Tracking\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -53,7 +53,7 @@
    "link_to": "Time Kiosk Settings"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Workforce",
  "name": "Workforce",
@@ -65,17 +65,12 @@
  "sequence_id": 26,
  "shortcuts": [
   {
-   "label": "Time Kiosk",
-   "link_to": "time-kiosk",
-   "type": "Page"
-  },
-  {
    "label": "Location Timeline",
    "link_to": "location-timeline",
    "type": "Page"
   },
   {
-   "label": "Kiosk PWA",
+   "label": "Time Kiosk",
    "type": "URL",
    "url": "/kiosk"
   }
