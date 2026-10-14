@@ -115,8 +115,13 @@
 // first real trip is why: v1.544.0 had just taken it from six flags to none, and every booking on
 // it has its number and no file yet, so counted as gaps its paperwork would have put ten back.
 //
-// Styling uses Frappe CSS variables so Frappe Light and Timeless Night both work. The page loader
-// serves this file version-aware, so no .bundle.* is needed.
+// STYLING is plan_a_trip.css beside this file, which the page loader sends with the page (custom
+// pages S3.4c, v1.661.0; it was a <style> string written from here). Its colours are the app's
+// --sf-* tokens, so the light and dark Desk themes both work, and no colour is written from this
+// script: a state is a class. The one exception is the Map view, where the Maps API takes a
+// colour VALUE for the older Marker and the lines; those are read from the same tokens at
+// runtime (tp_token_color). The page loader serves both files version-aware, so no .bundle.* is
+// needed.
 
 frappe.pages["plan-a-trip"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -133,209 +138,6 @@ frappe.pages["plan-a-trip"].on_page_load = function (wrapper) {
 frappe.pages["plan-a-trip"].on_page_show = function (wrapper) {
 	if (wrapper.trip_planner) wrapper.trip_planner.handle_route();
 };
-
-const TP_STYLE = `
-.tp-wrap{max-width:760px;margin:0 auto;padding-bottom:110px;font-size:15px;color:var(--text-color);}
-.tp-muted{color:var(--text-muted);font-size:13px;}
-.tp-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 8px;}
-.tp-head h4{margin:0;font-size:19px;}
-.tp-pill{display:inline-block;font-size:12px;border-radius:10px;padding:2px 10px;background:var(--control-bg);border:1px solid var(--border-color);}
-.tp-pill-green{background:#e7f7ed;color:#15803d;border-color:#15803d;}
-.tp-tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;position:sticky;top:0;background:var(--bg-color);z-index:3;}
-.tp-tab{flex:0 0 auto;padding:8px 14px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:14px;cursor:pointer;white-space:nowrap;}
-.tp-tab.tp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.tp-tab .tp-badge{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:9px;background:#fde8e8;color:#b91c1c;font-size:12px;font-weight:600;text-align:center;}
-.tp-tab.tp-active .tp-badge{background:#fff;}
-.tp-step-title{font-size:18px;font-weight:600;margin:6px 0 2px;}
-.tp-step-help{color:var(--text-muted);margin-bottom:14px;line-height:1.45;}
-.tp-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:12px;}
-.tp-card.tp-bad{border-color:#dc2626;}
-.tp-card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
-.tp-card-head b{font-size:16px;}
-.tp-card-head .tp-remove{margin-left:auto;}
-.tp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;}
-.tp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
-.tp-field label{font-size:13px;color:var(--text-muted);margin:0;}
-.tp-field label .tp-req{color:#b91c1c;}
-.tp-field input,.tp-field select,.tp-field textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
-.tp-field input[type=checkbox],.tp-field input[type=radio]{width:auto;padding:0;}
-.tp-field textarea{min-height:84px;}
-.tp-field .frappe-control{margin:0;}
-.tp-field .frappe-control input{height:auto;}
-.tp-pair{display:flex;flex-wrap:wrap;gap:6px;}
-.tp-pair input[type=date]{flex:1 1 150px;min-width:0;}
-.tp-pair input[type=time]{flex:1 1 120px;min-width:0;}
-.tp-wide{grid-column:1/-1;}
-.tp-seg{display:flex;flex-wrap:wrap;gap:8px;}
-.tp-seg button{flex:1 1 auto;min-height:42px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;padding:6px 12px;}
-.tp-seg button.tp-on{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.tp-chips{display:flex;flex-wrap:wrap;gap:8px;}
-.tp-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;user-select:none;}
-.tp-chip.tp-on{background:rgba(36,144,239,.12);border-color:var(--primary,#2490ef);font-weight:600;}
-button.tp-chip{font-family:inherit;line-height:inherit;margin:0;}
-button.tp-chip:disabled{cursor:default;}
-.tp-chip:focus-visible{outline:2px solid var(--sf-focus);outline-offset:2px;}
-.tp-chip.tp-ok{background:#e7f7ed;border-color:#15803d;color:#15803d;cursor:default;}
-.tp-chip.tp-miss{background:#fde8e8;border-color:#dc2626;color:#b91c1c;cursor:default;}
-.tp-refs{display:flex;flex-direction:column;gap:6px;}
-.tp-ref-row{display:flex;align-items:center;gap:8px;}
-.tp-ref-row span{flex:0 0 160px;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tp-ref-row input{flex:1;padding:6px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
-.tp-check{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;margin:2px 0;}
-.tp-add{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px;}
-.tp-btn{min-height:40px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;cursor:pointer;padding:6px 14px;}
-.tp-btn-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.tp-btn-link{border:none;background:none;color:var(--primary,#2490ef);padding:0;min-height:0;cursor:pointer;font-size:14px;}
-.tp-gap{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:8px;background:#fde8e8;color:#b91c1c;font-size:14px;margin-top:8px;}
-.tp-gap .tp-btn-link{margin-left:auto;white-space:nowrap;}
-.tp-ok-line{padding:8px 10px;border-radius:8px;background:#e7f7ed;color:#15803d;font-size:14px;margin-top:8px;}
-.tp-paper{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;border:1px dashed var(--border-color);color:var(--text-muted);font-size:13px;margin-top:6px;}
-.tp-paper .tp-btn-link{margin-left:auto;white-space:nowrap;font-size:13px;}
-.tp-paper-count{color:var(--text-muted);font-size:13px;}
-.tp-crew-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;margin-bottom:8px;background:var(--card-bg);}
-.tp-crew-row.tp-on{border-color:var(--primary,#2490ef);}
-.tp-crew-row .tp-crew-name{flex:1;min-width:0;}
-.tp-crew-extra{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;}
-.tp-crew-extra input{padding:6px 8px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
-.tp-matrix{overflow-x:auto;margin-bottom:14px;}
-.tp-matrix table{border-collapse:collapse;font-size:13px;}
-.tp-matrix th,.tp-matrix td{border:1px solid var(--border-color);padding:5px 8px;text-align:center;white-space:nowrap;}
-.tp-matrix th:first-child,.tp-matrix td:first-child{text-align:left;}
-.tp-matrix td.tp-y{background:#e7f7ed;color:#15803d;}
-.tp-matrix td.tp-n{background:#fde8e8;color:#b91c1c;font-weight:600;}
-.tp-day{font-weight:600;margin:14px 0 6px;}
-.tp-review-sec{margin-bottom:16px;}
-.tp-review-sec h5{margin:0 0 6px;font-size:15px;}
-.tp-sum{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
-.tp-sum div{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;}
-.tp-sum b{display:block;font-size:18px;}
-.tp-sum div.tp-quiet{border-style:dashed;}
-.tp-sum div.tp-quiet b{color:var(--text-muted);font-weight:500;}
-.tp-nav{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:var(--bg-color);border-top:1px solid var(--border-color);z-index:5;}
-.tp-nav button{flex:1;min-height:48px;border-radius:9px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:16px;cursor:pointer;}
-.tp-nav button.tp-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.tp-nav button:disabled{opacity:.5;cursor:default;}
-.tp-savestate{position:fixed;left:0;right:0;bottom:calc(76px + env(safe-area-inset-bottom));text-align:center;font-size:13px;pointer-events:none;z-index:6;}
-.tp-savestate span{display:inline-block;padding:4px 12px;border-radius:12px;background:var(--control-bg);color:var(--text-muted);border:1px solid var(--border-color);}
-.tp-savestate.tp-err span{background:#fde8e8;color:#b91c1c;border-color:#b91c1c;font-weight:600;}
-.tp-list-item,.tp-copy-item{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);cursor:pointer;}
-.tp-list-item h5,.tp-copy-item h5{margin:0 0 4px;font-size:16px;}
-.tp-copy-more summary{cursor:pointer;color:var(--primary,#2490ef);font-size:14px;margin:0 0 10px;}
-.tp-copy-facts{margin-top:8px;font-size:14px;line-height:1.5;}
-.tp-copy-go{margin-top:14px;}
-.tp-empty{text-align:center;padding:40px 16px;color:var(--text-muted);}
-.tp-wrap.tp-views-wide{max-width:none;}
-.tp-viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;}
-.tp-vbtn{padding:5px 12px;border-radius:14px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;cursor:pointer;white-space:nowrap;}
-.tp-vbtn.tp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.tp-viewbar select{padding:5px 10px;border-radius:14px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;max-width:210px;}
-.tp-viewbar select.tp-active{border-color:var(--primary,#2490ef);font-weight:600;}
-.tp-view-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 12px;}
-.tp-view-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;}
-.tp-view-head .tp-step-title{margin:0;}
-.tp-notice{padding:8px 10px;border-radius:8px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;font-size:14px;margin-bottom:12px;}
-.tp-flag{display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;background:#fde8e8;color:#b91c1c;font-size:13px;margin-top:6px;}
-.tp-flag .tp-btn-link{margin-left:auto;white-space:nowrap;font-size:13px;}
-.tp-tl-day{margin-bottom:16px;}
-.tp-tl-date{font-weight:600;font-size:15px;margin:0 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border-color);}
-.tp-today-tag{display:inline-block;margin-left:6px;padding:0 8px;border-radius:9px;background:var(--primary,#2490ef);color:#fff;font-size:12px;font-weight:600;}
-.tp-tl-item{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);margin-bottom:6px;}
-.tp-tl-item.tp-bad{border-color:#dc2626;}
-.tp-tl-icon{flex:0 0 22px;font-size:17px;line-height:1.3;text-align:center;}
-.tp-tl-time{flex:0 0 130px;color:var(--text-muted);font-size:13px;padding-top:2px;}
-.tp-tl-body{flex:1;min-width:0;}
-.tp-tl-title{font-weight:600;}
-.tp-tl-sub{color:var(--text-muted);font-size:13px;}
-.tp-whos{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-.tp-who{display:inline-block;padding:2px 9px;border-radius:12px;border:1px solid var(--border-color);background:var(--control-bg);font-size:12px;}
-.tp-who.tp-who-miss{border-color:#dc2626;color:#b91c1c;background:#fde8e8;}
-.tp-cost{color:var(--text-muted);font-size:13px;margin-top:4px;}
-.tp-xscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border-color);border-radius:10px;margin-bottom:12px;max-width:100%;width:fit-content;}
-.tp-xtable{border-collapse:separate;border-spacing:0;font-size:13px;}
-.tp-xtable th,.tp-xtable td{border-right:1px solid var(--border-color);border-bottom:1px solid var(--border-color);padding:6px 8px;background:var(--card-bg);}
-.tp-xtable .tp-sticky{position:sticky;left:0;z-index:1;text-align:left;}
-.tp-xtable td.tp-off,.tp-xtable th.tp-off{background:var(--control-bg);color:var(--text-muted);}
-.tp-xtable .tp-today{box-shadow:inset 0 3px 0 var(--primary,#2490ef);}
-.tp-xtable td.tp-cell-warn{background:#fde8e8;}
-.tp-cgrid th{text-align:center;white-space:nowrap;font-weight:600;}
-.tp-cgrid td{text-align:center;white-space:nowrap;min-width:54px;font-size:15px;}
-.tp-cgrid .tp-sticky{min-width:110px;max-width:150px;}
-.tp-cgrid .tp-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;}
-.tp-warn{color:#b91c1c;font-weight:700;}
-.tp-cmp th{text-align:left;vertical-align:top;min-width:210px;}
-.tp-cmp td{vertical-align:top;min-width:210px;max-width:290px;white-space:normal;}
-.tp-cmp .tp-sticky{min-width:96px;max-width:120px;}
-.tp-line{font-size:13px;line-height:1.35;margin-bottom:5px;}
-.tp-miss-text{color:#b91c1c;font-weight:600;}
-.tp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--text-muted);margin-bottom:12px;}
-.tp-pday{font-weight:600;margin:14px 0 6px;max-width:640px;}
-.tp-pcard{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:8px;max-width:640px;}
-.tp-kicker{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;}
-.tp-ptitle{font-size:16px;font-weight:600;margin:2px 0;}
-.tp-psub{font-size:13px;color:var(--text-muted);white-space:pre-line;}
-.tp-pnr{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:14px;font-weight:600;}
-.tp-preview{max-width:760px;}
-.tp-preview iframe{display:block;width:100%;height:560px;border:1px solid var(--border-color);border-radius:8px;background:#fff;margin:10px 0;}
-.tp-preview dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0 0;font-size:14px;}
-.tp-preview dt{color:var(--text-muted);font-weight:normal;}
-.tp-preview dd{margin:0;min-width:0;overflow-wrap:anywhere;}
-.tp-events{margin:6px 0 10px;padding-left:18px;font-size:14px;}
-.tp-docs{margin-top:12px;}
-.tp-docs-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;margin-bottom:6px;}
-.tp-docs-head label{font-size:13px;color:var(--text-muted);margin:0;}
-.tp-doc{border:1px solid var(--border-color);border-radius:8px;padding:6px 8px 6px 10px;margin-bottom:6px;background:var(--control-bg);}
-.tp-doc-line{display:flex;align-items:center;gap:8px;min-width:0;}
-.tp-doc-icon{flex:0 0 22px;font-size:17px;text-align:center;}
-.tp-doc-title{flex:1;min-width:0;font-size:14px;line-height:1.3;overflow-wrap:anywhere;}
-.tp-doc-title .tp-muted{display:block;}
-.tp-doc-open{flex:0 0 auto;display:inline-flex;align-items:center;min-height:36px;padding:0 6px;font-size:14px;font-weight:600;white-space:nowrap;}
-.tp-doc-x{flex:0 0 auto;min-width:36px;min-height:36px;border:none;background:none;color:var(--text-muted);font-size:17px;line-height:1;cursor:pointer;}
-.tp-doc-edit{display:flex;flex-wrap:wrap;gap:6px 8px;margin:4px 0 2px 30px;}
-.tp-doc-edit select{flex:1 1 160px;min-width:0;padding:6px 8px;border-radius:8px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:14px;}
-.tp-docchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-.tp-docchip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 9px;border-radius:12px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:12px;text-decoration:none;}
-a.tp-docchip:hover,a.tp-pdoc:hover{border-color:var(--primary,#2490ef);text-decoration:none;}
-.tp-bookdocs{margin-bottom:14px;}
-.tp-bookdocs-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;font-weight:600;margin:0 0 6px;}
-.tp-bookdocs-head .tp-btn-link{font-weight:normal;}
-.tp-pdocs{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
-.tp-pdoc{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--control-bg);color:var(--text-color);font-size:14px;text-decoration:none;}
-.tp-pdoc span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tp-contacts{max-width:1000px;}
-.tp-contacts-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
-.tp-contact{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.45;min-width:0;overflow-wrap:anywhere;}
-.tp-contact .tp-kicker{margin-bottom:2px;}
-.tp-contact a{display:inline-block;padding:2px 0;}
-.tp-contact.tp-sos{border-color:#dc2626;}
-.tp-contact.tp-sos a{color:#b91c1c;font-size:18px;font-weight:700;}
-.tp-map-days{margin:0 0 10px;}
-.tp-map{height:440px;width:100%;border:1px solid var(--border-color);border-radius:10px;background:var(--control-bg);}
-.tp-map-status{margin:6px 0 10px;}
-.tp-map-list{max-width:760px;}
-.tp-map-day-head{font-weight:600;font-size:15px;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border-color);}
-.tp-map-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);margin-bottom:6px;}
-.tp-map-num{flex:0 0 auto;min-width:26px;height:26px;padding:0 6px;border-radius:13px;color:#fff;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
-.tp-map-body{flex:1;min-width:0;overflow-wrap:anywhere;}
-.tp-map-body .tp-muted{display:block;}
-.tp-map-open{flex:0 0 auto;font-size:13px;white-space:nowrap;}
-@media (max-width:600px){.tp-map{height:340px;}
-.tp-map-row{flex-wrap:wrap;row-gap:2px;}
-.tp-map-body{flex:1 1 calc(100% - 46px);}
-.tp-map-open{margin-left:36px;}}
-@media (max-width:600px){.tp-ref-row span{flex-basis:110px;}
-.tp-tl-item{flex-wrap:wrap;}
-.tp-tl-time{flex:1 1 auto;}
-.tp-tl-body{flex:1 1 100%;padding-left:32px;}
-.tp-cmp th,.tp-cmp td{min-width:170px;}
-.tp-preview iframe{height:460px;}
-.tp-doc-edit{margin-left:0;}}
-[data-theme="dark"] .tp-notice{background:rgba(245,158,11,.15);color:#fcd34d;border-color:#b45309;}
-[data-theme="dark"] .tp-flag,[data-theme="dark"] .tp-who.tp-who-miss,[data-theme="dark"] .tp-xtable td.tp-cell-warn{background:rgba(220,38,38,.18);color:#fca5a5;}
-[data-theme="dark"] .tp-who.tp-who-miss{border-color:#f87171;}
-[data-theme="dark"] .tp-warn,[data-theme="dark"] .tp-miss-text{color:#f87171;}
-[data-theme="dark"] .tp-contact.tp-sos{border-color:#f87171;}
-[data-theme="dark"] .tp-contact.tp-sos a{color:#fca5a5;}
-`;
 
 // Steps, in order. `leg` ties a transport step to the Leg stored on its rows.
 const TP_STEPS = [
@@ -506,21 +308,77 @@ const TP_ICONS = {
 	agenda: "&#128205;",
 };
 
+// A design token's value, for the Maps API, which takes a colour value rather than a CSS
+// variable. sf_tokens.bundle.css is on every Desk page (app_include_css) before any page script
+// runs, and the palette tokens read here never change with the theme, so reading them once is
+// enough. The fallback is the colour this page drew before it moved onto the tokens, or the
+// token's own value where the hue changed (pick-up, the drive lines).
+function tp_token_color(name, fallback) {
+	try {
+		const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return value || fallback;
+	} catch (e) {
+		return fallback;
+	}
+}
+
 // The Map view's places, by their `kind` (views.build_trip_views' `places`): the word the list
 // uses, its icon (`glyph` is the same icon as text, for the map's own popups, which are built
-// from elements), and its marker's color. The colors are literal, not theme variables: a marker
-// sits on Google's tiles, not on the desk.
+// from elements), and its marker's colour. A kind is a category, not a status, so it takes a
+// palette hue dark enough for a white number. plan_a_trip.css paints the list's numbers and the
+// HTML markers from the same token (keyed by data-kind); `color` is only for the older Marker,
+// whose fill is a value. Stop and pick-up borrow the red and green status hues: the palette's
+// other dark hues are two blues too close to the airport's to tell apart on a map, and every
+// kind also says its word in the list and the popup.
 const TP_PLACE_KINDS = {
-	airport: { label: __("Airport"), icon: "&#9992;", glyph: "✈", color: "#2563eb" },
-	hotel: { label: __("Hotel"), icon: "&#127976;", glyph: "\u{1F3E8}", color: "#7c3aed" },
-	stop: { label: __("Stop"), icon: "&#128205;", glyph: "\u{1F4CD}", color: "#dc2626" },
-	pickup: { label: __("Pick-up"), icon: "&#128663;", glyph: "\u{1F697}", color: "#ea580c" },
-	dropoff: { label: __("Drop-off"), icon: "&#128663;", glyph: "\u{1F697}", color: "#c2410c" },
-	freight: { label: __("Freight delivery"), icon: "&#128230;", glyph: "\u{1F4E6}", color: "#92400e" },
+	airport: {
+		label: __("Airport"),
+		icon: "&#9992;",
+		glyph: "✈",
+		color: tp_token_color("--sf-bahama-blue", "#2563eb"),
+	},
+	hotel: {
+		label: __("Hotel"),
+		icon: "&#127976;",
+		glyph: "\u{1F3E8}",
+		color: tp_token_color("--sf-violet-deep", "#7c3aed"),
+	},
+	stop: {
+		label: __("Stop"),
+		icon: "&#128205;",
+		glyph: "\u{1F4CD}",
+		color: tp_token_color("--sf-red", "#dc2626"),
+	},
+	pickup: {
+		label: __("Pick-up"),
+		icon: "&#128663;",
+		glyph: "\u{1F697}",
+		color: tp_token_color("--sf-green", "#1e7e51"),
+	},
+	dropoff: {
+		label: __("Drop-off"),
+		icon: "&#128663;",
+		glyph: "\u{1F697}",
+		color: tp_token_color("--sf-teal-deep", "#c2410c"),
+	},
+	freight: {
+		label: __("Freight delivery"),
+		icon: "&#128230;",
+		glyph: "\u{1F4E6}",
+		color: tp_token_color("--sf-ink-700", "#92400e"),
+	},
 };
 
-// The lines between places on the Map view (`legs`), by their `kind`.
-const TP_LEG_COLORS = { drive: "#0f766e", walk: "#0f766e", flight: "#475569" };
+// A marker's number and ring, on the older Marker (the HTML marker takes them from the CSS).
+const TP_MARKER_WHITE = tp_token_color("--sf-white", "#ffffff");
+
+// The lines between places on the Map view (`legs`), by their `kind`: a drive in the Service
+// pillar's bright blue, which stands off the basemap's roads, and a flight in muted grey dashes.
+const TP_LEG_COLORS = {
+	drive: tp_token_color("--sf-fresh-blue", "#00a0df"),
+	walk: tp_token_color("--sf-fresh-blue", "#00a0df"),
+	flight: tp_token_color("--sf-ink-500", "#475569"),
+};
 
 // The Google Maps libraries the Map view uses, every one: EEGoogleMaps.load imports only what it
 // is asked for (and "maps"), and a symbol from a library nobody asked for is undefined at runtime
@@ -1012,40 +870,39 @@ class TpTripMap {
 		const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
 		const title = `${place.number}. ${place.label || kind.label}`;
 		if (this.advanced) {
+			// HTML in the page's own DOM, so plan_a_trip.css draws it (.tp-map-pin, by data-kind).
 			const pin = document.createElement("div");
+			pin.className = "tp-map-pin";
+			pin.setAttribute("data-kind", TP_PLACE_KINDS[place.kind] ? place.kind : "stop");
 			pin.textContent = String(place.number);
-			pin.style.cssText =
-				"min-width:26px;height:26px;padding:0 6px;border-radius:13px;border:2px solid #fff;" +
-				"display:flex;align-items:center;justify-content:center;box-sizing:border-box;" +
-				`background:${kind.color};color:#fff;font:700 12px/1 sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4);`;
 			return new this.maps.marker.AdvancedMarkerElement({ position: point, content: pin, title: title });
 		}
 		return new this.maps.Marker({
 			position: point,
 			title: title,
-			label: { text: String(place.number), color: "#ffffff", fontSize: "12px", fontWeight: "700" },
+			label: { text: String(place.number), color: TP_MARKER_WHITE, fontSize: "12px", fontWeight: "700" },
 			icon: {
 				path: this.maps.SymbolPath.CIRCLE,
 				scale: 13,
 				fillColor: kind.color,
 				fillOpacity: 1,
-				strokeColor: "#ffffff",
+				strokeColor: TP_MARKER_WHITE,
 				strokeWeight: 2,
 			},
 		});
 	}
 
-	// A place's popup: text in elements, and its Google Maps link. The popup is always light,
-	// so its colors are literal.
+	// A place's popup: text in elements, and its Google Maps link. Google draws the popup white
+	// in either theme, so .tp-map-popup reads the palette's ink, not a themed token.
 	popup(place) {
 		const kind = TP_PLACE_KINDS[place.kind] || TP_PLACE_KINDS.stop;
 		const box = document.createElement("div");
-		box.style.cssText = "min-width:170px;max-width:260px;color:#202124;font-size:13px;line-height:1.4;";
+		box.className = "tp-map-popup";
 		const line = (text, bold) => {
 			if (!text) return;
 			const el = document.createElement("div");
 			el.textContent = text;
-			if (bold) el.style.fontWeight = "600";
+			if (bold) el.className = "tp-map-popup-title";
 			box.appendChild(el);
 		};
 		line(`${place.number}. ${place.label || kind.label}`, true);
@@ -1208,7 +1065,6 @@ class TripPlanner {
 		this.page = page;
 		this.wrapper = wrapper;
 		this.body = $('<div class="tp-wrap"></div>').appendTo(page.main);
-		$(`<style>${TP_STYLE}</style>`).appendTo(page.main);
 		this.step = 0;
 		this.state = null;
 		this.lookups = null;
@@ -3201,8 +3057,10 @@ class TripPlanner {
 		const $tabs = $('<div class="tp-tabs"></div>').appendTo(this.body);
 		TP_STEPS.forEach((step, index) => {
 			const count = this.gaps_for_step(step.key).length;
-			$(`<button class="tp-tab ${index === this.step ? "tp-active" : ""}">${tp_esc(step.title)}${
-				count ? `<span class="tp-badge">${count}</span>` : ""
+			// The red count says "missing" as well: in the tooltip, and read aloud (.tp-sr).
+			const missing = count ? ` title="${tp_esc(__("{0} missing", [count]))}"` : "";
+			$(`<button class="tp-tab ${index === this.step ? "tp-active" : ""}"${missing}>${tp_esc(step.title)}${
+				count ? `<span class="tp-badge">${count}<span class="tp-sr"> ${__("missing")}</span></span>` : ""
 			}</button>`)
 				.appendTo($tabs)
 				.on("click", () => this.go(index));
@@ -3432,9 +3290,9 @@ class TripPlanner {
 				"Tick everyone on the trip and pick the trip lead. Change someone's dates only if they arrive late or leave early."
 			)
 		);
-		const $search = $(`<input type="text" class="form-control" placeholder="${__("Find a person")}">`).appendTo(
-			$step
-		);
+		const $search = $(
+			`<input type="text" class="form-control tp-search" placeholder="${__("Find a person")}">`
+		).appendTo($step);
 		const $list = $('<div style="margin-top:10px;"></div>').appendTo($step);
 		const t = this.state.trip;
 
@@ -5132,7 +4990,7 @@ class TripPlanner {
 					let number;
 					if (member.ref) number = tp_esc(member.ref);
 					else if (unbooked) number = `<span class="tp-muted">${__("nothing to confirm")}</span>`;
-					else number = `<b style="color:#b91c1c;">${__("missing")}</b>`;
+					else number = `<b class="tp-miss-text">${__("missing")}</b>`;
 					lines.push(`${icon[table]} ${tp_esc(this.card_label(card))}: ${number}`);
 				});
 			});
@@ -5140,7 +4998,7 @@ class TripPlanner {
 				if (item.traveler && item.traveler !== t.employee) return;
 				const number = item.tracking_number
 					? tp_esc(item.tracking_number)
-					: `<b style="color:#b91c1c;">${__("missing")}</b>`;
+					: `<b class="tp-miss-text">${__("missing")}</b>`;
 				lines.push(`&#128230; ${tp_esc(item.carrier || __("Shipment"))}: ${number}`);
 			});
 			$(`<tr><td>${tp_esc(t.employee_name || t.employee)}</td><td style="text-align:left;white-space:normal;">${
@@ -5943,7 +5801,7 @@ class TripPlanner {
 				place.who.join(", "),
 			].filter(Boolean);
 			$(`<div class="tp-map-row">
-				<span class="tp-map-num" style="background:${kind.color};">${place.number}</span>
+				<span class="tp-map-num" data-kind="${TP_PLACE_KINDS[place.kind] ? place.kind : "stop"}">${place.number}</span>
 				<span class="tp-map-body"><b>${kind.icon} ${tp_esc(place.label || kind.label)}</b><span class="tp-muted">${tp_esc(
 					facts.join(" · ")
 				)}</span></span>

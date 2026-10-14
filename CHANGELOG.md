@@ -94,6 +94,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intervals on its clock (`makeDesk({ intervals: true })`) and a settable `desk.today`, so the Day
   Board's poll and midnight run there.
 
+## [1.661.0] - 2026-10-14
+
+### Changed
+
+- **Plan a Trip draws its CSS from its own file and the `--sf-*` tokens** (custom pages S3.4c,
+  ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry changed,
+  and the S3.6 toggle chips (`<button aria-pressed>`, the `data-chip` focus restore, disabled on a
+  booking that is on an Expense Claim) work exactly as before.
+  - **CSS out of the script.** `TP_STYLE`, about 200 rules written into the page as a `<style>`
+    element on every open, is now `plan_a_trip.css` beside the page, which Frappe's page loader
+    sends with the page. Page CSS stays in `<head>` for the session, so every selector carries the
+    page's `tp-` prefix; the old file's own `[data-theme="dark"]` block, which was not prefixed, is
+    gone, because the tokens follow the Desk's theme.
+  - **On the tokens.** Frappe's variables and 75 literal colours (17 distinct: a green, a red and
+    an amber for every status, plus their dark-theme copies) became the semantic and status tokens. A
+    status as a fill is the token with its `--sf-on-*` label and `--sf-chip-edge-*` edge (the
+    Booked pill, the coverage chips, a step's missing count, "Not saved"); a status as text is
+    mixed half and half with `--sf-text-strong`, so it reads on a white card and a navy one; a
+    tinted panel is the token at 12% over the card. The amber notice's text is the warn mix, never
+    yellow (1.7:1 on white).
+  - **Shape.** Cards, rows, panels, fields and the map are square; buttons, step tabs, the
+    segmented choices and the view bar round at `--sf-radius-control`; chips and pills are pills.
+    A card with something missing keeps a 4px danger bar, which still shows on a navy card where a
+    red hairline (2.8:1) would not. Fields are white in both themes with 16px text, so iOS does not
+    zoom into them. Secondary buttons are the design system's transparent button with a 2px text
+    stroke, and the primary button and the step on screen are `--sf-primary` with its navy label
+    and bold (Frappe v16's `--primary` was a near-black in both themes).
+  - **Touch.** Step tabs, buttons, segmented choices, a file's Open and remove buttons and a
+    person's file links are 44px tall everywhere; the toggle chips, the view bar and "Open in Google
+    Maps" are 44px on a phone.
+  - **One phone breakpoint.** The two 600px blocks are one at 767px, the app's phone width.
+  - **No drop under a box.** Today's column in the Crew grid and Side by side kept its 3px bar, now
+    painted as a background image so the cell keeps its size; the map markers keep their white ring.
+- **The Map view's colours come from the tokens** (custom pages S3.4c). Each kind of place has one
+  palette colour, dark enough for a white number: airport bahama-blue, hotel violet-deep, stop red,
+  pick-up green, drop-off teal-deep, freight ink-700. `plan_a_trip.css` paints the list's numbers
+  and the HTML markers (`AdvancedMarkerElement` content, which is in the page's DOM) by
+  `data-kind`, instead of an inline `background`. The classic `Marker`'s fill and ring and the drive
+  (fresh-blue) and flight (ink-500) lines take a colour value, which the Maps API cannot read from a
+  variable, so the script reads the same tokens through `getComputedStyle` (`tp_token_color`), with
+  the colour it drew before as the fallback, the pattern the Location Timeline took in v1.652.0. A
+  place's popup (always white) is a class reading the palette's ink, and its link is bahama-blue
+  rather than the Desk's link colour, which in the dark theme was pale on a white popup.
+- **A step tab's red count says "missing".** It was a number in red and nothing else; the tab's
+  tooltip now reads "2 missing" and a screen reader hears it. Review's per-person confirmation list
+  marks "missing" with a class instead of an inline red.
+- **Review follow-ups.**
+  - A Link field turned grey while typing: its input is a Bootstrap `.form-control`, whose `:focus`
+    rule (0,2,0) outranked `.tp-field input` (0,1,1). Link fields and the "Find a person" search on
+    Who's going (a bare `.form-control`, now also `.tp-search`) stay white, square and 16px, under
+    `.tp-wrap` at (0,4,0); focus changes the edge to `--sf-focus` (guarded).
+  - The person chosen in the view bar's "View as" select no longer moves the bar by a pixel: the
+    border keeps its width and changes colour, and a 1px outline doubles it (guarded).
+  - Pick-up and the drive lines fall back to their new hues (`#1e7e51`, `#00a0df`), not the old
+    orange and teal (guarded). Stop and pick-up keep the red and green status hues on purpose: the
+    palette's other dark hues are two blues too close to the airport's, and each kind says its word.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers Plan a Trip with the same checks as the other pages (no
+  injected styles, the `.css` exists, no literal colour or Frappe palette variable, every `--sf-*`
+  read defined, selectors prefixed, square and token radii, no shadow, one 767px breakpoint), and a
+  `style.cssText` assignment that sets a colour now counts as an inline colour on every page. New
+  `TestPlanATrip`: no theme block of its own; each place kind's marker colour, list number and HTML
+  pin read one token; the lines and the marker ring read tokens and no other colour value is left in
+  the script; the number, pin and popup are classes; the step tab's count says "missing"; warn text
+  is the mix; the controls are touch-sized; and every `tp-` class the script draws has a rule, and
+  every rule a class. Each new check fails on the pre-change files.
+- `test_s3_6_accessibility` reads the chip's focus ring from `plan_a_trip.css` now that the CSS has
+  left the script.
+
 ## [1.659.0] - 2026-10-13
 
 ### Changed
