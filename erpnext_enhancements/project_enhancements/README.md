@@ -721,11 +721,15 @@ under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
 **Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
 (`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
-or to `/week/<expected_start_date>` for a project that has not started yet, since the planner
-drops a filter for a project with no tasks in the range on screen. `handle_route` reads `project`
-from `frappe.route_options` after the last-used view is restored, consumes it, and clears the PM
-filter so it cannot hide that project's cards. The button shows only to those whose roles open the
-page.
+or to `/week/<expected_start_date>` for a project that has not started yet. The button is only on
+an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
+those whose roles open the page. `take_route_project` (from `handle_route`) reads `project` from
+`frappe.route_options` after the last-used view is restored, consumes it, and clears the PM filter
+so it cannot hide that project's cards. It is a one-off: the remembered filters are not saved, the
+"last used" view is not saved while the link's project is the filter (`project_link`), and the key
+is taken out of the address with `history.replaceState` so Back does not reapply it. A linked
+project the planner does not list stays the filter, and a filtered project with nothing in range
+or unscheduled is named in a "No work for … in this range" note over the calendar.
 
 **Who can be booked.** A **Planner Resource** per person or outside crew, not Employee: the pool
 includes subcontractors, who have no HR record, and only some staff (field techs, PMs on site,

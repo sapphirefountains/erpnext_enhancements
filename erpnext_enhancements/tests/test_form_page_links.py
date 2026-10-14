@@ -2,9 +2,11 @@
 
 Each form opens the page that works on the same record, in the right state:
 
-* Project — View > Open in Project Planner: the planner with that project as its Project
-  filter (``?project=``, read from ``frappe.route_options`` and consumed by the planner), on the
-  week the project starts when that is still ahead.
+* Project — View > Open in Project Planner, on an open customer job (a planner project type):
+  the planner with that project as its Project filter (``?project=``, read from
+  ``frappe.route_options`` and consumed by the planner), on the week the project starts when that
+  is still ahead. A one-off: the person's remembered filters and "last used" view are untouched,
+  and the key leaves the address so Back does not put the filter back.
 * Project Quality Inspection — Open in Inspection Wizard, on a saved draft:
   ``/desk/inspection-wizard/<inspection>/0``, the wizard's own path form.
 * Rental Booking — View > Open in Rental Planner: the board from the booking's first day
@@ -42,6 +44,7 @@ BOOKING_FORM = APP / "asset_management/doctype/rental_booking/rental_booking.js"
 PROJECT_PLANNER = APP / "project_enhancements/page/project_planner/project_planner.js"
 DAY_BOARD = APP / "sapphire_maintenance/page/maintenance_day_board/maintenance_day_board.js"
 HOOKS = APP / "hooks.py"
+ENGINE = APP / "project_enhancements/crew_availability.py"
 
 CHANGED = (PROJECT_LINK, INSPECTION_FORM, BOOKING_FORM, PROJECT_PLANNER, DAY_BOARD)
 
@@ -81,6 +84,24 @@ class TestTheButtons(unittest.TestCase):
 		self.assertIn('frappe.set_route("project-planner", "week", starts, options);', code)
 		self.assertIn('pages["project-planner"]', code)
 		self.assertIn("frm.is_new()", code)
+
+	def test_project_button_only_on_a_job_the_planner_plans(self):
+		"""The planner lists Active customer jobs: the button's list of types is the engine's own
+		PLANNER_PROJECT_TYPES, and a Completed or Canceled project gets no button."""
+		code = _code(PROJECT_LINK)
+		engine = ast.parse(_text(ENGINE))
+		types = next(
+			ast.literal_eval(node.value)
+			for node in engine.body
+			if isinstance(node, ast.Assign)
+			and any(getattr(t, "id", "") == "PLANNER_PROJECT_TYPES" for t in node.targets)
+		)
+		listed = re.search(r"const planned = \[([^\]]*)\];", code)
+		self.assertIsNotNone(listed)
+		self.assertEqual(tuple(re.findall(r'"([^"]+)"', listed.group(1))), types)
+		self.assertIn("planned.includes(frm.doc.project_type)", code)
+		self.assertIn('const closed = ["Completed", "Canceled", "Cancelled"];', code)
+		self.assertIn("closed.includes(frm.doc.status)", code)
 
 	def test_project_script_is_loaded_and_declares_nothing_at_the_top_level(self):
 		"""doctype_js concatenates every Project script into one: a top-level const or function
@@ -142,24 +163,50 @@ class TestTheButtons(unittest.TestCase):
 
 class TestTheProjectPlannerRead(unittest.TestCase):
 	"""The planner's one new read: `project` from route_options, consumed, after the last-used
-	view is restored (p6c_before_route) so the form's project wins over the remembered one."""
+	view is restored (p6c_before_route) so the form's project wins over the remembered one. A
+	one-off: nothing saved, and the key taken out of the address in place."""
+
+	def _read(self):
+		code = _code(PROJECT_PLANNER)
+		return _between(code, "\ttake_route_project() {", "\tset_mode(mode) {")
 
 	def test_project_is_read_after_the_last_used_view_and_consumed(self):
 		code = _code(PROJECT_PLANNER)
-		handle = _between(code, "\thandle_route() {", "\tset_mode(mode) {")
-		self.assertLess(handle.index("this.p6c_before_route()"), handle.index("frappe.route_options"))
-		read = _between(handle, "const opts = frappe.route_options;", "this.view = target.view;")
+		handle = _between(code, "\thandle_route() {", "\ttake_route_project() {")
+		self.assertLess(handle.index("this.p6c_before_route()"), handle.index("this.take_route_project();"))
+		self.assertLess(handle.index("this.take_route_project();"), handle.index("this.view = target.view;"))
+		read = self._read()
 		self.assertIn('Object.prototype.hasOwnProperty.call(opts, "project")', read)
 		self.assertIn("delete opts.project;", read)
 		self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", read)
 		self.assertIn('this.pm = "";', read)
-		self.assertIn("this.save_pref(PP.prefs.project, this.project);", read)
 
-	def test_the_planner_writes_no_history_of_its_own(self):
-		"""The read only reads: the address is the router's, and the planner moves by set_route."""
+	def test_the_link_saves_nothing(self):
+		"""The person's remembered project and PM, and their "last used" view, are left alone."""
+		read = self._read()
+		self.assertNotIn("save_pref", read)
+		self.assertIn('this.project = this.project_link = String(opts.project || "");', read)
+		save_last = _between(_code(PROJECT_PLANNER), "\tp6c_save_last() {", "\tp6c_matching_view() {")
+		self.assertIn("if (this.project_link && this.project === this.project_link) return;", save_last)
+
+	def test_the_only_history_write_takes_the_key_out_of_the_address(self):
+		"""One replaceState, on the entry on screen, so Back onto it does not reapply the filter;
+		the planner still moves between screens only by set_route."""
 		code = _code(PROJECT_PLANNER)
 		self.assertNotIn("history.pushState", code)
-		self.assertNotIn("history.replaceState", code)
+		self.assertEqual(code.count("history.replaceState"), 1)
+		self.assertIn(
+			'window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : ""));',
+			self._read(),
+		)
+
+	def test_an_unlisted_linked_project_stays_the_filter_and_is_named(self):
+		code = _code(PROJECT_PLANNER)
+		fill = _between(code, "\tfill_filters() {", "\ttask_visible(card) {")
+		self.assertIn("this.project === this.project_link && !this.by_project[this.project]", fill)
+		render = _between(code, "\trender() {", "\tavail_state(day) {")
+		self.assertIn('__("No work for {0} in this range."', render)
+		self.assertIn(".prependTo(this.$grid_wrap);", render)
 
 
 class TestNoAppLinks(unittest.TestCase):

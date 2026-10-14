@@ -176,6 +176,13 @@ class TestPageRecord(unittest.TestCase):
 class TestRouting(unittest.TestCase):
 	def test_views_change_only_through_frappe_set_route(self):
 		code = _code_without_comments()
+		# The one history write (S5b, v1.667.0): take_route_project takes a form link's ?project= out
+		# of the entry on screen, in place, so Back does not reapply it. It never pushes, and it is
+		# checked in tests/test_form_page_links.py; nothing else here may touch history.
+		start = code.index("\ttake_route_project() {")
+		end = code.index("\n\t}\n", start)
+		self.assertNotIn("pushState", code[start:end])
+		code = code[:start] + code[end:]
 		for forbidden in ("pushState", "replaceState", "window.location", "location.href", "history."):
 			self.assertNotIn(forbidden, code)
 		self.assertIn("frappe.set_route(PP.route, view, anchor)", code)

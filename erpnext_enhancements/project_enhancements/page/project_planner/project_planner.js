@@ -419,19 +419,7 @@ class ProjectPlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
-		// A form's "Open in Project Planner" (S5b, v1.667.0) names a project in route_options, as does
-		// ?project= in the address. Applied after the "last used" view above, consumed like the list
-		// view's filters, and the PM filter cleared so it cannot hide that project's cards.
-		const opts = frappe.route_options;
-		if (opts && Object.prototype.hasOwnProperty.call(opts, "project")) {
-			this.project = String(opts.project || "");
-			this.pm = "";
-			this.show_all_unscheduled = false;
-			this.save_pref(PP.prefs.project, this.project);
-			this.save_pref(PP.prefs.pm, "");
-			delete opts.project;
-			if (!Object.keys(opts).length) frappe.route_options = null;
-		}
+		this.take_route_project();
 		this.view = target.view;
 		this.anchor = target.anchor;
 		if (target.view === PP3B.my_week) {
@@ -452,6 +440,27 @@ class ProjectPlanner {
 		}
 		this.set_mode("");
 		this.load();
+	}
+
+	// A form's "Open in Project Planner" (S5b, v1.667.0) names a project in route_options, as does
+	// ?project= in the address. Read after the "last used" view is restored, so it wins over that,
+	// and consumed like the list view's filters. A one-off: nothing is saved (`project_link` holds off
+	// the "last used" save while it is the filter), the PM filter is cleared so it cannot hide the
+	// project's cards, and the key leaves the address in place, so Back onto this entry does not
+	// put the filter back over whatever was picked since.
+	take_route_project() {
+		const opts = frappe.route_options;
+		if (!opts || !Object.prototype.hasOwnProperty.call(opts, "project")) return;
+		this.project = this.project_link = String(opts.project || "");
+		this.pm = "";
+		this.show_all_unscheduled = false;
+		delete opts.project;
+		if (!Object.keys(opts).length) frappe.route_options = null;
+		const query = new URLSearchParams(window.location.search);
+		if (!query.has("project")) return;
+		query.delete("project");
+		const rest = query.toString();
+		window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : ""));
 	}
 
 	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
@@ -742,7 +751,11 @@ class ProjectPlanner {
 			const label = project.title && project.title !== project.name ? `${project.title} (${project.name})` : project.name;
 			$("<option></option>").val(project.name).text(label).appendTo(this.$project);
 		});
-		if (this.project && !this.by_project[this.project]) this.project = "";
+		// A form link's project stays the filter even when the planner does not list it (S5b): the
+		// calendar says it has no work here (render) rather than quietly showing every project.
+		if (this.project && this.project === this.project_link && !this.by_project[this.project]) {
+			$("<option></option>").val(this.project).text(this.project).appendTo(this.$project);
+		} else if (this.project && !this.by_project[this.project]) this.project = "";
 		this.$project.val(this.project);
 
 		const pms = [...new Set(projects.map((project) => project.pm).filter(Boolean))].sort();
@@ -807,6 +820,14 @@ class ProjectPlanner {
 		this.render_trays();
 		if (this.view === "crew") this.render_crew();
 		else this.render_calendar();
+		// A project filter with nothing in this range or unscheduled says so by name (S5b).
+		const cards = (this.data.tasks || []).concat(this.data.unscheduled || []);
+		if (this.project && !cards.some((card) => card.project === this.project)) {
+			const named = this.by_project[this.project];
+			$('<div class="pp-section pp-empty-note" role="status"></div>')
+				.text(__("No work for {0} in this range.", [(named && named.title) || this.project]))
+				.prependTo(this.$grid_wrap);
+		}
 		this.$hint.text(
 			this.view === "crew"
 				? __(
@@ -8095,6 +8116,8 @@ const PP6C_METHODS = {
 	p6c_save_last() {
 		const p6c = this.p6c;
 		if (!PP6C.schema.view[1].includes(this.view)) return;
+		// A form link's project (S5b) is a one-off, not "last used", for as long as it is the filter.
+		if (this.project_link && this.project === this.project_link) return;
 		const state = this.p6c_state(true);
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
