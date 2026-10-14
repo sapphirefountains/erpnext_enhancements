@@ -21,17 +21,33 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#hhm-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,17 +67,15 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="hhm-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#hhm-body");
         const count = container.querySelector("#hhm-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Headcount Movement is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Headcount Movement is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const joined = message.joined || [];
@@ -93,18 +107,18 @@
         function people(rows, label, showTenure) {
             if (!rows.length) return "";
             return (
-                `<div class="hhm-group">${esc(label)}</div>` +
+                `<div class="hhm-group">${sf.esc(label)}</div>` +
                 rows
                     .map((e) => {
                         const meta = [e.role, showTenure && e.tenure_years ? __("{0}y tenure", [e.tenure_years]) : ""]
                             .filter(Boolean)
-                            .map(esc)
+                            .map(sf.esc)
                             .join(" · ");
                         return `
                     <div class="hhm-row">
-                        <a class="hhm-name" href="/desk/employee/${encodeURIComponent(e.name)}">${esc(e.title)}</a>
+                        <a class="hhm-name" href="/desk/employee/${encodeURIComponent(e.name)}">${sf.esc(e.title)}</a>
                         <span class="hhm-meta">${meta}</span>
-                        <span class="hhm-age">${esc(e.date || "")}</span>
+                        <span class="hhm-age">${sf.esc(e.date || "")}</span>
                     </div>`;
                     })
                     .join("")
@@ -114,24 +128,26 @@
         body.innerHTML = tiles + people(joined, __("Joined"), false) + people(left, __("Left"), true);
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#hhm-body");
         const refresh = container.querySelector("#hhm-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load headcount movement."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load headcount movement.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -139,6 +155,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no
