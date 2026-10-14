@@ -63,6 +63,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not replay them. The S3.1 harness gives the Day Board its bare address and `get_today`.
 - New bench-free suite `tests/test_page_deep_links.py`, with its own CI step.
 
+## [1.658.0] - 2026-10-13
+
+Custom pages S3.3c (TASK-2026-02822): the last six data blocks draw their panels, chips and
+escaping from sf_kit, as the 34 department widgets have since v1.649.0. Every seeded Custom HTML
+Block is now on the kit except Desk Shortcuts, which asks the server nothing.
+
+### Changed
+
+- **KPI Cockpit, Morning Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and
+  My Travel moved onto sf_kit.** Each takes the kit and the ticket through `blocks.kit(root)` and
+  `blocks.ticket(root)`, and keeps the one-line plain-text fallback for a device whose cached
+  bundle predates them.
+  - Loading, empty, switched-off, error and no-access are `sf.state.render` panels. An error
+    panel carries Try again; a 403 (the jqXHR's `status`) draws no access.
+  - Each block's own escape and `__ee_ticket` / `__tvh_ticket` counter are gone.
+  - **KPI Cockpit and Morning Briefing** still register a `load(false)` wrapper, so a return
+    never recomputes the KPIs or regenerates the briefing, and still skip a return while Refresh
+    is out. Their Try again is a plain read as well. The department listing has its own error
+    panel, whose Try again lists the departments again.
+  - **Task Dashboard** keeps its debounced realtime refresh, its five-minute fallback, its timers
+    on `window`, its `onScreen` skip and its live clock. Loading, error and no access go in the
+    Top 10 panel, and only until the block has drawn once, so a failed refresh still never wipes
+    rows already showing. A null answer on a block that has never drawn now says "Nothing to show
+    yet." instead of loading forever, and a list missing from the answer reads as empty rather
+    than throwing. The overdue badge is a `danger` chip.
+  - **Projects Dashboard** changed only its panels (the skeleton loader, "Error loading
+    projects", "Network Error", the Gantt-not-loaded line and the empty tabs), its escaping and
+    the Completed tab's status badge, now an `sf.chip`. Priority Overview and Active Internal
+    Projects with nothing to list draw an empty panel instead of a bare table head. Its tables,
+    column selector and resizer, Gantt and saved per-user view are untouched.
+  - **My Training and My Travel** still ask for the session user's own data and pass no name. An
+    overdue course is a `danger` chip, and a trip's status a chip (`Planning` warn,
+    `In Progress` good, the rest neutral). My Travel's "No trips coming up" stays a notice, not
+    an empty panel: the body is never empty, since the link to everyone's trips and any receipts
+    reminder are drawn under it.
+  - CSS rules nothing uses any more are deleted: `.kpi-disabled`, `.mbr-disabled`, `.tdb-empty`,
+    `.tdb-overdue-badge`, `.tmd-flag`, the `.tvh-pill` family and the Projects Dashboard's
+    skeleton loader.
+- **No status words were added here.** The KPI Cockpit's Good / Watch / Bad and the Task
+  Dashboard's priority are still told by a border colour alone in this release; S3.6
+  (accessibility, PR #1271) adds the word to both. To keep the two changes apart, the KPI
+  Cockpit and the Task Dashboard read the kit's escape under the name `esc`, which is the name
+  #1271's new markup calls.
+- `tests/test_block_kit.py` enforces all six (`NOT_YET` keeps only Desk Shortcuts).
+  `scripts/test_workspace_block_return.mjs` runs them on the real `sf_kit.bundle.js` through the
+  generic checks (a 500, a 403, an empty answer, an older bundle, a kit that did not load), with
+  per-block notes for where each draws, and adds checks for what each must keep doing: the KPI
+  Cockpit's return and Try again read the snapshot and never recompute; the briefing's return
+  never regenerates and waits out a Regenerate; three renders of the Task Dashboard leave two
+  timers and one realtime subscription, and a realtime update refreshes once; a failed refresh
+  keeps the rows; the per-viewer blocks send no name.
+- `tests/test_travel_hub.py`'s node stubs define `__` and wait a tick for the kit before counting
+  requests, since My Travel now takes the kit before it loads.
+
+### Fixed
+
+- **The Projects Dashboard could not tell a 403 from any other failure.** Its `api_call` used
+  `frappe.call`'s `callback` / `error` options, and v16 calls `error` with no arguments on a 403
+  (`request.js`, `statusCode[403]`). It now settles on `frappe.call`'s promise, which rejects with
+  the jqXHR.
+- **A user without the Project Dashboard's page role got a Try again that could never work.**
+  `get_project_data` answers that user with `{"error": "You do not have permission ..."}` on
+  HTTP 200, not a 403, so the block drew "Could not load the projects." with a retry. It now
+  draws the no-access panel, with no Try again. Its other `{"error"}`, a failed read, keeps the
+  error panel and its Try again. The server is unchanged.
+- **Projects Dashboard values went into markup unescaped**: the value-stream and master-project
+  headings, the Assigned To and Type cells, the Completed tab's status, and the status and
+  priority options with their `data-project` attributes. All go through `sf.esc` now.
+
 ## [1.657.0] - 2026-10-14
 
 Form kit P3.3 (TASK-2026-02756): **one report face for phones, parties, pillars, money and
