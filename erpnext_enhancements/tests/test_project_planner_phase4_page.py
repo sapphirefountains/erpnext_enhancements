@@ -119,9 +119,16 @@ class TestWorkedHours(unittest.TestCase):
 		code = _strip(_code())
 		self.assertIn("if (this.over_only && !card.over_plan) return false;", _method(code, "task_visible"))
 		block = _block()
-		init = _obj_method(block, "init_phase4")
-		self.assertIn("this.over_only = !this.over_only;", init)
-		self.assertIn('__("Running over")', _obj_method(block, "p4_update_over"))
+		# An alert chip on the toolbar since v1.687.0: it toggles the filter, counts the tasks past
+		# their plan with the filter itself aside, and shows above zero or while it filters.
+		self.assertIn("this.over_only = !this.over_only;", _obj_method(block, "p4_toggle_over"))
+		count = _obj_method(block, "p4_over_count")
+		self.assertIn("this.over_only = false;", count)
+		self.assertIn("card.over_plan && this.task_visible(card)", count)
+		alerts = _obj_method(block, "tb_alerts")
+		self.assertIn('label: __("Running over"),', alerts)
+		self.assertIn("if (over > 0 || this.over_only) {", alerts)
+		self.assertIn("open: () => this.p4_toggle_over(),", alerts)
 		# A saved chip would hide the board the next morning: it never touches the prefs.
 		self.assertNotIn("over", " ".join(re.findall(r"prefs: \{.*?\}", _code(), flags=re.S)))
 		self.assertNotRegex(_strip(block), r"(save_pref|load_pref)\([^)]*over")
@@ -259,12 +266,24 @@ class TestEquipment(unittest.TestCase):
 		self.assertIn(".pp-hm-cell, .pp-ecard", code)
 
 
-class TestUtilizationLink(unittest.TestCase):
-	def test_the_toolbar_opens_the_crew_utilization_report_by_route(self):
+class TestUtilizationView(unittest.TestCase):
+	"""Utilization was a toolbar button that left for the Crew Utilization report; since v1.687.0 it is
+	the fifth view, drawing that report's own rows, and the report is one click on from it."""
+
+	def test_the_view_switcher_has_it_and_it_reads_the_report(self):
 		block = _strip(_block())
+		code = _strip(_code())
 		self.assertIn('report: "Crew Utilization"', block)
-		self.assertIn('frappe.set_route("query-report", PP4.report)', _obj_method(block, "init_phase4"))
-		self.assertIn('__("Utilization")', block)
+		self.assertIn('[PP.util_view, __("Utilization")],', _method(code, "build_shell"))
+		load = _obj_method(block, "load_utilization")
+		self.assertIn('run: "frappe.desk.query_report.run",', block)
+		self.assertIn(
+			"frappe.call({ method: PPU.run, args: { report_name: PP4.report, filters: JSON.stringify(filters) } })",
+			load,
+		)
+		render = _obj_method(block, "render_utilization")
+		self.assertIn('frappe.set_route("query-report", PP4.report, report)', render)
+		self.assertIn("!this.group || row.group === this.group", render)
 
 
 class TestHouseRules(unittest.TestCase):

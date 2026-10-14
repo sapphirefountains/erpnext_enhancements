@@ -188,6 +188,7 @@ class MaintenancePlanner {
 		this.init_phase6d();
 		this.init_phase6e();
 		this.init_phase_c1();
+		this.init_toolbar();
 		this.bind_drag();
 	}
 
@@ -462,67 +463,48 @@ class MaintenancePlanner {
 		});
 
 		$('<span class="mp-spacer"></span>').appendTo($bar);
+		// The filter (and 6B's search, which joins it) is one group: on a phone the group moves into
+		// the "Filters and tools" sheet and back (toolbar redesign, v1.687.0). Projected visits and
+		// Project work are switches in the Display menu (MPTB).
+		this.$filters = $('<span class="mp-tb-filters"></span>').appendTo($bar);
 		this.$tech = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", __("Technician"))
 			.on("change", () => this.pick_filter(this.$tech.val() || ""))
-			.appendTo($bar);
-		const $projected = $("<label></label>").appendTo($bar);
-		$('<input type="checkbox">')
-			.prop("checked", this.show_projected)
-			.on("change", (e) => {
-				this.show_projected = e.target.checked;
-				this.save_pref(MP.projected_key, this.show_projected ? "1" : "0");
-				this.render();
-			})
-			.appendTo($projected);
-		$projected.append(document.createTextNode(__("Projected visits")));
-		const $project_work = $("<label></label>")
-			.attr("title", __("Project tasks, rental crew tasks and travel, read-only. Move them on the Project Planner."))
-			.appendTo($bar);
-		$('<input type="checkbox">')
-			.prop("checked", this.show_project_work)
-			.on("change", (e) => {
-				this.show_project_work = e.target.checked;
-				this.save_pref(MP.project_key, this.show_project_work ? "1" : "0");
-				this.render();
-			})
-			.appendTo($project_work);
-		$project_work.append(document.createTextNode(__("Project work")));
-		this.$undo = $('<button class="btn btn-default btn-sm mp-undo mp-empty"></button>')
-			.text(__("Undo"))
+			.appendTo(this.$filters);
+		// The alert chips, then the four menus (both filled by MPTB), then Undo as a small icon while
+		// there is something to undo (its menu item is in Edit), ? and refresh.
+		this.$alerts = $('<span class="mp-tb-alerts mp-tb-empty" role="group"></span>').attr("aria-label", __("Alerts")).appendTo($bar);
+		this.$tools = $('<span class="mp-tb-tools"></span>').appendTo($bar);
+		this.$undo = $('<button type="button" class="btn btn-default btn-sm mp-undo mp-empty">↶</button>')
+			.attr("aria-label", __("Undo"))
 			.on("click", () => this.undo())
 			.appendTo($bar);
-		$('<button type="button" class="btn btn-default btn-sm">↻</button>')
+		$('<button type="button" class="btn btn-default btn-sm mp-refresh">↻</button>')
 			.attr("title", __("Refresh"))
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
 			.appendTo($bar);
 		this.update_undo_button();
 
-		// Each swatch carries the card's own kind class, so maintenance_planner.css draws it with the
-		// same edge as the card it names (S3.4e; it used to be painted here with a hex value).
-		const $legend = $('<div class="mp-legend"></div>').appendTo(this.$body);
-		[
-			["", __("Scheduled visit")],
-			["mp-seasonal", __("Seasonal")],
-			["mp-extra", __("Extra / follow-up")],
-			["mp-pending", __("Pending review")],
-			["mp-done", __("Done")],
-			["mp-projected", __("Projected from the contract")],
-			["mp-overdue", __("Overdue")],
-			["mp-bk-task", __("Project task (read-only)")],
-			["mp-bk-rental", __("Rental crew (read-only)")],
-			["mp-bk-travel", __("Travel (read-only)")],
-		].forEach(([kind, label]) => {
-			const $item = $("<span></span>").appendTo($legend);
-			$('<i class="mp-swatch"></i>').addClass(kind).appendTo($item);
-			$item.append(document.createTextNode(label));
-		});
-
+		// The key of the visit kinds is in the Display menu (MPTB's tb_kind_items) and the "?" help; it
+		// was a row of its own under the toolbar.
 		this.$panel = $('<div class="mp-section mp-res"></div>').appendTo(this.$body);
 		this.$tray = $('<div class="mp-tray"></div>').hide().appendTo(this.$body);
 		this.$grid_wrap = $("<div></div>").appendTo(this.$body);
 		this.$hint = $('<div class="mp-hint"></div>').appendTo(this.$body);
+	}
+
+	// Display's two switches: the projected visits, and the project work of the same people.
+	set_show_projected(on) {
+		this.show_projected = !!on;
+		this.save_pref(MP.projected_key, this.show_projected ? "1" : "0");
+		this.render();
+	}
+
+	set_show_project_work(on) {
+		this.show_project_work = !!on;
+		this.save_pref(MP.project_key, this.show_project_work ? "1" : "0");
+		this.render();
 	}
 
 	// ------------------------------------------------------------------ data
@@ -850,6 +832,7 @@ class MaintenancePlanner {
 		this.render_phase6d();
 		this.render_phase6e();
 		this.render_phase_c1();
+		this.tb_render();
 	}
 
 	render_calendar(cards) {
@@ -2264,6 +2247,8 @@ const MP6A = {
 	site_method: "erpnext_enhancements.api.planner_views.get_site_overview",
 	owner: "mp",
 	widths: { person: 460, day: 760, site: 520, panel: 540 },
+	// The first-time tips: since the toolbar redesign (v1.687.0) the first section of the "?" help,
+	// not banners under the toolbar.
 	hints: [
 		["mp-person-peek", "Click a technician's name to see their week without leaving the calendar."],
 		["mp-day-peek", "Click a date to see every technician's day side by side."],
@@ -2275,8 +2260,6 @@ const MP6A = {
 const MP6A_METHODS = {
 	init_phase6a() {
 		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
-		const $bar = this.$body.find(".mp-toolbar").first();
-		this.$p6a_hints = $('<div class="mp-p6a-hints"></div>').insertAfter($bar);
 		this.$p6a_help = $('<button type="button" class="btn btn-default btn-sm mp-p6a-help">?</button>')
 			.attr("title", __("How to read the planner"))
 			.attr("aria-label", __("How to read the planner"))
@@ -2317,8 +2300,8 @@ const MP6A_METHODS = {
 			if (current && current.owner === MP6A.owner) this.on_down(e);
 		});
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person")];
-		this.p6a_show_hints();
 		this.p6c_ready();
+		this.tb_ready();
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -2740,14 +2723,9 @@ const MP6A_METHODS = {
 
 	// ------------------------------------------------------------------ legend and hints
 
-	p6a_show_hints() {
-		const kit = this.p6a && this.p6a.kit;
-		if (!kit || !this.$p6a_hints) return;
-		let shown = 0;
-		MP6A.hints.forEach(([key, text]) => {
-			if (shown >= 2 || kit.hint.seen(key)) return;
-			if (kit.hint(key, __(text), { container: this.$p6a_hints[0] })) shown += 1;
-		});
+	// The tips, as the help's first section.
+	p6a_tip_section() {
+		return { title: __("Tips"), items: MP6A.hints.map(([, text]) => ({ sample_html: "", text: __(text) })) };
 	},
 
 	p6a_legend() {
@@ -2762,6 +2740,7 @@ const MP6A_METHODS = {
 		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
 		kit.legend(
 			[
+				this.p6a_tip_section(),
 				...this.p6c_legend_sections(),
 				{
 					title: __("Quick looks"),
@@ -3044,7 +3023,7 @@ const MP6B_METHODS = {
 
 	p6b_target(el) {
 		if (!el || !el.closest || !this.$body[0].contains(el)) return null;
-		if (el.closest("button, a, input, select, textarea, .mp-toolbar, .mp-legend, .mp-route, [data-route-resource], .mp-p6b-bar")) {
+		if (el.closest("button, a, input, select, textarea, .mp-toolbar, .mp-draft-bar, .mp-route, [data-route-resource], .mp-p6b-bar")) {
 			return null;
 		}
 		const card_el = el.closest(".mp-card[data-key]");
@@ -3651,8 +3630,8 @@ const MP6B_METHODS = {
 
 	p6b_build_search() {
 		const $wrap = $('<span class="mp-p6b-search-wrap"></span>');
-		const $seg = this.$p6b_toolbar.children(".mp-seg").first();
-		if ($seg.length) $wrap.insertAfter($seg);
+		// First among the filters, so a phone's "Filters and tools" sheet takes it with them (MPTB).
+		if (this.$filters && this.$filters.length) $wrap.prependTo(this.$filters);
 		else $wrap.appendTo(this.$p6b_toolbar);
 		const list_id = `mp-p6b-results-${Math.random().toString(36).slice(2, 9)}`;
 		this.p6b.search.list_id = list_id;
@@ -3829,6 +3808,7 @@ const MP6B_METHODS = {
 	},
 
 	p6b_pick(item) {
+		this.tb_close_sheet();
 		this.p6b_close_results();
 		this.$p6b_search.trigger("blur");
 		if (item.kind === "person") this.p6a_open_person(item.user);
@@ -4031,14 +4011,14 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 // The Maintenance Planner's half of Phase 6C (TASK-2026-02469; the Project Planner has the same, see
 // PP6C_METHODS there for the long version):
 //
-//   - Color by (toolbar)                     Visit type (today's colors, the default), Technician,
-//                                            Site, Visit status or Contract; a key under the toolbar
-//                                            and in the "?" legend. Site and contract use the kit's
+//   - Color by (toolbar's Display menu)      Visit type (today's colors, the default), Technician,
+//                                            Site, Visit status or Contract; the key in Display and
+//                                            in the "?" legend. Site and contract use the kit's
 //                                            stable hash, so a site is always the same color
 //   - "Highlight this site" in a visit's panel, the site drawer's header or the right-click menu, or
 //     a site in the color key                every visit of that site lights up and the rest fade;
 //                                            a toolbar pill and Esc clear it
-//   - Views (toolbar)                        named views and "last used", saved per person on the
+//   - Views (toolbar's Views menu)           named views and "last used", saved per person on the
 //                                            server (api/planner_views_prefs). Only a bare
 //                                            /maintenance-planner takes the saved view, by replacing
 //                                            its history entry
@@ -4048,7 +4028,7 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 //                                            everyone's day
 //   - Tap to move                            tap a visit, then the day or a technician's day: the
 //                                            drag's own drop -> plan_drop -> apply -> send path
-//   - Print (toolbar)                        the view on screen or 6B's selection, from the loaded
+//   - Print (Print menu)                     the view on screen or 6B's selection, from the loaded
 //                                            data, on the print design system's chrome (the Service
 //                                            pillar), in a browser window
 //
@@ -4107,7 +4087,6 @@ const MP6C_METHODS = {
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6c_menu_items(target));
 
-		const $toolbar = this.$body.find(".mp-toolbar").first();
 		this.$p6c_pill = $('<span class="mp-p6c-pill" role="status"></span>').hide().insertAfter(this.$title);
 		$('<span class="mp-p6c-pill-text"></span>').appendTo(this.$p6c_pill);
 		$('<button type="button" class="mp-p6c-pill-x">×</button>')
@@ -4115,35 +4094,15 @@ const MP6C_METHODS = {
 			.attr("aria-label", __("Stop highlighting"))
 			.on("click", () => this.p6c_clear_highlight())
 			.appendTo(this.$p6c_pill);
-		this.$p6c_color = $('<select class="form-control input-sm mp-p6c-color"></select>')
-			.attr("aria-label", __("Color by"))
-			.attr("title", __("Color by"))
-			.on("change", () => this.p6c_set_color(this.$p6c_color.val() || "default"))
-			.insertAfter(this.$tech);
-		MP6C.color_modes.forEach(([value, label]) => {
-			$("<option></option>").val(value).text(__("Color: {0}", [__(label)])).appendTo(this.$p6c_color);
-		});
-		this.$p6c_tap = $('<button type="button" class="mp-p6c-tap" aria-pressed="false"></button>')
-			.text(__("Tap to move"))
-			.attr("title", __("Tap a visit, then tap the day where it goes, instead of dragging"))
-			.on("click", () => this.p6c_set_tap(!this.p6c.tap))
-			.insertBefore(this.$undo);
-		this.$p6c_views = $('<button type="button" class="btn btn-default btn-sm mp-p6c-views"></button>')
-			.text(__("Views"))
-			.attr("title", __("Your saved views: filters, view and colors"))
-			.on("click", (e) => this.p6c_views_menu(e.currentTarget))
-			.insertBefore(this.$undo);
-		this.$p6c_print = $('<button type="button" class="btn btn-default btn-sm mp-p6c-print"></button>')
-			.text(__("Print"))
-			.attr("title", __("Print exactly what is on screen, with your filters and colors"))
-			.on("click", (e) => this.p6c_print_click(e.currentTarget))
-			.insertBefore(this.$undo);
-		this.$p6c_key = $('<div class="mp-p6c-key"></div>').hide().insertAfter($toolbar);
+		// Color by and its key are in the toolbar's Display menu, Tap to move in Edit, the saved views in
+		// Views and Print in Print (MPTB, v1.687.0); this block gives each menu its items
+		// (p6c_color_items, p6c_view_items, p6c_print_items).
 		this.$p6c_movebar = $('<div class="mp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
 
 		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
 		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
-		this.$body[0].addEventListener("click", (e) => this.p6c_body_click(e), true);
+		// A site in the color key highlights from the Display menu now (p6c_color_items); the key's own
+		// click listener went with the key's row (v1.687.0).
 		this.$body.on("change click", () => this.p6c_state_soon());
 		this.p6c_sync_controls();
 		this.p6c_fetch_views();
@@ -4159,7 +4118,6 @@ const MP6C_METHODS = {
 		this.p6c_paint();
 		this.p6c_apply_highlight();
 		this.p6c_render_strip();
-		this.p6c_render_key();
 		this.p6c_mark_moving();
 		this.p6c_state_soon();
 	},
@@ -4185,27 +4143,10 @@ const MP6C_METHODS = {
 
 	// ------------------------------------------------------------------ controls
 
-	// The two filter boxes the shell made without keeping them: found by their own label.
-	p6c_checkbox(text) {
-		let found = null;
-		this.$body.find(".mp-toolbar > label").each((_index, el) => {
-			if (!found && $(el).text().trim() === text) found = $(el).find("input");
-		});
-		return found;
-	},
-
 	p6c_sync_controls() {
 		const p6c = this.p6c;
 		if (!p6c || !this.$body) return;
 		if (this.$tech) this.$tech.val(this.technician || "");
-		const projected = this.p6c_checkbox(__("Projected visits"));
-		if (projected) projected.prop("checked", !!this.show_projected);
-		const work = this.p6c_checkbox(__("Project work"));
-		if (work) work.prop("checked", !!this.show_project_work);
-		if (this.$p6c_color) this.$p6c_color.val(p6c.color_by);
-		if (this.$p6c_tap) {
-			this.$p6c_tap.toggleClass("mp-p6c-on", !!p6c.tap).attr("aria-pressed", p6c.tap ? "true" : "false");
-		}
 		if (this.$p6c_pill) {
 			this.$p6c_pill.toggle(!!p6c.highlight);
 			if (p6c.highlight) {
@@ -4344,27 +4285,41 @@ const MP6C_METHODS = {
 		return `<i class="mp-p6c-swatch" style="--mp-color: ${mp_esc(paint)}"></i>`;
 	},
 
-	p6c_render_key() {
-		const $key = this.$p6c_key;
-		if (!$key) return;
+	// Display's Color by: one radio item a mode, then the key of what the colors mean on screen (it
+	// used to be a row of its own under the toolbar). A site in the key highlights its visits.
+	p6c_color_items() {
+		if (!this.p6c) return [];
+		const items = [{ heading: __("Color by") }];
+		MP6C.color_modes.forEach(([value, label]) => {
+			items.push({
+				label: __("Color: {0}", [__(label)]),
+				radio: true,
+				checked: this.p6c.color_by === value,
+				on_click: () => this.p6c_set_color(value),
+			});
+		});
 		const entries = this.p6c_legend_entries();
-		if (!entries.length) {
-			$key.hide().empty();
-			return;
-		}
+		if (!entries.length) return items;
 		const shown = entries.slice(0, MP6C.key_limit);
-		const items = shown.map((entry) => {
-			const hi = entry.hi ? ` data-p6c-hi="${mp_esc(entry.hi)}" role="button" tabindex="0"` : "";
-			const tip = entry.hi ? __("Highlight {0}", [entry.label]) : entry.label;
-			return `<span class="mp-p6c-key-item"${hi} title="${mp_esc(tip)}">${this.p6c_swatch_html(entry.color)}${mp_esc(
-				entry.label
-			)}</span>`;
+		items.push({ divider: true }, { heading: __("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]) });
+		shown.forEach((entry) => {
+			const on = !!(entry.hi && this.p6c.highlight && this.p6c.highlight.key === entry.hi);
+			items.push(
+				entry.hi
+					? {
+							label: entry.label,
+							sample_html: this.p6c_swatch_html(entry.color),
+							checked: on,
+							title: __("Highlight {0}", [entry.label]),
+							on_click: () => this.p6c_toggle_highlight(entry.hi),
+					  }
+					: { label: entry.label, sample_html: this.p6c_swatch_html(entry.color), info: true }
+			);
 		});
 		if (entries.length > shown.length) {
-			items.push(`<span class="mp-p6c-key-item">${mp_esc(__("+{0} more (see ?)", [entries.length - shown.length]))}</span>`);
+			items.push({ label: __("+{0} more (see ?)", [entries.length - shown.length]), info: true });
 		}
-		$key[0].innerHTML = `<span class="mp-p6c-key-title">${mp_esc(__("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]))}</span>${items.join("")}`;
-		$key.show();
+		return items;
 	},
 
 	p6c_legend_sections() {
@@ -4385,7 +4340,7 @@ const MP6C_METHODS = {
 			title: __("The big picture"),
 			note:
 				mode === "default"
-					? __("Color by in the toolbar colors the visits by technician, site, visit status or contract instead of the visit type below.")
+					? __("Color by in the toolbar's Display menu colors the visits by technician, site, visit status or contract instead of the visit type below.")
 					: "",
 			items: [
 				{
@@ -4451,13 +4406,6 @@ const MP6C_METHODS = {
 		});
 	},
 
-	p6c_body_click(e) {
-		const target = e.target;
-		if (!this.p6c || !target || !target.closest || Date.now() < this.click_blocked_until) return;
-		const key_item = target.closest(".mp-p6c-key [data-p6c-hi]");
-		if (key_item) this.p6c_toggle_highlight(key_item.getAttribute("data-p6c-hi"));
-	},
-
 	p6c_links(card) {
 		if (!this.p6c || !card || card.kind === "booking" || !card.project) return [];
 		const on = this.p6c.highlight && this.p6c.highlight.key === card.project;
@@ -4516,6 +4464,8 @@ const MP6C_METHODS = {
 	p6c_keydown(e) {
 		if (e.key !== "Escape" || e.defaultPrevented || !this.p6c || this.drag) return;
 		if (!this.p6c.moving && !this.p6c.highlight) return;
+		// A toolbar menu or the phone's sheet closes on its own Esc; the highlight stays.
+		if (e.target && e.target.closest && e.target.closest(".pk-menu, .pk-sheet")) return;
 		if (!this.p6c_here()) return;
 		const kit = this.p6a && this.p6a.kit;
 		if (kit && kit.guard && kit.guard.top()) return;
@@ -4898,24 +4848,27 @@ const MP6C_METHODS = {
 		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
 	},
 
-	p6c_views_menu(anchor) {
-		const kit = this.p6a && this.p6a.kit;
-		if (!kit) {
-			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
-			return;
-		}
+	// The Views menu's saved views: one radio item each (the one on screen is ticked), then Save and
+	// Manage.
+	p6c_view_items() {
+		if (!this.p6c) return [];
 		const current = this.p6c_matching_view();
-		const items = (this.p6c.views || []).map((entry) => ({
-			label: entry.name,
-			hint: current && current.name === entry.name ? "✓" : this.p6c_view_summary(entry.data || {}),
-			on_click: () => this.p6c_use_view(entry),
-		}));
-		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), disabled: true });
-		else if (!items.length) items.push({ label: __("No saved views yet"), disabled: true });
+		const items = [{ heading: __("Saved views") }];
+		(this.p6c.views || []).forEach((entry) =>
+			items.push({
+				label: entry.name,
+				radio: true,
+				checked: !!current && current.name === entry.name,
+				hint: this.p6c_view_summary(entry.data || {}),
+				on_click: () => this.p6c_use_view(entry),
+			})
+		);
+		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), info: true });
+		else if (!(this.p6c.views || []).length) items.push({ label: __("No saved views yet"), info: true });
 		items.push({ divider: true });
-		items.push({ label: __("Save view as…"), on_click: () => this.p6c_save_as() });
+		items.push({ label: __("Save current view as…"), on_click: () => this.p6c_save_as() });
 		if ((this.p6c.views || []).length) items.push({ label: __("Manage views…"), on_click: () => this.p6c_manage_views() });
-		kit.menu({ anchor, items, title: __("Saved views"), owner: MP6A.owner });
+		return items;
 	},
 
 	p6c_use_view(entry) {
@@ -4982,7 +4935,7 @@ const MP6C_METHODS = {
 
 	p6c_views_html() {
 		const views = this.p6c.views || [];
-		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from the Views button."))}</p>`;
+		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from the Views menu."))}</p>`;
 		const rows = views.map(
 			(entry) => `
 			<li class="mp-p6c-views-row">
@@ -5044,21 +4997,19 @@ const MP6C_METHODS = {
 		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
 	},
 
-	p6c_print_click(anchor) {
-		const kit = this.p6a && this.p6a.kit;
+	// The Print menu's items: the view on screen, and 6B's selection when there is one. Each runs in
+	// the menu item's click, so its window opens on the person's own tap.
+	p6c_print_items() {
 		const selected = this.p6c_selection();
-		if (selected.size && kit) {
-			kit.menu({
-				anchor,
-				owner: MP6A.owner,
-				items: [
-					{ label: __("Print this view"), on_click: () => this.p6c_print(false) },
-					{ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) },
-				],
-			});
-			return;
-		}
-		this.p6c_print(false);
+		const items = [
+			{
+				label: __("Print this view"),
+				title: __("Print exactly what is on screen, with your filters and colors"),
+				on_click: () => this.p6c_print(false),
+			},
+		];
+		if (selected.size) items.push({ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) });
+		return items;
 	},
 
 	p6c_print(selection_only) {
@@ -5322,17 +5273,8 @@ const MP6D_METHODS = {
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
-		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm mp-p6d-conflicts"></button>')
-			.text(__("Conflicts"))
-			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
-			.on("click", () => this.p6d_open_conflicts(null))
-			.insertBefore(this.$undo);
-		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm mp-p6d-block-btn"></button>')
-			.text(__("Block time"))
-			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
-			.hide()
-			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
-			.insertBefore(this.$undo);
+		// The Conflicts count is an alert chip on the toolbar and Block time an item of its Edit menu
+		// (MPTB, v1.687.0): p6d_conflict_count and data.can_schedule say when.
 		const root = this.$body[0];
 		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click.
 		root.addEventListener("click", (e) => this.p6d_click(e), true);
@@ -5380,7 +5322,6 @@ const MP6D_METHODS = {
 
 	render_phase6d() {
 		if (!this.p6d || !this.data) return;
-		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule);
 		if (this.p6d.notes_for !== this.data) {
 			this.p6d.notes = {};
 			this.p6d.asked = {};
@@ -5672,20 +5613,15 @@ const MP6D_METHODS = {
 	},
 
 	p6d_after_list() {
+		this.tb_render();
+		this.p6d_decorate();
+	},
+
+	// What nobody has kept in the dates on screen, or null before the first count (the toolbar's chip).
+	p6d_conflict_count() {
 		const center = this.p6d && this.p6d.center;
 		const count = center ? center.count() : null;
-		if (this.$p6d_conflicts) {
-			this.$p6d_conflicts
-				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
-				.toggleClass("mp-p6d-hot", Number(count) > 0)
-				.attr(
-					"title",
-					count
-						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
-						: __("Everything wrong in the dates on screen, with one-click fixes")
-				);
-		}
-		this.p6d_decorate();
+		return count == null ? null : Number(count) || 0;
 	},
 
 	p6d_projected_card(args) {
@@ -5886,7 +5822,7 @@ const MP6D_METHODS = {
 					),
 					item(
 						"",
-						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes for visits. A fix that causes a conflict still asks for a reason, like a drag."
+						"The Conflicts chip on the toolbar (Conflicts… in Edit) lists everything wrong in the dates on screen, with one-click fixes for visits. A fix that causes a conflict still asks for a reason, like a drag."
 					),
 				],
 			},
@@ -6017,18 +5953,13 @@ const MP6E_METHODS = {
 		this.p6_menu_providers.push((target) => this.p6e_menu_items(target));
 		this.p6_legend_providers = this.p6_legend_providers || [];
 		this.p6_legend_providers.push(() => this.p6e_legend_sections());
-		this.$p6e_add = $('<button type="button" class="btn btn-default btn-sm mp-p6e-add"></button>')
-			.text(__("Add visit"))
-			.attr("title", __("Draft a visit for a site, a day and a technician. Double-click an empty spot does the same."))
-			.on("click", () => this.p6e_add_visit(null))
-			.hide();
-		if (this.$undo) this.$p6e_add.insertBefore(this.$undo);
-		else this.$p6e_add.appendTo(this.$body.find(".mp-toolbar").first());
+		// "Add visit…" is an item of the toolbar's Edit menu (MPTB, v1.687.0), for whoever may create
+		// visits (data.can_create_visits).
 		this.$body[0].addEventListener("dblclick", (e) => this.p6e_dblclick(e));
 	},
 
 	render_phase6e() {
-		if (this.$p6e_add) this.$p6e_add.toggle(!!(this.data && this.data.can_create_visits));
+		// Nothing of its own to draw: Add visit… is offered by the Edit menu (tb_edit_items).
 	},
 
 	// ------------------------------------------------------------------ move by: calendar or working days
@@ -6134,7 +6065,7 @@ const MP6E_METHODS = {
 				items: [
 					{
 						sample_html: "",
-						text: __("Double-click an empty spot, or Add visit in the toolbar, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
+						text: __("Double-click an empty spot, or Add visit… in the toolbar's Edit menu, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
 					},
 				],
 			},
@@ -6354,7 +6285,7 @@ Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
 // Calendar sync that pushes only committed work comes next, so the two planners need the same line
 // between "trying things" and "the schedule".
 //
-//   - "Draft mode", a toolbar switch remembered per browser (ee_maintenance_planner_draft). While it
+//   - "Draft mode", a switch in the toolbar's Edit menu remembered per browser (ee_maintenance_planner_draft). While it
 //     is on, every visit write that send() makes (move_visit and add_crew: drags, the dialog, the
 //     right-click menu, the selection bar, the Conflict center's fixes, Undo) goes with draft=1 and
 //     lands on the planner's own Planner Draft Change rows (api/maintenance_drafts.py). Nobody's
@@ -6396,17 +6327,12 @@ const MPC1 = {
 const MPC1_METHODS = {
 	init_phase_c1() {
 		this.draft_on = this.load_pref(MPC1.pref, "0") === "1";
-		this.$draft_toggle = $('<label class="mp-draft-toggle"></label>')
-			.attr("title", __("Keep your changes to yourself until you publish them"))
-			.toggleClass("mp-draft-on", this.draft_on);
-		$('<input type="checkbox">')
-			.prop("checked", this.draft_on)
-			.on("change", (e) => this.set_draft_mode(e.target.checked))
-			.appendTo(this.$draft_toggle);
-		this.$draft_toggle.append(document.createTextNode(__("Draft mode")));
-		if (this.$undo) this.$draft_toggle.insertBefore(this.$undo);
-		else this.$draft_toggle.appendTo(this.$body.find(".mp-toolbar").first());
-		this.$draft_bar = $('<div class="mp-draft-bar"></div>').hide().insertAfter(this.$hint);
+		// The switch is an item of the toolbar's Edit menu (MPTB, v1.687.0); the strip sits right under
+		// the toolbar, where the switch's state shows.
+		this.$draft_bar = $('<div class="mp-draft-bar" role="region"></div>')
+			.attr("aria-label", __("Draft mode"))
+			.hide()
+			.insertAfter(this.$body.find(".mp-toolbar").first());
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.c1_menu_items(target));
 		this.p6_legend_providers = this.p6_legend_providers || [];
@@ -6434,7 +6360,6 @@ const MPC1_METHODS = {
 	set_draft_mode(on) {
 		this.draft_on = !!on;
 		this.save_pref(MPC1.pref, this.draft_on ? "1" : "0");
-		this.$draft_toggle.toggleClass("mp-draft-on", this.draft_on);
 		// An undo recorded in one mode must not be replayed in the other.
 		this.undo_stack = [];
 		this.update_undo_button();
@@ -6468,8 +6393,8 @@ const MPC1_METHODS = {
 		$('<span class="mp-draft-text"></span>')
 			.text(
 				count
-					? __("{0} unpublished change(s)", [count])
-					: __("Draft mode: nothing drafted yet. Your changes to visits stay yours until you publish them.")
+					? __("Draft mode on: {0} change(s) not published yet", [count])
+					: __("Draft mode on: nothing drafted yet. Your changes to visits stay yours until you publish them.")
 			)
 			.appendTo($bar);
 		if (stale.length) {
@@ -6628,3 +6553,360 @@ const MPC1_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MPC1_METHODS);
+
+// ====================================================================== The toolbar (v1.687.0)
+//
+// The Maintenance Planner's half of the toolbar redesign Nik picked on 2026-10-14 (the Project
+// Planner's PPTB block has the long version). One bar, made shorter by four menus:
+//
+//   ‹ Today ›  title  [highlight]  Month Week Crew   search  Technician
+//   [alert chips]  Views ▾  Display ▾  Edit ▾  Print ▾  [↶]  ?  ↻
+//
+//   - Views ▾     the saved views (6C), Save current view as…, Manage views…
+//   - Display ▾   Color by (6C) and the key of its colors (the row it had under the toolbar); the
+//                 key of the visit kinds (the legend row it had under the toolbar); Projected visits
+//                 and Project work, each with a check mark
+//   - Edit ▾      Draft mode (C1) and Tap to move (6C); Add visit… (6E, for whoever may create
+//                 visits); Block time… (6D, schedulers); Conflicts… (6D, even at none); Undo
+//   - Print ▾     Print this view and Print selection only (6C)
+//   - alert chips Conflicts (6D) and Overdue, in the danger tone, a count and a word each, there only
+//                 above zero. Conflicts opens the Conflict center; Overdue opens a side panel listing
+//                 the overdue visits on screen, each of which opens its visit (the planner had no
+//                 overdue list of its own; only a red card and its chip). There is no Running over:
+//                 visits carry no clocked-against-planned hours here
+//   - ↶, ?, ↻     Undo as a small icon only while there is something to undo; the help, whose first
+//                 section is now the tips that used to be banners on load; refresh
+//   - Draft mode  a strip under the bar, "Draft mode on: N changes not published yet", with
+//                 Publish and Discard (C1's c1_render_bar, c1_publish, c1_discard)
+//
+// The Day Board stays where it was, the page head's secondary button. There is no Utilization view
+// here: the Crew Utilization report is the Project Planner's view, and it counts maintenance visits
+// in every person's booked hours already.
+//
+// On a phone the bar is ‹ Today ›, the title, the view switcher and "Filters and tools", which opens
+// planner_kit.toolbar.sheet with the filter, the chips and the menus' items; Back closes it.
+//
+// Hooks into the class above, one line each: init_toolbar (constructor), tb_ready (p6a_ready),
+// tb_render (render, p6d_after_list) and tb_close_sheet (p6b_pick).
+
+const MPTB = {
+	phone_max: 767,
+	tones: { danger: "mp-tb-danger", warn: "mp-tb-warn" },
+	overdue_width: 460,
+};
+
+const MPTB_METHODS = {
+	// The four menus: [name, label, what is in it]. Written out as __() calls, so they are translated.
+	tb_menu_list() {
+		return [
+			["views", __("Views"), __("Your saved views")],
+			["display", __("Display"), __("Card colors, their key, and what else is drawn")],
+			["edit", __("Edit"), __("Draft mode, Tap to move, Add visit, Block time, Undo")],
+			["print", __("Print"), __("Print this view")],
+		];
+	},
+
+	init_toolbar() {
+		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null };
+		this.tb_menu_list().forEach(([name, label, title]) => {
+			const $button = $('<button type="button" class="btn btn-default btn-sm mp-tb-menu"></button>')
+				.attr("data-tb-menu", name)
+				.attr("title", title)
+				.on("click", () => {
+					if (!this.tb.kit) frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+				})
+				.appendTo(this.$tools);
+			$("<span></span>").text(label).appendTo($button);
+			$('<span class="mp-tb-caret" aria-hidden="true">▾</span>').appendTo($button);
+			this.tb.$menus[name] = $button;
+		});
+		this.$tb_more = $('<button type="button" class="btn btn-default btn-sm mp-tb-more"></button>')
+			.attr("aria-haspopup", "dialog")
+			.attr("aria-label", __("Filters and tools"))
+			.on("click", () => this.tb_open_sheet())
+			.appendTo(this.$body.find(".mp-toolbar").first());
+		$("<span></span>").text(__("Filters and tools")).appendTo(this.$tb_more);
+		this.$tb_more_count = $('<span class="mp-tb-count" aria-hidden="true"></span>').hide().appendTo(this.$tb_more);
+	},
+
+	tb_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!this.tb || this.tb.kit || !kit || !kit.toolbar) return;
+		this.tb.kit = kit;
+		this.tb_menu_list().forEach(([name, label]) => {
+			this.tb.menus[name] = kit.toolbar.menu(this.tb.$menus[name][0], {
+				label,
+				items: () => this.tb_items(name),
+			});
+		});
+		this.tb_render();
+	},
+
+	tb_items(name) {
+		if (name === "views") return this.p6c_view_items();
+		if (name === "display") return this.tb_display_items();
+		if (name === "edit") return this.tb_edit_items();
+		if (name === "print") return this.p6c_print_items();
+		return [];
+	},
+
+	// The visit kinds, each drawn with its card's own class, so the key and the calendar agree (the
+	// legend row under the toolbar, before v1.687.0).
+	tb_kind_items() {
+		const kinds = [
+			["", __("Scheduled visit")],
+			["mp-seasonal", __("Seasonal")],
+			["mp-extra", __("Extra / follow-up")],
+			["mp-pending", __("Pending review")],
+			["mp-done", __("Done")],
+			["mp-projected", __("Projected from the contract")],
+			["mp-overdue", __("Overdue")],
+			["mp-bk-task", __("Project task (read-only)")],
+			["mp-bk-rental", __("Rental crew (read-only)")],
+			["mp-bk-travel", __("Travel (read-only)")],
+		];
+		return [{ heading: __("Visit kinds") }].concat(
+			kinds.map(([kind, label]) => ({
+				label,
+				sample_html: `<i class="mp-swatch${kind ? ` ${kind}` : ""}"></i>`,
+				info: true,
+			}))
+		);
+	},
+
+	tb_display_items() {
+		return this.p6c_color_items().concat(
+			[{ divider: true }],
+			this.tb_kind_items(),
+			[
+				{ divider: true },
+				{
+					label: __("Projected visits"),
+					checked: !!this.show_projected,
+					title: __("The visits a contract will draft next, before the scheduler drafts them"),
+					on_click: () => this.set_show_projected(!this.show_projected),
+				},
+				{
+					label: __("Project work"),
+					checked: !!this.show_project_work,
+					title: __("Project tasks, rental crew tasks and travel, read-only. Move them on the Project Planner."),
+					on_click: () => this.set_show_project_work(!this.show_project_work),
+				},
+			]
+		);
+	},
+
+	tb_edit_items() {
+		const items = [
+			{
+				label: __("Draft mode"),
+				checked: !!this.draft_on,
+				title: __("Keep your changes to yourself until you publish them"),
+				on_click: () => this.set_draft_mode(!this.draft_on),
+			},
+		];
+		if (this.p6c) {
+			items.push({
+				label: __("Tap to move"),
+				checked: !!this.p6c.tap,
+				title: __("Tap a visit, then tap the day where it goes, instead of dragging"),
+				on_click: () => this.p6c_set_tap(!this.p6c.tap),
+			});
+		}
+		items.push({ divider: true });
+		if (this.data && this.data.can_create_visits) {
+			items.push({
+				label: __("Add visit…"),
+				title: __("Draft a visit for a site, a day and a technician. Double-click an empty spot does the same."),
+				on_click: () => this.p6e_add_visit(null),
+			});
+		}
+		if (this.data && this.data.can_schedule) {
+			items.push({
+				label: __("Block time…"),
+				title: __("Mark someone unavailable for part of a day or all of it"),
+				on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),
+			});
+		}
+		const count = this.p6d_conflict_count();
+		items.push({
+			label: __("Conflicts…"),
+			hint: count ? String(count) : "",
+			title: __("Everything wrong in the dates on screen, with one-click fixes"),
+			on_click: () => this.p6d_open_conflicts(null),
+		});
+		const last = this.undo_stack[this.undo_stack.length - 1];
+		items.push(
+			{ divider: true },
+			{
+				label: __("Undo"),
+				hint: __("Ctrl+Z"),
+				disabled: !last,
+				title: last ? __("Undo the last change to {0}", [last.site]) : __("Nothing to undo"),
+				on_click: () => this.undo(),
+			}
+		);
+		return items;
+	},
+
+	// ------------------------------------------------------------------ alert chips
+
+	// The overdue visits the filter shows, in date order.
+	tb_overdue_cards() {
+		if (!this.data) return [];
+		return this.all_cards()
+			.filter((card) => card.kind === "visit" && card.overdue && this.visible(card))
+			.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+	},
+
+	tb_alerts() {
+		if (!this.data) return [];
+		const out = [];
+		const conflicts = this.p6d_conflict_count();
+		if (conflicts > 0) {
+			out.push({
+				key: "conflicts",
+				tone: "danger",
+				count: conflicts,
+				label: __("Conflicts"),
+				title: __("{0} conflict(s) nobody has kept in the dates on screen", [conflicts]),
+				open: () => this.p6d_open_conflicts(null),
+			});
+		}
+		const overdue = this.tb_overdue_cards().length;
+		if (overdue > 0) {
+			out.push({
+				key: "overdue",
+				tone: "danger",
+				count: overdue,
+				label: __("Overdue"),
+				title: __("Drafted visits whose day has passed: list them"),
+				open: () => this.tb_open_overdue(),
+			});
+		}
+		return out;
+	},
+
+	// The Overdue chip: the overdue visits on screen in a side panel; one opens its visit.
+	tb_open_overdue() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) return;
+		const html = () => {
+			const cards = this.tb_overdue_cards();
+			if (!cards.length) return `<p class="pk-empty">${mp_esc(__("No overdue visits on screen."))}</p>`;
+			const rows = cards.map(
+				(card) => `
+				<li>
+					<button type="button" class="mp-tb-overdue-row" data-tb-overdue="${mp_esc(card.key)}">
+						<span class="mp-tb-overdue-site">${mp_esc(card.site || card.project || card.name || "")}</span>
+						<span class="mp-tb-overdue-sub">${mp_esc(
+							[card.date ? mp_when(card.date) : "", card.technician ? this.tech_name(card.technician) : __("Unassigned")]
+								.filter(Boolean)
+								.join(" · ")
+						)}</span>
+					</button>
+				</li>`
+			);
+			return `<ul class="mp-tb-overdue">${rows.join("")}</ul><p class="pk-note">${mp_esc(
+				__("Drafted visits whose day has passed. Open one to move it or fill it in.")
+			)}</p>`;
+		};
+		kit.drawer.open({
+			title: __("Overdue visits"),
+			body: html(),
+			width: MPTB.overdue_width,
+			key: "mp-tb-overdue",
+			owner: MP6A.owner,
+			push: this.$body[0],
+			reopen: () => this.tb_open_overdue(),
+			on_click: (e) => {
+				const el = e.target && e.target.closest ? e.target.closest("[data-tb-overdue]") : null;
+				if (!el) return;
+				const card = this.by_key[el.getAttribute("data-tb-overdue")];
+				if (card) this.open_card(card);
+			},
+		});
+	},
+
+	tb_render() {
+		if (!this.tb || !this.$alerts) return;
+		const alerts = this.tb_alerts();
+		const active = document.activeElement;
+		const had = active && this.$alerts[0].contains(active) ? active.getAttribute("data-tb-alert") : null;
+		this.$alerts.empty();
+		alerts.forEach((alert) => {
+			const $chip = $('<button type="button" class="mp-tb-alert"></button>')
+				.addClass(MPTB.tones[alert.tone] || "")
+				.attr("data-tb-alert", alert.key)
+				.attr("title", alert.title)
+				.on("click", () => alert.open())
+				.appendTo(this.$alerts);
+			$('<span class="mp-tb-count"></span>').text(String(alert.count)).appendTo($chip);
+			$("<span></span>").text(alert.label).appendTo($chip);
+		});
+		// A class, not toggle(): on a phone the CSS hides the chips in the bar (they are in the sheet).
+		this.$alerts.toggleClass("mp-tb-empty", !alerts.length);
+		if (had) {
+			const again = this.$alerts.find(`[data-tb-alert="${had}"]`)[0];
+			if (again) again.focus();
+		}
+		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
+		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
+		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
+		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
+	},
+
+	// ------------------------------------------------------------------ the phone's sheet
+
+	tb_open_sheet() {
+		const kit = this.tb && this.tb.kit;
+		if (!kit) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		this.tb.sheet = kit.toolbar.sheet({
+			title: __("Filters and tools"),
+			max_width: MPTB.phone_max,
+			return_focus: this.$tb_more[0],
+			top: (slot) => {
+				this.$filters.addClass("mp-tb-in-sheet").appendTo(slot);
+			},
+			sections: () => this.tb_sheet_sections(),
+			on_close: () => {
+				this.$filters.removeClass("mp-tb-in-sheet").insertBefore(this.$alerts);
+				this.tb.sheet = null;
+			},
+		});
+	},
+
+	tb_close_sheet() {
+		if (this.tb && this.tb.sheet) this.tb.sheet.close("user");
+	},
+
+	tb_sheet_sections() {
+		const keep = (items) => items.map((item) => Object.assign({}, item, { keep_open: typeof item.checked === "boolean" }));
+		const alerts = this.tb_alerts().map((alert) => ({
+			label: `${alert.count} ${alert.label}`,
+			tone: alert.tone,
+			title: alert.title,
+			on_click: alert.open,
+		}));
+		return [
+			{ title: __("Alerts"), items: alerts },
+			{ title: __("Views"), items: keep(this.p6c_view_items()) },
+			{ title: __("Display"), items: keep(this.tb_display_items()) },
+			{ title: __("Edit"), items: keep(this.tb_edit_items()) },
+			{ title: __("Print"), items: this.p6c_print_items() },
+			{
+				title: __("This page"),
+				items: [
+					{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
+					{ label: __("Day Board"), on_click: () => frappe.set_route("maintenance-day-board") },
+					{ label: __("Refresh"), on_click: () => this.load() },
+				],
+			},
+		];
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);

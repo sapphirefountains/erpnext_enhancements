@@ -22,6 +22,8 @@
  *   blocks.form / note_form / chip_html / notes_html   personal blocks and day notes (Phase 6D)
  *   glow_key / glow_keys / format.{hours, drive, day_label, add_days}
  *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
+ *   toolbar.menu(button, opts) / sheet(opts)  the toolbar's menu buttons (no history entry) and the
+ *                                       phone's "Filters and tools" sheet (one, like a drawer)
  *
  * See "Planner kit" in project_enhancements/README.md for how to use each one, and
  * planner_kit/history.js for how Back closes a drawer without the router reloading the page.
@@ -41,6 +43,7 @@ import * as conflicts from "./planner_kit/conflicts.js";
 import * as blocks from "./planner_kit/blocks.js";
 import { CSS, STYLE_ID } from "./planner_kit/styles.js";
 import * as big_picture from "./planner_kit/big_picture.js";
+import { create_toolbar } from "./planner_kit/toolbar.js";
 
 const VERSION = 1;
 
@@ -156,6 +159,8 @@ function install() {
 		}),
 		render: { person_week_html, day_overview_html, day_state },
 		big_picture,
+		// The planner toolbar redesign (v1.687.0): menu buttons and the phone's sheet.
+		toolbar: create_toolbar(env),
 	};
 
 	// Esc closes the topmost kit overlay (a menu before the drawer under it), unless something

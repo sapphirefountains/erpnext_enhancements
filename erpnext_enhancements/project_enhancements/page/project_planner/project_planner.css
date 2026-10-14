@@ -116,15 +116,6 @@
 	max-width: 200px;
 }
 
-.pp-toolbar label {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	margin: 0;
-	font-size: 13px;
-	font-weight: normal;
-}
-
 /* The toolbar's selects and search are Bootstrap .form-control fields. Bootstrap's own
  * .form-control:focus (0,2,0) would outrank a plain field rule and turn them grey while in use,
  * so the focused field has its own rule, under the page at (0,4,0). Fields stay white, square,
@@ -142,8 +133,126 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-.pp-undo.pp-empty {
-	opacity: 0.55;
+/* ---- The toolbar (v1.687.0): the filters, alert chips, four menus, the phone's one button --- */
+
+.pp-tb-filters,
+.pp-tb-tools,
+.pp-tb-alerts {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+/* Undo is a small icon while there is something to undo (its item is in Edit either way), and not on
+ * the heatmap or Utilization. No chip, no chip row. */
+.pp-undo.pp-empty,
+.pp-undo.pp-tb-off,
+.pp-tb-alerts.pp-tb-empty {
+	display: none;
+}
+
+.pp-undo,
+.pp-refresh {
+	min-width: 30px;
+}
+
+.pp-tb-caret {
+	margin-left: 4px;
+	font-size: 11px;
+}
+
+/* An alert is a status chip: the status fill with its own label and its chip edge, a count and a
+ * word, so it is never color alone. It is a button: it opens what it counts. */
+.pp-tb-alert {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 12px 2px 4px;
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-pill);
+	font-size: 13px;
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+}
+
+.pp-tb-alert.pp-tb-danger {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+}
+
+.pp-tb-alert.pp-tb-warn {
+	background: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
+	color: var(--sf-on-warn);
+}
+
+/* Running over while it filters the board: a heavier edge in the label's own color. */
+.pp-tb-alert[aria-pressed="true"] {
+	border: var(--sf-border-control) solid currentColor;
+	text-decoration: underline;
+}
+
+.pp-tb-alert:focus-visible,
+.pp-tb-more:focus-visible,
+.pp-tb-menu:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* The count: a small ground of the surface inside the chip, read before the word. */
+.pp-tb-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	padding: 0 5px;
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-surface);
+	color: var(--sf-text-strong);
+	font-size: 12px;
+}
+
+.pp-tb-more .pp-tb-count {
+	margin-left: 6px;
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+}
+
+/* "Filters and tools" is the phone's: the wide bar has every control it opens. */
+.pp-tb-more {
+	display: none;
+}
+
+/* The filters while they are in the phone's sheet: one column of full-width fields, on the tokens
+ * as they are in the bar (the sheet is outside .pp-wrap). */
+.pp-tb-filters.pp-tb-in-sheet {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	padding: 10px 0;
+}
+
+.pp-tb-filters.pp-tb-in-sheet .form-control,
+.pp-tb-filters.pp-tb-in-sheet .form-control:focus {
+	width: 100%;
+	max-width: none;
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-input);
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.pp-tb-filters.pp-tb-in-sheet .form-control:focus {
+	border-color: var(--sf-focus);
+	outline: 1px solid var(--sf-focus);
+}
+
+.pp-tb-filters.pp-tb-in-sheet .btn {
+	min-height: var(--sf-touch-min);
 }
 
 .pp-section {
@@ -1095,6 +1204,63 @@ body.pp-drag-active * {
 	font-size: 12px;
 }
 
+/* ---- Utilization: the Crew Utilization report's rows, a view of the planner (v1.687.0) ------ */
+
+.pp-util-head {
+	display: flex;
+	justify-content: flex-end;
+	margin: 0 0 8px;
+}
+
+.pp-util-scroll {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+	padding: 0;
+}
+
+.pp-util {
+	width: 100%;
+	min-width: 640px;
+	border-collapse: collapse;
+	font-size: 13px;
+	color: var(--sf-text);
+}
+
+.pp-util th,
+.pp-util td {
+	padding: 6px 10px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	text-align: left;
+	font-weight: normal;
+	white-space: nowrap;
+}
+
+.pp-util thead th {
+	border-top: 0;
+	font-size: 12px;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-muted);
+}
+
+.pp-util tbody th {
+	color: var(--sf-text-strong);
+}
+
+/* A person's first week starts a group: a heavier rule above it. */
+.pp-util tr.pp-util-first > th,
+.pp-util tr.pp-util-first > td {
+	border-top: var(--sf-border-control) solid var(--sf-rule);
+}
+
+.pp-util .pp-util-num {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.pp-util-none {
+	color: var(--sf-text-muted);
+}
+
 /* ---- The heatmap: eight weeks of load per person ----------------------------------------- */
 
 .pp-hm-scroll {
@@ -1436,6 +1602,33 @@ body.pp-drag-active * {
 		display: none;
 	}
 
+	/* One compact bar: ‹ Today ›, the title, the view switcher and "Filters and tools". The rest is
+	 * in the sheet that button opens (the highlight pill stays in the bar while it is on). */
+	.pp-toolbar .pp-tb-filters,
+	.pp-toolbar .pp-tb-alerts,
+	.pp-toolbar .pp-tb-tools,
+	.pp-toolbar .pp-undo,
+	.pp-toolbar .pp-p6a-help,
+	.pp-toolbar .pp-refresh {
+		display: none;
+	}
+
+	.pp-tb-more {
+		display: inline-flex;
+		align-items: center;
+	}
+
+	/* Five views on a narrow screen: the switcher scrolls sideways rather than wrapping. */
+	.pp-seg {
+		max-width: 100%;
+		overflow-x: auto;
+	}
+
+	.pp-seg button {
+		padding: 4px 9px;
+		white-space: nowrap;
+	}
+
 	.pp-day {
 		min-height: 84px;
 		padding: 2px;
@@ -1520,21 +1713,15 @@ body.pp-drag-active * {
 	font-weight: 600;
 }
 
-.pp-draft-toggle.pp-draft-on {
-	color: var(--sf-link);
-	font-weight: 600;
-}
-
+/* Draft mode on: a strip right under the toolbar, a dashed focus edge like a drafted card's, so the
+ * mode is seen before anything is dragged. */
 .pp-draft-bar {
-	position: sticky;
-	bottom: 8px;
-	z-index: 5;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 8px;
 	padding: 8px 12px;
-	margin: 10px 0;
+	margin: -2px 0 10px;
 	border: var(--sf-border-control) dashed var(--sf-focus);
 	border-radius: var(--sf-radius-none);
 	background: var(--sf-surface);
@@ -1655,31 +1842,6 @@ body.pp-drag-active * {
 .pp-chip.pp-equip {
 	background: color-mix(in srgb, var(--sf-pillar-build) 12%, var(--sf-surface));
 	color: var(--sf-text);
-}
-
-/* A toggle in the toolbar (Running over, Tap to move): a control, pressed or not. */
-.pp-toggle {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	border: var(--sf-border-hairline) solid var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-	background: var(--sf-surface);
-	padding: 3px 11px;
-	font-size: 13px;
-	color: var(--sf-text);
-}
-
-.pp-toggle:focus-visible {
-	outline: 2px solid var(--sf-focus);
-	outline-offset: 2px;
-}
-
-.pp-toggle.pp-on {
-	background: color-mix(in srgb, var(--sf-danger) 12%, var(--sf-surface));
-	border-color: var(--sf-chip-edge-danger);
-	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
-	font-weight: 600;
 }
 
 .pp-forecast {
@@ -1884,11 +2046,6 @@ body.pp-drag-active * {
 /* ======================================================================================== */
 /* Phase 6A: quick looks, the legend and hints, sticky headings (PP6A_STYLE).                */
 /* ======================================================================================== */
-
-.pp-p6a-hints {
-	display: flex;
-	flex-direction: column;
-}
 
 .pp-p6a-help {
 	font-weight: 700;
@@ -2433,10 +2590,6 @@ body.p6b-resizing * {
 /* Phase 6C: Color by, highlight, the team strip, tap to move, saved views (PP6C_STYLE).    */
 /* ======================================================================================== */
 
-.pp-p6c-color {
-	max-width: 190px;
-}
-
 /* The "Highlighting ..." pill, with its X. */
 .pp-p6c-pill {
 	display: inline-flex;
@@ -2479,49 +2632,7 @@ body.p6b-resizing * {
 	outline-offset: 1px;
 }
 
-/* Tap to move, on: a tint, the focus edge and the weight (it is also aria-pressed). */
-.pp-p6c-tap.pp-p6c-on {
-	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
-	border-color: var(--sf-focus);
-	color: var(--sf-link);
-	font-weight: 600;
-}
-
-.pp-p6c-key {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 3px 12px;
-	font-size: 12px;
-	color: var(--sf-text-muted);
-	margin: -2px 0 8px;
-}
-
-.pp-p6c-key-title {
-	font-weight: 600;
-}
-
-.pp-p6c-key-item {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	max-width: 240px;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.pp-p6c-key-item[data-p6c-hi] {
-	cursor: pointer;
-	border-radius: var(--sf-radius-none);
-}
-
-.pp-p6c-key-item[data-p6c-hi]:hover {
-	color: var(--sf-text-strong);
-	text-decoration: underline;
-}
-
-/* A key's swatch: the color it stands for is data (--pp-color, set by the script). */
+/* A key's swatch (in Display's color key and the help): the color it stands for is data (--pp-color, set by the script). */
 .pp-p6c-swatch {
 	flex: 0 0 auto;
 	display: inline-block;
@@ -2718,8 +2829,7 @@ body.p6b-resizing * {
 @media (pointer: coarse) {
 	.pp-toolbar .btn,
 	.pp-toolbar select,
-	.pp-toolbar .pp-toggle,
-	.pp-toolbar label,
+	.pp-toolbar .pp-tb-alert,
 	.pp-seg button {
 		min-height: var(--sf-touch-min);
 	}
@@ -2780,21 +2890,11 @@ body.p6b-resizing * {
 	.pp-p6c-sday {
 		padding: 2px 3px;
 	}
-
-	.pp-p6c-key-item {
-		max-width: 160px;
-	}
 }
 
 /* ======================================================================================== */
 /* Phase 6D: the Conflict center button, day notes and blocks (PP6D_STYLE).                 */
 /* ======================================================================================== */
-
-.pp-p6d-conflicts.pp-p6d-hot {
-	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
-	border-color: var(--sf-chip-edge-danger);
-	font-weight: 600;
-}
 
 .pp-chip.pp-p6d-link {
 	cursor: pointer;

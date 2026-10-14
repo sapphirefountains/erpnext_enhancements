@@ -124,15 +124,6 @@
 	max-width: 220px;
 }
 
-.mp-toolbar label {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	margin: 0;
-	font-size: 13px;
-	font-weight: normal;
-}
-
 /* The toolbar's selects and search are Bootstrap .form-control fields. Bootstrap's own
  * .form-control:focus (0,2,0) would outrank a plain field rule and turn them grey while in use,
  * so the focused field has its own rule, under the page at (0,4,0). Fields stay white, square,
@@ -150,27 +141,156 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-.mp-undo.mp-empty {
-	opacity: 0.55;
-}
+/* ---- The toolbar (v1.687.0): the filter, alert chips, four menus, the phone's one button ----- */
 
-.mp-legend {
-	display: flex;
+.mp-tb-filters,
+.mp-tb-tools,
+.mp-tb-alerts {
+	display: inline-flex;
 	flex-wrap: wrap;
-	gap: 12px;
-	font-size: 12px;
-	color: var(--sf-text-muted);
-	margin: 0 0 10px;
 	align-items: center;
+	gap: 8px;
 }
 
-.mp-legend span {
+/* Undo is a small icon while there is something to undo (its item is in Edit either way). No chip,
+ * no chip row. */
+.mp-undo.mp-empty,
+.mp-tb-alerts.mp-tb-empty {
+	display: none;
+}
+
+.mp-undo,
+.mp-refresh {
+	min-width: 30px;
+}
+
+.mp-tb-caret {
+	margin-left: 4px;
+	font-size: 11px;
+}
+
+/* An alert is a status chip: the status fill with its own label and its chip edge, a count and a
+ * word, so it is never color alone. It is a button: it opens what it counts. */
+.mp-tb-alert {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
+	padding: 2px 12px 2px 4px;
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-pill);
+	font-size: 13px;
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
 }
 
-/* The legend's swatch: the same edge as the card it names (the card rules below list it too). */
+.mp-tb-alert.mp-tb-danger {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+}
+
+.mp-tb-alert.mp-tb-warn {
+	background: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
+	color: var(--sf-on-warn);
+}
+
+.mp-tb-alert:focus-visible,
+.mp-tb-more:focus-visible,
+.mp-tb-menu:focus-visible,
+.mp-tb-overdue-row:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.mp-tb-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	padding: 0 5px;
+	border-radius: var(--sf-radius-pill);
+	background: var(--sf-surface);
+	color: var(--sf-text-strong);
+	font-size: 12px;
+}
+
+.mp-tb-more .mp-tb-count {
+	margin-left: 6px;
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+}
+
+/* "Filters and tools" is the phone's: the wide bar has every control it opens. */
+.mp-tb-more {
+	display: none;
+}
+
+/* The filter while it is in the phone's sheet: full-width fields on the tokens (the sheet is
+ * outside .mp-wrap). */
+.mp-tb-filters.mp-tb-in-sheet {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	padding: 10px 0;
+}
+
+.mp-tb-filters.mp-tb-in-sheet .form-control,
+.mp-tb-filters.mp-tb-in-sheet .form-control:focus {
+	width: 100%;
+	max-width: none;
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-input);
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.mp-tb-filters.mp-tb-in-sheet .form-control:focus {
+	border-color: var(--sf-focus);
+	outline: 1px solid var(--sf-focus);
+}
+
+/* The Overdue chip's list: one row a visit, square, a hairline between them. */
+.mp-tb-overdue {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.mp-tb-overdue-row {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 6px 4px;
+	border: 0;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: transparent;
+	color: var(--sf-text);
+	text-align: left;
+	cursor: pointer;
+}
+
+.mp-tb-overdue-row:hover {
+	background: color-mix(in srgb, var(--sf-focus) 10%, var(--sf-surface));
+}
+
+.mp-tb-overdue-site {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.mp-tb-overdue-sub {
+	font-size: 12px;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+/* A visit kind's swatch in the Display menu's key: the same edge as the card it names (the card
+ * rules below list it too). */
 .mp-swatch {
 	display: inline-block;
 	width: 16px;
@@ -1060,6 +1180,22 @@ body.mp-drag-active * {
 		min-width: 0;
 	}
 
+	/* One compact bar: ‹ Today ›, the title, the view switcher and "Filters and tools". The rest is
+	 * in the sheet that button opens (the highlight pill stays in the bar while it is on). */
+	.mp-toolbar .mp-tb-filters,
+	.mp-toolbar .mp-tb-alerts,
+	.mp-toolbar .mp-tb-tools,
+	.mp-toolbar .mp-undo,
+	.mp-toolbar .mp-p6a-help,
+	.mp-toolbar .mp-refresh {
+		display: none;
+	}
+
+	.mp-tb-more {
+		display: inline-flex;
+		align-items: center;
+	}
+
 	/* 16px in a field, so iOS does not zoom the page into it. */
 	.mp-wrap .mp-toolbar .form-control {
 		font-size: var(--sf-text-input);
@@ -1074,11 +1210,6 @@ body.mp-drag-active * {
 /* ======================================================================================== */
 /* Phase 6A: quick looks, the legend and hints, sticky headings (MP6A_STYLE).                */
 /* ======================================================================================== */
-
-.mp-p6a-hints {
-	display: flex;
-	flex-direction: column;
-}
 
 .mp-p6a-help {
 	font-weight: 700;
@@ -1456,11 +1587,6 @@ body.mp-drag-active * {
 /* Phase 6C: Color by, highlight, the team strip, tap to move, saved views (MP6C_STYLE).    */
 /* ======================================================================================== */
 
-.mp-p6c-color {
-	width: auto;
-	max-width: 200px;
-}
-
 /* The "Highlighting ..." pill, with its X. */
 .mp-p6c-pill {
 	display: inline-flex;
@@ -1503,61 +1629,7 @@ body.mp-drag-active * {
 	outline-offset: 1px;
 }
 
-.mp-p6c-tap {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	border: var(--sf-border-hairline) solid var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-	background: var(--sf-surface);
-	padding: 3px 11px;
-	font-size: 13px;
-	color: var(--sf-text);
-}
-
-/* Tap to move, on: a tint, the focus edge and the weight (it is also aria-pressed). */
-.mp-p6c-tap.mp-p6c-on {
-	background: color-mix(in srgb, var(--sf-focus) 12%, var(--sf-surface));
-	border-color: var(--sf-focus);
-	color: var(--sf-link);
-	font-weight: 600;
-}
-
-.mp-p6c-key {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 3px 12px;
-	font-size: 12px;
-	color: var(--sf-text-muted);
-	margin: -2px 0 8px;
-}
-
-.mp-p6c-key-title {
-	font-weight: 600;
-}
-
-.mp-p6c-key-item {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	max-width: 240px;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.mp-p6c-key-item[data-p6c-hi] {
-	cursor: pointer;
-	border-radius: var(--sf-radius-none);
-}
-
-.mp-p6c-key-item[data-p6c-hi]:hover {
-	color: var(--sf-text-strong);
-	text-decoration: underline;
-}
-
-/* A key's swatch: the color it stands for is data (--mp-color, set by the script). */
+/* A key's swatch (in Display's color key and the help): the color it stands for is data (--mp-color, set by the script). */
 .mp-p6c-swatch {
 	flex: 0 0 auto;
 	display: inline-block;
@@ -1763,9 +1835,8 @@ body.mp-drag-active * {
 @media (pointer: coarse) {
 	.mp-toolbar .btn,
 	.mp-toolbar select,
-	.mp-toolbar label,
-	.mp-seg button,
-	.mp-p6c-tap {
+	.mp-toolbar .mp-tb-alert,
+	.mp-seg button {
 		min-height: var(--sf-touch-min);
 	}
 
@@ -1830,21 +1901,11 @@ body.mp-drag-active * {
 	.mp-p6c-sday {
 		padding: 2px 3px;
 	}
-
-	.mp-p6c-key-item {
-		max-width: 160px;
-	}
 }
 
 /* ======================================================================================== */
 /* Phase 6D: the Conflict center button, day notes on the crew view (MP6D_STYLE).            */
 /* ======================================================================================== */
-
-.mp-p6d-conflicts.mp-p6d-hot {
-	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
-	border-color: var(--sf-chip-edge-danger);
-	font-weight: 600;
-}
 
 .mp-chip.mp-p6d-link {
 	cursor: pointer;
@@ -1939,21 +2000,15 @@ body.mp-drag-active * {
 	font-weight: 600;
 }
 
-.mp-toolbar label.mp-draft-toggle.mp-draft-on {
-	color: var(--sf-link);
-	font-weight: 600;
-}
-
+/* Draft mode on: a strip right under the toolbar, a dashed focus edge like a drafted card's, so the
+ * mode is seen before anything is dragged. */
 .mp-draft-bar {
-	position: sticky;
-	bottom: 8px;
-	z-index: 5;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 8px;
 	padding: 8px 12px;
-	margin: 10px 0;
+	margin: -2px 0 10px;
 	border: var(--sf-border-control) dashed var(--sf-focus);
 	border-radius: var(--sf-radius-none);
 	background: var(--sf-surface);

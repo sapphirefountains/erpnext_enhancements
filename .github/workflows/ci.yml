@@ -3541,6 +3541,15 @@ jobs:
       # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
       - name: Custom pages S5c planner filters in the address (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v
+      # Planner toolbar redesign (v1.687.0). Both planners' bars fold into Views / Display / Edit /
+      # Print menus (planner_kit/toolbar.js: the ARIA menu button, arrow keys, Esc gives focus back,
+      # no history entry), count chips there only above zero, the draft strip under the bar, the
+      # Project Planner's Utilization view, and the phone's "Filters and tools" sheet, which takes
+      # the kit's one history entry so Back closes it. Runs scripts/test_planner_toolbar.js, the real
+      # kit module and page scripts on a fake DOM and a fake browser, with an explicit list of every
+      # control the old bars had; node is on PATH in this job, so the harness cannot skip here.
+      - name: Planner toolbar menus, alert chips, draft strip and phone sheet (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_toolbar -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

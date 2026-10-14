@@ -12,6 +12,10 @@
 //                                             time between them, and a map
 //   /desk/project-planner/heatmap/2026-10-12  eight weeks of load per person, one cell per week
 //                                             (the arrows step four weeks; a cell opens its week)
+//   /desk/project-planner/utilization/2026-10-01
+//                                             the Crew Utilization report's figures for the month
+//                                             holding that day, per person per week, as a view of
+//                                             the planner (the arrows step a month)
 //
 // The Project, Project manager and Group filters ride along on every one of those as the query
 // (S5c): /desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
@@ -66,6 +70,8 @@ const PP = {
 	route_view: "route",
 	heatmap_view: "heatmap",
 	heatmap_weeks: 8,
+	// The Utilization view (toolbar redesign, v1.687.0): the Crew Utilization report's rows, drawn here.
+	util_view: "utilization",
 	groups: ["Field", "PM", "Design", "Subcontractor"],
 	prefs: {
 		project: "ee_project_planner_project",
@@ -206,6 +212,7 @@ class ProjectPlanner {
 		this.init_phase6c();
 		this.init_phase6d();
 		this.init_t1();
+		this.init_toolbar();
 		this.bind_drag();
 	}
 
@@ -225,6 +232,11 @@ class ProjectPlanner {
 		if (route[1] === PP.heatmap_view) {
 			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 			return { view: PP.heatmap_view, anchor: date };
+		}
+		// /project-planner/utilization/<date>
+		if (route[1] === PP.util_view) {
+			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+			return { view: PP.util_view, anchor: date };
 		}
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
@@ -252,6 +264,11 @@ class ProjectPlanner {
 		if (target.view === PP.heatmap_view) {
 			this.set_mode("heatmap");
 			this.load_heatmap();
+			return;
+		}
+		if (target.view === PP.util_view) {
+			this.set_mode(PP.util_view);
+			this.load_utilization();
 			return;
 		}
 		this.set_mode("");
@@ -413,26 +430,28 @@ class ProjectPlanner {
 	}
 
 	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
-	// The heatmap keeps the toolbar but swaps the calendar for its grid, and drops the controls
-	// that only mean something on the calendar. (The panel is shown and hidden by render_panel,
-	// so leaving a view does not reveal a stale one.)
+	// The heatmap and Utilization keep the toolbar but swap the calendar for their own grid, and drop
+	// the controls that only mean something on the calendar (the menus leave out theirs too:
+	// tb_calendar). (The panel is shown and hidden by render_panel, so leaving a view does not reveal
+	// a stale one.)
 	set_mode(mode) {
 		const route = mode === "route";
-		const heatmap = mode === PP.heatmap_view;
+		const board = mode === PP.heatmap_view || mode === PP.util_view;
 		this.$toolbar.toggle(!route);
-		this.$trays.toggle(!route && !heatmap);
+		this.$trays.toggle(!route && !board);
 		this.$grid_wrap.toggle(!route);
 		this.$hint.toggle(!route);
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
 		this.p4_set_mode(mode);
 		this.p6c_set_mode(mode);
-		this.p6d_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
-		[this.$project, this.$pm, this.$foreign, this.$undo].forEach(($el) => $el && $el.toggle(!heatmap));
-		if (heatmap && this.$copy) this.$copy.hide();
-		if (route || heatmap) this.$panel.hide();
+		[this.$project, this.$pm].forEach(($el) => $el && $el.toggle(!board));
+		// A class, not toggle(): the icon's CSS also hides it while there is nothing to undo.
+		if (this.$undo) this.$undo.toggleClass("pp-tb-off", board);
+		if (route || board) this.$panel.hide();
 		if (!route) this.clear_route_map();
+		this.tb_render();
 	}
 
 	go_route(resource, ymd) {
@@ -489,6 +508,10 @@ class ProjectPlanner {
 	range() {
 		const first = this.first_weekday();
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
+		if (this.view === PP.util_view) {
+			// The month holding the anchor, as the Crew Utilization report reads it by default.
+			return { start: anchor.clone().startOf("month"), end: anchor.clone().endOf("month").startOf("day") };
+		}
 		if (this.view === PP.heatmap_view) {
 			// The same weeks as the calendar: they begin on the site's first weekday, which is also
 			// what get_heatmap and copy_week snap to.
@@ -518,7 +541,7 @@ class ProjectPlanner {
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
 		// The heatmap steps half its span, so each step keeps four weeks in common.
 		const next =
-			this.view === "month"
+			this.view === "month" || this.view === PP.util_view
 				? anchor.startOf("month").add(sign, "months")
 				: anchor.add(sign * (this.view === PP.heatmap_view ? (PP.heatmap_weeks / 2) * 7 : 7), "days");
 		this.go(this.view, pp_ymd(next));
@@ -526,7 +549,7 @@ class ProjectPlanner {
 
 	title() {
 		const { start, end } = this.range();
-		if (this.view === "month") return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
+		if (this.view === "month" || this.view === PP.util_view) return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
 		if (start.year() !== end.year()) return `${start.format("MMM D, YYYY")} – ${end.format("MMM D, YYYY")}`;
 		if (start.month() !== end.month()) return `${start.format("MMM D")} – ${end.format("MMM D, YYYY")}`;
 		return `${start.format("MMM D")} – ${end.format("D, YYYY")}`;
@@ -560,6 +583,7 @@ class ProjectPlanner {
 			["week", __("Week")],
 			["crew", __("Crew")],
 			[PP.heatmap_view, __("Heatmap")],
+			[PP.util_view, __("Utilization")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
 				.text(label)
@@ -568,37 +592,26 @@ class ProjectPlanner {
 		});
 
 		$('<span class="pp-spacer"></span>').appendTo($bar);
-		this.$project = this.make_select($bar, __("Project"), (value) => this.pick_filter("project", value));
-		this.$pm = this.make_select($bar, __("Project manager"), (value) => this.pick_filter("pm", value));
-		this.$group = this.make_select($bar, __("Group"), (value) => this.pick_filter("group", value));
+		// The filters (and 6B's search, which joins them) are one group: on a phone the group moves
+		// into the "Filters and tools" sheet and back (toolbar redesign, v1.687.0).
+		this.$filters = $('<span class="pp-tb-filters"></span>').appendTo($bar);
+		this.$project = this.make_select(this.$filters, __("Project"), (value) => this.pick_filter("project", value));
+		this.$pm = this.make_select(this.$filters, __("Project manager"), (value) => this.pick_filter("pm", value));
+		this.$group = this.make_select(this.$filters, __("Group"), (value) => this.pick_filter("group", value));
 		$("<option></option>").val("").text(__("All groups")).appendTo(this.$group);
 		PP.groups.forEach((group) => $("<option></option>").val(group).text(__(group)).appendTo(this.$group));
 		this.$group.val(PP.groups.includes(this.group) ? this.group : "");
 		this.group = this.$group.val() || "";
 
-		const $foreign = $("<label></label>").appendTo($bar);
-		this.$foreign = $foreign;
-		$('<input type="checkbox">')
-			.prop("checked", this.show_foreign)
-			.on("change", (e) => {
-				this.show_foreign = e.target.checked;
-				this.save_pref(PP.prefs.foreign, this.show_foreign ? "1" : "0");
-				this.render();
-			})
-			.appendTo($foreign);
-		$foreign.append(document.createTextNode(__("Maintenance, rentals, travel")));
-
-		this.$copy = $('<button type="button" class="btn btn-default btn-sm pp-copy"></button>')
-			.text(__("Copy week…"))
-			.attr("title", __("Copy tasks from this week into another week"))
-			.hide()
-			.on("click", () => this.open_copy_week())
-			.appendTo($bar);
-		this.$undo = $('<button class="btn btn-default btn-sm pp-undo pp-empty"></button>')
-			.text(__("Undo"))
+		// The alert chips, then the four menus (both filled by the toolbar block, PPTB), then Undo as
+		// a small icon while there is something to undo (its menu item is in Edit), ? and refresh.
+		this.$alerts = $('<span class="pp-tb-alerts" role="group"></span>').attr("aria-label", __("Alerts")).appendTo($bar);
+		this.$tools = $('<span class="pp-tb-tools"></span>').appendTo($bar);
+		this.$undo = $('<button type="button" class="btn btn-default btn-sm pp-undo pp-empty">↶</button>')
+			.attr("aria-label", __("Undo"))
 			.on("click", () => this.undo())
 			.appendTo($bar);
-		$('<button type="button" class="btn btn-default btn-sm">↻</button>')
+		$('<button type="button" class="btn btn-default btn-sm pp-refresh">↻</button>')
 			.attr("title", __("Refresh"))
 			.attr("aria-label", __("Refresh"))
 			.on("click", () => this.load())
@@ -610,6 +623,13 @@ class ProjectPlanner {
 		this.$grid_wrap = $("<div></div>").appendTo(this.$body);
 		this.$hint = $('<div class="pp-hint"></div>').appendTo(this.$body);
 		this.$route = $('<div class="pp-route-view"></div>').hide().appendTo(this.$body);
+	}
+
+	// "Maintenance, rentals, travel" in Display: the other planners' bookings, read-only.
+	set_show_foreign(on) {
+		this.show_foreign = !!on;
+		this.save_pref(PP.prefs.foreign, this.show_foreign ? "1" : "0");
+		this.render();
 	}
 
 	make_select($bar, label, on_change) {
@@ -625,6 +645,7 @@ class ProjectPlanner {
 
 	load() {
 		if (this.view === PP.heatmap_view) return this.load_heatmap();
+		if (this.view === PP.util_view) return this.load_utilization();
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
@@ -759,8 +780,11 @@ class ProjectPlanner {
 			this.render_heatmap();
 			return;
 		}
+		if (this.view === PP.util_view) {
+			this.render_utilization();
+			return;
+		}
 		if (!this.data) return;
-		this.$copy.toggle(this.view !== "month" && !!this.data.can_edit);
 		this.render_panel();
 		this.render_trays();
 		if (this.view === "crew") this.render_crew();
@@ -788,6 +812,7 @@ class ProjectPlanner {
 		this.render_phase6b();
 		this.render_phase6c();
 		this.render_phase6d();
+		this.tb_render();
 	}
 
 	// The availability of one person on one day, as a class and a short text.
@@ -2330,7 +2355,9 @@ class ProjectPlanner {
 				[...this.overdue_selected].forEach((name) => {
 					if (!known.has(name)) this.overdue_selected.delete(name);
 				});
-				if (this.view !== PP.heatmap_view && this.data) this.render_trays();
+				// The trays are the calendar views' (not the heatmap's or Utilization's).
+				if (PP.views.includes(this.view) && this.data) this.render_trays();
+				this.tb_render();
 			})
 			.catch(() => null);
 	}
@@ -2390,10 +2417,17 @@ class ProjectPlanner {
 		return rows;
 	}
 
+	// The overdue groups the filters show, and how many tasks they hold (the tray's heading and the
+	// toolbar's Overdue chip say the same number).
+	overdue_visible() {
+		if (!this.overdue) return { groups: [], total: 0 };
+		const groups = this.overdue.groups.filter((group) => this.overdue_group_visible(group) && group.rows.length);
+		return { groups, total: groups.reduce((sum, group) => sum + group.rows.length, 0) };
+	}
+
 	render_overdue_tray() {
 		if (!this.overdue) return;
-		const groups = this.overdue.groups.filter((group) => this.overdue_group_visible(group) && group.rows.length);
-		const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
+		const { groups, total } = this.overdue_visible();
 		if (!total) return;
 		const editable = !!(this.data && this.data.can_edit);
 		const $tray = $('<div class="pp-od"></div>').appendTo(this.$trays);
@@ -3330,13 +3364,14 @@ class ProjectPlanner {
 //                                             (tap for Google Maps), crewmates, hours and notes,
 //                                             and a link to that day's route view
 //
-// Draft mode is a toolbar switch, remembered per browser. While it is on, every drag, dialog save
-// and Undo is sent with draft=1, so it lands on the planner's own drafts (Planner Draft Change)
-// instead of the Task: nobody's assignments move and nobody is told. Drafted cards get a dashed
-// outline and a "Draft" chip, and a bar along the bottom says "N unpublished changes · Publish ·
-// Discard". Publish asks once for a reason when the drafts conflict together (all or nothing) and
-// then tells each person whose days moved. "My week" and "Print crew sheet" are toolbar buttons;
-// the crew sheet opens in a new window and prints there (server PDF is broken on production).
+// Draft mode is a switch in the toolbar's Edit menu, remembered per browser. While it is on, every
+// drag, dialog save and Undo is sent with draft=1, so it lands on the planner's own drafts (Planner
+// Draft Change) instead of the Task: nobody's assignments move and nobody is told. Drafted cards get
+// a dashed outline and a "Draft" chip, and a strip under the toolbar says "Draft mode on: N changes
+// not published yet · Publish · Discard". Publish asks once for a reason when the drafts conflict
+// together (all or nothing) and then tells each person whose days moved. "My week" is in the Views
+// menu and "Print crew sheet" in Print (toolbar redesign, v1.687.0); the crew sheet opens in a new
+// window and prints there (server PDF is broken on production).
 //
 // Everything Phase 3B adds to the page is in this block, mixed into ProjectPlanner below, so the
 // Phase 3A work on the same file merges cleanly. The hooks into the class above are one line each:
@@ -3363,26 +3398,12 @@ const PP3B_METHODS = {
 		this.my_week_date = "";
 		this.my_week_data = null;
 
-		this.$draft_toggle = $('<label class="pp-draft-toggle"></label>')
-			.attr("title", __("Keep your changes to yourself until you publish them"))
-			.toggleClass("pp-draft-on", this.draft_on)
-			.insertBefore(this.$undo);
-		$('<input type="checkbox">')
-			.prop("checked", this.draft_on)
-			.on("change", (e) => this.set_draft_mode(e.target.checked))
-			.appendTo(this.$draft_toggle);
-		this.$draft_toggle.append(document.createTextNode(__("Draft mode")));
-		$('<button type="button" class="btn btn-default btn-sm"></button>')
-			.text(__("My week"))
-			.on("click", () => this.go_my_week(frappe.datetime.get_today()))
-			.insertBefore(this.$undo);
-		$('<button type="button" class="btn btn-default btn-sm"></button>')
-			.text(__("Print crew sheet"))
-			.attr("title", __("A one-page sheet of who is where this week, to print"))
-			.on("click", () => this.print_crew_sheet())
-			.insertBefore(this.$undo);
-
-		this.$draft_bar = $('<div class="pp-draft-bar"></div>').hide().insertAfter(this.$hint);
+		// The Draft mode switch, My week and Print crew sheet are items of the toolbar's Edit, Views and
+		// Print menus (PPTB). The strip sits right under the toolbar, where the switch's state shows.
+		this.$draft_bar = $('<div class="pp-draft-bar" role="region"></div>')
+			.attr("aria-label", __("Draft mode"))
+			.hide()
+			.insertAfter(this.$toolbar);
 		this.$my_week = $('<div class="pp-my-week"></div>').hide().appendTo(this.$body);
 	},
 
@@ -3399,7 +3420,6 @@ const PP3B_METHODS = {
 	set_draft_mode(on) {
 		this.draft_on = !!on;
 		this.save_pref(PP3B.pref, this.draft_on ? "1" : "0");
-		this.$draft_toggle.toggleClass("pp-draft-on", this.draft_on);
 		// An undo recorded in one mode must not be replayed in the other.
 		this.undo_stack = [];
 		this.update_undo_button();
@@ -3451,8 +3471,8 @@ const PP3B_METHODS = {
 		$('<span class="pp-draft-text"></span>')
 			.text(
 				count
-					? __("{0} unpublished change(s)", [count])
-					: __("Draft mode: nothing drafted yet. Your changes stay yours until you publish them.")
+					? __("Draft mode on: {0} change(s) not published yet", [count])
+					: __("Draft mode on: nothing drafted yet. Your changes stay yours until you publish them.")
 			)
 			.appendTo($bar);
 		if (stale.length) {
@@ -3737,7 +3757,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // this side that decides anything:
 //   - a card that has clock-in hours says "14h of 12h" (red when the server marks it over_plan);
 //     the dialog lists each person's hours (card.crew[].actual, refined by get_actuals); the
-//     toolbar's "Running over" chip shows only the over_plan tasks
+//     toolbar's "Running over" alert chip (PPTB) shows only the over_plan tasks
 //   - with a project picked, a strip shows its labor forecast (get_labor_forecast): hours always;
 //     cost only when the answer says can_see_cost, and the rate it is at ("base rate" until the
 //     burdened rates are in) - a wage is never worked out here from hours
@@ -3745,7 +3765,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 //     to save_task as `equipment`, an equipment conflict arrives in needs_reason under the
 //     "Equipment" key and is asked about like any other, and the crew view gains an Equipment row
 //     group (get_equipment): each vehicle or asset, the tasks using it each day
-//   - a "Utilization" button opens the Crew Utilization report
+//   - the Crew Utilization report's figures are the planner's Utilization view (PPU, v1.687.0)
 //
 // Everything Phase 4 adds is in this block, mixed into ProjectPlanner below. The hooks into the
 // class above are one line each: init_phase4 (constructor), p4_set_mode (set_mode), load_phase4
@@ -3771,27 +3791,15 @@ const PP4_METHODS = {
 		this.equip = null;
 		this.equip_request = 0;
 
-		// The filter is for this visit to the page: a chip that quietly hides most of the board
-		// the next morning would be a trap, so it is not remembered.
-		this.$over = $('<button type="button" class="pp-toggle" aria-pressed="false"></button>')
-			.attr("title", __("Show only the tasks whose clocked hours are past their plan"))
-			.on("click", () => {
-				this.over_only = !this.over_only;
-				this.render();
-			})
-			.insertAfter(this.$foreign);
-		this.$util = $('<button type="button" class="btn btn-default btn-sm pp-util"></button>')
-			.text(__("Utilization"))
-			.attr("title", __("The Crew Utilization report: capacity, booked and worked hours per person"))
-			.on("click", () => frappe.set_route("query-report", PP4.report))
-			.insertBefore(this.$undo);
+		// Running over is an alert chip in the toolbar (PPTB), shown while any task on screen is past
+		// its plan. The filter is for this visit to the page: a chip that quietly hides most of the
+		// board the next morning would be a trap, so it is not remembered.
 		this.$forecast = $('<div class="pp-forecast"></div>').hide().insertBefore(this.$panel);
 	},
 
-	// The route, heatmap and My week views have none of this; the calendar views draw it.
+	// The route, heatmap, Utilization and My week views have none of this; the calendar views draw it.
 	p4_set_mode(mode) {
 		const calendar = mode === "";
-		if (this.$over) this.$over.toggle(calendar);
 		if (this.$forecast && !calendar) this.$forecast.hide();
 	},
 
@@ -3805,23 +3813,27 @@ const PP4_METHODS = {
 	render_phase4() {
 		this.p4_sync_forecast();
 		this.p4_render_forecast();
-		this.p4_update_over();
 	},
 
 	// ------------------------------------------------------------------ running over
 
-	p4_update_over() {
-		if (!this.data || !this.$over) return;
+	// How many tasks the filters show are past their plan, the Running over filter itself aside: the
+	// toolbar's chip says it (PPTB's tb_alerts), and stays up while the filter is on, to turn it off.
+	p4_over_count() {
+		if (!this.data) return 0;
 		const saved = this.over_only;
 		this.over_only = false;
 		const count = []
 			.concat(this.data.tasks || [], this.data.unscheduled || [])
 			.filter((card) => card.over_plan && this.task_visible(card)).length;
 		this.over_only = saved;
-		this.$over
-			.text(`${__("Running over")} (${count})`)
-			.toggleClass("pp-on", !!saved)
-			.attr("aria-pressed", saved ? "true" : "false");
+		return count;
+	},
+
+	// The chip: show only the running-over tasks, or all of them again.
+	p4_toggle_over() {
+		this.over_only = !this.over_only;
+		this.render();
 	},
 
 	// What a task was planned for: its estimate, else what the engine booked for its crew.
@@ -4473,6 +4485,8 @@ const PP6A = {
 	owner: "pp",
 	// Drawer widths on a wide screen; a phone gets the whole screen.
 	widths: { person: 460, day: 760, project: 620, panel: 620 },
+	// The first-time tips. They used to be banners under the toolbar on load; since the toolbar redesign
+	// (v1.687.0) they are the first section of the "?" help, and take no row of their own.
 	hints: [
 		["pp-person-peek", "Click a person's name to see their week without leaving the calendar."],
 		["pp-day-peek", "Click a date to see everyone's day side by side."],
@@ -4487,7 +4501,6 @@ const PP6A = {
 const PP6A_METHODS = {
 	init_phase6a() {
 		this.p6a = { kit: null, peek: null, panel: null, panel_card: null, seen: null, glow: [] };
-		this.$p6a_hints = $('<div class="pp-p6a-hints"></div>').insertAfter(this.$toolbar);
 		this.$p6a_glance = $('<button type="button" class="btn btn-default btn-sm pp-p6a-glance"></button>')
 			.text(__("At a glance"))
 			.attr("title", __("The project picked here, at a glance: its tasks, hours and forecast"))
@@ -4541,8 +4554,8 @@ const PP6A_METHODS = {
 			if (current && current.owner === PP6A.owner) this.on_down(e);
 		});
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person"), kit.hover_glow(this.$body[0], "project")];
-		this.p6a_show_hints();
 		this.p6c_ready();
+		this.tb_ready();
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -5065,14 +5078,9 @@ const PP6A_METHODS = {
 
 	// ------------------------------------------------------------------ legend and hints
 
-	p6a_show_hints() {
-		const kit = this.p6a && this.p6a.kit;
-		if (!kit || !this.$p6a_hints) return;
-		let shown = 0;
-		PP6A.hints.forEach(([key, text]) => {
-			if (shown >= 2 || kit.hint.seen(key)) return;
-			if (kit.hint(key, __(text), { container: this.$p6a_hints[0] })) shown += 1;
-		});
+	// The tips, as the help's first section.
+	p6a_tip_section() {
+		return { title: __("Tips"), items: PP6A.hints.map(([, text]) => ({ sample_html: "", text: __(text) })) };
 	},
 
 	p6a_legend() {
@@ -5087,6 +5095,7 @@ const PP6A_METHODS = {
 		const item = (sample_html, text) => ({ sample_html, text: __(text) });
 		kit.legend(
 			[
+				this.p6a_tip_section(),
 				...this.p6c_legend_sections(),
 				{
 					title: __("Quick looks"),
@@ -6600,8 +6609,8 @@ const PP6B_METHODS = {
 
 	p6b_build_search() {
 		const $wrap = $('<span class="p6b-search-wrap"></span>');
-		const $seg = this.$toolbar.children(".pp-seg").first();
-		if ($seg.length) $wrap.insertAfter($seg);
+		// First among the filters, so a phone's "Filters and tools" sheet takes it with them (PPTB).
+		if (this.$filters && this.$filters.length) $wrap.prependTo(this.$filters);
 		else $wrap.appendTo(this.$toolbar);
 		const list_id = `p6b-results-${Math.random().toString(36).slice(2, 9)}`;
 		this.p6b.search.list_id = list_id;
@@ -6787,6 +6796,7 @@ const PP6B_METHODS = {
 	},
 
 	p6b_pick(item) {
+		this.tb_close_sheet();
 		this.p6b_close_results();
 		this.$p6b_search.trigger("blur");
 		if (item.kind === "person") this.p6a_open_person(item.resource);
@@ -6908,7 +6918,7 @@ const PP6B_METHODS = {
 
 	p6b_run_key(action) {
 		// The route view and My week keep their own buttons.
-		if (!PP.views.includes(this.view) && this.view !== PP.heatmap_view) return false;
+		if (!PP.views.includes(this.view) && this.view !== PP.heatmap_view && this.view !== PP.util_view) return false;
 		if (action === "today") {
 			this.go(this.view, frappe.datetime.get_today());
 			return true;
@@ -7002,10 +7012,10 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 // TASK-2026-02469. Nik picked all six on 2026-10-09; each is on both planners (the Maintenance Planner
 // has the same block, MP6C_METHODS):
 //
-//   - Color by (toolbar)                     the cards' left edge by Task color (today's look, the
+//   - Color by (toolbar's Display menu)      the cards' left edge by Task color (today's look, the
 //                                            default), Person (the lead, or the row in the crew view),
-//                                            Job type, Project, Project manager or Status; a key under
-//                                            the toolbar and in the "?" legend. Job type and status
+//                                            Job type, Project, Project manager or Status; the key in
+//                                            Display and in the "?" legend. Job type and status
 //                                            use fixed palettes; project and PM a stable hash
 //                                            (planner_kit.big_picture), so a project is always the
 //                                            same color on every device; a person their own color,
@@ -7015,7 +7025,7 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 //                                            every card of that project lights up and the rest fade,
 //                                            in every view and week; a toolbar pill and Esc clear it.
 //                                            Not remembered: a reload starts clear
-//   - Views (toolbar)                        named views ("Field crew, Build only") saved on the
+//   - Views (toolbar's Views menu)           named views ("Field crew, Build only") saved on the
 //                                            server per person (api/planner_views_prefs), switch and
 //                                            delete; the view last used is saved a moment after any
 //                                            change and restored when the planner opens, on any
@@ -7027,13 +7037,13 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 //                                            everyone the group filter shows, amber at 90% booked,
 //                                            red past capacity, pencil hatched; click a day for
 //                                            everyone's day (6A's day peek)
-//   - Tap to move (toolbar; on by default on a touch screen)
+//   - Tap to move (Edit menu; on by default on a touch screen)
 //                                            tap a card, then the day (or a person's day in the crew
 //                                            view): the move goes through drop -> plan_drop ->
 //                                            commit -> send, exactly like a drag, so the reason
 //                                            prompt, the past-day question and Undo all apply. A tap
 //                                            on a card with it off still opens the card
-//   - Print (toolbar)                        exactly what is on screen (view, range, filters, colors,
+//   - Print (Print menu)                     exactly what is on screen (view, range, filters, colors,
 //                                            highlight), or only 6B's selection, built from the
 //                                            loaded data (never the live DOM) on the print design
 //                                            system's chrome, printed from a browser window
@@ -7107,28 +7117,9 @@ const PP6C_METHODS = {
 			.attr("aria-label", __("Stop highlighting"))
 			.on("click", () => this.p6c_clear_highlight())
 			.appendTo(this.$p6c_pill);
-		this.$p6c_color = this.make_select(this.$toolbar, __("Color by"), (value) => this.p6c_set_color(value))
-			.addClass("pp-p6c-color")
-			.insertAfter(this.$group);
-		PP6C.color_modes.forEach(([value, label]) => {
-			$("<option></option>").val(value).text(__("Color: {0}", [__(label)])).appendTo(this.$p6c_color);
-		});
-		this.$p6c_tap = $('<button type="button" class="pp-toggle pp-p6c-tap" aria-pressed="false"></button>')
-			.text(__("Tap to move"))
-			.attr("title", __("Tap a card, then tap the day where it goes, instead of dragging"))
-			.on("click", () => this.p6c_set_tap(!this.p6c.tap))
-			.insertBefore(this.$undo);
-		this.$p6c_views = $('<button type="button" class="btn btn-default btn-sm pp-p6c-views"></button>')
-			.text(__("Views"))
-			.attr("title", __("Your saved views: filters, view and colors"))
-			.on("click", (e) => this.p6c_views_menu(e.currentTarget))
-			.insertBefore(this.$undo);
-		this.$p6c_print = $('<button type="button" class="btn btn-default btn-sm pp-p6c-print"></button>')
-			.text(__("Print"))
-			.attr("title", __("Print exactly what is on screen, with your filters and colors"))
-			.on("click", (e) => this.p6c_print_click(e.currentTarget))
-			.insertBefore(this.$undo);
-		this.$p6c_key = $('<div class="pp-p6c-key"></div>').hide().insertAfter(this.$toolbar);
+		// Color by and its key are in the toolbar's Display menu, Tap to move in Edit, the saved views in
+		// Views and Print in Print (PPTB, v1.687.0); this block gives each menu its items
+		// (p6c_color_items, p6c_view_items, p6c_print_items).
 		this.$p6c_movebar = $('<div class="pp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
 
 		// Capture on the document: a tap that moves a card is taken before 6A's quick looks and the
@@ -7154,20 +7145,17 @@ const PP6C_METHODS = {
 		this.p6c_paint();
 		this.p6c_apply_highlight();
 		this.p6c_render_strip();
-		this.p6c_render_key();
 		this.p6c_mark_moving();
 		this.p6c_state_soon();
 	},
 
-	// The route, heatmap and My week views have no cards to color, highlight or move.
+	// The route, heatmap, Utilization and My week views have no cards to color, highlight or move (the
+	// menus leave Color by and Tap to move out there: PPTB's tb_calendar).
 	p6c_set_mode(mode) {
 		if (!this.p6c) return;
 		const calendar = mode === "";
-		[this.$p6c_color, this.$p6c_tap].forEach(($el) => $el && $el.toggle(calendar));
-		[this.$p6c_views, this.$p6c_print].forEach(($el) => $el && $el.toggle(calendar || mode === PP.heatmap_view));
 		if (!calendar) {
 			this.p6c_disarm();
-			if (this.$p6c_key) this.$p6c_key.hide();
 			if (this.$p6c_pill) this.$p6c_pill.hide();
 		}
 		this.p6c_state_soon();
@@ -7202,11 +7190,6 @@ const PP6C_METHODS = {
 		if (this.$project) this.$project.val(this.project || "");
 		if (this.$pm) this.$pm.val(this.pm || "");
 		if (this.$group) this.$group.val(PP.groups.includes(this.group) ? this.group : "");
-		if (this.$foreign) this.$foreign.find("input").prop("checked", !!this.show_foreign);
-		if (this.$p6c_color) this.$p6c_color.val(p6c.color_by);
-		if (this.$p6c_tap) {
-			this.$p6c_tap.toggleClass("pp-p6c-on", !!p6c.tap).attr("aria-pressed", p6c.tap ? "true" : "false");
-		}
 		if (this.$p6c_pill) {
 			const on = !!p6c.highlight && PP.views.includes(this.view);
 			this.$p6c_pill.toggle(on);
@@ -7325,27 +7308,41 @@ const PP6C_METHODS = {
 		return `<i class="pp-p6c-swatch" style="--pp-color: ${pp_esc(paint)}"></i>`;
 	},
 
-	p6c_render_key() {
-		const $key = this.$p6c_key;
-		if (!$key) return;
-		const entries = this.p6c_legend_entries();
-		if (!entries.length || !PP.views.includes(this.view)) {
-			$key.hide().empty();
-			return;
-		}
+	// Display's Color by: one radio item a mode, then the key of what the colors mean on screen (it
+	// used to be a row of its own under the toolbar). A project in the key highlights its cards.
+	p6c_color_items() {
+		if (!this.p6c) return [];
+		const items = [{ heading: __("Color by") }];
+		PP6C.color_modes.forEach(([value, label]) => {
+			items.push({
+				label: __("Color: {0}", [__(label)]),
+				radio: true,
+				checked: this.p6c.color_by === value,
+				on_click: () => this.p6c_set_color(value),
+			});
+		});
+		const entries = PP.views.includes(this.view) ? this.p6c_legend_entries() : [];
+		if (!entries.length) return items;
 		const shown = entries.slice(0, PP6C.key_limit);
-		const items = shown.map((entry) => {
-			const hi = entry.hi ? ` data-p6c-hi="${pp_esc(entry.hi)}" role="button" tabindex="0"` : "";
-			const tip = entry.hi ? __("Highlight {0}", [entry.label]) : entry.label;
-			return `<span class="pp-p6c-key-item"${hi} title="${pp_esc(tip)}">${this.p6c_swatch_html(entry.color)}${pp_esc(
-				entry.label
-			)}</span>`;
+		items.push({ divider: true }, { heading: __("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]) });
+		shown.forEach((entry) => {
+			const on = !!(entry.hi && this.p6c.highlight && this.p6c.highlight.key === entry.hi);
+			items.push(
+				entry.hi
+					? {
+							label: entry.label,
+							sample_html: this.p6c_swatch_html(entry.color),
+							checked: on,
+							title: __("Highlight {0}", [entry.label]),
+							on_click: () => this.p6c_toggle_highlight(entry.hi),
+					  }
+					: { label: entry.label, sample_html: this.p6c_swatch_html(entry.color), info: true }
+			);
 		});
 		if (entries.length > shown.length) {
-			items.push(`<span class="pp-p6c-key-item">${pp_esc(__("+{0} more (see ?)", [entries.length - shown.length]))}</span>`);
+			items.push({ label: __("+{0} more (see ?)", [entries.length - shown.length]), info: true });
 		}
-		$key[0].innerHTML = `<span class="pp-p6c-key-title">${pp_esc(__("Colors: {0}", [this.p6c_mode_label(this.p6c.color_by)]))}</span>${items.join("")}`;
-		$key.show();
+		return items;
 	},
 
 	// The "?" legend's sections (6A's p6a_legend lists them first).
@@ -7357,7 +7354,7 @@ const PP6C_METHODS = {
 			title: __("Card colors: {0}", [this.p6c_mode_label(mode)]),
 			note:
 				mode === "default"
-					? __("Each card's left edge is the task's own color. Color by in the toolbar colors the cards by person, job type, project, project manager or status instead.")
+					? __("Each card's left edge is the task's own color. Color by in the toolbar's Display menu colors the cards by person, job type, project, project manager or status instead.")
 					: "",
 			items:
 				mode === "default"
@@ -7438,11 +7435,6 @@ const PP6C_METHODS = {
 	p6c_body_click(e) {
 		const target = e.target;
 		if (!this.p6c || !target || !target.closest || Date.now() < this.click_blocked_until) return;
-		const key_item = target.closest(".pp-p6c-key [data-p6c-hi]");
-		if (key_item) {
-			this.p6c_toggle_highlight(key_item.getAttribute("data-p6c-hi"));
-			return;
-		}
 		const chip = target.closest(".pp-card [data-pk-project]");
 		if (chip) this.p6c_highlight(decodeURIComponent(chip.getAttribute("data-pk-project")));
 	},
@@ -7506,6 +7498,8 @@ const PP6C_METHODS = {
 	p6c_keydown(e) {
 		if (e.key !== "Escape" || e.defaultPrevented || !this.p6c || this.drag) return;
 		if (!this.p6c.moving && !this.p6c.highlight) return;
+		// A toolbar menu or the phone's sheet closes on its own Esc; the highlight stays.
+		if (e.target && e.target.closest && e.target.closest(".pk-menu, .pk-sheet")) return;
 		if (!this.p6c_here()) return;
 		const kit = this.p6a && this.p6a.kit;
 		if (kit && kit.guard && kit.guard.top()) return;
@@ -7897,24 +7891,27 @@ const PP6C_METHODS = {
 		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
 	},
 
-	p6c_views_menu(anchor) {
-		const kit = this.p6a && this.p6a.kit;
-		if (!kit) {
-			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
-			return;
-		}
+	// The Views menu's saved views: one radio item each (the one on screen is ticked), then Save and
+	// Manage.
+	p6c_view_items() {
+		if (!this.p6c) return [];
 		const current = this.p6c_matching_view();
-		const items = (this.p6c.views || []).map((entry) => ({
-			label: entry.name,
-			hint: current && current.name === entry.name ? "✓" : this.p6c_view_summary(entry.data || {}),
-			on_click: () => this.p6c_use_view(entry),
-		}));
-		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), disabled: true });
-		else if (!items.length) items.push({ label: __("No saved views yet"), disabled: true });
+		const items = [{ heading: __("Saved views") }];
+		(this.p6c.views || []).forEach((entry) =>
+			items.push({
+				label: entry.name,
+				radio: true,
+				checked: !!current && current.name === entry.name,
+				hint: this.p6c_view_summary(entry.data || {}),
+				on_click: () => this.p6c_use_view(entry),
+			})
+		);
+		if (!this.p6c.loaded) items.push({ label: __("Loading your views…"), info: true });
+		else if (!(this.p6c.views || []).length) items.push({ label: __("No saved views yet"), info: true });
 		items.push({ divider: true });
-		items.push({ label: __("Save view as…"), on_click: () => this.p6c_save_as() });
+		items.push({ label: __("Save current view as…"), on_click: () => this.p6c_save_as() });
 		if ((this.p6c.views || []).length) items.push({ label: __("Manage views…"), on_click: () => this.p6c_manage_views() });
-		kit.menu({ anchor, items, title: __("Saved views"), owner: PP6A.owner });
+		return items;
 	},
 
 	p6c_use_view(entry) {
@@ -7983,7 +7980,7 @@ const PP6C_METHODS = {
 
 	p6c_views_html() {
 		const views = this.p6c.views || [];
-		if (!views.length) return `<p class="pk-empty">${pp_esc(__("No saved views yet. Save one from the Views button."))}</p>`;
+		if (!views.length) return `<p class="pk-empty">${pp_esc(__("No saved views yet. Save one from the Views menu."))}</p>`;
 		const rows = views.map(
 			(entry) => `
 			<li class="pp-p6c-views-row">
@@ -8045,21 +8042,19 @@ const PP6C_METHODS = {
 		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
 	},
 
-	p6c_print_click(anchor) {
-		const kit = this.p6a && this.p6a.kit;
+	// The Print menu's own items: the view on screen, and 6B's selection when there is one. Each runs
+	// in the menu item's click, so its window opens on the person's own tap.
+	p6c_print_items() {
 		const selected = this.p6c_selection();
-		if (selected.size && kit) {
-			kit.menu({
-				anchor,
-				owner: PP6A.owner,
-				items: [
-					{ label: __("Print this view"), on_click: () => this.p6c_print(false) },
-					{ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) },
-				],
-			});
-			return;
-		}
-		this.p6c_print(false);
+		const items = [
+			{
+				label: __("Print this view"),
+				title: __("Print exactly what is on screen, with your filters and colors"),
+				on_click: () => this.p6c_print(false),
+			},
+		];
+		if (selected.size) items.push({ label: __("Print selection only ({0})", [selected.size]), on_click: () => this.p6c_print(true) });
+		return items;
 	},
 
 	// The window opens on the click itself (one opened after a request is a blocked pop-up) and fills
@@ -8338,9 +8333,10 @@ Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
 // and api/planner_conflicts.py (Phase 6D); the drawer, the two forms and the markup are the planner
 // kit's (planner_kit/conflicts.js and blocks.js), shared with the Maintenance Planner.
 //
-//   - "Conflicts (N)" on the toolbar        the Conflict center for the dates on screen. N is what
-//                                            nobody has kept, red above 0, read after each load (one
-//                                            call, debounced), never on a plain re-render. A card in
+//   - the "N Conflicts" chip on the toolbar the Conflict center for the dates on screen. N is what
+//     (and Conflicts… in its Edit menu)      nobody has kept; the chip shows only above 0 (PPTB), read
+//                                            after each load (one call, debounced), never on a plain
+//                                            re-render. A card in
 //                                            a conflict has its Conflict chip turned into the way in
 //                                            (a small marker when it had no chip): it opens the list
 //                                            at that conflict.
@@ -8349,7 +8345,7 @@ Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
 //                                            asks for a reason, Draft mode drafts it and Undo puts it
 //                                            back. "Pick someone who's free" lists who_is_free and
 //                                            picks nobody; "Keep it with a reason" needs a reason.
-//   - "Block time" (planners), "Block       the block form. A block shows in the crew view as a
+//   - Block time… (Edit menu), "Block       the block form. A block shows in the crew view as a
 //     time…" in a person's drawer and the    hatched "Unavailable 2–4 pm" bar, in week and month as a
 //     right-click menu                       chip; its note only when block_notes has it. Blocks are
 //                                            never dragged.
@@ -8360,7 +8356,7 @@ Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
 //                                            group, and "Block my time" on each day (only your own)
 //
 // Hooks into the class above, one line each: init_phase6d (constructor), render_phase6d (render),
-// p6d_set_mode (set_mode), p6d_state (avail_state), p6d_block_html (booking_html), p6d_day_html
+// p6d_state (avail_state), p6d_block_html (booking_html), p6d_day_html
 // (render_calendar), p6d_crew_notes_row (render_crew), p6d_my_week_day (render_my_week), and in
 // Phase 6A's block p6d_person_actions (p6a_open_person), p6d_day_peek_opts (p6a_open_day) and
 // p6d_legend_sections (p6a_legend).
@@ -8388,17 +8384,8 @@ const PP6D_METHODS = {
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
-		this.$p6d_conflicts = $('<button type="button" class="btn btn-default btn-sm pp-p6d-conflicts"></button>')
-			.text(__("Conflicts"))
-			.attr("title", __("Everything wrong in the dates on screen, with one-click fixes"))
-			.on("click", () => this.p6d_open_conflicts(null))
-			.insertBefore(this.$undo);
-		this.$p6d_block = $('<button type="button" class="btn btn-default btn-sm pp-p6d-block-btn"></button>')
-			.text(__("Block time"))
-			.attr("title", __("Mark someone unavailable for part of a day or all of it"))
-			.hide()
-			.on("click", () => this.p6d_block_form({ date: this.p6d_default_date() }))
-			.insertBefore(this.$undo);
+		// The Conflicts count is an alert chip on the toolbar and Block time an item of its Edit menu
+		// (PPTB, v1.687.0): p6d_conflict_count and p6d_toolbar_block say when.
 		const root = this.$body[0];
 		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click,
 		// not the card's (which opens the task) and not the day's.
@@ -8448,7 +8435,6 @@ const PP6D_METHODS = {
 
 	render_phase6d() {
 		if (!this.p6d || !this.data) return;
-		if (this.$p6d_block) this.$p6d_block.toggle(!!this.data.can_schedule && PP.views.includes(this.view));
 		if (this.p6d.notes_for !== this.data) {
 			// Notes read for days off the screen are as old as the last load.
 			this.p6d.notes = {};
@@ -8464,11 +8450,19 @@ const PP6D_METHODS = {
 		}
 	},
 
-	// The route, heatmap and My week views have no Conflicts or Block time button.
-	p6d_set_mode(mode) {
-		const calendar = mode === "";
-		if (this.$p6d_conflicts) this.$p6d_conflicts.toggle(calendar);
-		if (this.$p6d_block && !calendar) this.$p6d_block.hide();
+	// The toolbar reads these two (PPTB); it offers neither off the calendar views (the route,
+	// heatmap, Utilization and My week views have no Conflicts or Block time).
+	//
+	// What nobody has kept in the dates on screen, or null before the first count.
+	p6d_conflict_count() {
+		const center = this.p6d && this.p6d.center;
+		const count = center ? center.count() : null;
+		return count == null ? null : Number(count) || 0;
+	},
+
+	// Block time is the scheduling planners', on the calendar views.
+	p6d_toolbar_block() {
+		return !!(this.data && this.data.can_schedule && PP.views.includes(this.view));
 	},
 
 	// An all-day personal block makes the day read "Unavailable" rather than "Off".
@@ -8819,19 +8813,7 @@ const PP6D_METHODS = {
 	},
 
 	p6d_after_list() {
-		const center = this.p6d && this.p6d.center;
-		const count = center ? center.count() : null;
-		if (this.$p6d_conflicts) {
-			this.$p6d_conflicts
-				.text(count == null ? __("Conflicts") : __("Conflicts ({0})", [count]))
-				.toggleClass("pp-p6d-hot", Number(count) > 0)
-				.attr(
-					"title",
-					count
-						? __("{0} conflict(s) nobody has kept in the dates on screen", [count])
-						: __("Everything wrong in the dates on screen, with one-click fixes")
-				);
-		}
+		this.tb_render();
 		this.p6d_decorate();
 	},
 
@@ -9009,7 +8991,7 @@ const PP6D_METHODS = {
 					),
 					item(
 						"",
-						"Conflicts (N) on the toolbar lists everything wrong in the dates on screen, with one-click fixes. A fix that causes a conflict still asks for a reason, like a drag, and Undo puts it back."
+						"The Conflicts chip on the toolbar (Conflicts… in Edit) lists everything wrong in the dates on screen, with one-click fixes. A fix that causes a conflict still asks for a reason, like a drag, and Undo puts it back."
 					),
 				],
 			},
@@ -9575,7 +9557,7 @@ const PPT1_METHODS = {
 				if (token !== t1.needs_token) return;
 				t1.needs = (r && r.message) || null;
 				t1.needs_at = Date.now();
-				if (this.view !== PP.heatmap_view && this.data) this.render_trays();
+				if (PP.views.includes(this.view) && this.data) this.render_trays();
 			})
 			.catch(() => null);
 	},
@@ -10528,3 +10510,470 @@ const PPT4_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPT4_METHODS);
+
+// ====================================================================== The toolbar (v1.687.0)
+//
+// Nik picked the toolbar redesign from a mockup on 2026-10-14. Every phase used to append its own
+// buttons to the bar, so it had grown into one long flat row. It is still one bar, made shorter by
+// four menus:
+//
+//   ‹ Today ›  title  [highlight]  Month Week Crew Heatmap Utilization   search  Project  PM  Group
+//   [alert chips]  Views ▾  Display ▾  Edit ▾  Print ▾  [↶]  ?  ↻
+//
+//   - Views ▾     My week; the saved views (6C), Save current view as…, Manage views…
+//   - Display ▾   Color by (6C) and the key of its colors (the row it had under the toolbar);
+//                 Maintenance, rentals, travel
+//   - Edit ▾      Draft mode (3B) and Tap to move (6C), each with a check mark; Block time… (6D);
+//                 Copy week… (week and crew views); Conflicts… (6D, even at none); Undo
+//   - Print ▾     Print this view and Print selection only (6C); Print crew sheet (3B)
+//   - alert chips Conflicts (6D) and Overdue in the danger tone, Running over (4) in warn, each a
+//                 count and its word, there only above zero (Running over also while it filters).
+//                 A chip opens what its button did: the Conflict center, the Running over filter,
+//                 the Overdue tray (opened and scrolled to)
+//   - ↶           Undo, as a small icon only while there is something to undo
+//   - ?           the help, whose first section is now the tips that used to be banners on load
+//   - Draft mode  a strip under the bar, "Draft mode on: N changes not published yet", with
+//                 Publish and Discard (3B's render_draft_bar, publish_drafts, discard_drafts)
+//   - Utilization a fifth view (PPU, below)
+//
+// The menus are planner_kit.toolbar.menu (a menu button: arrow keys, Esc gives focus back, a click
+// elsewhere closes it, and opening one pushes no history entry). Each menu's items are built when it
+// opens, from the page's own state, through the methods the phases already had: nothing is clicked
+// on someone's behalf, and an item whose control was hidden on a screen (Copy week in the month view,
+// Block time for someone who cannot schedule) is left out of the menu there.
+//
+// On a phone (767px and under) the bar is ‹ Today ›, the title, the view switcher and "Filters and
+// tools", which opens planner_kit.toolbar.sheet: the filters (moved in, and back when it closes), the
+// alert chips, the four menus' items and the help and refresh. The sheet is a screen, so it takes the
+// kit's one history entry, and the phone's Back closes it (Nik's rule: never break Back/Forward).
+//
+// Hooks into the class above, one line each: init_toolbar (constructor), tb_ready (p6a_ready),
+// tb_render (render, set_mode, load_overdue, p6d_after_list) and tb_close_sheet (p6b_pick).
+
+const PPTB = {
+	// The phone breakpoint, as the CSS writes it (--sf-phone-max cannot be read in a media query).
+	phone_max: 767,
+	// An alert chip's tone, as the class that paints it.
+	tones: { danger: "pp-tb-danger", warn: "pp-tb-warn" },
+};
+
+const PPTB_METHODS = {
+	// The four menus: [name, label, what is in it]. Written out as __() calls, so they are translated.
+	tb_menu_list() {
+		return [
+			["views", __("Views"), __("Saved views and My week")],
+			["display", __("Display"), __("Card colors, their key, and what else is drawn")],
+			["edit", __("Edit"), __("Draft mode, Tap to move, Block time, Copy week, Undo")],
+			["print", __("Print"), __("Print this view or the crew sheet")],
+		];
+	},
+
+	init_toolbar() {
+		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null };
+		this.tb_menu_list().forEach(([name, label, title]) => {
+			const $button = $('<button type="button" class="btn btn-default btn-sm pp-tb-menu"></button>')
+				.attr("data-tb-menu", name)
+				.attr("title", title)
+				.on("click", () => {
+					// The menu itself is the kit's; until the kit has loaded, say so.
+					if (!this.tb.kit) frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+				})
+				.appendTo(this.$tools);
+			$("<span></span>").text(label).appendTo($button);
+			$('<span class="pp-tb-caret" aria-hidden="true">▾</span>').appendTo($button);
+			this.tb.$menus[name] = $button;
+		});
+		this.$tb_more = $('<button type="button" class="btn btn-default btn-sm pp-tb-more"></button>')
+			.attr("aria-haspopup", "dialog")
+			.attr("aria-label", __("Filters and tools"))
+			.on("click", () => this.tb_open_sheet())
+			.appendTo(this.$toolbar);
+		$("<span></span>").text(__("Filters and tools")).appendTo(this.$tb_more);
+		this.$tb_more_count = $('<span class="pp-tb-count" aria-hidden="true"></span>').hide().appendTo(this.$tb_more);
+	},
+
+	// The kit has loaded (6A's p6a_ready): the buttons become menus.
+	tb_ready() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!this.tb || this.tb.kit || !kit || !kit.toolbar) return;
+		this.tb.kit = kit;
+		this.tb_menu_list().forEach(([name, label]) => {
+			this.tb.menus[name] = kit.toolbar.menu(this.tb.$menus[name][0], {
+				label,
+				items: () => this.tb_items(name),
+			});
+		});
+		this.tb_render();
+	},
+
+	// The calendar views: week, month and crew (not the route, heatmap, Utilization or My week).
+	tb_calendar() {
+		return PP.views.includes(this.view);
+	},
+
+	// One menu's items, as planner_kit.toolbar takes them.
+	tb_items(name) {
+		if (name === "views") return this.tb_views_items();
+		if (name === "display") return this.tb_display_items();
+		if (name === "edit") return this.tb_edit_items();
+		if (name === "print") return this.tb_print_items();
+		return [];
+	},
+
+	tb_views_items() {
+		const items = [
+			{
+				label: __("My week"),
+				title: __("Your own week: each day's stops in route order, crewmates and notes"),
+				on_click: () => this.go_my_week(frappe.datetime.get_today()),
+			},
+		];
+		if (this.tb_calendar() || this.view === PP.heatmap_view) items.push({ divider: true }, ...this.p6c_view_items());
+		return items;
+	},
+
+	tb_display_items() {
+		if (!this.tb_calendar()) return [];
+		return this.p6c_color_items().concat([
+			{ divider: true },
+			{
+				label: __("Maintenance, rentals, travel"),
+				checked: !!this.show_foreign,
+				title: __("Maintenance visits, rental crew work and travel, read-only: they move on their own planners"),
+				on_click: () => this.set_show_foreign(!this.show_foreign),
+			},
+		]);
+	},
+
+	tb_edit_items() {
+		const items = [
+			{
+				label: __("Draft mode"),
+				checked: !!this.draft_on,
+				title: __("Keep your changes to yourself until you publish them"),
+				on_click: () => this.set_draft_mode(!this.draft_on),
+			},
+		];
+		if (this.tb_calendar() && this.p6c) {
+			items.push({
+				label: __("Tap to move"),
+				checked: !!this.p6c.tap,
+				title: __("Tap a card, then tap the day where it goes, instead of dragging"),
+				on_click: () => this.p6c_set_tap(!this.p6c.tap),
+			});
+		}
+		items.push({ divider: true });
+		if (this.p6d_toolbar_block()) {
+			items.push({
+				label: __("Block time…"),
+				title: __("Mark someone unavailable for part of a day or all of it"),
+				on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),
+			});
+		}
+		if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {
+			items.push({
+				label: __("Copy week…"),
+				title: __("Copy tasks from this week into another week"),
+				on_click: () => this.open_copy_week(),
+			});
+		}
+		if (this.tb_calendar()) {
+			const count = this.p6d_conflict_count();
+			items.push({
+				label: __("Conflicts…"),
+				hint: count ? String(count) : "",
+				title: __("Everything wrong in the dates on screen, with one-click fixes"),
+				on_click: () => this.p6d_open_conflicts(null),
+			});
+		}
+		if (this.view !== PP.heatmap_view && this.view !== PP.util_view) {
+			const last = this.undo_stack[this.undo_stack.length - 1];
+			items.push(
+				{ divider: true },
+				{
+					label: __("Undo"),
+					hint: __("Ctrl+Z"),
+					disabled: !last,
+					title: last ? __("Undo the last change to {0}", [last.subject]) : __("Nothing to undo"),
+					on_click: () => this.undo(),
+				}
+			);
+		}
+		return items;
+	},
+
+	tb_print_items() {
+		const items = this.tb_calendar() || this.view === PP.heatmap_view ? this.p6c_print_items() : [];
+		return items.concat([
+			{
+				label: __("Print crew sheet"),
+				title: __("A one-page sheet of who is where this week, to print"),
+				on_click: () => this.print_crew_sheet(),
+			},
+		]);
+	},
+
+	// ------------------------------------------------------------------ alert chips
+
+	// The counts that need someone's attention, on the calendar views: each only above zero.
+	tb_alerts() {
+		if (!this.tb_calendar() || !this.data) return [];
+		const out = [];
+		const conflicts = this.p6d_conflict_count();
+		if (conflicts > 0) {
+			out.push({
+				key: "conflicts",
+				tone: "danger",
+				count: conflicts,
+				label: __("Conflicts"),
+				title: __("{0} conflict(s) nobody has kept in the dates on screen", [conflicts]),
+				open: () => this.p6d_open_conflicts(null),
+			});
+		}
+		const over = this.p4_over_count();
+		if (over > 0 || this.over_only) {
+			out.push({
+				key: "over",
+				tone: "warn",
+				count: over,
+				label: __("Running over"),
+				pressed: !!this.over_only,
+				title: this.over_only
+					? __("Showing only the tasks past their plan. Click to show every task again.")
+					: __("Show only the tasks whose clocked hours are past their plan"),
+				open: () => this.p4_toggle_over(),
+			});
+		}
+		const overdue = this.overdue_visible().total;
+		if (overdue > 0) {
+			out.push({
+				key: "overdue",
+				tone: "danger",
+				count: overdue,
+				label: __("Overdue"),
+				title: __("Late open tasks: open the Overdue list"),
+				open: () => this.tb_open_overdue(),
+			});
+		}
+		return out;
+	},
+
+	// The Overdue chip: the tray opens and comes into view, its Hide button focused.
+	tb_open_overdue() {
+		this.overdue_open = true;
+		this.render_trays();
+		const tray = this.$trays[0] && this.$trays[0].querySelector(".pp-od");
+		if (!tray) return;
+		try {
+			tray.scrollIntoView({ block: "start", behavior: "smooth" });
+		} catch (e) {
+			tray.scrollIntoView();
+		}
+		const button = tray.querySelector("h5 button");
+		if (button) button.focus({ preventScroll: true });
+	},
+
+	// The chips, the phone button's count and an open sheet, after anything that changes them. A
+	// chip that had focus has it again once redrawn (Running over redraws the board under it).
+	tb_render() {
+		if (!this.tb || !this.$alerts) return;
+		const alerts = this.tb_alerts();
+		const active = document.activeElement;
+		const had = active && this.$alerts[0].contains(active) ? active.getAttribute("data-tb-alert") : null;
+		this.$alerts.empty();
+		alerts.forEach((alert) => {
+			const $chip = $('<button type="button" class="pp-tb-alert"></button>')
+				.addClass(PPTB.tones[alert.tone] || "")
+				.attr("data-tb-alert", alert.key)
+				.attr("title", alert.title)
+				.on("click", () => alert.open())
+				.appendTo(this.$alerts);
+			if ("pressed" in alert) $chip.attr("aria-pressed", alert.pressed ? "true" : "false");
+			$('<span class="pp-tb-count"></span>').text(String(alert.count)).appendTo($chip);
+			$("<span></span>").text(alert.label).appendTo($chip);
+		});
+		// A class, not toggle(): on a phone the CSS hides the chips in the bar (they are in the sheet).
+		this.$alerts.toggleClass("pp-tb-empty", !alerts.length);
+		if (had) {
+			const again = this.$alerts.find(`[data-tb-alert="${had}"]`)[0];
+			if (again) again.focus();
+		}
+		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
+		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
+		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
+		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
+	},
+
+	// ------------------------------------------------------------------ the phone's sheet
+
+	tb_open_sheet() {
+		const kit = this.tb && this.tb.kit;
+		if (!kit) {
+			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
+			return;
+		}
+		this.tb.sheet = kit.toolbar.sheet({
+			title: __("Filters and tools"),
+			max_width: PPTB.phone_max,
+			return_focus: this.$tb_more[0],
+			// The bar's own filters (and search) move in, so they keep their values and handlers.
+			top: (slot) => {
+				this.$filters.addClass("pp-tb-in-sheet").appendTo(slot);
+			},
+			sections: () => this.tb_sheet_sections(),
+			on_close: () => {
+				this.$filters.removeClass("pp-tb-in-sheet").insertBefore(this.$alerts);
+				this.tb.sheet = null;
+			},
+		});
+	},
+
+	tb_close_sheet() {
+		if (this.tb && this.tb.sheet) this.tb.sheet.close("user");
+	},
+
+	// The sheet's lists: the chips, the four menus and the page's own buttons. A switch (a check mark
+	// or a radio) keeps the sheet open and redraws it; anything else closes it first.
+	tb_sheet_sections() {
+		const keep = (items) => items.map((item) => Object.assign({}, item, { keep_open: typeof item.checked === "boolean" }));
+		const alerts = this.tb_alerts().map((alert) => ({
+			label: `${alert.count} ${alert.label}`,
+			tone: alert.tone,
+			title: alert.title,
+			checked: "pressed" in alert ? alert.pressed : undefined,
+			on_click: alert.open,
+		}));
+		return [
+			{ title: __("Alerts"), items: keep(alerts) },
+			{ title: __("Views"), items: keep(this.tb_views_items()) },
+			{ title: __("Display"), items: keep(this.tb_display_items()) },
+			{ title: __("Edit"), items: keep(this.tb_edit_items()) },
+			{ title: __("Print"), items: this.tb_print_items() },
+			{
+				title: __("This page"),
+				items: [
+					{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
+					{ label: __("Refresh"), on_click: () => this.load() },
+				],
+			},
+		];
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPTB_METHODS);
+
+// ====================================================================== Utilization (v1.687.0)
+//
+//   /desk/project-planner/utilization/2026-10-01
+//
+// The fifth view beside Month, Week, Crew and Heatmap. Utilization was a button that left the
+// planner for the Crew Utilization script report; Nik asked for it as a view of its own. It reads the
+// report itself (frappe.desk.query_report.run, so the report's own roles decide who may see it, and
+// both always show the same figures): the month holding the date, a row per person per week, with
+// capacity, booked and clocked hours and the two percentages. A week booked past capacity carries an
+// "Over" chip and one at 75% or more "Near full", so the color is never the only sign.
+//
+// It is a route like the other views (‹ › step a month, T is today, Back and Forward step through
+// months), and the S5c filters ride along in the address: Group narrows it to that group's people;
+// Project and Project manager do not apply to a person's whole week, so they are hidden here and kept
+// in the address for the next calendar view. "Open the full report" opens the report on the same
+// month and group, for its chart and its split of booked hours.
+
+const PPU = {
+	run: "frappe.desk.query_report.run",
+	granularity: "Week",
+};
+
+const PPU_METHODS = {
+	load_utilization() {
+		const { start, end } = this.range();
+		const token = ++this.request;
+		this.$title.text(this.title());
+		this.take_title_focus();
+		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.$body.addClass("pp-loading");
+		const filters = { from_date: pp_ymd(start), to_date: pp_ymd(end), granularity: PPU.granularity };
+		return Promise.resolve(
+			frappe.call({ method: PPU.run, args: { report_name: PP4.report, filters: JSON.stringify(filters) } })
+		)
+			.then((r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				const answer = (r && r.message) || {};
+				this.util = { filters, rows: Array.isArray(answer.result) ? answer.result : [] };
+				this.render_utilization();
+			})
+			.catch(() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.util = null;
+				this.render_utilization();
+			});
+	},
+
+	// A percentage as text, and a chip with its word when it needs attention.
+	util_pct_html(value) {
+		if (value == null || value === "") return `<span class="pp-util-none">${pp_esc(__("No hours"))}</span>`;
+		const pct = Math.round(Number(value) || 0);
+		if (pct > 100) return `<span class="pp-chip pp-red">${pp_esc(__("{0}% · Over", [pct]))}</span>`;
+		if (pct >= 75) return `<span class="pp-chip pp-amber">${pp_esc(__("{0}% · Near full", [pct]))}</span>`;
+		return pp_esc(`${pct}%`);
+	},
+
+	render_utilization() {
+		const data = this.util;
+		// Nothing asked for yet (a filter picked while the first answer is on its way): it draws then.
+		if (data === undefined) return;
+		this.$hint.text(
+			__(
+				"Booked hours against each person's hours, week by week, and the hours they clocked at the kiosk on customer jobs: the Crew Utilization report's figures. Driving here uses saved and estimated times only."
+			)
+		);
+		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view");
+		if (!data) {
+			$('<div class="pp-section pp-empty-note"></div>')
+				.text(__("Utilization could not be loaded. Refresh the planner and try again."))
+				.appendTo(this.$grid_wrap);
+			return;
+		}
+		const rows = data.rows.filter((row) => row && (!this.group || row.group === this.group));
+		const report = { from_date: data.filters.from_date, to_date: data.filters.to_date, granularity: PPU.granularity };
+		if (this.group) report.group = this.group;
+		const $head = $('<div class="pp-util-head"></div>').appendTo(this.$grid_wrap);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Open the full report"))
+			.attr("title", __("The Crew Utilization report for this month: its chart and booked hours by kind"))
+			.on("click", () => this.p6a_route(() => frappe.set_route("query-report", PP4.report, report), false))
+			.appendTo($head);
+		if (!rows.length) {
+			$('<div class="pp-section pp-empty-note"></div>')
+				.text(__("Nobody to show for this month. Add the people you schedule under Planner Resources."))
+				.appendTo(this.$grid_wrap);
+			return;
+		}
+		const hours = (value) => pp_esc(`${pp_hours(value)}h`);
+		const body = rows.map((row, index) => {
+			const first = index === 0 || rows[index - 1].resource !== row.resource;
+			return `<tr class="${first ? "pp-util-first" : ""}">
+				<th scope="row">${first ? pp_esc(row.label || row.resource) : `<span class="pp-sr">${pp_esc(row.label || row.resource)}</span>`}</th>
+				<td>${pp_esc(row.period || "")}</td>
+				<td class="pp-util-num">${hours(row.capacity)}</td>
+				<td class="pp-util-num">${hours(row.booked)}</td>
+				<td class="pp-util-num">${hours(row.actual)}</td>
+				<td class="pp-util-num">${this.util_pct_html(row.utilization)}</td>
+				<td class="pp-util-num">${this.util_pct_html(row.actual_pct)}</td>
+			</tr>`;
+		});
+		const th = (text, num) => `<th scope="col"${num ? ' class="pp-util-num"' : ""}>${pp_esc(text)}</th>`;
+		const $scroll = $('<div class="pp-section pp-util-scroll"></div>').appendTo(this.$grid_wrap);
+		$scroll[0].innerHTML = `<table class="pp-util">
+			<caption class="pp-sr">${pp_esc(__("Utilization, {0}", [this.title()]))}</caption>
+			<thead><tr>${th(__("Person"))}${th(__("Week"))}${th(__("Capacity"), true)}${th(__("Booked"), true)}${th(
+				__("Actual (kiosk)"),
+				true
+			)}${th(__("Utilization"), true)}${th(__("Actual %"), true)}</tr></thead>
+			<tbody>${body.join("")}</tbody></table>`;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPU_METHODS);
