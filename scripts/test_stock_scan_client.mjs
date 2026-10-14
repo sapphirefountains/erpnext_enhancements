@@ -1229,11 +1229,38 @@ async function appBinActions() {
 	const realFetch = globalThis.fetch;
 	const posted = [];
 	let n = 0;
+	// What the NEXT bin-assignment save gets: null (it saves), "refuse" (a 417 sentence),
+	// "drop" (no answer at all), or "hold" (it saves once `release()` is called: a slow signal).
+	let nextBin = null;
+	let release = null;
+	const BIN_SAVES = [".move_to", ".unassign", ".send_to_boneyard"];
 	const fetchStub = async (url, init) => {
 		const body = JSON.parse((init && init.body) || "{}");
 		const u = String(url);
 		posted.push({ url: u, body });
 		let message = null;
+		if (BIN_SAVES.some((s) => u.endsWith(s)) && nextBin) {
+			const plan = nextBin;
+			nextBin = null;
+			if (plan === "drop") throw new TypeError("Failed to fetch");
+			if (plan === "refuse") {
+				const said = "Only 2 Each of Widget is recorded at Bin A1.";
+				return new Response(JSON.stringify({ exc_type: "ValidationError", _server_messages: serverMessages({ message: said, raise_exception: 1 }) }), {
+					status: 417,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (plan === "hold" || plan === "hold-refuse") {
+				await new Promise((resolve) => (release = resolve));
+				release = null;
+				if (plan === "hold-refuse") {
+					return new Response(JSON.stringify({ exc_type: "ValidationError", _server_messages: serverMessages({ message: "Refused.", raise_exception: 1 }) }), {
+						status: 417,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
+			}
+		}
 		const logOf = (extra) => ({
 			name: `SCAN-2026-${String(++n).padStart(5, "0")}`, status: "Posted", item_code: body.item_code, item_name: "Widget", stock_uom: "Each", can_undo: 1, posted_at: `${today} 10:00:00`, ...extra,
 		});
@@ -1294,7 +1321,8 @@ async function appBinActions() {
 		page.doc.body.appendChild(root);
 		const app = new A.StockScanApp(root, boot);
 		app.mount();
-		app.showLocation({ ...location }, {});
+		// `viaRecent`: opened from Start (a Recent row, "Where is it?"), so no bin list is underneath.
+		if (!(extra && extra.viaRecent)) app.showLocation({ ...location }, {});
 		app.showItem({ ...widget, ...(item || {}) }, {});
 		await settle();
 		const walkFind = (top, test) => {
@@ -1319,7 +1347,7 @@ async function appBinActions() {
 		};
 		t.qtyField = () => t.inSheets((node) => node.tagName === "INPUT" && node.getAttribute("aria-label") === "How many to move");
 		t.homeBox = () => t.inSheets((node) => node.tagName === "INPUT" && node.type === "checkbox");
-		t.homeRow = () => t.inSheets((node) => node.classList && node.classList.contains("ee-ss-check"));
+		t.homeRow = () => t.inSheets((node) => node.classList && node.classList.contains("ee-ss-home-check"));
 		t.typeQty = (value) => {
 			const field = t.qtyField();
 			field.value = value;
@@ -1500,7 +1528,129 @@ async function appBinActions() {
 		check("remove, nothing here: Recent has it with Undo", [t.app.recent[0].action, t.app.recent[0].can_undo, !!t.toastAction("Undo")], ["Unassign", 1, true]);
 		check("remove, nothing here: back on the bin's list, its own entry, nothing pushed", [t.app.view.name, t.page.here(), t.page.index(), t.pushes()], ["location", "S", 1, pushesBefore + 1]);
 
-		// 7. Both stay shut while the report form is on its way.
+		// 7. (Review) A save that lands while ANOTHER sheet is open does not write the list over that
+		// sheet's marker: it waits until the sheets are closed, then walks back without a push.
+		for (const [label, openOther] of [
+			["Move here from…", (tt) => tt.inMain("Move here from…").click()],
+			["the camera", (tt) => tt.app.scanBtn.click()],
+		]) {
+			t = await open({});
+			t.inMain("Move to…").click();
+			await t.scanCode("BIN-B2");
+			nextBin = "hold";
+			t.sheetButton("Move 5 to Bin B2").click();
+			await settle();
+			t.page.userBack(); // Back while it is saving: the sheet closes, the save goes on
+			await settle();
+			openOther(t);
+			check(`late save (${label}): another sheet is open on its own marker`, [U.sheetDepth(), t.page.here(), t.page.index(), t.page.entries.length], [1, "M", 3, 4]);
+			release();
+			await settle();
+			check(
+				`late save (${label}): it lands, and nothing moves under the open sheet`,
+				[t.app.recent[0].action, t.app.view.name, U.sheetDepth(), t.page.here(), t.page.index(), t.page.entries.length],
+				["Move To", "item", 1, "M", 3, 4]
+			);
+			U.closeAllSheets(); // the person closes it
+			await settle();
+			await settle();
+			check(
+				`late save (${label}): once it closes, back on the bin's list, on its own entry, no entry added`,
+				[U.sheetDepth(), t.app.view.name, t.page.here(), t.page.index(), t.page.entries.length],
+				[0, "location", "S", 1, 4]
+			);
+			t.page.win.history.forward();
+			await settle();
+			check(`late save (${label}): Forward is the item screen it left, an entry of ours`, [t.app.view.name, t.page.here(), t.page.index()], ["item", "S", 2]);
+		}
+
+		// 8. (Review) A refusal or no answer on each new sheet: the sheet stays, its button works
+		// again, a retry after no answer sends the SAME client_ref, and a changed save a new one.
+		t = await open({});
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		nextBin = "refuse";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		const refusedRef = sent(".move_to").slice(-1)[0].client_ref;
+		check("refused move: the sentence in the sheet, the button enabled again", [U.sheetDepth(), /Only 2 Each of Widget/.test(t.sheetText()), t.sheetButton("Move 5 to Bin B2").disabled], [1, true, false]);
+		nextBin = "drop";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		const droppedRef = sent(".move_to").slice(-1)[0].client_ref;
+		truthy("refused move: tapped again, a new client_ref (nothing was saved)", droppedRef !== refusedRef);
+		check("no answer: said so, sheet open, button enabled", [U.sheetDepth(), /will not save it twice/.test(t.sheetText()), t.sheetButton("Move 5 to Bin B2").disabled], [1, true, false]);
+		nextBin = "drop";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		check("no answer: the same move again sends the same client_ref", sent(".move_to").slice(-1)[0].client_ref, droppedRef);
+		t.typeQty("4");
+		nextBin = "hold-refuse";
+		t.sheetButton("Move 4 to Bin B2").click();
+		await settle();
+		truthy("no answer: a changed move is a new client_ref", sent(".move_to").slice(-1)[0].client_ref !== droppedRef);
+		t.typeQty("3"); // typed while it is saving: the button keeps "Saving…"
+		release();
+		await settle();
+		truthy("refused after an edit mid-save: the button names the move as typed now, the error stays", !!t.sheetButton("Move 3 to Bin B2") && /Refused\./.test(t.sheetText()), t.sheetText());
+
+		t = await open({}, { on_hand: 0, available: 0 });
+		t.inMain("Remove from this bin").click();
+		nextBin = "drop";
+		t.sheetButton("Remove from Bin A1").click();
+		await settle();
+		const offRef = sent(".unassign").slice(-1)[0].client_ref;
+		check("no answer on Remove: sheet open, button enabled", [U.sheetDepth(), t.sheetButton("Remove from Bin A1").disabled], [1, false]);
+		t.sheetButton("Remove from Bin A1").click();
+		await settle();
+		check("no answer on Remove: the retry sends the same client_ref, and goes through", [sent(".unassign").slice(-1)[0].client_ref, t.app.view.name], [offRef, "location"]);
+
+		t = await open({});
+		t.inMain("Remove from this bin").click();
+		nextBin = "hold";
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		check("boneyard posting: every way out of the sheet is shut, Move to… too", [t.sheetButtonStarting("Move to…").disabled], [true]);
+		release();
+		await settle();
+		t = await open({});
+		t.inMain("Remove from this bin").click();
+		nextBin = "drop";
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		const boneRef = sent(".send_to_boneyard").slice(-1)[0].client_ref;
+		check("no answer on the Boneyard: both ways out work again", [t.sheetButtonStarting("Move to…").disabled, t.sheetButtonStarting("Send to the Boneyard").disabled], [false, false]);
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		check("no answer on the Boneyard: the retry sends the same client_ref", sent(".send_to_boneyard").slice(-1)[0].client_ref, boneRef);
+
+		// 9. (Review) Reserved stock: only what is free moves, the box starts unticked (the bin keeps
+		// the item), and Remove promises nothing the server will not do.
+		t = await open({}, { on_hand: 5, available: 3 });
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		check("reserved: Move to… starts at the 3 free, the box unticked", [t.qtyField().value, t.homeBox().checked], ["3", false]);
+		U.closeAllSheets();
+		await settle();
+		t.inMain("Remove from this bin").click();
+		const reservedText = t.sheetText();
+		truthy(
+			"reserved: Remove says 2 stay reserved and the item stays on the bin, never 'takes it off'",
+			/2 Each here are reserved and stay/.test(reservedText) && /2 Each are reserved and stay, so Widget stays on Bin A1/.test(reservedText) && !/off Bin A1/.test(reservedText),
+			reservedText
+		);
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		check("reserved: the Boneyard trip moves the 3 free", sent(".send_to_boneyard").slice(-1)[0].qty, 3);
+
+		// 10. (Review) Reached from Recent, no bin list underneath: the card's own flags decide.
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: true, undecided: false });
+		check("from Recent: the item's default warehouse is here, so Remove shows", !!t.inMain("Remove from this bin"), true);
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: false, undecided: true });
+		check("from Recent: undecided here, so Remove shows", !!t.inMain("Remove from this bin"), true);
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: false, undecided: false });
+		check("from Recent: on none of the three counts, no Remove (the server would say it is not on the bin)", !!t.inMain("Remove from this bin"), false);
+
+		// 11. Both stay shut while the report form is on its way.
 		const page = fakePage();
 		const rec = fakeRecorder(page);
 		globalThis.window = page.win;

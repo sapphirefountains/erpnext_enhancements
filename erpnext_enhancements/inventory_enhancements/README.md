@@ -536,7 +536,7 @@ QR label like any location.
 | Button | Who sees it | What it does |
 |---|---|---|
 | **Move to…** (beside *Move here from…*, under Save) | everyone, wherever stock here is free to move (like Take) | how many (all free here by default), where to (scan its label, *Find a location*, or where it is already), and **"Make <there> this item's bin"**, shown only with `can_manage` and ticked while the quantity is everything on hand until the person touches it. Posts `move_to`; the boneyard is never offered as a bin |
-| **Remove from this bin** | `can_manage` only | nothing on hand: one confirmed tap posts `unassign` and the page returns to the bin's list. Stock on hand: offers **Move to…** or **Send to the Boneyard** (`send_to_boneyard`, everything free here; hidden when no boneyard is set), each said plainly |
+| **Remove from this bin** | `can_manage` only, where `unassign` would accept it (the item card's `assigned`, `is_default` or `undecided`, or stock here) | nothing on hand: one confirmed tap posts `unassign` and the page returns to the bin's list. Stock on hand: offers **Move to…** or **Send to the Boneyard** (`send_to_boneyard`, everything free here; hidden when no boneyard is set), each said plainly; with stock reserved it says the item stays on the bin, since only the free part moves |
 
 Move to… without the box needs nothing a take does not (Stock Entry create and submit), which is
 why it shows to everyone; the box, Remove and the Boneyard are the module gate's, so they hide

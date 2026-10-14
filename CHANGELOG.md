@@ -29,7 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     item. With stock here the server refuses that, so the sheet offers the two ways out and says
     what each does: **Move to…**, or **Send to the Boneyard** (`send_to_boneyard`: everything
     free here goes to the Inventory Scanner Settings boneyard and the item comes off this bin).
-    Reserved stock cannot move and is said so. No boneyard set: only Move to….
+    No boneyard set: only Move to…. With some stock **reserved**, only the free part can move,
+    and the server then keeps the item on the bin (the move does not empty it), so the sheet says
+    the item stays on the bin while that stock is reserved instead of promising to take it off.
+    While the Boneyard trip is posting, every option in the sheet is shut, Move to… included.
+  - Remove shows wherever `unassign` would accept it: the item is on the bin, it is its default
+    warehouse, nobody has decided on the pair yet, or stock is recorded there. The item card
+    (`api/stock_scan._item_payload`) now carries **`is_default`** and **`undecided`** beside
+    `assigned`, so this holds on an item reached from Recent or "Where is it?" as well as from
+    the bin's own list.
 - **Who sees them.** Move to… without the box is a plain stock movement: `move_to` then needs only
   Stock Entry create and submit, exactly as a take or *Move here* does, so it shows to everyone
   wherever stock here is free to move, like Take. The box, Remove from this bin and Send to the
@@ -53,11 +61,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   walks back to the bin's list on the list's own entry when that is the one behind, or by
   **replacing** the item's entry, never by pushing a new one, so Back from the list does not land
   on an item that is no longer there.
+- A save that lands while **another** sheet is open (Back pressed while it was saving, then *Move
+  here from…* or the camera opened) waits until no sheet is open before it walks anywhere. Walking
+  at once wrote the list over that sheet's marker with the sheet still showing, and the phone's
+  Back then landed on the item that had just left the bin (found in review, before release). It
+  also stays put if the closing sheet started a lookup (a scan, a search pick): that screen is
+  taking the marker.
+- After a refusal or no answer, the Move to… button names the move as it is typed now, not as it
+  was when the save began.
 
 ### Changed
 - `transport.js` has a second endpoint map, `BIN` (`move_to`, `unassign`, `send_to_boneyard` in
   `inventory_enhancements/bin_assignments`), because `M` is pinned to exactly `api/stock_scan`'s
   endpoints. `ui.js`'s `setActions` returns the buttons it made, so a sheet can relabel its own.
+- The make-home box's classes are `ee-ss-home-check*`. Its first name, `ee-ss-check`, was already
+  the store-run quick item's name-check panel, defined later in the stylesheet, so the panel's
+  column layout won over the box and the box's card styling reached the panel.
 
 ### Tests
 - `scripts/test_stock_scan_client.mjs` (already its own CI step) runs the real app.js on its fake
@@ -67,12 +86,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stock offering Move to… or the Boneyard (hidden when unset) and without posting `unassign`,
   Remove with none posting it, each save's endpoint, parameters and client_ref, Recent and the
   toast's Undo, and Back on every new sheet (and the camera and search over Move to…) with the
-  history entries counted. The fake DOM's `textContent` is now a child text node, as in a browser,
-  so relabelling a button through `fill` no longer keeps the old label beside the new one.
+  history entries counted. From the review: a save landing under another open sheet or the camera
+  (entries and Forward checked after the walk back), a refusal and no answer on each new sheet
+  (the button works again, the same client_ref on a retry, a new one after an edit, the label
+  as typed), reserved stock (the box unticked, the Boneyard sending only what is free, no promise
+  of taking the item off), every Remove option shut while the Boneyard posts, and Remove on an
+  item reached from Recent by `is_default` or `undecided`. The fake DOM's `textContent` is now a
+  child text node, as in a browser, so relabelling a button through `fill` no longer keeps the old
+  label beside the new one.
 - `tests/test_stock_scan_surface.py` pins the `BIN` map to the whitelisted functions of
   `bin_assignments.py`, reads every `this.post(v, BIN.…, {...})` in app.js and checks it sends each
-  required parameter and nothing the function does not take, and adds the two new doors to the
-  report-form guard.
+  required parameter and nothing the function does not take, pins `make_home` as exactly 0 or 1,
+  adds the two new doors to the report-form guard, pins the item card's `assigned`/`is_default`/
+  `undecided` and the listing rows' flags, and fails the build on any class given two top-level
+  rule sets in `stock_scan.bundle.css` (the `ee-ss-check` collision).
 
 ## [1.689.0] - 2026-10-14
 

@@ -1394,7 +1394,7 @@ body .page-footer {
 	cursor: default;
 	min-height: 60px;
 }
-.ee-ss-check {
+.ee-ss-home-check {
 	display: flex;
 	align-items: center;
 	gap: 12px;
@@ -1410,7 +1410,7 @@ body .page-footer {
 	touch-action: manipulation;
 	overflow-wrap: anywhere;
 }
-.ee-ss-check-input {
+.ee-ss-home-check-input {
 	flex: none;
 	width: 26px;
 	height: 26px;

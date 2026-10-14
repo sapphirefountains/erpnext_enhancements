@@ -1004,16 +1004,19 @@ export class StockScanApp {
 
 	/**
 	 * Remove from this bin: only with `can_manage`, and only where there is something to take off
-	 * — the item is on the bin (`assigned`), its bin's list drew it (a default warehouse, a pair
-	 * nobody decided on), or stock is recorded here. A blocked item with stock cannot be moved by
-	 * this page, so it would be offered only moves the server refuses.
+	 * — the item is on the bin (`assigned`), this is its default warehouse (`is_default`), nobody
+	 * has decided on the pair yet (`undecided`), or stock is recorded here: the reasons
+	 * `unassign` accepts. The item card carries all three (also when it was reached from Recent
+	 * or "Where is it?"); the bin's own list row, when it is the screen underneath, is read too in
+	 * case the card is older. A blocked item with stock cannot be moved by this page, so it would
+	 * be offered only moves the server refuses.
 	 */
 	canRemove(item) {
 		if (!this.canManage() || !item || !item.warehouse) return false;
 		const stocked = (Number(item.on_hand) || 0) > 0;
 		if (item.blocked && stocked) return false;
-		const row = this.listedHere(item);
-		return !!(item.assigned || stocked || (row && (row.assigned || row.is_default || row.undecided)));
+		const why = (row) => !!(row && (row.assigned || row.is_default || row.undecided));
+		return stocked || why(item) || why(this.listedHere(item));
 	}
 
 	/**
@@ -1062,10 +1065,10 @@ export class StockScanApp {
 		const more = button("+", "ee-ss-mini-step", () => step(1));
 		more.setAttribute("aria-label", "One more");
 
-		const home = input({ type: "checkbox", className: "ee-ss-check-input" });
-		const homeText = el("span", "ee-ss-check-text");
-		const homeRow = append(el("label", "ee-ss-check"), home, homeText);
-		const homeNote = el("p", "ee-ss-note ee-ss-check-note");
+		const home = input({ type: "checkbox", className: "ee-ss-home-check-input" });
+		const homeText = el("span", "ee-ss-home-check-text");
+		const homeRow = append(el("label", "ee-ss-home-check"), home, homeText);
+		const homeNote = el("p", "ee-ss-note ee-ss-home-check-note");
 		const destBox = el("div", "ee-ss-dest");
 		const status = el("p", "ee-ss-search-status");
 		status.setAttribute("role", "status");
@@ -1098,7 +1101,8 @@ export class StockScanApp {
 			homeNote.textContent = note;
 			homeNote.hidden = !note;
 		};
-		const relabel = () => {
+		/** The button names the move as typed now; held while a save is in flight ("Saving…"). */
+		const drawGo = () => {
 			const r = current();
 			if (goBtn && !this.saving) {
 				fill(
@@ -1108,6 +1112,9 @@ export class StockScanApp {
 				);
 				goBtn.disabled = !dest;
 			}
+		};
+		const relabel = () => {
+			drawGo();
 			refreshHome();
 			showError("");
 		};
@@ -1236,7 +1243,11 @@ export class StockScanApp {
 					keepChange: true,
 					after: (result) => this.afterMoveOut(v, result),
 				}
-			);
+			).then(() => {
+				// A refusal or no answer leaves the sheet open, and `busy` put back the label the
+				// button had when the save began: name the move as it is typed now, keeping the error.
+				if (!closed) drawGo();
+			});
 		};
 
 		home.addEventListener("change", () => {
@@ -1297,22 +1308,36 @@ export class StockScanApp {
 	}
 
 	/**
-	 * Back to the bin's list after the item came off it. Waits for the closed sheet's marker to be
-	 * stepped back over first (`whenQuiet`), then walks the history the back link would: onto the
-	 * list's own entry when it is the one behind, else REPLACING this entry with the list — never a
-	 * new entry, so the phone's Back from the list does not land on an item that is no longer there.
+	 * Back to the bin's list after the item came off it. Waits until no sheet is open
+	 * (`whenNoSheets`: the save may land while the person has opened another sheet or the camera,
+	 * whose marker is the current entry, and the list must not be written over it under an open
+	 * sheet) and the closed sheets' marker has been stepped back over (`whenQuiet`), then walks the
+	 * history the back link would: onto the list's own entry when it is the one behind, else
+	 * REPLACING this entry with the list — never a new entry, so the phone's Back from the list
+	 * does not land on an item that is no longer there. If the person has gone elsewhere by then,
+	 * nothing moves.
 	 */
 	leaveItem(v) {
-		this.nav.whenQuiet(() => {
-			if (this.view !== v || this.reportBusy()) return;
-			const parent = this.back[this.back.length - 1] || START;
-			if (this.nav.behindIs(parent, this.back.slice(0, -1))) {
-				this.goBack();
-				return;
-			}
-			this.back.pop();
-			this.show(parent, this.back, "replace");
-		});
+		const walk = () => {
+			// A sheet that closed into a lookup (a scan, a search pick) is taking the person elsewhere:
+			// its marker belongs to the screen that lands, so neither it nor this view is ours to move.
+			// (Asked a tick after the last sheet closed: the camera starts its lookup just after.)
+			if (this.view !== v || this.loads || sheetDepth()) return;
+			this.nav.whenQuiet(() => {
+				if (this.view !== v || this.reportBusy() || sheetDepth()) return;
+				const parent = this.back[this.back.length - 1] || START;
+				if (this.nav.behindIs(parent, this.back.slice(0, -1))) {
+					this.goBack();
+					return;
+				}
+				this.back.pop();
+				this.show(parent, this.back, "replace");
+			});
+		};
+		// The usual case, the save's own sheet just closed and nothing else is open: now, while the
+		// closed sheet's marker is still waiting to be stepped back over.
+		if (!sheetDepth()) walk();
+		else whenNoSheets(() => setTimeout(walk, 0));
 	}
 
 	/**
@@ -1369,6 +1394,12 @@ export class StockScanApp {
 			return;
 		}
 
+		// Every way out of this sheet: while the Boneyard trip is posting, none may be tapped (a
+		// Move to… opened meanwhile would be a second save on the same stock).
+		const rows = [];
+		const enable = (on) => {
+			for (const r of rows) r.disabled = !on || free <= 0;
+		};
 		const option = (title, sub, onClick) => {
 			const row = button(
 				[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", title), el("span", "ee-ss-row-sub", sub)), icon("next", "ee-ss-row-go")],
@@ -1376,8 +1407,14 @@ export class StockScanApp {
 				() => onClick(row)
 			);
 			row.disabled = free <= 0;
+			rows.push(row);
 			return append(el("li"), row);
 		};
+		// The server takes the item off this bin only when the move empties it
+		// (`bin_assignments._plan_source`), and reserved stock cannot move: promise that only when
+		// everything here is free.
+		const empties = free >= onHand - 1e-9;
+		const reserved = `${plain(onHand - free)} ${uom}`;
 		sheet({
 			title: `Remove from ${here}`,
 			onClose,
@@ -1393,7 +1430,9 @@ export class StockScanApp {
 				list.appendChild(
 					option(
 						"Move to…",
-						`Pick the location they go to. Moving all ${plain(free)} there and making it this item's bin takes ${item.item_name} off ${here}.`,
+						empties
+							? `Pick the location they go to. Moving all ${plain(free)} there and making it this item's bin takes ${item.item_name} off ${here}.`
+							: `Pick the location they go to. ${reserved} here are reserved and stay, so ${item.item_name} stays on ${here} until they are used.`,
 						() => {
 							handle.close("action");
 							this.openMoveTo();
@@ -1404,8 +1443,11 @@ export class StockScanApp {
 					list.appendChild(
 						option(
 							"Send to the Boneyard",
-							`Moves all ${plain(free)} ${uom} to the Boneyard and takes ${item.item_name} off ${here}. Undo puts them back.`,
-							(row) =>
+							empties
+								? `Moves all ${plain(free)} ${uom} to the Boneyard and takes ${item.item_name} off ${here}. Undo puts them back.`
+								: `Moves the ${plain(free)} ${uom} free here to the Boneyard. ${reserved} are reserved and stay, so ${item.item_name} stays on ${here}. Undo puts them back.`,
+							(row) => {
+								enable(false);
 								this.post(
 									v,
 									BIN.BONEYARD,
@@ -1418,17 +1460,16 @@ export class StockScanApp {
 										keepChange: true,
 										after: (result) => this.afterMoveOut(v, result),
 									}
-								)
+								).then(() => {
+									if (!closed) enable(true);
+								});
+							}
 						)
 					);
 				}
 				body.appendChild(list);
 				if (free <= 0) {
 					body.appendChild(el("p", "ee-ss-note", `All ${plain(onHand)} ${uom} here are reserved, so none can be moved yet.`));
-				} else if (free < onHand) {
-					body.appendChild(
-						el("p", "ee-ss-note", `${plain(onHand - free)} ${uom} here are reserved and stay, so ${here} keeps ${item.item_name} until they are used.`)
-					);
 				}
 				body.appendChild(error.node);
 			},
