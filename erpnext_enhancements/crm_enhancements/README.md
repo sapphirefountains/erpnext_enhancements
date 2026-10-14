@@ -423,6 +423,14 @@ so a reviewer can disagree on sight; `link_opportunity_to_project` writes exactl
 one link, refuses to overwrite an existing one, and guards both directions so two
 Projects cannot claim one Opportunity.
 
+**Which link counts** (WI-024). Three fields link a deal and its Project:
+`Opportunity.custom_created_project` is the canonical forward link (the hand-off engine's
+idempotency field, and the only one the won-without-project warnings read),
+`Project.custom_opportunity` the canonical reverse link, and `Opportunity.custom_project` a
+hidden legacy field that nothing should write. `patches/backfill_opportunity_project_links.py`
+(v1.636.0) filled the canonical pair on every Closed Won deal from the other two, with the same
+one-Project-one-deal guard as the linker; what it could not prove it listed for review instead.
+
 **Named Account Targets** builds an outreach list from the same data, sorted by
 staleness rather than alphabetically. It has **no scale filter** — the
 event-planner scale taxonomy is undecided, and a filter built against a guessed
