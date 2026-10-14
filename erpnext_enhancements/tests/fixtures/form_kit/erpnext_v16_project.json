@@ -1,0 +1,497 @@
+{
+ "_source": {
+  "repository": "https://github.com/frappe/erpnext",
+  "ref": "origin/version-16",
+  "commit": "7474d9e786277383de1242ab882f16856d17a9c9",
+  "tag": "v16.50.0",
+  "paths": [
+   "erpnext/projects/doctype/project/project.json"
+  ],
+  "trimmed": "Only the keys listed in 'kept_field_keys' are kept per field; permissions keep role, permlevel and the read/write/create/delete/if_owner rights. Field order is the JSON's own.",
+  "kept_field_keys": [
+   "fieldname",
+   "fieldtype",
+   "label",
+   "options",
+   "reqd",
+   "hidden",
+   "read_only",
+   "depends_on",
+   "mandatory_depends_on",
+   "read_only_depends_on",
+   "default",
+   "description",
+   "permlevel",
+   "precision",
+   "bold",
+   "collapsible",
+   "set_only_once",
+   "allow_on_submit",
+   "in_list_view",
+   "fetch_from"
+  ],
+  "produced_by": "The file at origin/version-16 (read with git show in a sibling erpnext checkout, whose develop working tree is v17 and the wrong tree), trimmed as above, for the block registry test (form kit P3.1)."
+ },
+ "doctypes": {
+  "Project": {
+   "name": "Project",
+   "istable": 0,
+   "title_field": "project_name",
+   "autoname": "naming_series:",
+   "permissions": [
+    {
+     "role": "Projects Manager",
+     "permlevel": 1,
+     "read": 1,
+     "write": 1,
+     "delete": 1
+    },
+    {
+     "role": "Projects User",
+     "read": 1,
+     "write": 1,
+     "create": 1,
+     "delete": 1
+    },
+    {
+     "role": "Desk User",
+     "permlevel": 1,
+     "read": 1
+    },
+    {
+     "role": "Projects Manager",
+     "read": 1,
+     "write": 1,
+     "create": 1,
+     "delete": 1
+    },
+    {
+     "role": "Employee"
+    },
+    {
+     "role": "HR User"
+    },
+    {
+     "role": "HR Manager"
+    },
+    {
+     "role": "Accounts Manager"
+    },
+    {
+     "role": "Accounts User"
+    },
+    {
+     "role": "Delivery Manager"
+    },
+    {
+     "role": "Delivery User"
+    },
+    {
+     "role": "Maintenance Manager"
+    },
+    {
+     "role": "Maintenance User"
+    },
+    {
+     "role": "Manufacturing Manager"
+    },
+    {
+     "role": "Manufacturing User"
+    },
+    {
+     "role": "Purchase Manager"
+    },
+    {
+     "role": "Purchase Master Manager"
+    },
+    {
+     "role": "Purchase User"
+    },
+    {
+     "role": "Quality Manager"
+    },
+    {
+     "role": "Sales Manager"
+    },
+    {
+     "role": "Sales Master Manager"
+    },
+    {
+     "role": "Sales User"
+    },
+    {
+     "role": "Stock Manager"
+    },
+    {
+     "role": "Stock User"
+    },
+    {
+     "role": "Support Team"
+    }
+   ],
+   "fields": [
+    {
+     "fieldname": "project_name",
+     "fieldtype": "Data",
+     "label": "Project Name",
+     "reqd": 1
+    },
+    {
+     "fieldname": "status",
+     "fieldtype": "Select",
+     "label": "Status",
+     "options": "Open\nOn hold\nCompleted\nCancelled",
+     "default": "Open"
+    },
+    {
+     "fieldname": "project_type",
+     "fieldtype": "Link",
+     "label": "Project Type",
+     "options": "Project Type",
+     "in_list_view": 1
+    },
+    {
+     "fieldname": "is_active",
+     "fieldtype": "Select",
+     "label": "Is Active",
+     "options": "Yes\nNo"
+    },
+    {
+     "fieldname": "percent_complete_method",
+     "fieldtype": "Select",
+     "label": "% Complete Method",
+     "options": "Manual\nTask Completion\nTask Progress\nTask Weight",
+     "default": "Task Completion"
+    },
+    {
+     "fieldname": "percent_complete",
+     "fieldtype": "Percent",
+     "label": "% Completed",
+     "read_only_depends_on": "eval:doc.percent_complete_method != 'Manual'",
+     "bold": 1,
+     "in_list_view": 1
+    },
+    {
+     "fieldname": "column_break_5",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "project_template",
+     "fieldtype": "Link",
+     "label": "From Template",
+     "options": "Project Template",
+     "set_only_once": 1
+    },
+    {
+     "fieldname": "expected_start_date",
+     "fieldtype": "Date",
+     "label": "Expected Start Date",
+     "bold": 1,
+     "in_list_view": 1
+    },
+    {
+     "fieldname": "expected_end_date",
+     "fieldtype": "Date",
+     "label": "Expected End Date",
+     "bold": 1,
+     "in_list_view": 1
+    },
+    {
+     "fieldname": "priority",
+     "fieldtype": "Select",
+     "label": "Priority",
+     "options": "Medium\nLow\nHigh"
+    },
+    {
+     "fieldname": "department",
+     "fieldtype": "Link",
+     "label": "Department",
+     "options": "Department"
+    },
+    {
+     "fieldname": "customer_details",
+     "fieldtype": "Section Break",
+     "label": "Customer Details",
+     "options": "fa fa-user",
+     "collapsible": 1
+    },
+    {
+     "fieldname": "customer",
+     "fieldtype": "Link",
+     "label": "Customer",
+     "options": "Customer"
+    },
+    {
+     "fieldname": "column_break_14",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "sales_order",
+     "fieldtype": "Link",
+     "label": "Sales Order",
+     "options": "Sales Order"
+    },
+    {
+     "fieldname": "users_section",
+     "fieldtype": "Section Break",
+     "label": "Users",
+     "collapsible": 1
+    },
+    {
+     "fieldname": "users",
+     "fieldtype": "Table",
+     "label": "Users",
+     "options": "Project User",
+     "description": "Project will be accessible on the website to these users",
+     "permlevel": 1
+    },
+    {
+     "fieldname": "copied_from",
+     "fieldtype": "Data",
+     "label": "Copied From",
+     "hidden": 1,
+     "read_only": 1,
+     "permlevel": 1
+    },
+    {
+     "fieldname": "section_break0",
+     "fieldtype": "Section Break",
+     "label": "Notes",
+     "options": "fa fa-list",
+     "collapsible": 1
+    },
+    {
+     "fieldname": "notes",
+     "fieldtype": "Text Editor",
+     "label": "Notes"
+    },
+    {
+     "fieldname": "section_break_18",
+     "fieldtype": "Section Break",
+     "label": "Timeline",
+     "collapsible": 1
+    },
+    {
+     "fieldname": "actual_start_date",
+     "fieldtype": "Date",
+     "label": "Actual Start Date (via Timesheet)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "actual_time",
+     "fieldtype": "Float",
+     "label": "Actual Time in Hours (via Timesheet)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "column_break_20",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "actual_end_date",
+     "fieldtype": "Date",
+     "label": "Actual End Date (via Timesheet)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "project_details",
+     "fieldtype": "Section Break",
+     "label": "Costing and Billing",
+     "options": "fa fa-money"
+    },
+    {
+     "fieldname": "estimated_costing",
+     "fieldtype": "Currency",
+     "label": "Estimated Cost",
+     "options": "Company:company:default_currency",
+     "in_list_view": 1
+    },
+    {
+     "fieldname": "total_costing_amount",
+     "fieldtype": "Currency",
+     "label": "Total Costing Amount (via Timesheet)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "total_purchase_cost",
+     "fieldtype": "Currency",
+     "label": "Total Purchase Cost (via Purchase Invoice)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "company",
+     "fieldtype": "Link",
+     "label": "Company",
+     "options": "Company",
+     "reqd": 1
+    },
+    {
+     "fieldname": "column_break_28",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "total_sales_amount",
+     "fieldtype": "Currency",
+     "label": "Total Sales Amount (via Sales Order)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "total_billable_amount",
+     "fieldtype": "Currency",
+     "label": "Total Billable Amount (via Timesheet)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "total_billed_amount",
+     "fieldtype": "Currency",
+     "label": "Total Billed Amount (via Sales Invoice)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "total_consumed_material_cost",
+     "fieldtype": "Currency",
+     "label": "Total Consumed Material Cost (via Stock Entry)",
+     "read_only": 1
+    },
+    {
+     "fieldname": "cost_center",
+     "fieldtype": "Link",
+     "label": "Default Cost Center",
+     "options": "Cost Center"
+    },
+    {
+     "fieldname": "margin",
+     "fieldtype": "Section Break",
+     "label": "Margin"
+    },
+    {
+     "fieldname": "gross_margin",
+     "fieldtype": "Currency",
+     "label": "Gross Margin",
+     "options": "Company:company:default_currency",
+     "read_only": 1
+    },
+    {
+     "fieldname": "column_break_37",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "per_gross_margin",
+     "fieldtype": "Percent",
+     "label": "Gross Margin %",
+     "read_only": 1
+    },
+    {
+     "fieldname": "collect_progress",
+     "fieldtype": "Check",
+     "label": "Collect Progress",
+     "default": "0"
+    },
+    {
+     "fieldname": "holiday_list",
+     "fieldtype": "Link",
+     "label": "Holiday List",
+     "options": "Holiday List",
+     "depends_on": "collect_progress"
+    },
+    {
+     "fieldname": "frequency",
+     "fieldtype": "Select",
+     "label": "Frequency To Collect Progress",
+     "options": "Hourly\nTwice Daily\nDaily\nWeekly",
+     "depends_on": "eval:doc.collect_progress == true"
+    },
+    {
+     "fieldname": "from_time",
+     "fieldtype": "Time",
+     "label": "From Time",
+     "depends_on": "eval:(doc.frequency == \"Hourly\" && doc.collect_progress)"
+    },
+    {
+     "fieldname": "to_time",
+     "fieldtype": "Time",
+     "label": "To Time",
+     "depends_on": "eval:(doc.frequency == \"Hourly\" && doc.collect_progress)"
+    },
+    {
+     "fieldname": "first_email",
+     "fieldtype": "Time",
+     "label": "First Email",
+     "depends_on": "eval:(doc.frequency == \"Twice Daily\" && doc.collect_progress == true)\n\n"
+    },
+    {
+     "fieldname": "second_email",
+     "fieldtype": "Time",
+     "label": "Second Email",
+     "depends_on": "eval:(doc.frequency == \"Twice Daily\" && doc.collect_progress == true)"
+    },
+    {
+     "fieldname": "daily_time_to_send",
+     "fieldtype": "Time",
+     "label": "Daily Time to send",
+     "depends_on": "eval:(doc.frequency == \"Daily\" && doc.collect_progress == true)"
+    },
+    {
+     "fieldname": "day_to_send",
+     "fieldtype": "Select",
+     "label": "Day to Send",
+     "options": "Monday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+     "depends_on": "eval:(doc.frequency == \"Weekly\" && doc.collect_progress == true)"
+    },
+    {
+     "fieldname": "weekly_time_to_send",
+     "fieldtype": "Time",
+     "label": "Weekly Time to send",
+     "depends_on": "eval:(doc.frequency == \"Weekly\" && doc.collect_progress == true)"
+    },
+    {
+     "fieldname": "column_break_45",
+     "fieldtype": "Column Break"
+    },
+    {
+     "fieldname": "message",
+     "fieldtype": "Text",
+     "label": "Message",
+     "depends_on": "collect_progress",
+     "mandatory_depends_on": "collect_progress",
+     "description": "Message will be sent to the users to get their status on the Project"
+    },
+    {
+     "fieldname": "naming_series",
+     "fieldtype": "Select",
+     "label": "Series",
+     "options": "PROJ-.####",
+     "reqd": 1,
+     "set_only_once": 1
+    },
+    {
+     "fieldname": "subject",
+     "fieldtype": "Data",
+     "label": "Subject",
+     "depends_on": "collect_progress",
+     "mandatory_depends_on": "collect_progress"
+    },
+    {
+     "fieldname": "costing_tab",
+     "fieldtype": "Tab Break",
+     "label": "Costing"
+    },
+    {
+     "fieldname": "monitor_progress_tab",
+     "fieldtype": "Tab Break",
+     "label": "Progress"
+    },
+    {
+     "fieldname": "more_info_tab",
+     "fieldtype": "Tab Break",
+     "label": "More Info"
+    },
+    {
+     "fieldname": "connections_tab",
+     "fieldtype": "Tab Break",
+     "label": "Connections"
+    }
+   ]
+  }
+ }
+}

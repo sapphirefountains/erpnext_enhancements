@@ -76,6 +76,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
   chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
 
+## [1.669.0] - 2026-10-14
+
+Form kit P3.1 and the server half of P3.2 (ERPNext TASK-2026-02754 and TASK-2026-02755): one
+definition per piece of information, and Opportunity's two contact fields kept equal by every save
+that sets either one.
+No UI changes: the Party entry component is next, once the side panel (P4.4) has landed.
+
+### Added
+
+- **The information-block registry** (`form_kit/blocks.py`, P3.1). It defines Party, Site,
+  Schedule window, Scope by pillar, Money and Crew once each. Each block names the fields that carry
+  it on Opportunity and Project, and its three faces: the kit's entry component, the report face's
+  column kind and the print helper.
+  - It points at what exists rather than copying it. The Schedule window is
+    `utils/date_pairs.PAIRS` plus the pairs ERPNext validates itself. Scope by pillar is built from
+    the Opportunity config's request tables, with each stream's pillar from
+    `print_style.STREAM_PILLAR`. Money prints through Frappe's own formatter.
+  - **A face may be pending, never missing.** The Party and Site entry component is pending on
+    TASK-2026-02755. The Schedule window, Money and Crew entry components, and Crew's print helper,
+    are pending on TASK-2026-02753. Each names its task and what it will build.
+  - **Party's address is the Billing Address, and Site is the job site.** The plan put
+    `primary_address` in Party. That was written before v1.633.0 made ERPNext's `customer_address`
+    the visible Billing Address and kept Primary Address as the job site.
+  - The JavaScript twin is `public/js/info_blocks/blocks.js`. Nothing bundles it yet; the Party
+    component will be its first reader.
+- `tests/test_form_kit_blocks.py`, with its own CI step. It fails when a block is missing a face,
+  when a pending face names no task, or when a face points at an export, a report kind or a print
+  helper that does not exist. It also fails when a block names a field that the DocType's meta does
+  not have, or when the JS twin differs from the Python registry (checked under node).
+  - The meta is the v16 one: ERPNext's DocType JSON at `origin/version-16`, plus this app's Custom
+    Fields and the fields `setup/custom_fields.py` adds on migrate.
+  - `tests/fixtures/form_kit/erpnext_v16_project.json` is new, made the same way as the Opportunity
+    fixture. Its `_source` key records the commit and how it was produced.
+- **Opportunity's hidden Contact Person now follows the visible Primary Contact**
+  (`crm_enhancements/party_mirrors.py`, P3.2).
+  - **Why it matters.** People pick Primary Contact. ERPNext's own code reads the hidden
+    `contact_person`: *Create > Quotation* maps fields by name, and the Prospect's opportunity row
+    copies it too. So when the two disagreed, a Quotation went to someone other than the person on
+    the deal.
+  - It runs first in Opportunity `before_save`, ahead of
+    `sync_contact.refresh_primary_contact_copies`. A contact copied up therefore gets its title,
+    phone and email in the same save.
+  - **Which side wins.**
+    - A new record takes the visible field. If only the hidden one is set (by a mapping or an API
+      insert), it is copied up.
+    - On a saved record, the field a person changed in that save wins. Emptying Primary Contact
+      empties both, though on a Customer's deal ERPNext's `map_fields` (in `Opportunity.validate`,
+      before `before_save`) usually refills it from the account's own Primary Contact first.
+    - If only the hidden field changed, and to a value, it is copied up. This covers ERPNext's form,
+      which sets `contact_person` when the account changes, and an API call that only knows the
+      stock field.
+    - **A save that changes neither field leaves the pair exactly as it is**, and so does a saved
+      record whose stored copy cannot be read. So a board move, a guided step, ERPNext's daily
+      `auto_close_opportunity` or a bulk status change never rewrites the rows waiting for approval.
+  - **When it changes Contact Person it also refreshes ERPNext's copies of it**: `contact_display`
+    and `contact_mobile` (as v16's `get_contact_details` fills them) and `contact_email` (from
+    `custom_email`, as this app's Property Setter fetches it). Emptying Contact Person empties them.
+    v16 fills `fetch_from` values in `_validate_links`, before `before_save`, so without this the
+    email would still be the old person's. The other two are set only by the form's script. *Create
+    > Quotation* copies all three by name, so the Quotation would have had the new contact with the
+    old person's name and email.
+  - It copies only to a Contact that exists. It skips fields the meta does not have yet (ERPNext's
+    test bootstrap). It never raises: a failure goes to the Error Log with its traceback, against the
+    record.
+- **Party Mirror Preview**, a dry-run report (CRM Enhancements; System Manager and Sales Manager).
+  - It lists every Opportunity whose two contact fields disagree, with both values and what the
+    fix would make them (the visible contact, else the hidden one copied up). It writes nothing and
+    has no apply button.
+  - It reads with SQL, so User Permissions on Opportunity do not narrow it. Its roles (System
+    Manager, Sales Manager) see every Opportunity anyway, and it shows names only.
+  - It compares in Python, not SQL: under MariaDB's PAD SPACE collation `a <> b` ignores trailing
+    spaces, so a SQL check would report clean on a pair that is not.
+  - On production on 2026-10-14, 9 Opportunities had the two fields set to different contacts. The
+    plan counted 8 on 2026-10-13. Another 20 had only the hidden field set and 11 only the visible
+    one.
+  - **Nothing is fixed yet.** As with the normalization cleanup, Nik approves this list first. The
+    fix will then ship as a patch that runs the same rule.
+
+### Not changed, on purpose
+
+- **The address pair is not synced.** The plan asked for `customer_address` to follow Primary
+  Address. Since v1.633.0 `customer_address` is the visible Billing Address, which *Create >
+  Quotation* copies into the Quotation's billing address. Overwriting it with the job site would
+  undo that decision, so the two addresses stay independent.
+- **Project has no hidden contact field** (ERPNext's Project has no `contact_person`), so it has
+  nothing to mirror. Its equivalent pair for P7 is `primary_address` beside the older
+  `custom_customer__lead_address`, which `api/pickup_routing.py` and `api/travel.py` still read as a
+  fallback.
+
 ## [1.667.0] - 2026-10-14
 
 ### Added
