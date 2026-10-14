@@ -1388,9 +1388,7 @@ class TestPageSource(unittest.TestCase):
 		style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 		self.assertTrue(classes)
-		self.assertEqual(
-			{c for c in classes if not c.startswith(("t1-", "pp-"))}, {"form-control"}, classes
-		)
+		self.assertEqual({c for c in classes if not c.startswith(("t1-", "pp-"))}, {"form-control"}, classes)
 
 	def test_the_quick_add_dialog_has_the_new_fields_and_stays_collapsed(self):
 		quick = self.code[

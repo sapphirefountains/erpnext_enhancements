@@ -1192,7 +1192,9 @@ class TestPages(unittest.TestCase):
 				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
 				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6A_STYLE).")))
 				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertRegex(style, r"\.pp-crew-view \.pp-crew-head,[^{]*\{\s*position: sticky;\s*top: 0;")
+				self.assertRegex(
+					style, r"\.pp-crew-view \.pp-crew-head,[^{]*\{\s*position: sticky;\s*top: 0;"
+				)
 				self.assertRegex(style, r"\.pp-week \.pp-grid \{\s*max-height:")
 				# planner_kit's timeline bar takes the task's color from the page (--pp-color).
 				classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style)) - {"pk-tl-bar"}

@@ -631,10 +631,18 @@ class TestPages(unittest.TestCase):
 				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6C_STYLE).")))
 				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 				self.assertNotIn("_STYLE = `", block)
-				coarse, phone, touch = "@media (pointer: coarse)", "@media (max-width: 767px)", "min-height: var(--sf-touch-min)"
+				coarse, phone, touch = (
+					"@media (pointer: coarse)",
+					"@media (max-width: 767px)",
+					"min-height: var(--sf-touch-min)",
+				)
 			else:
 				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
-				coarse, phone, touch = "@media (pointer:coarse)", "@media (max-width:760px)", "min-height:40px"
+				coarse, phone, touch = (
+					"@media (pointer:coarse)",
+					"@media (max-width:760px)",
+					"min-height:40px",
+				)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual(

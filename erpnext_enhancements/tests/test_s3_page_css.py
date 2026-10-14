@@ -254,14 +254,19 @@ class TestTheCssLeftTheJs(unittest.TestCase):
 		for name, folder in PAGES.items():
 			js = _js_code(_read(folder / f"{name}.js"))
 			inline = re.findall(r"style=\"([^\"]*)\"", js) + re.findall(r"style='([^']*)'", js)
-			painted = [s for s in inline if re.search(r"(?i)(color|background|border)\s*:", _without_data_color(s))]
+			painted = [
+				s for s in inline if re.search(r"(?i)(color|background|border)\s*:", _without_data_color(s))
+			]
 			with self.subTest(page=name):
 				self.assertEqual(painted, [], f"inline colour in {name}.js")
 
 	def test_the_data_color_allowance_is_exactly_one_pattern(self):
 		"""The allowance takes the custom property through pp_esc and nothing else: a literal, a
 		second property, or the same property written raw is still an inline color."""
-		for allowed in ('--pp-color: ${pp_esc(color)}', "--pp-color: ${pp_esc(\n\t\tthis.resource_color(x)\n\t)}"):
+		for allowed in (
+			"--pp-color: ${pp_esc(color)}",
+			"--pp-color: ${pp_esc(\n\t\tthis.resource_color(x)\n\t)}",
+		):
 			with self.subTest(allowed=allowed):
 				self.assertNotRegex(_without_data_color(allowed), r"(?i)(color|background|border)\s*:")
 		for refused in (
@@ -652,8 +657,8 @@ class TestPlanATrip(unittest.TestCase):
 
 class TestProjectPlanner(unittest.TestCase):
 	"""S3.4d (v1.664.0). The Project Planner wrote eleven <style> elements from its script, in
-	Frappe's palette with a literal hex for every status, a shadow on every hover, four width
-	breakpoints and 32-40px touch targets, and painted a task's and a person's color inline."""
+	Frappe's palette with a literal hex for every status, 17 shadows, three width breakpoints (760,
+	761 and 1024px) and 32-40px touch targets, and painted a task's and a person's color inline."""
 
 	FOLDER = PAGES["project_planner"]
 
@@ -688,7 +693,7 @@ class TestProjectPlanner(unittest.TestCase):
 		self.assertGreaterEqual(len(DATA_COLOR.findall(self.js)), 7)
 		# A person's dot, a crew cell's card and a calendar card.
 		self.assertEqual(len(re.findall(r'style="--pp-color: \$\{pp_esc\(color\)\}">', self.js)), 3)
-		self.assertIn('color = `--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))};`;', self.js)
+		self.assertIn("color = `--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))};`;", self.js)
 		self.assertIn('classes.push("pp-tl-colored");', self.js)
 		for selector in (".pp-dot", ".pp-badge", ".pp-card", ".pp-p6c-swatch", ".pk-tl-bar.pp-tl-colored"):
 			with self.subTest(selector=selector):
@@ -701,12 +706,20 @@ class TestProjectPlanner(unittest.TestCase):
 		same tokens through getComputedStyle; the list's numbers are CSS on those tokens."""
 		helper = re.search(r"const PP_ROUTE_COLORS = \(\) => \(\{(.*?)\}\);", self.js, flags=re.S)
 		self.assertIsNotNone(helper)
-		found = dict(re.findall(r"(\w+): pp_token_color\(\"(--sf-[a-z0-9-]+)\", \"#[0-9a-f]{6}\"\)", helper.group(1)))
+		found = dict(
+			re.findall(r"(\w+): pp_token_color\(\"(--sf-[a-z0-9-]+)\", \"#[0-9a-f]{6}\"\)", helper.group(1))
+		)
 		self.assertEqual(sorted(found), ["line", "ring", "shop", "stop"])
 		self.assertIn(f"var({found['stop']})", self._rule(".pp-stop-num"))
 		self.assertIn(f"var({found['shop']})", self._rule(".pp-stop-num.pp-shop"))
 		self.assertIn("getComputedStyle(document.documentElement).getPropertyValue(name).trim()", self.js)
-		for use in ("color: colors.ring", "strokeColor: colors.ring", '"S", colors.shop', "colors.stop,", "PP_ROUTE_COLORS().line"):
+		for use in (
+			"color: colors.ring",
+			"strokeColor: colors.ring",
+			'"S", colors.shop',
+			"colors.stop,",
+			"PP_ROUTE_COLORS().line",
+		):
 			with self.subTest(use=use):
 				self.assertIn(use, self.js)
 
@@ -715,7 +728,11 @@ class TestProjectPlanner(unittest.TestCase):
 		grey (both the same kind of value as a record's color), a person's hashed hsl(), and the
 		token reads' fallbacks."""
 		rest = re.sub(r'pp_token_color\("--sf-[a-z0-9-]+", "#[0-9a-f]{6}"\)', "", self.js)
-		for allowed in ('default_color: "#2563eb",', 'none_color: "#94a3b8",', "return `hsl(${hash},55%,42%)`;"):
+		for allowed in (
+			'default_color: "#2563eb",',
+			'none_color: "#94a3b8",',
+			"return `hsl(${hash},55%,42%)`;",
+		):
 			self.assertIn(allowed, rest)
 			rest = rest.replace(allowed, "")
 		self.assertNotRegex(rest, r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![\w-])")
@@ -745,7 +762,9 @@ class TestProjectPlanner(unittest.TestCase):
 				self.assertIn("background-color: var(--sf-field-bg)", body)
 				self.assertIn("color: var(--sf-field-text)", body)
 		phone = self.css[self.css.index("@media (max-width: 767px)") :]
-		self.assertRegex(phone, r"\.pp-wrap \.pp-toolbar \.form-control \{\s*font-size: var\(--sf-text-input\);")
+		self.assertRegex(
+			phone, r"\.pp-wrap \.pp-toolbar \.form-control \{\s*font-size: var\(--sf-text-input\);"
+		)
 
 	def test_touch_targets_are_44px(self):
 		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S)
@@ -753,7 +772,13 @@ class TestProjectPlanner(unittest.TestCase):
 		heights = re.findall(r"min-(?:height|width):\s*([^;]+);", coarse.group(1))
 		self.assertGreaterEqual(heights.count("var(--sf-touch-min)"), 8)
 		self.assertEqual([h for h in heights if h not in ("var(--sf-touch-min)", "64px")], [])
-		for selector in (".pp-toolbar .btn", ".pp-seg button", ".pp-week .pp-card", ".pp-day-num", ".pp-p6c-sday"):
+		for selector in (
+			".pp-toolbar .btn",
+			".pp-seg button",
+			".pp-week .pp-card",
+			".pp-day-num",
+			".pp-p6c-sday",
+		):
 			with self.subTest(selector=selector):
 				self.assertIn(selector, coarse.group(1))
 

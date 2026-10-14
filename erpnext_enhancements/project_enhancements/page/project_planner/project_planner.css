@@ -1,12 +1,12 @@
 /* Project Planner: the page's stylesheet (custom pages S3.4d, v1.664.0, TASK-2026-02823).
  *
- * It used to be twelve <style> elements the script wrote into <head> (PP_STYLE, PP3B_STYLE ...
+ * It used to be eleven <style> elements the script wrote into <head> (PP_STYLE, PP3B_STYLE ...
  * PPT4_STYLE). Frappe's page loader sends this file with the page instead, and appends it to
  * <head> once for the rest of the session, so every selector here starts with one of the page's
  * own class families: pp-, p6b- and p6e- (the planner's Phase 6B and 6E pieces), t1- (Build out)
  * and t4- (AI draft). The Maintenance Planner's are all mp-, and nothing else in the app uses
- * these; tests/test_s3_page_css.py holds both facts. The sections below keep the order the
- * twelve blocks were written in, so the cascade between them is unchanged.
+ * these; tests/test_s3_page_css.py holds the second. The sections below keep the order the
+ * eleven blocks were written in, so the cascade between them is unchanged.
  *
  * Colors are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's light
  * or dark theme. Status is the three status tokens: a fill is the token with its --sf-on-* label
