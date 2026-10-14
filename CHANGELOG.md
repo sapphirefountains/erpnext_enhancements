@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.645.0] - 2026-10-13
+
+Form kit P4.7 (TASK-2026-02765): **the guided page keeps working when the signal drops.** Nik asked for forms that work offline (2026-10-13), because field staff lose signal on sites. This covers the page being open when the signal goes. Opening ERPNext from cold with no connection is the P4.8 spike, written up in `docs/offline-cold-start-spike.md` for Nik to decide on.
+
+### Added
+
+- **Nothing typed is lost to a dropped signal, a reload, a crash, or the phone closing the browser.**
+  - What has not reached the server is kept on the phone: one localStorage entry per record, with the server's value from before each change and the record's `modified`.
+  - It is the Visit Wizard's journal (v1.596.0), as a form-kit service: the pure rules are in `public/js/form_kit/journal.js`, and the page owns the storage and the timers.
+- **Opening the record again puts kept changes back,** decided by the server's current value:
+  - unchanged since, the change goes back on and is saved;
+  - already there (a save that landed and lost its answer), it is dropped;
+  - changed by someone else, the person chooses, with the same side-by-side chooser as any conflict.
+  - A newer edit on the server is never overwritten without saying so.
+- **A save that fails for want of signal** (no answer, or a 408, 429, 502, 503 or 504) reads "Saved on this phone — sends when there is signal" rather than "Not saved".
+  - It is retried when the browser reports the signal back, and every 20 seconds until one gets through.
+  - Tapping the line retries now. A refusal by the server (a validation, a permission) still says so as before.
+- **A new deal can be started without signal, and is never created twice.**
+  - Step 1 is kept on the phone as it is typed, with an id for the create.
+  - A create that cannot be sent waits for the signal and is sent again with the same id.
+  - `create_record` stores the id on the record it makes, in a new hidden, unique, no-copy field `custom_guided_client_id` (config `create.client_id_field`). It answers a resend from the same user with that record, marked `deduped`, because the first attempt may have arrived with its answer lost. The page then saves whatever step 1 holds that differs.
+  - The id lives in the database, not the cache, which the deploy flushes several times a day. The unique index also settles a resend that races the first insert. It waits for that insert and collides. Its own snapshot predates the winner's commit, so the transaction is rolled back, which also returns the naming-series number it took, and a fresh read finds the winner.
+  - New endpoint `find_created` (GET): a page that puts back a kept start first asks whether that create arrived after all, and opens the record if it did.
+  - A start kept from before is put back on the next New, with *Start over*. Each start is its own entry, so two tabs never overwrite each other. Switching to the full form drops the phone's copy, since the form holds it from there.
+- **Kept copies are per person.** Keys carry the signed-in user, so on a shared phone nobody sees or saves another's changes. Entries older than 30 days are swept when the page loads.
+- **Kept values the server has since changed differently** wait on the person's choice, and the phone keeps them until then, so closing the app before choosing loses nothing. Changes typed while a conflict is open are kept too. A kept change to a field the person can no longer edit is reported, not silently dropped.
+- **Reloading a record keeps changes still waiting to send.** This covers a reload by Set as Lost, by the hand-off prompt, or by Back while there was no signal. The changes come over to the reloaded page, through the same check against the server.
+- **Typing after a restore is kept.** If a kept start's create turns out to have arrived after all, the record opens, and step 1 as it stands now is saved onto it.
+- **Start over** drops every start kept for that DocType, rather than bringing back the next-oldest.
+- **Closing the tab warns only when the phone could not keep something:** storage refused, as in a private window or with site data blocked. This is tracked per entry.
+- `docs/offline-cold-start-spike.md`: the P4.8 finding.
+  - It recommends a service worker scoped to the guided page only, built like `/itinerary`'s.
+  - The proof gate: does Desk's own boot reach the page offline? A 1–2 day proof on real phones decides.
+  - Size: about 6–9 days after that. The fallback is a standalone page.
+- Three independent review passes over this change; every finding is fixed here.
+- Tests:
+  - `test_guided_entry` runs the journal rules under node (reconcile, try-later, keys, entry shapes and ages) and checks the page wiring.
+  - `test_form_kit` holds `create_record`'s client id:
+    - a resend returns the first record, marked `deduped`;
+    - a resend racing the first insert returns it after a rollback;
+    - a record that is gone is made again;
+    - another user's is never returned;
+    - another unique collision is raised;
+    - an id of the wrong shape is ignored;
+    - `find_created` answers only for the caller.
+
 ## [1.644.0] - 2026-10-13
 
 Form kit P5.2 and P4.5 (TASK-2026-02742): **the guided page is where an Opportunity opens, new or
