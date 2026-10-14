@@ -4,7 +4,7 @@ A child table (``istable: 1``) has no permissions of its own, so frappe refuses 
 of it: link search, link validation and ``get_list`` all fail with "Insufficient Permission", for
 a System Manager too. ``Lead Source`` was ported into the app as a child table on 2026-06-09
 although its records were always standalone (no parent), so the Lead Source field on Lead,
-Opportunity and Customer could not be picked for four months; Nik hit it on 2026-10-14. v1.677.3
+Opportunity and Customer could not be picked for four months; Nik hit it on 2026-10-14. v1.678.1
 made it a standalone list again.
 
 Checks every Link field in ``fixtures/custom_field.json`` and in this app's own DocType JSONs.
