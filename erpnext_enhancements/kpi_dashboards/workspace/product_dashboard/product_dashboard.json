@@ -1,9 +1,13 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_dashboard_hub_links\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Dashboard Hub Links\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}, {\"id\": \"pd_s4a_01\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Jump to</b></span>\", \"col\": 12}}, {\"id\": \"pd_s4a_sc_01\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Item\", \"col\": 4}}, {\"id\": \"pd_s4a_sc_02\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Configurable Product\", \"col\": 4}}, {\"id\": \"pd_s4a_sc_03\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Product Configuration\", \"col\": 4}}, {\"id\": \"pd_s4a_sc_04\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"BOM\", \"col\": 4}}, {\"id\": \"pd_s4a_sc_05\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Rental Planner\", \"col\": 4}}, {\"id\": \"pd_s4a_02\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Everything else</b></span>\", \"col\": 12}}, {\"id\": \"pd_s4a_03\", \"type\": \"card\", \"data\": {\"card_name\": \"Catalog\", \"col\": 4}}, {\"id\": \"pd_s4a_04\", \"type\": \"card\", \"data\": {\"card_name\": \"Reports\", \"col\": 4}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Dashboard Hub Links",
+   "label": "Dashboard Hub Links"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"
@@ -11,13 +15,140 @@
  ],
  "doctype": "Workspace",
  "for_user": "",
- "hide_custom": 0,
+ "hide_custom": 1,
  "icon": "dashboard",
  "is_hidden": 0,
  "is_standard": 1,
  "label": "Product Dashboard",
- "links": [],
- "modified": "2026-07-07 18:00:00.000000",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Catalog",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item Group",
+   "link_count": 0,
+   "link_to": "Item Group",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item Price",
+   "link_count": 0,
+   "link_to": "Item Price",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Configurable Product",
+   "link_count": 0,
+   "link_to": "Configurable Product",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Product Configuration",
+   "link_count": 0,
+   "link_to": "Product Configuration",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "BOM",
+   "link_count": 0,
+   "link_to": "BOM",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 5,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Item Naming Audit",
+   "link_count": 0,
+   "link_to": "Item Naming Audit",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Item-wise Sales History",
+   "link_count": 0,
+   "link_to": "Item-wise Sales History",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Item Prices",
+   "link_count": 0,
+   "link_to": "Item Prices",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Stock Balance",
+   "link_count": 0,
+   "link_to": "Stock Balance",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "BOM Explorer",
+   "link_count": 0,
+   "link_to": "BOM Explorer",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Product Dashboard",
@@ -40,7 +171,37 @@
   }
  ],
  "sequence_id": 56,
- "shortcuts": [],
+ "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "Item",
+   "link_to": "Item",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Configurable Product",
+   "link_to": "Configurable Product",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Product Configuration",
+   "link_to": "Product Configuration",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "BOM",
+   "link_to": "BOM",
+   "type": "DocType"
+  },
+  {
+   "label": "Rental Planner",
+   "link_to": "rental-planner",
+   "type": "Page"
+  }
+ ],
  "title": "Product Dashboard",
  "type": "Workspace"
 }

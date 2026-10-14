@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"dh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"dh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Feature Design\",\"col\":4}},{\"id\":\"dh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Control Panel Design\",\"col\":4}},{\"id\":\"dh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Product\",\"col\":4}},{\"id\":\"dh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"dh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Engineering Wizard\",\"col\":4}},{\"id\":\"dh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Design Dashboard\",\"col\":4}},{\"id\":\"dh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"dh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Designs still open\",\"col\":6}},{\"id\":\"dh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"dh_11\",\"type\":\"card\",\"data\":{\"card_name\":\"Design work\",\"col\":4}},{\"id\":\"dh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Standards\",\"col\":4}},{\"id\":\"dh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"What it feeds\",\"col\":4}},{\"id\":\"dh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"dh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"dh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Feature Design\",\"col\":4}},{\"id\":\"dh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Control Panel Design\",\"col\":4}},{\"id\":\"dh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Product\",\"col\":4}},{\"id\":\"dh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"id\":\"dh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Water Engineering Wizard\",\"col\":4}},{\"id\":\"dh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Design Dashboard\",\"col\":4}},{\"id\":\"dh_s4a_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Product Dashboard\",\"col\":4}},{\"id\":\"dh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"dh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Designs still open\",\"col\":6}},{\"id\":\"dh_10\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"dh_11\",\"type\":\"card\",\"data\":{\"card_name\":\"Design work\",\"col\":4}},{\"id\":\"dh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Standards\",\"col\":4}},{\"id\":\"dh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"What it feeds\",\"col\":4}},{\"id\":\"dh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -213,7 +213,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-13 18:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Design Hub",
@@ -277,6 +277,11 @@
    "label": "Design Dashboard",
    "type": "URL",
    "url": "/desk/design-dashboard"
+  },
+  {
+   "label": "Product Dashboard",
+   "type": "URL",
+   "url": "/desk/product-dashboard"
   }
  ],
  "title": "Design Hub",

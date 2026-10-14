@@ -146,13 +146,13 @@ class TestProjectsLayout(unittest.TestCase):
 		self.assertEqual(list(self.ns["PROJECTS_LAYOUT"]), PRE_UPGRADE_LAYOUT)
 		self.assertEqual(self.ns["PROJECTS_WORKSPACE"], "Projects")
 
-	def test_layout_blocks_are_seeded_except_the_site_block(self):
-		# "Home Dashboard Tasks" was made on the site and has no source here; every
-		# other block the layout names must be one the seeder creates, or the page
-		# would depend on a record that a fresh site never gets.
+	def test_layout_blocks_are_all_seeded(self):
+		# Every block the layout names must be one the seeder creates, or the page would
+		# depend on a record that a fresh site never gets. "Home Dashboard Tasks" was made
+		# on the site and was the one exception until v1.681.0 brought its source in.
 		seeded = {name for name, _prefix in self.ns["BLOCKS"]}
 		missing = set(self.ns["PROJECTS_LAYOUT"]) - seeded
-		self.assertEqual(missing, {"Home Dashboard Tasks"})
+		self.assertEqual(missing, set())
 
 	def test_stock_file_path_is_erpnexts_projects_workspace(self):
 		self.assertEqual(

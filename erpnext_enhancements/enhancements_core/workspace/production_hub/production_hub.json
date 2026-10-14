@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"ph_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"ph_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"ph_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Job Interval\",\"col\":4}},{\"id\":\"ph_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"ph_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Site Hazard\",\"col\":4}},{\"id\":\"ph_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Day Board\",\"col\":4}},{\"id\":\"ph_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"ph_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Production Dashboard\",\"col\":4}},{\"id\":\"ph_18\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":4}},{\"id\":\"ph_09\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"ph_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Hazards still open\",\"col\":6}},{\"id\":\"ph_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Permits in force\",\"col\":6}},{\"id\":\"ph_12\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"ph_13\",\"type\":\"card\",\"data\":{\"card_name\":\"On the job\",\"col\":4}},{\"id\":\"ph_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Permits and isolation\",\"col\":4}},{\"id\":\"ph_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety\",\"col\":4}},{\"id\":\"ph_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Stock and tools\",\"col\":4}},{\"id\":\"ph_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"ph_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"ph_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sapphire Maintenance Record\",\"col\":4}},{\"id\":\"ph_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Job Interval\",\"col\":4}},{\"id\":\"ph_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Safety Incident\",\"col\":4}},{\"id\":\"ph_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Site Hazard\",\"col\":4}},{\"id\":\"ph_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Day Board\",\"col\":4}},{\"id\":\"ph_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"ph_08\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Production Dashboard\",\"col\":4}},{\"id\":\"ph_s4a_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Service Dashboard\",\"col\":4}},{\"id\":\"ph_18\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Scan\",\"col\":4}},{\"id\":\"ph_09\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"ph_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Hazards still open\",\"col\":6}},{\"id\":\"ph_11\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Permits in force\",\"col\":6}},{\"id\":\"ph_12\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"ph_13\",\"type\":\"card\",\"data\":{\"card_name\":\"On the job\",\"col\":4}},{\"id\":\"ph_14\",\"type\":\"card\",\"data\":{\"card_name\":\"Permits and isolation\",\"col\":4}},{\"id\":\"ph_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Safety\",\"col\":4}},{\"id\":\"ph_16\",\"type\":\"card\",\"data\":{\"card_name\":\"Stock and tools\",\"col\":4}},{\"id\":\"ph_17\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -301,7 +301,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-10-13 18:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Production Hub",
@@ -374,8 +374,8 @@
   },
   {
    "label": "Time Kiosk",
-   "link_to": "time-kiosk",
-   "type": "Page"
+   "type": "URL",
+   "url": "/kiosk"
   },
   {
    "label": "Production Dashboard",
@@ -386,6 +386,11 @@
    "label": "Stock Scan",
    "type": "URL",
    "url": "/stock-scan"
+  },
+  {
+   "label": "Service Dashboard",
+   "type": "URL",
+   "url": "/desk/service-dashboard"
   }
  ],
  "title": "Production Hub",

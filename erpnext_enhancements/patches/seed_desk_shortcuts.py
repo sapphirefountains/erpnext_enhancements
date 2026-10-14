@@ -20,7 +20,10 @@ DEFAULTS = [
 		"label": "Time Kiosk",
 		"icon": "⏱️",  # ⏱️
 		"color": "Blue",
-		"link_to": "time-kiosk",
+		# The kiosk itself, not the time-kiosk desk page: that page is only a redirect
+		# here (v1.681.0 moved the existing row the same way).
+		"link_type": "URL",
+		"url": "/kiosk",
 		"visible_to_all": 1,
 		"roles": [],
 		"sequence": 10,

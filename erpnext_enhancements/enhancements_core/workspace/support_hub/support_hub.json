@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"uh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"uh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Issue\",\"col\":4}},{\"id\":\"uh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Contract\",\"col\":4}},{\"id\":\"uh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Record\",\"col\":4}},{\"id\":\"uh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Service Plan\",\"col\":4}},{\"id\":\"uh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Visit Wizard\",\"col\":4}},{\"id\":\"uh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Day Board\",\"col\":4}},{\"id\":\"uh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"uh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Issues waiting on us\",\"col\":6}},{\"id\":\"uh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Contracts that have expired\",\"col\":6}},{\"id\":\"uh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"uh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Service\",\"col\":4}},{\"id\":\"uh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"The customer\",\"col\":4}},{\"id\":\"uh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"On site\",\"col\":4}},{\"id\":\"uh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "content": "[{\"id\":\"uh_01\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Jump to</b></span>\",\"col\":12}},{\"id\":\"uh_02\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Issue\",\"col\":4}},{\"id\":\"uh_03\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Contract\",\"col\":4}},{\"id\":\"uh_04\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Record\",\"col\":4}},{\"id\":\"uh_05\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Service Plan\",\"col\":4}},{\"id\":\"uh_06\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Visit Wizard\",\"col\":4}},{\"id\":\"uh_07\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Day Board\",\"col\":4}},{\"id\":\"sh_s4a_01\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Service Dashboard\",\"col\":4}},{\"id\":\"uh_08\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Needs you</b></span>\",\"col\":12}},{\"id\":\"uh_09\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Issues waiting on us\",\"col\":6}},{\"id\":\"uh_10\",\"type\":\"quick_list\",\"data\":{\"quick_list_name\":\"Contracts that have expired\",\"col\":6}},{\"id\":\"uh_11\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Everything else</b></span>\",\"col\":12}},{\"id\":\"uh_12\",\"type\":\"card\",\"data\":{\"card_name\":\"Service\",\"col\":4}},{\"id\":\"uh_13\",\"type\":\"card\",\"data\":{\"card_name\":\"The customer\",\"col\":4}},{\"id\":\"uh_14\",\"type\":\"card\",\"data\":{\"card_name\":\"On site\",\"col\":4}},{\"id\":\"uh_15\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-09-11 16:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -253,7 +253,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-11 20:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": null,
  "name": "Support Hub",
@@ -322,6 +322,11 @@
    "label": "Day Board",
    "link_to": "maintenance-day-board",
    "type": "Page"
+  },
+  {
+   "label": "Service Dashboard",
+   "type": "URL",
+   "url": "/desk/service-dashboard"
   }
  ],
  "title": "Support Hub",
