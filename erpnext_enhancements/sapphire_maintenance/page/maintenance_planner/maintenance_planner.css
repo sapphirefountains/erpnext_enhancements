@@ -6,7 +6,7 @@
  * only this page draws (its phases are mp-p6a-, mp-p6b- and so on; tests/test_s3_page_css.py holds
  * that). The sections below keep the order the seven blocks were written in, so the cascade
  * between them is unchanged, and the whole file still comes before planner_kit's stylesheet,
- * which the kit adds when the planner first loads it.
+ * which the planner loads beside the kit (MP6A.kit).
  *
  * Colors are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's light or
  * dark theme. Status is the three status tokens: a fill is the token, a tinted ground is the token

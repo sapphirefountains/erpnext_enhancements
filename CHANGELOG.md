@@ -65,22 +65,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeline, Conflict center, personal blocks and day notes). It was three template strings,
   `styles.js`'s `CSS`, `conflicts.js`'s `CONFLICTS_CSS` and `blocks.js`'s `BLOCKS_CSS`, injected
   into `<style id="pk-style">` with literal hex, Frappe variables and 8 shadows.
-  - **How it loads, and why the cascade is unchanged.** `planner_kit.bundle.js` still writes its
-    one `<style id="pk-style">` from `CSS + CONFLICTS_CSS + BLOCKS_CSS`, untouched. `CSS` is now a
-    single `@import` of the bundle's content-hashed path, which `styles.js` resolves through
-    `frappe.assets.bundled_asset` (the lookup `frappe.require` makes, so an edit is never served
-    stale), and the other two are empty, so the import stays the sheet's first rule. The kit's rules
-    therefore sit exactly where the injected text did: after the planner page's stylesheet, which
-    Frappe appended when the page loaded. Equal-specificity pairs across the two resolve as before
-    in both directions (`.pk-tl-bar.pp-tl-colored` against `.pk-tl-bar.pk-tl-pencil` and
-    `.pk-tl-over`; `.pp-p6d-mw .pk-block` against `.pk-block.pk-block-compact`). It is not a second
-    `frappe.require`: that freezes the screen until every file has loaded, so a slow or missing
-    stylesheet would hold the freeze over the planner. If the name is not in the build, the kit
-    draws unstyled and nothing throws.
+  - **How it loads, and why the cascade is unchanged.** Both planners ask for it in the same
+    `frappe.require` as the kit's script: `PP6A.kit` and `MP6A.kit` are now
+    `["planner_kit.bundle.js", "planner_kit.bundle.css"]` (the one line the Project Planner's page
+    script changes). `frappe.require` resolves both names through `boot.assets_json`, so they are
+    content-hashed and never served stale, and appends the stylesheet as a `<link>` after the
+    planner page's own CSS, which Frappe added when the page loaded. The kit's rules therefore
+    still come after the page's: equal-specificity pairs across the two resolve as before in both
+    directions (`.pk-tl-bar.pp-tl-colored` against `.pk-tl-bar.pk-tl-pencil` and `.pk-tl-over`;
+    `.pp-p6d-mw .pk-block` against `.pk-block.pk-block-compact`). The callback waits for both files,
+    so the hints and legends drawn at `p6a_ready` never flash unstyled. If the stylesheet fails,
+    `frappe.require` still calls back: the kit is plain and nothing throws.
+    `planner_kit.bundle.js` is untouched and still writes `<style id="pk-style">` from
+    `CSS + CONFLICTS_CSS + BLOCKS_CSS`; all three are `""` now, so no rule is injected twice.
   - **The look.** Square drawer, menu, columns, timeline and conflict cards; the drawer and the
     menu have an edge instead of a drop shadow; the toast is sf_kit's (inverted, with a status
-    edge); the hover glow is a focus tint laid over a card or a badge rather than a ring, so it
-    never hides a card's state outline or a person's color; a late timeline bar is a danger ring; a
+    edge); the hover glow is a focus tint on a booking's ground color, never a ring (a card's
+    outline is its state) and never a background image (the stripes of an off technician, a
+    pencilled card or a block stay visible while it glows), and an inset focus ring on a name or a
+    badge, whose own color a tint would wash out; a late timeline bar is a danger ring; a
     day with a conflict has a danger bar on its left (an inset shadow before). A booking in a quick
     look takes its pillar's chip edge, as on the planners. A stop's number is the route view's
     bahama-blue. The drawer's close button, menu items, a hint's Got it, a person's day head and the
@@ -91,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The color is a custom property now and the stripes draw. A month cell's load, a tint and nothing
   else on screen, is read aloud. Two rules for classes nothing draws (`mp-avail-row`,
   `mp-cap-row`) are gone.
+- **Review follow-ups** (before release):
+  - Merged `origin/main` (S3.4f, the Rental Planner, v1.670.0): `test_s3_page_css.py` keeps both
+    pages' entries, docstring paragraphs and test classes.
+  - The kit's stylesheet is loaded as a stylesheet, beside the kit in one `frappe.require`, not by
+    an `@import` written into the kit's `<style>` element: the `@import` arrived one round trip after
+    the kit's script, so hints and legends drawn at `p6a_ready` flashed unstyled. `styles.js`'s
+    `CSS` is `""`.
+  - The hover glow was a `background-image` with `!important`, which hid the stripes of an off
+    technician, a pencilled card and a blocked day while it glowed. It is a `background-color` tint
+    on a booking and an inset focus ring on a name or a badge.
+  - The 44px touch cards stay on tablets: a week column or a crew cell on a tablet fits a 44px card,
+    and a tablet is a touch screen like a phone.
 
 ### Tests
 
@@ -108,11 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing crossed or raw.
 - A new `TestPlannerKitStylesheet` holds `planner_kit.bundle.css` to the same rules (tokens only, no
   literal, named or Frappe color, every selector `pk-`, square, no shadow, one 767px breakpoint,
-  44px touch, reduced motion, a tint for the glow, sections in the old join order, well-formed
-  comments), the three modules to carrying no CSS, and `styles.js` to importing the hashed bundle
-  where the old style element was. `test_planner_phase6a` runs `stylesheet_import` under node: the
-  hashed path through `bundled_asset` or `boot.assets_json`, and `""` with no Desk, an unbuilt name,
-  a throwing lookup or a path that could end `url()` early.
+  44px touch, reduced motion, a glow that tints a booking's ground and rings a name but never sets
+  a background image, sections in the old join order, well-formed comments), the three modules to
+  carrying no CSS, and both planners to loading it in the kit's own `frappe.require`.
+  `test_planner_phase6a` runs `styles.js` under node with a Desk present and finds it injects
+  nothing, and pins `kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"]` in both planners.
 - Run against the pre-change files, every new Maintenance Planner and planner_kit check fails except
   the one that no other file styles `mp-`, which holds a fact about the repo.
 - The planner suites that read `MP*_STYLE` from the script (`test_planner_phase6a`, `6b`, `6c`,

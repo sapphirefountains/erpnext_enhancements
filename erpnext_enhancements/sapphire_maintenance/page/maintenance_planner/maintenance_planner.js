@@ -2118,7 +2118,9 @@ Object.assign(MaintenancePlanner.prototype, MP5_METHODS);
 // p6a_close_toast (undo), and p6a_dialog, p6a_links and p6a_action (open_card).
 
 const MP6A = {
-	kit: "planner_kit.bundle.js",
+	// The kit and its stylesheet, both content-hashed bundles (S3.4e). The stylesheet's <link> lands
+	// after maintenance_planner.css, so the kit's rules come after the page's, as they always have.
+	kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],
 	site_method: "erpnext_enhancements.api.planner_views.get_site_overview",
 	owner: "mp",
 	widths: { person: 460, day: 760, site: 520, panel: 540 },

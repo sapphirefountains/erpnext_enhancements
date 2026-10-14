@@ -1084,9 +1084,10 @@ planner pages share, and that Phases 6B–6D build on. A content-hashed esbuild 
 paths are cached for a year), loaded only by the two planner pages with
 `frappe.require("planner_kit.bundle.js", callback)`, and deliberately **not** in `app_include_js`.
 Its stylesheet is a bundle of its own, `public/css/planner_kit.bundle.css` (custom pages S3.4e,
-v1.673.0), on the `--sf-*` tokens: the kit's one `<style id="pk-style">` holds an `@import` of its
-hashed path (`planner_kit/styles.js`), so a page needs only the one require, and the kit's rules
-still come after the page's own stylesheet, as the injected text did. It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
+v1.673.0), on the `--sf-*` tokens, which each planner loads in the same require as the kit
+(`PP6A.kit` and `MP6A.kit` list both bundles): its `<link>` lands after the page's own stylesheet,
+so the kit's rules still come after the page's, as the injected text did, and the callback waits
+for it, so nothing the kit draws flashes unstyled. It installs `window.planner_kit` (use it through `window.` — eslint does not know the global):
 
 | Part | Use | Notes |
 |---|---|---|

@@ -626,8 +626,8 @@ class TestHouseRules(unittest.TestCase):
 			self.assertTrue(classes)
 			self.assertEqual({c for c in classes if not c.startswith(prefix)}, set(), classes)
 		# The two modules' CSS is a section each of public/css/planner_kit.bundle.css (S3.4e,
-		# v1.673.0). The constants stay, empty, because the bundle still appends them after the
-		# @import of that stylesheet, which must be the sheet's first rule.
+		# v1.673.0), which the planners load beside the kit. The constants stay, empty, because the
+		# bundle still appends them to its own <style>, and no rule may be injected twice.
 		for name in ("CONFLICTS_CSS", "BLOCKS_CSS"):
 			text = _kit("conflicts" if name == "CONFLICTS_CSS" else "blocks")
 			self.assertIn(f'export const {name} = "";', text)

@@ -30,8 +30,9 @@ S3.4e (v1.673.0) adds the Maintenance Planner, which wrote seven ``<style>`` ele
 technician's color and Color by's are data, so the page may write them only as
 ``style="--mp-color: ${mp_esc(...)}"``; ``TestMaintenancePlanner`` holds the rest. planner_kit's
 stylesheet, which both planners share, left its three JS template strings for a real bundle,
-``public/css/planner_kit.bundle.css``; ``TestPlannerKitStylesheet`` holds it to the same rules (its
-selectors are the kit's ``pk-``) and the three modules to carrying no CSS.
+``public/css/planner_kit.bundle.css``, which both planners load beside the kit;
+``TestPlannerKitStylesheet`` holds it to the same rules (its selectors are the kit's ``pk-``) and the
+three modules to carrying no CSS.
 
 S3.4f (v1.670.0) adds the Rental Planner, which wrote its stylesheet from the script (``RP_STYLE``,
 in Frappe's palette with a literal hex for every bar) and painted its legend's swatches with a
@@ -1208,7 +1209,7 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 	"""S3.4e (v1.673.0). planner_kit's stylesheet was three JS template strings (styles.js's CSS,
 	conflicts.js's CONFLICTS_CSS, blocks.js's BLOCKS_CSS) the kit wrote into <style id="pk-style">,
 	in Frappe's palette with literal hex, 8 shadows and no touch sizes. It is a real bundle now, on
-	the tokens, which the kit's one <style> element @imports by its hashed path."""
+	the tokens, which both planners load beside the kit in one frappe.require."""
 
 	@classmethod
 	def setUpClass(cls):
@@ -1272,13 +1273,22 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 		self.assertIn(".pk-drawer.pk-open", reduced.group(1))
 		self.assertIn("animation: none", reduced.group(1))
 
-	def test_the_hover_glow_is_a_tint_not_a_ring(self):
-		"""pk-glow lands on cards whose outline is their state, and on badges painted with a person's
-		color: it is laid over them as a tint."""
-		body = re.search(r"(?m)^\.pk-glow \{([^}]*)\}", self.css)
-		self.assertIsNotNone(body)
-		self.assertIn("background-image: linear-gradient(", body.group(1))
-		self.assertNotIn("outline", body.group(1))
+	def test_the_hover_glow_keeps_state_rings_and_stripes(self):
+		"""pk-glow lands on bookings whose outline is their state and whose stripes (an off
+		technician, a pencilled card, a block) are a background-image: a booking is tinted on its
+		ground color, never ringed and never given a background-image. A name (data-pk-person: a
+		badge in the person's own color, a name in a row) takes an inset ring instead of a tint."""
+		rules = dict(re.findall(r"(?m)^(\.pk-glow[^{,]*?)\s*\{([^}]*)\}", self.css))
+		self.assertEqual(sorted(rules), [".pk-glow:not([data-pk-person])", ".pk-glow[data-pk-person]"])
+		booking = rules[".pk-glow:not([data-pk-person])"]
+		self.assertIn("background-color: color-mix(in srgb, var(--sf-focus)", booking)
+		self.assertNotIn("background-image", booking)
+		self.assertNotIn("outline", booking)
+		name = rules[".pk-glow[data-pk-person]"]
+		self.assertIn("outline: 2px solid var(--sf-focus)", name)
+		self.assertIn("outline-offset: -2px", name)
+		self.assertNotIn("background", name)
+		self.assertNotRegex(self.css, r"\.pk-glow[^{]*\{[^}]*background-image")
 
 	def test_its_sections_keep_the_order_the_strings_were_joined_in(self):
 		"""The bundle wrote CSS + CONFLICTS_CSS + BLOCKS_CSS; equal-specificity kit rules resolve as
@@ -1306,24 +1316,30 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 		self.assertIn('export const CONFLICTS_CSS = "";', _read(KIT_DIR / "conflicts.js"))
 		self.assertIn('export const BLOCKS_CSS = "";', _read(KIT_DIR / "blocks.js"))
 
-	def test_the_kit_imports_the_hashed_bundle_where_its_style_was(self):
-		"""The kit's one <style id="pk-style"> now holds an @import of the bundle, resolved the way
-		frappe.require resolves a name (frappe.assets.bundled_asset, i.e. boot.assets_json), so the
-		file is content-hashed and its rules sit where the injected text did: after the planner
-		page's own stylesheet. The empty CONFLICTS_CSS and BLOCKS_CSS keep the @import first."""
+	def test_both_planners_load_it_with_the_kit(self):
+		"""Each planner asks for the stylesheet in the same frappe.require as the kit's script, so it
+		is content-hashed (frappe.require looks the name up in boot.assets_json), lands as a <link>
+		after the page's own CSS (the kit's rules still come after the page's), and the callback
+		waits for it, so hints and legends drawn on load never flash unstyled. If it fails,
+		frappe.require still calls back and the kit is plain. The kit's own <style> holds nothing,
+		so no rule is injected twice."""
+		for name, path in (
+			("PP6A", PAGES["project_planner"] / "project_planner.js"),
+			("MP6A", PAGES["maintenance_planner"] / "maintenance_planner.js"),
+		):
+			js = _js_code(_read(path))
+			with self.subTest(planner=name):
+				self.assertIn(f"const {name} = {{", js)
+				self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', js)
+				self.assertEqual(len(re.findall(r"frappe\.require\(", js)), 2)
+				self.assertEqual(len(re.findall(rf"frappe\.require\({name}\.kit, \(\) => this\.", js)), 2)
 		styles = _js_code(_read(KIT_DIR / "styles.js"))
-		self.assertIn('export const CSS_BUNDLE = "planner_kit.bundle.css";', styles)
-		self.assertIn("assets.bundled_asset(CSS_BUNDLE)", styles)
-		self.assertIn('return `@import url("${path}");`;', styles)
-		self.assertIn('!path.startsWith("/assets/")', styles)
-		self.assertIn(
-			'export const CSS = stylesheet_import(typeof window !== "undefined" ? window.frappe : null);',
-			styles,
-		)
+		self.assertIn('export const CSS = "";', styles)
+		self.assertNotIn("@import", styles)
 		bundle = _read(KIT_BUNDLE)
 		self.assertIn('import { CSS, STYLE_ID } from "./planner_kit/styles.js";', bundle)
 		self.assertIn("style.textContent = CSS + conflicts.CONFLICTS_CSS + blocks.BLOCKS_CSS;", bundle)
-		# Loaded only by the kit, never on every Desk page.
+		# Loaded only by the planners, never on every Desk page.
 		self.assertNotIn("planner_kit.bundle.css", _read(APP / "hooks.py"))
 
 

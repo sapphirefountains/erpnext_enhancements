@@ -996,7 +996,8 @@ class TestKitFiles(unittest.TestCase):
 		self.assertNotIn("planner_kit", hooks.split("app_include_js")[1].split("]")[0])
 		for path, constant in ((PP_JS, "PP6A"), (MP_JS, "MP6A")):
 			code = path.read_text(encoding="utf-8")
-			self.assertIn('kit: "planner_kit.bundle.js"', code)
+			# The kit and its stylesheet in one require (S3.4e, v1.673.0).
+			self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', code)
 			self.assertIn(f"frappe.require({constant}.kit, () => this.p6a_ready());", code)
 			self.assertIn("window.planner_kit", code)
 
@@ -1026,7 +1027,7 @@ class TestKitFiles(unittest.TestCase):
 
 	def test_the_kit_never_publishes_a_frappe_global_and_its_styles_are_namespaced(self):
 		# The kit's CSS is a bundle of its own, public/css/planner_kit.bundle.css (S3.4e, v1.673.0);
-		# styles.js only resolves its hashed path, and writes no rule.
+		# styles.js writes no rule; the planners load the bundle beside the kit.
 		raw = (APP / "public/css/planner_kit.bundle.css").read_text(encoding="utf-8")
 		css = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
@@ -1561,11 +1562,11 @@ class TestKitUnderNode(unittest.TestCase):
 			raise AssertionError(result.stderr)
 		cls.out = json.loads(result.stdout)
 
-	def test_the_stylesheet_is_imported_by_its_hashed_path_or_not_at_all(self):
-		"""S3.4e (v1.673.0): styles.js's CSS is one @import of public/css/planner_kit.bundle.css, by
-		the content-hashed path frappe.assets.bundled_asset gives (boot.assets_json). With no Desk, a
-		name the build does not know, a lookup that throws or a path that could end url() early, it is
-		"" and the kit draws unstyled rather than failing."""
+	def test_the_kit_injects_no_stylesheet_of_its_own(self):
+		"""S3.4e (v1.673.0): the kit's rules are public/css/planner_kit.bundle.css, which each planner
+		loads in the same frappe.require as the kit (PP6A.kit / MP6A.kit). The <style id="pk-style">
+		the bundle still writes holds nothing, so no rule is injected twice: styles.js's CSS, run as
+		the browser runs it (with a Desk on the page), is the empty string."""
 		source = re.sub(
 			r"^export (const|function) ",
 			r"\1 ",
@@ -1575,21 +1576,10 @@ class TestKitUnderNode(unittest.TestCase):
 		harness = """
 const fs = require("fs");
 const vm = require("vm");
-const ctx = {};
+const ctx = { window: { frappe: { assets: { bundled_asset: (name) => "/assets/x/" + name } } } };
 vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(0, "utf8") + "\\nthis.kit = { CSS, CSS_BUNDLE, stylesheet_import };", ctx);
-const k = ctx.kit;
-const hashed = "/assets/erpnext_enhancements/dist/css/planner_kit.bundle.ABC123.css";
-const map = (path) => ({ assets: { bundled_asset: (name) => (name === k.CSS_BUNDLE ? path : name) } });
-console.log(JSON.stringify({
-	css: k.CSS,
-	hashed: k.stylesheet_import(map(hashed)),
-	boot_only: k.stylesheet_import({ boot: { assets_json: { "planner_kit.bundle.css": hashed } } }),
-	unbuilt: k.stylesheet_import({ assets: { bundled_asset: (name) => name } }),
-	none: k.stylesheet_import(null),
-	throws: k.stylesheet_import({ assets: { bundled_asset: () => { throw new Error("x"); } } }),
-	quote: k.stylesheet_import(map('/assets/x.css"); body{x:1'))
-}));
+vm.runInContext(fs.readFileSync(0, "utf8") + "\\nthis.kit = { CSS, STYLE_ID };", ctx);
+console.log(JSON.stringify(ctx.kit));
 """
 		result = subprocess.run(
 			[self.node, "-e", harness],
@@ -1600,13 +1590,7 @@ console.log(JSON.stringify({
 			timeout=60,
 		)
 		self.assertEqual(result.returncode, 0, result.stderr)
-		out = json.loads(result.stdout)
-		expected = '@import url("/assets/erpnext_enhancements/dist/css/planner_kit.bundle.ABC123.css");'
-		self.assertEqual(out["hashed"], expected)
-		self.assertEqual(out["boot_only"], expected)
-		for key in ("css", "unbuilt", "none", "throws", "quote"):
-			with self.subTest(case=key):
-				self.assertEqual(out[key], "")
+		self.assertEqual(json.loads(result.stdout), {"CSS": "", "STYLE_ID": "pk-style"})
 
 	def test_the_javascript_parses(self):
 		for path in [*sorted(KIT_DIR.glob("*.js")), BUNDLE, PP_JS, MP_JS]:

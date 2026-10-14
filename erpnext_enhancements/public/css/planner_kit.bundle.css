@@ -5,14 +5,14 @@
  * esbuild bundle now, with a content-hashed name, so an edit is never served stale from the
  * one-year /assets cache. The sections below keep the order of those three strings.
  *
- * How it loads: the kit still writes its one <style id="pk-style"> element when the planner first
- * loads it (planner_kit.bundle.js, unchanged), but what it writes is a single @import of this
- * file's hashed path, which styles.js resolves through frappe.assets.bundled_asset, the lookup
- * frappe.require makes. The rules therefore sit exactly where the injected text sat: after the
- * planner page's own stylesheet, which Frappe appended when the page loaded. Rules of equal
- * specificity in a page's CSS and here (.pk-tl-bar.pp-tl-colored and .pk-tl-bar.pk-tl-over,
- * .pp-p6d-mw .pk-block and .pk-block.pk-block-compact) resolve as they always did. If the file
- * cannot be fetched, the kit's drawers and menus are unstyled but every script still runs.
+ * How it loads: each planner asks for it in the same frappe.require as the kit's script (PP6A.kit
+ * and MP6A.kit list both bundles). frappe.require appends it as a <link> after the planner page's
+ * own stylesheet, which Frappe added when the page loaded, so the kit's rules still come after the
+ * page's: rules of equal specificity in a page's CSS and here (.pk-tl-bar.pp-tl-colored and
+ * .pk-tl-bar.pk-tl-over, .pp-p6d-mw .pk-block and .pk-block.pk-block-compact) resolve as they
+ * always did. The callback waits for both files, so nothing the kit draws flashes unstyled. If this
+ * file cannot be fetched, frappe.require still calls back: the kit is plain and every script runs.
+ * The kit's own <style id="pk-style"> is empty now (styles.js).
  *
  * Every selector starts with pk-, which only the kit draws; the two planners share it on purpose,
  * so it is global once loaded. Colors are the app's --sf-* tokens (docs/app-design-system.md),
@@ -367,14 +367,18 @@
 }
 
 /* Hovering a name lights up that person's bookings (and Phase 6C's highlight uses the same
- * class). A tint laid over whatever the element is painted with, not a ring: a card's outline
- * carries its state (selected, moving, drafted, a drop target), and a person's badge keeps its own
- * color under the tint. */
-.pk-glow {
-	background-image: linear-gradient(
-		color-mix(in srgb, var(--sf-focus) 22%, transparent),
-		color-mix(in srgb, var(--sf-focus) 22%, transparent)
-	) !important;
+ * class). A booking is tinted on its ground color, not ringed: a card's outline carries its state
+ * (selected, moving, drafted, a drop target), and a ground color leaves the stripes of an off
+ * technician, a pencilled card or a blocked day (their background-image) showing through. The
+ * names themselves (a badge painted in the person's own color, a name in a row) carry
+ * data-pk-person; a tint would wash a badge's color out, so they take an inset focus ring. */
+.pk-glow:not([data-pk-person]) {
+	background-color: color-mix(in srgb, var(--sf-focus) 22%, var(--sf-surface)) !important;
+}
+
+.pk-glow[data-pk-person] {
+	outline: 2px solid var(--sf-focus) !important;
+	outline-offset: -2px !important;
 }
 
 .pk-legend-section {

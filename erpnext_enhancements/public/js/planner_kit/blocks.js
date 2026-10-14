@@ -431,6 +431,6 @@ export function create_blocks(env) {
 }
 
 // The styles of blocks and day notes are a section of public/css/planner_kit.bundle.css (S3.4e, v1.673.0).
-// planner_kit.bundle.js still appends this after styles.js's CSS, which is now an @import of that
-// bundle; it must stay empty, because an @import after any other rule is ignored.
+// planner_kit.bundle.js still appends this to its <style id="pk-style">; it stays empty, so no rule is
+// injected beside the stylesheet the planners load.
 export const BLOCKS_CSS = "";
