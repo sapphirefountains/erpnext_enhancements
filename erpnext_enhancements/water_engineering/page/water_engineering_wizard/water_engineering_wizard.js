@@ -15,7 +15,7 @@
  * Access is gated server-side by `check_permission` (read on Water Feature
  * Design); theming uses Frappe CSS variables so Light + Timeless Night both work.
  *
- * Loading, empty, error and no-access states come from sf_kit (v1.637.0), and the loads that
+ * Loading, empty, error and no-access states come from sf_kit (v1.638.0), and the loads that
  * report in their own panel (the access check, the design list, a design's state) use its quiet
  * call. Calculate keeps frappe.call's dialogs: that failure answers a click.
  */

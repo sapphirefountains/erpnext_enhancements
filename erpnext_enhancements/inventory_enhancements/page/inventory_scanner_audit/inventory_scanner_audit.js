@@ -46,7 +46,7 @@ const ISA_QR_DECODER = '/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.
 // and a full 1080p frame costs ~5x the time for no better read.
 const ISA_QR_FRAME_WIDTH = 480;
 
-// sf_kit (v1.637.0): the shared loading / error / no-access panel and the quiet server call,
+// sf_kit (v1.638.0): the shared loading / error / no-access panel and the quiet server call,
 // loaded once with frappe.require. v16's loader resolves even when a file fails to load
 // (assets.js: "resolve even on error"), so a kit that never arrived leaves window.sf_kit unset
 // and the count carries on with isa_plain_kit instead of stopping. The jsQR decoder stays a
@@ -147,7 +147,7 @@ class InventoryScanner {
 		return frappe.call({ method: ISA_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
-	// Quiet (v1.637.0): a failed start-up says so where the count's lines go, with Try again,
+	// Quiet (v1.638.0): a failed start-up says so where the count's lines go, with Try again,
 	// instead of leaving an empty page behind a frappe dialog.
 	boot() {
 		isa_kit().then((sf) => {

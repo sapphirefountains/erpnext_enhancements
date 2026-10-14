@@ -4,7 +4,7 @@
 // Auto-refreshes every 60s, but only while this page is the one on screen (Desk pages are
 // never removed, so a timer left running would poll all day); on_page_show refreshes at
 // once on the way back. Cards link to the underlying documents. Its loading, error and
-// no-access panels and its server call come from sf_kit (v1.637.0).
+// no-access panels and its server call come from sf_kit (v1.638.0).
 
 frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -147,7 +147,7 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		}
 	}
 
-	// Always the quiet path (v1.637.0), the timer's above all: a board left on a wall screen must
+	// Always the quiet path (v1.638.0), the timer's above all: a board left on a wall screen must
 	// not stack a frappe dialog every minute while the server is unhappy. frappe.call's `silent`,
 	// used here before, stops only the msgprint of a 417; a 500, 502, 504 or a lapsed session
 	// still put up a dialog of their own on every tick.

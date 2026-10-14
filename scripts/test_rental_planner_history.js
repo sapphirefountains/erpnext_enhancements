@@ -111,7 +111,7 @@ function makeWorld() {
 		local: new Map(),
 		requests: [],
 		created: [],
-		// Methods whose calls fail as a 500 would (v1.637.0: the board's error panel).
+		// Methods whose calls fail as a 500 would (v1.638.0: the board's error panel).
 		down: new Set(),
 		confirmAnswer: true,
 	};

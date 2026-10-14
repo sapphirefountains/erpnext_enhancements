@@ -24,7 +24,7 @@
  *
  * The page is otherwise stateless; all data comes from the RPCs above.
  *
- * The status load and the resync-preview poll run on sf_kit's quiet path (v1.637.0): the load
+ * The status load and the resync-preview poll run on sf_kit's quiet path (v1.638.0): the load
  * draws its loading, empty, error and no-access states from the kit where the sync logs go, and
  * the poll, which no one is watching, never puts up a frappe dialog. The buttons keep
  * frappe.call and its dialogs: those failures answer a click.
@@ -237,7 +237,7 @@ function refresh(root) {
 	);
 }
 
-// Every value in a row is the server's, so every one goes through the kit's escape (v1.637.0).
+// Every value in a row is the server's, so every one goes through the kit's escape (v1.638.0).
 function renderLogs(root, logs) {
 	const sf = qboSf();
 	const esc = sf.esc;
@@ -367,7 +367,7 @@ function pollResyncPreview(previewId, attempts) {
 		);
 		return;
 	}
-	// Quiet (v1.637.0): a poll every 3 s must not put up a frappe dialog for each failed tick. A
+	// Quiet (v1.638.0): a poll every 3 s must not put up a frappe dialog for each failed tick. A
 	// failed tick counts as an attempt and tries again; a lapsed session ends the poll with a toast.
 	const sf = qboSf();
 	sf.call("erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary", { name: previewId }, { quiet: true }).then(

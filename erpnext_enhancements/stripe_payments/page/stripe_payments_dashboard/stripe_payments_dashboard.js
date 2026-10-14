@@ -4,7 +4,7 @@
 // Stripe Payments dashboard: connection/config readiness, status counts and a
 // recent-payments table. All data comes from the operator-gated RPC
 // erpnext_enhancements.stripe_payments.core.api.get_dashboard_status. Its loading, empty, error
-// and no-access panels, its toast and its server call come from sf_kit (v1.637.0).
+// and no-access panels, its toast and its server call come from sf_kit (v1.638.0).
 frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,
@@ -171,7 +171,7 @@ frappe.pages["stripe-payments-dashboard"].on_page_load = function (wrapper) {
 		`);
 	}
 
-	// Quiet (v1.637.0): the dashboard says what went wrong in its own panel. A refresh that fails
+	// Quiet (v1.638.0): the dashboard says what went wrong in its own panel. A refresh that fails
 	// while the dashboard is showing (Refresh, or after Test Connection) keeps it and says so in a
 	// toast; only a dashboard that never loaded is replaced by the panel.
 	let loaded = false;

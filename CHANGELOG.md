@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.638.0] - 2026-10-13
+
+Custom pages, step 3.1 (TASK-2026-02820): the seven Desk pages that sat on "Loading…" or went blank
+when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto the kit built in steps
+2 (v1.626.0) and its follow-up (v1.632.0).
+
+### Fixed
+
+- **Loading, error, empty and no-access states** on the Rental Planner, the Maintenance Day Board, the
+  Stripe and QuickBooks dashboards, the Water Engineering Wizard, the Device Console and the Inventory
+  Scanner Audit. A failed first load shows an error with **Try again**, which re-runs the same load
+  (the same date range on the Rental Planner); an empty result shows a sentence about what to do; a 403
+  shows the no-access panel; an expired session shows a Reload panel, because the quiet path never
+  shows frappe's sign-in dialog. The Rental Planner no longer hangs on "Loading the fleet…".
+- **Background refreshes are quiet.** The Maintenance Day Board's loads, its 60-second timer included,
+  the QuickBooks status load and resync-preview poll, and the start-up loads on the Water wizard and
+  both scanner pages go through `call(..., {quiet: true})`. A wall screen no longer stacks frappe
+  dialogs on a 5xx (v1.623.0's `silent` only quieted a `frappe.throw`). A refresh that fails over data
+  already showing keeps the data, with an "as of" line on the day board and a toast elsewhere.
+- **QuickBooks sync-log rows are escaped**, including their `data-route` attribute; they were
+  interpolated raw.
+- Button actions (QuickBooks actions, Stripe's Test Connection, the Rental Planner's wizard steps, every
+  scan and action on the scanner pages) keep frappe.call's normal dialogs, which is what a person who
+  just clicked expects.
+- Each page carries a small fallback for the rare case the kit itself cannot load: calls go through
+  frappe.call and the states render as plain text, so a page never ends up worse than before.
+
+### Tests
+
+- `tests/test_s3_page_states.py` (19, own CI step): every page loads the kit, has loading and error
+  paths with a retry, the day board's timer refresh is quiet, and the QuickBooks log rows are escaped.
+  The rental-planner and desk-page-history node harnesses gained failed-load-then-Try-again scenarios
+  (the Device Console and the Scanner Audit keep every Back/Forward assertion).
+
 ## [1.636.0] - 2026-10-13
 
 WI-024 step 1 (TASK-2026-00917): the Opportunity↔Project links are back-filled, so the

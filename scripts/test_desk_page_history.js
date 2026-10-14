@@ -1151,7 +1151,7 @@ test("Device Console: the camera tapped while the first show's replace waits on 
 	check("no push without a tap", desk.violations, []);
 });
 
-// A failed start-up (v1.637.0): the page's own panel says why, and its Try again asks again in
+// A failed start-up (v1.638.0): the page's own panel says why, and its Try again asks again in
 // place. The harness has no sf_kit, so this is the plain stand-in each page falls back to.
 const saidText = (desk, text) => desk.calls.some((c) => c.method === "text" && c.args[0] === text);
 const tryAgain = (desk) =>
