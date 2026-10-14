@@ -767,6 +767,12 @@ jobs:
       # module, which the suite above monkeypatches.
       - name: Recurring billing seasons
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_billing_season -v
+      # A visit's chemicals bill per dose, as a whole container or not at all, as the reviewer
+      # chose on approval (v1.628.0): the lines, the item default, the checked choices, both
+      # invoice builders and the Visit Review page wired through one module. Own step for its
+      # own frappe stub.
+      - name: Chemical billing on approval
+        run: python -m unittest erpnext_enhancements.tests.test_chemical_billing -v
       # The visit roll-forward had no off-season: a drained fountain kept drafting
       # November-March visits, and a weekly site kept drafting one every week. The
       # winter pause defers those to spring. Bench-free, own frappe stub, own step.
