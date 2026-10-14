@@ -1819,8 +1819,9 @@ class TestEndpoints(unittest.TestCase):
         finally:
             STATE.pop("attrs", None)
         self.assertEqual(fields[-1], "custom_lead_source")
-        # A rule that raises is logged and read as "not required": step 1 still opens, and the
-        # server's own rule still refuses a missing Lead Source on insert (review of #1286).
+        # A rule that raises never takes step 1 down (review of #1286), and the field is OFFERED
+        # (review of #1291): read as "not required" it would hide the one field enforce_source may
+        # still refuse the insert without. Logged once per process, not on every page open.
         logged = []
 
         def broken(doctype):
@@ -1829,16 +1830,20 @@ class TestEndpoints(unittest.TestCase):
         get_attr, log_error = FRAPPE.get_attr, getattr(FRAPPE, "log_error", None)
         FRAPPE.get_attr = lambda path: broken
         FRAPPE.log_error = lambda *args, **kwargs: logged.append((args, kwargs))
+        api._QUICK_RULES_LOGGED.clear()
         try:
             fields = api.get_flow("Opportunity")["quick"]["fields"]
+            again = api.get_flow("Opportunity")["quick"]["fields"]
         finally:
             FRAPPE.get_attr = get_attr
+            api._QUICK_RULES_LOGGED.clear()
             if log_error is None:
                 del FRAPPE.log_error
             else:
                 FRAPPE.log_error = log_error
-        self.assertNotIn("custom_lead_source", fields)
-        self.assertEqual(len(logged), 1)
+        self.assertEqual(fields[-1], "custom_lead_source")
+        self.assertEqual(again, fields)
+        self.assertEqual(len(logged), 1, "logged once, not on every page open")
         self.assertEqual(logged[0][0], (), "keyword arguments only (v16's log_error title heuristic)")
         self.assertIn(path, logged[0][1]["title"])
         self.assertIn("message", logged[0][1])
@@ -1934,6 +1939,7 @@ class TestEndpoints(unittest.TestCase):
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["declare_lost"])
         self.assertIn("methods=['POST']", decorated["save_step"])
+        self.assertIn("methods=['GET']", decorated["party_details"], "a read: GET only")
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)
 

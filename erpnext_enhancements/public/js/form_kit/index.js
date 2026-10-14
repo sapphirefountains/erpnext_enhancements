@@ -78,4 +78,5 @@ export {
 	create_kind,
 	details_args,
 	plan_account_change,
+	same_details_args,
 } from "./party.js";

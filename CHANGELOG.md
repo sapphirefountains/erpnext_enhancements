@@ -32,19 +32,24 @@ account, and re-suggested when the account changes. The server half (the block r
     billing address starts on "Also <account>'s address". A new account: the Customer quick entry;
     a Lead or Prospect opens its form in a new tab with a toast, since neither has a quick entry here
     and leaving the page would lose the step.
-  - **When the account changes on a saved deal**, a value that already belongs to the new account
-    stays; one the person chose in this visit stays, with a note under the field and *Use
-    <suggestion>*, so nothing they chose is overwritten silently; anything else follows the account
-    as ERPNext's own form does.
+  - **When the account changes on a saved deal**, an empty contact, billing address or site takes the
+    new account's default, and **a stored value is never overwritten or emptied**. One linked to the
+    new account, or to the deal itself (a general contractor's job site), stays quietly; any other
+    stays with a note under the field and *Use <suggestion>*. Why (review of #1291): the first
+    version replaced or cleared a stored site nobody had touched, on a step nobody was looking at,
+    and the hand-off would then have copied the wrong site into the Project. An answer for values
+    changed while it was in flight is asked again.
   - **Back closes the dialog, and only the dialog.** A frappe Dialog closes on any route change, so on
     its own Back would also leave the step or close the side panel. The dialog joins the planner
     kit's history guard as an overlay; the guided page loads `planner_kit.bundle.js` the first time a
     dialog opens.
-- **`form_kit.api.party_details`** (GET, `form_kit/party.py`): an account's default contact, billing
-  address and site by ERPNext's own rules (`get_default_contact`, `get_default_address`,
+- **`form_kit.api.party_details`** (GET only, `form_kit/party.py`): an account's default contact,
+  billing address and site by ERPNext's own rules (`get_default_contact`, `get_default_address`,
   `get_party_shipping_address`, plus "one address is also the site"), and which of the deal's
-  current values are linked to it. Allowlisted DocType, read on the DocType and on the account, the
-  account kind the Party block allows, at most 20 names, every row through `frappe.get_list`.
+  current values are linked to it or to the deal. Allowlisted DocType, read on the DocType, the
+  account and the deal, the account kind the Party block allows, at most 20 names, every row through
+  `frappe.get_list` with `distinct`: the Dynamic Link filter is a join, and a record linked twice to
+  one party (the Zoho import left some) would otherwise come back twice and push another out.
 - **`contacts_ux.create_for(doctype, record, opts)`** in `contact_address_quick_entry.js`: the
   Contact/Address dialogs for a record that is not the Form on screen, handed its context instead of
   the route's. A refused insert keeps the dialog open rather than opening the full form over the page.
@@ -65,9 +70,20 @@ account, and re-suggested when the account changes. The server half (the block r
 - **Undo fails closed** (`panel.js` `undo_allowed`, review of #1286): with no flow, or one that sends
   neither `closed` nor `won`, the side panel offers no Undo instead of offering one it cannot check.
 - **A broken `quick.when` rule no longer breaks step 1** (`form_kit/api.py`, review of #1286): it ran
-  on every new-record `get_flow` and an exception took the guided page's start down with it. It is
-  logged (`frappe.log_error`, keyword arguments) and read as "not required"; the server still refuses
-  a missing Lead Source on insert.
+  on every new-record `get_flow` and an exception took the guided page's start down with it. The
+  field is now offered (read as "not required", Lead Source would be hidden while `enforce_source`
+  may still refuse the insert without it, review of #1291), and the failure is logged once per
+  process (`frappe.log_error`, keyword arguments) rather than on every page open.
+- **An Opportunity with no job site no longer takes the Customer's address HTML into it.** ERPNext's
+  `Opportunity.validate` runs `map_fields`, which copies every empty column from the party by name,
+  and `Customer.primary_address` is ERPNext's rendered address (a Text Editor of HTML). v16 checks
+  links in `_validate_links` before `before_validate` and `validate`, and
+  `sync_contact.sanitize_primary_address_link` ran only on `before_validate`, so the HTML reached the
+  `primary_address` Link on every save of a deal with no site. It now also runs on Opportunity's
+  `validate`, after ERPNext's own. Production had 28 Customers with that text and one Opportunity
+  holding it (2026-10-14); that one is cleared on its next save. Found in review; older than P3.2.
+- **"+ New" can never stay held**: it is let go after 8 s even when the dialog never opens (frappe's
+  `with_doctype` never calls back on a failed request).
 
 ## [1.676.0] - 2026-10-14
 

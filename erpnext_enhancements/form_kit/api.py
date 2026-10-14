@@ -116,33 +116,43 @@ def get_flow(doctype, name=None):
 	return out
 
 
+#: ``quick.when`` rules that have raised in this process: logged once each, not on every page open.
+_QUICK_RULES_LOGGED = set()
+
+
 def _quick_needs(path, doctype):
 	"""Whether quick add must ask for a field, by the config's ``quick.when`` rule at ``path``.
 
 	It runs on every new-record ``get_flow``, so a rule that raises (a Settings field not migrated
-	yet, a bad path) must not take the guided page's step 1 down with it: the failure is logged and
-	read as "not required". Nothing is lost by that: the server still enforces its own rule on
-	insert (on Opportunity, ``attribution.enforce_source`` refuses a missing Lead Source).
+	yet, a bad path) must not take the guided page's step 1 down with it. The field is then
+	**offered**: read as "not required", a rule like Opportunity's Lead Source would hide the one
+	field ``attribution.enforce_source`` may still refuse the insert without, and nothing could ever
+	be created (review of #1291). The failure is logged once per process, not on every page open.
 	"""
 	try:
 		return bool(frappe.get_attr(path)(doctype))
 	except Exception:
-		frappe.log_error(title=f"Guided entry: quick add rule {path} failed", message=frappe.get_traceback())
-		return False
+		if path not in _QUICK_RULES_LOGGED:
+			_QUICK_RULES_LOGGED.add(path)
+			frappe.log_error(
+				title=f"Guided entry: quick add rule {path} failed", message=frappe.get_traceback()
+			)
+		return True
 
 
-@frappe.whitelist()
-def party_details(doctype, party_type, party, contacts=None, addresses=None):
+@frappe.whitelist(methods=["GET"])
+def party_details(doctype, party_type, party, contacts=None, addresses=None, name=None):
 	"""The Party entry component's answer when the account changes (form kit P3.2).
 
 	``{"defaults": {"contact", "billing", "site"}, "linked": {"Contact": [...], "Address": [...]}}``:
 	the account's own contact and addresses as ERPNext's form would suggest them, and which of the
-	names in ``contacts`` / ``addresses`` (JSON lists, the record's current values) are linked to it.
-	Read-only, GET. See ``form_kit/party.py`` for the rules and the permission checks.
+	names in ``contacts`` / ``addresses`` (JSON lists, the record's current values) are linked to it
+	or to the record ``name``. Read-only, GET only. See ``form_kit/party.py`` for the rules and the
+	permission checks.
 	"""
 	_require_configured(doctype)
 	frappe.has_permission(doctype, "read", throw=True)
-	return party_rules.details(doctype, party_type, party, contacts, addresses)
+	return party_rules.details(doctype, party_type, party, contacts, addresses, name)
 
 
 @frappe.whitelist(methods=["POST"])

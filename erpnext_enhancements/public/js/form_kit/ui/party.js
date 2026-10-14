@@ -29,10 +29,11 @@
  *     path (the control's new_doc is replaced), so no record is ever made unlinked from here.
  *   - When the account changes on a saved record, party_details says which of the current
  *     contact and addresses are the new account's, and what the account would suggest
- *     (form_kit/party.py, ERPNext's own defaults). plan_account_change: a value of the new
- *     account's stays; one the person chose in this visit stays and is flagged under its field
- *     ("not one of <account>'s", with the suggestion one tap away); anything else follows the
- *     account. On a new record nothing is suggested here: the contact and addresses are on later
+ *     (form_kit/party.py, ERPNext's own defaults). plan_account_change: an EMPTY field takes the
+ *     account's default; a stored value is never overwritten or emptied. One of the new account's,
+ *     or linked to the record itself (a general contractor's job site), just stays; any other stays
+ *     and is flagged under its field ("not one of <account>'s", with "Use <suggestion>" one tap
+ *     away). On a new record nothing is suggested here: the contact and addresses are on later
  *     steps, and the insert's own Opportunity.map_fields fills them from the account.
  *
  * Phones and emails typed into the dialogs are normalized by the server on insert
@@ -59,11 +60,15 @@ import {
 	create_kind,
 	details_args,
 	plan_account_change,
+	same_details_args,
 } from "../party.js";
 
 const API = "erpnext_enhancements.form_kit.api.";
 // How long the guided page waits for planner_kit.bundle.js before opening a dialog without it.
 const GUARD_WAIT_MS = 4000;
+// "+ New" is held while a dialog opens; after this long it is let go whatever happened (frappe's
+// with_doctype never calls back when its request fails, so the promise may never settle).
+const OPEN_WAIT_MS = 8000;
 
 // The "+ New" label per kind of record. Customer is "Account" on this site (a label only).
 function new_label(doctype) {
@@ -85,15 +90,13 @@ export class PartyEntry {
 	constructor(editor) {
 		this.ed = editor;
 		this.roles = null;
-		this.chosen = new Set();
 		this.flags = {};
 		this.seq = 0;
 	}
 
-	// A record (or a new one) was loaded: the roles of its DocType, and nothing chosen yet.
+	// A record (or a new one) was loaded: the roles of its DocType, and no notes yet.
 	reset() {
 		this.roles = this.ed.doctype ? party_roles(BLOCKS, this.ed.doctype) : null;
-		this.chosen = new Set();
 		this.flags = {};
 		this.seq += 1;
 	}
@@ -149,7 +152,7 @@ export class PartyEntry {
 		($group.length ? $group : control.$wrapper).append($tools);
 	}
 
-	// "Not one of <account>'s": a value the person chose that the new account does not have.
+	// "Not one of <account>'s": a stored value the new account does not have, kept, never overwritten.
 	draw_flag(fieldname) {
 		const control = this.control(fieldname);
 		if (!control || !control.$wrapper) return;
@@ -159,7 +162,7 @@ export class PartyEntry {
 		const what = role_of(this.roles, fieldname) === "contact" ? __("contacts") : __("addresses");
 		const $flag = $('<div class="fk-party-flag" role="status"></div>');
 		$('<p class="fk-party-flag-text"></p>')
-			.text(__("Kept what you chose, but it is not one of {0}'s {1}.", [flag.account, what]))
+			.text(__("Kept as it was, but it is not one of {0}'s {1}.", [flag.account, what]))
 			.appendTo($flag);
 		if (flag.suggestion && this.ed.flow && this.ed.flow.can_write) {
 			$('<button type="button" class="sf-btn sf-btn--secondary fk-party-use"></button>')
@@ -187,15 +190,14 @@ export class PartyEntry {
 			this.account_changed(value);
 			return;
 		}
-		// The contact or an address, changed by the person: theirs from now on.
-		this.chosen.add(fieldname);
+		// The contact or an address, changed by the person: a note about the old value no longer applies.
 		if (this.flags[fieldname]) {
 			delete this.flags[fieldname];
 			this.draw_flag(fieldname);
 		}
 	}
 
-	account_changed(value) {
+	account_changed(value, retries) {
 		const seq = ++this.seq;
 		// Notes about the previous account no longer apply (redrawn where they are on screen).
 		const flagged = Object.keys(this.flags);
@@ -212,6 +214,8 @@ export class PartyEntry {
 				API + "party_details",
 				{
 					doctype,
+					// The record: a contact or address linked to it (a general contractor's job site) is kept.
+					name,
 					party_type: party.doctype,
 					party: party.name,
 					contacts: JSON.stringify(current.contacts),
@@ -222,6 +226,11 @@ export class PartyEntry {
 			.then((details) => {
 				const now = account_of(this.roles, this.ed.values);
 				if (seq !== this.seq || !this.same_record(doctype, name) || !now || now.name !== party.name) return;
+				// The answer is about the values sent: one changed meanwhile is asked about again.
+				if (!same_details_args(current, details_args(this.roles, this.ed.values))) {
+					if ((retries || 0) < 2) this.account_changed(value, (retries || 0) + 1);
+					return;
+				}
 				this.apply(party, details || {});
 			})
 			.catch(() => {
@@ -246,7 +255,6 @@ export class PartyEntry {
 		const plan = plan_account_change({
 			roles: this.roles,
 			values: this.ed.values,
-			chosen: this.chosen,
 			details,
 			editable: this.ed.flow.can_write ? this.editable() : new Set(),
 		});
@@ -261,10 +269,10 @@ export class PartyEntry {
 		const label = (fieldname) => __((this.ed.defs[fieldname] || {}).label || fieldname);
 		const followed = Object.keys(plan.set).map(label).join(", ");
 		const said = [];
-		if (followed) said.push(__("{0} now follow {1}.", [followed, party.name]));
+		if (followed) said.push(__("Filled from {0}: {1}.", [party.name, followed]));
 		if (plan.kept.length) {
 			said.push(
-				__("Kept the {0} you chose, which is not {1}'s: check it.", [
+				__("Kept the {0}, which is not {1}'s: check it.", [
 					plan.kept.map((item) => label(item.fieldname)).join(", "),
 					party.name,
 				])
@@ -391,12 +399,20 @@ export class PartyEntry {
 
 	open_dialog(open) {
 		if (this.opening) return;
-		this.opening = true;
+		// Held against a double tap, and always let go: when the promise settles, or after OPEN_WAIT_MS
+		// if it never does (a failed with_doctype request never calls back).
+		const token = {};
+		this.opening = token;
+		const release = () => {
+			if (this.opening === token) this.opening = null;
+		};
+		const timer = setTimeout(release, OPEN_WAIT_MS);
 		this.guard()
 			.then((guard) => Promise.resolve(open()).then((dialog) => this.track(dialog, guard)))
 			.catch(() => {})
 			.finally(() => {
-				this.opening = false;
+				clearTimeout(timer);
+				release();
 			});
 	}
 

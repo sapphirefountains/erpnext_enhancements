@@ -179,9 +179,9 @@ which to leave out (`hide_flag`: on Opportunity, the historical deals) and what 
 carry, the config's `won`; the side panel asks for these fields before it saves the move), `closed`
 (`{"field", "in"}`: the statuses that close a record, from the config's `mine.open`) and, for a
 new record only, `quick` (`{"fields", "fixed", "owner_field", "stage_field"}`: the board's quick
-add, the config's `quick`). A `quick.when` rule that raises is logged (`frappe.log_error`) and read
-as "not required", so a broken rule never takes step 1 down; the server still enforces its own rule
-on insert.
+add, the config's `quick`). A `quick.when` rule that raises never takes step 1 down: the field is
+**offered** (read as "not required", Lead Source would be hidden while `enforce_source` may still
+refuse the insert without it), and the failure is logged once per process, not on every page open.
 
 `party_details(doctype, party_type, party, contacts=None, addresses=None)`, GET: the Party entry
 component's question when the account changes. See *The Party entry component (P3.2)* below.
@@ -413,13 +413,27 @@ Decisions, for review:
 - **Phones and emails** typed in a dialog are normalized once, by the server's `"*"` hook on insert
   (`utils/normalize_hook.normalize_doc`); the component does not reformat them.
 - **When the account changes on a saved record**, `party_details` answers which of the current
-  contact, billing address and site are the new account's, and the account's defaults by ERPNext's
-  own rules (`party.py`). Then, field by field (`party.js` `plan_account_change`): a value that is
-  the new account's stays; a value the person chose in this visit stays, with a note under the
-  field ("not one of <account>'s", and *Use <suggestion>*), so nothing they chose is overwritten
-  silently; anything else follows the account (its default, or empty), as ERPNext's form does. On a
-  new record nothing is suggested: the contact and addresses are on later steps, and the insert's
-  own `map_fields` fills them from the account.
+  contact, billing address and site are linked to the new account **or to the record itself**, and
+  the account's defaults by ERPNext's own rules (`party.py`). Then, field by field (`party.js`
+  `plan_account_change`): an **empty** field takes the account's default; a **stored value is never
+  overwritten and never emptied**. One linked to the new account or to the deal (a general
+  contractor's job site is linked to the Opportunity only) stays quietly; any other stays with a
+  note under the field ("not one of <account>'s", and *Use <suggestion>*). Review of #1291: an
+  earlier rule replaced or cleared a stored site nobody had touched, on a step nobody was looking
+  at, and the hand-off then copied the wrong site into the Project. ERPNext's own `party_name`
+  handler, which does overwrite `contact_person` and `customer_address`, is the Desk form's client
+  script; nothing runs it here, and on the server `map_fields` fills only empty fields, so the same
+  rule holds for all three. An answer for values that changed while it was in flight is asked again.
+  On a new record nothing is suggested: the contact and addresses are on later steps, and the
+  insert's own `map_fields` fills them from the account.
+- **`map_fields` and the job site** (found in review, older than this component).
+  `Opportunity.map_fields` copies every empty column from the party by name, and
+  `Customer.primary_address` is ERPNext's rendered address HTML, so a deal with no site took that HTML
+  into its `primary_address` Link on every save: v16 checks links in `_validate_links` *before*
+  `before_validate` and `validate`, and `sanitize_primary_address_link` ran only on
+  `before_validate`. It now runs on Opportunity's `validate` too, after ERPNext's (hooks.py).
+  Production had 28 Customers with that text and one Opportunity holding it (2026-10-14); that row
+  is cleared on its next save.
 - **The defaults.** Contact: flagged `is_primary_contact`, else `is_billing_contact` (ERPNext's
   `get_default_contact`), else the account's own `primary_contact` / `customer_primary_contact` when
   that Contact is linked to it (what `map_fields` copies anyway). Billing: flagged
@@ -438,11 +452,13 @@ Decisions, for review:
   closes the dialog and nothing else, and Save or Cancel steps back off the guard's entry. The guided
   page loads `planner_kit.bundle.js` the first time a dialog opens; where the guard cannot work,
   Back falls back to frappe's behavior.
-- `party_details(doctype, party_type, party, contacts=None, addresses=None)`, GET:
+- `party_details(doctype, party_type, party, contacts=None, addresses=None, name=None)`, GET only:
   `{"defaults": {"contact", "billing", "site"}, "linked": {"Contact": [...], "Address": [...]}}`.
   The DocType allowlist, read on the DocType, `party_type` one of the Party block's `accounts`, read
-  on the account, at most 20 names of each kind, and every Contact and Address through
-  `frappe.get_list`, so user permissions and sharing decide what is offered. Writes nothing.
+  on the account (and on the record `name`, when sent), at most 20 names of each kind, and every
+  Contact and Address through `frappe.get_list` with `distinct` (a record linked twice to one party,
+  as the Zoho import left some, is counted once), so user permissions and sharing decide what is
+  offered. Writes nothing.
 
 ## Adding a DocType
 

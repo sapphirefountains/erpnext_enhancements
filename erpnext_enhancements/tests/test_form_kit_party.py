@@ -57,6 +57,7 @@ _MODULES = (
 	"erpnext_enhancements.form_kit.steps",
 	"erpnext_enhancements.form_kit.completeness",
 	"erpnext_enhancements.form_kit.field_help",
+	"erpnext_enhancements.sync_contact",
 )
 _saved = {}
 party = api = blocks = None
@@ -124,25 +125,44 @@ const details = {
 	defaults: { contact: "Ann New-Bayside", billing: "Bayside-Billing", site: "Bayside-Shipping" },
 	linked: { Contact: ["Cam Shared-Bayside"], Address: ["Bayside-Billing"] },
 };
-const plan = (values, chosen, editable, d) =>
-	party.plan_account_change({ roles: opp, values, chosen, details: d === undefined ? details : d, editable });
+const plan = (values, editable, d) =>
+	party.plan_account_change({ roles: opp, values, details: d === undefined ? details : d, editable });
+const STORED = { primary_contact: "Old Person-Harbor Plaza", customer_address: "Harbor Plaza-Billing", primary_address: "Harbor Plaza-Site" };
 out.plan = {
-	// Nothing chosen this visit: everything follows the new account.
-	follows: plan({ primary_contact: "Old Person-Harbor Plaza", customer_address: "Harbor Plaza-Billing", primary_address: "" }, []),
-	// Already the new account's: stays.
-	linked_stays: plan({ primary_contact: "Cam Shared-Bayside", customer_address: "Bayside-Billing", primary_address: "Bayside-Shipping" }, []),
-	// Chosen this visit and not the new account's: kept and reported, never overwritten.
-	chosen_kept: plan(
-		{ primary_contact: "Old Person-Harbor Plaza", customer_address: "Harbor Plaza-Billing", primary_address: "Harbor Plaza-Site" },
-		["primary_contact", "primary_address"]
-	),
-	// Chosen this visit and empty: nothing to keep, the suggestion fills it.
-	chosen_empty: plan({ primary_contact: "" }, ["primary_contact"]),
-	// The new account has no defaults: a stale value is emptied; an empty one stays empty.
-	no_defaults: plan({ primary_contact: "Old Person-Harbor Plaza", customer_address: "" }, [], null, { defaults: {}, linked: {} }),
+	// Empty fields take the new account's defaults.
+	empty_fills: plan({ primary_contact: "", customer_address: null, primary_address: "" }),
+	// Stored values that are not the new account's: all kept, all flagged with the suggestion.
+	stored_kept: plan(STORED),
+	// Already the new account's (or the record's own, which the server reports as linked): stays, no flag.
+	linked_stays: plan({ primary_contact: "Cam Shared-Bayside", customer_address: "Bayside-Billing", primary_address: "Bayside-Shipping" }, null, {
+		defaults: details.defaults,
+		linked: { Contact: ["Cam Shared-Bayside"], Address: ["Bayside-Billing", "Bayside-Shipping"] },
+	}),
+	// A general contractor's site, linked to the deal only: the server counts it linked, so it stays quietly.
+	gc_site: plan({ primary_address: "GC Yard-Shipping" }, null, {
+		defaults: details.defaults,
+		linked: { Contact: [], Address: ["GC Yard-Shipping"] },
+	}),
+	// The new account has one address (it is both its billing address and the suggested site): a
+	// stored site is still kept, only flagged.
+	one_address: plan({ primary_address: "GC Yard-Shipping", customer_address: "" }, null, {
+		defaults: { contact: null, billing: "Solo-Billing", site: "Solo-Billing" },
+		linked: { Contact: [], Address: [] },
+	}),
+	// The new account has many addresses and no shipping flag (no suggested site): never cleared to null.
+	many_addresses: plan({ primary_address: "GC Yard-Shipping" }, null, {
+		defaults: { contact: null, billing: "Many-Billing", site: null },
+		linked: { Contact: [], Address: [] },
+	}),
+	// No defaults at all: nothing is written, a stored value is kept.
+	no_defaults: plan({ primary_contact: "Old Person-Harbor Plaza", customer_address: "" }, null, { defaults: {}, linked: {} }),
 	// A field the person may not change is never touched.
-	not_editable: plan({ primary_contact: "Old Person-Harbor Plaza" }, [], ["customer_address", "primary_address"]),
-	no_details: plan({ primary_contact: "x" }, [], null, null),
+	not_editable: plan({ primary_contact: "", customer_address: "" }, ["customer_address", "primary_address"]),
+	no_details: plan({ primary_contact: "" }, null, null),
+};
+out.same_args = {
+	same: party.same_details_args({ contacts: ["A"], addresses: ["B"] }, { contacts: ["A"], addresses: ["B"] }),
+	changed: party.same_details_args({ contacts: ["A"], addresses: ["B"] }, { contacts: ["C"], addresses: ["B"] }),
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -210,8 +230,8 @@ class TestPartyDecisionsUnderNode(unittest.TestCase):
 		)
 		self.assertEqual(self.out["details_args_empty"], {"contacts": [], "addresses": []})
 
-	def test_unchosen_values_follow_the_account(self):
-		p = self.out["plan"]["follows"]
+	def test_empty_fields_take_the_new_accounts_defaults(self):
+		p = self.out["plan"]["empty_fills"]
 		self.assertEqual(
 			p["set"],
 			{
@@ -222,29 +242,61 @@ class TestPartyDecisionsUnderNode(unittest.TestCase):
 		)
 		self.assertEqual(p["kept"], [])
 
-	def test_values_of_the_new_account_stay(self):
-		self.assertEqual(self.out["plan"]["linked_stays"], {"set": {}, "kept": []})
-
-	def test_a_value_chosen_this_visit_is_never_silently_overwritten(self):
-		p = self.out["plan"]["chosen_kept"]
-		self.assertEqual(p["set"], {"customer_address": "Bayside-Billing"})
+	def test_a_stored_value_is_never_overwritten_only_flagged(self):
+		"""Review of #1291: a stored site nobody touched this visit was replaced or cleared."""
+		p = self.out["plan"]["stored_kept"]
+		self.assertEqual(p["set"], {})
 		self.assertEqual(
 			p["kept"],
 			[
 				{"fieldname": "primary_contact", "role": "contact", "suggestion": "Ann New-Bayside"},
+				{"fieldname": "customer_address", "role": "billing", "suggestion": "Bayside-Billing"},
 				{"fieldname": "primary_address", "role": "site", "suggestion": "Bayside-Shipping"},
 			],
 		)
-		self.assertEqual(self.out["plan"]["chosen_empty"]["set"]["primary_contact"], "Ann New-Bayside")
 
-	def test_no_defaults_empties_a_stale_value(self):
-		p = self.out["plan"]["no_defaults"]
-		self.assertEqual(p["set"], {"primary_contact": None})
-		self.assertEqual(p["kept"], [])
+	def test_values_of_the_new_account_or_the_record_stay_quietly(self):
+		self.assertEqual(self.out["plan"]["linked_stays"], {"set": {}, "kept": []})
+		gc = self.out["plan"]["gc_site"]
+		self.assertEqual(gc["kept"], [], "a site linked to the deal itself was flagged as not belonging")
+		self.assertNotIn("primary_address", gc["set"])
+		# The empty contact and billing address still take the new account's.
+		self.assertEqual(
+			gc["set"], {"primary_contact": "Ann New-Bayside", "customer_address": "Bayside-Billing"}
+		)
+
+	def test_a_stored_site_survives_an_account_with_one_address(self):
+		p = self.out["plan"]["one_address"]
+		self.assertNotIn(
+			"primary_address", p["set"], "the general contractor's site became the account's office"
+		)
+		self.assertEqual(p["set"], {"customer_address": "Solo-Billing"})
+		self.assertEqual(
+			p["kept"], [{"fieldname": "primary_address", "role": "site", "suggestion": "Solo-Billing"}]
+		)
+
+	def test_a_stored_site_survives_an_account_with_many_addresses(self):
+		p = self.out["plan"]["many_addresses"]
+		self.assertNotIn("primary_address", p["set"], "the site was cleared to null")
+		self.assertEqual(p["kept"], [{"fieldname": "primary_address", "role": "site", "suggestion": None}])
+
+	def test_null_is_never_written(self):
+		for case, p in self.out["plan"].items():
+			with self.subTest(case=case):
+				self.assertNotIn(None, p["set"].values())
+		self.assertEqual(self.out["plan"]["no_defaults"]["set"], {})
+		self.assertEqual(
+			self.out["plan"]["no_defaults"]["kept"],
+			[{"fieldname": "primary_contact", "role": "contact", "suggestion": None}],
+		)
 
 	def test_only_editable_fields_are_touched(self):
 		self.assertNotIn("primary_contact", self.out["plan"]["not_editable"]["set"])
+		self.assertIn("customer_address", self.out["plan"]["not_editable"]["set"])
 		self.assertEqual(self.out["plan"]["no_details"], {"set": {}, "kept": []})
+
+	def test_an_answer_is_for_the_values_that_were_sent(self):
+		self.assertEqual(self.out["same_args"], {"same": True, "changed": False})
 
 
 # ---------------------------------------------------------------------------------- the endpoint
@@ -272,20 +324,41 @@ def _compare(actual, op, value):
 
 
 def _get_list(
-	doctype, filters=None, or_filters=None, fields=None, order_by=None, limit_page_length=None, **kwargs
+	doctype,
+	filters=None,
+	or_filters=None,
+	fields=None,
+	order_by=None,
+	limit_page_length=None,
+	distinct=False,
+	**kwargs,
 ):
 	STATE["get_list"].append(
-		{"doctype": doctype, "filters": filters, "or_filters": or_filters, "order_by": order_by}
+		{
+			"doctype": doctype,
+			"filters": filters,
+			"or_filters": or_filters,
+			"order_by": order_by,
+			"distinct": distinct,
+			"limit": limit_page_length,
+		}
 	)
 	for field in fields or []:
 		assert "(" not in field, "Frappe 16 refuses SQL functions as strings in get_list"
 	rows = [r for r in STATE["records"].get(doctype, []) if r["name"] not in STATE["unreadable"]]
-	# Dynamic Link conditions name ONE link row: both halves must be on the same row.
+	# Dynamic Link conditions name ONE link row: both halves must be on the same row. As in SQL, the
+	# join returns a record once per matching link row unless the query is DISTINCT.
 	link_conds = [c for c in filters or [] if len(c) == 4 and c[0] == "Dynamic Link"]
 	other = [c for c in filters or [] if not (len(c) == 4 and c[0] == "Dynamic Link")]
 	if link_conds:
 		want = {c[1]: c[3] for c in link_conds}
-		rows = [r for r in rows if any(all(link.get(k) == v for k, v in want.items()) for link in r["links"])]
+		rows = [r for r in rows for link in r["links"] if all(link.get(k) == v for k, v in want.items())]
+		if distinct:
+			unique = []
+			for r in rows:
+				if r not in unique:
+					unique.append(r)
+			rows = unique
 	rows = [r for r in rows if all(_match(r, c) for c in other)]
 	if or_filters:
 		rows = [r for r in rows if any(_match(r, c) for c in or_filters)]
@@ -345,6 +418,9 @@ def _install_frappe():
 
 		def sql(self, *args, **kwargs):  # pragma: no cover - guarded below
 			raise AssertionError("party details read with raw SQL")
+
+		def exists(self, doctype, name):
+			return any(r["name"] == name for r in STATE["records"].get(doctype, []))
 
 	frappe.db = DB()
 	sys.modules["frappe"] = frappe
@@ -448,7 +524,12 @@ def _reset(**overrides):
 
 
 def _details(
-	party_type="Customer", party_name="Bayside", contacts=None, addresses=None, doctype="Opportunity"
+	party_type="Customer",
+	party_name="Bayside",
+	contacts=None,
+	addresses=None,
+	doctype="Opportunity",
+	name=None,
 ):
 	return api.party_details(
 		doctype,
@@ -456,6 +537,7 @@ def _details(
 		party_name,
 		json.dumps(contacts or []),
 		json.dumps(addresses or []),
+		name,
 	)
 
 
@@ -581,6 +663,98 @@ class TestPartyDetails(unittest.TestCase):
 		# Non-text entries and blanks are dropped, never queried.
 		self.assertEqual(party._names(["", None, 3, "Ann", "Ann"]), ["Ann"])
 
+	def test_duplicate_link_rows_never_push_a_linked_record_out(self):
+		"""Review of #1291: the Dynamic Link join returns a record once per link row; the Zoho import
+		left records linked twice to one party. Without DISTINCT and with limit=len(names), the
+		duplicate took the place of the second name."""
+		contacts = STATE["records"]["Contact"]
+		ann = next(r for r in contacts if r["name"] == "Ann New-Bayside")
+		ann["links"] = [_link("Customer", "Bayside"), _link("Customer", "Bayside")]
+		got = _details(contacts=["Ann New-Bayside", "Cam Shared-Bayside"])
+		self.assertEqual(got["linked"]["Contact"], ["Ann New-Bayside", "Cam Shared-Bayside"])
+		asked = [c for c in STATE["get_list"] if any(len(f) == 3 and f[0] == "name" for f in c["filters"])]
+		self.assertTrue(asked and all(c["distinct"] for c in asked))
+		self.assertTrue(all(c["limit"] >= party.MAX_NAMES for c in asked))
+
+	def test_duplicate_link_rows_do_not_hide_the_one_address_site(self):
+		addresses = STATE["records"]["Address"]
+		harbor = next(r for r in addresses if r["name"] == "Harbor Plaza-Billing")
+		harbor["links"] = [_link("Customer", "Harbor Plaza")] * 3
+		self.assertEqual(_details(party_name="Harbor Plaza")["defaults"]["site"], "Harbor Plaza-Billing")
+
+	def test_an_address_linked_to_the_record_itself_counts_as_linked(self):
+		"""A general contractor's job site is linked to the Opportunity only (the 2026-10-06 rule)."""
+		STATE["records"]["Address"].append(
+			{
+				"name": "GC Yard-Shipping",
+				"links": [_link("Opportunity", "CRM-OPP-0001")],
+				"address_type": "Shipping",
+				"disabled": 0,
+				"modified": 7,
+			}
+		)
+		got = _details(addresses=["GC Yard-Shipping"], name="CRM-OPP-0001")
+		self.assertEqual(got["linked"]["Address"], ["GC Yard-Shipping"])
+		self.assertIn(("Opportunity", "read", "CRM-OPP-0001"), STATE["perm_checks"])
+		# Without the record, it is not the account's.
+		self.assertEqual(_details(addresses=["GC Yard-Shipping"])["linked"]["Address"], [])
+		# The record must be readable.
+		STATE["denied"] = {("Opportunity", "read", "CRM-OPP-0001")}
+		with self.assertRaises(PermissionError_):
+			_details(addresses=["GC Yard-Shipping"], name="CRM-OPP-0001")
+
+
+# ------------------------------------------------------------ map_fields and the job site (v1.677.0)
+
+
+class _Field:
+	def __init__(self, fieldtype):
+		self.fieldtype = fieldtype
+
+
+class _Meta:
+	def get_field(self, fieldname):
+		return _Field("Link") if fieldname == "primary_address" else None
+
+
+class _Opportunity(dict):
+	meta = _Meta()
+
+	def __getattr__(self, key):
+		return self.get(key)
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
+class TestMapFieldsCannotStoreAddressHtml(unittest.TestCase):
+	"""ERPNext's Opportunity.validate runs map_fields, which copies every EMPTY column from the party
+	by name; Customer.primary_address is ERPNext's rendered address (a Text Editor of HTML). v16 runs
+	_validate_links before before_validate and validate (frappe/model/document.py at version-16), so
+	the HTML landed in Opportunity.primary_address, a Link, on every save of a deal with no site.
+	sanitize_primary_address_link now runs on validate too, after ERPNext's own."""
+
+	def setUp(self):
+		_reset()
+
+	def test_it_runs_on_validate_after_erpnexts_map_fields(self):
+		hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+		block = hooks[hooks.index('\t"Opportunity": {') :]
+		block = block[: block.index('"before_save"')]
+		validate = block[block.index('"validate": [') :]
+		first = re.search(r'^\s*"([\w.]+)",', validate, re.M).group(1)
+		self.assertEqual(first, "erpnext_enhancements.sync_contact.sanitize_primary_address_link")
+		self.assertIn('"before_validate": [', block)
+
+	def test_html_from_map_fields_is_cleared_and_an_address_name_is_kept(self):
+		sync_contact = importlib.import_module("erpnext_enhancements.sync_contact")
+		doc = _Opportunity(primary_address="2600 Example Blvd<br>Springfield")
+		sync_contact.sanitize_primary_address_link(doc)
+		self.assertIsNone(doc.primary_address)
+		doc = _Opportunity(primary_address="Bayside-Billing")
+		sync_contact.sanitize_primary_address_link(doc)
+		self.assertEqual(doc.primary_address, "Bayside-Billing")
+
 
 # ---------------------------------------------------------------------------------- the wiring
 
@@ -610,6 +784,27 @@ class TestWiring(unittest.TestCase):
 			self.assertNotIn(forbidden, code)
 		self.assertRegex(code, r'API \+ "party_details",[\s\S]*?\{ quiet: true, method: "GET" \}')
 		self.assertEqual(code.count("API + "), 1)
+
+	def test_an_answer_for_values_since_changed_is_asked_again(self):
+		"""Review of #1291: a stale `linked` answer could flag a contact picked while it was in flight."""
+		code = _code(PARTY_UI)
+		body = code[code.index("\taccount_changed(value, retries) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn("if (!same_details_args(current, details_args(this.roles, this.ed.values))) {", body)
+		self.assertIn("this.account_changed(value, (retries || 0) + 1);", body)
+		self.assertLess(body.index("same_details_args"), body.index("this.apply(party, details || {});"))
+		# The record goes along, so its own job site counts as linked.
+		self.assertRegex(body, r"API \+ \"party_details\",\s*\{\s*doctype,\s*(//[^\n]*\n\s*)*name,")
+
+	def test_new_is_let_go_even_if_the_dialog_never_opens(self):
+		"""Review of #1291: with_doctype never calls back on a failed request, so the promise may never
+		settle; "+ New" must not stay held."""
+		code = _code(PARTY_UI)
+		body = code[code.index("\topen_dialog(open) {") :]
+		body = body[: body.index("\n\t}\n")]
+		self.assertIn("const timer = setTimeout(release, OPEN_WAIT_MS);", body)
+		self.assertIn("clearTimeout(timer);", body)
+		self.assertIn("const OPEN_WAIT_MS = ", code)
 
 	def test_values_are_never_written_as_html(self):
 		code = _code(PARTY_UI)

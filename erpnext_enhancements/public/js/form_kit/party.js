@@ -12,6 +12,7 @@
  *   create_kind(roles, field, values) what "+ New" on a field makes: { doctype, role }
  *   details_args(roles, values)       the record's current contact and addresses, for party_details
  *   plan_account_change(...)          what changes when the account does, and what is kept
+ *   same_details_args(a, b)           whether a party_details answer is still for the values on screen
  */
 
 // The roles that follow the account: picked from its own records, re-suggested when it changes.
@@ -88,34 +89,45 @@ export function details_args(roles, values) {
 }
 
 // When the account changes, for each field that follows it (contact, billing address, site):
-//   - a value linked to the new account stays;
-//   - a value the person chose in this session (`chosen`) stays, and is reported in `kept` with the
-//     new account's suggestion, so the page can say so: it is never overwritten silently;
-//   - anything else (empty, or set before this session, or by the server) becomes the new account's
-//     default, or empty when it has none, as ERPNext's own form does (get_party_details).
+//   - an EMPTY field takes the new account's default, when it has one;
+//   - a stored value is never overwritten and never emptied. One linked to the new account, or to
+//     the record itself (a general contractor's job site is linked to the Opportunity only, the
+//     2026-10-06 rule), simply stays. Any other stays too, and is reported in `kept` with the new
+//     account's suggestion, so the page can flag it and offer "Use <suggestion>".
+// Review of #1291: an earlier rule replaced or cleared a stored job site nobody had touched in this
+// visit, on a step nobody was looking at, and the hand-off then copied the wrong site into the
+// Project. ERPNext's own party_name handler, which does overwrite contact_person and
+// customer_address, is the Desk form's client script; nothing runs it on the guided page, and on the
+// server Opportunity.map_fields only fills EMPTY fields, so the same rule holds for all three.
 // `editable`, when given, is the set of fieldnames the person may change: nothing else is touched.
 // `details` is party_details' answer. Returns { set: { fieldname: value }, kept: [{ fieldname, role,
-// suggestion }] }.
-export function plan_account_change({ roles, values, chosen, details, editable }) {
+// suggestion }] }; `set` never holds a null.
+export function plan_account_change({ roles, values, details, editable }) {
 	const out = { set: {}, kept: [] };
 	if (!roles || !details) return out;
 	const v = values || {};
 	const defaults = details.defaults || {};
 	const linked = details.linked || {};
-	const picked = chosen instanceof Set ? chosen : new Set(chosen || []);
 	const can = editable instanceof Set ? editable : editable ? new Set(editable) : null;
 	FOLLOWERS.forEach((role) => {
 		const fieldname = roles[role];
 		if (!fieldname || (can && !can.has(fieldname))) return;
 		const current = text(v[fieldname]).trim();
 		const own = (role === "contact" ? linked.Contact : linked.Address) || [];
-		if (current && own.includes(current)) return;
 		const suggestion = defaults[role] || null;
-		if (current && picked.has(fieldname)) {
-			out.kept.push({ fieldname, role, suggestion });
+		if (!current) {
+			if (suggestion) out.set[fieldname] = suggestion;
 			return;
 		}
-		if (current !== text(suggestion)) out.set[fieldname] = suggestion;
+		if (own.includes(current)) return;
+		out.kept.push({ fieldname, role, suggestion });
 	});
 	return out;
+}
+
+// Whether two details_args answers ask about the same values (a party_details answer is for the
+// values that were sent; a field changed while it was in flight needs asking again).
+export function same_details_args(a, b) {
+	const key = (x) => JSON.stringify([(x && x.contacts) || [], (x && x.addresses) || []]);
+	return key(a) === key(b);
 }
