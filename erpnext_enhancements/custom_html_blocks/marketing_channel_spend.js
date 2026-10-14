@@ -21,17 +21,27 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#mcs-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,22 +61,20 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="mcs-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#mcs-body");
         const count = container.querySelector("#mcs-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Channel Spend & CPL is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Channel Spend & CPL is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         if (message.unavailable) {
             count.textContent = "";
-            body.innerHTML = muted(esc(message.unavailable));
+            sf.state.render(body, "empty", { title: message.unavailable });
             return;
         }
 
@@ -76,13 +84,13 @@
             : __("month to date");
 
         if (!channels.length) {
-            body.innerHTML = muted(__("No spend recorded for this month yet."));
+            sf.state.render(body, "empty", { title: __("No spend recorded for this month yet.") });
             return;
         }
 
         const warning = message.attribution_available
             ? ""
-            : muted(__("Lead attribution is not installed, so no cost per lead can be computed."));
+            : `<div class="mcs-muted">${__("Lead attribution is not installed, so no cost per lead can be computed.")}</div>`;
 
         body.innerHTML =
             warning +
@@ -95,32 +103,34 @@
                     const tone = c.matched ? "" : "mcs-warn";
                     return `
                     <div class="mcs-row">
-                        <span class="mcs-name">${esc(c.channel)}</span>
-                        <span class="mcs-meta ${tone}">${esc(leads)}</span>
-                        <span class="mcs-age">${esc(money(c.spend))} · ${esc(cpl)}</span>
+                        <span class="mcs-name">${sf.esc(c.channel)}</span>
+                        <span class="mcs-meta ${tone}">${sf.esc(leads)}</span>
+                        <span class="mcs-age">${sf.esc(money(c.spend))} · ${sf.esc(cpl)}</span>
                     </div>`;
                 })
                 .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#mcs-body");
         const refresh = container.querySelector("#mcs-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load channel spend."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load channel spend.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -128,6 +138,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no

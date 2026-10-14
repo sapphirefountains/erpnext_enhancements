@@ -1,0 +1,244 @@
+"""Custom HTML Blocks on sf_kit carry no shell of their own (v1.647.0).
+
+Every block used to repeat the same shell: an HTML escape (``function esc``), a ``muted()``
+helper writing its loading / empty / error lines, a ``root.__ee_ticket`` counter so only the
+newest answer draws, and ``-pill`` markup for its status labels. The blocks listed in
+``ON_KIT`` now take all of it from one place:
+
+* ``blocks.kit(root)`` (``public/js/global_enhancements/workspace_block_return.js``) loads
+  ``sf_kit.bundle.js`` once, adopts ``sf_kit.CSS`` into the block's shadow root and resolves the
+  kit, or a plain-text stand-in when it could not load;
+* ``blocks.ticket(root)`` is the counter;
+* panels are ``sf.state.render``, labels ``sf.chip``, escaping ``sf.esc``.
+
+This fails the build when a converted block grows any of those copies back, writes a loading,
+error or switched-off line by hand, or loses its guard for a device whose bundle predates the
+helpers. It also makes every seeded block choose a side: on the kit, or in ``NOT_YET`` with the
+reason it is still waiting. ``scripts/test_workspace_block_return.mjs`` runs the converted
+blocks on the real kit.
+
+Comments are stripped first: a header that explains why ``esc`` is gone names ``esc``.
+
+Bench-free: the files are read as text.
+
+Run: python -m unittest erpnext_enhancements.tests.test_block_kit
+"""
+
+import ast
+import re
+import unittest
+from pathlib import Path
+
+APP = Path(__file__).resolve().parents[1]
+BLOCKS_DIR = APP / "custom_html_blocks"
+SEEDER = APP / "setup" / "custom_html_blocks.py"
+HELPER = APP / "public" / "js" / "global_enhancements" / "workspace_block_return.js"
+README = BLOCKS_DIR / "README.md"
+CI = APP.parent / ".github" / "workflows" / "ci.yml"
+
+#: The blocks on sf_kit: the 34 department dashboard widgets.
+ON_KIT = (
+	"design_handoff_readiness",
+	"design_hydraulic_headroom",
+	"design_signoff_queue",
+	"design_wip_board",
+	"executive_bookings_backlog",
+	"executive_cash_runway",
+	"executive_risk_queue",
+	"executive_scorecard",
+	"finance_astrology",
+	"finance_bank_balances",
+	"finance_calendar",
+	"finance_new_jobs",
+	"finance_weather",
+	"finance_whos_working",
+	"hr_headcount_movement",
+	"hr_people_calendar",
+	"hr_time_capture",
+	"hr_training_compliance",
+	"marketing_channel_spend",
+	"marketing_funnel_cascade",
+	"marketing_source_health",
+	"marketing_unsourced_leads",
+	"operations_fleet_health",
+	"production_hours_variance",
+	"production_material_readiness",
+	"production_milestone_slippage",
+	"production_wip_aging",
+	"sales_handoff_backlog",
+	"sales_renewal_radar",
+	"sales_speed_to_lead",
+	"sales_stalled_deals",
+	"service_chemistry_alerts",
+	"service_day_board",
+	"service_labor_capture",
+)
+
+#: Blocks not converted yet, and why. Move one to ON_KIT in the change that converts it.
+NOT_YET = {
+	"desk_shortcuts": "Asks the server nothing and builds its tiles with createElement: no panel, no escape.",
+	"kpi_cockpit": "Its own tabbed shell and load(force) wrapper; a follow-up of TASK-2026-02822.",
+	"morning_briefing": "Markdown body and a load(false) wrapper; a follow-up of TASK-2026-02822.",
+	"projects_dashboard": "1,600 lines of tables and the Gantt; a follow-up of TASK-2026-02822.",
+	"task_dashboard": "The morning TV screen with its own polling panels; a follow-up of TASK-2026-02822.",
+	"training_my_dashboard": "Per-viewer cards with their own empty states; a follow-up of TASK-2026-02822.",
+	"travel_home": "Five hundred lines of trip cards; a follow-up of TASK-2026-02822.",
+}
+
+#: What a converted block must not contain, and why.
+BANNED = (
+	(r"\bfunction\s+esc\s*\(", "its own escape: use sf.esc"),
+	(r"\b(?:const|let|var)\s+esc\s*=", "its own escape: use sf.esc"),
+	(r"escape_html\s*\(", "a call to frappe.utils.escape_html: use sf.esc"),
+	(r"\bmuted\s*\(", "a muted() helper: panels are sf.state.render"),
+	(r"__ee_ticket", "its own ticket counter: use blocks.ticket"),
+	(r"class=\"\w+-pill", "-pill markup: use sf.chip"),
+	(
+		r"(?:innerHTML|textContent)\s*=[^;]*?(?:Loading|Refreshing|Could not load|turned off|unavailable\.)",
+		"a hand-written loading / error / switched-off line: use sf.state.render",
+	),
+)
+
+#: What every converted block must contain.
+REQUIRED = (
+	"const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;",
+	"if (blocks && blocks.kit && blocks.ticket) {",
+	"blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));",
+	# The older bundle's stand-in: it must draw (plain text) and not throw.
+	"startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);",
+	"sf.state.render(",
+	'"no-access"',
+	'"error", { title, on_action: ',
+)
+
+
+def strip_comments(text):
+	"""Block comments, then // line comments not preceded by ':' or a quote (so a URL stays)."""
+	text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+	return re.sub(r"(^|[^:\"'\\])//[^\n]*", r"\1", text)
+
+
+def code(prefix):
+	return strip_comments((BLOCKS_DIR / f"{prefix}.js").read_text(encoding="utf-8"))
+
+
+def seeded_prefixes():
+	for node in ast.parse(SEEDER.read_text(encoding="utf-8")).body:
+		if isinstance(node, ast.Assign) and any(
+			isinstance(target, ast.Name) and target.id == "BLOCKS" for target in node.targets
+		):
+			return {prefix for _name, prefix in ast.literal_eval(node.value)}
+	raise AssertionError("BLOCKS not found in setup/custom_html_blocks.py")
+
+
+def violations(text):
+	return [why for pattern, why in BANNED if re.search(pattern, text)]
+
+
+class TestTheScanner(unittest.TestCase):
+	"""Each rule must catch what it is for; a scanner that finds nothing proves nothing."""
+
+	def test_each_banned_shape_is_caught(self):
+		samples = {
+			"function esc(value) { return value; }": "its own escape",
+			"const esc = frappe.utils.escape_html;": "its own escape",
+			"x = frappe.utils.escape_html(v);": "escape_html",
+			'body.innerHTML = muted(__("No rows."));': "muted()",
+			"const t = (root.__ee_ticket = (root.__ee_ticket || 0) + 1);": "ticket",
+			'`<span class="ssd-pill ssd-pill-bad">${x}</span>`': "-pill",
+			'body.innerHTML = `<div class="x-muted">${__("Loading…")}</div>`;': "loading",
+			'body.innerHTML = `<div>${__("Could not load the board.")}</div>`;': "error",
+			'body.textContent = __("Sales is turned off in Settings.");': "switched-off",
+		}
+		for sample, label in samples.items():
+			with self.subTest(label):
+				self.assertTrue(violations(strip_comments(sample)), sample)
+
+	def test_the_kit_calls_are_not_mistaken_for_copies(self):
+		clean = (
+			'sf.state.render(body, "empty", { title: __("Sales is turned off.") });\n'
+			'const title = __("Could not load the board.");\n'
+			'sf.state.render(body, "error", { title, on_action: load });\n'
+			"const meta = list.map(sf.esc).join(' ');\n"
+			'const pill = sf.chip(__("Open"), "warn");\n'
+			"const escape = frappe.utils.escape_html;\n"
+		)
+		self.assertEqual(violations(strip_comments(clean)), [])
+
+	def test_a_comment_neither_trips_nor_satisfies_it(self):
+		self.assertEqual(violations(strip_comments("// was: function esc(value) and muted()\n")), [])
+		self.assertNotIn("blocks.kit(", strip_comments("// blocks.kit(container).then(...)\n"))
+
+
+class TestEveryBlockChooses(unittest.TestCase):
+	def test_every_seeded_block_is_on_the_kit_or_says_why_not(self):
+		seeded = seeded_prefixes()
+		self.assertGreaterEqual(len(seeded), 41)
+		self.assertEqual(sorted(seeded - set(ON_KIT) - set(NOT_YET)), [], "in neither list")
+		self.assertEqual(sorted(set(ON_KIT) & set(NOT_YET)), [], "in both lists")
+		self.assertEqual(sorted((set(ON_KIT) | set(NOT_YET)) - seeded), [], "not a seeded block")
+
+	def test_a_block_waiting_is_really_not_converted(self):
+		for prefix in NOT_YET:
+			with self.subTest(prefix):
+				self.assertNotIn("blocks.kit(", code(prefix), "converted: move it to ON_KIT")
+
+
+class TestConvertedBlocksCarryNoShell(unittest.TestCase):
+	def test_no_converted_block_brings_its_own_copy_back(self):
+		for prefix in ON_KIT:
+			text = code(prefix)
+			for why in violations(text):
+				with self.subTest(block=prefix, rule=why):
+					self.fail(f"{prefix}.js: {why}")
+
+	def test_each_takes_the_kit_through_the_guarded_helper(self):
+		for prefix in ON_KIT:
+			text = code(prefix)
+			for needle in REQUIRED:
+				with self.subTest(block=prefix, needle=needle):
+					self.assertTrue(needle in text, f"{prefix}.js lacks: {needle}")
+
+	def test_each_error_title_is_handed_to_the_kit(self):
+		"""Every "Could not load" sentence is the error panel's title, not markup."""
+		for prefix in ON_KIT:
+			for line in code(prefix).splitlines():
+				if "Could not load" in line and "Could not fetch" not in line:
+					with self.subTest(block=prefix, line=line.strip()):
+						self.assertRegex(line, r"const title = __\(\"Could not load ")
+
+
+class TestTheHelper(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		cls.code = strip_comments(HELPER.read_text(encoding="utf-8"))
+
+	def test_it_exports_kit_and_ticket(self):
+		self.assertIn("api.kit = function (root)", self.code)
+		self.assertIn("api.ticket = function (root)", self.code)
+
+	def test_the_kit_is_required_once_by_its_bundle_name(self):
+		# A bundle name, never a raw /assets path (the year-long immutable cache in CLAUDE.md).
+		self.assertIn('const KIT_ASSET = "sf_kit.bundle.js";', self.code)
+		self.assertEqual(self.code.count("frappe.require("), 1)
+		self.assertIn("if (kitLoaded) return kitLoaded;", self.code)
+		self.assertNotIn("/assets/", self.code)
+
+	def test_the_ticket_keeps_the_counter_on_the_root(self):
+		ticket = self.code[self.code.index("api.ticket = function (root)") :]
+		ticket = ticket[: ticket.index("\n\t};\n")]
+		self.assertIn("holder.__ee_ticket = (holder.__ee_ticket || 0) + 1", ticket)
+		self.assertIn("return () => holder.__ee_ticket === mine;", ticket)
+
+	def test_ci_and_the_readme_know_about_it(self):
+		self.assertTrue(
+			"python -m unittest erpnext_enhancements.tests.test_block_kit" in CI.read_text(encoding="utf-8"),
+			"ci.yml never runs this suite",
+		)
+		readme = README.read_text(encoding="utf-8")
+		self.assertIn("blocks.kit(", readme)
+		self.assertIn("blocks.ticket(", readme)
+
+
+if __name__ == "__main__":
+	unittest.main()

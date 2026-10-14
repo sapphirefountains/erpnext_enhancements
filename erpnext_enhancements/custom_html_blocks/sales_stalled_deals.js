@@ -21,17 +21,27 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#ssd-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,60 +61,62 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="ssd-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#ssd-body");
         const count = container.querySelector("#ssd-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Stalled Deals is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Stalled Deals is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const deals = message.deals || [];
         count.textContent = deals.length ? __("{0} idle {1}d+", [deals.length, message.threshold_days]) : "";
         if (!deals.length) {
-            body.innerHTML = muted(__("Nothing has gone quiet. Every open deal was touched this fortnight."));
+            sf.state.render(body, "empty", {
+                title: __("Nothing has gone quiet. Every open deal was touched this fortnight."),
+            });
             return;
         }
 
         body.innerHTML = deals
             .map((d) => {
-                const meta = [d.owner, money(d.amount)].filter(Boolean).map(esc).join(" · ");
-                const stage = d.stage ? `<span class="ssd-pill">${esc(d.stage)}</span>` : "";
+                const meta = [d.owner, money(d.amount)].filter(Boolean).map(sf.esc).join(" · ");
+                const stage = d.stage ? sf.chip(d.stage) : "";
                 const tone = d.idle_days >= 30 ? "ssd-bad" : "ssd-warn";
                 return `
                     <div class="ssd-row">
-                        <a class="ssd-name" href="/desk/opportunity/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="ssd-name" href="/desk/opportunity/${encodeURIComponent(d.name)}">${sf.esc(d.title)}</a>
                         ${stage}
                         <span class="ssd-meta">${meta}</span>
-                        <span class="ssd-age ${tone}">${esc(__("{0}d idle", [d.idle_days]))}</span>
+                        <span class="ssd-age ${tone}">${sf.esc(__("{0}d idle", [d.idle_days]))}</span>
                     </div>`;
             })
             .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#ssd-body");
         const refresh = container.querySelector("#ssd-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load stalled deals."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load stalled deals.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -112,6 +124,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no

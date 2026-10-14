@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.647.0] - 2026-10-13
+
+Custom pages S3.3b (TASK-2026-02822): the 34 department dashboard widgets draw their panels,
+chips and escaping from sf_kit, and their copies of the same shell are gone.
+
+### Added
+
+- **`workspace_blocks.kit(root)` and `workspace_blocks.ticket(root)`** in
+  `public/js/global_enhancements/workspace_block_return.js` (the global bundle), the one way a
+  Custom HTML Block gets the kit.
+  - `kit(root)` calls `frappe.require(["sf_kit.bundle.js"])` once per page load, adopts
+    `sf_kit.CSS` into the block's shadow root once per root (one constructed sheet shared by
+    every block), and resolves `window.sf_kit`.
+  - It never rejects. v16's `frappe.require` calls back even when the script failed to load
+    (`assets.js`, `script.onerror = resolve`, "for backward compatibility") and records the path
+    as executed either way, so a later require never fetches it again. Verified on
+    `origin/version-16`, not the v17-dev working tree. So a kit that is missing after the
+    callback stays missing, and `kit()` resolves a plain-text stand-in (`esc`, a `state.render`
+    writing the title as text, a `chip` that is its escaped word). A ten-second wait resolves it
+    too, if no callback ever comes.
+  - `ticket(root)` is the "only the newest answer draws" counter each block wrote by hand as
+    `root.__ee_ticket`, with the same semantics and the same property.
+  - It is not `sf_kit_ready()` from the S3.1 page loader (#1256, not merged). That one is for
+    Desk pages and this one stays inside the block helper; the two can be unified later.
+- **`tests/test_block_kit.py`**, a CI step. It fails when a converted block brings back its own
+  escape, a `muted()` helper, a ticket counter, `-pill` markup, or a hand-written loading,
+  error or switched-off line, or loses its guard for an older bundle. It also requires every
+  seeded block to be on the kit or listed with the reason it is still waiting.
+
+### Changed
+
+- **The department widgets moved onto sf_kit**: Sales, Operations, Design, Production, Service,
+  Marketing, HR, Executive and all six Finance widgets.
+  - Loading, empty, switched-off, error and no-access are `sf.state.render` panels. An error
+    panel carries Try again, which loads again. A 403, read from the jqXHR's `status`, draws
+    no access instead.
+  - Status pills are `sf.chip`, with the kit's tones (`danger`, `warn`, `good`, or neutral for
+    a plain stage or state). Escaping is `sf.esc`.
+  - Each block's `esc`, `muted()` and ticket copies are deleted, along with the `-pill` CSS
+    rules that nothing uses any more (15 files, plus Bank Balances' status pills).
+  - Calls still go through `frappe.call`, so frappe's own dialogs are unchanged.
+  - Lifecycle is unchanged: `onWorkspaceReturn` registration, Bank Balances' guarded return,
+    and Who's Working's on-screen poll skip. The Finance widgets that redrew a loading line on
+    every load still do.
+  - The one new behaviour is a ticket on Finance Astrology, which had none: two sign changes in
+    a row could draw the older sign's text last.
+  - **The fallback.** A device whose cached global bundle predates the helpers has no
+    `blocks.kit`, so each block keeps a one-line stand-in. It draws plain text, without the
+    ticket. It only has to draw, not throw.
+- **`scripts/test_workspace_block_return.mjs`** covers the new helpers: the ticket, the
+  memoized require, the stand-in, CSS adoption once per root and never into a document, and the
+  wait when no callback comes. It also runs every converted block on the REAL
+  `sf_kit.bundle.js`:
+  - a 500 draws the error panel, and its Try again asks the server again;
+  - a 403 draws no access;
+  - a null or switched-off answer draws the empty panel, and so do eight blocks given an empty
+    list;
+  - on an older bundle the block still draws, as plain text.
+- `custom_html_blocks/README.md` documents how a block gets the kit, the ticket helper and the
+  fallback rule. `docs/app-design-system.md` points to it.
+
+Not converted yet, and listed in `test_block_kit.py` as a follow-up: the KPI Cockpit, Morning
+Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk
+Shortcuts asks the server nothing and has no panel to convert.
+
 ## [1.641.0] - 2026-10-13
 
 Custom pages S3.3a (TASK-2026-02822): the dashboard blocks' status colours come from the design

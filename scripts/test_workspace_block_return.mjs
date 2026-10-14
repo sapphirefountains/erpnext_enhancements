@@ -45,7 +45,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -311,6 +311,117 @@ await test("onScreen: a hidden or detached block is off screen, and what it cann
 		},
 	};
 	assert.equal(onScreen(broken), true, "a throwing layout read fails open");
+});
+
+await test("ticket: only the newest ticket on a root is current, and roots do not share one", () => {
+	const desk = makeDesk();
+	const ticket = desk.api.ticket;
+	assert.equal(typeof ticket, "function", "not exported on erpnext_enhancements.workspace_blocks");
+	const a = {};
+	const b = {};
+	const first = ticket(a);
+	assert.equal(first(), true, "a lone ticket is the newest");
+	const second = ticket(a);
+	assert.equal(first(), false, "an older answer must not draw");
+	assert.equal(second(), true);
+	const other = ticket(b);
+	assert.equal(second(), true, "another root's ticket does not retire this one");
+	assert.equal(other(), true);
+	assert.equal(ticket(null)(), true, "no root: every answer draws, nothing throws");
+});
+
+// A CSSStyleSheet that records its text, for the adoption checks.
+class FakeSheet {
+	replaceSync(text) {
+		this.text = text;
+	}
+}
+
+function kitDesk(require, globals = {}) {
+	const desk = makeDesk({ globals: Object.assign({ CSSStyleSheet: FakeSheet }, globals) });
+	desk.requires = [];
+	if (require) {
+		desk.sandbox.frappe.require = (assets, callback) => {
+			desk.requires.push(assets);
+			return require(assets, callback, desk);
+		};
+	}
+	return desk;
+}
+
+const shadowRoot = () => ({ host: { isConnected: true }, adoptedStyleSheets: [] });
+
+await test("kit: a failed load (v16 calls back anyway) resolves a plain-text stand-in, and asks once", async () => {
+	const desk = kitDesk((assets, callback) => setImmediate(callback));
+	const roots = [shadowRoot(), shadowRoot(), shadowRoot()];
+	const kits = await Promise.all(roots.map((root) => desk.api.kit(root)));
+	await desk.api.kit(roots[0]);
+	// JSON, not deepEqual: the array was built in the desk's realm.
+	assert.equal(JSON.stringify(desk.requires), '[["sf_kit.bundle.js"]]', "one frappe.require per page load, memoized");
+	const sf = kits[0];
+	assert.ok(kits.every((kit) => kit === sf), "one stand-in");
+	assert.equal(sf.stand_in, true);
+	assert.equal(sf.esc(`<b x='1'>&\``), "&lt;b x=&#39;1&#39;&gt;&amp;&#96;");
+	assert.equal(sf.esc(null), "");
+	assert.equal(sf.esc(0), "0");
+	assert.equal(sf.chip(" <i>Open</i> ", "warn"), "&lt;i&gt;Open&lt;/i&gt;", "a chip is its escaped word");
+	const el = { textContent: "" };
+	sf.state.render(el, "error", { title: "Could not load <x>.", on_action() {} });
+	assert.equal(el.textContent, "Could not load <x>.", "plain text: textContent, never markup");
+	sf.state.render(el, "no-access");
+	assert.equal(el.textContent, "You do not have access to this.");
+	sf.state.render(el, "loading");
+	assert.equal(el.textContent, "Loading…");
+	assert.equal(sf.state.render(null, "loading"), null, "no element: nothing, not a throw");
+	assert.ok(roots.every((root) => root.adoptedStyleSheets.length === 0), "a stand-in adopts no styles");
+});
+
+await test("kit: a loaded kit is returned, its CSS adopted once per shadow root and never into a document", async () => {
+	const kit = {
+		esc: (v) => String(v),
+		chip: (v) => String(v),
+		state: { render() {} },
+		CSS: ".sf-state { display: flex; }",
+	};
+	const desk = kitDesk((assets, callback, d) => {
+		setImmediate(() => {
+			d.sandbox.sf_kit = kit;
+			callback();
+		});
+	});
+	const a = shadowRoot();
+	const b = shadowRoot();
+	const doc = { adoptedStyleSheets: [] };
+	assert.equal(await desk.api.kit(a), kit);
+	assert.equal(await desk.api.kit(a), kit);
+	assert.equal(await desk.api.kit(b), kit);
+	assert.equal(await desk.api.kit(doc), kit);
+	assert.equal(a.adoptedStyleSheets.length, 1, "adopted once per root, however often it asks");
+	assert.equal(a.adoptedStyleSheets[0].text, kit.CSS);
+	assert.equal(b.adoptedStyleSheets[0], a.adoptedStyleSheets[0], "one constructed sheet for every block");
+	assert.equal(doc.adoptedStyleSheets.length, 0, "a block that fell back to document styles nothing");
+	assert.equal(desk.requires.length, 1);
+});
+
+await test("kit: a kit already on the page is used without a require; no frappe.require is a stand-in", async () => {
+	const kit = { esc: String, chip: String, state: { render() {} } };
+	const present = kitDesk(() => assert.fail("required a kit the page already had"));
+	present.sandbox.sf_kit = kit;
+	assert.equal(await present.api.kit(shadowRoot()), kit);
+	const bare = kitDesk(null);
+	delete bare.sandbox.frappe.require;
+	assert.equal((await bare.api.kit(shadowRoot())).stand_in, true);
+});
+
+await test("kit: a require that never calls back still resolves (the ten-second wait), and a throw too", async () => {
+	const silent = kitDesk(() => undefined, {
+		setTimeout: (fn, ms) => (ms === 10000 ? setImmediate(fn) : setTimeout(fn, ms)),
+	});
+	assert.equal((await silent.api.kit(shadowRoot())).stand_in, true);
+	const throws = kitDesk(() => {
+		throw new Error("assets.js broke");
+	});
+	assert.equal((await throws.api.kit(shadowRoot())).stand_in, true);
 });
 
 await test("no router: a no-op that says so, not an exception", () => {
@@ -646,6 +757,165 @@ for (const poller of POLLERS) {
 			assert.equal(desk.calls.length > before, asks, asks ? "the poll asked nothing" : "a hidden block polled");
 		});
 	}
+}
+
+// ============================================== part three: the blocks on the real kit
+
+/**
+ * The blocks on sf_kit draw their panels with the REAL kit: sf_kit.bundle.js imported the way
+ * scripts/test_sf_kit.mjs imports it (it installs window.sf_kit), then handed to each block's
+ * desk as `sf_kit`, which is what blocks.kit() resolves to on a page. The body a block draws
+ * into keeps its markup, so the panel itself is checked: a 500 is an error panel with Try again
+ * (and Try again asks again), a 403 is no access, an empty or switched-off answer the empty one.
+ * And on a bundle from before blocks.kit, the block still draws, as plain text.
+ */
+async function importRealKit() {
+	globalThis.window = { setTimeout, clearTimeout, console };
+	globalThis.document = { cookie: "", body: null, head: null };
+	try {
+		await import(pathToFileURL(path.join(APP, "public", "js", "sf_kit.bundle.js")).href);
+		const sf = globalThis.window.sf_kit;
+		assert.ok(sf && sf.state && typeof sf.chip === "function", "sf_kit.bundle.js installed no kit");
+		return sf;
+	} finally {
+		delete globalThis.window;
+		delete globalThis.document;
+	}
+}
+
+const REAL_KIT = await importRealKit();
+
+/** An element that keeps what is written into it, enough for state.render and its button. */
+function element() {
+	let html = "";
+	let button = null;
+	const el = {
+		textContent: "",
+		disabled: false,
+		listeners: {},
+		style: {},
+		addEventListener(type, fn) {
+			(el.listeners[type] = el.listeners[type] || []).push(fn);
+		},
+		querySelector(selector) {
+			if (selector !== ".sf-state-action" || !html.includes("sf-state-action")) return null;
+			if (!button) button = element();
+			return button;
+		},
+		querySelectorAll: () => [],
+		appendChild() {},
+		click() {
+			for (const fn of el.listeners.click || []) fn({ preventDefault() {} });
+		},
+	};
+	Object.defineProperty(el, "innerHTML", {
+		get: () => html,
+		set: (value) => {
+			html = String(value);
+			button = null;
+		},
+	});
+	return el;
+}
+
+const onKit = fs
+	.readdirSync(BLOCKS_DIR)
+	.filter((name) => name.endsWith(".js"))
+	.filter((name) => stripComments(fs.readFileSync(path.join(BLOCKS_DIR, name), "utf8")).includes("blocks.kit("))
+	.sort();
+
+console.log("\nevery block on the kit (" + onKit.length + "), drawn with the real sf_kit");
+
+await test("the blocks on the kit are found", () => {
+	assert.ok(onKit.length >= 34, "only " + onKit.length + " blocks use blocks.kit");
+	assert.ok(onKit.includes("sales_stalled_deals.js") && onKit.includes("finance_whos_working.js"));
+});
+
+/** Run a block on the real kit (or, with `old`, on a bundle from before blocks.kit). */
+async function runOnKit(file, answer, options = {}) {
+	const source = fs.readFileSync(path.join(BLOCKS_DIR, file), "utf8");
+	const desk = makeBlockDesk();
+	desk.sandbox.CSSStyleSheet = FakeSheet;
+	desk.sandbox.sf_kit = REAL_KIT;
+	if (options.old) {
+		delete desk.api.kit;
+		delete desk.api.ticket;
+	}
+	desk.sandbox.frappe.call = (opts) => {
+		desk.calls.push(opts && opts.method);
+		return answer();
+	};
+	desk.navigate(["Workspaces", "Dashboard"]);
+	const body = element();
+	const refresh = element();
+	const root = {
+		host: { isConnected: true },
+		adoptedStyleSheets: [],
+		querySelector: (selector) =>
+			/-body$/.test(selector) ? body : /-refresh$/.test(selector) ? refresh : anything(),
+		querySelectorAll: () => [],
+	};
+	new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: file }).runInContext(desk.sandbox)(root);
+	await settle(20);
+	return { desk, body, refresh, root };
+}
+
+const fail = (status) => () => Promise.reject({ status, responseText: "" });
+
+for (const file of onKit) {
+	await test(file + ": a 500 is an error panel whose Try again asks again", async () => {
+		const { desk, body, root } = await runOnKit(file, fail(500));
+		assert.match(body.innerHTML, /sf-state--error/, "no error panel: " + body.innerHTML.slice(0, 120));
+		assert.match(body.innerHTML, /role="alert"/);
+		assert.match(body.innerHTML, /Try again/);
+		assert.equal(root.adoptedStyleSheets.length, 1, "the kit's styles were not adopted into the block");
+		const before = desk.calls.length;
+		body.querySelector(".sf-state-action").click();
+		await settle(20);
+		assert.ok(desk.calls.length > before, "Try again asked the server nothing");
+	});
+
+	await test(file + ": a 403 is the no-access panel", async () => {
+		const { body } = await runOnKit(file, fail(403));
+		assert.match(body.innerHTML, /sf-state--no-access/, "no no-access panel: " + body.innerHTML.slice(0, 120));
+		assert.doesNotMatch(body.innerHTML, /Try again/);
+	});
+
+	await test(file + ": an empty or switched-off answer is the empty panel", async () => {
+		for (const message of [null, { enabled: false }]) {
+			const { body } = await runOnKit(file, () => Promise.resolve({ message }));
+			assert.match(body.innerHTML, /sf-state--empty/, JSON.stringify(message) + ": " + body.innerHTML.slice(0, 120));
+		}
+	});
+
+	await test(file + ": on a bundle from before blocks.kit it still draws, as plain text", async () => {
+		const failed = await runOnKit(file, fail(500), { old: true });
+		assert.match(failed.body.textContent, /\S/, "a failed load drew nothing");
+		assert.equal(failed.body.innerHTML, "", "the stand-in writes text, never markup");
+		const off = await runOnKit(file, () => Promise.resolve({ message: null }), { old: true });
+		assert.match(off.body.textContent, /turned off/i, "a switched-off block said nothing");
+	});
+}
+
+// An answer with nothing in it: the lists a department widget draws, all empty. Each block's
+// own empty sentence, in the kit's empty panel. (The switched-off case above covers the rest:
+// snapshot widgets, Weather, Bank Balances.)
+const EMPTY_LISTS = {
+	"sales_speed_to_lead.js": { leads: [] },
+	"sales_stalled_deals.js": { deals: [], threshold_days: 14 },
+	"design_handoff_readiness.js": { designs: [] },
+	"executive_scorecard.js": { cards: [] },
+	"finance_new_jobs.js": { jobs: [] },
+	"finance_calendar.js": { events: [] },
+	"finance_whos_working.js": { workers: [] },
+	"service_day_board.js": { visits: [] },
+};
+for (const [file, lists] of Object.entries(EMPTY_LISTS)) {
+	await test(file + ": an answer with nothing in it is the empty panel", async () => {
+		const { body } = await runOnKit(file, () => Promise.resolve({ message: Object.assign({ enabled: true }, lists) }));
+		assert.match(body.innerHTML, /sf-state--empty/, body.innerHTML.slice(0, 160));
+		assert.doesNotMatch(body.innerHTML, /turned off/, "drew the switched-off sentence for an empty list");
+	});
 }
 
 await settle(20);

@@ -21,17 +21,27 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#dsq-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,23 +61,21 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="dsq-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#dsq-body");
         const count = container.querySelector("#dsq-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Awaiting Sign-Off is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Awaiting Sign-Off is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const designs = message.designs || [];
         count.textContent = designs.length ? __("{0} waiting", [designs.length]) : "";
         if (!designs.length) {
-            body.innerHTML = muted(__("Nothing is waiting on a sign-off."));
+            sf.state.render(body, "empty", { title: __("Nothing is waiting on a sign-off.") });
             return;
         }
 
@@ -76,7 +84,7 @@
                 // "Package Ready" with blockers open is the combination worth seeing:
                 // it means the design believes it is done and the checks disagree.
                 const state = d.blockers
-                    ? `<span class="dsq-bad">${esc(__("{0} blockers", [d.blockers]))}</span>`
+                    ? `<span class="dsq-bad">${sf.esc(__("{0} blockers", [d.blockers]))}</span>`
                     : d.ready
                       ? `<span class="dsq-good">${__("Ready")}</span>`
                       : "";
@@ -84,32 +92,34 @@
                 const tone = d.waiting_days >= 14 ? "dsq-bad" : d.waiting_days >= 7 ? "dsq-warn" : "";
                 return `
                     <div class="dsq-row">
-                        <a class="dsq-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${esc(d.title)}</a>
+                        <a class="dsq-name" href="/desk/water-feature-design/${encodeURIComponent(d.name)}">${sf.esc(d.title)}</a>
                         <span class="dsq-meta">${meta}</span>
-                        <span class="dsq-age ${tone}">${esc(__("{0}d", [d.waiting_days]))}</span>
+                        <span class="dsq-age ${tone}">${sf.esc(__("{0}d", [d.waiting_days]))}</span>
                     </div>`;
             })
             .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#dsq-body");
         const refresh = container.querySelector("#dsq-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load the sign-off queue."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load the sign-off queue.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -117,6 +127,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no
