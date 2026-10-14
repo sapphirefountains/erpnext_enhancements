@@ -464,6 +464,15 @@
 	color: var(--sf-text-muted);
 }
 
+/* ---- The Triton assistant button ----
+   It floats bottom-right over every Desk page (triton_widget.css: bottom 16px, above everything),
+   which on this page is exactly where the footer's Next button sits: on a phone it covered Next
+   completely (seen live on 2026-10-13). While the page shows (body.ge-page-active, set on show and
+   cleared on hide in guided_entry.js) it floats above the footer instead. */
+body.ge-page-active .triton-fab {
+	bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+
 /* ---- Footer: Back, the saving line, Next ---- */
 .ge-footer {
 	position: sticky;
@@ -577,6 +586,13 @@
 		flex: 0 0 100%;
 		max-width: 100%;
 		width: 100%;
+	}
+	/* Frappe's own form padding (15px on the section and 15px on the column) set every field 30px
+	   in from the step's title; on a phone that width belongs to the field. */
+	.ge-fields .form-section,
+	.ge-fields .form-section .form-column {
+		padding-left: 0;
+		padding-right: 0;
 	}
 	.ge-conflict-row {
 		grid-template-columns: minmax(0, 1fr);

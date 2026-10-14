@@ -49,13 +49,20 @@ frappe.pages["guided-entry"].on_page_load = function (wrapper) {
 	});
 	wrapper.guided_entry = new GuidedEntry(page, wrapper);
 	// Leaving for another Desk page (the sidebar, a link) saves what was typed, as a step change does.
-	$(wrapper).on("hide", () => wrapper.guided_entry.on_hide());
+	$(wrapper).on("hide", () => {
+		document.body.classList.remove(GE_BODY_CLASS);
+		wrapper.guided_entry.on_hide();
+	});
 };
 
 frappe.pages["guided-entry"].on_page_show = function (wrapper) {
+	// While this page shows, the Triton assistant button floats above the sticky footer instead of
+	// on its Next button (guided_entry.bundle.css). Cleared on hide, so other pages keep it as is.
+	document.body.classList.add(GE_BODY_CLASS);
 	if (wrapper.guided_entry) wrapper.guided_entry.route_changed();
 };
 
+const GE_BODY_CLASS = "ge-page-active";
 const GE_ASSETS = ["sf_kit.bundle.js", "sf_kit.bundle.css", "guided_entry.bundle.js", "guided_entry.bundle.css"];
 const GE_API = "erpnext_enhancements.form_kit.api.";
 const GE_LIST_SUFFIX = "__ge_list";
