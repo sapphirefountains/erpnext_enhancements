@@ -1589,7 +1589,9 @@ class TestTheSource(unittest.TestCase):
 		for name in READS:
 			fn = found.pop(name)
 			with self.subTest(read=name):
-				self.assertEqual([ast.unparse(d) for d in fn.decorator_list], ["frappe.whitelist(methods=['GET'])"])
+				self.assertEqual(
+					[ast.unparse(d) for d in fn.decorator_list], ["frappe.whitelist(methods=['GET'])"]
+				)
 				self.assertEqual([a.arg for a in fn.args.args], READS[name])
 				body = [
 					s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
@@ -1628,7 +1630,9 @@ class TestTheSource(unittest.TestCase):
 				for allowed in early:
 					(at,) = [(c[0], c[1]) for c in calls if c[2] == allowed]
 					self.assertLess(at, begin[0])
-					checks = [(c[0], c[1]) for c in calls if c[2] in ("scan._check_quick_item", "require_manage")]
+					checks = [
+						(c[0], c[1]) for c in calls if c[2] in ("scan._check_quick_item", "require_manage")
+					]
 					self.assertTrue(checks and max(checks) < at, "every refusal before the Item is made")
 				finish = [(c[0], c[1]) for c in calls if c[2] == "scan._finish_log"]
 				self.assertTrue(finish and finish[0] > max(writes))

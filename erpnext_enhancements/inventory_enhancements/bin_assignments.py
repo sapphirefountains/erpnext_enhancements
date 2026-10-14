@@ -472,7 +472,11 @@ def restore(changes):
 			row = frappe.db.get_value(
 				"Item Default", change.get("row"), ["parent", "default_warehouse"], as_dict=True
 			)
-			if not row or row.parent != change.get("item") or row.default_warehouse != change.get("warehouse"):
+			if (
+				not row
+				or row.parent != change.get("item")
+				or row.default_warehouse != change.get("warehouse")
+			):
 				continue
 			require_manage()
 			frappe.db.set_value(
@@ -885,7 +889,9 @@ def _bin_rows():
 def _trails(rows):
 	"""Each bin's breadcrumb (``stock_scan_rules.location_trail``), worked out from one read of
 	the group warehouses rather than one query per bin (production had 221 bins on 2026-10-14)."""
-	groups = frappe.get_all("Warehouse", filters={"is_group": 1}, fields=["name", "warehouse_name", "lft", "rgt"])
+	groups = frappe.get_all(
+		"Warehouse", filters={"is_group": 1}, fields=["name", "warehouse_name", "lft", "rgt"]
+	)
 	groups.sort(key=lambda g: cint(g.lft))
 	out = {}
 	for row in rows:

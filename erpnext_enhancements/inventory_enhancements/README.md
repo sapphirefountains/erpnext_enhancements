@@ -20,6 +20,7 @@ model, the pure rules and the label reads.
 | `doctype/inventory_scanner_settings/` | Single — scanner configuration, and the Stock Scan page's accounts, cost center, job rule and undo window |
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
+| `page/bin_manager/` | The Bin Manager (v1.693.0): one bin's items on a PC, no scanning — change a quantity, move, unassign, send to the boneyard, add or create an item, undo. See *The Bin Manager page* below |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
 | `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
@@ -528,6 +529,54 @@ guided Item flow; it passes the gate only when it changes something.
 once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
 QR label like any location.
 
+### The Bin Manager page (v1.693.0)
+
+ER-2026-1320545: a Desk page for a PC, no scanning, separate from `/stock-scan` and calling the
+same endpoints. `/desk/bin-manager` is the picker (every leaf, enabled, non-transit warehouse,
+grouped under its parent, with how many items are on hand and assigned there, and a filter);
+`/desk/bin-manager/<warehouse>` is one bin. Each is its own history entry: picking a bin is one
+`set_route`, Back returns to the picker, Forward to the bin, and dialogs push nothing (the router
+closes an open one on Back). `?warehouse=<name>` is read from `frappe.route_options` and opens that
+bin in place of the picker; `?q=` fills the filter.
+
+A bin shows the rows `api/stock_scan.get_location` returns, each with why it is listed, and these
+actions, shown only to people who can do them (from `bin_assignments.manager_boot`, never a role
+list in the page):
+
+| Action | Endpoint | Shown when |
+|---|---|---|
+| Change quantity | `set_count` (a Stock Reconciliation: a count correction, never a Material Issue) | `can_count`: Stock Reconciliation create and submit |
+| Move | `move_to`, with "Make <bin> this item's bin" ticked when everything moves, unticked for part, decided again on each quantity change until touched | `can_move`: Stock Entry create and submit, stock here; the box needs `can_manage` and is never offered for the boneyard |
+| Keep on this bin | `assign` | `can_manage`, the item listed here but not on the bin |
+| Send to boneyard | `send_to_boneyard` | `can_manage`, `can_move`, a boneyard set, stock here, not the boneyard |
+| Unassign | `unassign`; with stock here it first offers Move or Send to boneyard (the server refuses unassign with stock) | `can_manage` |
+| Add existing item | `api/stock_scan.search_items`, then `assign` | `can_manage`, not the boneyard |
+| New item | `create_and_assign` (below), with `check_new_item`'s preview while typing | `can_manage` and Item create, not the boneyard |
+
+Each save is logged on `Stock Scan Log`; the page lists your recent saves on this bin
+(`get_recent`, filtered to saves to or out of it) with Undo (`api/stock_scan.undo`).
+
+**`create_and_assign(warehouse, client_ref, item_code, item_name, item_group, stock_uom)`** makes
+the Item through the store run's quick-item path unchanged (`_quick_item_spec`,
+`_check_quick_item`, `_quick_item`: the same refusals, inserted as the user, the naming guard on
+insert, an Item Default for the bin's company pointing at the bin) and puts it on the bin, in one
+transaction. Its bin and gate refusals come before the Item exists; the log row (an *Assign* with
+`created_item` and `needs_review`, so the new Item joins the weekly "New Items From Store Runs"
+review) goes in right after the Item, because its `item_code` is a Link. Undo disables the rule and
+clears the Item Default it set (`rule_changes` kind `item_default_set`) while it still names the bin;
+**the Item stays**, as a store run's does.
+
+**`manager_boot()`** (GET) is the page's one read of its own: the bins with counts and breadcrumbs,
+`can_manage`, `can_count`, `can_move`, `can_create_items`, the boneyard (read from Inventory Scanner
+Settings on the server: the page never reads a Settings Single), and the quick Item's groups and
+units. The page is in the Operations Hub (a shortcut beside Stock Scan, and its Inventory card) and
+the Inventory Enhancements workspace (Counts), linked by `patches/bin_manager_hub_links`. It admits
+the Stock Scan roles; all four read `Stock Scan Log`, so the module is never hidden from them.
+
+The page's decisions are `public/js/bin_manager/logic.js` and its state and calls
+`public/js/bin_manager/controller.js` (`bin_manager.bundle.js`, `window.sf_bin_manager`); the page
+script draws and wires, and its CSS is `bin_manager.css`, every selector under `.bm-`.
+
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -698,6 +747,7 @@ python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Acco
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
 python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
+python -m unittest erpnext_enhancements.tests.test_bin_manager -v         # create_and_assign, manager_boot, and the page under node (scripts/test_bin_manager.mjs)
 node scripts/test_stock_scan_client.mjs
 ```
 

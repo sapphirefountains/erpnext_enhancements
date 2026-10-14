@@ -48,7 +48,9 @@ LOGIC = APP / "public" / "js" / "bin_manager" / "logic.js"
 CONTROLLER = APP / "public" / "js" / "bin_manager" / "controller.js"
 HARNESS = REPO / "scripts" / "test_bin_manager.mjs"
 OPS_HUB = APP / "enhancements_core" / "workspace" / "operations_hub" / "operations_hub.json"
-INV_WS = APP / "inventory_enhancements" / "workspace" / "inventory_enhancements" / "inventory_enhancements.json"
+INV_WS = (
+	APP / "inventory_enhancements" / "workspace" / "inventory_enhancements" / "inventory_enhancements.json"
+)
 PATCH = APP / "patches" / "bin_manager_hub_links.py"
 PATCHES_TXT = APP / "patches.txt"
 
@@ -165,7 +167,9 @@ class TestCreateAndAssign(_Base):
 	def test_creates_the_item_as_the_user_and_puts_it_on_the_bin(self):
 		out = self.create()
 		item = base._table("Item")["PDT-0420"]
-		self.assertEqual((item["item_name"], item["is_stock_item"], item["stock_uom"]), ("FITTING, ELBOW, 2 IN", 1, "Unit"))
+		self.assertEqual(
+			(item["item_name"], item["is_stock_item"], item["stock_uom"]), ("FITTING, ELBOW, 2 IN", 1, "Unit")
+		)
 		self.assertIn(("insert", "Item", False), STATE["writes"], "as the user, never past the framework")
 		(rule,) = base._rules_for("PDT-0420", BIN_A)
 		self.assertEqual(rule["disable"], 0)
@@ -306,7 +310,8 @@ class TestManagerBoot(_Base):
 	def test_what_the_caller_may_do_comes_from_their_permissions(self):
 		out = base.bins.manager_boot()
 		self.assertEqual(
-			(out["can_manage"], out["can_count"], out["can_move"], out["can_create_items"]), (True, True, True, True)
+			(out["can_manage"], out["can_count"], out["can_move"], out["can_create_items"]),
+			(True, True, True, True),
 		)
 		base._as_stock_user()
 		STATE["perm"][("Item", "create")] = False
@@ -389,7 +394,8 @@ class TestThePageFiles(unittest.TestCase):
 		for selector in selectors:
 			with self.subTest(selector=selector):
 				self.assertTrue(
-					re.match(r"^(\[data-theme=\"dark\"\]\s+)?\.bm-", selector), f"{selector!r} is not namespaced"
+					re.match(r"^(\[data-theme=\"dark\"\]\s+)?\.bm-", selector),
+					f"{selector!r} is not namespaced",
 				)
 
 	def test_the_page_loads_bundles_never_a_raw_assets_path(self):
@@ -410,7 +416,9 @@ class TestThePageFiles(unittest.TestCase):
 			"erpnext_enhancements.inventory_enhancements.bin_assignments.": (
 				APP / "inventory_enhancements" / "bin_assignments.py"
 			).read_text(encoding="utf-8"),
-			"erpnext_enhancements.api.stock_scan.": (APP / "api" / "stock_scan.py").read_text(encoding="utf-8"),
+			"erpnext_enhancements.api.stock_scan.": (APP / "api" / "stock_scan.py").read_text(
+				encoding="utf-8"
+			),
 		}
 		found = re.findall(r'(BA|SCAN) \+ "(\w+)"', code)
 		self.assertGreaterEqual(len(found), 11)
@@ -450,7 +458,10 @@ class TestWhereToFindIt(unittest.TestCase):
 		rest = links[start + 1 :]
 		end = next((i for i, l in enumerate(rest) if l["type"] == "Card Break"), len(rest))
 		members = rest[:end]
-		self.assertIn(("Bin Manager", "bin-manager", "Page"), [(l["label"], l.get("link_to"), l.get("link_type")) for l in members])
+		self.assertIn(
+			("Bin Manager", "bin-manager", "Page"),
+			[(l["label"], l.get("link_to"), l.get("link_type")) for l in members],
+		)
 		self.assertEqual(links[start]["link_count"], len(members))
 
 	def test_the_patch_lands_both_files_and_is_registered(self):
@@ -461,7 +472,8 @@ class TestWhereToFindIt(unittest.TestCase):
 		lines = [line.strip() for line in PATCHES_TXT.read_text(encoding="utf-8").splitlines()]
 		self.assertIn("erpnext_enhancements.patches.bin_manager_hub_links", lines)
 		self.assertGreater(
-			lines.index("erpnext_enhancements.patches.bin_manager_hub_links"), lines.index("[post_model_sync]")
+			lines.index("erpnext_enhancements.patches.bin_manager_hub_links"),
+			lines.index("[post_model_sync]"),
 		)
 
 

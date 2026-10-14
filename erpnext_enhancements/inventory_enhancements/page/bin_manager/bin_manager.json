@@ -1,0 +1,30 @@
+{
+ "content": "",
+ "creation": "2026-10-14 14:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "icon": "package",
+ "modified": "2026-10-14 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "bin-manager",
+ "owner": "Administrator",
+ "page_name": "bin-manager",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
+  },
+  {
+   "role": "Inventory Clerk"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Bin Manager"
+}
