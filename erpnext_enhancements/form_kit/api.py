@@ -21,6 +21,7 @@ from frappe.utils import escape_html
 
 from erpnext_enhancements.form_kit import field_help, saver
 from erpnext_enhancements.form_kit import party as party_rules
+from erpnext_enhancements.form_kit import record_info as record_info_rules
 from erpnext_enhancements.form_kit import steps as flow
 from erpnext_enhancements.form_kit.completeness import completeness_for as _completeness_for
 from erpnext_enhancements.form_kit.completeness import stage_completeness
@@ -79,6 +80,18 @@ def get_flow(doctype, name=None):
 		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
 	]
 	out["clears"] = config.get("clears") or {}
+	if config.get("queries"):
+		# The form scripts' set_query, as data (v1.685.0): the page's controls have no frm. Sent
+		# without each entry's ``source``, which is documentation, with what the queries read that
+		# the values do not hold (the deal's company, the directory's link sources).
+		out["queries"] = {
+			fieldname: {key: value for key, value in query.items() if key != "source"}
+			for fieldname, query in config["queries"].items()
+		}
+		out["query_context"] = flow.query_context(doctype, doc, steps)
+	if config.get("label_from"):
+		# A field labeled with another field's value, as the form relabels it (party_name).
+		out["label_from"] = {fieldname: rule["field"] for fieldname, rule in config["label_from"].items()}
 	open_rule = (config.get("mine") or {}).get("open")
 	if open_rule:
 		# The statuses that close a record (Closed Won, Lost, Closed, Converted on Opportunity): the side
@@ -349,3 +362,20 @@ def record_notes(doctype, name):
 		"total": len(rows),
 		"can_add": bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None)),
 	}
+
+
+@frappe.whitelist(methods=["GET"])
+def record_info(doctype, name):
+	"""What the Desk form's sidebar and timeline show for a record, for the guided page's record
+	tools (attachments, activity, assigned to, tags, follow, shared): v1.686.0.
+
+	Nik, 2026-10-14: "We shouldn't have lost any fidelity or information on any of the UI/UX
+	changes." The form reads all of this through ``frappe.desk.form.load.get_docinfo``, which
+	answers in ``frappe.response["docinfo"]``; sf_kit.call reads only ``message``. So this runs that
+	same function (read permission on the record, as the form's own load checks it) and returns what
+	it found with every stored HTML string as plain text. Shapes: ``form_kit/record_info.py``.
+	"""
+	_require_configured(doctype)
+	if not isinstance(name, str) or not name:
+		frappe.throw(_("Which record?"), title=_("Not Found"))
+	return record_info_rules.build(doctype, name)

@@ -27,6 +27,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `completeness.py` | `stage_completeness(doctype, doc)`, pure; `completeness_for(doctype, names)`, the batch for the board |
 | `api.py` | The whitelisted endpoints, and the DocType allowlist in front of them |
 | `party.py` | The Party entry component's one read (P3.2): an account's default contact and addresses, and which of the record's are the account's. See *The Party entry component* below |
+| `record_info.py` | The record tools' one read (v1.686.0): frappe's `get_docinfo` and ERPNext's open activities, shaped for a page that writes text. See *The record tools* below |
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
@@ -262,6 +263,129 @@ the steps, the guided page always and the side panel on every edit, and the shar
 A new DocType gets both with no work. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if
 the editor singles a DocType out, or if the Comments App starts reading more of `frm`.
 
+## The record tools, on every guided DocType (v1.686.0)
+
+**Rule (Nik, 2026-10-14): "We shouldn't have lost any fidelity or information on any of the UI/UX
+changes."** Beyond the timeline's comments, the Desk form carries a sidebar (attachments, assigned
+to, tags, follow, shared with), the rest of its timeline (versions, emails, logs), ERPNext's CRM
+Activities tab, its dashboard's connections, the Contact & Address directory and a toolbar. The
+guided page and the side panel bring all of it back for any saved record, in `public/js/form_kit/
+ui/record_tools.js` (`RecordTools`), which the editor mounts with the comments (`mount_tools`, called
+from `mount_comments`). The shells only draw an empty `<section class="ge-tools">`: the guided page
+inside the view settings' `.ge-block--tools`, which each person places beside the step, below it,
+or collapsed behind its "Record tools" bar (`apply_view`, *View settings* below); the side panel
+under its notes and comments. The tools add an **Actions** button beside the shell's own head
+button (`.ge-band-actions`, `.fk-head-row`).
+
+| Tool | What it shows and does | Code path it reuses |
+|---|---|---|
+| Assigned to | assignees; Assign, remove (yours, or anyone's with write), Done on your own | `frappe.ui.form.AssignToDialog` (no form needed), `frappe.desk.form.assign_to.add/remove/close` |
+| Follow | Follow / Unfollow, where the DocType tracks changes and the person gets follow emails | `frappe.desk.form.document_follow.update_follow`, the form menu's rule |
+| Tags | tags; add (with suggestions) and remove, with write | `frappe.desk.doctype.tag.tag.add_tag/remove_tag/get_tags` |
+| Shared with | who has it shared, read only; sharing itself is on the full form | docinfo `shared` (frappe's Share is the form's own) |
+| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
+| Activity | created, last edited, Versions as sentences (the timeline's display rule per field), emails (as text, Reply), assignment / attachment / info / workflow logs, milestones; ERPNext's open ToDos and Events with Done; New email, New task, New event | `frappe.desk.form.load.get_docinfo` and the open half of `erpnext.crm.utils.get_open_activities` (`get_open_todos` / `get_open_events`, behind its own permission check) through `record_info`; `frappe.views.CommunicationComposer`; `frappe.views.InteractionComposer` set up as `crm_activities.js` does; `frappe.client.set_value` for Done |
+| People & places | where the form has `contact_list_html` / `address_list_html`: the same lists, New contact / address, Link existing (with "Also add to"), Import contacts, Set primary, Unlink | `sync_contact.get_contacts_for_context` and the rest of the widget's endpoints; `global_enhancements/party_sources.js`, which `unified_tab_controller.js` calls too; `contacts_ux.create_for`; Set primary writes the record's own field through the editor's save queue |
+| Connections | the dashboard's linked documents with counts, each opening its list filtered to this record | `meta.__dashboard` (this app's `override_doctype_dashboards` included), `frappe.desk.notifications.get_open_count`, `dashboard.js`'s list filter |
+| Actions menu | Create (the DocType's own form script's list), Generate Contract, Open Drive Folder, Set Reminder, New Email, Print, Customize, and the full form for rename, duplicate, merge, delete | `RECORD_TOOLS` + `frappe.model.open_mapped_doc({method, source_name})`; `global_enhancements/record_actions.js`, which the form's buttons call too; the planner kit's menu |
+
+Everything is decided by the record's meta, its permissions (docinfo's `get_doc_permissions`) and
+its values. The one per-DocType list is `RECORD_TOOLS` in `public/js/form_kit/record_tools.js`: the
+Create menu and the email field are what a DocType's own form script adds (Opportunity: ERPNext's
+`make_supplier_quotation`, `make_request_for_quotation`, `make_customer` unless the party is a
+Customer, `make_quotation`; none while Lost). A DocType without an entry gets every other tool.
+
+`record_info(doctype, name)` (GET) runs frappe's own `get_docinfo`, whose read check is the form
+load's, because that function answers in `frappe.response["docinfo"]` and sf_kit's call reads only
+`message`. It returns every stored HTML string (an email body, a ToDo, a log line) as plain text,
+names beside user ids, and the record's Drive folder fields (hidden on the form, so in no step)
+where the caller may read them. The page writes everything with `.text()`.
+
+Every dialog joins the planner kit's history guard through the Party component's `open_dialog`:
+Back closes the dialog and nothing else. The Actions menu is the planner kit's menu, an overlay of
+the same guard. Left on the full form, reached from the menu: Rename, Duplicate, Delete, Merge,
+frappe's Remind Me (its `ReminderManager` is not exported; Set Reminder covers Opportunity), Share,
+Repeat, Copy to Clipboard, Undo/Redo, and New Email's "Attach Document Print" and saved draft (the
+composer offers them only with a form, and a stand-in would have to be one: it reads the form's
+timeline, events, meta, print formats and letter head). The record's own files are offered in both
+composers. Not ported at all: ERPNext's Opportunity Close / Reopen, which write status "Closed" /
+"Open", values this site's stage list (a Property Setter) refuses, and Fetch Latest Exchange Rate,
+which shows only for a deal in a foreign currency, and deals here are always in the company's.
+
+New Email starts as the Desk's composer does with a form (`setup_subject_and_recipients`, ported as
+`record_tools.js email_start`): To the record's email field, which `record_info` returns under
+`emails` because it is usually hidden and so in no step (Opportunity: `contact_email`, then
+`primary_contact_email`); subject "Re:" the latest email on the record, else the title; always
+"(#name)". Reply quotes the email in full from the timeline's own `get_communications` (read on the
+record); `record_info`'s copy is cut to 1,200 characters and is the quote only if that read fails.
+
+New Task and New Event run frappe's `InteractionComposer`, which also reads the global `cur_frm`
+(its file list and its post-insert `reload_doc`). Both shells are Desk Pages and v16's `pageview.js`
+sets `cur_frm` to null whenever a Page shows, so normally it is null and the record's files go in
+as the composer's `attachments`. A defence for the rare case it is set: another record's form is
+nulled while the composer is open and until its insert calls back, then put back only on the same
+route; this record's own form keeps it, and its files are then not passed twice.
+`tests/test_guided_record_tools.py`.
+
+## The inputs are the form's (v1.685.0)
+
+**Rule (Nik, 2026-10-14): "We shouldn't have lost any fidelity or information on any of the UI/UX
+changes, and the inputs should be the same."** The editor draws a step in a `frappe.ui.FieldGroup`,
+which has no `frm`, so anything a form script does through `frm` never reaches it. Each such thing
+is carried as data and applied by the editor (`editor.js control_def`, `render_fields`), on the
+guided page and the side panel alike:
+
+| On the form | On the guided page |
+|---|---|
+| `frm.set_query(field, ...)`, and a grid column's `set_query(field, table, ...)` / `grid.get_field(field).get_query` | the config's `queries` (schema in `config/__init__.py`; a column is keyed `table.field` and reads its row with `{"row": column}`), sent by `get_flow` without their `source`, applied as each Link's `get_query` (`fields.js resolve_query`). What a query reads that the values do not hold comes as `query_context`: the deal's `company` (a Prospect's search) and the directory's link sources |
+| a docfield's `link_filters`, `length` (a Data input's maxlength), `sort_options`, `placeholder`, `max_height`, `hide_days` / `hide_seconds` | carried by `steps.FIELD_KEYS`; v16's controls read them from the df with no `frm` |
+| a Link's search sends the form's DocType as `reference_doctype`, which `search_link` needs to honor a docfield's `ignore_user_permissions` | the editor gives each Link control the record's DocType (`set_link_reference`, only the method, so its display status stays the FieldGroup's) and `ignore_user_permissions` is carried; a grid cell, whose row carries no DocType here, is given its child DocType when it is made (`df.on_make`), as the Desk's cell has the row's |
+| a value loaded onto the form is shown as stored, never looked up | `set_initial_values` sets each loaded value without link.js's `validate_link_and_fetch` (a stored disabled account would otherwise raise "did not match any results" on load), refreshes the conditions as each value lands, and listens to a field again only while that very control is on screen |
+| a field the person cannot change (read-only by a condition, hidden by a `depends_on`) keeps the record's value | `field_changed` reads only a control whose status is "Write": v16 reads a 0 in a read-only or hidden control back as blank, which would queue a save nobody made |
+| `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it, and one that cannot be read adds neither (a `depends_on` that cannot be read still shows the field). Conditions read the record as the form's `doc` does, `__islocal` included |
+| `set_df_property(<rank>, "reqd", ...)` on Closed Won (`opportunity_migrated_scripts.js`) | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="Closed Won"` (`steps.won_conditions`); the side panel's move marks them required too |
+| ERPNext's `set_dynamic_field_label` (party_name labeled with `opportunity_from`) | the config's `label_from`; relabeled as the kind changes, translated as on the form ("Customer" shows as "Accounts") |
+| Ctrl/Cmd+S saves now | the editor's `save_now`: the queue is flushed now, a new record is created, a side panel's move is committed. The guided page's shortcut handler (v1.684.0) calls it; elsewhere frappe's Ctrl+S ends in `frappe.container.page.save_action`, to which each editor adds itself once (`ge_bind_save_key`), so a side panel over a list or board saves too. A dialog keeps the key for itself, as on the form |
+
+Opportunity's `queries`, field by field:
+
+| Field | Query | Desk source |
+|---|---|---|
+| `opportunity_from` | DocType name in Customer, Lead, Prospect | ERPNext `opportunity.js` `setup` (and the field's `link_filters` Property Setter) |
+| `party_name` | Lead: `erpnext.controllers.queries.lead_query`; Customer: enabled only; Prospect: the deal's company | ERPNext `opportunity.js` `setup_queries` |
+| `primary_contact`, `primary_address` | Dynamic Link `link_name` in the deal, its stakeholder rows' parties and its live account | `unified_tab_controller.js` `setup_queries` |
+| `customer_address` (Billing Address) | ERPNext's `address_query`: the account's addresses only, as on the form | ERPNext `opportunity.js` `setup_queries` |
+
+Waived (`query_waivers`): `contact_person` (hidden; the page offers Primary Contact) and the items
+table's `item_code` / `uom` (the table is hidden on this site's form).
+
+Item's `queries` are all ERPNext's `item.js` `erpnext.item.setup_queries`, on grid columns: the
+Accounting rows' accounts, cost centers and warehouse by the row's company (expense and income
+accounts through `get_expense_account` / `get_income_account`; the five Expense accounts of its
+`fields` loop; provisional Liability or Asset; deferred revenue Liability, deferred expense Asset;
+inventory Stock; discount Profit and Loss), the Reorder row's warehouse (not a group) and warehouse
+group (`get_warehouses_for_reorder` by the row's warehouse). Waived: `taxes.tax_type`, which v16's
+Item Tax row does not have. Item's own conditions (Maintain Stock and Is Fixed Asset, Is Purchase
+Item and Customer Provided each read-only while the other is ticked; Asset Category, Shelf Life and
+the variant Attributes required) now apply on the guided Item page as on the form.
+
+`tests/test_form_kit_inputs.py` reads ERPNext's form script for each guided DocType at version-16
+(trimmed into `tests/fixtures/form_kit/erpnext_v16_<doctype>_scripts.json`) and every script this app
+runs on the form, and fails on a `set_query` that is neither mirrored nor waived, on a mirror no
+script sets, on a DocType added to the registry without being audited, and on a relabel or a Closed
+Won rule that drifted from the scripts. Under node it holds every Item condition to what the Desk
+form sets on 128 records.
+
+A step's starting values are set one control at a time (`set_initial_values`): v16's read-only or
+hidden Table MultiSelect rejects a value, and through `FieldGroup.set_values` that left every field of
+the step unheard (the Close step saved nothing before v1.685.0).
+
+Checked and left as they are: `fetch_from` (the server fills it on every save and `save_step` returns
+what changed; a client fetch would queue a change to a field the person cannot edit), Select, Date,
+Datetime, Percent, Check, Text Editor and Table MultiSelect (their controls read nothing from `frm`),
+Currency (formatted in the record's currency only through a form; every deal is in the company
+currency, so the system currency is the same), Dynamic Link (`get_options` reads the live type).
+
 ## View settings (v1.684.0)
 
 **Nik, 2026-10-14:** "once a document has been created via the flow, the presentation could be
@@ -492,9 +616,9 @@ thing. Its decisions are `public/js/form_kit/party.js`, pure, run under node by
 | Field | Search | "+ New" |
 |---|---|---|
 | Account (`party_name`, kind `opportunity_from`) | Frappe's own | Customer: the app's quick entry (`party_quick_entry.js`), then picked. Lead or Prospect: its form in a new tab, with a toast saying to pick it here once saved (neither has a quick entry on this site, and leaving the page would lose the step) |
-| Primary Contact | the account's own (`fields.js` `link_query`, ERPNext's `contact_query`) | the app's Contact quick entry, linked to the account and the deal, then picked |
-| Billing Address (`customer_address`) | the account's own (`address_query`) | the app's Address quick entry, starting on "Also <account>'s address" |
-| Primary Address (the site) | the account's own | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
+| Primary Contact | the Desk directory's (v1.685.0): the deal's own, its stakeholders' and the account's (`queries` `links: "directory"`) | the app's Contact quick entry, linked to the account and the deal, then picked |
+| Billing Address (`customer_address`) | the account's own (ERPNext's `address_query`, as on the form) | the app's Address quick entry, starting on "Also <account>'s address" |
+| Primary Address (the site) | the Desk directory's, as Primary Contact's | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
 
 Decisions, for review:
 
