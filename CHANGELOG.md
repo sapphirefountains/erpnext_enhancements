@@ -88,6 +88,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep reading the script for the Maintenance Planner; `test_s3_6_accessibility` reads the focus ring
   from the CSS.
 
+## [1.663.0] - 2026-10-14
+
+Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:
+
+- **P6.3:** the board, a table and a timeline under one filter bar.
+- **P6.4:** the needs-attention list.
+- **P6.8:** focus, meaning On Hold folded, snooze, quick filters and saved views.
+
+Part A (v1.654.0) matched SQL on prod at 74 open deals: $293,725, and $101,663 weighted.
+
+Still out of scope:
+
+- **P6.6:** the side panel.
+- **P6.7:** quick add and bulk.
+- **P6.10:** retiring the stock Kanban's patches and the list's redirect, which waits for Nik's
+  sign-off on the board. The Kanban, its patches and the redirect are untouched.
+
+### Added
+
+- **Three views under one filter bar** (P6.3). The views are the board, a sortable table, and a
+  timeline of expected close dates by month. Past months are marked, and deals with no date come
+  last.
+  - Each view is its own route: `/desk/opportunity-board/<stages|streams>`, `/table`, `/timeline`
+    and `/attention`. The deal panel sits at `…/move/<name>` over any of them.
+  - The filters are page state, not the address, so switching views keeps them and Back returns to
+    the view before.
+  - The table's column heads sort, and a turned column keeps blanks (no amount, no date) last
+    either way.
+  - On a phone the table stacks into one block per deal, each value under its column's name.
+    Nothing scrolls sideways at 390px.
+  - Part A's addresses still open the same screens.
+- **Needs attention** (P6.4) lists every open deal that matches any of these rules:
+  - **stale**: past the glow thresholds; On Hold is never stale, as it never glows;
+  - **past its expected close date**;
+  - **missing an amount**;
+  - **missing what its stage asks for**: the P4.6 completeness, from the form kit's own lists.
+
+  The list is sorted by value, with no amount last, and each deal carries a chip for each reason.
+  A snoozed deal stays off it until its date. The SQL that checks it is in
+  `crm_enhancements/README.md`. The test suite runs that exact query on SQLite, child tables
+  included, against deals that go through the real `get_board` and the form kit's real
+  `completeness_for`. Both must name the same deals in the same order.
+
+  A deal opens the normal way (the guided page by default). The task says "in the side panel";
+  that waits for P6.6, and the code says so where the deal opens.
+- **On Hold folds into a count by default** (P6.8). On prod on 2026-10-14, 36 of 74 open deals sat
+  there.
+  - "Show them" unfolds the column and "Fold" folds it again.
+  - A folded column is narrower, is still a drop target, and its deals still count in every total.
+- **Snooze** (P6.8), in the deal panel. Pick a date to "Hide it until", and add a reason if you
+  like.
+  - A snoozed deal is hidden from every view until its date. On that date it comes back marked
+    **Back from snooze**, until someone wakes it or snoozes it again.
+  - "Show snoozed (N)" shows the snoozed deals, dimmed and marked. The head says how many are
+    hidden.
+  - **Two new Opportunity custom fields**, `custom_snoozed_until` (Date) and
+    `custom_snooze_reason` (Small Text). Both are hidden on the form, `no_copy` and have no
+    default; they are in `fixtures/custom_field.json`, after `custom_guided_client_id`.
+  - Hidden fields are not in the guided flow, so the guided page never shows them and
+    `save_step` cannot write them. Snoozing has its own endpoint instead.
+- **`opportunity_board.snooze`**, POST. It checks write permission on the deal and takes the same
+  `modified` lock and conflict shape as `save_step`.
+  - It refuses a date that is not after today or is more than a year out, and it refuses a closed
+    deal.
+  - It writes only the two fields, with `db_set`, never `save()`. A focus tool must not be stopped
+    by an unrelated validation (an old deal missing a field that became required since), nor re-run
+    the stage clock or the probability hooks.
+  - It leaves an Info comment on the deal's timeline and sends the board's realtime event.
+  - **It returns `str(get_datetime(modified))`.** `db_set` stamps `now()`'s text, which always
+    carries `.000000`, but the table's datetime prints without microseconds when they are zero.
+    Returning the raw text would turn the next move into a false conflict once in a million saves.
+- **Quick filters** (P6.8): My deals, an owner, a value stream (or "No value stream"), "Over $" an
+  amount, and Closing this month.
+  - The forecast strip, the column totals and the head's count follow the filters, so the strip
+    forecasts what is shown. With no filter and Show snoozed on, they are the whole board that the
+    SQL checks measure.
+  - On a phone the bar folds behind one button.
+- **Saved views** (P6.8) live in the planners' own store, `api/planner_views_prefs.py`, under a
+  new planner key, `board`.
+  - That is the caller's `__UserSettings` row, written straight to the table. A deploy's Redis
+    FLUSHDB cannot lose a view, which frappe's own `user_settings.save` would.
+  - A view holds the filters, the view, the board's layout and the table's sort. The server's
+    schema is held equal to the page's by test.
+  - "Last used" is saved a moment after anything changes, and a bare `/desk/opportunity-board`
+    opens it. Any other address wins.
+  - "Save this view" names one, and the Saved views list applies or deletes it. Up to 20 per
+    person.
+  - The board's views are gated by read permission on Opportunity, not a planner role. The
+    planners' own schemas and gates are unchanged.
+- **`get_board` sends more** per deal: `owner` and `owner_name`, `snoozed_until` and
+  `snooze_reason`. It also sends `can_snooze`, so a site that has not migrated the fields yet
+  shows no snooze controls.
+- **`tests/test_opportunity_board_focus.py`**, bench-free, with its own CI step:
+  - the filters, snooze states, attention rules and order, table sort, timeline months, routes and
+    saved-view shape, under node;
+  - the attention SQL check;
+  - the snooze endpoint against a frappe stub;
+  - the prefs `board` key;
+  - the two fields;
+  - the page's wiring.
+
+- **What the PR review found, fixed before merge:**
+  - An explicit `/stages` address no longer comes up as value-stream rows because the last-used
+    view was "By value stream". The remembered layout applies only to a bare address or another
+    view (`last_layout_applies`).
+  - A click on the layout already shown now redraws. There is no route change for it, so it used
+    to do nothing (`layout_change`).
+  - A saved owner or stream that no deal has any more stays a selected choice, instead of reading
+    "Anyone" while it still filters.
+  - The snooze controls appear only to someone who may write an Opportunity.
+  - The snooze's `db_set` passes `notify=True`, so a form open on the deal hears of it
+    (`doc_update`, which is a different event from the board's own).
+  - The date input stops at the server's one-year cap.
+
+### Changed
+
+- `tests/test_opportunity_board.py`, part A's suite, expects the routes' new `view` and `bare`
+  keys, the deal's new fields, and seven quiet requests where there were two.
+
 ## [1.662.0] - 2026-10-14
 
 ### Added
