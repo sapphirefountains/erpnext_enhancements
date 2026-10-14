@@ -1066,6 +1066,13 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.opportunity_probability.apply_stage_probability",
 		],
 		"before_save": [
+			# Form kit P3.2 (v1.669.0): ERPNext's hidden contact_person kept equal to the visible
+			# Primary Contact, because Create > Quotation and the Prospect row copy the hidden one.
+			# The field a person changed wins; a hidden-only value is copied up. Not the address
+			# pair: customer_address is the Billing Address, not the job site (v1.633.0). Must
+			# precede refresh_primary_contact_copies, so a contact copied up gets its copies in the
+			# same save. Rule and reasons: crm_enhancements/party_mirrors.py. Never raises.
+			"erpnext_enhancements.crm_enhancements.party_mirrors.keep_in_step",
 			# Form kit P4.5: a new primary contact's title, phone and email, copied the way
 			# primary_contact.js copies them, for saves with no form behind them (the guided page).
 			# Must precede on_update's sync_from_main_doc, which pushes the copies onto the Contact.

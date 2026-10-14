@@ -1705,6 +1705,20 @@ jobs:
       # lists. Own frappe stub, so its own step.
       - name: Form kit engine (steps, saves, completeness)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
+      # Form kit P3.1, the information-block registry (form_kit/blocks.py): every block (Party,
+      # Site, Schedule window, Scope by pillar, Money, Crew) declares its entry, report and print
+      # faces (a pending one names its task), each face resolves to a real export, report-face kind
+      # or print helper, every field it names is on the v16 Opportunity / Project meta plus this
+      # app's fixtures, and the JavaScript twin (public/js/info_blocks/blocks.js) equals it under
+      # node. Own frappe stub (utils/date_pairs imports frappe).
+      - name: Form kit information blocks (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_blocks -v
+      # Form kit P3.2: Opportunity's hidden contact_person kept equal to the visible Primary
+      # Contact on every save (crm_enhancements/party_mirrors.py), ahead of the contact copies,
+      # never raising; and the Party Mirror Preview dry run, which writes nothing and compares in
+      # Python because MariaDB's PAD SPACE hides a trailing space. Own frappe stub.
+      - name: Party mirror rule + dry run (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_party_mirrors -v
       # Form kit P4-B, the Guided Entry page (enhancements_core/page/guided_entry and the pure ES
       # modules in public/js/form_kit/): routes and history, step activeness against steps.py's own
       # `applies`, the save queue (coalescing, one request in flight, conflicts) under node, and
