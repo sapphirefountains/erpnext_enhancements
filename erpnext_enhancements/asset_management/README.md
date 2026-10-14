@@ -186,7 +186,9 @@ seven days, but **nothing expires holds yet**; that job comes with the sales PR.
 ### The Rental Planner (v1.563.0)
 
 A desk page at `/desk/rental-planner` (`page/rental_planner/`, server side in `rental_planner.py`).
-Open it from the workspace, the Rental Booking list, or a booking's View menu.
+Open it from the workspace, the Rental Booking list, or a booking's View menu. Since v1.667.0 the
+booking's *View > Open in Rental Planner* opens the board on the booking's first day (delivery,
+else setup, else the event) as `?start=`, and shows only to those whose roles open the page.
 
 - **The board is the fleet timeline.** It has one row per rentable fountain and one per accessory
   pool, across two weeks, a month or a quarter.
