@@ -55,8 +55,22 @@ const ISA_QR_FRAME_WIDTH = 480;
 function isa_kit() {
 	if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
 	return new Promise((resolve) =>
-		frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () => resolve(window.sf_kit))
+		frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () =>
+			resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : isa_bare_kit())
+		)
 	);
+}
+
+// Neither the loader nor the kit: a Desk opened before this deploy whose old kit file is gone too.
+// A line of text and a button, so the page still says something instead of throwing.
+function isa_bare_kit() {
+	const failed = (x) => ({ status: (x && x.status) || 0, message: '', exc_type: '', session_expired: (x && x.status) === 401 });
+	const render = (el, kind, o) => {
+		const $el = $(el).empty().append($('<div class="text-muted"></div>').text((o && o.title) || ''));
+		if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __('Try again')).on('click', o.on_action).appendTo($el);
+	};
+	const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
+	return { esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: 'orange' }) };
 }
 
 // A failed load's panel: no access on a 403; a way back in when the session has lapsed (the
@@ -99,6 +113,9 @@ class InventoryScanner {
 		// or the lookup failed. Such an entry is taken over by the next sheet, never reopened.
 		this.leftover = null;
 		this.reads = 0; // camera reads, counted: `leftover` is the last one's (see handleScan)
+		// Bumped whenever the clerk starts, cancels or finishes a count: a start-up reply asked for
+		// before the last bump knows nothing of that count and must not set the session (see boot).
+		this.sessionTouched = 0;
 		// frappe triggers "hide" on the page it leaves for another. Only the page's own counts: a
 		// Bootstrap "hide.bs.*" from inside the page bubbles up to the wrapper as well.
 		$(wrapper).on('hide', (e) => {
@@ -117,15 +134,17 @@ class InventoryScanner {
 	// Try again, instead of leaving an empty page behind a frappe dialog. Its own slot, not the
 	// lines': the clerk can start a count (Start, or a scan) while it is still loading, and its
 	// loading panel, its error or a retry must not paint over lines already counted. For the same
-	// reason a late reply never replaces a session started meanwhile.
+	// reason a late reply leaves the session alone once the clerk has started, cancelled or finished
+	// a count since it was asked for: it would bring back a count just cancelled, or drop one begun.
 	boot() {
 		isa_kit().then((sf) => {
 			sf.state.render(this.$boot, 'loading', { title: __('Loading the count…') });
+			const touched = this.sessionTouched;
 			sf.call(ISA_METHOD + 'get_bootstrap', {}, { quiet: true }).then(
 				(d) => {
 					this.$boot.empty();
 					this.state.settings = (d && d.settings) || {};
-					if (!this.state.session) this.state.session = (d && d.session) || null;
+					if (this.sessionTouched === touched) this.state.session = (d && d.session) || null;
 					this.renderAll();
 					this.focusScan();
 				},
@@ -526,6 +545,7 @@ class InventoryScanner {
 	// ----- actions -----
 	startSession() {
 		return this.call('start_session', {}).then((session) => {
+			this.sessionTouched += 1;
 			this.state.session = session;
 			this.renderAll();
 			this.focusScan();
@@ -757,6 +777,7 @@ class InventoryScanner {
 	}
 
 	resetSession() {
+		this.sessionTouched += 1;
 		this.state.session = null;
 		this.state.activeLocation = null;
 		this.state.pendingItem = null;

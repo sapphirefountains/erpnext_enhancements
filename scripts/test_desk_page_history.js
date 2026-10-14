@@ -1523,6 +1523,23 @@ test("Scanner Audit, real kit: a start-up that lands after a count began neither
 	}
 });
 
+test("Scanner Audit, real kit: a start-up that lands after a count was started and cancelled does not bring it back", async () => {
+	const desk = makeDesk({ kit: true });
+	await desk.installKit();
+	desk.respond.start_session = () => ({ name: "ICS-9", lines: [], summary: { lines: 0, with_variance: 0 } });
+	desk.respond.cancel_session = () => ({});
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("inventory-scanner-audit"));
+	await desk.tap(() => isa(desk).startSession());
+	await desk.tap(() => isa(desk).cancelSession());
+	await desk.tap(() => desk.dialog("Confirm").answer(true));
+	check("the count was cancelled", isa(desk).state.session, null);
+	// The start-up was asked for before all that, and still names the count open at the time.
+	desk.sent("get_bootstrap")[0].resolve({ settings: {}, session: { name: "ICS-9", lines: [], summary: { lines: 0, with_variance: 0 } } });
+	await desk.settle();
+	check("the late start-up leaves it cancelled", isa(desk).state.session, null);
+});
+
 test("Scanner Audit: Back closes Find Item and stays; Forward reopens it", async () => {
 	const desk = await inventory();
 	await desk.tap(() => isa(desk).openItemSearch(""));

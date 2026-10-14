@@ -21,7 +21,9 @@
  *   - the QuickBooks resync poll retries a network or server failure, stops on a 4xx with a toast,
  *     and stops on a lapsed session with the signed-out panel;
  *   - the Water wizard drops a design's reply that lands after another design was picked, and puts
- *     a design name with a quote in it into the picker as one option with that exact value.
+ *     a design name with a quote in it into the picker as one option with that exact value;
+ *   - with no loader and no kit (an old Desk tab whose kit file is gone), each page still says what
+ *     failed and retries; and the loader's own stand-in reads a lapsed session as the kit does.
  *
  * jQuery is a small stand-in over plain objects (each remembers its markup, text, value and
  * handlers); the kit only needs innerHTML and querySelector on the element it is handed.
@@ -203,13 +205,15 @@ function makeJQuery() {
 				el._value = undefined;
 				return proxy;
 			},
-			append(x) {
-				if (typeof x === "string") {
-					el.innerHTML = el.innerHTML + x;
-					const m = /^\s*<option value="([^"]*)"/.exec(x);
-					if (m) el.options.push(m[1]);
-				} else if (x) {
-					wrap(x[0] || x).appendTo(proxy);
+			append(...items) {
+				for (const x of items) {
+					if (typeof x === "string") {
+						el.innerHTML = el.innerHTML + x;
+						const m = /^\s*<option value="([^"]*)"/.exec(x);
+						if (m) el.options.push(m[1]);
+					} else if (x) {
+						wrap(x[0] || x).appendTo(proxy);
+					}
 				}
 				return proxy;
 			},
@@ -291,6 +295,7 @@ function openPage(name, options) {
 		toasts: [],
 		timeouts: [],
 		intervals: [],
+		frappe_calls: [],
 	};
 	const $ = makeJQuery();
 
@@ -334,14 +339,28 @@ function openPage(name, options) {
 		show_alert(m) {
 			world.alerts.push(typeof m === "object" ? m.message : m);
 		},
-		// The button paths keep frappe.call; none of the scenarios press one.
+		// Answered from `respond` too: the button paths, and every call on a stand-in. A failure
+		// rejects the way frappe.call's jqXHR does, with the status and the parsed body.
 		call(o) {
-			world.sent.push(String(o.method).split(".").pop());
-			return Promise.resolve({ message: null });
+			const short = String(o.method).split(".").pop();
+			world.sent.push(short);
+			world.frappe_calls.push(short);
+			const handler = world.respond[short];
+			const answer = typeof handler === "function" ? handler() : handler;
+			return Promise.resolve(answer).then((value) => {
+				if (value === NETWORK_DOWN) throw { status: 0 };
+				if (value && value.__reply) throw { status: value.status, responseJSON: value.body };
+				return { message: value === undefined ? null : value };
+			});
 		},
 		// v16's frappe.require: the files arrive (the real bundle installs window.sf_kit), then the
 		// callback runs. Another copy of the module per page, as each page load evaluates it afresh.
+		// `kit: false`: the file failed to load, and v16 runs the callback anyway.
 		require(paths, cb) {
+			if (opts.kit === false) {
+				Promise.resolve().then(() => cb && cb());
+				return;
+			}
 			globalThis.window = ctx;
 			globalThis.document = document;
 			import(pathToFileURL(BUNDLE).href + `?page=${++kitCopies}`).then(() => cb && cb());
@@ -391,7 +410,8 @@ function openPage(name, options) {
 	};
 	ctx.window = ctx;
 	vm.createContext(ctx);
-	vm.runInContext(fs.readFileSync(LOADER, "utf8"), ctx, { filename: LOADER });
+	// `loader: false`: a Desk opened before the deploy that added sf_kit_ready.
+	if (opts.loader !== false) vm.runInContext(fs.readFileSync(LOADER, "utf8"), ctx, { filename: LOADER });
 	const file = path.join(APP, PAGES[name]);
 	vm.runInContext(fs.readFileSync(file, "utf8"), ctx, { filename: file });
 	const wrapper = frappe.pages[name];
@@ -550,6 +570,9 @@ test("Day Board: a 403 on a refresh stops the timer", async () => {
 	await settle();
 	check("no timer left", !!tickOf(p), false);
 	check("the board stays", p.part("mdb-board").innerHTML.includes("mdb-col"), true);
+	check("and says access is gone, not a hiccup", p.world.toasts, [
+		"You no longer have access to the Day Board. Showing it as of 12:00:00.",
+	]);
 });
 
 test("Day Board: a lapsed session on the first load stops the timer", async () => {
@@ -665,6 +688,55 @@ test("Water: a design name with a quote is one option with that exact value", as
 	check("the placeholder, then the design", pick.children.map((o) => o.value), ["", odd]);
 	check("its label is text", pick.children[1].textContent.startsWith(odd), true);
 	check("no option written as markup", pick.innerHTML.includes("<option"), false);
+});
+
+// ------------------------------------------------------------------ without the kit
+
+// The text and buttons a stand-in drew into `host` (it writes elements, not markup).
+const said = (host) => host.children.map((c) => c.textContent);
+const pressButton = async (host) => {
+	const button = host.children.find((c) => c.handlers.click);
+	if (!button) throw new Error("no button");
+	button.handlers.click.forEach((h) => h.fn({ preventDefault() {} }));
+	await settle();
+};
+
+for (const [name, spec] of Object.entries(FIRST)) {
+	test(`${name}: no loader and no kit (an old Desk tab after a deploy) still says what failed`, async () => {
+		const p = openPage(name, { loader: false, kit: false, respond: Object.assign({ [spec.method]: SERVER_ERROR }, spec.extra) });
+		await settle();
+		const host = spec.host(p);
+		check("the page's title, as text", said(host).includes(spec.failed), true);
+		check("asked through frappe.call", count(p.world.frappe_calls, spec.method), 1);
+		p.world.respond[spec.method] = spec.ok;
+		await pressButton(host);
+		check("Try again asked again", count(p.world.frappe_calls, spec.method), 2);
+	});
+}
+
+test("Loader stand-in: a 401 is a lapsed session, so the Day Board's timer stops", async () => {
+	const p = openPage("maintenance-day-board", { kit: false, respond: { [BOARD]: SIGNED_OUT } });
+	await settle();
+	check("signed out", said(p.part("mdb-board")).includes("You have been signed out."), true);
+	check("no timer left", !!tickOf(p), false);
+});
+
+test("Loader stand-in: rejects in the kit's shape, expiry read as the kit reads it", async () => {
+	const p = openPage("stripe-payments-dashboard", { kit: false, respond: { get_dashboard_status: {} } });
+	await settle();
+	const sf = await p.ctx.sf_kit_ready();
+	const failure = async (answer, cookie) => {
+		p.world.respond.probe = answer;
+		if (cookie !== undefined) p.ctx.document.cookie = cookie;
+		return sf.call("x.probe", {}, { quiet: true }).then(() => null, (err) => err);
+	};
+	check("the kit did not load", p.ctx.sf_kit, undefined);
+	check("a 401", await failure(SIGNED_OUT), { status: 401, message: "", exc_type: "SessionExpired", session_expired: true });
+	check("AuthenticationError in a server message", (await failure(reply(417, { _server_messages: JSON.stringify([JSON.stringify({ message: "x", exc_type: "AuthenticationError" })]) }))).session_expired, true);
+	check("a 403 with the server's words, signed in", await failure(REFUSED), { status: 403, message: "Not permitted to read this.", exc_type: "PermissionError", session_expired: false });
+	check("a 403 once v16 has deleted the user_id cookie", (await failure(REFUSED, "sid=Guest")).session_expired, true);
+	check("a 500", await failure(SERVER_ERROR, "sid=abc; user_id=tester%40example.com"), { status: 500, message: "", exc_type: "Exception", session_expired: false });
+	check("a dropped connection", (await failure(NETWORK_DOWN)).status, 0);
 });
 
 // ------------------------------------------------------------------ run

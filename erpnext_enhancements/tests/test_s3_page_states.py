@@ -108,13 +108,26 @@ class TestEveryPageLoadsTheKit(unittest.TestCase):
 					r"""if \(typeof window\.sf_kit_ready === (['"])function\1\) return window\.sf_kit_ready\(\);""",
 				)
 
-	def test_no_page_carries_its_own_stand_in(self):
-		"""The fallback lives in the loader; a page-local copy is the duplication it replaced."""
+	def test_no_page_carries_the_loaders_stand_in(self):
+		"""The full stand-in lives in the loader; a page-local copy is the duplication it replaced."""
+		for name, path in PAGES.items():
+			with self.subTest(page=name):
+				self.assertNotRegex(_code(path), r"(?i)plain_?kit")
+
+	def test_the_no_loader_path_never_hands_the_page_undefined(self):
+		"""No loader (an old Desk tab) and its old kit file gone too: window.sf_kit is unset after
+		require, and a bare stand-in of at most a few lines answers instead of `undefined`."""
 		for name, path in PAGES.items():
 			with self.subTest(page=name):
 				code = _code(path)
-				self.assertNotRegex(code, r"(?i)plain_?kit")
-				self.assertNotIn("window.sf_kit && window.sf_kit.state", code)
+				match = re.search(
+					r"window\.sf_kit && window\.sf_kit\.state \? window\.sf_kit : (\w+)\(\)", code
+				)
+				self.assertTrue(match, "the no-loader path checks the kit arrived")
+				lines = code[code.index(f"function {match.group(1)}() {{") :].splitlines()
+				end = next(i for i, ln in enumerate(lines) if ln.strip() == "}")
+				self.assertLessEqual(end - 1, 10, "a bare stand-in, not another copy of the loader's")
+				self.assertIn("session_expired: (x && x.status) === 401", "\n".join(lines[:end]))
 
 
 class TestTheSharedLoader(unittest.TestCase):
@@ -140,9 +153,24 @@ class TestTheSharedLoader(unittest.TestCase):
 		for piece in ("esc:", "call:", "state: {", "render(el, kind, opts) {", "toast:"):
 			with self.subTest(piece=piece):
 				self.assertIn(piece, stand_in)
-		# A failed call rejects in the kit's own shape.
-		self.assertIn("status: (xhr && xhr.status) || 0", stand_in)
-		self.assertIn("session_expired: false", stand_in)
+		# A failed call rejects in the kit's own shape, read by rejection() below.
+		self.assertIn("Promise.reject(rejection(xhr))", stand_in)
+
+	def test_the_stand_in_reports_a_lapsed_session(self):
+		"""Else the Day Board's timer would keep polling a 401 on the stand-in path."""
+		rejection = self.code[
+			self.code.index("function rejection(xhr) {") : self.code.index("function plain_kit() {")
+		]
+		for token in (
+			"status === 401",
+			'"SessionExpired"',
+			'"AuthenticationError"',
+			"object.session_expired",
+			"user_id=",
+		):
+			with self.subTest(token=token):
+				self.assertIn(token, rejection)
+		self.assertIn("return { status, message, exc_type, session_expired: expired };", rejection)
 
 	def test_the_global_bundle_imports_it_after_workspace_block_return(self):
 		"""Its own line straight after workspace_block_return, so imports added at the end of the
@@ -234,6 +262,8 @@ class TestRefreshes(unittest.TestCase):
 	def test_the_day_board_stops_polling_a_refusal(self):
 		refresh = self._day_board_refresh()
 		self.assertIn("if (err.status === 403 || err.session_expired) stop();", refresh)
+		# Over a board already showing, a refusal says access is gone, not "could not refresh".
+		self.assertIn("You no longer have access to the Day Board.", refresh)
 
 	def test_a_failed_refresh_with_data_showing_keeps_it(self):
 		for name in ("stripe-payments-dashboard", "device-console"):
@@ -280,7 +310,11 @@ class TestRefreshes(unittest.TestCase):
 		self.assertIn("sf.state.render(this.$boot, 'loading'", boot)
 		self.assertIn("isa_failed(sf, this.$boot, err", boot)
 		self.assertNotIn("this.$list", boot)
-		self.assertIn("if (!this.state.session) this.state.session =", boot)
+		# A late reply sets the session only if the clerk has not started, cancelled or finished a
+		# count since it was asked for (it would bring back a cancelled one).
+		self.assertIn("const touched = this.sessionTouched;", boot)
+		self.assertIn("if (this.sessionTouched === touched) this.state.session =", boot)
+		self.assertEqual(code.count("this.sessionTouched += 1;"), 2, "startSession and resetSession")
 		self.assertIn('<div class="isa-boot"></div>', code)
 
 	def test_a_stale_timeline_reply_never_paints(self):

@@ -45,8 +45,22 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	function kit() {
 		if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
 		return new Promise((resolve) =>
-			frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () => resolve(window.sf_kit))
+			frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () =>
+				resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : bareKit())
+			)
 		);
+	}
+
+	// Neither the loader nor the kit: a Desk opened before this deploy whose old kit file is gone too.
+	// A line of text and a button, so the page still says something instead of throwing.
+	function bareKit() {
+		const failed = (x) => ({ status: (x && x.status) || 0, message: '', exc_type: '', session_expired: (x && x.status) === 401 });
+		const render = (el, kind, o) => {
+			const $el = $(el).empty().append($('<div class="text-muted"></div>').text((o && o.title) || ''));
+			if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __('Try again')).on('click', o.on_action).appendTo($el);
+		};
+		const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
+		return { esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: 'orange' }) };
 	}
 
 	function esc(value) {
@@ -160,10 +174,13 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 				// failures, not every minute) and in the line above it, which stays for a wall screen
 				// nobody was watching when the toast went; only a board that never loaded gets the panel.
 				if (!state.loaded) return failed(sf, err);
+				// A refusal is not a hiccup: the timer has stopped, so say why rather than "could not refresh".
 				const said = err.session_expired
 					? __('You have been signed out. Reload the page to sign in again.')
-					: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt]);
-				if (!state.stale || err.session_expired) sf.toast(said, { tone: 'warning' });
+					: err.status === 403
+						? __('You no longer have access to the Day Board. Showing it as of {0}.', [state.loadedAt])
+						: __('Could not refresh the board. Showing it as of {0}.', [state.loadedAt]);
+				if (!state.stale || err.session_expired || err.status === 403) sf.toast(said, { tone: 'warning' });
 				state.stale = true;
 				$stale.text(said).show();
 			});

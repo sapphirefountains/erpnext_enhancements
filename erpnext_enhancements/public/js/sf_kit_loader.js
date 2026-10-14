@@ -34,6 +34,52 @@
 
 	let loading = null;
 
+	const parse = (value) => {
+		if (typeof value !== "string") return value;
+		try {
+			return JSON.parse(value);
+		} catch (e) {
+			return null;
+		}
+	};
+
+	// A server message as plain text. DOMParser builds an inert tree (nothing runs, nothing loads);
+	// without one, tags are dropped.
+	function words(html) {
+		const text = String(html == null ? "" : html);
+		if (typeof DOMParser === "function") {
+			const body = new DOMParser().parseFromString(text, "text/html").body;
+			return ((body && body.textContent) || "").replace(/\s+/g, " ").trim();
+		}
+		return text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+	}
+
+	// A failed frappe.call in the kit's rejection shape: { status, message, exc_type,
+	// session_expired }. Expiry is read the way sf_kit/call.js reads it (is_session_expired): a 401,
+	// exc_type SessionExpired / AuthenticationError (in the body or in one of its _server_messages),
+	// the body's session_expired flag, or a 403 to a page that was signed in whose user_id cookie is
+	// now gone or Guest (v16 deletes the cookies with the first 401). The kit itself is not imported
+	// here: this file is what runs when the kit could not load.
+	function rejection(xhr) {
+		const status = Number(xhr && xhr.status) || 0;
+		const body = parse(xhr && (xhr.responseJSON || xhr.responseText));
+		const object = body && typeof body === "object" ? body : {};
+		const list = parse(object._server_messages);
+		const entries = (Array.isArray(list) ? list : []).map((m) => parse(m)).filter((m) => m && typeof m === "object");
+		const types = [object.exc_type].concat(entries.map((m) => m.exc_type));
+		const user = frappe.session && (frappe.session.logged_in_user || frappe.session.user);
+		const cookie = /(?:^|;\s*)user_id=([^;]*)/.exec(typeof document !== "undefined" ? String(document.cookie || "") : "");
+		const expired =
+			status === 401 ||
+			types.includes("SessionExpired") ||
+			types.includes("AuthenticationError") ||
+			!!object.session_expired ||
+			(status === 403 && !!user && user !== "Guest" && (!cookie || cookie[1] === "Guest"));
+		const exc_type = expired ? "SessionExpired" : typeof object.exc_type === "string" ? object.exc_type : "";
+		const message = expired ? "" : entries.map((m) => words(m.message)).filter(Boolean).join(" ");
+		return { status, message, exc_type, session_expired: expired };
+	}
+
 	// The kit's shape without the kit: what a page uses of it (esc, call, state.render, toast).
 	function plain_kit() {
 		return {
@@ -48,8 +94,7 @@
 					})
 				).then(
 					(r) => r && r.message,
-					(xhr) =>
-						Promise.reject({ status: (xhr && xhr.status) || 0, message: "", exc_type: "", session_expired: false })
+					(xhr) => Promise.reject(rejection(xhr))
 				),
 			state: {
 				render(el, kind, opts) {
