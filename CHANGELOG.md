@@ -26,12 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`api.item_flow.code_blocks`). Every `PDT-`/`SRV-` number the model writes anywhere is removed,
     and a note about one is dropped whole.
   - **It never invents a vendor part number.** A part number is kept only when the person typed it or
-    it appears in their description. One read off the photo is kept but marked *Check it*, and
+    it is whole words of their description, and then in the description's own spelling: the code IS
+    the number as printed (`printed_in`). One read off the photo, or one only close to the
+    description (cut short, re-spaced, stitched across words), is kept but marked *Check it*, and
     *Accept all* skips it. A part number the person typed makes it a purchased part, whatever the
     model thought (SOP §5 Phase 2).
   - **The rules have the last word.** The model's answer is untrusted input. Only the keys of the
-    schema the prompt states survive, every value is plain text and bounded, and the Item Group and
-    unit must be ones the site already uses. The composed Item then goes through `item_naming_rules`
+    schema the prompt states survive, every value is plain text and bounded, the Item Group must be a
+    leaf the site has and the unit an enabled UOM. The composed Item then goes through `item_naming_rules`
     (`check_code`, `check_name`, `check_supporting`, `check_code_name_agreement`) and the new-Item
     guard's `blocking_findings`, and through Stock Scan's `preview_new_item`, the preview the step's
     naming check shows. The card names an existing Item with that code, and the similar ones, before
@@ -55,7 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     always did, so the five other callers are unchanged.
 - **`item_naming_suggest`, the same suggestion for the assistant.** Read-only in the AI gate
   (`EXPLICIT_READONLY`), gated on Item create. Its name puts it in Triton's core pack by the existing
-  `item_naming` rule, so Triton needs no change. It takes no photo: a File named by an assistant call
+  `item_naming` rule, but **Triton's deployed agents do not see it yet**: they read a generated
+  snapshot of FAC's tools (`triton/backend/app/core/adk/fac_tools_generated.py`), so the tool reaches
+  them only after that snapshot is regenerated and the agents are redeployed, which is a Triton-side
+  step this release does not take. It takes no photo: a File named by an assistant call
   would need the gate's file denylist, and a Triton chat attachment is refused there anyway. The
   item-naming skill now says to draft with it and still confirm with `item_naming_check`.
 - **A *New item (guided)* button on the Item list**, beside *+ Add Item*, for people who may open
@@ -72,7 +77,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offered only when the line's `uom` is the Item's stock unit, because an Item Price is per stock
   unit. `uom` and LinkSelector's `name_field` have no place and are dropped. This works on
   `/desk/guided-entry/Item/new` only: Item is not where a record opens, so `frappe.new_doc("Item")`
-  still opens the form, and a caller that wants the guided flow routes there itself.
+  still opens the form, and a caller that wants the guided flow routes there itself. The line is
+  handed on only once the create has gone through, by a new optional block hook,
+  `ext.created(record)`, keyed by the name the server gave the Item.
+
+### Fixed (before release, from review)
+- **A part number "found in your description" was a substring test.** With "pump AFS-7731, 1/2 HP,
+  115 V", a model's `AFS-773` (cut short), `PUMP-AFS`, `115V` or `12HP-115` was kept unflagged as
+  "Found in your description", and *Accept all* wrote it into Item Code. Found now means the whole
+  word, or a run of whole words inside one comma-delimited clause, matches with case and punctuation
+  set aside, and the value is the description's spelling (`afs7731` comes back `AFS-7731`). Anything
+  merely close is a *Check it* row.
+- **The unit list offered a disabled UOM.** It was the units live Items use, which includes "Nos"
+  (disabled since 2026-06-19; new Items use "Unit") and leaves out enabled ones no Item uses yet
+  ("Gallon"). It is now the enabled UOMs, the most used first, and a suggested unit outside that list
+  is dropped.
+- **Entities were decoded after tags were stripped**, so `&lt;img src=x onerror=...&gt;` came back
+  a live tag and `&lt;/description&gt;` could close the prompt's fence round the person's words.
+  `plain_text` now decodes first, strips tags, then drops any stray `<` or `>`; the vendor part
+  number in the prompt goes through it too.
+- **A PDT or SRV number with an unexpected separator survived** (`PDT.0042`, `PDT/0042`, a Unicode
+  dash, `PDT#0042`), and `PDT,0042` became two segments because the strip ran before the builder's
+  comma cleaning. Any non-alphanumeric run now counts as a separator, segments are cleaned first, and
+  a value that still reads as one once normalized (`XPDT0042`) is dropped.
+- **The email scrub removed ratings**: "10 GPM@20.5 PSI" became "10 [removed] PSI". It now needs a
+  domain ending in letters.
+- **A photo named by `file_url`**: the size is taken from the disk when the File row has none, so a
+  huge file is refused before it is read; the File rows sharing that address are searched for one the
+  person may read; and a File they may not read gets the same "could not be read" answer as a
+  missing one, instead of a 403 that told them it exists.
+- **An unexpected error after the model answered was a 500**, and Frappe's error snapshot renders the
+  frame's locals, the prompt and the photo among them. It is now logged (class and message only) and
+  answered with the plain "could not be read as a suggestion".
+- **A buying line's supplier and rate were kept before the create**, so after a failed create (a
+  code that is taken) the next Item opened with that code started from them. See `ext.created` above.
+- `item_naming_suggest` refuses a non-text `description` cleanly instead of raising
+  `AttributeError`, and a dropped part number beside an unnamed kind of code no longer reads "a
+  other code".
 
 ## [1.687.0] - 2026-10-14
 

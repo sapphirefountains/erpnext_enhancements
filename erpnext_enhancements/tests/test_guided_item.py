@@ -126,7 +126,7 @@ out.registry = { before: kit.has_extension("Item"), none: kit.extension_for("Opp
 await load("/guided_item/extension.js");
 const ext = kit.extension_for("Item");
 out.registry.after = kit.has_extension("Item");
-out.registry.methods = ["render", "on_change", "before_create", "leave"].filter((m) => typeof ext[m] === "function");
+out.registry.methods = ["render", "on_change", "before_create", "created", "leave"].filter((m) => typeof ext[m] === "function");
 out.registry.fresh = kit.extension_for("Item") !== ext;
 out.registry.before_create = ext.before_create();
 kit.register_extension("Broken", () => { throw new Error("no"); });
@@ -377,7 +377,7 @@ class TestTheModules(unittest.TestCase):
 		self.assertFalse(r["before"])
 		self.assertTrue(r["after"])
 		self.assertIsNone(r["none"])
-		self.assertEqual(r["methods"], ["render", "on_change", "before_create", "leave"])
+		self.assertEqual(r["methods"], ["render", "on_change", "before_create", "created", "leave"])
 		self.assertTrue(r["fresh"], "each record gets its own extension")
 		self.assertEqual(r["before_create"], "", "nothing checked yet holds nothing back")
 		self.assertIsNone(r["broken"], "an extension that fails to start is none at all")
@@ -802,12 +802,22 @@ class TestTheWiring(unittest.TestCase):
 		code = _code(EXTENSION_JS)
 		before = code[code.index("before_create() {") :]
 		before = before[: before.index("\n\t}\n")]
-		self.assertIn("LINE_STARTS.set(code, this.line);", before)
+		self.assertNotIn("LINE_STARTS", before, "a create that fails would leave the line for another Item")
+		created = code[code.index("created(record) {") :]
+		created = created[: created.index("\n\t}\n")]
+		self.assertIn("LINE_STARTS.set(name, this.line);", created, "only once the create went through")
 		supplier = code[code.index("render_supplier($box, ctx, setup) {") :]
 		supplier = supplier[: supplier.index("\n\t}\n")]
 		self.assertIn("LINE_STARTS.delete(String(ctx.name", supplier)
 		self.assertIn("let shown_rate = recorded.rate;", supplier, "the line's rate is not recorded yet, so it is sent")
 		editor = _code(EDITOR_JS)
+		create = editor[editor.index("\tcreate() {") :]
+		create = create[: create.index("\n\t}\n")]
+		self.assertIn("const ext = this.ext;", create, "the block that let the create go")
+		told = create.index("ext.created(created);")
+		self.assertLess(create.index(".then(({ created, flow }) => {"), told)
+		self.assertLess(told, create.index(".catch((err) => {"), "never told of a create that failed")
+		self.assertLess(told, create.index("this.after_create({"), "before the shell moves on")
 		self.assertIn("carried: () => (same() && this.is_new ? Object.assign({}, this.carry || {}) : {}),", editor)
 		self.assertIn("started: () => (same() && this.is_new ? Object.assign({}, this.start_options || {}) : {}),", editor)
 		page = _code(PAGE_JS)

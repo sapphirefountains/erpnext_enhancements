@@ -23,12 +23,14 @@ the person accepts. Three things the model can never do:
   (``api.item_flow.code_blocks``), a person's choice inside a semantic block. A product or service
   suggestion names the family and nothing more. Every ``PDT-<digits>`` and ``SRV-<digits>`` the
   model writes, in any value or reason, is removed (:func:`strip_reserved_numbers`).
-* **Invent a vendor part number.** A part number is kept only when the person typed it or it
-  appears in their description. One read off a photo is kept but marked ``confirm``: the page
-  never accepts it with *Accept all*, and the person checks it against the label first.
+* **Invent a vendor part number.** A part number is kept only when the person typed it or it is
+  whole words of their description (:func:`printed_in`), and then in the description's spelling:
+  the code IS the number as printed, never shortened, completed or re-punctuated. One read off a
+  photo, or one that is only close to the description (cut short, stitched across words), is kept
+  but marked ``confirm``: the page never accepts it with *Accept all*, and the person checks it.
 * **Make up a category, an item group or a unit.** CATEGORY goes through ``check_name``. A Tier 3
   word or a plural is normalized to the rule's own suggestion, and anything else unapproved is
-  reported, never repaired. The item group and unit must be ones the site already uses.
+  reported, never repaired. The item group must be a leaf the site has, the unit an enabled UOM.
 
 Indentation is tabs (new file).
 """
@@ -132,19 +134,31 @@ MSG_NEED_PART: Final[str] = "The vendor's part number, exactly as printed: it be
 # --- text ----------------------------------------------------------------------
 
 _TAGS = re.compile(r"<[^>]+>")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-#: A PDT- or SRV- number, which only the block list hands out: any case, and with a hyphen, a space,
-#: an underscore or nothing between (``con_part`` would turn "PDT 0042" into "PDT-0042").
-_RESERVED_NUMBER = re.compile(r"\b(?:PDT|SRV)[\s_-]*\d+", re.IGNORECASE)
+#: An email address as people write one: a local part, "@", then a domain whose last label is
+#: letters. "10 GPM@20.5 PSI" is a pump rating, not an address.
+_EMAIL = re.compile(r"[\w.+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}\b")
+#: A PDT- or SRV- number, which only the block list hands out: any case, and with anything that is
+#: not a letter or a digit between, or nothing (``con_part`` would turn "PDT 0042" into "PDT-0042";
+#: a dot, a slash, a Unicode dash or a "#" reads the same to a person).
+_RESERVED_NUMBER = re.compile(r"(?<![A-Za-z0-9])(?:PDT|SRV)[^A-Za-z0-9]*\d+", re.IGNORECASE)
+#: The same once ``rules.normalise`` has set case and punctuation aside: the backstop for what the
+#: pattern above cannot see ("XPDT0042", or a separator it does not know).
+_RESERVED_KEY = re.compile(r"(?:PDT|SRV)\d")
 #: item_naming_rules._WORD_GREY: the SOP's GRAY, applied to one segment at a time.
 _WORD_GREY = re.compile(r"\bGREY\b")
 
 
 def plain_text(value, limit: int) -> str:
-	"""Plain text: tags gone, entities decoded, whitespace collapsed, cut to ``limit``."""
+	"""Plain text: entities decoded, then tags gone, then any ``<`` or ``>`` left over dropped,
+	whitespace collapsed, cut to ``limit``.
+
+	Decoding comes first. The other way round, ``&lt;img src=x onerror=...&gt;`` passes the tag
+	strip as text and comes back a live tag, and ``&lt;/description&gt;`` closes the prompt's fence
+	round the person's words."""
 	if value is None or isinstance(value, dict | list):
 		return ""
-	text = html.unescape(_TAGS.sub(" ", str(value)))
+	text = _TAGS.sub(" ", html.unescape(str(value)))
+	text = text.replace("<", " ").replace(">", " ")
 	text = " ".join(text.split())
 	if len(text) > limit:
 		text = text[: limit - 1].rstrip() + "…"
@@ -154,6 +168,12 @@ def plain_text(value, limit: int) -> str:
 def strip_reserved_numbers(value) -> str:
 	"""``value`` without any PDT- or SRV- number in it (the block list hands those out)."""
 	return " ".join(_RESERVED_NUMBER.sub(" ", str(value or "")).split())
+
+
+def has_reserved_number(value) -> bool:
+	"""Whether ``value`` still reads as a PDT- or SRV- number once case and punctuation are set
+	aside (``rules.normalise``): "PDT.0042", "pdt/0042", "XPDT0042"."""
+	return bool(_RESERVED_KEY.search(rules.normalise(str(value or ""))))
 
 
 def scrub_description(value) -> str:
@@ -286,7 +306,7 @@ def build_prompt(description, vendor_part_no, context, has_photo=False) -> str:
 			"they are compliant; they are not this item:",
 			*[f"- {strip_reserved_numbers(name)}" for name in neighbours[:NEIGHBOURS]],
 		]
-	part = vendor_code(vendor_part_no)[:PART_MAX]
+	part = vendor_code(plain_text(vendor_part_no, PART_MAX * 2))[:PART_MAX]
 	lines += [
 		"",
 		f"<vendor_part_no>{part or '(none typed)'}</vendor_part_no>",
@@ -338,8 +358,13 @@ def _entry(data, key):
 	return None, None
 
 
-def _value(value, limit) -> str:
-	return strip_reserved_numbers(plain_text(value, limit * 2))[:limit].strip()
+def _segment(value) -> str:
+	"""One name segment: plain, cleaned as the builder cleans it, and only then any PDT- or SRV-
+	number taken out, so "PDT,0042" is one number and not "PDT" and "0042" either side of a comma.
+	A segment that still reads as one ("XPDT0042") is dropped whole."""
+	part = clean_part(plain_text(value, SEGMENT_MAX * 2))
+	part = strip_reserved_numbers(part)[:SEGMENT_MAX].strip()
+	return "" if has_reserved_number(part) else part
 
 
 def _reason(value) -> str:
@@ -357,9 +382,56 @@ def _canonical(value, allowed) -> str | None:
 	return None
 
 
-def _in_text(part, *texts) -> bool:
-	"""Whether a part number appears in what the person typed, once case and punctuation are set
-	aside (``rules.normalise``, the identity the duplicate check uses)."""
+#: What ends a run of words in a description: a comma or a semicolon ("1/2 HP, 115 V" is two runs).
+#: Whitespace ends a word; a part number keeps its - / and . inside it.
+_CLAUSE = re.compile(r"[,;]")
+_WORD = re.compile(r"\S+")
+#: Trimmed off either end of a word: sentence punctuation and brackets, never inside a printed
+#: number ("AFS-7731." ending a sentence, "(AFS-7731)", "#7731").
+_WORD_EDGE: Final[str] = ".:!?()[]{}'\"`#*"
+
+
+def _words(text) -> list[tuple[int, int, str]]:
+	"""``(start, end, key)`` for each word of ``text``, its ends trimmed, ``key`` its
+	``rules.normalise`` form. A word that is only punctuation ("-", "&") has no key and is skipped."""
+	words = []
+	for match in _WORD.finditer(text):
+		raw = match.group()
+		trimmed = raw.strip(_WORD_EDGE)
+		key = rules.normalise(trimmed)
+		if not key:
+			continue
+		start = match.start() + len(raw) - len(raw.lstrip(_WORD_EDGE))
+		words.append((start, start + len(trimmed), key))
+	return words
+
+
+def printed_in(part, *texts) -> str:
+	"""The text's own spelling of the part number ``part``, or "".
+
+	A part number is found only when it IS words of the text: word for word, with case and
+	punctuation set aside, it equals one whole word ("afs7731" is the printed "AFS-7731") or a run of
+	whole words inside one clause ("afs 7731" is the printed "AFS 7731"). What comes back is the
+	text's spelling, never the model's. A number cut short ("AFS-773"), stitched across words
+	("PUMP-AFS", "115V" from "115 V", "12HP-115" from "1/2 HP, 115") or across a comma is not found.
+	"""
+	want = [key for _start, _end, key in _words(str(part or ""))]
+	if not want or len("".join(want)) < 3:
+		return ""
+	size = len(want)
+	for text in texts:
+		for clause in _CLAUSE.split(str(text or "")):
+			words = _words(clause)
+			for i in range(len(words) - size + 1):
+				if [key for _start, _end, key in words[i : i + size]] == want:
+					return clause[words[i][0] : words[i + size - 1][1]]
+	return ""
+
+
+def _near(part, *texts) -> bool:
+	"""Whether ``part``'s letters and digits run inside the text at all, punctuation and word breaks
+	aside: a number cut short, re-punctuated or stitched across words. Never "found"; the person
+	checks it."""
 	key = rules.normalise(part)
 	return len(key) >= 3 and any(key in rules.normalise(text) for text in texts if text)
 
@@ -410,20 +482,26 @@ def validate_suggestion(
 	value, reason = _entry(data, "vendor_part_no")
 	proposed = vendor_code(plain_text(value, PART_MAX * 2))[:PART_MAX]
 	if family == rules.FAMILY_VENDOR:
+		printed = vendor_code(printed_in(proposed, description))[:PART_MAX] if proposed else ""
 		if typed:
 			part, why, confirm = typed, "The part number you typed, as printed.", False
-		elif proposed and _in_text(proposed, description):
-			part, why, confirm = proposed, reason or "Found in your description.", False
+		elif printed:
+			# The description's spelling, never the model's: the code IS the number as printed.
+			part, why, confirm = printed, "Found in your description.", False
 		elif proposed and has_photo:
 			part, why, confirm = proposed, reason or "Read from the photo.", True
+		elif proposed and _near(proposed, description):
+			why = "Close to something in your description, but not the number exactly as printed."
+			part, confirm = proposed, True
 		else:
 			part, why, confirm = "", None, False
 			if proposed:
 				drop("vendor_part_no", "not in what you typed: a part number is never guessed")
-		# A reserved number written without its hyphen ("PDT0042") still reads as one: never offered.
+		# A reserved number written without its hyphen ("PDT0042"), or with a dot, a slash or a
+		# Unicode dash, still reads as one: never offered.
 		if part and (
 			rules.classify_code_family(part) != rules.FAMILY_VENDOR
-			or (part != typed and _RESERVED_NUMBER.search(part))
+			or (part != typed and has_reserved_number(part))
 		):
 			drop("vendor_part_no", "PDT-, SRV- and CON- belong to our own families, not a vendor's")
 			part = ""
@@ -436,7 +514,12 @@ def validate_suggestion(
 				note="Check it against the label before you accept it." if confirm else None,
 			)
 	elif proposed:
-		drop("vendor_part_no", f"the suggestion is a {FAMILY_LABELS.get(family, 'other').lower()} code")
+		drop(
+			"vendor_part_no",
+			f"the suggestion is a {FAMILY_LABELS[family]} code"
+			if family
+			else "the AI did not say what kind of code it is",
+		)
 
 	# A consumable's code parts.
 	if family == rules.FAMILY_CONSUMABLE:
@@ -458,8 +541,7 @@ def validate_suggestion(
 	name = data.get("name") if isinstance(data.get("name"), dict) else {}
 	for index, segment in enumerate(rules.SEGMENTS):
 		value, reason = _entry(name, segment)
-		part = clean_part(_value(value, SEGMENT_MAX))
-		part = _WORD_GREY.sub("GRAY", part)
+		part = _WORD_GREY.sub("GRAY", _segment(value))
 		if part:
 			keep(SEGMENT_KEYS[index], part, reason)
 
@@ -480,7 +562,12 @@ def validate_suggestion(
 	for note in data.get("missing") if isinstance(data.get("missing"), list) else []:
 		text = plain_text(note, MISSING_ITEM_MAX)
 		# A note about a PDT- or SRV- number is about the one thing the model may not choose.
-		if text and not _RESERVED_NUMBER.search(text) and text not in missing:
+		if (
+			text
+			and not _RESERVED_NUMBER.search(text)
+			and not has_reserved_number(text)
+			and text not in missing
+		):
 			missing.append(text)
 	return {"fields": fields, "family": family or None, "missing": missing[:MISSING_MAX], "dropped": dropped}
 

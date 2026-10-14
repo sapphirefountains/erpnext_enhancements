@@ -164,7 +164,6 @@ class ItemExtension {
 		this.$families = null;
 		this.$family_inputs = null;
 		this.line = null; // a buying line's supplier and rate (line_from), on a new Item
-		this.values_now = null; // the new record's ctx.values, read when step 1 creates it
 		// The Describe it card, kept across redraws of the step: what was typed, the photo, the
 		// last answer and which of its rows were accepted (key -> the value taken).
 		this.suggest = { description: null, part: null, photo: null, answer: null, accepted: {}, busy: false, seq: 0 };
@@ -199,10 +198,15 @@ class ItemExtension {
 	before_create() {
 		const v = this.last_verdict;
 		if (v && v.refusals.length) return __("Fix the naming problem shown above first: it would be refused.");
-		// A buying line's supplier and rate wait for the supplier block of the Item this makes.
-		const code = this.line && this.values_now ? String((this.values_now() || {}).item_code || "").trim() : "";
-		if (code) LINE_STARTS.set(code, this.line);
 		return "";
+	}
+
+	// The create went through. A buying line's supplier and rate wait for the supplier block of the
+	// Item it made, keyed by the name the server gave it. Only now: set before the create, a create
+	// that failed (a code that is taken) left them waiting for whichever Item had that code.
+	created(record) {
+		const name = record && record.name ? String(record.name) : "";
+		if (name && this.line) LINE_STARTS.set(name, this.line);
 	}
 
 	// ------------------------------------------------------------------ Describe it (v1.691.0)
@@ -500,7 +504,6 @@ class ItemExtension {
 		if (ctx.is_new && ctx.can_write) {
 			// Route options no field takes (a buying line's supplier and rate), for later.
 			this.line = line_from(typeof ctx.started === "function" ? ctx.started() : {});
-			this.values_now = ctx.values;
 			this.render_describe($box.find(".gi-describe").prop("hidden", false), ctx);
 			this.render_code_helper($box.find(".gi-code-body"), ctx);
 		} else {

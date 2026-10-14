@@ -21,19 +21,22 @@ What it keeps to:
   through Stock Scan's ``preview_new_item``, the same preview the step's naming check shows, so
   an existing Item that looks the same is named before anyone accepts anything.
 * **Failure is graceful.** The AI is not set up, it timed out, it answered something that is not
-  the JSON asked for, or it suggested nothing usable: ``{"ok": False, "message": ...}`` in plain
-  words, and the rule-based helper below the card works as before. The Error Log row carries the
-  exception's class and a short message, never the prompt or the photo (``frappe.get_traceback``
-  is not used: Frappe renders local variables, and both are locals).
+  the JSON asked for, it suggested nothing usable, or reviewing the answer hit an error of our own:
+  ``{"ok": False, "message": ...}`` in plain words, and the rule-based helper below the card works
+  as before. The Error Log row carries the exception's class and a short message, never the prompt
+  or the photo (``frappe.get_traceback`` is not used: Frappe renders local variables, and both are
+  locals).
 * **The photo is checked by its bytes.** JPEG, PNG, WebP or HEIC, at most 4 MB decoded, sent as
-  base64 (``image``) or named as a File the caller can read (``file_url``). The page scales a phone
-  photo to 1600px before it sends it, and nothing is stored.
+  base64 (``image``) or named as a File the caller can read (``file_url``), its size checked
+  before it is read. A File that is not there and one the caller may not read get the same answer.
+  The page scales a phone photo to 1600px before it sends it, and nothing is stored.
 
 Gated on Item create, as ``api.item_flow``'s preview and blocks are, and rate-limited per user.
 Indentation is tabs (new file).
 """
 
 import base64
+import os
 
 import frappe
 from frappe import _
@@ -91,6 +94,39 @@ def _answer(ok, message="", **extra):
 	return dict({"ok": bool(ok), "message": message}, **extra)
 
 
+#: File rows looked at for one address. Several rows share an address (each attachment of the same
+#: upload is its own row, with its own permissions), so the first is not necessarily one this person
+#: may read.
+FILE_ROWS_MAX = 20
+
+
+def _readable_file(url):
+	"""A File at ``url`` this person may read, or None (none there, or none they may read)."""
+	if not url:
+		return None
+	for name in frappe.get_all("File", filters={"file_url": url}, pluck="name", limit=FILE_ROWS_MAX):
+		try:
+			doc = frappe.get_doc("File", name)
+			if doc.has_permission("read"):
+				return doc
+		except Exception:
+			continue
+	return None
+
+
+def _file_size(doc):
+	"""The File's size in bytes, from its row or else from the disk, without reading it; None when
+	neither can say. A row's ``file_size`` is 0 or blank on some older uploads, and reading the file
+	to measure it would read a huge one whole before the limit could refuse it."""
+	size = doc.get("file_size") or 0
+	if size:
+		return size
+	try:
+		return os.path.getsize(doc.get_full_path())
+	except Exception:
+		return None
+
+
 def _photo(image=None, file_url=None):
 	"""``({"mime_type", "data"}, None)`` for the photo, or ``(None, message)``. A File is read only
 	when the caller may read it; its bytes, not its name, say what it is."""
@@ -101,13 +137,15 @@ def _photo(image=None, file_url=None):
 		except ValueError as exc:
 			return None, str(exc)
 	elif file_url:
-		url = cstr(file_url).strip()
-		names = frappe.get_all("File", filters={"file_url": url}, pluck="name", limit=1) if url else []
-		if not names:
+		doc = _readable_file(cstr(file_url).strip())
+		# A File the person may not read gets the same words as one that is not there: the answer is
+		# not a way to find out which private files exist.
+		if doc is None:
 			return None, rules.MSG_PHOTO_UNREADABLE
-		doc = frappe.get_doc("File", names[0])
-		doc.check_permission("read")
-		if (doc.get("file_size") or 0) > rules.IMAGE_MAX_BYTES:
+		size = _file_size(doc)
+		if size is None:
+			return None, rules.MSG_PHOTO_UNREADABLE
+		if size > rules.IMAGE_MAX_BYTES:
 			return None, rules.MSG_PHOTO_SIZE
 		try:
 			# No encodings: v16's File.get_content otherwise tries utf-8, windows-1250 and
@@ -123,12 +161,25 @@ def _photo(image=None, file_url=None):
 	return {"mime_type": rules.sniff_image(raw), "data": base64.b64encode(raw).decode("ascii")}, None
 
 
+def _enabled_uoms(rows):
+	"""The enabled UOMs, the ones ``rows`` (live Items) use most first, then by name."""
+	used = {}
+	for row in rows:
+		uom = row.get("stock_uom")
+		if uom:
+			used[uom] = used.get(uom, 0) + 1
+	enabled = [uom for uom in frappe.get_all("UOM", filters={"enabled": 1}, pluck="name") if uom]
+	return sorted(set(enabled), key=lambda uom: (-used.get(uom, 0), uom))
+
+
 def read_context(seed):
 	"""What the prompt and the checks need from the site: ``{"categories", "item_groups",
 	"uoms", "neighbours", "codes"}``.
 
-	The item groups are the tree's leaves without its root, and the units are the ones live Items
-	use, so the model can only pick what a buyer already picks from. ``neighbours`` are the catalog
+	The item groups are the tree's leaves without its root, and the units are the enabled UOMs, the
+	ones live Items use most first, so the model can only pick what a buyer can pick from. Not the
+	units live Items use: a disabled one ("Nos", replaced by "Unit") is still on old Items, and an
+	enabled one no Item uses yet ("Gallon") would be missing. ``neighbours`` are the catalog
 	names that share the most (rarest-first) words with ``seed``, never their codes; ``codes`` is
 	every Item code, read as the new-Item guard reads it (a code is taken whoever can see it).
 	"""
@@ -145,7 +196,7 @@ def read_context(seed):
 	return {
 		"categories": item_flow_rules.approved_categories(),
 		"item_groups": sorted(g for g in groups if g and g != naming.ROOT_ITEM_GROUP),
-		"uoms": sorted({row.get("stock_uom") for row in rows if row.get("stock_uom")}),
+		"uoms": _enabled_uoms(rows),
 		"neighbours": neighbours,
 		"codes": frappe.get_all("Item", pluck="name"),
 	}
@@ -217,6 +268,19 @@ def run_suggestion(description=None, vendor_part_no=None, image=None, file_url=N
 		_log(exc)
 		return _answer(False, _(rules.failure_message(exc)))
 
+	# Everything after the model call is ours, and an unexpected error in it is still the friendly
+	# answer: as a 500, Frappe's error snapshot would render this frame's locals, the prompt and the
+	# photo among them.
+	try:
+		return _review_answer(reply, text, part, bool(photo), context)
+	except Exception as exc:
+		_log(exc)
+		return _answer(False, _(rules.MSG_BAD_ANSWER))
+
+
+def _review_answer(reply, text, part, has_photo, context):
+	"""The model's ``reply`` held to its schema, put through the rules, and answered. Takes whether
+	there was a photo, never the photo."""
 	data = rules.parse_answer(reply)
 	if data is None:
 		_log(ValueError("The model's reply was not a JSON object"))
@@ -225,7 +289,7 @@ def run_suggestion(description=None, vendor_part_no=None, image=None, file_url=N
 		data,
 		description=text,
 		vendor_part_no=part,
-		has_photo=bool(photo),
+		has_photo=has_photo,
 		item_groups=context["item_groups"],
 		uoms=context["uoms"],
 	)

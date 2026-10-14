@@ -10,6 +10,10 @@
  *   ext.render(name, $box, ctx)          draw block `name` into $box, above the step's fields
  *   ext.on_change(fieldname, value, ctx) a field on the step changed (optional)
  *   ext.leave()                          the step or the record is going away (optional)
+ *   ext.before_create()                  step 1 is about to create the record: "" lets it go, any
+ *                                        other text holds it back and is shown (optional)
+ *   ext.created(record)                  the create went through: { name, ... } (optional; never
+ *                                        called for a create that failed)
  *
  * and `ctx` is what the page lends a block:
  *

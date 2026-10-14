@@ -75,7 +75,9 @@ class ItemNamingSuggest(BaseTool):
 
     def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
         args = arguments or {}
-        description = (args.get("description") or "").strip()
+        description = args.get("description")
+        # A model can send anything: a number, a list, an object. Only text is a description.
+        description = description.strip() if isinstance(description, str) else ""
         if not description:
             frappe.throw(_("A 'description' of the item is required."), frappe.ValidationError)
         # The suggestion is for creating an Item, and each call costs a model call: the same gate
