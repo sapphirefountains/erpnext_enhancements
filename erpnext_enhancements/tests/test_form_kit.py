@@ -431,6 +431,8 @@ def _install_frappe_stub(metas):
         return FakeDoc(doctype, data)
 
     frappe.new_doc = new_doc
+    # The config's `quick.when` paths (form kit P6.7): what the server would answer, per test.
+    frappe.get_attr = lambda path: lambda doctype: bool(STATE.get("attrs", {}).get(path))
 
     def get_doc(doctype, name=None):
         if name not in STATE["db"]:
@@ -1736,6 +1738,8 @@ class TestEndpoints(unittest.TestCase):
                 "lost",
                 # Form kit P6.6 (v1.672.0): what a move into Closed Won must carry.
                 "won",
+                # The statuses that close a record: the side panel offers no Undo across them.
+                "closed",
             },
         )
         self.assertEqual(payload["name"], name)
@@ -1778,6 +1782,20 @@ class TestEndpoints(unittest.TestCase):
         self.assertEqual(quick["stage_field"], "status")
         self.assertIn("status", new["prefill_fields"], "the column's stage goes with the create")
         self.assertIn("custom_opportunity_summary", new["prefill_fields"], "so does the summary")
+        self.assertNotIn("custom_lead_source", quick["fields"], "not asked while nothing requires it")
+
+    def test_quick_add_asks_for_the_lead_source_while_the_server_requires_one(self):
+        path = "erpnext_enhancements.crm_enhancements.attribution.lead_source_required"
+        self.assertEqual(config.CONFIGS["Opportunity"]["quick"]["when"], {"custom_lead_source": path})
+        STATE["attrs"] = {path: True}
+        try:
+            fields = api.get_flow("Opportunity")["quick"]["fields"]
+        finally:
+            STATE.pop("attrs", None)
+        self.assertEqual(fields[-1], "custom_lead_source")
+        # The Desk reads no Settings Single for it: get_flow says.
+        page = (APP / "public" / "js" / "form_kit" / "panel.js").read_text(encoding="utf-8")
+        self.assertNotIn("Settings", page)
 
     def test_the_schema_check_holds_won_and_quick(self):
         broken = copy.deepcopy(config.CONFIGS["Opportunity"])

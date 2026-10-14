@@ -135,6 +135,14 @@ export class RecordEditor {
 		return false;
 	}
 
+	// v16's own login path. In a new tab, so nothing typed here is lost: the Desk that boots there
+	// broadcasts its new CSRF token to this tab (desk.js setup_broadcast_listeners). P4.4: here rather
+	// than on the guided page, so the side panel's "Sign in" (refresh_notices) works too.
+	open_login() {
+		const here = window.location.pathname + window.location.search;
+		window.open(`/login?redirect-to=${encodeURIComponent(here)}`, "_blank", "noopener");
+	}
+
 	// The step whose fields are on screen. A shell that draws fields the flow has in no single step
 	// (the side panel's required fields on a move, its quick add) sets `step_override`.
 	current_step() {
@@ -289,7 +297,7 @@ export class RecordEditor {
 			send: (values, at) =>
 				this.sf.call(GE_API + "save_step", { doctype, name, values, modified: at }, { quiet: true }),
 			on_state: (state, error) => {
-				this.write_journal(doctype, name);
+				if (!queue.manual) this.write_journal(doctype, name);
 				if (state === "error" && this.kit.try_later(error) && !queue.manual) this.wait_for_signal();
 				if (current()) this.on_save_state(state, error);
 			},
@@ -766,10 +774,12 @@ export class RecordEditor {
 	// sending), each its own: in flight, held by a conflict prompt, and typed since. Kept values that
 	// wait on the person's choice (`held`) come first; the newest typing wins.
 	write_journal(doctype, name) {
-		// P4.4: a move's required fields are not a change until the move is committed, so the phone
-		// keeps none of them (put back later, they would commit a move nobody confirmed).
-		if (!doctype || !name || !this.kit || this.hold_saves) return;
+		if (!doctype || !name || !this.kit) return;
 		const key = this.record_key(doctype, name);
+		// P4.4: a move's required fields are not a change until the move is committed, so the phone
+		// keeps none of them (put back later, they would commit a move nobody confirmed). The queue
+		// says so itself (`manual`); this editor then leaves the record's entry exactly as it is.
+		if (this.queue && this.queue.manual && this.queue.record_key === key) return;
 		const held = this.held[key] || {};
 		const unsent = {};
 		const base = {};
@@ -779,7 +789,7 @@ export class RecordEditor {
 		});
 		let modified = null;
 		[...this.retired, this.queue].forEach((queue) => {
-			if (!queue || queue.record_key !== key) return;
+			if (!queue || queue.manual || queue.record_key !== key) return;
 			Object.assign(unsent, queue.in_flight() || {}, queue.conflict_sent || {}, queue.pending());
 			modified = queue.modified || modified;
 		});
@@ -1361,7 +1371,9 @@ export class RecordEditor {
 			this.sf.state.render($slot, "empty", {
 				title: __("Not carried over here: {0}.", [notice.fields.join(", ")]),
 				body: __("The full form keeps every value it was started with."),
-				action_label: __("Use the full form"),
+				// Only the guided page starts a record from elsewhere (and has open_new_in_form); a shell
+				// without it shows the notice with no action rather than a button that throws.
+				action_label: typeof this.open_new_in_form === "function" ? __("Use the full form") : "",
 				on_action: () => this.open_new_in_form(),
 			});
 			return;

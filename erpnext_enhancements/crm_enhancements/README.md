@@ -431,7 +431,9 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   A panel for a deal that has left the board (a closing move), a stage that is gone, or a bulk
   action with nothing selected puts the view back in its place, as the move panel does.
 - **Tap to edit** (P6.6): a card, or a row of the table, the timeline or the attention list, opens
-  the deal for editing. Closing an edit that saved something offers Undo.
+  the deal for editing. Closing an edit that saved something offers Undo, except when the edit moved
+  the deal into or out of a closing status (Closed Won, Lost, ...): those are undone the way they
+  are made (the Closed-Won prompt's No, which refuses once a project exists).
 - **Required fields on a drop** (P6.6): Closed Won asks for the three ranks, Lost for the lost
   reasons, competitors and detail (the Set as Lost dialog's fields). The move is saved only when the
   person commits, together with those fields and locked on the card's `modified`; until then the
@@ -440,18 +442,23 @@ opens the normal way and a closing drop opens the guided Close step, as before p
   project prompt and the hand-off gate's stamps come from the ordinary save, as for any move into
   Closed Won.
 - **Quick add** (P6.7): the "+" on each open column and On Hold asks for the account, a name, the
-  value streams and a summary (the config's `quick`), creates through `form_kit.api.create_record`
+  value streams and a summary (the config's `quick`; plus the Lead Source while Lead Attribution
+  Settings require one, which `get_flow` decides), creates through `form_kit.api.create_record`
   with its `client_id`, in that stage, and then shows the new deal in the panel.
 - **Bulk** (P6.7): "Select" shows a box on every deal and a bar along the bottom. **Change stage**
-  (a closing stage asks for its required fields first; the ranks given fill only a deal's blank
-  ranks), **Reassign**, **Set close date** and **Snooze** go through `opportunity_board.bulk_update`
-  (POST, up to 100 deals): every deal through the path a single change takes
+  (Lost asks for its reasons first), **Reassign** (an enabled System User), **Set close date** and
+  **Snooze** go through `opportunity_board.bulk_update` (POST, up to 100 deals, 25 for a stage move;
+  over the cap the panel says so and sends nothing): every deal through the path a single change takes
   (`form_kit.saver.save_step`, `saver.declare_lost`, or `snooze`), with write permission and the
   `modified` lock checked per deal and a savepoint per deal, so one refusal never undoes the others.
   The answer is deal by deal; what did not change stays selected, with its reason. The selection
   is kept for the tab (`sessionStorage`, guarded), so a reload on a bulk address finds it.
-  - A bulk move into Closed Won sends each deal's Closed-Won project prompt, one per deal, as
-    single moves do.
+  - **Closed Won is not a bulk move**, a deliberate departure from P6.7's text (review of #1286). It
+    is not offered, and `bulk_update` refuses it: "Win deals one at a time: each needs its own ranks
+    and hand-off." Each win sends its own "Schedule the hand-off meeting now?" prompt, so twenty would
+    stack with none naming its deal, and v16 treats a prompt closed with Esc or × as No, which
+    un-wins that deal (`project_prompt.revert_won_status`). One set of ranks for many deals is wrong
+    too. Win from the card (a drop, or the move panel), one deal at a time.
 
 ### Needs attention check
 

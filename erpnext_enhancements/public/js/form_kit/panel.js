@@ -110,6 +110,21 @@ export function panel_key(spec) {
 	return "";
 }
 
+// Whether Undo may be offered for what a panel session saved. Not when it moved the record into or
+// out of a closing status (the flow's `closed`: Closed Won, Lost, Closed, Converted on Opportunity,
+// plus `won` and `lost` themselves): a plain save back out of Closed Won would skip
+// revert_won_status's refusal once a project exists and leave the won date set, and one back into
+// it would fire the hand-off prompt again. Those moves are undone the way they are made, on purpose.
+export function undo_allowed(flow, before, saved) {
+	const f = flow || {};
+	const field = (f.closed && f.closed.field) || (f.won && f.won.status_field) || (f.lost && f.lost.status_field) || "status";
+	const closing = new Set([].concat((f.closed && f.closed.in) || [], f.won ? [f.won.status] : [], f.lost ? [f.lost.status] : []));
+	const b = before || {};
+	const s = saved || {};
+	if (!Object.prototype.hasOwnProperty.call(s, field) || same_value(b[field], s[field])) return true;
+	return !closing.has(s[field]) && !closing.has(b[field]);
+}
+
 // The fields a panel session changed and saved, and what each was when the panel opened: the
 // Undo toast puts these back. `before` is the record as the panel first loaded it, `saved` each
 // saved field's value now. A field saved back to its opening value is not a change.

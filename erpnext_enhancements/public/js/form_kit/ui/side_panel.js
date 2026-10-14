@@ -179,6 +179,8 @@ export class SidePanel extends RecordEditor {
 				key: this.key(),
 				push: this.opts.push || null,
 				history: false,
+				// The drawer's own × takes the panel's close path too: an edit saves first.
+				request_close: () => this.request_close(),
 				tools: this.close_button(),
 				on_close: (how) => this.drawer_closed(how),
 			});
@@ -251,6 +253,7 @@ export class SidePanel extends RecordEditor {
 		if (spec.kind === "edit" && this.queue) {
 			const queue = this.queue;
 			const opened = this.opened;
+			const flow = this.flow;
 			const doctype = this.doctype;
 			const name = this.name;
 			const title = this.title_text();
@@ -259,7 +262,7 @@ export class SidePanel extends RecordEditor {
 			this.touched.forEach((fieldname) => (saved[fieldname] = ge_clone(this.values[fieldname])));
 			queue
 				.flush()
-				.then(() => this.offer_undo({ queue, opened, saved, doctype, name, title }))
+				.then(() => this.offer_undo({ queue, flow, opened, saved, doctype, name, title }))
 				.catch(() => {});
 		}
 		this.load_seq += 1;
@@ -506,11 +509,18 @@ export class SidePanel extends RecordEditor {
 		}
 	}
 
-	offer_undo({ queue, opened, saved, doctype, name, title }) {
+	offer_undo({ queue, flow, opened, saved, doctype, name, title }) {
 		const undo = this.kit.undo_values(opened || {}, saved || {});
 		const count = Object.keys(undo).length;
 		if (!count) return;
-		this.sf.toast(count === 1 ? __("Saved a change to {0}", [title]) : __("Saved {0} changes to {1}", [count, title]), {
+		const said = count === 1 ? __("Saved a change to {0}", [title]) : __("Saved {0} changes to {1}", [count, title]);
+		// No Undo for an edit that moved the record into or out of a closing status (Closed Won, Lost,
+		// ...): a plain save back would skip the un-win refusal and leave the won date (panel.js).
+		if (!this.kit.undo_allowed(flow, opened || {}, saved || {})) {
+			this.sf.toast(said, { tone: "success", timeout: 6000 });
+			return;
+		}
+		this.sf.toast(said, {
 			tone: "success",
 			timeout: 10000,
 			action_label: __("Undo"),
@@ -534,7 +544,9 @@ export class SidePanel extends RecordEditor {
 				if (result && result.modified) queue.set_modified(result.modified);
 				this.sf.toast(__("Undone: {0} is back as it was.", [title]), { tone: "info" });
 				if (typeof this.host.changed === "function") this.host.changed(name);
-				if (this.is_open() && this.name === name && this.spec && this.spec.kind === "edit") this.reload_record();
+				// The guided page (and this panel, if it is open on the record) reload rather than meet
+				// the Undo as a conflict on their next save.
+				$(document).trigger("sf-record-changed", [doctype, name]);
 			})
 			.catch((err) => this.sf.toast((err && err.message) || __("It could not be undone."), { tone: "warning" }));
 	}

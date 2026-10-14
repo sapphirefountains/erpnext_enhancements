@@ -1664,6 +1664,8 @@ class OpportunityBoard {
 				owner: "ob-bulk",
 				push: this.$root[0],
 				history: false,
+				// The drawer's × closes through the route, as the Close button does.
+				request_close: () => this.close_side(),
 				tools: close,
 				on_close: (how) => {
 					if (this.bulk_closing || this.bulk !== bulk) return;
@@ -1684,7 +1686,15 @@ class OpportunityBoard {
 		const titles = names.map((name) => (this.model.by_name[name] || {}).title || name);
 		const shown = titles.slice(0, 6).map((t) => `<li>${esc(t)}</li>`).join("");
 		const more = titles.length > 6 ? `<li>${esc(__("and {0} more", [titles.length - 6]))}</li>` : "";
-		const head = `<p class="ob-bulk-count">${esc(this.bulk_count_text())}</p><ul class="ob-bulk-names">${shown}${more}</ul>`;
+		// A stage move takes at most 25 deals a request, the rest 100 (kit.bulk_cap, the server's caps).
+		const cap = this.kit.bulk_cap(bulk.action);
+		const over = names.length > cap;
+		const cap_note = over
+			? `<p class="ob-bulk-error" role="alert">${esc(
+					__("This changes at most {0} deals at once, and {1} are selected. Clear some, then try again.", [cap, names.length])
+			  )}</p>`
+			: "";
+		const head = `<p class="ob-bulk-count">${esc(this.bulk_count_text())}</p><ul class="ob-bulk-names">${shown}${more}</ul>${cap_note}`;
 		if (bulk.outcome) {
 			bulk.body.innerHTML = head + this.bulk_outcome_html(bulk.outcome);
 			bulk.fg = null;
@@ -1701,21 +1711,19 @@ class OpportunityBoard {
 							stage.label
 						)}</span>${
 							stage.kind === "close"
-								? `<span class="ob-stage-note">${esc(
-										stage.gate === "lost" ? __("Asks why they were lost") : __("Asks for the ranks")
-								  )}</span>`
+								? `<span class="ob-stage-note">${esc(__("Asks why they were lost"))}</span>`
 								: ""
 						}</button>`
 				)
 				.join("");
-			body = `<p class="ob-panel-intro">${esc(__("Choose the stage they move to."))}</p><div class="ob-panel-stages">${buttons}</div>`;
+			// Closed Won is never offered here (kit.bulk_stages): a deliberate departure from P6.7.
+			body = `<p class="ob-panel-intro">${esc(__("Choose the stage they move to."))}</p><div class="ob-panel-stages">${buttons}</div>
+				<p class="ob-panel-intro">${esc(__("Win deals one at a time: each needs its own ranks and hand-off."))}</p>`;
 		} else {
 			const stage = bulk.stage ? this.kit.stage_by_key(this.model, bulk.stage) : null;
 			const intro = {
 				stage: stage
-					? stage.gate === "won"
-						? __("Closed Won needs scope, schedule and budget ranked 1, 2 and 3. A deal that already has its ranks keeps them; these fill only the ones missing.")
-						: stage.gate === "lost"
+					? stage.gate === "lost"
 						? __("Why they were lost, saved on each deal as Set as Lost does.")
 						: __("Each deal moves to {0}, checked and saved the way a single move is.", [stage.label])
 					: "",
@@ -1734,7 +1742,7 @@ class OpportunityBoard {
 				<div class="ob-bulk-fields"></div>
 				${bulk.error ? `<p class="ob-bulk-error" role="alert">${esc(bulk.error)}</p>` : ""}`;
 			commit = `<div class="ob-bulk-foot"><button type="button" class="sf-btn sf-btn--primary" data-bulk-commit${
-				bulk.busy || !names.length ? " disabled" : ""
+				bulk.busy || !names.length || over ? " disabled" : ""
 			}>${esc(bulk.busy ? __("Working…") : label)}</button></div>`;
 		}
 		bulk.body.innerHTML = head + body + commit;
@@ -1743,8 +1751,8 @@ class OpportunityBoard {
 		if (holder) this.bulk_fields(holder);
 	}
 
-	// The fields an action needs, as frappe controls. A closing stage's come from the deal's own flow
-	// (the ranks' definitions; the Set as Lost fields), read once with get_flow.
+	// The fields an action needs, as frappe controls. Lost's are the Set as Lost fields, from the deal's
+	// own flow, read once with get_flow.
 	bulk_fields(holder) {
 		const bulk = this.bulk;
 		const make = (fields) => {
@@ -1773,10 +1781,10 @@ class OpportunityBoard {
 			]);
 		} else if (bulk.action === "stage" && bulk.stage) {
 			const stage = this.kit.stage_by_key(this.model, bulk.stage);
-			if (!stage || stage.kind !== "close") return;
+			if (!stage || stage.gate !== "lost") return;
 			this.bulk_flow_for().then((flow) => {
 				const fk = window.sf_form_kit;
-				if (!flow || !fk) {
+				if (!flow || !fk || !flow.lost) {
 					const note = document.createElement("p");
 					note.className = "ob-bulk-error";
 					note.setAttribute("role", "alert");
@@ -1784,20 +1792,7 @@ class OpportunityBoard {
 					if (holder.isConnected) holder.replaceChildren(note);
 					return;
 				}
-				const fields =
-					stage.gate === "lost"
-						? fk.lost_fields(flow.lost, __)
-						: // The stage's required fields, required here as on a drop: a deal that has its own
-						  // ranks keeps them (the server fills only blanks), but the gate always asks.
-						  fk.field_defs(flow, (flow.won && flow.won.fields) || []).map((f) => ({
-								fieldtype: f.fieldtype,
-								fieldname: f.fieldname,
-								label: f.label,
-								options: f.options,
-								description: f.hint || "",
-								reqd: 1,
-						  }));
-				make(fields);
+				make(fk.lost_fields(flow.lost, __));
 			});
 		}
 	}
@@ -1832,7 +1827,8 @@ class OpportunityBoard {
 			bulk.stage = hit.getAttribute("data-bulk-stage");
 			bulk.error = "";
 			const stage = this.kit.stage_by_key(this.model, bulk.stage);
-			if (stage && stage.kind !== "close") return this.bulk_commit();
+			const fits = this.kit.clean_picks(this.model, this.picks || []).length <= this.kit.bulk_cap(bulk.action);
+			if (stage && stage.kind !== "close" && fits) return this.bulk_commit();
 			return this.render_bulk();
 		}
 		if (el.closest("[data-bulk-restage]")) {
@@ -1866,25 +1862,25 @@ class OpportunityBoard {
 			const stage = this.kit.stage_by_key(this.model, bulk.stage);
 			if (!stage) return;
 			payload_values = { status: stage.label };
+			if (stage.gate === "won") return; // never offered; the server refuses it too
 			if (stage.gate === "lost") {
 				Object.assign(payload_values, {
 					reasons: values.reasons || [],
 					competitors: values.competitors || [],
 					detail: values.detail || "",
 				});
-			} else if (stage.gate === "won") {
-				payload_values.ranks = Object.assign({}, values);
 			}
 		}
 		const request = this.kit.bulk_request(this.model, this.picks || [], bulk.action, payload_values);
-		if (!request.names.length) return;
+		// Over the action's cap: the panel says so, and nothing is sent until the selection fits.
+		if (!request.names.length || request.over > 0) return this.render_bulk();
 		bulk.busy = true;
 		bulk.error = "";
 		this.render_bulk();
 		this.move_epoch += 1;
 		request.names.forEach((name) => this.saving.add(name));
 		this.sf
-			.call(OB_API + "bulk_update", request, { quiet: true })
+			.call(OB_API + "bulk_update", { names: request.names, action: request.action, values: request.values, modified: request.modified }, { quiet: true })
 			.then((answer) => {
 				const outcome = this.kit.bulk_outcome(request.names, answer && answer.results);
 				this.set_picks(this.kit.after_bulk(this.picks || [], outcome));

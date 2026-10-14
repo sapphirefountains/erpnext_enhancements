@@ -114,6 +114,18 @@ out.keys = [
 	fk.panel_key(null),
 ];
 out.undo = fk.undo_values({ a: 1, b: "x", c: null, d: 5 }, { a: "1.0", b: "y", c: "z", e: 9 });
+// No Undo for an edit that moved the record into or out of a closing status (review of #1286).
+const closed_flow = Object.assign({}, flow, { closed: { field: "status", in: ["Closed Won", "Lost", "Closed", "Converted"] } });
+out.undo_allowed = {
+	plain: fk.undo_allowed(closed_flow, { status: "Qualification", x: 1 }, { x: 2 }),
+	open_to_open: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Needs Analysis" }),
+	into_won: fk.undo_allowed(closed_flow, { status: "Proposal/Price Quote" }, { status: "Closed Won", custom_scope_rank: "1" }),
+	into_lost: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Lost" }),
+	into_converted: fk.undo_allowed(closed_flow, { status: "Qualification" }, { status: "Converted" }),
+	out_of_won: fk.undo_allowed(closed_flow, { status: "Closed Won" }, { status: "Qualification" }),
+	unchanged_won: fk.undo_allowed(closed_flow, { status: "Closed Won" }, { status: "Closed Won", x: 1 }),
+	won_without_closed: fk.undo_allowed(flow, { status: "Qualification" }, { status: "Closed Won" }),
+};
 
 // ---- the save queue's manual mode: nothing autosaves; flush sends it all at once
 const timers = [];
@@ -187,6 +199,12 @@ for (let i = 0; i < 150; i++) many.by_name["D" + i] = { name: "D" + i };
 out.clean_cap = kit.clean_picks(many, Object.keys(many.by_name)).length;
 out.bulk_stages = kit.bulk_stages(model).map((s) => s.key);
 out.request = kit.bulk_request(model, ["B", "GONE", "A"], "owner", { owner: "lisa@example.com" });
+const big = { by_name: {} };
+for (let i = 0; i < 40; i++) big.by_name["D" + i] = { name: "D" + i, modified: "m" };
+const picks40 = Object.keys(big.by_name);
+out.caps = [kit.bulk_cap("stage"), kit.bulk_cap("owner"), kit.bulk_cap("snooze"), kit.BULK_CAPS];
+out.over_stage = [kit.bulk_request(big, picks40, "stage", {}).names.length, kit.bulk_request(big, picks40, "stage", {}).over];
+out.over_owner = [kit.bulk_request(big, picks40, "owner", {}).names.length, kit.bulk_request(big, picks40, "owner", {}).over];
 const outcome = kit.bulk_outcome(["A", "B", "C", "D"], [
 	{ name: "A", ok: 1, modified: "m" },
 	{ name: "B", conflict: 1, modified_by: "office@example.com" },
@@ -355,6 +373,17 @@ class TestThePanelsDecisions(unittest.TestCase):
 	def test_undo_puts_back_only_what_changed(self):
 		self.assertEqual(self.out["undo"], {"b": "x", "c": None})
 
+	def test_no_undo_for_an_edit_that_moved_into_or_out_of_a_closing_status(self):
+		"""Review of #1286: an Undo of a Close-step win is a plain save_step, which would skip
+		revert_won_status's refusal once a project exists and leave the won date set."""
+		u = self.out["undo_allowed"]
+		self.assertTrue(u["plain"])
+		self.assertTrue(u["open_to_open"])
+		self.assertTrue(u["unchanged_won"], "editing a won deal's other fields keeps its Undo")
+		for case in ("into_won", "into_lost", "into_converted", "out_of_won", "won_without_closed"):
+			with self.subTest(case=case):
+				self.assertFalse(u[case])
+
 	def test_a_manual_queue_never_autosaves_and_sends_everything_in_one_save(self):
 		o = self.out
 		self.assertEqual(o["manual_timers"], 0)
@@ -448,18 +477,27 @@ class TestTheBoardsPartC(unittest.TestCase):
 		self.assertEqual(self.out["clean_cap"], 100)
 		self.assertEqual(self.out["constants"], [100, ["stage", "owner", "close_date", "snooze"], "ob-picks"])
 
-	def test_bulk_offers_every_stage_but_an_unlisted_one(self):
+	def test_bulk_offers_every_stage_but_an_unlisted_one_and_closed_won(self):
+		"""Closed Won is not a bulk move (review of #1286, a departure from P6.7's text): each won
+		deal needs its own ranks and its own hand-off prompt."""
 		self.assertEqual(
 			self.out["bulk_stages"],
-			["qualification", "needs-analysis", "on-hold", "lost", "closed-won", "replied"],
+			["qualification", "needs-analysis", "on-hold", "lost", "replied"],
 		)
 		self.assertNotIn("old-status", self.out["bulk_stages"])
+		self.assertNotIn("closed-won", self.out["bulk_stages"])
 
 	def test_a_bulk_request_carries_each_deals_lock(self):
 		req = self.out["request"]
 		self.assertEqual(req["names"], ["B", "A"])
 		self.assertEqual(req["modified"], {"B": "2026-10-13 09:00:00.B", "A": "2026-10-13 09:00:00.A"})
 		self.assertEqual((req["action"], req["values"]), ("owner", {"owner": "lisa@example.com"}))
+		self.assertEqual(req["over"], 0)
+
+	def test_a_stage_move_takes_smaller_batches_and_says_when_a_selection_is_over(self):
+		self.assertEqual(self.out["caps"], [25, 100, 100, {"stage": 25}])
+		self.assertEqual(self.out["over_stage"], [25, 15])
+		self.assertEqual(self.out["over_owner"], [40, 0])
 
 	def test_the_answer_is_deal_by_deal_and_what_failed_stays_selected(self):
 		o = self.out["outcome"]
@@ -573,7 +611,9 @@ def _install_frappe_stub():
 	frappe.get_doc = get_doc
 
 	def exists(doctype, filters):
-		return filters.get("name") in STATE["users"]
+		STATE.setdefault("user_filters", []).append(dict(filters))
+		user_type = STATE["users"].get(filters.get("name"))
+		return bool(user_type) and filters.get("user_type", user_type) == user_type
 
 	frappe.db = types.SimpleNamespace(
 		savepoint=lambda name: STATE["calls"].append(("savepoint", name)),
@@ -720,7 +760,7 @@ class TestTheBulkEndpoint(unittest.TestCase):
 				"no_write": set(),
 				"not_writable": set(),
 				"deny": set(),
-				"users": {"lisa@example.com"},
+				"users": {"lisa@example.com": "System User", "portal@example.com": "Website User"},
 				"calls": [],
 				"perm": [],
 				"saves": [],
@@ -777,21 +817,35 @@ class TestTheBulkEndpoint(unittest.TestCase):
 		self.assertEqual(results[0]["ok"], 0)
 		self.assertIn("which version", results[0]["message"])
 
-	def test_closed_won_keeps_a_deals_own_ranks_and_fills_only_the_blanks(self):
+	def test_closed_won_is_never_a_bulk_move(self):
+		"""Review of #1286: each won deal needs its own ranks and its own hand-off prompt (twenty
+		stacked, none naming its deal, and Esc on one un-wins it), so a bulk win is refused before any
+		deal is touched, with or without ranks."""
 		ranks = {"custom_scope_rank": "1", "custom_schedule_rank": "2", "custom_budget_rank": "3"}
-		results = self.bulk(["A", "C"], "stage", {"status": "Closed Won", "ranks": ranks})
-		self.assertEqual([r["ok"] for r in results], [1, 1])
-		self.assertEqual(STATE["saves"][0][2], {"status": "Closed Won", **ranks})
-		self.assertEqual(STATE["saves"][1][2], {"status": "Closed Won"}, "C keeps 2, 1, 3")
-		self.assertEqual(STATE["docs"]["C"].values["custom_scope_rank"], "2")
-
-	def test_closed_won_without_ranks_meets_the_same_rule_a_drop_does(self):
-		results = self.bulk(["A", "C"], "stage", {"status": "Closed Won"})
-		self.assertEqual(results[0]["ok"], 0)
+		for values in ({"status": "Closed Won"}, {"status": "Closed Won", "ranks": ranks}):
+			with (
+				self.subTest(values=values),
+				self.assertRaises(sys.modules["frappe"].ValidationError) as caught,
+			):
+				self.bulk(["A", "C"], "stage", values)
+			self.assertEqual(str(caught.exception), self.mod.WIN_ONE_AT_A_TIME)
+		self.assertEqual(STATE["saves"], [])
 		self.assertEqual(
-			results[0]["message"], "Scope Rank, Schedule Rank and Budget Rank must be 1, 2 or 3."
+			self.mod.WIN_ONE_AT_A_TIME, "Win deals one at a time: each needs its own ranks and hand-off."
 		)
-		self.assertEqual(results[1]["ok"], 1, "C has its own ranks")
+
+	def test_an_open_stage_move_carries_only_the_status(self):
+		results = self.bulk(["A", "C"], "stage", {"status": "Proposal/Price Quote", "ranks": {"x": 1}})
+		self.assertEqual([r["ok"] for r in results], [1, 1])
+		self.assertEqual([s[2] for s in STATE["saves"]], [{"status": "Proposal/Price Quote"}] * 2)
+
+	def test_a_stage_move_takes_at_most_25_deals(self):
+		self.assertEqual(self.mod.MAX_BULK_STAGE, 25)
+		names = [f"D{i}" for i in range(26)]
+		with self.assertRaises(sys.modules["frappe"].ValidationError):
+			self.bulk(names, "stage", {"status": "Needs Analysis"})
+		results = self.bulk(names, "close_date", {"date": "2026-12-15"})
+		self.assertEqual(len(results), 26, "owner, close date and snooze keep 100")
 
 	def test_lost_runs_declare_lost_with_the_reasons(self):
 		results = self.bulk(
@@ -835,9 +889,13 @@ class TestTheBulkEndpoint(unittest.TestCase):
 		self.assertEqual(results[0]["ok"], 0)
 		self.assertIn("cannot change", results[0]["message"])
 
-	def test_the_owner_must_be_an_enabled_user(self):
+	def test_the_owner_must_be_an_enabled_system_user(self):
 		with self.assertRaises(sys.modules["frappe"].ValidationError):
 			self.bulk(["A"], "owner", {"owner": "nobody@example.com"})
+		with self.assertRaises(sys.modules["frappe"].ValidationError):
+			self.bulk(["A"], "owner", {"owner": "portal@example.com"})
+		self.assertEqual(STATE["user_filters"][-1]["user_type"], "System User")
+		self.assertEqual(STATE["user_filters"][-1]["enabled"], 1)
 
 	def test_the_request_shape_is_checked(self):
 		ValidationError = sys.modules["frappe"].ValidationError
@@ -950,12 +1008,39 @@ class TestOneRenderer(unittest.TestCase):
 	def test_a_move_keeps_nothing_on_the_phone_and_is_never_resent_by_itself(self):
 		editor = _code(EDITOR_JS)
 		self.assertIn("manual: !!this.hold_saves,", editor)
-		self.assertIn("if (!doctype || !name || !this.kit || this.hold_saves) return;", editor)
+		# The queue's own flag decides (review of #1286), not a flag on the editor.
+		journal = _body(editor, "\twrite_journal(doctype, name) {")
+		self.assertIn(
+			"if (this.queue && this.queue.manual && this.queue.record_key === key) return;", journal
+		)
+		self.assertIn("if (!queue || queue.manual || queue.record_key !== key) return;", journal)
+		self.assertNotIn("hold_saves", journal)
+		self.assertIn("if (!queue.manual) this.write_journal(doctype, name);", editor)
 		self.assertIn('queue && !queue.manual && queue.state === "error"', editor)
 		panel = _code(PANEL_JS)
 		self.assertIn('this.hold_saves = spec.kind === "move";', panel)
 		leave = _body(panel, "\tleave() {")
 		self.assertIn("this.queue.discard(fieldname)", leave, "Cancel and Back drop a move's fields")
+
+	def test_sign_in_works_in_both_shells(self):
+		"""Review of #1286: the shared notice's "Sign in" called open_login, which only the guided
+		page had; the panel threw."""
+		editor = _code(EDITOR_JS)
+		self.assertIn("\topen_login() {", editor)
+		self.assertIn("on_action: () => this.open_login(),", editor)
+		self.assertNotIn("\topen_login() {", _code(GUIDED_JS), "one copy, mixed onto the page")
+		# The "carry" notice's action is offered only by a shell that has open_new_in_form.
+		self.assertIn('action_label: typeof this.open_new_in_form === "function"', editor)
+
+	def test_no_undo_after_a_close_step_win_and_the_guided_page_hears_of_an_undo(self):
+		panel = _code(PANEL_JS)
+		offer = _body(panel, "\toffer_undo({ queue, flow, opened, saved, doctype, name, title }) {")
+		self.assertIn("if (!this.kit.undo_allowed(flow, opened || {}, saved || {})) {", offer)
+		self.assertLess(offer.index("undo_allowed"), offer.index('action_label: __("Undo")'))
+		undo = _body(panel, "\tundo({ queue, undo, doctype, name, title }) {")
+		self.assertIn('$(document).trigger("sf-record-changed", [doctype, name]);', undo)
+		api = _text(APP / "form_kit" / "api.py")
+		self.assertIn('out["closed"] = {"field": open_rule["field"], "in": list(open_rule["not_in"])}', api)
 
 
 # ---------------------------------------------------------------------------------- the wiring
@@ -967,6 +1052,21 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn("if (opts.history !== false) guard.open(overlay);", drawer)
 		self.assertIn("history: false,", _code(PANEL_JS))
 		self.assertIn("history: false,", _code(PAGE_JS), "the bulk panel too")
+
+	def test_the_drawers_own_close_takes_the_panels_close_path(self):
+		"""Review of #1286: the × called the drawer's close directly, past the panel's save-first."""
+		drawer = _code(DRAWER_JS)
+		self.assertIn(
+			'if (current && typeof current.opts.request_close === "function") current.opts.request_close(current);',
+			drawer,
+		)
+		self.assertIn("else api.close();", drawer, "the planners pass none and keep their ×")
+		self.assertIn("request_close: () => this.request_close(),", _code(PANEL_JS))
+		self.assertIn("request_close: () => this.close_side(),", _code(PAGE_JS))
+		for planner in ("project_planner", "maintenance_planner"):
+			path = APP / "project_enhancements" / "page" / planner / f"{planner}.js"
+			if path.exists():
+				self.assertNotIn("request_close", _text(path))
 
 	def test_the_panels_files_load_on_demand(self):
 		page = _code(PAGE_JS)
@@ -1023,11 +1123,25 @@ class TestTheWiring(unittest.TestCase):
 
 	def test_bulk_goes_through_its_endpoint_quietly(self):
 		page = _code(PAGE_JS)
-		self.assertIn('.call(OB_API + "bulk_update", request, { quiet: true })', page)
+		self.assertIn(
+			'.call(OB_API + "bulk_update", { names: request.names, action: request.action, values: request.values, modified: request.modified }, { quiet: true })',
+			page,
+		)
 		self.assertIn(
 			"this.kit.bulk_request(this.model, this.picks || [], bulk.action, payload_values)", page
 		)
 		self.assertIn("this.set_picks(this.kit.after_bulk(this.picks || [], outcome));", page)
+		# Over the action's cap nothing is sent, and the panel says so.
+		self.assertIn("if (!request.names.length || request.over > 0) return this.render_bulk();", page)
+		self.assertIn("const cap = this.kit.bulk_cap(bulk.action);", page)
+
+	def test_the_bulk_panel_never_offers_or_sends_closed_won(self):
+		page = _code(PAGE_JS)
+		bulk = page[page.index("\trender_bulk() {") : page.index("\tbulk_outcome_html(outcome) {")]
+		self.assertNotIn("payload_values.ranks", bulk)
+		self.assertNotIn("flow.won", bulk)
+		self.assertIn('if (stage.gate === "won") return;', bulk)
+		self.assertIn("Win deals one at a time: each needs its own ranks and hand-off.", bulk)
 
 	def test_the_selection_storage_is_guarded(self):
 		page = _code(PAGE_JS)

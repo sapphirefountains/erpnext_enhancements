@@ -172,7 +172,8 @@ record is simply absent) with one bound query per child table, never one per rec
 which to leave out (`hide_flag`: on Opportunity, the historical deals) and what a row shows.
 
 `get_flow` also sends `won` (`{"status", "status_field", "fields"}`: what a move into Closed Won must
-carry, the config's `won`; the side panel asks for these fields before it saves the move) and, for a
+carry, the config's `won`; the side panel asks for these fields before it saves the move), `closed`
+(`{"field", "in"}`: the statuses that close a record, from the config's `mine.open`) and, for a
 new record only, `quick` (`{"fields", "fixed", "owner_field", "stage_field"}`: the board's quick
 add, the config's `quick`).
 
@@ -200,11 +201,25 @@ not among the pure modules in `public/js/form_kit/*.js` (those are what the node
   owns the address (the drawer is opened with `history: false`): each panel is a route, Back closes
   it, reload reopens it, and a step change *replaces* the address. Three kinds:
   - **edit**: a record, one step at a time, autosaved as on the guided page; closing it offers an
-    Undo toast that puts back what this panel changed, locked on `modified`.
+    Undo toast that puts back what this panel changed, locked on `modified`, and then sends
+    `sf-record-changed` so an open guided page reloads. **No Undo** when the edit moved the record
+    into or out of a closing status (`get_flow`'s `closed`, plus `won` and `lost`; `panel.js`
+    `undo_allowed`): a plain save back out of Closed Won would skip `revert_won_status`'s refusal
+    once a project exists and leave the won date set.
   - **move**: what a move into a stage must carry (`won`'s fields, or `lost`'s reasons), then the
     move, in one save. The queue is `manual` (`save_queue.js`: nothing autosaves) and the journal
     keeps nothing (`hold_saves`), so nothing reaches the record until the person commits.
   - **new**: the config's `quick`, created through `create_record` with the create's `client_id`.
+    `quick.when` adds a field while the server says a new record needs it (on Opportunity the Lead
+    Source, while `crm_enhancements.attribution.lead_source_required`); `get_flow` decides, so the
+    Desk never reads the Settings Single.
+- **Known limitation: one journal union per editor.** The phone's entry for a record is written by
+  whichever editor last saved it, from that editor's own queues (`write_journal`). The guided page
+  and a side panel open on the same record in one tab (or two tabs) each hold their own queues, so
+  one can rewrite the entry without the other's unsent values. A shared, module-level registry of
+  live queues per user and record would close it, but the bases and held choices would have to be
+  shared too; left for a later change. In practice the two are rarely open on one record at once,
+  and a lost entry only matters when the signal drops at that moment.
 - What a shell must provide (`showing`, `load`, `refresh_chrome`, `after_create`, `show_created`,
   `still_new`) is listed at the head of `editor.js`. The panel's pure decisions are
   `public/js/form_kit/panel.js` (`gate_for`, `field_defs`, `quick_start`, `create_extras`,

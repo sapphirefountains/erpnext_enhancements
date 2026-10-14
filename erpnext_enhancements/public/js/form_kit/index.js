@@ -64,5 +64,6 @@ export {
 	create_extras,
 	quick_start,
 	panel_key,
+	undo_allowed,
 	undo_values,
 } from "./panel.js";

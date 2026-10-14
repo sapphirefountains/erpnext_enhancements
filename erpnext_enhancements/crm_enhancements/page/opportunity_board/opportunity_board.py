@@ -331,6 +331,16 @@ def snooze(name, until=None, reason=None, modified=None):
 #: The most deals one bulk request may change (``board.js`` MAX_BULK holds the same number).
 MAX_BULK = 100
 
+#: The most deals one bulk change of STAGE may move (``board.js`` BULK_CAPS.stage). A stage move
+#: runs every save hook of the stage, and the person reads each refusal; a smaller batch keeps that
+#: readable. Owner, close date and snooze keep :data:`MAX_BULK`.
+MAX_BULK_STAGE = 25
+
+#: Why Closed Won is never a bulk move (a deliberate departure from P6.7's text, review of #1286).
+#: Each won deal needs its own ranks and its own Closed-Won prompt ("Schedule the hand-off meeting
+#: now?"); twenty of those stacked, none naming its deal, and closing one with Esc un-wins it.
+WIN_ONE_AT_A_TIME = "Win deals one at a time: each needs its own ranks and hand-off."
+
 #: What a bulk request may do to the selected deals.
 BULK_ACTIONS = ("stage", "owner", "close_date", "snooze")
 
@@ -361,6 +371,8 @@ def _bulk_plan(action, values):
 		closed_for_good = set(CLOSED_STATUSES) - set(CLOSING_STATUSES)
 		if not status or status not in options or status in closed_for_good:
 			frappe.throw(frappe._("Choose a stage to move them to."))
+		if status == WON_STATUS:
+			frappe.throw(frappe._(WIN_ONE_AT_A_TIME))
 		plan = {"status": status}
 		if status == LOST_STATUS:
 			plan["reasons"] = values.get("reasons") or []
@@ -368,14 +380,12 @@ def _bulk_plan(action, values):
 			plan["detail"] = values.get("detail") or ""
 			if not plan["reasons"]:
 				frappe.throw(frappe._("Choose at least one reason they were lost."))
-		elif status == WON_STATUS:
-			won = CONFIGS[DOCTYPE].get("won") or {}
-			ranks = values.get("ranks") or {}
-			plan["ranks"] = {f: ranks.get(f) for f in won.get("fields") or [] if ranks.get(f)}
 		return plan
 	if action == "owner":
 		owner = str(values.get("owner") or "").strip()
-		if not owner or not frappe.db.exists("User", {"name": owner, "enabled": 1}):
+		# A desk user: a Website User cannot work a deal (review of #1286).
+		user = {"name": owner, "enabled": 1, "user_type": "System User"}
+		if not owner or not frappe.db.exists("User", user):
 			frappe.throw(frappe._("Choose the person who will own them."))
 		return {"owner": owner}
 	if action == "close_date":
@@ -423,13 +433,9 @@ def _bulk_apply(name, action, plan, modified):
 		return saver.declare_lost(
 			DOCTYPE, name, plan["reasons"], plan["competitors"], plan["detail"], modified
 		)
-	values = {"status": status}
-	# Closed Won: the ranks given fill only the ranks a deal does not have; its own are kept. A deal
-	# still without all three is refused by the same validation a single move meets.
-	for fieldname, rank in (plan.get("ranks") or {}).items():
-		if not doc.get(fieldname):
-			values[fieldname] = rank
-	return _saved(saver.save_step(DOCTYPE, name, values, modified), "status", status, name)
+	# An open stage or On Hold. Closed Won never reaches here: _bulk_plan refuses it.
+	result = saver.save_step(DOCTYPE, name, {"status": status}, modified)
+	return _saved(result, "status", status, name)
 
 
 def _refusal(exc):
@@ -443,9 +449,11 @@ def bulk_update(names, action, values=None, modified=None):
 	snooze. ``names`` is a JSON list of up to :data:`MAX_BULK` deals, ``modified`` a JSON object of
 	each deal's ``modified`` as the board loaded it, ``values`` what the action needs:
 
-	* ``stage``: ``{"status"}``; for Lost also ``reasons`` and ``competitors`` (lists of names) and
-	  ``detail``; for Closed Won ``ranks`` (``{fieldname: rank}``), given only to a deal without one.
-	* ``owner``: ``{"owner"}``, an enabled user. ``close_date``: ``{"date"}``.
+	* ``stage``: ``{"status"}``, an open stage, On Hold or Lost, for at most :data:`MAX_BULK_STAGE`
+	  deals; for Lost also ``reasons`` and ``competitors`` (lists of names) and ``detail``. **Closed
+	  Won is refused** (:data:`WIN_ONE_AT_A_TIME`): each won deal needs its own ranks and its own
+	  hand-off prompt, which a bulk move would stack one per deal.
+	* ``owner``: ``{"owner"}``, an enabled System User. ``close_date``: ``{"date"}``.
 	  ``snooze``: ``{"until", "reason"}`` (a blank ``until`` wakes them).
 
 	Returns ``{"results": [{"name", "ok": 1, "modified"} | {"name", "conflict": 1, "modified_by"} |
@@ -456,9 +464,8 @@ def bulk_update(names, action, values=None, modified=None):
 
 	* **Nothing is bypassed.** Every deal goes through the path a single change takes
 	  (:func:`_bulk_apply`): write permission on that deal, the ``modified`` lock and its conflict
-	  shape, and a real ``save()`` (or ERPNext's own Declare Lost), so the stage rules (Closed Won's
-	  ranks, Lost's reasons), the hand-off gate's stamps and the Closed-Won project prompt all run as
-	  they do for one deal.
+	  shape, and a real ``save()`` (or ERPNext's own Declare Lost), so the stage rules (Lost's
+	  reasons) and every save hook run as they do for one deal.
 	* **A refusal is one deal's.** Each deal runs in a savepoint: a validation or permission refusal
 	  rolls back that deal only and is reported; the deals before it keep their changes. Anything
 	  else (a database error) fails the whole request, which Frappe rolls back as one.
@@ -472,8 +479,9 @@ def bulk_update(names, action, values=None, modified=None):
 	names = list(dict.fromkeys(names))
 	if not names:
 		frappe.throw(frappe._("Select the deals to change first."))
-	if len(names) > MAX_BULK:
-		frappe.throw(frappe._("Change at most {0} deals at once.").format(MAX_BULK))
+	cap = MAX_BULK_STAGE if action == "stage" else MAX_BULK
+	if len(names) > cap:
+		frappe.throw(frappe._("Change at most {0} deals at once.").format(cap))
 	values = _json(values, dict, {})
 	modified = _json(modified, dict, {})
 	plan = _bulk_plan(action, values)

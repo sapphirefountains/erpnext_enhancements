@@ -27,7 +27,12 @@ which waits for Nik's sign-off on the board.
   - **Undo toast.** Closing an edit that saved something offers Undo, which saves each changed field
     back to what it was when the panel opened, locked on `modified`: someone else's save since is
     reported and never overwritten, and a field the other person changed (a conflict) becomes what
-    Undo returns to.
+    Undo returns to. **No Undo is offered when the edit moved the deal into or out of a closing
+    status** (Closed Won, Lost, Closed, Converted; `get_flow`'s new `closed`): a plain save back out
+    of Closed Won would skip `revert_won_status`'s refusal once a project exists and leave the won
+    date set. After an Undo the page sends `sf-record-changed`, so an open guided page reloads.
+  - The drawer's own × goes through the panel's close (an edit saves first), via the drawer's new
+    `request_close` option; the planners pass none and keep their ×.
   - Its files load on demand the first time a panel opens (`frappe.require` of `planner_kit`,
     `guided_entry.bundle.js` and `.css`), as the planners load theirs. If they do not arrive, a deal
     opens the normal way and a closing drop opens the guided Close step, as before.
@@ -56,22 +61,32 @@ which waits for Nik's sign-off on the board.
   It creates through `form_kit.api.create_record` with the create's `client_id` (a resend returns
   the deal the first attempt made), already in that column's stage, owned by the person adding; the
   panel then shows the new deal for anything else (its entry replaced, so Back never lands on an
-  empty quick add). The config's new `quick` says what it asks for and what it fills itself.
+  empty quick add). The config's new `quick` says what it asks for and what it fills itself; its
+  `when` adds the Lead Source while Lead Attribution Settings require one on a new Opportunity
+  (`attribution.lead_source_required`, which `enforce_source` now uses too). The server decides, in
+  `get_flow`; the Desk reads no Settings Single.
 - **Bulk actions** (P6.7). "Select" (page state, like the filters) puts a 44px box on every card
   and row and a bar along the bottom: **Change stage**, **Reassign**, **Set close date**,
   **Snooze**, each in the side panel's drawer (`…/bulk/<action>`; the selection is kept for the tab
-  in guarded `sessionStorage`, so a reload finds it). A closing stage asks for its required fields
-  first, as a drop does: the ranks (which fill only a deal's blank ranks; its own are kept) or the
-  lost reasons. The answer is deal by deal; what failed or conflicted stays selected, with each
+  in guarded `sessionStorage`, so a reload finds it). Lost asks for the lost reasons first, as a
+  drop does. The answer is deal by deal; what failed or conflicted stays selected, with each
   reason, and "Try the rest again" is one tap.
-- **`opportunity_board.bulk_update`**, POST: up to 100 deals, each with the `modified` the board
-  loaded. Every deal goes through the path a single change takes (`form_kit.saver.save_step`,
+  - **Closed Won is not a bulk move** (a deliberate departure from P6.7's text, after review): it is
+    not offered, and the server refuses it ("Win deals one at a time: each needs its own ranks and
+    hand-off."). Each win fires its own "Schedule the hand-off meeting now?" prompt, none naming its
+    deal, and closing one with Esc un-wins its deal; and one set of ranks for many deals is wrong.
+  - A stage move takes at most 25 deals a request; owner, close date and snooze take 100. Over the
+    cap, the panel says so and sends nothing.
+  - Reassign takes an enabled **System User** only.
+- **`opportunity_board.bulk_update`**, POST: up to 100 deals (25 for a stage move), each with the
+  `modified` the board loaded. Every deal goes through the path a single change takes (`form_kit.saver.save_step`,
   `saver.declare_lost`, or the board's own `snooze`): write permission on that deal, the lock and
   its conflict shape, a real `save()`. Each runs in a savepoint, so a refusal rolls back that deal
   only; a database error fails the whole request. A value the flow would not let the person write
   is reported as a refusal, not a success. Listed in `test_whitelist_placement`'s exact surfaces.
-- `get_flow` sends `won` (what a move into Closed Won must carry) and, for a new record, `quick`;
-  `get_board` sends each closing stage's `gate` ("won" or "lost").
+- `get_flow` sends `won` (what a move into Closed Won must carry), `closed` (the statuses that close
+  a record) and, for a new record, `quick`; `get_board` sends each closing stage's `gate` ("won" or
+  "lost").
 - **`tests/test_opportunity_board_panel.py`**, bench-free, with its own CI step: the panel's pure
   decisions and the save queue's `manual` mode under node, the board's part C, `bulk_update` against
   a frappe stub, one renderer for both shells, and the wiring.
@@ -85,13 +100,17 @@ which waits for Nik's sign-off on the board.
   methods are mixed onto it when `guided_entry.bundle.js` arrives (`mix_editor`; the class is
   defined before the bundle loads). The moved code is unchanged except at four seams, each marked
   "P4.4": the step on screen (`current_step`), the help ids' prefix, step 1's create handing its
-  routing to the shell (`after_create`, `show_created`, `still_new`), and `send_lost`.
-  `test_guided_entry` reads the page and the editor together where code moved; no assertion was
-  loosened. `guided_entry.bundle.js` is version 2 and carries `RecordEditor`, `mix_editor` and
+  routing to the shell (`after_create`, `show_created`, `still_new`), and `send_lost`. `open_login`
+  moved too, so the panel's "Sign in" works; a move's `manual` queue (not a flag on the editor) is
+  what keeps the phone's journal untouched. `test_guided_entry` reads the page and the editor
+  together where code moved; no assertion was loosened.
+  - Known limitation, documented in `form_kit/README.md`: the guided page and a side panel open on
+    the same record each keep their own journal union, so one can rewrite the record's phone entry
+    without the other's unsent values. `guided_entry.bundle.js` is version 2 and carries `RecordEditor`, `mix_editor` and
   `SidePanel`.
-- **The planner kit's drawer takes `history: false`** (additive): the page keeps the drawer in its
-  own route, so the kit pushes no entry and leaves Esc to the page. The planners pass nothing and
-  behave as before.
+- **The planner kit's drawer takes `history: false` and `request_close`** (additive): the page keeps
+  the drawer in its own route, so the kit pushes no entry and leaves Esc to the page, and the ×
+  asks the owner instead of closing. The planners pass neither and behave as before.
 - The board's move panel says what a closing stage asks for ("Asks for the ranks" / "Asks why it
   was lost") rather than "Opens the close step".
 

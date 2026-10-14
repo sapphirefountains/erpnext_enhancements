@@ -198,9 +198,15 @@ CONFIG = {
 	# Form kit P6.7: the board's quick add (the "+" on a column) asks only for these, in this order,
 	# and creates through create_record like step 1, with the same client_id. ``fixed`` fills the rest
 	# of what step 1 needs (the account is a Customer), ``owner_field`` is the person adding, when the
-	# new record's defaults leave it blank, and the column's stage goes in ``stage_field``.
+	# new record's defaults leave it blank, and the column's stage goes in ``stage_field``. ``when``
+	# adds a field while the server says a new record needs it: the Lead Source, while Lead
+	# Attribution Settings require it (crm_enhancements.attribution.enforce_source would refuse
+	# every quick add otherwise). The Desk never reads that Settings Single; get_flow asks.
 	"quick": {
 		"fields": ["party_name", "custom_opportunity_name", STREAMS_FIELD, "custom_opportunity_summary"],
+		"when": {
+			"custom_lead_source": "erpnext_enhancements.crm_enhancements.attribution.lead_source_required",
+		},
 		"fixed": {"opportunity_from": "Customer"},
 		"owner_field": "opportunity_owner",
 		"stage_field": "status",

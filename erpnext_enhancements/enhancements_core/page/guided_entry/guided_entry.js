@@ -632,13 +632,6 @@ class GuidedEntry {
 		});
 	}
 
-	// v16's own login path. In a new tab, so nothing typed here is lost: the Desk that boots there
-	// broadcasts its new CSRF token to this tab (desk.js setup_broadcast_listeners).
-	open_login() {
-		const here = window.location.pathname + window.location.search;
-		window.open(`/login?redirect-to=${encodeURIComponent(here)}`, "_blank", "noopener");
-	}
-
 	// ------------------------------------------------------------------ the shell
 
 	render_shell() {

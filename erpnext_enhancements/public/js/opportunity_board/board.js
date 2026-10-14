@@ -1005,20 +1005,32 @@ export function clean_picks(model, picks) {
 	return out;
 }
 
-// The stages a bulk change of stage offers: every board column but an unlisted status, then the
-// closing stages (which ask for their required fields first, as a drop does).
+// The stages a bulk change of stage offers: every board column but an unlisted status, then Lost
+// (which asks for its reasons first, as a drop does). Never Closed Won: each won deal needs its own
+// ranks and its own hand-off prompt, so deals are won one at a time (a deliberate departure from
+// P6.7's text; the server refuses it too, opportunity_board.WIN_ONE_AT_A_TIME).
 export function bulk_stages(model) {
-	return ((model || {}).stages || []).filter((s) => s.kind !== "other");
+	return ((model || {}).stages || []).filter((s) => s.kind !== "other" && !(s.kind === "close" && s.gate === "won"));
+}
+
+// How many deals one bulk request may carry, per action: a stage move runs every hook of the stage,
+// so it takes smaller batches (the server's MAX_BULK_STAGE; the test holds the two equal).
+export const BULK_CAPS = { stage: 25 };
+
+export function bulk_cap(action) {
+	return BULK_CAPS[action] || MAX_BULK;
 }
 
 // What a bulk request carries: the deals, each with the `modified` the board has for it (the same
-// lock a move takes), the action and its values.
+// lock a move takes), the action and its values. `over` says how many of the selection are past the
+// action's cap; the page says so and sends nothing until the selection fits.
 export function bulk_request(model, picks, action, values) {
 	const by_name = (model || {}).by_name || {};
-	const names = clean_picks(model, picks);
+	const all = clean_picks(model, picks);
+	const names = all.slice(0, bulk_cap(action));
 	const modified = {};
 	names.forEach((name) => (modified[name] = by_name[name].modified));
-	return { names, modified, action, values: values || {} };
+	return { names, modified, action, values: values || {}, over: all.length - names.length };
 }
 
 // The server's per-deal answer, sorted: { ok: [name], conflicts: [{name, modified_by}], failed:
