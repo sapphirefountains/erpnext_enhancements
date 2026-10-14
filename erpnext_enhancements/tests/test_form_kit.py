@@ -2623,6 +2623,28 @@ class TestNotesFromEveryStore(unittest.TestCase):
         self.assertEqual([n["name"] for n in out["notes"]], ["notes"])
         self.assertEqual(out["total"], 1)
 
+    def test_nothing_to_show_and_nothing_to_add_hides_the_block(self):
+        # A Project with no notes has no add_note: no empty "No notes yet." block (Comments still show).
+        self._as_guided("Project")
+        self._project()
+        record = STATE["db"]["PROJ-0001"]
+        record["notes"] = ""
+        record["custom_comments_table"] = []
+        out = api.record_notes("Project", "PROJ-0001")
+        self.assertEqual(out, {"has_notes": False, "notes": [], "total": 0, "can_add": False})
+        # Nor when the only stores are at a permlevel the user cannot read.
+        self._project(comments_permlevel=2)
+        STATE["db"]["PROJ-0001"]["notes"] = ""
+        self.assertFalse(api.record_notes("Project", "PROJ-0001")["has_notes"])
+
+    def test_a_plain_text_notes_field_is_not_read_as_html(self):
+        self._as_guided("Project")
+        self._project()
+        STATE["metas"]["Project"].get_field("notes")["fieldtype"] = "Small Text"
+        out = api.record_notes("Project", "PROJ-0001")
+        # Only the table's rows: a plain-text field would lose "a<b and c>d" to the tag stripper.
+        self.assertEqual([n["text"] for n in out["notes"]], ["Site visit", "Pump replaced"])
+
     def test_an_empty_notes_field_adds_nothing(self):
         self._as_guided("Project")
         self._project()

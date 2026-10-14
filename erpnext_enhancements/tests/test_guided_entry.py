@@ -1504,7 +1504,8 @@ class TestTheCommentsAreShown(unittest.TestCase):
 		self.assertIn('<section class="ge-comments" hidden></section>', _code(PAGE_JS))
 		self.assertIn('<section class="ge-comments fk-comments" hidden></section>', _code(self.SIDE_PANEL_JS))
 
-	# The Notes tab (ERPNext's `notes` table of CRM Note) is where most of an Opportunity's history is.
+	# The Notes tab (ERPNext's `notes` table of CRM Note) is where most of an Opportunity's history is;
+	# record_notes reads every notes store a DocType has (Project's table and field too).
 
 	def test_the_notes_are_read_through_one_get_that_checks_the_record(self):
 		api = _text(APP / "form_kit" / "api.py")

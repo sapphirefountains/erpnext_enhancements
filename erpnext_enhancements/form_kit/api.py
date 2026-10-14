@@ -299,8 +299,9 @@ NOTES_LIMIT = 200
 #: imported history, ``custom_comments_table``: 283 rows on prod, hidden on the Desk form.
 NOTE_TABLES = {"CRM Note": "note", "Project Notes": "notes"}
 
-#: A ``notes`` field of one of these types (Project has one) is a single note, with no author or date.
-NOTE_TEXT_TYPES = ("Text Editor", "Text", "Small Text", "Long Text")
+#: A ``notes`` field of this type (Project has one) is a single note, with no author or date. HTML
+#: only: ``_note_text`` strips tags, which would eat a plain-text field's "a<b and c>d".
+NOTE_TEXT_TYPES = ("Text Editor",)
 
 
 def _note_sources(meta):
@@ -332,8 +333,10 @@ def record_notes(doctype, name):
 	field.
 
 	``{"has_notes", "notes": [{"name", "text", "added_by", "added_on", "label"}], "total", "can_add"}``,
-	rows newest first. ``has_notes`` is false for a DocType with no notes store. A store at a
-	permlevel the user cannot read is left out, as the Desk form leaves it out. ``text`` is plain
+	rows newest first. ``has_notes`` is false when there is nothing to show and nothing to add: no
+	notes store, none the user can read, or no notes in it and no ``add_note`` (so a Project with no
+	notes shows no empty block; its Comments are under it anyway). A store at a permlevel the user
+	cannot read is left out, as the Desk form leaves it out. ``text`` is plain
 	text (the note's HTML with its tags taken out), so the page writes it with ``.text()``.
 	``can_add`` is write permission on the record and the DocType's own ``add_note``, which the page
 	calls through ``run_doc_method`` (ERPNext's CRMNote mixin; it appends a row and saves). A DocType
@@ -370,6 +373,9 @@ def record_notes(doctype, name):
 		user = row.get("added_by")
 		if user and user not in people:
 			people[user] = frappe.utils.get_fullname(user) or user
+	can_add = bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None))
+	if not pinned and not rows and not can_add:
+		return {"has_notes": False, "notes": [], "total": 0, "can_add": False}
 	return {
 		"has_notes": True,
 		"notes": pinned
@@ -384,5 +390,5 @@ def record_notes(doctype, name):
 			for row, text_key in shown
 		],
 		"total": len(pinned) + len(rows),
-		"can_add": bool(doc.has_permission("write")) and callable(getattr(doc, "add_note", None)),
+		"can_add": can_add,
 	}

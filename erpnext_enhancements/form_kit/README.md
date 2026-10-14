@@ -256,11 +256,15 @@ the steps, the guided page always and the side panel on every edit, and the shar
     prod; Lead and Prospect have the table too);
   - a table of **Project Notes**, Project's imported history (`custom_comments_table`, 283 rows,
     hidden on the Desk form);
-  - a **`notes` text field** (Project has one), listed first as one note labelled "Notes field",
-    with no author or date.
+  - a **`notes` Text Editor field** (Project has one), listed first as one note labelled "Notes
+    field", with no author or date. Only a Text Editor: the tag stripper would eat a plain-text
+    field's "a<b and c>d".
 
-  Table rows are merged newest first. A store at a permlevel the user cannot read is left out. Which
-  stores a DocType has is decided by its meta, never by its name. Adding one runs the DocType's own
+  Table rows are merged newest first. A store at a permlevel the user cannot read is left out. A
+  record with nothing to show and nothing to add (no notes, no readable store, no `add_note`)
+  answers `has_notes: false`, so a Project with no notes gets no empty block. Which stores a
+  DocType has is decided by its meta, never by its name. The "newest N of M" line no longer says
+  the form has the rest: Project Notes are hidden on the Desk form. Adding one runs the DocType's own
   `add_note` through `run_doc_method` (only CRM Note DocTypes have it; elsewhere a new note is a
   Comment),
   after what is queued has saved, then draws only the Notes list again (no page reload). The
