@@ -1114,6 +1114,14 @@ jobs:
       # existed. Own step: it installs its own frappe stub.
       - name: Historical opportunities are excluded everywhere they were decided to be
         run: python -m unittest erpnext_enhancements.tests.test_historical_opportunities -v
+      # WI-024 step 1 (v1.636.0): RUNS the Opportunity<->Project link backfill against a stub --
+      # each rule, the Canceled tie-break, the multi-project skip and the one-Project-one-deal
+      # conflicts it must leave alone, deals that are not Closed Won, a second run, missing
+      # columns -- and checks statically that it never save()s (the closed-won prompt, hazard
+      # H3) and that every set_value passes update_modified=False. unittest-style. Own step:
+      # it installs its own frappe stub.
+      - name: Opportunity-Project link backfill fills only what it can prove
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_project_link_backfill -v
       # RUNS the roster's print guard rather than reading it, and that distinction is
       # the whole reason this step exists. The previous defect on this report was a
       # print template that had never once been rendered: a double brace inside an HTML
