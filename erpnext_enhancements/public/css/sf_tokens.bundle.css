@@ -184,6 +184,19 @@
 	--sf-on-warn: var(--sf-navy-900);
 	--sf-good: var(--sf-green);
 	--sf-on-good: var(--sf-off-white);
+	/* A chip's 1px edge (sf_kit), per tone. In light a pillar's edge is its opening stop, the
+	   brand's look; service's and rent's (2.96:1 and 1.93:1 on white) are decoration there,
+	   because their closing-stop fills clear 6:1 and are the boundary. Warn's yellow fill is 1.7:1
+	   on white, so its edge is its navy label colour. Dark overrides the edges whose fill AND
+	   opening stop both sink into the navy ground (v1.630.0). */
+	--sf-chip-edge-design: var(--sf-pillar-design);
+	--sf-chip-edge-build: var(--sf-pillar-build);
+	--sf-chip-edge-service: var(--sf-pillar-service);
+	--sf-chip-edge-rent: var(--sf-pillar-rent);
+	--sf-chip-edge-neutral: var(--sf-pillar-neutral);
+	--sf-chip-edge-danger: var(--sf-danger);
+	--sf-chip-edge-warn: var(--sf-on-warn);
+	--sf-chip-edge-good: var(--sf-good);
 }
 
 /* Dark, from the Desk's theme setting. */
@@ -202,6 +215,14 @@
 	--sf-label: var(--sf-off-white);
 	--sf-hint: var(--sf-sky-200);
 	--sf-focus: var(--sf-fresh-blue);
+	/* Build's fill is navy-800 (the card itself) and its bahama-blue edge 2.48:1 on navy-800;
+	   Neutral's deep-sea-blue edge is 1.06:1 and its bahama fill 2.48:1; danger's red fill is
+	   2.82:1. sky-200 is 8.49:1 on navy-800 and 9.83:1 on navy-900, off-white 15.56:1 and 18.03:1.
+	   Warn's yellow fill is 9.54:1 here, so its edge goes back to the fill. */
+	--sf-chip-edge-build: var(--sf-sky-200);
+	--sf-chip-edge-neutral: var(--sf-sky-200);
+	--sf-chip-edge-danger: var(--sf-off-white);
+	--sf-chip-edge-warn: var(--sf-warn);
 }
 
 /* Dark, from the device, on a page that sets no data-theme. Keep identical to the block above. */
@@ -219,5 +240,9 @@
 		--sf-label: var(--sf-off-white);
 		--sf-hint: var(--sf-sky-200);
 		--sf-focus: var(--sf-fresh-blue);
+		--sf-chip-edge-build: var(--sf-sky-200);
+		--sf-chip-edge-neutral: var(--sf-sky-200);
+		--sf-chip-edge-danger: var(--sf-off-white);
+		--sf-chip-edge-warn: var(--sf-warn);
 	}
 }

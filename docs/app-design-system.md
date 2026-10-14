@@ -73,9 +73,11 @@ Read the semantic layer in screens. Read the palette only to draw a pillar or th
 | `--sf-danger` / `--sf-on-danger` | red / off-white | same | a status fill and its label |
 | `--sf-warn` / `--sf-on-warn` | yellow / navy-900 | same | a status fill and its label |
 | `--sf-good` / `--sf-on-good` | green / off-white | same | a status fill and its label |
+| `--sf-chip-edge-<tone>` | the opening stop (design, build, service, rent, neutral); red (danger); navy-900 (warn); green (good) | sky-200 (build, neutral); off-white (danger); yellow (warn); the rest as light | a chip's 1px edge |
 
-Every text pairing above clears 4.5:1, and every boundary and focus ring 3:1, in both themes.
-The test measures them all.
+Every text pairing above clears 4.5:1, and every boundary and focus ring 3:1, in both themes
+(a chip's boundary is its fill or its edge, whichever meets the ground; see Chip, below). The
+test measures them all.
 
 ### Palette
 
@@ -112,8 +114,10 @@ The rules:
 - **A flat pillar colour is the opening stop.** It is a fill or a rule, never text: fresh-blue
   is 3.0:1 on white and teal 1.8:1.
 - **A pillar chip** (the board's card band, a tag in a list) is filled with the **closing
-  stop** under an off-white label, and edged with the opening stop. Every closing stop clears
-  6:1. The edge keeps a Build chip visible on a dark card (see Chip, below).
+  stop** under an off-white label, and edged with `--sf-chip-edge-<pillar>`: the opening stop
+  in light, and sky-200 in dark for Build and Neutral, whose opening stops sink into the navy
+  card. Every closing stop clears 6:1. The edge keeps a Build chip visible on a dark card (see
+  Chip, below).
 - **Never invent a fifth pillar colour or reassign one.** Design is violet.
 
 **Value streams to pillars** live in `print_style.STREAM_PILLAR`, the one record of which
@@ -233,7 +237,7 @@ Built in form kit P4 and P6, specified here so they come out the same everywhere
 | **Field** | `--sf-label` above (never a placeholder for a label), a square `--sf-field-bg` input with a 1px `--sf-field-border` and 16px text, then the hint in `--sf-hint` under it. Focus is a 2px `--sf-focus` ring. |
 | **Help bubble** | An (i) button, 44px hit area, beside the label. It opens the field's longer explanation in a square panel on `--sf-surface` with a `--sf-rule` edge, and Back or Esc closes it. |
 | **Card** | Square `--sf-surface` on `--sf-bg`, a `--sf-rule` hairline, no shadow. A pillar card leads with a band in the pillar's closing stop. |
-| **Chip** | A pill in a closing stop with an `--sf-on-pillar` label and a 1px border in the pillar's **opening** stop, or `--sf-danger` / `--sf-warn` with its own label. The border is not decoration: Build's closing stop is navy-800, the same colour as a dark-theme card, so without it a Build chip is a floating word (seen in the 2026-10-13 render). A status always carries its word, not just its colour. |
+| **Chip** | A pill in a closing stop with an `--sf-on-pillar` label, or `--sf-danger` / `--sf-warn` / `--sf-good` with its own label, and a 1px border in `--sf-chip-edge-<tone>`. The border is not decoration: Build's closing stop is navy-800, the same colour as a dark-theme card, so without it a Build chip is a floating word (seen in the 2026-10-13 render). The first edge, the opening stop, still failed there: bahama-blue is 2.48:1 on navy-800 and 2.88:1 on navy-900, Neutral's deep-sea-blue 1.06:1, and danger's red fill 2.82:1. So the edge is a themed token (v1.630.0): in dark, Build and Neutral are edged sky-200 (8.49:1 on navy-800, 9.83:1 on navy-900) and danger off-white (15.56:1, 18.03:1); in light, warn is edged in its navy label colour, because its yellow fill is 1.7:1 on white. The rule the test holds, for every tone in both themes: whichever of fill or edge meets the ground clears 3:1 against `--sf-surface` and `--sf-bg`. (Service's and Rent's light edges, fresh-blue and teal at 2.96:1 and 1.93:1 on white, are decoration: their closing-stop fills, 7.96:1 and 6.61:1, are the boundary.) A status always carries its word, not just its colour. |
 | **Button** | `--sf-radius-control`. Primary: `--sf-primary` fill, `--sf-on-primary` label, at most one per panel. Secondary: transparent with a 2px `--sf-text` stroke. Hover changes colour only. |
 | **Toast** | Inverted: a `--sf-text-strong` ground with `--sf-surface` text, so it stands out in both themes (a navy toast would vanish against the dark page). One action. |
 
@@ -298,24 +302,63 @@ A toast for a block goes into its own root (`container`), so it sits inside the 
 row.innerHTML = `<b>${sf_kit.esc(doc.customer_name)}</b>`;
 ```
 
-**`sf_kit.call(method, args, { silent })`**: `frappe.call` as a promise that always settles once.
-It resolves `r.message`, and rejects `{ status, message }`: `status` is the HTTP status, or 0
-when the server was never reached; `message` is the server's own words for a `frappe.throw`
-(HTML taken out), or a plain translated sentence ("Could not reach the server.", and a generic
-one for a 5xx, never the exception text). `silent: true` stops frappe's own pop-up, so the page
-can say it once in its error panel.
+**`sf_kit.call(method, args, { quiet, method, silent, freeze })`**: a server call as a promise
+that always settles, exactly once. It resolves `r.message`, and rejects
+`{ status, message, exc_type, session_expired }`:
+
+- `status`: the HTTP status, or **0** when the server was never reached (offline, a network
+  error) or what answered was not the server (a 200 whose body is not JSON: a proxy or login page);
+- `message`: the server's own words for a `frappe.throw` (from `_server_messages`, HTML taken
+  out and entities decoded), or a plain translated sentence ("Could not reach the server.", a
+  generic one for a 5xx, never the exception text or a traceback);
+- `exc_type`: the server's exception class (`ValidationError`, `PermissionError` ...), or `""`;
+- `session_expired`: `true` when the reply means the person is signed out, and `exc_type` is
+  then `"SessionExpired"` too. **Test `err.session_expired`**, not the status: v16 answers the
+  first call after a session lapses with **401** `{ exc_type: "SessionExpired", session_expired:
+  1 }` (`sessions.py` sets the flag, `is_whitelisted` raises `SessionExpired`), but that reply
+  deletes the `sid` and `user_id` cookies, so every call after it arrives as a plain Guest and
+  is refused **403** `PermissionError`. The kit therefore also counts a 401/403 as expiry when
+  the page was signed in (`frappe.session`) and the `user_id` cookie is now gone or `Guest`, the
+  same test v16's own `frappe.request.is_session_expired` makes. A retry queue stops on it and
+  asks the person to sign in.
+
+There are two paths, and they differ in which dialogs frappe shows:
+
+- **`quiet: true` (use it for anything that reports errors in its own panel).** No `frappe.call`:
+  a `fetch` to `/api/method/<method>`, so frappe shows **nothing**: no msgprint, no "Server
+  Error" dialog, no session-expired dialog. POST by default, the args as a JSON body
+  (`Content-Type: application/json`), with `X-Frappe-CSRF-Token` from `frappe.csrf_token`,
+  `Accept: application/json` and same-origin credentials; `method: "GET"` sends the args as a
+  query string, for reads (a method whitelisted `methods=["POST"]` refuses a GET with a 403). An
+  object or array argument is JSON-encoded exactly as `frappe.call` sends it, so the server
+  method sees what it always did. What it does not do: sync returned docs into `locals`, run
+  `freeze`, or show a successful call's msgprints. It is not `frappe.call`'s own `quiet` option,
+  which only hides the spinner.
+- **The default, `frappe.call`.** `silent: true` (passed through, with `freeze` /
+  `freeze_message`) stops exactly **one** dialog: the `_server_messages` msgprint in
+  `frappe.request.cleanup` (`request.js` on `version-16`), i.e. a `frappe.throw` or msgprint
+  carried by a 417 or a 200. It does **not** stop the per-status handlers: 403 "Not permitted",
+  404 "Not found", 413 "File too big", 502 "Internal Server Error", 504 "Request Timed Out", 508
+  "Please try again", the 500 "Server Error" dialog from `report_error` (with the traceback, for
+  a system user, when tracebacks are allowed), the QueryTimeout / QueryDeadlock dialogs, the
+  session-expired dialog, or the offline "Connection Lost" toast. Use it only where those are
+  acceptable.
 
 ```js
-sf_kit.call("erpnext_enhancements.api.x.get_rows", { day }, { silent: true })
+sf_kit.call("erpnext_enhancements.api.x.get_rows", { day }, { quiet: true, method: "GET" })
 	.then((rows) => draw(rows))
-	.catch((err) => sf_kit.state.render(el, "error", { body: err.message, on_action: load }));
+	.catch((err) => {
+		if (err.session_expired) return ask_to_sign_in();
+		sf_kit.state.render(el, "error", { body: err.message, on_action: load });
+	});
 ```
 
 **`sf_kit.state.render(el, kind, opts)`** / **`sf_kit.state.html(kind, opts)`**: the panel a page
 shows in place of its content. `kind` is `loading`, `empty`, `error` or `no-access`; `opts` are
 `title`, `body`, `action_label` and `on_action`. It is page content, never an overlay, and it
-pushes no history entry. The one button ("Try again" by default) is drawn only when there is an
-`on_action` to call. Loading is `role="status"`, error `role="alert"`; the spinner stops under
+pushes no history entry. The one button ("Try again" by default) is drawn when there is an
+`action_label` or an `on_action`: `render()` wires `on_action`, and markup from `html()` with
+only a label is for a caller that delegates clicks on `.sf-state-action`. Loading is `role="status"`, error `role="alert"`; the spinner stops under
 `prefers-reduced-motion`.
 
 ```js
@@ -338,16 +381,28 @@ caller built (and escaped).
 
 **Buttons**: the classes `sf-btn sf-btn--primary` (at most one per panel), `sf-btn
 sf-btn--secondary` and `sf-btn sf-btn--quiet` (a text button). 44px tall, `--sf-radius-control`,
-a 2px `--sf-focus` ring, and hover changes colour only.
+a 2px `--sf-focus` ring, and hover changes colour only. Written as an `<a>`, a button keeps its
+colours on hover and focus: the Desk's `a:hover, a:focus` (specificity 0,1,1, `color:
+var(--text-color)`) outranks one class, so the kit states `.sf-btn--primary:hover` and the rest
+at 0,2,0 (in a block's shadow root too, where the Desk links its stylesheet as well). Tile links
+get the same, and a `:focus-visible` ring the Desk's `a:focus { outline: 0 }` would remove.
 
 ```html
 <button type="button" class="sf-btn sf-btn--primary">Save visit</button>
 ```
 
 **`sf_kit.toast(message, { action_label, on_action, timeout, tone })`**: one at a time, 8 seconds
-by default, held while the pointer is over it, announced politely, one action and a Dismiss.
-Inverted, so it shows on the dark page too. `tone` is `success`, `warning` or `info`.
-`toast.close()` and `toast.current()` as in the planner kit, whose toast is now this one.
+by default, held while the pointer is over it **or focus is inside it** (focusin pauses the timer,
+focusout to outside re-arms it), announced politely, one action and a Dismiss. When a toast that
+holds focus closes, focus goes back to the element that had it before, if it is still in the
+page. Inverted, so it shows on the dark page too. `tone` is `success`, `warning` or `info`.
+`toast.close()` and `toast.current()` act on that instance's own toast.
+
+"One at a time" is per **document**, across every instance: the page's `sf_kit.toast`, any
+`create_toast()`, a block's toast in its shadow root, and the planners' pk toast. The toast is
+fixed to the bottom of the viewport wherever it is appended, so two would overlap; the current
+one is kept on the document under `Symbol.for("sf_kit.toast.current")`, which the separate
+planner_kit and sf_kit bundles share, and a new toast from any of them replaces it.
 
 ```js
 sf_kit.toast(__("Visit saved"), { action_label: __("Undo"), on_action: undo });
@@ -357,17 +412,25 @@ sf_kit.toast(__("Visit saved"), { action_label: __("Undo"), on_action: undo });
 fleet). Each item is `{ key, title, tone | status, status_label, value, detail, metrics: [{ label,
 value }], links: [{ label, href }] }`; `green` / `amber` / `red` are read as `good` / `warn` /
 `danger`. Every text is escaped, and a link becomes a link only for a `/desk/` route or an http(s)
-URL; anything else is shown as plain text.
+URL; anything else is shown as plain text. A blank `href` (`null`, `""`) falls back to `route`.
+Malformed data costs only its own part: `metrics` or `links` that are not a list are skipped, so
+one bad tile never blanks the grid, and a tile with no title draws no empty heading.
 
 ```js
 el.innerHTML = sf_kit.tiles.html([{ title: "Google Drive", tone: "good", detail: "Synced 4 min ago",
 	links: [{ label: __("Settings"), href: "/desk/google-drive-settings" }] }]);
 ```
 
-**`sf_kit.t(text, args)`**: `__()` when the Desk is there, `{0}` substitution otherwise.
+**`sf_kit.t(text, args)`**: `__()` when the Desk is there, `{0}` substitution otherwise. It is
+for a caller's own dynamic text. The kit's own words are written as literal `__("...")` calls,
+with a module-level `__` imported from `sf_kit/t.js` that hands to the Desk's: frappe's JS
+extractor (`frappe/gettext/extractors/javascript.py`) only finds a call whose name is `__` and
+whose first argument is a string literal, so a word said through `t("...")` is never translated.
+A module built on the kit (form kit P4) does the same: `import { __ } from "../sf_kit/t.js"`.
 
 As ES modules, the same functions are exported by `public/js/sf_kit/index.js` (`call` and
-`create_toast` take an `env` there: `{ frappe, t }` and `{ doc, t, set_timeout, clear_timeout }`).
+`create_toast` take an `env` there: `{ frappe, fetch, cookie }` and `{ doc, set_timeout,
+clear_timeout }`; the bundle builds both from the page).
 
 ### What stays with form kit P4
 

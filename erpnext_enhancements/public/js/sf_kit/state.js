@@ -9,25 +9,31 @@
  * It is page content, written into the element the content would go in: never an overlay, never
  * a dialog, and it pushes no history entry, so Back still leaves the page in one step.
  *
- * One optional action button, drawn only when there is something to call (`on_action`); render()
- * wires it, and html() leaves it for a caller that delegates clicks on `.sf-state-action`.
- * Loading is role="status" (announced politely), error role="alert" (announced at once). The
- * spinner stops turning under prefers-reduced-motion (the CSS); the word "Loading" carries the
+ * One optional action button, drawn when there is an `action_label` or an `on_action` (label
+ * "Try again" by default). render() wires `on_action` when it is given; html() never can, so a
+ * caller that builds the markup itself passes `action_label` and delegates clicks on
+ * `.sf-state-action` (v1.630.0: html() used to drop the button unless it had a function it could
+ * not use). Loading is role="status" (announced politely), error role="alert" (announced at once).
+ * The spinner stops turning under prefers-reduced-motion (the CSS); the word "Loading" carries the
  * meaning either way.
  */
 
 import { esc } from "./esc.js";
-import { t } from "./t.js";
+import { __ } from "./t.js";
 
 export const STATE_KINDS = ["loading", "empty", "error", "no-access"];
 
 const ROLES = { loading: "status", error: "alert" };
 
+function blank(value) {
+	return value === undefined || value === null || value === "";
+}
+
 function default_title(kind) {
-	if (kind === "loading") return t("Loading…");
-	if (kind === "error") return t("Something went wrong.");
-	if (kind === "no-access") return t("You do not have access to this.");
-	return t("Nothing here yet.");
+	if (kind === "loading") return __("Loading…");
+	if (kind === "error") return __("Something went wrong.");
+	if (kind === "no-access") return __("You do not have access to this.");
+	return __("Nothing here yet.");
 }
 
 export function state_kind(kind) {
@@ -39,16 +45,14 @@ export function state_html(kind, opts) {
 	kind = state_kind(kind);
 	const role = ROLES[kind] ? ` role="${ROLES[kind]}"` : "";
 	const live = kind === "loading" ? ' aria-live="polite"' : "";
-	const title = opts.title === undefined || opts.title === null || opts.title === "" ? default_title(kind) : opts.title;
+	const title = blank(opts.title) ? default_title(kind) : opts.title;
 	const parts = [];
 	if (kind === "loading") parts.push('<span class="sf-state-spinner" aria-hidden="true"></span>');
 	if (kind === "error") parts.push('<span class="sf-state-mark" aria-hidden="true">!</span>');
 	parts.push(`<p class="sf-state-title">${esc(title)}</p>`);
-	if (opts.body !== undefined && opts.body !== null && opts.body !== "") {
-		parts.push(`<p class="sf-state-body">${esc(opts.body)}</p>`);
-	}
-	if (typeof opts.on_action === "function") {
-		const label = opts.action_label || t("Try again");
+	if (!blank(opts.body)) parts.push(`<p class="sf-state-body">${esc(opts.body)}</p>`);
+	if (!blank(opts.action_label) || typeof opts.on_action === "function") {
+		const label = blank(opts.action_label) ? __("Try again") : opts.action_label;
 		parts.push(`<button type="button" class="sf-btn sf-btn--secondary sf-state-action">${esc(label)}</button>`);
 	}
 	return `<div class="sf-state sf-state--${kind}"${role}${live}>${parts.join("")}</div>`;

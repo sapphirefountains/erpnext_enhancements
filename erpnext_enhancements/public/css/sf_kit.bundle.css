@@ -70,14 +70,20 @@
 	margin-top: var(--sf-space-5);
 }
 
-/* ---- Chip: a pill with a word. Pillar: closing-stop fill, opening-stop edge. ---- */
+/* ---- Chip: a pill with a word. Pillar: closing-stop fill, opening-stop edge. ----
+   The edge is --sf-chip-edge-<tone>, a semantic token: in light it is the opening stop (and
+   danger's and good's own fill), but in dark Build's and Neutral's opening stops vanish into the
+   navy card (bahama-blue is 2.48:1 on navy-800) and danger's red fill is 2.82:1, so those edges
+   turn sky-200 / off-white there; warn's yellow fill is 1.7:1 on white, so its light edge is its
+   navy label colour. Whichever of fill or edge meets the ground clears 3:1 in both themes
+   (tests/test_app_design_tokens.py, v1.630.0). */
 .sf-chip {
 	box-sizing: border-box;
 	display: inline-flex;
 	align-items: center;
 	max-width: 100%;
 	padding: 1px var(--sf-space-10);
-	border: var(--sf-border-hairline) solid var(--sf-pillar-neutral);
+	border: var(--sf-border-hairline) solid var(--sf-chip-edge-neutral);
 	border-radius: var(--sf-radius-pill);
 	background: var(--sf-pillar-neutral-deep);
 	color: var(--sf-on-pillar);
@@ -92,33 +98,33 @@
 }
 .sf-chip--design {
 	background: var(--sf-pillar-design-deep);
-	border-color: var(--sf-pillar-design);
+	border-color: var(--sf-chip-edge-design);
 }
 .sf-chip--build {
 	background: var(--sf-pillar-build-deep);
-	border-color: var(--sf-pillar-build);
+	border-color: var(--sf-chip-edge-build);
 }
 .sf-chip--service {
 	background: var(--sf-pillar-service-deep);
-	border-color: var(--sf-pillar-service);
+	border-color: var(--sf-chip-edge-service);
 }
 .sf-chip--rent {
 	background: var(--sf-pillar-rent-deep);
-	border-color: var(--sf-pillar-rent);
+	border-color: var(--sf-chip-edge-rent);
 }
 .sf-chip--danger {
 	background: var(--sf-danger);
-	border-color: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
 	color: var(--sf-on-danger);
 }
 .sf-chip--warn {
 	background: var(--sf-warn);
-	border-color: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
 	color: var(--sf-on-warn);
 }
 .sf-chip--good {
 	background: var(--sf-good);
-	border-color: var(--sf-good);
+	border-color: var(--sf-chip-edge-good);
 	color: var(--sf-on-good);
 }
 
@@ -210,6 +216,28 @@
 }
 .sf-btn--quiet:not(:disabled):hover {
 	background: color-mix(in srgb, var(--sf-link) 10%, transparent);
+}
+/* An sf-btn written as an <a>: the Desk's a:hover / a:focus (0,1,1, color var(--text-color), from
+   desk.bundle.css, which a Custom HTML Block's shadow root links too) and bootstrap's underline
+   outrank a single class (0,1,0), so the label turned grey on hover. A class plus a pseudo-class
+   (0,2,0) wins; .sf-btn's own comes first so a variant overrides it. */
+.sf-btn:hover,
+.sf-btn:focus {
+	color: var(--sf-text);
+	text-decoration: none;
+}
+.sf-btn--primary:hover,
+.sf-btn--primary:focus {
+	color: var(--sf-on-primary);
+}
+.sf-btn--secondary:hover,
+.sf-btn--secondary:focus {
+	color: var(--sf-text);
+}
+.sf-btn--quiet:hover,
+.sf-btn--quiet:focus {
+	color: var(--sf-link);
+	text-decoration: underline;
 }
 
 /* ---- Toast: inverted, so it stands out on the light page and the dark one alike. ---- */
@@ -345,7 +373,24 @@
 	color: var(--sf-link);
 	text-decoration: underline;
 }
+/* The same Desk a:hover / a:focus, and a:focus { outline: 0 }, which would leave a keyboard user
+   no ring at all. */
+.sf-tile-link:hover,
+.sf-tile-link:focus {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+.sf-tile-link:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
 .sf-tile-link--plain {
+	color: var(--sf-text-muted);
+	text-decoration: none;
+}
+/* The plain-text stand-in carries .sf-tile-link too, so the hover rule above would reach it. */
+.sf-tile-link--plain:hover,
+.sf-tile-link--plain:focus {
 	color: var(--sf-text-muted);
 	text-decoration: none;
 }

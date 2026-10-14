@@ -20,7 +20,9 @@
  *
  *   esc(value)                                  HTML-escape; null/undefined -> ""
  *   t(text, args)                               __() when present, else {0} substitution
- *   call(method, args, {silent})                -> Promise of r.message; rejects {status, message}
+ *   call(method, args, {silent, quiet, method}) -> Promise of r.message; rejects
+ *                                                  {status, message, exc_type, session_expired};
+ *                                                  quiet: true = fetch, no frappe dialog at all
  *   state.html(kind, opts) / state.render(el, kind, opts)   loading | empty | error | no-access
  *   chip(label, tone)                           pillar or status pill, always with its word
  *   card.html({title, body_html, pillar}) / card.class_name(pillar)
@@ -50,7 +52,9 @@ import {
 	CSS,
 } from "./sf_kit/index.js";
 
-const VERSION = 1;
+// 2 (v1.630.0): call()'s quiet path and its rejection shape, the shared toast registry. A page
+// that loaded version 1 first gets this one in its place.
+const VERSION = 2;
 
 function install() {
 	if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -61,9 +65,15 @@ function install() {
 		t,
 		set_timeout: (fn, ms) => window.setTimeout(fn, ms),
 		clear_timeout: (id) => window.clearTimeout(id),
+		// The quiet path's transport and the session-expiry check's cookie, both read per call.
+		cookie: () => document.cookie,
 	};
-	// Read frappe when a call is made, not when the bundle loads.
+	// Read frappe and fetch when a call is made, not when the bundle loads.
 	Object.defineProperty(env, "frappe", { get: () => window.frappe, enumerable: true });
+	Object.defineProperty(env, "fetch", {
+		get: () => (typeof window.fetch === "function" ? (url, init) => window.fetch(url, init) : undefined),
+		enumerable: true,
+	});
 
 	window.sf_kit = {
 		version: VERSION,
