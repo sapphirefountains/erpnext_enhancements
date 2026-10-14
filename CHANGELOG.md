@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.679.0] - 2026-10-14
+
+Custom pages S6a, part 1 (ERPNext TASK-2026-02808): the customer portal's look. **Presentation
+only.** `/pay` and `/pay-card` take payments, so every inline page script on the four pages is
+byte-for-byte what it was, and a test now pins each one by SHA-256.
+
+### Changed
+
+- **`/pay`, `/pay-card`, `/rentals` and `/rent-a-fountain` share a nav bar and read the app design
+  tokens.** Until now they showed the website's standard navbar with no customer menu, styled with
+  inline Bootstrap and no phone rules.
+  - **The nav bar** is one include, `templates/includes/sf_portal_nav.html`, in each page's
+    `navbar` block in place of the Standard Navbar. It is the navy head band with the brand name in
+    the display face. A signed-in customer gets Pay Invoices, My Rentals, Rent a Fountain and Sign
+    out (`/logout`); a guest, who can only be on the rent form, gets Rent a Fountain and Sign in
+    (back to the same page). There are no Desk or `/app/` links. The current page is bold and
+    underlined (`aria-current="page"`), so it doesn't rely on colour alone. A skip link leads to the
+    content.
+  - **"Rent a Fountain" shows only while that form is switched on.** The page 404s while
+    `Rental Settings.public_request_form` is off, so the nav asks a new Jinja global,
+    `ee_rent_form_enabled` (in `asset_management/rental_requests.py`, registered in `hooks.py`).
+    It is read-only and never raises, because it returns the existing `enabled()`, which already
+    swallows a missing settings record.
+  - **The tokens reach each page through its own link,** as on `/review` and `/itinerary`
+    (v1.659.0). Each template links `sf_tokens.bundle.css` through `bundled_asset`, then the new
+    `sf_portal.bundle.css`. Both are content-hashed, so a phone never keeps a stale copy from the
+    year-long `/assets` cache. Neither is in `web_include_css`, which would ship them to every
+    public page. `/pay`, `/pay-card` and `/rentals` call `super()` in `head_include`, so they keep
+    the site's own head HTML as before. `/rent-a-fountain` never called it and still does not.
+  - **The pages are pinned light.** The tokens follow the device's dark setting on a page with no
+    `data-theme`, but these pages can't go dark with them, for two reasons. The rest of the website
+    (Frappe's footer and website styles) has no dark theme. And Stripe's Payment Element draws dark
+    grey labels inside its own frame, which no stylesheet reaches; on a navy card they would be
+    unreadable. So a one-line include, `sf_portal_light.html`, writes `data-theme="light"` on
+    `<html>` before the stylesheets load. There is no toggle. It is an include rather than a
+    `<script>` in each page, because tests read `pay.html`'s first `<script>` as the payment code.
+  - **The look.** Square cards, notices and fields with `--sf-rule` hairlines, and no shadows; the
+    CSS only switches Bootstrap's own shadows off. Buttons round at `--sf-radius-control`: the
+    primary is fresh-blue with a navy label, the secondary a 2px stroke. Headings are in the display
+    face. Links are underlined. Notices are a card on the surface with a status rule down the left,
+    and their words are unchanged.
+  - **Status words, not colour alone.** `/pay`'s three payment verdicts are now chips with their
+    unchanged words: "Waiting for bank approval…" in the warn tone, and "Payment received — please
+    contact us" and "Processing…" in neutral. A rental's status ("On hold", "Confirmed",
+    "Delivered" and so on) is a Rent-pillar chip, in the list and on the booking. `/pay-card`'s
+    decline and "tap Back" notes are the danger colour mixed half and half with the strongest text,
+    which is the guide's rule for status text.
+  - **Phones (767px and below).** `/pay`'s invoice table becomes one card per invoice. Each cell is
+    stacked and labelled through `data-label`; the Invoice cell stays a bare `<td>` because
+    `test_stripe_payments` parses it. Card and Bank sit side by side at full width. Fields go to one
+    column. A settled invoice's two ways out on `/pay-card` stack at full width. The nav wraps under
+    the brand. Every button, field and nav link is at least 44px tall, and every field's type is
+    16px, below which iOS zooms in.
+  - **Inline styles moved to classes**: the autopay panel's rule and spacing, the consent text's
+    line breaks, the footnote's margin, the two pages' column widths (520px and 640px), and
+    `/pay-card`'s spacing around the Payment Element, the notes and the review table. Two kinds of
+    inline style stay on purpose. The `display:none` on `#step-review`, `#review-fee-row`,
+    `#review-disclosure` and `#review-nofee` is state: the script shows and hides those through
+    `style.display` and reads it back, and no stylesheet rule sets `display` on them (tested). The
+    rent form's honeypot also stays inline, so it is off screen even if the stylesheet never arrives.
+  - **Keyboard and screen readers.** Each page's content wrapper (`#sf-portal-main`) takes
+    `tabindex="-1"`, so the skip link moves keyboard focus and not just the view; it gets the same
+    focus ring as everything else. `/pay`'s invoice table carries explicit ARIA roles (`table`,
+    `rowgroup`, `row`, `columnheader`, `cell`), because Safari and VoiceOver drop a table's
+    semantics once CSS sets `display: block` on its parts, as the phone card layout does.
+    `test_stripe_payments`' two row parsers now match `<tr …>` and `<td …>` with attributes, and
+    count the rows so they can never pass on an empty match.
+  - **Labels.** `/rentals`' site-prep fields had labels that were not tied to their fields. Each now
+    has `for` and an `id`. The change-request box, which had only a placeholder, is labelled by its
+    card's heading through `aria-labelledby`. The `/pay` consent line is the whole 44px target.
+
+- **Not changed: every inline page script.** That covers the bank (ACH) Checkout call, autopay
+  set-up and cancel, `/pay-card`'s price and charge calls, its timers, idempotency and 3-D Secure
+  handling, the rentals forms' submits, and the rent form's Turnstile and submit. Every form field's
+  `name`, every endpoint, the CSRF handling and the page controllers are unchanged too. **Stripe's
+  Payment Element still has no `appearance` object**, so Stripe draws it in its default light look;
+  its frame cannot read CSS variables. No `stripe_payments` Python was touched.
+
+### Added
+
+- `tests/test_customer_portal_polish.py` (bench-free, own CI step). It checks the token and portal
+  links and their order, the light pin, the shared nav, and that the tokens are not in
+  `web_include_css`. It renders the nav with jinja2 signed in, signed out and with the rent form
+  off, and refuses a Desk link. On the CSS it refuses a literal or named colour, an undefined
+  `--sf-*` or a custom property of its own; it requires token radii, a single 767px breakpoint,
+  44px controls and 16px fields, no status fill as text, no shadow except switching one off, and no
+  `display` rule on what `/pay-card`'s script toggles. On the pages it pins each inline script by
+  SHA-256 to origin/main's bytes. Every id, class and `data-` attribute a script reads must still
+  be in the markup, the form field names must be unchanged, every field must have a label, and an
+  inline style is allowed only where it is state.
+
 ## [1.678.2] - 2026-10-14
 
 ### Fixed

@@ -1,0 +1,585 @@
+/*
+ * The customer portal: /pay, /pay-card, /rentals and /rent-a-fountain (custom pages S6a,
+ * TASK-2026-02808). One esbuild bundle (content-hashed filename), linked by each of those four
+ * templates through bundled_asset('sf_portal.bundle.css'), AFTER bundled_asset('sf_tokens.bundle.css'):
+ * a website page does not get the tokens (they are app_include_css, Desk only), and putting them in
+ * web_include_css would ship them to every public page. Raw /assets paths are cached for a year with
+ * no content hash, so an edit would never reach a phone that had the old copy.
+ *
+ * Presentation only. These pages take payments; nothing here hides, shows or moves anything the
+ * page scripts read or toggle. In particular no rule sets `display` on #step-card, #step-review,
+ * #review-fee-row, #review-disclosure or #review-nofee: /pay-card's script shows and hides them
+ * through their inline style (style.display = "none" / ""), and "" must fall back to the element's
+ * natural display, not to a rule here.
+ *
+ * Every colour is a --sf-* token (tests/test_customer_portal_polish.py refuses a literal one). The
+ * pages are pinned light (templates/includes/sf_portal_light.html says why), so the tokens resolve
+ * to their light values. Structure is square, buttons round at --sf-radius-control, chips are pills,
+ * and nothing casts a shadow: the box-shadow declarations below only switch Bootstrap's off.
+ *
+ * Scoped: .sf-portal is each page's wrapper, .sf-portal-nav the shared nav bar
+ * (templates/includes/sf_portal_nav.html). The only bare element rule is body's ground, and this
+ * file is linked by these four pages alone.
+ */
+
+body {
+	background-color: var(--sf-bg);
+}
+
+/* ---- Skip link: off screen until it has keyboard focus ---------------------------------------- */
+
+.sf-portal-skip {
+	position: absolute;
+	left: var(--sf-space-10);
+	top: calc(-1 * var(--sf-space-60));
+	z-index: 1050;
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	background: var(--sf-surface);
+	color: var(--sf-link);
+	font-family: var(--sf-font-sans);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+}
+
+.sf-portal-skip:focus {
+	top: var(--sf-space-10);
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 0;
+}
+
+/* ---- The nav bar: the navy head band, the same in both themes --------------------------------- */
+
+.sf-portal-nav {
+	background: var(--sf-band);
+	color: var(--sf-on-band);
+	font-family: var(--sf-font-sans);
+}
+
+.sf-portal-nav__inner {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0 var(--sf-space-20);
+	max-width: 1140px;
+	margin: 0 auto;
+	padding: var(--sf-space-5) var(--sf-space-15);
+}
+
+.sf-portal-nav__brand {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-md);
+	line-height: var(--sf-leading-display);
+	letter-spacing: 0;
+	color: var(--sf-on-band);
+	text-decoration: none;
+}
+
+.sf-portal-nav__brand:hover,
+.sf-portal-nav__brand:focus {
+	color: var(--sf-on-band);
+	text-decoration: none;
+}
+
+.sf-portal-nav__links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 var(--sf-space-5);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sf-portal-nav__links a {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	color: var(--sf-on-band);
+	font-size: var(--sf-text-md);
+	text-decoration: none;
+	text-underline-offset: 6px;
+	transition: color var(--sf-duration) var(--sf-ease);
+}
+
+.sf-portal-nav__links a:hover {
+	color: var(--sf-on-band);
+	text-decoration: underline;
+}
+
+/* The page you are on: bold and underlined, never colour alone. */
+.sf-portal-nav__links a[aria-current="page"] {
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+	text-decoration-thickness: 3px;
+}
+
+/* The focus colour is bahama-blue in light, which is lost on the navy band; the band's own
+   off-white is the ring here. */
+.sf-portal-nav a:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-on-band);
+	outline-offset: -2px;
+}
+
+/* ---- The page ----------------------------------------------------------------------------------- */
+
+.sf-portal {
+	margin: var(--sf-space-30) 0 var(--sf-space-60);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	line-height: var(--sf-leading-body);
+}
+
+/* The skip link's target (tabindex="-1", so following the link moves keyboard focus here): a ring
+   in the focus colour, like every other focused thing on the page. */
+.sf-portal:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 4px;
+}
+
+/* /pay-card and /rent-a-fountain are one column of form; they were 520px and 640px inline. */
+.sf-portal--narrow {
+	max-width: 520px;
+}
+
+.sf-portal--form {
+	max-width: 640px;
+}
+
+.sf-portal h1 {
+	margin-bottom: var(--sf-space-20);
+	color: var(--sf-heading);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-lg);
+	font-weight: var(--sf-weight-bold);
+	line-height: var(--sf-leading-display);
+	letter-spacing: 0;
+}
+
+.sf-portal h5 {
+	margin-bottom: var(--sf-space-10);
+	color: var(--sf-heading);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-bold);
+	line-height: var(--sf-leading-display);
+	letter-spacing: 0;
+}
+
+.sf-portal b,
+.sf-portal th {
+	color: var(--sf-text-strong);
+}
+
+/* Bootstrap's .text-muted and .text-danger are !important, so these have to be too. */
+.sf-portal .text-muted {
+	color: var(--sf-text-muted) !important;
+}
+
+/* A decline or a "tap Back" note (#card-error, #review-error): the danger colour mixed half and
+   half with the strongest text, as every status word is. The red fill alone is for fills. */
+.sf-portal .text-danger {
+	color: var(--sf-text-strong) !important;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong)) !important;
+	font-weight: var(--sf-weight-bold);
+}
+
+.sf-portal a:not(.btn) {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.sf-portal a:not(.btn):hover {
+	color: var(--sf-text-strong);
+}
+
+.sf-portal a:focus-visible,
+.sf-portal button:focus-visible,
+.sf-portal input:focus-visible,
+.sf-portal select:focus-visible,
+.sf-portal textarea:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ---- Buttons: 44px, rounded at the control radius, one primary per panel ---------------------- */
+
+.sf-portal .btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-5) var(--sf-space-20);
+	border: var(--sf-border-control) solid transparent;
+	border-radius: var(--sf-radius-control);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1.2;
+	box-shadow: none;
+	transition:
+		background-color var(--sf-duration) var(--sf-ease),
+		border-color var(--sf-duration) var(--sf-ease),
+		color var(--sf-duration) var(--sf-ease);
+}
+
+.sf-portal .btn:focus,
+.sf-portal .btn:active {
+	box-shadow: none;
+}
+
+.sf-portal .btn-block {
+	display: flex;
+	width: 100%;
+}
+
+.sf-portal .btn-primary,
+.sf-portal .btn-primary:focus {
+	border-color: var(--sf-primary);
+	background-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+.sf-portal .btn-primary:hover,
+.sf-portal .btn-primary:active {
+	border-color: var(--sf-pillar-service-deep);
+	background-color: var(--sf-pillar-service-deep);
+	color: var(--sf-on-pillar);
+}
+
+.sf-portal .btn-default,
+.sf-portal .btn-default:focus {
+	border-color: var(--sf-text);
+	background-color: transparent;
+	color: var(--sf-text-strong);
+}
+
+.sf-portal .btn-default:hover,
+.sf-portal .btn-default:active {
+	border-color: var(--sf-text-strong);
+	background-color: var(--sf-text-strong);
+	color: var(--sf-surface);
+}
+
+.sf-portal .btn-link,
+.sf-portal .btn-link:focus,
+.sf-portal .btn-link:hover {
+	border-color: transparent;
+	background-color: transparent;
+	color: var(--sf-link);
+	font-weight: var(--sf-weight-regular);
+	text-decoration: underline;
+}
+
+.sf-portal .btn:disabled,
+.sf-portal .btn.disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.sf-portal .btn-primary:disabled:hover {
+	border-color: var(--sf-primary);
+	background-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+/* ---- Notices: a square card on the surface, a status rule down the left, and its words --------- */
+
+.sf-portal .alert {
+	margin-bottom: var(--sf-space-20);
+	padding: var(--sf-space-15) var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-left-width: 4px;
+	border-radius: var(--sf-radius-none);
+	background-color: var(--sf-surface);
+	color: var(--sf-text-strong);
+}
+
+.sf-portal .alert-success {
+	border-left-color: var(--sf-good);
+}
+
+.sf-portal .alert-warning {
+	border-left-color: var(--sf-warn);
+}
+
+.sf-portal .alert-info {
+	border-left-color: var(--sf-pillar-neutral-deep);
+}
+
+/* ---- Tables, cards and lists: square, hairlines, no shadow ------------------------------------ */
+
+.sf-portal .table {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background-color: var(--sf-surface);
+	color: var(--sf-text);
+}
+
+.sf-portal .table th,
+.sf-portal .table td {
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-color: var(--sf-rule);
+	vertical-align: middle;
+}
+
+.sf-portal .table thead th {
+	border-bottom-width: var(--sf-border-hairline);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+
+.sf-portal .card {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background-color: var(--sf-surface);
+	box-shadow: none;
+}
+
+.sf-portal .list-group > .list-group-item {
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-15) var(--sf-space-20);
+	border-color: var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background-color: var(--sf-surface);
+	color: var(--sf-text);
+	text-decoration: none;
+}
+
+.sf-portal .list-group > .list-group-item:hover,
+.sf-portal .list-group > .list-group-item:focus {
+	background-color: var(--sf-bg);
+	color: var(--sf-text-strong);
+}
+
+/* /pay's autopay panel, under the invoices; it was inline. */
+.sf-portal .stripe-autopay {
+	margin-top: var(--sf-space-30);
+	padding-top: var(--sf-space-20);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+/* The autopay consent text keeps the line breaks it is written with. */
+.sf-portal-consent {
+	white-space: pre-line;
+}
+
+.sf-portal-footnote {
+	margin-top: var(--sf-space-30);
+}
+
+/* ---- Chips: a status in a pill, always with its word ------------------------------------------ */
+
+.sf-portal-chip {
+	display: inline-block;
+	padding: 2px var(--sf-space-10);
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-pill);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	line-height: var(--sf-leading-body);
+}
+
+.sf-portal-chip--neutral {
+	border-color: var(--sf-chip-edge-neutral);
+	background-color: var(--sf-pillar-neutral-deep);
+	color: var(--sf-on-pillar);
+}
+
+.sf-portal-chip--warn {
+	border-color: var(--sf-chip-edge-warn);
+	background-color: var(--sf-warn);
+	color: var(--sf-on-warn);
+}
+
+.sf-portal-chip--rent {
+	border-color: var(--sf-chip-edge-rent);
+	background-color: var(--sf-pillar-rent-deep);
+	color: var(--sf-on-pillar);
+}
+
+/* ---- Fields: label above, square, 16px type (iOS zooms into anything smaller) ----------------- */
+
+.sf-portal label {
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+
+.sf-portal .form-control {
+	height: auto;
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-input);
+	box-shadow: none;
+}
+
+.sf-portal .form-control:focus {
+	border-color: var(--sf-focus);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 0;
+	box-shadow: none;
+}
+
+/* /pay's consent box: the whole line is the target, the box itself 20px. */
+.sf-portal .sf-portal-check {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin-bottom: var(--sf-space-10);
+	padding: var(--sf-space-10) 0;
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-regular);
+	cursor: pointer;
+}
+
+.sf-portal .sf-portal-check input[type="checkbox"] {
+	flex: none;
+	width: 20px;
+	height: 20px;
+	margin-top: 2px;
+	accent-color: var(--sf-focus);
+}
+
+/* ---- /pay-card's spacing, which was inline (the ids are the page script's; display is not set) - */
+
+.sf-portal #payment-element {
+	margin: var(--sf-space-15) 0;
+}
+
+.sf-portal #card-error,
+.sf-portal #review-error,
+.sf-portal #review-nofee {
+	margin-bottom: var(--sf-space-10);
+}
+
+.sf-portal #step-review .table {
+	margin-top: var(--sf-space-15);
+}
+
+.sf-portal-aside {
+	margin-top: var(--sf-space-10);
+}
+
+/* ---- Phones ------------------------------------------------------------------------------------- */
+
+@media (max-width: 767px) {
+	.sf-portal-nav__inner {
+		padding: var(--sf-space-5) var(--sf-space-10);
+	}
+
+	.sf-portal-nav__brand {
+		font-size: var(--sf-display-sm);
+	}
+
+	.sf-portal-nav__links {
+		width: 100%;
+		margin-left: calc(-1 * var(--sf-space-10));
+	}
+
+	.sf-portal {
+		margin: var(--sf-space-20) 0 var(--sf-space-40);
+	}
+
+	.sf-portal h1 {
+		font-size: var(--sf-display-md);
+	}
+
+	/* One column of fields. */
+	.sf-portal .form-row > [class*="col-"] {
+		flex: 0 0 100%;
+		max-width: 100%;
+	}
+
+	/* A settled invoice's two ways out (Back to invoices, View invoice) stack, full width. */
+	.sf-portal > .btn {
+		display: flex;
+		width: 100%;
+		margin-bottom: var(--sf-space-10);
+	}
+
+	/* /pay's invoice list: each invoice is a card, its cells stacked, each labelled. */
+	.sf-portal-invoices,
+	.sf-portal-invoices tbody,
+	.sf-portal-invoices tr,
+	.sf-portal-invoices td {
+		display: block;
+		width: 100%;
+	}
+
+	.sf-portal .sf-portal-invoices {
+		margin-bottom: 0;
+		border: 0;
+		background-color: transparent;
+	}
+
+	.sf-portal-invoices thead {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+
+	.sf-portal-invoices tr {
+		margin-bottom: var(--sf-space-15);
+		padding: var(--sf-space-10) 0;
+		border: var(--sf-border-hairline) solid var(--sf-rule);
+		background-color: var(--sf-surface);
+	}
+
+	.sf-portal .sf-portal-invoices td {
+		padding: var(--sf-space-5) var(--sf-space-15);
+		border: 0;
+		text-align: left !important;
+	}
+
+	.sf-portal-invoices td[data-label]::before {
+		content: attr(data-label);
+		display: block;
+		color: var(--sf-text-muted);
+		font-size: var(--sf-text-xs);
+		font-weight: var(--sf-weight-bold);
+	}
+
+	.sf-portal-invoices .sf-portal-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sf-space-10);
+		padding-top: var(--sf-space-10);
+	}
+
+	.sf-portal-invoices .sf-portal-actions .btn {
+		flex: 1 1 0;
+	}
+
+	.sf-portal .list-group-item .float-right {
+		float: none !important;
+		display: inline-block;
+		margin-top: var(--sf-space-5);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sf-portal .btn,
+	.sf-portal-nav__links a {
+		transition: none;
+	}
+}
