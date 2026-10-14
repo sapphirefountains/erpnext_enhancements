@@ -308,7 +308,10 @@ def parse_answer(text):
 		if len(lines) > 2:
 			raw = "\n".join(lines[1:-1]).strip()
 	try:
-		data = json.loads(raw)
+		# strict=False: the Gemini client joins the answer's text parts with a newline, and a part
+		# boundary inside a string would otherwise make the whole answer unreadable. Every value is
+		# whitespace-collapsed afterwards.
+		data = json.loads(raw, strict=False)
 	except (ValueError, TypeError):
 		return None
 	return data if isinstance(data, dict) else None

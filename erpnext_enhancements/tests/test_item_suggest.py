@@ -79,6 +79,8 @@ class TestParsing(unittest.TestCase):
 	def test_a_json_object_with_or_without_a_fence(self):
 		self.assertEqual(rules.parse_answer('{"a": 1}'), {"a": 1})
 		self.assertEqual(rules.parse_answer('```json\n{"a": 1}\n```'), {"a": 1})
+		# The client joins text parts with a newline; one may fall inside a string.
+		self.assertEqual(rules.parse_answer('{"a": "PUMP, SUB\nMERSIBLE"}'), {"a": "PUMP, SUB\nMERSIBLE"})
 
 	def test_anything_else_is_none(self):
 		for bad in ("", "  ", None, "[1, 2]", '"text"', "not json", "{'a': 1}", 42, b'{"a": 1}'):
