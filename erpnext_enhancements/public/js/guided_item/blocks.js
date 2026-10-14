@@ -90,3 +90,31 @@ export function stock_start(setup) {
 export function given(value) {
 	return value !== null && value !== undefined && text(value) !== "";
 }
+
+// A buying line's supplier, price and unit, from the route options a new Item was started with
+// (v1.691.0: a purchase document's grid passes item_code, item_name, description, stock_uom, uom,
+// rate and supplier). Neither supplier, rate nor uom is an Item field; the supplier block is where
+// they belong. null when the line named no supplier.
+export function line_from(options) {
+	const o = options || {};
+	const supplier = text(o.supplier);
+	if (!supplier) return null;
+	return { supplier, rate: o.rate === undefined || o.rate === null ? "" : o.rate, uom: text(o.uom) };
+}
+
+// What the supplier block starts from for an Item made from a buying line: the line's supplier and,
+// when the line's unit is the Item's stock unit (or it named none), its rate; an Item Price is per
+// stock unit, so a rate per box is never offered as the price per each. Only for an Item with no
+// supplier yet; null otherwise, and the block starts as it always does. Nothing is saved until the
+// person presses Save supplier.
+export function line_supplier_start(start, line, setup) {
+	const s = setup || {};
+	const l = line || {};
+	if (!text(l.supplier) || (Array.isArray(s.suppliers) && s.suppliers.length)) return null;
+	const rate = Number(l.rate);
+	const same_unit = !text(l.uom) || text(l.uom) === text(s.stock_uom);
+	return Object.assign({}, start || {}, {
+		supplier: text(l.supplier),
+		rate: given(l.rate) && Number.isFinite(rate) && rate > 0 && same_unit ? rate : "",
+	});
+}

@@ -273,6 +273,9 @@ class GuidedEntry {
 		// options themselves, so a second start with different values is told from Back.
 		this.carry = {};
 		this.started_with = "";
+		// v1.691.0: every start value, the ones no field takes too (a buying line's supplier and
+		// rate), for the DocType's extension to put where its blocks have a place (ctx.started).
+		this.start_options = {};
 		this.client_id = null;
 		// v1.684.0: how this record is laid out, and what the person did to it on this visit.
 		this.entry = null;
@@ -530,6 +533,7 @@ class GuidedEntry {
 			if (!this.kit.same_value(options[key], defaults[key])) given[key] = options[key];
 		});
 		this.started_with = ge_start_key(given);
+		this.start_options = ge_clone(given);
 		// Once read, the values live here; a long one (a Lead's details) would make the address too
 		// long to reload. Back and Forward to this entry find the record being started in memory.
 		if (window.location.search) {

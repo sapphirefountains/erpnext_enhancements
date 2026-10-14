@@ -30,6 +30,7 @@ model, the pure rules and the label reads.
 | `item_naming_digest.py` | Monday's email of last week's new Items that fail the rules |
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
+| `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.691.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
 ## The count flow
@@ -534,7 +535,7 @@ The rules module lives here rather than under `assistant_tools/` because nothing
 outside `assistant_tools/` and `tests/` may import that package (`TestFacOptionalInvariant`),
 and Item-master vocabulary has to stay reachable from a report or a patch.
 
-### Six callers, one engine
+### Seven callers, one engine
 
 `item_naming_rules.py` is the only place a naming judgement is made. Everything else is a thin
 caller, and that is load-bearing rather than tidy: two definitions of "compliant" that disagree
@@ -546,6 +547,7 @@ by one row is a bug report nobody can close.
 | **Item form** | `public/js/item_naming_advisor.js` | Headline on refresh, two buttons under *Naming* |
 | **KPIs** `item_naming_compliance_pct`, `item_naming_new_compliance_pct` | `kpi_dashboards/snapshots.py` | Nightly, on the Product dashboard. The second covers items created on or after `NAMING_GO_LIVE` (2026-10-01) |
 | **MCP** `item_naming_check` | `assistant_tools/item_naming_check.py` | For Triton and any MCP client |
+| **AI suggest** (*Describe it* on the guided Item page, MCP `item_naming_suggest`) | `item_suggest_rules.review`, `api/item_suggest.py` | v1.691.0. The model proposes; `check_code`, `check_name`, `check_supporting`, `check_code_name_agreement` and `blocking_findings` judge the result, then `stock_scan.preview_new_item` as the step's naming check does. Its only correction is `check_name`'s own (a Tier 3 word, a plural CATEGORY, GREY) |
 | **New-Item guard** | `item_naming_guard.py` | Two findings only; see above |
 | **Weekly digest** | `item_naming_digest.py` | Last week's new Items that fail |
 

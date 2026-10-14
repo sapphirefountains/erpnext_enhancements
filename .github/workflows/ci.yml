@@ -1784,6 +1784,18 @@ jobs:
       # Asset's id in a unique column, a racing resend settled by the index). Own frappe stub.
       - name: Guided Item flow endpoints (permissions, idempotency, PDT/SRV blocks)
         run: python -m unittest erpnext_enhancements.tests.test_item_flow -v
+      # v1.691.0 (ER-2026-1320546), the guided Item flow's AI suggest step: api/item_suggest.py, its
+      # pure rules (inventory_enhancements/item_suggest_rules.py) and the item_naming_suggest tool.
+      # The model is a fake: nothing here calls Gemini. Pins that the model's answer is held to its
+      # schema (nothing else survives, every value plain and bounded), that a PDT- or SRV- number never
+      # appears anywhere in a suggestion (the block list is the only source), that a vendor part number
+      # is the person's own (one read off a photo is marked to check), that the suggestion goes through
+      # item_naming_rules' checks and the new-Item guard and Stock Scan's preview, that it writes
+      # nothing, that AI off, a timeout, an error and a non-JSON reply are plain messages with no prompt
+      # or photo in the Error Log, the photo checked by its bytes, Item create, and a per-user rate
+      # limit. Own frappe stub (and FAC's BaseTool), so its own step; unittest classes.
+      - name: Guided Item AI suggest (schema, no PDT/SRV numbers, rules + guard, graceful failure)
+        run: python -m unittest erpnext_enhancements.tests.test_item_suggest -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast

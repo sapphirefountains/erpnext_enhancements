@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.691.0] - 2026-10-14
+
+### Added
+- **The guided Item flow can suggest a new item's code family and its POL-0602 name from a plain
+  description (ER-2026-1320546).** Parker Bailey (purchasing): "An AI assisted way to create new item
+  codes for items that don't have codes." Nik, 2026-10-14 (on TASK-2026-02790): an AI *suggest* step
+  on top of form kit P8.1's rule-based guided Item flow. The AI does not replace the rules. On a new
+  Item, above the code helper, a *Describe it* card takes what the item is in plain words, an optional
+  vendor part number and an optional photo. It answers with one row per field, each with a short
+  reason: the kind of code, the vendor part number or a CON- code's group, descriptor and size, the
+  seven name segments, the Item Group and the unit. *Accept* puts a row where a person would have
+  typed it: the code helper's own inputs, the name builder's segment, the step's own field. *Edit*
+  changes it first. So the code is built, numbered and checked exactly as before, and the naming check
+  and the save are unchanged.
+  - **It never picks a PDT or SRV number.** A product or service suggestion is the family alone. The
+    code helper then lists the blocks, and the number is the one the person picks there
+    (`api.item_flow.code_blocks`). Every `PDT-`/`SRV-` number the model writes anywhere is removed,
+    and a note about one is dropped whole.
+  - **It never invents a vendor part number.** A part number is kept only when the person typed it or
+    it appears in their description. One read off the photo is kept but marked *Check it*, and
+    *Accept all* skips it. A part number the person typed makes it a purchased part, whatever the
+    model thought (SOP §5 Phase 2).
+  - **The rules have the last word.** The model's answer is untrusted input. Only the keys of the
+    schema the prompt states survive, every value is plain text and bounded, and the Item Group and
+    unit must be ones the site already uses. The composed Item then goes through `item_naming_rules`
+    (`check_code`, `check_name`, `check_supporting`, `check_code_name_agreement`) and the new-Item
+    guard's `blocking_findings`, and through Stock Scan's `preview_new_item`, the preview the step's
+    naming check shows. The card names an existing Item with that code, and the similar ones, before
+    anyone accepts anything. The only correction made is `check_name`'s own: a Tier 3 word takes its
+    Appendix A replacement, a plural CATEGORY its approved singular, GREY becomes GRAY. An unapproved
+    category is reported, never repaired.
+  - **It writes nothing.** No Item, no File, no price. Its only rows are the shared Gemini client's
+    AI Model Usage row and, when the call fails, one Error Log row with the exception's class and a
+    short message, never the prompt or the photo (`frappe.get_traceback` is not used: the prompt is a
+    local).
+  - **When the AI cannot help, the flow works as before.** AI not set up (no Google service account),
+    a timeout, an error, a reply that is not the JSON asked for, or nothing usable: the card says so in
+    plain words and the rule-based helper below it is untouched. Gated on Item create, POST, 30 calls
+    per person per hour.
+  - **The photo** is scaled in the browser to 1600px on its long side and sent as base64. It is never
+    stored, and the server checks it by its bytes (JPEG, PNG, WebP or HEIC, at most 4 MB). The endpoint
+    also takes `file_url`, a File the caller can read.
+  - `api/item_suggest.py` (`suggest_item`), `inventory_enhancements/item_suggest_rules.py` (pure),
+    `public/js/guided_item/suggest.js` (pure). `api/gemini.py` gains keyword-only `images`,
+    `response_mime_type`, `thinking_level` and `timeout`. A call without them sends the request it
+    always did, so the five other callers are unchanged.
+- **`item_naming_suggest`, the same suggestion for the assistant.** Read-only in the AI gate
+  (`EXPLICIT_READONLY`), gated on Item create. Its name puts it in Triton's core pack by the existing
+  `item_naming` rule, so Triton needs no change. It takes no photo: a File named by an assistant call
+  would need the gate's file denylist, and a Triton chat attachment is refused there anyway. The
+  item-naming skill now says to draft with it and still confirm with `item_naming_check`.
+- **A *New item (guided)* button on the Item list**, beside *+ Add Item*, for people who may open
+  the guided page and create an Item. It routes to `/desk/guided-entry/Item/new`. An Item still opens
+  in its form (`open_by_default` stays False).
+- **A new Item started with a buying line's values lands where the flow has a place for each.** The
+  Desk buying grids (#1305) pass `item_code`, `item_name`, `description` (the line's Text Editor
+  HTML), `stock_uom`, `uom`, `rate` and `supplier`. Step 1 takes the code, name and unit as it always
+  did. The description goes with the create into the Item's own description field, and the
+  *Describe it* box starts from it as text, put in with `.val()`, never as markup. `supplier` and
+  `rate` are not Item fields, so the editor now lends a block the new record's start
+  (`ctx.carried()`, `ctx.started()`). The Item extension keeps them, in the tab, until the
+  *Supplier & price* block of the Item the create made, which starts from them unsaved. The rate is
+  offered only when the line's `uom` is the Item's stock unit, because an Item Price is per stock
+  unit. `uom` and LinkSelector's `name_field` have no place and are dropped. This works on
+  `/desk/guided-entry/Item/new` only: Item is not where a record opens, so `frappe.new_doc("Item")`
+  still opens the form, and a caller that wants the guided flow routes there itself.
+
 ## [1.685.0] - 2026-10-14
 
 ### Fixed

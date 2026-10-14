@@ -627,7 +627,10 @@ way. The editor knows only that interface, never what the block is: `render(name
 `on_change(fieldname, value, ctx)`, `before_create()` (a sentence that holds step 1 back, or "")
 and `leave()`. `ctx` lends the record's values, `set_value` (into a field the page then saves),
 `save_first` (send what the page holds) and `record_changed` (take the record's new version after
-the block wrote through its own endpoint). A block that throws is caught; the fields still show.
+the block wrote through its own endpoint). Since v1.691.0 it also lends a new record's start
+(route options): `carried()`, the values for fields of later steps the create sends along, and
+`started()`, every start value including ones no field takes. Both are `{}` for a saved record. A
+block that throws is caught; the fields still show.
 Whatever a block creates beyond the record goes through its own whitelisted endpoints, each
 checking its own permission, never through `save_step`.
 
@@ -647,7 +650,7 @@ held by `test_form_kit`); its core steps and their blocks (`public/js/guided_ite
 
 | Step | Block | What it writes, and how |
 |---|---|---|
-| Name & code (creates the Item) | `item_naming`: the code helper (vendor part number as printed, `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`, `PDT-####` and `SRV-###` from a block the person chooses) and the name builder (POL-0602's seven segments, pick lists from the catalog narrowed by the CATEGORY), with the naming guard's own preview | Item Code and Item Name, into the step's own fields |
+| Name & code (creates the Item) | `item_naming`: on a new Item the *Describe it* card (AI suggest, below), then the code helper (vendor part number as printed, `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`, `PDT-####` and `SRV-###` from a block the person chooses) and the name builder (POL-0602's seven segments, pick lists from the catalog narrowed by the CATEGORY), with the naming guard's own preview | Item Code and Item Name, into the step's own fields |
 | Description | — | the form's fields |
 | Supplier & price | `item_supplier` | `api.item_flow.save_supplier`: the Item Supplier row (part number, `purchase_url`), the company's default supplier, the Item Price on the buying list for that supplier |
 | Stock & bin (stock items) | `item_stock` | `save_stock`: the company's default warehouse and its Purchase reorder rule; *Print the bin label* opens `/warehouse-labels?w=<bin>`, Stock Scan's own label page |
@@ -665,7 +668,50 @@ code, and its `create.client_id_field` (`Item.custom_guided_client_id`, hidden a
 Opportunity) makes a resent create return the Item the first attempt made rather than a duplicate
 code refusal. Item is
 not where an Item opens yet (`open_by_default: False`), and the guided page's roles include
-*Item Manager*, the role that creates Items.
+*Item Manager*, the role that creates Items. The Item list has a *New item (guided)* button beside
+*+ Add Item* (`public/js/item_list.js`, v1.691.0) for people who may open the guided page and create
+an Item; + Add Item still opens the form.
+
+### Describe it: the AI suggest step (v1.691.0)
+
+ER-2026-1320546, Parker Bailey (purchasing): "An AI assisted way to create new item codes for items
+that don't have codes." Nik, 2026-10-14: an AI suggest step on top of the rule-based flow; the AI does
+not replace the rules. On a new Item, above the code helper, the card takes a plain-words
+description, an optional vendor part number and an optional photo (scaled to 1600px in the browser,
+sent as base64, never stored), and *Suggest* posts them to `api.item_suggest.suggest_item` (sf_kit's
+quiet call, POST). The answer is a row per field, each with the model's reason and, where the rules
+have one, their verdict; *Accept* puts a row where a person would have typed it, *Edit* first:
+
+| Row | Accepted into |
+|---|---|
+| Kind of code | the code helper's family buttons. A product or service is the family alone: the helper then lists the blocks, and the PDT/SRV number is the one the person picks there (`code_blocks`), never the AI's |
+| Vendor part number, CON- group, descriptor, size | the code helper's own inputs, which build the code as when typed (`codes.js`) |
+| CATEGORY ... PACKAGING | the name builder's segment, and Item Name |
+| Item Group, Default Unit of Measure | the step's own fields |
+
+*Accept all* never takes a vendor part number read off the photo (marked *Check it*). The card also
+lists an existing Item with that code and the similar ones, from the same preview the naming check
+shows. Every word of the answer is put on the page with `.text()` or `.val()`. When the AI is not set
+up, times out, errs or answers something that is not the JSON asked for, the card says so and the
+helper below works as before. The server side is `api/item_suggest.py` and
+`inventory_enhancements/item_suggest_rules.py`; the pure page side is `public/js/guided_item/suggest.js`.
+
+### A new Item started with values
+
+The guided page reads a new record's route options (`apply_start`): step 1's fields (`item_code`,
+`item_name`, `stock_uom`) start filled, a field of a later step that the flow offers (`description`,
+a buying line's Text Editor HTML, stored as the Item's own description) goes with the create, and the
+Describe it card starts from that description as text (else Item Name; else an Item Code that reads as
+words). A buying line's `supplier` and `rate` are not Item fields: they wait, in the tab, for the
+*Supplier & price* block of the Item the create made, which starts from them unsaved (the rate only
+when the line's `uom` is the Item's stock unit, or the line named none; an Item Price is per stock
+unit). `uom` itself and LinkSelector's `name_field` have no place in the flow and are dropped.
+
+**This works on `/desk/guided-entry/Item/new` only.** Item is not where a record opens
+(`open_by_default: False`), so `frappe.new_doc("Item", options)` opens the Item form, not this page:
+`guided_default.js` sets no create route for Item, and the form keeps the options. A caller that wants
+the guided flow sets `frappe.route_options` and routes to `["guided-entry", "Item", "new"]` itself
+(when `window.sf_guided.has_flow("Item")`).
 
 ## Adding a DocType
 

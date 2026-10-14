@@ -124,6 +124,9 @@ MUST_STAY_WHITELISTED = {
     # every six hours while the mirror goes stale. `stamp_of` and the `_require_mirror` /
     # `_rendered` helpers sit directly below it and must never carry the decorator.
     "api/knowledge_base_mirror.py": ("snapshot",),
+    # The Describe it card's only request (v1.691.0). Four helpers sit directly above it; a lost
+    # decorator shows the card and answers every Suggest with "not whitelisted".
+    "api/item_suggest.py": ("suggest_item",),
 }
 
 
@@ -262,6 +265,11 @@ EXACT_SURFACE = {
         "save_stock",
         "create_asset",
     },
+    # The guided Item flow's AI suggest step (v1.691.0, ER-2026-1320546): one POST, gated on Item
+    # create and writing nothing (tested in test_item_suggest). `run_suggestion`, which the assistant
+    # tool shares, and the `_photo` / `_preview` / `read_context` helpers sit right above it and must
+    # never be exposed: run_suggestion has no permission check of its own.
+    "api/item_suggest.py": {"suggest_item"},
 }
 
 

@@ -1100,6 +1100,12 @@ export class RecordEditor {
 			kit: this.kit,
 			can_write: !!(this.flow && this.flow.can_write) && !(step && step.read_only),
 			values: () => (same() ? Object.assign({}, this.values) : {}),
+			// What a new record was started with (v1.691.0): `carried`, the values for fields of
+			// later steps the create sends along; `started`, every start value, including ones no
+			// field takes (a buying line's supplier and rate). The Item flow's Describe it card
+			// starts from a carried description, its supplier block from the line's supplier.
+			carried: () => (same() && this.is_new ? Object.assign({}, this.carry || {}) : {}),
+			started: () => (same() && this.is_new ? Object.assign({}, this.start_options || {}) : {}),
 			set_value: (fieldname, value) => {
 				if (!same() || this.kit.same_value(value, this.values[fieldname])) return;
 				this.set_value_local(fieldname, value);

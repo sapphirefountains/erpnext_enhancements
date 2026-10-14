@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
 from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming
+from erpnext_enhancements.inventory_enhancements import item_suggest_rules as suggest_rules
 
 APP = REPO_ROOT / "erpnext_enhancements"
 JS = APP / "public" / "js"
@@ -74,6 +75,39 @@ NAMES = [
 	["TAPE", "ELECTRICAL", "", "VINYL", '3/4"', "", "ROLL"],
 ]
 
+# The builder's rules, run by both naming.js/codes.js and item_suggest_rules' Python copies.
+MIRROR = {
+	"names": NAMES + [["a", "b", "c", "d", "e", "f", "g", "h"], [None, " x ", "y,z"]],
+	"parts": [" AQU-98,125 ", "Paper  Towel!", "steel, grey ", "", "  ", "ß straße", '2"\tsch80'],
+	"con": [["elec", "zip tie", '8"'], ["OFFC", "Paper  Towel!", ""], ["srv", "--a--b--", " 1/2 "], ["", "", ""]],
+}
+
+
+def _server_answer():
+	"""What api.item_suggest answers for one made-up pump, built by the server's own pure rules, so
+	the page's reading of it is tested against the real shape rather than a copy."""
+	data = {
+		"family": {"value": "vendor", "reason": "A purchased pump."},
+		"vendor_part_no": {"value": "LG-505025", "reason": "On the label in the photo."},
+		"name": {
+			"CATEGORY": {"value": "pumps", "reason": "It moves water."},
+			"SUB-CATEGORY": {"value": "submersible"},
+			"SIZE": {"value": '1-1/2"'},
+		},
+		"item_group": {"value": "Pumps"},
+		"stock_uom": {"value": "Unit"},
+	}
+	checked = suggest_rules.validate_suggestion(
+		data, description="a pump", has_photo=True, item_groups=["Pumps"], uoms=["Unit"]
+	)
+	suggest_rules.normalize_category(checked)
+	composed = suggest_rules.compose(checked)
+	review = suggest_rules.review(composed, existing_codes=[])
+	return {"ok": True, "fields": suggest_rules.field_rows(checked, review), "item_name": composed["item_name"]}
+
+
+ANSWER = _server_answer()
+
 RUNNER = r"""
 import { pathToFileURL } from "node:url";
 const [dir, inputJson] = process.argv.slice(2);
@@ -83,6 +117,7 @@ const naming = await load("/guided_item/naming.js");
 const codes = await load("/guided_item/codes.js");
 const advice = await load("/guided_item/advice.js");
 const blocks = await load("/guided_item/blocks.js");
+const suggest = await load("/guided_item/suggest.js");
 const input = JSON.parse(inputJson);
 const out = {};
 
@@ -239,6 +274,59 @@ out.blocks = {
 	],
 };
 
+// ---- the Describe it card (v1.691.0): the server's own answer, built by item_suggest_rules
+const answer = input.answer;
+out.suggest = {
+	constants: { description_max: suggest.DESCRIPTION_MAX, photo_max: suggest.PHOTO_MAX_BYTES },
+	start: [
+		suggest.start_from({ item_code: "AFS-7731", item_name: "" }, { description: "<p>Submersible pump &amp; 1/2&nbsp;HP</p>" }),
+		suggest.start_from({ item_code: "pump 1/2 hp submersible", item_name: "" }, {}),
+		suggest.start_from({ item_code: "PDT-0042", item_name: "Pump, X" }, {}),
+		suggest.start_from({ item_code: "825Y-QT 1" }, { description: "<p><br></p>" }),
+		suggest.start_from(null, null),
+	],
+	untagged: suggest.untagged('<img src=x onerror="alert(1)">Tee &#8220;2&#x22;&#8221; &bogus; &lt;b&gt;'),
+	fit: [[4032, 3024], [800, 600], [3000, 9000], [0, 0]].map(([w, h]) => suggest.fit_photo(w, h, suggest.PHOTO_MAX_EDGE)),
+	bytes: ["data:image/png;base64,AAAA", "data:image/png;base64,AAA=", "AAAAAA==", ""].map(suggest.data_url_bytes),
+	photo: [
+		suggest.photo_problem({ type: "image/jpeg", size: 1000 }),
+		suggest.photo_problem({ type: "", size: 1000 }),
+		suggest.photo_problem({ type: "application/pdf", size: 10 }),
+		suggest.photo_problem({ type: "image/heic", size: 30 * 1024 * 1024 }),
+	],
+	targets: ["family", "vendor_part_no", "consumable_group", "descriptor", "code_size", "segment_0", "segment_6", "segment_7", "item_group", "stock_uom", "item_code", "rate"].map(suggest.target_for),
+	rows: suggest.rows_for(answer),
+	rows_junk: [suggest.rows_for(null), suggest.rows_for({ fields: [null, { key: "segment_0", value: " " }, { key: "owner", value: "x" }] })],
+	spec: {
+		family: suggest.code_spec_after({ family: "product", number: 42, vendor: "X" }, { kind: "family" }, "service"),
+		vendor: suggest.code_spec_after({ family: "product", number: 42 }, { kind: "code", part: "vendor" }, "AFS-7731"),
+		group: suggest.code_spec_after({ family: "vendor", vendor: "A" }, { kind: "code", part: "group" }, "ELEC"),
+	},
+	segments: suggest.segments_after(["PUMP", "", ""], 3, "stainless, 304"),
+	segments_bad: suggest.segments_after(["pump"], 9, "X"),
+	order: suggest.accept_all_order(suggest.rows_for(answer)).map((row) => row.key),
+};
+// The builder's rules, for item_suggest_rules' Python copies of them.
+out.mirror = {
+	names: input.mirror.names.map((parts) => naming.assemble_name(parts)),
+	parts: input.mirror.parts.map(naming.clean_part),
+	vendor: input.mirror.parts.map(codes.vendor_code),
+	con: input.mirror.con.map(([group, descriptor, size]) => codes.consumable_code(group, descriptor, size)),
+};
+// A buying line's supplier and rate, for the supplier block of the Item it became.
+const no_suppliers = { stock_uom: "Nos", suppliers: [] };
+const line = { supplier: "Example Pumps", rate: 41.5, uom: "Nos" };
+out.line = {
+	from: [blocks.line_from({ supplier: "Example Pumps", rate: 41.5, uom: "Nos", item_code: "X" }), blocks.line_from({ rate: 5 }), blocks.line_from(null)],
+	same_unit: blocks.line_supplier_start(blocks.supplier_start(no_suppliers), line, no_suppliers),
+	other_unit: blocks.line_supplier_start(blocks.supplier_start(no_suppliers), Object.assign({}, line, { uom: "Box" }), no_suppliers),
+	no_unit: blocks.line_supplier_start({}, Object.assign({}, line, { uom: "" }), no_suppliers),
+	zero: blocks.line_supplier_start({}, Object.assign({}, line, { rate: 0 }), no_suppliers),
+	text_rate: blocks.line_supplier_start({}, Object.assign({}, line, { rate: "abc" }), no_suppliers),
+	has_suppliers: blocks.line_supplier_start({}, line, { stock_uom: "Nos", suppliers: [{ supplier: "Other" }] }),
+	no_supplier: blocks.line_supplier_start({}, {}, no_suppliers),
+};
+
 // ---- the bundle the page loads installs all of it
 globalThis.window = {};
 await load("/guided_entry.bundle.js");
@@ -266,7 +354,7 @@ class TestTheModules(unittest.TestCase):
 			shutil.copytree(JS / "info_blocks", folder / "info_blocks")
 			shutil.copy(BUNDLE, folder / "guided_entry.bundle.js")
 			(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
-			payload = json.dumps({"names": NAMES, "codes": CODES})
+			payload = json.dumps({"names": NAMES, "codes": CODES, "answer": ANSWER, "mirror": MIRROR})
 			proc = subprocess.run(
 				[node, str(folder / "runner.mjs"), str(folder), payload],
 				capture_output=True,
@@ -481,6 +569,98 @@ class TestTheModules(unittest.TestCase):
 	def test_a_price_is_sent_only_when_it_was_changed(self):
 		self.assertEqual(self.out["blocks"]["rate"], [None, None, "45", "12", None, None, "0"])
 
+	# ---- the Describe it card (v1.691.0)
+
+	def test_the_builders_python_copies_are_the_builders(self):
+		m = self.out["mirror"]
+		self.assertEqual(m["names"], [suggest_rules.assemble_name(parts) for parts in MIRROR["names"]])
+		self.assertEqual(m["parts"], [suggest_rules.clean_part(part) for part in MIRROR["parts"]])
+		self.assertEqual(m["vendor"], [suggest_rules.vendor_code(part) for part in MIRROR["parts"]])
+		self.assertEqual(m["con"], [suggest_rules.consumable_code(*args) for args in MIRROR["con"]])
+		s = self.out["suggest"]["constants"]
+		self.assertEqual(s["description_max"], suggest_rules.DESCRIPTION_MAX)
+		self.assertEqual(s["photo_max"], suggest_rules.IMAGE_MAX_BYTES)
+
+	def test_the_card_starts_from_what_the_item_was_started_with(self):
+		start = self.out["suggest"]["start"]
+		self.assertEqual(start[0], {"description": "Submersible pump & 1/2 HP", "vendor_part_no": "AFS-7731"})
+		self.assertEqual(
+			start[1], {"description": "pump 1/2 hp submersible", "vendor_part_no": ""}, "words are a description"
+		)
+		self.assertEqual(start[2], {"description": "Pump, X", "vendor_part_no": ""}, "never our own family")
+		self.assertEqual(start[3], {"description": "", "vendor_part_no": "825Y-QT 1"}, "an empty editor is no text")
+		self.assertEqual(start[4], {"description": "", "vendor_part_no": ""})
+		self.assertEqual(self.out["suggest"]["untagged"], "Tee “2\"” &bogus; <b>", "text, for .val()")
+
+	def test_a_photo_is_scaled_and_sized(self):
+		s = self.out["suggest"]
+		self.assertEqual(
+			[(f["width"], f["height"], f["scaled"]) for f in s["fit"]],
+			[(1600, 1200, True), (800, 600, False), (533, 1600, True), (0, 0, False)],
+		)
+		self.assertEqual(s["bytes"], [3, 2, 4, 0])
+		self.assertEqual(s["photo"][:2], ["", ""], "a type the browser does not name goes to the server's check")
+		self.assertIn("JPEG, PNG, WebP or HEIC", s["photo"][2])
+		self.assertIn("too large", s["photo"][3])
+
+	def test_each_suggested_field_has_one_place_to_go(self):
+		targets = self.out["suggest"]["targets"]
+		self.assertEqual(
+			targets,
+			[
+				{"kind": "family"},
+				{"kind": "code", "part": "vendor"},
+				{"kind": "code", "part": "group"},
+				{"kind": "code", "part": "descriptor"},
+				{"kind": "code", "part": "size"},
+				{"kind": "segment", "index": 0},
+				{"kind": "segment", "index": 6},
+				None,
+				{"kind": "field", "fieldname": "item_group"},
+				{"kind": "field", "fieldname": "stock_uom"},
+				None,
+				None,
+			],
+			"no row can write the Item Code or a price directly",
+		)
+
+	def test_the_servers_rows_are_read_as_sent(self):
+		rows = self.out["suggest"]["rows"]
+		self.assertEqual([row["key"] for row in rows], [row["key"] for row in ANSWER["fields"]])
+		by_key = {row["key"]: row for row in rows}
+		self.assertTrue(by_key["vendor_part_no"]["confirm"], "a part number off the photo is checked first")
+		self.assertEqual(by_key["family"]["shown"], "Vendor part number")
+		self.assertEqual(by_key["segment_0"]["value"], "PUMP", "the rule's singular")
+		self.assertEqual(by_key["segment_0"]["verdict"]["tone"], "good")
+		self.assertEqual(self.out["suggest"]["rows_junk"], [[], []])
+
+	def test_accept_all_never_takes_a_part_number_to_check_and_builds_the_code_first(self):
+		order = self.out["suggest"]["order"]
+		self.assertNotIn("vendor_part_no", order)
+		self.assertEqual(order[0], "family")
+		self.assertEqual(order[-2:], ["item_group", "stock_uom"])
+		self.assertEqual(order[1:-2], ["segment_0", "segment_1", "segment_4"])
+
+	def test_an_accepted_family_never_carries_a_number(self):
+		spec = self.out["suggest"]["spec"]
+		self.assertEqual(spec["family"], {"family": "service", "vendor": "X"})
+		self.assertEqual(spec["vendor"], {"family": "vendor", "vendor": "AFS-7731"})
+		self.assertEqual(spec["group"], {"family": "consumable", "vendor": "A", "group": "ELEC"})
+		self.assertEqual(self.out["suggest"]["segments"], ["PUMP", "", "", "STAINLESS 304", "", "", ""])
+		self.assertEqual(self.out["suggest"]["segments_bad"], ["PUMP", "", "", "", "", "", ""])
+
+	def test_a_buying_lines_supplier_and_rate_start_the_supplier_block(self):
+		line = self.out["line"]
+		self.assertEqual(line["from"], [{"supplier": "Example Pumps", "rate": 41.5, "uom": "Nos"}, None, None])
+		self.assertEqual(line["same_unit"]["supplier"], "Example Pumps")
+		self.assertEqual(line["same_unit"]["rate"], 41.5)
+		self.assertEqual(line["other_unit"]["rate"], "", "a price per box is not the price per each")
+		self.assertEqual(line["no_unit"]["rate"], 41.5)
+		self.assertEqual(line["zero"]["rate"], "")
+		self.assertEqual(line["text_rate"]["rate"], "")
+		self.assertIsNone(line["has_suppliers"], "an Item with suppliers starts as it always did")
+		self.assertIsNone(line["no_supplier"])
+
 	def test_the_supplier_block_uses_them(self):
 		code = _code(EXTENSION_JS)
 		self.assertIn("const fields = supplier_fields(this.setup, picked);", code)
@@ -579,7 +759,10 @@ class TestTheWiring(unittest.TestCase):
 					any(f'"{name}"' in args for name in ("save_supplier", "save_stock", "create_asset"))
 					or "API + method" in args
 				)
-				self.assertEqual(bool(get), not write)
+				# The Describe it card's Suggest (v1.691.0) writes nothing but is a POST: a photo does
+				# not fit an address, and every call is a model call.
+				post = write or args.strip().startswith("SUGGEST,")
+				self.assertEqual(bool(get), not post)
 		for name in ("naming_options", "preview_item", "code_blocks", "get_setup"):
 			self.assertIn(f'API + "{name}"', code)
 		for name in ("save_supplier", "save_stock", "create_asset"):
@@ -596,8 +779,50 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn("/warehouse-labels?w=", _text(ITEM_JS / "blocks.js"))
 		self.assertIn("/warehouse-labels?w=", _text(JS / "warehouse_stock_scan.js"))
 
+	def test_the_describe_card_is_wired_to_the_builders_and_never_writes_markup(self):
+		code = _code(EXTENSION_JS)
+		self.assertIn('const SUGGEST = "erpnext_enhancements.api.item_suggest.suggest_item";', code)
+		self.assertIn(".call(SUGGEST, args, { quiet: true })", code)
+		card = code[code.index("render_describe($card, ctx) {") : code.index("render_naming($box, ctx) {")]
+		self.assertNotIn(".html(", card, "the AI's words are model output: .text() and .val() only")
+		self.assertNotIn("innerHTML", card)
+		self.assertIn("this.set_code(code_spec_after(this.code_spec, t, value), ctx);", card)
+		self.assertIn('ctx.set_value("item_name", name);', card)
+		self.assertIn("ctx.set_value(t.fieldname, value);", card)
+		naming_step = code[code.index("render_naming($box, ctx) {") :]
+		naming_step = naming_step[: naming_step.index("\n\t}\n")]
+		self.assertLess(naming_step.index("if (ctx.is_new && ctx.can_write) {"), naming_step.index("this.render_describe("))
+		self.assertIn("typeof ctx.carried === \"function\"", card, "a tab with the older editor still draws it")
+
+	def test_a_buying_lines_supplier_waits_for_the_supplier_block(self):
+		code = _code(EXTENSION_JS)
+		before = code[code.index("before_create() {") :]
+		before = before[: before.index("\n\t}\n")]
+		self.assertIn("LINE_STARTS.set(code, this.line);", before)
+		supplier = code[code.index("render_supplier($box, ctx, setup) {") :]
+		supplier = supplier[: supplier.index("\n\t}\n")]
+		self.assertIn("LINE_STARTS.delete(String(ctx.name", supplier)
+		self.assertIn("let shown_rate = recorded.rate;", supplier, "the line's rate is not recorded yet, so it is sent")
+		editor = _code(EDITOR_JS)
+		self.assertIn("carried: () => (same() && this.is_new ? Object.assign({}, this.carry || {}) : {}),", editor)
+		self.assertIn("started: () => (same() && this.is_new ? Object.assign({}, this.start_options || {}) : {}),", editor)
+		page = _code(PAGE_JS)
+		self.assertIn("this.start_options = ge_clone(given);", page)
+		self.assertIn("this.start_options = {};", page)
+
+	def test_the_item_list_offers_the_guided_flow_beside_new(self):
+		code = _code(JS / "item_list.js")
+		self.assertIn('listview.page.add_inner_button(__("New item (guided)")', code)
+		self.assertIn('frappe.set_route("guided-entry", "Item", "new");', code)
+		self.assertIn('window.sf_guided.has_flow("Item")', code)
+		self.assertIn('frappe.model.can_create("Item")', code)
+		self.assertIn("original_onload.call(this, listview);", code, "ERPNext's own onload still runs")
+		from erpnext_enhancements.form_kit.config.item import CONFIG
+
+		self.assertFalse(CONFIG["open_by_default"], "an Item still opens in its form")
+
 	def test_the_pure_modules_need_no_frappe_and_no_dom(self):
-		for name in ("naming.js", "codes.js", "advice.js", "blocks.js"):
+		for name in ("naming.js", "codes.js", "advice.js", "blocks.js", "suggest.js"):
 			code = _code(ITEM_JS / name)
 			with self.subTest(module=name):
 				for token in ("frappe", "document.", "window.", "$("):
