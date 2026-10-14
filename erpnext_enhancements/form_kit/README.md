@@ -29,6 +29,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `field_help.py`, `help_text/*.json` | Field help (P4.3): each field's short `hint` and longer `help`, one file per DocType, changed by PR |
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
+| `config/item.py` | Item (P8.1): the core steps with their blocks, the `more` steps, `open_by_default: False` |
 
 ## How the steps are built
 
@@ -194,8 +195,15 @@ configured DocType's records open there; the form is the fallback. `public/js/gu
   `#hash`), a record just saved from the full form, and an unsaved record the Desk holds that the
   guided page cannot take whole. One it can take (the Customer mapping) opens on step 1 with its
   values. The rules are `public/js/form_kit/opening.js`, run under node by `test_guided_entry`.
-- `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts. site_config
-  `disable_guided_default` empties it, and every record opens in the form again.
+- `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts and whether its records
+  open on the guided page (`default`). site_config `disable_guided_default` empties it, and every
+  record opens in the form again.
+- **Not every flow is the default** (P8.1). A config with `open_by_default: False` (Item) keeps
+  the form as where its records open: `default` is 0, `guided_default.js` sets no create route and
+  redirects nothing (`opening.js` `opens_by_default`), and the flow is reached on purpose, by the
+  form's *Guided* button (`sf_guided.has_flow`), the guided page's start screen (listed only for
+  people who can create one) and `/desk/guided-entry/<DocType>/new`. Absent, the key is True, so
+  Opportunity is unchanged.
 
 ## Completeness
 
@@ -237,6 +245,51 @@ behind an (i); the text lives in the repository and changes by PR, never from th
   `fetch` (frappe.call shows its own dialogs on errors; a tooltip must not).
 - `get_field_help(doctype)`, GET: `{"article", "fields": {fieldname: {"help", "anchor"}}}`, only
   fields with an explanation that the caller may read; `anchor` is the field's step key.
+
+## Blocks and "more" steps (P8.1)
+
+Some steps need more than the form's own fields. A config step names a block with `extension`;
+`flow_steps` passes it through, and the guided page asks the DocType's extension
+(`public/js/form_kit/extensions.js`, a registry by DocType) to draw it above the step's fields. The
+page knows only that interface, never what the block is: `render(name, $box, ctx)`,
+`on_change(fieldname, value, ctx)`, `before_create()` (a sentence that holds step 1 back, or "")
+and `leave()`. `ctx` lends the record's values, `set_value` (into a field the page then saves),
+`save_first` (send what the page holds) and `record_changed` (take the record's new version after
+the block wrote through its own endpoint). A block that throws is caught; the fields still show.
+Whatever a block creates beyond the record goes through its own whitelisted endpoints, each
+checking its own permission, never through `save_step`.
+
+A step with `more: True` is past the core of the flow: Next on the last core step offers Done,
+and the rest stays a tap away (the rail, and *More details* under the step). Nothing is hidden.
+A section no step claims becomes a `more` step too when the config has any, so it never lands
+between the core steps. `config.check` holds `more` steps after the core ones.
+
+## The Item flow (P8.1)
+
+TASK-2026-02790: a correctly named stock item with its supplier, price and reorder level, its bin
+label printed, from a phone or a desk, without opening the Item form; a fixed-asset item lands
+with its Asset. `config/item.py` walks the whole Item form (every field it shows is in one step,
+held by `test_form_kit`); its core steps and their blocks (`public/js/guided_item/`):
+
+| Step | Block | What it writes, and how |
+|---|---|---|
+| Name & code (creates the Item) | `item_naming`: the code helper (vendor part number as printed, `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`, `PDT-####` and `SRV-###` from a block the person chooses) and the name builder (POL-0602's seven segments, pick lists from the catalog narrowed by the CATEGORY), with the naming guard's own preview | Item Code and Item Name, into the step's own fields |
+| Description | — | the form's fields |
+| Supplier & price | `item_supplier` | `api.item_flow.save_supplier`: the Item Supplier row (part number, `purchase_url`), the company's default supplier, the Item Price on the buying list for that supplier |
+| Stock & bin (stock items) | `item_stock` | `save_stock`: the company's default warehouse and its Purchase reorder rule; *Print the bin label* opens `/warehouse-labels?w=<bin>`, Stock Scan's own label page |
+| Fixed asset (fixed assets) | `item_asset` | `create_asset`: a draft Asset (category, location, purchase date, cost, `custom_rentable`), idempotent on the page's id in `Asset.custom_guided_client_id` |
+
+The preview is `api.item_flow.preview_item`, which is Stock Scan's `preview_new_item`: only the
+guard's two findings (a duplicate code, a name that is just the code) are shown as refusals, and
+only while the guard is in force; everything else is advice. The next PDT/SRV number is
+`item_flow_rules.code_blocks`: the blocks in use with each one's lowest free number, plus the first
+unused block, never `MAX()+1`. The help file covers the core steps' fields; the `more` steps keep
+ERPNext's own descriptions until their help is written and reviewed.
+
+The Item itself is created by `create_record` and can never be created twice: it is named by its
+code, so a resent create is refused as a duplicate code rather than making a second Item. Item is
+not where an Item opens yet (`open_by_default: False`), and the guided page's roles include
+*Item Manager*, the role that creates Items.
 
 ## Adding a DocType
 

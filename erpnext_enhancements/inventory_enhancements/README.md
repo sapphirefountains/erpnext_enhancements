@@ -29,6 +29,7 @@ model, the pure rules and the label reads.
 | `item_naming_guard.py` | The `Item` → `validate` doc_event: refuses a *new* Item for two findings only |
 | `item_naming_digest.py` | Monday's email of last week's new Items that fail the rules |
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
+| `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
 ## The count flow

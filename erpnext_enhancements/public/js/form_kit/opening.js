@@ -42,6 +42,14 @@ function plain_row(row) {
 	return out;
 }
 
+// Whether records of a DocType open on the guided page by default: its frappe.boot.sf_guided
+// entry, whose `default` is 0 for a flow that is reached on purpose (Item, form kit P8.1). An
+// entry without the key (a boot from before it) counts as a default, as Opportunity always was.
+export function opens_by_default(entry) {
+	if (!entry || typeof entry !== "object") return false;
+	return entry.default === undefined || entry.default === null || !!Number(entry.default);
+}
+
 // The Desk names an unsaved record "new-<doctype>-<random>"; "/desk/<doctype>/new" asks for one.
 export function is_new_name(name) {
 	const value = text(name);
@@ -88,7 +96,8 @@ export function carry_over(doc, fresh, accepts, ignore) {
 
 // What to do with a Form route: { route, prefill } to open the guided page instead, or null to
 // leave the form alone. `ctx`:
-//   guided     {doctype: {accepts: [...]}}, frappe.boot.sf_guided
+//   guided     {doctype: {accepts: [...], default: 0|1}}, frappe.boot.sf_guided; a DocType whose
+//              `default` is 0 always stays on the form (opens_by_default)
 //   page_open  whether this person may open the guided page at all
 //   full_form  full_form_key()s this tab opened in the full form on purpose
 //   hash       location.hash: a link into one tab or field of the form
@@ -104,7 +113,7 @@ export function redirect_for(route, ctx) {
 	const name = route.slice(2).map(text).join("/");
 	const c = ctx || {};
 	const config = (c.guided || {})[doctype];
-	if (!doctype || !name || !config || !c.page_open) return null;
+	if (!doctype || !name || !c.page_open || !opens_by_default(config)) return null;
 	if (text(c.hash).replace(/^#/, "")) return null;
 	if ((c.full_form || []).includes(full_form_key(doctype, name))) return null;
 	if ((c.renamed || []).includes(name)) return null;

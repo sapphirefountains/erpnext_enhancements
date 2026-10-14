@@ -34,10 +34,15 @@
  * break Back/Forward). Each switch tags the entry it pushes (history.state.sf_toggle); switching
  * back from a tagged entry steps back instead of pushing.
  *
+ * NOT EVERY FLOW IS THE DEFAULT (form kit P8.1). A DocType whose sf_guided entry has `default: 0`
+ * (its config's open_by_default False: Item, until Nik has reviewed its flow) keeps the form as
+ * where its records open; nothing here redirects it. Its flow is reached on purpose: the form's
+ * Guided button (has_flow), the guided page's start screen and /desk/guided-entry/Item/new.
+ *
  * Kill switch: site_config `disable_guided_default` empties frappe.boot.sf_guided.
  */
 
-import { redirect_for, full_form_key } from "./form_kit/opening.js";
+import { redirect_for, full_form_key, opens_by_default } from "./form_kit/opening.js";
 
 const STORE_KEY = "sf_guided_full_form";
 const STORE_LIMIT = 200;
@@ -91,6 +96,11 @@ function tagged(from) {
 const api = {
 	// Whether records of `doctype` open on the guided page for this person.
 	is_guided(doctype) {
+		return page_open() && opens_by_default(guided()[doctype]);
+	},
+	// Whether `doctype` has a guided flow this person may open, default or not: the form's Guided
+	// button and the guided page's start screen offer it (Item, which is not the default, P8.1).
+	has_flow(doctype) {
 		return page_open() && !!guided()[doctype];
 	},
 	// The guided page's "Open form": this record opens in the full form in this tab from now on.

@@ -634,6 +634,139 @@ body.ge-page-active .triton-fab {
 }
 
 /* ---- Phone ---- */
+/* ---- A step's block (form kit P8.1, public/js/form_kit/extensions.js) ----
+   Drawn above the step's fields by the DocType's extension; the Item flow's are public/js/guided_item/.
+   Every control is full width with 16px text and 44px targets, so the same blocks work on a phone. */
+.ge-ext {
+	display: grid;
+	gap: var(--sf-space-15);
+	margin-bottom: var(--sf-space-20);
+}
+.ge-more {
+	margin-top: var(--sf-space-20);
+	min-height: var(--sf-touch-min);
+}
+.gi-card {
+	padding: var(--sf-space-15);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.gi-title {
+	margin: 0 0 var(--sf-space-10);
+}
+.gi-field {
+	margin-bottom: var(--sf-space-10);
+}
+.gi-label {
+	display: block;
+	margin-bottom: var(--sf-space-5);
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.gi-input {
+	font-size: var(--sf-text-input);
+	min-height: var(--sf-touch-min);
+	border-radius: var(--sf-radius-control);
+}
+.gi-hint,
+.gi-note {
+	margin: var(--sf-space-5) 0 0;
+	color: var(--sf-hint);
+	font-size: var(--sf-text-sm);
+}
+.gi-note {
+	color: var(--sf-text-muted);
+}
+.gi-families,
+.gi-block-list,
+.gi-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-10);
+}
+.gi-family,
+.gi-block {
+	min-height: var(--sf-touch-min);
+}
+.gi-family.is-on,
+.gi-block.is-on {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+.gi-segments {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+	gap: 0 var(--sf-space-15);
+}
+.gi-assembled {
+	margin: var(--sf-space-5) 0 0;
+	padding: var(--sf-space-10);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-bg);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.gi-problem,
+.gi-error {
+	margin: var(--sf-space-5) 0 0;
+	color: var(--sf-danger);
+}
+.gi-problem:empty,
+.gi-error:empty {
+	display: none;
+}
+.gi-refusals {
+	border-left: 4px solid var(--sf-danger);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	margin-bottom: var(--sf-space-10);
+	background: var(--sf-bg);
+}
+.gi-refusal-head,
+.gi-advice-head {
+	margin: 0 0 var(--sf-space-5);
+	font-weight: var(--sf-weight-bold);
+}
+.gi-refusal {
+	margin: 0 0 var(--sf-space-5);
+}
+.gi-advice,
+.gi-similar,
+.gi-rows {
+	margin: 0 0 var(--sf-space-10);
+	padding-left: var(--sf-space-20);
+}
+.gi-advice li,
+.gi-similar li,
+.gi-rows li {
+	margin-bottom: var(--sf-space-5);
+	overflow-wrap: anywhere;
+}
+.gi-exists,
+.gi-ok {
+	margin: 0 0 var(--sf-space-10);
+}
+.gi-row-text {
+	color: var(--sf-text);
+}
+.gi-tick {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin: 0 0 var(--sf-space-10);
+	font-weight: var(--sf-weight-regular);
+}
+.gi-form[hidden] {
+	display: none;
+}
+.gi-actions .sf-btn,
+.gi-form > .sf-btn {
+	min-height: var(--sf-touch-min);
+}
+
 @media (max-width: 767px) {
 	.ge-band {
 		padding: var(--sf-space-15);

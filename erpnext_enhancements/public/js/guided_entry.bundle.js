@@ -13,12 +13,18 @@
  * It installs `window.sf_form_kit`: every export of public/js/form_kit/index.js (routes, step
  * activeness, missing-per-step, input modes, the text-list table, conflict diffing and the save
  * queue). The page's DOM and Frappe wiring stay in the page script; the decisions live here so
- * tests/test_guided_entry.py can run them under node.
+ * tests/test_guided_entry.py can run them under node. It also carries the DocType extensions the
+ * page draws step blocks with (public/js/guided_item/ for Item), found through
+ * sf_form_kit.extension_for(doctype).
  */
 
 import * as form_kit from "./form_kit/index.js";
+// Each DocType's page extension registers itself with form_kit/extensions.js (form kit P8.1):
+// the Item flow's name builder and its supplier, stock and asset blocks.
+import "./guided_item/extension.js";
 
-const VERSION = 1;
+// 2 (form kit P8.1): extension_for, ends_core and opens_by_default.
+const VERSION = 2;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_form_kit && window.sf_form_kit.version >= VERSION)) {

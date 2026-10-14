@@ -41,6 +41,14 @@
 // A validation error (417) is shown at the top of the step and keeps the person on it; a lapsed
 // session shows a sign-in panel and keeps everything typed in memory.
 //
+// EXTENSIONS (form kit P8.1). A step whose config names an `extension` gets a block above its
+// fields, drawn by the DocType's extension (public/js/form_kit/extensions.js; the Item flow's
+// name builder and its supplier, stock and asset blocks are public/js/guided_item/). The page
+// knows only that small interface: render, on_change, before_create, leave, and the ctx it lends
+// (ext_context). A block that throws is caught here, so the step's own fields always show.
+// "More" steps (config `more`) are the rest of the form past a flow's core: Next on the last core
+// step offers Done, with More details beside the step and every step still in the rail.
+//
 // Every request this page makes goes through sf_kit.call(..., { quiet: true }): frappe.call's own
 // dialogs (403, 5xx, QueryTimeout) would interrupt a page that already says it once, in its
 // own panel. The one framework loader it uses is frappe.model.with_doctype, for the child-table
@@ -173,6 +181,8 @@ class GuidedEntry {
 	}
 
 	reset() {
+		this.leave_extension();
+		this.ext = null;
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.retired = this.retired.filter((queue) => queue.has_unsaved());
 		this.flow = null;
@@ -323,7 +333,8 @@ class GuidedEntry {
 			return;
 		}
 		const next = this.kit.neighbor(this.flow.steps, this.values, this.step_key, 1);
-		if (next) {
+		// The last core step's Next is Done; the "more" steps are behind More details (P8.1).
+		if (next && !this.ends_core()) {
 			this.navigate(next);
 			return;
 		}
@@ -336,6 +347,10 @@ class GuidedEntry {
 	on_hide() {
 		this.toggle_all_help(false);
 		this.save_in_background();
+	}
+
+	ends_core() {
+		return !this.is_new && !!this.kit.ends_core && this.kit.ends_core(this.flow.steps, this.values, this.step_key);
 	}
 
 	has_unsaved() {
@@ -365,6 +380,7 @@ class GuidedEntry {
 		this.doctype = doctype;
 		this.name = name || null;
 		this.is_new = !name;
+		this.ext = this.kit.extension_for ? this.kit.extension_for(doctype) : null;
 		this.page.set_title(__("Guided Entry"));
 		this.sf.state.render(this.$root, "loading");
 		this.ensure_meta(doctype)
@@ -637,7 +653,12 @@ class GuidedEntry {
 	show_landing() {
 		this.reset();
 		this.page.set_title(__("Guided Entry"));
-		const doctypes = Object.keys((frappe.boot && frappe.boot.sf_guided) || {});
+		const guided = (frappe.boot && frappe.boot.sf_guided) || {};
+		// A flow that is not where its records open (Item, P8.1) is listed only for people who can
+		// start one: a salesperson who can read Items has no Item flow to pick up.
+		const doctypes = Object.keys(guided).filter(
+			(doctype) => this.kit.opens_by_default(guided[doctype]) || (frappe.model.can_create && frappe.model.can_create(doctype))
+		);
 		if (!doctypes.length) doctypes.push("Opportunity");
 		this.$root.html(`
 			<div class="ge-landing">
@@ -667,7 +688,12 @@ class GuidedEntry {
 		$card.find(".ge-mine-title").text(__(doctype));
 		const $new = $card.find(".ge-mine-new");
 		if (can_create) {
-			$new.text(__("New {0}", [__(doctype)])).on("click", () => frappe.new_doc(doctype));
+			// frappe.new_doc reaches this page only for a DocType that opens here by default; one
+			// reached on purpose (Item, P8.1) would open its form, so its New starts here directly.
+			const by_default = window.sf_guided && window.sf_guided.is_guided && window.sf_guided.is_guided(doctype);
+			$new.text(__("New {0}", [__(doctype)])).on("click", () =>
+				by_default ? frappe.new_doc(doctype) : frappe.set_route(this.kit.build_route(doctype, null, null))
+			);
 		} else {
 			$new.remove();
 		}
@@ -951,7 +977,7 @@ class GuidedEntry {
 	render_footer(steps, pos) {
 		const kit = this.kit;
 		const prev = this.is_new ? null : kit.neighbor(steps, this.values, this.step_key, -1);
-		const next = this.is_new ? null : kit.neighbor(steps, this.values, this.step_key, 1);
+		const next = this.is_new || this.ends_core() ? null : kit.neighbor(steps, this.values, this.step_key, 1);
 		this.$root.find(".ge-back").toggleClass("is-hidden", !prev).prop("disabled", !prev);
 		let label;
 		if (this.is_new) label = this.creating ? __("Creating…") : __("Create and continue");
@@ -1026,6 +1052,7 @@ class GuidedEntry {
 	render_step(key) {
 		const step = this.kit.find_step(this.flow.steps, key);
 		const moved = this.step_key !== null;
+		this.leave_extension();
 		this.step_key = key;
 		this.fg = null;
 		this.toggle_all_help(false);
@@ -1082,6 +1109,18 @@ class GuidedEntry {
 			if (this.kit.text_list_column(field)) this.render_text_list(field, editable && !field.read_only);
 		});
 		this.decorate_controls(step);
+		this.mount_extension(step, $fields);
+		if (this.ends_core()) {
+			// The rest of the form, past the flow's core: one tap on, never in the way of Done.
+			const next = this.kit.neighbor(this.flow.steps, this.values, key, 1);
+			$('<button type="button" class="sf-btn sf-btn--secondary ge-more"></button>')
+				.text(__("More details: {0}", [(this.kit.find_step(this.flow.steps, next) || {}).title || ""]))
+				.on("click", () => {
+					const now = this.kit.neighbor(this.flow.steps, this.values, this.step_key, 1);
+					if (now) this.navigate(now);
+				})
+				.appendTo($stage);
+		}
 		// A grid says nothing when a row is removed or moved, and a cell edit may not reach the
 		// table's own onchange: read the grids again after either (delete_rows runs in 0.1 s steps).
 		$fields.on("click", ".grid-remove-rows, .grid-delete-row, .grid-add-row, .grid-move-row", () =>
@@ -1208,6 +1247,67 @@ class GuidedEntry {
 			if (mode && control.$input && control.$input.length) control.$input.attr("inputmode", mode);
 			if (field.help) this.add_help(control.$wrapper, field, step);
 		});
+	}
+
+	// ------------------------------------------------------------------ extensions (P8.1)
+
+	// The step's block, above its fields, when the config names one and the DocType's extension
+	// draws it. Anything the block throws stays in the block: the fields below always show.
+	mount_extension(step, $fields) {
+		if (!this.ext || !step.extension || typeof this.ext.render !== "function") return;
+		const $box = $('<div class="ge-ext"></div>').attr("data-extension", step.extension).insertBefore($fields);
+		try {
+			this.ext.render(step.extension, $box, this.ext_context(step));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+			$box.remove();
+		}
+	}
+
+	leave_extension() {
+		if (!this.ext || typeof this.ext.leave !== "function") return;
+		try {
+			this.ext.leave();
+		} catch (e) {
+			// A block that cannot tidy up has nothing left to say.
+		}
+	}
+
+	ext_notify(fieldname, value) {
+		if (!this.ext || typeof this.ext.on_change !== "function") return;
+		const step = this.kit.find_step(this.flow.steps, this.step_key);
+		try {
+			this.ext.on_change(fieldname, value, this.ext_context(step));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
+	}
+
+	// What the page lends a block (public/js/form_kit/extensions.js documents it). The record is
+	// read when called, never captured, so a block outliving a step cannot write to another record.
+	ext_context(step) {
+		const doctype = this.doctype;
+		const name = this.name;
+		const same = () => this.doctype === doctype && this.name === name;
+		return {
+			doctype,
+			name,
+			is_new: this.is_new,
+			step,
+			sf: this.sf,
+			kit: this.kit,
+			can_write: !!(this.flow && this.flow.can_write) && !(step && step.read_only),
+			values: () => (same() ? Object.assign({}, this.values) : {}),
+			set_value: (fieldname, value) => {
+				if (!same() || this.kit.same_value(value, this.values[fieldname])) return;
+				this.set_value_local(fieldname, value);
+				this.show_value(fieldname, value);
+			},
+			save_first: () => (same() ? this.save_before_moving() : Promise.reject(new Error(__("The record changed.")))),
+			record_changed: () => {
+				if (same() && !this.is_new) this.refresh_from_server();
+			},
+		};
 	}
 
 	add_help($wrapper, field, step) {
@@ -1383,6 +1483,7 @@ class GuidedEntry {
 				this.show_value(cleared, null);
 			});
 			this.refresh_distinct();
+			this.ext_notify(fieldname, value);
 		}
 		this.fg.refresh_dependency();
 	}
@@ -1668,6 +1769,13 @@ class GuidedEntry {
 		if (this.creating || !this.flow) return;
 		this.collect_step();
 		const step = (this.flow.steps || []).find((s) => s.create) || this.flow.steps[0];
+		// The step's block may know the insert would be refused (the Item flow's naming guard).
+		const held = this.ext && typeof this.ext.before_create === "function" ? this.ext.before_create() : "";
+		if (held) {
+			this.notice = { kind: "create", title: __("Not created yet"), body: held };
+			this.refresh_notices();
+			return;
+		}
 		const missing = this.kit.missing_required(step.fields, this.values);
 		if (missing.length) {
 			this.notice = {

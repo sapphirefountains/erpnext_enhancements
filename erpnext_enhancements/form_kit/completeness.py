@@ -89,6 +89,10 @@ def stage_completeness(doctype, doc, config=None):
 	requirements = stages["lists"].get(stage)
 	if requirements is None:
 		requirements = stages["lists"].get(stages.get("default"), [])
+	# A stage whose value is not words (Item's is_stock_item tick) is shown by its label.
+	labels = stages.get("labels") or {}
+	if stage in labels:
+		stage = _(labels[stage])
 	missing = []
 	for requirement in requirements:
 		if not requirement_met(requirement, doc):
