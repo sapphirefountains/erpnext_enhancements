@@ -790,7 +790,7 @@ def _bin_b():
 
 
 class TestTheBinAssignment(unittest.TestCase):
-	"""v1.689.1: the bin the flow saves is also where the item is assigned, an enabled Putaway Rule
+	"""v1.692.1: the bin the flow saves is also where the item is assigned, an enabled Putaway Rule
 	through ``bin_assignments.ensure_assignment`` (bins are Putaway Rules: Nik, 2026-10-14)."""
 
 	def setUp(self):

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.689.1] - 2026-10-14
+## [1.692.1] - 2026-10-14
 
 ### Changed
 - **The guided Item flow puts the item on the bin it saves, not only as its default.** v1.683.0's
@@ -57,6 +57,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     releasing on a same-bin save, the kept-stock note, the mute, restoring the mute, the
     savepoint rollback, the narrow `except`, catching `PermissionError`, and the note. In the
     helper: the stock check, the claim check, and clearing the default.
+
+## [1.692.0] - 2026-10-14
+
+### Added
+- **Stock Scan: Move to… and Remove from this bin on the item sheet** (ER-2026-1319376;
+  TASK-2026-02740, TASK-2026-02741). The phone side of the v1.689.0 bin assignments, on
+  `/stock-scan` for an item at a bin:
+  - **Move to…** pushes stock out of this bin into another location, the mirror of *Move here
+    from…*, and sits beside it directly under Save: the stock lead's history shows receipts ("Not
+    on a purchase order") recorded where a move was meant, so it must not be buried. One sheet:
+    how many (all that is free here by default), where to (scan its label, *Find a location*, or
+    one of the places the item is recorded already), and **"Make <destination> this item's
+    bin"**, ticked while the quantity is everything on hand here and unticked for a partial move,
+    re-decided as the quantity changes until the person touches the box. With the box ticked on
+    a partial move the sheet says the old bin keeps the item too, which is the server's rule
+    (`bin_assignments._plan_source`: the source lets go only when the move empties it). Posts
+    `bin_assignments.move_to`. The Boneyard is never offered as a bin, and the page's own bin or
+    an item's label is refused as a destination before anything is posted.
+  - **Remove from this bin**: with nothing recorded here, one confirmed tap posts
+    `bin_assignments.unassign` and the page goes back to the bin's list, which no longer has the
+    item. With stock here the server refuses that, so the sheet offers the two ways out and says
+    what each does: **Move to…**, or **Send to the Boneyard** (`send_to_boneyard`: everything
+    free here goes to the Inventory Scanner Settings boneyard and the item comes off this bin).
+    No boneyard set: only Move to…. With some stock **reserved**, only the free part can move,
+    and the server then keeps the item on the bin (the move does not empty it), so the sheet says
+    the item stays on the bin while that stock is reserved instead of promising to take it off.
+    While the Boneyard trip is posting, every option in the sheet is shut, Move to… included.
+  - Remove shows wherever `unassign` would accept it: the item is on the bin, it is its default
+    warehouse, nobody has decided on the pair yet, or stock is recorded there. The item card
+    (`api/stock_scan._item_payload`) now carries **`is_default`** and **`undecided`** beside
+    `assigned`, so this holds on an item reached from Recent or "Where is it?" as well as from
+    the bin's own list.
+- **Who sees them.** Move to… without the box is a plain stock movement: `move_to` then needs only
+  Stock Entry create and submit, exactly as a take or *Move here* does, so it shows to everyone
+  wherever stock here is free to move, like Take. The box, Remove from this bin and Send to the
+  Boneyard show only with the boot's `can_manage` (a Stock Scan role and read on Item, the
+  server's `require_manage`), so nobody is offered a button the server would refuse.
+- Every save goes through the page's own `post()`: one `client_ref` per intended save (now keyed
+  also on the destination and the box, `logic.saveKey`), kept for a retry after no answer, the
+  error said in the sheet or, once the person has moved on, as a toast naming the item; into
+  Recent with Undo like every other save. Recent marks a *Move To* or *Boneyard* trip as a move
+  (`Bin A1 → Bin B2`) and taking an item off a bin, putting one on, or a recount with a neutral
+  mark; the Undo question says what Undo puts back.
+- The bin's list gives an item that lists with nothing on hand a quiet badge saying why: **on
+  order** (stock on its way to this bin) or **not assigned** (stock passed through and nobody has
+  put it on the bin or taken it off yet), the search list's existing badge.
+
+### Back and Forward
+- Move to… and Remove are sheets like every other on the page: one history marker, so the phone's
+  Back closes them, and a camera or location search opened over Move to… closes with it, without
+  leaving the item. Remove's "Move to…" swaps the sheet under the same marker. A save that takes
+  the item off this bin waits for the closed sheet's marker to be stepped back over and then
+  walks back to the bin's list on the list's own entry when that is the one behind, or by
+  **replacing** the item's entry, never by pushing a new one, so Back from the list does not land
+  on an item that is no longer there.
+- A save that lands while **another** sheet is open (Back pressed while it was saving, then *Move
+  here from…* or the camera opened) waits until no sheet is open before it walks anywhere. Walking
+  at once wrote the list over that sheet's marker with the sheet still showing, and the phone's
+  Back then landed on the item that had just left the bin (found in review, before release). It
+  also stays put if the closing sheet started a lookup (a scan, a search pick): that screen is
+  taking the marker.
+- After a refusal or no answer, the Move to… button names the move as it is typed now, not as it
+  was when the save began.
+
+### Changed
+- `transport.js` has a second endpoint map, `BIN` (`move_to`, `unassign`, `send_to_boneyard` in
+  `inventory_enhancements/bin_assignments`), because `M` is pinned to exactly `api/stock_scan`'s
+  endpoints. `ui.js`'s `setActions` returns the buttons it made, so a sheet can relabel its own.
+- The make-home box's classes are `ee-ss-home-check*`. Its first name, `ee-ss-check`, was already
+  the store-run quick item's name-check panel, defined later in the stylesheet, so the panel's
+  column layout won over the box and the box's card styling reached the panel.
+
+### Tests
+- `scripts/test_stock_scan_client.mjs` (already its own CI step) runs the real app.js on its fake
+  DOM: the gate (Move to… without `can_manage`, Remove and the box only with it, neither on a
+  blocked item with stock), the box's default flipping with the quantity and staying put once
+  touched, a scanned destination, a searched one, an item label and this bin refused, Remove with
+  stock offering Move to… or the Boneyard (hidden when unset) and without posting `unassign`,
+  Remove with none posting it, each save's endpoint, parameters and client_ref, Recent and the
+  toast's Undo, and Back on every new sheet (and the camera and search over Move to…) with the
+  history entries counted. From the review: a save landing under another open sheet or the camera
+  (entries and Forward checked after the walk back), a refusal and no answer on each new sheet
+  (the button works again, the same client_ref on a retry, a new one after an edit, the label
+  as typed), reserved stock (the box unticked, the Boneyard sending only what is free, no promise
+  of taking the item off), every Remove option shut while the Boneyard posts, and Remove on an
+  item reached from Recent by `is_default` or `undecided`. The fake DOM's `textContent` is now a
+  child text node, as in a browser, so relabelling a button through `fill` no longer keeps the old
+  label beside the new one.
+- `tests/test_stock_scan_surface.py` pins the `BIN` map to the whitelisted functions of
+  `bin_assignments.py`, reads every `this.post(v, BIN.…, {...})` in app.js and checks it sends each
+  required parameter and nothing the function does not take, pins `make_home` as exactly 0 or 1,
+  adds the two new doors to the report-form guard, pins the item card's `assigned`/`is_default`/
+  `undecided` and the listing rows' flags, and fails the build on any class given two top-level
+  rule sets in `stock_scan.bundle.css` (the `ee-ss-check` collision).
 
 ## [1.689.0] - 2026-10-14
 

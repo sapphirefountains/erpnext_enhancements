@@ -481,7 +481,7 @@ def ensure_assignment(item_code, warehouse):
 
 
 def release_if_empty(item_code, warehouse):
-	"""Take ``item_code`` off the bin ``warehouse`` if nothing of it is on hand there (v1.689.1).
+	"""Take ``item_code`` off the bin ``warehouse`` if nothing of it is on hand there (v1.692.1).
 
 	What *Move to* with ``make_home`` does to its source (:func:`_plan_source`, :func:`_release`),
 	for a caller that moved the item's home some other way: the guided Item flow when its bin

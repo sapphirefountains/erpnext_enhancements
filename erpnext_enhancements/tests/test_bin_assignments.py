@@ -755,7 +755,7 @@ class TestEnsureAssignment(_Base):
 
 
 class TestReleaseIfEmpty(_Base):
-	"""v1.689.1: the Item flow's other half (``api.item_flow.save_stock`` when its bin changes),
+	"""v1.692.1: the Item flow's other half (``api.item_flow.save_stock`` when its bin changes),
 	what *Move to* with ``make_home`` does to a source it empties."""
 
 	def test_an_empty_bin_is_taken_off_and_its_default_cleared(self):
