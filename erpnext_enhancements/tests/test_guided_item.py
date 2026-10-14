@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming  # noqa: E402
+from erpnext_enhancements.inventory_enhancements import item_naming_rules as naming
 
 APP = REPO_ROOT / "erpnext_enhancements"
 JS = APP / "public" / "js"
@@ -51,7 +51,19 @@ def _code(path):
 	return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
 
 
-CODES = ["", "  ", "PDT-0042", "pdt-0042", "PDT-00051", "SRV-007", "CON-ELEC-TAPE", "con-x", "505025", "A-21", "PDTX-1"]
+CODES = [
+	"",
+	"  ",
+	"PDT-0042",
+	"pdt-0042",
+	"PDT-00051",
+	"SRV-007",
+	"CON-ELEC-TAPE",
+	"con-x",
+	"505025",
+	"A-21",
+	"PDTX-1",
+]
 NAMES = [
 	["elbow", "90", "soc", "pvc", '2" sch80', "", ""],
 	["  pump ", "", "submersible,  quiet", "", "1200 GPH", "", ""],
@@ -278,7 +290,12 @@ class TestTheModules(unittest.TestCase):
 	def test_names_are_assembled_in_order_with_one_comma_and_space(self):
 		self.assertEqual(
 			self.out["names"],
-			['ELBOW, 90, SOC, PVC, 2" SCH80', "PUMP, SUBMERSIBLE QUIET, 1200 GPH", "", 'TAPE, ELECTRICAL, VINYL, 3/4", ROLL'],
+			[
+				'ELBOW, 90, SOC, PVC, 2" SCH80',
+				"PUMP, SUBMERSIBLE QUIET, 1200 GPH",
+				"",
+				'TAPE, ELECTRICAL, VINYL, 3/4", ROLL',
+			],
 		)
 
 	def test_the_assembled_names_pass_the_naming_rules_punctuation(self):
@@ -317,7 +334,9 @@ class TestTheModules(unittest.TestCase):
 		self.assertEqual(o["sub_elbow"], ["90", "45"], "most used first, only ELBOW's")
 		self.assertEqual(o["material_elbow_90"], ["PVC", "BRASS"])
 		self.assertEqual(o["size_elbow_45"], [])
-		self.assertEqual(o["nothing_matches"], ["SOC", "THD"], "an unknown choice falls back to the category's names")
+		self.assertEqual(
+			o["nothing_matches"], ["SOC", "THD"], "an unknown choice falls back to the category's names"
+		)
 
 	# ---- the code helper
 
@@ -338,7 +357,15 @@ class TestTheModules(unittest.TestCase):
 
 	def test_a_code_with_a_problem_says_what_it_is(self):
 		p = self.out["code_problems"]
-		for key in ("vendor_blank", "vendor_ours", "con_group", "con_descriptor", "pdt_no_block", "none", "too_long"):
+		for key in (
+			"vendor_blank",
+			"vendor_ours",
+			"con_group",
+			"con_descriptor",
+			"pdt_no_block",
+			"none",
+			"too_long",
+		):
 			with self.subTest(case=key):
 				self.assertTrue(p[key])
 		for key in ("vendor_ok", "con_ok", "pdt_ok"):
@@ -351,7 +378,8 @@ class TestTheModules(unittest.TestCase):
 		self.assertEqual(k["groups"], list(naming.CONSUMABLE_GROUPS))
 		self.assertEqual(k["prefixes"], dict(naming.RESERVED_PREFIXES))
 		self.assertEqual(
-			k["families"], [naming.FAMILY_VENDOR, naming.FAMILY_CONSUMABLE, naming.FAMILY_PRODUCT, naming.FAMILY_SERVICE]
+			k["families"],
+			[naming.FAMILY_VENDOR, naming.FAMILY_CONSUMABLE, naming.FAMILY_PRODUCT, naming.FAMILY_SERVICE],
 		)
 
 	# ---- refusals and advice
@@ -361,7 +389,9 @@ class TestTheModules(unittest.TestCase):
 		enforced = v["enforced"]
 		self.assertEqual(enforced["refusals"], ["Item Code <b>X</b> is the same as Y."])
 		self.assertFalse(enforced["can_create"])
-		self.assertEqual([a["severity"] for a in enforced["advice"]], ["STOP", "FIX", "NOTE"], "a STOP is still advice")
+		self.assertEqual(
+			[a["severity"] for a in enforced["advice"]], ["STOP", "FIX", "NOTE"], "a STOP is still advice"
+		)
 		self.assertEqual(enforced["similar"], [{"item_code": "A"}])
 		before = v["before_go_live"]
 		self.assertEqual(before["refusals"], [])
@@ -388,11 +418,21 @@ class TestTheModules(unittest.TestCase):
 		b = self.out["blocks"]
 		self.assertEqual(
 			b["supplier_start"],
-			{"supplier": "Little Giant", "supplier_part_no": "505025", "purchase_url": "https://lg.example/p", "rate": 41.5},
+			{
+				"supplier": "Little Giant",
+				"supplier_part_no": "505025",
+				"purchase_url": "https://lg.example/p",
+				"rate": 41.5,
+			},
 		)
-		self.assertEqual(b["supplier_start_empty"], {"supplier": "", "supplier_part_no": "", "purchase_url": "", "rate": ""})
+		self.assertEqual(
+			b["supplier_start_empty"],
+			{"supplier": "", "supplier_part_no": "", "purchase_url": "", "rate": ""},
+		)
 		self.assertEqual(b["supplier_row"]["supplier_part_no"], "AQ-1")
-		self.assertEqual(b["stock_start"], {"warehouse": "Bin A1-3-1 - SF", "reorder_level": 4, "reorder_qty": 12})
+		self.assertEqual(
+			b["stock_start"], {"warehouse": "Bin A1-3-1 - SF", "reorder_level": 4, "reorder_qty": 12}
+		)
 		self.assertEqual(b["stock_start_empty"], {"warehouse": "", "reorder_level": "", "reorder_qty": ""})
 		self.assertEqual(b["given"], [False, False, False, True, True, False])
 
@@ -444,7 +484,10 @@ class TestTheWiring(unittest.TestCase):
 		self.assertNotIn("frappe.call(", code)
 		for args, get in calls:
 			with self.subTest(call=args.strip()[:40]):
-				write = any(f'"{name}"' in args for name in ("save_supplier", "save_stock", "create_asset")) or "API + method" in args
+				write = (
+					any(f'"{name}"' in args for name in ("save_supplier", "save_stock", "create_asset"))
+					or "API + method" in args
+				)
 				self.assertEqual(bool(get), not write)
 		for name in ("naming_options", "preview_item", "code_blocks", "get_setup"):
 			self.assertIn(f'API + "{name}"', code)

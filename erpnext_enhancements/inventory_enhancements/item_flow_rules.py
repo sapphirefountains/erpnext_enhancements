@@ -97,7 +97,13 @@ def code_blocks(codes, prefix: str) -> dict:
 				"next_code": _pad(prefix, first),
 			}
 			break
-	return {"prefix": prefix, "width": width, "block_size": rules.BLOCK_SIZE, "blocks": blocks, "new_block": new_block}
+	return {
+		"prefix": prefix,
+		"width": width,
+		"block_size": rules.BLOCK_SIZE,
+		"blocks": blocks,
+		"new_block": new_block,
+	}
 
 
 def catalog_segments(rows) -> list[list[str]]:

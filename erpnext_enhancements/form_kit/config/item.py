@@ -46,7 +46,10 @@ BASE = [
 	{"field": "supplier_items", "row_field": "supplier", "label": "A supplier"},
 ]
 #: A stock item also wants a reorder rule for the bin it is kept in.
-STOCKED = [*BASE, {"field": "reorder_levels", "row_field": "warehouse_reorder_level", "label": "A reorder level"}]
+STOCKED = [
+	*BASE,
+	{"field": "reorder_levels", "row_field": "warehouse_reorder_level", "label": "A reorder level"},
+]
 
 CONFIG = {
 	"doctype": "Item",

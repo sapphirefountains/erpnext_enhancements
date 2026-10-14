@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.inventory_enhancements import item_flow_rules as rules  # noqa: E402
+from erpnext_enhancements.inventory_enhancements import item_flow_rules as rules
 
 APP = REPO_ROOT / "erpnext_enhancements"
 API_FILE = APP / "api" / "item_flow.py"
@@ -42,7 +42,9 @@ STATE = None
 class TestCodeBlocks(unittest.TestCase):
 	def test_blocks_in_use_offer_their_lowest_free_number(self):
 		out = rules.code_blocks(["PDT-0001", "PDT-0002 WIDGET", "PDT-0101", "PDT-0100"], "PDT")
-		self.assertEqual([b["label"] for b in out["blocks"]], ["PDT-0000 to PDT-0099", "PDT-0100 to PDT-0199"])
+		self.assertEqual(
+			[b["label"] for b in out["blocks"]], ["PDT-0000 to PDT-0099", "PDT-0100 to PDT-0199"]
+		)
 		self.assertEqual(out["blocks"][0]["next_code"], "PDT-0003", "0 is never offered, then the first gap")
 		self.assertEqual(out["blocks"][1]["next_code"], "PDT-0102")
 		self.assertEqual(out["new_block"]["next_code"], "PDT-0200")
@@ -51,7 +53,9 @@ class TestCodeBlocks(unittest.TestCase):
 	def test_the_lowest_gap_not_max_plus_one(self):
 		out = rules.code_blocks(["PDT-0400", "PDT-0401", "PDT-0403", "PDT-0499"], "PDT")
 		self.assertEqual(out["blocks"][0]["next_code"], "PDT-0402")
-		self.assertEqual(out["new_block"]["next_code"], "PDT-0001", "the lowest unused block, not the next one up")
+		self.assertEqual(
+			out["new_block"]["next_code"], "PDT-0001", "the lowest unused block, not the next one up"
+		)
 
 	def test_a_taken_number_with_trailing_text_is_taken(self):
 		"""Trap 1 of item_naming_rules: the only record of the 5HP VFD bypass."""
@@ -297,7 +301,9 @@ def _install_frappe_stub():
 		return Doc(doctype, copy.deepcopy(STATE["db"][doctype][name]))
 
 	frappe.get_doc = get_doc
-	frappe.new_doc = lambda doctype: Doc(doctype, {"asset_type": "Existing Asset"} if doctype == "Asset" else {})
+	frappe.new_doc = lambda doctype: Doc(
+		doctype, {"asset_type": "Existing Asset"} if doctype == "Asset" else {}
+	)
 
 	def get_list(doctype, filters=None, fields=None, **kwargs):
 		STATE["get_list"].append(doctype)
@@ -330,7 +336,11 @@ def _install_frappe_stub():
 		if record is None:
 			return None
 		if isinstance(fieldname, list):
-			return frappe._dict({f: record.get(f) for f in fieldname}) if as_dict else [record.get(f) for f in fieldname]
+			return (
+				frappe._dict({f: record.get(f) for f in fieldname})
+				if as_dict
+				else [record.get(f) for f in fieldname]
+			)
 		return record.get(fieldname)
 
 	def rollback():
@@ -383,7 +393,10 @@ def setUpModule():
 	stock_scan = types.ModuleType("erpnext_enhancements.api.stock_scan")
 	stock_scan.preview_new_item = lambda *args: {"checked": True, "asked": list(args)}
 	sys.modules["erpnext_enhancements.api.stock_scan"] = stock_scan
-	for mod in ("erpnext_enhancements.api.item_flow", "erpnext_enhancements.inventory_enhancements.item_naming"):
+	for mod in (
+		"erpnext_enhancements.api.item_flow",
+		"erpnext_enhancements.inventory_enhancements.item_naming",
+	):
 		sys.modules.pop(mod, None)
 	from erpnext_enhancements.api import item_flow
 
@@ -408,8 +421,14 @@ def _reset(perm=None):
 			"perm": dict(perm or {}),
 			"perm_checks": [],
 			"roles": ["Item Manager", "Stock User", "Purchase Master Manager"],
-			"meta": {"Item Supplier": {"purchase_url"}, "Asset": {"custom_guided_client_id", "custom_rentable"}},
-			"singles": {("Buying Settings", "buying_price_list"): "Standard Buying", ("Stock Settings", "auto_indent"): 1},
+			"meta": {
+				"Item Supplier": {"purchase_url"},
+				"Asset": {"custom_guided_client_id", "custom_rentable"},
+			},
+			"singles": {
+				("Buying Settings", "buying_price_list"): "Standard Buying",
+				("Stock Settings", "auto_indent"): 1,
+			},
 			"db": {
 				"Item": {},
 				"Item Price": {},
@@ -419,9 +438,27 @@ def _reset(perm=None):
 					"Aquascape": {"name": "Aquascape", "supplier_name": "Aquascape Inc"},
 				},
 				"Warehouse": {
-					"Bin A1-3-1 - SF": {"name": "Bin A1-3-1 - SF", "company": "Sapphire Fountains", "is_group": 0, "disabled": 0, "warehouse_type": ""},
-					"Inventory - SF": {"name": "Inventory - SF", "company": "Sapphire Fountains", "is_group": 1, "disabled": 0, "warehouse_type": ""},
-					"Truck - SF": {"name": "Truck - SF", "company": "Sapphire Fountains", "is_group": 0, "disabled": 0, "warehouse_type": "Transit"},
+					"Bin A1-3-1 - SF": {
+						"name": "Bin A1-3-1 - SF",
+						"company": "Sapphire Fountains",
+						"is_group": 0,
+						"disabled": 0,
+						"warehouse_type": "",
+					},
+					"Inventory - SF": {
+						"name": "Inventory - SF",
+						"company": "Sapphire Fountains",
+						"is_group": 1,
+						"disabled": 0,
+						"warehouse_type": "",
+					},
+					"Truck - SF": {
+						"name": "Truck - SF",
+						"company": "Sapphire Fountains",
+						"is_group": 0,
+						"disabled": 0,
+						"warehouse_type": "Transit",
+					},
 				},
 				"Location": {"Upstairs Rental Warehouse": {"name": "Upstairs Rental Warehouse"}},
 				"Price List": {"Standard Buying": {"name": "Standard Buying", "currency": "USD"}},
@@ -488,10 +525,18 @@ class TestSupplier(unittest.TestCase):
 			[(r["supplier"], r["supplier_part_no"], r["purchase_url"]) for r in item["supplier_items"]],
 			[("Little Giant", "505025", "https://lg.example/p/505025")],
 		)
-		self.assertEqual(item["item_defaults"], [{"company": "Sapphire Fountains", "default_supplier": "Little Giant"}])
+		self.assertEqual(
+			item["item_defaults"], [{"company": "Sapphire Fountains", "default_supplier": "Little Giant"}]
+		)
 		(price,) = STATE["db"]["Item Price"].values()
 		self.assertEqual(
-			(price["item_code"], price["price_list"], price["supplier"], price["uom"], price["price_list_rate"]),
+			(
+				price["item_code"],
+				price["price_list"],
+				price["supplier"],
+				price["uom"],
+				price["price_list_rate"],
+			),
 			("LG-505025", "Standard Buying", "Little Giant", "Unit", 41.5),
 		)
 		self.assertEqual(out["default_supplier"], "Little Giant")
@@ -558,7 +603,9 @@ class TestStock(unittest.TestCase):
 	def test_records_the_bin_and_its_purchase_reorder_rule(self):
 		out = api.save_stock("LG-505025", "Bin A1-3-1 - SF", reorder_level="4", reorder_qty="12")
 		item = _stored("LG-505025")
-		self.assertEqual(item["item_defaults"], [{"company": "Sapphire Fountains", "default_warehouse": "Bin A1-3-1 - SF"}])
+		self.assertEqual(
+			item["item_defaults"], [{"company": "Sapphire Fountains", "default_warehouse": "Bin A1-3-1 - SF"}]
+		)
 		self.assertEqual(
 			item["reorder_levels"],
 			[
@@ -585,10 +632,20 @@ class TestStock(unittest.TestCase):
 		_item(
 			"LG-505025",
 			is_stock_item=1,
-			reorder_levels=[{"warehouse": "Bin A1-3-1 - SF", "material_request_type": "Transfer", "warehouse_reorder_level": 1, "warehouse_reorder_qty": 2}],
+			reorder_levels=[
+				{
+					"warehouse": "Bin A1-3-1 - SF",
+					"material_request_type": "Transfer",
+					"warehouse_reorder_level": 1,
+					"warehouse_reorder_qty": 2,
+				}
+			],
 		)
 		api.save_stock("LG-505025", "Bin A1-3-1 - SF", reorder_level="4", reorder_qty="12")
-		self.assertEqual([r["material_request_type"] for r in _stored("LG-505025")["reorder_levels"]], ["Transfer", "Purchase"])
+		self.assertEqual(
+			[r["material_request_type"] for r in _stored("LG-505025")["reorder_levels"]],
+			["Transfer", "Purchase"],
+		)
 
 	def test_only_a_bin_that_holds_stock_and_only_a_stock_item(self):
 		for warehouse in ("Inventory - SF", "Truck - SF", "Nowhere"):
@@ -706,7 +763,9 @@ class TestReads(unittest.TestCase):
 	def test_setup_says_what_the_caller_may_do(self):
 		out = api.get_setup("RENTAL-FOUNTAIN-01")
 		self.assertEqual(out["can"], {"write": 1, "price": 1, "link": 1, "asset": 1, "label": 1})
-		self.assertEqual((out["price_list"], out["currency"], out["auto_reorder"]), ("Standard Buying", "USD", 1))
+		self.assertEqual(
+			(out["price_list"], out["currency"], out["auto_reorder"]), ("Standard Buying", "USD", 1)
+		)
 		_reset({("Item Price", "create"): False, ("Item Price", "write"): False, ("Asset", "create"): False})
 		STATE["roles"] = ["Purchase User"]
 		STATE["meta"]["Item Supplier"] = set()
@@ -766,7 +825,15 @@ class TestTheSurface(unittest.TestCase):
 	def test_writes_are_post_and_nothing_is_open_to_guests(self):
 		self.assertEqual(
 			set(self.decorated),
-			{"naming_options", "preview_item", "code_blocks", "get_setup", "save_supplier", "save_stock", "create_asset"},
+			{
+				"naming_options",
+				"preview_item",
+				"code_blocks",
+				"get_setup",
+				"save_supplier",
+				"save_stock",
+				"create_asset",
+			},
 		)
 		for name in ("save_supplier", "save_stock", "create_asset"):
 			self.assertIn("methods=['POST']", self.decorated[name])

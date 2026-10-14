@@ -189,7 +189,9 @@ def code_blocks(prefix):
 	family = _text(prefix).upper()
 	codes = item_naming.read_reserved_codes()
 	if family not in codes:
-		frappe.throw(_("{0} is not a numbered code family. Use PDT or SRV.").format(frappe.bold(family or "?")))
+		frappe.throw(
+			_("{0} is not a numbered code family. Use PDT or SRV.").format(frappe.bold(family or "?"))
+		)
 	return flow_rules.code_blocks(codes[family], family)
 
 
@@ -313,7 +315,9 @@ def save_supplier(item_code, supplier, supplier_part_no=None, purchase_url=None,
 	rate_value = None if rate in (None, "") else flt(rate)
 	if rate_value is not None:
 		if not price_list:
-			frappe.throw(_("There is no buying price list to record the price on. Set one in Buying Settings."))
+			frappe.throw(
+				_("There is no buying price list to record the price on. Set one in Buying Settings.")
+			)
 		price_name = _price_for(item, price_list, supplier)
 		# Refused before anything is written, so the Item's rows never land without their price.
 		if price_name:
@@ -367,9 +371,13 @@ def save_stock(item_code, warehouse, reorder_level=None, reorder_qty=None):
 	if not cint(item.is_stock_item):
 		frappe.throw(_("{0} is not kept in stock, so it has no bin.").format(frappe.bold(item.name)))
 	name = _text(warehouse)
-	bin_row = frappe.db.get_value(
-		"Warehouse", name, ["name", "company", "is_group", "disabled", "warehouse_type"], as_dict=True
-	) if name else None
+	bin_row = (
+		frappe.db.get_value(
+			"Warehouse", name, ["name", "company", "is_group", "disabled", "warehouse_type"], as_dict=True
+		)
+		if name
+		else None
+	)
 	if not bin_row:
 		frappe.throw(_("Choose the bin from the list."))
 	if cint(bin_row.is_group) or cint(bin_row.disabled) or bin_row.warehouse_type == "Transit":
@@ -433,7 +441,9 @@ def create_asset(item_code, client_id, location, net_purchase_amount, purchase_d
 		frappe.throw(_("The request did not carry its id. Reload and try again."))
 	frappe.has_permission("Asset", "create", throw=True)
 	if not frappe.get_meta("Asset").has_field(ASSET_CLIENT_FIELD):
-		frappe.throw(_("Creating an Asset here is not set up on this site yet (Asset.{0}).").format(ASSET_CLIENT_FIELD))
+		frappe.throw(
+			_("Creating an Asset here is not set up on this site yet (Asset.{0}).").format(ASSET_CLIENT_FIELD)
+		)
 	problem = flow_rules.asset_problem(location, net_purchase_amount)
 	if problem:
 		frappe.throw(_(problem))
