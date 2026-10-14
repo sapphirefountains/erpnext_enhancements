@@ -10,10 +10,10 @@
  * (#171717 in both themes, never redefined by the dark theme), so a button painted
  * with it is black on a black card in dark mode. v16's own primary button uses the
  * pair `--btn-primary` / `--neutral` instead, which dark mode swaps; so does this.
- * The status colors are frappe's theme-aware pairs (`--bg-green` with
- * `--text-on-green` and so on), the same ones its indicator pills use. Their
- * fallbacks for the two status tones, green and orange, are the app's `--sf-good`
- * and `--sf-warn` tokens rather than literals.
+ * The featured card's and the notices' tones are frappe's theme-aware pairs
+ * (`--bg-green` with `--text-on-green` and so on). Their fallbacks for the two
+ * status tones, green and orange, are the app's `--sf-good` and `--sf-warn` tokens
+ * rather than literals. A trip's status word is an sf.chip.
  *
  * The layout is written for a phone first (360px up) and widened with container
  * queries, so it follows the width of the workspace column rather than of the
@@ -215,38 +215,7 @@
     text-decoration: none;
 }
 
-/* ------------------------------------------------------------------ status pills */
-
-.tvh-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    white-space: nowrap;
-}
-
-.tvh-pill.tone-gray {
-    background: var(--bg-gray, #f3f3f3);
-    color: var(--text-on-gray, #525252);
-}
-
-.tvh-pill.tone-green {
-    background: var(--bg-green, color-mix(in srgb, var(--sf-good) 12%, transparent));
-    color: var(--text-on-green, var(--sf-good));
-}
-
-.tvh-pill.tone-blue {
-    background: var(--bg-blue, #edf6fd);
-    color: var(--text-on-blue, #0070cc);
-}
-
-.tvh-pill.tone-orange {
-    background: var(--bg-orange, color-mix(in srgb, var(--sf-warn) 15%, transparent));
-    color: var(--text-on-orange, color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong)));
-}
+/* A trip's status is an sf.chip (sf_kit's styles, adopted into the shadow root). */
 
 .tvh-meta-item {
     white-space: nowrap;

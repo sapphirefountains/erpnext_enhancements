@@ -15,8 +15,10 @@
  *
  * Caches, every one of them named "itinerary-...":
  *   itinerary-shell-<deploy>  the page (the /itinerary navigation, kept under PAGE whatever
- *                             its ?trip=, ?as=, ?view= or ?file=) and its own stylesheet and
- *                             script at their ?v= addresses. Versioned per deploy, like the
+ *                             its ?trip=, ?as=, ?view= or ?file=), its own stylesheet and
+ *                             script at their ?v= addresses, and the design tokens'
+ *                             stylesheet at the content-hashed address the page names in
+ *                             this worker's &tokens= (TOKENS). Versioned per deploy, like the
  *                             kiosk's: the page registers /itinerary-sw.js?v=<deploy token>,
  *                             so a deploy is a new worker with a new shell cache.
  *   itinerary-files-<key>     the files the page asked to keep (boarding passes, booking
@@ -28,7 +30,8 @@
  *
  * Lifecycle:
  *   - install:  precache the stylesheet and script (cache: 'reload', so the year-long HTTP
- *               cache of raw /assets cannot hand over a stale copy), then the page itself,
+ *               cache of raw /assets cannot hand over a stale copy) and the tokens
+ *               stylesheet (hashed, so never stale), then the page itself,
  *               so the phone has it from the very first visit; then skipWaiting().
  *   - activate: carry the page forward from the previous deploy's shell when this one could
  *               not fetch it, then delete ONLY this worker's own old shell caches. Every other
@@ -39,7 +42,7 @@
  *   - fetch:    the /itinerary page: network first (the navigation preload's answer), the kept
  *               page when there is no answer (none within PAGE_WAIT_MS, or a server error). A
  *               `?cmd=` navigation is frappe's API, not the page, and passes through. The
- *               stylesheet and script: kept copy first. A file
+ *               stylesheet, script and tokens: kept copy first. A file
  *               under /private/files/ or /files/ that this person's files cache holds: the
  *               network when it answers within FILE_WAIT_MS, else the kept copy. Everything
  *               else, and every non-GET or other-site request, passes through untouched.
@@ -87,6 +90,16 @@ const PRECACHE = [
 ];
 const PRECACHE_PATHS = new Set(PRECACHE);
 
+// The app design tokens' stylesheet (sf_tokens.bundle.css), which itinerary.css paints in and
+// itinerary.html links through bundled_asset, before the page's own. Its address is
+// content-hashed (dist/css/sf_tokens.bundle.<hash>.css, css-rtl for a right-to-left language)
+// and changes with every build, so it cannot be written in the list above: the page names it in
+// this worker's own address (&tokens=, itinerary.js registerWorker), and only this site's
+// address of exactly that shape is accepted. It is kept in the shell with the page's stylesheet,
+// because without it the offline itinerary has no colours.
+const TOKENS_PATH = /^\/assets\/erpnext_enhancements\/dist\/css(?:-rtl)?\/sf_tokens\.bundle\.[\w-]+\.css$/;
+const TOKENS = tokensPath(new URL(self.location.href).searchParams.get('tokens'));
+
 // Where this site serves uploaded files. A file is only ever kept from one of these.
 const FILE_PATHS = ['/private/files/', '/files/'];
 
@@ -108,6 +121,18 @@ let currentKey = null;
 
 function versioned(url) {
   return url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(VERSION);
+}
+
+// The tokens stylesheet's path when `raw` is this site's address of it, else ''.
+function tokensPath(raw) {
+  if (!raw) return '';
+  try {
+    const url = new URL(String(raw), self.location.origin);
+    if (url.origin !== self.location.origin || url.search || url.hash) return '';
+    return TOKENS_PATH.test(url.pathname) ? url.pathname : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 function filesCacheFor(key) {
@@ -195,9 +220,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(SHELL);
     // Best effort: one failure must not fail the install.
-    await Promise.allSettled(
-      PRECACHE.map((url) => cache.add(new Request(versioned(url), { cache: 'reload' })))
-    );
+    const assets = PRECACHE.map((url) => new Request(versioned(url), { cache: 'reload' }));
+    // The tokens' address is content-hashed, so no copy of it is ever stale: no ?v=, no reload.
+    if (TOKENS) assets.push(new Request(TOKENS, { credentials: 'same-origin' }));
+    await Promise.allSettled(assets.map((req) => cache.add(req)));
     // The page itself, as the person who opened it sees it. The page that registered this
     // worker was not yet under it, so its own load was never kept; without this, a first
     // visit followed by a flight would find nothing.
@@ -272,6 +298,14 @@ async function pageFromNetworkOrKept(event) {
   }
 }
 
+// This deploy's tokens stylesheet, for a request for the tokens at another build's address (a page
+// kept before a deploy names the hash it was drawn with, which that build's files no longer
+// serve), or null.
+async function ownTokens(shell, req) {
+  if (!TOKENS || !TOKENS_PATH.test(new URL(req.url).pathname)) return null;
+  return (await shell.match(TOKENS)) || null;
+}
+
 async function shellAsset(req) {
   const shell = await caches.open(SHELL);
   const exact = await shell.match(req);
@@ -281,13 +315,18 @@ async function shellAsset(req) {
     if (keepable(res)) {
       const copy = res.clone();
       shell.put(req, copy).catch(() => {});
+      return res;
     }
-    return res;
+    return (await ownTokens(shell, req)) || res;
   } catch (e) {
     // Offline, and the page asks for another deploy's ?v= than this worker precached (a page
-    // kept before a deploy): this deploy's copy of the same file answers. Only for these two
-    // files, and only from this worker's own shell.
-    return (await shell.match(req, { ignoreSearch: true })) || new Response('', { status: 504 });
+    // kept before a deploy): this deploy's copy of the same file answers. Only for the page's
+    // own stylesheet, script and tokens, and only from this worker's own shell.
+    return (
+      (await shell.match(req, { ignoreSearch: true })) ||
+      (await ownTokens(shell, req)) ||
+      new Response('', { status: 504 })
+    );
   }
 }
 
@@ -334,7 +373,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (PRECACHE_PATHS.has(url.pathname)) {
+  if (PRECACHE_PATHS.has(url.pathname) || TOKENS_PATH.test(url.pathname)) {
     event.respondWith(shellAsset(req));
     return;
   }

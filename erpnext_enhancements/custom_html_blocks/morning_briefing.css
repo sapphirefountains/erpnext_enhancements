@@ -50,8 +50,7 @@
     cursor: wait;
 }
 
-.mbr-loading,
-.mbr-disabled {
+.mbr-loading {
     color: var(--text-muted);
     font-size: var(--text-md);
     padding: 1rem 0;

@@ -78,6 +78,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_s3_6_accessibility` reads the chip's focus ring from `plan_a_trip.css` now that the CSS has
   left the script.
 
+## [1.659.0] - 2026-10-13
+
+### Changed
+
+- **The `/review` and `/itinerary` staff web apps paint in the app design tokens** (custom pages
+  S3.5a, ERPNext TASK-2026-02824). Styling only: no endpoint, route or Python changed.
+  - **The tokens reach a website page by the page's own link.** `sf_tokens.bundle.css` is
+    `app_include_css`, so only the Desk had it; a `www/` page gets `web_include_css` alone, and adding
+    the tokens there would ship them to every public page (/pay, /contract-sign, the login page). Each
+    template now links them through `bundled_asset` (content-hashed, so never served stale from the
+    year-long `/assets` cache), before its own stylesheet.
+  - **Each app keeps its own names, mapped in one place.** `design_review.bundle.css` keeps `--rr-*` and
+    `itinerary.css` keeps `--ti-*`, each declared once on `:root` as a `--sf-*` token or a mix of them;
+    no rule in either file holds a literal colour any more. Cards, panels, fields and rows are square,
+    buttons take `--sf-radius-control` and chips are pills; every shadow is gone (the frame previews
+    take a hairline outline, which uses no layout space, so the scaled concept inside keeps its size).
+    Both use Lato and the display face from the tokens, and the Review Room's duplicate `@font-face`
+    is dropped. Fields stay white in dark, as the guide says.
+  - **Colour that was wrong in one theme.** The itinerary's accent was fresh-blue, 3:1 as words on
+    white; words and edges in the accent are `--sf-link` now (6.4:1, and 8.5:1 in dark). The Review
+    Room's selected screen in the rail was navy on a navy card in dark (1.06:1): it is the primary fill.
+    Its "Decided" pill was white on light blue in dark; it is the neutral chip, edged sky-200. Status
+    words (accepted, rejected, the 911 role, offline notes, "not saved" in the bar) are their status
+    colour mixed half and half with the strongest text of their ground, never the fill itself. The 911
+    button is the danger fill, edged off-white in dark, where red alone is 2.8:1 on the navy card. The
+    toast is inverted, as the guide's is. The selected part's tag and its in-frame outline are violet
+    (the old orange is not in the palette); the frame outlines stay literal in `frames.js`, because a
+    concept frame is a sandboxed document no stylesheet reaches, and they are palette values by
+    construction (tested).
+  - **Dark mode is the tokens' own switch.** The tokens follow `<html data-theme>` and the device
+    without it. The Review Room's THEME button wrote a `data-rr-theme` the tokens cannot see; it
+    writes `data-theme` now (AUTO removes it), and the app keeps no dark palette of its own, only
+    `color-scheme`. `review.html` applies the stored choice from an inline script at the top of
+    `<head>`, before any stylesheet, as `kiosk.html` does, so the loading text no longer flashes in the
+    device theme while the bundle loads; `applyTheme` owns every change after that. The itinerary had no toggle and still follows the device: nothing writes
+    `data-theme` there, so the tokens' `prefers-color-scheme` block applies, with the brand's
+    single-palette dark in place of the old grey one.
+  - **No status by colour alone.** Your verdict on a screen was a 10px coloured dot in the rail and
+    the compare grid; it is a small chip with its word (Yes, Maybe, No). A part with a note in the
+    element list was a yellow dot; it says Noted.
+  - **Touch targets.** Every itinerary control is at least 44px tall (the map, copy, reload and person
+    buttons, the maps and footer links, the place-notes toggle). The Review Room keeps its desktop
+    sizes and its layout breakpoints (1599, 1299 and 900px) and gains the phone one, 767px, where
+    every control is 44px and a text field's type is 16px, below which iOS zooms in.
+  - **The offline itinerary keeps its colours.** The service worker precaches the page's stylesheet
+    and script by path, but the tokens' address is content-hashed and changes with every build. The
+    page passes it as `ITIN_TOKENS_CSS`, `itinerary.js` puts it in the worker's own address
+    (`&tokens=`), and the worker accepts only this site's `sf_tokens.bundle.<hash>.css`, precaches it
+    with the shell and answers it cache-first; a page kept from an earlier build that asks for the old
+    hash gets this build's copy. The theme-color meta and the manifest's colours are the tokens by
+    value (fresh-blue, off-white), since neither can read a CSS variable.
+  - `tests/test_www_app_tokens.py` (bench-free, own CI step) holds both apps to all of it: the link
+    and its order, no tokens in `web_include_css`, no literal or Frappe palette colour, every `--sf-*`
+    defined, own names on `:root` only, no shadow, token radii, the breakpoints, no status fill as
+    text, the dark-mode traps (`--sf-pillar-neutral` edges, `--sf-pillar-build-deep` fills), dark mode
+    on the tokens' switch, the verdict words, 44px controls, and the worker keeping the tokens. The
+    worker's node run in `test_itinerary_service_worker` now covers the tokens online, offline and
+    across a build. The Review Room's browser harness links the tokens too.
+
+## [1.658.0] - 2026-10-13
+
+Custom pages S3.3c (TASK-2026-02822): the last six data blocks draw their panels, chips and
+escaping from sf_kit, as the 34 department widgets have since v1.649.0. Every seeded Custom HTML
+Block is now on the kit except Desk Shortcuts, which asks the server nothing.
+
+### Changed
+
+- **KPI Cockpit, Morning Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and
+  My Travel moved onto sf_kit.** Each takes the kit and the ticket through `blocks.kit(root)` and
+  `blocks.ticket(root)`, and keeps the one-line plain-text fallback for a device whose cached
+  bundle predates them.
+  - Loading, empty, switched-off, error and no-access are `sf.state.render` panels. An error
+    panel carries Try again; a 403 (the jqXHR's `status`) draws no access.
+  - Each block's own escape and `__ee_ticket` / `__tvh_ticket` counter are gone.
+  - **KPI Cockpit and Morning Briefing** still register a `load(false)` wrapper, so a return
+    never recomputes the KPIs or regenerates the briefing, and still skip a return while Refresh
+    is out. Their Try again is a plain read as well. The department listing has its own error
+    panel, whose Try again lists the departments again.
+  - **Task Dashboard** keeps its debounced realtime refresh, its five-minute fallback, its timers
+    on `window`, its `onScreen` skip and its live clock. Loading, error and no access go in the
+    Top 10 panel, and only until the block has drawn once, so a failed refresh still never wipes
+    rows already showing. A null answer on a block that has never drawn now says "Nothing to show
+    yet." instead of loading forever, and a list missing from the answer reads as empty rather
+    than throwing. The overdue badge is a `danger` chip.
+  - **Projects Dashboard** changed only its panels (the skeleton loader, "Error loading
+    projects", "Network Error", the Gantt-not-loaded line and the empty tabs), its escaping and
+    the Completed tab's status badge, now an `sf.chip`. Priority Overview and Active Internal
+    Projects with nothing to list draw an empty panel instead of a bare table head. Its tables,
+    column selector and resizer, Gantt and saved per-user view are untouched.
+  - **My Training and My Travel** still ask for the session user's own data and pass no name. An
+    overdue course is a `danger` chip, and a trip's status a chip (`Planning` warn,
+    `In Progress` good, the rest neutral). My Travel's "No trips coming up" stays a notice, not
+    an empty panel: the body is never empty, since the link to everyone's trips and any receipts
+    reminder are drawn under it.
+  - CSS rules nothing uses any more are deleted: `.kpi-disabled`, `.mbr-disabled`, `.tdb-empty`,
+    `.tdb-overdue-badge`, `.tmd-flag`, the `.tvh-pill` family and the Projects Dashboard's
+    skeleton loader.
+- **No status words were added here.** The KPI Cockpit's Good / Watch / Bad and the Task
+  Dashboard's priority are still told by a border colour alone in this release; S3.6
+  (accessibility, PR #1271) adds the word to both. To keep the two changes apart, the KPI
+  Cockpit and the Task Dashboard read the kit's escape under the name `esc`, which is the name
+  #1271's new markup calls.
+- `tests/test_block_kit.py` enforces all six (`NOT_YET` keeps only Desk Shortcuts).
+  `scripts/test_workspace_block_return.mjs` runs them on the real `sf_kit.bundle.js` through the
+  generic checks (a 500, a 403, an empty answer, an older bundle, a kit that did not load), with
+  per-block notes for where each draws, and adds checks for what each must keep doing: the KPI
+  Cockpit's return and Try again read the snapshot and never recompute; the briefing's return
+  never regenerates and waits out a Regenerate; three renders of the Task Dashboard leave two
+  timers and one realtime subscription, and a realtime update refreshes once; a failed refresh
+  keeps the rows; the per-viewer blocks send no name.
+- `tests/test_travel_hub.py`'s node stubs define `__` and wait a tick for the kit before counting
+  requests, since My Travel now takes the kit before it loads.
+
+### Fixed
+
+- **The Projects Dashboard could not tell a 403 from any other failure.** Its `api_call` used
+  `frappe.call`'s `callback` / `error` options, and v16 calls `error` with no arguments on a 403
+  (`request.js`, `statusCode[403]`). It now settles on `frappe.call`'s promise, which rejects with
+  the jqXHR.
+- **A user without the Project Dashboard's page role got a Try again that could never work.**
+  `get_project_data` answers that user with `{"error": "You do not have permission ..."}` on
+  HTTP 200, not a 403, so the block drew "Could not load the projects." with a retry. It now
+  draws the no-access panel, with no Try again. Its other `{"error"}`, a failed read, keeps the
+  error panel and its Try again. The server is unchanged.
+- **Projects Dashboard values went into markup unescaped**: the value-stream and master-project
+  headings, the Assigned To and Type cells, the Completed tab's status, and the status and
+  priority options with their `data-project` attributes. All go through `sf.esc` now.
+
 ## [1.657.0] - 2026-10-14
 
 Form kit P3.3 (TASK-2026-02756): **one report face for phones, parties, pillars, money and
