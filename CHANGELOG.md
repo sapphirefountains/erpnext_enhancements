@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.657.0] - 2026-10-14
+
+Form kit P3.3 (TASK-2026-02756): **one report face for phones, parties, pillars, money and
+dates.** Script reports now call one shared formatter for those columns, so a phone reads
+`(801) 555-0100` and a date `10/14/2026` in every report, the same way print, email and SMS show
+them. Before this, 23 of the 37 script reports carried their own formatter. The CRM and sales
+reports move first; the rest move as they are touched.
+
+### Added
+
+- **`erpnext_enhancements.report_face`** (`public/js/report_face/`), loaded on every Desk page by
+  `erpnext_enhancements.bundle.js`, because a report's own `.js` can import nothing.
+  - `report_face.format(value, row, column, data, default_formatter)` dispatches on the column.
+    A column says what it is with `sf_face` in the report's Python: `phone`, `party`, `pillar`,
+    `money`, `date`, `datetime` or `time`. With no marker, a Date, Datetime, Time, Currency or
+    Phone column takes its kind from its fieldtype. `sf_face: "none"` and an unknown kind leave
+    the column to Frappe, so a typo can't blank a column.
+  - **Phones and dates** come from the normalization twin (`normalize/normalize.js`, held to
+    `utils/normalize.py`): `(801) 555-0100 x12`, `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM`.
+  - **A party** is the record's human name, linked through `frappe.utils.get_form_link`. It
+    falls back to plain text when the person can't read the doctype, as Frappe's own Link cells
+    do, and it carries `data-doctype`/`data-name`, so the hover preview works. A party column
+    comes in two shapes:
+    - **A Link or Dynamic Link column** holds the docname, and `sf_label` names the row field
+      with the name. This is for a column that already was a Link to the record itself.
+    - **A Data column** holds the name, `sf_name` names the row field with the docname, and
+      `sf_doctype` or `sf_doctype_field` gives the doctype. Export, sort and the column search
+      stay on the name people know, and without the face the name still shows. With no docname
+      the name shows unlinked.
+  - **A datetime is moved into the person's time zone first**, with
+    `frappe.datetime.convert_to_user_tz`, as v16's own Datetime formatter does. Then the twin
+    formats it. Dates and times alone aren't converted, as in Frappe.
+  - **A value stream** is a chip in its pillar's colors (`STREAM_PILLAR`, a copy held to
+    `print_style`'s). A word that isn't a stream, such as Value Stream Performance's
+    "Unallocated" row, stays plain text.
+  - **Money** is Frappe's own Currency formatter on the column, with the column's currency
+    options.
+  - The same answers come one at a time for HTML a report builds itself: `phone`, `date`,
+    `datetime`, `time`, `money`, `party`, `pillar` and `chip`.
+  - **It fails open.** If the face throws, the cell gets the report's default formatter and the
+    console gets one warning.
+- **The chip is drawn with inline declarations, and no stylesheet is added to any page.** Loading
+  sf_kit globally to style one pill would be the wrong trade. `cells.js` carries sf_kit's
+  `.sf-chip` declarations as a table, and the test holds it to `css/sf_kit.bundle.css`
+  declaration for declaration. The declarations read only `--sf-*` tokens, which are already on
+  every Desk page, so the chip follows light and dark like the kit's does. Each tone's style
+  string is built once, at load. The face imports sf_kit's one escape (`sf_kit/esc.js`), not the
+  kit.
+- **`party_naming_rules.party_record(doctype, facts)`** returns the `(doctype, docname)` a
+  record's party *is*, beside `party_of`, which returns the name it shows. `audit()` rows carry it
+  as `party_record`. `party_naming.FIELDS` reads `opportunity_from` on Opportunity for it.
+- **`tests/test_report_face.py`**, a CI step with node.
+  - It runs every cell rule under node against the Python twin's own answers.
+  - It runs the Desk half against a fake `frappe`: links come from `get_form_link` and respect
+    read permission, money goes to the default formatter as Currency without mutating the
+    column, datetimes go through `convert_to_user_tz` (and show unconverted if it throws), and
+    the face fails open with a single warning.
+  - It holds the chip to sf_kit's rules and checks that every token it reads exists.
+  - It checks the bundle imports the face and not the kit, and that nothing builds a route by
+    hand.
+- **`tests/test_report_hand_formatting.py`**, in the same CI step. It reads every Script Report's
+  `.js`, `.py` and `.html` with comments and docstrings stripped, and lists each phone or date
+  still formatted by hand. That covers `frappe.datetime.str_to_user`, `moment(...).format`,
+  `toLocaleDateString`, `getMonth() + 1`, `formatdate`, `frappe.format(x, {"fieldtype": "Date"})`,
+  and a phone rebuilt with a regex or `phonenumbers`. Three rules are narrower so they don't flag
+  what isn't a shown date or phone:
+  - `strftime` is flagged only when its format has a day in it. Month or year keys such as
+    `%Y-%m` and `%b %Y` pass.
+  - `[3:6]` slices are flagged only on a phone-ish name.
+  - For a `*_date` passed straight into `.format(...)`, the call is read with `ast`. Nested
+    parentheses are handled, and a keyword's name (`.format(from_date=fd)`) is not a date.
+
+  Every rule has samples it must catch and samples it must not.
+  - **The CRM and sales reports fail the build** on a finding, on a formatter that doesn't call
+    the face, or on a phone, party or value-stream column left unmarked. Those are the seven CRM
+    Enhancements reports plus Value Stream Performance.
+  - **The rest are reported in the CI log, not failed.** They are tracked on `KNOWN_REMAINING`,
+    which pins a count per report and rule and allows only removals. These fail:
+    - a report not on the list that starts formatting by hand;
+    - a listed report with more findings under a rule than pinned;
+    - one with fewer, until the count is lowered;
+    - a report, rule or count above the frozen 2026-10-14 snapshot.
+  - Three reports are on the list today:
+    - Crew Qualification Roster: 9 `frappe.format` dates in Python and 2 `str_to_user` in its
+      print sheet.
+    - Marketing Spend Rollup: an ISO window in its message, twice.
+    - Supplier Pickup List: 2 `str_to_user` in its print sheet.
+  - `ALLOWED` takes a report that legitimately differs, with its reason. It is empty: nothing
+    found so far has a reason to differ.
+
+### Changed
+
+- **Account Data Quality**: the Customer is shown by `customer_name` and linked. Value streams
+  are pillar chips. The legacy-import tint is kept.
+- **Attribution Gaps**: the Created date and the Value go through the face. The red live-gap
+  color is kept.
+- **Closed Won Reconciliation**: the Customer is shown by `customer_name` and linked, and the close
+  date and amount go through the face.
+  - The Show Candidates dialog no longer builds its own `/desk/project/` link,
+    `frappe.datetime.str_to_user` date or `format_currency` value. It calls `report_face.party`
+    (in a new tab, as before), `.date` and `.money`. A Desk tab opened before the deploy has no
+    face, so the dialog then shows plain escaped values rather than throwing.
+- **Hand-Off Process Coverage**: the "Customer / Party" column still holds the party's name
+  (`customer_name`, else `party_name`), and it is now linked to the Opportunity's party through
+  the row's `party_id` (`party_name`) and `party_type` (`opportunity_from`). An Opportunity with
+  no `party_name` still shows its `customer_name`, unlinked. The orange untracked flag is kept.
+- **Named Account Targets** gained a formatter. The account is shown by `customer_name` and
+  linked, the phone reads `(801) 555-0100`, the value streams are chips, and Last Activity goes
+  through the face.
+- **Party Naming Audit**: "Party it belongs to" still holds the party's title, and now links to
+  the party record (Customer, Lead, Prospect, Supplier and so on) through the row's `party_id`
+  and `party_doctype`. The muted dash for a record with no party is kept, as are the severity
+  colors.
+- **Value Stream Performance**: each stream is a pillar chip, and the money columns go through
+  the face. The window in its message reads `10/14/2026` rather than an ISO date
+  (`utils.normalize.format_date`). The grey Unallocated row and the win-rate colors are kept.
+- **Opportunity Loss Reasons** is unchanged. It has no phone, party, stream, money or date column.
+- **A report's date-and-time is now 12-hour** (`10/14/2026 2:00 PM`, the print style), in the
+  person's time zone. The Desk's own fields stay 24-hour, because Frappe v16 has no 12-hour Desk
+  format. A date alone reads `10/14/2026` either way.
+- **Exports and sorting are unchanged.** Every party column that held a name still holds it. The
+  three that link by docname (the Customer columns of Account Data Quality, Named Account
+  Targets and Closed Won Reconciliation) were already Links to the record itself.
+- **Docs**: `docs/app-design-system.md` gains "The report face". The `public/`, `crm_enhancements/`
+  and `kpi_dashboards/` READMEs describe it.
+
 ## [1.656.0] - 2026-10-13
 
 ### Changed

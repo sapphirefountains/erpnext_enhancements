@@ -574,5 +574,38 @@ class AuditTest(unittest.TestCase):
 		self.assertEqual(rules.audit("Sales Invoice", [{"name": "X"}]), [])
 
 
+class PartyRecordTest(unittest.TestCase):
+	"""The record a party *is*, for the report's link (the report face, form kit P3.3)."""
+
+	def test_each_doctype_points_at_its_party(self):
+		self.assertEqual(
+			rules.party_record("Project", {"customer": "BJ Carey", "customer_name": "Robert Carey Residence"}),
+			("Customer", "BJ Carey"),
+		)
+		self.assertEqual(
+			rules.party_record("Opportunity", {"opportunity_from": "Lead", "party_name": "CRM-LEAD-0001"}),
+			("Lead", "CRM-LEAD-0001"),
+		)
+		self.assertEqual(
+			rules.party_record("Address", {"party_doctype": "Supplier", "party_alias": "Pumps Inc", "party": "Pumps"}),
+			("Supplier", "Pumps Inc"),
+		)
+
+	def test_both_parts_or_neither(self):
+		self.assertEqual(rules.party_record("Project", {"customer": ""}), ("", ""))
+		self.assertEqual(rules.party_record("Opportunity", {"party_name": "X"}), ("", ""))
+		self.assertEqual(rules.party_record("Address", {"party_doctype": "Customer"}), ("", ""))
+		self.assertEqual(rules.party_record("Sales Invoice", {"customer": "X"}), ("", ""))
+
+	def test_the_audit_carries_it(self):
+		rows = rules.audit("Project", PROJECTS)
+		self.assertTrue(rows)
+		for row in rows:
+			with self.subTest(name=row["name"]):
+				doctype, docname = row["party_record"]
+				self.assertIn(doctype, ("Customer", ""))
+				self.assertEqual(bool(doctype), bool(docname))
+
+
 if __name__ == "__main__":
 	unittest.main()

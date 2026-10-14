@@ -72,21 +72,40 @@ frappe.query_reports["Closed Won Reconciliation"] = {
 			});
 		});
 	},
+
+	formatter(value, row, column, data, default_formatter) {
+		// The customer, the close date and the amount: the report face (form kit P3.3).
+		const face = window.erpnext_enhancements?.report_face;
+		return face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
+	},
 };
 
 function showCandidateDialog(report, row, candidates) {
 	// A table the reviewer reads, with the reasoning visible per row. The top
 	// suggestion being wrong is an expected outcome, not an edge case — so the
 	// runners-up and their reasons have to be on the same screen.
+	// The link, the start date and the value come from the report face (form kit P3.3), so
+	// they read exactly as the same things do in the report behind the dialog.
+	// A Desk tab opened before the face shipped has no face: then the cells are the plain,
+	// escaped values (unlinked), never an error that leaves the dialog closed.
+	const face = window.erpnext_enhancements?.report_face;
+	const plain = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
+	const cell = {
+		project: (c) => (face?.party ? face.party("Project", c.project, c.project, { new_tab: true }) : plain(c.project)),
+		date: (c) => (face?.date ? face.date(c.start_date) : plain(c.start_date)),
+		money: (c) => (face?.money ? face.money(c.value) : plain(c.value)),
+	};
 	const rows = candidates
 		.map(
 			(c) => `
 		<tr>
-			<td><a href="/desk/project/${encodeURIComponent(c.project)}" target="_blank">${frappe.utils.escape_html(
-				c.project
-			)}</a><br><span class="text-muted small">${frappe.utils.escape_html(c.project_name || "")}</span></td>
-			<td>${frappe.datetime.str_to_user(c.start_date) || ""}</td>
-			<td>${format_currency(c.value)}</td>
+			<td>${cell.project(c)}<br><span class="text-muted small">${frappe.utils.escape_html(
+				c.project_name || ""
+			)}</span></td>
+			<td>${cell.date(c)}</td>
+			<td>${cell.money(c)}</td>
 			<td><b>${c.score}</b></td>
 			<td class="small text-muted">${frappe.utils.escape_html(c.reasons.join("; "))}</td>
 			<td><button class="btn btn-xs btn-primary ee-link-btn" data-project="${frappe.utils.escape_html(

@@ -12,7 +12,12 @@ frappe.query_reports["Value Stream Performance"] = {
 	],
 
 	formatter(value, row, column, data, default_formatter) {
-		const formatted = default_formatter(value, row, column, data);
+		// Streams as pillar chips and the money columns: the report face (form kit P3.3). The
+		// grey Unallocated row and the win-rate colors are ours.
+		const face = window.erpnext_enhancements?.report_face;
+		const formatted = face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
 		if (!data) return formatted;
 
 		// The unallocated row is a caveat, not a value stream — grey it so nobody

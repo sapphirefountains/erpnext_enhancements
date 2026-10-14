@@ -237,6 +237,32 @@ is a full page load on v16. Access is page-level (shared portfolio display, like
 `DEFAULT_ROLES`; data is then fetched permission-free so User Permissions can't
 silently empty the board.
 
+## The reports' face (form kit P3.3, v1.657.0)
+
+Every script report in this module shows its phones, parties, value streams, money and dates
+through the shared report face (`public/js/report_face/`, [docs/app-design-system.md, "The report
+face"](../../docs/app-design-system.md#the-report-face)): a phone reads `(801) 555-0100`, a date
+`10/14/2026`, a value stream is a chip in its pillar's colors, and an account or a party is its
+human name linked with `get_form_link`. Each report's formatter calls
+`erpnext_enhancements.report_face.format` first and keeps only its own coloring on top (the legacy
+tint, the red gap, the orange untracked hand-off, the severity colors). The columns carry the
+markers (`"sf_face": "party", "sf_label": "customer_name"` and so on), so a report's Python says
+what each column is.
+
+Two reports' party columns gained a link and kept their value. **Hand-Off Process Coverage**'s
+"Customer / Party" still holds `customer_name` (else `party_name`) and links through the row's
+`party_id` / `party_type` (`party_name` / `opportunity_from`); an Opportunity with no `party_name`
+shows its `customer_name` unlinked. **Party Naming Audit**'s "Party it belongs to" still holds the
+title and links through `party_id` / `party_doctype`, which come from
+`party_naming_rules.party_record`, beside `party_of` (Project: its Customer; Opportunity:
+`opportunity_from` + `party_name`, read for this; Address: the Dynamic Link it is named after).
+Both are Data columns of the face's second party shape, so export, sorting and the column search
+stay on the name; a Link column would have put the docname in all three.
+
+`tests/test_report_hand_formatting.py` fails the build if any of these reports formats a phone or
+a date by hand again, stops calling the face, or leaves a phone, party or value-stream column
+unmarked.
+
 ## Opportunity Board page (`/desk/opportunity-board`)
 
 Form kit P6 (ERPNext TASK-2026-02774): the board that is to replace the patched stock Kanban.

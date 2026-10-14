@@ -58,6 +58,9 @@ from frappe.utils import add_months, flt, getdate, nowdate
 
 from erpnext_enhancements.crm_enhancements.historical import exclude_sql
 
+# The window in the message reads 10/14/2026, as every report face date does (form kit P3.3).
+from erpnext_enhancements.utils import normalize
+
 #: Statuses that count as won and lost.
 #:
 #: This used to read: "Closed" is neither -- on this site it is used for administratively
@@ -101,7 +104,9 @@ def _window(filters):
 
 def get_columns():
 	return [
-		{"label": _("Value Stream"), "fieldname": "value_stream", "fieldtype": "Data", "width": 150},
+		# The report face (form kit P3.3): each stream as a chip in its pillar's colors. The
+		# Unallocated row is not a stream and stays plain text.
+		{"label": _("Value Stream"), "fieldname": "value_stream", "fieldtype": "Data", "width": 150, "sf_face": "pillar"},
 		{"label": _("Spend"), "fieldname": "spend", "fieldtype": "Currency", "width": 120},
 		{"label": _("Opportunities"), "fieldname": "opportunities", "fieldtype": "Int", "width": 120},
 		{"label": _("Won"), "fieldname": "won", "fieldtype": "Int", "width": 80},
@@ -258,7 +263,9 @@ def _message(from_date, to_date, spend, revenue):
 	notes = [
 		_("{0} to {1}. An opportunity tagged with several value streams counts once toward "
 		  "<b>each</b>, so these columns do not sum to the company total — that is the right "
-		  "reading per stream and the wrong one for total pipeline.").format(from_date, to_date)
+		  "reading per stream and the wrong one for total pipeline.").format(
+			normalize.format_date(from_date), normalize.format_date(to_date)
+		)
 	]
 
 	if not spend:

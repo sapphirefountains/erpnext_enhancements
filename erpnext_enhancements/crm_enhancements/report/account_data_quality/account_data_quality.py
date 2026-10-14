@@ -43,11 +43,14 @@ def execute(filters=None):
 def get_columns():
 	return [
 		{"label": _("Missing"), "fieldname": "gaps", "fieldtype": "Data", "width": 200},
-		{"label": _("Customer"), "fieldname": "name", "fieldtype": "Link", "options": "Customer", "width": 220},
+		# The report face (form kit P3.3, public/js/report_face/): the account by the name people
+		# know it by, linked, and its value streams as chips in their pillars' colors.
+		{"label": _("Customer"), "fieldname": "name", "fieldtype": "Link", "options": "Customer", "width": 220,
+		 "sf_face": "party", "sf_label": "customer_name"},
 		{"label": _("Type"), "fieldname": "customer_type", "fieldtype": "Data", "width": 110},
 		{"label": _("Group"), "fieldname": "customer_group", "fieldtype": "Link", "options": "Customer Group", "width": 150},
 		{"label": _("Industry"), "fieldname": "industry", "fieldtype": "Link", "options": "Industry Type", "width": 160},
-		{"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "width": 170},
+		{"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "width": 170, "sf_face": "pillar"},
 		{"label": _("Territory"), "fieldname": "territory", "fieldtype": "Link", "options": "Territory", "width": 130},
 		{"label": _("Status"), "fieldname": "custom_account_status", "fieldtype": "Data", "width": 100},
 		{"label": _("Projects"), "fieldname": "projects", "fieldtype": "Int", "width": 90},

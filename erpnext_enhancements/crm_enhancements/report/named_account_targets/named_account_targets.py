@@ -55,14 +55,17 @@ def execute(filters=None):
 
 def get_columns():
 	return [
-		{"label": _("Account"), "fieldname": "name", "fieldtype": "Link", "options": "Customer", "width": 230},
+		# The report face (form kit P3.3, public/js/report_face/): the account by the name people know
+		# it by, linked; value streams as pillar chips; the phone as (801) 555-0100.
+		{"label": _("Account"), "fieldname": "name", "fieldtype": "Link", "options": "Customer", "width": 230,
+		 "sf_face": "party", "sf_label": "customer_name"},
 		{"label": _("Industry"), "fieldname": "industry", "fieldtype": "Link", "options": "Industry Type", "width": 170},
 		{"label": _("Territory"), "fieldname": "territory", "fieldtype": "Link", "options": "Territory", "width": 140},
 		{"label": _("Type"), "fieldname": "customer_type", "fieldtype": "Data", "width": 110},
 		{"label": _("Status"), "fieldname": "custom_account_status", "fieldtype": "Data", "width": 100},
-		{"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "width": 160},
+		{"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "width": 160, "sf_face": "pillar"},
 		{"label": _("Owner"), "fieldname": "account_manager", "fieldtype": "Link", "options": "User", "width": 160},
-		{"label": _("Phone"), "fieldname": "phone", "fieldtype": "Data", "width": 130},
+		{"label": _("Phone"), "fieldname": "phone", "fieldtype": "Data", "width": 130, "sf_face": "phone"},
 		{"label": _("Email"), "fieldname": "email", "fieldtype": "Data", "width": 200},
 		{"label": _("Last Activity"), "fieldname": "last_activity", "fieldtype": "Date", "width": 120},
 		{"label": _("Projects"), "fieldname": "projects", "fieldtype": "Int", "width": 90},
@@ -98,6 +101,7 @@ def get_data(filters):
 		f"""
 		SELECT
 			c.name,
+			c.customer_name,
 			c.industry,
 			c.territory,
 			c.customer_type,
