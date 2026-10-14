@@ -1604,7 +1604,17 @@ ENDPOINTS = {
 	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home"],
 	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref"],
 	"set_count": ["item_code", "warehouse", "qty", "client_ref"],
+	# v1.693.0, the Bin Manager page's New item (tests/test_bin_manager.py has its behaviour).
+	"create_and_assign": ["warehouse", "client_ref", "item_code", "item_name", "item_group", "stock_uom"],
 }
+
+#: Read-only endpoints (v1.693.0): GET, role-checked first, no client_ref.
+READS = {"manager_boot": []}
+
+#: The one write allowed before the log row: create_and_assign's quick Item, because the log's
+#: item_code is a Link and the Item has to exist first (the store run does the same). A retry
+#: still finds the first save through _already_saved, and a refusal rolls the Item back.
+WRITES_BEFORE_LOG = {"create_and_assign": {"scan._quick_item"}}
 
 #: What writes, in an endpoint: none of it may come before the log row.
 WRITES = {
@@ -1625,7 +1635,18 @@ class TestTheSource(unittest.TestCase):
 			for name, fn in _functions(MODULE).items()
 			if any("whitelist" in ast.unparse(d) for d in fn.decorator_list)
 		}
-		self.assertEqual(set(found), set(ENDPOINTS))
+		self.assertEqual(set(found), set(ENDPOINTS) | set(READS))
+		for name in READS:
+			fn = found.pop(name)
+			with self.subTest(read=name):
+				self.assertEqual(
+					[ast.unparse(d) for d in fn.decorator_list], ["frappe.whitelist(methods=['GET'])"]
+				)
+				self.assertEqual([a.arg for a in fn.args.args], READS[name])
+				body = [
+					s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+				]
+				self.assertEqual(ast.unparse(body[0]), "scan._check_access()")
 		for name, fn in found.items():
 			with self.subTest(endpoint=name):
 				self.assertEqual(
@@ -1651,10 +1672,18 @@ class TestTheSource(unittest.TestCase):
 			calls = _calls(fn)
 			begin = [pos for pos in ((c[0], c[1]) for c in calls if c[2] == "scan._begin_log")]
 			writes = [(c[0], c[1]) for c in calls if c[2] in WRITES]
+			early = WRITES_BEFORE_LOG.get(name, set())
 			with self.subTest(endpoint=name):
 				self.assertEqual(len(begin), 1)
 				self.assertTrue(writes)
 				self.assertLess(begin[0], min(writes))
+				for allowed in early:
+					(at,) = [(c[0], c[1]) for c in calls if c[2] == allowed]
+					self.assertLess(at, begin[0])
+					checks = [
+						(c[0], c[1]) for c in calls if c[2] in ("scan._check_quick_item", "require_manage")
+					]
+					self.assertTrue(checks and max(checks) < at, "every refusal before the Item is made")
 				finish = [(c[0], c[1]) for c in calls if c[2] == "scan._finish_log"]
 				self.assertTrue(finish and finish[0] > max(writes))
 

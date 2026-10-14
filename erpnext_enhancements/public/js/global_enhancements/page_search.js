@@ -109,6 +109,8 @@
 			page: "inventory-scanner-audit",
 			aliases: ["scan", "scanner", "audit", "scanner audit", "inventory audit", "cycle count"],
 		},
+		// v1.693.0: one bin's items on a PC, without scanning (the same endpoints as /stock-scan).
+		{ page: "bin-manager", aliases: ["bins", "bin", "shelf", "shelves", "putaway", "boneyard"] },
 		{ page: "time-kiosk", aliases: ["kiosk", "clock in", "clock out", "time clock", "timeclock"] },
 		{ page: "integrations-health", aliases: ["health", "integrations", "sync status"] },
 		{ page: "device-fleet-dashboard", aliases: ["health", "devices", "fleet", "mdm"] },
