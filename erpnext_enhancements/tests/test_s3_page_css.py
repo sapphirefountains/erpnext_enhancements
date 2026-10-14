@@ -966,11 +966,12 @@ class TestMaintenancePlanner(unittest.TestCase):
 	def test_the_legends_draw_the_cards_own_classes(self):
 		"""Both legends painted a hex per kind: the toolbar's through jQuery .css(), the help's through
 		the kit's swatch. Each is the card's own kind class now, so the legend and the calendar cannot
-		drift apart, and both follow the theme."""
-		self.assertIn("$('<i class=\"mp-swatch\"></i>').addClass(kind)", self.js)
+		drift apart, and both follow the theme. The toolbar's legend row is the Display menu's key of
+		the visit kinds since v1.687.0 (tb_kind_items)."""
+		self.assertIn('sample_html: `<i class="mp-swatch${kind ? ` ${kind}` : ""}"></i>`,', self.js)
 		kinds = re.findall(
 			r'\["(mp-[a-z-]+)", __\("',
-			self.js[self.js.index('const $legend = $(\'<div class="mp-legend">') :][:1200],
+			self.js[self.js.index("tb_kind_items() {") :][:1200],
 		)
 		self.assertEqual(
 			kinds,

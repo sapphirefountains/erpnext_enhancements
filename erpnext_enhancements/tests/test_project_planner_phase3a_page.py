@@ -49,6 +49,13 @@ def _method(code, name):
 	return match.group(1)
 
 
+def _obj_method(code, name):
+	"""One method of a mixin object (``\tname(...) {`` to ``\t},``)."""
+	match = re.search(rf"^\t{name}\(.*?\) \{{\n(.*?)^\t\}},\n", code, flags=re.S | re.M)
+	assert match, f"no method {name}"
+	return match.group(1)
+
+
 class TestTentative(unittest.TestCase):
 	def test_a_tentative_card_is_hatched_and_says_pencil(self):
 		code = _code_without_comments()
@@ -191,10 +198,19 @@ class TestHeatmap(unittest.TestCase):
 	def test_the_heatmap_hides_the_calendar_only_controls(self):
 		code = _code_without_comments()
 		mode = _method(code, "set_mode")
-		self.assertIn("PP.heatmap_view", mode)
-		for control in ("$project", "$pm", "$foreign", "$undo", "$copy"):
+		# The heatmap and Utilization (v1.687.0) are both boards with no calendar controls.
+		self.assertIn("const board = mode === PP.heatmap_view || mode === PP.util_view;", mode)
+		for control in ("$project", "$pm", "$undo"):
 			self.assertIn(control, mode)
-		self.assertIn("this.$trays.toggle(!route && !heatmap)", mode)
+		self.assertIn("this.$trays.toggle(!route && !board)", mode)
+		# The calendar-only controls folded into the toolbar's menus (v1.687.0) are offered only on the
+		# calendar views: "Maintenance, rentals, travel" in Display, Copy week in Edit.
+		self.assertIn("return PP.views.includes(this.view);", _obj_method(code, "tb_calendar"))
+		self.assertIn("if (!this.tb_calendar()) return [];", _obj_method(code, "tb_display_items"))
+		self.assertIn(
+			'if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {',
+			_obj_method(code, "tb_edit_items"),
+		)
 
 
 class TestOverdueTray(unittest.TestCase):
@@ -253,10 +269,12 @@ class TestOverdueTray(unittest.TestCase):
 
 class TestCopyWeek(unittest.TestCase):
 	def test_copy_week_is_a_toolbar_action_on_week_and_crew_views(self):
+		# An item of the toolbar's Edit menu since v1.687.0, on the week and crew views, for planners.
 		code = _code_without_comments()
-		self.assertIn('.text(__("Copy week…"))', code)
-		self.assertIn('this.$copy.toggle(this.view !== "month" && !!this.data.can_edit)', code)
-		self.assertIn("this.open_copy_week()", code)
+		edit = _obj_method(code, "tb_edit_items")
+		self.assertIn('label: __("Copy week…"),', edit)
+		self.assertIn('this.view !== "month" && this.data && this.data.can_edit', edit)
+		self.assertIn("on_click: () => this.open_copy_week(),", edit)
 
 	def test_the_planner_picks_tasks_and_a_target_week(self):
 		code = _code_without_comments()
