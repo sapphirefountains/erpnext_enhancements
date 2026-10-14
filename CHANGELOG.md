@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **When:** all 14 were re-created in one minute, 18:07–18:08 on 2026-07-18, the evening the
     site moved to the new Google Cloud infrastructure.
   - **Cause:** a migrate ran a build from before v1.159.0. Its fixtures still held these records,
-    with the same `insert_after` and an empty `module`, exactly as they sit on prod. Fixture sync
+    with the same names and `insert_after` as on prod (five of them with an empty `module`, as in
+    those old fixtures). Fixture sync
     only adds, and the removal patches were already in `tabPatch Log`, so nothing deleted them
     again. No code creates them: it was one downgraded migrate.
   - **Cleanup:** `patches/retire_resurrected_customizations` runs both removal patches' `execute()`
@@ -42,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Override:** `allow_erpnext_enhancements_downgrade: 1` in a site's `site_config.json`, for
     one migrate.
   - **Failure mode:** the guard never blocks on its own failure.
+  - **CI keeps the version moving forward:** a new "Version moves forward" step in the
+    `version-sync` job. A PR's `__version__` must be strictly above its base branch's as it stands
+    when CI runs, and a push to main must not go below the commit it replaced. Without it, a
+    GitHub "Revert" PR (which restores the old number) or a version conflict resolved toward the
+    lower side would make every deploy refuse to migrate until someone bumped it.
 - **New guard:** `tests/test_retired_customizations.py`, in its own CI step. It pins:
   - the downgrade guard, and that it runs first;
   - the cleanup patch;

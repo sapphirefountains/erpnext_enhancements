@@ -15,7 +15,7 @@ because the patches that did are already logged.
 
 That happened once. Between 18:07 and 18:08 on 2026-07-18, the evening the site moved to the new
 Google Cloud infrastructure, a migrate ran a build from before v1.159.0 (whose fixtures still had
-these records, ``module`` empty, with the same ``insert_after`` as on prod) and re-inserted 14
+these records, with the same names and ``insert_after`` as on prod) and re-inserted 14
 Custom Fields:
 
 - the 12 blank duplicate "Comments" Tab Breaks v1.159.2 removed (Address, Batch, Delivery Note,
@@ -59,7 +59,8 @@ def parse(version):
 def installed_version():
 	"""The version that last migrated this site, or None (a fresh install has no row yet)."""
 	rows = frappe.db.sql(
-		"select app_version from `tabInstalled Application` where app_name = %s limit 1",
+		"select app_version from `tabInstalled Application`"
+		" where parent = 'Installed Applications' and app_name = %s limit 1",
 		(APP,),
 	)
 	return (rows[0][0] if rows else None) or None
