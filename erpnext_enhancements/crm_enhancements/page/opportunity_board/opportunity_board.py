@@ -102,7 +102,7 @@ def _stages():
 	options = [opt.strip() for opt in ((field.options if field else "") or "").split("\n") if opt.strip()]
 	stages = [{"label": label, "kind": "open"} for label in open_stages]
 	stages += [{"label": label, "kind": "parked"} for label in parked]
-	# ``gate`` (part C, v1.668.0): which required fields a move into the stage needs, which the side
+	# ``gate`` (part C, v1.670.0): which required fields a move into the stage needs, which the side
 	# panel asks for before the move is saved: Closed Won's ranks, or Lost's reasons.
 	stages += [
 		{"label": label, "kind": "close", "gate": "lost" if label == LOST_STATUS else "won"}

@@ -23,7 +23,7 @@
  *                   open the side panel's required fields (Closed Won, Lost: they need ranks or
  *                   reasons, P6.6), nothing (its own stage), or refuse
  *
- * Part C (v1.668.0):
+ * Part C (v1.670.0):
  *
  *   panel (P6.6)    the side panel's routes (edit, a closing move, quick add, bulk) and which closing
  *                   stage needs what
@@ -52,7 +52,7 @@ export const PAGE = "opportunity-board";
 export const LAYOUTS = ["stages", "streams"];
 export const DEFAULT_LAYOUT = "stages";
 export const MOVE = "move";
-// Part C (v1.668.0): the side panel's routes (form kit P4.4, P6.6, P6.7), each over any view.
+// Part C (v1.670.0): the side panel's routes (form kit P4.4, P6.6, P6.7), each over any view.
 //   .../edit/<name>[/<step>]          a deal in the side panel (the step is replaced, never pushed)
 //   .../closing/<name>/<stage key>    a drop on Closed Won or Lost: its required fields, then the move
 //   .../new/<stage key>               quick add, in that column's stage

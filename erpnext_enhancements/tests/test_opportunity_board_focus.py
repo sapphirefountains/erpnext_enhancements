@@ -1234,7 +1234,7 @@ class TestThePageWiring(unittest.TestCase):
 		self.assertNotIn("filters", show)
 
 	def test_attention_opens_the_deal_until_the_side_panel_exists(self):
-		"""Part C (v1.668.0): the side panel exists, and the attention list opens a deal in it."""
+		"""Part C (v1.670.0): the side panel exists, and the attention list opens a deal in it."""
 		raw = _text(PAGE_JS)
 		self.assertIn("P6.6", raw[raw.index("attention_html() {") :][:1200])
 		code = _code(PAGE_JS)

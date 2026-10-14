@@ -1,4 +1,4 @@
-"""Bench-free tests for the side panel (form kit P4.4) and the board's part C (P6.6, P6.7; v1.668.0).
+"""Bench-free tests for the side panel (form kit P4.4) and the board's part C (P6.6, P6.7; v1.670.0).
 
 Four halves:
 

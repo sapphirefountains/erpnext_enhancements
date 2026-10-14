@@ -977,7 +977,7 @@ body.ob-drag-active * {
 	}
 }
 
-/* ---- Part C (v1.668.0): quick add, selection and bulk (P6.7), the side panel's marks (P6.6) ----
+/* ---- Part C (v1.670.0): quick add, selection and bulk (P6.7), the side panel's marks (P6.6) ----
  * The side panel itself is the form kit's (guided_entry.bundle.css, .fk-panel) in the planner kit's
  * drawer; only what sits on the board, and the bulk panel's body, is here. */
 .ob-head-tools {

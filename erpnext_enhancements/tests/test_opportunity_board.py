@@ -532,7 +532,7 @@ class TestTheBoardUnderNode(unittest.TestCase):
 	def test_routes(self):
 		r = self.out["routes"]
 		# Part B (v1.663.0) added `view` (and `bare`, the address with no segment at all, where the
-		# remembered view may apply); part C (v1.668.0) `side`, the side panel, none on these. The
+		# remembered view may apply); part C (v1.670.0) `side`, the side panel, none on these. The
 		# board's own routes read as they did in part A.
 		board = {"view": "board", "bare": False, "side": None}
 		self.assertEqual(
@@ -1125,7 +1125,7 @@ class TestThePage(unittest.TestCase):
 		self.assertNotIn("save_step", conflict, "a conflict is never retried with the new modified")
 
 	def test_closing_drops_open_the_guided_close_step(self):
-		"""Part C (v1.668.0): a closing drop opens the side panel's required fields
+		"""Part C (v1.670.0): a closing drop opens the side panel's required fields
 		(test_opportunity_board_panel); the guided Close step stays as its fallback, for when the
 		panel's files do not load."""
 		code = _code(PAGE_JS)
@@ -1171,7 +1171,7 @@ class TestThePage(unittest.TestCase):
 			self.assertNotIn(forbidden, code)
 
 	def test_the_phone_taps_to_move(self):
-		"""Part C (v1.668.0, P6.6): a tap opens the deal in the side panel, on a phone too; the move
+		"""Part C (v1.670.0, P6.6): a tap opens the deal in the side panel, on a phone too; the move
 		panel is the card's Move button, on every width."""
 		code = _code(PAGE_JS)
 		self.assertIn('window.matchMedia("(max-width: 767px)")', code)
