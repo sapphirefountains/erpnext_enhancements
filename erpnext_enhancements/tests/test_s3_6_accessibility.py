@@ -203,9 +203,12 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		self.assertIn("open(e);", binder)
 		self.assertEqual(code.count("this.bind_week_links($"), 2)
 		self.assertNotIn('find("[data-week]").on("click", (e) =>', code)
-		self.assertIn(
-			".pp-day-num:focus-visible,.pp-crew-head:focus-visible,.pp-title:focus-visible{outline:2px solid var(--sf-focus);",
-			code,
+		# The page's CSS moved out of the script into project_planner.css in S3.4d (v1.664.0).
+		css = re.sub(r"/\*[\s\S]*?\*/", "", PROJECT.with_suffix(".css").read_text(encoding="utf-8"))
+		self.assertRegex(
+			css,
+			r"(?m)^\.pp-day-num:focus-visible,\s*\.pp-crew-head:focus-visible,\s*\.pp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
 		)
 
 	def test_maintenance_planner(self):

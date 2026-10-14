@@ -614,7 +614,15 @@ class TestHouseRules(unittest.TestCase):
 
 	def test_styles_are_namespaced_and_text_is_american(self):
 		for block, prefix in ((PP_BLOCK, ("pp-", "pk-")), (MP_BLOCK, ("mp-", "pk-"))):
-			style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+			if block is PP_BLOCK:
+				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
+				# section of it, from its banner to the next.
+				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
+				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6D_STYLE).")))
+				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+				self.assertNotIn("_STYLE = `", block)
+			else:
+				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual({c for c in classes if not c.startswith(prefix)}, set(), classes)

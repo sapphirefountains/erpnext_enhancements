@@ -695,7 +695,9 @@ class TestPagesUnderNode(unittest.TestCase):
 		self.assertIn("calendar days", out["note"])
 		self.assertEqual((out["label"], out["default"]), ("Move by (days)", 7))
 		self.assertEqual(out["pref"], {})  # reading the default writes nothing
-		self.assertEqual(out["style"], 1)  # the first use adds the switch's style, once
+		# The switch's style is in project_planner.css (S3.4d, v1.664.0): its first use adds no
+		# <style> element to <head> any more.
+		self.assertEqual(out["style"], 0)
 		self.assertEqual(self.out["pp_calendar_drop"], 1)
 
 	def test_calendar_days_move_every_task_by_the_same_calendar_days(self):
@@ -953,7 +955,7 @@ class TestPageSource(unittest.TestCase):
 	def test_the_pure_maths_reuses_the_pages_existing_helpers(self):
 		# No third copy of the date arithmetic: the 6B helpers do the stepping, counting and offsets.
 		pp_pure = _strip(
-			self.pp_block[self.pp_block.index("const PP6E_PURE") : self.pp_block.index("const PP6E_STYLE")]
+			self.pp_block[self.pp_block.index("const PP6E_PURE") : self.pp_block.index("const PP6E_METHODS")]
 		)
 		self.assertIn("PP6B_PURE.ymd_add(", pp_pure)
 		self.assertIn("PP6B_PURE.working_days(card.start, end)", pp_pure)
@@ -998,7 +1000,15 @@ class TestPageSource(unittest.TestCase):
 
 	def test_the_house_rules_hold_for_the_new_blocks(self):
 		for block, prefix in ((self.pp_block, "p6e-"), (self.mp_block, "mp-p6e-")):
-			style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+			if block is self.pp_block:
+				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
+				# section of it, from its banner to the next.
+				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
+				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6E_STYLE).")))
+				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+				self.assertNotIn("_STYLE = `", block)
+			else:
+				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes and all(c.startswith(prefix) for c in classes), classes)
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour"):

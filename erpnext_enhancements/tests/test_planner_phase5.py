@@ -1533,16 +1533,16 @@ class TestPages(unittest.TestCase):
 		self.assertIn('.attr("srcdoc", answer.html)', self.block)
 
 	def test_the_block_is_namespaced_and_escapes_what_it_shows(self):
-		style = self.code[
-			self.code.index("const PP5_STYLE = `") : self.code.index(
-				"`;", self.code.index("const PP5_STYLE = `")
-			)
-		]
+		# The block's CSS is its section of project_planner.css (S3.4d, v1.664.0), sent with the
+		# page; the script writes no <style> element.
+		raw = PAGE_JS.with_suffix(".css").read_text(encoding="utf-8")
+		start = raw.index("*/", raw.index("/* ===", raw.index("(PP5_STYLE).")))
+		style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
 		classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 		self.assertTrue(classes)
 		self.assertEqual({c for c in classes if not c.startswith("pp-")}, set())
-		self.assertIn("@media (max-width:760px)", style)
-		self.assertIn("id='pp-style-5'", self.block)
+		self.assertIn("@media (max-width: 767px)", style)
+		self.assertNotIn("pp-style-5", self.block)
 		self.assertNotIn("localStorage", self.block)
 		raw = [
 			line.strip()
