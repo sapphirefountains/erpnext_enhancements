@@ -2,6 +2,20 @@
 
 {% block title %}{{ _("Pay by Card") }}{% endblock %}
 
+{#- The customer portal's look (custom pages S6a): the tokens, then the portal's own stylesheet,
+    both content-hashed through bundled_asset; the shared nav bar in place of the website's.
+    Presentation only: the page script below is byte-for-byte what it was, and every id it reads
+    is still here (tests/test_customer_portal_polish.py). Stripe's Payment Element draws in its
+    own frame with Stripe's default look; it is given no appearance object, and none is added. -#}
+{% block head_include %}
+{{ super() }}
+{% include "erpnext_enhancements/templates/includes/sf_portal_light.html" %}
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
+<link rel="stylesheet" href="{{ bundled_asset('sf_portal.bundle.css') }}">
+{% endblock %}
+
+{% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
+
 {% block page_content %}
 {#- "View invoice (PDF)": the invoice itself, from stripe_payments.core.api.portal_invoice_pdf,
     which checks again that it is this customer's submitted invoice. In a new tab, so the phone's
@@ -10,7 +24,7 @@
 {%- macro invoice_pdf_link(name, css="") -%}
 <a{% if css %} class="{{ css }}"{% endif %} href="/api/method/erpnext_enhancements.stripe_payments.core.api.portal_invoice_pdf?invoice={{ name | urlencode }}" target="_blank" rel="noopener">{{ _("View invoice (PDF)") }}</a>
 {%- endmacro %}
-<div class="pay-card" style="max-width:520px;">
+<div class="pay-card sf-portal sf-portal--narrow" id="sf-portal-main">
 	<h1 class="mb-4">{{ _("Pay by Card") }}</h1>
 
 	{% if not enabled %}
@@ -82,12 +96,12 @@
 	{# Step 1: collect the card. No amount is committed yet, so the fee (if any) can
 	   still be priced from the card the payer actually enters. #}
 	<div id="step-card">
-		<div id="payment-element" style="margin:16px 0;"></div>
+		<div id="payment-element"></div>
 		{# role="alert": a screen reader announces a decline the moment it is written here. #}
-		<div id="card-error" class="text-danger small" role="alert" style="margin-bottom:12px;"></div>
+		<div id="card-error" class="text-danger small" role="alert"></div>
 		<button id="continue-btn" class="btn btn-primary btn-block">{{ _("Continue") }}</button>
 		{% if enable_ach %}
-		<p class="text-muted small" style="margin-top:12px;">
+		<p class="text-muted small sf-portal-aside">
 			{{ _("Paying from a bank account instead?") }}
 			<a href="/pay">{{ _("Use bank (ACH)") }}</a> — {{ _("never carries a fee.") }}
 		</p>
@@ -97,8 +111,10 @@
 	{# Step 2: the true total, including the fee only when one genuinely applies.
 	   Card-network rules require the payer to see this before committing and to be
 	   able to back out and choose another method — hence the Back button. #}
+	{#- The inline display:none here and on three elements below is state, not style: the script
+	    shows and hides them through style.display and reads it back, so it stays inline. -#}
 	<div id="step-review" style="display:none;">
-		<table class="table table-bordered" style="margin-top:16px;">
+		<table class="table table-bordered">
 			<tbody>
 				<tr>
 					<td>{{ _("Invoice") }} {{ invoice.name }}</td>
@@ -115,11 +131,11 @@
 			</tbody>
 		</table>
 		<div id="review-disclosure" class="alert alert-info small" style="display:none;"></div>
-		<div id="review-nofee" class="text-muted small" style="display:none; margin-bottom:12px;"></div>
+		<div id="review-nofee" class="text-muted small" style="display:none;"></div>
 		{# A Pay tap is never ignored in silence: when there is no quote behind the review on
 		   screen, this says what to do instead (announced, like #card-error). Empty, it adds no
 		   gap above Pay: its margin collapses through it into the one above. #}
-		<div id="review-error" class="text-danger small" role="alert" style="margin-bottom:12px;"></div>
+		<div id="review-error" class="text-danger small" role="alert"></div>
 		<button id="pay-btn" class="btn btn-primary btn-block"></button>
 		<button id="back-btn" class="btn btn-link btn-block">{{ _("Back — use a different payment method") }}</button>
 	</div>

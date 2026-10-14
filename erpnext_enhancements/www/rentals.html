@@ -2,12 +2,23 @@
 
 {% block title %}{{ _("My Rentals") }}{% endblock %}
 
+{#- The customer portal's look (custom pages S6a): the tokens, then the portal's own stylesheet,
+    both content-hashed through bundled_asset; the shared nav bar in place of the website's. -#}
+{% block head_include %}
+{{ super() }}
+{% include "erpnext_enhancements/templates/includes/sf_portal_light.html" %}
+<link rel="stylesheet" href="{{ bundled_asset('sf_tokens.bundle.css') }}">
+<link rel="stylesheet" href="{{ bundled_asset('sf_portal.bundle.css') }}">
+{% endblock %}
+
+{% block navbar %}{% include "erpnext_enhancements/templates/includes/sf_portal_nav.html" %}{% endblock %}
+
 {% block page_content %}
-<div class="rentals-portal">
+<div class="rentals-portal sf-portal" id="sf-portal-main">
 	{% if detail %}
 		<p><a href="/rentals">&larr; {{ _("All rentals") }}</a></p>
 		<h1 class="mb-1">{{ detail.event_name or detail.name }}</h1>
-		<p class="text-muted">{{ detail.name }} &middot; <b>{{ detail.status_label }}</b>
+		<p class="text-muted">{{ detail.name }} &middot; <span class="sf-portal-chip sf-portal-chip--rent">{{ detail.status_label }}</span>
 			{% if detail.hold_expires_on %}&middot; {{ _("held until {0}").format(frappe.format(detail.hold_expires_on, {"fieldtype": "Date"})) }}{% endif %}</p>
 
 		<div class="card mb-3"><div class="card-body">
@@ -60,23 +71,23 @@
 			{% if detail.editable %}
 			<form id="rental-site-prep" data-booking="{{ detail.name }}">
 				<div class="form-row">
-					<div class="form-group col-sm-6"><label>{{ _("On-site contact") }}</label>
-						<input class="form-control" name="site_contact_name" maxlength="140" value="{{ detail.site_prep.site_contact_name }}"></div>
-					<div class="form-group col-sm-6"><label>{{ _("On-site phone") }}</label>
-						<input class="form-control" name="site_contact_phone" type="tel" maxlength="40" value="{{ detail.site_prep.site_contact_phone }}"></div>
+					<div class="form-group col-sm-6"><label for="rental-site-contact">{{ _("On-site contact") }}</label>
+						<input id="rental-site-contact" class="form-control" name="site_contact_name" maxlength="140" value="{{ detail.site_prep.site_contact_name }}"></div>
+					<div class="form-group col-sm-6"><label for="rental-site-phone">{{ _("On-site phone") }}</label>
+						<input id="rental-site-phone" class="form-control" name="site_contact_phone" type="tel" maxlength="40" value="{{ detail.site_prep.site_contact_phone }}"></div>
 				</div>
-				<div class="form-group"><label>{{ _("Surface where the fountain will stand") }}</label>
-					<select class="form-control" name="surface">
+				<div class="form-group"><label for="rental-surface">{{ _("Surface where the fountain will stand") }}</label>
+					<select id="rental-surface" class="form-control" name="surface">
 						{% for s in surfaces %}<option value="{{ s }}" {% if s == detail.site_prep.surface %}selected{% endif %}>{{ _(s) if s else _("Choose...") }}</option>{% endfor %}
 					</select></div>
-				<div class="form-group"><label>{{ _("Access: gate codes, parking, stairs") }}</label>
-					<textarea class="form-control" name="site_access" rows="2" maxlength="1000">{{ detail.site_prep.site_access }}</textarea></div>
-				<div class="form-group"><label>{{ _("Power: where is the nearest outlet?") }}</label>
-					<textarea class="form-control" name="power_source" rows="2" maxlength="1000">{{ detail.site_prep.power_source }}</textarea></div>
-				<div class="form-group"><label>{{ _("Water: where is the nearest spigot?") }}</label>
-					<textarea class="form-control" name="water_source" rows="2" maxlength="1000">{{ detail.site_prep.water_source }}</textarea></div>
-				<div class="form-group"><label>{{ _("Anything else we should know") }}</label>
-					<textarea class="form-control" name="site_prep_notes" rows="2" maxlength="1000">{{ detail.site_prep.site_prep_notes }}</textarea></div>
+				<div class="form-group"><label for="rental-site-access">{{ _("Access: gate codes, parking, stairs") }}</label>
+					<textarea id="rental-site-access" class="form-control" name="site_access" rows="2" maxlength="1000">{{ detail.site_prep.site_access }}</textarea></div>
+				<div class="form-group"><label for="rental-power">{{ _("Power: where is the nearest outlet?") }}</label>
+					<textarea id="rental-power" class="form-control" name="power_source" rows="2" maxlength="1000">{{ detail.site_prep.power_source }}</textarea></div>
+				<div class="form-group"><label for="rental-water">{{ _("Water: where is the nearest spigot?") }}</label>
+					<textarea id="rental-water" class="form-control" name="water_source" rows="2" maxlength="1000">{{ detail.site_prep.water_source }}</textarea></div>
+				<div class="form-group"><label for="rental-site-notes">{{ _("Anything else we should know") }}</label>
+					<textarea id="rental-site-notes" class="form-control" name="site_prep_notes" rows="2" maxlength="1000">{{ detail.site_prep.site_prep_notes }}</textarea></div>
 				<button class="btn btn-primary btn-sm" type="submit">{{ _("Save site details") }}</button>
 				<span class="rental-status small ml-2 text-muted" role="status"></span>
 			</form>
@@ -87,9 +98,9 @@
 
 		{% if detail.editable %}
 		<div class="card mb-3"><div class="card-body">
-			<h5>{{ _("Need to change something?") }}</h5>
+			<h5 id="rental-change-title">{{ _("Need to change something?") }}</h5>
 			<form id="rental-change" data-booking="{{ detail.name }}">
-				<div class="form-group"><textarea class="form-control" name="message" rows="3" maxlength="1000" required
+				<div class="form-group"><textarea class="form-control" name="message" aria-labelledby="rental-change-title" rows="3" maxlength="1000" required
 					placeholder="{{ _('Dates, times, the venue, or what you would like booked') }}"></textarea></div>
 				<button class="btn btn-default btn-sm" type="submit">{{ _("Send to our team") }}</button>
 				<span class="rental-status small ml-2 text-muted" role="status"></span>
@@ -105,7 +116,7 @@
 			{% for b in bookings %}
 				<a class="list-group-item list-group-item-action" href="/rentals?booking={{ b.name | urlencode }}">
 					<b>{{ b.event_name or b.name }}</b>
-					<span class="float-right text-muted">{{ b.status_label }}</span>
+					<span class="float-right sf-portal-chip sf-portal-chip--rent">{{ b.status_label }}</span>
 					<div class="small text-muted">{{ frappe.format(b.delivery_datetime, {"fieldtype": "Datetime"}) }} &ndash; {{ frappe.format(b.takedown_datetime, {"fieldtype": "Datetime"}) }}</div>
 				</a>
 			{% endfor %}
