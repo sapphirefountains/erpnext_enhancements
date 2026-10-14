@@ -65,6 +65,192 @@
    "fieldtype": "Link",
    "hidden": 1,
    "reqd": 0
+  },
+  {
+   "fieldname": "custom_aquatic_section",
+   "fieldtype": "Section Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_equipment_class",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_model_no",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_nsf_listing",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_iapmo_listing",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_spec_cut_sheet",
+   "fieldtype": "Attach",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_equipment_elec_cb",
+   "fieldtype": "Column Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_voltage",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_phase",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_hz",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_fla_amps",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_watts",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_elec_hp",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_requires_gfci",
+   "fieldtype": "Check",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_nec680_bond",
+   "fieldtype": "Check",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_filter_area_sqft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_filter_max_flow_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_filter_media",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_heater_fuel",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_heater_kw",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_heater_btu_hr",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_vgb_open_area_sqin",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_vgb_max_flow_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_vgb_rated",
+   "fieldtype": "Check",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_jet_flow_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_jet_pressure_psi",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_skimmer_max_flow_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_meter_kind",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_meter_range",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_feed_rate_gpd",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_controller_channels",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
   }
  ],
  "Purchase Invoice": [
@@ -84,6 +270,52 @@
    "fieldname": "workflow_state",
    "fieldtype": "Link",
    "hidden": 1,
+   "reqd": 0
+  }
+ ],
+ "Purchase Order": [
+  {
+   "fieldname": "custom_order_stage",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_approval_stamp_section",
+   "fieldtype": "Section Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_approved_by",
+   "fieldtype": "Link",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_approved_on",
+   "fieldtype": "Datetime",
+   "hidden": 0,
+   "reqd": 0
+  }
+ ],
+ "Purchase Receipt": [
+  {
+   "fieldname": "custom_store_run",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_receipt_photo",
+   "fieldtype": "Attach Image",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_receipt_total",
+   "fieldtype": "Currency",
+   "hidden": 0,
    "reqd": 0
   }
  ]
