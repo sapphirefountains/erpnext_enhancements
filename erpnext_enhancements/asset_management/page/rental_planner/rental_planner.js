@@ -31,6 +31,11 @@
 // bar per row, and a fleet timeline is several bookings on each fountain's row (split tasks and
 // the resource view are PRO-only). The server is still the authority on availability — the
 // booking's own save re-checks with the fountains row-locked — so nothing here enforces anything.
+//
+// The page's styles are rental_planner.css beside this file (custom pages S3.4f, v1.670.0), which
+// Frappe's page loader sends with the page. The script writes no stylesheet and no color: a bar's
+// kind, a pool cell's load and the legend are classes, and what stays inline is layout only (a
+// bar's left and width, a cell's, the day width as --rp-day).
 
 const RP = {
 	route: "rental-planner",
@@ -104,73 +109,9 @@ frappe.pages[RP.route].on_page_show = function (wrapper) {
 	}
 };
 
-const RP_STYLE = `
-.rp-wrap{padding-bottom:64px;color:var(--text-color);}
-.rp-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 12px;}
-.rp-toolbar .rp-range-label{font-weight:600;margin:0 6px;}
-.rp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--text-muted);margin:0 0 10px;}
-.rp-legend span{display:inline-flex;align-items:center;gap:5px;}
-.rp-swatch{display:inline-block;width:18px;height:10px;border-radius:3px;}
-.rp-scroll{overflow-x:auto;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);}
-.rp-row{display:flex;min-height:38px;border-bottom:1px solid var(--border-color);}
-.rp-row:last-child{border-bottom:none;}
-.rp-label{flex:0 0 190px;position:sticky;left:0;z-index:2;background:var(--card-bg);padding:6px 10px;border-right:1px solid var(--border-color);font-size:13px;line-height:1.25;}
-.rp-label small{display:block;color:var(--text-muted);font-size:11px;}
-.rp-track{position:relative;flex:0 0 auto;cursor:copy;
-  background-image:linear-gradient(to right,var(--border-color) 1px,transparent 1px);
-  background-size:var(--rp-day) 100%;}
-.rp-head .rp-track,.rp-pool .rp-track,.rp-section .rp-track{cursor:default;}
-.rp-head{position:sticky;top:0;z-index:3;background:var(--card-bg);min-height:42px;}
-.rp-day{position:absolute;top:0;bottom:0;font-size:11px;text-align:center;color:var(--text-muted);padding-top:4px;line-height:1.2;overflow:hidden;}
-.rp-day b{display:block;color:var(--text-color);font-size:12px;}
-.rp-day.rp-today b{color:var(--primary,#2490ef);}
-.rp-today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--primary,#2490ef);opacity:.55;z-index:1;pointer-events:none;}
-.rp-bar{position:absolute;top:7px;height:24px;border-radius:5px;font-size:11px;line-height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;cursor:pointer;z-index:2;box-sizing:border-box;display:block;margin:0;border:0;font-family:inherit;text-align:left;}
-.rp-bar:hover{filter:brightness(1.08);box-shadow:0 1px 4px rgba(0,0,0,.25);}
-.rp-bar:focus-visible{outline:2px solid var(--sf-focus);outline-offset:1px;z-index:4;}
-.rp-bar-text{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
-.rp-bar.rp-rental{background:#2563eb;}
-.rp-bar.rp-rental.rp-held{background:repeating-linear-gradient(45deg,#93c5fd,#93c5fd 6px,#bfdbfe 6px,#bfdbfe 12px);color:#1e3a8a;border:1px dashed #2563eb;}
-.rp-bar.rp-prep,.rp-bar.rp-turnaround{background:#94a3b8;color:#0f172a;top:12px;height:14px;line-height:14px;font-size:10px;}
-.rp-bar.rp-booking{background:#d97706;}
-.rp-bar.rp-out_of_service{background:repeating-linear-gradient(45deg,#dc2626,#dc2626 6px,#b91c1c 6px,#b91c1c 12px);}
-.rp-section .rp-label{font-weight:600;background:var(--subtle-fg,var(--control-bg));}
-.rp-section{min-height:28px;background:var(--subtle-fg,var(--control-bg));}
-.rp-cell{position:absolute;top:6px;bottom:6px;border-radius:4px;font-size:11px;text-align:center;display:flex;align-items:center;justify-content:center;}
-.rp-cell.rp-low{background:rgba(37,99,235,.12);}
-.rp-cell.rp-mid{background:rgba(217,119,6,.22);}
-.rp-cell.rp-full{background:rgba(220,38,38,.28);font-weight:600;}
-.rp-empty{padding:28px;text-align:center;color:var(--text-muted);}
-.rp-steps{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px;}
-.rp-step{padding:7px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);font-size:13px;color:var(--text-muted);}
-.rp-step.rp-done{color:var(--text-color);cursor:pointer;}
-button.rp-step{font-family:inherit;line-height:inherit;margin:0;}
-.rp-step:focus-visible{outline:2px solid var(--sf-focus);outline-offset:2px;}
-.rp-step.rp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.rp-card{max-width:860px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:12px;}
-.rp-card h4{margin:0 0 10px;font-size:15px;}
-.rp-nav{max-width:860px;display:flex;justify-content:space-between;gap:8px;}
-.rp-pick{display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border-color);}
-.rp-pick:last-child{border-bottom:none;}
-.rp-pick .rp-pick-main{flex:1;min-width:0;}
-.rp-pick .rp-why{font-size:12px;color:var(--text-muted);}
-.rp-pick input[type=number]{width:96px;}
-.rp-pick.rp-taken{opacity:.6;}
-.rp-pill{display:inline-block;font-size:11px;border-radius:10px;padding:1px 8px;margin-left:6px;}
-.rp-pill.rp-free{background:#dcfce7;color:#166534;}
-.rp-pill.rp-no{background:#fee2e2;color:#991b1b;}
-.rp-summary dt{color:var(--text-muted);font-weight:normal;font-size:12px;margin-top:8px;}
-.rp-summary dd{margin:0;}
-.rp-total{font-size:18px;font-weight:600;margin-top:10px;}
-@media (max-width:640px){.rp-label{flex-basis:120px;}}
-`;
-
 class RentalPlanner {
 	constructor(page) {
 		this.page = page;
-		if (!document.getElementById("rp-style")) {
-			$("<style id='rp-style'>").text(RP_STYLE).appendTo(document.head);
-		}
 		this.$body = $('<div class="rp-wrap"></div>').appendTo(page.main);
 		this.draft = this.load_draft();
 		this.board_start = frappe.datetime.get_today();
@@ -380,7 +321,7 @@ class RentalPlanner {
 		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => this.move_board(frappe.datetime.get_today())).appendTo($bar);
 		$('<button type="button" class="btn btn-default btn-sm">').text("›").attr({ title: __("Later"), "aria-label": __("Later") }).on("click", () => shift(1)).appendTo($bar);
 		this.$range_label = $('<span class="rp-range-label"></span>').appendTo($bar);
-		const $range = $('<select class="form-control input-sm" style="width:auto"></select>').appendTo($bar);
+		const $range = $('<select class="form-control input-sm rp-range"></select>').appendTo($bar);
 		[[14, __("2 weeks")], [31, __("Month")], [92, __("Quarter")]].forEach(([days, label]) =>
 			$("<option>").val(days).text(label).prop("selected", days === this.board_days).appendTo($range)
 		);
@@ -395,15 +336,16 @@ class RentalPlanner {
 		});
 
 		const $legend = $('<div class="rp-legend"></div>').appendTo(this.$body);
+		// Each swatch carries its bar's own classes, so the rule that paints a bar paints its key.
 		[
-			["#2563eb", __("Confirmed rental")],
-			["repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#bfdbfe 4px,#bfdbfe 8px)", __("Held (tentative)")],
-			["#94a3b8", __("Prep / cleaning")],
-			["#d97706", __("Other booking")],
-			["#dc2626", __("Out of service")],
-		].forEach(([color, label]) => {
+			["rp-rental", __("Confirmed rental")],
+			["rp-rental rp-held", __("Held (tentative)")],
+			["rp-prep", __("Prep / cleaning")],
+			["rp-booking", __("Other booking")],
+			["rp-out_of_service", __("Out of service")],
+		].forEach(([kind, label]) => {
 			const $s = $("<span>").appendTo($legend);
-			$('<i class="rp-swatch">').css("background", color).appendTo($s);
+			$('<i class="rp-swatch" aria-hidden="true"></i>').addClass(kind).appendTo($s);
 			$s.append(document.createTextNode(label));
 		});
 		$('<span>').text(__("Click an empty day on a fountain to start a rental there.")).appendTo($legend);
@@ -518,7 +460,8 @@ class RentalPlanner {
 			const $d = $('<div class="rp-day"></div>').css({ left: i * dw + "px", width: dw + "px" });
 			$("<b>").text(date.getDate()).appendTo($d);
 			if (dw >= 30) $d.append(document.createTextNode(date.toLocaleDateString(undefined, { weekday: "short" })));
-			if (i === today_index) $d.addClass("rp-today");
+			// Today is marked by a bar and its weight, and says so to a screen reader.
+			if (i === today_index) $d.addClass("rp-today").append($('<span class="rp-sr"></span>').text(__("Today")));
 			$d.attr("title", frappe.datetime.str_to_user(rp_ymd(date)));
 			$d.appendTo($days);
 		}
@@ -582,12 +525,14 @@ class RentalPlanner {
 			pool.used.forEach((used, i) => {
 				if (!used) return;
 				const ratio = pool.capacity ? used / pool.capacity : 1;
-				$('<div class="rp-cell"></div>')
+				const $cell = $('<div class="rp-cell"></div>')
 					.addClass(ratio >= 1 ? "rp-full" : ratio >= 0.6 ? "rp-mid" : "rp-low")
 					.css({ left: i * dw + 1 + "px", width: dw - 2 + "px" })
 					.text(dw >= 30 ? `${used}/${pool.capacity}` : used)
 					.attr("title", __("{0} of {1} out", [used, pool.capacity]))
 					.appendTo($track);
+				// The shade is not the only thing that says a pool is full or nearly so.
+				if (ratio >= 0.6) $('<span class="rp-sr"></span>').text(ratio >= 1 ? __("full") : __("nearly full")).appendTo($cell);
 			});
 		});
 	}
@@ -717,7 +662,7 @@ class RentalPlanner {
 			])
 		);
 
-		const $package = $('<div class="rp-package" style="max-width:420px"></div>').appendTo(this.$card);
+		const $package = $('<div class="rp-package"></div>').appendTo(this.$card);
 		const package_field = frappe.ui.form.make_control({
 			parent: $package,
 			df: {
@@ -822,7 +767,7 @@ class RentalPlanner {
 			});
 		});
 
-		$('<h5 style="margin-top:16px"></h5>').text(__("Accessories")).appendTo($l);
+		$('<h5 class="rp-subhead"></h5>').text(__("Accessories")).appendTo($l);
 		if (!data.pools.length) {
 			$l.append($('<p class="text-muted">').text(__("No accessory pools yet.")));
 		}
@@ -953,7 +898,7 @@ class RentalPlanner {
 		const item = (label, value, step) => {
 			const $dt = $("<dt></dt>").text(label).appendTo($dl);
 			if (step) {
-				$('<a href="#" style="margin-left:8px;font-size:11px"></a>')
+				$('<a href="#" class="rp-edit"></a>')
 					.text(__("Edit"))
 					.on("click", (e) => {
 						e.preventDefault();
@@ -1006,7 +951,7 @@ class RentalPlanner {
 		show_total();
 
 		this.$next.empty();
-		const $buttons = $('<div style="display:flex;gap:8px;flex-wrap:wrap"></div>').appendTo(this.$next);
+		const $buttons = $('<div class="rp-actions"></div>').appendTo(this.$next);
 		$('<button class="btn btn-default"></button>')
 			.text(__("Book as Confirmed"))
 			.on("click", () => this.create("Confirmed"))
@@ -1055,7 +1000,7 @@ class RentalPlanner {
 					: __("The fountains are booked and their calendars are firm.")
 			)
 			.appendTo($card);
-		const $buttons = $('<div style="display:flex;gap:8px;flex-wrap:wrap"></div>').appendTo($card);
+		const $buttons = $('<div class="rp-actions"></div>').appendTo($card);
 		$('<button class="btn btn-primary"></button>')
 			.text(__("Open Booking"))
 			.on("click", () => frappe.set_route("Form", "Rental Booking", c.name))
