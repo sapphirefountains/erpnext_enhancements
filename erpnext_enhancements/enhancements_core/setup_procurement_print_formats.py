@@ -76,7 +76,7 @@ _DASH = '<span style="color:' + ps.INK_700 + ';">&mdash;</span>'
 
 
 def _date(expr):
-	return "{{ frappe.format(" + expr + ', {"fieldtype": "Date"}) }}'
+	return "{{ ps_date(" + expr + ') }}'
 
 
 def _date_or_dash(expr):
@@ -515,7 +515,7 @@ _PAYMENT_TERMS = (
       <div>
         {%- if term_label and term_label != doc.payment_terms_template %}{{ term_label | e }} &mdash; {% endif %}
         {{- frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
-        {%- if term.due_date %} due {{ frappe.format(term.due_date, {"fieldtype": "Date"}) }}{% endif %}
+        {%- if term.due_date %} due {{ ps_date(term.due_date) }}{% endif %}
       </div>
       {%- endfor %}
     {%- else %}

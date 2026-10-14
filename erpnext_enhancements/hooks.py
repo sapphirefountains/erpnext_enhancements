@@ -2064,6 +2064,11 @@ jinja = {
 		"erpnext_enhancements.print_style.ps_line",
 		"erpnext_enhancements.print_style.ps_uom",
 		"erpnext_enhancements.print_style.ps_state",
+		# Form kit P3.4: dates in the print style every channel shares (utils.normalize):
+		# 10/14/2026, 10/14/2026 2:00 PM, 2:00 PM. Not frappe.format, which prints 24-hour.
+		"erpnext_enhancements.print_style.ps_date",
+		"erpnext_enhancements.print_style.ps_datetime",
+		"erpnext_enhancements.print_style.ps_time",
 		# v1.535.0: what a format cannot find for itself. The party block (name, address,
 		# Attn, phone, email) walks the document -> its Contact -> its Address -> the party
 		# record, because this site keeps phones and emails in the app's own custom fields

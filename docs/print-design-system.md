@@ -173,6 +173,7 @@ where a value *comes from*, when the template cannot find it itself, lives in
 | `ps_line(name, description)` | Bold item name, description under it only when it adds something | ERPNext copies the name into an empty description; printing both stutters |
 | `ps_uom(uom)` | `Nos` → `ea` | "Nos" (ERPNext's "numbers") is on every sales line and means nothing to a customer |
 | `ps_phone(value)` | Ten North American digits → `(801) 555-0100`; anything else as stored | Phones are stored as bare digits about as often as formatted |
+| `ps_date(value)` / `ps_datetime(value)` / `ps_time(value)` | `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM` (`utils.normalize`, form kit P3.4) | `frappe.format` follows System Settings and prints a 24-hour time; print, email, SMS and the Desk now share one date style. `test_print_style` fails on a print template that formats a date by hand |
 | `ps_state(docstatus)` | Red `DRAFT` / `CANCELLED`, nothing when submitted | Frappe's Draft heading comes from macros a custom format never calls |
 | `ps_party(doc)` | The party block: name, address, `Attn:`, phone, email | See below |
 | `ps_rfq_suppliers(doc)` | One party block per supplier the RFQ is addressed to | An RFQ names its suppliers in a child table |
