@@ -74,6 +74,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     checked.
   - `scripts/test_planner_url_filters.js` gains the Utilization view's route and address.
 
+### Fixed (from the review of #1302, before merge)
+
+- **Utilization answers to the report's access.** The view's button shows only when the boot says
+  the report would open: `frappe.boot.allowed_reports` lists Crew Utilization and
+  `frappe.model.can_get_report("Task")` is true. Those are the two gates of v16.50's
+  `query_report.get_report_doc`. Someone who arrives by the address anyway is not asked for
+  anything and gets the no-access panel: "You don't have access to the Crew Utilization report."
+  The rows are now asked for through the kit's new `quiet_call`, sf_kit's call on its quiet path.
+  That path shows no frappe dialog, so a server refusal (403 / PermissionError) is the same panel
+  instead of frappe's red "Not permitted" modal over a "could not be loaded" note. The kit now also
+  carries sf_kit's `state_html`.
+- **A toolbar menu closes on a route change** (the kit's `on_route_change`) and when the planner
+  page hides (`tb_close_menus` on the page's own `hide`). Its `pointerdown`, `resize` and `scroll`
+  listeners go with it. Before, it stayed on `<body>` over the next screen.
+- **Tab in a menu** closes it and gives focus back to its button without stopping the Tab, so the
+  browser moves on to the control after the button. The list sits at the end of `<body>`, so the
+  Tab used to land at the end of the page.
+- **The phone sheet's focus trap** counts only controls that can take focus: enabled, not
+  `[hidden]` and laid out (`offsetParent`). Tab no longer escapes onto the Project and PM filters
+  the Utilization view hides.
+- **The Maintenance Planner's Overdue panel** is redrawn on every reload while it is open, so a
+  visit moved on the calendar behind it leaves the list.
+- **Utilization's labels.** *Over* and *Near full* mark Planned % (the column was titled
+  "Utilization") and never Actual %. They are decided on the raw value as the report decides
+  them, so 100.4% is Over though it reads 100%. A note explains that the first and last weeks
+  count only the month's days.
+- **Ctrl+Z on Utilization** is not taken by the planner, since there is no Undo there.
+- **No empty menus.** A menu with nothing for the screen on show is hidden. Display and Edit are
+  hidden on Utilization, where Edit now offers nothing: Draft mode and Undo do not apply.
+
 ## [1.683.0] - 2026-10-14
 
 Form kit P8.1 (TASK-2026-02790, under P8 "Procurement flows"): **a guided Item flow.** A buyer can

@@ -483,6 +483,58 @@ test("A menu closes on a click elsewhere, on Tab, and when another opens", () =>
 	check("ArrowDown on the button opens it at the first", doc.activeElement === second.items()[0], true);
 });
 
+test("A route change closes an open menu and takes its listeners with it; Tab leaves from the button", () => {
+	const kit = loadKit();
+	const doc = makeDoc();
+	const b = browser();
+	const changes = [];
+	const toolbar = kit.create_toolbar({ doc, win: b.win, t: (s) => s, on_route_change: (fn) => changes.push(fn) });
+	const bar = doc.createElement("div");
+	doc.body.appendChild(bar);
+	const button = doc.createElement("button");
+	const after = doc.createElement("button");
+	bar.appendChild(button);
+	bar.appendChild(after);
+	const handle = toolbar.menu(button, { label: "Edit", items: () => [{ label: "A", on_click: () => null }] });
+	const pointer = () => doc.listeners.filter((l) => l.type === "pointerdown").length;
+	button.click();
+	check("open: it listens for a click elsewhere", pointer(), 1);
+	changes.forEach((fn) => fn());
+	check("a route change closes it", [handle.is_open(), !!handle.element(), button.getAttribute("aria-expanded")], [false, false, "false"]);
+	check("and removes its document listener", pointer(), 0);
+	button.click();
+	toolbar.close_all("route");
+	check("a page hiding (close_all) closes it too", [handle.is_open(), pointer()], [false, 0]);
+	button.click();
+	const tab = key(handle.items()[0], "Tab");
+	check("Tab closes it with focus back on its button", [handle.is_open(), doc.activeElement === button], [false, true]);
+	check("and lets the browser's Tab go on from there (to the control after it)", tab.defaultPrevented, false);
+});
+
+test("The sheet's focus trap skips what is hidden or disabled", () => {
+	const { doc, toolbar } = toolbarEnv();
+	const shown = doc.createElement("select");
+	const hidden = doc.createElement("select");
+	hidden.offsetParent = null; // display: none (the Project filter on the Utilization view)
+	const off = doc.createElement("input");
+	off.disabled = true;
+	const sheet = toolbar.sheet({
+		title: "x",
+		top: (slot) => [shown, hidden, off].forEach((el) => slot.appendChild(el)),
+		sections: () => [{ title: "Edit", items: [{ label: "Draft mode", checked: false, on_click: () => null }] }],
+	});
+	const last = sheet.body.querySelectorAll(".pk-sheet-item")[0];
+	const close = sheet.el.querySelector(".pk-sheet-close");
+	last.focus();
+	const forward = key(last, "Tab");
+	check("Tab on the last usable control wraps to the first", [forward.defaultPrevented, doc.activeElement === close], [true, true]);
+	const back = key(close, "Tab", { shiftKey: true });
+	check("Shift+Tab on the first wraps to the last usable one, not the hidden field", [back.defaultPrevented, doc.activeElement === last], [true, true]);
+	shown.focus();
+	const middle = key(shown, "Tab");
+	check("in between, the browser moves focus itself", middle.defaultPrevented, false);
+});
+
 test("tidy drops headings and dividers that say nothing", () => {
 	const { kit } = toolbarEnv();
 	const out = kit.tidy([
@@ -1054,8 +1106,8 @@ test("Project Planner: Utilization is a view with a route", () => {
 	check("landing: the filters, the mode, the load", steps, ["filters", ["mode", "utilization"], "load"]);
 	check("the view", [pp.view, pp.anchor], ["utilization", "2026-10-01"]);
 	check(
-		"a week over capacity carries its word, not only a color",
-		[pp.util_pct_html(112), pp.util_pct_html(80), pp.util_pct_html(40), pp.util_pct_html(null)],
+		"a week over capacity carries its word, not only a color (Planned %)",
+		[pp.util_pct_html(112, true), pp.util_pct_html(80, true), pp.util_pct_html(40, true), pp.util_pct_html(null, true)],
 		[
 			'<span class="pp-chip pp-red">112% · Over</span>',
 			'<span class="pp-chip pp-amber">80% · Near full</span>',
@@ -1063,6 +1115,116 @@ test("Project Planner: Utilization is a view with a route", () => {
 			'<span class="pp-util-none">No hours</span>',
 		]
 	);
+	check(
+		"the thresholds are the report's, on the raw value: 100.4% reads 100% and is over",
+		[pp.util_pct_html(100.4, true), pp.util_pct_html(100, true), pp.util_pct_html(74.6, true)],
+		['<span class="pp-chip pp-red">100% · Over</span>', '<span class="pp-chip pp-amber">100% · Near full</span>', "75%"]
+	);
+	check("Actual % is never flagged", [pp.util_pct_html(130, false), pp.util_pct_html(90, false)], ["130%", "90%"]);
+});
+
+// A Utilization page with the pieces render_utilization draws into, and a kit whose quiet call is
+// recorded and answers as told.
+function utilizationPage(answer, access) {
+	const env = projectPlanner();
+	const { pp, $, frappe, ctx } = env;
+	access = access || {};
+	frappe.boot.allowed_reports = access.reports === undefined ? { "Crew Utilization": {} } : access.reports;
+	frappe.boot.user = { can_get_report: access.task === false ? [] : ["Task"] };
+	frappe.model = { can_get_report: (dt) => frappe.boot.user.can_get_report.indexOf(dt) !== -1 };
+	const asked = [];
+	const dialogs = [];
+	frappe.call = (opts) => (asked.push(["frappe.call", opts.method]), Promise.resolve({}));
+	frappe.msgprint = (m) => dialogs.push(m);
+	ctx.window.planner_kit = {
+		quiet_call: (method, args) => (asked.push(["quiet", method, args.report_name]), answer()),
+		state_html: (kind, opts) => `<div class="sf-state sf-state--${kind}"><p class="sf-state-title">${opts.title}</p></div>`,
+	};
+	pp.view = "utilization";
+	pp.anchor = "2026-10-01";
+	pp.request = 0;
+	pp.p6a_require = (fn) => Promise.resolve().then(fn);
+	pp.range = () => ({ start: { format: () => "2026-10-01" }, end: { format: () => "2026-10-31" } });
+	pp.title = () => "October 2026";
+	pp.take_title_focus = () => null;
+	pp.$title = $("<span></span>");
+	pp.$view_buttons = { week: $("<button></button>"), utilization: $("<button></button>") };
+	pp.$body = $("<div></div>");
+	pp.$grid_wrap = $("<div></div>");
+	pp.p6a_route = (fn) => fn();
+	return Object.assign(env, { asked, dialogs });
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test("Project Planner: Utilization's button and panel answer to the report's access", async () => {
+	const ok = utilizationPage(() => Promise.resolve({ result: [] }));
+	check("both gates pass: offered", ok.pp.util_allowed(), true);
+	const no_task = utilizationPage(() => Promise.resolve({}), { task: false });
+	check("no report permission on Task: not offered", no_task.pp.util_allowed(), false);
+	const no_report = utilizationPage(() => Promise.resolve({}), { reports: { "Other Report": {} } });
+	check("the report not among the user's: not offered", no_report.pp.util_allowed(), false);
+	no_report.pp.init_toolbar();
+	check("the view switcher hides its button", no_report.pp.$view_buttons.utilization.nodes[0].style.display, "none");
+	ok.pp.init_toolbar();
+	check("and shows it to someone it lets in", ok.pp.$view_buttons.utilization.nodes[0].style.display, "");
+
+	await no_report.pp.load_utilization();
+	await settle();
+	const text = no_report.pp.$grid_wrap.nodes[0].querySelector(".pp-util-denied");
+	check("arrived by the address anyway: the no-access panel", !!text && text.innerHTML.includes("You don't have access to the Crew Utilization report."), true);
+	check("the kit's no-access markup", !!text && text.innerHTML.includes("sf-state--no-access"), true);
+	check("and nothing asked of the server, no dialog", [no_report.asked, no_report.dialogs], [[], []]);
+});
+
+test("Project Planner: a refusal from the server is a panel, not frappe's red dialog", async () => {
+	const page = utilizationPage(() => Promise.reject({ status: 403, exc_type: "PermissionError", message: "No" }));
+	await page.pp.load_utilization();
+	await settle();
+	check("asked through the kit's quiet call only", page.asked, [["quiet", "frappe.desk.query_report.run", "Crew Utilization"]]);
+	check("no dialog", page.dialogs, []);
+	check("the no-access panel", !!page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-denied"), true);
+	const broken = utilizationPage(() => Promise.reject({ status: 0, exc_type: "", message: "offline" }));
+	await broken.pp.load_utilization();
+	await settle();
+	check(
+		"any other failure says it could not be loaded",
+		broken.pp.$grid_wrap.nodes[0].textContent.includes("Utilization could not be loaded"),
+		true
+	);
+});
+
+test("Project Planner: Utilization's table flags Planned % only, and explains its partial weeks", async () => {
+	const rows = [
+		{ resource: "R1", label: "Austin", group: "Field", period: "Week of Sep 28", capacity: 24, booked: 24.1, actual: 30, utilization: 100.4, actual_pct: 125 },
+		{ resource: "R1", label: "Austin", group: "Field", period: "Week of Oct 5", capacity: 40, booked: 10, actual: 8, utilization: 25, actual_pct: 20 },
+	];
+	const page = utilizationPage(() => Promise.resolve({ result: rows }));
+	await page.pp.load_utilization();
+	await settle();
+	const html = page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-scroll").innerHTML;
+	check("Planned % past 100 (raw 100.4) is Over", html.includes('<span class="pp-chip pp-red">100% · Over</span>'), true);
+	check("Actual % at 125 is not flagged", [html.includes("125%"), html.includes("125% · Over")], [true, false]);
+	check("the column says Planned %", html.includes("Planned %"), true);
+	const note = page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-note");
+	check("a note explains the partial first and last weeks", !!note && note.textContent.includes("first and last weeks"), true);
+});
+
+test("Project Planner: on Utilization, Ctrl+Z is not the planner's and empty menus are not offered", () => {
+	const { pp } = projectPlanner();
+	const undone = [];
+	pp.undo = () => undone.push(1);
+	pp.view = "utilization";
+	check("Ctrl+Z on Utilization: not taken, nothing undone", [pp.p6b_run_key("undo"), undone.length], [false, 0]);
+	pp.view = "week";
+	check("Ctrl+Z on the week still undoes", [pp.p6b_run_key("undo"), undone.length], [true, 1]);
+	pp.view = "utilization";
+	pp.tb_render();
+	const off = (name) => pp.tb.$menus[name].hasClass("pp-tb-off");
+	check("Display and Edit have nothing there and are hidden; Views and Print stay", [off("views"), off("display"), off("edit"), off("print")], [false, true, true, false]);
+	pp.view = "week";
+	pp.tb_render();
+	check("back on the week, all four", [off("views"), off("display"), off("edit"), off("print")], [false, false, false, false]);
 });
 
 test("Project Planner: the phone's sheet takes the filters in and gives them back", () => {
@@ -1191,7 +1353,9 @@ test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 	// The Overdue chip lists the overdue visits in a side panel; one opens its visit.
 	let drawer = null;
 	const opened = [];
-	mp.p6a = { kit: { drawer: { open: (o) => (drawer = o) } } };
+	const bodies = [];
+	const panel = { open: true, is_open: () => panel.open, set_body: (html) => bodies.push(html) };
+	mp.p6a = { kit: { drawer: { open: (o) => ((drawer = o), panel) } } };
 	mp.open_card = (card) => opened.push(card.key);
 	mp.by_key = { v1: mp.data.visits[0] };
 	mp.tb_open_overdue();
@@ -1199,6 +1363,13 @@ test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 	const row = { closest: () => ({ getAttribute: () => "v1" }) };
 	drawer.on_click({ target: row });
 	check("a row opens its visit", opened, ["v1"]);
+	// Moved on the calendar behind it: the planner reloads, and the open list follows.
+	mp.data.visits[0].overdue = false;
+	mp.tb_render();
+	check("a reload while it is open redraws the list", [bodies.length, bodies[0].includes("No overdue visits on screen.")], [1, true]);
+	panel.open = false;
+	mp.tb_render();
+	check("closed, it is left alone", bodies.length, 1);
 
 	const calls = record(mp, ["c1_publish", "c1_discard"]);
 	mp.data.drafts = { count: 2, stale: [] };

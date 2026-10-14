@@ -277,10 +277,10 @@ class TestUtilizationView(unittest.TestCase):
 		self.assertIn('[PP.util_view, __("Utilization")],', _method(code, "build_shell"))
 		load = _obj_method(block, "load_utilization")
 		self.assertIn('run: "frappe.desk.query_report.run",', block)
-		self.assertIn(
-			"frappe.call({ method: PPU.run, args: { report_name: PP4.report, filters: JSON.stringify(filters) } })",
-			load,
-		)
+		self.assertIn("const args = { report_name: PP4.report, filters: JSON.stringify(filters) };", load)
+		# Through the kit's quiet call, so a refusal is the page's no-access panel, not a dialog.
+		self.assertIn("kit.quiet_call(PPU.run, args)", load)
+		self.assertIn("if (!this.util_allowed()) {", load)
 		render = _obj_method(block, "render_utilization")
 		self.assertIn('frappe.set_route("query-report", PP4.report, report)', render)
 		self.assertIn("!this.group || row.group === this.group", render)
@@ -340,7 +340,7 @@ class TestHouseRules(unittest.TestCase):
 			"Labor forecast",
 			"Hours worked",
 			"Vehicles and assets",
-			"Utilization",
+			"Planned %",
 			"By person",
 		):
 			self.assertIn(f'__("{text}"', block, text)

@@ -148,6 +148,7 @@
  * the heatmap or Utilization. No chip, no chip row. */
 .pp-undo.pp-empty,
 .pp-undo.pp-tb-off,
+.pp-tb-menu.pp-tb-off,
 .pp-tb-alerts.pp-tb-empty {
 	display: none;
 }
@@ -1258,6 +1259,13 @@ body.pp-drag-active * {
 }
 
 .pp-util-none {
+	color: var(--sf-text-muted);
+}
+
+/* Why the first and last weeks look light: the report clips them to the month. */
+.pp-util-note {
+	margin: 6px 0 0;
+	font-size: 12px;
 	color: var(--sf-text-muted);
 }
 

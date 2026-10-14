@@ -28,7 +28,7 @@
  * aria-expanded; the list is role="menu" with menuitem / menuitemcheckbox / menuitemradio items
  * (aria-checked, and a check mark that is not color alone); ArrowDown/ArrowUp move (and wrap),
  * Home/End jump, Esc closes and gives focus back to the button, Tab closes and lets focus go on, and
- * a click anywhere else closes it. An item closes the menu first and then runs, so an item may open a
+ * a click anywhere else or a route change closes it. An item closes the menu first and then runs, so an item may open a
  * drawer or a print window (the click is still the user activation a pop-up needs).
  *
  * A menu pushes NO history entry: it is part of the toolbar, not a screen, and it closes on any click
@@ -272,6 +272,11 @@ export function create_toolbar(env) {
 					if (typeof e.stopPropagation === "function") e.stopPropagation();
 					close("escape");
 				} else if (e.key === "Tab") {
+					// The list sits at the end of <body>, so the browser's own Tab would leave for the end
+					// of the page. Focus goes back to the button first and the Tab is not stopped: the
+					// browser then moves on from the button, to the control after it (or, with Shift,
+					// before it), as if the menu had never been open.
+					focus(button);
 					close("tab");
 				}
 			});
@@ -339,6 +344,14 @@ export function create_toolbar(env) {
 	// ------------------------------------------------------------------ the phone's sheet
 
 	let open_sheet = null;
+
+	// Enabled, not hidden (itself or an ancestor), and laid out (offsetParent is null for display:
+	// none, here or above; a fixed-position element has none either, but nothing in the sheet is).
+	function focusable_now(node) {
+		if (!node || node.disabled || node.hidden) return false;
+		if (typeof node.closest === "function" && node.closest("[hidden]")) return false;
+		return node.offsetParent !== null;
+	}
 
 	function sheet(opts) {
 		opts = opts || {};
@@ -474,7 +487,9 @@ export function create_toolbar(env) {
 			// Keep Tab inside the sheet while it is open (it is modal).
 			if (e.key !== "Tab") return;
 			const all = [close_button].concat(Array.from(el.querySelectorAll ? el.querySelectorAll("button, select, input, [tabindex='0']") : []));
-			const usable = all.filter((node, index) => all.indexOf(node) === index && !node.disabled);
+			// Only what can take focus: a field the page has hidden (the Project filter on the
+			// Utilization view) is in the sheet but not on screen, and Tab must not escape onto it.
+			const usable = all.filter((node, index) => all.indexOf(node) === index && focusable_now(node));
 			if (usable.length < 2) return;
 			const first = usable[0];
 			const last = usable[usable.length - 1];
@@ -513,6 +528,18 @@ export function create_toolbar(env) {
 		if (guard) guard.open(overlay);
 		focus(close_button);
 		return handle;
+	}
+
+	// A route change (another week, view or page) closes an open menu: its list is on <body>, and
+	// the screen it was for has gone. A page hiding calls close_all itself.
+	if (typeof env.on_route_change === "function") {
+		try {
+			env.on_route_change(() => {
+				if (open_menu) open_menu.close("route");
+			});
+		} catch (e) {
+			warn(e);
+		}
 	}
 
 	return {

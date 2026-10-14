@@ -6934,6 +6934,8 @@ const PP6B_METHODS = {
 			return true;
 		}
 		if (action === "undo") {
+			// Utilization changes nothing and offers no Undo (v1.687.0): the key is not the planner's there.
+			if (this.view === PP.util_view) return false;
 			this.undo();
 			return true;
 		}
@@ -10590,6 +10592,22 @@ const PPTB_METHODS = {
 			.appendTo(this.$toolbar);
 		$("<span></span>").text(__("Filters and tools")).appendTo(this.$tb_more);
 		this.$tb_more_count = $('<span class="pp-tb-count" aria-hidden="true"></span>').hide().appendTo(this.$tb_more);
+		// Utilization's button only for someone the report would let in (PPU's util_allowed).
+		const util_button = this.$view_buttons && this.$view_buttons[PP.util_view];
+		if (util_button) util_button.toggle(this.util_allowed());
+		// A menu or the sheet left open when the page hides (another page) closes with it; a route
+		// change of the planner's own closes a menu through the kit (toolbar.js).
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			wrapper.on("hide", (e) => {
+				if (e.target === wrapper[0]) this.tb_close_menus();
+			});
+		}
+	},
+
+	tb_close_menus() {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar) kit.toolbar.close_all("route");
 	},
 
 	// The kit has loaded (6A's p6a_ready): the buttons become menus.
@@ -10646,6 +10664,8 @@ const PPTB_METHODS = {
 	},
 
 	tb_edit_items() {
+		// Utilization edits nothing: no Draft mode, no Undo, so no Edit menu at all (tb_render).
+		if (this.view === PP.util_view) return [];
 		const items = [
 			{
 				label: __("Draft mode"),
@@ -10801,7 +10821,19 @@ const PPTB_METHODS = {
 		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
 		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
 		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
+		// A menu with nothing for this screen is not offered (Display and Edit on Utilization).
+		this.tb_menu_list().forEach(([name]) => {
+			const $button = this.tb.$menus[name];
+			if ($button) $button.toggleClass("pp-tb-off", !this.tb_kit_tidy(this.tb_items(name)).length);
+		});
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
+	},
+
+	// The items a menu would show (headings and dividers with nothing under them dropped).
+	tb_kit_tidy(items) {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar && typeof kit.toolbar.tidy === "function") return kit.toolbar.tidy(items);
+		return (items || []).filter((item) => item && !item.divider && !item.heading);
 	},
 
 	// ------------------------------------------------------------------ the phone's sheet
@@ -10878,45 +10910,86 @@ Object.assign(ProjectPlanner.prototype, PPTB_METHODS);
 // Project and Project manager do not apply to a person's whole week, so they are hidden here and kept
 // in the address for the next calendar view. "Open the full report" opens the report on the same
 // month and group, for its chart and its split of booked hours.
+//
+// Who may see it is the report's own rule (query_report.get_report_doc: the Report's roles, then
+// "report" permission on its ref doctype, Task). The view's button shows only for someone the boot
+// says passes both (util_allowed), and anyone who arrives by the address anyway gets a no-access
+// panel, not frappe's red dialog: the rows are asked for through the kit's quiet call, which shows
+// no dialog of its own, and a refusal is drawn in the page.
 
 const PPU = {
 	run: "frappe.desk.query_report.run",
 	granularity: "Week",
+	ref_doctype: "Task",
 };
 
 const PPU_METHODS = {
+	// The report's two gates, as the boot knows them (v16.50): allowed_reports lists the reports the
+	// user's roles open, and can_get_report the doctypes they may report on. A boot without either
+	// (an older Desk) leaves the server to decide.
+	util_allowed() {
+		const boot = frappe.boot || {};
+		const reports = boot.allowed_reports;
+		if (reports && typeof reports === "object" && !Object.prototype.hasOwnProperty.call(reports, PP4.report)) {
+			return false;
+		}
+		try {
+			if (frappe.model && typeof frappe.model.can_get_report === "function") {
+				return !!frappe.model.can_get_report(PPU.ref_doctype);
+			}
+		} catch (e) {
+			// No can_get_report list on this boot: the server's answer decides.
+		}
+		return true;
+	},
+
 	load_utilization() {
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
 		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
-		this.$body.addClass("pp-loading");
 		const filters = { from_date: pp_ymd(start), to_date: pp_ymd(end), granularity: PPU.granularity };
-		return Promise.resolve(
-			frappe.call({ method: PPU.run, args: { report_name: PP4.report, filters: JSON.stringify(filters) } })
-		)
-			.then((r) => {
+		if (!this.util_allowed()) {
+			// Arrived by the address without access: say so, and ask the server nothing.
+			this.util = { denied: true, filters, rows: [] };
+			this.render_utilization();
+			return Promise.resolve();
+		}
+		this.$body.addClass("pp-loading");
+		const args = { report_name: PP4.report, filters: JSON.stringify(filters) };
+		// The kit's quiet call (sf_kit's call on its quiet path) shows no dialog: a refusal is the
+		// page's to draw. Before the kit has loaded it is waited for; without it, a plain call.
+		return this.p6a_require(() => {
+			const kit = window.planner_kit;
+			return kit && typeof kit.quiet_call === "function"
+				? kit.quiet_call(PPU.run, args)
+				: Promise.resolve(frappe.call({ method: PPU.run, args })).then((r) => r && r.message);
+		})
+			.then((answer) => {
 				if (token !== this.request) return;
 				this.$body.removeClass("pp-loading");
-				const answer = (r && r.message) || {};
+				answer = answer || {};
 				this.util = { filters, rows: Array.isArray(answer.result) ? answer.result : [] };
 				this.render_utilization();
 			})
-			.catch(() => {
+			.catch((err) => {
 				if (token !== this.request) return;
 				this.$body.removeClass("pp-loading");
-				this.util = null;
+				const refused = !!err && (err.exc_type === "PermissionError" || err.status === 403);
+				this.util = refused ? { denied: true, filters, rows: [] } : null;
 				this.render_utilization();
 			});
 	},
 
-	// A percentage as text, and a chip with its word when it needs attention.
-	util_pct_html(value) {
+	// A percentage as text. With `flag` (Planned %), a chip with its word when it needs attention,
+	// decided on the raw value as the report decides it: 100.4% is over, though it reads "100%".
+	util_pct_html(value, flag) {
 		if (value == null || value === "") return `<span class="pp-util-none">${pp_esc(__("No hours"))}</span>`;
-		const pct = Math.round(Number(value) || 0);
-		if (pct > 100) return `<span class="pp-chip pp-red">${pp_esc(__("{0}% · Over", [pct]))}</span>`;
-		if (pct >= 75) return `<span class="pp-chip pp-amber">${pp_esc(__("{0}% · Near full", [pct]))}</span>`;
+		const raw = Number(value) || 0;
+		const pct = Math.round(raw);
+		if (flag && raw > 100) return `<span class="pp-chip pp-red">${pp_esc(__("{0}% · Over", [pct]))}</span>`;
+		if (flag && raw >= 75) return `<span class="pp-chip pp-amber">${pp_esc(__("{0}% · Near full", [pct]))}</span>`;
 		return pp_esc(`${pct}%`);
 	},
 
@@ -10934,6 +11007,15 @@ const PPU_METHODS = {
 			$('<div class="pp-section pp-empty-note"></div>')
 				.text(__("Utilization could not be loaded. Refresh the planner and try again."))
 				.appendTo(this.$grid_wrap);
+			return;
+		}
+		if (data.denied) {
+			// The kit's no-access panel (sf_kit's state markup), or the same words without the kit.
+			const kit = window.planner_kit;
+			const title = __("You don't have access to the Crew Utilization report.");
+			const $note = $('<div class="pp-section pp-empty-note pp-util-denied"></div>').appendTo(this.$grid_wrap);
+			if (kit && typeof kit.state_html === "function") $note[0].innerHTML = kit.state_html("no-access", { title });
+			else $note.attr("role", "status").text(title);
 			return;
 		}
 		const rows = data.rows.filter((row) => row && (!this.group || row.group === this.group));
@@ -10960,8 +11042,8 @@ const PPU_METHODS = {
 				<td class="pp-util-num">${hours(row.capacity)}</td>
 				<td class="pp-util-num">${hours(row.booked)}</td>
 				<td class="pp-util-num">${hours(row.actual)}</td>
-				<td class="pp-util-num">${this.util_pct_html(row.utilization)}</td>
-				<td class="pp-util-num">${this.util_pct_html(row.actual_pct)}</td>
+				<td class="pp-util-num">${this.util_pct_html(row.utilization, true)}</td>
+				<td class="pp-util-num">${this.util_pct_html(row.actual_pct, false)}</td>
 			</tr>`;
 		});
 		const th = (text, num) => `<th scope="col"${num ? ' class="pp-util-num"' : ""}>${pp_esc(text)}</th>`;
@@ -10971,8 +11053,16 @@ const PPU_METHODS = {
 			<thead><tr>${th(__("Person"))}${th(__("Week"))}${th(__("Capacity"), true)}${th(__("Booked"), true)}${th(
 				__("Actual (kiosk)"),
 				true
-			)}${th(__("Utilization"), true)}${th(__("Actual %"), true)}</tr></thead>
+			)}${th(__("Planned %"), true)}${th(__("Actual %"), true)}</tr></thead>
 			<tbody>${body.join("")}</tbody></table>`;
+		// The report clips its weeks to the month, so the first and last carry only that month's days.
+		$('<p class="pp-util-note"></p>')
+			.text(
+				__(
+					"The first and last weeks count only this month's days, so their capacity is part of a week. Planned % is booked hours against capacity; Over is past 100%, Near full 75% or more."
+				)
+			)
+			.appendTo(this.$grid_wrap);
 	},
 };
 

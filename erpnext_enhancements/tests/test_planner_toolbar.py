@@ -62,6 +62,10 @@ class TestTheKitModule(unittest.TestCase):
 		bundle = BUNDLE.read_text(encoding="utf-8")
 		self.assertIn('import { create_toolbar } from "./planner_kit/toolbar.js";', bundle)
 		self.assertIn("toolbar: create_toolbar(env),", bundle)
+		# Utilization's request shows no frappe dialog: sf_kit's quiet call, carried by the kit.
+		self.assertIn('import { call as sf_call } from "./sf_kit/call.js";', bundle)
+		self.assertIn("Object.assign({}, opts, { quiet: true })", bundle)
+		self.assertIn("kit.quiet_call(PPU.run, args)", _code(PP_JS))
 		# drawer.js is another session's; this change does not touch it.
 		self.assertNotIn("toolbar", (KIT / "drawer.js").read_text(encoding="utf-8"))
 

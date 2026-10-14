@@ -6627,6 +6627,19 @@ const MPTB_METHODS = {
 			.appendTo(this.$body.find(".mp-toolbar").first());
 		$("<span></span>").text(__("Filters and tools")).appendTo(this.$tb_more);
 		this.$tb_more_count = $('<span class="mp-tb-count" aria-hidden="true"></span>').hide().appendTo(this.$tb_more);
+		// A menu or the sheet left open when the page hides (another page) closes with it; a route
+		// change of the planner's own closes a menu through the kit (toolbar.js).
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			wrapper.on("hide", (e) => {
+				if (e.target === wrapper[0]) this.tb_close_menus();
+			});
+		}
+	},
+
+	tb_close_menus() {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar) kit.toolbar.close_all("route");
 	},
 
 	tb_ready() {
@@ -6788,32 +6801,36 @@ const MPTB_METHODS = {
 	},
 
 	// The Overdue chip: the overdue visits on screen in a side panel; one opens its visit.
+	// The Overdue panel's list, from the visits on screen now.
+	tb_overdue_html() {
+		const cards = this.tb_overdue_cards();
+		if (!cards.length) return `<p class="pk-empty">${mp_esc(__("No overdue visits on screen."))}</p>`;
+		const rows = cards.map(
+			(card) => `
+			<li>
+				<button type="button" class="mp-tb-overdue-row" data-tb-overdue="${mp_esc(card.key)}">
+					<span class="mp-tb-overdue-site">${mp_esc(card.site || card.project || card.name || "")}</span>
+					<span class="mp-tb-overdue-sub">${mp_esc(
+						[card.date ? mp_when(card.date) : "", card.technician ? this.tech_name(card.technician) : __("Unassigned")]
+							.filter(Boolean)
+							.join(" · ")
+					)}</span>
+				</button>
+			</li>`
+		);
+		return `<ul class="mp-tb-overdue">${rows.join("")}</ul><p class="pk-note">${mp_esc(
+			__("Drafted visits whose day has passed. Open one to move it or fill it in.")
+		)}</p>`;
+	},
+
 	tb_open_overdue() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!kit) return;
-		const html = () => {
-			const cards = this.tb_overdue_cards();
-			if (!cards.length) return `<p class="pk-empty">${mp_esc(__("No overdue visits on screen."))}</p>`;
-			const rows = cards.map(
-				(card) => `
-				<li>
-					<button type="button" class="mp-tb-overdue-row" data-tb-overdue="${mp_esc(card.key)}">
-						<span class="mp-tb-overdue-site">${mp_esc(card.site || card.project || card.name || "")}</span>
-						<span class="mp-tb-overdue-sub">${mp_esc(
-							[card.date ? mp_when(card.date) : "", card.technician ? this.tech_name(card.technician) : __("Unassigned")]
-								.filter(Boolean)
-								.join(" · ")
-						)}</span>
-					</button>
-				</li>`
-			);
-			return `<ul class="mp-tb-overdue">${rows.join("")}</ul><p class="pk-note">${mp_esc(
-				__("Drafted visits whose day has passed. Open one to move it or fill it in.")
-			)}</p>`;
-		};
-		kit.drawer.open({
+		// Kept, so a reload while it is open (a visit moved on the calendar behind it, or moved and
+		// saved from its own panel and the list opened again) redraws it: tb_render.
+		this.tb.overdue = kit.drawer.open({
 			title: __("Overdue visits"),
-			body: html(),
+			body: this.tb_overdue_html(),
 			width: MPTB.overdue_width,
 			key: "mp-tb-overdue",
 			owner: MP6A.owner,
@@ -6830,6 +6847,8 @@ const MPTB_METHODS = {
 
 	tb_render() {
 		if (!this.tb || !this.$alerts) return;
+		const overdue = this.tb.overdue;
+		if (overdue && typeof overdue.is_open === "function" && overdue.is_open()) overdue.set_body(this.tb_overdue_html());
 		const alerts = this.tb_alerts();
 		const active = document.activeElement;
 		const had = active && this.$alerts[0].contains(active) ? active.getAttribute("data-tb-alert") : null;
