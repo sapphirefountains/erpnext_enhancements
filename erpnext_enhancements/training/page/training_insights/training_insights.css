@@ -75,7 +75,7 @@
 /* Only ever applied when the count is above zero — a red 0 reads as a problem that is
    not there. Mixed with the strongest text so it reads on both themes' cards. */
 .ti-tile.is-bad .ti-tile-value,
-td.is-bad {
+.ti-table td.is-bad {
 	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 	font-weight: var(--sf-weight-bold);
 }

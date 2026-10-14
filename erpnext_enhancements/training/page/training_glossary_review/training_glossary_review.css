@@ -59,9 +59,11 @@
 }
 
 /* A collision, not a term. The border says at a glance that this card is about a word two
- * entries are fighting over rather than one entry to judge. */
+ * entries are fighting over rather than one entry to judge. The chip edge rather than the
+ * flat neutral pillar colour: deep-sea-blue on a dark-theme card is 1.06:1, and the edge
+ * token turns sky-200 there. */
 .gr-page .gr-cluster {
-	border-left: 3px solid var(--sf-pillar-neutral);
+	border-left: 3px solid var(--sf-chip-edge-neutral);
 }
 
 .gr-page .gr-counts {

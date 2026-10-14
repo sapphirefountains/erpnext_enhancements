@@ -3428,11 +3428,12 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
-      # Custom pages S3.4a (v1.643.0). Five Desk pages keep their CSS in their own <page>.css,
+      # Custom pages S3.4a (v1.646.0). Five Desk pages keep their CSS in their own <page>.css,
       # which the page loader sends with the page (never stale from the immutable /assets
-      # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline
-      # colour, no literal colour or Frappe palette variable, no undefined --sf-* token, no
-      # shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
+      # cache), and draw it from the --sf-* tokens: no <style> written from JS, no inline,
+      # .css() or attr("style") colour, no literal or named colour or Frappe palette variable,
+      # every selector namespaced to its page (page CSS stays in <head> all session), no
+      # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v

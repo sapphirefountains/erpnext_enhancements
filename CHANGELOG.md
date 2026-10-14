@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.643.0] - 2026-10-14
+## [1.646.0] - 2026-10-13
 
 ### Changed
 
@@ -31,14 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `--sf-text-strong`, so it reads on a white card and a navy one; `--sf-warn` is a yellow fill and
     is never text on its own. Fields are white with 16px text in both themes, so iOS no longer zooms
     into the Inspection Wizard's note box or the Glossary Review's text areas (both were 15px or less).
-    The Inspection Wizard is Build work, so the section on screen is a Build pillar chip; its nav bar
-    and sticky tabs keep Frappe's `--bg-color` on purpose, because they sit over the Desk's own page
-    ground and have to match it.
+    The Inspection Wizard is Build work, so the section on screen is a Build pillar chip with a 4px
+    `--sf-primary` bar under it. The bar matters in the dark theme, where the chip's navy-800 fill
+    is the same colour as every other tab's `--sf-surface`, and on a failing section, whose danger
+    edge replaces the chip's. Its nav bar and sticky tabs keep Frappe's `--bg-color` on purpose,
+    because they sit over the Desk's own page ground and have to match it. The Glossary Review's
+    collision cards are edged in `--sf-chip-edge-neutral`, not the flat neutral pillar colour, which
+    is 1.06:1 on a dark-theme card.
   - **Statuses that were colour alone now carry a word.** A failing section's tab says "failing" beside
     its red edge; a measurement out of range says "Out of range" on its range line (shown only while
-    the line is marked, so it clears with the colour when a new value is typed); a row with a photo
-    attached shows a tick; the Drive Link Manager's status is a pill with its word on the fill; the
-    Glossary Review's current tab has a bar under it, not just a change of ground.
+    the line is marked, so typing a new value clears the word and the line's red together, while the
+    input's red edge waits for the server's verdict as before); a row with a photo attached shows a
+    tick; the Drive Link Manager's status is a pill with its word on the fill; the Glossary Review's
+    current tab has a bar under it, not just a change of ground.
+  - **Every selector is namespaced to its page.** A Desk page's CSS is appended to `<head>` once and
+    stays for the session, so Training Insights' bare `td.is-bad` would have reddened any cell with
+    that class on any page opened afterwards; it is `.ti-table td.is-bad` now.
   - **Layout on phones.** GA4's two-column grid becomes one column, the Drive Link Manager's table
     scrolls inside its own box instead of pushing the page sideways, and Training Insights shows its
     tiles two to a row.
@@ -59,11 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`tests/test_s3_page_css.py`** (bench-free, its own CI step). Fails the build if any of the five
-  pages writes a `<style>` from JS or paints a colour inline again, loses its `.css`, puts a literal
-  colour or a Frappe palette variable in it, reads a `var(--sf-...)` that `sf_tokens.bundle.css` does
-  not define (it would resolve to nothing, silently), declares a custom property of its own, uses a
-  shadow or a radius that is not a token, or a breakpoint other than 767px. It also holds every
-  Training page's `TR.loadAssets` call to passing a version.
+  pages writes a `<style>` from JS or paints a colour inline, through a jQuery `.css(...)` colour
+  write or an `attr("style", ...)` again; loses its `.css`; puts a literal colour (hex, `rgb()`,
+  `hsl()`, a named colour such as `white`) or a Frappe palette variable (`--red-500`, `--bg-orange`,
+  `--text-on-red`; not the structural `--bg-color`) in it; writes a selector whose first compound
+  does not carry the page's prefix or wrapper; reads a `var(--sf-...)` that `sf_tokens.bundle.css`
+  does not define (it would resolve to nothing, silently); declares a custom property of its own; or
+  uses a shadow, a radius that is not a token, or a breakpoint other than 767px. It also holds every
+  Training page's `TR.loadAssets` call to passing a version. The namespace and palette checks fail
+  on the files as they were; no page ever had a named colour or a jQuery colour write, so those two
+  checks are proven against samples inside the suite instead.
 
 ## [1.641.0] - 2026-10-13
 

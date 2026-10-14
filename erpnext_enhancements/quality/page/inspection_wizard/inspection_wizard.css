@@ -78,16 +78,25 @@
 	white-space: nowrap;
 }
 
-/* The section on screen: a Build pillar chip, and bold, so it is not told by colour alone. */
+/* The section on screen: a Build pillar chip, bold, and a 4px bar under it. The bar is the
+ * part that always shows. In the dark theme the chip's fill (navy-800) is the same colour
+ * as every other tab's --sf-surface, and on a failing section the danger edge below replaces
+ * the chip's edge, so without the bar only the weight would mark it. */
 .qw-tab.qw-active {
 	background: var(--sf-pillar-build-deep);
 	border-color: var(--sf-chip-edge-build);
+	border-bottom: 4px solid var(--sf-primary);
 	color: var(--sf-on-pillar);
 	font-weight: var(--sf-weight-bold);
 }
 
 .qw-tab.qw-has-fail {
 	border: 2px solid var(--sf-danger);
+}
+
+/* Failing and on screen: the danger edge on three sides, and the bar kept. */
+.qw-tab.qw-active.qw-has-fail {
+	border-bottom: 4px solid var(--sf-primary);
 }
 
 .qw-tab-flag {
@@ -265,8 +274,10 @@
 	font-weight: var(--sf-weight-bold);
 }
 
-/* "Out of range", printed only while the range line says so. A new value clears the class
- * at once (the server decides again on save), so the word goes with the colour. */
+/* "Out of range", printed only while the range line is marked. Typing a new value clears
+ * the RANGE line's class at once, so the word and the line's red go together. The input's
+ * own red edge (.qw-measure input.qw-oor) is left as it was until the save comes back and
+ * the server's verdict repaints the row; the server decides, not the page. */
 .qw-oor-word {
 	display: none;
 }
