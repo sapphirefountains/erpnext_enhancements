@@ -21,17 +21,33 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#pmr-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
-    }
-
-    function esc(value) {
-        return frappe.utils.escape_html(value === null || value === undefined ? "" : String(value));
     }
 
     function money(value) {
@@ -51,67 +67,69 @@
         });
     }
 
-    function muted(text) {
-        return `<div class="pmr-muted">${text}</div>`;
-    }
-
-    function render(container, message) {
+    function render(container, sf, message) {
         const body = container.querySelector("#pmr-body");
         const count = container.querySelector("#pmr-count");
 
         if (!message || message.enabled === false) {
             count.textContent = "";
-            body.innerHTML = muted(__("Material Readiness is turned off in ERPNext Enhancements Settings."));
+            sf.state.render(body, "empty", {
+                title: __("Material Readiness is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const requests = message.requests || [];
         count.textContent = requests.length ? __("{0} outstanding", [requests.length]) : "";
         if (!requests.length) {
-            body.innerHTML = muted(__("Every material request on a live project has landed."));
+            sf.state.render(body, "empty", {
+                title: __("Every material request on a live project has landed."),
+            });
             return;
         }
 
         body.innerHTML = requests
             .map((r) => {
                 const late = r.late_days
-                    ? `<span class="pmr-pill pmr-pill-bad">${esc(__("{0}d late", [r.late_days]))}</span>`
-                    : `<span class="pmr-pill">${esc(r.status)}</span>`;
+                    ? sf.chip(__("{0}d late", [r.late_days]), "danger")
+                    : sf.chip(r.status);
                 const meta = [
                     r.project_title,
                     __("{0} of {1} lines open", [r.open_lines, r.line_count]),
                 ]
                     .filter(Boolean)
-                    .map(esc)
+                    .map(sf.esc)
                     .join(" · ");
                 return `
                     <div class="pmr-row">
-                        <a class="pmr-name" href="/desk/material-request/${encodeURIComponent(r.name)}">${esc(r.name)}</a>
+                        <a class="pmr-name" href="/desk/material-request/${encodeURIComponent(r.name)}">${sf.esc(r.name)}</a>
                         ${late}
                         <span class="pmr-meta">${meta}</span>
-                        <span class="pmr-age">${esc(r.needed_by || "")}</span>
+                        <span class="pmr-age">${sf.esc(r.needed_by || "")}</span>
                     </div>`;
             })
             .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#pmr-body");
         const refresh = container.querySelector("#pmr-refresh");
 
         // The refresh button and a return to the workspace can both ask while an answer
-        // is on its way, so each ask takes a ticket and only the newest one draws. The
-        // ticket lives on the root: an answer only ever draws into the root it was for.
+        // is on its way, so each ask takes a ticket on the root (blocks.ticket) and only
+        // the newest answer draws, into the root it was for.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: METHOD })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
-                    if (current()) body.innerHTML = muted(__("Could not load material requests."));
+                .catch((err) => {
+                    if (!current()) return;
+                    const title = __("Could not load material requests.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -119,6 +137,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         // Coming back to this workspace runs nothing again (the header), so the shared
         // helper reloads the block then. A bundle cached from before the helper has no

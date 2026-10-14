@@ -25,10 +25,30 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#fww-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
@@ -43,15 +63,16 @@
         return blocks.onScreen(container);
     }
 
-    function render(body, message) {
-        const esc = frappe.utils.escape_html;
+    function render(body, sf, message) {
         if (!message || message.enabled === false) {
-            body.innerHTML = `<div class="fww-muted">${__("Who's Working is turned off in ERPNext Enhancements Settings.")}</div>`;
+            sf.state.render(body, "empty", {
+                title: __("Who's Working is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         const workers = message.workers || [];
         if (!workers.length) {
-            body.innerHTML = `<div class="fww-muted">${__("Nobody is clocked in right now.")}</div>`;
+            sf.state.render(body, "empty", { title: __("Nobody is clocked in right now.") });
             return;
         }
         body.innerHTML = workers
@@ -62,16 +83,16 @@
                 return `
                     <div class="fww-item">
                         <div class="fww-line">
-                            <span class="fww-name">${esc(w.employee_name || "")}</span>
-                            <span class="fww-elapsed">${esc(w.elapsed_label || "")}${paused ? " " : ""}${paused}</span>
+                            <span class="fww-name">${sf.esc(w.employee_name || "")}</span>
+                            <span class="fww-elapsed">${sf.esc(w.elapsed_label || "")}${paused ? " " : ""}${paused}</span>
                         </div>
-                        ${where ? `<div class="fww-where">${esc(where)}</div>` : ""}
+                        ${where ? `<div class="fww-where">${sf.esc(where)}</div>` : ""}
                     </div>`;
             })
             .join("");
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const state = (window.__ee_fww = window.__ee_fww || {});
         if (state.timer) {
             clearInterval(state.timer);
@@ -82,21 +103,23 @@
         const refresh = container.querySelector("#fww-refresh");
 
         // The refresh button, the timer and a return to the workspace can all ask while
-        // an answer is on its way, so each ask takes a ticket and only the newest draws.
+        // an answer is on its way, so each ask takes a ticket on the root (blocks.ticket)
+        // and only the newest draws.
         function load() {
             state.stale = false;
             state.last = Date.now();
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
+            const current = ticket(container);
             refresh.disabled = true;
             frappe
                 .call({ method: "erpnext_enhancements.api.finance_dashboard.get_whos_working" })
                 .then((r) => {
-                    if (current()) render(body, r.message);
+                    if (current()) render(body, sf, r.message);
                 })
-                .catch(() => {
+                .catch((err) => {
                     if (!current()) return;
-                    body.innerHTML = `<div class="fww-muted">${__("Could not load time-clock status.")}</div>`;
+                    const title = __("Could not load time-clock status.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -115,6 +138,7 @@
         }
 
         refresh.addEventListener("click", load);
+        sf.state.render(body, "loading");
         load();
         state.timer = setInterval(tick, TICK_MS);
         // The return helper runs the same load at once on an ordinary return and owns the

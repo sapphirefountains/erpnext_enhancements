@@ -120,33 +120,6 @@
     text-transform: uppercase;
 }
 
-.odb-pill {
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-    padding: 1px 7px;
-    white-space: nowrap;
-}
-
-.odb-pill-bad {
-    background: color-mix(in srgb, var(--sf-danger) 12%, transparent);
-    border-color: color-mix(in srgb, var(--sf-danger) 35%, transparent);
-    color: var(--sf-danger);
-}
-
-.odb-pill-warn {
-    background: color-mix(in srgb, var(--sf-warn) 12%, transparent);
-    border-color: color-mix(in srgb, color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong)) 40%, transparent);
-    color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
-}
-
-.odb-pill-good {
-    background: color-mix(in srgb, var(--sf-good) 12%, transparent);
-    border-color: color-mix(in srgb, var(--sf-good) 35%, transparent);
-    color: var(--sf-good);
-}
-
 .odb-bar {
     background: var(--bg-light-gray);
     border-radius: 3px;
