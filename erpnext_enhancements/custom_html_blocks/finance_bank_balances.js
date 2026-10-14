@@ -21,10 +21,30 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#fbb-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
@@ -39,19 +59,18 @@
         return `/desk/bank/${encodeURIComponent(bank)}`;
     }
 
-    function renderAccount(a) {
-        const esc = frappe.utils.escape_html;
-        const mask = a.mask ? `••${esc(a.mask)}` : "";
-        const sub = [esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");
+    function renderAccount(sf, a) {
+        const mask = a.mask ? `••${sf.esc(a.mask)}` : "";
+        const sub = [sf.esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");
         const available =
             a.available !== null && a.available !== undefined
-                ? `<span class="fbb-avail">${__("avail")} ${esc(money(a.available, a.currency))}</span>`
+                ? `<span class="fbb-avail">${__("avail")} ${sf.esc(money(a.available, a.currency))}</span>`
                 : "";
         return `
             <div class="fbb-acct">
                 <div class="fbb-acct-top">
-                    <span class="fbb-acct-name">${esc(a.name || __("Account"))}</span>
-                    <span class="fbb-acct-bal">${esc(money(a.current, a.currency))}</span>
+                    <span class="fbb-acct-name">${sf.esc(a.name || __("Account"))}</span>
+                    <span class="fbb-acct-bal">${sf.esc(money(a.current, a.currency))}</span>
                 </div>
                 <div class="fbb-acct-foot">
                     <span class="fbb-acct-sub">${sub}</span>
@@ -60,43 +79,43 @@
             </div>`;
     }
 
-    function renderBank(b) {
-        const esc = frappe.utils.escape_html;
+    function renderBank(sf, b) {
         const status = b.status || "Connected";
         let body;
         if (status === "Reconnect Required") {
             body = `<div class="fbb-reconnect">${__("Bank connection needs re-authentication.")}
-                <a href="${bankFormUrl(b.bank)}">${__("Open {0} → Refresh Plaid Link", [esc(b.bank)])}</a></div>`;
+                <a href="${bankFormUrl(b.bank)}">${__("Open {0} → Refresh Plaid Link", [sf.esc(b.bank)])}</a></div>`;
         } else if (status === "Error") {
-            body = `<div class="fbb-bank-msg">${esc(b.message || __("Could not fetch balances."))}</div>`;
+            body = `<div class="fbb-bank-msg">${sf.esc(b.message || __("Could not fetch balances."))}</div>`;
         } else if (!(b.accounts || []).length) {
             body = `<div class="fbb-bank-msg">${__("No accounts returned yet — press Refresh.")}</div>`;
         } else {
-            body = b.accounts.map(renderAccount).join("");
+            body = b.accounts.map((a) => renderAccount(sf, a)).join("");
         }
-        const pill = status === "Connected" ? "" : `<span class="fbb-bank-status fbb-status-${status === "Error" ? "error" : "warn"}">${esc(status)}</span>`;
+        const pill = status === "Connected" ? "" : sf.chip(status, status === "Error" ? "danger" : "warn");
         return `
             <div class="fbb-bank">
                 <div class="fbb-bank-head">
-                    <span class="fbb-bank-name">${esc(b.bank)}</span>
+                    <span class="fbb-bank-name">${sf.esc(b.bank)}</span>
                     ${pill}
                 </div>
                 ${body}
             </div>`;
     }
 
-    function render(container, message) {
-        const esc = frappe.utils.escape_html;
+    function render(container, sf, message) {
         const body = container.querySelector("#fbb-body");
         const meta = container.querySelector("#fbb-meta");
         meta.textContent = "";
 
         if (!message || message.enabled === false) {
-            body.innerHTML = `<div class="fbb-muted">${__("Bank Balances are turned off. Switch the widget on in Plaid Banking Settings.")}</div>`;
+            sf.state.render(body, "empty", {
+                title: __("Bank Balances are turned off. Switch the widget on in Plaid Banking Settings."),
+            });
             return;
         }
         if (message.paused) {
-            body.innerHTML = `<div class="fbb-reconnect">${esc(message.status_message || __("Plaid is paused after a configuration error."))}
+            body.innerHTML = `<div class="fbb-reconnect">${sf.esc(message.status_message || __("Plaid is paused after a configuration error."))}
                 <a href="/desk/plaid-settings">${__("Check the native Plaid Settings")}</a>
                 <a href="/desk/plaid-banking-settings">${__("Plaid Banking Settings → Test Connection")}</a></div>`;
             return;
@@ -112,7 +131,7 @@
         }
 
         meta.textContent = __("{0} bank(s)", [banks.length]);
-        body.innerHTML = banks.map(renderBank).join("");
+        body.innerHTML = banks.map((b) => renderBank(sf, b)).join("");
 
         if (message.last_sync) {
             const stamp = document.createElement("div");
@@ -122,25 +141,27 @@
         }
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#fbb-body");
         const refresh = container.querySelector("#fbb-refresh");
 
         // Refresh and a return to the workspace can both ask while an answer is on its
-        // way, so each read takes a ticket and only the newest one draws.
+        // way, so each read takes a ticket on the root (blocks.ticket) and only the newest
+        // one draws.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
-            body.innerHTML = `<div class="fbb-muted">${__("Loading…")}</div>`;
+            const current = ticket(container);
+            sf.state.render(body, "loading");
             refresh.disabled = true;
             frappe
                 .call({ method: READ })
                 .then((r) => {
-                    if (current()) render(container, r.message);
+                    if (current()) render(container, sf, r.message);
                 })
-                .catch(() => {
+                .catch((err) => {
                     if (!current()) return;
-                    body.innerHTML = `<div class="fbb-muted">${__("Could not load bank balances.")}</div>`;
+                    const title = __("Could not load bank balances.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: load });
                 })
                 .then(() => {
                     if (current()) refresh.disabled = false;
@@ -149,7 +170,7 @@
 
         function refreshNow() {
             refresh.disabled = true;
-            body.innerHTML = `<div class="fbb-muted">${__("Refreshing from your banks…")}</div>`;
+            sf.state.render(body, "loading", { title: __("Refreshing from your banks…") });
             frappe
                 .call({ method: REFRESH })
                 .then((r) => {
