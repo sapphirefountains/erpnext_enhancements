@@ -1,4 +1,4 @@
-"""How a visit's chemicals are billed (v1.627.0).
+"""How a visit's chemicals are billed (v1.628.0).
 
 Since v1.594.0 a visit records chemicals the way the technician counts them: doses ("1 cap
 full", "2 tablets"), not stock quantities. Both invoice builders still billed ``qty`` of the

@@ -118,7 +118,7 @@ def get_review_visit(record):
 				"first_visit",
 			)
 		},
-		# How each chemical bills, chosen on approval (v1.627.0).
+		# How each chemical bills, chosen on approval (v1.628.0).
 		"chemicals": chemical_billing.review_rows(doc),
 		"position": index + 1 if index >= 0 else None,
 		"total": len(names),
@@ -131,7 +131,7 @@ def get_review_visit(record):
 def approve_visit(record, modified=None, chemicals=None):
 	"""Approve & Submit, as the reviewer. The approval chain runs on submit, as from the form.
 
-	``chemicals`` (v1.627.0): how each chemical bills, [{row, bill_as, containers}], from the
+	``chemicals`` (v1.628.0): how each chemical bills, [{row, bill_as, containers}], from the
 	page. Written to the rows before the workflow runs, because ``apply_workflow`` reloads the
 	visit from the database, and the invoice drafted on submit reads them.
 	"""

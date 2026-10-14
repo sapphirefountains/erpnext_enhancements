@@ -768,7 +768,7 @@ jobs:
       - name: Recurring billing seasons
         run: python -m unittest erpnext_enhancements.tests.test_maintenance_billing_season -v
       # A visit's chemicals bill per dose, as a whole container or not at all, as the reviewer
-      # chose on approval (v1.627.0): the lines, the item default, the checked choices, both
+      # chose on approval (v1.628.0): the lines, the item default, the checked choices, both
       # invoice builders and the Visit Review page wired through one module. Own step for its
       # own frappe stub.
       - name: Chemical billing on approval

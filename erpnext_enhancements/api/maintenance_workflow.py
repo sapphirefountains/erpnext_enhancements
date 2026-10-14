@@ -451,7 +451,7 @@ def create_sales_invoice(doc):
         doc.add_comment("Comment", _("No maintenance fee line added: set the Default Maintenance Fee Item or Maintenance Services Item Group in ERPNext Enhancements Settings."))
 
     # 3. Add the chemicals used: per dose, whole container or not at all, as the reviewer chose
-    # (v1.627.0). A dose is no unit of the item's, so qty-at-the-selling-price billed a bottle.
+    # (v1.628.0). A dose is no unit of the item's, so qty-at-the-selling-price billed a bottle.
     from erpnext_enhancements.sapphire_maintenance.chemical_billing import invoice_lines
 
     for line in invoice_lines(doc.consumables, visit=doc.name):

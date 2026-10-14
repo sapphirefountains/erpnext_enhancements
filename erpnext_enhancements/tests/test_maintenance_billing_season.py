@@ -164,7 +164,7 @@ def setUpModule():
         if doctype == "Sapphire Maintenance Consumable":
             return [_Row(row) for row in STATE["consumables"].get(filters["parent"], [])]
         if doctype == "Item":
-            # v1.627.0: chemicals bill as chosen. These tests bill them whole, at the selling price.
+            # v1.628.0: chemicals bill as chosen. These tests bill them whole, at the selling price.
             return [
                 _Row(name=n, item_name=n, custom_maintenance_billing="Whole Container", custom_price_per_dose=0)
                 for n in filters["name"][1]

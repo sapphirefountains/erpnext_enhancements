@@ -304,7 +304,7 @@ def setUpModule():
 	)
 	utils.nowdate = lambda: "2026-10-12"
 	utils.get_url_to_form = lambda doctype, name: f"https://erp.test/app/{doctype}/{name}"
-	# The visit's chemicals (v1.627.0, sapphire_maintenance/chemical_billing.py): these visits use
+	# The visit's chemicals (v1.628.0, sapphire_maintenance/chemical_billing.py): these visits use
 	# none, so nothing is priced, but the module reads quantities through flt.
 	utils.flt = lambda v, precision=None: float(v or 0)
 	utils.fmt_money = lambda v, *a, **k: f"${float(v or 0):.2f}"

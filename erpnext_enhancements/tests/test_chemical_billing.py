@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""A visit's chemicals bill per dose, as a whole container, or not at all, as chosen (v1.627.0).
+"""A visit's chemicals bill per dose, as a whole container, or not at all, as chosen (v1.628.0).
 
 Visits record chemicals as doses ("1 cap full"), and both invoice builders billed that many of
 the item at its selling price: a bottle per cap. Nik, 2026-10-13: it is "entirely situational",

@@ -521,7 +521,7 @@ class VisitReview {
 		});
 	}
 
-	// "Chemicals to bill" (v1.627.0): per dose, whole container or not at all is situational
+	// "Chemicals to bill" (v1.628.0): per dose, whole container or not at all is situational
 	// (Nik, 2026-10-13), so the reviewer chooses for each chemical, starting from the item's
 	// default. Sent with Approve; read-only for a reviewer who cannot approve this visit.
 	chemicals_html(data) {

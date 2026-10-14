@@ -297,7 +297,7 @@ def _append_unbilled_consumables(invoice, contract, period_end):
             filters={"parent": record, "parenttype": "Sapphire Maintenance Record"},
             fields=["name", "item", "qty", "uom", "bill_as", "containers"],
         )
-        # Per dose, whole container or not at all, as the reviewer chose (v1.627.0).
+        # Per dose, whole container or not at all, as the reviewer chose (v1.628.0).
         for line in chemical_billing.invoice_lines(rows, visit=record):
             invoice.append("items", line)
     return records
