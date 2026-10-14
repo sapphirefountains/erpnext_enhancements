@@ -1604,3 +1604,19 @@ body.desktop-page .desktop-icon .icon-title,
 .form-page.ee-activity-off-tab .form-footer {
     display: none !important;
 }
+
+/* --------------------------------------------------------------------------
+   UNREADABLE PHONE, EMAIL OR WEBSITE (form kit P2-C, part two)
+   public/js/normalize/desk_display.js marks a registered field whose value the
+   normalization rules cannot read. A soft warning only: the record still saves,
+   so it is never Frappe's df.invalid / .has-error, which block dialogs. Frappe's
+   own theme-aware error colours, so it matches the Desk in light and dark.
+   -------------------------------------------------------------------------- */
+.frappe-control.sf-normalize-unreadable .form-control {
+    border-color: var(--error-border);
+}
+.frappe-control .sf-normalize-note {
+    color: var(--alert-text-danger);
+    font-size: var(--text-sm);
+    margin: var(--margin-xs) 0 0;
+}

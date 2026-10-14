@@ -26,12 +26,21 @@ is skipped rather than raised: ``has_column`` takes a doctype and raises on an u
 The emptiness test is ``LENGTH(col) > 0``, not ``col != ''``: under MariaDB's PAD SPACE collation
 a value of only spaces compares equal to ``''``, and a whitespace-only value is exactly one the
 cleanup would change.
+
+**Proposed fixes (P2-C, part two).** A value no rule can read, and one the cleanup would have
+blanked, also gets a *proposed fix* from ``utils/normalize_fixes.py`` when one of its rules is
+sure: the column shows it with the reason, and the "Has a proposed fix" filter lists only those.
+A System Manager ticks the rows to apply and presses *Apply checked fixes*; the server works every
+fix out again (``normalize_cleanup.apply_fixes``), so the browser chooses rows and never values.
+The rows carry ``fix_key`` (table, row name, field) for that; nothing else about a target is sent.
 """
+
+import json
 
 import frappe
 from frappe import _
 
-from erpnext_enhancements.utils import normalize
+from erpnext_enhancements.utils import normalize, normalize_fixes
 from erpnext_enhancements.utils import normalize_fields as registry
 
 STATUS_CHANGE = "Will change"
@@ -41,20 +50,25 @@ STATUS_SUBMITTED = "Submitted — left alone"
 
 FILTER_ATTENTION = "Will change + Can't normalize"
 FILTER_EVERYTHING = "Everything, including Already clean"
+FILTER_FIXES = "Has a proposed fix"
 
 _WANTED = {
 	FILTER_ATTENTION: {STATUS_CHANGE, STATUS_STUCK},
 	STATUS_CHANGE: {STATUS_CHANGE},
 	STATUS_STUCK: {STATUS_STUCK},
 	FILTER_EVERYTHING: {STATUS_CHANGE, STATUS_STUCK, STATUS_CLEAN},
+	FILTER_FIXES: {STATUS_CHANGE, STATUS_STUCK},
 }
 
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
-	wanted = _WANTED.get(filters.get("status") or FILTER_ATTENTION, _WANTED[FILTER_ATTENTION])
+	choice = filters.get("status") or FILTER_ATTENTION
+	wanted = _WANTED.get(choice, _WANTED[FILTER_ATTENTION])
 	rows, counts = collect(doctype=filters.get("doctype"), kind=filters.get("kind"))
 	data = [row for row in rows if row["status"] in wanted]
+	if choice == FILTER_FIXES:
+		data = [row for row in data if row.get("fix_key")]
 	return get_columns(), data, _message(), None, _report_summary(counts)
 
 
@@ -80,6 +94,8 @@ def get_columns():
 		{"label": _("Normalized value"), "fieldname": "normalized", "fieldtype": "Data", "width": 230},
 		{"label": _("Status"), "fieldname": "status", "fieldtype": "Data", "width": 210},
 		{"label": _("Reason"), "fieldname": "reason", "fieldtype": "Data", "width": 300},
+		{"label": _("Proposed fix"), "fieldname": "proposed", "fieldtype": "Data", "width": 260},
+		{"label": _("Why"), "fieldname": "fix_why", "fieldtype": "Data", "width": 300},
 	]
 
 
@@ -133,6 +149,10 @@ def _scan_table(dt, fields, rows, counts, targets=False):
 		columns += ["parenttype", "parent"]
 	if country_field and country_field not in present:
 		columns.append(country_field)
+	# What a proposed fix reads beside the value (normalize_fixes.EXTRA_COLUMNS).
+	columns += [
+		c for c in normalize_fixes.EXTRA_COLUMNS.get(dt, ()) if c not in present and _has_column(dt, c)
+	]
 	columns += present
 	query = "select {} from {} where {}".format(
 		", ".join(_quote(c) for c in columns),
@@ -148,8 +168,18 @@ def _scan_table(dt, fields, rows, counts, targets=False):
 		name = (record.get("parent") or record.get("name")) if child else record.get("name")
 		for fieldname in present:
 			label = f"{dt}.{fieldname}" if child else fieldname
-			target = (dt, record.get("name"), fieldname, parent_dt, name) if targets else None
-			_add(rows, parent_dt, name, label, fields[fieldname], record.get(fieldname), country, target)
+			target = (dt, record.get("name"), fieldname, parent_dt, name)
+			_add(
+				rows,
+				parent_dt,
+				name,
+				label,
+				fields[fieldname],
+				record.get(fieldname),
+				country,
+				target if targets else None,
+				fix_source=(record, target),
+			)
 
 
 def _scan_single(dt, fields, rows):
@@ -169,7 +199,7 @@ def _scan_single(dt, fields, rows):
 		_add(rows, dt, dt, fieldname, kind, raw, None)
 
 
-def _add(rows, doctype, record, field, kind, raw, country, target=None):
+def _add(rows, doctype, record, field, kind, raw, country, target=None, fix_source=None):
 	if raw is None or raw == "":
 		return
 	result = normalize.normalize(kind, raw, country)
@@ -179,6 +209,10 @@ def _add(rows, doctype, record, field, kind, raw, country, target=None):
 		status = STATUS_CHANGE
 	else:
 		status = STATUS_CLEAN
+	fix = None
+	if fix_source and (status == STATUS_STUCK or (status == STATUS_CHANGE and result.value == "")):
+		context, (table, row_name, fieldname, _parent_dt, _parent) = fix_source
+		fix = normalize_fixes.propose(kind, raw, context, table, fieldname)
 	row = {
 		"doctype": doctype,
 		"record": record,
@@ -191,7 +225,20 @@ def _add(rows, doctype, record, field, kind, raw, country, target=None):
 	}
 	if target:
 		row["_target"] = target
+	if fix:
+		row["proposed"] = _fix_display(fix)
+		row["fix_why"] = fix.why
+		row["fix_key"] = json.dumps([table, row_name, fieldname])
+		if target:
+			row["_fix"] = fix
+			row["_also_before"] = {f: context.get(f) for f in fix.also}
 	rows.append(row)
+
+
+def _fix_display(fix):
+	shown = [fix.value if fix.value else _("(blank)")]
+	shown += [f"{field} = {value}" for field, value in fix.also.items()]
+	return "; ".join(shown)
 
 
 def _has_column(dt, fieldname):
@@ -212,13 +259,17 @@ def _message():
 	return "<br>".join(
 		[
 			_(
-				"<b>A dry run: nothing is written.</b> Every phone, email, website and address field "
+				"<b>A dry run: showing this writes nothing.</b> Every phone, email, website and address field "
 				"in the normalization registry, run through the rules in docs/data-normalization.md."
 			),
 			_(
 				"<i>Will change</i> is what the cleanup would rewrite. <i>Can't normalize</i> is left "
 				"exactly as typed and needs a person. Submitted and cancelled records are never touched, "
 				"and settings pages (Singles) are reported only — fix those in the settings form."
+			),
+			_(
+				"<i>Proposed fix</i> is a suggestion for a value no rule can read. Nothing is applied "
+				"until you tick its row and press <b>Apply checked fixes</b>; an undo file is saved first."
 			),
 		]
 	)

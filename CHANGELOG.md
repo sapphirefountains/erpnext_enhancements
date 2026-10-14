@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.624.0] - 2026-10-13
+
+Form kit P2-C, part two (TASK-2026-02752): what replaces typing the fields, and fixes for the values
+the cleanup could not read. Both follow Nik's decisions of 2026-10-13, recorded on TASK-2026-02742.
+
+### Added
+
+- **A soft warning on the Desk.** A phone, email or website field holding a value the rules cannot
+  read gets a red border and a one-line note under the input, for example "This doesn't look like a
+  phone number. It will be saved exactly as typed."
+  - **The record still saves.** This replaces the plan's last step, typing the fields
+    `Phone`/`Email`/`URL`. Frappe v16 validates a typed field on every save, so a bad value from the
+    QuickBooks sync or a web form would become a hard error, and every record already holding one
+    would freeze.
+  - **It is never Frappe's `df.invalid`.** That flag doesn't stop a form save, but it does block a
+    dialog's primary action (Quick Entry, the planner kit) and a web form's submit.
+  - **When it shows:** it refreshes on load and after each change.
+  - **What is never marked:** read-only fields, filters, and fields Frappe validates itself.
+  - **Colors:** Frappe's own theme-aware `--error-border` and `--alert-text-danger`, so it reads
+    in light and dark.
+  - `frappe.boot.sf_normalize` now carries the registered email and website fields as well as phones.
+- **Proposed fixes in the Data Normalization Preview** (`utils/normalize_fixes.py`). A value no rule
+  can read gets a **Proposed fix** with a **Why** when a rule is sure. *Show → Has a proposed fix*
+  lists just those. The rules:
+  - **Placeholder phone numbers** are cleared.
+  - **An international number typed without its `+`** gets it, and a `(0)` trunk prefix is
+    dropped. This applies only when the number opens with a real country code set apart from the
+    rest *and* Google's `phonenumbers` (a Frappe v16 dependency) calls the result valid.
+  - **One phone number inside text** is kept. A trailing `PIN` or `ext` becomes the extension,
+    which the dialer sends after connecting.
+  - **Vanity numbers** become keypad digits.
+  - **Misplaced values move to an empty field where they belong:** an email in a phone field, a
+    website in an email field, a job title in a Contact's email field.
+  - **Notes and names in contact fields** are cleared.
+  - **A ZIP that lost its leading zero** gets it back, but only in a state whose ZIPs begin with 0.
+  - **Everything else stays for a person:** a typo, a truncated number, a foreign number with its
+    trunk `0`, an address missing its `.com`.
+  - **The rules hold no record's values,** because the repo is public. The tests use made-up
+    numbers only.
+- **Apply checked fixes,** a button on the report (`normalize_cleanup.apply_fixes`: POST, System
+  Manager only).
+  - **It receives the ticked rows' keys, never a value.** It scans again and applies only the fix it
+    works out itself, so a stale page can't write a stale proposal.
+  - **Exact re-read:** a row is written only if its value, and any field a fix moves into, is still
+    what the proposal was made from.
+  - **Same safeguards as the cleanup:** an undo file first, `set_value(update_modified=False)`, and
+    a comment on the report with counts and no values.
+
+### Changed
+
+- **A value of only spaces is proposed for blanking only in a phone, email or website field.** Never
+  in a name or address part, which can be mandatory. That leaves the 3 such values the cleanup
+  skipped (Customer Accounts email or phone) to be applied from the report.
+- `tests/test_normalize_fixes.py` gets its own CI step, which installs `phonenumbers~=9.0.23`. The
+  cleanup, report, display and hook suites gain the new cases.
+
 ## [1.623.0] - 2026-10-13
 
 Custom pages, step 1 of 7 (TASK-2026-02802, step S1 = TASK-2026-02803). Nik picked the scope on

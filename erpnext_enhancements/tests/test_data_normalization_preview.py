@@ -17,6 +17,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_data_normalization_previ
 """
 
 import importlib
+import json
 import re
 import sys
 import types
@@ -138,6 +139,7 @@ class TestPreview(unittest.TestCase):
                     contact("C-4", docstatus=2, email_id="X@Y.COM"),
                     contact("C-5", mobile_no="+18015550101"),
                     contact("C-6", first_name="   "),
+                    contact("C-7", phone="X801-555-0142"),
                 ],
                 "Contact Phone": [
                     {"name": "row1", "docstatus": 0, "parenttype": "Contact", "parent": "C-1", "phone": "(801) 555-0100 x12"},
@@ -239,6 +241,37 @@ class TestPreview(unittest.TestCase):
         self.assertEqual({r["kind"] for r in data}, {"email"})
         _cols, data, *_ = self._rows(doctype="No Such Doctype")
         self.assertEqual(data, [])
+
+    def test_a_value_no_rule_can_read_gets_a_proposed_fix_when_one_is_sure(self):
+        _cols, data, *_ = self._rows()
+        (row,) = self._find(data, "C-7", "phone")
+        self.assertEqual(row["status"], report.STATUS_STUCK)
+        self.assertEqual(row["proposed"], "+18015550142")
+        self.assertIn("phone number in the text", row["fix_why"])
+        self.assertEqual(json.loads(row["fix_key"]), ["Contact", "C-7", "phone"])
+        self.assertNotIn("_fix", row, "the write plan never reaches the browser")
+        # A whitespace-only value the cleanup would blank is offered as a fix too.
+        (blank,) = self._find(data, "C-6", "first_name")
+        self.assertNotIn("fix_key", blank, "text has no fix rules: names are left for a person")
+        (zip_row,) = self._find(data, "A-2", "pincode")
+        self.assertNotIn("fix_key", zip_row, "a Utah ZIP never gets a leading zero")
+
+    def test_the_proposed_fix_filter_lists_only_rows_with_one(self):
+        _cols, data, *_ = self._rows(status=report.FILTER_FIXES)
+        self.assertTrue(data)
+        self.assertTrue(all(row.get("fix_key") for row in data))
+        self.assertIn("C-7", {row["record"] for row in data})
+
+    def test_the_proposal_columns_are_shown(self):
+        names = [column["fieldname"] for column in report.get_columns()]
+        self.assertEqual(names[-2:], ["proposed", "fix_why"])
+
+    def test_the_js_applies_only_ticked_rows_through_apply_fixes(self):
+        source = JS_PATH.read_text(encoding="utf-8")
+        self.assertIn("checkboxColumn: true", source)
+        self.assertIn("get_checked_items()", source)
+        self.assertIn('"erpnext_enhancements.utils.normalize_cleanup.apply_fixes"', source)
+        self.assertIn("row.fix_key", source)
 
     def test_identifiers_with_a_backtick_are_refused(self):
         with self.assertRaises(ValueError):

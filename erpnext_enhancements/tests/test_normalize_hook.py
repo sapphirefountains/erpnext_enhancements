@@ -398,8 +398,13 @@ class TestWiring(unittest.TestCase):
         registry = hook.desk_registry()
         self.assertEqual(set(registry), {"fields"})
         self.assertEqual(registry["fields"]["Contact"]["mobile_no"], "phone")
-        self.assertNotIn("email_id", registry["fields"]["Contact"], "phones only")
-        self.assertNotIn("Bank", registry["fields"], "a doctype with no phone is left out")
+        # Emails and websites ride along for the soft warning (P2-C part two).
+        self.assertEqual(registry["fields"]["Contact"]["email_id"], "email")
+        self.assertEqual(registry["fields"]["Bank"], {"website": "website"})
+        self.assertNotIn("first_name", registry["fields"]["Contact"], "names are not sent")
+        self.assertNotIn("state", registry["fields"]["Address"], "address parts are not sent")
+        kinds = {kind for fields in registry["fields"].values() for kind in fields.values()}
+        self.assertEqual(kinds, {"phone", "email", "website"})
         frappe.conf = _Dict({"disable_value_normalization": 1})
         self.assertIsNone(hook.desk_registry())
         frappe.conf = _Dict()

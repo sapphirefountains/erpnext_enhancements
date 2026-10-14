@@ -45,8 +45,10 @@ from erpnext_enhancements.utils.normalize_fields import (
 	CHILD_TABLE_PARENTS,
 	CHILD_TABLES,
 	COUNTRY_FIELD,
+	EMAIL,
 	FIELDS,
 	PHONE,
+	WEBSITE,
 )
 
 #: The site_config key that turns normalization off — this hook and the Desk display both.
@@ -61,6 +63,10 @@ WATCHED_DOCTYPES = frozenset(FIELDS) | _CHILD_PARENTS
 
 _LOGGED_FLAG = "sf_value_normalization_logged"
 
+#: The kinds the Desk knows about: a phone it shows differently from how it is stored, and all
+#: three for the soft warning on a value the rules cannot read (P2-C, part two).
+DESK_KINDS = frozenset({PHONE, EMAIL, WEBSITE})
+
 
 def is_disabled():
 	"""True when ``disable_value_normalization`` is set in site_config. Never raises."""
@@ -71,22 +77,22 @@ def is_disabled():
 
 
 def desk_registry():
-	"""``{"fields": {doctype: {fieldname: "phone"}}}`` for ``frappe.boot.sf_normalize``, or None.
+	"""``{"fields": {doctype: {fieldname: kind}}}`` for ``frappe.boot.sf_normalize``, or None.
 
-	What ``public/js/normalize/desk_display.js`` matches a docfield against to show a phone as
-	``(801) 555-0100`` and to normalize what is typed into it. Phones only: they are the one
-	kind the Desk shows differently from how it is stored, and every other kind is stored
-	exactly as it is shown. ``None`` when the kill switch is on, and the Desk then installs
-	nothing. Never raises: boot runs on every Desk page.
+	What ``public/js/normalize/desk_display.js`` matches a docfield against: a phone is shown
+	as ``(801) 555-0100`` and what is typed into it is normalized (the one kind the Desk shows
+	differently from how it is stored), and a phone, email or website the rules cannot read is
+	marked with a soft warning while the record still saves. ``None`` when the kill switch is
+	on, and the Desk then installs nothing. Never raises: boot runs on every Desk page.
 	"""
 	try:
 		if is_disabled():
 			return None
 		fields = {}
 		for doctype, registered in FIELDS.items():
-			phones = {fieldname: kind for fieldname, kind in registered.items() if kind == PHONE}
-			if phones:
-				fields[doctype] = phones
+			shown = {fieldname: kind for fieldname, kind in registered.items() if kind in DESK_KINDS}
+			if shown:
+				fields[doctype] = shown
 		return {"fields": fields}
 	except Exception:
 		return None
