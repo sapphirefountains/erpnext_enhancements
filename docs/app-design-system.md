@@ -136,7 +136,10 @@ Products has always been drawn as Build in the project brief. Nik chose Build fo
 2026-10-13. A stream mapped to `None` would take the neutral band. `project_brief.js` carries a
 copy, and `tests/test_print_style.py` holds that copy to `STREAM_PILLAR`; so do the guided page's
 `form_kit/summary.js` (`tests/test_guided_entry.py`) and the report face's `report_face/cells.js`
-(`tests/test_report_face.py`). The Kanban's own value-stream colours are retired by form kit P6.
+(`tests/test_report_face.py`). The Kanban's own
+value-stream colours are retired by form kit P6: the new Opportunity board
+(`crm_enhancements/page/opportunity_board`) draws each card's band from `form_kit/summary.js`'s copy, one segment
+per stream in the closing stop, edged in `--sf-chip-edge-<pillar>` so Build and Neutral still show on a dark card.
 
 ## Type
 
@@ -523,12 +526,24 @@ value }], links: [{ label, href }] }`; `green` / `amber` / `red` are read as `go
 `danger`. Every text is escaped, and a link becomes a link only for a `/desk/` route or an http(s)
 URL; anything else is shown as plain text. A blank `href` (`null`, `""`) falls back to `route`.
 Malformed data costs only its own part: `metrics` or `links` that are not a list are skipped, so
-one bad tile never blanks the grid, and a tile with no title draws no empty heading.
+one bad tile never blanks the grid, and a tile with no title draws no empty heading. A metric may
+carry a `tone` too (v1.651.0): a status tone (or `green` / `amber` / `red`) draws its value as a
+chip of that tone, so a metric is never marked by colour alone; any other tone leaves the value as
+text.
 
 ```js
 el.innerHTML = sf_kit.tiles.html([{ title: "Google Drive", tone: "good", detail: "Synced 4 min ago",
+	metrics: [{ label: __("Failed (24h)"), value: 0, tone: "good" }],
 	links: [{ label: __("Settings"), href: "/desk/google-drive-settings" }] }]);
 ```
+
+Every health dashboard draws its tiles this way (S3.2, v1.651.0): Integrations Health, the Device
+Fleet Dashboard, the QuickBooks Online dashboard and the Stripe dashboard. A page may decide what a
+status *means* (a `{ Paid: "good", Failed: "danger" }` map onto the kit's tones), never what it
+looks like: no page keeps a colour map, a literal colour or hand-built tile markup
+(`tests/test_s3_health_tiles.py`). The two pages that show server health checks are thin callers of
+`public/js/health_board.bundle.js` (`window.sf_health_board.mount(page, opts)`), which draws them
+with the S3.1 states.
 
 **`sf_kit.t(text, args)`**: `__()` when the Desk is there, `{0}` substitution otherwise. It is
 for a caller's own dynamic text. The kit's own words are written as literal `__("...")` calls,

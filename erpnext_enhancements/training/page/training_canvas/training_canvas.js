@@ -4317,8 +4317,18 @@ class TrainingCanvas {
 			)
 				.toggleClass("is-unfinished", unfinished)
 				.toggleClass("is-active", cp.checkpoint_key === this.checkpoint_key)
-				.attr("aria-label", __("Checkpoint at {0}", [this.mmss(cp.at_seconds)]))
-				.attr("title", this.mmss(cp.at_seconds))
+				// An unfinished pin is amber, and says so in words too: a 10px pin has no room
+				// for a label, so the word goes where a pointer and a screen reader find it.
+				.attr(
+					"aria-label",
+					unfinished
+						? __("Checkpoint at {0}, unfinished", [this.mmss(cp.at_seconds)])
+						: __("Checkpoint at {0}", [this.mmss(cp.at_seconds)])
+				)
+				.attr(
+					"title",
+					unfinished ? __("{0} · unfinished", [this.mmss(cp.at_seconds)]) : this.mmss(cp.at_seconds)
+				)
 				.css("left", this.offset_for(cp.at_seconds, duration))
 				.on("click", (e) => {
 					e.stopPropagation();
