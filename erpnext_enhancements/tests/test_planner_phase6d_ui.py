@@ -251,7 +251,12 @@ class TestHooks(unittest.TestCase):
 
 	def test_the_kit_is_the_one_loaded_by_frappe_require(self):
 		for block, constant in ((PP_BLOCK, "PP6A"), (MP_BLOCK, "MP6A")):
-			self.assertIn(f"frappe.require({constant}.kit, () => this.p6d_ready());", block)
+			# The same request as 6A's (S5c, v1.676.0): two requires in one tick linked the CSS twice.
+			self.assertIn("this.p6a_require(() => this.p6d_ready());", block)
+			self.assertNotIn("frappe.require(", block)
+			self.assertIn(
+				f"Promise.resolve(frappe.require({constant}.kit))", PP if constant == "PP6A" else MP
+			)
 			self.assertIn("kit.conflicts.center({", block)
 		bundle = BUNDLE.read_text(encoding="utf-8")
 		for name in ("conflicts", "blocks"):

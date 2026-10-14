@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.676.0] - 2026-10-14
+
+### Added
+
+- **The planners' filters are in the address** (custom pages S5c, ERPNext TASK-2026-02807). A
+  copied link opens the planner as its sender saw it, and a reload keeps the filters.
+  - **Project Planner:** the Project, Project manager and Group filters ride on every planner
+    screen as `?project=`, `?pm=` and `?group=`, e.g.
+    `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`.
+  - **Maintenance Planner:** the Technician filter, as `?technician=<user>` (`__none__` for
+    Unassigned). Its Projected visits and Project work boxes are display switches, like the
+    Project Planner's "Maintenance, rentals, travel", and stay remembered only.
+  - **Read on every landing** (`take_route_filters`, from `handle_route`), from
+    `frappe.route_options`, after the "last used" view is restored, so the address wins over it.
+    The keys are consumed, so none is left for v16.50's `set_route` to write into the next route's
+    address. Keys that are not the planner's are left alone, as S5b decided. An address that names
+    any filter is the whole filter: one it does not name is All, so a link names exactly what it
+    shows. An address that names none (the sidebar, another page's path-only link) keeps the filters
+    on screen, and they are written into it.
+  - **Ignored:** a group that is not one of the four, a value longer than a document name, an
+    object or a null. A PM or technician the loaded planner does not list becomes All, and the
+    address follows. A project the planner does not list stays the filter, as since S5b.
+  - **A pick replaces, a screen pushes.** Picking a filter rewrites the entry on screen in place
+    (`write_filter_url`, `history.replaceState`, each page's one history write). A filter is not a
+    screen. A push per pick would make Back step through every select change before it reached the
+    week before, and Nik's rule is one entry per screen. Because the entry keeps saying what it
+    shows, Back onto it, a reload and a copied link all show it again. A week, month, view, heatmap,
+    My week or a person's route is a screen. It moves by `set_route` as before, now carrying the
+    filters (`filter_options`), so Back and Forward walk the screens, each with the filters it had.
+  - **The write is guarded.** It happens only on the planner's own path, so a late load cannot
+    write a form's address, and never over keys the router has put in `route_options` that the page
+    has not read yet. It keeps the path as the router wrote it, other keys, the hash and
+    `history.state`, and encodes as v16.50's `set_route` does, so the router never pushes a
+    duplicate entry for the same screen. After a popstate the router does not route (the planner
+    kit closing a drawer), `watch_filter_url` runs it again, so a pick made under a drawer reaches
+    the entry below.
+  - **On the router before v16.50**, which pushed the path alone, the filters still reach the
+    address: the planner reads them from `route_options` and writes them itself.
+
+### Changed
+
+- **What an address gave is that visit's only** (S5b's rule for the Project form's link, made
+  general). It is never saved to the remembered filters, and the "last used" view is not saved
+  while it is on screen (`url_filters`, replacing `project_link`). A bare planner address after it
+  brings back the person's own filters. A filter the person picks (`pick_filter`: the selects, and
+  "Filter to this project" in a project's drawer) makes everything the bar then shows theirs.
+  On the Project Planner that saves all three to the remembered filters, as the "last used" view
+  already did. Before, only the one picked was saved. A saved view, used or restored, is theirs
+  too.
+- **The Project form's link keeps `?project=` in the address.** S5b took the key out
+  (`take_route_project`, now part of `take_route_filters`), so that Back onto the entry would not
+  put the filter back over a later pick. A pick now rewrites the entry, which keeps that promise
+  while the address stays shareable. The link still clears the PM filter: it names only the
+  project, so the PM is All.
+
+### Fixed
+
+- **The planner kit's stylesheet was linked twice on both planners** (since v1.673.0). v16.50's
+  `frappe.require` counts a file as loaded only after it has loaded: `assets.js` pushes it to
+  `_executed` in the element's `onload`. Phase 6A's and Phase 6D's start-up each called
+  `frappe.require(PP6A.kit)` (or `MP6A.kit`) from the constructor in the same tick, and each
+  appended a `<script>` and a `<link>` for `planner_kit.bundle.*`. The second script was harmless,
+  because the bundle installs itself once. The stylesheet, though, was on the page twice. Both now
+  go through `p6a_require`, each page's only `frappe.require`. It keeps the request on
+  `window.planner_kit_request`, one per Desk, which both planners share, so opening the other
+  planner while the kit is on its way does not ask again either.
+
+### Tests
+
+- New bench-free suite `tests/test_planner_url_filters.py`, with its own CI step. It runs
+  `scripts/test_planner_url_filters.js`, the real page scripts against a model of v16.50's router
+  (and the one before it) and of its `assets.js`. It covers opening with the filters, a pick
+  rewriting the address, a reload over the remembered and "last used" filters, Back and Forward
+  across real screen changes, malformed and unknown values, the remembered filters untouched by a
+  link, nothing left in `route_options` for the next route, a bare address after a link, the
+  last-used view's redirect, a pick made under a drawer, and the writes it must never make. It
+  also proves the double `<link>` under the assets model, and one link with `p6a_require`, for
+  6A and 6D in one tick and for both planners at once.
+- `scripts/test_form_page_links.js` follows the Project link's new address, and a pick goes
+  through `pick_filter`. The source checks in the planner suites now allow each page's one
+  in-place history write, `write_filter_url`, still never a push, and one `frappe.require` behind
+  `p6a_require`.
+
 ## [1.673.0] - 2026-10-14
 
 ### Changed

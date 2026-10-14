@@ -3497,6 +3497,17 @@ jobs:
       # model of v16.50's router; node is on PATH in this job, so the harness cannot skip here.
       - name: Custom pages S5b form links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_form_page_links -v
+      # Custom pages S5c (v1.676.0). The Project Planner's Project / PM / Group filters and the
+      # Maintenance Planner's Technician live in the address (?project=&pm=&group=, ?technician=):
+      # read from route_options on every landing and consumed key by key, a pick rewrites the entry
+      # in place (replaceState, never a push), every planner screen carries them, and what an
+      # address gave is never remembered or saved as "last used". Also the planner kit's
+      # stylesheet linked once: v16.50's frappe.require marks a file loaded only after it loads,
+      # so 6A's and 6D's requires in one tick each added a <link>. Runs
+      # scripts/test_planner_url_filters.js, the real page scripts against a model of v16.50's
+      # router and assets.js; node is on PATH in this job, so the harness cannot skip here.
+      - name: Custom pages S5c planner filters in the address (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_url_filters -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

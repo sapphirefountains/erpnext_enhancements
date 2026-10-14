@@ -1331,8 +1331,11 @@ class TestPlannerKitStylesheet(unittest.TestCase):
 			with self.subTest(planner=name):
 				self.assertIn(f"const {name} = {{", js)
 				self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', js)
-				self.assertEqual(len(re.findall(r"frappe\.require\(", js)), 2)
-				self.assertEqual(len(re.findall(rf"frappe\.require\({name}\.kit, \(\) => this\.", js)), 2)
+				# One frappe.require, behind p6a_require, which 6A and 6D share (S5c, v1.676.0): two in
+				# one tick each appended a <link>, and the stylesheet was on the page twice.
+				self.assertEqual(len(re.findall(r"frappe\.require\(", js)), 1)
+				self.assertIn(f"Promise.resolve(frappe.require({name}.kit))", js)
+				self.assertEqual(len(re.findall(r"this\.p6a_require\(\(\) => this\.", js)), 2)
 		styles = _js_code(_read(KIT_DIR / "styles.js"))
 		self.assertIn('export const CSS = "";', styles)
 		self.assertNotIn("@import", styles)

@@ -998,7 +998,15 @@ class TestKitFiles(unittest.TestCase):
 			code = path.read_text(encoding="utf-8")
 			# The kit and its stylesheet in one require (S3.4e, v1.673.0).
 			self.assertIn('kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],', code)
-			self.assertIn(f"frappe.require({constant}.kit, () => this.p6a_ready());", code)
+			# Asked for once, however many phases want it (S5c, v1.676.0): p6a_require is the page's only
+			# frappe.require, and one request per Desk is shared by both planners.
+			self.assertIn("this.p6a_require(() => this.p6a_ready());", code)
+			self.assertEqual(code.count("frappe.require("), 1)
+			self.assertIn(
+				"if (!window.planner_kit_request) window.planner_kit_request = "
+				f"Promise.resolve(frappe.require({constant}.kit));",
+				code,
+			)
 			self.assertIn("window.planner_kit", code)
 
 	def test_back_is_decided_before_the_router_routes(self):
@@ -1069,12 +1077,23 @@ class TestPages(unittest.TestCase):
 		):
 			self.assertIn(line, self.pp, line)
 			self.assertIn(line, self.mp, line)
-		self.assertIn("this.p6a_route(() => frappe.set_route(PP.route, view, anchor), true);", self.pp)
+		# Each carries the planner's filters (S5c, v1.676.0).
 		self.assertIn(
-			"this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd), false);", self.pp
+			"this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);",
+			self.pp,
 		)
-		self.assertIn("this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd), false);", self.pp)
-		self.assertIn("this.p6a_route(() => frappe.set_route(MP.route, view, anchor), true);", self.mp)
+		self.assertIn(
+			"this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options()), false);",
+			self.pp,
+		)
+		self.assertIn(
+			"this.p6a_route(() => frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options()), false);",
+			self.pp,
+		)
+		self.assertIn(
+			"this.p6a_route(() => frappe.set_route(MP.route, view, anchor, this.filter_options()), true);",
+			self.mp,
+		)
 		self.assertIn(
 			'const dialog = this.p6a_dialog({ title: card.subject || card.name, fields, size: "large" }, card);',
 			self.pp,
