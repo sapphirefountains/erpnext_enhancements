@@ -6,13 +6,18 @@
  *   tiles_html([{
  *     key: "drive", title: "Google Drive", tone: "good", status_label: "Healthy",
  *     value: "12,408", detail: "Last sync 4 min ago",
- *     metrics: [{ label: "Queued", value: 0 }],
+ *     metrics: [{ label: "Queued", value: 0 }, { label: "Failed (24h)", value: 3, tone: "red" }],
  *     links: [{ label: "Settings", href: "/desk/google-drive-settings" }],
  *   }])
  *
  * `tone` (or `status`) is a chip tone; integrations_health's green / amber / red are accepted as
  * good / warn / danger so that page can move over unchanged. With no `status_label`, a status
  * tone gets a default word; a tile with neither has no chip rather than a wordless one.
+ *
+ * A metric's `tone`, when it is a status (danger / warn / good, or the same aliases), draws its
+ * value as a chip of that tone (v1.651.0): the health pages marked a metric with a coloured dot
+ * and nothing else, which says nothing to a colour-blind reader or a screen reader. The value is
+ * the chip's word. A neutral, pillar or unknown tone leaves the value as plain text.
  *
  * Everything is escaped. A link goes in an href only when it is a site-relative /desk/ route or an
  * http(s) URL; anything else (javascript:, data:, //host, a bare word) is shown as plain text, so
@@ -26,7 +31,7 @@
 
 import { esc } from "./esc.js";
 import { __ } from "./t.js";
-import { chip, chip_tone } from "./chip.js";
+import { STATUS_TONES, chip, chip_tone } from "./chip.js";
 
 const STATUS_ALIASES = { green: "good", amber: "warn", yellow: "warn", red: "danger" };
 
@@ -67,6 +72,15 @@ function link_html(link) {
 	return `<a class="sf-tile-link" href="${esc(href)}"${external}>${esc(link.label)}</a>`;
 }
 
+// A metric's value: a status chip when the metric has a status tone (its value is the chip's word,
+// so the colour never stands alone), else plain text. A pillar or unknown tone is not a status, and
+// a metric is not a pillar, so either is plain text.
+function metric_value(m) {
+	const value = blank(m.value) ? "—" : m.value;
+	const tone = blank(m.tone) ? "" : tile_tone(m.tone);
+	return STATUS_TONES.includes(tone) ? chip(value, tone) : esc(value);
+}
+
 export function tile_html(item) {
 	item = item && typeof item === "object" ? item : {};
 	const raw_tone = item.tone !== undefined ? item.tone : item.status;
@@ -80,10 +94,7 @@ export function tile_html(item) {
 	if (!blank(item.detail)) parts.push(`<p class="sf-tile-detail">${esc(item.detail)}</p>`);
 	const metrics = list(item.metrics)
 		.filter((m) => m && typeof m === "object" && !blank(m.label))
-		.map(
-			(m) =>
-				`<div class="sf-tile-metric"><dt>${esc(m.label)}</dt><dd>${esc(blank(m.value) ? "—" : m.value)}</dd></div>`
-		);
+		.map((m) => `<div class="sf-tile-metric"><dt>${esc(m.label)}</dt><dd>${metric_value(m)}</dd></div>`);
 	if (metrics.length) parts.push(`<dl class="sf-tile-metrics">${metrics.join("")}</dl>`);
 	const links = list(item.links).map(link_html).filter(Boolean);
 	if (links.length) parts.push(`<div class="sf-tile-links">${links.join("")}</div>`);

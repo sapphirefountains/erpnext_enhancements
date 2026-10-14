@@ -1,13 +1,28 @@
 /*
- * Sales Pipeline board (/app/sales-pipeline).
+ * Sales Pipeline board (/desk/sales-pipeline), and its TV mode (/desk/sales-pipeline/tv).
  *
- * Theme convention (see memory/dark-theme-convention): structural colors come
- * from Frappe CSS variables so Frappe Light and Timeless Night both work; only
- * the semantic staleness accents (amber/red) and the won-green are literal,
- * with [data-theme="dark"] adjustments for contrast.
+ * Delivered through the Page asset mechanism (no immutable /assets cache: page CSS is served
+ * via getpage, so deploys reach every device). That also makes it GLOBAL: pageview.js appends it
+ * to <head> once and never removes it. The board's own class names (.pipeline-card, .rail-chip)
+ * are generic, so every rule here sits under the page body (.sales-pipeline-page, stamped by
+ * sales_pipeline.js) or under the TV-mode body class (body.sales-pipeline-tv, which the page
+ * toggles on show and removes on hide). tests/test_s3_page_css.py holds every selector to that.
  *
- * Delivered through the Page asset mechanism (no immutable /assets cache —
- * page CSS is served via getpage, so deploys reach every device).
+ * EVERY COLOUR IS AN --sf-* TOKEN (docs/app-design-system.md), so the board follows the Desk's
+ * light or dark theme with no theme block of its own. Staleness is the status tokens: amber is
+ * --sf-warn, red is --sf-danger, and each badge carries its word ("Aging", "Stale") as well as
+ * its colour. The badge is a status chip edged in --sf-chip-edge-*; the card itself keeps its
+ * --sf-rule hairline in every state, because a chip edge on a whole card flips with the theme
+ * (a near-black Aging card in light, an off-white Stale card in dark).
+ *
+ * Square cards, a hairline, no shadows. The left stripe that marks a stale card is a 4px border,
+ * not an inset shadow, in the status colour mixed half and half with --sf-text-strong: the yellow
+ * itself is 1.7:1 on a white card and the red 2.8:1 on a navy one, and the mix clears 3:1 on both.
+ * The red card's pulse is a thick outline in the danger colour, sized to be seen across a room;
+ * it stops under prefers-reduced-motion and gives way to the focus ring.
+ *
+ * THIS IS A WALL DISPLAY. The TV-mode font sizes at the bottom are tuned for reading across a
+ * room and are kept exactly as they were; restyle the colours, not the sizes.
  */
 
 .sales-pipeline-page {
@@ -16,7 +31,7 @@
 	height: calc(100vh - 130px);
 }
 
-.sales-pipeline-board {
+.sales-pipeline-page .sales-pipeline-board {
 	display: flex;
 	gap: 12px;
 	padding: 12px;
@@ -26,134 +41,122 @@
 	align-items: stretch;
 }
 
-.sales-pipeline-footer {
+.sales-pipeline-page .sales-pipeline-footer {
 	padding: 4px 16px 10px;
 	font-size: 12px;
 	text-align: right;
+	color: var(--sf-text-muted);
 }
 
 /* --- Hand-off rail: projects mid PRO-0204 process, under the funnel --- */
 
-.sales-pipeline-rail {
+.sales-pipeline-page .sales-pipeline-rail {
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 8px;
 	padding: 6px 12px;
-	border-top: 1px solid var(--border-color);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
 }
 
-.sales-pipeline-rail .rail-title {
+.sales-pipeline-page .sales-pipeline-rail .rail-title {
 	font-size: 12px;
-	font-weight: 700;
-	color: var(--text-muted);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-eyebrow);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 	margin-right: 4px;
 }
 
-.rail-chip {
+.sales-pipeline-page .rail-chip {
 	display: inline-flex;
 	flex-direction: column;
-	background: var(--fg-color);
-	border: 1px solid var(--border-color);
-	border-radius: 8px;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 	padding: 4px 10px;
 	text-decoration: none !important;
-	color: var(--text-color);
+	color: var(--sf-text);
 	line-height: 1.3;
 }
 
-.rail-chip .rail-chip-label {
-	font-size: 12px;
-	font-weight: 600;
-	color: var(--heading-color);
+.sales-pipeline-page .rail-chip:hover,
+.sales-pipeline-page .rail-chip:focus-visible {
+	border-color: var(--sf-focus);
 }
 
-.rail-chip .rail-chip-step {
+.sales-pipeline-page .rail-chip .rail-chip-label {
+	font-size: 12px;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.sales-pipeline-page .rail-chip .rail-chip-step {
 	font-size: 11px;
-	color: var(--text-muted);
+	color: var(--sf-text-muted);
 }
 
-.rail-chip.rail-overdue {
-	border-color: #dc2626;
-	box-shadow: inset 3px 0 0 #dc2626;
+.sales-pipeline-page .rail-chip.rail-overdue {
+	border-left: 4px solid color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
 }
 
-.rail-chip.rail-overdue .rail-chip-step {
-	color: #dc2626;
-	font-weight: 700;
+/* Danger as TEXT is mixed with the strongest text colour, so it reads on both themes' cards;
+   the step line also starts with the word "Overdue". */
+.sales-pipeline-page .rail-chip.rail-overdue .rail-chip-step {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: var(--sf-weight-bold);
 }
 
-[data-theme="dark"] .rail-chip.rail-overdue {
-	border-color: #ef4444;
-	box-shadow: inset 3px 0 0 #ef4444;
-}
-
-[data-theme="dark"] .rail-chip.rail-overdue .rail-chip-step {
-	color: #f87171;
-}
-
-.rail-overflow {
+.sales-pipeline-page .rail-overflow {
 	font-size: 12px;
-}
-
-body.sales-pipeline-tv .rail-chip .rail-chip-label {
-	font-size: 15px;
-}
-
-body.sales-pipeline-tv .rail-chip .rail-chip-step {
-	font-size: 13px;
-}
-
-body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
-	font-size: 14px;
+	color: var(--sf-text-muted);
 }
 
 /* --- Columns --- */
 
-.pipeline-column {
+.sales-pipeline-page .pipeline-column {
 	flex: 1 1 0;
 	min-width: 220px;
 	display: flex;
 	flex-direction: column;
-	background: var(--bg-color);
-	border: 1px solid var(--border-color);
-	border-radius: 10px;
+	background: var(--sf-bg);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 	overflow: hidden;
 }
 
-.pipeline-column-head {
+.sales-pipeline-page .pipeline-column-head {
 	padding: 10px 12px;
-	border-bottom: 1px solid var(--border-color);
-	background: var(--fg-color);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
 }
 
-.pipeline-column-title {
-	font-weight: 700;
-	color: var(--heading-color);
+.sales-pipeline-page .pipeline-column-title {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-heading);
 	font-size: 14px;
 	line-height: 1.2;
 }
 
-.pipeline-column-meta {
+.sales-pipeline-page .pipeline-column-meta {
 	display: flex;
 	justify-content: space-between;
 	margin-top: 4px;
 	font-size: 12px;
-	color: var(--text-muted);
+	color: var(--sf-text-muted);
 }
 
-.pipeline-count::before {
+.sales-pipeline-page .pipeline-count::before {
 	content: "▣ ";
 	opacity: 0.6;
 }
 
-.pipeline-total {
-	font-weight: 600;
+.sales-pipeline-page .pipeline-total {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
 }
 
-.pipeline-column-cards {
+.sales-pipeline-page .pipeline-column-cards {
 	padding: 10px;
 	display: flex;
 	flex-direction: column;
@@ -162,72 +165,78 @@ body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
 	flex: 1;
 }
 
-.pipeline-empty,
-.pipeline-overflow {
+.sales-pipeline-page .pipeline-empty,
+.sales-pipeline-page .pipeline-overflow {
 	text-align: center;
 	font-size: 12px;
 	padding: 8px 0;
+	color: var(--sf-text-muted);
 }
 
-/* Won — awaiting project: the Step 1 -> Step 2 gap, green accent. */
-.pipeline-column-won .pipeline-column-head {
-	border-top: 3px solid #16a34a;
+/* Won, awaiting project: the Step 1 -> Step 2 gap. The column title says "Won" in words. */
+.sales-pipeline-page .pipeline-column-won .pipeline-column-head {
+	border-top: 3px solid var(--sf-good);
 }
 
 /* Parked (On Hold): visually muted, never stale. */
-.pipeline-column-parked {
+.sales-pipeline-page .pipeline-column-parked {
 	opacity: 0.65;
 }
 
-.pipeline-column-parked .pipeline-column-head {
-	border-top: 3px solid var(--border-color);
+.sales-pipeline-page .pipeline-column-parked .pipeline-column-head {
+	border-top: 3px solid var(--sf-rule);
 }
 
 /* --- Cards --- */
 
-.pipeline-card {
+.sales-pipeline-page .pipeline-card {
 	display: block;
-	background: var(--fg-color);
-	border: 1px solid var(--border-color);
-	border-radius: 8px;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
 	padding: 8px 10px;
 	text-decoration: none !important;
-	color: var(--text-color);
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
+	color: var(--sf-text);
+	transition: border-color var(--sf-duration) var(--sf-ease);
 }
 
-.pipeline-card:hover {
-	transform: translateY(-2px);
-	box-shadow: var(--shadow-md, 0 4px 10px rgba(0, 0, 0, 0.12));
+.sales-pipeline-page .pipeline-card:hover,
+.sales-pipeline-page .pipeline-card:focus-visible {
+	border-color: var(--sf-focus);
 }
 
-.pipeline-card-top {
+.sales-pipeline-page .pipeline-card:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
+}
+
+.sales-pipeline-page .pipeline-card-top {
 	display: flex;
 	justify-content: space-between;
 	align-items: baseline;
 	gap: 8px;
 }
 
-.pipeline-card-customer {
-	font-weight: 600;
-	color: var(--heading-color);
+.sales-pipeline-page .pipeline-card-customer {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
 	font-size: 13px;
 	line-height: 1.25;
 }
 
-.pipeline-card-days {
+.sales-pipeline-page .pipeline-card-days {
 	flex-shrink: 0;
 	font-size: 11px;
-	color: var(--text-muted);
-	border: 1px solid var(--border-color);
-	border-radius: 10px;
+	color: var(--sf-text-muted);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-pill);
 	padding: 0 7px;
 	white-space: nowrap;
 }
 
-.pipeline-card-summary {
+.sales-pipeline-page .pipeline-card-summary {
 	font-size: 12px;
-	color: var(--text-muted);
+	color: var(--sf-text-muted);
 	margin-top: 3px;
 	display: -webkit-box;
 	-webkit-line-clamp: 2;
@@ -235,7 +244,7 @@ body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
 	overflow: hidden;
 }
 
-.pipeline-card-bottom {
+.sales-pipeline-page .pipeline-card-bottom {
 	display: flex;
 	justify-content: space-between;
 	align-items: baseline;
@@ -243,80 +252,89 @@ body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
 	font-size: 12px;
 }
 
-.pipeline-card-amount {
-	font-weight: 700;
-	color: var(--heading-color);
+.sales-pipeline-page .pipeline-card-amount {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
 }
 
-.pipeline-card-owner {
-	color: var(--text-muted);
+.sales-pipeline-page .pipeline-card-owner {
+	color: var(--sf-text-muted);
 	font-size: 11px;
 }
 
 /* --- Staleness: "it lights up if it's been sitting too long" --- */
 
-.pipeline-card.stale-amber {
-	border-color: #d97706;
-	box-shadow: inset 3px 0 0 #d97706;
+/* The badge is a status chip: the status fill, its own label colour, and the tone's chip edge
+   (warn's yellow fill is 1.7:1 on white, so its edge is the navy label colour in light). The
+   card keeps its --sf-rule hairline; only its 4px stripe changes, in the status colour mixed
+   with --sf-text-strong so the stripe clears 3:1 on a white card and a navy one. */
+.sales-pipeline-page .pipeline-card.stale-amber {
+	border-left: 4px solid color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
 }
 
-.pipeline-card.stale-amber .pipeline-card-days {
-	background: #fef3c7;
-	border-color: #d97706;
-	color: #92400e;
-	font-weight: 700;
+.sales-pipeline-page .pipeline-card.stale-amber .pipeline-card-days {
+	background: var(--sf-warn);
+	border-color: var(--sf-chip-edge-warn);
+	color: var(--sf-on-warn);
+	font-weight: var(--sf-weight-bold);
 }
 
-.pipeline-card.stale-red {
-	border-color: #dc2626;
-	box-shadow: inset 3px 0 0 #dc2626, 0 0 8px rgba(220, 38, 38, 0.35);
-	animation: pipeline-pulse 2.4s ease-in-out infinite;
+.sales-pipeline-page .pipeline-card.stale-red {
+	border-left: 4px solid color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	outline: 4px solid transparent;
+	outline-offset: 2px;
+	animation: sales-pipeline-pulse 2.4s ease-in-out infinite;
 }
 
-.pipeline-card.stale-red .pipeline-card-days {
-	background: #fee2e2;
-	border-color: #dc2626;
-	color: #991b1b;
-	font-weight: 700;
+/* The pulse owns the outline, so without this a focused stale card would show no focus ring for
+   half of every cycle: the focus ring wins, and the pulse stops while the card has focus. */
+.sales-pipeline-page .pipeline-card.stale-red:focus-visible {
+	animation: none;
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
 }
 
-@keyframes pipeline-pulse {
+.sales-pipeline-page .pipeline-card.stale-red .pipeline-card-days {
+	background: var(--sf-danger);
+	border-color: var(--sf-chip-edge-danger);
+	color: var(--sf-on-danger);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* The across-the-room cue for a deal that has sat past the red line: a 4px ring outside the card
+   that breathes in the danger colour. A colour change, not movement, and switched off for
+   reduced motion, where the stripe and the "Stale" chip still say it. */
+@keyframes sales-pipeline-pulse {
 	0%,
 	100% {
-		box-shadow: inset 3px 0 0 #dc2626, 0 0 4px rgba(220, 38, 38, 0.25);
+		outline-color: transparent;
 	}
 	50% {
-		box-shadow: inset 3px 0 0 #dc2626, 0 0 14px rgba(220, 38, 38, 0.55);
+		outline-color: var(--sf-danger);
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.pipeline-card.stale-red {
+	.sales-pipeline-page .pipeline-card.stale-red {
 		animation: none;
+	}
+
+	.sales-pipeline-page .pipeline-card {
+		transition: none;
 	}
 }
 
-/* Dark theme: brighter accents, darker badge fills (contrast flips). */
-[data-theme="dark"] .pipeline-card.stale-amber {
-	border-color: #f59e0b;
-	box-shadow: inset 3px 0 0 #f59e0b;
-}
+/* --- Phones: one column at a time, swiped sideways --- */
 
-[data-theme="dark"] .pipeline-card.stale-amber .pipeline-card-days {
-	background: rgba(245, 158, 11, 0.18);
-	border-color: #f59e0b;
-	color: #fbbf24;
-}
+@media (max-width: 767px) {
+	.sales-pipeline-page .sales-pipeline-board {
+		scroll-snap-type: x mandatory;
+	}
 
-[data-theme="dark"] .pipeline-card.stale-red {
-	border-color: #ef4444;
-	box-shadow: inset 3px 0 0 #ef4444, 0 0 10px rgba(239, 68, 68, 0.45);
-}
-
-[data-theme="dark"] .pipeline-card.stale-red .pipeline-card-days {
-	background: rgba(239, 68, 68, 0.18);
-	border-color: #ef4444;
-	color: #f87171;
+	.sales-pipeline-page .pipeline-column {
+		flex: 0 0 85%;
+		scroll-snap-align: start;
+	}
 }
 
 /* --- TV mode: chrome off, typography up, made for across-the-room --- */
@@ -332,6 +350,18 @@ body.sales-pipeline-tv .content.page-container {
 
 body.sales-pipeline-tv .sales-pipeline-page {
 	height: 100vh;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-label {
+	font-size: 15px;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-step {
+	font-size: 13px;
+}
+
+body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
+	font-size: 14px;
 }
 
 body.sales-pipeline-tv .pipeline-column-title {

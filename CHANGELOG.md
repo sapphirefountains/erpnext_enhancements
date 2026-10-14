@@ -123,6 +123,191 @@ User, Sales Manager, System Manager.
   The fallbacks have been 45 / 90 since v1.421.0, and the Opportunity Board reads the same live
   settings.
 
+## [1.652.0] - 2026-10-13
+
+### Changed
+
+- **Four more Desk pages draw their CSS from the `--sf-*` tokens** (custom pages S3.4b, ERPNext
+  TASK-2026-02823): Question Review, the Course Canvas, the Sales Pipeline TV board and the Location
+  Timeline. Styling and file layout only; no endpoint, route, realtime event or Python changed.
+  - **Question Review** (`training_review.css`) painted itself in Frappe's palette (`--red-500`,
+    `--green-500`, `--yellow-500`, `--primary`). It is on the semantic and status tokens now: a status
+    as text is mixed half and half with `--sf-text-strong` so it reads on a white card and a navy one;
+    Draft and Published are status chips; cards are square; the focused card's bar is a 4px rule
+    instead of an inset shadow. 767px gives the verdict buttons a 44px touch target.
+  - **Course Canvas** (`training_canvas.css`) read the learner's Aurora palette (`--tr-*`) for its
+    chrome, with a literal fallback beside nearly every read (151 lines carried a literal colour),
+    plus Frappe colours. The
+    chrome is on `--sf-*`; the learner render inside the sheet still takes `player.css`, which is the
+    point of the canvas. Shadows became hairlines and outlines; the save pip, the conflict banner, the
+    asset warnings, the unreviewed-question flag and the home-screen status pills take the status
+    tokens. The current lesson in the rail is a 3px focus bar and a heavier weight.
+  - **Sales Pipeline** (`sales_pipeline.css`). Every rule now sits under `.sales-pipeline-page` or
+    `body.sales-pipeline-tv`: the board's class names (`.pipeline-card`, `.rail-chip`) are generic,
+    and a Desk page's CSS stays in `<head>` for the whole session, so they styled any element of the
+    same name on every page opened afterwards. The `pipeline-pulse` keyframes became
+    `sales-pipeline-pulse` for the same reason. Amber and red staleness are `--sf-warn` / `--sf-danger`
+    chips edged in `--sf-chip-edge-*`; the red card pulses its outline colour instead of a glow. The TV
+    font sizes are unchanged: it is a wall display. Phones get one column at a time, swiped sideways.
+  - **Location Timeline.** Its stylesheet moves from `public/css/workforce/location_timeline.css` into
+    the page folder as `location_timeline.css`, and the page no longer `frappe.require`s it. That path
+    was not actually being served stale (v16's `frappe.require` appends `?v=<build>` to a non-bundled
+    path, `AssetManager.execute` in `assets.js` on `version-16`), but it was a second request behind
+    a `frappe.dom.freeze()` for a file the page loader sends with the page for nothing. The page also
+    stacks below 991.98px instead of 900px (touch targets at 767px); the markers keep a white ring on the basemap
+    instead of a drop shadow.
+- **Status words beside status colours.** The Sales Pipeline days badge now reads "12 days · Aging"
+  or "· Stale", and an overdue hand-off chip starts with "Overdue"; a stale Live pin on the Location
+  Timeline starts its second line with "Stale"; an unfinished checkpoint pin on the Course Canvas
+  says "unfinished" in its tooltip and accessible name.
+
+- **Review follow-ups.**
+  - A stale (red) pipeline card kept its pulse while focused, and the pulse owns the outline, so
+    the keyboard focus ring vanished; `.stale-red:focus-visible` now stops the pulse and draws the
+    `--sf-focus` ring (guarded).
+  - Stale cards and overdue hand-off chips keep their `--sf-rule` hairline. A `--sf-chip-edge-*`
+    border on a whole card flipped with the theme (near-black Aging in light, off-white Stale in
+    dark); the 4px stripe and the badge chip carry the status, and the stripe is the status colour
+    mixed with `--sf-text-strong`, because plain yellow is 1.7:1 on white (guarded).
+  - The red pulse is a 4px ring outside the card in `--sf-danger`, sized for a TV across the room;
+    still off under `prefers-reduced-motion`.
+  - Below 991.98px the Course Canvas's top bar (the save status) and rich-text toolbar stick under
+    the Desk navbar (`--navbar-height`, 48px on v16) instead of scrolling away.
+  - The Location Timeline's gap, stop and geofence strokes are read from `--sf-danger`,
+    `--sf-warn` and `--sf-pillar-service` at runtime (`getComputedStyle`, old hex as fallback),
+    the same tokens the legend swatches read, so the legend matches the map (guarded).
+  - The Location Timeline stacks its map and 340px side panel below 991.98px too, so a portrait
+    tablet's map is not squeezed to a strip.
+  - A stray blank line in `.tc-title:focus` is gone.
+
+### Fixed
+
+- **The Course Canvas's tablet layout never applied, from v1.489.0 until now.** The home-screen
+  section was pasted into the middle of the narrow-screens comment. CSS comments do not nest, so the
+  comment ended at the home-screen section's own closing marker and its second paragraph sat in the
+  stylesheet as a selector, which made the next rule invalid. That rule was
+  `@media (max-width: 991.98px)`, and a browser drops an invalid rule whole: below 992px the rail
+  stayed a fixed 248px column and the canvas a fixed viewport-high box. The tests that pinned the
+  breakpoint searched the text and passed. The comment is whole again, and
+  `tests/test_s3_page_css.py` now fails on a comment that opens inside another one or closes twice.
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the four pages: no injected styles, the `.css` exists, no literal
+  colours or Frappe palette variables, every `--sf-*` read defined, selectors namespaced, one 767px
+  breakpoint (the two Training pages also keep Frappe's 991.98px, which their own suites pin). New
+  checks for every page: no `var(--tr-...)`, every `@keyframes` name prefixed, comments well formed,
+  the Location Timeline's old stylesheet gone, and the Sales Pipeline's realtime event, server method
+  and hooks untouched. Each check fails on the pre-change files.
+- `test_location_timeline_page` / `test_location_timeline_map` follow the stylesheet into the page
+  folder and onto the tokens.
+
+## [1.651.0] - 2026-10-13
+
+Custom pages, step 3.2 (TASK-2026-02821): the four health dashboards share one tile renderer,
+`sf_kit.tiles`. Integrations Health, the Device Fleet Dashboard, the QuickBooks Online dashboard and
+the Stripe dashboard each drew their own tiles and status colours, and three of them marked a status
+with a coloured dot or pill and nothing else.
+
+### Added
+
+- **`public/js/health_board.bundle.js`, the one health dashboard.**
+  `window.sf_health_board.mount(page, opts)` asks the server for its health checks and draws them on
+  `sf_kit` tiles. It shows the S3.1 states: the kit's loading panel, then on a failed first load
+  either the error panel with Try again, the no-access panel on a 403, or the signed-out panel with
+  Reload. A Refresh that fails while tiles are showing keeps them and says so in a toast, and a reply
+  that lands after a newer Refresh is dropped. Calls go on the kit's quiet path, so frappe shows no
+  dialog. `tile(check)` maps the shape that `api/integrations_health.py` and `api/device_dashboard.py`
+  both send: the label is the title, the headline and notes are the detail line, and the status and
+  metric tones and the link routes go to the kit unchanged. The bundle gets the kit from
+  `window.sf_kit_ready()` and carries none of its own. Only the two health pages load it, through
+  `frappe.require`.
+- **A tile metric can carry a status tone** (`sf_kit/tiles.js`). `danger` / `warn` / `good`, or
+  `red` / `amber` / `green`, draws the metric's value as a chip of that tone, so the value is the word
+  and the colour only repeats it. Any other tone leaves the value as plain text. The metric's value
+  cell may shrink (`min-width: 0`), so a long chip ellipsizes instead of pushing the row wider
+  (`sf_kit.bundle.css`, pasted into `styles.js`). The kit bundle's `VERSION` is now 3.
+- **The loader's stand-in has `chip` and `tiles.html`.** With no kit there is no kit stylesheet
+  either, so a chip is its word and each tile is one line of escaped words joined by " · ":
+  - the title;
+  - the status word: the tile's `status_label`, or else the kit's default word for its `status` or
+    `tone` (Healthy, Needs attention or Failing; none for neutral);
+  - the value and the detail;
+  - each metric as "label: value";
+  - each link's label.
+
+  The QuickBooks and Stripe pages' bare kits, used when the loader itself is missing, carry an
+  identical copy, so their tiles no longer vanish on that path.
+
+### Changed
+
+- **The Device Fleet Dashboard is a thin caller of the health board.** It was a copy of Integrations
+  Health with its class prefix changed (`dfd-` for `ih-`), complete with its own inline stylesheet
+  and colour map. It is now a page title, a Device Console button and one `mount` call.
+- **Integrations Health** draws every integration through the board. The scheduler and the 24-hour
+  error digest became kit tiles too: a disabled scheduler is a "disabled" chip, and the failures and
+  top errors are metric rows. The Drive tile's **Test connection** button sits in the kit's Drive tile
+  and runs on the quiet path. Each check's result is a Pass / Fail / Not set up chip, replacing a
+  green or red tick, and a failed test says so in the tile instead of a dialog.
+- **QuickBooks Online dashboard:** its four status boxes are kit tiles. The connection is a chip that
+  says its status (Connected is good, Syncing warn, Failed danger, anything else a neutral chip with
+  its word), and the failed-log count carries a chip as well. The tiles show "—" until the status
+  arrives. The S3.1 states, the loader use and the resync poll's 4xx/5xx rules are unchanged.
+- **Stripe dashboard:**
+  - The connection banner (a Bootstrap alert, green or amber) and the eight-setting grid became one
+    kit tile. Its chip is the connection status, and the ✓ / ✗ on the secret key and webhook secret
+    became Set / Missing chips.
+  - The six count boxes are kit tiles. Each one is a chip with the status word above its count.
+  - The recent-payments table shows each status as a kit chip.
+  - `statusColor`, the map from payment status to Frappe indicator colour, is gone. The amount
+    column is escaped like every other cell.
+- **The QuickBooks dashboard's CSS no longer ships on every Desk page.**
+  `public/css/quickbooks_online/qbo_dashboard.css` was imported by `desk_addons.bundle.scss`, so
+  every Desk page downloaded it. It is now the page's own `quickbooks_online_dashboard.css`, which
+  `getpage` sends with the page. Once appended to `<head>` that CSS is global, so every selector is
+  scoped under `.qbo-dashboard`. Nothing else used its classes, which the test checks. It follows the
+  app design rules: square edges, `--sf-*` colours and one 767px breakpoint. The status-box rules
+  went with the boxes. The Record Matching page's sheet stays in the bundle.
+
+### Tests
+
+- **`tests/test_s3_health_tiles.py`** (new CI step). It fails the build if any of the four pages or
+  the board:
+  - keeps a status-colour map or a literal colour. This covers hex values, Frappe palette variables,
+    indicator classes, alert colours, inline backgrounds and colour names as map values;
+  - builds tile markup by hand;
+  - writes a status map whose values are not kit tones. A page may say what a status means, never
+    what it looks like.
+
+  It also checks that the Device Fleet page stays a thin caller and that the board keeps the S3.1
+  states. For the QuickBooks stylesheet, it checks that the old file is out of the bundle, that every
+  selector is scoped, and that it follows the design rules.
+- **`scripts/test_s3_page_states.mjs`** now runs both health pages against the real kit:
+  - first-load states, Refresh, stale replies, the stand-in and the Drive test;
+  - the QuickBooks and Stripe tiles: chips with their words, escaped server strings, links through
+    `safe_href`, and no hand-drawn colour.
+- **`scripts/test_sf_kit.mjs`** covers metric tones.
+
+## [1.650.0] - 2026-10-13
+
+Form kit P3.4 (TASK-2026-02757): **print shows dates in the same style as every other channel.** That style is `10/14/2026` and `10/14/2026 2:00 PM`, from the one library the Desk, reports, emails and SMS already share (`utils.normalize`, P2.1).
+
+### Changed
+
+- **Print templates use the new date helpers.**
+  - New Jinja globals `ps_date`, `ps_datetime` and `ps_time` in `print_style.py`, which stays frappe-free. They are registered in `hooks.py` with the other `ps_*` helpers.
+  - The templates call them instead of `frappe.format(..., {"fieldtype": "Date"})`, which follows System Settings and prints a 24-hour time, and `frappe.utils.formatdate`.
+  - The changed templates are the Python-composed print formats (sales, procurement, project, training, package dispatch, product configurator) and the `Maintenance Record Print` fixture.
+- **What prints differently:** dates read as before (`10/14/2026`). The one date-and-time on a printed document, a Purchase Order's approval stamp, now prints `10/14/2026 2:00 PM` instead of `14:00`.
+- **Blank dates:** a blank date still prints nothing, so the `or "—"` placeholders keep working. A value the library can't read prints as written, escaped.
+- **Phones were already shared.** `ps_phone` has used the shared library since P2-A.
+
+### Added
+
+- **`test_print_style` guards the change.** It fails on any print generator (`setup_*print_formats.py`) or print-format fixture that formats a date by hand, and it tests the three helpers directly.
+- **The print suites now check the real printed dates** (`09/21/2026`) rather than the stub's passthrough.
+- `docs/print-design-system.md` lists the helpers.
+
 ## [1.649.0] - 2026-10-13
 
 Custom pages S3.3b (TASK-2026-02822): the 34 department dashboard widgets draw their panels,
