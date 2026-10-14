@@ -435,6 +435,11 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Pure filesystem, like the step above. A Link field whose target is a child table can be
+      # neither searched nor validated by anyone (a child table has no permissions of its own):
+      # Lead Source was one from 2026-06-09 to v1.677.3, and nobody could pick a lead source.
+      - name: No Link points at a child table
+        run: python -m unittest erpnext_enhancements.tests.test_link_targets_not_child_tables -v
       # Whether the nightly offsite backup ships the file archives is one membership
       # test -- `include_files = backup_type in FULL_TYPES`. Drop the scheduled type out
       # of that tuple and the run silently reverts to database-only: it still succeeds,
