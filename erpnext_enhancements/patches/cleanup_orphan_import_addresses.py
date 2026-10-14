@@ -32,8 +32,8 @@ counted ``delete_skipped_no_match`` and listed.
 addresses for existing Suppliers and never linked them. It ran as one batch inside a single
 minute -- every row it wrote has a ``creation`` between 09:39:09 and 09:39:24 site time, and
 nothing else on the site was created in that minute -- so the batch is identified by that
-window rather than by who ran it (other addresses entered by hand later the same day are not
-part of it and are left alone). An Address gets one Dynamic Link row to its Supplier when ALL
+window rather than by who ran it (other addresses entered by hand the same day are not part of
+it and are left alone). An Address gets one Dynamic Link row to its Supplier when ALL
 of:
 
 * it has no Dynamic Link row;
