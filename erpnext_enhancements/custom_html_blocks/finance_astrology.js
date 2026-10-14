@@ -22,10 +22,30 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#fas-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
@@ -47,20 +67,21 @@
         }
     }
 
-    function render(body, message) {
-        const esc = frappe.utils.escape_html;
+    function render(body, sf, message) {
         if (!message || message.enabled === false) {
-            body.innerHTML = `<div class="fas-muted">${__("Horoscope is turned off in ERPNext Enhancements Settings.")}</div>`;
+            sf.state.render(body, "empty", {
+                title: __("Horoscope is turned off in ERPNext Enhancements Settings."),
+            });
             return;
         }
         if (!message.text) {
-            body.innerHTML = `<div class="fas-muted">${esc(message.reason || __("No horoscope available."))}</div>`;
+            sf.state.render(body, "empty", { title: message.reason || __("No horoscope available.") });
             return;
         }
-        body.innerHTML = `<p class="fas-text">${esc(message.text)}</p>`;
+        body.innerHTML = `<p class="fas-text">${sf.esc(message.text)}</p>`;
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#fas-body");
         const select = container.querySelector("#fas-sign");
 
@@ -69,13 +90,21 @@
             (s) => `<option value="${s}"${s === current ? " selected" : ""}>${s}</option>`,
         ).join("");
 
+        // Two sign changes in quick succession can overlap, so each ask takes a ticket on
+        // the root (blocks.ticket) and only the newest sign's text draws.
         function load(sign) {
-            body.innerHTML = `<div class="fas-muted">${__("Loading…")}</div>`;
+            const newest = ticket(container);
+            sf.state.render(body, "loading");
             frappe
                 .call({ method: "erpnext_enhancements.api.horoscope.get_horoscope", args: { sign } })
-                .then((r) => render(body, r.message))
-                .catch(() => {
-                    body.innerHTML = `<div class="fas-muted">${__("Could not load horoscope.")}</div>`;
+                .then((r) => {
+                    if (newest()) render(body, sf, r.message);
+                })
+                .catch((err) => {
+                    if (!newest()) return;
+                    const title = __("Could not load horoscope.");
+                    if (err && err.status === 403) sf.state.render(body, "no-access");
+                    else sf.state.render(body, "error", { title, on_action: () => load(sign) });
                 });
         }
 

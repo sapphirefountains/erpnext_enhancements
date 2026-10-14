@@ -16,10 +16,30 @@
         return typeof root_element !== "undefined" && root_element ? root_element : document;
     }
 
+    // The kit (panels, chips, escaping) and the ticket come from the shared helper,
+    // workspace_block_return.js. A bundle cached from before them has neither: the block
+    // then draws plain text, and every answer draws.
+    function withKit(container) {
+        const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
+        if (blocks && blocks.kit && blocks.ticket) {
+            blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
+            return;
+        }
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
+        const escape = frappe.utils.escape_html;
+        startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
+    }
+
     function waitForDOM() {
         const container = getContainer();
         if (container.querySelector("#fwx-body")) {
-            startApp(container);
+            withKit(container);
         } else if (++attempts < MAX_ATTEMPTS) {
             setTimeout(waitForDOM, 100);
         }
@@ -40,8 +60,7 @@
         return ["🌡", ""];
     }
 
-    function renderWeather(body, label, data) {
-        const esc = frappe.utils.escape_html;
+    function renderWeather(body, sf, label, data) {
         const current = data.current || {};
         const daily = data.daily || {};
         const glyph = wmo(current.weather_code);
@@ -59,22 +78,26 @@
                 <span class="fwx-icon">${glyph[0]}</span>
                 <span class="fwx-temp">${Math.round(current.temperature_2m)}°</span>
                 <span class="fwx-info">
-                    <span class="fwx-cond">${esc(glyph[1])}</span>
-                    <span class="fwx-loc">${esc(label || "")} ${range}</span>
+                    <span class="fwx-cond">${sf.esc(glyph[1])}</span>
+                    <span class="fwx-loc">${sf.esc(label || "")} ${range}</span>
                 </span>
             </div>`;
     }
 
-    function startApp(container) {
+    function startApp(container, sf, ticket) {
         const body = container.querySelector("#fwx-body");
 
-        // Two returns in quick succession can overlap, so each ask takes a ticket and
-        // only the newest one draws.
+        // Two returns in quick succession can overlap, so each ask takes a ticket on the
+        // root (blocks.ticket) and only the newest one draws.
         function load() {
-            const ticket = (container.__ee_ticket = (container.__ee_ticket || 0) + 1);
-            const current = () => container.__ee_ticket === ticket;
-            const unavailable = () => {
-                if (current()) body.innerHTML = `<div class="fwx-muted">${__("Weather unavailable.")}</div>`;
+            const current = ticket(container);
+            // The settings call refused (403) is no access; anything else, Open-Meteo
+            // included, is "unavailable", with Try again.
+            const unavailable = (err) => {
+                if (!current()) return;
+                const title = __("Weather unavailable.");
+                if (err && err.status === 403) sf.state.render(body, "no-access");
+                else sf.state.render(body, "error", { title, on_action: load });
             };
             frappe
                 .call({ method: "erpnext_enhancements.api.finance_dashboard.get_finance_config" })
@@ -82,7 +105,9 @@
                     if (!current()) return;
                     const cfg = r.message || {};
                     if (!cfg.enabled || !cfg.enabled.weather) {
-                        body.innerHTML = `<div class="fwx-muted">${__("Weather is turned off in ERPNext Enhancements Settings.")}</div>`;
+                        sf.state.render(body, "empty", {
+                            title: __("Weather is turned off in ERPNext Enhancements Settings."),
+                        });
                         return;
                     }
                     const w = cfg.weather || {};
@@ -96,13 +121,14 @@
                     fetch(url)
                         .then((resp) => resp.json())
                         .then((data) => {
-                            if (current()) renderWeather(body, w.label, data);
+                            if (current()) renderWeather(body, sf, w.label, data);
                         })
                         .catch(unavailable);
                 })
                 .catch(unavailable);
         }
 
+        sf.state.render(body, "loading");
         load();
         const blocks = window.erpnext_enhancements && window.erpnext_enhancements.workspace_blocks;
         if (blocks && blocks.onWorkspaceReturn) blocks.onWorkspaceReturn(container, load);
