@@ -23,6 +23,12 @@
  *                               row -- after a full import, none of them.
  *
  * The page is otherwise stateless; all data comes from the RPCs above.
+ *
+ * The status load and the resync-preview poll run on sf_kit's quiet path (v1.645.0): the load
+ * draws its loading, empty, error and no-access states from the kit where the sync logs go, and
+ * the poll, which no one is watching, never puts up a frappe dialog (it retries a network or
+ * server failure, and stops on a 4xx or a lapsed session). The buttons keep
+ * frappe.call and its dialogs: those failures answer a click.
  */
 frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -96,8 +102,47 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	});
 
 	renderEntities(root);
+	qbo_root = root;
 	refresh(root);
 };
+
+// sf_kit from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never
+// rejects: a kit that never arrived resolves to a plain stand-in (frappe.call and a line of plain
+// text), so the dashboard carries on. A Desk opened before the deploy that added the loader has no
+// sf_kit_ready yet, and asks frappe.require for the kit itself.
+function qboKit() {
+	if (typeof window.sf_kit_ready === "function") return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(["sf_kit.bundle.js", "sf_kit.bundle.css"], () =>
+			resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : qboBareKit())
+		),
+	);
+}
+
+// Neither the loader nor the kit: a Desk opened before this deploy whose old kit file is gone too.
+// A line of text and a button, so the page still says something instead of throwing.
+function qboBareKit() {
+	const failed = (x) => ({ status: (x && x.status) || 0, message: "", exc_type: "", session_expired: (x && x.status) === 401 });
+	const render = (el, kind, o) => {
+		const $el = $(el).empty().append($('<div class="text-muted"></div>').text((o && o.title) || ""));
+		if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __("Try again")).on("click", o.on_action).appendTo($el);
+	};
+	const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
+	return { esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
+}
+
+// The dashboard on screen, for the resync poll: a lapsed session ends the poll with the same
+// signed-out panel the status load draws where the sync logs go.
+let qbo_root = null;
+
+function qboSignedOut(sf, list) {
+	sf.state.render(list, "error", {
+		title: __("You have been signed out."),
+		body: __("Reload the page to sign in again."),
+		action_label: __("Reload"),
+		on_action: () => window.location.reload(),
+	});
+}
 
 // Keep in sync with ACCOUNTING_ENTITIES in quickbooks_online/core/constants.py.
 const QBO_ENTITIES = [
@@ -140,42 +185,68 @@ function renderEntities(root) {
 	});
 }
 
+// Loaded once, on the way in: the tiles keep their "-" and the log list carries the state.
 function refresh(root) {
-	frappe.call({
-		method: "erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status",
-		callback(response) {
-			const data = response.message || {};
-			const settings = data.settings || {};
-			root.find("[data-field='status']").text(settings.status || "-");
-			root.find("[data-field='environment']").text(settings.environment || "-");
-			root.find("[data-field='realm_id']").text(settings.realm_id || "-");
-			root.find("[data-field='failed_records']").text(data.failed_records || 0);
-			renderLogs(root, data.latest_logs || []);
-		},
+	qboKit().then((sf) => {
+		const list = root.find(".qbo-log-list");
+		sf.state.render(list, "loading", { title: __("Loading QuickBooks status…") });
+		sf.call("erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status", {}, { quiet: true }).then(
+			(message) => {
+				const data = message || {};
+				const settings = data.settings || {};
+				root.find("[data-field='status']").text(settings.status || "-");
+				root.find("[data-field='environment']").text(settings.environment || "-");
+				root.find("[data-field='realm_id']").text(settings.realm_id || "-");
+				root.find("[data-field='failed_records']").text(data.failed_records || 0);
+				renderLogs(sf, root, data.latest_logs || []);
+			},
+			(err) => {
+				err = err || {};
+				if (err.session_expired) {
+					qboSignedOut(sf, list);
+				} else if (err.status === 403) {
+					sf.state.render(list, "no-access", {
+						title: __("You do not have access to the QuickBooks Online dashboard."),
+						body: err.message,
+					});
+				} else {
+					sf.state.render(list, "error", {
+						title: __("Could not load the QuickBooks status."),
+						body: err.message,
+						on_action: () => refresh(root),
+					});
+				}
+			},
+		);
 	});
 }
 
-function renderLogs(root, logs) {
+// Every value in a row is the server's, so every one goes through the kit's escape (v1.645.0).
+function renderLogs(sf, root, logs) {
+	const esc = sf.esc;
 	const list = root.find(".qbo-log-list");
 	list.empty();
 	if (!logs.length) {
-		list.html(`<div class="text-muted">${__("No sync logs yet.")}</div>`);
+		sf.state.render(list, "empty", {
+			title: __("No sync logs yet."),
+			body: __("Import All or sync a single entity above, and its log appears here."),
+		});
 		return;
 	}
 	logs.forEach((log) => {
 		$(`
 			<div class="qbo-log-row">
 				<div>
-					<a data-route="Form/QuickBooks Sync Log/${log.name}">${log.name}</a>
-					<div class="text-muted">${log.sync_type || ""} ${log.entity_type || ""}</div>
+					<a data-route="Form/QuickBooks Sync Log/${esc(log.name)}">${esc(log.name)}</a>
+					<div class="text-muted">${esc(log.sync_type || "")} ${esc(log.entity_type || "")}</div>
 				</div>
-				<div>${log.status}</div>
+				<div>${esc(log.status)}</div>
 				<div>
-					${__("C")} ${log.created_count || 0} /
-					${__("L")} ${log.linked_count || 0} /
-					${__("R")} ${log.manual_review_count || 0} /
-					${__("X")} ${log.conflict_count || 0} /
-					${__("I")} ${log.ignored_count || 0}
+					${__("C")} ${esc(log.created_count || 0)} /
+					${__("L")} ${esc(log.linked_count || 0)} /
+					${__("R")} ${esc(log.manual_review_count || 0)} /
+					${__("X")} ${esc(log.conflict_count || 0)} /
+					${__("I")} ${esc(log.ignored_count || 0)}
 				</div>
 			</div>
 		`).appendTo(list);
@@ -279,24 +350,49 @@ function pollResyncPreview(previewId, attempts) {
 		);
 		return;
 	}
-	frappe.call({
-		method: "erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary",
-		args: { name: previewId },
-		callback(response) {
-			const data = response.message || {};
-			if (data.status === "Completed") {
-				offerRunResync(previewId, data.summary || {});
-			} else if (data.status === "Failed") {
-				frappe.msgprint({
-					title: __("Resync preview failed"),
-					indicator: "red",
-					message: frappe.utils.escape_html(data.error_message || __("See Sync Log {0}.", [previewId])),
-				});
-			} else {
-				setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
-			}
-		},
-	});
+	// Quiet (v1.645.0): a poll every 3 s must not put up a frappe dialog for each failed tick. Only
+	// a failure that can pass is retried, as an attempt: the network (status 0) or the server
+	// (5xx). A 4xx is an answer rather than a hiccup (a refusal, a log that is not there) and asking
+	// again every 3 s cannot change it, so the poll stops and says why in a toast. A lapsed session
+	// stops it too, with the signed-out panel the status load draws.
+	qboKit().then((sf) =>
+		sf.call("erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary", { name: previewId }, { quiet: true }).then(
+			(message) => {
+				const data = message || {};
+				if (data.status === "Completed") {
+					offerRunResync(previewId, data.summary || {});
+				} else if (data.status === "Failed") {
+					frappe.msgprint({
+						title: __("Resync preview failed"),
+						indicator: "red",
+						message: frappe.utils.escape_html(data.error_message || __("See Sync Log {0}.", [previewId])),
+					});
+				} else {
+					setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+				}
+			},
+			(err) => {
+				err = err || {};
+				const status = Number(err.status) || 0;
+				if (err.session_expired) {
+					if (qbo_root) qboSignedOut(sf, qbo_root.find(".qbo-log-list"));
+					sf.toast(__("You have been signed out. Sign in again and review Sync Log {0}.", [previewId]), { tone: "warning" });
+					return;
+				}
+				if (status === 0 || status >= 500) {
+					setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+					return;
+				}
+				sf.toast(
+					__("Stopped checking the resync preview: {0} Review Sync Log {1}.", [
+						err.message || __("The server refused this request."),
+						previewId,
+					]),
+					{ tone: "warning" },
+				);
+			},
+		),
+	);
 }
 
 function offerRunResync(previewId, summary) {
