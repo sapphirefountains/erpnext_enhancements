@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.650.0] - 2026-10-13
+## [1.654.0] - 2026-10-13
 
 Form kit P6, part A (ERPNext TASK-2026-02774, "New Opportunity board"): **a new Opportunity board
 page, `/desk/opportunity-board`**, the board that is to replace the patched stock Kanban. This
