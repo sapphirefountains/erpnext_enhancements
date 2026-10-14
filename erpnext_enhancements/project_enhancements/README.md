@@ -719,6 +719,17 @@ the core **Projects** module sidebar right after Task, with Crew Utilization amo
 places at once without being told. Scope set by Nik on 2026-10-08; the whole build is tracked
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
+**Its stylesheet** (custom pages S3.4d, v1.664.0) is `page/project_planner/project_planner.css`,
+which Frappe's page loader sends with the page; the script writes no `<style>` element. The file is
+on the app's `--sf-*` tokens ([docs/app-design-system.md](../../docs/app-design-system.md)), so it
+follows the Desk's light or dark theme, and keeps one section per phase in the order the script used
+to inject them. A page's CSS stays in `<head>` for the session, so every selector starts with one of
+the page's own families: `pp-`, `p6b-`, `p6e-`, `t1-` (Build out) or `t4-` (AI draft). Two colors
+are data rather than design, a task's own and a planner resource's: the script hands them over as
+`style="--pp-color: ..."` and the CSS paints with `var(--pp-color)`; Color by sets `--pp-p6c-c`. The
+route map's markers and line take color values, so `PP_ROUTE_COLORS()` reads the same tokens the
+stop list paints. `tests/test_s3_page_css.py` holds all of it.
+
 **Who can be booked.** A **Planner Resource** per person or outside crew, not Employee: the pool
 includes subcontractors, who have no HR record, and only some staff (field techs, PMs on site,
 designers). `patches/seed_planner_resources` created one for each active technician, Project
@@ -1510,7 +1521,7 @@ Hooks into the classes and into Phase 6B's blocks, one line each: `p6e_bar_switc
 `p6e_move_note` (`p6b_move_panel`), `p6e_moves` / `p6e_message` (Project Planner `p6b_move_selection`),
 `p6e_date` / `p6e_question` (Maintenance Planner `p6b_move_selection`), `p6e_dependents`
 (`p6b_split_save`); and on the Maintenance Planner `init_phase6e`, `render_phase6e` and `p6e_undo`. The
-Project Planner needs no constructor hook (its style is added on first use). The existing
+Project Planner needs no constructor hook (its style is in `project_planner.css`). The existing
 `p6b_undo` line is untouched. `tests/test_planner_phase6e.py` pins all four.
 
 ### Build out tasks, Needs tasks and the richer quick add (T1, v1.602.0)

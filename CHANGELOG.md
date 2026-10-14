@@ -94,6 +94,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_s3_page_states.py` checks that the S3.1 start-up panel never waits for the scanner
   kit.
 
+## [1.664.0] - 2026-10-14
+
+### Changed
+
+- **The Project Planner draws its CSS from its own file and the `--sf-*` tokens** (custom pages
+  S3.4d, ERPNext TASK-2026-02823). Styling only: no endpoint, route, save rule or history entry
+  changed. Drag and drop, resizing, tap to move, the calendar, crew and heatmap geometry, the route
+  map, the quick looks and every keyboard path work as before, and the S3.6 labels, `role=button`
+  day numbers and crew heads and their focus rings are kept.
+  - **CSS out of the script.** Eleven `<style>` elements the script wrote into `<head>` (`PP_STYLE`,
+    `PP3B_STYLE` ... `PPT4_STYLE`, 425 rules) are now `project_planner.css` beside the page,
+    which Frappe's page loader sends with the page. One section per phase, in the order the script
+    injected them, so the cascade between them is unchanged. Page CSS stays in `<head>` for the
+    session, so every selector starts with one of the page's own families (`pp-`, `p6b-`, `p6e-`,
+    `t1-`, `t4-`), which nothing else in the app styles. The Maintenance Planner is unchanged (its
+    own PR), and so is planner_kit's shared stylesheet.
+  - **Data colors stay data.** A task's own color and a planner resource's color come from records
+    people edit, so the script still sets them inline, but only as one custom property,
+    `style="--pp-color: ${pp_esc(...)}"`, which the CSS paints with (the card's edge, a person's dot,
+    a crew badge, a Color-by swatch, a timeline bar in the project quick look). Color by keeps
+    `--pp-p6c-c`. No other color is written inline.
+  - **On the tokens.** 205 reads of Frappe's variables and 121 literal colors (50 distinct) became
+    the semantic and status tokens. A load is `--sf-good` up to 75%, `--sf-warn` to 100% and `--sf-danger` over, as a fill or
+    a tint; status as text (a red availability, an overdue date, a missing location) is the token
+    mixed half and half with `--sf-text-strong`, never plain yellow. The bookings from the other
+    planners take their pillar's chip edge: a maintenance visit Service, a rental Rent, travel
+    Neutral (they were slate, amber and dark yellow). Selection (Phase 6B) is `--sf-violet`.
+  - **Shape.** Sections, grids, cards, trays, the stop list and the floating bars are square, with no
+    shadow: a conflict or a drop target is an inset outline, the crew lead's badge is ringed in
+    `--sf-text-strong`, a jumped-to card blinks its focus ring, and a floating bar has a 2px edge.
+    The view switch and the toggles round at `--sf-radius-control`; chips, badges and today's number
+    are pills. Today's number and the view on screen are `--sf-primary` with its navy label and bold.
+  - **Fields.** The toolbar's selects and search and Build out's grid cells are white, square and
+    edged in both themes, with their own focused rule, because Bootstrap's `.form-control:focus`
+    (0,2,0) outranks a plain field rule. On a phone the toolbar's fields are 16px, so iOS does not
+    zoom into them.
+  - **Touch and phones.** On a touch screen every toolbar control, card, day number, strip day and
+    the move bar's buttons are 44px (`--sf-touch-min`; they were 32 to 40px). The seven 760px blocks
+    are the app's one phone width, 767px. The sticky headings were a `min-width: 761px` block; they
+    are written for every width and switched off at 767px. The 1024px block that kept a wide grid
+    from scrolling the page sideways (`overflow-x: clip`) now applies at every width; clip makes no
+    scroll container, so the sticky headings and the fixed bars are unaffected. The move bar sits
+    above a phone's safe area.
+  - **The route map reads the tokens the stop list paints.** Google's markers and line take a color
+    value, so `PP_ROUTE_COLORS()` reads them through `getComputedStyle`, with each token's own value
+    as the fallback: a stop bahama-blue (was `#2563eb`), the shop green (was `#16a34a`), the road
+    fresh-blue. The printed card of an overdue task takes the same red as its edge on screen.
+- **A month cell says its load.** The month view's one-line availability cells were a tint and
+  nothing else; each now carries its words ("3h free", "Over 2h") for a screen reader.
+- **Less motion when asked.** The AI draft spinner and the jumped-to card's blink stop under
+  `prefers-reduced-motion`.
+- **Review follow-ups.**
+  - A highlighted card (Color by's highlight) is now marked by a focus-colored tint, not an outline.
+    The outline rule (0,3,0) outranked the selected, moving and drafted rings and the drop target,
+    so on a highlighted card none of them showed (guarded).
+  - Keyboard focus on a card is a ring drawn inside it on `::after`, not an outline. A card's
+    outline carries its state, and one element has one outline: the focus outline lost to the later
+    state rules, so a selected or drafted card showed no focus at all. On its own channel, a card
+    that is both selected and focused shows both (guarded).
+  - On a touch screen a month cell's day number keeps its 44px height but is 32px wide rather than
+    about 44px, so it fits a phone's 53px cell beside the day's "free" text (guarded).
+
+### Tests
+
+- `tests/test_s3_page_css.py` covers the Project Planner with the same checks as the other pages, and
+  a new `TestProjectPlanner`: the script writes no stylesheet; every `var()` is an `--sf-*` token or
+  one of the two data colors; the data colors go in as `--pp-color` and the CSS paints them; the
+  route map's colors read the tokens the stop list paints; no other color value is left in the
+  script; warn text and thin warn rings are the mix; focused fields keep their own rule; touch
+  targets are 44px; the sticky headings stop at 767px; the S3.6 focus ring moved with the CSS; a
+  month cell says its load; every rule styles a class the script draws; and no other file styles the
+  page's short prefixes. The inline-color check allows exactly one pattern,
+  `--pp-color: ${pp_esc(...)}`, with its own test. Each new page check fails on the pre-change files,
+  except the one that no other file styles the short prefixes, which holds a fact about the repo.
+- The planner suites that read the old `*_STYLE` constants (`test_project_planner_page`,
+  `test_project_planner_phase3a_page`, `test_project_planner_phase4_page`, `test_planner_phase3b`,
+  `test_planner_phase5`, `test_planner_phase6a`, `6b`, `6c`, `6d_ui` and `6e`,
+  `test_planner_build_out`) read their section of `project_planner.css` for the Project Planner and
+  keep reading the script for the Maintenance Planner; `test_s3_6_accessibility` reads the focus ring
+  from the CSS.
+
 ## [1.663.0] - 2026-10-14
 
 Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:

@@ -22,12 +22,18 @@ from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 PAGE_JS = APP / "project_enhancements" / "page" / "project_planner" / "project_planner.js"
+# The page's stylesheet, which the script wrote into <head> as PP_STYLE until S3.4d (v1.664.0).
+PAGE_CSS = PAGE_JS.with_suffix(".css")
 API = APP / "api" / "project_planner.py"
 ENGINE = APP / "project_enhancements" / "crew_availability.py"
 
 
 def _code():
 	return PAGE_JS.read_text(encoding="utf-8")
+
+
+def _css():
+	return re.sub(r"/\*.*?\*/", "", PAGE_CSS.read_text(encoding="utf-8"), flags=re.S)
 
 
 def _code_without_comments():
@@ -46,8 +52,9 @@ def _method(code, name):
 class TestTentative(unittest.TestCase):
 	def test_a_tentative_card_is_hatched_and_says_pencil(self):
 		code = _code_without_comments()
-		self.assertIn("pp-card.pp-tentative", code)
-		self.assertIn("repeating-linear-gradient", code.split(".pp-card.pp-tentative")[1].split("\n")[0])
+		css = _css()
+		self.assertIn(".pp-card.pp-tentative {", css)
+		self.assertIn("repeating-linear-gradient", css.split(".pp-card.pp-tentative {")[1].split("}")[0])
 		card = _method(code, "card_html")
 		self.assertIn('classes.push("pp-tentative")', card)
 		self.assertIn('class="pp-chip pp-pencil"', card)
@@ -80,9 +87,10 @@ class TestTentative(unittest.TestCase):
 		self.assertIn("day.soft_booked", state)
 		self.assertIn("soft_ratio", state)
 		# The firm figure is still `booked`; the pencilled hours are an extra, hatched segment.
-		self.assertIn("pp-bar b{", code)
+		self.assertIn(".pp-bar b {", _css())
 		self.assertIn("bar_html(state)", code)
 		self.assertIn("pp-softover", code)
+		self.assertIn(".pp-softover {", _css())
 		# In the tooltip and for a pencilled booking.
 		tip = _method(code, "day_tip")
 		self.assertIn("day.soft_booked", tip)
@@ -321,10 +329,11 @@ class TestPhase3aConventions(unittest.TestCase):
 		self.assertRegex(code, r"tasks: JSON\.stringify\(")
 
 	def test_the_new_styles_have_phone_rules(self):
-		code = _code()
-		style = code[code.index("const PP_STYLE = `") : code.index("`;", code.index("const PP_STYLE = `"))]
-		phone = style[style.index("@media (max-width:760px)") :]
-		self.assertIn(".pp-hm{", phone)
+		# The page's CSS is project_planner.css (S3.4d); its phone width is the app's one, 767px.
+		css = _css()
+		phone = css[css.index("@media (max-width: 767px)") :]
+		self.assertIn(".pp-hm {", phone)
+		self.assertNotIn("const PP_STYLE", _code())
 
 	def test_no_new_localstorage_access(self):
 		# Preferences go through load_pref/save_pref, which guard it.

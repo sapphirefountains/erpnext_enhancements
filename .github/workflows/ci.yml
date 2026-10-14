@@ -3515,7 +3515,8 @@ jobs:
       # undefined --sf-* token, no shadow, radii from tokens, one 767px breakpoint. Also holds every Training page's
       # TR.loadAssets call to passing the deploy version. Reads files only; no frappe stub.
       # S3.4b (v1.652.0) added four pages and S3.4c (v1.661.0) Plan a Trip, whose Map colours
-      # are read from the same tokens the page CSS uses.
+      # are read from the same tokens the page CSS uses. S3.4d (v1.664.0) added the Project
+      # Planner, whose task and person colors are data and go in only as --pp-color.
       - name: Custom pages S3.4a page CSS on the tokens (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_css -v
       # Custom pages S3.6 (v1.656.0), the accessibility pass, pinned file by file: the Rental
