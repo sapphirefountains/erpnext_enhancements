@@ -440,6 +440,12 @@ jobs:
       # Lead Source was one from 2026-06-09 to v1.678.1, and nobody could pick a lead source.
       - name: No Link points at a child table
         run: python -m unittest erpnext_enhancements.tests.test_link_targets_not_child_tables -v
+      # Own step: it installs its own frappe stub. On 2026-07-18 an older build's migrate brought
+      # back 14 retired Custom Fields that stayed three months (v1.682.1). Pins the downgrade guard
+      # (first in before_migrate), the cleanup patch, and that no retired field is back in the
+      # fixtures or created by app code.
+      - name: Retired customizations stay retired
+        run: python -m unittest erpnext_enhancements.tests.test_retired_customizations -v
       # Whether the nightly offsite backup ships the file archives is one membership
       # test -- `include_files = backup_type in FULL_TYPES`. Drop the scheduled type out
       # of that tuple and the run silently reverts to database-only: it still succeeds,

@@ -1426,3 +1426,8 @@ erpnext_enhancements.patches.cleanup_orphan_import_addresses
 # seeded Time Kiosk Desk Shortcut and the Workforce sidebar's Time Kiosk item to /kiosk and drops the sidebar's
 # URL-less "Kiosk PWA" item. Cannot raise, safe twice.
 erpnext_enhancements.patches.custom_pages_s4a_hub_links
+# v1.682.1: delete again the 14 Custom Fields an older build's migrate brought back on 2026-07-18
+# (12 blank duplicate "Comments" tabs from v1.159.2, Opportunity's custom_lost_reason and
+# custom_lost_competitor from v1.159.0) by running those two patches' execute() once more. Data checked
+# on prod first; nothing to migrate. Cannot raise, safe twice. setup/downgrade_guard.py stops the cause.
+erpnext_enhancements.patches.retire_resurrected_customizations
