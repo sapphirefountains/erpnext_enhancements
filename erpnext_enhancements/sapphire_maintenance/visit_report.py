@@ -263,7 +263,9 @@ def chemistry_charts(doc, names=None):
 		}
 		if max(len(points) for points in series.values()) < 2:
 			continue
-		labels = {feature: names.get(feature) or feature or "" for feature in series}
+		# A reading with no feature is the whole site's (a form ticked Once per Site Visit):
+		# named so, not left a blank legend line (v1.678.0).
+		labels = {feature: names.get(feature) or feature or frappe._("Whole site") for feature in series}
 		charts.append(svg_chart(chart["title"], chart["uom"], chart["low"], chart["high"], series, labels))
 	return charts
 

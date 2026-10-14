@@ -952,7 +952,7 @@ def _chemistry_trends(project, serial_no=None):
 	records = frappe.get_all(
 		"Sapphire Maintenance Record",
 		filters=filters,
-		fields=["name", "creation"],
+		fields=["name", "creation", "serial_no"],
 		order_by="creation desc",
 		limit=5,
 	)
@@ -960,14 +960,20 @@ def _chemistry_trends(project, serial_no=None):
 		return []
 
 	created = {r.name: r.creation for r in records}
+	header = {r.name: r.serial_no or "" for r in records}
 	row_filters = {"parent": ["in", list(created)], "parenttype": "Sapphire Maintenance Record"}
 	if serial_no:
 		row_filters["serial_no"] = ["in", [serial_no, ""]]
 	rows = frappe.get_all(
 		"Sapphire Chemistry Reading",
 		filters=row_filters,
-		fields=["parent", "reading", "reading_value", "uom", "min_value", "max_value", "out_of_range"],
+		fields=["parent", "reading", "reading_value", "uom", "min_value", "max_value", "out_of_range", "serial_no"],
 	)
+	if serial_no:
+		# An untagged row belongs to this feature only on its own Per Feature visit. On a site
+		# visit it is a reading for the whole site (a form ticked Once per Site Visit, v1.634.0),
+		# and showed in every feature's sparkline (v1.678.0).
+		rows = [row for row in rows if row.get("serial_no") == serial_no or header.get(row.parent) == serial_no]
 
 	trends = {}
 	for row in sorted(rows, key=lambda r: str(created[r.parent])):
