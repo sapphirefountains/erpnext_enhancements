@@ -6,7 +6,7 @@
  * erpnext_enhancements.quickbooks_online.core.api:
  *
  *  - Status tiles (connection, environment, realm id, failed-log count), drawn by
- *    sf_kit's tiles (renderTiles(), v1.649.0), and a recent-sync-logs list, populated
+ *    sf_kit's tiles (renderTiles(), v1.651.0), and a recent-sync-logs list, populated
  *    from `get_dashboard_status` (refresh()). Its styles are this page's own
  *    quickbooks_online_dashboard.css, sent with the page, every rule under .qbo-dashboard.
  *  - Per-entity panel: enter a QuickBooks ID and "Sync" a single entity via
@@ -114,7 +114,24 @@ function qboBareKit() {
 	};
 	const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
 	const esc = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
-	return { esc, call, state: { render }, chip: esc, tiles: { html: () => "" }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
+	return { esc, call, state: { render }, chip: esc, tiles: { html: (items) => qboPlainTiles(items, esc) }, toast: (message) => frappe.show_alert({ message, indicator: "orange" }) };
+}
+
+// The kit's tiles as lines of words, a copy of plain_tiles in public/js/sf_kit_loader.js (this is
+// the path where that loader is missing): title, status word, value, detail, each metric as
+// "label: value", each link's label, every part escaped.
+function qboPlainTiles(items, esc) {
+	const words = { __proto__: null, good: __("Healthy"), green: __("Healthy"), warn: __("Needs attention"), amber: __("Needs attention"), yellow: __("Needs attention"), danger: __("Failing"), red: __("Failing") };
+	const filled = (v) => v != null && typeof v !== "object" && String(v).trim() !== "";
+	const rows = (v) => (Array.isArray(v) ? v : []).filter((x) => x && typeof x === "object");
+	const line = (i) =>
+		[i.title, filled(i.status_label) ? i.status_label : words[i.status ?? i.tone], i.value, i.detail]
+			.concat(rows(i.metrics).filter((m) => filled(m.label)).map((m) => `${m.label}: ${filled(m.value) ? m.value : "—"}`))
+			.concat(rows(i.links).map((l) => l.label))
+			.filter(filled)
+			.map(esc)
+			.join(" · ");
+	return `<div>${rows(items).map((i) => `<p>${line(i)}</p>`).join("")}</div>`;
 }
 
 // The dashboard on screen, for the resync poll: a lapsed session ends the poll with the same
@@ -204,11 +221,11 @@ function refresh(root) {
 	});
 }
 
-// What a connection status means; how it looks is the kit's (v1.649.0). The same reading as
+// What a connection status means; how it looks is the kit's (v1.651.0). The same reading as
 // api/integrations_health.py's QuickBooks tile. Any other status is a neutral chip with its word.
 const QBO_CONNECTION_TONE = { Connected: "good", Syncing: "warn", Failed: "danger" };
 
-// The four status tiles, drawn by sf_kit (v1.649.0): the connection is a chip that says its
+// The four status tiles, drawn by sf_kit (v1.651.0): the connection is a chip that says its
 // status, the failed-log count a chip in the danger or good tone, and every value is escaped by
 // the kit. `data` is null before the status has loaded.
 function renderTiles(sf, root, data) {

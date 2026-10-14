@@ -436,7 +436,7 @@ value }], links: [{ label, href }] }`; `green` / `amber` / `red` are read as `go
 URL; anything else is shown as plain text. A blank `href` (`null`, `""`) falls back to `route`.
 Malformed data costs only its own part: `metrics` or `links` that are not a list are skipped, so
 one bad tile never blanks the grid, and a tile with no title draws no empty heading. A metric may
-carry a `tone` too (v1.649.0): a status tone (or `green` / `amber` / `red`) draws its value as a
+carry a `tone` too (v1.651.0): a status tone (or `green` / `amber` / `red`) draws its value as a
 chip of that tone, so a metric is never marked by colour alone; any other tone leaves the value as
 text.
 
@@ -446,7 +446,7 @@ el.innerHTML = sf_kit.tiles.html([{ title: "Google Drive", tone: "good", detail:
 	links: [{ label: __("Settings"), href: "/desk/google-drive-settings" }] }]);
 ```
 
-Every health dashboard draws its tiles this way (S3.2, v1.649.0): Integrations Health, the Device
+Every health dashboard draws its tiles this way (S3.2, v1.651.0): Integrations Health, the Device
 Fleet Dashboard, the QuickBooks Online dashboard and the Stripe dashboard. A page may decide what a
 status *means* (a `{ Paid: "good", Failed: "danger" }` map onto the kit's tones), never what it
 looks like: no page keeps a colour map, a literal colour or hand-built tile markup

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.649.0] - 2026-10-13
+## [1.651.0] - 2026-10-13
 
 Custom pages, step 3.2 (TASK-2026-02821): the four health dashboards share one tile renderer,
 `sf_kit.tiles`. Integrations Health, the Device Fleet Dashboard, the QuickBooks Online dashboard and
@@ -29,11 +29,20 @@ with a coloured dot or pill and nothing else.
   `frappe.require`.
 - **A tile metric can carry a status tone** (`sf_kit/tiles.js`). `danger` / `warn` / `good`, or
   `red` / `amber` / `green`, draws the metric's value as a chip of that tone, so the value is the word
-  and the colour only repeats it. Any other tone leaves the value as plain text. The kit bundle's
-  `VERSION` is now 3.
+  and the colour only repeats it. Any other tone leaves the value as plain text. The metric's value
+  cell may shrink (`min-width: 0`), so a long chip ellipsizes instead of pushing the row wider
+  (`sf_kit.bundle.css`, pasted into `styles.js`). The kit bundle's `VERSION` is now 3.
 - **The loader's stand-in has `chip` and `tiles.html`.** With no kit there is no kit stylesheet
-  either, so a chip is its word and a tile is a line of escaped words: title, status, value and
-  detail.
+  either, so a chip is its word and each tile is one line of escaped words joined by " · ":
+  - the title;
+  - the status word: the tile's `status_label`, or else the kit's default word for its `status` or
+    `tone` (Healthy, Needs attention or Failing; none for neutral);
+  - the value and the detail;
+  - each metric as "label: value";
+  - each link's label.
+
+  The QuickBooks and Stripe pages' bare kits, used when the loader itself is missing, carry an
+  identical copy, so their tiles no longer vanish on that path.
 
 ### Changed
 

@@ -3433,7 +3433,7 @@ jobs:
       # other three run against it in the two history harnesses.
       - name: Custom pages S3.1 page states (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_states -v
-      # Custom pages S3.2 (v1.649.0). The four health dashboards (Integrations Health, Device
+      # Custom pages S3.2 (v1.651.0). The four health dashboards (Integrations Health, Device
       # Fleet, QuickBooks Online, Stripe) draw every tile through sf_kit.tiles: each status a chip
       # that says its word, every colour a --sf-* token. Fails the build if a page keeps its own
       # status-colour map or literal colour, builds tile markup by hand, or if Device Fleet stops

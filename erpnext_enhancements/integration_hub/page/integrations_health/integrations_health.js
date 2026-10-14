@@ -8,7 +8,7 @@
  * DB-only — no outbound calls on load). The Drive tile carries a "Test connection"
  * button that runs the one live check on demand (api.integrations_health.run_drive_test).
  *
- * Drawn by the shared health board (public/js/health_board.bundle.js, v1.649.0), as the
+ * Drawn by the shared health board (public/js/health_board.bundle.js, v1.651.0), as the
  * Device Fleet Dashboard is: every tile is an sf_kit tile, each status a chip that says its
  * word, every colour a --sf-* token, and every server string escaped by the kit. This file
  * only says what to ask for and adds what is particular to this page: the scheduler and

@@ -5,7 +5,7 @@
  * self-attestations, warranty expiries, platform / ownership breakdown — from
  * api.device_dashboard.get_fleet_health (Device-Manager / System-Manager only, DB-only).
  *
- * A thin caller of the shared health board (public/js/health_board.bundle.js, v1.649.0),
+ * A thin caller of the shared health board (public/js/health_board.bundle.js, v1.651.0),
  * the same one Integrations Health uses: the server sends the health-check tile shape and
  * the board draws it on sf_kit tiles, states included. This page used to be a copy of the
  * Integrations Health page with its class prefix changed.

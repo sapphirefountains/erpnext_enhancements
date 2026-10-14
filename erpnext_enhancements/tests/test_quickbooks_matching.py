@@ -786,7 +786,7 @@ def test_dashboard_hands_off_to_the_page_and_the_dead_dialog_is_gone():
 	assert 'frappe.set_route("quickbooks-record-matching")' in js
 	assert "function showMatchDialog" not in js
 	assert "function previewExistingMatches" not in js
-	# The dashboard's stylesheet is the page's own since v1.649.0 (it left desk_addons.bundle.scss).
+	# The dashboard's stylesheet is the page's own since v1.651.0 (it left desk_addons.bundle.scss).
 	css = _read(DASHBOARD_JS.with_suffix(".css"))
 	assert ".qbo-match-row" not in css
 

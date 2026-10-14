@@ -1,5 +1,5 @@
 /**
- * window.sf_health_board: the one health dashboard, drawn on sf_kit tiles (v1.649.0,
+ * window.sf_health_board: the one health dashboard, drawn on sf_kit tiles (v1.651.0,
  * TASK-2026-02821). Integrations Health (/desk/integrations-health) and the Device Fleet Dashboard
  * (/desk/device-fleet-dashboard) are both thin callers of it. Until then the fleet page was a copy
  * of the health page with its class prefix changed: two inline stylesheets, two green / amber /

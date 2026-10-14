@@ -1,4 +1,4 @@
-"""Custom pages S3.2 (v1.649.0, TASK-2026-02821): the four health dashboards share one tile renderer.
+"""Custom pages S3.2 (v1.651.0, TASK-2026-02821): the four health dashboards share one tile renderer.
 
 Before this, each drew its own tiles and its own status colours:
 
@@ -214,18 +214,49 @@ class TestTheHealthBoard(unittest.TestCase):
 		self.assertNotIn("health_board", hooks, "never app_include_js")
 
 
-class TestTheLoadersStandIn(unittest.TestCase):
-	def test_a_stand_in_tile_is_words_escaped(self):
+def _plain_tiles_body(code, name):
+	"""The body of a page's (or the loader's) plain tile renderer, indentation removed."""
+	start = code.index(f"function {name}(items, esc) {{")
+	lines = code[start:].splitlines()
+	end = next(i for i, ln in enumerate(lines) if ln.strip() == "}")
+	return [ln.strip() for ln in lines[1:end]]
+
+
+class TestTheStandInTiles(unittest.TestCase):
+	"""With no kit (the loader's stand-in, or a page's bare kit when the loader is missing too), a
+	tile is a line of words, and its status still says itself."""
+
+	def test_the_loaders_stand_in_draws_tiles_as_words(self):
 		code = _code(LOADER)
 		stand_in = code[code.index("function plain_kit() {") : code.index("window.sf_kit_ready")]
 		self.assertIn("chip: (label) => escape(label),", stand_in)
-		self.assertIn("[item.title, item.status_label, item.value, item.detail]", stand_in)
-		self.assertIn(".map(escape)", stand_in)
+		self.assertIn("tiles: { html: (items) => plain_tiles(items, escape) },", stand_in)
+		body = "\n".join(_plain_tiles_body(code, "plain_tiles"))
+		for token in (
+			"words[i.status ?? i.tone]",
+			'good: __("Healthy")',
+			'warn: __("Needs attention")',
+			'danger: __("Failing")',
+			"rows(i.metrics)",
+			"rows(i.links).map((l) => l.label)",
+			".map(esc)",
+		):
+			with self.subTest(token=token):
+				self.assertIn(token, body)
+		self.assertNotIn("neutral", body, "a neutral status has no word, as in the kit")
 
-	def test_a_bare_page_kit_draws_no_tiles_rather_than_throwing(self):
-		for name in ("quickbooks-online-dashboard", "stripe-payments-dashboard"):
+	def test_a_bare_page_kit_draws_the_same_lines(self):
+		loader = _plain_tiles_body(_code(LOADER), "plain_tiles")
+		for name, helper in (
+			("quickbooks-online-dashboard", "qboPlainTiles"),
+			("stripe-payments-dashboard", "plainTiles"),
+		):
 			with self.subTest(page=name):
-				self.assertIn('chip: esc, tiles: { html: () => "" }', _code(PAGES[name]))
+				code = _code(PAGES[name])
+				self.assertIn(f"tiles: {{ html: (items) => {helper}(items, esc) }}", code)
+				self.assertEqual(
+					_plain_tiles_body(code, helper), loader, "a copy of the loader's plain_tiles"
+				)
 
 
 class TestTheQuickBooksStylesheet(unittest.TestCase):

@@ -150,7 +150,7 @@ class TestTheSharedLoader(unittest.TestCase):
 		stand_in = self.code[
 			self.code.index("function plain_kit() {") : self.code.index("window.sf_kit_ready")
 		]
-		# chip and tiles since S3.2 (v1.649.0): the four dashboards draw their tiles through them.
+		# chip and tiles since S3.2 (v1.651.0): the four dashboards draw their tiles through them.
 		for piece in (
 			"esc:",
 			"call:",

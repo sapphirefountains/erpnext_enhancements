@@ -25,7 +25,7 @@
  *   - with no loader and no kit (an old Desk tab whose kit file is gone), each page still says what
  *     failed and retries; and the loader's own stand-in reads a lapsed session as the kit does.
  *
- * S3.2 (v1.649.0, TASK-2026-02821) adds the tiles. Integrations Health and the Device Fleet
+ * S3.2 (v1.651.0, TASK-2026-02821) adds the tiles. Integrations Health and the Device Fleet
  * Dashboard join through the shared health board (public/js/health_board.bundle.js, run in the
  * page's context as the Desk's script tag would): the same first-load states, a Refresh that fails
  * keeps the tiles, a stale reply is dropped, and the Drive test answers in its tile. On all four
@@ -506,7 +506,7 @@ const FIRST = {
 		refused: "You do not have access to Water Feature Designs.",
 		drawn: "we-wrap",
 	},
-	// S3.2 (v1.649.0): the two health pages are drawn by the shared board. It has no no-loader
+	// S3.2 (v1.651.0): the two health pages are drawn by the shared board. It has no no-loader
 	// fallback of the S3.1 kind (`board_only`): see "without the loader" below.
 	"integrations-health": {
 		method: "get_health",
@@ -787,7 +787,7 @@ test("Loader stand-in: rejects in the kit's shape, expiry read as the kit reads 
 	check("a dropped connection", (await failure(NETWORK_DOWN)).status, 0);
 });
 
-// ------------------------------------------------------------------ S3.2: the tiles (v1.649.0)
+// ------------------------------------------------------------------ S3.2: the tiles (v1.651.0)
 
 // One tile's markup out of a grid, by its data-key.
 function section(html, key) {
@@ -938,8 +938,33 @@ test("Health board: on the loader's stand-in, each tile is a line of text with i
 	const html = boardContent(p).innerHTML;
 	check("asked through frappe.call", count(p.world.frappe_calls, "get_health"), 1);
 	check("a line per tile", (html.match(/<p>/g) || []).length, 5);
-	check("title and detail", html.includes("<p>Google Drive · Configured</p>"), true);
+	check("title, status word, detail and metric", html.includes("<p>Google Drive · Healthy · Configured · Failed (24h): 0</p>"), true);
+	check(
+		"a red tile still says Failing, with its metrics and link labels",
+		html.includes("Failing · Failed. Reconnect &lt;script&gt;x()&lt;/script&gt; · Failed syncs (7d): 3 · Last CDC poll: &lt;2 h ago&gt; · Plain: 9 · Settings · Evil · Old</p>"),
+		true
+	);
+	check("a neutral tile has no word", html.includes("<p>Analytics · Not configured. Add the GA4 property ID.</p>"), true);
 	check("escaped", [html.includes("QuickBooks &lt;b&gt;Online&lt;/b&gt;"), html.includes("<b>")], [true, false]);
+});
+
+test("QuickBooks and Stripe: with no loader and no kit, the tiles are lines of words, statuses included", async () => {
+	const qbo = openPage("quickbooks-online-dashboard", {
+		loader: false,
+		kit: false,
+		respond: { get_dashboard_status: { settings: { status: "Connected", realm_id: "<9130>" }, failed_records: 2, latest_logs: [] } },
+	});
+	await settle();
+	const tiles = qbo.part("qbo-dashboard").found[".qbo-tiles"].innerHTML;
+	check("QuickBooks: the connection and the tone-only failed count both say their word", [tiles.includes("<p>Connection · Connected</p>"), tiles.includes("<p>Failed Logs · Failing · 2</p>"), tiles.includes("&lt;9130&gt;")], [true, true, true]);
+	const stripe = openPage("stripe-payments-dashboard", {
+		loader: false,
+		kit: false,
+		respond: { get_dashboard_status: { settings: { status: "Connected", has_secret_key: 0 }, counts: { Paid: 3 }, recent: [] } },
+	});
+	await settle();
+	const html = stripe.part("stripe-dashboard").innerHTML;
+	check("Stripe: the connection tile with its metrics, and a count tile", [html.includes("<p>Connection · Connected · Environment: — · Enabled: No · Secret key: Missing"), html.includes("<p>Paid · 3</p>")], [true, true]);
 });
 
 test("Health board: without the loader, or without the board, the page says so in a line", async () => {

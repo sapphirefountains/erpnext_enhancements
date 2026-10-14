@@ -1,12 +1,12 @@
 /*
- * QuickBooks Online dashboard page styles (v1.649.0).
+ * QuickBooks Online dashboard page styles (v1.651.0).
  *
  * What this styles: the toolbar, the two sections, and the entity / sync-log rows (a grid that
  * collapses to one column on a phone). The four status tiles are sf_kit's (sf_kit.bundle.css),
  * so nothing here draws a tile, a chip or a status colour.
  *
  * Loaded via: this page's own .css, which getpage sends with the page and the Desk appends to
- * <head> once. Until v1.649.0 it was public/css/quickbooks_online/qbo_dashboard.css, imported by
+ * <head> once. Until v1.651.0 it was public/css/quickbooks_online/qbo_dashboard.css, imported by
  * desk_addons.bundle.scss and so shipped on every Desk page. Once appended it is still global, so
  * every selector is scoped under .qbo-dashboard, the page's own wrapper
  * (tests/test_s3_health_tiles.py holds that).

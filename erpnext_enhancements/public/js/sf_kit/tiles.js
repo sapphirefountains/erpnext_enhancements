@@ -15,7 +15,7 @@
  * tone gets a default word; a tile with neither has no chip rather than a wordless one.
  *
  * A metric's `tone`, when it is a status (danger / warn / good, or the same aliases), draws its
- * value as a chip of that tone (v1.649.0): the health pages marked a metric with a coloured dot
+ * value as a chip of that tone (v1.651.0): the health pages marked a metric with a coloured dot
  * and nothing else, which says nothing to a colour-blind reader or a screen reader. The value is
  * the chip's word. A neutral, pillar or unknown tone leaves the value as plain text.
  *
