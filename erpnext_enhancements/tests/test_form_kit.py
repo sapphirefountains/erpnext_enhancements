@@ -1934,12 +1934,15 @@ class TestEndpoints(unittest.TestCase):
                 "find_created",
                 # P3.2 (v1.677.0): read-only; its own suite is test_form_kit_party.
                 "party_details",
+                # v1.678.2: the guided page's Notes block, read-only; tested in test_guided_entry.
+                "record_notes",
             },
         )
         self.assertIn("methods=['POST']", decorated["create_record"])
         self.assertIn("methods=['POST']", decorated["declare_lost"])
         self.assertIn("methods=['POST']", decorated["save_step"])
         self.assertIn("methods=['GET']", decorated["party_details"], "a read: GET only")
+        self.assertIn("methods=['GET']", decorated["record_notes"], "a read: GET only")
         for decorator in decorated.values():
             self.assertNotIn("allow_guest", decorator)
 

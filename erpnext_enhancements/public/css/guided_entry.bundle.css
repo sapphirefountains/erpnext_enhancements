@@ -219,6 +219,72 @@
 .ge-step-link {
 	margin-top: var(--sf-space-15);
 }
+/* The record's comments, under the steps on every step (editor.js mount_comments). The Comments
+   App inside draws itself with the Desk's own .project-comments-* styles. */
+.ge-comments {
+	margin-top: var(--sf-space-20);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	padding: var(--sf-space-20);
+}
+.ge-comments[hidden] {
+	display: none;
+}
+.ge-comments-title {
+	margin: 0 0 var(--sf-space-15);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+.ge-comments-body {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.ge-notes + .ge-comments-app {
+	margin-top: var(--sf-space-20);
+	padding-top: var(--sf-space-20);
+	border-top: 1px solid var(--sf-rule);
+}
+.ge-notes[hidden] {
+	display: none;
+}
+.ge-note-add {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-15);
+}
+.ge-note-input {
+	width: 100%;
+	min-height: 44px;
+}
+.ge-note-save {
+	min-height: 44px;
+}
+.ge-notes-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.ge-note {
+	padding: var(--sf-space-10) 0;
+	border-top: 1px solid var(--sf-rule);
+}
+.ge-note:first-child {
+	border-top: 0;
+}
+.ge-note-meta {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ge-note-text {
+	margin-top: var(--sf-space-5);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--sf-text);
+}
 .ge-notices:not(:empty),
 .ge-conflict-slot:not(:empty) {
 	margin-bottom: var(--sf-space-15);
