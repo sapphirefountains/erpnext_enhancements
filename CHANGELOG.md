@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.625.1] - 2026-10-13
+
+Opportunity form and guided-flow config. These are item 2 of Nik's 2026-10-13 decisions on TASK-2026-02742.
+
+### Fixed
+
+- **The Initial Invoice section (First Invoice Percentage, Billing Email) is back on the Opportunity's
+  Budget tab.**
+  - v1.326.0 meant it to sit there and repointed the Hand-Off Process tab to follow it. But
+    Opportunity's field order is kept by hand in `fixtures/property_setter.json`
+    (`Opportunity-main-field_order`, which is not one of the `scripts/layout/` generated specs), and
+    that order never listed the four new fields.
+  - **What v16 did with them:** `Meta.sort_fields` placed a Section Break missing from the order at
+    the next Section Break after its `insert_after` anchor. That anchor turned out to be after
+    `items`, inside the hidden Items tab. Checked on prod's live meta: all four fields sat at
+    positions 180–183, under `items_section`, `hidden=1`.
+  - **The effect:** for two months nobody could see or fill them on the form. The hand-off billing
+    note fell back to the configured Billing attendees and `billing@`, as designed for a blank
+    field.
+  - **The fix:** the order now lists the four fields right after `custom_notes_relating_to_budget`,
+    with the Hand-Off Process tab after them.
+  - **Project is unaffected:** its copies are already on its Budget tab.
+  - `test_form_kit` pins the placement. The guided flow's Budget step now carries the two fields.
+
+### Changed
+
+- **The guided flow no longer shows Scope Contributors.** Nik, 2026-10-13: Primary Contact and the
+  general scope description are shown although the form hides them; Contributors stays hidden in
+  both places. `show_hidden` is updated, and the test pins both.
+- The Lost stage's completeness list is the Qualification basics plus a lost reason, as Nik confirmed
+  (7 items). It is unchanged in behavior; now cited in the config and pinned by its total in the test.
+
 ## [1.625.0] - 2026-10-13
 
 ### Added
