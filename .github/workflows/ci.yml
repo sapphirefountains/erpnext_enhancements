@@ -3557,7 +3557,7 @@ jobs:
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_custom_pages_s1 -v
-      # Custom pages S4c (v1.679.0). page_search.js gives the awesomebar and the search dialog a
+      # Custom pages S4c (v1.680.0). page_search.js gives the awesomebar and the search dialog a
       # "Pages" section with aliases ("planner", "kiosk", "scan", "qbo", which full-text search
       # cannot see at three letters) and binds six Alt+Shift page shortcuts. The node step runs the
       # real file against a stubbed frappe: matching, role filtering through page_info, routing,
