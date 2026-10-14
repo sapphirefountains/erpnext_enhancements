@@ -1,6 +1,6 @@
 // Opportunity Board (form kit P6, ERPNext TASK-2026-02774): the board that is to replace the
 // patched stock Kanban. Part A (v1.654.0) built P6.1 (cards), P6.2 (rows by value stream), P6.5
-// (the forecast strip) and P6.9 (the phone layout). Part B (v1.660.0) adds P6.3 (the board, a
+// (the forecast strip) and P6.9 (the phone layout). Part B (v1.663.0) adds P6.3 (the board, a
 // sortable table and a timeline of close dates, under one filter bar), P6.4 (the needs-attention
 // list) and P6.8 (On Hold folded, snooze, quick filters and saved views). The stock Kanban, its
 // patches and the list's redirect to it are untouched until P6.10; the /sales-pipeline TV board

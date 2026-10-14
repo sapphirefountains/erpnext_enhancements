@@ -40,7 +40,7 @@ import frappe
 from frappe import _
 
 #: The planner a request is about -> its key in ``__UserSettings.doctype``. ``board`` is the
-#: Opportunity Board (form kit P6.8, v1.660.0), which keeps its saved views in this same store.
+#: Opportunity Board (form kit P6.8, v1.663.0), which keeps its saved views in this same store.
 PLANNERS = {"project": "Project Planner", "maintenance": "Maintenance Planner", "board": "Opportunity Board"}
 #: The one top-level key of the row these endpoints own; anything else in the row is kept.
 ROW_KEY = "planner_views"

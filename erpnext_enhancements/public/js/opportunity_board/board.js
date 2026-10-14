@@ -23,7 +23,7 @@
  *                   open the guided Close step (Closed Won, Lost: they need ranks or reasons the
  *                   side panel, P6.6, will collect), nothing (its own stage), or refuse
  *
- * Part B (v1.660.0):
+ * Part B (v1.663.0):
  *
  *   views (P6.3)    the board, a sortable table and a timeline of close dates by month, plus the
  *                   attention list, each its own route; the filters are page state, so switching

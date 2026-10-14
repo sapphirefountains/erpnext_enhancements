@@ -531,7 +531,7 @@ class TestTheBoardUnderNode(unittest.TestCase):
 
 	def test_routes(self):
 		r = self.out["routes"]
-		# Part B (v1.660.0) added `view` (and `bare`, the address with no segment at all, where the
+		# Part B (v1.663.0) added `view` (and `bare`, the address with no segment at all, where the
 		# remembered view may apply); the board's own routes read as they did in part A.
 		board = {"view": "board", "bare": False}
 		self.assertEqual(

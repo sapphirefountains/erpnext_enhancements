@@ -1,4 +1,4 @@
-"""Bench-free tests for the Opportunity board, part B (form kit P6.3, P6.4, P6.8; v1.660.0).
+"""Bench-free tests for the Opportunity board, part B (form kit P6.3, P6.4, P6.8; v1.663.0).
 
 Part A's suite (``test_opportunity_board``) covers the board, rows, forecast and phone layout.
 This one covers what part B adds, in four halves:

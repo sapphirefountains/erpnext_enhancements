@@ -21,7 +21,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
-| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move; part B (v1.660.0) the table, timeline and needs-attention views under one filter bar, On Hold folded, snooze, quick filters and saved views. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET); `snooze` (whitelisted, POST: write permission, the `modified` lock, `db_set` of `custom_snoozed_until` / `custom_snooze_reason`) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
+| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move; part B (v1.663.0) the table, timeline and needs-attention views under one filter bar, On Hold folded, snooze, quick filters and saved views. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET); `snooze` (whitelisted, POST: write permission, the `modified` lock, `db_set` of `custom_snoozed_until` / `custom_snooze_reason`) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -351,7 +351,7 @@ where status not in ('Closed Won', 'Lost', 'Closed', 'Converted')
 group by substr(expected_closing, 1, 7)
 ```
 
-### Part B: views, needs attention, focus (v1.660.0)
+### Part B: views, needs attention, focus (v1.663.0)
 
 Form kit P6.3, P6.4 and P6.8. Out of scope still: the side panel (P6.6), quick add and bulk
 (P6.7), and retiring the stock Kanban's patches and the list's redirect (P6.10, waiting on Nik's
