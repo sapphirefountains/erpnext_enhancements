@@ -33,8 +33,10 @@ which waits for Nik's sign-off on the board.
     date set. After an Undo the page sends `sf-record-changed`, so an open guided page reloads.
   - The drawer's own × goes through the panel's close (an edit saves first), via the drawer's new
     `request_close` option; the planners pass none and keep their ×.
-  - Its files load on demand the first time a panel opens (`frappe.require` of `planner_kit`,
-    `guided_entry.bundle.js` and `.css`), as the planners load theirs. If they do not arrive, a deal
+  - Its files load on demand the first time a panel opens (`frappe.require` of
+    `planner_kit.bundle.js` and `.css`, `guided_entry.bundle.js` and `.css`), as the planners load
+    theirs; since v1.673.0 the drawer's styles are `planner_kit.bundle.css`, no longer injected by
+    the kit's script. If they do not arrive, a deal
     opens the normal way and a closing drop opens the guided Close step, as before.
 - **Tap to edit** (P6.6). A tap or click on a card, or on a row of the table, the timeline or the
   attention list, opens the deal in the side panel (`…/edit/<name>`). On a phone too: the card's
