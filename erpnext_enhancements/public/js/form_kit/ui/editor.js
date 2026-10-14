@@ -21,7 +21,8 @@
  *     (save_now, through the host page's save_action)
  *   - a DocType's step blocks (form kit P8.1, ../extensions.js; the Item flow's name builder and its
  *     supplier, stock and asset blocks): mounted above a step's fields when the step names an
- *     `extension`, told of each change, asked before a create; a block that throws stays in its box
+ *     `extension`, told of each change, asked before a create and told after one that went
+ *     through; a block that throws stays in its box
  *
  * What it asks of the shell that hosts it (the "host" methods; the guided page and the side panel
  * each define their own):
@@ -1119,6 +1120,12 @@ export class RecordEditor {
 			kit: this.kit,
 			can_write: !!(this.flow && this.flow.can_write) && !(step && step.read_only),
 			values: () => (same() ? Object.assign({}, this.values) : {}),
+			// What a new record was started with (v1.694.0): `carried`, the values for fields of
+			// later steps the create sends along; `started`, every start value, including ones no
+			// field takes (a buying line's supplier and rate). The Item flow's Describe it card
+			// starts from a carried description, its supplier block from the line's supplier.
+			carried: () => (same() && this.is_new ? Object.assign({}, this.carry || {}) : {}),
+			started: () => (same() && this.is_new ? Object.assign({}, this.start_options || {}) : {}),
 			set_value: (fieldname, value) => {
 				if (!same() || this.kit.same_value(value, this.values[fieldname])) return;
 				this.set_value_local(fieldname, value);
@@ -1884,6 +1891,9 @@ export class RecordEditor {
 		const extra = this.kit.create_extras(step, values, (this.flow && this.flow.values) || {});
 		const doctype = this.doctype;
 		const started_with = this.started_with;
+		// The block that let the create go, told once it went through (the page has moved on to a
+		// fresh block for the new record by the time it hears).
+		const ext = this.ext;
 		this.creating = true;
 		this.notice = null;
 		this.refresh_notices();
@@ -1918,6 +1928,13 @@ export class RecordEditor {
 				// An earlier attempt made the record; step 1 may have changed since, so what differs is
 				// saved on it now.
 				if (created.deduped && this.queue) this.resend_typed(values);
+				// Before the shell moves on: the Item flow's block hands a buying line's supplier and
+				// rate to the new Item's supplier block here, and only here, never for a failed create.
+				try {
+					if (ext && typeof ext.created === "function") ext.created(created);
+				} catch (e) {
+					if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+				}
 				// Where the shell goes from here (the guided page replaces its "new" entry; the side
 				// panel shows the deal it made).
 				this.after_create({ doctype, created, started_with, still_here });

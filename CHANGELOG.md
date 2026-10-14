@@ -48,6 +48,253 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Tests:** `scripts/test_new_item_prefill.mjs` runs all three files against a stub of the v16
     pieces they hook, as a new CI step.
 
+## [1.694.0] - 2026-10-14
+
+### Added
+- **The guided Item flow can suggest a new item's code family and its POL-0602 name from a plain
+  description (ER-2026-1320546).** Parker Bailey (purchasing): "An AI assisted way to create new item
+  codes for items that don't have codes." Nik, 2026-10-14 (on TASK-2026-02790): an AI *suggest* step
+  on top of form kit P8.1's rule-based guided Item flow. The AI does not replace the rules. On a new
+  Item, above the code helper, a *Describe it* card takes what the item is in plain words, an optional
+  vendor part number and an optional photo. It answers with one row per field, each with a short
+  reason: the kind of code, the vendor part number or a CON- code's group, descriptor and size, the
+  seven name segments, the Item Group and the unit. *Accept* puts a row where a person would have
+  typed it: the code helper's own inputs, the name builder's segment, the step's own field. *Edit*
+  changes it first. So the code is built, numbered and checked exactly as before, and the naming check
+  and the save are unchanged.
+  - **It never picks a PDT or SRV number.** A product or service suggestion is the family alone. The
+    code helper then lists the blocks, and the number is the one the person picks there
+    (`api.item_flow.code_blocks`). Every `PDT-`/`SRV-` number the model writes anywhere is removed,
+    and a note about one is dropped whole.
+  - **It never invents a vendor part number.** A part number is kept only when the person typed it or
+    it is whole words of their description, and then in the description's own spelling: the code IS
+    the number as printed (`printed_in`). One read off the photo, or one only close to the
+    description (cut short, re-spaced, stitched across words), is kept but marked *Check it*, and
+    *Accept all* skips it. A part number the person typed makes it a purchased part, whatever the
+    model thought (SOP §5 Phase 2).
+  - **The rules have the last word.** The model's answer is untrusted input. Only the keys of the
+    schema the prompt states survive, every value is plain text and bounded, the Item Group must be a
+    leaf the site has and the unit an enabled UOM. The composed Item then goes through `item_naming_rules`
+    (`check_code`, `check_name`, `check_supporting`, `check_code_name_agreement`) and the new-Item
+    guard's `blocking_findings`, and through Stock Scan's `preview_new_item`, the preview the step's
+    naming check shows. The card names an existing Item with that code, and the similar ones, before
+    anyone accepts anything. The only correction made is `check_name`'s own: a Tier 3 word takes its
+    Appendix A replacement, a plural CATEGORY its approved singular, GREY becomes GRAY. An unapproved
+    category is reported, never repaired.
+  - **It writes nothing.** No Item, no File, no price. Its only rows are the shared Gemini client's
+    AI Model Usage row and, when the call fails, one Error Log row with the exception's class and a
+    short message, never the prompt or the photo (`frappe.get_traceback` is not used: the prompt is a
+    local).
+  - **When the AI cannot help, the flow works as before.** AI not set up (no Google service account),
+    a timeout, an error, a reply that is not the JSON asked for, or nothing usable: the card says so in
+    plain words and the rule-based helper below it is untouched. Gated on Item create, POST, 30 calls
+    per person per hour.
+  - **The photo** is scaled in the browser to 1600px on its long side and sent as base64. It is never
+    stored, and the server checks it by its bytes (JPEG, PNG, WebP or HEIC, at most 4 MB). The endpoint
+    also takes `file_url`, a File the caller can read.
+  - `api/item_suggest.py` (`suggest_item`), `inventory_enhancements/item_suggest_rules.py` (pure),
+    `public/js/guided_item/suggest.js` (pure). `api/gemini.py` gains keyword-only `images`,
+    `response_mime_type`, `thinking_level` and `timeout`. A call without them sends the request it
+    always did, so the five other callers are unchanged.
+- **`item_naming_suggest`, the same suggestion for the assistant.** Read-only in the AI gate
+  (`EXPLICIT_READONLY`), gated on Item create. Its name puts it in Triton's core pack by the existing
+  `item_naming` rule, but **Triton's deployed agents do not see it yet**: they read a generated
+  snapshot of FAC's tools (`triton/backend/app/core/adk/fac_tools_generated.py`), so the tool reaches
+  them only after that snapshot is regenerated and the agents are redeployed, which is a Triton-side
+  step this release does not take. It takes no photo: a File named by an assistant call
+  would need the gate's file denylist, and a Triton chat attachment is refused there anyway. The
+  item-naming skill now says to draft with it and still confirm with `item_naming_check`.
+- **A *New item (guided)* button on the Item list**, beside *+ Add Item*, for people who may open
+  the guided page and create an Item. It routes to `/desk/guided-entry/Item/new`. An Item still opens
+  in its form (`open_by_default` stays False).
+- **A new Item started with a buying line's values lands where the flow has a place for each.** The
+  Desk buying grids (#1305) pass `item_code`, `item_name`, `description` (the line's Text Editor
+  HTML), `stock_uom`, `uom`, `rate` and `supplier`. Step 1 takes the code, name and unit as it always
+  did. The description goes with the create into the Item's own description field, and the
+  *Describe it* box starts from it as text, put in with `.val()`, never as markup. `supplier` and
+  `rate` are not Item fields, so the editor now lends a block the new record's start
+  (`ctx.carried()`, `ctx.started()`). The Item extension keeps them, in the tab, until the
+  *Supplier & price* block of the Item the create made, which starts from them unsaved. The rate is
+  offered only when the line's `uom` is the Item's stock unit, because an Item Price is per stock
+  unit. `uom` and LinkSelector's `name_field` have no place and are dropped. This works on
+  `/desk/guided-entry/Item/new` only: Item is not where a record opens, so `frappe.new_doc("Item")`
+  still opens the form, and a caller that wants the guided flow routes there itself. The line is
+  handed on only once the create has gone through, by a new optional block hook,
+  `ext.created(record)`, keyed by the name the server gave the Item.
+
+### Fixed (before release, from review)
+- **A part number "found in your description" was a substring test.** With "pump AFS-7731, 1/2 HP,
+  115 V", a model's `AFS-773` (cut short), `PUMP-AFS`, `115V` or `12HP-115` was kept unflagged as
+  "Found in your description", and *Accept all* wrote it into Item Code. Found now means the whole
+  word, or a run of whole words inside one comma-delimited clause, matches with case and punctuation
+  set aside, and the value is the description's spelling (`afs7731` comes back `AFS-7731`). Anything
+  merely close is a *Check it* row.
+- **The unit list offered a disabled UOM.** It was the units live Items use, which includes "Nos"
+  (disabled since 2026-06-19; new Items use "Unit") and leaves out enabled ones no Item uses yet
+  ("Gallon"). It is now the enabled UOMs, the most used first, and a suggested unit outside that list
+  is dropped.
+- **Entities were decoded after tags were stripped**, so `&lt;img src=x onerror=...&gt;` came back
+  a live tag and `&lt;/description&gt;` could close the prompt's fence round the person's words.
+  `plain_text` now decodes first, strips tags, then drops any stray `<` or `>`; the vendor part
+  number in the prompt goes through it too.
+- **A PDT or SRV number with an unexpected separator survived** (`PDT.0042`, `PDT/0042`, a Unicode
+  dash, `PDT#0042`), and `PDT,0042` became two segments because the strip ran before the builder's
+  comma cleaning. Any non-alphanumeric run now counts as a separator, segments are cleaned first, and
+  a value that still reads as one once normalized (`XPDT0042`) is dropped.
+- **The email scrub removed ratings**: "10 GPM@20.5 PSI" became "10 [removed] PSI". It now needs a
+  domain ending in letters.
+- **A photo named by `file_url`**: the size is taken from the disk when the File row has none, so a
+  huge file is refused before it is read; the File rows sharing that address are searched for one the
+  person may read; and a File they may not read gets the same "could not be read" answer as a
+  missing one, instead of a 403 that told them it exists.
+- **An unexpected error after the model answered was a 500**, and Frappe's error snapshot renders the
+  frame's locals, the prompt and the photo among them. It is now logged (class and message only) and
+  answered with the plain "could not be read as a suggestion".
+- **A buying line's supplier and rate were kept before the create**, so after a failed create (a
+  code that is taken) the next Item opened with that code started from them. See `ext.created` above.
+- `item_naming_suggest` refuses a non-text `description` cleanly instead of raising
+  `AttributeError`, and a dropped part number beside an unnamed kind of code no longer reads "a
+  other code".
+
+## [1.693.0] - 2026-10-14
+
+### Added
+- **Bin Manager: a Desk page to manage one bin's items from a PC, no scanning** (ER-2026-1320545,
+  TASK-2026-02827; stacked on the bin-assignment server side, v1.689.0). `/desk/bin-manager` lists
+  every bin (a leaf, enabled, non-transit Warehouse) grouped under its parent, with how many items
+  are on hand and how many are assigned there, and a filter box. Picking one opens
+  `/desk/bin-manager/<warehouse>`: every item the bin lists (the same `api.stock_scan.get_location`
+  rows /stock-scan shows, each saying why it is listed: on this bin, default bin, on order, not
+  decided, stock only) with its quantity, and per row:
+  - **Change quantity** -> `bin_assignments.set_count`, a submitted **Stock Reconciliation**. A
+    count correction is not consumption: it must not charge a job, it has to be able to go up as well
+    as down, and the ledger should say it was a count. A Material Issue does none of those.
+  - **Move** -> `bin_assignments.move_to`, to any other bin picked in the dialog, with "Make <bin>
+    this item's bin" ticked by default when the whole quantity moves and unticked for a partial move,
+    decided again on every change of quantity until the person touches it; never offered for the
+    boneyard.
+  - **Unassign** -> `bin_assignments.unassign`. With stock still here the server refuses it, so the
+    page offers Move or **Send to boneyard** (`send_to_boneyard`) first; the boneyard button is
+    hidden when Inventory Scanner Settings has none.
+  - **Keep on this bin** (an item listed here but not on the bin: undecided, default-only, stock
+    only) -> `bin_assignments.assign`.
+  and for the bin: **Add existing item** (search, `api.stock_scan.search_items`, then `assign`) and
+  **New item** (below). Every save writes a Stock Scan Log row, and the page lists your recent saves
+  on this bin with Undo (`api.stock_scan.undo`), as /stock-scan's Recent does; the last save's
+  sentence sits above the items with its own Undo.
+- **`bin_assignments.create_and_assign(warehouse, client_ref, item_code, item_name, item_group,
+  stock_uom)`** (POST): New item. The Item is created through the store run's quick-item path
+  unchanged (`_quick_item_spec`, `_check_quick_item`, `_quick_item`: the same checks, the same
+  refusals, inserted as the user, the naming guard judging it on insert, its Item Default for the
+  bin's company set to this bin), then put on the bin with a Putaway Rule, in one transaction, logged
+  as an *Assign* with `created_item` and idempotent on `client_ref`. Every refusal about the bin and
+  the module gate comes before the Item exists. The dialog shows `check_new_item`'s preview as it is
+  typed (already in ERPNext, what the naming guard will refuse, similar items with "Add this one
+  instead", advice). Undo takes the item off the bin: the rule is disabled and the Item Default it
+  set is cleared while it still names this bin (a new `rule_changes` kind, `item_default_set`, which
+  `bin_assignments.restore` reverses), and **the Item stays**, as a store run's quick Item does; the
+  undo's sentence says so. The log row also carries `needs_review`, so the new Item joins the weekly
+  "New Items From Store Runs" review (without it the row could never be ticked reviewed:
+  `StockScanLog._stamp_review` clears `reviewed` on a row that does not need review).
+- **`bin_assignments.manager_boot()`** (GET, role-checked): the page's one read of its own. The
+  bins with their counts and breadcrumbs (two grouped derived tables in one `frappe.db.sql`, the
+  trails from one read of the group warehouses), and what the caller may do: `can_manage` (the
+  bin-assignment gate), `can_count` (Stock Reconciliation create and submit), `can_move` (Stock
+  Entry create and submit), `can_create_items` (Item create), the boneyard (read from Inventory
+  Scanner Settings on the server, so the page never reads a Settings Single), and the quick Item's
+  groups and units.
+- **Who sees what**, from that payload and never a role list in the page: Change quantity needs
+  `can_count`; Move needs `can_move` (and "make it the item's bin" the gate); Keep, Unassign, Send
+  to boneyard, Add existing item and New item need the gate, the last also Item create. Server
+  refusals are already sentences and show inline in the dialog that asked; a dropped reply keeps
+  the save's reference so the next try cannot post twice.
+- **Back and Forward**: the picker and each bin are their own history entry (one `set_route` per
+  pick); Back from a bin returns to the picker and Forward returns to the bin. Dialogs push nothing,
+  and the router closes an open one on Back. `?warehouse=<name>` (from the address or a
+  `frappe.set_route("bin-manager", {warehouse})`) is read from `frappe.route_options` and opens that
+  bin in place of the picker entry, and `?q=` fills the filter.
+- **Where to find it**: a Bin Manager shortcut beside Stock Scan on the Operations Hub and a link in
+  its Inventory card, a link in the Inventory Enhancements workspace's Counts card (both files
+  timestamp-bumped, and force-imported by `patches/bin_manager_hub_links`), and the "Pages" search
+  (`page_search.js`: bins, shelf, putaway, boneyard). The Page admits the Stock Scan roles
+  (`stock_scan_rules.SCAN_ROLES`); all four already read Stock Scan Log, a doctype of the page's
+  module. No link from /stock-scan, as decided.
+- Review fixes, before release: the Move dialog's destination list shows the first 30 bins that
+  match what is typed, and a click was looked up in the first 30 of the *unfiltered* list, so a bin
+  past #30 (production has 221) could not be chosen; it is now looked up in the full list
+  (`controller.bin`). "Keep on this bin" and a preview's "Add this one instead" keep their
+  `client_ref` per bin and item until the save lands or is refused (`controller.quick`), as a
+  dialog does, so a click after a dropped reply returns the first save instead of "already on this
+  bin". `create_and_assign` turns a concurrent retry's lost Item insert (`DuplicateEntryError`,
+  "Item X already exists") into `_begin_log`'s "still being recorded" 409, so the page keeps the
+  same reference; `store_run` is unchanged. Item, warehouse and bin names are escaped wherever they
+  reach frappe's own HTML: dialog titles (v16's `Dialog.set_title` is `.html()`), field labels and
+  descriptions, and the make-home label.
+- The page's decisions are a pure module and a DOM-free controller
+  (`public/js/bin_manager/logic.js`, `controller.js`, loaded as `bin_manager.bundle.js`); its CSS is
+  the page folder's `bin_manager.css`, every selector under `.bm-`.
+
+### Tests
+- `tests/test_bin_manager.py` (own CI step): `create_and_assign` and `manager_boot` on
+  `test_bin_assignments`' frappe stub (the Item inserted as the user, every refusal before any write,
+  a resend posts once, undo clears what it set and leaves the Item, the boot from permissions), and
+  `scripts/test_bin_manager.mjs` under node, including the real page script in a vm over a modelled
+  v16.50 router: a bin pick is one entry, Back/Forward, dialogs push none, route options read and the
+  address cleaned, the make-home default, gating and each action's endpoint with its `client_ref`.
+  `test_bin_assignments`' source checks now know the two new endpoints (the GET read, and the one
+  write allowed before the log row: the quick Item, whose code the log row links).
+
+## [1.692.1] - 2026-10-14
+
+### Changed
+- **The guided Item flow puts the item on the bin it saves, not only as its default.** v1.683.0's
+  stock step (`api.item_flow.save_stock`) recorded the bin only as the Item Default's
+  `default_warehouse`. Since v1.689.0, an item is assigned to a bin by an enabled Putaway Rule,
+  per Nik's 2026-10-14 decision.
+  - Before this change, Stock Scan's bin list showed such an item only as the default
+    (`is_default`), not as `assigned`.
+  - A new item with no stock there yet dropped off the bin as soon as its default changed.
+  - ERPNext's *Apply Putaway Rule*, which routes received stock by the rule, had nothing to go
+    by.
+  
+  The stock step now also calls `bin_assignments.ensure_assignment`. v1.689.0 kept that helper,
+  with a stable signature, for this call.
+  - **Idempotent:** an existing enabled rule comes back as it is, and a disabled one is
+    re-enabled. Asking on every save keeps an item whose rule went missing on its bin.
+  - **Moving the item to another bin takes it off the old one when nothing is left there**, as
+    v1.689.0's *Move to* with "make this the item's bin" does to a source it empties. This uses
+    `bin_assignments.release_if_empty`, the new other half of `ensure_assignment`: the same
+    `_release`, gated only when it changes something, no log row, and a stable signature.
+    - Stock still on hand keeps the old bin's claim, and the note says so: "Bin A still has 3 on
+      hand, so the item stays on that bin too until it is moved."
+    - Two enabled rules means two bins *Apply Putaway Rule* may fill, so this is not left unsaid.
+    - A pair nothing claims (no enabled rule, not undecided) is left alone, so no record of a
+      decision is made where nobody listed the item.
+    - Found in this change's review: the first draft left the old rule enabled in every case.
+  - **A refusal never undoes the bin the person saved.** Examples are a caller without a stock
+    role (the bin module's gate is a Stock Scan role plus Item read; the flow's own is Item write)
+    or a template item.
+    - Both helpers' writes roll back together to a savepoint (`item_flow_bin_assignment`), which
+      is taken before messages are muted.
+    - The reason is added to the response's `note` ("Stock Scan's bin list was not changed:
+      ..."), which the page already shows as a warning toast after "Bin saved."
+    - Messages are muted while they run. A caught `frappe.throw` has already queued its message
+      for the browser, so it would otherwise still show a red dialog.
+    - Any other failure is not caught: the request fails and nothing of it is saved.
+  - The Putaway Rule is the one write in this flow that is not the caller's own: the bin module
+    writes it behind its own gate, as it does for Stock Scan. The module docstring says so.
+- **Tests.**
+  - `tests/test_item_flow.py TestTheBinAssignment` covers the flow side.
+  - `tests/test_bin_assignments.py TestReleaseIfEmpty` covers the helper: an emptied bin is taken
+    off and its default cleared, stock keeps the bin, a pair nothing claims is left alone, an
+    emptied undecided pair is recorded, and only a change meets the gate.
+  - The Item flow stub's `frappe.throw` now queues its message unless muted, as frappe's does.
+    So a swallowed throw that would still show a dialog fails the build.
+  - Removing any one safeguard fails its own test. In the flow: the call, the release call,
+    releasing on a same-bin save, the kept-stock note, the mute, restoring the mute, the
+    savepoint rollback, the narrow `except`, catching `PermissionError`, and the note. In the
+    helper: the stock check, the claim check, and clearing the default.
+
 ## [1.692.0] - 2026-10-14
 
 ### Added

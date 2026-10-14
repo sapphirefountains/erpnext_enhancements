@@ -245,6 +245,50 @@ class RequestShapeTests(unittest.TestCase):
 		self.assertEqual(STATE["inserted"], [])
 
 
+class OptionsTests(unittest.TestCase):
+	"""The keyword-only options the item suggester added (v1.694.0). Absent, the request is the
+	one every other caller has always sent."""
+
+	def setUp(self):
+		_reset()
+		STATE["response"] = _ok_response()
+
+	def test_a_call_without_them_sends_what_it_always_sent(self):
+		gemini.generate_content_with_vertex_ai("p", "s", None)
+		post = STATE["posts"][0]
+		self.assertEqual(post["json"]["contents"][0]["parts"], [{"text": "p"}])
+		self.assertEqual(set(post["json"]["generationConfig"]), {"thinkingConfig"})
+		self.assertEqual(post["timeout"], gemini.REQUEST_TIMEOUT)
+
+	def test_a_photo_goes_before_the_text_as_inline_data(self):
+		gemini.generate_content_with_vertex_ai(
+			"p",
+			"s",
+			None,
+			feature="item_naming_suggest",
+			images=[{"mime_type": "image/png", "data": "QUJD"}],
+			response_mime_type="application/json",
+			thinking_level="MEDIUM",
+			timeout=60,
+		)
+		post = STATE["posts"][0]
+		self.assertEqual(
+			post["json"]["contents"][0]["parts"],
+			[{"inlineData": {"mimeType": "image/png", "data": "QUJD"}}, {"text": "p"}],
+		)
+		self.assertEqual(post["json"]["generationConfig"]["responseMimeType"], "application/json")
+		self.assertEqual(post["json"]["generationConfig"]["thinkingConfig"]["thinkingLevel"], "MEDIUM")
+		self.assertEqual(post["timeout"], 60)
+		self.assertEqual(STATE["inserted"][0]["feature"], "item_naming_suggest")
+
+	def test_an_image_of_another_type_is_refused_before_any_request(self):
+		for image in ({"mime_type": "application/pdf", "data": "QUJD"}, {"mime_type": "image/png", "data": ""}, None):
+			with self.subTest(image=image):
+				with self.assertRaises(Exception):
+					gemini.generate_content_with_vertex_ai("p", "s", None, images=[image])
+		self.assertEqual(STATE["posts"], [])
+
+
 class FailureTests(unittest.TestCase):
 	def setUp(self):
 		_reset()

@@ -1813,6 +1813,59 @@ body.ge-page-active .triton-fab {
 .gi-form > .sf-btn {
 	min-height: var(--sf-touch-min);
 }
+/* The Describe it card (v1.694.0): the AI's suggested fields, each accepted or edited into the
+   builders below it. Full width, 16px text and 44px targets like every block here. */
+.gi-describe[hidden],
+.gi-photo-remove[hidden] {
+	display: none;
+}
+.gi-ai-text {
+	min-height: calc(var(--sf-touch-min) * 2);
+	resize: vertical;
+}
+.gi-photo-input {
+	display: block;
+	max-width: 100%;
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-input);
+}
+.gi-photo-remove {
+	min-height: var(--sf-touch-min);
+	margin-top: var(--sf-space-5);
+}
+.gi-suggestion:empty {
+	display: none;
+}
+.gi-suggestion {
+	margin-top: var(--sf-space-10);
+}
+.gi-sg-rows {
+	display: grid;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-10);
+}
+.gi-sg-row {
+	padding: var(--sf-space-10);
+	border: 1px solid var(--sf-rule);
+	background: var(--sf-bg);
+}
+.gi-sg-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5);
+}
+.gi-sg-head .gi-label {
+	margin-bottom: 0;
+}
+.gi-sg-value {
+	margin: var(--sf-space-5) 0 0;
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.gi-sg-row .gi-actions {
+	margin: var(--sf-space-10) 0 0;
+}
 
 @media (max-width: 767px) {
 	.ge-band {

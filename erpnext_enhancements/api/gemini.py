@@ -2,7 +2,8 @@
 
 Not whitelisted — internal helper imported by ``api/briefing.py`` (the morning
 briefing narrative), ``api/communication.py`` (email/SMS drafts),
-``api/training_ai.py`` and ``assistant_tools/draft_course_spec.py``. Posts a
+``api/training_ai.py``, ``api/planner_ai_draft.py``, ``api/item_suggest.py`` (the
+only caller that sends a photo) and ``assistant_tools/draft_course_spec.py``. Posts a
 single ``generateContent`` request for ``MODEL_ID`` on the platform's **global**
 endpoint in the ``sapphire-fountains-poseidon`` GCP project and splits the
 response into final answer text vs. the model's "thoughts".
@@ -145,7 +146,7 @@ def _access_token():
     return credentials.token
 
 
-def _post(url, payload):
+def _post(url, payload, timeout=REQUEST_TIMEOUT):
     """POST to the platform, keeping the bearer token out of every traceback.
 
     ``headers`` is cleared before anything raises, and that is the point of the
@@ -161,7 +162,7 @@ def _post(url, payload):
             "Authorization": f"Bearer {_access_token()}",
             "Content-Type": "application/json",
         }
-        return requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        return requests.post(url, headers=headers, json=payload, timeout=timeout)
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
         headers = None
@@ -178,7 +179,22 @@ def _platform_error(response, exc):
     return message
 
 
-def generate_content_with_vertex_ai(prompt, system_instruction, settings, feature="unknown", model_id=None):
+#: What ``images`` may carry: the image types the platform takes as inline data.
+IMAGE_MIME_TYPES = ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif")
+
+
+def generate_content_with_vertex_ai(
+    prompt,
+    system_instruction,
+    settings,
+    feature="unknown",
+    model_id=None,
+    *,
+    images=None,
+    response_mime_type=None,
+    thinking_level=None,
+    timeout=None,
+):
     """Call ``generateContent`` on the platform and return ``(text, thoughts)``.
 
     Args:
@@ -194,6 +210,20 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
             AI Model Usage token-accounting row.
         model_id (str): Override ``MODEL_ID`` for this one call, for a caller
             that wants Pro. Recorded on the usage row as the model that answered.
+
+    Keyword-only, all optional, added for the item suggester (``api/item_suggest.py``,
+    v1.694.0); a call without them sends exactly the request it always did:
+
+        images (list[dict]): ``{"mime_type", "data"}`` with ``data`` base64, one of
+            ``IMAGE_MIME_TYPES``. Sent as ``inlineData`` parts before the prompt's
+            text part, the order Google recommends for one image and a question.
+            The caller checks the type and the size; this refuses an unknown type.
+        response_mime_type (str): ``"application/json"`` asks the model for JSON
+            only (``generationConfig.responseMimeType``). The caller still parses
+            and validates it: the model's answer is untrusted input.
+        thinking_level (str): ``LOW``, ``MEDIUM`` or ``HIGH`` for this call, for a
+            caller with a person waiting. ``THINKING_LEVEL`` otherwise.
+        timeout (int): seconds, for this call. ``REQUEST_TIMEOUT`` otherwise.
 
     Returns:
         tuple[str, str]: ``(final_text, final_thoughts)`` — the generated answer
@@ -211,10 +241,18 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
     model = model_id or MODEL_ID
     url = build_endpoint(model)
 
+    parts = []
+    for image in images or ():
+        mime_type = (image or {}).get("mime_type")
+        if mime_type not in IMAGE_MIME_TYPES or not (image or {}).get("data"):
+            raise Exception("An image for the Gemini Enterprise Agent Platform must be JPEG, PNG, WebP or HEIC data.")
+        parts.append({"inlineData": {"mimeType": mime_type, "data": image["data"]}})
+    parts.append({"text": prompt})
+
     payload = {
         "contents": [{
             "role": "user",
-            "parts": [{"text": prompt}]
+            "parts": parts
         }],
         "systemInstruction": {
             "parts": [{"text": system_instruction}]
@@ -222,12 +260,14 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings, featur
         "generationConfig": {
             "thinkingConfig": {
                 "includeThoughts": True,
-                "thinkingLevel": THINKING_LEVEL
+                "thinkingLevel": thinking_level or THINKING_LEVEL
             }
         }
     }
+    if response_mime_type:
+        payload["generationConfig"]["responseMimeType"] = response_mime_type
 
-    response = _post(url, payload)
+    response = _post(url, payload, timeout or REQUEST_TIMEOUT)
 
     try:
         response.raise_for_status()
