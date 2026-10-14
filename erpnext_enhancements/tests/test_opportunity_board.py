@@ -531,21 +531,31 @@ class TestTheBoardUnderNode(unittest.TestCase):
 
 	def test_routes(self):
 		r = self.out["routes"]
-		self.assertEqual(r["bare"], {"layout": "stages", "stage": "", "panel": ""})
+		# Part B (v1.663.0) added `view` (and `bare`, the address with no segment at all, where the
+		# remembered view may apply); the board's own routes read as they did in part A.
+		board = {"view": "board", "bare": False}
+		self.assertEqual(
+			r["bare"], {"view": "board", "layout": "stages", "stage": "", "panel": "", "bare": True}
+		)
 		self.assertIsNone(r["other"])
 		self.assertIsNone(r["not_array"])
 		self.assertEqual(r["streams"]["layout"], "streams")
 		self.assertEqual(r["bad_layout"]["layout"], "stages")
-		self.assertEqual(r["tab"], {"layout": "stages", "stage": "on-hold", "panel": ""})
-		self.assertEqual(r["panel"], {"layout": "stages", "stage": "", "panel": "CRM-OPP-2026-00123"})
+		self.assertEqual(r["tab"], {**board, "layout": "stages", "stage": "on-hold", "panel": ""})
 		self.assertEqual(
-			r["tab_panel"], {"layout": "streams", "stage": "qualification", "panel": "CRM-OPP-2026-00123"}
+			r["panel"], {**board, "layout": "stages", "stage": "", "panel": "CRM-OPP-2026-00123"}
+		)
+		self.assertEqual(
+			r["tab_panel"],
+			{**board, "layout": "streams", "stage": "qualification", "panel": "CRM-OPP-2026-00123"},
 		)
 		self.assertEqual(r["build_bare"], ["opportunity-board", "stages"])
 		self.assertEqual(r["build_tab"], ["opportunity-board", "streams", "on-hold"])
 		self.assertEqual(r["build_panel"], ["opportunity-board", "stages", "move", "OPP-1"])
 		self.assertEqual(r["build_tab_panel"], ["opportunity-board", "stages", "lost", "move", "OPP-1"])
-		self.assertEqual(r["round_trip"], {"layout": "streams", "stage": "qualification", "panel": "OPP-1"})
+		self.assertEqual(
+			r["round_trip"], {**board, "layout": "streams", "stage": "qualification", "panel": "OPP-1"}
+		)
 		self.assertTrue(r["keys_differ"])
 		self.assertTrue(r["keys_same"])
 
@@ -680,6 +690,9 @@ def _opportunity_meta(missing=()):
 		("custom_stage_changed_on", None),
 		("custom_is_historical", None),
 		("custom_value_stream", "Value Stream"),
+		("opportunity_owner", "User"),
+		("custom_snoozed_until", None),
+		("custom_snooze_reason", None),
 	]
 	return _Meta([_Field(n, o) for n, o in names if n not in missing])
 
@@ -806,6 +819,8 @@ def _install_frappe_stub():
 	utils.get_datetime = lambda v: v
 	utils.now_datetime = lambda: datetime.datetime(2026, 10, 13, 12, 0, 0)
 	utils.escape_html = lambda s: str(s)
+	utils.formatdate = lambda value: str(getdate(value))
+	utils.get_fullname = lambda user: {"nik@example.com": "Nik Bradshaw"}.get(user, user)
 	frappe.utils = utils
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
@@ -875,6 +890,9 @@ def _record(name, **values):
 		"probability": 10,
 		"expected_closing": datetime.date(2026, 10, 30),
 		"custom_stage_changed_on": datetime.datetime(2026, 10, 1, 8, 0),
+		"opportunity_owner": "nik@example.com",
+		"custom_snoozed_until": None,
+		"custom_snooze_reason": None,
 	}
 	row.update(values)
 	return row
@@ -961,6 +979,11 @@ class TestTheEndpoint(unittest.TestCase):
 				"modified": "2026-10-12 09:30:15.123456",
 				"streams": ["Design", "Build"],
 				"completeness": {"stage": "Qualification", "done": 3, "total": 6, "missing": []},
+				# Part B: the owner filter and table, and the snooze.
+				"owner": "nik@example.com",
+				"owner_name": "Nik Bradshaw",
+				"snoozed_until": None,
+				"snooze_reason": "",
 			},
 		)
 		self.assertIsNone(two["amount"], "no amount is None, so the card says so")
@@ -1065,7 +1088,8 @@ class TestThePage(unittest.TestCase):
 		):
 			self.assertNotIn(forbidden, code)
 		calls = [m.start() for m in re.finditer(r"\.call\(\s*OB_", code)]
-		self.assertEqual(len(calls), 2)
+		# get_board, save_step; part B: snooze, and the four saved-view calls.
+		self.assertEqual(len(calls), 7)
 		for start in calls:
 			depth, end = 0, start
 			for end in range(code.index("(", start), len(code)):
@@ -1089,6 +1113,7 @@ class TestThePage(unittest.TestCase):
 
 	def test_a_conflict_is_never_overwritten(self):
 		code = _code(PAGE_JS)
+		code = code[code.index("\tmove(deal, key) {") :]
 		self.assertIn("if (result && result.conflict) {", code)
 		conflict = code[code.index("if (result && result.conflict) {") :]
 		conflict = conflict[: conflict.index("return;")]
