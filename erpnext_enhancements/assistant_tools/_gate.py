@@ -118,7 +118,7 @@ EXPLICIT_READONLY = {
     # reason the training tools record above -- unclassified, is_mutating() falls to
     # the fail-closed default and the tool answers with a confirmation card.
     "item_naming_check",
-    # v1.691.0 (ER-2026-1320546) -- the AI suggest step of the guided Item flow, from a
+    # v1.694.0 (ER-2026-1320546) -- the AI suggest step of the guided Item flow, from a
     # description. Read-only in the sense the gate cares about, like draft_course_spec below:
     # it creates no Item and no File, and its one side effect is the shared Gemini client's
     # AI Model Usage row. It never allocates a PDT-/SRV- number (the block list does) and

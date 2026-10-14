@@ -246,7 +246,7 @@ class RequestShapeTests(unittest.TestCase):
 
 
 class OptionsTests(unittest.TestCase):
-	"""The keyword-only options the item suggester added (v1.691.0). Absent, the request is the
+	"""The keyword-only options the item suggester added (v1.694.0). Absent, the request is the
 	one every other caller has always sent."""
 
 	def setUp(self):

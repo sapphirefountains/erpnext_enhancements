@@ -1,4 +1,4 @@
-"""Bench-free tests for the guided Item flow's AI suggest step (v1.691.0, ER-2026-1320546).
+"""Bench-free tests for the guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546).
 
 Three pieces:
 

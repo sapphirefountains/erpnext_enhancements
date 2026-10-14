@@ -710,7 +710,7 @@ way. The editor knows only that interface, never what the block is: `render(name
 `on_change(fieldname, value, ctx)`, `before_create()` (a sentence that holds step 1 back, or "")
 and `leave()`. `ctx` lends the record's values, `set_value` (into a field the page then saves),
 `save_first` (send what the page holds) and `record_changed` (take the record's new version after
-the block wrote through its own endpoint). Since v1.691.0 it also lends a new record's start
+the block wrote through its own endpoint). Since v1.694.0 it also lends a new record's start
 (route options): `carried()`, the values for fields of later steps the create sends along, and
 `started()`, every start value including ones no field takes. Both are `{}` for a saved record. A
 block that throws is caught; the fields still show.
@@ -752,10 +752,10 @@ Opportunity) makes a resent create return the Item the first attempt made rather
 code refusal. Item is
 not where an Item opens yet (`open_by_default: False`), and the guided page's roles include
 *Item Manager*, the role that creates Items. The Item list has a *New item (guided)* button beside
-*+ Add Item* (`public/js/item_list.js`, v1.691.0) for people who may open the guided page and create
+*+ Add Item* (`public/js/item_list.js`, v1.694.0) for people who may open the guided page and create
 an Item; + Add Item still opens the form.
 
-### Describe it: the AI suggest step (v1.691.0)
+### Describe it: the AI suggest step (v1.694.0)
 
 ER-2026-1320546, Parker Bailey (purchasing): "An AI assisted way to create new item codes for items
 that don't have codes." Nik, 2026-10-14: an AI suggest step on top of the rule-based flow; the AI does

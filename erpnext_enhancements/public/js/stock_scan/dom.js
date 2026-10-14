@@ -70,6 +70,8 @@ const ICONS = {
 	job: ["M4 8h16v11H4z", "M9 8V5h6v3", "M4 13h16"],
 	pin: ["M12 21s-6.5-5.8-6.5-11a6.5 6.5 0 0 1 13 0c0 5.2-6.5 11-6.5 11z", "M12 7.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z"],
 	move: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
+	// "Move to…" (v1.692.0): the mirror of Move here, out of the tray instead of into it.
+	moveOut: ["M12 15V3", "M7 8l5-5 5 5", "M5 20h14"],
 	undo: ["M9 14L4 9l5-5", "M4 9h10.5a5.5 5.5 0 0 1 0 11H11"],
 	bolt: ["M13 3L5 14h6l-1 7 8-11h-6z"],
 	close: ["M6 6l12 12", "M18 6L6 18"],

@@ -1813,7 +1813,7 @@ body.ge-page-active .triton-fab {
 .gi-form > .sf-btn {
 	min-height: var(--sf-touch-min);
 }
-/* The Describe it card (v1.691.0): the AI's suggested fields, each accepted or edited into the
+/* The Describe it card (v1.694.0): the AI's suggested fields, each accepted or edited into the
    builders below it. Full width, 16px text and 44px targets like every block here. */
 .gi-describe[hidden],
 .gi-photo-remove[hidden] {

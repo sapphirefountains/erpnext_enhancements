@@ -7,7 +7,7 @@
 // Wraps frappe.listview_settings["Item"].refresh to inject a <style> block (kept
 // idempotent by removing the prior #custom-item-list-css before re-appending).
 //
-// Plus "New item (guided)" (v1.691.0, ER-2026-1320546): the guided Item flow, with its
+// Plus "New item (guided)" (v1.694.0, ER-2026-1320546): the guided Item flow, with its
 // Describe it card, one tap from the list Parker starts at. Beside + Add Item, not instead of
 // it: an Item still opens in its form (form_kit/config/item.py, open_by_default False), so the
 // button only routes to /desk/guided-entry/Item/new. Shown to people who may open the guided

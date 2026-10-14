@@ -274,7 +274,7 @@ out.blocks = {
 	],
 };
 
-// ---- the Describe it card (v1.691.0): the server's own answer, built by item_suggest_rules
+// ---- the Describe it card (v1.694.0): the server's own answer, built by item_suggest_rules
 const answer = input.answer;
 out.suggest = {
 	constants: { description_max: suggest.DESCRIPTION_MAX, photo_max: suggest.PHOTO_MAX_BYTES },
@@ -573,7 +573,7 @@ class TestTheModules(unittest.TestCase):
 	def test_a_price_is_sent_only_when_it_was_changed(self):
 		self.assertEqual(self.out["blocks"]["rate"], [None, None, "45", "12", None, None, "0"])
 
-	# ---- the Describe it card (v1.691.0)
+	# ---- the Describe it card (v1.694.0)
 
 	def test_the_builders_python_copies_are_the_builders(self):
 		m = self.out["mirror"]
@@ -763,7 +763,7 @@ class TestTheWiring(unittest.TestCase):
 					any(f'"{name}"' in args for name in ("save_supplier", "save_stock", "create_asset"))
 					or "API + method" in args
 				)
-				# The Describe it card's Suggest (v1.691.0) writes nothing but is a POST: a photo does
+				# The Describe it card's Suggest (v1.694.0) writes nothing but is a POST: a photo does
 				# not fit an address, and every call is a model call.
 				post = write or args.strip().startswith("SUGGEST,")
 				self.assertEqual(bool(get), not post)

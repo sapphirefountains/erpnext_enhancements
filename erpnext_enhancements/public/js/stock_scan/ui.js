@@ -229,8 +229,10 @@ export function sheet(opts) {
 			}
 			flushClear();
 		},
+		/** Replace the footer's buttons; returns them, in order, for a caller that relabels one. */
 		setActions(list) {
 			clear(foot);
+			const made = [];
 			for (const action of list || []) {
 				const btn = button(
 					action.glyph ? [glyph(action.glyph), el("span", null, action.label)] : action.label,
@@ -242,7 +244,9 @@ export function sheet(opts) {
 				);
 				if (action.disabled) btn.disabled = true;
 				foot.appendChild(btn);
+				made.push(btn);
 			}
+			return made;
 		},
 		setTitle(text) {
 			heading.textContent = text || "";

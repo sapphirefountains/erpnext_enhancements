@@ -92,7 +92,7 @@ export function given(value) {
 }
 
 // A buying line's supplier, price and unit, from the route options a new Item was started with
-// (v1.691.0: a purchase document's grid passes item_code, item_name, description, stock_uom, uom,
+// (v1.694.0: a purchase document's grid passes item_code, item_name, description, stock_uom, uom,
 // rate and supplier). Neither supplier, rate nor uom is an Item field; the supplier block is where
 // they belong. null when the line named no supplier.
 export function line_from(options) {

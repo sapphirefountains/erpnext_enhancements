@@ -701,6 +701,11 @@ body .page-footer {
 	background: var(--ss-accent-soft);
 	color: var(--ss-accent);
 }
+/* On a bin, off it, or recounted (v1.692.0): no stock moved, so neither red nor green. */
+.ee-ss-recent-mark.is-bin {
+	background: var(--ss-chip-bg);
+	color: var(--ss-text-2);
+}
 .ee-ss-recent-main {
 	flex: 1;
 	min-width: 0;
@@ -1125,6 +1130,21 @@ body .page-footer {
 .ee-ss-move-btn {
 	margin-top: 4px;
 }
+/* Move to… and Move here from… side by side, right under Save (v1.692.0). */
+.ee-ss-move-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 4px;
+}
+.ee-ss-move-row > .ee-ss-btn {
+	flex: 1 1 40%;
+	margin-top: 0;
+	padding: 0 12px;
+}
+.ee-ss-remove-btn {
+	color: var(--ss-text-2);
+}
 .ee-ss-also {
 	margin: 0;
 	color: var(--ss-text-2);
@@ -1353,6 +1373,50 @@ body .page-footer {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+/* Move to… (v1.692.0): where the stock goes, and "Make … this item's bin". */
+.ee-ss-dest {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.ee-ss-dest-ways {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+.ee-ss-dest-ways > .ee-ss-btn {
+	flex: 1 1 40%;
+	padding: 0 12px;
+}
+.ee-ss-dest-pick {
+	cursor: default;
+	min-height: 60px;
+}
+.ee-ss-home-check {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 56px;
+	padding: 8px 14px;
+	border: 2px solid var(--ss-border-strong);
+	border-radius: 14px;
+	background: var(--ss-surface);
+	color: var(--ss-text);
+	font-size: 1rem;
+	font-weight: 700;
+	cursor: pointer;
+	touch-action: manipulation;
+	overflow-wrap: anywhere;
+}
+.ee-ss-home-check-input {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	margin: 0;
+	accent-color: var(--ss-accent);
+	cursor: pointer;
 }
 .ee-ss-root .ee-ss-group-title {
 	margin: 8px 0 0;

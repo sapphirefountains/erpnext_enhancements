@@ -5,7 +5,7 @@
  * which is how the generic guided page draws a step's block without knowing what an Item is. The
  * steps name their blocks (form_kit/config/item.py):
  *
- *   item_naming    step 1: on a new Item the Describe it card (v1.691.0, ER-2026-1320546: a
+ *   item_naming    step 1: on a new Item the Describe it card (v1.694.0, ER-2026-1320546: a
  *                  description, a vendor part number and a photo in, the AI's suggested fields
  *                  out, each accepted or edited into the builders below; suggest.js), the code
  *                  helper (vendor part number, CON-, PDT-####, SRV-###), the name builder
@@ -209,7 +209,7 @@ class ItemExtension {
 		if (name && this.line) LINE_STARTS.set(name, this.line);
 	}
 
-	// ------------------------------------------------------------------ Describe it (v1.691.0)
+	// ------------------------------------------------------------------ Describe it (v1.694.0)
 
 	// The AI suggest step (ER-2026-1320546): above the code helper on a new Item. It fills nothing
 	// by itself; each suggested field is accepted (or edited, then accepted) into the builders below,
@@ -859,7 +859,7 @@ class ItemExtension {
 	render_supplier($box, ctx, setup) {
 		const recorded = supplier_start(setup);
 		const can = setup.can || {};
-		// An Item just made from a buying line starts from the line's supplier and rate (v1.691.0),
+		// An Item just made from a buying line starts from the line's supplier and rate (v1.694.0),
 		// once. `recorded` stays what the Item holds, so the rate counts as changed and is sent.
 		const line = can.write ? LINE_STARTS.get(String(ctx.name || "")) : null;
 		const from_line = line ? line_supplier_start(recorded, line, setup) : null;

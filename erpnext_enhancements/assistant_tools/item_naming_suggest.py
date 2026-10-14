@@ -1,6 +1,6 @@
 """item_naming_suggest — suggest a new Item's code family and POL-0602 name (read-only).
 
-The assistant's door to the guided Item flow's AI suggest step (ER-2026-1320546, v1.691.0): from a
+The assistant's door to the guided Item flow's AI suggest step (ER-2026-1320546, v1.694.0): from a
 plain-words description (and, optionally, the vendor's part number), the same
 ``api.item_suggest.run_suggestion`` the guided page's *Describe it* card calls. It asks
 Gemini through the app's own client, keeps only the fields of the answer's schema, runs them

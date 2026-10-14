@@ -1,5 +1,5 @@
 /*
- * The Item flow's Describe it card (ER-2026-1320546, v1.691.0): the small decisions behind the AI
+ * The Item flow's Describe it card (ER-2026-1320546, v1.694.0): the small decisions behind the AI
  * suggest step. Pure: no frappe, no DOM; run under node by tests/test_guided_item.py.
  *
  * The server (api/item_suggest.py) answers with rows, one per suggested field. Here is where each

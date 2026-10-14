@@ -31,7 +31,7 @@ model, the pure rules and the label reads.
 | `item_naming_digest.py` | Monday's email of last week's new Items that fail the rules |
 | `item_naming_triton.py` | The "Check with Triton" button — deterministic findings as context |
 | `item_flow_rules.py` | The guided Item flow's judgements (form kit P8.1): the PDT/SRV blocks in use with each one's lowest free number (never `MAX()+1`), the catalog's segments for the name builder's pick lists, and the supplier, stock and asset blocks' refusals. No Frappe, no I/O; the endpoints are `api/item_flow.py` |
-| `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.691.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
+| `item_suggest_rules.py` | The guided Item flow's AI suggest step (v1.694.0, ER-2026-1320546): the prompt and the answer's schema, the model's answer held to it (a vendor part number only when the person typed or wrote it, never a PDT/SRV number, groups and units the site uses), the CATEGORY corrected by `check_name`'s own suggestion, and the composed Item run through the checks and the new-Item guard. Python copies of the builder's rules (`naming.js`, `codes.js`), held equal under node. No Frappe, no I/O; the endpoint is `api/item_suggest.py` |
 | `report/item_naming_audit/` | The naming work list, worst-first |
 
 ## The count flow
@@ -157,6 +157,8 @@ Undo exists.
 | **+** returned from the run's job | `Add Without PO` (with the job) | Stock Entry, **Material Receipt** at the item's current cost, tagged with the job | Offsets to the *Parts Taken* account, so the credit reverses the account the take charged and the job nets by project in the ledger. Flagged `needs_review` |
 | **+** found, or not from a job | `Add Without PO` (no job) | Stock Entry, **Material Receipt** at the item's current cost | Offsets to the *Added Without PO* account. Flagged `needs_review` for a Stock Manager |
 | **Move here from…** | `Move` | Stock Entry, **Material Transfer** into the scanned location | Put-away: from wherever the stock is recorded |
+| **Move to…** (v1.692.0) | `Move To` | Stock Entry, **Material Transfer** out of the scanned location | The mirror of Move here; optionally makes the destination the item's bin. See [Bin assignments](#bin-assignments-v16890) |
+| **Remove from this bin** → Send to the Boneyard (v1.692.0) | `Unassign` / `Boneyard` | none / Stock Entry, **Material Transfer** to the Boneyard | Taking an item off a bin; with stock, moving it out first |
 | **+** bought on a store run (v1.536.0) | `Store Run` | **Purchase Receipt**, no PO, one per line, from a Supplier ticked *Store-Run Vendor* | At the price on the paper receipt, before tax; no tax row and no project on the receipt. Carries the run id, the receipt photo and the receipt total. Flagged `needs_review` for Purchasing. See [Bought on a store run](#bought-on-a-store-run-v15350) |
 
 **"+" is PO-first, and the fallback is a choice, never a default.** The item's open order
@@ -472,7 +474,8 @@ concurrent retry with a new Item gets a 409 and then "already saved"; an Amend k
 
 ER-2026-1319376 (take an item off a bin on `/stock-scan` and move it elsewhere) and
 ER-2026-1320545 (a Desk page to manage one bin's items) share one server side,
-`bin_assignments.py`. The phone buttons and the Desk page come in later releases.
+`bin_assignments.py`. The phone buttons shipped in v1.692.0 (*On the phone* below); the Desk page
+comes in a later release.
 
 **An item is on a bin when it has an enabled ERPNext Putaway Rule there.** Nobody sees the rule:
 people put an item on a bin and take it off. Every rule has capacity `CAPACITY` (1,000,000 in the
@@ -528,6 +531,19 @@ guided Item flow; it passes the gate only when it changes something.
 `patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
 once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
 QR label like any location.
+
+**On the phone** (v1.692.0, TASK-2026-02740 / -02741). On `/stock-scan`, an item at a bin carries:
+
+| Button | Who sees it | What it does |
+|---|---|---|
+| **Move to…** (beside *Move here from…*, under Save) | everyone, wherever stock here is free to move (like Take) | how many (all free here by default), where to (scan its label, *Find a location*, or where it is already), and **"Make <there> this item's bin"**, shown only with `can_manage` and ticked while the quantity is everything on hand until the person touches it. Posts `move_to`; the boneyard is never offered as a bin |
+| **Remove from this bin** | `can_manage` only, where `unassign` would accept it (the item card's `assigned`, `is_default` or `undecided`, or stock here) | nothing on hand: one confirmed tap posts `unassign` and the page returns to the bin's list. Stock on hand: offers **Move to…** or **Send to the Boneyard** (`send_to_boneyard`, everything free here; hidden when no boneyard is set), each said plainly; with stock reserved it says the item stays on the bin, since only the free part moves |
+
+Move to… without the box needs nothing a take does not (Stock Entry create and submit), which is
+why it shows to everyone; the box, Remove and the Boneyard are the module gate's, so they hide
+without `can_manage` rather than fail. A save that takes the item off the bin returns to the bin's
+list without adding a history entry. The list's rows say why an empty item still lists: an
+**on order** or **not assigned** (undecided) badge.
 
 ## Item naming
 
@@ -609,7 +625,7 @@ by one row is a bug report nobody can close.
 | **Item form** | `public/js/item_naming_advisor.js` | Headline on refresh, two buttons under *Naming* |
 | **KPIs** `item_naming_compliance_pct`, `item_naming_new_compliance_pct` | `kpi_dashboards/snapshots.py` | Nightly, on the Product dashboard. The second covers items created on or after `NAMING_GO_LIVE` (2026-10-01) |
 | **MCP** `item_naming_check` | `assistant_tools/item_naming_check.py` | For Triton and any MCP client |
-| **AI suggest** (*Describe it* on the guided Item page, MCP `item_naming_suggest`) | `item_suggest_rules.review`, `api/item_suggest.py` | v1.691.0. The model proposes; `check_code`, `check_name`, `check_supporting`, `check_code_name_agreement` and `blocking_findings` judge the result, then `stock_scan.preview_new_item` as the step's naming check does. Its only correction is `check_name`'s own (a Tier 3 word, a plural CATEGORY, GREY) |
+| **AI suggest** (*Describe it* on the guided Item page, MCP `item_naming_suggest`) | `item_suggest_rules.review`, `api/item_suggest.py` | v1.694.0. The model proposes; `check_code`, `check_name`, `check_supporting`, `check_code_name_agreement` and `blocking_findings` judge the result, then `stock_scan.preview_new_item` as the step's naming check does. Its only correction is `check_name`'s own (a Tier 3 word, a plural CATEGORY, GREY) |
 | **New-Item guard** | `item_naming_guard.py` | Two findings only; see above |
 | **Weekly digest** | `item_naming_digest.py` | Last week's new Items that fail |
 

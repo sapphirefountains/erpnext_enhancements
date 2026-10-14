@@ -212,7 +212,7 @@ def generate_content_with_vertex_ai(
             that wants Pro. Recorded on the usage row as the model that answered.
 
     Keyword-only, all optional, added for the item suggester (``api/item_suggest.py``,
-    v1.691.0); a call without them sends exactly the request it always did:
+    v1.694.0); a call without them sends exactly the request it always did:
 
         images (list[dict]): ``{"mime_type", "data"}`` with ``data`` base64, one of
             ``IMAGE_MIME_TYPES``. Sent as ``inlineData`` parts before the prompt's

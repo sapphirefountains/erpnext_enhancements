@@ -273,7 +273,7 @@ class GuidedEntry {
 		// options themselves, so a second start with different values is told from Back.
 		this.carry = {};
 		this.started_with = "";
-		// v1.691.0: every start value, the ones no field takes too (a buying line's supplier and
+		// v1.694.0: every start value, the ones no field takes too (a buying line's supplier and
 		// rate), for the DocType's extension to put where its blocks have a place (ctx.started).
 		this.start_options = {};
 		this.client_id = null;

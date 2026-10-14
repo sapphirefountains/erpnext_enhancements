@@ -128,6 +128,7 @@ public/js/stock_scan.bundle.js    entry: mounts StockScanApp on #ee-stock-scan-r
 public/js/stock_scan/             app.js (state machine), nav.js (Back/Forward, pure), scanner.js, transport.js, logic.js (pure), ui.js, dom.js, lib/jsQR
 public/css/stock_scan.bundle.css  --ss-* tokens: light, then two identical dark blocks
 api/stock_scan.py                 every endpoint the page calls (transport.js's M map)
+inventory_enhancements/bin_assignments.py   Move to… / Remove from this bin / the Boneyard (transport.js's BIN map, v1.692.0)
 ```
 
 - **The shell is the `/feedback` one.** It extends `templates/web.html` with the chrome blocks
@@ -162,7 +163,10 @@ api/stock_scan.py                 every endpoint the page calls (transport.js's 
   - a sheet (the camera is one) pushes one **marker** entry inside the tap that opens it, so
     the phone's Back closes the sheet instead of leaving the screen. A sheet closed from its ×
     steps back off its marker; one that closed into a navigation (a scan, a search pick) hands
-    the marker's entry to the screen that lands;
+    the marker's entry to the screen that lands. Sheets opened over a sheet (the camera or the
+    location search over **Move to…**, v1.692.0) share its one marker, so Back closes the stack;
+    a save that takes an item off its bin returns to the bin's list by stepping back onto it or
+    replacing the item's entry, never by pushing one;
   - screens live in memory, keyed by an id in `history.state`; item and supplier names never go
     into `history.state`, which browsers write to disk. An entry the page did not write (a
     reload's, the report form's) is never restored from: the page stays put and re-stamps it.

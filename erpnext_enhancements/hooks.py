@@ -3355,7 +3355,7 @@ assistant_tools = [
 	# PDT-0008 free while the sole record of that product holds it; unanchored, the
 	# five-digit "(deleted)" family collapses onto four-digit slots that are genuinely free.
 	"erpnext_enhancements.assistant_tools.item_naming_check.ItemNamingCheck",
-	# v1.691.0 Inventory (ER-2026-1320546) -- the guided Item flow's AI suggest step for the
+	# v1.694.0 Inventory (ER-2026-1320546) -- the guided Item flow's AI suggest step for the
 	# assistant: a description in, each suggested field (code family, POL-0602 name segments,
 	# group, unit) with a reason and the naming rules' and guard's verdict out. Read-only
 	# (EXPLICIT_READONLY): it writes no Item and no File. It never gives a PDT-/SRV- number or

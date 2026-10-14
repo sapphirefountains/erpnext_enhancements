@@ -335,6 +335,10 @@ export function saveKey(parts) {
 		plain(p.receipt_total),
 		p.no_job ? 1 : 0,
 		(p.new_item && p.new_item.item_code) || "",
+		// Move to… (v1.692.0): where the stock goes, and whether that becomes the item's bin. A
+		// move to another bin, or the same move with the box changed, is a different save.
+		p.to_warehouse || "",
+		p.make_home ? 1 : 0,
 	]);
 }
 
@@ -355,9 +359,33 @@ export function keptRef(entry, nowMs) {
 
 /** What a save was, for a message raised after the person has moved on: "Take 3 Each of Widget". */
 export function saveLabel(action, qty, uom, itemName) {
-	const verb = action === "take" ? "Take" : action === "move" ? "Move" : action === "store_run" ? "Record buying" : "Add";
+	// Taking an item off a bin moves no stock, so it has no amount to name.
+	if (action === "unassign") return `Remove ${itemName || "this item"} from the bin`;
+	const verb =
+		action === "take"
+			? "Take"
+			: action === "move" || action === "move_to"
+				? "Move"
+				: action === "boneyard"
+					? "Send"
+					: action === "store_run"
+						? "Record buying"
+						: "Add";
 	const amount = `${plain(qty)} ${uom || ""}`.trim();
-	return `${verb} ${amount} of ${itemName || "this item"}`;
+	return `${verb} ${amount} of ${itemName || "this item"}${action === "boneyard" ? " to the Boneyard" : ""}`;
+}
+
+/**
+ * Move to… (v1.692.0): should "Make <destination> this item's bin" start ticked? Yes when the
+ * move takes everything on hand at the bin, no for a partial move. That is the server's own
+ * rule (`bin_assignments._plan_source`): a make-home move takes the item off its old bin only
+ * when the move empties it, so a partial move with the box ticked leaves the item on BOTH bins.
+ * Re-applied whenever the quantity changes, until the person touches the box themselves.
+ */
+export function makeHomeDefault(qty, onHand) {
+	const q = Number(qty);
+	const have = Number(onHand);
+	return Number.isFinite(q) && Number.isFinite(have) && have > 0 && q > 0 && q >= have - 1e-9;
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +681,17 @@ export function logHeadline(log) {
 			return `Moved ${amount}`;
 		case "Store Run":
 			return `Bought ${amount}`;
+		// Bin assignments (v1.692.0 on this page; logged since v1.689.0).
+		case "Move To":
+			return `Moved ${amount}`;
+		case "Boneyard":
+			return `Boneyard ${amount}`;
+		case "Unassign":
+			return "Off the bin";
+		case "Assign":
+			return "On the bin";
+		case "Count":
+			return `Counted ${amount}`;
 		default:
 			return amount;
 	}
@@ -693,6 +732,25 @@ export function undoQuestion(log) {
 			}
 			return text;
 		}
+		// Bin assignments (v1.692.0). `warehouse` is where the stock went (the destination, the
+		// boneyard) or the bin itself; `from_warehouse` the bin it left.
+		case "Move To": {
+			const from = l.from_warehouse_name || l.from_warehouse || "its old bin";
+			const text = `Undo: moved ${amount} of ${item} from ${from} to ${here}?`;
+			// Undo restores exactly the rules the move changed (`bin_assignments.restore`).
+			return l.moved_home ? `${text} Its bins go back to how they were.` : text;
+		}
+		case "Boneyard": {
+			const from = l.from_warehouse_name || l.from_warehouse || "its bin";
+			// `source_kept === false`: the trip emptied the bin and took the item off it.
+			return `Undo: sent ${amount} of ${item} from ${from} to the Boneyard?${l.source_kept === false ? ` It goes back on ${from}.` : ""}`;
+		}
+		case "Unassign":
+			return `Undo: took ${item} off ${here}? It goes back on that bin.`;
+		case "Assign":
+			return `Undo: put ${item} on ${here}?`;
+		case "Count":
+			return `Undo: counted ${amount} of ${item} at ${here}? The count goes back to what it was.`;
 		default:
 			return `Undo this save of ${amount} of ${item}?`;
 	}
