@@ -130,6 +130,12 @@ with frappe, erpnext or another app on the bench.
 | `kanban_leak_fix.js` | Hotfix for the Kanban filter memory leak (upstream frappe/frappe#24156): takes the reactive `update_cards` path on same-board refresh instead of re-`init()`. |
 | `kanban_scroll_perf.js` | Fixes layout-thrash in core `bind_clickdrag` drag-to-scroll (reads `e.pageX` only, no `offsetLeft`; capture-phase handler `stopPropagation`s core's reflow-forcing handler). |
 
+One Kanban fix is server-side and lives outside this bundle: `kanban_order.py` replaces
+frappe's `update_order` (`override_whitelisted_methods`, v1.639.1). 16.50.0's board `init()`
+sends every column's saved order on each open, and frappe's endpoint wrote each card listed under
+the wrong column into it, so a status changed on the form flipped back and forth whenever someone
+opened the board. The replacement only orders.
+
 ## Project Dashboard components (`js/project_enhancements/dashboard_components/`)
 
 The **single Projects Dashboard** is the "Projects Dashboard" Custom HTML Block
