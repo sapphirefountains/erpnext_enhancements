@@ -53,20 +53,28 @@ def get_columns():
 		{"label": _("Record"), "fieldname": "record", "fieldtype": "Dynamic Link", "options": "doctype", "width": 190},
 		{"label": _("Doctype"), "fieldname": "doctype", "fieldtype": "Data", "width": 110},
 		{"label": _("Name it carries"), "fieldname": "value", "fieldtype": "Data", "width": 300},
-		{"label": _("Party it belongs to"), "fieldname": "party", "fieldtype": "Data", "width": 220},
+		# The report face (form kit P3.3): the party's title, linked to the party itself.
+		{"label": _("Party it belongs to"), "fieldname": "party", "fieldtype": "Dynamic Link", "options": "party_doctype",
+		 "width": 220, "sf_face": "party", "sf_label": "party_label"},
 		{"label": _("Findings"), "fieldname": "findings", "fieldtype": "Data", "width": 260},
 		{"label": _("What to do"), "fieldname": "first_message", "fieldtype": "Data", "width": 460},
+		# Hidden support column for the Dynamic Link above.
+		{"label": _("Party Doctype"), "fieldname": "party_doctype", "fieldtype": "Data", "width": 1, "hidden": 1},
 	]
 
 
 def _shape(row):
 	findings = row.get("findings") or []
+	party_doctype, party_docname = row.get("party_record") or ("", "")
 	return {
 		"severity": row.get("verdict"),
 		"record": row.get("name"),
 		"doctype": row.get("doctype"),
 		"value": row.get("value"),
-		"party": row.get("party") or "—",
+		# The record the party is (linked), and the title shown for it: the name on the form.
+		"party": party_docname,
+		"party_doctype": party_doctype,
+		"party_label": row.get("party") or "—",
 		# Codes rather than prose so the column stays scannable and the finding_code filter
 		# has something to match; the sentence goes in `What to do`.
 		"findings": ", ".join(f.get("code") for f in findings),

@@ -33,12 +33,17 @@ frappe.query_reports["Party Naming Audit"] = {
 	],
 
 	formatter(value, row, column, data, default_formatter) {
-		const formatted = default_formatter(value, row, column, data);
+		// The party, linked and shown by its title: the report face (form kit P3.3). The
+		// severity colors and the muted no-party dash are ours.
+		const face = window.erpnext_enhancements?.report_face;
+		const formatted = face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
 		if (column.fieldname === "severity" && data && data.severity) {
 			const colour = data.severity === "STOP" ? "var(--red-500)" : "var(--orange-500)";
 			return `<span style="color: ${colour}; font-weight: 600;">${formatted}</span>`;
 		}
-		if (column.fieldname === "party" && data && data.party === "—") {
+		if (column.fieldname === "party" && data && data.party_label === "—") {
 			return `<span style="color: var(--text-muted);" title="${__(
 				"No party is linked — the name may well be right and the link is what is missing"
 			)}">${formatted}</span>`;

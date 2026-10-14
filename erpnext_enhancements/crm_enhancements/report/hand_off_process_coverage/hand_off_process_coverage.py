@@ -32,13 +32,17 @@ def get_columns():
 	return [
 		{"label": _("Opportunity"), "fieldname": "opportunity", "fieldtype": "Link", "options": "Opportunity", "width": 165},
 		{"label": _("Opp Status"), "fieldname": "opp_status", "fieldtype": "Data", "width": 110},
-		{"label": _("Customer / Party"), "fieldname": "party", "fieldtype": "Data", "width": 190},
+		# The report face (form kit P3.3): the party by its name, linked to its Customer, Lead or
+		# Prospect; the doctype is the hidden Party Type column at the end.
+		{"label": _("Customer / Party"), "fieldname": "party", "fieldtype": "Dynamic Link", "options": "party_type",
+		 "width": 190, "sf_face": "party", "sf_label": "party_label"},
 		{"label": _("Won Date"), "fieldname": "won_date", "fieldtype": "Date", "width": 95},
 		{"label": _("Project"), "fieldname": "project", "fieldtype": "Link", "options": "Project", "width": 120},
 		{"label": _("Project Status"), "fieldname": "project_status", "fieldtype": "Data", "width": 105},
 		{"label": _("Tracker Started"), "fieldname": "tracker_started", "fieldtype": "Data", "width": 120},
 		{"label": _("Steps"), "fieldname": "n_steps", "fieldtype": "Int", "width": 65},
 		{"label": _("Active Step(s)"), "fieldname": "current_step", "fieldtype": "Data", "width": 320},
+		{"label": _("Party Type"), "fieldname": "party_type", "fieldtype": "Data", "width": 1, "hidden": 1},
 	]
 
 
@@ -57,6 +61,7 @@ def get_data(filters):
 			"custom_date_closed_won",
 			"customer_name",
 			"party_name",
+			"opportunity_from",
 		],
 		order_by="custom_date_closed_won desc, name desc",
 	)
@@ -101,7 +106,9 @@ def get_data(filters):
 			{
 				"opportunity": o.name,
 				"opp_status": o.status,
-				"party": o.get("customer_name") or o.get("party_name"),
+				"party": o.get("party_name"),
+				"party_type": o.get("opportunity_from"),
+				"party_label": o.get("customer_name") or o.get("party_name"),
 				"won_date": o.get("custom_date_closed_won"),
 				"project": proj,
 				"project_status": proj_status.get(proj),

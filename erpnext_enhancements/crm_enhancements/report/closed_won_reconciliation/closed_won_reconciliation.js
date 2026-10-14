@@ -72,21 +72,32 @@ frappe.query_reports["Closed Won Reconciliation"] = {
 			});
 		});
 	},
+
+	formatter(value, row, column, data, default_formatter) {
+		// The customer, the close date and the amount: the report face (form kit P3.3).
+		const face = window.erpnext_enhancements?.report_face;
+		return face?.format
+			? face.format(value, row, column, data, default_formatter)
+			: default_formatter(value, row, column, data);
+	},
 };
 
 function showCandidateDialog(report, row, candidates) {
 	// A table the reviewer reads, with the reasoning visible per row. The top
 	// suggestion being wrong is an expected outcome, not an edge case — so the
 	// runners-up and their reasons have to be on the same screen.
+	// The link, the start date and the value come from the report face (form kit P3.3), so
+	// they read exactly as the same things do in the report behind the dialog.
+	const face = window.erpnext_enhancements.report_face;
 	const rows = candidates
 		.map(
 			(c) => `
 		<tr>
-			<td><a href="/desk/project/${encodeURIComponent(c.project)}" target="_blank">${frappe.utils.escape_html(
-				c.project
-			)}</a><br><span class="text-muted small">${frappe.utils.escape_html(c.project_name || "")}</span></td>
-			<td>${frappe.datetime.str_to_user(c.start_date) || ""}</td>
-			<td>${format_currency(c.value)}</td>
+			<td>${face.party("Project", c.project, c.project, {
+				new_tab: true,
+			})}<br><span class="text-muted small">${frappe.utils.escape_html(c.project_name || "")}</span></td>
+			<td>${face.date(c.start_date)}</td>
+			<td>${face.money(c.value)}</td>
 			<td><b>${c.score}</b></td>
 			<td class="small text-muted">${frappe.utils.escape_html(c.reasons.join("; "))}</td>
 			<td><button class="btn btn-xs btn-primary ee-link-btn" data-project="${frappe.utils.escape_html(
