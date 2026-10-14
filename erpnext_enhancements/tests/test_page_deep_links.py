@@ -157,21 +157,30 @@ class TestTheDayBoardServerTakesADay(unittest.TestCase):
 		self.assertIsNone(fn.args.defaults[0].value)
 		# The assistant tool and every older caller send nothing.
 		body = ast.get_source_segment(self.src, fn)
-		self.assertIn("return _board(today, None)", body)
+		self.assertIn("return _today_board()", body)
 
 	def test_permission_is_checked_before_the_day_is_read(self):
 		body = ast.get_source_segment(self.src, self.funcs["get_day_board_data"])
 		self.assertLess(body.index("frappe.PermissionError"), body.index("_board_day(date)"))
 
-	def test_the_day_is_strict_iso(self):
+	def test_the_day_is_strict_iso_and_never_raises(self):
 		body = ast.get_source_segment(self.src, self.funcs["_board_day"])
 		self.assertIn("datetime.date.fromisoformat(", body)
-		self.assertIn("escape_html", body)
+		self.assertIn("1900 <= day.year <= 2999", body)
+		self.assertNotIn("frappe.throw", body)
 
-	def test_the_sql_takes_the_day_as_a_bound_parameter(self):
-		body = ast.get_source_segment(self.src, self.funcs["_board"])
+	def test_another_day_is_dated_by_the_visit_not_by_modified(self):
+		"""Billing and the sign-off move `modified` on submitted visits; the behaviour is run
+		against real SQL in tests/test_maintenance_board_days.py."""
+		body = ast.get_source_segment(self.src, self.funcs["_day_board"])
+		# `modified` may be read as a column, never filtered on.
+		for token in ("modified >", "modified <", '"modified": [', '["modified"'):
+			with self.subTest(token=token):
+				self.assertNotIn(token, body)
+		self.assertIn("_VISIT_DONE_BETWEEN", body)
 		self.assertIn("%(day)s", body)
 		self.assertIn('{"day": day, "next_day": next_day}', body)
+		self.assertIn("visit_date >= %(from_day)s", self.src)
 
 	def test_the_page_asks_for_a_day_only_when_it_is_not_today(self):
 		code = _code(DAY_BOARD)

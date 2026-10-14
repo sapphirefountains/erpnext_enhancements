@@ -135,6 +135,25 @@ function makeDesk(options) {
 	function clearTimeout_(id) {
 		timers.delete(id);
 	}
+	// A repeating timer on the same clock; its ids are its own, apart from the timeouts'.
+	const intervals = new Map();
+	let intervalSeq = 1000000;
+	function setInterval_(fn, ms) {
+		const id = ++intervalSeq;
+		const tick = () => {
+			if (!intervals.has(id)) return;
+			intervals.set(id, setTimeout_(tick, ms));
+			fn();
+		};
+		intervals.set(id, setTimeout_(tick, ms));
+		return id;
+	}
+	function clearInterval_(id) {
+		if (intervals.has(id)) clearTimeout_(intervals.get(id));
+		intervals.delete(id);
+	}
+	desk.liveIntervals = () => intervals.size;
+	desk.today = "2026-09-24";
 	desk.wait = async function (ms) {
 		const end = now + (ms || 0);
 		for (;;) {
@@ -868,7 +887,8 @@ function makeDesk(options) {
 			},
 		},
 		datetime: {
-			get_today: () => "2026-09-24",
+			// The clock's date; a test moves it past midnight by setting desk.today.
+			get_today: () => desk.today,
 			now_time: () => "12:00",
 			str_to_user: (s) => s,
 		},
@@ -935,8 +955,9 @@ function makeDesk(options) {
 		URLSearchParams,
 		setTimeout: setTimeout_,
 		clearTimeout: clearTimeout_,
-		setInterval: () => 0,
-		clearInterval() {},
+		// Intervals are opt-in (`makeDesk({ intervals: true })`): a page's poll then runs on this clock.
+		setInterval: opts.intervals ? setInterval_ : () => 0,
+		clearInterval: opts.intervals ? clearInterval_ : () => {},
 		$,
 		jQuery: $,
 		frappe,
@@ -2473,6 +2494,27 @@ ROUTERS.forEach(([router, options]) => {
 	});
 });
 
+test("Location Timeline: an employee param carrying markup never reaches the picker", async () => {
+	const evil = '<img src=x onerror="alert(1)">';
+	const desk = await locationTimeline(`/desk/location-timeline?employee=${encodeURIComponent(evil)}&from_date=2026-09-20`);
+	const lti = lt(desk);
+	check("not picked", lti.employeeField.value, "");
+	check("not admitted to the list", lti.employees.map((e) => e.value), ["E1"]);
+	check("no label anywhere carries markup", lti.employees.some((e) => /[<>"]/.test(e.label)), false);
+	check("no request for it", lti.loads(), []);
+	check("the address corrected to the bare one, in place", [desk.at().url, desk.at().length], ["/desk/location-timeline", 1]);
+	const html = desk.calls.filter((c) => c.method === "html" || c.method === "append").map((c) => String(c.args[0]));
+	check("nothing written to the page holds it", html.some((h) => h.includes("onerror")), false);
+	check("quietly", desk.messages, []);
+});
+
+test("Location Timeline: an unlisted employee that looks like a name is admitted, its label plain text", async () => {
+	const desk = await locationTimeline("/desk/location-timeline?employee=HR-EMP-00042&from_date=2026-09-20");
+	const lti = lt(desk);
+	check("picked and loaded", [lti.employeeField.value, lti.loads()], ["HR-EMP-00042", ["loadTrail:HR-EMP-00042:2026-09-20:2026-09-20"]]);
+	check("admitted with its name as the label", lti.employees.slice(-1), [{ value: "HR-EMP-00042", label: "HR-EMP-00042" }]);
+});
+
 // ---------------------------------------------------------------------------- Maintenance Day Board
 
 // The REAL page script, on the loader's plain stand-in kit (so its calls go through frappe.call).
@@ -2574,6 +2616,45 @@ ROUTERS.forEach(([router, options]) => {
 		check("the day shown is the one drawn", [mdb(desk).day(), drawn(desk).includes("SMR-2026-09-22")], ["2026-09-22", true]);
 		check("one entry per day", desk.at().length, 3);
 	});
+});
+
+// The Today button's state as last drawn: disabled on today.
+const todayDisabled = (desk) => {
+	const props = desk.calls.filter((c) => c.label === ".mdb-today" && c.method === "prop" && c.args[0] === "disabled");
+	return props.length ? props[props.length - 1].args[1] : null;
+};
+
+test("Day Board: a past day is not polled; today and a later day are, and the poll comes back with them", async () => {
+	const desk = dayBoardDesk({ intervals: true });
+	await desk.load(`${BOARD}?date=2026-09-20`);
+	check("a past day: no poll", desk.liveIntervals(), 0);
+	await desk.wait(180000);
+	check("and three minutes ask nothing more", asked(desk), ["2026-09-20"]);
+	await desk.tap(() => mdb(desk).go("2026-09-24"));
+	check("back to today: polled again", desk.liveIntervals(), 1);
+	await desk.wait(60000);
+	check("the poll asks for today", asked(desk).slice(-1), ["today"]);
+	await desk.tap(() => mdb(desk).step(1));
+	check("a later day is polled (drafts can still be scheduled for it)", desk.liveIntervals(), 1);
+	await desk.tap(() => mdb(desk).step(-2));
+	check("a past day stops it", desk.liveIntervals(), 0);
+	await desk.back();
+	check("Back onto the later day starts it again", [mdb(desk).day(), desk.liveIntervals()], ["2026-09-25", 1]);
+});
+
+test("Day Board: a later day left on screen past midnight becomes the bare today", async () => {
+	const desk = dayBoardDesk({ intervals: true });
+	await desk.load(`${BOARD}?date=2026-09-25`);
+	check("the 25th, Today enabled, Submitted", [mdb(desk).day(), todayDisabled(desk), /Submitted Today/.test(drawn(desk))], ["2026-09-25", false, false]);
+	desk.today = "2026-09-25"; // midnight
+	await desk.wait(60000);
+	check("now today, on the bare address, corrected in place", [mdb(desk).day(), desk.at().url, desk.at().length], ["2026-09-25", BOARD, 1]);
+	check("asked of the server as today", asked(desk).slice(-1), ["today"]);
+	check("Today disabled, Submitted Today", [todayDisabled(desk), /Submitted Today/.test(drawn(desk))], [true, true]);
+	desk.today = "2026-09-26";
+	await desk.wait(60000);
+	check("and it follows the clock from here", mdb(desk).day(), "2026-09-26");
+	check("no push without a tap", desk.violations, []);
 });
 
 test("Day Board: a draft visit links to its record and to the Visit Wizard, both in the Desk", async () => {

@@ -13,9 +13,11 @@
 // frappe.route_options on every route change, and a link from another page puts its options
 // there too, so every show reads the date from route_options and consumes it. A date that is not
 // a real calendar day is ignored, and so is today's own date: both leave the bare address, which
-// keeps following the clock past midnight on a wall screen. The page writes the address itself
-// (history.pushState for a new day, replaceState to tidy the one on screen): routing to the page
-// it is already on would make the router's push_state drop the query on older v16 builds.
+// keeps following the clock past midnight on a wall screen, as does a later day left on screen
+// until it becomes today. A past day cannot change, so it is not polled. The page writes the
+// address itself (history.pushState for a new day, replaceState to tidy the one on screen):
+// routing to the page it is already on would make the router's push_state drop the query on
+// older v16 builds.
 
 frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -215,6 +217,8 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 		state.date = date;
 		writeAddress(true);
 		dayChanged();
+		// Stops the poll for a past day, starts it again for today or a later one.
+		start();
 	}
 
 	// A board that never loaded: no access on a 403, a way back in when the session has lapsed,
@@ -317,12 +321,30 @@ frappe.pages['maintenance-day-board'].on_page_load = function (wrapper) {
 	// Poll only while this is the current route and the tab is visible. Desk pages are never
 	// removed (a 'remove' handler never fires), so the timer stops itself on its first tick
 	// after the user has left, and on_page_show starts it again.
+	//
+	// A past day cannot change, so it is not polled at all; a move to today or a later day (go) and
+	// the next show start the poll again.
 	function start() {
 		stop();
+		if (isPast()) return;
 		state.timer = setInterval(() => {
 			if (!isCurrent()) return stop();
+			reachedToday();
 			if (!document.hidden) refresh();
 		}, 60000);
+	}
+
+	function isPast() {
+		return !!state.date && state.date < today();
+	}
+
+	// A later day left on screen until midnight has become today: from here on it is the bare today
+	// (its labels, a disabled Today, the server's own today), the address corrected in place.
+	function reachedToday() {
+		if (!state.date || state.date !== today()) return;
+		state.date = null;
+		writeAddress(false);
+		drawNav();
 	}
 
 	$nav.find('.mdb-prev').on('click', () => go(addDays(shownDay(), -1)));

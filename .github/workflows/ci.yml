@@ -3449,6 +3449,12 @@ jobs:
       # Desk pages step above and in the Rental Planner step. Reads files only.
       - name: Custom pages S5a deep links (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_page_deep_links -v
+      # The Day Board's feed for another day (v1.662.0), its SQL run against an in-memory SQLite
+      # copy of the columns: a visit is on the day it was done (visit_date, else its clock-in),
+      # never the day billing or the sign-off last moved `modified`; today's queries are the ones
+      # it always sent; no date it can be handed raises. Its own step: installs a frappe stub.
+      - name: Day Board feed for another day (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_maintenance_board_days -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

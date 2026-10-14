@@ -608,7 +608,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         // (To falls back to From). The entry on screen is then corrected in place to
         // say exactly that, which adds no history entry.
         async applyRouteOptions(opts) {
-            const employee = opts.employee == null ? '' : String(opts.employee).trim();
+            const employee = this.routeEmployee(opts.employee);
             const from = validDay(opts.from_date) || today();
             const to = validDay(opts.to_date) || from;
             if (employee && this.data && this.trailIs(employee, from, to)) {
@@ -626,8 +626,10 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             this.setMode('trail');
             if (employee && !this.employees.some((e) => e.value === employee)) {
                 // An inactive employee still has a trail a manager may need to see;
-                // the picker only lists active ones, so admit this one by name.
-                this.employees.push({ value: employee, label: employee });
+                // the picker only lists active ones, so admit this one by name. The
+                // Autocomplete draws a label as HTML; routeEmployee has already refused
+                // anything that is not a plain Employee name, and the label is escaped too.
+                this.employees.push({ value: employee, label: frappe.utils.escape_html(employee) });
                 this.employeeField.df.options = this.employees;
                 this.employeeField.set_data(this.employees);
             }
@@ -636,6 +638,17 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             await this.setSilently(this.employeeField, employee);
             this.writeAddress(false);
             this.loadTrail({ auto: true });
+        }
+
+        // The employee a route names, or '' for none. One the picker lists is taken as
+        // it is. Any other (an inactive employee, a pasted link) must look like an
+        // Employee name — letters, digits, space and . _ - / only, at most 140 — or it
+        // is dropped: the address is anyone's to write, and the Autocomplete draws
+        // labels as HTML, so ?employee=<img onerror=…> must never reach the picker.
+        routeEmployee(value) {
+            const employee = value == null ? '' : String(value).trim();
+            if (!employee || this.employees.some((e) => e.value === employee)) return employee;
+            return /^[\p{L}\p{N}][\p{L}\p{N} ._\/-]{0,139}$/u.test(employee) ? employee : '';
         }
 
         // Whether the trail last asked of the server is this one.

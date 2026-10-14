@@ -18,13 +18,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the bare address is today. The board gains ‹ › Today and a date box. Each day stepped to is
     a history entry, so Back returns to the day before. Today's date in the address, or one that is
     not a real calendar day, leaves the bare address, which keeps following the clock past midnight
-    on a wall screen. `get_day_board_data` takes an optional `date`. With none, or today's, it
-    answers exactly as before. For another day the columns are read as of that day: the drafts
-    scheduled for it (`scheduled_visit_date`), the maintenance clock-ins that started on it, the
-    visits submitted on it, and the flagged visits of the seven days up to it. A day changed while
-    a load is in flight is asked for at once, and the older reply is dropped rather than painted
-    over the newer day. Each scheduled draft also links to its Visit Wizard
+    on a wall screen. `get_day_board_data` takes an optional `date`. With none, or today's, it runs
+    exactly the queries it always has. For another day the columns are read as of that day: the
+    drafts scheduled for it (`scheduled_visit_date`), the maintenance clock-ins that started on it,
+    the visits done on it, and the flagged visits done in the seven days up to it. A day changed
+    while a load is in flight is asked for at once, and the older reply is dropped rather than
+    painted over the newer day. Each scheduled draft also links to its Visit Wizard
     (`/desk/visit-wizard/<visit>`).
+  - **Another day's visits are dated by the visit, not by `modified`.** Billing writes the Sales
+    Invoice link onto a submitted visit (`api/maintenance_billing.py`) and the sign-off writes its
+    stamps (`sapphire_maintenance/sign_off.py`). Both move `modified`, so a visit done on the 1st
+    and invoiced on the 3rd would have shown on the 3rd's board and not on the 1st's. A visit's day
+    is its `visit_date`, the day the work was done, which the move into review stamps when blank
+    (v1.595.1). An older visit with none falls back to the day of its `clock_in_time`. The record
+    has no submitted timestamp, and `visit_date` is the field the contract cadence already rolls
+    forward from. "Submitted" and the 7-day "Flagged" window both use it.
+    `tests/test_maintenance_board_days.py` runs those queries against an in-memory SQLite copy of
+    the columns, with a visit whose `modified` is two days after its visit date. Today's queries
+    are unchanged and are pinned by the arguments they send.
+  - **No date the board can be handed raises.** A malformed `date` used to be a 417 from
+    `frappe.throw`, and `9999-12-31` a 500 when stepping a day past it overflowed. The server now
+    applies the client's rule: a YYYY-MM-DD calendar day from 1900 to 2999, and anything else is
+    today.
+  - **A past day is not polled.** Its data cannot change, so the 60 s poll stops while one is
+    shown. It starts again when the board moves to today or a later day, or on the next show.
+  - **A later day left on screen past midnight becomes the bare today.** It gets today's labels,
+    a disabled Today button, the server's own today, and the bare address, corrected in place. This
+    is the same thing the bare address already did at midnight.
   - **Rental Planner: the board's dates.** `/desk/rental-planner?start=YYYY-MM-DD` is the board's
     first day, and the bare address is today. ‹ › and Today push an entry each. The flow's Planner
     buttons return to the dates it left rather than to today, and the flow's own Back still steps
@@ -34,6 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     routes with the trail in its options, and the Trail button carries the trail in the pickers,
     so Back and Forward onto a trail already drawn load nothing again. The Employee and Job Interval
     buttons open it the way they did, and their trail now reaches the address too.
+  - **Security: an `employee` from the address can no longer inject markup into the picker.** An
+    employee the picker does not list was admitted with the raw value as its label. v16.50's
+    Autocomplete draws labels with `.html()`, so `?employee=<img onerror=…>` would have run script.
+    The hole predates this release, but this release makes the address the shareable way in. Now
+    only an employee the picker lists, or one that looks like an Employee name, is accepted. That
+    means letters, digits, space and `. _ - /`, at most 140 characters; anything else is dropped
+    and the address corrected. The admitted label is escaped as well. The desk harness checks that
+    a markup-bearing param is neither picked, listed nor written to the page.
 
 ### Changed
 
@@ -61,7 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scenarios cover a pasted address, each state change as an entry, Back and Forward, a reload, a
   malformed date, and another page's `set_route` with options followed by a plain one that must
   not replay them. The S3.1 harness gives the Day Board its bare address and `get_today`.
-- New bench-free suite `tests/test_page_deep_links.py`, with its own CI step.
+- New bench-free suites `tests/test_page_deep_links.py` and `tests/test_maintenance_board_days.py`
+  (a `frappe` stub, so its own step), each with its own CI step. The desk harness gains opt-in
+  intervals on its clock (`makeDesk({ intervals: true })`) and a settable `desk.today`, so the Day
+  Board's poll and midnight run there.
 
 ## [1.658.0] - 2026-10-13
 
