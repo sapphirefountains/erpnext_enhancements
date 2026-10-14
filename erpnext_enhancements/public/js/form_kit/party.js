@@ -125,6 +125,16 @@ export function plan_account_change({ roles, values, details, editable }) {
 	return out;
 }
 
+// The frappe Dialog a "+ New" opened, from what make_quick_entry resolved with. v16's
+// QuickEntryForm.setup() resolves the QuickEntryForm itself, whose Dialog is its .dialog; a bare
+// Dialog (one with a $wrapper) is taken as it is. null when nothing opened: no quick entry, so the
+// full form was routed to instead and the entry has no dialog.
+export function dialog_of(entry) {
+	if (!entry || typeof entry !== "object") return null;
+	if (entry.dialog && typeof entry.dialog === "object" && entry.dialog.$wrapper) return entry.dialog;
+	return entry.$wrapper ? entry : null;
+}
+
 // Whether two details_args answers ask about the same values (a party_details answer is for the
 // values that were sent; a field changed while it was in flight needs asking again).
 export function same_details_args(a, b) {

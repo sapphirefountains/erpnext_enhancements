@@ -160,6 +160,16 @@ out.plan = {
 	not_editable: plan({ primary_contact: "", customer_address: "" }, ["customer_address", "primary_address"]),
 	no_details: plan({ primary_contact: "" }, null, null),
 };
+// v1.677.1: make_quick_entry resolves with the QuickEntryForm; its Dialog is .dialog.
+const wrapper = { one() {} };
+const dlg = { $wrapper: wrapper, display: true };
+out.dialog_of = {
+	quick_entry_form: party.dialog_of({ doctype: "Contact", dialog: dlg }) === dlg,
+	bare_dialog: party.dialog_of(dlg) === dlg,
+	full_form_instead: party.dialog_of({ doctype: "Contact" }),
+	nothing: party.dialog_of(undefined),
+	not_object: party.dialog_of("x"),
+};
 out.same_args = {
 	same: party.same_details_args({ contacts: ["A"], addresses: ["B"] }, { contacts: ["A"], addresses: ["B"] }),
 	changed: party.same_details_args({ contacts: ["A"], addresses: ["B"] }, { contacts: ["C"], addresses: ["B"] }),
@@ -189,6 +199,16 @@ class TestPartyDecisionsUnderNode(unittest.TestCase):
 		if proc.returncode != 0:
 			raise AssertionError(f"node failed:\n{proc.stderr}")
 		cls.out = json.loads(proc.stdout)
+
+	def test_the_dialog_is_unwrapped_from_the_quick_entry_form(self):
+		# v16 QuickEntryForm.setup() resolves the QuickEntryForm, not its Dialog. Taking it as the
+		# dialog skipped the history guard on prod, so Back closed the dialog and left the step.
+		d = self.out["dialog_of"]
+		self.assertTrue(d["quick_entry_form"])
+		self.assertTrue(d["bare_dialog"])
+		self.assertIsNone(d["full_form_instead"])
+		self.assertIsNone(d["nothing"])
+		self.assertIsNone(d["not_object"])
 
 	def test_roles_are_the_python_registrys(self):
 		from erpnext_enhancements.form_kit import blocks as py_blocks
@@ -834,6 +854,9 @@ class TestWiring(unittest.TestCase):
 		self.assertIn('frappe.require("planner_kit.bundle.js"', code)
 		self.assertIn("guard.open(overlay);", code)
 		self.assertIn('dialog.$wrapper.one("hidden.bs.modal", () => guard.close(overlay, "user"));', code)
+		# What make_quick_entry resolves with is the QuickEntryForm, unwrapped to its Dialog (v1.677.1).
+		self.assertIn("track(entry, guard) {", code)
+		self.assertIn("const dialog = dialog_of(entry);", code)
 		self.assertNotIn(
 			"pushState", code, "the guard owns history; the component never pushes its own entry"
 		)
