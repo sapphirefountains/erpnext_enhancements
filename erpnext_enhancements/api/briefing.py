@@ -28,6 +28,7 @@ from erpnext_enhancements.api.task_dashboard import (
 	overdue_task_filters,
 	spanning_task_filters,
 )
+from erpnext_enhancements.crm_enhancements.historical import exclude_filter_dict
 
 RETENTION_DAYS = 60
 TASK_LIMIT = 15
@@ -172,6 +173,10 @@ def _user_pipeline(user):
 		filters={
 			"opportunity_owner": user,
 			"status": ("not in", CLOSED_OPPORTUNITY_STATUSES),
+			# A historical deal (pre-ERPNext, untouched for 90 days -- historical.py,
+			# v1.629.0) is not "my open pipeline", and the briefing's five slots are
+			# too few to spend on one.
+			**exclude_filter_dict(),
 		},
 		fields=["name", "title", "party_name", "status", "opportunity_amount"],
 		order_by="modified desc",

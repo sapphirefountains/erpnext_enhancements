@@ -183,7 +183,7 @@
     "group_by_based_on": "status",
     "number_of_groups": 0,
     "type": "Donut",
-    "filters_json": "[]",
+    "filters_json": "[[\"Opportunity\",\"custom_is_historical\",\"=\",0,false]]",
     "is_public": 1
   },
   {
@@ -197,7 +197,7 @@
     "aggregate_function_based_on": "opportunity_amount",
     "number_of_groups": 0,
     "type": "Bar",
-    "filters_json": "[]",
+    "filters_json": "[[\"Opportunity\",\"custom_is_historical\",\"=\",0,false]]",
     "is_public": 1
   },
   {

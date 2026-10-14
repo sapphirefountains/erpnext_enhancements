@@ -599,9 +599,9 @@ class TestGateStamping(unittest.TestCase):
 	def test_resaving_an_already_won_deal_does_not_stamp(self):
 		"""The guard that keeps the legacy backlog out of the gate.
 
-		`stamp_won_date` fills a blank won date on ANY Closed-Won save, so a date
-		comparison would have dragged a merely-re-saved legacy deal into the gate.
-		This keys on the transition instead.
+		`stamp_won_date` filled a blank won date on ANY Closed-Won save until v1.629.0
+		(it is transition-only now), so a date comparison would have dragged a
+		merely-re-saved legacy deal into the gate. This keys on the transition instead.
 		"""
 		doc = self._doc(before_status="Closed Won")
 		handoff.stamp_handoff_gate(doc)

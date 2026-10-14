@@ -301,6 +301,14 @@ frappe.provide("erpnext_enhancements.crm");
 				opportunity: opportunity_name,
 			})
 			.then(function (state) {
+				// A historical deal (pre-ERPNext, untouched for 90 days —
+				// crm_enhancements/historical.py) is excluded from hand-off warnings, so
+				// opening one asks nothing. A person changing its status un-flags it in
+				// that same save, so a fresh transition is never skipped by this.
+				if (state && state.is_historical) {
+					done();
+					return;
+				}
 				const needs_meeting =
 					state && state.available && state.enabled && state.gate_applies && !state.held && !state.event;
 				if (needs_meeting) ask_schedule();

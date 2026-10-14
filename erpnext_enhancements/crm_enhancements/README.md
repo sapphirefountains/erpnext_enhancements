@@ -17,6 +17,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `party_naming.py` | The reads behind it, plus the whitelisted entry point the three forms call | `read_rows`, `attach_customer_labels`, `attach_address_parties`, `audit_doctype`, `check_record` (whitelisted) | `public/js/party_naming_advisor.js` on all three forms; `report/party_naming_audit/`; `assistant_tools/party_naming_check.py`; `project_naming_compliance_pct` (Operations) and `opportunity_naming_compliance_pct` / `address_naming_compliance_pct` (Sales) on the nightly snapshot |
 | `lead_triage.py` | Inbound Lead ownership and the speed-to-lead SLA (v1.502.0, TASK-2026-01473): named owner or `Sales Team` rotation, a working-time first-response deadline, a ToDo, remind-then-escalate once each, and the one "has this Lead been answered" rule the Speed-to-Lead widget shares. See [`docs/lead-triage-runbook.md`](../../docs/lead-triage-runbook.md) | `prepare_inbound_lead` / `assign_inbound_lead` (called by `web_lead.py`), `stamp_first_response`, `sweep_first_response_sla`, `backfill_first_responses`, `RESPONSE_EXISTS_SQL` | `Communication` `on_update`; `scheduler_events.cron` `*/10`; `after_migrate` |
 | `website_cleanup.py` | Accept a bare domain in any URL field (v1.324.0) — prefixes `https://` before frappe's URL validation reads it. Shared with the QuickBooks sync, which met the same defect first | `normalize_website` (the whole rule, pure), `heal_url_fields`, `add_missing_scheme` | `before_validate` on Lead / Customer / Opportunity / **Supplier / Company** (the last two are not CRM — they are here because they carry the same Property Setter); `quickbooks_online.core.mapping._heal_invalid_urls` delegates to it |
+| `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
 
@@ -425,3 +426,77 @@ Projects cannot claim one Opportunity.
 staleness rather than alphabetically. It has **no scale filter** — the
 event-planner scale taxonomy is undecided, and a filter built against a guessed
 field would quietly match nothing.
+
+## Historical opportunities (`historical.py`, v1.629.0)
+
+Decided by Nik on 2026-10-13 (TASK-2026-00917, WI-024): most of the "Closed Won but no
+linked Project" backlog is Zoho history, imported 2025-07-14 and delivered before ERPNext
+existed. Those deals no longer raise hand-off warnings and no longer count in the KPIs.
+
+**The rule.** An Opportunity is historical when it was created before **2025-08-01** (which
+covers every Zoho import, whenever it was won) **and** no person has done anything on it in
+the last **90 days**. Activity is any of these, created in the window (the Comment, ToDo and
+Version sources only when the owner is not Administrator or Guest):
+
+- a Comment of type **Comment** or **Attachment** (not Info, Edit, Like or the assignment
+  types: code writes those as a side effect, and an assignment counts through its ToDo);
+- a Communication on it (email, call), through `reference_doctype`/`reference_name` **or** a
+  `Communication Link` timeline row, **whoever owns it**: an email about a deal is somebody
+  working it even when the system logged it as Administrator (4 of prod's 392 Opportunity
+  Communications are). Only `communication_type` **Communication**, on both paths: an
+  Automated Message (a v16 Notification email, such as the won-deal alert) does not revive
+  a deal. The window is the Communication's own date, not the link row's;
+- a ToDo referencing it (an assignment);
+- a Version recording a **status** change that was not part of a Data Import. The JSON is
+  parsed in Python: every v16 Version carries `"data_import": null`, so a SQL
+  `NOT LIKE '%data_import%'` would match nothing.
+
+**The field.** `Opportunity.custom_is_historical` ("Historical (pre-ERPNext)") is a stored,
+read-only Check in the list's standard filters. It is a column rather than a Python rule
+because Number Cards, Dashboard Charts, Report Builder and the list view can only filter on a
+stored column. Nobody sets it by hand.
+
+**The nightly job.** `refresh_historical_flags` (daily) recomputes every deal created before
+the cutoff with one `IN`-list query per source per 500 deals, writes only the rows that change
+(`update_modified=False`), clears the flag on anything newer, logs its counts and never
+raises. It is not ordered against the won-deal nag (each daily job is its own RQ job), so a
+deal that flips can be off by one day in the nag. A person changing the status of a
+historical deal un-flags it in that same save (`clear_on_person_status_change`); a comment
+or email un-flags it on the next run; and ninety quiet days later it is historical again.
+Any other save puts the stored flag back, so a stale open form (the Desk sends read-only
+fields too) can never write an old value over the job's.
+
+**Where it is applied** (always through `exclude_filters` / `exclude_filter_dict` /
+`exclude_sql` / `is_historical`, each of which excludes nothing until the column exists):
+
+- warnings and queues: the daily won-deal nag and its list link (`status_alerts.py`), the
+  daily overdue hand-off-meeting emails (`process_steps.escalate_overdue_handoffs`), the
+  **Closed Won Reconciliation** report, the Sales Dashboard's hand-off backlog and stalled
+  deals widgets, the `handoff_backlog` KPI, the Sales Pipeline's "Won — awaiting project"
+  column, the Opportunity form's create-project prompt and its Hand-Off Process tab (a quiet
+  "Historical (pre-ERPNext) — excluded from hand-off warnings" line, no Ready step, no
+  OVERDUE banner, and every button kept but none primary, so a deal behind a closed gate can
+  still book or skip the meeting and create its project), and the
+  `closed_won_handoff_status` AI tool, which returns `historical_excluded` so an answer can
+  say how many it left out;
+- measurements: the Closed-Won KPIs (`win_rate_90` on both legs, `won_count_30`,
+  `won_value_30`, `avg_deal_size`, `marketing_won_30`), the open-pipeline KPIs
+  (`open_pipeline_value`, `open_opportunities`, `stalled_opportunities`), the marketing
+  funnel's won count, the Value Stream Performance report's opportunity counts and won
+  amounts, the morning briefing's open-pipeline list, the **Closed-Won Opportunities**,
+  **Open Opportunities** and **Open Pipeline Value** Number Cards and the **Opportunities by
+  Status** / **Opportunity Value by Status** charts.
+
+**Deliberately not applied** where the rows are deals that already have a project or revenue:
+the **Hand-Off Process Coverage** report (it lists only deals with a project, so excluding
+historical ones would hide live projects) and Value Stream Performance's billed-revenue
+rollup (real money, whatever the deal's age). The TV pipeline board's open columns also keep
+historical deals, so people can still see and act on them.
+
+**To see historical deals in the reconciliation report**, tick **Include historical** (off by
+default). In the Opportunity list, filter on *Historical (pre-ERPNext)*.
+
+Alongside it, `stamp_won_date` became transition-only: it used to stamp today on any save of a
+won deal with a blank date, which is how a 2026-06-30 re-import dated twelve old wins
+06-30-2026 (`patches/restore_opportunity_won_dates.py` restores eleven; the twelfth really
+was won that day).

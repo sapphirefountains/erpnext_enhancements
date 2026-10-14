@@ -27,6 +27,7 @@ from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
+from erpnext_enhancements.crm_enhancements.historical import exclude_sql
 from erpnext_enhancements.kpi_dashboards import metrics
 
 DEFAULT_RETENTION_DAYS = 120
@@ -750,6 +751,12 @@ def _sales_metrics():
 	d90 = add_days(today, -90)
 	values, add = _collector()
 	open_filter = "status not in ('Closed Won','Lost','Closed','Converted')"
+	# Historical deals (pre-ERPNext, untouched for 90 days -- crm_enhancements/historical.py,
+	# v1.629.0) are out of the open-pipeline KPIs and every Closed-Won measure below, and out
+	# of BOTH legs of the win rate: dropping them from one leg only would move the rate by the
+	# size of the history. "1=1" until the column exists. Not folded into open_filter, which
+	# reads as the status rule it is.
+	not_historical = exclude_sql(None)
 
 	# --- naming compliance, per the party-naming rules (v1.339.0) ---
 	add(
@@ -774,7 +781,7 @@ def _sales_metrics():
 	add(
 		"open_pipeline_value",
 		"Open Pipeline Value",
-		_scalar(f"select sum(opportunity_amount) from `tabOpportunity` where {open_filter}"),
+		_scalar(f"select sum(opportunity_amount) from `tabOpportunity` where {open_filter} and {not_historical}"),
 		"USD",
 		"Opportunity",
 		metrics.HIGHER,
@@ -782,16 +789,17 @@ def _sales_metrics():
 	add(
 		"open_opportunities",
 		"Open Opportunities",
-		_scalar(f"select count(*) from `tabOpportunity` where {open_filter}"),
+		_scalar(f"select count(*) from `tabOpportunity` where {open_filter} and {not_historical}"),
 		"count",
 		"Opportunity",
 		metrics.HIGHER,
 	)
 	# Use the stamped close date if the CRM customization is present, else modified.
 	closed_col = "custom_date_closed_won" if frappe.db.has_column("Opportunity", "custom_date_closed_won") else "modified"
+	# `not_historical` (defined at the top) applies to every Closed-Won measure below.
 	won_90 = flt(
 		_scalar(
-			f"select count(*) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s",
+			f"select count(*) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s and {not_historical}",
 			{"d": d90},
 		)
 	)
@@ -802,7 +810,7 @@ def _sales_metrics():
 			# which is why that patch updates the rows WITHOUT touching it -- doing so would
 			# have dropped all 144 into this 90-day window and taken the reported win rate
 			# from 36.9% to 16.1% overnight.
-			"select count(*) from `tabOpportunity` where status = 'Lost' and modified >= %(d)s",
+			f"select count(*) from `tabOpportunity` where status = 'Lost' and modified >= %(d)s and {not_historical}",
 			{"d": d90},
 		)
 	)
@@ -810,12 +818,12 @@ def _sales_metrics():
 	add("win_rate_90", "Win Rate (90d)", (won_90 / decided * 100.0) if decided else None, "%", "Opportunity", metrics.HIGHER)
 
 	won_30 = _scalar(
-		f"select count(*) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s",
+		f"select count(*) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s and {not_historical}",
 		{"d": d30},
 	)
 	add("won_count_30", "Closed-Won (30d)", won_30, "count", "Opportunity", metrics.HIGHER)
 	won_val_30 = _scalar(
-		f"select sum(opportunity_amount) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s",
+		f"select sum(opportunity_amount) from `tabOpportunity` where status='Closed Won' and {closed_col} >= %(d)s and {not_historical}",
 		{"d": d30},
 	)
 	add("won_value_30", "Closed-Won Value (30d)", won_val_30, "USD", "Opportunity", metrics.HIGHER)
@@ -853,7 +861,7 @@ def _sales_metrics():
 		"stalled_opportunities",
 		"Stalled Opportunities (>14d)",
 		_scalar(
-			f"select count(*) from `tabOpportunity` where {open_filter} and modified < %(d)s",
+			f"select count(*) from `tabOpportunity` where {open_filter} and modified < %(d)s and {not_historical}",
 			{"d": add_days(today, -14)},
 		),
 		"count",
@@ -864,8 +872,10 @@ def _sales_metrics():
 		add(
 			"handoff_backlog",
 			"Hand-Off Backlog",
+			# Historical deals excluded (v1.629.0), as in the nag and the Sales Dashboard widget.
 			_scalar(
-				"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(custom_created_project,'')=''"
+				"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(custom_created_project,'')='' "
+				f"and {not_historical}"
 			),
 			"count",
 			"Opportunity",
@@ -1290,7 +1300,8 @@ def _marketing_metrics():
 			"marketing_won_30",
 			"Sourced Wins (30d)",
 			_scalar(
-				f"select count(*) from `tabOpportunity` where status='Closed Won' and {sourced} and {closed_col} >= %(d)s",
+				f"select count(*) from `tabOpportunity` where status='Closed Won' and {sourced} and {closed_col} >= %(d)s "
+				f"and {exclude_sql(None)}",
 				dict(unknown, d=d30),
 			),
 			"count",
