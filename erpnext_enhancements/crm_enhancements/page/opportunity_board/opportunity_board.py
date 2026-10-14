@@ -227,7 +227,10 @@ def get_board():
 		"today": nowdate(),
 		"currency": frappe.defaults.get_global_default("currency") or "USD",
 		"truncated": truncated,
-		"can_snooze": all(meta.has_field(fieldname) for fieldname in SNOOZE_FIELDS),
+		# Whether to draw the snooze controls at all: the fields exist and the caller may write some
+		# Opportunity. :func:`snooze` still checks write on the deal itself.
+		"can_snooze": all(meta.has_field(fieldname) for fieldname in SNOOZE_FIELDS)
+		and bool(frappe.has_permission(DOCTYPE, "write")),
 	}
 
 
@@ -260,6 +263,10 @@ def snooze(name, until=None, reason=None, modified=None):
 	  ``db_set`` still stamps ``modified``, so the next save of the deal is checked against it. The
 	  board is told through the same realtime event an Opportunity save sends, and the deal's
 	  timeline gets an Info comment saying who snoozed it and until when.
+	* **An open form is told too.** ``db_set(..., notify=True)`` runs ``Document.notify_update``
+	  (``doc_update`` to the deal's room and ``list_update``, after commit; ``version-16``), which a
+	  form open on the deal reads as "this record changed". That is a different event from the
+	  board's ``sales_pipeline_updated``, so neither publish repeats the other.
 	"""
 	if not isinstance(name, str) or not name:
 		frappe.throw(frappe._("Say which deal to snooze."))
@@ -294,7 +301,7 @@ def snooze(name, until=None, reason=None, modified=None):
 			frappe.throw(frappe._("A snooze can run at most a year. Put a deal parked longer On Hold."))
 	text = " ".join(str(reason or "").split())[:MAX_REASON] if until_date else ""
 
-	doc.db_set({SNOOZE_UNTIL: until_date, SNOOZE_REASON: text or None})
+	doc.db_set({SNOOZE_UNTIL: until_date, SNOOZE_REASON: text or None}, notify=True)
 	if until_date:
 		note = frappe._("Snoozed on the Opportunity Board until {0}").format(formatdate(until_date))
 		if text:

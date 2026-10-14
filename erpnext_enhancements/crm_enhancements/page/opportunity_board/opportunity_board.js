@@ -492,13 +492,16 @@ class OpportunityBoard {
 			`<button type="button" class="ob-toggle" data-toggle="${esc(key)}" aria-pressed="${!!f[key]}">${esc(label)}</button>`;
 		const option = (value, label, selected) =>
 			`<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+		// A saved owner or stream no deal has now is still a choice, and selected: the filter applies.
+		const owner_name =
+			f.owner && frappe.user && typeof frappe.user.full_name === "function" ? frappe.user.full_name(f.owner) : "";
 		const owners = [option("", __("Anyone"), !f.owner)]
-			.concat(this.kit.owners(this.model).map((o) => option(o.id, o.name, f.owner === o.id)))
+			.concat(this.kit.owners(this.model, f.owner, owner_name).map((o) => option(o.id, o.name, f.owner === o.id)))
 			.join("");
 		const streams = [option("", __("Any"), !f.stream)]
 			.concat(
 				this.kit
-					.stream_choices(this.model)
+					.stream_choices(this.model, f.stream)
 					.map((s) =>
 						option(s, s === this.kit.NO_STREAM_FILTER ? __("No value stream") : __(s), f.stream === s)
 					)
@@ -1121,7 +1124,9 @@ class OpportunityBoard {
 			${state}
 			<div class="ob-snooze-form">
 				<label class="ob-field ob-field--stack"><span>${esc(__("Hide it until"))}</span>
-					<input type="date" data-snooze-until min="${esc(this.kit.snooze_min(this.model.today))}" value="${esc(
+					<input type="date" data-snooze-until min="${esc(this.kit.snooze_min(this.model.today))}" max="${esc(
+					this.kit.snooze_max(this.model.today)
+				)}" value="${esc(
 						draft ? draft.until : ""
 					)}"></label>
 				<label class="ob-field ob-field--stack"><span>${esc(__("Why (optional)"))}</span>
@@ -1193,9 +1198,16 @@ class OpportunityBoard {
 		if (hit) return this.wake(this.target.panel);
 		hit = el.closest("[data-layout]");
 		if (hit) {
-			this.layout = hit.getAttribute("data-layout");
+			const change = this.kit.layout_change(this.target, hit.getAttribute("data-layout"));
+			this.layout = change.next.layout;
 			this.remember();
-			return this.go({ view: "board", layout: this.layout, stage: this.target.stage, panel: "" });
+			// When the address already says this layout there is no route change (go() returns false)
+			// and so no handle_route: draw here, or the click would do nothing.
+			if (!change.navigate || !this.go(change.next)) {
+				if (this.target.view === "board") this.target.layout = this.layout;
+				this.render();
+			}
+			return;
 		}
 		hit = el.closest("[data-tab]");
 		if (hit) return this.go({ view: "board", layout: this.layout, stage: hit.getAttribute("data-tab"), panel: "" });
@@ -1320,14 +1332,16 @@ class OpportunityBoard {
 
 	// A view's filters, sort and layout on the page; with `navigate`, its view too (a new history
 	// entry, as any change of view is).
-	apply_state(state, navigate) {
+	// `take_layout` false keeps the board's layout as the address set it: an explicit /stages or
+	// /streams wins over the last-used view (kit.last_layout_applies).
+	apply_state(state, navigate, take_layout = true) {
 		const s = this.kit.pick_view(state || {});
 		this.filters = this.kit.clean_filters(Object.assign({}, this.kit.DEFAULT_FILTERS, s));
 		this.sort = {
 			sort: s.sort || this.kit.DEFAULT_SORT.sort,
 			desc: s.desc === undefined ? this.kit.DEFAULT_SORT.desc : !!s.desc,
 		};
-		if (s.layout) this.layout = s.layout;
+		if (s.layout && take_layout) this.layout = s.layout;
 		if (navigate) {
 			const moved = this.go({ view: s.view || "board", layout: this.layout, stage: "", panel: "" });
 			if (!moved) this.render();
@@ -1343,7 +1357,10 @@ class OpportunityBoard {
 			.then((data) => {
 				this.saved_views = (data && data.views) || [];
 				const last = (data && data.last) || null;
-				if (last) this.apply_state(last, false);
+				// The filters and sort always come back; the layout only where the address leaves it
+				// open, so an explicit /stages is never drawn as rows.
+				if (last) this.apply_state(last, false, this.kit.last_layout_applies(this.target));
+				if (this.target && this.target.view === "board") this.target.layout = this.layout;
 				this.last_sent = JSON.stringify(this.view_state());
 				this.prefs_ready = true;
 				const target = this.target;

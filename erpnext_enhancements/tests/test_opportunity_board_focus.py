@@ -257,6 +257,36 @@ const snoozed = kit.set_snooze(model, "A", "2026-10-20", "HOA vote", "2026-10-14
 out.set_snooze = [snoozed.by_name.A.snooze, snoozed.by_name.A.snooze_reason, snoozed.by_name.A.modified, model.by_name.A.snooze];
 const woken = kit.set_snooze(snoozed, "A", "", "ignored", "2026-10-14 10:00:01");
 out.woken = [woken.by_name.A.snooze, woken.by_name.A.snooze_reason, woken.by_name.A.snoozed_until];
+
+// Review of #1278: an explicit board address wins over the last-used layout, and a click on the
+// layout the address already shows must redraw (there is no route change to do it).
+const P = (route) => kit.parse_route(route);
+out.last_layout = [
+	kit.last_layout_applies(P(["opportunity-board"])),
+	kit.last_layout_applies(P(["opportunity-board", "stages"])),
+	kit.last_layout_applies(P(["opportunity-board", "stages", "on-hold"])),
+	kit.last_layout_applies(P(["opportunity-board", "streams", "move", "X"])),
+	kit.last_layout_applies(P(["opportunity-board", "table"])),
+	kit.last_layout_applies(null),
+];
+const lc = (route, layout) => kit.layout_change(P(route), layout);
+out.layout_change = [
+	lc(["opportunity-board", "stages"], "stages"),
+	lc(["opportunity-board", "stages"], "streams"),
+	lc(["opportunity-board", "streams", "on-hold"], "stages"),
+	lc(["opportunity-board", "streams", "on-hold"], "streams"),
+	lc(["opportunity-board"], "stages"),
+	lc(["opportunity-board"], "streams"),
+	lc(["opportunity-board", "stages"], "nonsense"),
+];
+// A saved owner or stream no deal has now stays a selected choice.
+out.owners_kept = [
+	kit.owners(model, "gone@example.com", "Gone Person").map((o) => o.id + "=" + o.name),
+	kit.owners(model, "gone@example.com", "").find((o) => o.id === "gone@example.com"),
+	kit.owners(model, user, "ignored").filter((o) => o.id === user && o.name === "Nik").length,
+];
+out.streams_kept = [kit.stream_choices(model, "Fountain Art"), kit.stream_choices(model, "Design")];
+out.snooze_max = [kit.snooze_max("2026-10-14"), kit.snooze_max("2027-02-28"), kit.snooze_max(""), kit.MAX_SNOOZE_DAYS];
 console.log(JSON.stringify(out));
 """
 
@@ -429,6 +459,49 @@ class TestFocusUnderNode(unittest.TestCase):
 			{"view": "table", "mine": True, "owner": "7", "sort": "amount", "desc": False, "min_amount": ""},
 		)
 
+	# ---- review of #1278
+
+	def test_an_explicit_board_address_wins_over_the_last_layout(self):
+		"""/stages (with or without a tab or the panel) keeps its layout; a bare address, another
+		view, or no route yet takes the remembered one."""
+		self.assertEqual(self.out["last_layout"], [True, False, False, False, True, True])
+
+	def test_a_layout_click_on_the_shown_layout_redraws_instead_of_navigating(self):
+		def view(item):
+			return (item["next"]["layout"], item["next"]["stage"], item["navigate"])
+
+		self.assertEqual(
+			[view(item) for item in self.out["layout_change"]],
+			[
+				("stages", "", False),  # already /stages: no route change, so the page redraws
+				("streams", "", True),
+				("stages", "on-hold", True),  # the phone's stage tab is kept
+				("streams", "on-hold", False),
+				("stages", "", False),  # bare is the board by stage already
+				("streams", "", True),
+				("stages", "", False),  # an unknown layout is the default one
+			],
+		)
+
+	def test_a_saved_owner_or_stream_nobody_has_stays_selected(self):
+		kept, unnamed, once = self.out["owners_kept"]
+		self.assertIn("gone@example.com=Gone Person", kept)
+		self.assertEqual(unnamed, {"id": "gone@example.com", "name": "gone@example.com"})
+		self.assertEqual(once, 1, "an owner on the board keeps the board's name, once")
+		with_extra, present = self.out["streams_kept"]
+		self.assertEqual(with_extra[-1], "Fountain Art")
+		self.assertEqual(present, self.out["stream_choices"], "a stream on the board is not added twice")
+
+	def test_the_latest_snooze_date_is_the_servers_cap(self):
+		self.assertEqual(self.out["snooze_max"], ["2027-10-15", "2028-02-29", "", 366])
+		mod_text = _text(APP / "crm_enhancements" / "page" / "opportunity_board" / "opportunity_board.py")
+		self.assertIn("MAX_SNOOZE_DAYS = 366", mod_text)
+		self.assertIn(
+			'max="${esc(\n\t\t\t\t\tthis.kit.snooze_max(this.model.today)',
+			_text(PAGE_JS),
+			"the date input carries it",
+		)
+
 
 # ---------------------------------------------------------------------------------- frappe stub
 
@@ -531,7 +604,7 @@ def _install_frappe_stub():
 
 	def has_permission(doctype, ptype="read", doc=None, throw=False, **kwargs):
 		STATE["perm"].append((doctype, ptype))
-		allowed = STATE.get("allowed", True)
+		allowed = STATE.get("allowed", True) and ptype not in STATE.get("deny", ())
 		if not allowed and throw:
 			raise PermissionError(f"No {ptype} on {doctype}")
 		return allowed
@@ -899,6 +972,7 @@ class _Doc:
 		self.modified = datetime.datetime(2026, 10, 13, 9, 0, 0)
 		self.values = {"status": status, "modified_by": "office@example.com", **values}
 		self.writes = []
+		self.notified = []
 		self.comments = []
 		self.saved = False
 		self.can_write = True
@@ -914,6 +988,7 @@ class _Doc:
 	def db_set(self, values, value=None, update_modified=True, **kwargs):
 		assert isinstance(values, dict)
 		self.writes.append(dict(values))
+		self.notified.append(kwargs.get("notify", False))
 		self.values.update(values)
 		# Frappe's db_set stamps now()'s text, microseconds always written.
 		self.modified = "2026-10-14 12:00:00.000000"
@@ -947,6 +1022,7 @@ class TestTheSnoozeEndpoint(unittest.TestCase):
 			[{"custom_snoozed_until": datetime.date(2026, 10, 20), "custom_snooze_reason": "Budget vote"}],
 		)
 		self.assertFalse(self.doc.saved, "never save(): no unrelated validation may stop a snooze")
+		self.assertEqual(self.doc.notified, [True], "an open form on the deal hears of it (notify_update)")
 		self.assertEqual(
 			result,
 			{
@@ -1031,6 +1107,13 @@ class TestTheSnoozeEndpoint(unittest.TestCase):
 		data = self.mod.get_board()
 		self.assertFalse(data["can_snooze"])
 		self.assertIsNone(data["deals"][0]["snoozed_until"])
+		# Review of #1278: a reader who may not write any Opportunity gets no snooze controls.
+		_reset([_complete("A", "Qualification")])
+		STATE["deny"] = ("write",)
+		data = self.mod.get_board()
+		self.assertFalse(data["can_snooze"])
+		self.assertEqual(len(data["deals"]), 1, "reading the board is unaffected")
+		self.assertIn(("Opportunity", "write"), STATE["perm"])
 
 
 # ---------------------------------------------------------------------------------- saved views
@@ -1155,6 +1238,17 @@ class TestThePageWiring(unittest.TestCase):
 			'this.open_record(hit.getAttribute("data-open") || hit.getAttribute("data-name"));',
 			_code(PAGE_JS),
 		)
+
+	def test_the_page_follows_the_layout_rules(self):
+		"""Review of #1278, the wiring half (the rules themselves run under node above)."""
+		code = _code(PAGE_JS)
+		self.assertIn("this.apply_state(last, false, this.kit.last_layout_applies(this.target));", code)
+		self.assertIn("if (s.layout && take_layout) this.layout = s.layout;", code)
+		click = code[code.index('hit = el.closest("[data-layout]");') :]
+		click = click[: click.index("return;")]
+		self.assertIn('this.kit.layout_change(this.target, hit.getAttribute("data-layout"))', click)
+		self.assertIn("if (!change.navigate || !this.go(change.next)) {", click)
+		self.assertIn("this.render();", click)
 
 	def test_on_hold_folds_by_default(self):
 		code = _code(PAGE_JS)

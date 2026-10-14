@@ -139,6 +139,29 @@ export function route_key(target) {
 	return [view, layout, view === "board" ? target.stage || "" : "", target.panel || ""].join("|");
 }
 
+// Whether the last-used view's layout may apply on arrival. An explicit board address (/stages,
+// /streams, with or without a stage tab) wins, as the rule on the planners has it; a bare address,
+// or one of the other views (whose routes carry no layout), takes the remembered one. The filters
+// and the sort are not in any address, so they always come back.
+export function last_layout_applies(target) {
+	return !target || !!target.bare || target.view !== "board";
+}
+
+// A click on the board's layout switch: the route to go to, and whether it is a new one. When the
+// address already says that layout there is nothing to navigate to, so the page must redraw itself
+// (a click that changed this.layout without a redraw did nothing).
+export function layout_change(target, layout) {
+	const t = target || {};
+	const next = {
+		view: "board",
+		layout: LAYOUTS.includes(layout) ? layout : DEFAULT_LAYOUT,
+		stage: t.view === "board" ? text(t.stage) : "",
+		panel: "",
+	};
+	const now = t.view === "board" && !t.bare ? parse_route(build_route(t)) : t;
+	return { next, navigate: route_key(parse_route(build_route(next))) !== route_key(now) };
+}
+
 export function is_phone(width) {
 	return num(width) > 0 && num(width) <= PHONE_MAX;
 }
@@ -625,20 +648,31 @@ export function filtered(model, filters, user) {
 	return Object.assign({}, m, { deals, snoozed, hidden: passing.length - deals.length, filters: f });
 }
 
-// The owners on the board, for the owner filter: [{ id, name }] by name.
-export function owners(model) {
+// The owners on the board, for the owner filter: [{ id, name }] by name. A `selected` owner no deal
+// has now (a saved view's, or a deal reassigned since) is kept as a choice, named `selected_name`
+// when the page knows it, so the select shows the filter that is really applied, never "Anyone".
+export function owners(model, selected, selected_name) {
 	const seen = {};
 	((model || {}).deals || []).forEach((deal) => {
 		if (deal.owner && !seen[deal.owner]) seen[deal.owner] = deal.owner_name || deal.owner;
 	});
+	const keep = text(selected);
+	if (keep && !seen[keep]) seen[keep] = text(selected_name) || keep;
 	return Object.keys(seen)
 		.map((id) => ({ id, name: seen[id] }))
 		.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 // The streams on the board, for the stream filter, in row order; NO_STREAM_FILTER last when a deal
-// has none.
-export function stream_choices(model) {
+// has none. A `selected` stream no deal has is kept, after the rest, for the same reason as owners.
+export function stream_choices(model, selected) {
+	const choices = present_streams(model);
+	const keep = text(selected);
+	if (keep && !choices.includes(keep)) choices.push(keep);
+	return choices;
+}
+
+function present_streams(model) {
 	const found = new Set();
 	let none = false;
 	((model || {}).deals || []).forEach((deal) => {
@@ -813,6 +847,16 @@ export function snooze_min(today) {
 	const n = day_number(today);
 	if (n === null) return "";
 	return new Date((n + 1) * 86400000).toISOString().slice(0, 10);
+}
+
+// The latest date a snooze may run to: the site's today plus MAX_SNOOZE_DAYS, the server's own cap
+// (opportunity_board.MAX_SNOOZE_DAYS; the test holds the two equal).
+export const MAX_SNOOZE_DAYS = 366;
+
+export function snooze_max(today) {
+	const n = day_number(today);
+	if (n === null) return "";
+	return new Date((n + MAX_SNOOZE_DAYS) * 86400000).toISOString().slice(0, 10);
 }
 
 // The model with one deal's snooze set (or cleared, with until ""), as the server saved it.

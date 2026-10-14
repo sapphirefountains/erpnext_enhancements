@@ -108,6 +108,19 @@ Still out of scope:
   - the two fields;
   - the page's wiring.
 
+- **What the PR review found, fixed before merge:**
+  - An explicit `/stages` address no longer comes up as value-stream rows because the last-used
+    view was "By value stream". The remembered layout applies only to a bare address or another
+    view (`last_layout_applies`).
+  - A click on the layout already shown now redraws. There is no route change for it, so it used
+    to do nothing (`layout_change`).
+  - A saved owner or stream that no deal has any more stays a selected choice, instead of reading
+    "Anyone" while it still filters.
+  - The snooze controls appear only to someone who may write an Opportunity.
+  - The snooze's `db_set` passes `notify=True`, so a form open on the deal hears of it
+    (`doc_update`, which is a different event from the board's own).
+  - The date input stops at the server's one-year cap.
+
 ### Changed
 
 - `tests/test_opportunity_board.py`, part A's suite, expects the routes' new `view` and `bare`
