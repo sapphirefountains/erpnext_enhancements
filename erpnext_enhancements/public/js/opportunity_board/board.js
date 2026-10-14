@@ -657,7 +657,37 @@ export const VIEW_SCHEMA = {
 	hold_open: ["bool"],
 	sort: ["enum", SORT_KEYS],
 	desc: ["bool"],
+	// v1.684.0: what a card shows (card_parts). Text, so it stays inside the store's own kinds.
+	card: ["text"],
 };
+
+// ------------------------------------------------------------------ what a card shows (v1.684.0)
+
+// The parts a card can show beside its title, in the order a card draws them. DEFAULT_CARD is what
+// every card showed before a person could choose, so a view that never chose (or was saved before
+// this existed) shows exactly that: a card loses a part only when the person removes it.
+export const CARD_PARTS = ["account", "streams", "owner", "amount", "probability", "close", "age", "meter"];
+export const DEFAULT_CARD = ["account", "streams", "amount", "close", "age", "meter"];
+// The saved text of a card that shows nothing beside its title (empty text means "never chose").
+export const CARD_NONE = "none";
+
+// A view's `card` text -> the parts shown, in CARD_PARTS order.
+export function card_parts(value) {
+	const raw = text(value);
+	if (!raw) return DEFAULT_CARD.slice();
+	if (raw === CARD_NONE) return [];
+	const asked = raw.split(",").map((part) => part.trim());
+	const parts = CARD_PARTS.filter((part) => asked.includes(part));
+	return parts.length ? parts : DEFAULT_CARD.slice();
+}
+
+// The parts shown -> the text a view saves: "" for the defaults, CARD_NONE for nothing.
+export function card_text(parts) {
+	const list = CARD_PARTS.filter((part) => (parts || []).includes(part));
+	if (!list.length) return CARD_NONE;
+	if (list.length === DEFAULT_CARD.length && DEFAULT_CARD.every((part) => list.includes(part))) return "";
+	return list.join(",");
+}
 
 function flag(value) {
 	return value === true || value === 1 || value === "1" || value === "true";

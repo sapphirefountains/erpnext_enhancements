@@ -292,7 +292,7 @@ class TestTheModules(unittest.TestCase):
 
 	def test_the_pages_bundle_installs_the_kit_with_the_item_extension(self):
 		b = self.out["bundle"]
-		self.assertEqual(b["version"], 3)
+		self.assertEqual(b["version"], 4, "3 brought the extensions (P8.1), 4 the view settings (v1.684.0)")
 		self.assertEqual(b["has"], ["extension_for", "ends_core", "opens_by_default", "parse_route"])
 		self.assertTrue(b["item"])
 
@@ -562,8 +562,10 @@ class TestTheWiring(unittest.TestCase):
 	def test_the_bundle_carries_the_item_extension(self):
 		bundle = _code(BUNDLE)
 		self.assertIn('import "./guided_item/extension.js";', bundle)
-		# 3: a tab still holding version 2 (the editor, v1.675.0) has no extension_for.
-		self.assertIn("const VERSION = 3;", bundle)
+		# 3: a tab still holding version 2 (the editor, v1.675.0) has no extension_for. 4 since v1.684.0
+		# (the view settings): never back below 3.
+		version = re.search(r"const VERSION = (\d+);", bundle)
+		self.assertTrue(version and int(version.group(1)) >= 3)
 
 	def test_every_request_is_quiet_reads_are_get_writes_post(self):
 		code = _code(EXTENSION_JS)
