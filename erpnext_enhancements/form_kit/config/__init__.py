@@ -14,6 +14,8 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     Fields the form hides that the flow shows anyway (a Link the form sets through a widget).
 ``read_only_fields``  ``{fieldname: reason}``
     Shown, never written by the flow.
+``once_fields``  ``{fieldname: reason}``
+    Editable while the record is being created (step 1), read-only once it exists.
 ``site_only_fields``  ``{fieldname}``
     Fieldnames above that exist on the production site but are not created by this repo.
 ``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}, "prefill_fields": {fieldname: reason}}``
@@ -49,7 +51,7 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     The guided page's start screen lists the caller's records: ``owner_field`` is the caller,
     ``open`` is ``{"field", "not_in": [...]}`` (closed records are left out), and a record whose
     ``hide_flag`` Check is set is left out too. ``label`` heads the list.
-``steps``  ``[{key, title, intro, sections, fields?, applies?, read_only?, final?, link?}]``
+``steps``  ``[{key, title, intro, sections, fields?, applies?, read_only?, final?, link?, extension?, more?}]``
     In order. ``sections`` are Section Break fieldnames (``_top`` for the fields before the first
     one; a tab's fieldname for the fields that open a tab before any Section Break). ``fields``
     moves single fields into the step from wherever they sit. ``applies`` is
@@ -57,8 +59,19 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     for a table, any row's ``row_field``) is one of ``in``. ``final`` keeps the step last, after
     any section no step claims (those are walked as steps of their own, so nothing the form
     shows is ever lost). ``link`` points at a part of the Desk form the flow cannot draw.
-``stages``  ``{"field", "default", "lists": {stage: [requirement, ...]}}``
-    Completeness per stage; see ``form_kit.completeness``.
+    ``extension`` names a block the DocType's page extension draws above the step's fields
+    (``public/js/form_kit/extensions.js``; the Item flow's name builder, supplier and stock
+    blocks); the page ignores a name its extension does not know. ``more`` marks a step past the
+    core of the flow: Next on the last core step offers Done, and the ``more`` steps stay in the
+    rail and behind *More details*, so nothing the form shows is hidden.
+``stages``  ``{"field", "default", "lists": {stage: [requirement, ...]}, "labels"?: {stage: label}}``
+    Completeness per stage; see ``form_kit.completeness``. ``labels`` names a stage whose value
+    is not words (Item's stage is its ``is_stock_item`` tick, 0 or 1).
+``open_by_default``  ``bool``, default True
+    Whether the DocType's records open on the guided page for everyone who may open it
+    (``public/js/guided_default.js``, ``frappe.boot.sf_guided``). False keeps the Desk form as
+    where a record opens, and the guided page is reached on purpose: the form's *Guided* button,
+    the guided page's start screen, or ``/desk/guided-entry/<DocType>/new``.
 ``queries``  ``{fieldname: query}``
     Every ``set_query`` the DocType's form scripts set on a field the flow shows, as data, so the
     guided page offers the same choices as the form (v1.685.0). The page's controls are a
@@ -81,16 +94,29 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     "Prospect"). The page relabels it as the other field changes.
 """
 
-from erpnext_enhancements.form_kit.config import opportunity
+from erpnext_enhancements.form_kit.config import item, opportunity
 
-CONFIGS = {"Opportunity": opportunity.CONFIG}
+CONFIGS = {"Opportunity": opportunity.CONFIG, "Item": item.CONFIG}
 
-STEP_KEYS = {"key", "title", "intro", "sections", "fields", "applies", "read_only", "final", "link"}
+STEP_KEYS = {
+	"key",
+	"title",
+	"intro",
+	"sections",
+	"fields",
+	"applies",
+	"read_only",
+	"final",
+	"link",
+	"extension",
+	"more",
+}
 CONFIG_KEYS = {
 	"doctype",
 	"skip_fields",
 	"show_hidden",
 	"read_only_fields",
+	"once_fields",
 	"site_only_fields",
 	"create",
 	"steps",
@@ -104,7 +130,9 @@ CONFIG_KEYS = {
 	"queries",
 	"query_waivers",
 	"label_from",
+	"open_by_default",
 }
+STAGES_KEYS = {"field", "default", "lists", "labels"}
 QUICK_KEYS = {"fields", "fixed", "owner_field", "stage_field", "when"}
 CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields", "client_id_field"}
 MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
@@ -116,6 +144,11 @@ QUERY_LINKS = ("directory",)
 def get_config(doctype):
 	"""The config for ``doctype``, or None when the flow does not serve it."""
 	return CONFIGS.get(doctype)
+
+
+def opens_by_default(config):
+	"""Whether the DocType's records open on the guided page by default (``open_by_default``)."""
+	return bool((config or {}).get("open_by_default", True))
 
 
 def requirement_fieldnames(requirement):
@@ -141,7 +174,7 @@ def check(config):
 	for key in ("doctype", "steps", "create", "stages"):
 		if not config.get(key):
 			problems.append(f"missing {key}")
-	for key in ("skip_fields", "show_hidden", "read_only_fields"):
+	for key in ("skip_fields", "show_hidden", "read_only_fields", "once_fields"):
 		for fieldname, reason in (config.get(key) or {}).items():
 			if not str(reason or "").strip():
 				problems.append(f"{key}.{fieldname} has no reason")
@@ -243,13 +276,29 @@ def check(config):
 		applies = step.get("applies")
 		if applies is not None and (not applies.get("field") or not isinstance(applies.get("in"), list)):
 			problems.append(f"step {key} applies rule needs a field and an 'in' list")
+		extension = step.get("extension")
+		if extension is not None and not (isinstance(extension, str) and extension.strip()):
+			problems.append(f"step {key} extension needs a name")
+		if step.get("more") and (index == 0 or step.get("final")):
+			problems.append(f"step {key} cannot be a 'more' step: it is the first or the final one")
+	more = [bool(step.get("more")) for step in config.get("steps") or [] if not step.get("final")]
+	if True in more and False in more[more.index(True) :]:
+		problems.append("'more' steps must all come after the core steps")
+	if not isinstance(config.get("open_by_default", True), bool):
+		problems.append("open_by_default must be True or False")
 	finals = [step.get("key") for step in config.get("steps") or [] if step.get("final")]
 	if finals and finals != [(config.get("steps") or [{}])[-1].get("key")]:
 		problems.append("only the last step may be final")
 	stages = config.get("stages") or {}
+	unknown = set(stages) - STAGES_KEYS
+	if unknown:
+		problems.append(f"unknown stages keys {sorted(unknown)}")
+	for stage in stages.get("labels") or {}:
+		if stage not in (stages.get("lists") or {}):
+			problems.append(f"stages.labels names {stage!r}, which has no list")
 	if not stages.get("field") or not stages.get("lists"):
 		problems.append("stages needs a field and lists")
-	if stages.get("default") and stages.get("default") not in (stages.get("lists") or {}):
+	if stages.get("default") is not None and stages.get("default") not in (stages.get("lists") or {}):
 		problems.append("stages.default is not one of the lists")
 	for stage, requirements in (stages.get("lists") or {}).items():
 		for requirement in requirements:

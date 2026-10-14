@@ -446,6 +446,12 @@ jobs:
       # Billing" on prod until v1.682.0.
       - name: Every custom field is in its form's field_order
         run: python -m unittest erpnext_enhancements.tests.test_layout_field_order_coverage -v
+      # Own step: it installs its own frappe stub. On 2026-07-18 an older build's migrate brought
+      # back 14 retired Custom Fields that stayed three months (v1.682.1). Pins the downgrade guard
+      # (first in before_migrate), the cleanup patch, and that no retired field is back in the
+      # fixtures or created by app code.
+      - name: Retired customizations stay retired
+        run: python -m unittest erpnext_enhancements.tests.test_retired_customizations -v
       # Whether the nightly offsite backup ships the file archives is one membership
       # test -- `include_files = backup_type in FULL_TYPES`. Drop the scheduled type out
       # of that tuple and the run silently reverts to database-only: it still succeeds,
@@ -1713,7 +1719,8 @@ jobs:
       # (every field the form shows is in the flow), permissions per field as the Desk works
       # them out (permlevel read/write, if-owner, read-only, set-only-once), the saver assigning
       # only what the flow offers, the optimistic lock on modified, and the stage completeness
-      # lists. Own frappe stub, so its own step.
+      # lists. Own frappe stub, so its own step. Since P8.1 it walks the real v16 Item meta too:
+      # every field the Item form shows is in one step, the core steps' hints are the descriptions.
       - name: Form kit engine (steps, saves, completeness)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit -v
       # Form kit P3.1, the information-block registry (form_kit/blocks.py): every block (Party,
@@ -1752,6 +1759,21 @@ jobs:
       # (node). Imports only the config, no frappe stub.
       - name: Form kit inputs match the form (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_form_kit_inputs -v
+      # Form kit P8.1, the guided Item flow's page side (public/js/guided_item/ and the page's
+      # extension point): the name builder's punctuation held to item_naming_rules.check_name, the
+      # code helper's families held to classify_code_family, only the guard's two findings shown as
+      # refusals, Done after the core steps, and an Item that keeps opening in its form while
+      # Opportunity still opens on the guided page. Get the last one wrong and the Item form Parker
+      # and Clegg use every day is replaced overnight by a flow nobody reviewed. Pure node, no stub.
+      - name: Guided Item flow page (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_item -v
+      # Form kit P8.1, the guided Item flow's endpoints (api/item_flow.py) and their pure rules
+      # (inventory_enhancements/item_flow_rules.py): the next PDT/SRV number from the block a person
+      # chose, never MAX()+1, with both occupancy traps; every write behind its own permission check
+      # and never ignore_permissions; a resend makes no second supplier row, price or Asset (the
+      # Asset's id in a unique column, a racing resend settled by the index). Own frappe stub.
+      - name: Guided Item flow endpoints (permissions, idempotency, PDT/SRV blocks)
+        run: python -m unittest erpnext_enhancements.tests.test_item_flow -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
@@ -3767,6 +3789,40 @@ jobs:
           if [ -z "$PY" ] || [ "$PKG" != "$PY" ]; then
             echo "::error::Version drift -- __init__.py is '$PY' but package.json is '$PKG'. Bump both together (release.yml will refuse to tag otherwise)."
             exit 1
+          fi
+      # v1.682.1: the version must move forward. setup/downgrade_guard.py (first in before_migrate)
+      # refuses to migrate a build older than the version that last migrated prod, so a main whose
+      # __version__ went DOWN (a GitHub "Revert" PR restores the old number; a version conflict
+      # resolved toward the lower side) would fail every deploy until someone bumped it. A PR must
+      # be strictly above its base branch as it stands when this runs; a push to main must not go
+      # below the commit it replaced.
+      - name: Version moves forward
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -e
+          HEAD_V=$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' erpnext_enhancements/__init__.py)
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --quiet --depth=1 origin "$BASE_REF"
+            BASE_V=$(git show FETCH_HEAD:erpnext_enhancements/__init__.py | sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p')
+            echo "this PR: $HEAD_V   $BASE_REF: $BASE_V"
+            TOP=$(printf '%s\n%s\n' "$BASE_V" "$HEAD_V" | sort -V | tail -1)
+            if [ "$HEAD_V" = "$BASE_V" ] || [ "$TOP" != "$HEAD_V" ]; then
+              echo "::error::Version $HEAD_V does not move past $BASE_REF's $BASE_V. Merge $BASE_REF in and bump above it (CHANGELOG section on top); a deploy refuses to migrate an older build (setup/downgrade_guard.py)."
+              exit 1
+            fi
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if git fetch --quiet --depth=1 origin "$BEFORE" 2>/dev/null; then
+              BEFORE_V=$(git show FETCH_HEAD:erpnext_enhancements/__init__.py | sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p')
+              echo "this push: $HEAD_V   before: $BEFORE_V"
+              TOP=$(printf '%s\n%s\n' "$BEFORE_V" "$HEAD_V" | sort -V | tail -1)
+              if [ "$TOP" != "$HEAD_V" ]; then
+                echo "::error::main's version went DOWN from $BEFORE_V to $HEAD_V. The next deploy will refuse to migrate (setup/downgrade_guard.py) until a commit bumps it above $BEFORE_V."
+                exit 1
+              fi
+            fi
           fi
 
   # ---------------------------------------------------------------------------

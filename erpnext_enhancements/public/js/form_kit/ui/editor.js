@@ -19,6 +19,9 @@
  *     each Link's set_query (the config's `queries`, control_def), mandatory_depends_on and
  *     read_only_depends_on (apply_condition), a label another field sets (relabel), and Ctrl/Cmd+S
  *     (save_now, through the host page's save_action)
+ *   - a DocType's step blocks (form kit P8.1, ../extensions.js; the Item flow's name builder and its
+ *     supplier, stock and asset blocks): mounted above a step's fields when the step names an
+ *     `extension`, told of each change, asked before a create; a block that throws stays in its box
  *
  * What it asks of the shell that hosts it (the "host" methods; the guided page and the side panel
  * each define their own):
@@ -29,7 +32,9 @@
  *                                 still_here }; return nothing
  *   show_created(doctype, name)   a kept start turned out to exist on the server: open it
  *   still_new(doctype)            is the shell still on the "new" screen of this DocType
- * and the DOM it draws into, under this.$root: .ge-notices, .ge-conflict-slot, .ge-saveline.
+ * and the DOM it draws into, under this.$root: .ge-notices, .ge-conflict-slot, .ge-saveline. A
+ * shell's load() also calls open_extension(doctype) (P8.1), so a step that names a block can draw
+ * it, and its reset() drops it (leave_extension, then this.ext = null).
  *
  * Two ways in:
  *   - class SidePanel extends RecordEditor (an ES module: ./side_panel.js)
@@ -490,6 +495,8 @@ export class RecordEditor {
 	// lists, the help, and the grids' listeners. P4.4: the guided page and the side panel both draw
 	// a step with this; each draws its own head around it.
 	render_fields(step, $fields, editable) {
+		// P8.1: whatever block the last step drew is going away with it.
+		this.leave_extension();
 		const dfs = (step.fields || []).map((field) => this.control_def(field, step, editable));
 		const editor = this;
 		this.fg = new frappe.ui.FieldGroup({
@@ -523,6 +530,7 @@ export class RecordEditor {
 		});
 		this.decorate_controls(step);
 		this.party_entry().decorate(step, editable);
+		this.mount_extension(step, $fields);
 		// A grid says nothing when a row is removed or moved, and a cell edit may not reach the
 		// table's own onchange: read the grids again after either (delete_rows runs in 0.1 s steps).
 		$fields.on("click", ".grid-remove-rows, .grid-delete-row, .grid-add-row, .grid-move-row", () =>
@@ -811,6 +819,73 @@ export class RecordEditor {
 		if ($input.length) $input.trigger("focus");
 	}
 
+	// ------------------------------------------------------------------ extensions (P8.1)
+
+	// The DocType's extension (../extensions.js), fresh for each record a shell opens: null when it
+	// has none (Opportunity). The shells call this from load(); the one it replaces is left first.
+	open_extension(doctype) {
+		this.leave_extension();
+		this.ext = this.kit && this.kit.extension_for ? this.kit.extension_for(doctype) : null;
+	}
+
+	// The step's block, above its fields, when the config names one and the DocType's extension
+	// draws it. Anything the block throws stays in the block: the fields below always show.
+	mount_extension(step, $fields) {
+		if (!this.ext || !step || !step.extension || typeof this.ext.render !== "function") return;
+		const $box = $('<div class="ge-ext"></div>').attr("data-extension", step.extension).insertBefore($fields);
+		try {
+			this.ext.render(step.extension, $box, this.ext_context(step));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+			$box.remove();
+		}
+	}
+
+	leave_extension() {
+		if (!this.ext || typeof this.ext.leave !== "function") return;
+		try {
+			this.ext.leave();
+		} catch (e) {
+			// A block that cannot tidy up has nothing left to say.
+		}
+	}
+
+	ext_notify(fieldname, value) {
+		if (!this.ext || typeof this.ext.on_change !== "function") return;
+		try {
+			this.ext.on_change(fieldname, value, this.ext_context(this.current_step()));
+		} catch (e) {
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
+	}
+
+	// What the editor lends a block (../extensions.js documents it). The record is read when called,
+	// never captured, so a block outliving a step cannot write to another record.
+	ext_context(step) {
+		const doctype = this.doctype;
+		const name = this.name;
+		const same = () => this.doctype === doctype && this.name === name;
+		return {
+			doctype,
+			name,
+			is_new: this.is_new,
+			step,
+			sf: this.sf,
+			kit: this.kit,
+			can_write: !!(this.flow && this.flow.can_write) && !(step && step.read_only),
+			values: () => (same() ? Object.assign({}, this.values) : {}),
+			set_value: (fieldname, value) => {
+				if (!same() || this.kit.same_value(value, this.values[fieldname])) return;
+				this.set_value_local(fieldname, value);
+				this.show_value(fieldname, value);
+			},
+			save_first: () => (same() ? this.save_before_moving() : Promise.reject(new Error(__("The record changed.")))),
+			record_changed: () => {
+				if (same() && !this.is_new) this.refresh_from_server();
+			},
+		};
+	}
+
 	// ------------------------------------------------------------------ the text-list table
 
 	render_text_list(field, editable) {
@@ -937,6 +1012,7 @@ export class RecordEditor {
 			this.refresh_distinct();
 			this.relabel(fieldname);
 			this.party_entry().changed(fieldname, before, value);
+			this.ext_notify(fieldname, value);
 		}
 		this.fg.refresh_dependency();
 	}
@@ -1496,6 +1572,19 @@ export class RecordEditor {
 		if (this.creating || !this.flow) return;
 		this.collect_step();
 		const step = (this.flow.steps || []).find((s) => s.create) || this.flow.steps[0];
+		// The step's block may know the insert would be refused (the Item flow's naming guard, P8.1).
+		let held = "";
+		try {
+			held = this.ext && typeof this.ext.before_create === "function" ? this.ext.before_create() : "";
+		} catch (e) {
+			// A block that cannot answer holds nothing back: the server still checks the insert.
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
+		if (held) {
+			this.notice = { kind: "create", title: __("Not created yet"), body: held };
+			this.refresh_notices();
+			return;
+		}
 		const missing = this.kit.missing_required(step.fields, this.values);
 		if (missing.length) {
 			this.notice = {

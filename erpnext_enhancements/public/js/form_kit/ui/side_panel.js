@@ -98,6 +98,9 @@ export class SidePanel extends RecordEditor {
 	}
 
 	reset() {
+		// P8.1: a DocType's step blocks go with the record (editor.js open_extension).
+		this.leave_extension();
+		this.ext = null;
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.retired = this.retired.filter((queue) => queue.has_unsaved());
 		this.flow = null;
@@ -280,6 +283,7 @@ export class SidePanel extends RecordEditor {
 		this.doctype = doctype;
 		this.name = name || null;
 		this.is_new = !name;
+		this.open_extension(doctype);
 		// A move's fields are not saved until the move is (editor.js make_queue, write_journal).
 		this.hold_saves = spec.kind === "move";
 		this.$root.empty();

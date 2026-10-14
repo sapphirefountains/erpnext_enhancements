@@ -1,0 +1,91 @@
+{
+ "doctype": "Item",
+ "article": null,
+ "_scope": "The core steps of the guided Item flow (Name & code, Description, Supplier & price, Stock & bin, Fixed asset). The 'more' steps fall back to ERPNext's own field descriptions until their help is written and reviewed.",
+ "fields": {
+  "item_code": {
+   "hint": "The vendor's part number as printed, or a CON-, PDT- or SRV- code (POL-0602)",
+   "help": "The code is the Item's ID everywhere: purchase orders, stock, labels and scans. Use the vendor's part number exactly as printed, minus any comma. Our own families are CON- for consumables, PDT-#### for products we build and SRV-### for services; PDT and SRV numbers come from their blocks of 100."
+  },
+  "custom_sku": {
+   "hint": "Our SKU for a product we sell; leave it blank for parts we only buy",
+   "help": "The Sales dashboard counts how many sellable items carry a SKU. A part we only buy and use has none."
+  },
+  "custom_item_identifier": {
+   "hint": "Filled in once the Item is saved: the code it was saved under",
+   "help": "The Item form copies the saved code here so it can be read and copied from the top of the form. Nothing needs typing."
+  },
+  "item_name": {
+   "hint": "CATEGORY, SUB-CATEGORY, KEY FEATURE, MATERIAL, SIZE, RATING, PACKAGING in capitals",
+   "help": "The name is how people find the item, so it reads like a catalog line, for example ELBOW, 90, SOC, PVC, 2\" SCH80. Use only the segments that apply, each separated by a comma and one space. A name that only repeats the code is refused; everything else the naming check finds is advice."
+  },
+  "item_group": {
+   "hint": "The most specific group in the item tree that fits",
+   "help": "The group drives reports, default accounts and the store-run picker. Pick one at the bottom of the tree rather than All Item Groups, which counts as unclassified."
+  },
+  "stock_uom": {
+   "hint": "The unit we count it in on the shelf, such as Unit, FT or Gallon",
+   "help": "Stock, reorder levels and prices are all kept in this unit. A supplier who sells by the box can still be ordered from in boxes once the box is added under Units & tax with how many units it holds."
+  },
+  "is_stock_item": {
+   "hint": "Tick for parts we keep on a shelf and count; not for services or assets",
+   "help": "A stock item has quantities in bins, shows in Stock Scan and can be reordered automatically. Services and fixed assets are not stock. It cannot be changed once stock has moved, so decide before the first receipt."
+  },
+  "is_fixed_asset": {
+   "hint": "Tick for equipment we own and track as an Asset, such as a rental fountain",
+   "help": "A fixed-asset item is never a stock item. The Fixed asset step then creates its Asset record, with its location and cost, so the Item and the Asset stay linked. Rental fountains are fixed assets."
+  },
+  "asset_category": {
+   "hint": "The asset category, which sets how it depreciates; needed for a fixed asset",
+   "help": "The category carries the depreciation settings and asset accounts. Rental fountains use Rental Fountain Fleet. The Asset made in the Fixed asset step takes its category from here."
+  },
+  "brand": {
+   "hint": "The manufacturer's brand when it matters for buying; never the category",
+   "help": "A brand goes here or in the name's KEY FEATURE or RATING segment, never as the first word of the name. Leave it blank for generic parts."
+  },
+  "description": {
+   "hint": "What the name can't hold: the full part number, specifications, notes for buyers",
+   "help": "Shown on quotations, purchase orders and the Item's page. When a vendor part number has commas, record it here in full, since the code drops them."
+  },
+  "purchase_uom": {
+   "hint": "The unit the supplier sells it in, if it differs from the stock unit",
+   "help": "Purchase orders default to this unit and convert it to the stock unit with the conversion under Units & tax. Leave it blank when we buy in the unit we count."
+  },
+  "min_order_qty": {
+   "hint": "The smallest order the supplier accepts, in the stock unit",
+   "help": "A purchase order for less than this is refused, so set it only when the supplier really has a minimum. Leave it at 0 when there is none."
+  },
+  "lead_time_days": {
+   "hint": "How many days the supplier usually takes to deliver",
+   "help": "Automatic reorders set their Required By date this many days ahead, so a rough figure is better than none."
+  },
+  "last_purchase_rate": {
+   "hint": "Set by ERPNext from the last purchase; nothing to enter",
+   "help": "ERPNext updates it from the last purchase, so it changes on its own. The buying price recorded in the block above is what a new purchase order offers."
+  },
+  "supplier_items": {
+   "hint": "Every supplier we buy it from, with their part number and link",
+   "help": "The block above adds or updates one supplier at a time; this table lists them all. A purchase order offers the supplier's part number and link, and reorders go to the default supplier chosen above."
+  },
+  "safety_stock": {
+   "hint": "The quantity to keep on hand as a cushion against late deliveries",
+   "help": "ERPNext uses it to suggest reorder levels. It orders nothing by itself; the reorder level does."
+  },
+  "reorder_levels": {
+   "hint": "Per bin: when stock falls to the level, request the quantity",
+   "help": "Each row is one bin, with its reorder level, the quantity to request and the kind of request. The block above writes the row for the default bin; add rows here for other bins. Requests are raised only while automatic reordering is on in Stock Settings."
+  },
+  "auto_create_assets": {
+   "hint": "Tick to have a purchase receipt create an Asset for each one received",
+   "help": "Leave it unticked for equipment we already own, such as the rental fleet: its Asset is made in the block above. Tick it for assets we are about to buy, so receiving them creates the records."
+  },
+  "is_grouped_asset": {
+   "hint": "Make one Asset for a whole receipt rather than one per unit",
+   "help": "Only matters with Auto create assets. Use it for things tracked as a set, such as a pallet of identical lights."
+  },
+  "asset_naming_series": {
+   "hint": "The series that automatically created Assets are numbered from",
+   "help": "Only used with Auto create assets. An Asset made in the block above takes the Asset form's own series."
+  }
+ }
+}

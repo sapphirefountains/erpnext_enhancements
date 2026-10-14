@@ -69,6 +69,211 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Closed Won rule that drifted from the scripts, and runs the Ctrl+S binding under node. Waived:
   `contact_person` and the items table's `item_code` / `uom`, none of which the flow shows.
 
+## [1.683.0] - 2026-10-14
+
+Form kit P8.1 (TASK-2026-02790, under P8 "Procurement flows"): **a guided Item flow.** A buyer can
+add a part named the POL-0602 way, with its supplier, last price, bin, reorder rule and bin label,
+from a phone or a desk, without opening the Item form; a fixed-asset item lands with its Asset, so
+the two never come apart (the inline Item the old Asset form offered vanished from its own field,
+ER-2026-420503). **It is not where an Item opens.** Parker and Clegg use the Item form daily and
+nobody has reviewed this flow yet, so an Item still opens in its form; the flow is reached from the
+form's new *Guided* button, the guided page's start screen, or `/desk/guided-entry/Item/new`.
+
+### Added
+
+- **The Item flow** (`form_kit/config/item.py`), walked by the generic guided page like Opportunity.
+  It walks the whole Item form: every field the form shows is in exactly one step (held by
+  `test_form_kit`, against ERPNext v16's real `item.json` merged with this app's fields and
+  Property Setters). Five core steps, then the rest of the form as "more" steps:
+  - **Name & code** (creates the Item). The **code helper** picks the family: the vendor's part
+    number as printed (a comma dropped, per SOP §6), `CON-<GROUP>-<DESCRIPTOR>[-<SIZE>]`,
+    `PDT-####` or `SRV-###`. A PDT or SRV number comes from a block the person chooses: the
+    blocks in use, each with its lowest free number, plus the first block nobody uses yet
+    (`inventory_enhancements/item_flow_rules.code_blocks`, on `item_naming_rules`' occupancy, so a
+    number held only by trailing text or a `(deleted)` tombstone stays taken and the five-digit
+    QuickBooks family never lands on a four-digit slot). Never `MAX()+1`, and never number 0.
+    The **name builder** has a box per POL-0602 segment (CATEGORY, SUB-CATEGORY, KEY FEATURE,
+    MATERIAL, SIZE, RATING, PACKAGING), each offering what the catalog already uses in that
+    position, narrowed by the CATEGORY chosen; Appendix A leads the CATEGORY list. The name is
+    assembled in capitals with one comma and one space between segments. The **naming check**
+    runs as you type: it is Stock Scan's own quick-Item preview (`stock_scan.preview_new_item`, the
+    guard's exact `blocking_findings` call), so the only refusals shown are the guard's two (a
+    duplicate code, a name that is just the code), and they hold back *Create and continue*;
+    every other finding, a STOP included, is advice.
+  - **Description.**
+  - **Supplier & price**: the supplier, their part number, the purchase link (Item Supplier's
+    `purchase_url`, the per-supplier link `api/procurement.py` already stores), whether reorders go
+    to them (the company's default supplier), and the last price paid (an Item Price on the buying
+    list, for that supplier, in the stock unit), so a purchase order can offer them.
+  - **Stock & bin** (stock items): the bin (the company's default warehouse), its reorder level and
+    quantity (a Purchase reorder rule), and *Print the bin label*, which opens Stock Scan's own
+    `/warehouse-labels?w=<bin>`. It says so when automatic reordering is off in Stock Settings.
+  - **Fixed asset** (fixed-asset items): creates the draft Asset (the Item's name and category,
+    location, purchase date, cost, *Available for event rental*), listing any already made.
+- **`api/item_flow.py`**: `naming_options`, `preview_item`, `code_blocks`, `get_setup` (reads,
+  GET) and `save_supplier`, `save_stock`, `create_asset` (writes, POST). Every write checks its
+  own DocType permission first (Item write; Item Price create or write before anything is written;
+  Asset create) and saves without `ignore_permissions`; every refusal comes before a write, in
+  words. **Nothing is made twice on a resend**: rows and the price are keyed on what they are
+  about, so a second identical request changes nothing and saves nothing; the Asset carries the
+  page's id in a new hidden, unique, no-copy `Asset.custom_guided_client_id`, a resend from the
+  same person returns the first Asset, and a resend racing the first insert collides on the index
+  and reads the winner after a rollback (the P4.7 pattern).
+- **`Item.custom_guided_client_id`** (hidden, unique, no-copy) and `create.client_id_field` on the
+  Item config, so a create resent by P4.7's no-signal queue returns the Item the first attempt
+  made instead of being refused as a duplicate code.
+- **Field help for the core steps** (`form_kit/help_text/item.json`): a hint and an explanation
+  for each of their 21 fields, the hint also the field's description, through 19 new
+  `Item-<field>-description` Property Setters and the descriptions of `custom_sku` and
+  `custom_item_identifier`. So the Item form shows the same lines, and its (i) tooltips the
+  explanations. The "more" steps keep ERPNext's own descriptions until their help is written and
+  reviewed.
+- **The guided page's extension point** (`public/js/form_kit/extensions.js`). A config step can
+  name a block (`extension`), which the DocType's extension draws above the step's fields. The
+  record editor both shells run (`public/js/form_kit/ui/editor.js`, v1.675.0) mounts it, so the
+  guided page and the Opportunity board's side panel draw a block the same way: it knows only
+  `render`, `on_change`, `before_create` and `leave`, lends the block the record's values,
+  `set_value`, `save_first` and `record_changed`, and catches a block that throws so the fields
+  always show. Each shell picks the DocType's extension when a record opens (`open_extension`) and
+  drops it on reset; the guided page alone adds Done after the core steps and *More details*.
+  `guided_entry.bundle.js` goes to version 3, so a tab still holding version 2 (no
+  `extension_for`) takes the new kit. The Item blocks are `public/js/guided_item/`; their decisions (the name
+  assembly, the code families, refusals versus advice, the blocks' starting values) are pure
+  modules run under node by the new `test_guided_item`.
+- **"More" steps** (config `more`): past the core of a flow, Next on the last core step offers
+  Done, with *More details* under the step and every step still in the rail. A section nobody
+  placed is a "more" step too when the config has any.
+- **`open_by_default`** in a config (default True): `frappe.boot.sf_guided` now carries `default`
+  per DocType, and `guided_default.js` takes over where records open only for the defaults
+  (`opening.js` `opens_by_default`); `sf_guided.has_flow` answers for the Guided button. The start
+  screen lists a non-default flow only for people who can create one, and its New starts on the
+  guided page directly.
+- **A Guided button on the Item form** (`public/js/item.js`), for people who may open the guided
+  page: this Item on the guided page, or step 1 of a new one.
+- **Item Manager may open the guided page** (the Page's roles), the role that creates Items.
+- Completeness for Item: a non-stock item wants its code, name, group, unit and a supplier; a stock
+  item also a reorder level. `stages.labels` names a stage whose value is not words.
+- **Notes and comments on a saved Item** (v1.678.2's rule: every guided DocType). They come from
+  the shared editor with nothing Item-specific: the Desk's Comments App under the steps, and no
+  Notes list, because Item has no `notes` table of CRM Note (`record_notes` answers `has_notes:
+  false` rather than refusing; `test_form_kit TestItemNotesAndComments`).
+- Tests: `test_item_flow` (new, own stub: the blocks and both occupancy traps, every permission,
+  idempotency, the racing resend), `test_guided_item` (new, node: the pure modules, the page's
+  bundle, the wiring), and `test_form_kit` now builds the real Item meta
+  (`tests/fixtures/form_kit/erpnext_v16_item.json`, trimmed from ERPNext `v16.50.0`) and holds the
+  Item flow to the engine's rules. Both new suites have their own CI steps.
+
+### Changed
+
+- `api.stock_scan.check_new_item` answers through `preview_new_item`, which the guided Item flow
+  shares behind its own permission check (Item create, not Stock Scan's roles). Same answer.
+- `boot._guided_doctypes` tries each DocType on its own, so one broken flow no longer empties
+  `frappe.boot.sf_guided` and with it Opportunity's default.
+- **The default now follows what a person may do with the records.** `sf_guided` carries
+  `default` (a saved record opens on the guided page) only for someone with write permission on
+  the DocType, and `default_new` (a New does) only for someone with create permission, both on
+  top of `open_by_default`. Without it, letting Item Managers onto the guided page would have
+  taken deals off the form for an Item Manager who can read Opportunities but holds no Sales role.
+  A person who may only read keeps the form; the flow is still there to open on purpose.
+- **The Desk Item form changes for everyone, not only guided users.** The 19 new `description`
+  Property Setters and the two custom-field descriptions replace the descriptions the Item form
+  shows under those fields (and in Quick Entry and grids), and because Item now has a help file,
+  the form's (i) tooltips on those fields show the longer explanation too.
+- `create_record` also settles a resend racing the first insert when it collides on the primary
+  key (`DuplicateEntryError`) rather than on the id's unique index: an Item is named by its code,
+  so its primary key is hit first. Same rollback and re-read.
+- Config `once_fields`: editable while the record is created, read-only once it exists. Item
+  Code is one, so a saved Item's code is never typed over in the flow (it changes by renaming).
+
+### Fixed (from the review of #1270, before merge)
+
+- Picking a supplier that has no Item Supplier row yet cleared nothing: the previous supplier's
+  part number, link and price stayed in the boxes and were saved for the new one, with a new
+  Item Price at the old price. The boxes now hold the picked supplier's own details or nothing,
+  and "Reorders go to this supplier" starts ticked only when the Item has no default supplier yet
+  or the picked one already is it.
+- The price shown for a supplier could be a stale one: the rows were read newest first into a
+  dict, which kept the oldest, across units. Now only the stock unit's price, the newest per
+  supplier. A save sends a price only when it was changed in the box.
+- Moving an Item to another bin left the old bin's Purchase reorder rule behind. It moves with the
+  item now; when the new bin already has its own rule the old one is kept and the page says so.
+- The page catches a block's `before_create` that throws, as it does `render`, `on_change` and
+  `leave`.
+
+### Fixed (second review of #1270)
+
+- **`Item.custom_guided_client_id` is in the Item layout.** v1.682.0 (#1297, merged first)
+  regenerated `Item-main-field_order` and added `test_layout_field_order_coverage`, which fails on a
+  field the array leaves out. The field sits after `custom_item_identifier` in
+  `scripts/layout/specs/item.json`, and only that Property Setter's value was rewritten, by the
+  generator's own build_universe, expand_layout and lint against ERPNext `origin/version-16`
+  `item.json` and its `dump_fixture`. The generator still refuses a full write while
+  `property_setter.json` is not name-sorted. The test that pinned the stale layout
+  (`test_the_fields_the_stale_layout_moved_are_named_where_they_belong`) now holds the corrected one:
+  Default Unit of Measure, Maintain Stock and the asset ticks in Details, and Maintenance Billing
+  holding only its own two fields. The steps still name those fields, so a section that moves again
+  cannot move a field between steps.
+- A tab still holding `sf_form_kit` v2 (loaded before the deploy) no longer calls the editor's
+  `open_extension` or the kit's `opens_by_default` without checking that they exist, as `ends_core`
+  already did. It gets no blocks and lists every flow, as before.
+- The Item blocks read a server message's HTML in an inert document (`DOMParser`) rather than a
+  created `div`, whose `innerHTML` runs an `<img onerror>` even when it is never attached.
+- `item_flow_rules` refuses `nan` and `inf` as a price, reorder level, reorder quantity or purchase
+  amount. `float()` accepts them, and NaN passes every `< 0` check.
+
+### Checked, not changed
+
+- **Item Manager on the guided page's roles adds no one.** All 15 people who hold Item Manager on
+  production already hold Sales User, which the Page already listed (reviewed 2026-10-14). The role
+  is kept so the page stays open to an Item Manager who is not in Sales.
+
+## [1.682.1] - 2026-10-14
+
+### Fixed
+- **The blank second "Comments" tab is gone again from 12 forms, and so is Opportunity's old Lost
+  Reason.** Both had been retired, and both came back.
+  - **What came back:** 14 Custom Fields.
+    - The 12 empty duplicate "Comments" Tab Breaks that v1.159.2 deleted: Address, Batch, Delivery
+      Note, Lead, Project, Quotation, Serial No, Stock Entry and Task's `custom_comments_tab`, and
+      Employee, Purchase Order and Supplier Quotation's `custom_comments`.
+    - Opportunity's `custom_lost_reason` and `custom_lost_competitor`, which v1.159.0 replaced with
+      ERPNext's own `lost_reasons` and `competitors`. The Desk showed a second Lost Reason again,
+      and four deals were given a value in it.
+  - **When:** all 14 were re-created in one minute, 18:07–18:08 on 2026-07-18, the evening the
+    site moved to the new Google Cloud infrastructure.
+  - **Cause:** a migrate ran a build from before v1.159.0. Its fixtures still held these records,
+    with the same names and `insert_after` as on prod (five of them with an empty `module`, as in
+    those old fixtures). Fixture sync
+    only adds, and the removal patches were already in `tabPatch Log`, so nothing deleted them
+    again. No code creates them: it was one downgraded migrate.
+  - **Cleanup:** `patches/retire_resurrected_customizations` runs both removal patches' `execute()`
+    once more. Both are idempotent, and the patch never raises.
+  - **Data, checked on prod first:** the Tab Breaks carry none. The four `custom_lost_reason`
+    values (CRM-OPP-2026-00068, -00104, -00124, -00137) are all "Other" on Lost deals, and each
+    deal already has a native `lost_reasons` row. `custom_lost_competitor` was empty everywhere.
+    Nothing in the fixtures is anchored on, sets a property on, or orders any of the 14.
+- **Downgrade guard:** a migrate now refuses to run a build older than the one that last migrated
+  the site.
+  - `setup/downgrade_guard.py` runs first in `before_migrate`. That is before both patch phases
+    and fixture sync, while the site's `Installed Application` row still holds the previous
+    version; v16 updates it only afterwards (`InstalledApplications.update_versions`).
+  - **Why it's safe:** every release bumps the version and main only moves forward, so on this
+    pipeline an older build is always a mistake: a stale image, a branch deployed by hand, or two
+    deploys finishing out of order. A rollback ships as a revert commit with a new version.
+  - **Override:** `allow_erpnext_enhancements_downgrade: 1` in a site's `site_config.json`, for
+    one migrate.
+  - **Failure mode:** the guard never blocks on its own failure.
+  - **CI keeps the version moving forward:** a new "Version moves forward" step in the
+    `version-sync` job. A PR's `__version__` must be strictly above its base branch's as it stands
+    when CI runs, and a push to main must not go below the commit it replaced. Without it, a
+    GitHub "Revert" PR (which restores the old number) or a version conflict resolved toward the
+    lower side would make every deploy refuse to migrate until someone bumped it.
+- **New guard:** `tests/test_retired_customizations.py`, in its own CI step. It pins:
+  - the downgrade guard, and that it runs first;
+  - the cleanup patch;
+  - that none of the 14 retired fields (read from the two removal patches) is back in the
+    fixtures, anchored on, ordered, or created by app code.
+
 ## [1.682.0] - 2026-10-14
 
 ### Fixed
