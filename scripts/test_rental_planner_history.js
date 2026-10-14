@@ -154,7 +154,13 @@ function makeWorld() {
 		replies: new Map(),
 		confirmAnswer: true,
 	};
-	world.route = () => world.entries[world.index].replace(/^\/desk\//, "").split("/").filter(Boolean);
+	// An entry is its whole address; the route is its path, and the query is route options.
+	world.path = () => world.entries[world.index].split("?")[0];
+	world.search = () => {
+		const q = world.entries[world.index].split("?")[1];
+		return q ? `?${q}` : "";
+	};
+	world.route = () => world.path().replace(/^\/desk\//, "").split("/").filter(Boolean);
 	return world;
 }
 
@@ -170,7 +176,13 @@ function loadPage(world, options) {
 	const pages = { "rental-planner": {} };
 	const routeFlags = {};
 
+	// The router's route(): parse() copies the address's query into frappe.route_options, merged
+	// into what is there (set_route_options_from_url), then the page for the route is shown.
 	const show = () => {
+		if (!frappe.route_options) frappe.route_options = {};
+		new URLSearchParams(world.search()).forEach((value, key) => {
+			frappe.route_options[key] = value;
+		});
 		const route = world.route();
 		const page = pages[route[0]];
 		if (!page) return;
@@ -220,13 +232,18 @@ function loadPage(world, options) {
 	};
 
 	const responders = {
-		"erpnext_enhancements.asset_management.rental_planner.get_timeline": () =>
-			world.timeline || {
-				start: "2026-10-01 00:00:00",
-				days: 31,
-				fountains: [],
-				pools: [],
-			},
+		// The board's first day asked for is remembered in world.starts.
+		"erpnext_enhancements.asset_management.rental_planner.get_timeline": (args) => {
+			world.starts = (world.starts || []).concat(args.start || "");
+			return (
+				world.timeline || {
+					start: "2026-10-01 00:00:00",
+					days: 31,
+					fountains: [],
+					pools: [],
+				}
+			);
+		},
 		"erpnext_enhancements.asset_management.rental_availability.get_availability": () => ({
 			fountains: [{ asset: "F-1", asset_name: "Tiered Fountain", item_code: "TF", available: true, conflicts: [] }],
 			pools: [],
@@ -242,17 +259,36 @@ function loadPage(world, options) {
 		route_flags: routeFlags,
 		route_options: null,
 		get_route: () => world.route(),
+		// v16's set_route: a plain object among the parts becomes frappe.route_options (make_url),
+		// and push_state pushes (or, with replace_route, replaces) only when the path or the query
+		// differs from the address on screen, then routes. Before v16.50 the query is JSON-encoded,
+		// quotes and all, and decides only whether to push: the PATH alone is pushed. From v16.50
+		// (`opts.queryInUrl`, frappe PR #40040) a plain value is written as itself and the query is
+		// pushed with the path.
 		set_route(...args) {
 			const route = Array.isArray(args[0]) ? args[0] : args;
-			const target = "/desk/" + route.join("/");
-			if (routeFlags.replace_route) {
-				world.entries[world.index] = target;
-			} else if (world.entries[world.index] !== target) {
-				world.entries = world.entries.slice(0, world.index + 1);
-				world.entries.push(target);
-				world.index += 1;
+			const parts = [];
+			route.forEach((part) => {
+				if (part && typeof part === "object") frappe.route_options = part;
+				else parts.push(part);
+			});
+			const path = "/desk/" + parts.join("/");
+			const encode = (v) => (opts.queryInUrl && (v === null || typeof v !== "object") ? String(v) : JSON.stringify(v));
+			const query = Object.entries(frappe.route_options || {})
+				.map(([k, v]) => `${k}=` + encodeURIComponent(encode(v)))
+				.join("&");
+			const search = query ? `?${query}` : "";
+			if (world.path() !== path || world.search() !== search) {
+				const target = opts.queryInUrl ? path + search : path;
+				if (routeFlags.replace_route) {
+					world.entries[world.index] = target;
+				} else {
+					world.entries = world.entries.slice(0, world.index + 1);
+					world.entries.push(target);
+					world.index += 1;
+				}
+				show();
 			}
-			show();
 			return Promise.resolve();
 		},
 		call({ method, args }) {
@@ -310,9 +346,29 @@ function loadPage(world, options) {
 		},
 		sessionStorage: storage(world.session),
 		localStorage: storage(world.local),
+		// The browser's session history: a page's own push adds an entry and a replace rewrites the
+		// one on screen, neither of them routing (no popstate fires for either).
 		history: {
+			state: null,
 			back() {
 				world.pendingTraversal = -1;
+			},
+			pushState(_state, _title, url) {
+				world.entries = world.entries.slice(0, world.index + 1);
+				world.entries.push(String(url));
+				world.index += 1;
+				world.pushes = (world.pushes || 0) + 1;
+			},
+			replaceState(_state, _title, url) {
+				world.entries[world.index] = String(url);
+			},
+		},
+		location: {
+			get pathname() {
+				return world.path();
+			},
+			get search() {
+				return world.search();
 			},
 		},
 	};
@@ -336,6 +392,7 @@ function loadPage(world, options) {
 	const desk = {
 		world,
 		registry,
+		frappe,
 		show,
 		// The real sf_kit.bundle.js installed on this page's window (a fresh copy of the module per
 		// page, so it installs again).
@@ -654,6 +711,98 @@ test("Keyboard: a finished step on the rail is a button; the current one is mark
 	await desk.flush();
 	check("a mouse click on step 1 goes back to it too", desk.here(), "/desk/rental-planner/new/dates");
 	check("without moving focus", desk.registry.focused, null);
+});
+
+// The board's dates in its address (v1.662.0): ?start=YYYY-MM-DD, bare for today. Each runs under
+// the router before v16.50 (the path alone is pushed) and after (the query goes with it).
+const BOARD = "/desk/rental-planner";
+[
+	["v16 before 50", {}],
+	["v16.50+", { queryInUrl: true }],
+].forEach(([router, options]) => {
+	test(`Board dates (${router}): a pasted ?start= opens those dates; a reload keeps them`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(`${BOARD}?start=2026-11-02`);
+		await settle();
+		check("those dates", [desk.planner().board_start, world.starts], ["2026-11-02", ["2026-11-02"]]);
+		check("the address untouched, no entry added", [desk.here(), desk.length()], [`${BOARD}?start=2026-11-02`, 2]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		const reloaded = loadPage(world, options);
+		reloaded.show();
+		await settle();
+		check("a reload: the same dates", reloaded.planner().board_start, "2026-11-02");
+	});
+
+	test(`Board dates (${router}): ‹ › and Today are entries; Back and Forward walk them`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(BOARD);
+		await settle();
+		check("today, on the bare address", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+		await desk.click("›");
+		check("›: its own entry", [desk.here(), desk.length(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, 3, "2026-10-15"]);
+		await desk.click("›");
+		check("› again", [desk.here(), desk.length()], [`${BOARD}?start=2026-10-29`, 4]);
+		await desk.back();
+		check("Back: the dates before, drawn again", [desk.planner().board_start, desk.here(), world.starts.slice(-1)[0]], ["2026-10-15", `${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		await desk.back();
+		check("Back: today", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+		await desk.forward();
+		check("Forward", [desk.planner().board_start, desk.here()], ["2026-10-15", `${BOARD}?start=2026-10-15`]);
+		await desk.click("‹");
+		check("‹ back to today is the bare address, as an entry", [desk.here(), desk.length()], [BOARD, 4]);
+		await desk.click("Today");
+		check("Today on today adds nothing", desk.length(), 4);
+	});
+
+	test(`Board dates (${router}): a malformed start, or today's, is today, corrected in place`, async () => {
+		for (const bad of ["2026-13-01", "nope", "2026-10-1", "2026-10-01"]) {
+			const world = makeWorld();
+			const desk = loadPage(world, options);
+			desk.open(`${BOARD}?start=${bad}`);
+			await settle();
+			check(`?start=${bad}: today, quietly`, [desk.planner().board_start, world.lastMessage], ["2026-10-01", undefined]);
+			check(`?start=${bad}: the bare address, no entry`, [desk.here(), desk.length()], [BOARD, 2]);
+		}
+	});
+
+	test(`Board dates (${router}): another page's route options open those dates and reach the address`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.frappe.set_route("rental-planner", { start: "2026-12-01" });
+		await settle();
+		check("those dates", [desk.planner().board_start, desk.here()], ["2026-12-01", `${BOARD}?start=2026-12-01`]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		desk.frappe.set_route("somewhere-else");
+		desk.frappe.set_route("rental-planner");
+		await settle();
+		check("a later plain route replays nothing: today", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+	});
+
+	test(`Board dates (${router}): the flow returns to the board at the dates it left`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(BOARD);
+		await settle();
+		await desk.click("›");
+		desk.world.primary.fn(); // New Rental
+		await desk.flush();
+		check("on step 1", desk.here(), "/desk/rental-planner/new/dates");
+		await desk.click("Back to Planner");
+		check("the flow's Back steps back onto those dates", [desk.here(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		desk.world.primary.fn();
+		await desk.flush();
+		await throughDates(desk);
+		desk.planner().draft.fountains.push({ asset: "F-1", asset_name: "Tiered Fountain", rate: 0 });
+		await desk.click("Next: Customer");
+		desk.world.fg.values = { customer: "CUST-1", create_project: 1 };
+		await desk.click("Next: Review");
+		await desk.click("Place Hold");
+		await desk.click("Back to Planner");
+		check("from the booked screen: a new entry at those dates", [desk.here(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		check("route_options consumed", desk.frappe.route_options, null);
+	});
 });
 
 (async () => {

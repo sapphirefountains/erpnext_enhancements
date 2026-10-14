@@ -23,7 +23,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `historical.py` | Historical Opportunities (v1.629.0, WI-024): created before 2025-08-01 and nobody's activity in 90 days, stored as `Opportunity.custom_is_historical`, and left out of every won-without-project warning and the Closed-Won KPIs | `refresh_historical_flags`, `active_recently`, `exclude_filters` / `exclude_filter_dict` / `exclude_sql`, `is_historical`, `clear_on_person_status_change` | `scheduler_events.daily`; `clear_on_person_status_change` → `Opportunity` `before_save`; see below |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/desk/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
-| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
+| `page/opportunity_board/*` | The new Opportunity board (`/desk/opportunity-board`, form kit P6, v1.654.0): stage columns, cards with age, value-stream band, amount, close date and completeness, rows by value stream, the forecast strip, drag (long-press on touch) and the phone's tap-to-move; part B (v1.663.0) the table, timeline and needs-attention views under one filter bar, On Hold folded, snooze, quick filters and saved views. Pure decisions in `public/js/opportunity_board/board.js` (bundle `opportunity_board.bundle.js` / `.css`) | `get_board` (whitelisted, GET); `snooze` (whitelisted, POST: write permission, the `modified` lock, `db_set` of `custom_snoozed_until` / `custom_snooze_reason`) | CRM sidebar (`setup/workspace_tweaks.py`); moves save through `form_kit.api.save_step`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -351,6 +351,120 @@ where status not in ('Closed Won', 'Lost', 'Closed', 'Converted')
 	and ifnull(custom_is_historical, 0) = 0
 	and substr(expected_closing, 1, 7) in ('2026-10', '2026-11')
 group by substr(expected_closing, 1, 7)
+```
+
+### Part B: views, needs attention, focus (v1.663.0)
+
+Form kit P6.3, P6.4 and P6.8. Out of scope still: the side panel (P6.6), quick add and bulk
+(P6.7), and retiring the stock Kanban's patches and the list's redirect (P6.10, waiting on Nik's
+sign-off on the board).
+
+- **Three views and a list under one filter bar** (P6.3). The views are the board, a sortable table,
+  and a timeline of expected close dates by month (past months marked; deals with no date last).
+  The list is Needs attention. Each is its own route: `/desk/opportunity-board/<stages|streams>`,
+  `/table`, `/timeline` and `/attention`, with the deal panel at `…/move/<name>` over any of them.
+  The filters are page state, not part of the address, so switching views keeps them, and Back
+  returns to the view before.
+- **Needs attention** (P6.4) lists every open deal that is any of the following:
+  - **stale**: past the glow thresholds; On Hold never glows, so it is never stale;
+  - **past its expected close date**;
+  - **missing an amount**;
+  - **missing what its stage asks for**: the P4.6 completeness, the form kit's own lists in
+    `form_kit/config/opportunity.py`.
+
+  The list is sorted by value, largest first, with no amount last. Each chip says why the deal is
+  there. A snoozed deal is not on it until its date comes. On Hold deals are on it for the last
+  three rules: being parked is no reason to have no amount.
+
+  A deal opens the normal way, which is the guided page by default. The task says "in the side
+  panel"; that waits for P6.6, and the code says so where it opens.
+- **On Hold folded** (P6.8). The column folds into a count by default: 36 of 74 open deals sat
+  there on 2026-10-14. "Show them" unfolds it and "Fold" folds it again. A folded column is still a
+  drop target, and its deals still count in every total.
+- **Snooze** (P6.8) is in the deal panel: "Hide it until" a date, and "Why" if the person wants to
+  say.
+  - A snoozed deal is hidden from every view and from the attention list until its date. On that
+    date it comes back marked **Back from snooze**, until someone wakes it ("Clear the mark") or
+    snoozes it again.
+  - "Show snoozed (N)" shows the snoozed deals, dimmed and marked.
+  - The fields are `custom_snoozed_until` (Date) and `custom_snooze_reason` (Small Text). Both are
+    hidden on the form and `no_copy`, in `fixtures/custom_field.json`. Hidden fields are not in
+    the guided flow, so the save goes through its own endpoint, `opportunity_board.snooze`
+    (POST). That endpoint checks write permission on the deal, takes the same `modified` lock and
+    conflict shape as `save_step`, and refuses a date that is not after today or is more than a
+    year out.
+  - It writes only the two fields, with `db_set`. A focus tool must not be stopped by an unrelated
+    validation, nor re-run the stage clock or probability hooks. It adds an Info comment to the
+    deal's timeline and sends the board's realtime event.
+- **Quick filters** (P6.8): My deals (Opportunity Owner is you), an owner, a value stream (or none),
+  "Over $" an amount, and closing this month.
+  - The forecast strip, the column totals and the count in the head all reflect the deals the
+    filters show. With no filter and Show snoozed on, they are the whole board, which is what the
+    SQL checks above measure.
+- **Saved views** (P6.8) use the planners' own store, `api/planner_views_prefs.py`, under the
+  planner key `board`. That means the caller's `__UserSettings` row, written straight to the table,
+  so a deploy's Redis flush cannot lose a view.
+  - A view holds the filters, the view, the board's layout and the table's sort.
+  - "Last used" is saved a moment after anything changes, and a bare `/desk/opportunity-board` opens
+    it. Any other address wins.
+  - Named views come from "Save this view" and the Saved views list. Up to 20 per person, and saving
+    a name again replaces it.
+  - The board's views are gated by read permission on Opportunity, not a planner role.
+
+### Needs attention check
+
+The list as SQL, one row per deal. The test suite runs this exact query on an SQLite copy of its
+test deals, child tables included, and holds the page's list to it, deal for deal and in order of
+value.
+
+To run it on the site, put today's date in place of `2026-10-14`, and the stale cutoff in place of
+`2026-10-07`. The cutoff is today minus the Sales Pipeline Dashboard's amber days, or minus its red
+days when amber is 0; drop that line when both are 0.
+
+Two things differ from the page, and neither can happen through the Desk:
+- MariaDB's `trim` strips spaces only, where the page treats any whitespace as blank.
+- Under PAD SPACE, a value stream with a trailing space would still match its name. A Value Stream
+  is a Link, so its value is always a real name.
+
+```sql
+select o.name, o.opportunity_amount
+from `tabOpportunity` o
+where o.status not in ('Closed Won', 'Lost', 'Closed', 'Converted')
+	and ifnull(o.custom_is_historical, 0) = 0
+	and (o.custom_snoozed_until is null or o.custom_snoozed_until <= '2026-10-14')
+	and (
+		(o.status <> 'On Hold' and date(coalesce(o.custom_stage_changed_on, o.modified)) <= '2026-10-07')
+		or o.expected_closing < '2026-10-14'
+		or not ifnull(o.opportunity_amount, 0) > 0
+		or trim(ifnull(o.party_name, '')) = ''
+		or trim(ifnull(o.custom_opportunity_name, '')) = ''
+		or trim(ifnull(o.opportunity_owner, '')) = ''
+		or trim(ifnull(o.custom_opportunity_summary, '')) = ''
+		or (trim(ifnull(o.primary_contact, '')) = '' and trim(ifnull(o.contact_person, '')) = '')
+		or not exists (select 1 from `tabValue Stream` v where v.parenttype = 'Opportunity'
+			and v.parentfield = 'custom_value_stream' and v.parent = o.name
+			and trim(ifnull(v.value_stream, '')) <> '')
+		or (o.status in ('Needs Analysis', 'Proposal/Price Quote', 'Negotiation/Review') and (
+			trim(ifnull(o.custom_lead_source, '')) = ''
+			or o.expected_closing is null
+			or not exists (select 1 from `tabValue Stream` v where v.parenttype = 'Opportunity'
+				and v.parentfield = 'custom_value_stream' and v.parent = o.name and (
+					(v.value_stream = 'Design' and exists (select 1 from `tabDesign Customer Requests` r
+						where r.parenttype = 'Opportunity' and r.parentfield = 'custom_design_customer_requests'
+						and r.parent = o.name and trim(ifnull(r.design_customer_requests, '')) <> ''))
+					or (v.value_stream = 'Build' and exists (select 1 from `tabBuild Customer Requests` r
+						where r.parenttype = 'Opportunity' and r.parentfield = 'custom_build_customer_requests'
+						and r.parent = o.name and trim(ifnull(r.build_customer_requests, '')) <> ''))
+					or (v.value_stream = 'Service' and exists (select 1 from `tabService Customer Requests` r
+						where r.parenttype = 'Opportunity' and r.parentfield = 'custom_service_customer_requests'
+						and r.parent = o.name and trim(ifnull(r.service_customer_requests, '')) <> ''))
+					or (v.value_stream = 'Events' and exists (select 1 from `tabRent Customer Requests` r
+						where r.parenttype = 'Opportunity' and r.parentfield = 'custom_rent_customer_requests'
+						and r.parent = o.name and trim(ifnull(r.rent_customer_requests, '')) <> ''))))))
+		or (o.status in ('Proposal/Price Quote', 'Negotiation/Review')
+			and trim(ifnull(o.primary_address, '')) = '')
+	)
+order by case when ifnull(o.opportunity_amount, 0) > 0 then 0 else 1 end, o.opportunity_amount desc, o.name
 ```
 
 ## Gotchas

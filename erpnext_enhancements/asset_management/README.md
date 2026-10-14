@@ -220,6 +220,12 @@ Open it from the workspace, the Rental Booking list, or a booking's View menu.
     nothing.
   - Once booked, the draft is cleared, so Back from the confirmation cannot book the same fountains
     twice.
+- **The board's dates are in its address** (v1.662.0): `/desk/rental-planner?start=YYYY-MM-DD` is
+  the board's first day, and the bare address is today. ‹ › and Today each push an entry, so Back
+  returns to the dates before, and a reload or a pasted link opens the same ones. The flow's
+  Planner buttons return to the dates it left. The page writes that one address itself, because
+  routing to the page it is on would make an older v16 router drop the query, and reads `start`
+  back from `frappe.route_options`. A start that is not a real calendar day is today.
   - `scripts/test_rental_planner_history.js` runs the real script against a model of the v16 router,
     from `tests/test_rental_planner.py`.
 

@@ -78,6 +78,212 @@ No UI changes: the Party entry component is next, once the side panel (P4.4) has
   `custom_customer__lead_address`, which `api/pickup_routing.py` and `api/travel.py` still read as a
   fallback.
 
+## [1.663.0] - 2026-10-14
+
+Form kit P6, part B (ERPNext TASK-2026-02774, "New Opportunity board"). This release adds:
+
+- **P6.3:** the board, a table and a timeline under one filter bar.
+- **P6.4:** the needs-attention list.
+- **P6.8:** focus, meaning On Hold folded, snooze, quick filters and saved views.
+
+Part A (v1.654.0) matched SQL on prod at 74 open deals: $293,725, and $101,663 weighted.
+
+Still out of scope:
+
+- **P6.6:** the side panel.
+- **P6.7:** quick add and bulk.
+- **P6.10:** retiring the stock Kanban's patches and the list's redirect, which waits for Nik's
+  sign-off on the board. The Kanban, its patches and the redirect are untouched.
+
+### Added
+
+- **Three views under one filter bar** (P6.3). The views are the board, a sortable table, and a
+  timeline of expected close dates by month. Past months are marked, and deals with no date come
+  last.
+  - Each view is its own route: `/desk/opportunity-board/<stages|streams>`, `/table`, `/timeline`
+    and `/attention`. The deal panel sits at `…/move/<name>` over any of them.
+  - The filters are page state, not the address, so switching views keeps them and Back returns to
+    the view before.
+  - The table's column heads sort, and a turned column keeps blanks (no amount, no date) last
+    either way.
+  - On a phone the table stacks into one block per deal, each value under its column's name.
+    Nothing scrolls sideways at 390px.
+  - Part A's addresses still open the same screens.
+- **Needs attention** (P6.4) lists every open deal that matches any of these rules:
+  - **stale**: past the glow thresholds; On Hold is never stale, as it never glows;
+  - **past its expected close date**;
+  - **missing an amount**;
+  - **missing what its stage asks for**: the P4.6 completeness, from the form kit's own lists.
+
+  The list is sorted by value, with no amount last, and each deal carries a chip for each reason.
+  A snoozed deal stays off it until its date. The SQL that checks it is in
+  `crm_enhancements/README.md`. The test suite runs that exact query on SQLite, child tables
+  included, against deals that go through the real `get_board` and the form kit's real
+  `completeness_for`. Both must name the same deals in the same order.
+
+  A deal opens the normal way (the guided page by default). The task says "in the side panel";
+  that waits for P6.6, and the code says so where the deal opens.
+- **On Hold folds into a count by default** (P6.8). On prod on 2026-10-14, 36 of 74 open deals sat
+  there.
+  - "Show them" unfolds the column and "Fold" folds it again.
+  - A folded column is narrower, is still a drop target, and its deals still count in every total.
+- **Snooze** (P6.8), in the deal panel. Pick a date to "Hide it until", and add a reason if you
+  like.
+  - A snoozed deal is hidden from every view until its date. On that date it comes back marked
+    **Back from snooze**, until someone wakes it or snoozes it again.
+  - "Show snoozed (N)" shows the snoozed deals, dimmed and marked. The head says how many are
+    hidden.
+  - **Two new Opportunity custom fields**, `custom_snoozed_until` (Date) and
+    `custom_snooze_reason` (Small Text). Both are hidden on the form, `no_copy` and have no
+    default; they are in `fixtures/custom_field.json`, after `custom_guided_client_id`.
+  - Hidden fields are not in the guided flow, so the guided page never shows them and
+    `save_step` cannot write them. Snoozing has its own endpoint instead.
+- **`opportunity_board.snooze`**, POST. It checks write permission on the deal and takes the same
+  `modified` lock and conflict shape as `save_step`.
+  - It refuses a date that is not after today or is more than a year out, and it refuses a closed
+    deal.
+  - It writes only the two fields, with `db_set`, never `save()`. A focus tool must not be stopped
+    by an unrelated validation (an old deal missing a field that became required since), nor re-run
+    the stage clock or the probability hooks.
+  - It leaves an Info comment on the deal's timeline and sends the board's realtime event.
+  - **It returns `str(get_datetime(modified))`.** `db_set` stamps `now()`'s text, which always
+    carries `.000000`, but the table's datetime prints without microseconds when they are zero.
+    Returning the raw text would turn the next move into a false conflict once in a million saves.
+- **Quick filters** (P6.8): My deals, an owner, a value stream (or "No value stream"), "Over $" an
+  amount, and Closing this month.
+  - The forecast strip, the column totals and the head's count follow the filters, so the strip
+    forecasts what is shown. With no filter and Show snoozed on, they are the whole board that the
+    SQL checks measure.
+  - On a phone the bar folds behind one button.
+- **Saved views** (P6.8) live in the planners' own store, `api/planner_views_prefs.py`, under a
+  new planner key, `board`.
+  - That is the caller's `__UserSettings` row, written straight to the table. A deploy's Redis
+    FLUSHDB cannot lose a view, which frappe's own `user_settings.save` would.
+  - A view holds the filters, the view, the board's layout and the table's sort. The server's
+    schema is held equal to the page's by test.
+  - "Last used" is saved a moment after anything changes, and a bare `/desk/opportunity-board`
+    opens it. Any other address wins.
+  - "Save this view" names one, and the Saved views list applies or deletes it. Up to 20 per
+    person.
+  - The board's views are gated by read permission on Opportunity, not a planner role. The
+    planners' own schemas and gates are unchanged.
+- **`get_board` sends more** per deal: `owner` and `owner_name`, `snoozed_until` and
+  `snooze_reason`. It also sends `can_snooze`, so a site that has not migrated the fields yet
+  shows no snooze controls.
+- **`tests/test_opportunity_board_focus.py`**, bench-free, with its own CI step:
+  - the filters, snooze states, attention rules and order, table sort, timeline months, routes and
+    saved-view shape, under node;
+  - the attention SQL check;
+  - the snooze endpoint against a frappe stub;
+  - the prefs `board` key;
+  - the two fields;
+  - the page's wiring.
+
+- **What the PR review found, fixed before merge:**
+  - An explicit `/stages` address no longer comes up as value-stream rows because the last-used
+    view was "By value stream". The remembered layout applies only to a bare address or another
+    view (`last_layout_applies`).
+  - A click on the layout already shown now redraws. There is no route change for it, so it used
+    to do nothing (`layout_change`).
+  - A saved owner or stream that no deal has any more stays a selected choice, instead of reading
+    "Anyone" while it still filters.
+  - The snooze controls appear only to someone who may write an Opportunity.
+  - The snooze's `db_set` passes `notify=True`, so a form open on the deal hears of it
+    (`doc_update`, which is a different event from the board's own).
+  - The date input stops at the server's one-year cap.
+
+### Changed
+
+- `tests/test_opportunity_board.py`, part A's suite, expects the routes' new `view` and `bare`
+  keys, the deal's new fields, and seven quiet requests where there were two.
+
+## [1.662.0] - 2026-10-14
+
+### Added
+
+- **Links that keep your place: three Desk pages keep what they show in the address** (custom pages
+  S5a, ERPNext TASK-2026-02807). A reload, a pasted link and Back and Forward now land on the same
+  state, where before a reload went back to the default and Back left the page.
+  - **Maintenance Day Board: the day.** `/desk/maintenance-day-board?date=YYYY-MM-DD` shows that day,
+    and the bare address is today. The board gains ‹ › Today and a date box. Each day stepped to is
+    a history entry, so Back returns to the day before. Today's date in the address, or one that is
+    not a real calendar day, leaves the bare address, which keeps following the clock past midnight
+    on a wall screen. `get_day_board_data` takes an optional `date`. With none, or today's, it runs
+    exactly the queries it always has. For another day the columns are read as of that day: the
+    drafts scheduled for it (`scheduled_visit_date`), the maintenance clock-ins that started on it,
+    the visits done on it, and the flagged visits done in the seven days up to it. A day changed
+    while a load is in flight is asked for at once, and the older reply is dropped rather than
+    painted over the newer day. Each scheduled draft also links to its Visit Wizard
+    (`/desk/visit-wizard/<visit>`).
+  - **Another day's visits are dated by the visit, not by `modified`.** Billing writes the Sales
+    Invoice link onto a submitted visit (`api/maintenance_billing.py`) and the sign-off writes its
+    stamps (`sapphire_maintenance/sign_off.py`). Both move `modified`, so a visit done on the 1st
+    and invoiced on the 3rd would have shown on the 3rd's board and not on the 1st's. A visit's day
+    is its `visit_date`, the day the work was done, which the move into review stamps when blank
+    (v1.595.1). An older visit with none falls back to the day of its `clock_in_time`. The record
+    has no submitted timestamp, and `visit_date` is the field the contract cadence already rolls
+    forward from. "Submitted" and the 7-day "Flagged" window both use it.
+    `tests/test_maintenance_board_days.py` runs those queries against an in-memory SQLite copy of
+    the columns, with a visit whose `modified` is two days after its visit date. Today's queries
+    are unchanged and are pinned by the arguments they send.
+  - **No date the board can be handed raises.** A malformed `date` used to be a 417 from
+    `frappe.throw`, and `9999-12-31` a 500 when stepping a day past it overflowed. The server now
+    applies the client's rule: a YYYY-MM-DD calendar day from 1900 to 2999, and anything else is
+    today.
+  - **A past day is not polled.** Its data cannot change, so the 60 s poll stops while one is
+    shown. It starts again when the board moves to today or a later day, or on the next show.
+  - **A later day left on screen past midnight becomes the bare today.** It gets today's labels,
+    a disabled Today button, the server's own today, and the bare address, corrected in place. This
+    is the same thing the bare address already did at midnight.
+  - **Rental Planner: the board's dates.** `/desk/rental-planner?start=YYYY-MM-DD` is the board's
+    first day, and the bare address is today. ‹ › and Today push an entry each. The flow's Planner
+    buttons return to the dates it left rather than to today, and the flow's own Back still steps
+    back through history onto them.
+  - **Location Timeline: the trail.** `?employee=…&from_date=…&to_date=…` is the trail on screen, and
+    the bare address is no one's trail. Each person, date or Load picked is an entry. A Live row
+    routes with the trail in its options, and the Trail button carries the trail in the pickers,
+    so Back and Forward onto a trail already drawn load nothing again. The Employee and Job Interval
+    buttons open it the way they did, and their trail now reaches the address too.
+  - **Security: an `employee` from the address can no longer inject markup into the picker.** An
+    employee the picker does not list was admitted with the raw value as its label. v16.50's
+    Autocomplete draws labels with `.html()`, so `?employee=<img onerror=…>` would have run script.
+    The hole predates this release, but this release makes the address the shareable way in. Now
+    only an employee the picker lists, or one that looks like an Employee name, is accepted. That
+    means letters, digits, space and `. _ - /`, at most 140 characters; anything else is dropped
+    and the address corrected. The admitted label is escaped as well. The desk harness checks that
+    a markup-bearing param is neither picked, listed nor written to the page.
+
+### Changed
+
+- **How the three pages keep the address, and why each writes its own.** Frappe v16's router copies
+  the address's query into `frappe.route_options` on every route change, and `set_route(page, {k:
+  v})` puts `k` there too. So each page reads its keys from `route_options` and consumes them as the
+  list view does: it deletes each key and nulls an emptied object, or the next plain `set_route` to
+  the page would replay them. Before v16.50, though, `set_route` pushes the path alone; the query
+  only decides whether to push (frappe PR #40040 changed that in v16.50). Routing to the page on
+  screen to change its query therefore loses the query, which is what broke Plan a Trip in v1.520.0.
+  Each page instead writes its own address through one helper, on `window.location.pathname`, so a
+  workspace shell the router put in front of the page name stays. It uses `pushState` for a state the
+  person chose and `replaceState` to correct the entry on screen, and writes nothing when the
+  address already says it. Back onto such an entry is an ordinary `popstate`: the router re-renders
+  the same page and the show reads the query from `route_options`. The guards that forbade any
+  history write on these pages (`test_desk_page_history`, `test_rental_planner`,
+  `test_location_timeline_page`, `test_s3_page_states`) now allow exactly that one writer.
+- **Both history harnesses model the router on either side of v16.50.**
+  `scripts/test_desk_page_history.js` already modelled the path-only push. It now also models the
+  newer one (`makeDesk({ queryInUrl: true })`): plain values written as themselves, the query pushed
+  with the path, `set_route("/desk/a?x=1")` filling `route_options`. The deep-link scenarios run
+  under both. `scripts/test_rental_planner_history.js` gains what it lacked: `route_options` filled
+  from the address on every route change, a plain object among `set_route`'s parts moved there, the
+  push skipped when path and query are unchanged, and a session history the page can write. The
+  scenarios cover a pasted address, each state change as an entry, Back and Forward, a reload, a
+  malformed date, and another page's `set_route` with options followed by a plain one that must
+  not replay them. The S3.1 harness gives the Day Board its bare address and `get_today`.
+- New bench-free suites `tests/test_page_deep_links.py` and `tests/test_maintenance_board_days.py`
+  (a `frappe` stub, so its own step), each with its own CI step. The desk harness gains opt-in
+  intervals on its clock (`makeDesk({ intervals: true })`) and a settable `desk.today`, so the Day
+  Board's poll and midnight run there.
+
 ## [1.661.1] - 2026-10-14
 
 ### Fixed
