@@ -113,7 +113,7 @@ import "./global_enhancements/sidebar_collapse_heal.js";
 // are DB-stored Custom HTML Blocks that cannot import anything; each guards the call,
 // so a device holding an older bundle still draws every block.
 import "./global_enhancements/workspace_block_return.js";
-// window.sf_kit_ready(): the one loader for sf_kit on a Desk page (v1.638.0). The kit stays a
+// window.sf_kit_ready(): the one loader for sf_kit on a Desk page (v1.642.0). The kit stays a
 // page-loaded bundle; this is only the memoized frappe.require and the stand-in for a kit that
 // never arrived, which seven pages used to carry a copy each.
 import "./sf_kit_loader.js";

@@ -46,7 +46,7 @@ const ISA_QR_DECODER = '/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.
 // and a full 1080p frame costs ~5x the time for no better read.
 const ISA_QR_FRAME_WIDTH = 480;
 
-// sf_kit (v1.638.0): the shared loading / error / no-access panel and the quiet server call,
+// sf_kit (v1.642.0): the shared loading / error / no-access panel and the quiet server call,
 // from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
 // kit that never arrived resolves to a plain stand-in, so the count carries on. A Desk opened
 // before the deploy that added the loader has no sf_kit_ready yet, and asks frappe.require for
@@ -113,7 +113,7 @@ class InventoryScanner {
 		return frappe.call({ method: ISA_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
-	// Quiet (v1.638.0): a failed start-up says so in its own slot above the count's lines, with
+	// Quiet (v1.642.0): a failed start-up says so in its own slot above the count's lines, with
 	// Try again, instead of leaving an empty page behind a frappe dialog. Its own slot, not the
 	// lines': the clerk can start a count (Start, or a scan) while it is still loading, and its
 	// loading panel, its error or a retry must not paint over lines already counted. For the same

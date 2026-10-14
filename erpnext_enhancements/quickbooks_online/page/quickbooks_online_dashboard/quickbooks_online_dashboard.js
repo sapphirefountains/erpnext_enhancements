@@ -24,7 +24,7 @@
  *
  * The page is otherwise stateless; all data comes from the RPCs above.
  *
- * The status load and the resync-preview poll run on sf_kit's quiet path (v1.638.0): the load
+ * The status load and the resync-preview poll run on sf_kit's quiet path (v1.642.0): the load
  * draws its loading, empty, error and no-access states from the kit where the sync logs go, and
  * the poll, which no one is watching, never puts up a frappe dialog (it retries a network or
  * server failure, and stops on a 4xx or a lapsed session). The buttons keep
@@ -207,7 +207,7 @@ function refresh(root) {
 	});
 }
 
-// Every value in a row is the server's, so every one goes through the kit's escape (v1.638.0).
+// Every value in a row is the server's, so every one goes through the kit's escape (v1.642.0).
 function renderLogs(sf, root, logs) {
 	const esc = sf.esc;
 	const list = root.find(".qbo-log-list");
@@ -336,7 +336,7 @@ function pollResyncPreview(previewId, attempts) {
 		);
 		return;
 	}
-	// Quiet (v1.638.0): a poll every 3 s must not put up a frappe dialog for each failed tick. Only
+	// Quiet (v1.642.0): a poll every 3 s must not put up a frappe dialog for each failed tick. Only
 	// a failure that can pass is retried, as an attempt: the network (status 0) or the server
 	// (5xx). A 4xx is an answer rather than a hiccup (a refusal, a log that is not there) and asking
 	// again every 3 s cannot change it, so the poll stops and says why in a toast. A lapsed session

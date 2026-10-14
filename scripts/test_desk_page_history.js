@@ -1194,7 +1194,7 @@ test("Device Console: the camera tapped while the first show's replace waits on 
 	check("no push without a tap", desk.violations, []);
 });
 
-// A failed start-up (v1.638.0): the page's own panel says why, and its Try again asks again in
+// A failed start-up (v1.642.0): the page's own panel says why, and its Try again asks again in
 // place. The harness has no sf_kit, so this is the plain stand-in each page falls back to.
 const saidText = (desk, text) => desk.calls.some((c) => c.method === "text" && c.args[0] === text);
 const tryAgain = (desk) =>
@@ -1457,7 +1457,7 @@ test("Scanner Audit: a start-up that failed says so, and Try again boots it in p
 	check("no push without a tap", desk.violations, []);
 });
 
-// The REAL sf_kit (v1.638.0): the bundle installed on the page, its quiet call answered by the same
+// The REAL sf_kit (v1.642.0): the bundle installed on the page, its quiet call answered by the same
 // `respond`, every panel drawn by its own state.render and every failure in its own rejection
 // shape. A page that reads the kit wrong fails here, where the plain stand-in above would not.
 const reply = (status, body) => Object.assign(new Error(`HTTP ${status}`), { status, body });
@@ -1501,7 +1501,7 @@ test("Scanner Audit, real kit: a 403 draws no-access, and a lapsed session the s
 	check("signed out, with Reload", [signedOut.includes("You have been signed out."), signedOut.includes(">Reload</button>")], [true, true]);
 });
 
-// v1.638.0 review: the start-up has its own slot. A count started while it loads keeps its lines and
+// v1.642.0 review: the start-up has its own slot. A count started while it loads keeps its lines and
 // its session, whether the start-up then fails or answers with no session.
 test("Scanner Audit, real kit: a start-up that lands after a count began neither paints over it nor replaces it", async () => {
 	const session = { name: "ICS-9", lines: [], summary: { lines: 0, with_variance: 0 } };

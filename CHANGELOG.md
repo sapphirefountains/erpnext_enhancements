@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.638.0] - 2026-10-13
+## [1.642.0] - 2026-10-13
 
 Custom pages, step 3.1 (TASK-2026-02820): the seven Desk pages that sat on "Loading…" or went blank
 when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto the kit built in steps

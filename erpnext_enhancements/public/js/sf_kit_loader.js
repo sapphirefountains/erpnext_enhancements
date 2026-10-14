@@ -3,7 +3,7 @@
  *
  * Loaded via: erpnext_enhancements.bundle.js (global), so every Desk page can call it. The kit
  * itself stays out of the global bundle (sf_kit.bundle.js: "loaded only by a page that uses it");
- * this file is only the loader, the one copy of what seven pages each carried in v1.638.0's first
+ * this file is only the loader, the one copy of what seven pages each carried in v1.642.0's first
  * draft.
  *
  *   sf_kit_ready().then((sf) => {

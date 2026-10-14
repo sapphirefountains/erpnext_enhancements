@@ -32,7 +32,7 @@ const DC_SHEETS = ['camera', 'employee'];
 // How long to wait for the router to land our own history.back() before going on without it.
 const DC_BACK_TIMEOUT_MS = 1500;
 
-// sf_kit (v1.638.0): the shared loading / error / no-access panel, the toast and the quiet
+// sf_kit (v1.642.0): the shared loading / error / no-access panel, the toast and the quiet
 // server call, from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It
 // never rejects: a kit that never arrived resolves to a plain stand-in, so the console carries
 // on. A Desk opened before the deploy that added the loader has no sf_kit_ready yet, and asks
@@ -92,7 +92,7 @@ class DeviceConsole {
 		return frappe.call({ method: DC_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
-	// Quiet (v1.638.0): a failed start-up says so in the console's own panel, with Try again,
+	// Quiet (v1.642.0): a failed start-up says so in the console's own panel, with Try again,
 	// instead of leaving the counts blank behind a frappe dialog. Scans still work either way.
 	boot() {
 		dc_kit().then((sf) => {

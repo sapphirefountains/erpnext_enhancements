@@ -131,7 +131,7 @@ function makeWorld() {
 		local: new Map(),
 		requests: [],
 		created: [],
-		// Methods whose calls fail as a 500 would (v1.638.0: the board's error panel).
+		// Methods whose calls fail as a 500 would (v1.642.0: the board's error panel).
 		down: new Set(),
 		// Methods answered with this HTTP status and body instead (the real kit's quiet path only).
 		replies: new Map(),
@@ -484,7 +484,7 @@ test("A board that failed to load says so, and Try again loads it in place", asy
 	check("no history entry for a retry", [desk.here(), desk.length()], ["/desk/rental-planner", entries]);
 });
 
-// The REAL sf_kit (v1.638.0): the board's panels drawn by the kit's own state.render, its failures
+// The REAL sf_kit (v1.642.0): the board's panels drawn by the kit's own state.render, its failures
 // in the kit's own rejection shape. A page that reads the kit wrong fails here.
 test("Real kit: a failed board is the kit's error panel, Try again loads it, and a 403 is no access", async () => {
 	const timeline = "erpnext_enhancements.asset_management.rental_planner.get_timeline";
