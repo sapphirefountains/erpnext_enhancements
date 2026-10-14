@@ -887,19 +887,30 @@ export class RecordTools {
 		// timeline's own read (frappe.desk.form.load.get_communications, which checks read on this
 		// record), scripts and styles taken out as the timeline does. record_info carries only a cut
 		// text copy; it is the quote only if that read fails.
+		//
+		// That read is a round trip, and the board's side panel switches records in place: if the
+		// editor is on another record when it answers, this reply never opens over that one (v1.688.1).
+		// The record it was asked from is compared, not the mount: a reload of the same record (a
+		// realtime refresh re-mounts it) still opens the reply the person asked for.
+		const doctype = this.doctype;
+		const name = this.name;
+		const asked_here = () => this.ed.doctype === doctype && this.ed.name === name && !this.ed.is_new;
 		const cut = frappe.utils.escape_html(reply.text || "").replace(/\n/g, "<br>");
 		this.sf()
 			.call(
 				"frappe.desk.form.load.get_communications",
-				{ doctype: this.doctype, name: this.name, start: 0, limit: 100 },
+				{ doctype, name, start: 0, limit: 100 },
 				{ quiet: true, method: "GET" }
 			)
 			.then((rows) => {
+				if (!asked_here()) return;
 				const found = (rows || []).find((row) => row && row.name === reply.name);
 				const content = found && typeof found.content === "string" ? frappe.dom.remove_script_and_style(found.content) : null;
 				open(content || cut);
 			})
-			.catch(() => open(cut));
+			.catch(() => {
+				if (asked_here()) open(cut);
+			});
 	}
 
 	// The record's values with the email fields record_info read filled in where the values have none.

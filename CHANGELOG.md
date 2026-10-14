@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.688.1] - 2026-10-14
+
+### Fixed
+- **A reply never opens over a different record.** Since v1.686.0, the record tools' Reply reads the
+  full email first (`frappe.desk.form.load.get_communications`, a round trip) and then opens the
+  composer. The Opportunity board's side panel switches records in place, so switching deals during
+  that read opened the old deal's reply over the new one. It still sent against the right record,
+  because the record is captured up front, but it looked like a reply to the deal on screen.
+  - When the read answers, success or failure, the reply now opens only if the editor still shows
+    the record it was asked from.
+  - The check compares that record (DocType, name, saved), not the tools' mount: a realtime refresh
+    re-mounts the tools on the same record, and the person still gets the reply they asked for.
+  - Found in the second review of PR #1301.
+  - `tests/test_guided_record_tools.py TestReplyFollowsTheRecord` runs the real `new_email` under node
+    against a stand-in editor and settles the read by hand: the same record, a switch on success
+    and on failure, the cut-copy fallback, and a same-record re-mount. Without the guard, three of
+    them fail.
+
 ## [1.686.1] - 2026-10-14
 
 ### Changed
