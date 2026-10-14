@@ -79,7 +79,32 @@ ACTION_MOVE = "Move"
 #: purchase order, one per line, flagged for review. Appended LAST: the Select's order is
 #: this tuple's, and the existing values keep their positions.
 ACTION_STORE_RUN = "Store Run"
-ACTIONS = (ACTION_TAKE, ACTION_RECEIVE, ACTION_ADD_WITHOUT_PO, ACTION_MOVE, ACTION_STORE_RUN)
+#: Bin assignments (v1.689.0, ``inventory_enhancements/bin_assignments.py``), appended after
+#: Store Run for the same reason. *Assign* and *Unassign* put an item on a bin or take it off
+#: (an ERPNext Putaway Rule; no voucher). *Move To* pushes stock out of the bin being managed
+#: into another (the same Material Transfer as *Move*, seen from the other side; with "make it
+#: the item's home" it moves the assignment too). *Count* corrects what is on hand with a
+#: submitted Stock Reconciliation. *Boneyard* sends stock the bin no longer keeps to a Boneyard
+#: bin (a Material Transfer) and takes the item off the bin it came from.
+ACTION_ASSIGN = "Assign"
+ACTION_UNASSIGN = "Unassign"
+ACTION_MOVE_TO = "Move To"
+ACTION_COUNT = "Count"
+ACTION_BONEYARD = "Boneyard"
+ACTIONS = (
+	ACTION_TAKE,
+	ACTION_RECEIVE,
+	ACTION_ADD_WITHOUT_PO,
+	ACTION_MOVE,
+	ACTION_STORE_RUN,
+	ACTION_ASSIGN,
+	ACTION_UNASSIGN,
+	ACTION_MOVE_TO,
+	ACTION_COUNT,
+	ACTION_BONEYARD,
+)
+#: The bin-assignment actions (``bin_assignments``): their sentences are ``_bin_message``'s.
+BIN_ACTIONS = frozenset({ACTION_ASSIGN, ACTION_UNASSIGN, ACTION_MOVE_TO, ACTION_COUNT, ACTION_BONEYARD})
 
 # ---------------------------------------------------------------------------
 # Store runs (v1.536.0)
@@ -281,6 +306,67 @@ def check_qty(value, whole_number=False, uom=""):
 	if whole_number and abs(qty - round(qty)) > TOLERANCE:
 		return None, f"{uom or 'This unit'} is counted in whole numbers, so {plain(qty)} cannot be used."
 	return qty, None
+
+
+def check_count(value, whole_number=False, uom=""):
+	"""``(qty, problem)`` for a count typed on the page: what is really on the shelf.
+
+	Unlike :func:`check_qty` a count may be **zero** (the bin is empty), because it is the new
+	total rather than the size of a change. Negative is refused, and so is a fraction of a
+	whole-number unit, for the same reasons.
+	"""
+	qty = _number(value)
+	if qty is None:
+		return None, "Enter how many are there."
+	if qty < -TOLERANCE:
+		return None, "A count cannot be less than zero."
+	qty = max(qty, 0.0)
+	if qty > MAX_QTY:
+		return None, f"{plain(qty)} is more than one count can record. Check the number and try again."
+	if whole_number and abs(qty - round(qty)) > TOLERANCE:
+		return None, f"{uom or 'This unit'} is counted in whole numbers, so {plain(qty)} cannot be used."
+	return qty, None
+
+
+def _amount(qty, uom):
+	return f"{plain(qty)} {uom}".strip()
+
+
+def check_recount(qty, on_hand, reserved=0.0, uom="", warehouse_name=""):
+	"""A sentence when a count cannot be recorded as given, else ``None``.
+
+	* The same as the system already shows: ERPNext would refuse the Stock Reconciliation
+	  with "None of the items have any change in quantity or value", so say it plainly first.
+	* Less than is reserved there: ERPNext refuses that on submit (``validate_reserved_stock``).
+	"""
+	have = _number(on_hand) or 0.0
+	held = _number(reserved) or 0.0
+	where = f" at {warehouse_name}" if warehouse_name else ""
+	if abs(qty - have) <= TOLERANCE:
+		return f"The system already shows {_amount(have, uom)}{where}. Nothing to change."
+	if held > TOLERANCE and qty < held - TOLERANCE:
+		return (
+			f"{_amount(held, uom)} are reserved for orders{where}, so the count cannot be less "
+			"than that. Ask a Stock Manager to release the reservation first."
+		)
+	return None
+
+
+def unassign_refusal(on_hand, uom="", item_name="", warehouse_name=""):
+	"""A sentence when an item cannot come off a bin because stock is still there, else ``None``.
+
+	Taking the item off while stock sits on the shelf would not hide it (the listing still
+	shows anything on hand), but it would leave stock in a bin that no longer claims it, which
+	is how parts get lost. So the person moves it first: to another bin, or wherever the page
+	offers.
+	"""
+	have = _number(on_hand) or 0.0
+	if have > TOLERANCE:
+		return (
+			f"{_amount(have, uom)} of {item_name or 'this item'} are still recorded at "
+			f"{warehouse_name or 'this bin'}. Move them to another bin first, then take it off."
+		)
+	return None
 
 
 def check_take(qty, on_hand, warehouse_name=""):
@@ -809,8 +895,12 @@ def remark(
 		text = (
 			f"Stock Scan: {who} added {amount} to {warehouse} without a purchase order (flagged for review)"
 		)
-	elif action == ACTION_MOVE:
+	elif action in (ACTION_MOVE, ACTION_MOVE_TO):
 		text = f"Stock Scan: {who} moved {amount} from {from_warehouse} to {warehouse}"
+	elif action == ACTION_BONEYARD:
+		text = f"Stock Scan: {who} sent {amount} from {from_warehouse} to the boneyard ({warehouse})"
+	elif action == ACTION_COUNT:
+		text = f"Stock Scan: {who} counted {amount} at {warehouse}"
 	else:
 		text = f"Stock Scan: {who} changed {amount} at {warehouse}"
 	if project:

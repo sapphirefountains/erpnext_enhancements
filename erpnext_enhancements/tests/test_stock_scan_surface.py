@@ -863,11 +863,21 @@ class TestTheVouchersAreV16Shaped(unittest.TestCase):
 		return out
 
 	def test_the_three_stock_entries_are_the_three_saves(self):
+		"""Take, add, and the one transfer builder (v1.689.0): *Move here* and the bin pages'
+		*Move To* and *Send to boneyard* (``bin_assignments``) all post ``_transfer_entry``'s."""
 		rows = self._item_rows()
 		self.assertEqual(
 			{name: types for name, (types, _r) in rows.items()},
-			{"take": ["Material Issue"], "add": ["Material Receipt"], "move_here": ["Material Transfer"]},
+			{
+				"take": ["Material Issue"],
+				"add": ["Material Receipt"],
+				"_transfer_entry": ["Material Transfer"],
+			},
 		)
+		move_here = ast.unparse(_functions(API)["move_here"])
+		self.assertIn("_transfer_source(", move_here)
+		self.assertIn("_transfer_entry(", move_here)
+		self.assertIn("_available(", ast.unparse(_functions(API)["_transfer_source"]))
 		for name, (_t, keys) in rows.items():
 			with self.subTest(save=name):
 				self.assertEqual(len(keys), 1)
@@ -892,7 +902,7 @@ class TestTheVouchersAreV16Shaped(unittest.TestCase):
 			"a Material Receipt without basic_rate is refused at submit (Valuation Rate Missing) "
 			"or posts stock at zero value",
 		)
-		self.assertTrue({"s_warehouse", "t_warehouse"} <= rows["move_here"])
+		self.assertTrue({"s_warehouse", "t_warehouse"} <= rows["_transfer_entry"])
 
 
 class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
@@ -963,7 +973,8 @@ class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
 		sentence, not a log row that the request then rolls back."""
 		expectations = {
 			"take": ("rules.check_take", "_project", "_require"),
-			"move_here": ("_available", "_require"),
+			# _transfer_source refuses an unusable source and more than is available there.
+			"move_here": ("_transfer_source", "_require"),
 			# add's _require guards its without-PO branch (the receipt branch is checked by
 			# receive_items itself), so it is compared with that branch's _begin_log: the last.
 			"add": ("_require", "_receipt_rate"),

@@ -17,6 +17,12 @@ Single that already existed, so ``patches/backfill_stock_scan_settings_defaults`
 their declared defaults where no ``tabSingles`` row exists — and ``DEFAULTS`` below falls
 back the same way, so the page is right even before that patch has run.
 
+``boneyard_warehouse`` (v1.689.0) is where Stock Scan's *Send to boneyard*
+(``inventory_enhancements.bin_assignments.send_to_boneyard``) moves stock a bin no longer
+keeps. It declares no default, since the warehouse's name is per site:
+``patches/add_boneyard_warehouse`` creates ``Boneyard`` under ``Inventory - SF`` and writes it
+here once, only where ``tabSingles`` has no row for the field. Blank switches the action off.
+
 The **Item Naming** section (v1.532.0) holds ``naming_digest_recipients``, who gets
 ``inventory_enhancements.item_naming_digest``'s Monday email. It has no default on purpose:
 blank means nobody. ``patches/seed_naming_digest_recipient`` writes the Purchasing Agent's
@@ -48,6 +54,10 @@ DEFAULTS = {
 	# site that never saved the field reads None, which api.stock_scan's cint() takes as off. So
 	# there is nothing for the backfill patch to write.
 	"stock_scan_disable_browser_back": None,
+	# Where "Send to boneyard" moves stock (v1.689.0, bin_assignments.send_to_boneyard). No
+	# declared default: a Link's value differs per site. patches/add_boneyard_warehouse creates
+	# the warehouse and fills this once, only where tabSingles has no row for it. Blank = off.
+	"boneyard_warehouse": None,
 	# Item naming digest. None: no recipients, no email.
 	"naming_digest_recipients": None,
 }

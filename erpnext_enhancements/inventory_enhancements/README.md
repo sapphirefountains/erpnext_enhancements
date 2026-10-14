@@ -21,6 +21,7 @@ model, the pure rules and the label reads.
 | `doctype/stock_scan_log/` | One row per Stock Scan save: the page's history, its Undo, the review queue for stock added without a PO (and, since v1.536.0, every store-run line), and the idempotency key |
 | `page/inventory_scanner_audit/` | Desk audit view over count sessions |
 | `stock_scan_rules.py` | Every judgement the Stock Scan page makes — what a scan means, whether a quantity is acceptable, who may undo, what a label says and how a sheet is laid out. No Frappe, no I/O |
+| `bin_assignments.py` | Bin assignments (v1.689.0): which items a bin holds, as ERPNext Putaway Rules. `assign`, `unassign`, `move_to`, `send_to_boneyard`, `set_count` (all logged and undoable through `api/stock_scan.py`), and `ensure_assignment`, the plain helper. See *Bin assignments* below |
 | `stock_accounts.py` | `difference_account` — the one rule every Stock Entry this app builds uses for a row's other side (the Stock Scan page and the maintenance consumables issue). See below for why ERPNext's own default is not enough |
 | `qr_svg.py` | QR codes as one compact inline `<path>` SVG, encoded with the `pyqrcode` Frappe already depends on. No Frappe |
 | `warehouse_labels.py` | The reads behind `/warehouse-labels`: which warehouses get a label, their breadcrumbs, their QR codes |
@@ -466,6 +467,54 @@ concurrent retry with a new Item gets a 409 and then "already saved"; an Amend k
 `custom_store_run`; a non-stock item received on its order line from the run sheet submits (84 of
 103 submitted receipts on production are non-stock only, so ERPNext takes the shape).
 
+### Bin assignments (v1.689.0)
+
+ER-2026-1319376 (take an item off a bin on `/stock-scan` and move it elsewhere) and
+ER-2026-1320545 (a Desk page to manage one bin's items) share one server side,
+`bin_assignments.py`. The phone buttons and the Desk page come in later releases.
+
+**An item is on a bin when it has an enabled ERPNext Putaway Rule there.** Nobody sees the rule:
+people put an item on a bin and take it off. Every rule has capacity `CAPACITY` (1,000,000 in the
+stock unit), priority 1 and the warehouse's company. The capacity is deliberately not a real one:
+with *Apply Putaway Rule* ticked on a receipt ERPNext fills each rule only to its free space and
+splits the rest elsewhere, and `StockController.validate_putaway_capacity` checks every Purchase
+Receipt, Stock Entry and Stock Reconciliation against the rules once any exist (ticked or not;
+on v16 it reads `rule.disabled`, a field that does not exist, so disabled rules are checked too).
+Taking an item off **disables** its rule: ERPNext allows one rule per pair, disabled included, and
+a receipt that routed stock by a rule links to it.
+
+**Why the listing changed.** `api/stock_scan._items_at` used to list every item with *any*
+`tabBin` row at the location. A Bin row is created by the first transaction and never deleted (28
+of the 80 zero rows on production still carry ordered, reserved or projected quantities), so an
+item could never come off a bin. Now an item lists when it is **on hand** there, **assigned**
+there, its **default warehouse** for the company, or **on order** to there (so the receiver
+finds it). `patches/backfill_bin_putaway_rules` gave every (enabled stock item, enabled leaf
+warehouse) pair with a Bin row its rule on deploy -- 536 pairs on 2026-10-14, the two rooms
+included -- so nothing dropped off a list.
+
+| Endpoint | What it posts | Undo |
+|---|---|---|
+| `assign` | a Putaway Rule (created, or a disabled one re-enabled) | disables it again |
+| `unassign` | disables the rule and clears the Item Default whose warehouse is the bin, for its company; **refused while stock is recorded there** | re-enables it; restores the default if it is still blank |
+| `move_to` | a Material Transfer out of the bin (the same builder as *Move here*); `make_home=1` also moves the assignment | cancels it, and restores the rules |
+| `send_to_boneyard` | a Material Transfer to the Boneyard warehouse in Inventory Scanner Settings, and the item taken off the source bin; never a rule at the boneyard | cancels it, and restores the rule and default |
+| `set_count` | a **Stock Reconciliation** of one item at one bin (zero allowed), never a Material Issue; from zero it carries `_receipt_rate`'s rate | cancels it |
+
+Every one is POST-only, role-checked, idempotent on `client_ref` and logged on `Stock Scan Log`
+before it writes (new actions *Assign*, *Unassign*, *Move To*, *Count*, *Boneyard*; new fields
+`putaway_rule`, `qty_before` and `rule_changes`, the JSON of what Undo puts back). Assign,
+unassign, make-home and boneyard need **Putaway Rule create** (Stock Manager in stock ERPNext);
+`can_manage` in the boot and location payloads lets the pages hide the buttons. Clearing an Item
+Default checks Item write and then writes only that child row (as ERPNext's own
+`set_item_default` does) rather than `Item.save()`, because a full save runs the naming guard,
+which refuses some older items. `ensure_assignment(item_code, warehouse)` is the plain,
+log-free helper underneath, also for the guided Item flow.
+
+**The Boneyard** is a leaf warehouse `Boneyard` under `Inventory - SF`, created by
+`patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
+once (only where `tabSingles` has no row for it). Blank switches *Send to boneyard* off. It gets a
+QR label like any location.
+
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0
@@ -635,6 +684,7 @@ python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v         # comb
 python -m unittest erpnext_enhancements.tests.test_store_run_matching -v  # Accounting's list of those pairs (Store Run Charge Matching)
 python -m unittest erpnext_enhancements.tests.test_stock_scan_theme -v
 python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
+python -m unittest erpnext_enhancements.tests.test_bin_assignments -v     # frappe stub; bin assignments, boneyard, counts, both patches
 node scripts/test_stock_scan_client.mjs
 ```
 

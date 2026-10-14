@@ -40,6 +40,11 @@
   "non_stock_item",
   "created_item",
   "repeat_unstocked",
+  "bin_section",
+  "putaway_rule",
+  "qty_before",
+  "column_break_bin",
+  "rule_changes",
   "review_section",
   "needs_review",
   "reviewed",
@@ -78,7 +83,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Action",
-   "options": "Take\nReceive\nAdd Without PO\nMove\nStore Run",
+   "options": "Take\nReceive\nAdd Without PO\nMove\nStore Run\nAssign\nUnassign\nMove To\nCount\nBoneyard",
    "read_only": 1,
    "reqd": 1
   },
@@ -149,7 +154,7 @@
    "reqd": 1
   },
   {
-   "depends_on": "eval:doc.action=='Move'",
+   "depends_on": "eval:in_list(['Move', 'Move To', 'Boneyard'], doc.action)",
    "fieldname": "from_warehouse",
    "fieldtype": "Link",
    "label": "Moved From",
@@ -317,6 +322,40 @@
    "read_only": 1
   },
   {
+   "collapsible": 0,
+   "depends_on": "eval:in_list(['Assign', 'Unassign', 'Move To', 'Count', 'Boneyard'], doc.action)",
+   "fieldname": "bin_section",
+   "fieldtype": "Section Break",
+   "label": "Bin Assignment"
+  },
+  {
+   "description": "The Putaway Rule that puts this item on the bin (Assign, Unassign, or Move To with \"make it the item's home\"; for Boneyard, the rule disabled at the bin the stock left).",
+   "fieldname": "putaway_rule",
+   "fieldtype": "Link",
+   "label": "Putaway Rule",
+   "options": "Putaway Rule",
+   "read_only": 1
+  },
+  {
+   "description": "Count: what the system showed at the bin before the count was recorded.",
+   "fieldname": "qty_before",
+   "fieldtype": "Float",
+   "label": "Qty Before",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_bin",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What this save changed outside a voucher, so Undo can put it back: each Putaway Rule (created here, or its previous Disabled value) and each Item Default whose warehouse was cleared (with the warehouse it had).",
+   "fieldname": "rule_changes",
+   "fieldtype": "Code",
+   "label": "Rule Changes",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
    "fieldname": "review_section",
    "fieldtype": "Section Break",
    "label": "Review"
@@ -404,7 +443,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-24 18:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Stock Scan Log",

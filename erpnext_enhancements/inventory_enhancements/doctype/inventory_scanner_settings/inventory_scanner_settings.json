@@ -20,6 +20,7 @@
   "require_project_for_take",
   "undo_window_minutes",
   "stock_scan_disable_browser_back",
+  "boneyard_warehouse",
   "item_naming_section",
   "naming_digest_recipients"
  ],
@@ -118,8 +119,15 @@
    "fieldname": "stock_scan_disable_browser_back",
    "fieldtype": "Check",
    "label": "Turn Off Browser Back on Stock Scan"
-   },
-   {
+  },
+  {
+   "description": "Where Stock Scan's \"Send to boneyard\" moves stock a bin no longer keeps: a leaf warehouse of the same company. The item is taken off the bin it came from; nothing is ever assigned to the boneyard. Blank switches Send to boneyard off.",
+   "fieldname": "boneyard_warehouse",
+   "fieldtype": "Link",
+   "label": "Boneyard Warehouse",
+   "options": "Warehouse"
+  },
+  {
    "description": "New Items are refused only when their code duplicates an existing one or their name is just the code. For everything else the naming rules find on a new Item, a weekly list goes to the addresses below.",
    "fieldname": "item_naming_section",
    "fieldtype": "Section Break",
@@ -135,7 +143,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-24 18:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Scanner Settings",

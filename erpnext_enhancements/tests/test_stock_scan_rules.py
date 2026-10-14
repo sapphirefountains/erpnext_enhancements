@@ -263,9 +263,11 @@ class TestStoreRuns(unittest.TestCase):
 		return next(f for f in meta["fields"] if f["fieldname"] == fieldname)
 
 	def test_store_run_is_the_last_action(self):
-		"""Appended, so every stored action keeps its place in the Select."""
-		self.assertEqual(rules.ACTIONS[-1], rules.ACTION_STORE_RUN)
+		"""Appended, so every stored action keeps its place in the Select. The bin-assignment
+		actions (v1.689.0) were appended after it for the same reason."""
+		self.assertEqual(rules.ACTIONS[4], rules.ACTION_STORE_RUN)
 		self.assertEqual(rules.ACTIONS[:4], ("Take", "Receive", "Add Without PO", "Move"))
+		self.assertEqual(rules.ACTIONS[5:], ("Assign", "Unassign", "Move To", "Count", "Boneyard"))
 
 	def test_the_reasons_are_the_selects_options_after_its_blank(self):
 		options = self.log_field("store_run_reason")["options"].split("\n")

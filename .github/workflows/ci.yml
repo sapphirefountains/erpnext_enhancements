@@ -3345,6 +3345,17 @@ jobs:
       # reads the source, so the next builder with that shape fails here, not on submit.
       - name: Stock Entry builders set the type and a difference account (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_stock_entry_builders -v
+      # Bin assignments (v1.689.0, inventory_enhancements/bin_assignments.py): an item is on a bin
+      # by an ERPNext Putaway Rule, run against the REAL api/stock_scan.py on a frappe stub whose
+      # Putaway Rule mimics v16's validate. ensure_assignment idempotent (create/existing/re-enable)
+      # with stock_capacity set (ERPNext checks it before computing it); permission refusals before
+      # any write and no ignore_permissions; unassign refused with stock on hand and clearing only
+      # the matching Item Default; Undo restoring every rule and default; move_to "make home" and
+      # send_to_boneyard (read from the setting, never a rule there); set_count a Stock
+      # Reconciliation, never a Material Issue; the listing's four conditions; the backfill and the
+      # Boneyard patch (once, idempotent, never over a stored setting). Own frappe stub, own step.
+      - name: Bin assignments, Putaway Rules, boneyard and counts (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_bin_assignments -v
       # The Stock Scan page's three-way palette, the kiosk's shape (test_kiosk_theme): the
       # system-dark block and the forced-dark block must stay identical, every color token
       # must be overridden in dark, and the pre-paint theme script must run before the
