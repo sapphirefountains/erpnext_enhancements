@@ -967,7 +967,7 @@ def handoff_state(opportunity):
 	if not frappe.has_permission("Opportunity", "read", doc=opportunity):
 		frappe.throw(_("Not permitted to read this Opportunity."), frappe.PermissionError)
 	# A historical (pre-ERPNext, untouched) deal is excluded from hand-off warnings
-	# (crm_enhancements/historical.py, v1.628.0): the form shows a quiet line instead of
+	# (crm_enhancements/historical.py, v1.629.0): the form shows a quiet line instead of
 	# offering Create Project as the next step. Reported on both branches so the prompt
 	# never asks about one just because the gate fields are missing.
 	historical = is_historical(opportunity)
@@ -1048,7 +1048,7 @@ def stamp_handoff_gate(doc, method=None):
 
 	Runs after ``stamp_won_date`` in the ``before_save`` chain, which fills an
 	empty ``custom_date_closed_won`` on the same transition (transition-only since
-	v1.628.0) — the deadlines are measured from the transition itself, so both
+	v1.629.0) — the deadlines are measured from the transition itself, so both
 	stamps describe the same moment.
 	"""
 	if doc.status != WON_STATUS:

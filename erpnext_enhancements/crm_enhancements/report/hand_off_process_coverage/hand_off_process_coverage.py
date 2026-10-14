@@ -17,7 +17,7 @@ both "5. Initial Payment From Customer" and "6. Outline Tasks..." at once. Uses
 ``process_steps._actionable_steps`` rather than re-deriving that rule here.
 
 Historical deals (created before 2025-08-01, no person's activity in 90 days —
-``crm_enhancements/historical.py``, v1.628.0) are left out unless "Include
+``crm_enhancements/historical.py``, v1.629.0) are left out unless "Include
 historical" is ticked, like every other hand-off worklist.
 """
 

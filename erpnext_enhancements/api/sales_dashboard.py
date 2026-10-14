@@ -154,7 +154,7 @@ def get_handoff_backlog():
 	rather than failing the whole dashboard.
 
 	Historical deals (pre-ERPNext, untouched for 90 days — ``historical.py``,
-	v1.628.0) are left out, as they are from the ``handoff_backlog`` KPI.
+	v1.629.0) are left out, as they are from the ``handoff_backlog`` KPI.
 	"""
 	if not frappe.db.has_column("Opportunity", "custom_created_project"):
 		return {"deals": [], "unavailable": "The Closed-Won hand-off customization is not installed."}

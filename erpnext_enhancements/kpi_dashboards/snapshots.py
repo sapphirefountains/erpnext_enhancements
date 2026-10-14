@@ -752,7 +752,7 @@ def _sales_metrics():
 	values, add = _collector()
 	open_filter = "status not in ('Closed Won','Lost','Closed','Converted')"
 	# Historical deals (pre-ERPNext, untouched for 90 days -- crm_enhancements/historical.py,
-	# v1.628.0) are out of the open-pipeline KPIs and every Closed-Won measure below, and out
+	# v1.629.0) are out of the open-pipeline KPIs and every Closed-Won measure below, and out
 	# of BOTH legs of the win rate: dropping them from one leg only would move the rate by the
 	# size of the history. "1=1" until the column exists. Not folded into open_filter, which
 	# reads as the status rule it is.
@@ -872,7 +872,7 @@ def _sales_metrics():
 		add(
 			"handoff_backlog",
 			"Hand-Off Backlog",
-			# Historical deals excluded (v1.628.0), as in the nag and the Sales Dashboard widget.
+			# Historical deals excluded (v1.629.0), as in the nag and the Sales Dashboard widget.
 			_scalar(
 				"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(custom_created_project,'')='' "
 				f"and {not_historical}"

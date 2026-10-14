@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Historical Opportunities: deals that predate ERPNext and nobody is working (v1.628.0).
+"""Historical Opportunities: deals that predate ERPNext and nobody is working (v1.629.0).
 
 Decision (Nik, 2026-10-13, TASK-2026-00917 / WI-024): historical Opportunities stop raising
 "Closed Won but no linked Project" warnings and are left out of KPI measurements. Most of the
@@ -278,7 +278,7 @@ def _write(names, value):
 
 
 def refresh_historical_flags():
-	"""Daily scheduler (hooks.py) and the v1.628.0 patch: recompute the flag for every deal.
+	"""Daily scheduler (hooks.py) and the v1.629.0 patch: recompute the flag for every deal.
 
 	Flags each Opportunity created before :data:`CUTOFF` with no person's activity in the
 	last :data:`ACTIVITY_DAYS` days, un-flags the rest, and clears the flag on anything

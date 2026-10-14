@@ -132,7 +132,7 @@ def _all_streams():
 def _opportunity_rollup(from_date, to_date):
 	"""Opportunity counts per stream. One row per (stream, outcome).
 
-	Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.628.0) are
+	Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.629.0) are
 	left out of every outcome, not just the wins, so the win rate is not skewed by them.
 	"""
 	rows = frappe.db.sql(

@@ -1,4 +1,4 @@
-"""Flag the historical Opportunities for the first time (v1.628.0, WI-024).
+"""Flag the historical Opportunities for the first time (v1.629.0, WI-024).
 
 Nik, 2026-10-13: an Opportunity created before 2025-08-01 that no person has worked on in 90
 days is *historical*. It raises no "Closed Won but no linked Project" warning and is left out

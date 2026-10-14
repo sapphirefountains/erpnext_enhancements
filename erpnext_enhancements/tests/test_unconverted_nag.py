@@ -186,7 +186,7 @@ class TestTheLinkShowsWhatWasCounted(unittest.TestCase):
         self.assertIn("custom_created_project", url)
 
     def test_the_predicate_form_leaves_historical_deals_out_once_the_column_exists(self):
-        """The nag excludes historical deals (v1.628.0), so the fallback link must too --
+        """The nag excludes historical deals (v1.629.0), so the fallback link must too --
         and must not name the column before it exists, which errors the list view."""
         fake = sys.modules["frappe"]
         self.assertNotIn("custom_is_historical", self.mod._unconverted_list_url(None))

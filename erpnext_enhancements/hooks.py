@@ -1077,7 +1077,7 @@ doc_events = {
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
-			# Historical opportunities (v1.628.0, WI-024): a PERSON changing the status of a
+			# Historical opportunities (v1.629.0, WI-024): a PERSON changing the status of a
 			# deal flagged custom_is_historical un-flags it in the same save, so an old deal
 			# somebody just marked Closed Won is in the hand-off warnings today rather than
 			# after the nightly refresh. Never for Administrator, an import or a patch.
@@ -1712,7 +1712,7 @@ scheduler_events = {
 		# docs (WI-071). Daily and bounded (max_new) so it cannot run away; the one-time
 		# historical backfill is a manual bench execute of attachments.sync_attachments.
 		"erpnext_enhancements.quickbooks_online.core.tasks.sync_attachments_scheduled",
-		# Historical opportunities (v1.628.0, WI-024, decided 2026-10-13): recompute
+		# Historical opportunities (v1.629.0, WI-024, decided 2026-10-13): recompute
 		# Opportunity.custom_is_historical -- created before 2025-08-01 AND, in 90 days, no
 		# person's comment, attachment, assignment or status change and no email on the deal
 		# (whoever logged it). Every won-without-project warning and the Closed-Won and

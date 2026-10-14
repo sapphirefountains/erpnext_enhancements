@@ -1,6 +1,6 @@
-"""Put back the real won date on eleven deals a re-import dated 2026-06-30 (v1.628.0, WI-024).
+"""Put back the real won date on eleven deals a re-import dated 2026-06-30 (v1.629.0, WI-024).
 
-Until v1.628.0 ``script_migrations.opportunity.stamp_won_date`` stamped today on ANY save of a
+Until v1.629.0 ``script_migrations.opportunity.stamp_won_date`` stamped today on ANY save of a
 Closed-Won deal whose ``custom_date_closed_won`` was blank, not only on the transition into
 Closed Won. A spreadsheet re-import on 2026-06-30 re-saved twelve long-won deals and every one
 of them came out "won 06-30-2026". The hook is transition-only now; this restores the dates.

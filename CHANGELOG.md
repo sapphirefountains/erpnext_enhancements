@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.629.0] - 2026-10-13
+
+Historical Opportunities (WI-024, TASK-2026-00917). Nik, 2026-10-13: the Closed-Won-but-no-project
+warnings should stop for deals from before ERPNext, "Julyish of 2025 or older", unless someone has
+worked them recently, and those deals should be left out of the KPIs. On prod that day 190 old won
+deals had no project, against 10 newer ones that are real follow-ups. While measuring it, twelve
+deals turned out to carry a won date nobody entered, 06-30-2026.
+
+### Added
+
+- **`Opportunity.custom_is_historical`**, "Historical (pre-ERPNext)": a stored, read-only check box.
+  A deal is historical when it was **created before 2025-08-01** (which covers every deal imported
+  from Zoho on 2025-07-14, however late it was won) **and nobody has worked it in 90 days**. Worked
+  means a comment or attachment, any email on the deal (by reference or a Communication Link,
+  whoever logged it), an assignment, or a person changing its status. Imports, bulk edits and
+  patches never count: they re-saved these rows on 2026-06-07, 06-30 and 08-19 without anyone
+  working the deals. It is a stored field rather than a computed rule because Number Cards,
+  Report Builder filters and list views can only filter on a column; this supersedes WI-024's "no
+  invented status field" line (the work item records the decision).
+  - `crm_enhancements/historical.py` holds the rule and the helpers every call site uses
+    (`exclude_filters`, `exclude_sql`, `is_historical`), each safe on a database that does not yet
+    have the column.
+  - A daily job re-checks every deal, and a person changing a historical deal's status clears the
+    flag on that save.
+  - The field sits on the Close step after "Stage changed on", in the hand-kept
+    `Opportunity-main-field_order`, and can be used as a list filter.
+- **"Include historical"** check boxes on the Closed Won Reconciliation and Hand-Off Process Coverage
+  reports, off by default.
+
+### Changed
+
+- **Historical deals are left out of:**
+  - the daily "won but not converted" SMS nag and the list link it sends;
+  - the Sales hand-off backlog block and its KPI, and the TV board's "Won — awaiting project"
+    column;
+  - the Opportunity form's "Create project now?" prompt and the hand-off panel, which shows a quiet
+    "Historical (pre-ERPNext)" line instead of a Ready step or an OVERDUE banner (Create Project
+    stays available as a plain button, so a real case is never stranded);
+  - the AI hand-off tool, which says how many historical deals it left out;
+  - the KPIs: win rate (both legs), won count and value, average deal size, marketing won, the
+    marketing funnel, value-stream performance and the three open-pipeline measures;
+  - the morning briefing's "my open pipeline";
+  - the "Closed-Won Opportunities" number card and the two status charts.
+- **`stamp_won_date` stamps a won date only when a deal becomes won** (inserted as Closed Won, or its
+  status changes to Closed Won on that save). It used to stamp today on *any* save of a won deal
+  with a blank date, so a spreadsheet re-import on 2026-06-30 dated twelve deals 06-30-2026 and
+  booked them as June wins in the KPIs and the commission report. A blank won date on a deal won
+  before ERPNext is deliberate (`backfill_opportunity_won_date`, v1.290.0); a re-save no longer
+  invents one.
+
+### Fixed
+
+- **The real won dates are back on eleven of those twelve deals** (`restore_opportunity_won_dates`),
+  each from the deal's own change to Closed Won in its history, made by a person on an ordinary
+  day: eight deals won between 2025-08-27 and 2026-04-27, and three Zoho-era deals actually won in
+  ERPNext in Sep–Oct 2025 (Union Station, Shine Backyard, BDL Viviano). Patches – Dan Chase gets
+  2025-03-19 from the Zoho export, where it was already Closed Won; its ERPNext change in October
+  only replaced the migration's "Closed" placeholder. Jan Trost really was won on 2026-06-30 and
+  keeps it. The patch changes a date only while it still reads 06-30-2026.
+
+### Migration
+
+- `restore_opportunity_won_dates`, then `set_historical_opportunities`. The second creates the
+  field from its fixture first (post-model-sync patches run before fixtures sync) and then flags the
+  deals. Both log their own failures and cannot raise.
+
+### Tests
+
+- `tests/test_historical_opportunities.py` (66 tests, own CI step): the rule at the cutoff boundary,
+  each activity source, what does not count, the stamp's transition behaviour, both patches, the
+  fixtures and wiring, and a scan that every adopting call site uses the helper.
+  `test_unconverted_nag` and `test_handoff_gate` cover the nag's and the gate's new exclusions.
+
 ## [1.627.0] - 2026-10-13
 
 Form kit P5.5 (TASK-2026-02772): a default forecast probability for each Opportunity stage, which Sales

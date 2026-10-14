@@ -109,7 +109,7 @@ frappe.ui.form.on("Opportunity", {
 		// earlier). Guarded to fire at most once per load and never for a status
 		// change made during this session (the realtime prompt covers transitions).
 		// Never for a historical deal (pre-ERPNext, untouched for 90 days —
-		// crm_enhancements/historical.py, v1.628.0): it is excluded from every
+		// crm_enhancements/historical.py, v1.629.0): it is excluded from every
 		// won-without-project warning, and opening one to read it is not a hand-off.
 		if (
 			!frm._ee_reopen_checked &&

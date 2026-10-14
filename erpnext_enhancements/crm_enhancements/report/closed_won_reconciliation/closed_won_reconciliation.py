@@ -23,7 +23,7 @@ whole 2014-2026 backlog is available, but opening the report should show you the
 part that matters.
 
 Historical deals (created before 2025-08-01, no person's activity in 90 days —
-`crm_enhancements/historical.py`, v1.628.0) are left out unless "Include
+`crm_enhancements/historical.py`, v1.629.0) are left out unless "Include
 historical" is ticked; `unlinked_won_opportunities` applies the filter.
 """
 

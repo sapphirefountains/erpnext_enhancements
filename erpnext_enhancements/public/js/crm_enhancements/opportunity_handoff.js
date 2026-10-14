@@ -43,7 +43,7 @@
  *  - Without a linked Project, they're derived from the Opportunity: "Mark Won"
  *    completes when the status is Closed Won; the others are upcoming.
  *  - A historical deal (`custom_is_historical`: pre-ERPNext and untouched for 90
- *    days, v1.628.0) with no Project marks neither step 2 nor step 3 as next,
+ *    days, v1.629.0) with no Project marks neither step 2 nor step 3 as next,
  *    never reads Ready or OVERDUE, and shows one quiet line saying it is excluded
  *    from hand-off warnings. Create Project stays, as a plain button.
  *

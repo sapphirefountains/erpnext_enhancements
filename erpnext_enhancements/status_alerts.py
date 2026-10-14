@@ -246,7 +246,7 @@ def _unconverted_list_url(names=None):
 		"custom_created_project": '["is","not set"]',
 		"custom_date_closed_won": '["is","set"]',
 	}
-	# The nag leaves historical deals out (crm_enhancements/historical.py, v1.628.0), so
+	# The nag leaves historical deals out (crm_enhancements/historical.py, v1.629.0), so
 	# the fallback link does too -- for the same reason as above: a link must show the
 	# set the sentence counted. Only once the column exists; naming a missing field in
 	# a list-view filter is an error on the page.
@@ -313,7 +313,7 @@ def nag_unconverted_opportunities():
 	# rather than a cleverer filter. That is the whole reason it was missed: the other
 	# two fit in the filter list and this one does not.
 	#
-	# And historical deals stay out (v1.628.0, WI-024, decided 2026-10-13): created before
+	# And historical deals stay out (v1.629.0, WI-024, decided 2026-10-13): created before
 	# 2025-08-01 with no person's activity in 90 days. A dated Zoho-era win with no project
 	# is history, not a hand-off somebody forgot, and every day it is in this message is a
 	# day the message teaches people to skim past the real ones.

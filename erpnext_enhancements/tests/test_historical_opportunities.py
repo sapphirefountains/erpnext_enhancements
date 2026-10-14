@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Historical Opportunities (v1.628.0, WI-024; Nik, 2026-10-13).
+"""Historical Opportunities (v1.629.0, WI-024; Nik, 2026-10-13).
 
 An Opportunity created before 2025-08-01 that no person has worked on in 90 days is
 *historical*: no won-without-project warning, no KPI. This suite RUNS the rule against an

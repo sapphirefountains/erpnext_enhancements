@@ -216,7 +216,7 @@ def get_pipeline_data():
 	for opp in opportunities:
 		if opp.status == WON_STATUS:
 			# Historical deals (pre-ERPNext, untouched for 90 days -- historical.py,
-			# v1.628.0) are not "awaiting" anything: they were delivered before this
+			# v1.629.0) are not "awaiting" anything: they were delivered before this
 			# system existed, and the column is a hand-off worklist.
 			if not opp.custom_created_project and not cint(opp.get(HISTORICAL_FIELD)):
 				won_waiting.append(opp)

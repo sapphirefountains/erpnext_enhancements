@@ -83,7 +83,7 @@ def get_funnel_cascade():
 			if frappe.db.has_column("Opportunity", "custom_date_closed_won")
 			else "modified"
 		)
-		# Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.628.0)
+		# Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.629.0)
 		# never count as a win in the funnel, matching the KPI snapshot's won counts.
 		won = _count("Opportunity", {"status": "Closed Won", won_col: (">=", since), **exclude_filter_dict()})
 		return {

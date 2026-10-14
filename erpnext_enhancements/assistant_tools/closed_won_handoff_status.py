@@ -13,7 +13,7 @@ permissions are enforced. To advance a step or create the project, use the desk
 (the "Create project now?" prompt) — those are deliberately not exposed here.
 
 Historical deals (created before 2025-08-01 with no person's activity in 90 days —
-``crm_enhancements/historical.py``, v1.628.0) are left out of the queue, and the
+``crm_enhancements/historical.py``, v1.629.0) are left out of the queue, and the
 result says how many were, so an answer built on it can say "N, not counting M
 pre-ERPNext deals" rather than quietly reporting a smaller backlog.
 """

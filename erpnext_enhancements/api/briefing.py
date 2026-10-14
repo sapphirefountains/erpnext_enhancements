@@ -174,7 +174,7 @@ def _user_pipeline(user):
 			"opportunity_owner": user,
 			"status": ("not in", CLOSED_OPPORTUNITY_STATUSES),
 			# A historical deal (pre-ERPNext, untouched for 90 days -- historical.py,
-			# v1.628.0) is not "my open pipeline", and the briefing's five slots are
+			# v1.629.0) is not "my open pipeline", and the briefing's five slots are
 			# too few to spend on one.
 			**exclude_filter_dict(),
 		},

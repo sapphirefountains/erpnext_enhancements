@@ -1100,7 +1100,7 @@ jobs:
       # nowhere in CI.
       - name: The unconverted-wins nag counts and links the same set
         run: python -m unittest erpnext_enhancements.tests.test_unconverted_nag -v
-      # Historical opportunities (v1.628.0, WI-024): RUNS the rule -- the 2025-08-01 cutoff,
+      # Historical opportunities (v1.629.0, WI-024): RUNS the rule -- the 2025-08-01 cutoff,
       # each activity source, Administrator/Guest and Data Import Versions not counting, the
       # 90-day window -- plus the transition-only won-date stamp and the won-date restore
       # patch, then checks every won-without-project warning and Closed-Won KPI adopted the

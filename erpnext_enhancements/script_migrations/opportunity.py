@@ -23,7 +23,7 @@ def stamp_won_date(doc, method=None):
 	Stamp today on the transition INTO Closed Won -- a new deal saved as won, or a status
 	change to it -- and only when nobody has entered a date.
 
-	Transition-only since v1.628.0. It used to stamp on ANY save of a won deal whose date was
+	Transition-only since v1.629.0. It used to stamp on ANY save of a won deal whose date was
 	blank, so the date meant "first saved after this hook shipped", not "won". A spreadsheet
 	re-import on 2026-06-30 re-saved twelve long-won deals and dated every one of them
 	06-30-2026 (patches/restore_opportunity_won_dates.py puts eleven back). A won deal with
