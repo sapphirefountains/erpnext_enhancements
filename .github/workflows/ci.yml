@@ -1711,6 +1711,14 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
+      # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
+      # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
+      # value-stream row and once in the board's total, On Hold kept out of the weighted forecast
+      # (figures held to the README's SQL check, run on SQLite), a drop on Closed Won or Lost never
+      # saving a status, ages at the TV board's thresholds; get_board reading through get_list with
+      # the form kit's exact `modified` string, or every move is a conflict. Own frappe stub.
+      - name: Opportunity board (bench-free, node + SQL check)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
@@ -3440,6 +3448,15 @@ jobs:
       # other three run against it in the two history harnesses.
       - name: Custom pages S3.1 page states (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_s3_page_states -v
+      # Custom pages S3.2 (v1.651.0). The four health dashboards (Integrations Health, Device
+      # Fleet, QuickBooks Online, Stripe) draw every tile through sf_kit.tiles: each status a chip
+      # that says its word, every colour a --sf-* token. Fails the build if a page keeps its own
+      # status-colour map or literal colour, builds tile markup by hand, or if Device Fleet stops
+      # being a thin caller of the shared health board; holds the QuickBooks page CSS out of
+      # desk_addons.bundle.scss and scoped under its wrapper. The behaviour runs in the S3.1
+      # step's harness (scripts/test_s3_page_states.mjs).
+      - name: Custom pages S3.2 health tiles (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_s3_health_tiles -v
       # Every Page has a title (the awesomebar indexes by it), the S1 patch covers every file
       # it force-imports with a bumped stamp, and the retired Hierarchical Task View is gone.
       - name: Custom pages S1 findability (bench-free)

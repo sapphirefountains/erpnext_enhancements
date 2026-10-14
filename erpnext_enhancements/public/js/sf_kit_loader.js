@@ -80,10 +80,35 @@
 		return { status, message, exc_type, session_expired: expired };
 	}
 
-	// The kit's shape without the kit: what a page uses of it (esc, call, state.render, toast).
+	// The kit's tiles as lines of words, one <p> per tile, the parts joined by " · ": the title; the
+	// status word (its status_label, else the kit's default word for its status or tone: Healthy,
+	// Needs attention or Failing, and none for neutral); the value; the detail; each metric as
+	// "label: value"; each link's label. Every part is escaped. QuickBooks' and Stripe's bare kits
+	// carry a copy, for the path where this loader itself is missing.
+	function plain_tiles(items, esc) {
+		const words = { __proto__: null, good: __("Healthy"), green: __("Healthy"), warn: __("Needs attention"), amber: __("Needs attention"), yellow: __("Needs attention"), danger: __("Failing"), red: __("Failing") };
+		const filled = (v) => v != null && typeof v !== "object" && String(v).trim() !== "";
+		const rows = (v) => (Array.isArray(v) ? v : []).filter((x) => x && typeof x === "object");
+		const line = (i) =>
+			[i.title, filled(i.status_label) ? i.status_label : words[i.status ?? i.tone], i.value, i.detail]
+				.concat(rows(i.metrics).filter((m) => filled(m.label)).map((m) => `${m.label}: ${filled(m.value) ? m.value : "—"}`))
+				.concat(rows(i.links).map((l) => l.label))
+				.filter(filled)
+				.map(esc)
+				.join(" · ");
+		return `<div>${rows(items).map((i) => `<p>${line(i)}</p>`).join("")}</div>`;
+	}
+
+	// The kit's shape without the kit: what a page uses of it (esc, call, state.render, toast, chip,
+	// tiles.html). A chip is its word, and a tile a line of words (plain_tiles above): with no kit
+	// there is no kit stylesheet either, so markup shaped like the kit's would draw as an unstyled
+	// jumble. The words carry the meaning, so a status still says itself.
 	function plain_kit() {
+		const escape = (v) => frappe.utils.escape_html(v == null ? "" : String(v));
 		return {
-			esc: (v) => frappe.utils.escape_html(v == null ? "" : String(v)),
+			esc: escape,
+			chip: (label) => escape(label),
+			tiles: { html: (items) => plain_tiles(items, escape) },
 			call: (method, args, opts) =>
 				Promise.resolve(
 					frappe.call({

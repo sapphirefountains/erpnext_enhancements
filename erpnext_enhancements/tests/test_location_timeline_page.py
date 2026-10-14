@@ -27,7 +27,7 @@ APP = Path(__file__).resolve().parents[1]
 PAGE_DIR = APP / "workforce/page/location_timeline"
 PAGE_JS = PAGE_DIR / "location_timeline.js"
 PAGE_JSON = PAGE_DIR / "location_timeline.json"
-PAGE_CSS = APP / "public/css/workforce/location_timeline.css"
+PAGE_CSS = PAGE_DIR / "location_timeline.css"
 EMPLOYEE_JS = APP / "public/js/employee.js"
 API = APP / "api/time_kiosk.py"
 
@@ -219,9 +219,12 @@ class TestTheMapFollowsTheDeskTheme(unittest.TestCase):
         at = body.index("new MutationObserver(")
         self.assertIn("attributeFilter: ['data-theme']", body[at : at + 300])
 
-    def test_the_stylesheet_reads_the_desk_variables(self):
+    def test_the_stylesheet_reads_the_app_tokens(self):
+        """The app's --sf-* tokens follow the desk's data-theme (sf_tokens.bundle.css), so the
+        page needs no theme block of its own. Since v1.652.0 they replace the desk variables
+        this used to read; tests/test_s3_page_css.py holds the rest of the file to them."""
         css = _text(PAGE_CSS)
-        for var in ("--bg-color", "--card-bg", "--border-color", "--text-color", "--text-muted"):
+        for var in ("--sf-bg", "--sf-surface", "--sf-rule", "--sf-text", "--sf-text-muted"):
             with self.subTest(var=var):
                 self.assertIn(f"var({var}", css)
 
@@ -248,18 +251,20 @@ class TestAssetsLoadThroughFrappeRequireWithBarePaths(unittest.TestCase):
                 self.assertNotIn(token, body)
         self.assertNotIn(".leaflet-", _text(PAGE_CSS))
 
-    def test_assets_still_load_through_frappe_require_with_bare_paths(self):
+    def test_no_path_carries_a_version_token(self):
         """v16 appends its own ?v=<build>; a path that already carries one loads as
         nothing. Removing Leaflet must not have reintroduced a versioned path."""
         body = _js(PAGE_JS)
-        self.assertIn("'/assets/erpnext_enhancements/css/workforce/location_timeline.css'", body)
         self.assertNotIn("?v=", body)
 
-    def test_the_stylesheet_is_required_and_exists(self):
+    def test_the_stylesheet_comes_with_the_page(self):
+        """Since v1.652.0 the stylesheet is the page's own .css, which Frappe's page loader
+        sends with the page; the script requires none. It used to be a raw /assets path in
+        frappe.require, a second request behind a frappe.dom.freeze()."""
         body = _js(PAGE_JS)
-        self.assertIn("'/assets/erpnext_enhancements/css/workforce/location_timeline.css'", body)
         self.assertTrue(PAGE_CSS.is_file())
-        self.assertIn("frappe.require(ASSETS", body)
+        self.assertNotIn("location_timeline.css", body)
+        self.assertNotIn("frappe.require(", body)
 
     def test_no_asset_path_carries_its_own_version_token(self):
         body = _js(PAGE_JS)
