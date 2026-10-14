@@ -68,6 +68,63 @@ tokens, and the on-screen check the polling blocks use exists once.
   host-less and throwing roots. It also fires both blocks' real poll timers three ways: shown,
   hidden, and hidden on an older bundle.
 
+## [1.639.1] - 2026-10-13
+
+### Fixed
+
+- **Opening the Opportunity Kanban board re-sent the Closed Won hand-off email** (reported 2026-10-13:
+  "I keep getting this email over and over"). CRM-OPP-2026-00178, *NACE - Primal at Natural History
+  Museum 11/5/26*, sent "Email Team on Opportunity Won" to the operations, billing, production and
+  sales inboxes 25 times: once when Brian won it on 10-12, then 24 more times on 10-13.
+  - **What prod showed.** Each extra email sits behind a pair of saves 90–210 ms apart, Closed Won →
+    Needs Analysis → Closed Won, by whoever had the **Opportunity Kanban board** open at that second
+    (Route History, and three of the board's own Version rows in the same seconds). Brian's five pairs
+    came at 07:56–07:58 and Nik's nineteen from 08:35 into the evening. The second save of each pair is a real
+    status change into Closed Won, so the Value Change notification fired every time.
+  - **The cause is frappe v16.50.0's board.** On every open, `init()` calls `update_order` with each
+    column's card list, and the server runs `frappe.set_value` on every card listed under a column
+    that is not its stored value. Up to 16.49 the client built those lists from the cards on screen,
+    so the write never fired. 16.50.0 builds them from the board's **saved** order, which only a drag
+    rewrites. Brian moved 00178 Needs Analysis → Negotiation/Review → Closed Won **on the form** on
+    10-12, so the saved order still listed it under Needs Analysis. Every board open after that
+    listed it twice. The server saved it into Needs Analysis, then back into Closed Won (the column
+    listed last wins), then re-saved both lists with the duplicate still in them. So it never cleared.
+  - **It is not only emails.** Each pair restamped `custom_stage_changed_on`, so the pipeline shows the
+    won deal as changed at the last board open. Once v1.627.0's stage probability shipped, the pair at
+    18:48 left the won deal at Needs Analysis' **25%**. And because the last-listed column wins, a deal
+    moved *backwards* on the form (Negotiation/Review → Needs Analysis, say) would have been put back
+    in its old column by the next board open, with nothing on screen saying so. 00178 is the only card
+    so far: it is the only Opportunity listed under a column that is not its status, and the only one
+    with paired status saves since 2026-09-01. No other Opportunity's status has changed since 10-10.
+  - **The fix** is `kanban_order.update_order`, registered in `override_whitelisted_methods` against
+    frappe's `update_order`. It only orders. Each column keeps the cards whose stored value is that
+    column, in the order sent, once each. A stale entry, a duplicate or a deleted document is dropped
+    from the saved order and never written onto the document. Nothing needs the write: a drag goes
+    through `update_order_for_single_card`, which sets the dragged card's value itself and is left to
+    frappe, and 16.50's client calls `update_order` from `init()` alone. It is a reimplementation, not a
+    wrapper, because the defect is frappe's loop body: pre-filtering and then calling frappe would still
+    write any card whose value changed between the two reads. The read-on-board / write-on-doctype
+    checks, `save(ignore_permissions=True)`, the realtime publish and the `(board, updated_cards)`
+    return mirror frappe's, and the stored values are read in one `IN` query instead of one `get_value`
+    per card (the Opportunity board sends 800+ names). Every Kanban board on the site goes through it.
+  - **00178 was repaired by hand on prod on 2026-10-13, before this release.** Its stale entry was
+    removed from the board's Needs Analysis order (no Opportunity is now listed under a column that
+    is not its status), and its `probability` (25 → 100) and `custom_stage_changed_on`
+    (2026-10-13 21:09 → 2026-10-12 16:17:57, the win) were put back. `custom_probability_by_hand`,
+    which the probability rule ticks on any probability change, was unticked in a second save. None
+    of those saves sent an email. `custom_date_closed_won` (10-12) and the hand-off deadlines were
+    never touched by the flips. On another board the first open after this deploys prunes any stale
+    entry the same way.
+  - **Not done: a once-per-deal guard on the notification itself.** The obvious one is a condition
+    reading the won date from before the save. That fails as a Notification condition.
+    `Notification.validate_condition` evaluates it against `new_doc(...).as_dict()`, a plain dict, so
+    any Document method in it raises "The Condition is invalid". On a fixture that aborts
+    `bench migrate`, which on this repo is the deploy.
+  - `tests/test_kanban_order.py` (own CI step) stubs `set_value` to raise. Its five core tests fail
+    against a copy of frappe 16.50.0's loop and pass against the override. Read from frappe tags
+    v16.49.0 and v16.50.0 (`kanban_board.py`, `kanban_board.bundle.js`); the sibling `../frappe`
+    checkout is on `develop`.
+
 ## [1.639.0] - 2026-10-13
 
 Orphaned addresses: a one-shot patch, `cleanup_orphan_import_addresses`, settles the unlinked
