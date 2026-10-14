@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.678.2] - 2026-10-14
+
+### Fixed
+- **An Opportunity's notes and comments are back on the guided page, and on the board's side
+  panel.** Nik, 2026-10-14: "I can't see comments which are extremely important." Since v1.644.0
+  the guided page has been the default way to open an Opportunity. It replaced the Desk form, and
+  with it the form's Notes tab and timeline, where a deal's history lives. Both now sit under the
+  steps, on every step, for any saved record:
+  - **Notes:** ERPNext's `notes` table of CRM Note, the Opportunity's Notes tab. On prod that is
+    1,049 notes on 235 deals, against 45 timeline comments.
+    - **Reading:** listed newest first through the new GET `form_kit.api.record_notes`, which
+      checks the registry and read on the record. It returns plain text only (the note's HTML
+      with its tags taken out), which the page writes with `.text()`.
+    - **Adding:** "Add note" runs the DocType's own `add_note` (ERPNext's CRMNote mixin) through
+      `frappe.handler.run_doc_method`. Queued edits save first; then only the Notes list is drawn
+      again, where the person is looking, and the page is not reloaded. The record's `modified`
+      moves, but the notes table is in no step, so the next step save's conflict check settles it
+      without asking (`save_queue` `split_conflict`).
+  - **Comments:** the Desk's own Comments App (`public/js/comments.js`), mounted with a stand-in
+    `frm` that carries only what it reads (`doc.doctype`, `doc.name` and the wrapper). It reads and
+    writes the same native Comment rows as the form's timeline.
+- **The same goes for every DocType given a guided view, now and later** (Nik: "We need the
+  comments visible for every doctype we are making the views for now and in the future"). It all
+  lives in the shared record editor, and whether a DocType has notes is read from its meta, never
+  its name. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if the editor singles a
+  DocType out, if either shell stops drawing the section, or if the Comments App starts reading
+  more of `frm` than the stand-in carries. `form_kit/README.md` "Notes and comments" states the
+  rule.
+
+## [1.678.1] - 2026-10-14
+
+### Fixed
+- **The Lead Source field can be picked again** on Lead, Opportunity and Customer, and in the
+  guided Opportunity flow. Picking one failed with "Insufficient Permission for Lead Source",
+  System Managers included (Nik, 2026-10-14).
+  - **Cause:** the port of 17 DB-only DocTypes into the app (2026-06-09) declared `Lead Source`
+    a **child table** (`istable: 1`, no permissions), although its 24 records were always
+    standalone, with no parent. A child table has no permissions of its own, so frappe refuses
+    every direct read of it: link search, link validation, `get_list`.
+  - **Impact:** since then one person managed to set a lead source by hand (August). The 825
+    Opportunities reading "Unknown (pre-Aug 2026)" were set by the backfill patch, which goes
+    past permissions.
+  - **Fix:** `Lead Source` is a standalone list again. It is named by the source itself
+    (`autoname: Prompt`, as the existing records are) and has Quick Entry.
+    - **Every Desk user** (v16's `Desk User`) may read and pick from it.
+    - **System Manager and Sales Manager** may add, edit and remove sources. Marketing Manager
+      is left out on purpose: `test_marketing_approval` pins that role to the publishing surface.
+    - **On migrate**, the DocType sync adds the list columns a standalone table needs
+      (`_user_tags`, `_comments`, `_assign`, `_liked_by`; v16 `DBTable.get_columns_from_docfields`)
+      and leaves the old `parent*` columns in place, unused.
+  - **New guard:** `tests/test_link_targets_not_child_tables.py`, in its own CI step, fails the
+    build when any Link field (in the fixtures or this app's DocTypes) points at a child table
+    this app owns. It found one more, `Value Streams.value_stream_link`: a dead field, empty on
+    all six records, which is allow-listed with its reason.
+
+## [1.678.0] - 2026-10-14
+
+### Added
+
+- **Day-specific lines on the Visit Review page.** Since v1.619.0 a checklist line can be set to
+  weekdays, so a daily site's visit carries that day's lines. A visit's checklist is built once, for the
+  day it was scheduled or done. A reviewer could not tell which lines were there because of the day,
+  nor see that a visit done a day late carried its scheduled day's lines.
+  - `get_review_visit` now returns `weekday` (`visit_days.review_lines`), and the page shows it under the
+    summary.
+  - The check uses the day the visit was done, else the day it was scheduled. It names the day-specific
+    lines on the visit, the lines due that day but missing, and the lines set for other days.
+  - Lines are matched by section and label, across water features. Chemical Dosing lines become
+    consumables, which carry an item rather than a label, so they are left out. Disabled sections are
+    left out too, as the checklist builder skips them.
+  - It never stops the page from opening.
+- **Preview a day on a visit form template.** The Sapphire Maintenance Template form has a **Preview a
+  day** button (`preview_day`). Pick a weekday and see each section's lines, in visit order, with those
+  set to other days struck through, plus a count of each. It reads the saved template and says so when
+  the form has unsaved changes. The template doctype gets its first form script.
+
+### Fixed
+
+- **A whole-site chemistry reading no longer shows in every fountain's trend sparkline.**
+  `_chemistry_trends` for a fountain took any untagged row. On a site visit that is a reading for the
+  whole site, which a form ticked Once per Site Visit (v1.634.0) records. An untagged row now counts only
+  on that fountain's own Per Feature visits.
+- **The customer report names a whole-site reading's chart line "Whole site"**, instead of leaving a
+  blank legend line.
+- Both were noted in the review of v1.634.0.
+
+### Tests
+
+- `test_visit_agreement_match`, 8 more:
+  - the day lines on time, a day late, and with none;
+  - dosing and disabled sections never reported missing;
+  - the weekday-number rule;
+  - Preview a day, and its refusal of a non-day;
+  - a fountain's trend without the site-wide reading.
+- `test_visit_report`: the "Whole site" legend.
+- `test_visit_review`: the `weekday` field, and the day block's escaping.
+
+## [1.677.2] - 2026-10-14
+
+### Fixed
+- **Back with a Party "+ New" dialog open closes only the dialog, for real this time.** v1.677.1
+  shipped the wrong cause and changed nothing on prod: Back still closed the New Contact dialog
+  and left the step.
+  - **The cause:** v16's `QuickEntryForm` *is* the frappe Dialog (`extends frappe.ui.Dialog`; its
+    `.dialog` is itself), so the entry never needed unwrapping. What stopped it was timing.
+    `make_quick_entry`'s promise resolves while the modal is still animating in, and
+    `Dialog.display` turns true only on `shown.bs.modal`. `PartyEntry.track` read
+    `display === false` at that moment as "the full form opened instead" and returned before
+    joining the planner kit's history guard.
+  - **The fix:** it now joins once the dialog has shown (`shown.bs.modal`), or at once if it is
+    already showing. A quick entry that routed to the full form never shows, so it never joins.
+  - **Measured on prod before the change:** the resolved entry had `display: false`, which was
+    `true` 1.5 s later. Registering the shown dialog with `planner_kit.guard` by hand made Back
+    close only the dialog, and Cancel stay on the step.
+  - **Corrected below:** the v1.677.1 entry's explanation is wrong; `dialog_of` stays as a
+    harmless normalizer.
+
 ## [1.677.1] - 2026-10-14
 
 ### Fixed

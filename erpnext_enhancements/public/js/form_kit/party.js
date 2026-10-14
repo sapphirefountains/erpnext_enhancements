@@ -125,10 +125,9 @@ export function plan_account_change({ roles, values, details, editable }) {
 	return out;
 }
 
-// The frappe Dialog a "+ New" opened, from what make_quick_entry resolved with. v16's
-// QuickEntryForm.setup() resolves the QuickEntryForm itself, whose Dialog is its .dialog; a bare
-// Dialog (one with a $wrapper) is taken as it is. null when nothing opened: no quick entry, so the
-// full form was routed to instead and the entry has no dialog.
+// The frappe Dialog a "+ New" opened, from what make_quick_entry resolved with. On v16 the
+// QuickEntryForm IS the Dialog (its .dialog is itself); an entry that wraps its Dialog in .dialog is
+// unwrapped, and a bare Dialog (one with a $wrapper) is taken as it is. null for anything else.
 export function dialog_of(entry) {
 	if (!entry || typeof entry !== "object") return null;
 	if (entry.dialog && typeof entry.dialog === "object" && entry.dialog.$wrapper) return entry.dialog;
