@@ -22,7 +22,7 @@
 // the backlog in one click makes reviewed-vs-unreviewed meaningless, and that
 // distinction is the only thing the panel has to tell a learner with.
 //
-// Desk tokens only, no learner stylesheet — hence `gr-` and nothing else.
+// The app's global --sf-* tokens only, no learner stylesheet — hence `gr-` and nothing else.
 //
 // THE TAB IS IN THE ROUTE. /desk/training-glossary-review is the review queue,
 // .../traps is the same queue narrowed to trade traps, and .../collisions is the second
@@ -98,8 +98,16 @@ class GlossaryReview {
 
 	loadNav() {
 		// The shared Training rail, pulled here rather than bundled globally — the same
-		// call training_insights.js and training_review.js make.
-		if (window.TR && TR.loadAssets) TR.loadAssets(GR_NAV_ASSETS);
+		// call training_insights.js and training_review.js make, and now with the same
+		// argument. It used to pass no version, so every load asked for `desk_nav.css?v=`:
+		// one unchanging URL for a file /assets serves immutable for a year, so a device
+		// that had cached it never saw an edit again. The deploy version changes the URL
+		// on every release, which is the cache bust TR.loadAssets exists to carry.
+		if (!window.TR || typeof TR.loadAssets !== "function") return;
+		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
+		TR.loadAssets(GR_NAV_ASSETS, version).catch(() => {
+			// Navigation is not the page.
+		});
 	}
 
 	buildChrome() {

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.643.0] - 2026-10-14
+
+### Changed
+
+- **Five Desk pages keep their CSS in their own `.css` file and draw it from the `--sf-*` tokens**
+  (custom pages S3.4a, ERPNext TASK-2026-02823): Drive Link Manager, GA4 Dashboard, Inspection
+  Wizard, Training Insights and Glossary Review.
+  - **Why the files moved.** Drive Link Manager and GA4 Dashboard wrote a `<style>` block into their
+    markup string, and the Inspection Wizard appended a 60-line `QW_STYLE` constant to the page. A
+    page's own `<page>.css` is the better home: frappe reads it beside the page's JS and sends it with
+    the page itself (`Page.load_assets` in `frappe/core/doctype/page/page.py`, through
+    `desk_page.getpage`; checked on `version-16`), so an edit reaches a phone on its next open rather
+    than waiting out a cached copy, and the styles can be read and linted as CSS. The injection code
+    is gone, and so are the inline `style="color: ..."` attributes the Drive Link Manager painted its
+    confidence and status colours with: they are tone classes now.
+  - **Why the colours changed.** The pages mixed Frappe's palette (`--green-500`, `--red-500`) with
+    literal hexes (`#dc2626`, `#e03636`, `#fde8e8`), so "failed" was a different red on each screen and
+    the literal ones ignored the dark theme. They now read the app's tokens, which follow the Desk's
+    light or dark setting: square cards on `--sf-surface` with a `--sf-rule` hairline and no shadow,
+    status from `--sf-good` / `--sf-warn` / `--sf-danger` with their `--sf-on-*` labels, radii from
+    `--sf-radius-*`, and one phone breakpoint at 767px. Status *text* mixes its token 50% with
+    `--sf-text-strong`, so it reads on a white card and a navy one; `--sf-warn` is a yellow fill and
+    is never text on its own. Fields are white with 16px text in both themes, so iOS no longer zooms
+    into the Inspection Wizard's note box or the Glossary Review's text areas (both were 15px or less).
+    The Inspection Wizard is Build work, so the section on screen is a Build pillar chip; its nav bar
+    and sticky tabs keep Frappe's `--bg-color` on purpose, because they sit over the Desk's own page
+    ground and have to match it.
+  - **Statuses that were colour alone now carry a word.** A failing section's tab says "failing" beside
+    its red edge; a measurement out of range says "Out of range" on its range line (shown only while
+    the line is marked, so it clears with the colour when a new value is typed); a row with a photo
+    attached shows a tick; the Drive Link Manager's status is a pill with its word on the fill; the
+    Glossary Review's current tab has a bar under it, not just a change of ground.
+  - **Layout on phones.** GA4's two-column grid becomes one column, the Drive Link Manager's table
+    scrolls inside its own box instead of pushing the page sideways, and Training Insights shows its
+    tiles two to a row.
+  - Behaviour is otherwise unchanged. GA4's chart series colours are still literal in its JS:
+    `frappe.Chart` takes them as values, so moving them onto the tokens is a separate change.
+
+### Fixed
+
+- **Glossary Review loaded the shared Training rail's stylesheet and script with no version**, so
+  every load asked for `desk_nav.css?v=` and `desk_nav.js?v=`: one unchanging URL for files that
+  `/assets` serves immutable for a year. A device that had cached them never saw an edit again (the
+  "works on desktop, phones still broken" bug in CLAUDE.md). `TR.loadAssets` refuses a path with no
+  `?v=` at all, but an empty token passed its guard. The page now passes the deploy version, as
+  Training Insights, Question Review, the learner page and the authoring canvas already did, and its
+  load ends in a `catch` so a failed rail can never cost the page. Question Review was checked and
+  already passed the version.
+
+### Added
+
+- **`tests/test_s3_page_css.py`** (bench-free, its own CI step). Fails the build if any of the five
+  pages writes a `<style>` from JS or paints a colour inline again, loses its `.css`, puts a literal
+  colour or a Frappe palette variable in it, reads a `var(--sf-...)` that `sf_tokens.bundle.css` does
+  not define (it would resolve to nothing, silently), declares a custom property of its own, uses a
+  shadow or a radius that is not a token, or a breakpoint other than 767px. It also holds every
+  Training page's `TR.loadAssets` call to passing a version.
+
 ## [1.639.1] - 2026-10-13
 
 ### Fixed

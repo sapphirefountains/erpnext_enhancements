@@ -5,17 +5,21 @@
  * PREFIX IS `ti-`, alongside `tr-` (the learner render), `tc-` (the authoring
  * canvas) and `tl-` (the learner Desk host).
  *
- * EVERY COLOUR COMES FROM FRAPPE, not from the Aurora palette. This is a manager's
- * console, not a learner's reading surface: it should look like every other desk
- * dashboard, it should follow the desk theme with no work of its own, and it should
- * not pull player.css (46KB) to render six numbers and three tables. The one
- * exception is the semantic red below, which is literal for the same reason the
- * learner stylesheet keeps its answer colours literal — "overdue" must not become a
- * different idea because somebody edited a palette.
+ * EVERY COLOUR COMES FROM THE APP'S --sf-* TOKENS (docs/app-design-system.md), not
+ * from the Aurora palette. This is a manager's console, not a learner's reading
+ * surface: it should look like every other dashboard the app draws, it should follow
+ * the Desk theme with no work of its own (the tokens switch on the Desk's
+ * data-theme), and it should not pull player.css (46KB) to render six numbers and
+ * three tables. "Overdue" is the danger status token, so it means the same thing on
+ * every screen, and its word is always printed beside it (the tile's label, the
+ * column's heading).
+ *
+ * Square cards with a hairline and no shadow; the one phone breakpoint is 767px.
  */
 
 .ti-page {
-	padding: 8px 0 24px;
+	padding: 8px 0 var(--sf-space-20);
+	color: var(--sf-text);
 }
 
 /* --------------------------------------------------------------- the numbers */
@@ -31,9 +35,9 @@
 	flex: 1 1 150px;
 	min-width: 140px;
 	padding: 14px 16px;
-	border: 1px solid var(--border-color);
-	border-radius: var(--border-radius-md, 8px);
-	background: var(--card-bg);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
 	text-align: left;
 	/* Reset the button the clickable variant is built from, so the two tiles are
 	   indistinguishable until you hover one. */
@@ -47,45 +51,55 @@
 
 .ti-tile.is-clickable:hover,
 .ti-tile.is-clickable:focus-visible {
-	border-color: var(--primary);
+	border-color: var(--sf-focus);
+}
+
+.ti-tile.is-clickable:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
 }
 
 .ti-tile-value {
 	font-size: 1.75rem;
-	font-weight: 700;
+	font-weight: var(--sf-weight-bold);
 	line-height: 1.1;
-	color: var(--heading-color);
+	color: var(--sf-text-strong);
 }
 
 .ti-tile-label {
 	margin-top: 2px;
-	font-size: 0.8125rem;
-	color: var(--text-muted);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
 }
 
-/* Literal, and only ever applied when the count is above zero — a red 0 reads as a
-   problem that is not there. */
+/* Only ever applied when the count is above zero — a red 0 reads as a problem that is
+   not there. Mixed with the strongest text so it reads on both themes' cards. */
 .ti-tile.is-bad .ti-tile-value,
 td.is-bad {
-	color: #e03636;
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	font-weight: var(--sf-weight-bold);
+}
+
+.ti-tile.is-bad {
+	border-left: 4px solid var(--sf-danger);
 }
 
 /* ---------------------------------------------------------------- the tables */
 
 .ti-section {
-	margin: 24px 0 8px;
+	margin: var(--sf-space-20) 0 8px;
 	font-size: 1rem;
-	font-weight: 600;
-	color: var(--heading-color);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-heading);
 }
 
 /* Tables scroll inside their own box rather than pushing the page sideways: the
    by-course table is six columns and the desk already spends width on a sidebar. */
 .ti-table-wrap {
 	overflow-x: auto;
-	border: 1px solid var(--border-color);
-	border-radius: var(--border-radius-md, 8px);
-	background: var(--card-bg);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
 }
 
 .ti-table {
@@ -98,14 +112,14 @@ td.is-bad {
 .ti-table td {
 	padding: 8px 12px;
 	text-align: left;
-	border-bottom: 1px solid var(--border-color);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
 	white-space: nowrap;
 }
 
 .ti-table th {
-	font-weight: 600;
-	color: var(--text-muted);
-	background: var(--bg-color);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-muted);
+	background: var(--sf-bg);
 }
 
 .ti-table tbody tr:last-child td {
@@ -113,7 +127,8 @@ td.is-bad {
 }
 
 .ti-link {
-	color: var(--primary);
+	color: var(--sf-link);
+	text-decoration: underline;
 	cursor: pointer;
 }
 
@@ -123,16 +138,16 @@ td.is-bad {
 	position: relative;
 	min-width: 90px;
 	height: 18px;
-	border-radius: 9px;
-	background: var(--bg-color);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-bg);
 	overflow: hidden;
 }
 
 .ti-bar-fill {
 	position: absolute;
 	inset: 0 auto 0 0;
-	background: var(--primary);
-	opacity: 0.25;
+	background: var(--sf-primary);
+	opacity: 0.35;
 }
 
 .ti-bar-text {
@@ -140,8 +155,8 @@ td.is-bad {
 	display: block;
 	line-height: 18px;
 	padding: 0 8px;
-	font-size: 0.75rem;
-	color: var(--text-color);
+	font-size: var(--sf-text-xs);
+	color: var(--sf-text-strong);
 }
 
 /* ----------------------------------------------------------------- the rest */
@@ -150,20 +165,28 @@ td.is-bad {
 	margin: 0;
 	padding: 8px 12px 8px 28px;
 	font-size: 0.875rem;
-	color: var(--text-color);
+	color: var(--sf-text);
 }
 
 .ti-empty {
-	padding: 24px;
-	border: 1px solid var(--border-color);
-	border-radius: var(--border-radius-md, 8px);
-	background: var(--card-bg);
-	color: var(--text-muted);
+	padding: var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text-muted);
 	text-align: center;
 }
 
 .ti-meta {
 	margin-top: 16px;
-	font-size: 0.75rem;
-	color: var(--text-muted);
+	font-size: var(--sf-text-xs);
+	color: var(--sf-text-muted);
+}
+
+@media (max-width: 767px) {
+	/* Two tiles a row on a phone, not one long column of six. */
+	.ti-tile {
+		flex: 1 1 calc(50% - 6px);
+		min-width: 0;
+	}
 }
