@@ -646,6 +646,24 @@ def ps_qty(value):
 	return qty_text(value)
 
 
+# Form kit P3.4: a date as every printed document shows it, ``10/14/2026`` and ``10/14/2026 2:00 PM``,
+# from the one library the Desk, reports, emails and SMS share (``utils.normalize``), rather than
+# ``frappe.format``, which follows System Settings and prints a 24-hour time. A value the library
+# cannot read prints as written; nothing prints for nothing.
+
+
+def ps_date(value):
+	return escape_html(normalize.format_date(value))
+
+
+def ps_datetime(value):
+	return escape_html(normalize.format_datetime(value))
+
+
+def ps_time(value):
+	return escape_html(normalize.format_time(value))
+
+
 def ps_rich(value):
 	return rich_text(value)
 

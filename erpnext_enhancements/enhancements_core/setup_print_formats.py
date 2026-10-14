@@ -91,7 +91,7 @@ _META = (
       <br>{{ project_names | join(", ") | e }}
       {%- endif %}
       {%- endif %}
-      <br>{{ frappe.format(doc.transaction_date, {"fieldtype": "Date"}) }}
+      <br>{{ ps_date(doc.transaction_date) }}
 """
 )
 
@@ -120,7 +120,7 @@ _FACTS = (
 	+ ps.fact("SUPPLIER", "{{ ps_party(doc) }}", width="40%")
 	+ ps.fact(
 		"REQUIRED BY",
-		'{% if doc.schedule_date %}{{ frappe.format(doc.schedule_date, {"fieldtype": "Date"}) }}'
+		'{% if doc.schedule_date %}{{ ps_date(doc.schedule_date) }}'
 		"{% else %}Not specified{% endif %}",
 		width="30%",
 	)
@@ -140,7 +140,7 @@ _FACTS = (
 		"APPROVED BY",
 		'{%- if doc.get("custom_approved_by") -%}'
 		'{{ frappe.db.get_value("User", doc.custom_approved_by, "full_name") or doc.custom_approved_by }}'
-		'{%- if doc.get("custom_approved_on") %}<br>{{ frappe.format(doc.custom_approved_on, {"fieldtype": "Datetime"}) }}{% endif -%}'
+		'{%- if doc.get("custom_approved_on") %}<br>{{ ps_datetime(doc.custom_approved_on) }}{% endif -%}'
 		"{%- else -%}" + _DASH + "{%- endif -%}",
 		width="30%",
 	)
@@ -249,7 +249,7 @@ _TERMS = (
       <div>
         {%- if term_label and term_label != doc.payment_terms_template %}{{ term_label | e }} &mdash; {% endif %}
         {{- frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
-        {%- if term.due_date %} due {{ frappe.format(term.due_date, {"fieldtype": "Date"}) }}{% endif %}
+        {%- if term.due_date %} due {{ ps_date(term.due_date) }}{% endif %}
       </div>
       {%- endfor %}
     {%- else %}

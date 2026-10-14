@@ -468,7 +468,7 @@ class TestDocumentSpecifics(_JinjaCase):
 			],
 		)
 		self.assertEqual(out.count("Net 30"), 1)
-		self.assertIn("USD 107.25 due DATE(2026-10-23)", out)
+		self.assertIn("USD 107.25 due 10/23/2026", out)
 
 	def test_invoice_amount_due_is_styled_like_the_totals(self):
 		ps = _NS["ps"]
@@ -523,14 +523,14 @@ class TestDocumentSpecifics(_JinjaCase):
 	def test_invoice_shows_the_suppliers_own_invoice_number(self):
 		out = _render("Purchase Invoice", bill_no="INV-88213", bill_date="2026-09-21")
 		self.assertIn("INV-88213", out)
-		self.assertIn("DATE(2026-09-21)", out)
+		self.assertIn("09/21/2026", out)
 
 	def test_material_request_prints_no_money_and_the_project(self):
 		self.assertNotIn("fmt_money", html_for("Material Request"))
 		self.assertIn("PRJ-00706", _render("Material Request"))
 
 	def test_supplier_quotation_shows_validity(self):
-		self.assertIn("DATE(2026-10-23)", _render("Supplier Quotation", valid_till="2026-10-23"))
+		self.assertIn("10/23/2026", _render("Supplier Quotation", valid_till="2026-10-23"))
 
 
 class TestWiring(unittest.TestCase):
