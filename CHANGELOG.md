@@ -95,6 +95,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_bin_assignments`' source checks now know the two new endpoints (the GET read, and the one
   write allowed before the log row: the quick Item, whose code the log row links).
 
+## [1.692.1] - 2026-10-14
+
+### Changed
+- **The guided Item flow puts the item on the bin it saves, not only as its default.** v1.683.0's
+  stock step (`api.item_flow.save_stock`) recorded the bin only as the Item Default's
+  `default_warehouse`. Since v1.689.0, an item is assigned to a bin by an enabled Putaway Rule,
+  per Nik's 2026-10-14 decision.
+  - Before this change, Stock Scan's bin list showed such an item only as the default
+    (`is_default`), not as `assigned`.
+  - A new item with no stock there yet dropped off the bin as soon as its default changed.
+  - ERPNext's *Apply Putaway Rule*, which routes received stock by the rule, had nothing to go
+    by.
+  
+  The stock step now also calls `bin_assignments.ensure_assignment`. v1.689.0 kept that helper,
+  with a stable signature, for this call.
+  - **Idempotent:** an existing enabled rule comes back as it is, and a disabled one is
+    re-enabled. Asking on every save keeps an item whose rule went missing on its bin.
+  - **Moving the item to another bin takes it off the old one when nothing is left there**, as
+    v1.689.0's *Move to* with "make this the item's bin" does to a source it empties. This uses
+    `bin_assignments.release_if_empty`, the new other half of `ensure_assignment`: the same
+    `_release`, gated only when it changes something, no log row, and a stable signature.
+    - Stock still on hand keeps the old bin's claim, and the note says so: "Bin A still has 3 on
+      hand, so the item stays on that bin too until it is moved."
+    - Two enabled rules means two bins *Apply Putaway Rule* may fill, so this is not left unsaid.
+    - A pair nothing claims (no enabled rule, not undecided) is left alone, so no record of a
+      decision is made where nobody listed the item.
+    - Found in this change's review: the first draft left the old rule enabled in every case.
+  - **A refusal never undoes the bin the person saved.** Examples are a caller without a stock
+    role (the bin module's gate is a Stock Scan role plus Item read; the flow's own is Item write)
+    or a template item.
+    - Both helpers' writes roll back together to a savepoint (`item_flow_bin_assignment`), which
+      is taken before messages are muted.
+    - The reason is added to the response's `note` ("Stock Scan's bin list was not changed:
+      ..."), which the page already shows as a warning toast after "Bin saved."
+    - Messages are muted while they run. A caught `frappe.throw` has already queued its message
+      for the browser, so it would otherwise still show a red dialog.
+    - Any other failure is not caught: the request fails and nothing of it is saved.
+  - The Putaway Rule is the one write in this flow that is not the caller's own: the bin module
+    writes it behind its own gate, as it does for Stock Scan. The module docstring says so.
+- **Tests.**
+  - `tests/test_item_flow.py TestTheBinAssignment` covers the flow side.
+  - `tests/test_bin_assignments.py TestReleaseIfEmpty` covers the helper: an emptied bin is taken
+    off and its default cleared, stock keeps the bin, a pair nothing claims is left alone, an
+    emptied undecided pair is recorded, and only a change meets the gate.
+  - The Item flow stub's `frappe.throw` now queues its message unless muted, as frappe's does.
+    So a swallowed throw that would still show a dialog fails the build.
+  - Removing any one safeguard fails its own test. In the flow: the call, the release call,
+    releasing on a same-bin save, the kept-stock note, the mute, restoring the mute, the
+    savepoint rollback, the narrow `except`, catching `PermissionError`, and the note. In the
+    helper: the stock check, the claim check, and clearing the default.
+
 ## [1.692.0] - 2026-10-14
 
 ### Added
