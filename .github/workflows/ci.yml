@@ -1739,6 +1739,15 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
+      # v1.684.0, the guided page's view settings: each person's layout (One page, Tabs, Step by
+      # step), nav, summary, notes, record tools, density, hints, text size, contrast, focus mode,
+      # pins, landing, hidden fields, summary fields, presets and shortcuts, as pure decisions under
+      # node (form_kit/view.js, field_groups.js) and the board's card parts; the store
+      # (planner_views_prefs, key "Guided Entry") against a frappe stub: only the caller's own
+      # __UserSettings row, straight to the table, cleaned in and out, capped; and fidelity (every
+      # layout through the editor's one renderer, a new record always the setup flow). Own stub.
+      - name: Guided Entry view settings (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_guided_view_settings -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast

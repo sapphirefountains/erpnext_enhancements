@@ -228,6 +228,20 @@ EXACT_SURFACE = {
         # record; returns plain text only (tested in test_guided_entry).
         "record_notes",
     },
+    # The planners' and the board's saved views, and since v1.684.0 the guided page's view
+    # settings: every endpoint acts only on the caller's own __UserSettings row (tested in
+    # test_planner_phase6c and test_guided_view_settings). Reads are GET, writes POST.
+    "api/planner_views_prefs.py": {
+        "get_views",
+        "save_view",
+        "delete_view",
+        "save_last_view",
+        "get_print_chrome",
+        "get_guided_view",
+        "save_guided_view",
+        "remember_guided_section",
+        "mark_guided_intro_seen",
+    },
     # The Opportunity board (form kit P6). Part C (v1.675.0) added bulk_update, which changes many
     # deals at once and so must check write permission and the `modified` lock deal by deal, through
     # the form kit's own save path (tested in test_opportunity_board_panel). `_bulk_plan`,

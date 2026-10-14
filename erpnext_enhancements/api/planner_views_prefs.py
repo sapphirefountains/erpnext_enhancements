@@ -109,6 +109,9 @@ SCHEMA = {
 		"hold_open": ("bool",),
 		"sort": ("enum", BOARD_SORT_KEYS),
 		"desc": ("bool",),
+		# v1.684.0: what a card shows beside its title (board.js card_parts / card_text): "" is the
+		# card as it always was, "none" nothing, else a comma list of board.js CARD_PARTS.
+		"card": ("text",),
 	},
 }
 #: Never remembered as "last used" (see the module docstring).
@@ -423,3 +426,236 @@ def get_print_chrome(planner, title=None, lines=None):
 		"th": ps.th(pillar),
 		"td": ps.TD,
 	}
+
+
+# ---------------------------------------------------------------------- the guided page's view (v1.684.0)
+#
+# Nik, 2026-10-14: a saved record on the guided page is laid out the way each person chooses (one
+# page, tabs or step by step; where the steps sit; the summary; notes and comments; pinned sections;
+# hidden fields; text size; focus mode; presets ...), "saved to their instance and not change it
+# for everyone else's views". The same store as the planners' views and for the same reason: a row
+# of the caller's own ``__UserSettings``, written straight to the table (never frappe's Redis-only
+# user_settings, which every deploy flushes), here under ``Guided Entry`` / ``guided_view``:
+#
+#     {"version": 1, "intro_seen": bool, "doctypes": {"Opportunity": {entry}}}
+#
+# An entry is ``prefs`` (enums, GUIDED_SCHEMA), ``pinned``, ``landing``, ``hidden_fields``,
+# ``hidden_steps``, ``summary_fields``, ``presets`` and ``last`` (the last section per record). The
+# page's twin is public/js/form_kit/view.js (VIEW_SCHEMA, clean_entry), held equal by
+# tests/test_guided_view_settings.py. Everything is cleaned on the way in and again on the way out:
+# an unknown key is dropped, an unknown value falls back to its default. Only the caller's own row
+# is ever read or written, so one person's choices never reach anyone else's page.
+
+GUIDED_SETTINGS = "Guided Entry"
+GUIDED_ROW_KEY = "guided_view"
+#: ``key -> values``; the first value is the default (view.js VIEW_SCHEMA, key for key).
+GUIDED_SCHEMA = {
+	"layout": ("page", "tabs", "steps"),
+	"nav": ("left", "right", "top"),
+	"summary": ("right", "left", "hidden"),
+	"notes": ("below", "side", "collapsed"),
+	"tools": ("side", "below", "collapsed"),
+	"density": ("comfortable", "compact"),
+	"hints": ("shown", "hidden"),
+	"fields": ("all", "filled"),
+	"text": ("normal", "large", "larger"),
+	"contrast": ("normal", "high"),
+	"focus": ("off", "on"),
+}
+GUIDED_LANDINGS = ("last", "first")
+#: The caps, view.js MAX_* one for one.
+GUIDED_MAX = {
+	"pinned": 20,
+	"hidden": 200,
+	"summary_fields": 12,
+	"presets": 10,
+	"preset_name": 40,
+	"last": 50,
+	"doctypes": 20,
+}
+#: The parts of an entry ``save_guided_view`` replaces when sent (``last`` has its own endpoint).
+GUIDED_PARTS = ("prefs", "pinned", "landing", "hidden_fields", "hidden_steps", "summary_fields", "presets")
+#: One save's JSON as sent, before parsing.
+MAX_GUIDED_BYTES = 12000
+_GUIDED_KEY = re.compile(r"^[A-Za-z0-9_]{1,140}$")
+
+
+def clean_guided_prefs(data):
+	"""Every key of :data:`GUIDED_SCHEMA`, each one of its values (the default when it was not)."""
+	source = data if isinstance(data, dict) else {}
+	out = {}
+	for key, values in GUIDED_SCHEMA.items():
+		value = source.get(key)
+		out[key] = value if isinstance(value, str) and value in values else values[0]
+	return out
+
+
+def _guided_keys(raw, limit):
+	"""Step keys or fieldnames: strings of the allowed shape, each once, at most ``limit``."""
+	out = []
+	for value in raw if isinstance(raw, list) else []:
+		key = value.strip() if isinstance(value, str) else ""
+		if _GUIDED_KEY.match(key) and key not in out and len(out) < limit:
+			out.append(key)
+	return out
+
+
+def _guided_landing(raw):
+	value = raw.strip() if isinstance(raw, str) else ""
+	return value if value in GUIDED_LANDINGS or _GUIDED_KEY.match(value) else "last"
+
+
+def _guided_presets(raw):
+	out = []
+	for preset in raw if isinstance(raw, list) else []:
+		if not isinstance(preset, dict):
+			continue
+		name = clean_text(preset.get("name"), GUIDED_MAX["preset_name"])
+		if not name or any(p["name"].lower() == name.lower() for p in out):
+			continue
+		if len(out) >= GUIDED_MAX["presets"]:
+			break
+		out.append({"name": name, "prefs": clean_guided_prefs(preset.get("prefs"))})
+	return out
+
+
+def _guided_last(raw):
+	out = []
+	for pair in raw if isinstance(raw, list) else []:
+		if not isinstance(pair, list | tuple) or len(pair) < 2:
+			continue
+		name = clean_text(pair[0])
+		step = pair[1].strip() if isinstance(pair[1], str) else ""
+		if not name or not _GUIDED_KEY.match(step) or any(p[0] == name for p in out):
+			continue
+		if len(out) >= GUIDED_MAX["last"]:
+			break
+		out.append([name, step])
+	return out
+
+
+def clean_guided_entry(raw):
+	"""One DocType's entry, every part cleaned (view.js ``clean_entry``)."""
+	r = raw if isinstance(raw, dict) else {}
+	summary = r.get("summary_fields")
+	summary = _guided_keys(summary, GUIDED_MAX["summary_fields"]) if isinstance(summary, list) else None
+	return {
+		"prefs": clean_guided_prefs(r.get("prefs")),
+		"pinned": _guided_keys(r.get("pinned"), GUIDED_MAX["pinned"]),
+		"landing": _guided_landing(r.get("landing")),
+		"hidden_fields": _guided_keys(r.get("hidden_fields"), GUIDED_MAX["hidden"]),
+		"hidden_steps": _guided_keys(r.get("hidden_steps"), GUIDED_MAX["hidden"]),
+		"summary_fields": summary,
+		"presets": _guided_presets(r.get("presets")),
+		"last": _guided_last(r.get("last")),
+	}
+
+
+def read_guided_store(row):
+	"""The ``guided_view`` part of a ``__UserSettings`` row, cleaned: ``{"intro_seen", "doctypes"}``."""
+	raw = row.get(GUIDED_ROW_KEY) if isinstance(row, dict) else None
+	raw = raw if isinstance(raw, dict) else {}
+	stored = raw.get("doctypes") if isinstance(raw.get("doctypes"), dict) else {}
+	doctypes = {}
+	for doctype, entry in stored.items():
+		name = clean_text(doctype)
+		if name and len(doctypes) < GUIDED_MAX["doctypes"]:
+			doctypes[name] = clean_guided_entry(entry)
+	return {"intro_seen": raw.get("intro_seen") is True, "doctypes": doctypes}
+
+
+def _guided_into(row, store):
+	row = dict(row or {})
+	row[GUIDED_ROW_KEY] = {
+		"version": STORE_VERSION,
+		"intro_seen": bool(store["intro_seen"]),
+		"doctypes": store["doctypes"],
+	}
+	return row
+
+
+def _guided_doctype(doctype):
+	"""A DocType the guided page serves (form_kit.config.CONFIGS) that the caller may read."""
+	from erpnext_enhancements.form_kit.config import CONFIGS
+
+	name = clean_text(doctype)
+	if name not in CONFIGS:
+		frappe.throw(_("There is no guided view for {0}.").format(name or "?"))
+	frappe.has_permission(name, "read", throw=True)
+	return name
+
+
+def _guided_parse(data):
+	"""What a save sent (JSON text or a dict) -> a dict, refusing anything too large or not an object."""
+	raw = json.dumps(data) if isinstance(data, dict) else (data if isinstance(data, str) else "")
+	if len(raw.encode("utf-8")) > MAX_GUIDED_BYTES:
+		frappe.throw(_("Those view settings are too large to save."))
+	if isinstance(data, dict):
+		return data
+	try:
+		parsed = json.loads(raw or "{}")
+	except ValueError:
+		frappe.throw(_("Those view settings could not be read."))
+	if not isinstance(parsed, dict):
+		frappe.throw(_("Those view settings could not be read."))
+	return parsed
+
+
+def _guided_entry(store, doctype):
+	if doctype not in store["doctypes"] and len(store["doctypes"]) >= GUIDED_MAX["doctypes"]:
+		frappe.throw(_("Too many guided views are stored."))
+	return store["doctypes"].get(doctype) or clean_guided_entry({})
+
+
+@frappe.whitelist()
+def get_guided_view():
+	"""The caller's guided-page view settings: ``{"intro_seen": bool, "doctypes": {doctype: entry}}``."""
+	return read_guided_store(_read_row(GUIDED_SETTINGS))
+
+
+@frappe.whitelist(methods=["POST"])
+def save_guided_view(doctype, data):
+	"""Replace the parts of the caller's entry for ``doctype`` that ``data`` sends (:data:`GUIDED_PARTS`).
+
+	``{"doctype", "entry"}``, the entry as stored.
+	"""
+	doctype = _guided_doctype(doctype)
+	sent = _guided_parse(data)
+	row = _read_row(GUIDED_SETTINGS, for_update=True)
+	store = read_guided_store(row)
+	entry = dict(_guided_entry(store, doctype))
+	for part in GUIDED_PARTS:
+		if part in sent:
+			entry[part] = sent[part]
+	entry = clean_guided_entry(entry)
+	store["doctypes"][doctype] = entry
+	_write_row(GUIDED_SETTINGS, _guided_into(row, store))
+	return {"doctype": doctype, "entry": entry}
+
+
+@frappe.whitelist(methods=["POST"])
+def remember_guided_section(doctype, name, step):
+	"""The section the caller last had open on record ``name``: newest first, at most 50 records."""
+	doctype = _guided_doctype(doctype)
+	record = clean_text(name)
+	step = step.strip() if isinstance(step, str) else ""
+	if not record or not _GUIDED_KEY.match(step):
+		frappe.throw(_("That section could not be remembered."))
+	row = _read_row(GUIDED_SETTINGS, for_update=True)
+	store = read_guided_store(row)
+	entry = dict(_guided_entry(store, doctype))
+	entry["last"] = _guided_last([[record, step]] + [pair for pair in entry["last"] if pair[0] != record])
+	store["doctypes"][doctype] = entry
+	_write_row(GUIDED_SETTINGS, _guided_into(row, store))
+	return {"name": record, "step": step}
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_guided_intro_seen():
+	"""The first-time explanation has been shown to the caller; it is never shown again."""
+	row = _read_row(GUIDED_SETTINGS, for_update=True)
+	store = read_guided_store(row)
+	if not store["intro_seen"]:
+		store["intro_seen"] = True
+		_write_row(GUIDED_SETTINGS, _guided_into(row, store))
+	return {"intro_seen": True}

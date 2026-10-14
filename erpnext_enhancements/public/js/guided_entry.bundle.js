@@ -30,8 +30,9 @@ import { RecordEditor, mix_editor } from "./form_kit/ui/editor.js";
 import { SidePanel } from "./form_kit/ui/side_panel.js";
 
 // 2 since v1.675.0: the editor and the side panel. A tab still holding version 1 (loaded before a
-// deploy) takes this one, so a page that needs SidePanel finds it.
-const VERSION = 2;
+// deploy) takes this one, so a page that needs SidePanel finds it. 3 since v1.684.0: the view
+// settings (form_kit/view.js) and the FieldGroups of One page and Tabs, which the page now calls.
+const VERSION = 3;
 
 try {
 	if (typeof window !== "undefined" && !(window.sf_form_kit && window.sf_form_kit.version >= VERSION)) {
