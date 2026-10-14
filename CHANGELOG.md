@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.636.0] - 2026-10-13
+
+WI-024 step 1 (TASK-2026-00917): the Opportunity↔Project links are back-filled, so the
+won-without-project warnings stop listing deals that already have a project.
+
+### Fixed
+
+- **About 25 deals that have a project no longer show as waiting for one.** Three fields link a deal
+  to its project and were filled inconsistently: `Opportunity.custom_created_project` (the canonical
+  forward link the hand-off engine writes), the hidden legacy `Opportunity.custom_project`, and
+  `Project.custom_opportunity`. The Sales hand-off backlog, its KPI, the TV board's Won-awaiting-project
+  column and the AI hand-off tool read only the first, so on prod (2026-10-13) 18 deals with a project
+  pointing back at them, and 14 linked only through the hidden field, still nagged. Only 7 won deals
+  truly have no project.
+  - `patches/backfill_opportunity_project_links.py`, on every Closed Won deal:
+    1. copies `custom_project` into a blank `custom_created_project` (16 on prod);
+    2. otherwise takes the one Project that points back at the deal; with several, the one that isn't
+       canceled, else it skips and lists the deal (14 on prod);
+    3. back-fills `Project.custom_opportunity` where a forward link's Project has none (about 3).
+  - It never overwrites a link, never hands a Project to a deal while another deal already owns it
+    (CRM-OPP-2025-00665 and CRM-OPP-2025-00636 both claim PRJ-00581; that pair is listed for a person
+    to settle), and leaves deals that aren't Closed Won alone (two are listed: one Lost, one On Hold).
+  - Every write is `frappe.db.set_value(update_modified=False)`: no saves, so the closed-won project
+    prompt and the wildcard after-save hooks never fire. It prints a tally and cannot raise.
+
+### Tests
+
+- `tests/test_opportunity_project_link_backfill.py` (31 tests, own CI step): each rule, the canceled
+  tie-break (both the `Cancelled` and this site's `Canceled` spelling), the skips and conflicts,
+  non-won deals, a second run, missing columns, and static checks for no `.save(` and
+  `update_modified=False` on every write.
+
 ## [1.635.0] - 2026-10-13
 
 ### Fixed

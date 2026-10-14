@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""WI-024 step 1 (v1.634.0): the Opportunity <-> Project link backfill.
+"""WI-024 step 1 (v1.636.0): the Opportunity <-> Project link backfill.
 
 The won-without-project warnings read only ``Opportunity.custom_created_project``, so a deal
 linked only by ``Project.custom_opportunity`` or the hidden legacy ``custom_project`` kept

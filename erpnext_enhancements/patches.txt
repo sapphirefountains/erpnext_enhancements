@@ -1404,7 +1404,7 @@ erpnext_enhancements.patches.restore_opportunity_won_dates
 # Order against the patch above does not matter: the rule reads creation and activity, never the won date.
 # Cannot raise, safe twice.
 erpnext_enhancements.patches.set_historical_opportunities
-# WI-024 step 1 (v1.634.0, TASK-2026-00917): fill the canonical Opportunity<->Project links on every Closed Won deal,
+# WI-024 step 1 (v1.636.0, TASK-2026-00917): fill the canonical Opportunity<->Project links on every Closed Won deal,
 # so the won-without-project warnings stop nagging about deals that have a Project. custom_created_project from the
 # legacy custom_project, else from the one Project pointing back (with several, the only one not Canceled); then the
 # Project's blank custom_opportunity from custom_created_project. Never overwrites, never touches custom_project or a

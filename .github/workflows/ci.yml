@@ -1114,7 +1114,7 @@ jobs:
       # existed. Own step: it installs its own frappe stub.
       - name: Historical opportunities are excluded everywhere they were decided to be
         run: python -m unittest erpnext_enhancements.tests.test_historical_opportunities -v
-      # WI-024 step 1 (v1.634.0): RUNS the Opportunity<->Project link backfill against a stub --
+      # WI-024 step 1 (v1.636.0): RUNS the Opportunity<->Project link backfill against a stub --
       # each rule, the Canceled tie-break, the multi-project skip and the one-Project-one-deal
       # conflicts it must leave alone, deals that are not Closed Won, a second run, missing
       # columns -- and checks statically that it never save()s (the closed-won prompt, hazard

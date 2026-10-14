@@ -1,4 +1,4 @@
-"""Make the canonical Opportunity <-> Project links agree with the other two (v1.634.0, WI-024 step 1).
+"""Make the canonical Opportunity <-> Project links agree with the other two (v1.636.0, WI-024 step 1).
 
 Three fields link a won deal to its Project, filled inconsistently over the years:
 
@@ -324,7 +324,7 @@ def _report(counts, review, not_won, universe):
 		try:
 			frappe.log_error(
 				title="Opportunity-Project links need review",
-				message="WI-024 link backfill (v1.634.0) wrote nothing for these:\n" + "\n".join(review),
+				message="WI-024 link backfill (v1.636.0) wrote nothing for these:\n" + "\n".join(review),
 			)
 		except Exception:
 			pass
