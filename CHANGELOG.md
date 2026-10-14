@@ -17,18 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the page's `client_ref`, logged on `Stock Scan Log` before anything is written, and undoable:
   - `assign` / `unassign` put an item on a bin and take it off. `unassign` also clears the Item
     Default whose warehouse is that bin (for the bin's company), and is **refused while stock is
-    recorded there**: move it first.
+    recorded there**: move it first. A pair with no rule at all is taken off by recording a
+    *disabled* rule (see the listing below).
   - `move_to` pushes stock out of the bin being managed (the same Material Transfer as *Move
-    here*; the builder is now shared, `api/stock_scan._transfer_source` / `_transfer_entry`);
-    `make_home=1` moves the assignment too. Off by default on the server; the pages tick it when
-    the whole quantity moves.
-  - `send_to_boneyard` moves stock to the Boneyard warehouse set in Inventory Scanner Settings and
-    takes the item off the source bin. It never makes a rule at the boneyard, and nothing can be
-    assigned there.
+    here*; the builder is now shared, `api/stock_scan._transfer_source` / `_transfer_entry`).
+    `make_home=1` assigns the destination and takes the item off the source **only when the move
+    empties it**: stock left behind keeps the bin's claim on it, the rule `unassign` enforces, and
+    the result says so (`source_kept`, "3 Unit still at ..., so it stays there."). The boneyard is
+    refused as a home before anything is posted. Off by default on the server; the pages tick it
+    when the whole quantity moves.
+  - `send_to_boneyard` moves stock to the Boneyard warehouse set in Inventory Scanner Settings and,
+    when that empties the source bin, takes the item off it (the same partial-move rule). It never
+    makes a rule at the boneyard, and nothing can be assigned there.
   - `set_count` corrects what is on hand with a submitted **Stock Reconciliation** for one item at
     one bin (zero allowed), never a Material Issue: a count is not consumption, must not charge a
     job, and can go up. From an empty bin it carries the same rate an add-without-PO would
-    (`_receipt_rate`), because ERPNext's own fallback can post it at zero.
+    (`_receipt_rate`), because ERPNext's own fallback can post it at zero. It is refused while
+    **any** stock there is reserved: v16's `validate_reserved_stock` refuses every reconciliation
+    of a pair with a Stock Reservation Entry, and its cancel too (production had none).
   - `ensure_assignment(item_code, warehouse)` is the plain, log-free helper underneath, also for
     the guided Item flow.
 - **The assignment is an ERPNext Putaway Rule**, which nobody sees: ERPNext's own record of "this
@@ -44,19 +50,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **before** it computes it, so a rule built in code without `stock_capacity` is refused
   "Insufficient Capacity" wherever there is stock. Every rule here sets it. Note for anyone who
   ticks *Apply Putaway Rule*: with every rule at priority 1 and the same capacity, ERPNext sends a
-  receipt to the item's rule with the most free space, which is the bin holding the least.
-- Assign, unassign, make-home and boneyard need **Putaway Rule create** (Stock Manager in stock
-  ERPNext), checked up front for a sentence and again by the framework; nothing is written with
-  `ignore_permissions`. Clearing an Item Default checks Item write and then writes only that child
-  row, moves the Item's `modified` and clears its cache (what ERPNext's own `set_item_default`
-  does), rather than `Item.save()`: a full save runs every Item validator, the naming guard
-  included, which refuses some older items. `can_manage` is in the Stock Scan boot and location
-  payloads so the pages can hide the buttons; the boot also carries `boneyard_warehouse`.
+  receipt to the item's rule with the most free space, which is the bin holding the least. And a
+  cost that is new with the first rule: once any Putaway Rule exists, `validate_putaway_capacity`
+  adds a `get_value` and a stock-balance query **per line** to every Purchase Receipt, Stock Entry,
+  Stock Reconciliation and update-stock Purchase Invoice. Harmless at this capacity, but new.
+- **Who can do what** (the owner's decision, 2026-10-14: "open this up to everyone with
+  permissions to our inventory and items already"). Putting items on bins and taking them off --
+  assign, unassign, the rule and Item Default side of make-home and the boneyard, and undoing any
+  of them -- needs one of the Stock Scan roles **and** read on Item (`require_manage`; the boot's
+  and location payload's `can_manage` is the same gate). In stock ERPNext only Stock Manager may
+  write a Putaway Rule, and on production only Item Manager may write an Item (a Custom DocPerm),
+  so without this a Stock Manager who is not also an Item Manager would have been told to ask an
+  Item Manager whenever an Item Default pointed at the bin. Past the gate the module writes
+  exactly two things with `ignore_permissions`: the **Putaway Rule** and the matching **Item
+  Default row's `default_warehouse`** (one child-row write that also moves the Item's `modified`
+  and clears its cache, what ERPNext's own `set_item_default` does, rather than `Item.save()`,
+  whose naming guard refuses some older items). Nothing else on the Item, no other doctype, every
+  write logged with the state before and undoable. **Stock still moves as the user**: a transfer
+  needs Stock Entry create and submit, a count Stock Reconciliation create and submit (Stock
+  Manager in stock ERPNext), exactly as before. The boot also carries `boneyard_warehouse`.
 - **Undo** puts rule changes back. A rule change has no voucher, so the log row keeps what it
   changed (`rule_changes`: each rule and whether this save created it or its previous `disable`;
-  each Item Default cleared and its warehouse). `api.stock_scan.undo` cancels any voucher first
-  and then restores them, in one transaction, behind the same Putaway Rule permission. A created
-  rule is disabled rather than deleted; an Item Default is restored only while it is still blank.
+  each Item Default cleared and its warehouse; for a move, whether its source was released). Undo
+  restores exactly that and nothing more. `api.stock_scan.undo` cancels any voucher first and then
+  restores, in one transaction, behind the same gate. A rule created enabled is disabled rather
+  than deleted (a receipt may link to it); a rule created *disabled* to take an undecided pair off
+  is deleted, so the pair lists as undecided again; an Item Default is restored only while it is
+  still blank.
 - `Stock Scan Log`: actions **Assign, Unassign, Move To, Count, Boneyard** (appended, so stored
   values keep their place) and fields `putaway_rule`, `qty_before` (a count's previous figure) and
   `rule_changes`.
@@ -69,15 +89,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two older `Bin D2-2-1 (Boneyard) - SF` and `Bin D2-2-2 (Boneyard) - SF` are left alone.
 
 ### Changed
-- **Which items a location lists** (`api/stock_scan._items_at`): an item lists when it is **on
-  hand** there, **assigned** there, its **default warehouse** there (as before), or **on order**
-  to there, so the receiver who scans the bin finds what is coming. It used to list every item
-  with *any* `tabBin` row, even at zero; a Bin row is created by the first transaction and never
+- **Which items a location lists** (`api/stock_scan._items_at`): an item lists when it **has
+  stock** there, is **on order** to there (so the receiver who scans the bin finds what is coming),
+  is **assigned** there, is its **default warehouse** there (as before), or has **never been
+  decided on** there -- a Bin row and no Putaway Rule at all. It used to list every item with
+  *any* `tabBin` row, even at zero; a Bin row is created by the first transaction and never
   deleted, so that rule is what made an item impossible to take off a bin. The rows cannot be
   deleted instead: 28 of the 80 zero rows on production still carry ordered, reserved or projected
-  quantities ERPNext maintains. Still one query, still filtered to enabled stock items in SQL; the
-  rules and defaults join as two small per-location derived tables. Rows now say why they list
-  (`assigned`, `is_default`, `on_order`), and the item card says `assigned`.
+  quantities ERPNext maintains. The "never decided" clause (from review) keeps stock first put into
+  a bin after this release on the bin's list once it is emptied, without assigning it
+  automatically; taking it off records a disabled rule, and a Bin row with a disabled rule does not
+  list. Still one query, still filtered to enabled stock items in SQL; the rules and defaults join
+  as small per-location derived tables. Rows now say why they list (`assigned`, `is_default`,
+  `on_order`, `undecided`), and the item card says `assigned`. The suite runs the query on SQLite
+  against every clause.
 - **Backfill** (`patches/backfill_bin_putaway_rules`), so nothing drops off a list on deploy: one
   enabled rule per (enabled stock item, enabled leaf, non-transit warehouse) pair that has a Bin
   row, unless the pair already has a rule. 536 pairs on 2026-10-14: 399 at the `Bin …` warehouses,

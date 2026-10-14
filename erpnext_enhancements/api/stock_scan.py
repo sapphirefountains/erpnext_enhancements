@@ -75,6 +75,7 @@ Things this module is careful about, each of which the obvious version gets wron
 Indentation is tabs (new file; ``api/README.md`` lists the package's mix).
 """
 
+import json
 import re
 
 import frappe
@@ -236,13 +237,12 @@ def _warehouse_names(names):
 
 
 def _can_manage():
-	"""Whether the caller may put items on bins and take them off (``bin_assignments``).
-
-	The page and the Desk page hide those buttons without it. A bin assignment is an ERPNext
-	Putaway Rule, which only Stock Manager may create in stock ERPNext; the endpoints check the
-	same permission again before they write anything.
+	"""Whether the caller may put items on bins and take them off (``bin_assignments``): one of
+	the page's roles and read on Item, the owner's 2026-10-14 decision ("everyone with
+	permissions to our inventory and items already"). The page and the Desk page hide those
+	buttons without it; ``bin_assignments.require_manage`` is the same gate on every write.
 	"""
-	return bool(frappe.has_permission("Putaway Rule", "create"))
+	return bool(rules.SCAN_ROLES.intersection(frappe.get_roles()) and frappe.has_permission("Item", "read"))
 
 
 def _location_payload(row):
@@ -269,18 +269,26 @@ def _items_at(row):
 	* **this is its default warehouse** for the location's company (its Item Default), as
 	  before;
 	* **it is on order to here** (``tabBin.ordered_qty > 0``): stock on its way to this bin,
-	  so the receiver who scans the bin's label finds the item to receive against its order.
+	  so the receiver who scans the bin's label finds the item to receive against its order;
+	* **nobody has decided on it here yet**: a Bin row and **no Putaway Rule at all**, enabled or
+	  disabled. Stock first put into a bin after v1.689.0 (a *Move here*, an add, a receipt) has
+	  a Bin row and no rule; without this it would drop off the bin's list the moment it was
+	  emptied, and only a Stock Manager in the Desk could bring it back. Nothing is assigned
+	  automatically: the item lists as undecided until someone puts it on the bin or takes it
+	  off, and taking it off records a *disabled* rule (``bin_assignments._release``), which is
+	  what ends this clause.
 
-	Until v1.689.0 the first test was "has *any* Bin row here", and a Bin row is created by
-	the first transaction that touches a pair and is never deleted -- so an item, once in a bin,
-	could never be taken off it. The rows cannot be deleted either: 28 of the 80 zero rows on
+	Until v1.689.0 the test was "has *any* Bin row here", and a Bin row is created by the first
+	transaction that touches a pair and is never deleted -- so an item, once in a bin, could
+	never be taken off it. The rows cannot be deleted either: 28 of the 80 zero rows on
 	production (2026-10-14) still carry ordered, reserved or projected quantities that ERPNext
-	maintains. Taking an item off a bin is therefore *unassigning* it (disabling its rule and
-	clearing an Item Default that points here), and this query reads the rule.
+	maintains. Taking an item off a bin is therefore a decision recorded on its rule, and this
+	query reads the rule.
 
 	Only stock items that are not disabled; the item's own refusal is shown when opened.
 	Ordered by what is on hand first, then name. Each row says why it lists (``assigned``,
-	``is_default``, ``on_order``), so the page can say why an item stays after it was taken off.
+	``is_default``, ``on_order``, ``undecided``), so the page can say why an item stays after it
+	was taken off.
 
 	One query, filtered to stock items in SQL: ``Stores - SF`` is the default warehouse of
 	741 Items on production, almost all of them non-stock, so capping the defaults before
@@ -295,13 +303,18 @@ def _items_at(row):
 			coalesce(b.actual_qty, 0) as on_hand,
 			coalesce(b.ordered_qty, 0) as on_order,
 			r.item_code is not null as assigned,
-			d.parent is not null as is_default
+			d.parent is not null as is_default,
+			b.name is not null and ar.item_code is null as undecided
 		from `tabItem` i
 		left join `tabBin` b on b.item_code = i.name and b.warehouse = %(warehouse)s
 		left join (
 			select distinct pr.item_code from `tabPutaway Rule` pr
 			where pr.warehouse = %(warehouse)s and pr.disable = 0
 		) r on r.item_code = i.name
+		left join (
+			select distinct apr.item_code from `tabPutaway Rule` apr
+			where apr.warehouse = %(warehouse)s
+		) ar on ar.item_code = i.name
 		left join (
 			select distinct idf.parent from `tabItem Default` idf
 			where idf.parenttype = 'Item'
@@ -313,6 +326,7 @@ def _items_at(row):
 				or b.ordered_qty > 0
 				or r.item_code is not null
 				or d.parent is not null
+				or (b.name is not null and ar.item_code is null)
 			)
 		""",
 		{"warehouse": row.name, "company": row.company},
@@ -330,6 +344,7 @@ def _items_at(row):
 			"on_order": flt(item.on_order),
 			"assigned": bool(cint(item.assigned)),
 			"is_default": bool(cint(item.is_default)),
+			"undecided": bool(cint(item.undecided)),
 		}
 		for item in items
 	]
@@ -1671,7 +1686,8 @@ def undo(log):
 	A bin assignment (v1.689.0: *Assign*, *Unassign*, and *Move To* with "make it the item's
 	home") changes Putaway Rules and Item Defaults, which have no voucher to cancel. Its log row
 	keeps what they were before (``rule_changes``) and ``bin_assignments.restore`` puts that
-	back, behind the same Putaway Rule permission the change needed. A *Move To* that moved the
+	back, behind the same module gate the change needed (``bin_assignments.require_manage``).
+	A *Move To* that moved the
 	assignment has both: its transfer is canceled and its rules restored, in one transaction, so
 	if ERPNext refuses the cancel nothing is restored either.
 	"""
@@ -1770,6 +1786,9 @@ def _log_row(doc, names=None, settings=None):
 		"putaway_rule": doc.get("putaway_rule") or None,
 		"qty_before": flt(doc.get("qty_before")) if doc.action == rules.ACTION_COUNT else None,
 		"moved_home": bool(doc.action == rules.ACTION_MOVE_TO and doc.get("rule_changes")),
+		# A make-home move or a boneyard trip that left stock at the source keeps the source's
+		# assignment (bin_assignments._plan_source); None when the save had no say over it.
+		"source_kept": _source_kept(doc),
 	}
 
 
@@ -1816,12 +1835,17 @@ def _bin_message(doc, amount, item, undone=False):
 				"It is still on order to {0}, so it stays listed there until that order is received or closed."
 			).format(here)
 		return text
+	source = _source_marker(doc)
+	kept = ""
+	if source and not cint(source.get("released")):
+		kept = " " + _("{0} still at {1}, so it stays there.").format(
+			f"{rules.plain(source.get('left'))} {doc.stock_uom or ''}".strip(), there
+		)
 	if doc.action == rules.ACTION_BONEYARD:
 		if undone:
-			return _("Undone: {0} of {1} is back at {2}, assigned as it was.").format(amount, item, there)
-		return _("Sent {0} of {1} from {2} to the boneyard ({3}). It is off {2}.").format(
-			amount, item, there, here
-		)
+			return _("Undone: {0} of {1} is back at {2}, as it was.").format(amount, item, there)
+		text = _("Sent {0} of {1} from {2} to the boneyard ({3}).").format(amount, item, there, here)
+		return text + (kept or " " + _("It is off {0}.").format(there))
 	if doc.action == rules.ACTION_COUNT:
 		before = f"{rules.plain(doc.get('qty_before'))} {doc.stock_uom or ''}".strip()
 		if undone:
@@ -1832,8 +1856,28 @@ def _bin_message(doc, amount, item, undone=False):
 		return _("Undone: {0} of {1} is back at {2}.").format(amount, item, there)
 	text = _("Moved {0} of {1} from {2} to {3}.").format(amount, item, there, here)
 	if doc.get("rule_changes"):
-		text += " " + _("{0} is now its home.").format(here)
+		text += " " + _("{0} is now its home.").format(here) + kept
 	return text
+
+
+def _source_kept(doc):
+	source = _source_marker(doc)
+	return None if source is None else not cint(source.get("released"))
+
+
+def _source_marker(doc):
+	"""What a *Move To* (make home) or *Boneyard* save did about its source bin: the ``source``
+	entry ``bin_assignments`` records in ``rule_changes`` (``released``, and ``left`` when stock
+	stayed), or ``None``."""
+	if doc.action not in (rules.ACTION_MOVE_TO, rules.ACTION_BONEYARD) or not doc.get("rule_changes"):
+		return None
+	try:
+		changes = json.loads(doc.rule_changes)
+	except (TypeError, ValueError):
+		return None
+	if not isinstance(changes, list):
+		return None
+	return next((c for c in changes if isinstance(c, dict) and c.get("kind") == "source"), None)
 
 
 def _message(doc, repeated=False, undone=False, already_canceled=False):

@@ -28,14 +28,15 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
 * :func:`assign` -- put an item on a bin.
 * :func:`unassign` -- take it off: disable its rule there **and** clear an Item Default whose
   warehouse is that bin (for the bin's company), because the listing reads both. Refused
-  while stock is still recorded there: move it first.
+  while stock is still recorded there: move it first. A pair with no rule at all (listed as
+  undecided) is taken off by recording a *disabled* rule.
 * :func:`move_to` -- push stock out of the bin being managed into another, a submitted
   Material Transfer built by the same helper as *Move here*; with ``make_home=1`` the
-  assignment moves too (a rule at the destination, the source rule disabled, an Item Default
-  pointing at the source cleared).
+  assignment moves too (a rule at the destination; the source is taken off only if the move
+  empties it).
 * :func:`send_to_boneyard` -- send stock the bin no longer keeps to the Boneyard warehouse
   (Inventory Scanner Settings; a Material Transfer through the same helper) and take the item
-  off the source bin. Never makes a rule at the Boneyard.
+  off the source bin if that empties it. Never makes a rule at the Boneyard.
 * :func:`set_count` -- correct what is on hand: a submitted **Stock Reconciliation** for one
   item at one bin, never a Material Issue, so the ledger says it was a count and the stock
   value moves at the item's rate.
@@ -44,21 +45,31 @@ What the endpoints do, each idempotent on the page's ``client_ref`` and recorded
 (``api.item_flow.save_stock``). No logging, no ``client_ref``.
 
 The same principles as ``api.stock_scan``, whose helpers this reuses (the reference check, the
-log row, the transfer builder, the rate and the accounts): every Putaway Rule, Stock Entry and
-Stock Reconciliation is inserted, saved, submitted and canceled **as the session user**, never
-with ``ignore_permissions``; refusals are sentences raised before anything is written; the log
-row goes in before anything else, in the same transaction.
+log row, the transfer builder, the rate and the accounts): every Stock Entry and Stock
+Reconciliation is inserted, submitted and canceled **as the session user**, never with
+``ignore_permissions``; refusals are sentences raised before anything is written; the log row
+goes in before anything else, in the same transaction.
 
-**Permissions.** Assigning, unassigning and *make it the item's home* need permission to
-create a Putaway Rule -- in stock ERPNext only Stock Manager has it (Stock User may read). The
-endpoints check it up front for a plain sentence; the framework checks it again on the save.
-Clearing an Item Default needs write on that Item, checked explicitly, and then writes only that
-one child row (``frappe.db.set_value`` on ``Item Default``, the Item's ``modified`` moved and its
-cache cleared -- the same thing ERPNext's own ``set_item_default`` does) instead of
-``Item.save()``: a full save runs every Item validator, including this app's naming guard, which
-refuses some older items outright, and a stock person taking a part off a shelf should not be
-told the part's name breaks a naming rule. Moving ``modified`` makes a form someone has open on
-that Item refuse its next save as stale, rather than quietly writing the old warehouse back.
+**Permissions: one module gate, and the one exception it buys.** The owner decided on
+2026-10-14 to open bin assignments to everyone who already works the inventory and can see the
+items, rather than only to Stock Manager (who alone may write a Putaway Rule in stock ERPNext)
+and Item Manager (who alone may write an Item on production). So the assignment records sit
+behind :func:`require_manage`: one of ``stock_scan_rules.SCAN_ROLES`` **and** read on Item.
+Past that gate this module writes exactly two things with ``ignore_permissions`` -- the Putaway
+Rule (create, enable, disable, and deleting a disabled rule an undo made redundant) and the
+``default_warehouse`` of the matching Item Default row -- and nothing else: no other field of
+the Item, no other doctype, and never a stock voucher, which still posts as the user, so moving
+and counting stock needs exactly the permission it needed before. It is the one exception to
+"permissions are the framework's", kept that narrow on purpose, and every such write is logged
+with the state before it and undoable.
+
+The Item Default write is one child row (``frappe.db.set_value`` on ``Item Default``, the
+Item's ``modified`` moved and its cache cleared -- the same thing ERPNext's own
+``set_item_default`` does) rather than ``Item.save()``: a full save runs every Item validator,
+including this app's naming guard, which refuses some older items outright, and a stock person
+taking a part off a shelf should not be told the part's name breaks a naming rule. Moving
+``modified`` makes a form someone has open on that Item refuse its next save as stale, rather
+than quietly writing the old warehouse back.
 
 Indentation is tabs (new file).
 """
@@ -97,6 +108,9 @@ PRIORITY = 1
 #: The two kinds of change a save records in ``Stock Scan Log.rule_changes``.
 CHANGE_RULE = "rule"
 CHANGE_ITEM_DEFAULT = "item_default"
+#: Not a change: what a move or a boneyard trip did about its source bin (released, or kept
+#: because stock is still there), for the result's sentence. Undo skips it.
+CHANGE_SOURCE = "source"
 
 _ITEM_FIELDS = ["name", "item_name", "stock_uom", "is_stock_item", "disabled", "has_variants"]
 
@@ -107,32 +121,20 @@ _ITEM_FIELDS = ["name", "item_name", "stock_uom", "is_stock_item", "disabled", "
 
 
 def can_manage():
-	"""Whether the caller may put items on bins and take them off. The pages hide the buttons
-	without it (``api.stock_scan`` puts it in the boot and the location payload)."""
+	"""Whether the caller may put items on bins and take them off: the module gate (one of
+	``SCAN_ROLES`` and read on Item). The pages hide the buttons without it
+	(``api.stock_scan._can_manage`` puts the same answer in the boot and location payloads)."""
 	return scan._can_manage()
 
 
-def _require_rule(ptype):
-	if not frappe.has_permission(RULE, ptype):
-		frappe.throw(
-			_(
-				"Putting items on bins and taking them off needs the Stock Manager role. Ask a Stock Manager to do it."
-			),
-			frappe.PermissionError,
-		)
-
-
 def require_manage():
-	"""Refuse, in a sentence, a caller who may not create a Putaway Rule."""
-	_require_rule("create")
-
-
-def _require_item_write(item_code, item_name=None):
-	if not frappe.has_permission("Item", "write", doc=item_code):
+	"""Refuse, in a sentence, a caller outside the module gate. Every rule and Item Default
+	write here, and every undo of one, comes after this."""
+	if not can_manage():
 		frappe.throw(
 			_(
-				"{0} also has this bin as its default warehouse, and clearing that needs permission to edit the item. Ask an Item Manager."
-			).format(item_name or item_code),
+				"Putting items on bins and taking them off needs a stock role and permission to see items. Ask a Stock Manager."
+			),
 			frappe.PermissionError,
 		)
 
@@ -172,14 +174,19 @@ def _assignable(item_code, warehouse):
 		frappe.throw(problem)
 	if not location.company:
 		frappe.throw(_("{0} belongs to no company, so nothing can be put on it.").format(name))
+	_refuse_boneyard(location)
+	return item, location
+
+
+def _refuse_boneyard(location):
+	"""Nothing is ever assigned to the boneyard: stock there lists because it is on hand, and
+	drops off when it is gone. Shared by :func:`_assignable` and *make it the item's home*."""
 	if location.name == cstr(scan.get_settings().get("boneyard_warehouse")).strip():
-		# Stock in the boneyard lists there because it is on hand; nothing *lives* there.
 		frappe.throw(
 			_("{0} is the boneyard. Nothing is put on it; send stock there with Send to boneyard.").format(
 				location.warehouse_name or location.name
 			)
 		)
-	return item, location
 
 
 def _rule_for(item_code, warehouse):
@@ -252,12 +259,12 @@ def _set_capacity(rule, stock_uom):
 
 
 def _save_rule(rule, stock_uom, balance):
-	"""Save an existing rule as the session user. A rule made by hand in the Desk with a real
-	capacity below what is now on hand would be refused on any save, a disable included, so it
-	is given :data:`CAPACITY` first."""
+	"""Save an existing rule, past the module gate (``ignore_permissions``; see the module
+	docstring). A rule made by hand in the Desk with a real capacity below what is now on hand
+	would be refused on any save, a disable included, so it is given :data:`CAPACITY` first."""
 	if flt(rule.stock_capacity) < flt(balance):
 		_set_capacity(rule, stock_uom)
-	rule.save()
+	rule.save(ignore_permissions=True)
 
 
 def _ensure(item, location):
@@ -267,21 +274,35 @@ def _ensure(item, location):
 		return existing.name, None
 	balance = _balance(item.name, location.name)
 	if existing:
-		_require_rule("write")
+		require_manage()
 		rule = frappe.get_doc(RULE, existing.name)
 		rule.disable = 0
 		_save_rule(rule, item.stock_uom, balance)
-		return rule.name, {"kind": CHANGE_RULE, "rule": rule.name, "created": 0, "disable": 1}
-	_require_rule("create")
+		return rule.name, _rule_change(rule.name, location, created=0, disable=1)
+	name = _new_rule(item, location, disable=0)
+	return name, _rule_change(name, location)
+
+
+def _rule_change(name, location, created=1, disable=None, created_disabled=0):
+	change = {"kind": CHANGE_RULE, "rule": name, "created": created, "disable": disable}
+	change["warehouse"] = location.name
+	if created_disabled:
+		change["created_disabled"] = 1
+	return change
+
+
+def _new_rule(item, location, disable):
+	"""Insert the pair's rule (:data:`CAPACITY`, :data:`PRIORITY`), past the module gate."""
+	require_manage()
 	rule = frappe.new_doc(RULE)
 	rule.item_code = item.name
 	rule.warehouse = location.name
 	rule.company = location.company
 	rule.priority = PRIORITY
-	rule.disable = 0
+	rule.disable = disable
 	_set_capacity(rule, item.stock_uom)
-	rule.insert()
-	return rule.name, {"kind": CHANGE_RULE, "rule": rule.name, "created": 1, "disable": None}
+	rule.insert(ignore_permissions=True)
+	return rule.name
 
 
 def _disable_rules(item, location):
@@ -290,14 +311,41 @@ def _disable_rules(item, location):
 	names = _enabled_rules(item.name, location.name)
 	if not names:
 		return changes
-	_require_rule("write")
+	require_manage()
 	balance = _balance(item.name, location.name)
 	for name in names:
 		rule = frappe.get_doc(RULE, name)
 		rule.disable = 1
 		_save_rule(rule, item.stock_uom, balance)
-		changes.append({"kind": CHANGE_RULE, "rule": name, "created": 0, "disable": 0})
+		changes.append(_rule_change(name, location, created=0, disable=0))
 	return changes
+
+
+def _undecided(item_code, warehouse):
+	"""Whether the pair lists only because nobody has decided on it yet: a Bin row and no
+	Putaway Rule at all (``api.stock_scan._items_at``'s fifth clause)."""
+	return bool(
+		frappe.db.exists("Bin", {"item_code": item_code, "warehouse": warehouse})
+		and not _rule_for(item_code, warehouse)
+	)
+
+
+def _release(item, location, defaults):
+	"""Take the item off ``location``: what *unassign* does, and the source side of a move that
+	empties it. Disables the enabled rule; where the pair has **no rule at all** (stock first
+	put there after v1.689.0, listed as undecided), records the decision as a new **disabled**
+	rule, because without one an emptied Bin row keeps listing; and clears ``defaults``."""
+	changes = _disable_rules(item, location)
+	if not changes and not _rule_for(item.name, location.name):
+		name = _new_rule(item, location, disable=1)
+		changes.append(_rule_change(name, location, created=1, created_disabled=1))
+	return changes + _clear_defaults(item.name, defaults, location.name)
+
+
+def _source_note(location, left, released):
+	"""The marker a move records about its source in ``rule_changes`` (Undo skips it): whether
+	the source was released, or kept because stock is still there, and how much."""
+	return {"kind": CHANGE_SOURCE, "warehouse": location.name, "released": int(released), "left": left}
 
 
 def _touch_item(item_code):
@@ -349,17 +397,23 @@ def parse_changes(value):
 
 
 def restore(changes):
-	"""Put back what a save changed, newest change first, as the session user.
+	"""Put back what a save changed, newest change first, past the module gate (the caller,
+	``api.stock_scan.undo``, has run :func:`require_manage`; the writes are the module's two).
 
 	* A rule the save **created** is disabled, not deleted: disabled is how every reader here
 	  and in ERPNext treats "no assignment", and a delete would be refused once a receipt has
 	  routed stock by the rule.
+	* A rule the save created **disabled** (:func:`_release` on a pair nobody had decided on) is
+	  deleted while it is still disabled: the pair had no rule, and only
+	  with none does an emptied Bin row list again as undecided. Nothing can link to it, because
+	  ERPNext routes stock only by enabled rules. If someone has enabled it since, it stays.
 	* A rule the save enabled or disabled gets its previous ``disable`` back.
 	* An Item Default the save cleared gets its warehouse back, but only while it is still
 	  blank: if somebody has since given the item another default warehouse, theirs stands.
 
-	A rule deleted in the Desk since is skipped. Called by ``api.stock_scan.undo`` after
-	:func:`require_manage` and after any voucher is canceled, in the same transaction.
+	A rule deleted in the Desk since is skipped, and so is the ``source`` marker. Called by
+	``api.stock_scan.undo`` after :func:`require_manage` and after any voucher is canceled, in
+	the same transaction.
 	"""
 	touched = set()
 	for change in reversed(changes):
@@ -367,10 +421,14 @@ def restore(changes):
 			name = change.get("rule")
 			if not name or not frappe.db.exists(RULE, name):
 				continue
-			target = 1 if cint(change.get("created")) else cint(change.get("disable"))
 			rule = frappe.get_doc(RULE, name)
+			require_manage()
+			if cint(change.get("created_disabled")):
+				if cint(rule.disable):
+					frappe.delete_doc(RULE, name, ignore_permissions=True)
+				continue
+			target = 1 if cint(change.get("created")) else cint(change.get("disable"))
 			if cint(rule.disable) != target:
-				_require_rule("write")
 				rule.disable = target
 				stock_uom = frappe.db.get_value("Item", rule.item_code, "stock_uom")
 				_save_rule(rule, stock_uom, _balance(rule.item_code, rule.warehouse))
@@ -380,7 +438,7 @@ def restore(changes):
 			)
 			if not row or row.parent != change.get("item") or row.default_warehouse:
 				continue
-			_require_item_write(row.parent)
+			require_manage()
 			frappe.db.set_value(
 				"Item Default",
 				change.get("row"),
@@ -403,8 +461,10 @@ def ensure_assignment(item_code, warehouse):
 
 	Idempotent: the existing enabled rule is returned as it is, a disabled one is re-enabled,
 	and otherwise one is created (:data:`CAPACITY`, :data:`PRIORITY`, the stock unit, the
-	warehouse's company). Runs as the session user and needs Putaway Rule create (or write, to
-	re-enable) only when it changes something; refuses in a sentence -- an unknown, disabled,
+	warehouse's company). Passes the module gate (:func:`require_manage`: a stock role and read
+	on Item) only when it changes something -- an existing enabled rule comes back to anyone --
+	and then writes the rule past ERPNext's own Putaway Rule permission, as every assignment
+	here does (module docstring). Refuses in a sentence -- an unknown, disabled,
 	non-stock or template item, a group, disabled or transit warehouse, a caller who may not --
 	before writing. Writes no log row and takes no ``client_ref``: it is a building block for
 	callers that keep their own record (the guided Item flow, ``api.item_flow.save_stock``).
@@ -455,7 +515,9 @@ def unassign(item_code, warehouse, client_ref):
 	Refused while stock is still recorded there (``stock_scan_rules.unassign_refusal``): the
 	page offers Move first. An item still **on order** to the bin is taken off, and the result
 	says it stays listed until that order is received or closed (``api.stock_scan._items_at``).
-	A disabled or non-stock item may still be taken off.
+	A disabled or non-stock item may still be taken off. An item listed only because it has a
+	Bin row there and no rule at all is taken off by recording a **disabled** rule
+	(:func:`_release`).
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -473,17 +535,28 @@ def unassign(item_code, warehouse, client_ref):
 		frappe.throw(problem)
 	assigned = _enabled_rules(item.name, location.name)
 	defaults = _defaults_at(item.name, location.name, location.company)
-	if not assigned and not defaults:
+	if not assigned and not defaults and not _undecided(item.name, location.name):
 		frappe.throw(_("{0} is not on {1}.").format(label, where))
-	if defaults:
-		_require_item_write(item.name, label)
 
 	log = scan._begin_log(ref, rules.ACTION_UNASSIGN, item, 0, location)
-	changes = _disable_rules(item, location) + _clear_defaults(item.name, defaults, location.name)
-	scan._finish_log(
-		log, None, None, putaway_rule=assigned[0] if assigned else None, rule_changes=_dump(changes)
-	)
+	changes = _release(item, location, defaults)
+	scan._finish_log(log, None, None, putaway_rule=_first_rule(changes), rule_changes=_dump(changes))
 	return scan._result(log.name)
+
+
+def _first_rule(changes):
+	return next((c["rule"] for c in changes if c and c.get("kind") == CHANGE_RULE), None)
+
+
+def _plan_source(item, source, qty):
+	"""``(release, left, defaults)`` for a move out of ``source``, decided before anything is
+	posted: the source is released (its rule disabled, its Item Default cleared) only when the
+	move empties it. Stock left behind keeps the bin's claim on it -- the same rule that refuses
+	*unassign* with stock on hand."""
+	left = max(_balance(item.name, source.name) - flt(qty), 0.0)
+	release = left <= rules.TOLERANCE
+	defaults = _defaults_at(item.name, source.name, source.company) if release else []
+	return release, (0.0 if release else left), defaults
 
 
 @frappe.whitelist(methods=["POST"])
@@ -491,9 +564,11 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	"""Push stock out of the bin being managed (``from_warehouse``) into another bin: a submitted
 	Material Transfer, the same voucher *Move here* posts (``api.stock_scan._transfer_entry``).
 
-	``make_home=1`` also moves the assignment: the item is put on ``to_warehouse``, its rule at
-	``from_warehouse`` is disabled, and an Item Default pointing at ``from_warehouse`` is cleared.
-	Off by default; the pages ask.
+	``make_home=1`` also moves the assignment: the item is put on ``to_warehouse`` and, **when
+	the move empties** ``from_warehouse``, taken off it (:func:`_release`: its rule disabled, an
+	Item Default pointing at it cleared). A partial move keeps the source assigned and says so
+	(``log.source_kept`` and the message). The boneyard is refused as a home before anything is
+	posted. Off by default; the pages tick it when the whole quantity moves.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -507,13 +582,12 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	qty = scan._checked_qty(qty, item)
 	source = scan._transfer_source(location.name, destination, item, qty)
 	home = bool(cint(make_home))
-	defaults = []
+	release, left, defaults = False, 0.0, []
 	if home:
+		_refuse_boneyard(destination)
 		require_manage()
 		_check_capacity(item, destination, adding=qty)
-		defaults = _defaults_at(item.name, source.name, source.company)
-		if defaults:
-			_require_item_write(item.name, item.item_name or item.name)
+		release, left, defaults = _plan_source(item, source, qty)
 	scan._require("Stock Entry", "create", "submit")
 
 	log = scan._begin_log(ref, rules.ACTION_MOVE_TO, item, qty, destination, from_warehouse=source.name)
@@ -522,7 +596,8 @@ def move_to(item_code, from_warehouse, to_warehouse, qty, client_ref, make_home=
 	rule, changes = None, []
 	if home:
 		rule, change = _ensure(item, destination)
-		changes = [change, *_disable_rules(item, source), *_clear_defaults(item.name, defaults, source.name)]
+		changes = [change, *(_release(item, source, defaults) if release else [])]
+		changes.append(_source_note(source, left, release))
 	scan._finish_log(
 		log, "Stock Entry", se.name, putaway_rule=rule, rule_changes=_dump(changes) if home else None
 	)
@@ -569,14 +644,14 @@ def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
 
 	A submitted Material Transfer of ``qty`` from ``from_warehouse`` into the Boneyard set in
 	Inventory Scanner Settings (:func:`_boneyard_for`), built by the same helper as *Move To*
-	and *Move here*.
-	Then the source bin's rule is disabled and an Item Default pointing at the source is
-	cleared, exactly as :func:`unassign` does. **No rule is ever made at the Boneyard**: stock
+	and *Move here*. When that empties the source bin, the item is taken off it as
+	:func:`unassign` would (:func:`_release`); when stock is left there, the source keeps it and
+	the result says so (``log.source_kept``). **No rule is ever made at the Boneyard**: stock
 	there lists because it is on hand, and drops off when it is gone. Undo cancels the transfer
-	and restores the source's rule and default (``api.stock_scan.undo``).
+	and restores exactly what was changed (``api.stock_scan.undo``).
 
-	Needs Putaway Rule create (it changes an assignment) as well as Stock Entry create and
-	submit, whether or not the item had a rule at the source.
+	Needs the module gate (it is an assignment action) as well as Stock Entry create and submit
+	(the transfer posts as the user), whether or not the item had a rule at the source.
 	"""
 	scan._check_access()
 	ref = scan._client_ref(client_ref)
@@ -590,21 +665,19 @@ def send_to_boneyard(item_code, from_warehouse, qty, client_ref):
 	boneyard = _boneyard_for(location)
 	source = scan._transfer_source(location.name, boneyard, item, qty)
 	require_manage()
-	defaults = _defaults_at(item.name, source.name, source.company)
-	if defaults:
-		_require_item_write(item.name, item.item_name or item.name)
+	release, left, defaults = _plan_source(item, source, qty)
 	scan._require("Stock Entry", "create", "submit")
 
-	assigned = _enabled_rules(item.name, source.name)
 	log = scan._begin_log(ref, rules.ACTION_BONEYARD, item, qty, boneyard, from_warehouse=source.name)
 	se = scan._transfer_entry(rules.ACTION_BONEYARD, item, qty, source, boneyard)
 	scan._post(se)
-	changes = _disable_rules(item, source) + _clear_defaults(item.name, defaults, source.name)
+	changes = _release(item, source, defaults) if release else []
+	changes.append(_source_note(source, left, release))
 	scan._finish_log(
 		log,
 		"Stock Entry",
 		se.name,
-		putaway_rule=assigned[0] if assigned else None,
+		putaway_rule=_first_rule(changes),
 		rule_changes=_dump(changes),
 	)
 	return scan._result(log.name)

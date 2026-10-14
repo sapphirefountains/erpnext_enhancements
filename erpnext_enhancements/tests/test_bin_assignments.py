@@ -395,6 +395,14 @@ def _install_frappe_stub():
 	frappe.get_traceback = lambda: "traceback"
 	frappe.parse_json = json.loads
 
+	def delete_doc(doctype, name, ignore_permissions=False, **kwargs):
+		if not ignore_permissions and not has_permission(doctype, "delete"):
+			raise PermissionError(f"No permission to delete {doctype}")
+		STATE["writes"].append(("delete", doctype, bool(ignore_permissions)))
+		_table(doctype).pop(name, None)
+
+	frappe.delete_doc = delete_doc
+
 	utils = types.ModuleType("frappe.utils")
 
 	def flt(value, precision=None):
@@ -619,6 +627,26 @@ def _vouchers(doctype):
 	return list(_table(doctype).values())
 
 
+def _as_stock_user():
+	"""A Stock User who can read Items and post transfers, but has no Item write and no
+	Putaway Rule create, write or delete: the people the 2026-10-14 decision let in."""
+	STATE["roles"] = ["Stock User"]
+	STATE["perm"].update(
+		{
+			("Item", "write"): False,
+			("Putaway Rule", "create"): False,
+			("Putaway Rule", "write"): False,
+			("Putaway Rule", "delete"): False,
+			("Stock Reconciliation", "create"): False,
+			("Stock Reconciliation", "submit"): False,
+		}
+	)
+
+
+def _without_item_read():
+	STATE["perm"][("Item", "read")] = False
+
+
 class _Base(unittest.TestCase):
 	def setUp(self):
 		_reset()
@@ -658,11 +686,17 @@ class TestEnsureAssignment(_Base):
 		self.assertEqual(bins.ensure_assignment("PDT-0001", BIN_A), name)
 		self.assertEqual(STATE["writes"], [])
 
-	def test_without_permission_an_existing_rule_is_still_returned(self):
+	def test_outside_the_gate_an_existing_rule_is_still_returned(self):
 		name = _rule("PDT-0001", BIN_A)
-		_reset_perm = {("Putaway Rule", "create"): False, ("Putaway Rule", "write"): False}
-		STATE["perm"].update(_reset_perm)
+		STATE["roles"] = ["Employee"]
+		_without_item_read()
 		self.assertEqual(bins.ensure_assignment("PDT-0001", BIN_A), name)
+
+	def test_a_stock_user_without_putaway_rule_create_can_assign(self):
+		_as_stock_user()
+		name = bins.ensure_assignment("PDT-0001", BIN_A)
+		self.assertEqual(_rules_for("PDT-0001", BIN_A)[0]["name"], name)
+		self.assertIn(("insert", "Putaway Rule", True), STATE["writes"], "past ERPNext's own permission")
 
 	def test_a_disabled_rule_is_re_enabled_not_duplicated(self):
 		name = _rule("PDT-0001", BIN_A, disable=1)
@@ -705,16 +739,19 @@ class TestEnsureAssignment(_Base):
 		message = self.assertRefused(bins.ensure_assignment, "more of", item_code="PDT-0001", warehouse=BIN_A)
 		self.assertNotIn("Insufficient", message)
 
-	def test_without_putaway_rule_create_it_is_a_sentence(self):
-		STATE["perm"][("Putaway Rule", "create")] = False
-		self.assertRefused(
-			bins.ensure_assignment,
-			"Stock Manager",
-			exc=FRAPPE.PermissionError,
-			item_code="PDT-0001",
-			warehouse=BIN_A,
-		)
-		self.assertEqual(STATE["writes"], [])
+	def test_outside_the_gate_a_change_is_a_sentence(self):
+		for setup in (_without_item_read, lambda: STATE.update(roles=["Item Manager", "Employee"])):
+			with self.subTest(setup=setup):
+				_reset()
+				setup()
+				self.assertRefused(
+					bins.ensure_assignment,
+					"stock role",
+					exc=FRAPPE.PermissionError,
+					item_code="PDT-0001",
+					warehouse=BIN_A,
+				)
+				self.assertEqual(STATE["writes"], [])
 
 
 # --------------------------------------------------------------------------- assign / unassign
@@ -730,7 +767,7 @@ class TestAssign(_Base):
 		)
 		self.assertEqual(
 			json.loads(log["rule_changes"]),
-			[{"kind": "rule", "rule": rule["name"], "created": 1, "disable": None}],
+			[{"kind": "rule", "rule": rule["name"], "created": 1, "disable": None, "warehouse": BIN_A}],
 		)
 
 	def test_a_resend_returns_the_first_save(self):
@@ -746,11 +783,11 @@ class TestAssign(_Base):
 		)
 		self.assertEqual(_table("Stock Scan Log"), {})
 
-	def test_without_permission_nothing_is_written(self):
-		STATE["perm"][("Putaway Rule", "create")] = False
+	def test_without_item_read_nothing_is_written(self):
+		_without_item_read()
 		self.assertRefused(
 			bins.assign,
-			"Stock Manager",
+			"stock role",
 			exc=FRAPPE.PermissionError,
 			item_code="PDT-0001",
 			warehouse=BIN_A,
@@ -758,11 +795,25 @@ class TestAssign(_Base):
 		)
 		self.assertEqual((STATE["writes"], _table("Putaway Rule")), ([], {}))
 
-	def test_the_role_gate_comes_first(self):
-		STATE["roles"] = ["Employee"]
+	def test_outside_the_scan_roles_it_is_refused(self):
+		STATE["roles"] = ["Employee", "Item Manager"]
 		self.assertRefused(
 			bins.assign, exc=FRAPPE.PermissionError, item_code="PDT-0001", warehouse=BIN_A, client_ref=_ref()
 		)
+		self.assertEqual(_table("Putaway Rule"), {})
+
+	def test_a_stock_user_assigns_and_undoes(self):
+		"""Item read, no Item write, no Putaway Rule create: the gate, not ERPNext's DocPerm."""
+		_as_stock_user()
+		out = bins.assign("PDT-0001", BIN_A, _ref())
+		self.assertEqual(_rules_for("PDT-0001", BIN_A)[0]["disable"], 0)
+		scan.undo(out["log"])
+		self.assertEqual(_rules_for("PDT-0001", BIN_A)[0]["disable"], 1)
+
+	def test_an_undecided_pair_is_assigned_with_an_enabled_rule(self):
+		_bin("PDT-0001", BIN_A, actual_qty=0)
+		bins.assign("PDT-0001", BIN_A, _ref())
+		self.assertEqual(_rules_for("PDT-0001", BIN_A)[0]["disable"], 0)
 
 	def test_undo_disables_the_rule_it_created(self):
 		out = bins.assign("PDT-0001", BIN_A, _ref())
@@ -798,12 +849,15 @@ class TestUnassign(_Base):
 		self.assertEqual(_log(out["log"])["action"], "Unassign")
 		self.assertIn(("Item", "PDT-0001"), STATE["cache_cleared"])
 
-	def test_the_item_default_is_a_row_write_after_an_explicit_item_check(self):
+	def test_the_item_default_is_one_row_write_behind_the_gate(self):
 		bins.unassign("PDT-0001", BIN_A, _ref())
-		self.assertIn(("Item", "write", "PDT-0001"), STATE["perm_checks"])
-		self.assertNotIn(("save", "Item", False), STATE["writes"], "never Item.save()")
+		self.assertIn(("Item", "read", None), STATE["perm_checks"])
+		self.assertFalse([w for w in STATE["writes"] if w[1] == "Item"], "never Item.save()")
 		touched = [v for v in STATE["set_values"] if v[0] == "Item"]
-		self.assertTrue(touched and "modified" in touched[0][2], "a stale open form must see the change")
+		self.assertEqual(len(touched), 1)
+		self.assertEqual(set(touched[0][2]), {"modified", "modified_by"}, "nothing else on the Item")
+		rows = [v for v in STATE["set_values"] if v[0] == "Item Default"]
+		self.assertEqual(rows, [("Item Default", self.here, {"default_warehouse": None})])
 
 	def test_refused_with_stock_on_hand(self):
 		_bin("PDT-0001", BIN_A, actual_qty=3)
@@ -813,17 +867,39 @@ class TestUnassign(_Base):
 		self.assertEqual(_table("Putaway Rule")[self.rule]["disable"], 0)
 		self.assertEqual(_table("Stock Scan Log"), {})
 
-	def test_without_item_write_nothing_changes(self):
-		STATE["perm"][("Item", "write")] = False
+	def test_without_item_read_nothing_changes(self):
+		_without_item_read()
 		self.assertRefused(
 			bins.unassign,
-			"Item Manager",
+			"stock role",
 			exc=FRAPPE.PermissionError,
 			item_code="PDT-0001",
 			warehouse=BIN_A,
 			client_ref=_ref(),
 		)
 		self.assertEqual(_table("Putaway Rule")[self.rule]["disable"], 0)
+		self.assertEqual(_table("Item Default")[self.here]["default_warehouse"], BIN_A)
+
+	def test_a_stock_user_without_item_write_unassigns_clears_the_default_and_undoes(self):
+		_as_stock_user()
+		out = bins.unassign("PDT-0001", BIN_A, _ref())
+		self.assertEqual(_table("Putaway Rule")[self.rule]["disable"], 1)
+		self.assertIsNone(_table("Item Default")[self.here]["default_warehouse"])
+		self.assertIn(("save", "Putaway Rule", True), STATE["writes"])
+		scan.undo(out["log"])
+		self.assertEqual(_table("Putaway Rule")[self.rule]["disable"], 0)
+		self.assertEqual(_table("Item Default")[self.here]["default_warehouse"], BIN_A)
+
+	def test_an_undecided_pair_is_taken_off_with_a_disabled_rule_and_undo_removes_it(self):
+		_bin("PDT-0002", BIN_B, actual_qty=0)
+		_item("PDT-0002")
+		out = bins.unassign("PDT-0002", BIN_B, _ref())
+		(rule,) = _rules_for("PDT-0002", BIN_B)
+		self.assertEqual((rule["disable"], rule["stock_capacity"]), (1, bins.CAPACITY))
+		(change,) = json.loads(_log(out["log"])["rule_changes"])
+		self.assertEqual((change["created"], change["created_disabled"]), (1, 1))
+		scan.undo(out["log"])
+		self.assertEqual(_rules_for("PDT-0002", BIN_B), [], "undecided again, so it lists again")
 
 	def test_not_on_the_bin_is_a_sentence(self):
 		self.assertRefused(
@@ -842,10 +918,10 @@ class TestUnassign(_Base):
 		scan.undo(out["log"])
 		self.assertEqual(_table("Item Default")[self.here]["default_warehouse"], BIN_B)
 
-	def test_undo_needs_the_same_permission(self):
+	def test_undo_needs_the_same_gate(self):
 		out = bins.unassign("PDT-0001", BIN_A, _ref())
-		STATE["perm"][("Putaway Rule", "create")] = False
-		self.assertRefused(scan.undo, "Stock Manager", exc=FRAPPE.PermissionError, log=out["log"])
+		_without_item_read()
+		self.assertRefused(scan.undo, "stock role", exc=FRAPPE.PermissionError, log=out["log"])
 		self.assertEqual(_log(out["log"])["status"], "Posted")
 
 
@@ -871,13 +947,32 @@ class TestMoveTo(_Base):
 		log = _log(out["log"])
 		self.assertEqual((log["action"], log["warehouse"], log["from_warehouse"]), ("Move To", BIN_B, BIN_A))
 		self.assertIsNone(log.get("rule_changes"))
+		self.assertIsNone(scan._source_kept(FRAPPE.get_doc("Stock Scan Log", out["log"])))
 
-	def test_make_home_moves_the_assignment(self):
-		bins.move_to("PDT-0001", BIN_A, BIN_B, 5, _ref(), make_home=1)
+	def test_make_home_with_a_full_move_takes_the_source_off(self):
+		out = bins.move_to("PDT-0001", BIN_A, BIN_B, 5, _ref(), make_home=1)
 		(dest,) = _rules_for("PDT-0001", BIN_B)
 		self.assertEqual(dest["disable"], 0)
 		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 1)
 		self.assertIsNone(_table("Item Default")[self.default]["default_warehouse"])
+		doc = FRAPPE.get_doc("Stock Scan Log", out["log"])
+		self.assertFalse(scan._source_kept(doc))
+		self.assertNotIn("still at", scan._message(doc))
+
+	def test_make_home_with_a_partial_move_keeps_the_source_and_says_so(self):
+		out = bins.move_to("PDT-0001", BIN_A, BIN_B, 2, _ref(), make_home=1)
+		self.assertEqual(_rules_for("PDT-0001", BIN_B)[0]["disable"], 0, "the destination is still ensured")
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
+		self.assertEqual(_table("Item Default")[self.default]["default_warehouse"], BIN_A)
+		doc = FRAPPE.get_doc("Stock Scan Log", out["log"])
+		self.assertTrue(scan._source_kept(doc))
+		self.assertTrue(scan._log_row(doc)["source_kept"])
+		self.assertIn("3 Unit still at Bin A1-1-1, so it stays there.", scan._message(doc))
+		kinds = [c["kind"] for c in json.loads(doc.rule_changes)]
+		self.assertEqual(kinds, ["rule", "source"], "only what changed, plus the marker")
+		scan.undo(out["log"])
+		self.assertEqual(_rules_for("PDT-0001", BIN_B)[0]["disable"], 1)
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
 
 	def test_undo_of_make_home_cancels_the_transfer_and_restores_the_rules(self):
 		out = bins.move_to("PDT-0001", BIN_A, BIN_B, 5, _ref(), make_home=1)
@@ -887,6 +982,31 @@ class TestMoveTo(_Base):
 		self.assertEqual(_rules_for("PDT-0001", BIN_B)[0]["disable"], 1)
 		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
 		self.assertEqual(_table("Item Default")[self.default]["default_warehouse"], BIN_A)
+
+	def test_a_full_move_out_of_an_undecided_source_leaves_a_disabled_rule(self):
+		_item("PDT-0002")
+		_bin("PDT-0002", BIN_B, actual_qty=2)
+		out = bins.move_to("PDT-0002", BIN_B, BIN_A, 2, _ref(2), make_home=1)
+		(source,) = _rules_for("PDT-0002", BIN_B)
+		self.assertEqual(source["disable"], 1)
+		scan.undo(out["log"])
+		self.assertEqual(_rules_for("PDT-0002", BIN_B), [])
+
+	def test_the_boneyard_is_never_a_home(self):
+		self.assertRefused(
+			bins.move_to,
+			"is the boneyard",
+			item_code="PDT-0001",
+			from_warehouse=BIN_A,
+			to_warehouse=BONEYARD,
+			qty=5,
+			client_ref=_ref(),
+			make_home=1,
+		)
+		self.assertEqual((_table("Stock Scan Log"), _table("Stock Entry")), ({}, {}))
+		self.assertEqual(_rules_for("PDT-0001", BONEYARD), [])
+		bins.move_to("PDT-0001", BIN_A, BONEYARD, 1, _ref(2))
+		self.assertEqual(_rules_for("PDT-0001", BONEYARD), [], "a plain move there is fine")
 
 	def test_more_than_is_there_is_refused_before_anything(self):
 		self.assertRefused(
@@ -900,8 +1020,8 @@ class TestMoveTo(_Base):
 		)
 		self.assertEqual((_table("Stock Scan Log"), _table("Stock Entry")), ({}, {}))
 
-	def test_make_home_without_permission_posts_nothing(self):
-		STATE["perm"][("Putaway Rule", "create")] = False
+	def test_make_home_outside_the_gate_posts_nothing(self):
+		_without_item_read()
 		self.assertRefused(
 			bins.move_to,
 			exc=FRAPPE.PermissionError,
@@ -914,6 +1034,23 @@ class TestMoveTo(_Base):
 		)
 		self.assertEqual(_table("Stock Entry"), {})
 
+	def test_the_transfer_still_posts_as_the_user(self):
+		_as_stock_user()
+		bins.move_to("PDT-0001", BIN_A, BIN_B, 5, _ref(), make_home=1)
+		posted = [w for w in STATE["writes"] if w[1] == "Stock Entry"]
+		self.assertEqual(posted, [("insert", "Stock Entry", False)])
+		_bin("PDT-0001", BIN_B, actual_qty=5)
+		STATE["perm"][("Stock Entry", "create")] = False
+		self.assertRefused(
+			bins.move_to,
+			exc=FRAPPE.PermissionError,
+			item_code="PDT-0001",
+			from_warehouse=BIN_B,
+			to_warehouse=BIN_A,
+			qty=1,
+			client_ref=_ref(2),
+		)
+
 
 class TestSendToBoneyard(_Base):
 	def setUp(self):
@@ -922,7 +1059,7 @@ class TestSendToBoneyard(_Base):
 		self.source_rule = _rule("PDT-0001", BIN_A)
 		self.default = _default("PDT-0001", BIN_A)
 
-	def test_transfers_to_the_setting_and_takes_the_item_off_the_bin(self):
+	def test_a_full_trip_transfers_and_takes_the_item_off_the_bin(self):
 		out = bins.send_to_boneyard("PDT-0001", BIN_A, 4, _ref())
 		(se,) = _vouchers("Stock Entry")
 		(row,) = se["items"]
@@ -937,6 +1074,19 @@ class TestSendToBoneyard(_Base):
 		self.assertEqual(
 			(log["action"], log["warehouse"], log["from_warehouse"]), ("Boneyard", BONEYARD, BIN_A)
 		)
+		self.assertIn("It is off", scan._message(FRAPPE.get_doc("Stock Scan Log", out["log"])))
+
+	def test_a_partial_trip_keeps_the_source_and_says_so(self):
+		out = bins.send_to_boneyard("PDT-0001", BIN_A, 1, _ref())
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
+		self.assertEqual(_table("Item Default")[self.default]["default_warehouse"], BIN_A)
+		doc = FRAPPE.get_doc("Stock Scan Log", out["log"])
+		self.assertTrue(scan._source_kept(doc))
+		self.assertIn("3 Unit still at Bin A1-1-1", scan._message(doc))
+		self.assertEqual([c["kind"] for c in json.loads(doc.rule_changes)], ["source"])
+		scan.undo(out["log"])
+		self.assertEqual(_vouchers("Stock Entry")[0]["docstatus"], 2)
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
 
 	def test_undo_reverses_the_transfer_and_the_rule_changes(self):
 		out = bins.send_to_boneyard("PDT-0001", BIN_A, 4, _ref())
@@ -945,6 +1095,14 @@ class TestSendToBoneyard(_Base):
 		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
 		self.assertEqual(_table("Item Default")[self.default]["default_warehouse"], BIN_A)
 		self.assertEqual(_rules_for("PDT-0001", BONEYARD), [])
+
+	def test_a_stock_user_can_send_and_undo(self):
+		_as_stock_user()
+		out = bins.send_to_boneyard("PDT-0001", BIN_A, 4, _ref())
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 1)
+		scan.undo(out["log"])
+		self.assertEqual(_table("Putaway Rule")[self.source_rule]["disable"], 0)
+		self.assertEqual(_table("Item Default")[self.default]["default_warehouse"], BIN_A)
 
 	def _refused(self, *words):
 		message = self.assertRefused(
@@ -981,8 +1139,8 @@ class TestSendToBoneyard(_Base):
 		self.assertEqual(_vouchers("Stock Entry")[0]["items"][0]["t_warehouse"], "Scrap Shelf - SF")
 		self.assertNotIn("Boneyard - SF", MODULE.read_text(encoding="utf-8"))
 
-	def test_needs_putaway_rule_permission(self):
-		STATE["perm"][("Putaway Rule", "create")] = False
+	def test_needs_the_gate(self):
+		_without_item_read()
 		self.assertRefused(
 			bins.send_to_boneyard,
 			exc=FRAPPE.PermissionError,
@@ -1032,15 +1190,39 @@ class TestSetCount(_Base):
 		bins.set_count("PDT-0001", BIN_A, 0, _ref())
 		self.assertEqual(_vouchers("Stock Reconciliation")[0]["items"][0]["qty"], 0.0)
 
-	def test_the_same_number_and_below_reserved_are_sentences(self):
+	def test_the_same_number_and_any_reservation_are_sentences(self):
+		"""v16's validate_reserved_stock refuses every reconciliation (and its cancel) of a pair
+		with reserved stock, above the reserved quantity too."""
 		_bin("PDT-0001", BIN_A, actual_qty=4, reserved_stock=3)
 		self.assertRefused(
 			bins.set_count, "already shows 4", item_code="PDT-0001", warehouse=BIN_A, qty=4, client_ref=_ref()
 		)
-		self.assertRefused(
-			bins.set_count, "reserved", item_code="PDT-0001", warehouse=BIN_A, qty=2, client_ref=_ref(2)
-		)
+		for n, qty in enumerate((2, 6), start=2):
+			with self.subTest(qty=qty):
+				self.assertRefused(
+					bins.set_count,
+					"reserved",
+					"does not allow a count",
+					item_code="PDT-0001",
+					warehouse=BIN_A,
+					qty=qty,
+					client_ref=_ref(n),
+				)
 		self.assertEqual(_table("Stock Reconciliation"), {})
+
+	def test_the_count_posts_as_the_user(self):
+		_as_stock_user()
+		_bin("PDT-0001", BIN_A, actual_qty=7)
+		self.assertRefused(
+			bins.set_count,
+			"Stock Reconciliation",
+			exc=FRAPPE.PermissionError,
+			item_code="PDT-0001",
+			warehouse=BIN_A,
+			qty=5,
+			client_ref=_ref(),
+		)
+		self.assertEqual(_table("Stock Scan Log"), {})
 
 	def test_undo_cancels_the_reconciliation(self):
 		_bin("PDT-0001", BIN_A, actual_qty=7)
@@ -1061,24 +1243,105 @@ class TestSetCount(_Base):
 
 
 class TestTheListing(_Base):
-	def test_one_query_with_the_four_conditions(self):
+	def _query(self):
 		scan._items_at(_dict(name=BIN_A, company=COMPANY))
 		(query,) = [q for q in STATE["sql"] if "`tabPutaway Rule` pr" in q]
+		return query
+
+	def test_one_query_with_the_five_conditions(self):
+		query = self._query()
 		for needle in (
 			"b.actual_qty > 0",
 			"b.ordered_qty > 0",
 			"pr.warehouse = %(warehouse)s and pr.disable = 0",
 			"idf.default_warehouse = %(warehouse)s and idf.company = %(company)s",
+			"(b.name is not null and ar.item_code is null)",
 			"i.disabled = 0 and i.is_stock_item = 1",
 		):
 			with self.subTest(condition=needle):
 				self.assertIn(needle, query)
-		self.assertNotIn("b.name is not null", query, "any Bin row is no longer enough to list")
+
+	def test_the_conditions_run_for_real(self):
+		"""The query itself, executed on SQLite in memory (it ports as written: backticks, derived
+		tables, ``x is not null as y``); only the ``%(name)s`` placeholders become ``:name``."""
+		import sqlite3
+
+		db = sqlite3.connect(":memory:")
+		db.executescript(
+			"""
+			create table `tabItem` (name text, item_name text, image text, stock_uom text,
+				disabled int, is_stock_item int);
+			create table `tabBin` (name text, item_code text, warehouse text, actual_qty real,
+				ordered_qty real);
+			create table `tabPutaway Rule` (name text, item_code text, warehouse text, disable int);
+			create table `tabItem Default` (name text, parent text, parenttype text,
+				default_warehouse text, company text);
+			"""
+		)
+		items = {
+			"ONHAND": (1, 0),
+			"ORDER": (1, 0),
+			"ASSIGNED": (1, 0),
+			"DEFAULT": (1, 0),
+			"DEFAULT_OTHER_CO": (1, 0),
+			"UNDECIDED": (1, 0),
+			"TAKEN_OFF": (1, 0),
+			"RULE_ELSEWHERE": (1, 0),
+			"NOT_HERE": (1, 0),
+			"NON_STOCK": (0, 0),
+			"DISABLED": (1, 1),
+		}
+		db.executemany(
+			"insert into `tabItem` values (?, ?, null, 'Unit', ?, ?)",
+			[(code, code, disabled, stock) for code, (stock, disabled) in items.items()],
+		)
+		db.executemany(
+			"insert into `tabBin` values (?, ?, ?, ?, ?)",
+			[
+				("b1", "ONHAND", BIN_A, 3, 0),
+				("b2", "ORDER", BIN_A, 0, 2),
+				("b3", "UNDECIDED", BIN_A, 0, 0),
+				("b4", "TAKEN_OFF", BIN_A, 0, 0),
+				("b5", "RULE_ELSEWHERE", BIN_A, 0, 0),
+				("b6", "NOT_HERE", BIN_B, 5, 0),
+				("b7", "NON_STOCK", BIN_A, 3, 0),
+			],
+		)
+		db.executemany(
+			"insert into `tabPutaway Rule` values (?, ?, ?, ?)",
+			[
+				("r1", "ONHAND", BIN_A, 1),
+				("r2", "ORDER", BIN_A, 1),
+				("r3", "ASSIGNED", BIN_A, 0),
+				("r3b", "ASSIGNED", BIN_A, 0),
+				("r4", "TAKEN_OFF", BIN_A, 1),
+				("r5", "RULE_ELSEWHERE", BIN_B, 0),
+				("r6", "DISABLED", BIN_A, 0),
+			],
+		)
+		db.executemany(
+			"insert into `tabItem Default` values (?, ?, 'Item', ?, ?)",
+			[("d1", "DEFAULT", BIN_A, COMPANY), ("d2", "DEFAULT_OTHER_CO", BIN_A, "Other Co")],
+		)
+		query = re.sub(r"%\((\w+)\)s", r":\1", self._query())
+		rows = db.execute(query, {"warehouse": BIN_A, "company": COMPANY}).fetchall()
+		listed = sorted(row[0] for row in rows)
+		self.assertEqual(listed, ["ASSIGNED", "DEFAULT", "ONHAND", "ORDER", "RULE_ELSEWHERE", "UNDECIDED"])
+		undecided = {row[0]: row[-1] for row in rows}
+		self.assertEqual((undecided["UNDECIDED"], undecided["ASSIGNED"], undecided["ONHAND"]), (1, 0, 0))
 
 	def test_the_location_and_the_boot_say_whether_the_caller_may_manage(self):
-		self.assertTrue(scan._location_payload(_dict(name=BIN_A, company=COMPANY, lft=None))["can_manage"])
-		STATE["perm"][("Putaway Rule", "create")] = False
-		self.assertFalse(scan._location_payload(_dict(name=BIN_A, company=COMPANY, lft=None))["can_manage"])
+		def flag():
+			return scan._location_payload(_dict(name=BIN_A, company=COMPANY, lft=None))["can_manage"]
+
+		self.assertTrue(flag())
+		_as_stock_user()
+		self.assertTrue(flag(), "a Stock User who can read items may")
+		_without_item_read()
+		self.assertFalse(flag())
+		_reset()
+		STATE["roles"] = ["Item Manager"]
+		self.assertFalse(flag())
 
 
 # --------------------------------------------------------------------------- the patches
@@ -1296,6 +1559,7 @@ ENDPOINTS = {
 #: What writes, in an endpoint: none of it may come before the log row.
 WRITES = {
 	"_ensure",
+	"_release",
 	"_disable_rules",
 	"_clear_defaults",
 	"scan._post",
@@ -1353,9 +1617,30 @@ class TestTheSource(unittest.TestCase):
 				if isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
 					body[0] = ast.Pass()
 		code = ast.unparse(tree)
-		self.assertIn("rule.insert()", code, "anti-vacuity: the stripped code still has the writes")
-		self.assertNotIn("ignore_permissions", code)
+		# The one exception (the owner's 2026-10-14 decision): the Putaway Rule itself, past the
+		# module gate. Every ignore_permissions is on a rule write, in these three functions only.
+		uses = {}
+		for fn in tree.body:
+			if isinstance(fn, ast.FunctionDef):
+				for node in ast.walk(fn):
+					if isinstance(node, ast.Call) and any(
+						k.arg == "ignore_permissions" for k in node.keywords
+					):
+						first = ast.unparse(node.args[0]) if node.args else ""
+						uses.setdefault(fn.name, []).append((ast.unparse(node.func), first))
+		self.assertEqual(set(uses), {"_save_rule", "_new_rule", "restore"})
+		self.assertEqual(
+			sorted(c for calls in uses.values() for c in calls),
+			[("frappe.delete_doc", "RULE"), ("rule.insert", ""), ("rule.save", "")],
+		)
+		gate = ast.unparse(_functions(MODULE)["require_manage"]) + ast.unparse(_functions(API)["_can_manage"])
+		self.assertIn("rules.SCAN_ROLES", gate)
+		self.assertIn("frappe.has_permission('Item', 'read')", gate)
+		for name in ("_new_rule", "_disable_rules", "restore"):
+			with self.subTest(gated=name):
+				self.assertIn("require_manage()", ast.unparse(_functions(MODULE)[name]))
 		self.assertNotRegex(code, r"flags\.ignore_")
+		self.assertNotIn("scan._post(se, ", code)
 		self.assertNotIn("set_user", code)
 		self.assertNotRegex(code, r"\.commit\(")
 		self.assertNotRegex(code, r"get_doc\(\s*['\"]Item['\"]", "an Item is never loaded to be saved whole")

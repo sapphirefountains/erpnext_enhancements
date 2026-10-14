@@ -337,17 +337,20 @@ def check_recount(qty, on_hand, reserved=0.0, uom="", warehouse_name=""):
 
 	* The same as the system already shows: ERPNext would refuse the Stock Reconciliation
 	  with "None of the items have any change in quantity or value", so say it plainly first.
-	* Less than is reserved there: ERPNext refuses that on submit (``validate_reserved_stock``).
+	* **Any** stock reserved there (Stock Reservation Entries): v16's ``validate_reserved_stock``
+	  refuses every Stock Reconciliation of the pair while a reservation exists -- and its
+	  cancel too, so even a count above the reserved quantity could not be undone. Production
+	  had no reservations on 2026-10-14.
 	"""
 	have = _number(on_hand) or 0.0
 	held = _number(reserved) or 0.0
 	where = f" at {warehouse_name}" if warehouse_name else ""
 	if abs(qty - have) <= TOLERANCE:
 		return f"The system already shows {_amount(have, uom)}{where}. Nothing to change."
-	if held > TOLERANCE and qty < held - TOLERANCE:
+	if held > TOLERANCE:
 		return (
-			f"{_amount(held, uom)} are reserved for orders{where}, so the count cannot be less "
-			"than that. Ask a Stock Manager to release the reservation first."
+			f"{_amount(held, uom)} are reserved for orders{where}, and ERPNext does not allow a "
+			"count while stock there is reserved. Ask a Stock Manager to release the reservation first."
 		)
 	return None
 
