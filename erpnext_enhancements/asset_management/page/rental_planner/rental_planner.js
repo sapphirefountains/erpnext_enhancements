@@ -11,9 +11,17 @@
 //   /desk/rental-planner/new/review          4. fees, then place the hold (or book it confirmed)
 //
 // Every screen is a route, so Back and Forward step through the flow (Nik's rule: never break
-// Back/Forward). The page moves only with frappe.set_route; frappe's router owns history, and
-// Back/Forward re-render the route through on_page_show -> handle_route. There is no popstate
-// listener and no history write of the page's own.
+// Back/Forward). The page moves between screens only with frappe.set_route; frappe's router owns
+// history, and Back/Forward re-render the route through on_page_show -> handle_route. There is no
+// popstate listener.
+//
+// The board's first day is in its address (v1.662.0): /desk/rental-planner?start=YYYY-MM-DD, and
+// the bare address is today. ‹ › and Today each push an entry of their own, so Back returns to the
+// dates looked at before and a reload or a pasted link opens the same ones. That is the page's one
+// history write: the same screen with another query, written with history.pushState because
+// routing to the page it is on would make older v16 routers drop the query. Back lands through
+// the router like any entry: it copies the query into frappe.route_options, and handle_route reads
+// `start` there and consumes it. A start that is not a real calendar day is ignored.
 //
 // The draft lives in memory and in sessionStorage, so leaving the page, Back past step 1 or a
 // reload loses nothing; an address for a step whose earlier steps are not done yet is corrected
@@ -23,6 +31,11 @@
 // bar per row, and a fleet timeline is several bookings on each fountain's row (split tasks and
 // the resource view are PRO-only). The server is still the authority on availability — the
 // booking's own save re-checks with the fountains row-locked — so nothing here enforces anything.
+//
+// The page's styles are rental_planner.css beside this file (custom pages S3.4f, v1.670.0), which
+// Frappe's page loader sends with the page. The script writes no stylesheet and no color: a bar's
+// kind, a pool cell's load and the legend are classes, and what stays inline is layout only (a
+// bar's left and width, a cell's, the day width as --rp-day).
 
 const RP = {
 	route: "rental-planner",
@@ -46,6 +59,14 @@ const RP_FEES = ["delivery_setup_fee", "pickup_removal_fee", "other_fee", "secur
 
 // A Date as "YYYY-MM-DD". Not frappe.datetime.obj_to_str, which returns a full ISO timestamp.
 const rp_ymd = (date) => moment(date).format("YYYY-MM-DD");
+
+// "YYYY-MM-DD" when the value is a real calendar day, else null: 2026-02-30 is not one.
+function rp_valid_day(value) {
+	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value == null ? "" : value).trim());
+	if (!m || +m[1] < 1900 || +m[1] > 2999) return null;
+	const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+	return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? m[0] : null;
+}
 
 // sf_kit (v1.645.0): the board's loading, error and no-access panels and its quiet server call,
 // from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It never rejects: a
@@ -88,69 +109,9 @@ frappe.pages[RP.route].on_page_show = function (wrapper) {
 	}
 };
 
-const RP_STYLE = `
-.rp-wrap{padding-bottom:64px;color:var(--text-color);}
-.rp-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 12px;}
-.rp-toolbar .rp-range-label{font-weight:600;margin:0 6px;}
-.rp-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--text-muted);margin:0 0 10px;}
-.rp-legend span{display:inline-flex;align-items:center;gap:5px;}
-.rp-swatch{display:inline-block;width:18px;height:10px;border-radius:3px;}
-.rp-scroll{overflow-x:auto;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);}
-.rp-row{display:flex;min-height:38px;border-bottom:1px solid var(--border-color);}
-.rp-row:last-child{border-bottom:none;}
-.rp-label{flex:0 0 190px;position:sticky;left:0;z-index:2;background:var(--card-bg);padding:6px 10px;border-right:1px solid var(--border-color);font-size:13px;line-height:1.25;}
-.rp-label small{display:block;color:var(--text-muted);font-size:11px;}
-.rp-track{position:relative;flex:0 0 auto;cursor:copy;
-  background-image:linear-gradient(to right,var(--border-color) 1px,transparent 1px);
-  background-size:var(--rp-day) 100%;}
-.rp-head .rp-track,.rp-pool .rp-track,.rp-section .rp-track{cursor:default;}
-.rp-head{position:sticky;top:0;z-index:3;background:var(--card-bg);min-height:42px;}
-.rp-day{position:absolute;top:0;bottom:0;font-size:11px;text-align:center;color:var(--text-muted);padding-top:4px;line-height:1.2;overflow:hidden;}
-.rp-day b{display:block;color:var(--text-color);font-size:12px;}
-.rp-day.rp-today b{color:var(--primary,#2490ef);}
-.rp-today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--primary,#2490ef);opacity:.55;z-index:1;pointer-events:none;}
-.rp-bar{position:absolute;top:7px;height:24px;border-radius:5px;font-size:11px;line-height:24px;padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;cursor:pointer;z-index:2;box-sizing:border-box;}
-.rp-bar:hover{filter:brightness(1.08);box-shadow:0 1px 4px rgba(0,0,0,.25);}
-.rp-bar.rp-rental{background:#2563eb;}
-.rp-bar.rp-rental.rp-held{background:repeating-linear-gradient(45deg,#93c5fd,#93c5fd 6px,#bfdbfe 6px,#bfdbfe 12px);color:#1e3a8a;border:1px dashed #2563eb;}
-.rp-bar.rp-prep,.rp-bar.rp-turnaround{background:#94a3b8;color:#0f172a;top:12px;height:14px;line-height:14px;font-size:10px;}
-.rp-bar.rp-booking{background:#d97706;}
-.rp-bar.rp-out_of_service{background:repeating-linear-gradient(45deg,#dc2626,#dc2626 6px,#b91c1c 6px,#b91c1c 12px);}
-.rp-section .rp-label{font-weight:600;background:var(--subtle-fg,var(--control-bg));}
-.rp-section{min-height:28px;background:var(--subtle-fg,var(--control-bg));}
-.rp-cell{position:absolute;top:6px;bottom:6px;border-radius:4px;font-size:11px;text-align:center;display:flex;align-items:center;justify-content:center;}
-.rp-cell.rp-low{background:rgba(37,99,235,.12);}
-.rp-cell.rp-mid{background:rgba(217,119,6,.22);}
-.rp-cell.rp-full{background:rgba(220,38,38,.28);font-weight:600;}
-.rp-empty{padding:28px;text-align:center;color:var(--text-muted);}
-.rp-steps{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px;}
-.rp-step{padding:7px 12px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);font-size:13px;color:var(--text-muted);}
-.rp-step.rp-done{color:var(--text-color);cursor:pointer;}
-.rp-step.rp-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.rp-card{max-width:860px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:12px;}
-.rp-card h4{margin:0 0 10px;font-size:15px;}
-.rp-nav{max-width:860px;display:flex;justify-content:space-between;gap:8px;}
-.rp-pick{display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border-color);}
-.rp-pick:last-child{border-bottom:none;}
-.rp-pick .rp-pick-main{flex:1;min-width:0;}
-.rp-pick .rp-why{font-size:12px;color:var(--text-muted);}
-.rp-pick input[type=number]{width:96px;}
-.rp-pick.rp-taken{opacity:.6;}
-.rp-pill{display:inline-block;font-size:11px;border-radius:10px;padding:1px 8px;margin-left:6px;}
-.rp-pill.rp-free{background:#dcfce7;color:#166534;}
-.rp-pill.rp-no{background:#fee2e2;color:#991b1b;}
-.rp-summary dt{color:var(--text-muted);font-weight:normal;font-size:12px;margin-top:8px;}
-.rp-summary dd{margin:0;}
-.rp-total{font-size:18px;font-weight:600;margin-top:10px;}
-@media (max-width:640px){.rp-label{flex-basis:120px;}}
-`;
-
 class RentalPlanner {
 	constructor(page) {
 		this.page = page;
-		if (!document.getElementById("rp-style")) {
-			$("<style id='rp-style'>").text(RP_STYLE).appendTo(document.head);
-		}
 		this.$body = $('<div class="rp-wrap"></div>').appendTo(page.main);
 		this.draft = this.load_draft();
 		this.board_start = frappe.datetime.get_today();
@@ -172,11 +133,16 @@ class RentalPlanner {
 	handle_route() {
 		const target = this.route_target();
 		if (!target) return;
+		const start = this.take_route_start();
 		// Steps the flow pushed that the browser has since gone back past are no longer behind us.
 		while (this.pushed.length && this.pushed[this.pushed.length - 1].step !== target.step) {
 			this.pushed.pop();
 		}
 		if (target.view === "board") {
+			// The address names the dates, every time: Back onto the bare address is today again.
+			this.board_start = start || frappe.datetime.get_today();
+			// Today's date or a malformed one leaves the bare address: corrected in place.
+			this.write_board_address(false);
 			this.show_board();
 			return;
 		}
@@ -192,6 +158,38 @@ class RentalPlanner {
 			return;
 		}
 		this.show_step(target.step);
+	}
+
+	// The board's start from frappe.route_options (where the router copies the address's query, and
+	// where a link from another page puts its options), taken out as the list view takes its
+	// filters: the key goes, and an emptied object goes too, or a later plain set_route to this page
+	// would replay it. Null when there is none or it is not a real day.
+	take_route_start() {
+		const opts = frappe.route_options;
+		if (!opts || !Object.prototype.hasOwnProperty.call(opts, "start")) return null;
+		const start = rp_valid_day(opts.start);
+		delete opts.start;
+		if (!Object.keys(opts).length) frappe.route_options = null;
+		return start;
+	}
+
+	// The route back to the board at the dates it shows, for the flow's "Planner" buttons: a new
+	// entry, and it should not quietly jump back to today.
+	board_route() {
+		const start = this.board_start;
+		return start && start !== frappe.datetime.get_today() ? [RP.route, { start }] : [RP.route];
+	}
+
+	// The board's address on the path the router put on screen (a workspace shell may lead it). push:
+	// dates the person moved to, a new entry; otherwise the entry on screen is corrected in place.
+	// Nothing is written off the board, or when the address already says it.
+	write_board_address(push) {
+		if (this.current_screen() !== "board" || (frappe.get_route() || [])[0] !== RP.route) return;
+		const start = this.board_start;
+		const url = window.location.pathname + (start && start !== frappe.datetime.get_today() ? `?start=${encodeURIComponent(start)}` : "");
+		if (url === window.location.pathname + window.location.search) return;
+		if (push) window.history.pushState(null, "", url);
+		else window.history.replaceState(window.history.state, "", url);
 	}
 
 	go(route, replace) {
@@ -229,7 +227,7 @@ class RentalPlanner {
 		if (index > 0) {
 			this.go([RP.route, "new", RP.steps[index - 1]]);
 		} else {
-			this.go([RP.route]);
+			this.go(this.board_route());
 		}
 	}
 
@@ -317,17 +315,13 @@ class RentalPlanner {
 		const $bar = $('<div class="rp-toolbar"></div>').appendTo(this.$body);
 		const shift = (sign) => {
 			const step = this.board_days === 92 ? 30 : this.board_days === 31 ? 14 : 7;
-			this.board_start = frappe.datetime.add_days(this.board_start, sign * step);
-			this.load_timeline();
+			this.move_board(frappe.datetime.add_days(this.board_start, sign * step));
 		};
-		$('<button class="btn btn-default btn-sm">').text("‹").attr("title", __("Earlier")).on("click", () => shift(-1)).appendTo($bar);
-		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => {
-			this.board_start = frappe.datetime.get_today();
-			this.load_timeline();
-		}).appendTo($bar);
-		$('<button class="btn btn-default btn-sm">').text("›").attr("title", __("Later")).on("click", () => shift(1)).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-sm">').text("‹").attr({ title: __("Earlier"), "aria-label": __("Earlier") }).on("click", () => shift(-1)).appendTo($bar);
+		$('<button class="btn btn-default btn-sm">').text(__("Today")).on("click", () => this.move_board(frappe.datetime.get_today())).appendTo($bar);
+		$('<button type="button" class="btn btn-default btn-sm">').text("›").attr({ title: __("Later"), "aria-label": __("Later") }).on("click", () => shift(1)).appendTo($bar);
 		this.$range_label = $('<span class="rp-range-label"></span>').appendTo($bar);
-		const $range = $('<select class="form-control input-sm" style="width:auto"></select>').appendTo($bar);
+		const $range = $('<select class="form-control input-sm rp-range"></select>').appendTo($bar);
 		[[14, __("2 weeks")], [31, __("Month")], [92, __("Quarter")]].forEach(([days, label]) =>
 			$("<option>").val(days).text(label).prop("selected", days === this.board_days).appendTo($range)
 		);
@@ -342,20 +336,29 @@ class RentalPlanner {
 		});
 
 		const $legend = $('<div class="rp-legend"></div>').appendTo(this.$body);
+		// Each swatch carries its bar's own classes, so the rule that paints a bar paints its key.
 		[
-			["#2563eb", __("Confirmed rental")],
-			["repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#bfdbfe 4px,#bfdbfe 8px)", __("Held (tentative)")],
-			["#94a3b8", __("Prep / cleaning")],
-			["#d97706", __("Other booking")],
-			["#dc2626", __("Out of service")],
-		].forEach(([color, label]) => {
+			["rp-rental", __("Confirmed rental")],
+			["rp-rental rp-held", __("Held (tentative)")],
+			["rp-prep", __("Prep / cleaning")],
+			["rp-booking", __("Other booking")],
+			["rp-out_of_service", __("Out of service")],
+		].forEach(([kind, label]) => {
 			const $s = $("<span>").appendTo($legend);
-			$('<i class="rp-swatch">').css("background", color).appendTo($s);
+			$('<i class="rp-swatch" aria-hidden="true"></i>').addClass(kind).appendTo($s);
 			$s.append(document.createTextNode(label));
 		});
 		$('<span>').text(__("Click an empty day on a fountain to start a rental there.")).appendTo($legend);
 
 		this.$timeline = $('<div class="rp-scroll"></div>').appendTo(this.$body);
+		this.load_timeline();
+	}
+
+	// Dates the person moved the board to: an entry of their own (none when nothing moved, as Today
+	// pressed on today), then the fleet for them.
+	move_board(start) {
+		this.board_start = start;
+		this.write_board_address(true);
 		this.load_timeline();
 	}
 
@@ -457,7 +460,8 @@ class RentalPlanner {
 			const $d = $('<div class="rp-day"></div>').css({ left: i * dw + "px", width: dw + "px" });
 			$("<b>").text(date.getDate()).appendTo($d);
 			if (dw >= 30) $d.append(document.createTextNode(date.toLocaleDateString(undefined, { weekday: "short" })));
-			if (i === today_index) $d.addClass("rp-today");
+			// Today is marked by a bar and its weight, and says so to a screen reader.
+			if (i === today_index) $d.addClass("rp-today").append($('<span class="rp-sr"></span>').text(__("Today")));
 			$d.attr("title", frappe.datetime.str_to_user(rp_ymd(date)));
 			$d.appendTo($days);
 		}
@@ -481,25 +485,24 @@ class RentalPlanner {
 				const left = Math.max(0, px(bar.from));
 				const right = Math.min(width, px(bar.to));
 				if (right <= left) return;
-				const $bar = $('<div class="rp-bar"></div>')
+				// A real button (S3.6): Tab reaches it, and Enter or Space opens it as a click does.
+				const $bar = $('<button type="button" class="rp-bar"></button>')
 					.addClass(`rp-${bar.kind}`)
 					.toggleClass("rp-held", Boolean(bar.held))
 					.css({ left: left + "px", width: Math.max(right - left, 3) + "px" })
 					.appendTo($track);
 				const text = bar.kind === "prep" ? __("Prep") : bar.kind === "turnaround" ? __("Cleaning") : bar.label;
-				if (bar.kind !== "prep" && bar.kind !== "turnaround") $bar.text(text);
+				// The label truncates on an inner span: some engines ignore text-overflow on a <button>.
+				if (bar.kind !== "prep" && bar.kind !== "turnaround") $('<span class="rp-bar-text"></span>').text(text).appendTo($bar);
 				const until = bar.open_ended ? __("until further notice") : frappe.datetime.str_to_user(bar.to);
-				$bar.attr(
-					"title",
-					[
-						text,
-						bar.held ? __("Held (tentative)") : bar.status,
-						`${frappe.datetime.str_to_user(bar.from)} – ${until}`,
-						bar.name,
-					]
-						.filter(Boolean)
-						.join("\n")
-				);
+				const facts = [
+					text,
+					bar.held ? __("Held (tentative)") : bar.status,
+					`${frappe.datetime.str_to_user(bar.from)} – ${until}`,
+					bar.name,
+				].filter(Boolean);
+				// The prep and cleaning bars draw no text, so the label is all a screen reader has.
+				$bar.attr({ title: facts.join("\n"), "aria-label": facts.join(", ") });
 				$bar.on("click", (event) => {
 					event.stopPropagation();
 					frappe.set_route("Form", bar.doctype, bar.name);
@@ -522,12 +525,14 @@ class RentalPlanner {
 			pool.used.forEach((used, i) => {
 				if (!used) return;
 				const ratio = pool.capacity ? used / pool.capacity : 1;
-				$('<div class="rp-cell"></div>')
+				const $cell = $('<div class="rp-cell"></div>')
 					.addClass(ratio >= 1 ? "rp-full" : ratio >= 0.6 ? "rp-mid" : "rp-low")
 					.css({ left: i * dw + 1 + "px", width: dw - 2 + "px" })
 					.text(dw >= 30 ? `${used}/${pool.capacity}` : used)
 					.attr("title", __("{0} of {1} out", [used, pool.capacity]))
 					.appendTo($track);
+				// The shade is not the only thing that says a pool is full or nearly so.
+				if (ratio >= 0.6) $('<span class="rp-sr"></span>').text(ratio >= 1 ? __("full") : __("nearly full")).appendTo($cell);
 			});
 		});
 	}
@@ -545,16 +550,27 @@ class RentalPlanner {
 	show_step(step) {
 		this.page.set_title(__("New Rental"));
 		this.page.clear_actions();
-		this.page.set_secondary_action(__("Planner"), () => this.go([RP.route]));
+		this.page.set_secondary_action(__("Planner"), () => this.go(this.board_route()));
 		this.$body.empty();
 
 		const $steps = $('<div class="rp-steps"></div>').appendTo(this.$body);
 		const current = RP.steps.indexOf(step);
 		const reachable = RP.steps.indexOf(this.first_unfinished_step());
 		RP.steps.forEach((key, i) => {
-			const $s = $('<div class="rp-step"></div>').text(`${i + 1}. ${RP_STEP_TITLES[key]}`).appendTo($steps);
-			if (i === current) $s.addClass("rp-active");
-			else if (i <= reachable) $s.addClass("rp-done").on("click", () => this.go_step(key));
+			// A step that can be gone back to is a real button (S3.6); the others are only words.
+			const done = i !== current && i <= reachable;
+			const $s = $(done ? '<button type="button" class="rp-step"></button>' : '<div class="rp-step"></div>')
+				.text(`${i + 1}. ${RP_STEP_TITLES[key]}`)
+				.appendTo($steps);
+			if (i === current) $s.addClass("rp-active").attr("aria-current", "step");
+			else if (done) {
+				$s.addClass("rp-done").on("click", (event) => {
+					// Enter or Space on a button is a click with detail 0. The step that comes next
+					// replaces the rail, so focus would fall to <body>: put it on the step's heading.
+					if (event && event.detail === 0) this.focus_heading_until = Date.now() + 2000;
+					this.go_step(key);
+				});
+			}
 		});
 
 		this.$card = $('<div class="rp-card"></div>').appendTo(this.$body);
@@ -566,6 +582,12 @@ class RentalPlanner {
 		this.$next = $('<div></div>').appendTo($nav);
 
 		this[`render_${step}`]();
+		// A step reached from the keyboard (S3.6): its heading takes focus, a mouse click leaves it.
+		if (this.focus_heading_until > Date.now()) {
+			this.focus_heading_until = 0;
+			const heading = this.$card.find("h4").first().attr("tabindex", "-1")[0];
+			if (heading && typeof heading.focus === "function") heading.focus();
+		}
 	}
 
 	// Keep what was typed on this step before moving, whichever way.
@@ -640,7 +662,7 @@ class RentalPlanner {
 			])
 		);
 
-		const $package = $('<div class="rp-package" style="max-width:420px"></div>').appendTo(this.$card);
+		const $package = $('<div class="rp-package"></div>').appendTo(this.$card);
 		const package_field = frappe.ui.form.make_control({
 			parent: $package,
 			df: {
@@ -745,7 +767,7 @@ class RentalPlanner {
 			});
 		});
 
-		$('<h5 style="margin-top:16px"></h5>').text(__("Accessories")).appendTo($l);
+		$('<h5 class="rp-subhead"></h5>').text(__("Accessories")).appendTo($l);
 		if (!data.pools.length) {
 			$l.append($('<p class="text-muted">').text(__("No accessory pools yet.")));
 		}
@@ -876,7 +898,7 @@ class RentalPlanner {
 		const item = (label, value, step) => {
 			const $dt = $("<dt></dt>").text(label).appendTo($dl);
 			if (step) {
-				$('<a href="#" style="margin-left:8px;font-size:11px"></a>')
+				$('<a href="#" class="rp-edit"></a>')
 					.text(__("Edit"))
 					.on("click", (e) => {
 						e.preventDefault();
@@ -929,7 +951,7 @@ class RentalPlanner {
 		show_total();
 
 		this.$next.empty();
-		const $buttons = $('<div style="display:flex;gap:8px;flex-wrap:wrap"></div>').appendTo(this.$next);
+		const $buttons = $('<div class="rp-actions"></div>').appendTo(this.$next);
 		$('<button class="btn btn-default"></button>')
 			.text(__("Book as Confirmed"))
 			.on("click", () => this.create("Confirmed"))
@@ -978,7 +1000,7 @@ class RentalPlanner {
 					: __("The fountains are booked and their calendars are firm.")
 			)
 			.appendTo($card);
-		const $buttons = $('<div style="display:flex;gap:8px;flex-wrap:wrap"></div>').appendTo($card);
+		const $buttons = $('<div class="rp-actions"></div>').appendTo($card);
 		$('<button class="btn btn-primary"></button>')
 			.text(__("Open Booking"))
 			.on("click", () => frappe.set_route("Form", "Rental Booking", c.name))
@@ -991,7 +1013,7 @@ class RentalPlanner {
 		}
 		$('<button class="btn btn-default"></button>')
 			.text(__("Back to Planner"))
-			.on("click", () => this.go([RP.route]))
+			.on("click", () => this.go(this.board_route()))
 			.appendTo($buttons);
 		$('<button class="btn btn-default"></button>')
 			.text(__("Book Another"))

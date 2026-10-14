@@ -39,6 +39,12 @@
  * and counts what it asks the server: leaving for a form asks nothing, coming back
  * asks again, and after the page is rendered again only the new block reloads.
  *
+ * Parts three and four run every block on sf_kit with the REAL kit: its panels for a 500,
+ * a 403 and an empty answer, its plain-text fallback on an older bundle, and (part four)
+ * what the last six converted must still do: the KPI Cockpit and Morning Briefing never
+ * recompute on a return, the Task Dashboard never stacks its timers or its realtime
+ * subscription, and the per-viewer blocks still ask for nobody's name.
+ *
  * Run: node scripts/test_workspace_block_return.mjs
  */
 
@@ -877,12 +883,101 @@ const onKit = fs
 console.log("\nevery block on the kit (" + onKit.length + "), drawn with the real sf_kit");
 
 await test("the blocks on the kit are found", () => {
-	assert.ok(onKit.length >= 34, "only " + onKit.length + " blocks use blocks.kit");
+	assert.ok(onKit.length >= 40, "only " + onKit.length + " blocks use blocks.kit");
 	assert.ok(onKit.includes("sales_stalled_deals.js") && onKit.includes("finance_whos_working.js"));
 });
 
+/**
+ * The six blocks converted after the department widgets (v1.658.0) draw into a different
+ * element, answer an empty call differently, or are jQuery inside. What the generic checks
+ * below need to know about each:
+ *
+ *   body     the selector of the element its panels go in (default: the one ending -body)
+ *   jquery   the block draws through $(root).find("#dashboard-content") (Projects Dashboard)
+ *   empties  answers that mean "nothing to show" (default: null and a switched-off answer)
+ *   off      what it says, on an older bundle, to an empty answer (default: "turned off")
+ *   notice   its "nothing to show" is a notice in a composed page, not an empty panel
+ */
+const KIT_SPECS = {
+	// No department for this role, the KPIs switched off: the empty panel.
+	"kpi_cockpit.js": { off: /No KPI dashboards are available/ },
+	"morning_briefing.js": { off: /not enabled/ },
+	// The TV screen's panels are four; the first one carries loading, error and no access.
+	"task_dashboard.js": { body: "#tdb-top-projects", off: /Nothing to show yet/ },
+	"training_my_dashboard.js": { off: /Nothing required of you/ },
+	// "No trips coming up" sits above the link to everyone's trips: a notice, never empty.
+	"travel_home.js": { notice: /No trips coming up/, off: /No trips coming up/ },
+	// A null project list is a failed read (the server's own error shape); [] is empty.
+	"projects_dashboard.js": {
+		body: "#dashboard-content",
+		jquery: true,
+		empties: [[]],
+		offMessage: [],
+		off: /No active client projects/,
+	},
+};
+
+/** Everything an element and the elements appended to it say, markup and text. */
+function allText(el) {
+	if (!el || typeof el !== "object") return "";
+	return [el.innerHTML || "", el.textContent || "", ...(el.children || []).map(allText)].join(" ");
+}
+
+/**
+ * Enough jQuery for the Projects Dashboard's panels: `$(root).find("#dashboard-content")` is a
+ * set around `body` whose empty / append / html write it, `$("<div>")` makes an element, and
+ * anything else is the do-anything stand-in the block already runs on in part two.
+ */
+function makeJquery(root, body) {
+	const wrap = (el) => {
+		const set = new Proxy(
+			{},
+			{
+				get(_, prop) {
+					if (prop === "jquery") return "3.7.1";
+					if (prop === "0") return el;
+					if (prop === "length") return 1;
+					if (prop === "then") return undefined;
+					if (prop === "empty")
+						return () => {
+							el.innerHTML = "";
+							return set;
+						};
+					if (prop === "html")
+						return (value) => {
+							el.innerHTML = value;
+							return set;
+						};
+					if (prop === "append")
+						return (child) => {
+							if (child && child.jquery) el.appendChild(child[0]);
+							else el.children.push({ innerHTML: String(child) });
+							return set;
+						};
+					if (prop === "appendTo")
+						return (parent) => {
+							parent.append(set);
+							return set;
+						};
+					if (prop === "find") return (selector) => (el === root && selector === "#dashboard-content" ? content : anything());
+					return anything()[prop];
+				},
+			},
+		);
+		return set;
+	};
+	const content = wrap(body);
+	const top = wrap(root);
+	return (target) => {
+		if (target === root) return top;
+		if (typeof target === "string" && target.trim().charAt(0) === "<") return wrap(element());
+		return anything();
+	};
+}
+
 /** Run a block on the real kit (or, with `old`, on a bundle from before blocks.kit). */
 async function runOnKit(file, answer, options = {}) {
+	const spec = KIT_SPECS[file] || {};
 	const source = fs.readFileSync(path.join(BLOCKS_DIR, file), "utf8");
 	const desk = makeBlockDesk();
 	desk.sandbox.CSSStyleSheet = FakeSheet;
@@ -892,9 +987,13 @@ async function runOnKit(file, answer, options = {}) {
 		delete desk.api.ticket;
 	}
 	desk.sandbox.frappe.call = (opts) => {
-		desk.calls.push(opts && opts.method);
-		return answer();
+		// The Task Dashboard writes frappe.call("method"), the rest frappe.call({ method }).
+		const method = typeof opts === "string" ? opts : opts && opts.method;
+		desk.calls.push(method);
+		desk.asked = (desk.asked || []).concat([{ method, args: (opts && opts.args) || {} }]);
+		return answer(method);
 	};
+	if (options.setup) options.setup(desk);
 	desk.navigate(["Workspaces", "Dashboard"]);
 	const body = element();
 	const refresh = element();
@@ -902,9 +1001,14 @@ async function runOnKit(file, answer, options = {}) {
 		host: { isConnected: true },
 		adoptedStyleSheets: [],
 		querySelector: (selector) =>
-			/-body$/.test(selector) ? body : /-refresh$/.test(selector) ? refresh : anything(),
+			(spec.body ? selector === spec.body : /-body$/.test(selector))
+				? body
+				: /-refresh$/.test(selector)
+					? refresh
+					: anything(),
 		querySelectorAll: () => [],
 	};
+	if (spec.jquery) desk.sandbox.$ = makeJquery(root, body);
 	new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: file }).runInContext(desk.sandbox)(root);
 	await settle(20);
 	return { desk, body, refresh, root };
@@ -931,10 +1035,17 @@ for (const file of onKit) {
 		assert.doesNotMatch(body.innerHTML, /Try again/);
 	});
 
+	const spec = KIT_SPECS[file] || {};
 	await test(file + ": an empty or switched-off answer is the empty panel", async () => {
-		for (const message of [null, { enabled: false }]) {
+		for (const message of spec.empties || [null, { enabled: false }]) {
 			const { body } = await runOnKit(file, () => Promise.resolve({ message }));
-			assert.match(body.innerHTML, /sf-state--empty/, JSON.stringify(message) + ": " + body.innerHTML.slice(0, 120));
+			const drawn = allText(body);
+			if (spec.notice) {
+				assert.match(drawn, spec.notice, JSON.stringify(message) + ": " + drawn.slice(0, 160));
+				assert.doesNotMatch(drawn, /sf-state--error/);
+			} else {
+				assert.match(drawn, /sf-state--empty/, JSON.stringify(message) + ": " + drawn.slice(0, 160));
+			}
 		}
 	});
 
@@ -942,8 +1053,10 @@ for (const file of onKit) {
 		const failed = await runOnKit(file, fail(500), { old: true });
 		assert.match(failed.body.textContent, /\S/, "a failed load drew nothing");
 		assert.equal(failed.body.innerHTML, "", "the stand-in writes text, never markup");
-		const off = await runOnKit(file, () => Promise.resolve({ message: null }), { old: true });
-		assert.match(off.body.textContent, /turned off/i, "a switched-off block said nothing");
+		const offMessage = "offMessage" in spec ? spec.offMessage : null;
+		const off = await runOnKit(file, () => Promise.resolve({ message: offMessage }), { old: true });
+		assert.match(allText(off.body), spec.off || /turned off/i, "a switched-off block said nothing");
+		assert.doesNotMatch(allText(off.body), /sf-state/, "the older bundle drew a kit panel");
 		// Words, never the raw kind: a 403 reads "No access", not "no-access".
 		const refused = await runOnKit(file, fail(403), { old: true });
 		assert.equal(refused.body.textContent, "No access");
@@ -985,6 +1098,327 @@ for (const [file, lists] of Object.entries(EMPTY_LISTS)) {
 		assert.doesNotMatch(body.innerHTML, /turned off/, "drew the switched-off sentence for an empty list");
 	});
 }
+
+// ======================================== part four: what the last six must keep doing
+//
+// v1.658.0 moved the KPI Cockpit, the Morning Briefing, the Task Dashboard, the Projects
+// Dashboard, My Training and My Travel onto the kit. The generic checks above cover their
+// panels; these cover what each did before and must still do.
+
+console.log("\nthe last six, on the kit");
+
+await test("the last six are on the kit, so the checks above ran on them", () => {
+	const six = Object.keys(KIT_SPECS);
+	assert.equal(six.length, 6);
+	for (const file of six) assert.ok(onKit.includes(file), file + " is not on the kit");
+});
+
+const answers = (table) => (method) =>
+	Object.prototype.hasOwnProperty.call(table, method)
+		? Promise.resolve({ message: table[method] })
+		: Promise.resolve({ message: null });
+
+const KPI = "erpnext_enhancements.api.kpi.";
+
+await test("kpi_cockpit.js: a snapshot draws escaped cards, and a return reads it again, never recomputes", async () => {
+	const { desk, body } = await runOnKit(
+		"kpi_cockpit.js",
+		answers({
+			[KPI + "visible_departments"]: ["Finance"],
+			[KPI + "get_kpi_dashboard"]: {
+				available: true,
+				snapshot: { snapshot_date: "2026-10-13", values: [{ label: "<b>Cash</b>", value_text: "12", status: "Good" }] },
+			},
+		}),
+	);
+	assert.match(body.innerHTML, /kpi-grid/, body.innerHTML.slice(0, 160));
+	assert.match(body.innerHTML, /&lt;b&gt;Cash&lt;\/b&gt;/, "the label went in unescaped");
+	desk.navigate(FORM);
+	desk.navigate(["Workspaces", "Dashboard"]);
+	await settle(20);
+	const methods = desk.calls.map(String);
+	assert.equal(methods.filter((m) => m.endsWith(".get_kpi_dashboard")).length, 2, "a return did not read the snapshot");
+	assert.ok(!methods.some((m) => m.endsWith(".refresh_kpi_dashboard")), "a return recomputed the KPIs");
+});
+
+await test("kpi_cockpit.js: no snapshot yet, or KPIs switched off, is the empty panel with the server's words", async () => {
+	for (const [dashboard, words] of [
+		[{ available: true, snapshot: null }, /No snapshot yet/],
+		[{ available: false, reason: "KPI Dashboards are disabled in ERPNext Enhancements Settings." }, /disabled/],
+	]) {
+		const { body } = await runOnKit(
+			"kpi_cockpit.js",
+			answers({ [KPI + "visible_departments"]: ["Finance"], [KPI + "get_kpi_dashboard"]: dashboard }),
+		);
+		assert.match(body.innerHTML, /sf-state--empty/, body.innerHTML.slice(0, 160));
+		assert.match(body.innerHTML, words);
+	}
+});
+
+await test("kpi_cockpit.js: Try again after a failed snapshot reads it, it does not recompute", async () => {
+	let first = true;
+	const { desk, body } = await runOnKit("kpi_cockpit.js", (method) => {
+		if (method.endsWith(".visible_departments")) return Promise.resolve({ message: ["Finance"] });
+		if (first) {
+			first = false;
+			return Promise.reject({ status: 500 });
+		}
+		return Promise.resolve({ message: { available: true, snapshot: null } });
+	});
+	assert.match(body.innerHTML, /sf-state--error/);
+	body.querySelector(".sf-state-action").click();
+	await settle(20);
+	assert.ok(!desk.calls.some((m) => String(m).endsWith(".refresh_kpi_dashboard")), "Try again recomputed");
+	assert.match(body.innerHTML, /No snapshot yet/);
+});
+
+const BRIEFING = "erpnext_enhancements.api.briefing.get_morning_briefing";
+
+await test("morning_briefing.js: a return reads the cached briefing; only Refresh regenerates", async () => {
+	const { desk, body, refresh } = await runOnKit(
+		"morning_briefing.js",
+		answers({ [BRIEFING]: { available: true, briefing: "# Today", date: "2026-10-13" } }),
+	);
+	assert.match(body.innerHTML, /mbr-content/);
+	desk.navigate(FORM);
+	desk.navigate(["Workspaces", "Dashboard"]);
+	await settle(20);
+	assert.deepEqual(
+		desk.asked.map((a) => a.args.force),
+		[0, 0],
+		"a return asked with force (that regenerates, and can take minutes)",
+	);
+	refresh.click();
+	await settle(20);
+	assert.equal(desk.asked[desk.asked.length - 1].args.force, 1, "Refresh did not regenerate");
+});
+
+await test("morning_briefing.js: a return while Regenerate is out asks nothing", async () => {
+	let regenerating = false;
+	const { desk, body, refresh } = await runOnKit("morning_briefing.js", () =>
+		regenerating ? new Promise(() => {}) : Promise.resolve({ message: { available: true, briefing: "x", date: "d" } }),
+	);
+	regenerating = true;
+	refresh.click();
+	assert.equal(refresh.disabled, true, "Refresh did not switch itself off");
+	assert.match(body.innerHTML, /sf-state--loading[\s\S]*Regenerating briefing/);
+	const before = desk.calls.length;
+	desk.navigate(FORM);
+	desk.navigate(["Workspaces", "Dashboard"]);
+	await settle(20);
+	assert.equal(desk.calls.length, before, "a return asked while a Regenerate was out");
+});
+
+const TASKS = "erpnext_enhancements.api.task_dashboard.get_task_dashboard_data";
+
+await test("task_dashboard.js: the projects panel draws its rows escaped, and no state panel over them", async () => {
+	const { body } = await runOnKit(
+		"task_dashboard.js",
+		answers({
+			[TASKS]: {
+				top_projects: [{ name: "PROJ-1", rank: 1, project_name: "<i>Fountain</i>", percent_complete: 40 }],
+				overdue_tasks: [
+					{ name: "TASK-1", subject: "Pump <x>", priority: "Urgent", days_overdue: 3, assignees: ["A"], project: "PROJ-1" },
+				],
+				today_tasks: [],
+				events: [],
+			},
+		}),
+		{
+			setup(desk) {
+				desk.sandbox.frappe.utils.get_form_link = (doctype, name) => "/desk/" + doctype + "/" + name;
+			},
+		},
+	);
+	assert.match(body.innerHTML, /&lt;i&gt;Fountain&lt;\/i&gt;/, "a project name went in unescaped");
+	assert.doesNotMatch(body.innerHTML, /sf-state/, "the projects panel drew a state panel over its rows");
+});
+
+await test("task_dashboard.js: every panel draws, the overdue chip and priority included, with no error", async () => {
+	const els = {};
+	const source = fs.readFileSync(path.join(BLOCKS_DIR, "task_dashboard.js"), "utf8");
+	const desk = makeBlockDesk();
+	desk.sandbox.CSSStyleSheet = FakeSheet;
+	desk.sandbox.sf_kit = REAL_KIT;
+	const errors = [];
+	desk.sandbox.console = Object.assign({}, quiet, { error: (...args) => errors.push(args) });
+	desk.sandbox.frappe.utils.get_form_link = (doctype, name) => "/desk/" + doctype + "/" + name;
+	desk.sandbox.frappe.call = () =>
+		Promise.resolve({
+			message: {
+				top_projects: [],
+				overdue_tasks: [{ name: "TASK-1", subject: "Pump", priority: "High", days_overdue: 3, assignees: [] }],
+				today_tasks: [{ name: "TASK-2", subject: "Clean", priority: "Low", assignees: ["B"] }],
+				events: [],
+			},
+		});
+	desk.navigate(["Workspaces", "Dashboard"]);
+	const root = {
+		host: { isConnected: true },
+		adoptedStyleSheets: [],
+		querySelector: (selector) => (els[selector] = els[selector] || element()),
+		querySelectorAll: () => [],
+	};
+	new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: "task_dashboard.js" }).runInContext(
+		desk.sandbox,
+	)(root);
+	await settle(20);
+	assert.deepEqual(errors, [], "rendering threw (a name the row helpers read is missing?)");
+	// The stand-in desk's __ returns its text as written, placeholder and all.
+	assert.match(els["#tdb-overdue"].innerHTML, /sf-chip--danger[^>]*>\{0\}d overdue</, els["#tdb-overdue"].innerHTML.slice(0, 400));
+	assert.match(els["#tdb-overdue"].innerHTML, /prio-high/);
+	assert.match(els["#tdb-today"].innerHTML, /prio-low/);
+	assert.match(els["#tdb-top-projects"].innerHTML, /sf-state--empty[\s\S]*No ranked projects/);
+	assert.match(els["#tdb-events"].innerHTML, /sf-state--empty[\s\S]*No events today/);
+});
+
+await test("task_dashboard.js: a failed refresh after a good one keeps the rows (no error panel over data)", async () => {
+	let calls = 0;
+	const { desk, body } = await runOnKit("task_dashboard.js", () =>
+		++calls === 1
+			? Promise.resolve({
+					message: {
+						top_projects: [{ name: "PROJ-1", rank: 1, project_name: "Fountain", percent_complete: 10 }],
+						overdue_tasks: [],
+						today_tasks: [],
+						events: [],
+					},
+				})
+			: Promise.reject({ status: 500 }),
+		{
+			setup(desk) {
+				desk.sandbox.frappe.utils.get_form_link = (doctype, name) => "/desk/" + doctype + "/" + name;
+			},
+		},
+	);
+	assert.match(body.innerHTML, /Fountain/);
+	desk.navigate(FORM);
+	desk.navigate(["Workspaces", "Dashboard"]);
+	await settle(20);
+	assert.equal(calls, 2, "the return did not refresh");
+	assert.match(body.innerHTML, /Fountain/, "a failed refresh wiped the rows");
+	assert.doesNotMatch(body.innerHTML, /sf-state--error/);
+});
+
+await test("task_dashboard.js: re-renders never stack its timers or its realtime subscription", async () => {
+	const source = fs.readFileSync(path.join(BLOCKS_DIR, "task_dashboard.js"), "utf8");
+	const desk = makeBlockDesk();
+	desk.sandbox.CSSStyleSheet = FakeSheet;
+	desk.sandbox.sf_kit = REAL_KIT;
+	const live = new Map();
+	let next = 1;
+	desk.sandbox.setInterval = (fn, ms) => {
+		live.set(next, [fn, ms]);
+		return next++;
+	};
+	desk.sandbox.clearInterval = (id) => live.delete(id);
+	const subscriptions = [];
+	desk.sandbox.frappe.realtime = { on: (event, fn) => subscriptions.push([event, fn]), off() {} };
+	desk.navigate(["Workspaces", "Dashboard"]);
+	const roots = [];
+	for (let i = 0; i < 3; i += 1) {
+		if (roots.length) roots[roots.length - 1].host.isConnected = false;
+		const root = {
+			host: { isConnected: true, getClientRects: () => ({ length: 1 }) },
+			adoptedStyleSheets: [],
+			querySelector: () => element(),
+			querySelectorAll: () => [],
+		};
+		roots.push(root);
+		new vm.Script("(function (root_element) {\n" + source + "\n})", { filename: "task_dashboard.js" }).runInContext(
+			desk.sandbox,
+		)(root);
+		await settle(20);
+	}
+	const periods = [...live.values()].map(([, ms]) => ms).sort((a, b) => a - b);
+	assert.deepEqual(periods, [30 * 1000, 5 * 60 * 1000], "three renders left " + periods.length + " timers running");
+	assert.equal(subscriptions.length, 1, "each render subscribed to realtime again");
+	assert.equal(subscriptions[0][0], "project_dashboard_updated");
+	// The one subscription calls the newest render's refresh, once.
+	const before = desk.calls.length;
+	subscriptions[0][1]();
+	await settle(20);
+	assert.equal(desk.calls.length - before, 1, "a realtime update refreshed more than once");
+	assert.equal(roots[2].__ee_ticket >= 1, true, "the newest render's root was not the one refreshed");
+	assert.equal(roots[0].__ee_ticket, 1, "an old render's root refreshed again");
+});
+
+const TRAINING = "erpnext_enhancements.training.dashboard.get_my_dashboard";
+
+await test("training_my_dashboard.js: an overdue course is a danger chip with its word, and titles are escaped", async () => {
+	const { body, desk } = await runOnKit(
+		"training_my_dashboard.js",
+		answers({ [TRAINING]: { required: [{ course: "C-1", title: "<b>Safety</b>", overdue: true }] } }),
+	);
+	assert.match(body.innerHTML, /sf-chip--danger[^>]*>Overdue</);
+	assert.match(body.innerHTML, /&lt;b&gt;Safety&lt;\/b&gt;/);
+	// The viewer's own record: the call names nobody.
+	assert.deepEqual(JSON.parse(JSON.stringify(desk.asked.map((a) => a.args))), [{}]);
+});
+
+const TRAVEL = "erpnext_enhancements.travel_management.home.get_travel_home";
+
+await test("travel_home.js: a trip's status is a kit chip in its tone, and the viewer's trips are asked for by nobody's name", async () => {
+	const { body, desk } = await runOnKit(
+		"travel_home.js",
+		answers({
+			[TRAVEL]: {
+				viewer: { first_name: "A" },
+				featured: { trip: "TRIP-1", purpose: "<b>Install</b>", status: "In Progress", itinerary_url: "/itinerary?trip=TRIP-1" },
+				trips: [{ trip: "TRIP-2", purpose: "Service", status: "Planning", relation: "traveling" }],
+			},
+		}),
+	);
+	assert.match(body.innerHTML, /sf-chip--good[^>]*>In Progress</);
+	assert.match(body.innerHTML, /sf-chip--warn[^>]*>Planning</);
+	assert.doesNotMatch(body.innerHTML, /tvh-pill/);
+	assert.match(body.innerHTML, /&lt;b&gt;Install&lt;\/b&gt;/);
+	assert.deepEqual(JSON.parse(JSON.stringify(desk.asked.map((a) => a.args))), [{}]);
+});
+
+const PROJECTS = "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.";
+
+await test("projects_dashboard.js: a project to list draws its table, not a state panel", async () => {
+	// The tables are built through jQuery sets the stand-in swallows, so this checks only that
+	// a non-empty answer neither errors nor draws the empty panel over the default tab.
+	const { body } = await runOnKit(
+		"projects_dashboard.js",
+		answers({
+			[PROJECTS + "get_project_data"]: [
+				{ name: "PROJ-1", project_name: "<i>Lobby</i>", project_type: "Build", is_active: "Yes", status: "Active" },
+			],
+			[PROJECTS + "get_priority_options"]: { project_priority: ["1"], company_priority: ["1"] },
+			[PROJECTS + "get_status_options"]: ["Active"],
+		}),
+	);
+	const drawn = allText(body);
+	assert.doesNotMatch(drawn, /sf-state/, "a project to list, and a state panel was drawn: " + drawn.slice(0, 200));
+});
+
+await test("projects_dashboard.js: a user without the page role sees no access, with no Try again", async () => {
+	// get_project_data answers that user with {"error": ...} on HTTP 200, not a 403.
+	const denied = { error: "You do not have permission to view the Project Dashboard." };
+	const { desk, body } = await runOnKit("projects_dashboard.js", (method) =>
+		Promise.resolve({ message: method.endsWith(".get_project_data") ? denied : [] }),
+	);
+	assert.match(body.innerHTML, /sf-state--no-access/, body.innerHTML.slice(0, 160));
+	assert.doesNotMatch(body.innerHTML, /Try again|sf-state-action/, "a Try again that can never succeed");
+	// Its other {"error"} is a failed read: the error panel, with Try again.
+	const failed = await runOnKit("projects_dashboard.js", (method) =>
+		Promise.resolve({
+			message: method.endsWith(".get_project_data") ? { error: "Could not fetch project data. Please check the logs." } : [],
+		}),
+	);
+	assert.match(failed.body.innerHTML, /sf-state--error[\s\S]*Try again/);
+	// On an older bundle the denial is still the words, not a raw kind.
+	const old = await runOnKit(
+		"projects_dashboard.js",
+		(method) => Promise.resolve({ message: method.endsWith(".get_project_data") ? denied : [] }),
+		{ old: true },
+	);
+	assert.equal(old.body.textContent, "No access");
+	assert.ok(desk.calls.length >= 3);
+});
 
 await settle(20);
 await test("no block left a promise rejection unhandled", () => {

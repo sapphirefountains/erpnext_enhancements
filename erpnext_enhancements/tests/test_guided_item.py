@@ -37,6 +37,9 @@ EXTENSION_JS = ITEM_JS / "extension.js"
 PAGE_DIR = APP / "enhancements_core" / "page" / "guided_entry"
 PAGE_JS = PAGE_DIR / "guided_entry.js"
 PAGE_JSON = PAGE_DIR / "guided_entry.json"
+# The record editor both shells run (form kit P4.4, v1.675.0): the blocks are mounted there.
+EDITOR_JS = JS / "form_kit" / "ui" / "editor.js"
+PANEL_JS = JS / "form_kit" / "ui" / "side_panel.js"
 BUNDLE = JS / "guided_entry.bundle.js"
 ITEM_FORM_JS = JS / "item.js"
 
@@ -259,6 +262,8 @@ class TestTheModules(unittest.TestCase):
 			(folder / "package.json").write_text('{"type": "module"}', encoding="utf-8")
 			shutil.copytree(JS / "form_kit", folder / "form_kit")
 			shutil.copytree(ITEM_JS, folder / "guided_item")
+			# The bundle carries the record editor (v1.675.0), whose Party component reads the blocks.
+			shutil.copytree(JS / "info_blocks", folder / "info_blocks")
 			shutil.copy(BUNDLE, folder / "guided_entry.bundle.js")
 			(folder / "runner.mjs").write_text(RUNNER, encoding="utf-8")
 			payload = json.dumps({"names": NAMES, "codes": CODES})
@@ -287,7 +292,7 @@ class TestTheModules(unittest.TestCase):
 
 	def test_the_pages_bundle_installs_the_kit_with_the_item_extension(self):
 		b = self.out["bundle"]
-		self.assertEqual(b["version"], 2)
+		self.assertEqual(b["version"], 3)
 		self.assertEqual(b["has"], ["extension_for", "ends_core", "opens_by_default", "parse_route"])
 		self.assertTrue(b["item"])
 
@@ -487,9 +492,25 @@ class TestTheModules(unittest.TestCase):
 
 class TestTheWiring(unittest.TestCase):
 	def test_the_page_draws_a_steps_block_and_keeps_its_fields_if_it_fails(self):
-		code = _code(PAGE_JS)
-		self.assertIn("this.ext = this.kit.extension_for ? this.kit.extension_for(doctype) : null;", code)
+		# Both shells pick the DocType's extension when a record opens, and drop it on reset.
+		for shell in (PAGE_JS, PANEL_JS):
+			with self.subTest(shell=shell.name):
+				shell_code = _code(shell)
+				self.assertIn("this.open_extension(doctype);", shell_code)
+				self.assertIn("this.ext = null;", shell_code)
+		page = _code(PAGE_JS)
+		for moved in ("mount_extension(step, $fields) {", "ext_context(step) {", "\tcreate() {"):
+			with self.subTest(moved=moved):
+				self.assertNotIn(moved, page, "the editor's code is not copied back onto the page")
+		code = _code(EDITOR_JS)
+		self.assertIn(
+			"this.ext = this.kit && this.kit.extension_for ? this.kit.extension_for(doctype) : null;", code
+		)
 		self.assertIn("this.mount_extension(step, $fields);", code)
+		fields = code[code.index("render_fields(step, $fields, editable) {") :]
+		fields = fields[: fields.index("\n\t}\n")]
+		self.assertLess(fields.index("this.leave_extension();"), fields.index("new frappe.ui.FieldGroup"))
+		self.assertIn("this.mount_extension(step, $fields);", fields)
 		self.assertIn("this.ext.render(step.extension, $box, this.ext_context(step));", code)
 		body = code[code.index("mount_extension(step, $fields) {") :]
 		body = body[: body.index("\n\t}\n")]
@@ -505,7 +526,7 @@ class TestTheWiring(unittest.TestCase):
 		)
 
 	def test_a_block_writes_after_the_pages_save_and_the_page_takes_the_new_version(self):
-		page = _code(PAGE_JS)
+		page = _code(EDITOR_JS)
 		self.assertIn("save_first: () => (same() ? this.save_before_moving()", page)
 		self.assertIn("if (same() && !this.is_new) this.refresh_from_server();", page)
 		ext = _code(EXTENSION_JS)
@@ -528,7 +549,8 @@ class TestTheWiring(unittest.TestCase):
 	def test_the_bundle_carries_the_item_extension(self):
 		bundle = _code(BUNDLE)
 		self.assertIn('import "./guided_item/extension.js";', bundle)
-		self.assertIn("const VERSION = 2;", bundle)
+		# 3: a tab still holding version 2 (the editor, v1.675.0) has no extension_for.
+		self.assertIn("const VERSION = 3;", bundle)
 
 	def test_every_request_is_quiet_reads_are_get_writes_post(self):
 		code = _code(EXTENSION_JS)

@@ -50,7 +50,9 @@ class TestCrewsPageSource(unittest.TestCase):
 		# A lone person is not ringed, and a crew-view row already says who it is.
 		self.assertIn("people.length > 1", badges)
 		self.assertIn("in_row && people.length < 2", badges)
-		self.assertIn(".mp-tech.mp-lead{", code)
+		# The ring is drawn by the page's stylesheet, maintenance_planner.css (S3.4e, v1.673.0).
+		css = PAGE.with_suffix(".css").read_text(encoding="utf-8")
+		self.assertRegex(css, r"(?m)^\.mp-tech\.mp-lead \{\s*outline: 2px solid var\(--sf-text-strong\);")
 		# Names and initials go through mp_esc on their way into the markup.
 		self.assertIn("mp_esc(initials.toUpperCase())", code)
 		self.assertIn("mp_esc(role ? `${name} (${role})` : name)", code)
@@ -159,6 +161,15 @@ class TestCrewsPageSource(unittest.TestCase):
 
 	def test_nothing_else_changed_about_how_the_page_behaves(self):
 		code = self.code
+		self.assertIn("frappe.set_route(MP.route, view, anchor, this.filter_options())", code)
+		# The page's one history write is write_filter_url's in-place rewrite of the Technician filter
+		# in the address, re-run by watch_filter_url after a popstate (S5c, v1.676.0; held by
+		# tests/test_planner_url_filters.py). Neither pushes.
+		for method in ("\twrite_filter_url() {", "\twatch_filter_url() {"):
+			start = code.index(method)
+			end = code.index("\n\t}\n", start)
+			self.assertNotIn("pushState", code[start:end])
+			code = code[:start] + code[end:]
 		for forbidden in (
 			"draggable",
 			"dragstart",
@@ -171,7 +182,6 @@ class TestCrewsPageSource(unittest.TestCase):
 		):
 			self.assertNotIn(forbidden, code)
 		self.assertEqual(code.count("localStorage"), 2)
-		self.assertIn("frappe.set_route(MP.route, view, anchor)", code)
 		# New visible text is translated.
 		for text in ("Planned hours", "Full day", "{0} added to {1}", "{0}h each", "Crew"):
 			self.assertIn(f'__("{text}"', code)

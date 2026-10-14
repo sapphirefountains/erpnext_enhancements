@@ -1,0 +1,613 @@
+/* Rental Planner (/desk/rental-planner): the fleet timeline and the new-rental flow.
+ *
+ * This was RP_STYLE, a string rental_planner.js wrote into <head> as a <style> tag, and the
+ * legend's swatches were painted inline from the script (custom pages S3.4f, v1.670.0,
+ * TASK-2026-02823). Frappe's page loader reads <page>.css beside the page's JS and sends it with
+ * the page, so an edit is never served stale from the one-year /assets cache.
+ *
+ * Page CSS is appended to <head> once and never removed, so it is GLOBAL for the rest of the
+ * session: every selector here starts with an rp- class. tests/test_s3_page_css.py holds it to
+ * that, and to everything below.
+ *
+ * Colors are the app's --sf-* tokens (docs/app-design-system.md), which follow the Desk's light
+ * or dark theme. The page's own chrome is the Rent pillar: a confirmed rental is a chip in the
+ * pillar's closing stop with an --sf-on-pillar label and the --sf-chip-edge-rent edge, a hold is
+ * the same pillar hatched with a dashed edge, and the board and the flow's card carry the
+ * pillar's opening stop as a stripe. Status is the three status tokens: a fill is the token with
+ * its --sf-on-* label and --sf-chip-edge-* edge; status as text is mixed half and half with
+ * --sf-text-strong, so it reads on a white card and a navy one. A tint is the token over the card.
+ * Two other variables are read, on purpose: --rp-day, the width of a day, which the script sets
+ * with the track's width; and the Desk's --bg-color under the phone's sticky Back / Next bar.
+ *
+ * Nothing is said by color alone. A bar's kind is in its accessible name and its tooltip, and a
+ * hold is hatched as well as paler; Free and Taken are words; today and a full or nearly full pool
+ * day say so to a screen reader (.rp-sr).
+ *
+ * The bars' kinds come from the server (rental_planner._bar_kind, and out_of_service), and the
+ * legend's swatches carry the same classes, so one rule paints a bar and its key.
+ *
+ * Structure is square: the board, its rows, bars and cells, the card and the fields. The step
+ * rail's steps round at --sf-radius-control, and the Free / Taken chips are pills. No shadows:
+ * a bar's hover changes its color only, and focus is a 2px --sf-focus outline. Outline is kept
+ * for focus alone, so nothing here can hide a focus ring.
+ *
+ * One phone breakpoint, 767px. On a touch screen (pointer: coarse) a booking bar, a step, the
+ * toolbar's and the flow's buttons and the review's Edit links are 44px, --sf-touch-min. */
+
+.rp-wrap {
+	padding-bottom: 64px;
+	color: var(--sf-text);
+}
+
+/* Read aloud, never drawn: the word beside a color that would otherwise say it alone. */
+.rp-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ---- The board's toolbar and legend -------------------------------------------------------- */
+
+.rp-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+	align-items: center;
+	margin: 4px 0 12px;
+}
+
+.rp-toolbar .rp-range-label {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+	margin: 0 6px;
+}
+
+/* Fields stay white and square, with the field edge, in both themes: the toolbar's range picker,
+ * and everything in the flow's card (the pick list's quantities and rates, and the Frappe
+ * controls the wizard makes: its FieldGroups and the package picker). Bootstrap's
+ * .form-control:focus (0,2,0) would turn a field grey while in use, so the focused field has a
+ * rule of its own, under the page; and a disabled one (a rate before its fountain is ticked)
+ * still looks disabled. */
+.rp-wrap .rp-toolbar .form-control,
+.rp-wrap .rp-card .form-control {
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+}
+
+.rp-wrap .rp-toolbar .form-control:focus,
+.rp-wrap .rp-card .form-control:focus {
+	border-color: var(--sf-focus);
+	background-color: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	outline: 1px solid var(--sf-focus);
+}
+
+.rp-wrap .rp-card .form-control:disabled {
+	background-color: color-mix(in srgb, var(--sf-field-text) 8%, var(--sf-field-bg));
+	color: color-mix(in srgb, var(--sf-field-text) 55%, var(--sf-field-bg));
+	cursor: not-allowed;
+}
+
+.rp-toolbar .rp-range {
+	width: auto;
+}
+
+.rp-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	font-size: var(--sf-text-xs);
+	color: var(--sf-text-muted);
+	margin: 0 0 10px;
+}
+
+.rp-legend span {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.rp-swatch {
+	display: inline-block;
+	box-sizing: border-box;
+	width: 18px;
+	height: 10px;
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-none);
+}
+
+/* ---- The timeline -------------------------------------------------------------------------- */
+
+/* The Rent pillar's opening stop as a stripe across the top of the board. */
+.rp-scroll {
+	overflow-x: auto;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-top: 4px solid var(--sf-pillar-rent);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+}
+
+.rp-row {
+	display: flex;
+	min-height: 38px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.rp-row:last-child {
+	border-bottom: none;
+}
+
+.rp-label {
+	flex: 0 0 190px;
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	background: var(--sf-surface);
+	color: var(--sf-text-strong);
+	padding: 6px 10px;
+	border-right: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: var(--sf-text-sm);
+	line-height: 1.25;
+}
+
+.rp-label small {
+	display: block;
+	color: var(--sf-text-muted);
+	font-size: 11px;
+}
+
+/* One hairline per day: --rp-day is the day's width, set by the script with the track's. */
+.rp-track {
+	position: relative;
+	flex: 0 0 auto;
+	cursor: copy;
+	background-image: linear-gradient(to right, var(--sf-rule) 1px, transparent 1px);
+	background-size: var(--rp-day) 100%;
+}
+
+.rp-head .rp-track,
+.rp-pool .rp-track,
+.rp-section .rp-track {
+	cursor: default;
+}
+
+.rp-head {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--sf-surface);
+	min-height: 42px;
+}
+
+.rp-day {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	box-sizing: border-box;
+	font-size: 11px;
+	text-align: center;
+	color: var(--sf-text-muted);
+	padding-top: 4px;
+	line-height: 1.2;
+	overflow: hidden;
+}
+
+.rp-day b {
+	display: block;
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-xs);
+}
+
+/* Today: a bar along the top of its column and the weight, never color alone. Its color is the
+ * neutral chip edge (deep-sea-blue in light, sky-200 in dark, clear of either card), not
+ * --sf-focus, so a focused bar on today's column still stands out from the line behind it. */
+.rp-day.rp-today {
+	border-top: 3px solid var(--sf-chip-edge-neutral);
+	padding-top: 1px;
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.rp-today-line {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: var(--sf-chip-edge-neutral);
+	z-index: 1;
+	pointer-events: none;
+}
+
+/* A booking bar is a <button> (S3.6). Its label truncates on an inner span, because some engines
+ * ignore text-overflow on a button. */
+.rp-bar {
+	position: absolute;
+	top: 7px;
+	height: 24px;
+	box-sizing: border-box;
+	display: block;
+	margin: 0;
+	padding: 0 6px;
+	border: var(--sf-border-hairline) solid transparent;
+	border-radius: var(--sf-radius-none);
+	font-family: inherit;
+	font-size: 11px;
+	line-height: 22px;
+	text-align: left;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+	z-index: 2;
+	transition: filter var(--sf-duration);
+}
+
+.rp-bar:hover {
+	filter: brightness(1.1);
+}
+
+.rp-bar:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 1px;
+	z-index: 4;
+}
+
+.rp-bar-text {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* Prep and cleaning are thin and draw no text; their accessible name says what they are. */
+.rp-bar.rp-prep,
+.rp-bar.rp-turnaround {
+	top: 12px;
+	height: 14px;
+	line-height: 12px;
+	font-size: 10px;
+}
+
+/* The kinds. Each rule paints the bar and its legend swatch. */
+
+/* Confirmed: a Rent chip, the closing stop under an off-white label. */
+.rp-bar.rp-rental,
+.rp-swatch.rp-rental {
+	background: var(--sf-pillar-rent-deep);
+	color: var(--sf-on-pillar);
+	border-color: var(--sf-chip-edge-rent);
+}
+
+/* Held (tentative): the same pillar, pale and hatched, with a dashed edge dark enough to see on a
+ * white card and light enough on a navy one. */
+.rp-bar.rp-rental.rp-held,
+.rp-swatch.rp-rental.rp-held {
+	background: repeating-linear-gradient(
+		45deg,
+		color-mix(in srgb, var(--sf-pillar-rent) 40%, var(--sf-surface)) 0 6px,
+		color-mix(in srgb, var(--sf-pillar-rent) 18%, var(--sf-surface)) 6px 12px
+	);
+	color: var(--sf-text-strong);
+	border-style: dashed;
+	border-color: color-mix(in srgb, var(--sf-pillar-rent-deep) 60%, var(--sf-text-strong));
+}
+
+/* Prep and cleaning: grey, the fountain's own time around a rental. */
+.rp-bar.rp-prep,
+.rp-bar.rp-turnaround,
+.rp-swatch.rp-prep {
+	background: color-mix(in srgb, var(--sf-text-muted) 40%, var(--sf-surface));
+	color: var(--sf-text-strong);
+	border-color: var(--sf-text-muted);
+}
+
+/* Booked by hand on an Asset Booking: the warn fill and its label. */
+.rp-bar.rp-booking,
+.rp-swatch.rp-booking {
+	background: var(--sf-warn);
+	color: var(--sf-on-warn);
+	border-color: var(--sf-chip-edge-warn);
+}
+
+/* Out of service: the danger fill, hatched against a darker red. The dark stripe is mixed with the
+ * fixed ink-900, never --sf-text-strong: that is off-white in the dark theme, which would make the
+ * stripe LIGHTER and drop the off-white label to 3.65:1. With ink it is about 7.7:1 in both. */
+.rp-bar.rp-out_of_service,
+.rp-swatch.rp-out_of_service {
+	background: repeating-linear-gradient(
+		45deg,
+		var(--sf-danger) 0 6px,
+		color-mix(in srgb, var(--sf-danger) 75%, var(--sf-ink-900)) 6px 12px
+	);
+	color: var(--sf-on-danger);
+	border-color: var(--sf-chip-edge-danger);
+}
+
+/* The accessory pools' heading row, tinted with the pillar. */
+.rp-section {
+	min-height: 28px;
+	background: color-mix(in srgb, var(--sf-pillar-rent) 10%, var(--sf-surface));
+}
+
+.rp-section .rp-label {
+	font-weight: var(--sf-weight-bold);
+	background: color-mix(in srgb, var(--sf-pillar-rent) 10%, var(--sf-surface));
+}
+
+/* A pool's day: units out, shaded as it fills. A full day is bold and says "full". */
+.rp-cell {
+	position: absolute;
+	top: 6px;
+	bottom: 6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--sf-radius-none);
+	font-size: 11px;
+	text-align: center;
+	color: var(--sf-text-strong);
+}
+
+.rp-cell.rp-low {
+	background: color-mix(in srgb, var(--sf-pillar-rent) 18%, var(--sf-surface));
+}
+
+.rp-cell.rp-mid {
+	background: color-mix(in srgb, var(--sf-warn) 30%, var(--sf-surface));
+}
+
+.rp-cell.rp-full {
+	background: color-mix(in srgb, var(--sf-danger) 30%, var(--sf-surface));
+	font-weight: var(--sf-weight-bold);
+}
+
+.rp-empty {
+	padding: 28px;
+	text-align: center;
+	color: var(--sf-text-muted);
+}
+
+/* ---- The new-rental flow ------------------------------------------------------------------- */
+
+.rp-steps {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	margin: 4px 0 14px;
+}
+
+.rp-step {
+	display: inline-flex;
+	align-items: center;
+	padding: 7px 12px;
+	border-radius: var(--sf-radius-control);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+/* A step that can be gone back to is a button (S3.6). */
+.rp-step.rp-done {
+	color: var(--sf-text);
+	border-color: var(--sf-field-border);
+	cursor: pointer;
+}
+
+button.rp-step {
+	font-family: inherit;
+	line-height: inherit;
+	margin: 0;
+}
+
+button.rp-step:hover {
+	border-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+}
+
+.rp-step:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* The step on screen: the primary fill and the weight (and aria-current), never color alone. */
+.rp-step.rp-active {
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
+	font-weight: var(--sf-weight-bold);
+}
+
+/* A square card with the Rent stripe, a hairline and no shadow. */
+.rp-card {
+	max-width: 860px;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-top: 4px solid var(--sf-pillar-rent);
+	border-radius: var(--sf-radius-none);
+	padding: 16px;
+	margin-bottom: 12px;
+}
+
+.rp-card h4 {
+	margin: 0 0 10px;
+	font-size: var(--sf-text-md);
+	color: var(--sf-heading);
+}
+
+.rp-card h5 {
+	color: var(--sf-text-strong);
+}
+
+.rp-card .rp-subhead {
+	margin-top: 16px;
+}
+
+.rp-package {
+	max-width: 420px;
+}
+
+.rp-nav {
+	max-width: 860px;
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.rp-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+/* A fountain or a pool to pick. A fountain's row is a <label>, so the whole row ticks it. */
+.rp-pick {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: var(--sf-touch-min);
+	padding: 9px 6px;
+	margin: 0;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.rp-pick:last-child {
+	border-bottom: none;
+}
+
+.rp-pick .rp-pick-main {
+	flex: 1;
+	min-width: 0;
+	color: var(--sf-text-strong);
+}
+
+.rp-pick .rp-why {
+	font-size: var(--sf-text-xs);
+	color: var(--sf-text-muted);
+}
+
+.rp-pick input[type="number"] {
+	width: 96px;
+}
+
+/* Taken for these dates: the name steps back, the chip says Taken, and what holds it is said in
+ * the danger text color. */
+.rp-pick.rp-taken .rp-pick-main {
+	color: var(--sf-text-muted);
+}
+
+.rp-pick.rp-taken .rp-why {
+	color: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+}
+
+/* Free / Taken: a status chip with its own word. */
+.rp-pill {
+	display: inline-block;
+	font-size: 11px;
+	border-radius: var(--sf-radius-pill);
+	border: var(--sf-border-hairline) solid transparent;
+	padding: 1px 8px;
+	margin-left: 6px;
+}
+
+.rp-pill.rp-free {
+	background: var(--sf-good);
+	color: var(--sf-on-good);
+	border-color: var(--sf-chip-edge-good);
+}
+
+.rp-pill.rp-no {
+	background: var(--sf-danger);
+	color: var(--sf-on-danger);
+	border-color: var(--sf-chip-edge-danger);
+}
+
+.rp-summary dt {
+	color: var(--sf-text-muted);
+	font-weight: normal;
+	font-size: var(--sf-text-xs);
+	margin-top: 8px;
+}
+
+.rp-summary dd {
+	margin: 0;
+	color: var(--sf-text-strong);
+}
+
+/* A link, so it is underlined: color alone is not enough. */
+.rp-summary .rp-edit {
+	margin-left: 8px;
+	font-size: 11px;
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.rp-total {
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+	margin-top: 10px;
+}
+
+/* ---- Touch and phones ---------------------------------------------------------------------- */
+
+/* On a touch screen every control is a 44px target: a row grows to hold a 44px bar. */
+@media (pointer: coarse) {
+	.rp-row {
+		min-height: 52px;
+	}
+
+	.rp-bar,
+	.rp-bar.rp-prep,
+	.rp-bar.rp-turnaround {
+		top: 4px;
+		height: var(--sf-touch-min);
+		line-height: 42px;
+	}
+
+	.rp-step,
+	.rp-toolbar .btn,
+	.rp-toolbar .rp-range,
+	.rp-nav .btn,
+	.rp-actions .btn {
+		min-height: var(--sf-touch-min);
+	}
+
+	.rp-summary .rp-edit {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--sf-touch-min);
+		padding: 0 6px;
+	}
+}
+
+/* A phone: a narrower name column, 16px fields so iOS does not zoom into them, and the flow's
+ * Back and Next kept in reach at the bottom of the screen. That bar sits over the Desk's own page
+ * ground, so it is painted with the Desk's --bg-color, as Plan a Trip's is, to match it exactly. */
+@media (max-width: 767px) {
+	.rp-label {
+		flex-basis: 120px;
+	}
+
+	.rp-wrap .rp-toolbar .form-control,
+	.rp-wrap .rp-card .form-control {
+		font-size: var(--sf-text-input);
+	}
+
+	.rp-nav {
+		position: sticky;
+		bottom: 0;
+		z-index: 5;
+		padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+		background: var(--bg-color);
+	}
+}

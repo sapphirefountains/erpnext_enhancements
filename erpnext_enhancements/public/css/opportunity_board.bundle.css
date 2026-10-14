@@ -1,0 +1,1164 @@
+/*
+ * Opportunity Board (form kit P6): crm_enhancements/page/opportunity_board.
+ * Loaded with the page (frappe.require, never app_include_css), after sf_kit.bundle.css.
+ *
+ * Built on the app design tokens only (docs/app-design-system.md): --sf-* variables, no colour
+ * values of its own, no shadows, square structure, controls rounded at --sf-radius-control. The
+ * semantic tokens follow the Desk theme, so nothing here is written twice for dark.
+ *
+ * Widths:
+ *   >= 768px  every stage a column, side by side; the board scrolls sideways inside its own box
+ *             when the columns do not fit. Rows by value stream line their cells up under the
+ *             same column heads.
+ *   <  768px  phone: one stage at a time under a wrapping row of stage tabs, nothing wider than
+ *             the screen, 44px targets, a 16px side gutter; the move panel is a bottom sheet
+ *             above the safe area.
+ *
+ * The stale "glow" is a 2px border in the warn / danger status colour, never a shadow (the brand
+ * has none), and the age chip beside it says the same thing in words.
+ */
+
+.ob-app {
+	box-sizing: border-box;
+	padding: var(--sf-space-15) var(--sf-space-20) var(--sf-space-40);
+	background: var(--sf-bg);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+	min-height: 60vh;
+}
+.ob-app *,
+.ob-ghost * {
+	box-sizing: border-box;
+}
+
+/* ---- Head: the count, the total, and the layout switch ---- */
+.ob-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-15);
+}
+.ob-summary {
+	margin: 0;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text);
+}
+.ob-summary strong {
+	color: var(--sf-text-strong);
+}
+.ob-note {
+	margin: 0 0 var(--sf-space-15);
+	color: var(--sf-text-muted);
+}
+.ob-layout {
+	display: inline-flex;
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+.ob-seg {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: 0;
+	background: transparent;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+	transition: background-color var(--sf-duration) var(--sf-ease), color var(--sf-duration) var(--sf-ease);
+}
+.ob-seg[aria-pressed="true"] {
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+}
+.ob-seg:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: -4px;
+}
+
+/* ---- Forecast strip (P6.5) ---- */
+.ob-strip {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-20);
+}
+.ob-tile {
+	min-width: 0;
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-tile--all {
+	border-top: var(--sf-space-5) solid var(--sf-pillar-neutral-deep);
+}
+.ob-tile--parked .ob-tile-value {
+	color: var(--sf-text-muted);
+}
+.ob-tile-label {
+	color: var(--sf-eyebrow);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ob-tile-value {
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ob-tile-meta {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	overflow-wrap: anywhere;
+}
+
+/* ---- Columns and rows ---- */
+.ob-scroll {
+	overflow-x: auto;
+	padding-bottom: var(--sf-space-10);
+}
+.ob-grid {
+	display: grid;
+	/* --ob-template is set by the page: a folded On Hold column is narrow (P6.8). */
+	grid-template-columns: var(--ob-template, repeat(var(--ob-cols, 1), minmax(240px, 1fr)));
+	gap: var(--sf-space-10);
+}
+.ob-col,
+.ob-cell {
+	min-width: 0;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	transition: background-color var(--sf-duration) var(--sf-ease);
+}
+.ob-col-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	padding: var(--sf-space-10);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-col--head {
+	border-bottom: 0;
+}
+.ob-col--head .ob-col-head {
+	border-bottom: 0;
+}
+.ob-col-title {
+	margin: 0;
+	color: var(--sf-heading);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	overflow-wrap: anywhere;
+}
+.ob-col-meta,
+.ob-row-meta {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+.ob-col--parked .ob-col-title {
+	color: var(--sf-text-muted);
+}
+.ob-cards,
+.ob-cell {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10);
+	min-height: 80px;
+}
+.ob-row {
+	margin-top: var(--sf-space-20);
+}
+.ob-row-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-10);
+}
+.ob-empty {
+	margin: 0;
+	color: var(--sf-text-muted);
+}
+.is-over {
+	outline: var(--sf-border-control) dashed var(--sf-focus);
+	outline-offset: -2px;
+	background: color-mix(in srgb, var(--sf-focus) 10%, transparent);
+}
+
+/* ---- Card (P6.1) ---- */
+.ob-card {
+	position: relative;
+	min-width: 0;
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-touch-callout: none;
+	transition: border-color var(--sf-duration) var(--sf-ease), opacity var(--sf-duration) var(--sf-ease);
+}
+.ob-card--stale-1 {
+	border: var(--sf-border-control) solid var(--sf-warn);
+}
+.ob-card--stale-2 {
+	border: var(--sf-border-control) solid var(--sf-danger);
+}
+.ob-card.is-lifted,
+.ob-card.is-saving {
+	opacity: 0.5;
+}
+/* The band: one segment per value stream in the pillar's closing stop, edged in the chip-edge
+   token so Build's navy and Neutral's blue still show on a dark-theme card. */
+.ob-band {
+	display: flex;
+	height: 6px;
+}
+.ob-band-seg {
+	flex: 1 1 0;
+	border-bottom: 2px solid transparent;
+}
+.ob-band-seg--design {
+	background: var(--sf-pillar-design-deep);
+	border-bottom-color: var(--sf-chip-edge-design);
+}
+.ob-band-seg--build {
+	background: var(--sf-pillar-build-deep);
+	border-bottom-color: var(--sf-chip-edge-build);
+}
+.ob-band-seg--service {
+	background: var(--sf-pillar-service-deep);
+	border-bottom-color: var(--sf-chip-edge-service);
+}
+.ob-band-seg--rent {
+	background: var(--sf-pillar-rent-deep);
+	border-bottom-color: var(--sf-chip-edge-rent);
+}
+.ob-band-seg--neutral {
+	background: var(--sf-pillar-neutral-deep);
+	border-bottom-color: var(--sf-chip-edge-neutral);
+}
+.ob-card-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	padding: var(--sf-space-10);
+}
+.ob-card-open {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-family: var(--sf-font-sans);
+	text-align: left;
+	cursor: pointer;
+}
+.ob-card-open:focus-visible,
+.ob-move:focus-visible,
+.ob-tab:focus-visible,
+.ob-stage-btn:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ob-card-title {
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+.ob-card-account {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	overflow-wrap: anywhere;
+}
+.ob-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+}
+.ob-also {
+	margin: 0;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-facts {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: var(--sf-space-5) var(--sf-space-10);
+}
+.ob-amount {
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-amount--none {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-regular);
+	font-style: italic;
+}
+.ob-close {
+	color: var(--sf-text-muted);
+}
+.ob-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+}
+.ob-age {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+}
+/* The completeness meter (form kit P4.6): what this stage asks for, how much is filled in. */
+.ob-meter {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+}
+.ob-meter-track {
+	display: inline-block;
+	width: 48px;
+	height: 8px;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-surface);
+}
+.ob-meter-bar {
+	display: block;
+	height: 100%;
+	background: var(--sf-primary);
+}
+.ob-move {
+	margin-left: auto;
+	min-height: var(--sf-touch-min);
+	min-width: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: 0;
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-link);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	text-decoration: underline;
+	cursor: pointer;
+}
+.ob-move:hover {
+	background: color-mix(in srgb, var(--sf-link) 10%, transparent);
+}
+
+/* ---- Dragging ---- */
+.ob-ghost {
+	position: fixed;
+	z-index: 1100;
+	pointer-events: none;
+	opacity: 0.92;
+	border: var(--sf-border-control) solid var(--sf-focus);
+	cursor: grabbing;
+}
+body.ob-drag-active,
+body.ob-drag-active * {
+	cursor: grabbing;
+}
+.ob-closebar {
+	display: none;
+	position: fixed;
+	z-index: 1090;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10) var(--sf-space-20) calc(var(--sf-space-10) + env(safe-area-inset-bottom));
+	background: var(--sf-bg);
+	border-top: var(--sf-border-control) solid var(--sf-rule);
+}
+.ob-app.is-dragging .ob-closebar {
+	display: flex;
+}
+.ob-drop-close {
+	flex: 1 1 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 64px;
+	padding: var(--sf-space-10);
+	border: var(--sf-border-control) dashed var(--sf-text);
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	text-align: center;
+}
+
+/* ---- Phone stage tabs (P6.9): they wrap; nothing scrolls sideways ---- */
+.ob-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-15);
+}
+.ob-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sf-space-5);
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	cursor: pointer;
+}
+.ob-tab[aria-selected="true"] {
+	border-color: var(--sf-text-strong);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-tab-count {
+	font-weight: var(--sf-weight-bold);
+}
+
+/* ---- The move panel: a centred box on a wide screen, a bottom sheet on a phone ---- */
+.ob-panel-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 1040;
+	background: color-mix(in srgb, var(--sf-navy-900) 55%, transparent);
+}
+.ob-panel {
+	position: fixed;
+	z-index: 1050;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: min(440px, calc(100vw - 32px));
+	max-height: calc(100vh - 64px);
+	overflow-y: auto;
+	padding: var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+}
+.ob-panel-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+}
+.ob-panel-title {
+	margin: 0;
+	color: var(--sf-heading);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	overflow-wrap: anywhere;
+}
+.ob-panel-intro {
+	margin: var(--sf-space-10) 0;
+	color: var(--sf-text-muted);
+}
+.ob-panel-stages {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+}
+.ob-stage-btn {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+.ob-stage-btn:not(:disabled):hover {
+	background: color-mix(in srgb, var(--sf-text) 10%, transparent);
+}
+.ob-stage-btn:disabled {
+	border-style: dashed;
+	color: var(--sf-text-muted);
+	cursor: default;
+}
+.ob-stage-btn--close {
+	border-style: dashed;
+}
+.ob-stage-note {
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-regular);
+}
+.ob-panel-foot {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: var(--sf-space-15);
+}
+
+/* ---- Views (P6.3): a row of tabs, each a route ---- */
+.ob-views {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-view {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: 0;
+	border-bottom: 3px solid transparent;
+	background: transparent;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	cursor: pointer;
+}
+.ob-view[aria-current="page"] {
+	border-bottom-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-view:focus-visible,
+.ob-toggle:focus-visible,
+.ob-sort:focus-visible,
+.ob-link:focus-visible,
+.ob-filters-toggle:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ---- The filter bar (P6.8) ---- */
+.ob-filters {
+	margin-bottom: var(--sf-space-15);
+}
+.ob-filters-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+.ob-filters-body[hidden] {
+	display: none;
+}
+.ob-filter-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10);
+}
+.ob-toggle,
+.ob-filters-toggle {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+}
+.ob-toggle[aria-pressed="true"] {
+	border-color: var(--sf-text-strong);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+}
+.ob-field {
+	display: inline-flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	color: var(--sf-label);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-field select,
+.ob-field input,
+.ob-field textarea {
+	min-height: var(--sf-touch-min);
+	min-width: 0;
+	padding: 0 var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-input);
+	font-weight: var(--sf-weight-regular);
+}
+.ob-field textarea {
+	padding: var(--sf-space-10);
+	resize: vertical;
+}
+.ob-field select:focus-visible,
+.ob-field input:focus-visible,
+.ob-field textarea:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 0;
+}
+.ob-field--stack {
+	display: flex;
+	width: 100%;
+}
+.ob-name-view {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10);
+}
+.ob-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ---- On Hold folded (P6.8) and snoozed cards ---- */
+.ob-fold {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10);
+	color: var(--sf-text-muted);
+}
+.ob-fold p {
+	margin: 0;
+}
+.ob-fold-btn {
+	align-self: flex-start;
+}
+.ob-card.is-snoozed {
+	opacity: 0.7;
+	border-style: dashed;
+}
+
+/* ---- The table (P6.3) ---- */
+.ob-table-wrap {
+	overflow-x: auto;
+}
+.ob-table {
+	width: 100%;
+	border-collapse: collapse;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-table th,
+.ob-table td {
+	padding: var(--sf-space-10);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	text-align: left;
+	vertical-align: top;
+}
+.ob-table th {
+	padding: 0;
+	color: var(--sf-eyebrow);
+	font-size: var(--sf-text-xs);
+	white-space: nowrap;
+}
+.ob-sort {
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+.ob-table tbody tr {
+	cursor: pointer;
+}
+.ob-table tbody tr:hover {
+	background: color-mix(in srgb, var(--sf-focus) 6%, transparent);
+}
+.ob-num {
+	white-space: nowrap;
+}
+.ob-link {
+	display: block;
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-text-strong);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+.ob-row-actions {
+	text-align: right;
+}
+
+/* ---- The timeline (P6.3) ---- */
+.ob-timeline {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-20);
+}
+.ob-month {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-month.is-past {
+	border-left: var(--sf-space-5) solid var(--sf-danger);
+}
+.ob-month-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-15);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-tl-list,
+.ob-att-list,
+.ob-att-counts {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ob-tl-item,
+.ob-att-item {
+	display: grid;
+	grid-template-columns: 110px minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-tl-item:last-child,
+.ob-att-item:last-child {
+	border-bottom: 0;
+}
+.ob-tl-date {
+	color: var(--sf-text-muted);
+}
+.ob-tl-main,
+.ob-att-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ob-tl-amount {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	white-space: nowrap;
+}
+
+/* ---- Needs attention (P6.4) ---- */
+.ob-att-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5) var(--sf-space-20);
+	margin-bottom: var(--sf-space-15);
+	color: var(--sf-text-muted);
+}
+.ob-att-counts strong {
+	color: var(--sf-text-strong);
+}
+.ob-att-list {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-att-item {
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	cursor: pointer;
+}
+.ob-att-main .ob-chips {
+	margin-top: var(--sf-space-5);
+}
+
+/* ---- Snooze, in the deal panel (P6.8) ---- */
+.ob-snooze {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-20);
+	padding-top: var(--sf-space-15);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-snooze-title {
+	margin: 0;
+	color: var(--sf-heading);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-snooze-state {
+	margin: 0;
+	color: var(--sf-text);
+}
+.ob-snooze-form {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+}
+
+/* ---- Phone ---- */
+@media (max-width: 767px) {
+	.ob-filter-row {
+		align-items: stretch;
+	}
+	.ob-filter-row > .ob-field {
+		flex: 1 1 140px;
+	}
+	.ob-filters-toggle {
+		width: 100%;
+		margin-bottom: var(--sf-space-10);
+	}
+	.ob-view {
+		flex: 1 1 auto;
+		padding: 0 var(--sf-space-10);
+		font-size: var(--sf-text-sm);
+	}
+	/* The table becomes one block per deal, each value under its column's name: nothing scrolls
+	   sideways at 390px. */
+	.ob-table-wrap {
+		overflow-x: visible;
+	}
+	.ob-table,
+	.ob-table tbody,
+	.ob-table tr,
+	.ob-table td {
+		display: block;
+		width: 100%;
+	}
+	.ob-table thead {
+		display: block;
+	}
+	.ob-table thead tr {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sf-space-5);
+		padding: var(--sf-space-5);
+	}
+	.ob-table thead th {
+		border: 0;
+	}
+	.ob-table thead th:last-child {
+		display: none;
+	}
+	.ob-sort {
+		border: var(--sf-border-hairline) solid var(--sf-rule);
+		border-radius: var(--sf-radius-control);
+	}
+	.ob-table tbody tr {
+		padding: var(--sf-space-10);
+		border-bottom: var(--sf-border-control) solid var(--sf-rule);
+	}
+	.ob-table td {
+		display: grid;
+		grid-template-columns: 40% minmax(0, 1fr);
+		gap: var(--sf-space-10);
+		padding: var(--sf-space-5) 0;
+		border: 0;
+	}
+	.ob-table td::before {
+		content: attr(data-label);
+		color: var(--sf-text-muted);
+		font-size: var(--sf-text-xs);
+		font-weight: var(--sf-weight-bold);
+	}
+	.ob-table td:first-child,
+	.ob-table td.ob-row-actions {
+		display: block;
+	}
+	.ob-table td:first-child::before,
+	.ob-table td.ob-row-actions::before {
+		content: none;
+	}
+	.ob-tl-item {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.ob-tl-date {
+		grid-column: 1 / -1;
+	}
+	.ob-att-item {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.ob-att-item .ob-tl-amount {
+		grid-column: 1;
+	}
+	.ob-app {
+		padding: var(--sf-space-10) 16px calc(var(--sf-space-40) + env(safe-area-inset-bottom));
+		overflow-x: hidden;
+	}
+	.ob-head {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.ob-layout {
+		display: flex;
+	}
+	.ob-seg {
+		flex: 1 1 0;
+	}
+	.ob-strip {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.ob-scroll {
+		overflow-x: visible;
+	}
+	.ob-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ob-card {
+		cursor: pointer;
+	}
+	.ob-phone-rows .ob-col-head {
+		padding: 0 0 var(--sf-space-10);
+		border-bottom: 0;
+	}
+	.ob-row .ob-cards {
+		padding: 0;
+	}
+	.ob-panel {
+		top: auto;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		transform: none;
+		width: auto;
+		max-height: 85vh;
+		padding: var(--sf-space-20) 16px calc(var(--sf-space-20) + env(safe-area-inset-bottom));
+		border-width: var(--sf-border-hairline) 0 0;
+	}
+	body.ob-panel-open {
+		overflow: hidden;
+	}
+	.ob-panel-foot .sf-btn {
+		width: 100%;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ob-seg,
+	.ob-col,
+	.ob-cell,
+	.ob-card {
+		transition: none;
+	}
+}
+
+/* ---- Part C (v1.675.0): quick add, selection and bulk (P6.7), the side panel's marks (P6.6) ----
+ * The side panel itself is the form kit's (guided_entry.bundle.css, .fk-panel) in the planner kit's
+ * drawer; only what sits on the board, and the bulk panel's body, is here. */
+.ob-head-tools {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+.ob-select-mode {
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+}
+.ob-col-titlebar {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sf-space-5);
+}
+/* Quick add: a "+" at the head of each open column and On Hold. */
+.ob-add {
+	flex: 0 0 auto;
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	background: transparent;
+	color: var(--sf-text-strong);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	line-height: 1;
+	cursor: pointer;
+}
+.ob-add:hover {
+	background: color-mix(in srgb, var(--sf-text) 10%, transparent);
+}
+.ob-add:focus-visible,
+.ob-pick:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+.ob-card-top {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-5);
+}
+/* Selecting: a box on each deal, a full 44px target, and the deal marked when it is picked. */
+.ob-pick {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--sf-touch-min);
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+	vertical-align: middle;
+}
+.ob-pick-box {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border: var(--sf-border-control) solid var(--sf-text);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-on-primary);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-pick[aria-pressed="true"] .ob-pick-box {
+	border-color: var(--sf-primary);
+	background: var(--sf-primary);
+}
+.ob-card.is-picked,
+.ob-tl-item.is-picked,
+.ob-att-item.is-picked {
+	outline: var(--sf-border-control) solid var(--sf-primary);
+	outline-offset: -2px;
+}
+.ob-table tr.is-picked td {
+	background: color-mix(in srgb, var(--sf-primary) 12%, transparent);
+}
+.is-selecting .ob-card {
+	cursor: pointer;
+}
+/* A drop on Closed Won or Lost waiting on its required fields in the side panel. */
+.ob-card.is-gated {
+	border-style: dashed;
+	opacity: 0.75;
+}
+/* The bar along the bottom while selecting. */
+.ob-bulkbar {
+	position: sticky;
+	bottom: 0;
+	z-index: 4;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	padding-bottom: calc(var(--sf-space-10) + env(safe-area-inset-bottom, 0px));
+	border-top: var(--sf-border-control) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-bulkbar-count {
+	margin: 0;
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulkbar-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+}
+/* The bulk panel, in the planner kit's drawer. */
+.ob-bulk {
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	line-height: var(--sf-leading-body);
+}
+.ob-bulk-count,
+.ob-bulk-head,
+.ob-bulk-stage {
+	margin: 0 0 var(--sf-space-10);
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulk-names,
+.ob-bulk-fails {
+	margin: 0 0 var(--sf-space-15);
+	padding-left: var(--sf-space-20);
+	color: var(--sf-text-muted);
+}
+.ob-bulk-fail {
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+}
+.ob-bulk-error {
+	margin: var(--sf-space-10) 0;
+	color: var(--sf-danger);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-bulk-fields input,
+.ob-bulk-fields select,
+.ob-bulk-fields textarea {
+	font-size: var(--sf-text-input);
+}
+.ob-bulk-foot {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-15);
+}
+.ob-bulk .ob-stage-btn {
+	width: 100%;
+}
+
+@media (max-width: 767px) {
+	.ob-head-tools {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.ob-bulkbar {
+		margin-left: -16px;
+		margin-right: -16px;
+		padding-left: 16px;
+		padding-right: 16px;
+	}
+	.ob-bulkbar-actions .sf-btn {
+		flex: 1 1 140px;
+	}
+	.ob-bulk-foot .sf-btn {
+		width: 100%;
+	}
+}

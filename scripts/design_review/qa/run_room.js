@@ -26,7 +26,9 @@ function fileFor(url) {
   if (url === "/mock.json") return path.join(__dirname, "mock.json");
   if (url.startsWith("/js/")) return path.join(REPO, "public", url);
   if (url.startsWith("/css/")) return path.join(REPO, "public", url);
-  if (url === "/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") return path.join(REPO, "public", "fonts", "big_noodle_titling.woff2");
+  // The display face (frames and sf_tokens.bundle.css) and Lato (sf_tokens.bundle.css).
+  const font = /^\/assets\/erpnext_enhancements\/fonts\/([\w-]+\.woff2)$/.exec(url);
+  if (font) return path.join(REPO, "public", "fonts", font[1]);
   return null;
 }
 

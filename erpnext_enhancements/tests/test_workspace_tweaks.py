@@ -397,10 +397,14 @@ class TestAddCoreSidebarItems(unittest.TestCase):
 		db = _AddDb(rows, sidebars=("CRM",))
 		_run_add(db)
 		self.assertEqual(
-			_order(db), ["Home", "Lead", "Opportunity", "Guided Entry", "Customer", "Reports", "Sales Analytics"]
+			_order(db),
+			["Home", "Lead", "Opportunity", "Guided Entry", "Opportunity Board", "Customer", "Reports", "Sales Analytics"],
 		)
-		(guided,) = db.inserted
+		self.assertEqual(sorted(r["idx"] for r in db.rows), list(range(1, len(db.rows) + 1)))
+		guided, board = db.inserted
 		self.assertEqual((guided["link_type"], guided["link_to"], guided["child"]), ("Page", "guided-entry", 0))
+		# Form kit P6: the new board sits under the guided page, at the same level.
+		self.assertEqual((board["link_type"], board["link_to"], board["child"]), ("Page", "opportunity-board", 0))
 
 	def test_icon_is_one_the_desk_can_draw(self):
 		names = {line for line in ICON_NAMES.read_text(encoding="utf-8").splitlines() if line and not line.startswith("#")}

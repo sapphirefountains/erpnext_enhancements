@@ -88,8 +88,7 @@
 /* Literal, and applied only above zero — the same colour and the same reason as
    the overdue tile on the manager console: "overdue" must not become a different
    idea because somebody edited a palette. */
-.tmd-tile.is-bad .tmd-tile-value,
-.tmd-flag.is-bad {
+.tmd-tile.is-bad .tmd-tile-value {
     color: #e03636;
 }
 
@@ -145,10 +144,6 @@
     margin-top: 1px;
     font-size: 11px;
     color: var(--text-muted, #7c7c7c);
-}
-
-.tmd-flag {
-    font-weight: 600;
 }
 
 .tmd-bar {

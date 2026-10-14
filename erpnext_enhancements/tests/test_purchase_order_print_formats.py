@@ -448,7 +448,7 @@ class TestWhatTheSupplierReads(unittest.TestCase):
             ],
         )
         self.assertEqual(out.count("Net 30"), 1)
-        self.assertIn("USD 106.25 due 2026-09-13", out)
+        self.assertIn("USD 106.25 due 09/13/2026", out)
 
     def test_a_row_label_that_says_something_else_is_kept(self):
         out = self.render(

@@ -1,17 +1,25 @@
 // Device Console — mobile-first check-in / enrollment for Device Managers.
 //
-// Scan a device barcode/IMEI (keyboard-wedge scanner or the device camera via
-// the BarcodeDetector API) to pull up its record, then check it out to an
-// employee, check it in, transfer it, send it for repair, or flag it lost. An
-// unknown scan offers to enroll a new device pre-filled with the scanned code.
-// All data flows through erpnext_enhancements.api.device_management. Theme-aware
-// (Frappe CSS vars); semantic status colours are literal. The camera/scan-row
-// pattern mirrors the Inventory Scanner Audit page.
+// Scan a device barcode/IMEI (keyboard-wedge scanner or the device camera) to
+// pull up its record, then check it out to an employee, check it in, transfer it,
+// send it for repair, or flag it lost. An unknown scan offers to enroll a new
+// device pre-filled with the scanned code. All data flows through
+// erpnext_enhancements.api.device_management. Theme-aware (Frappe CSS vars);
+// semantic status colours are literal.
+//
+// Camera: the scanner kit (public/js/scanner_kit, v1.666.0), shared with the
+// Inventory Scanner Audit. The native BarcodeDetector where it reads QR codes, else
+// the vendored jsQR decoder, loaded on first use. Every iPhone takes the jsQR path:
+// Safari has no BarcodeDetector, and before v1.666.0 the camera button never
+// appeared there. jsQR reads QR only, so on an iPhone a device's 1D barcode still
+// needs the wedge scanner or typing.
 //
 // The phone's Back button: each sheet (Camera Scan, Choose Employee) is a route
 // segment of its own — device-console/camera, device-console/employee — so Back
 // closes the sheet and stays on the console, and Forward opens it again. A scan is
-// never a history entry. See "sheets and the phone's Back button" below.
+// never a history entry. The kit (scanner_kit/sheets.js) pushes the entries and
+// steps back off them; what can be opened again, and what a read or a pick leads
+// to, is the console's own.
 
 frappe.pages['device-console'].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -58,6 +66,44 @@ function dc_bare_kit() {
 	return { esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: 'orange' }) };
 }
 
+// The scanner kit (v1.666.0): the camera sheet, its decoder, and the sheets' history handling,
+// shared with the Inventory Scanner Audit. There is no global loader for it (the global bundle
+// is left alone), so this is the guard: the kit already on the page answers at once, and only
+// the first visit on a Desk asks frappe.require for it. `then` gets the kit, or null when it did
+// not arrive (v16's frappe.require runs its callback even when the file failed to load), and is
+// never left waiting.
+function dc_scanner(then) {
+	const kit = () => (window.sf_scanner && window.sf_scanner.version >= 1 ? window.sf_scanner : null);
+	if (kit()) return then(kit());
+	try {
+		frappe.require(['scanner_kit.bundle.js'], () => then(kit()));
+	} catch (e) {
+		then(null);
+	}
+}
+
+// No scanner kit: each sheet is a plain dialog with no entry of its own, so Back leaves the
+// console, and the camera button stays hidden. The scans, the picker and the actions all work.
+function dc_bare_sheets() {
+	const nav = {
+		sheet: null,
+		opening: null,
+		current: () => null,
+		open: (name, show) => show(),
+		hide: (d) => d.hide(),
+		gone(d) {
+			if (nav.sheet && nav.sheet.dialog === d) nav.sheet = null;
+		},
+		leave: (name, then) => then && then(),
+		closed(name, d, then) {
+			nav.gone(d);
+			if (then) then();
+		},
+		show: () => ({ sheet: null, came: null }),
+	};
+	return nav;
+}
+
 // A failed load's panel: no access on a 403; a way back in when the session has lapsed (the
 // quiet path puts up no sign-in dialog of frappe's); otherwise what went wrong, with Try again.
 function dc_failed(sf, el, err, retry) {
@@ -86,20 +132,45 @@ function dc_failed(sf, el, err, retry) {
 class DeviceConsole {
 	constructor(page, wrapper) {
 		this.page = page;
+		this.wrapper = wrapper;
 		this.state = { camera: false, device: null };
-		this.sheet = null; // {name, dialog} while a sheet is open
-		this.opening = null; // the sheet whose route is being pushed
-		this.shownSheet = undefined; // the sheet segment at the last show; undefined before the first
-		this.away = false; // another Desk page has been shown since the last show (see onShow)
 		this.pick = null; // {action, device} of a Choose Employee closed with no pick, so Forward can reopen it
-		// frappe triggers "hide" on the page it leaves for another. Only the page's own counts: a
-		// Bootstrap "hide.bs.*" from inside the page bubbles up to the wrapper as well.
-		$(wrapper).on('hide', (e) => {
-			if (e.target === wrapper) this.away = true;
-		});
+		this.booted = false; // the bootstrap has answered: whether camera scanning is on is known
+		this.kit = null; // the scanner kit, once it has arrived
+		this.nav = dc_bare_sheets(); // the sheets' history handling; the kit's, once it has arrived
+		// While the kit loads (a Desk's first visit), a show and any sheet tapped open wait here.
+		this.scannerQueue = [];
+		this.showQueued = false;
 		this.injectStyles();
 		this.buildSkeleton();
+		dc_scanner((kit) => this.scannerArrived(kit));
 		this.boot();
+	}
+
+	scannerArrived(kit) {
+		// A kit that throws as it starts counts as no kit: the page carries on with plain sheets,
+		// and the queue below still runs, so nothing is left waiting on it.
+		const queue = this.scannerQueue;
+		this.scannerQueue = null;
+		if (kit) {
+			try {
+				const nav = kit.sheets({ route: DC_ROUTE, names: DC_SHEETS, mark: 'dc_sheet', back_timeout_ms: DC_BACK_TIMEOUT_MS });
+				nav.watch(this.wrapper);
+				this.nav = nav;
+				this.kit = kit;
+			} catch (e) {
+				this.kit = null;
+				this.nav = dc_bare_sheets();
+			}
+		}
+		this.renderCamera();
+		queue.forEach((fn) => fn());
+	}
+
+	// `fn` once the scanner kit has answered: at once, after the first load.
+	afterScanner(fn) {
+		if (this.scannerQueue) this.scannerQueue.push(fn);
+		else fn();
 	}
 
 	call(method, args) {
@@ -115,8 +186,9 @@ class DeviceConsole {
 				(d) => {
 					this.$load.empty();
 					this.state.camera = !!(d && d.enable_camera_scan);
+					this.booted = true;
 					this.renderCounts((d && d.counts) || {});
-					this.$cam.toggle(this.cameraOn());
+					this.renderCamera();
 					this.focusScan();
 				},
 				(err) => dc_failed(sf, this.$load, err, () => this.boot())
@@ -124,8 +196,14 @@ class DeviceConsole {
 		});
 	}
 
+	// The camera button shows once the bootstrap has said camera scanning is on, and the kit is
+	// here to say this browser can give the page a camera at all.
 	cameraOn() {
-		return this.state.camera && 'BarcodeDetector' in window;
+		return this.state.camera && !!this.kit && this.kit.camera.available();
+	}
+
+	renderCamera() {
+		if (this.booted) this.$cam.toggle(this.cameraOn());
 	}
 
 	focusScan() {
@@ -134,149 +212,30 @@ class DeviceConsole {
 
 	// ----- sheets and the phone's Back button -----
 	//
-	// A sheet's route is pushed from the tap that opens it, and the sheet is shown only
-	// once the route has settled: every route change closes the open dialog (the router's
-	// set_history and container.change_to both do), this one included. Back then pops the
-	// segment and the router closes the sheet with nothing more from here. A sheet closed
-	// any other way (a read, a pick, X, Escape) steps back off its own entry, so Back never
-	// lands on a sheet that is already shut. The entry behind a sheet's is always the
-	// console's own: one on the first show is replaced if it is a pasted link, and stepped
-	// back off if it is the page's own (a reload), as is one Back or Forward lands on that
-	// cannot be opened again.
-	//
-	// Only an entry this page pushed is a sheet's. Each is marked in history.state as it is
-	// pushed (markSheet), because the same URL also arrives from outside: frappe records every
-	// route with a second segment in Route History, and the awesome bar offers the most used as
-	// links. A sheet opened from one of those would have another page behind it, so X, or a
-	// camera read's step back, would land there and the scan be looked up off-screen. An
-	// unmarked sheet URL is handed to the console, as a pasted link's is — or, when it was pushed
-	// over the console's own entry while that was showing, stepped back off, onto that entry. A
-	// marked one on the first show (a reload, or Android restoring a discarded tab: history.state
-	// survives both) is stepped back off too, since the entry behind a marked one is always the
-	// console's own.
-	//
-	// Each replace the page asks for clears `route_flags.replace_route` as soon as set_route
-	// returns. set_route reads the flag as it writes the entry, but clears route_flags itself
-	// only once its promise settles, and that waits on every request then in flight (v16's
-	// after_ajax) — on a first show, the bootstrap call whenever it goes through frappe.call. Left
-	// set, the flag would turn the next tap into a replace of the console's own entry, and Back or X
-	// from the sheet it opened would then leave the page.
-
-	sheetRoute() {
-		const route = frappe.get_route() || [];
-		return route[0] === DC_ROUTE && DC_SHEETS.includes(route[1]) ? route[1] : null;
-	}
-
-	// The mark goes on the current entry, with no URL, and keeps whatever else it holds.
-	markSheet(name) {
-		try {
-			window.history.replaceState(Object.assign({}, window.history.state, { dc_sheet: name }), '');
-		} catch (e) {
-			// Unmarked, the entry is handed to the console on its next show rather than reopened.
-		}
-	}
-
-	ownSheet(name) {
-		try {
-			const state = window.history.state;
-			return !!state && state.dc_sheet === name;
-		} catch (e) {
-			return false;
-		}
-	}
-
-	// `reopen`: Forward landed on the sheet's entry; show it there, and push nothing.
-	openSheet(name, show, reopen) {
-		const on = this.sheetRoute();
-		if (reopen || (on === name && !this.sheet)) {
-			if (on === name && !this.sheet) show();
-			return;
-		}
-		this.opening = name;
-		// An entry left behind by a sheet that has closed is taken over, not stacked on.
-		if (on) frappe.route_flags.replace_route = true;
-		const settled = frappe.set_route(DC_ROUTE, name);
-		// Read already, and left set it would outlive this call (see "sheets and the phone's Back button").
-		frappe.route_flags.replace_route = false;
-		// set_route has written the entry by the time it returns (push_state runs before its
-		// promise does), so the mark lands on the sheet's own entry.
-		this.markSheet(name);
-		settled.then(() => {
-			if (this.opening !== name) return;
-			this.opening = null;
-			// Back pressed before the route settled took the entry, and the sheet with it.
-			if (this.sheetRoute() === name && !this.sheet) show();
-		});
-	}
-
-	// Bootstrap ignores hide() on a modal still fading in, so that waits for it to be shown.
-	hideSheet(d) {
-		if (d.display) d.hide();
-		else d.$wrapper.one('shown.bs.modal', () => d.hide());
-	}
-
-	// Every sheet's onhide ends here. `then` runs once the console is back on its own entry,
-	// so a dialog it opens (the enroll prompt, an error) is not closed by that route change.
-	sheetClosed(name, d, then) {
-		if (this.sheet && this.sheet.dialog === d) this.sheet = null;
-		let done = false;
-		const finish = () => {
-			if (done) return;
-			done = true;
-			if (then) then();
-		};
-		// Back closed it: the route has already moved off the segment. Nothing to step over.
-		if (this.sheetRoute() !== name) {
-			finish();
-			return;
-		}
-		frappe.router.once('change', finish);
-		setTimeout(finish, DC_BACK_TIMEOUT_MS);
-		window.history.back();
-	}
+	// The kit's sheets (scanner_kit/sheets.js) push each sheet's route from the tap that opens
+	// it, show the sheet once the route has settled, step back off its entry when it is closed any
+	// other way than Back, and on a show decide whether a sheet URL is the console's own. What is
+	// the console's: which sheet Back or Forward may open again (reopenSheet), and that a read or
+	// a pick is acted on only once the console is back on its own entry, so the enroll prompt or
+	// an error is not closed by that step.
 
 	onShow() {
-		const sheet = this.sheetRoute();
-		const first = this.shownSheet === undefined;
-		const came = this.shownSheet;
-		// The console's own entry was showing at the last show, and no other page has been since.
-		const stayed = !first && !this.away && came === null;
-		this.away = false;
-		this.shownSheet = sheet;
-		// A sheet whose entry is no longer current. The router closes the open dialog on
-		// every route change, but not one still fading in: it is not cur_dialog yet.
-		if (this.sheet && this.sheet.name !== sheet) this.hideSheet(this.sheet.dialog);
-		if (sheet) {
-			if (this.opening === sheet || (this.sheet && this.sheet.name === sheet)) return;
-			if (first || !this.ownSheet(sheet)) {
-				// A reload, a pasted link, or a sheet URL reached from another page (never start a
-				// camera nobody asked for, over a page it would step back to): the entry becomes
-				// the console, or is stepped back off onto the console's own.
-				this.shownSheet = null;
-				if (stayed || (first && this.ownSheet(sheet))) {
-					// Pushed over the console's own entry while it was showing (the awesome bar's
-					// link to a sheet, picked here), or a reload on a sheet entry this page pushed
-					// (its mark survives the reload): the entry behind is the console's, so step
-					// back onto it. Replacing this one would leave two console entries in a row.
-					window.history.back();
-				} else {
-					frappe.route_flags.replace_route = true;
-					frappe.set_route(DC_ROUTE);
-					// Read already, and left set it would outlive this call (see openSheet).
-					frappe.route_flags.replace_route = false;
-				}
-			} else if (!this.reopenSheet(sheet)) {
-				// Back or Forward onto a sheet that cannot be opened again (the picker, for a
-				// device scanned since): step back onto the console's own entry, which is always
-				// the one behind a sheet's. Replacing this entry instead would leave two console
-				// entries in a row, and the next Back would seem to do nothing.
-				window.history.back();
+		if (this.scannerQueue) {
+			// The kit is still loading: the show runs once it has answered, if the console is
+			// still the page showing.
+			if (!this.showQueued) {
+				this.showQueued = true;
+				this.afterScanner(() => {
+					this.showQueued = false;
+					if ((frappe.get_route() || [])[0] === DC_ROUTE) this.onShow();
+				});
 			}
 			return;
 		}
+		const { sheet, came } = this.nav.show({ reopen: (name) => this.reopenSheet(name) });
 		// A sheet has just closed: focus stays where closing it left it. On a phone, focusing
 		// the scan box would raise the keyboard over the device card.
-		if (came) return;
+		if (sheet || came) return;
 		this.focusScan();
 	}
 
@@ -315,7 +274,7 @@ class DeviceConsole {
 				<div class="dc-scanrow">
 					<input type="text" class="dc-scan" autocomplete="off" autocapitalize="characters"
 						spellcheck="false" placeholder="${__('Scan or type a barcode / IMEI / asset tag…')}" />
-					<button class="dc-cam" title="${__('Camera scan')}">📷</button>
+					<button class="dc-cam" title="${__('Camera scan')}" aria-label="${__('Camera scan')}">📷</button>
 				</div>
 				<div class="dc-device"></div>
 				<div class="dc-hint">${__('Scan a device to check it in or out.')}</div>
@@ -367,7 +326,7 @@ class DeviceConsole {
 
 	// The console's own entry is showing, with no sheet on it or on its way.
 	onConsole() {
-		return (frappe.get_route() || [])[0] === DC_ROUTE && !this.sheetRoute() && !this.sheet && !this.opening;
+		return (frappe.get_route() || [])[0] === DC_ROUTE && !this.nav.current() && !this.nav.sheet && !this.nav.opening;
 	}
 
 	onResolved(res, code) {
@@ -492,7 +451,7 @@ class DeviceConsole {
 	pickEmployee(action, onPick, reopen) {
 		// Remembered so Forward can open the same sheet again, for the same device only.
 		this.pick = { action, device: this.state.device && this.state.device.name };
-		this.openSheet('employee', () => this.showEmployeeSheet(onPick), reopen);
+		this.afterScanner(() => this.nav.open('employee', () => this.showEmployeeSheet(onPick), reopen));
 	}
 
 	showEmployeeSheet(onPick) {
@@ -529,91 +488,52 @@ class DeviceConsole {
 		$search.on('input', run);
 		$results.on('click', '.dc-emp-pick', (e) => {
 			picked = $(e.currentTarget).data('emp');
-			app.hideSheet(d);
+			app.nav.hide(d);
 		});
 		d.onhide = () => {
 			// A pick made is done with: Forward onto this entry must not offer it again (a
 			// second Transfer of a device that stays Assigned). The entry is stepped back off.
 			if (picked) app.pick = null;
-			app.sheetClosed('employee', d, () => picked && onPick(picked));
+			app.nav.closed('employee', d, () => picked && onPick(picked));
 		};
-		this.sheet = { name: 'employee', dialog: d };
+		this.nav.sheet = { name: 'employee', dialog: d };
 		d.show();
 		setTimeout(() => $search.focus(), 100);
 	}
 
-	// ----- camera scan (BarcodeDetector) — same approach as Inventory Scanner -----
+	// ----- camera scan (the scanner kit, shared with the Inventory Scanner Audit) -----
 	openCamera(reopen) {
-		if (!('BarcodeDetector' in window)) {
-			frappe.msgprint(__('Camera scanning is not supported in this browser. Use a hardware/Bluetooth scanner.'));
-			return;
-		}
-		this.openSheet('camera', () => this.showCamera(), reopen);
+		this.afterScanner(() => {
+			if (!this.kit) {
+				frappe.msgprint(__('Camera scanning could not be loaded. Reload the page, or use a hardware/Bluetooth scanner.'));
+				return;
+			}
+			this.kit.camera
+				.prepare({
+					unavailable: __('The camera needs a secure (https) connection and a browser that allows camera access. Use a hardware/Bluetooth scanner.'),
+				})
+				.then((reader) => {
+					if (reader) this.nav.open('camera', () => this.showCamera(reader), reopen);
+				});
+		});
 	}
 
-	showCamera() {
-		const app = this;
-		const d = new frappe.ui.Dialog({ title: __('Camera Scan'), size: 'small' });
-		d.$body.html(
-			`<video class="dc-video" playsinline muted></video><div class="text-muted" style="margin-top:6px;">${__('Point the camera at a barcode or QR code.')}</div>`
-		);
-		const video = d.$body.find('video')[0];
-		const detector = new window.BarcodeDetector();
-		let stream = null;
-		let stopped = false;
-		let read = null; // what the camera read, handed on once the sheet has closed
-		let failed = false;
-		const cleanup = () => {
-			stopped = true;
-			if (stream) stream.getTracks().forEach((t) => t.stop());
-		};
-		const tick = () => {
-			if (stopped) return;
-			detector
-				.detect(video)
-				.then((codes) => {
-					if (stopped) return;
-					if (codes && codes.length) {
-						read = codes[0].rawValue;
-						cleanup();
-						app.hideSheet(d);
-					} else {
-						setTimeout(tick, 200);
-					}
-				})
-				.catch(() => {
-					if (!stopped) setTimeout(tick, 300);
-				});
-		};
-		// The read, or the failure, is dealt with once the console is back on its own entry:
-		// stepping off the sheet's would otherwise close the enroll prompt or the message.
-		d.onhide = () => {
-			cleanup();
-			app.sheetClosed('camera', d, () => {
-				if (failed) frappe.msgprint(__('Could not access the camera.'));
-				else if (read) app.handleScan(read);
-			});
-		};
-		this.sheet = { name: 'camera', dialog: d };
-		d.show();
-		// Started after the sheet is up, never before the route has settled.
-		navigator.mediaDevices
-			.getUserMedia({ video: { facingMode: 'environment' } })
-			.then((s) => {
-				if (stopped) {
-					// Closed while the permission prompt was up.
-					s.getTracks().forEach((t) => t.stop());
-					return;
-				}
-				stream = s;
-				video.srcObject = s;
-				video.play();
-				tick();
-			})
-			.catch(() => {
-				failed = true;
-				app.hideSheet(d);
-			});
+	showCamera(reader) {
+		this.kit.camera.show({
+			nav: this.nav,
+			reader,
+			page: this.wrapper,
+			video_class: 'dc-video',
+			hint: __('Point the camera at a barcode or QR code.'),
+			qr_hint: __('Point the camera at a QR code. For a barcode, use a hardware/Bluetooth scanner or type it in.'),
+			// The read, or the failure, is dealt with once the console is back on its own entry:
+			// stepping off the sheet's would otherwise close the enroll prompt or the message.
+			on_close: ({ read, failure }) =>
+				this.nav.leave('camera', () => {
+					if (failure) frappe.msgprint(failure);
+					else if (read) this.handleScan(read);
+				}),
+		});
 	}
 
 	// ----- styles (theme-aware; semantic status colours literal) -----

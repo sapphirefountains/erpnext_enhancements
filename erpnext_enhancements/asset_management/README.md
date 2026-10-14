@@ -186,12 +186,20 @@ seven days, but **nothing expires holds yet**; that job comes with the sales PR.
 ### The Rental Planner (v1.563.0)
 
 A desk page at `/desk/rental-planner` (`page/rental_planner/`, server side in `rental_planner.py`).
-Open it from the workspace, the Rental Booking list, or a booking's View menu.
+Open it from the workspace, the Rental Booking list, or a booking's View menu. Since v1.667.0 the
+booking's *View > Open in Rental Planner* opens the board on the booking's first day (delivery,
+else setup, else the event) as `?start=`, and shows only to those whose roles open the page.
 
 - **The board is the fleet timeline.** It has one row per rentable fountain and one per accessory
   pool, across two weeks, a month or a quarter.
-  - Confirmed rentals are solid blue. Tentative holds are hatched and dashed. Prep and cleaning are
-    thin grey bars. Anything booked by hand on Asset Booking is amber, and out-of-service is red.
+  - Confirmed rentals are solid teal-deep, the Rent pillar. Tentative holds are the same pillar,
+    pale, hatched and dashed. Prep and cleaning are thin grey bars. Anything booked by hand on Asset
+    Booking is yellow (warn), and out-of-service is hatched red (danger). Each bar's kind is in its
+    accessible name and tooltip as well as its color.
+  - The page's styles are `page/rental_planner/rental_planner.css` (S3.4f, v1.670.0), on the
+    `--sf-*` tokens, so the board follows the Desk's light or dark theme. The script writes no
+    stylesheet and no color; the legend's swatches carry the bars' own classes.
+    `tests/test_s3_page_css.py` (`TestRentalPlanner`) holds it there.
   - Clicking a bar opens its record. Clicking an empty day on a fountain starts a new rental with
     that fountain and date filled in.
   - Pool rows show units out per day against what can be booked, shaded as they fill.
@@ -220,6 +228,12 @@ Open it from the workspace, the Rental Booking list, or a booking's View menu.
     nothing.
   - Once booked, the draft is cleared, so Back from the confirmation cannot book the same fountains
     twice.
+- **The board's dates are in its address** (v1.662.0): `/desk/rental-planner?start=YYYY-MM-DD` is
+  the board's first day, and the bare address is today. ‹ › and Today each push an entry, so Back
+  returns to the dates before, and a reload or a pasted link opens the same ones. The flow's
+  Planner buttons return to the dates it left. The page writes that one address itself, because
+  routing to the page it is on would make an older v16 router drop the query, and reads `start`
+  back from `frappe.route_options`. A start that is not a real calendar day is today.
   - `scripts/test_rental_planner_history.js` runs the real script against a model of the v16 router,
     from `tests/test_rental_planner.py`.
 

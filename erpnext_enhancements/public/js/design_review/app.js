@@ -221,9 +221,15 @@ export class ReviewApp {
 		});
 	}
 
+	// The app design tokens (sf_tokens.bundle.css, linked by review.html) switch on
+	// <html data-theme="light|dark"> and follow the device when it is absent, so the button writes
+	// that attribute: AUTO removes it. A website page has no Desk theme switcher to fight over it.
+	// Until v1.659.0 this wrote a data-rr-theme of its own, which the tokens cannot see.
 	applyTheme(mode) {
-		if (mode === "system") document.documentElement.removeAttribute("data-rr-theme");
-		else document.documentElement.setAttribute("data-rr-theme", mode);
+		const root = document.documentElement;
+		root.removeAttribute("data-rr-theme");
+		if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+		else root.removeAttribute("data-theme");
 	}
 
 	async call(method, args, okText) {
@@ -774,7 +780,7 @@ export class ReviewApp {
 			append(row, el("span", "rr-sc", sc), el("span", "rr-sn", this.screenName(v.content, v.track.id, sc)));
 			if (!v.compare) {
 				const mine = v.state.verdicts.mine[`${v.option.code}:${sc}`];
-				if (mine) row.appendChild(el("span", `rr-vd is-${mine.toLowerCase()}`));
+				if (mine) row.appendChild(el("span", `rr-vd is-${mine.toLowerCase()}`, mine));
 				const n = v.state.notes.filter((x) => x.option_code === v.option.code && x.screen_code === sc).length;
 				if (n) row.appendChild(el("span", "rr-pip", n));
 			}
@@ -862,7 +868,7 @@ export class ReviewApp {
 				const head = el("span", "rr-cell-h");
 				append(head, el("b", null, `${o.code} · ${o.name}`));
 				const mine = v.state.verdicts.mine[`${o.code}:${v.screen}`];
-				if (mine) head.appendChild(el("span", `rr-vd is-${mine.toLowerCase()}`));
+				if (mine) head.appendChild(el("span", `rr-vd is-${mine.toLowerCase()}`, mine));
 				cell.appendChild(head);
 				if (shot) this.thumbnail(cell, v.content, shot, shot.frame === "phone" ? 240 : 420, 420);
 				else cell.appendChild(el("span", "rr-small rr-muted", "This option has no such screen."));
@@ -1076,7 +1082,7 @@ export class ReviewApp {
 					this.select(code, name);
 				}, { "aria-pressed": this.sel && this.sel.code === code ? "true" : "false" });
 				append(row, el("b", null, `E${pad2(num)}`), el("span", null, name));
-				if (noted.has(Number(num))) row.appendChild(el("i", "rr-dot2"));
+				if (noted.has(Number(num))) row.appendChild(el("i", "rr-dot2", "Noted"));
 				list.appendChild(row);
 			});
 			body.appendChild(list);

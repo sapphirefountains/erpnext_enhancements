@@ -16,6 +16,9 @@
  * Nik's rule: every screen of a multi-screen page is its own history entry, Back never loses
  * work, and Forward restores the screen.
  *
+ * S3.6 (v1.656.0) adds the keyboard: `press` models Enter and Space as the browser handles them,
+ * so a booking bar or a step that is only a clickable <div> fails here.
+ *
  * Run: node scripts/test_rental_planner_history.js
  */
 
@@ -62,11 +65,17 @@ async function settle() {
 // ------------------------------------------------------------------ fake jQuery
 
 function makeJQuery(registry) {
-	function element() {
+	// `html` is the markup the element was made from and `attrs` what the page set on it, so a
+	// keyboard check can tell a real <button> from a clickable <div> (S3.6).
+	function element(html) {
 		// `node` is what the real sf_kit is handed (el[0]): it writes its state panel into innerHTML,
 		// then looks up the panel's one action button there, a fresh one per panel.
 		const node = {
 			innerHTML: "",
+			// Focus moved here by the page (S3.6): the registry remembers which element has it.
+			focus() {
+				registry.focused = self;
+			},
 			querySelector(sel) {
 				if (sel !== ".sf-state-action" || !node.innerHTML.includes("sf-state-action")) return null;
 				if (node.actionFor !== node.innerHTML) {
@@ -77,7 +86,7 @@ function makeJQuery(registry) {
 				return node.action;
 			},
 		};
-		const state = { text: "", handlers: {}, value: "", node };
+		const state = { text: "", handlers: {}, value: "", node, html: typeof html === "string" ? html : "", attrs: {} };
 		const self = new Proxy(function () {}, {
 			get(_target, prop) {
 				if (prop === "__state") return state;
@@ -106,6 +115,14 @@ function makeJQuery(registry) {
 						return self;
 					};
 				}
+				if (prop === "attr") {
+					return (key, value) => {
+						if (key && typeof key === "object") Object.assign(state.attrs, key);
+						else if (value === undefined) return state.attrs[key];
+						else state.attrs[key] = value;
+						return self;
+					};
+				}
 				if (prop === "get") return () => ({});
 				if (prop === "offset") return () => ({ left: 0, top: 0 });
 				if (prop === "prop") return (_k, v) => (v === undefined ? false : self);
@@ -117,7 +134,7 @@ function makeJQuery(registry) {
 		registry.push(self);
 		return self;
 	}
-	const $ = () => element();
+	const $ = (html) => element(html);
 	return $;
 }
 
@@ -137,7 +154,13 @@ function makeWorld() {
 		replies: new Map(),
 		confirmAnswer: true,
 	};
-	world.route = () => world.entries[world.index].replace(/^\/desk\//, "").split("/").filter(Boolean);
+	// An entry is its whole address; the route is its path, and the query is route options.
+	world.path = () => world.entries[world.index].split("?")[0];
+	world.search = () => {
+		const q = world.entries[world.index].split("?")[1];
+		return q ? `?${q}` : "";
+	};
+	world.route = () => world.path().replace(/^\/desk\//, "").split("/").filter(Boolean);
 	return world;
 }
 
@@ -153,7 +176,13 @@ function loadPage(world, options) {
 	const pages = { "rental-planner": {} };
 	const routeFlags = {};
 
+	// The router's route(): parse() copies the address's query into frappe.route_options, merged
+	// into what is there (set_route_options_from_url), then the page for the route is shown.
 	const show = () => {
+		if (!frappe.route_options) frappe.route_options = {};
+		new URLSearchParams(world.search()).forEach((value, key) => {
+			frappe.route_options[key] = value;
+		});
 		const route = world.route();
 		const page = pages[route[0]];
 		if (!page) return;
@@ -203,12 +232,18 @@ function loadPage(world, options) {
 	};
 
 	const responders = {
-		"erpnext_enhancements.asset_management.rental_planner.get_timeline": () => ({
-			start: "2026-10-01 00:00:00",
-			days: 31,
-			fountains: [],
-			pools: [],
-		}),
+		// The board's first day asked for is remembered in world.starts.
+		"erpnext_enhancements.asset_management.rental_planner.get_timeline": (args) => {
+			world.starts = (world.starts || []).concat(args.start || "");
+			return (
+				world.timeline || {
+					start: "2026-10-01 00:00:00",
+					days: 31,
+					fountains: [],
+					pools: [],
+				}
+			);
+		},
 		"erpnext_enhancements.asset_management.rental_availability.get_availability": () => ({
 			fountains: [{ asset: "F-1", asset_name: "Tiered Fountain", item_code: "TF", available: true, conflicts: [] }],
 			pools: [],
@@ -224,17 +259,36 @@ function loadPage(world, options) {
 		route_flags: routeFlags,
 		route_options: null,
 		get_route: () => world.route(),
+		// v16's set_route: a plain object among the parts becomes frappe.route_options (make_url),
+		// and push_state pushes (or, with replace_route, replaces) only when the path or the query
+		// differs from the address on screen, then routes. Before v16.50 the query is JSON-encoded,
+		// quotes and all, and decides only whether to push: the PATH alone is pushed. From v16.50
+		// (`opts.queryInUrl`, frappe PR #40040) a plain value is written as itself and the query is
+		// pushed with the path.
 		set_route(...args) {
 			const route = Array.isArray(args[0]) ? args[0] : args;
-			const target = "/desk/" + route.join("/");
-			if (routeFlags.replace_route) {
-				world.entries[world.index] = target;
-			} else if (world.entries[world.index] !== target) {
-				world.entries = world.entries.slice(0, world.index + 1);
-				world.entries.push(target);
-				world.index += 1;
+			const parts = [];
+			route.forEach((part) => {
+				if (part && typeof part === "object") frappe.route_options = part;
+				else parts.push(part);
+			});
+			const path = "/desk/" + parts.join("/");
+			const encode = (v) => (opts.queryInUrl && (v === null || typeof v !== "object") ? String(v) : JSON.stringify(v));
+			const query = Object.entries(frappe.route_options || {})
+				.map(([k, v]) => `${k}=` + encodeURIComponent(encode(v)))
+				.join("&");
+			const search = query ? `?${query}` : "";
+			if (world.path() !== path || world.search() !== search) {
+				const target = opts.queryInUrl ? path + search : path;
+				if (routeFlags.replace_route) {
+					world.entries[world.index] = target;
+				} else {
+					world.entries = world.entries.slice(0, world.index + 1);
+					world.entries.push(target);
+					world.index += 1;
+				}
+				show();
 			}
-			show();
 			return Promise.resolve();
 		},
 		call({ method, args }) {
@@ -292,9 +346,29 @@ function loadPage(world, options) {
 		},
 		sessionStorage: storage(world.session),
 		localStorage: storage(world.local),
+		// The browser's session history: a page's own push adds an entry and a replace rewrites the
+		// one on screen, neither of them routing (no popstate fires for either).
 		history: {
+			state: null,
 			back() {
 				world.pendingTraversal = -1;
+			},
+			pushState(_state, _title, url) {
+				world.entries = world.entries.slice(0, world.index + 1);
+				world.entries.push(String(url));
+				world.index += 1;
+				world.pushes = (world.pushes || 0) + 1;
+			},
+			replaceState(_state, _title, url) {
+				world.entries[world.index] = String(url);
+			},
+		},
+		location: {
+			get pathname() {
+				return world.path();
+			},
+			get search() {
+				return world.search();
 			},
 		},
 	};
@@ -318,6 +392,7 @@ function loadPage(world, options) {
 	const desk = {
 		world,
 		registry,
+		frappe,
 		show,
 		// The real sf_kit.bundle.js installed on this page's window (a fresh copy of the module per
 		// page, so it installs again).
@@ -362,6 +437,24 @@ function loadPage(world, options) {
 			el.__state.handlers.click({ preventDefault() {}, stopPropagation() {} });
 			await desk.flush();
 		},
+		// Enter or Space on an element, as the browser handles it (S3.6): a <button> turns the key
+		// into its own click; anything else is reachable only with role="button", tabindex="0"
+		// and a keydown handler of its own. Throws when the element has no keyboard path.
+		async press(el, key) {
+			const s = el.__state;
+			// A key's click on a button has detail 0; a mouse click's is 1 or more.
+			const event = { key, detail: 0, preventDefault() {}, stopPropagation() {} };
+			if (/^<button\b[^>]*\btype="button"/.test(s.html) && s.handlers.click) {
+				s.handlers.click(event);
+			} else if (/role="button"/.test(s.html) && /tabindex="0"/.test(s.html) && s.handlers.keydown) {
+				s.handlers.keydown(event);
+			} else {
+				throw new Error(`no keyboard path to ${s.html || "an element"} "${s.text}"`);
+			}
+			await desk.flush();
+		},
+		// Elements made with this class: whole class names only, so rp-bar is not rp-bar-text.
+		made: (cls) => registry.filter((e) => new RegExp(`class="(?:[^"]*\\s)?${cls}[\\s"]`).test(e.__state.html)),
 		here: () => world.entries[world.index],
 		length: () => world.entries.length,
 	};
@@ -534,6 +627,182 @@ test("Starting over after a started draft asks first", async () => {
 	await desk.flush();
 	check("fresh draft", desk.planner().draft.delivery_datetime, undefined);
 	check("on step 1", desk.here(), "/desk/rental-planner/new/dates");
+});
+
+// S3.6 (v1.656.0): the board's booking bars and the wizard's step rail answer the keyboard.
+function boardWithBars() {
+	const world = makeWorld();
+	world.timeline = {
+		start: "2026-10-01 00:00:00",
+		days: 31,
+		fountains: [
+			{
+				asset: "F-1",
+				asset_name: "Tiered Fountain",
+				item_code: "TF",
+				bars: [
+					{ kind: "rental", label: "Gala", status: "Confirmed", from: "2026-10-03", to: "2026-10-05", doctype: "Rental Booking", name: "RNT-2026-00007" },
+					{ kind: "prep", from: "2026-10-02", to: "2026-10-03", doctype: "Rental Booking", name: "RNT-2026-00007" },
+				],
+			},
+		],
+		pools: [],
+	};
+	return world;
+}
+
+test("Keyboard: a booking bar is a real button, and Enter opens its booking as a click does", async () => {
+	const desk = loadPage(boardWithBars());
+	desk.open("/desk/rental-planner");
+	await settle();
+	const bars = desk.made("rp-bar");
+	check("two bars drawn", bars.length, 2);
+	check("each is a <button type=button>", bars.map((b) => /^<button type="button"/.test(b.__state.html)), [true, true]);
+	const [rental, prep] = bars;
+	check("the rental bar is named for a screen reader", rental.__state.attrs["aria-label"], "Gala, Confirmed, 2026-10-03 – 2026-10-05, RNT-2026-00007");
+	check("the prep bar, which draws no text, is named too", prep.__state.attrs["aria-label"], "Prep, 2026-10-02 – 2026-10-03, RNT-2026-00007");
+	const entries = desk.length();
+	await desk.press(rental, "Enter");
+	check("Enter opened the booking", desk.here(), "/desk/Form/Rental Booking/RNT-2026-00007");
+	check("as one history entry, like a click", desk.length(), entries + 1);
+	await desk.back();
+	check("Back returns to the board", desk.here(), "/desk/rental-planner");
+	await desk.press(desk.made("rp-bar")[1], " ");
+	check("Space on the prep bar opens it too", desk.here(), "/desk/Form/Rental Booking/RNT-2026-00007");
+});
+
+test("Keyboard: the board's ‹ › buttons carry a label, not only a glyph", async () => {
+	const desk = loadPage(boardWithBars());
+	desk.open("/desk/rental-planner");
+	await settle();
+	const nav = desk.registry.filter((e) => e.__state.text === "‹" || e.__state.text === "›");
+	check("both drawn", nav.length, 2);
+	check("labelled", nav.map((e) => e.__state.attrs["aria-label"]), ["Earlier", "Later"]);
+});
+
+test("Keyboard: a finished step on the rail is a button; the current one is marked, not clickable", async () => {
+	const desk = loadPage(makeWorld());
+	desk.open("/desk/rental-planner/new/dates");
+	await settle();
+	await throughDates(desk);
+	check("on step 2", desk.here(), "/desk/rental-planner/new/fountains");
+	const steps = desk.made("rp-step").slice(-4);
+	const [dates, fountains] = steps;
+	check("the rail's first step", dates.__state.text, "1. When and where");
+	check("step 1 is a button", /^<button type="button"/.test(dates.__state.html), true);
+	check("step 2 is the current step", [fountains.__state.attrs["aria-current"], fountains.__state.handlers.click], ["step", undefined]);
+	let refused = false;
+	try {
+		await desk.press(steps[3], "Enter");
+	} catch (error) {
+		refused = true;
+	}
+	check("a step not reached yet is not a control", refused, true);
+	desk.registry.focused = null;
+	await desk.press(dates, "Enter");
+	check("Enter on step 1 goes back to it", desk.here(), "/desk/rental-planner/new/dates");
+	const heading = desk.registry.focused;
+	check("and focus is on the step's heading, not dropped to <body>", Boolean(heading) && heading.__state.attrs.tabindex, "-1");
+	// A mouse click (detail 1) leaves focus where the browser puts it.
+	await throughDates(desk);
+	const again = desk.made("rp-step").slice(-4)[0];
+	desk.registry.focused = null;
+	again.__state.handlers.click({ detail: 1, preventDefault() {}, stopPropagation() {} });
+	await desk.flush();
+	check("a mouse click on step 1 goes back to it too", desk.here(), "/desk/rental-planner/new/dates");
+	check("without moving focus", desk.registry.focused, null);
+});
+
+// The board's dates in its address (v1.662.0): ?start=YYYY-MM-DD, bare for today. Each runs under
+// the router before v16.50 (the path alone is pushed) and after (the query goes with it).
+const BOARD = "/desk/rental-planner";
+[
+	["v16 before 50", {}],
+	["v16.50+", { queryInUrl: true }],
+].forEach(([router, options]) => {
+	test(`Board dates (${router}): a pasted ?start= opens those dates; a reload keeps them`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(`${BOARD}?start=2026-11-02`);
+		await settle();
+		check("those dates", [desk.planner().board_start, world.starts], ["2026-11-02", ["2026-11-02"]]);
+		check("the address untouched, no entry added", [desk.here(), desk.length()], [`${BOARD}?start=2026-11-02`, 2]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		const reloaded = loadPage(world, options);
+		reloaded.show();
+		await settle();
+		check("a reload: the same dates", reloaded.planner().board_start, "2026-11-02");
+	});
+
+	test(`Board dates (${router}): ‹ › and Today are entries; Back and Forward walk them`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(BOARD);
+		await settle();
+		check("today, on the bare address", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+		await desk.click("›");
+		check("›: its own entry", [desk.here(), desk.length(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, 3, "2026-10-15"]);
+		await desk.click("›");
+		check("› again", [desk.here(), desk.length()], [`${BOARD}?start=2026-10-29`, 4]);
+		await desk.back();
+		check("Back: the dates before, drawn again", [desk.planner().board_start, desk.here(), world.starts.slice(-1)[0]], ["2026-10-15", `${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		await desk.back();
+		check("Back: today", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+		await desk.forward();
+		check("Forward", [desk.planner().board_start, desk.here()], ["2026-10-15", `${BOARD}?start=2026-10-15`]);
+		await desk.click("‹");
+		check("‹ back to today is the bare address, as an entry", [desk.here(), desk.length()], [BOARD, 4]);
+		await desk.click("Today");
+		check("Today on today adds nothing", desk.length(), 4);
+	});
+
+	test(`Board dates (${router}): a malformed start, or today's, is today, corrected in place`, async () => {
+		for (const bad of ["2026-13-01", "nope", "2026-10-1", "2026-10-01"]) {
+			const world = makeWorld();
+			const desk = loadPage(world, options);
+			desk.open(`${BOARD}?start=${bad}`);
+			await settle();
+			check(`?start=${bad}: today, quietly`, [desk.planner().board_start, world.lastMessage], ["2026-10-01", undefined]);
+			check(`?start=${bad}: the bare address, no entry`, [desk.here(), desk.length()], [BOARD, 2]);
+		}
+	});
+
+	test(`Board dates (${router}): another page's route options open those dates and reach the address`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.frappe.set_route("rental-planner", { start: "2026-12-01" });
+		await settle();
+		check("those dates", [desk.planner().board_start, desk.here()], ["2026-12-01", `${BOARD}?start=2026-12-01`]);
+		check("route_options consumed", desk.frappe.route_options, null);
+		desk.frappe.set_route("somewhere-else");
+		desk.frappe.set_route("rental-planner");
+		await settle();
+		check("a later plain route replays nothing: today", [desk.planner().board_start, desk.here()], ["2026-10-01", BOARD]);
+	});
+
+	test(`Board dates (${router}): the flow returns to the board at the dates it left`, async () => {
+		const world = makeWorld();
+		const desk = loadPage(world, options);
+		desk.open(BOARD);
+		await settle();
+		await desk.click("›");
+		desk.world.primary.fn(); // New Rental
+		await desk.flush();
+		check("on step 1", desk.here(), "/desk/rental-planner/new/dates");
+		await desk.click("Back to Planner");
+		check("the flow's Back steps back onto those dates", [desk.here(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		desk.world.primary.fn();
+		await desk.flush();
+		await throughDates(desk);
+		desk.planner().draft.fountains.push({ asset: "F-1", asset_name: "Tiered Fountain", rate: 0 });
+		await desk.click("Next: Customer");
+		desk.world.fg.values = { customer: "CUST-1", create_project: 1 };
+		await desk.click("Next: Review");
+		await desk.click("Place Hold");
+		await desk.click("Back to Planner");
+		check("from the booked screen: a new entry at those dates", [desk.here(), desk.planner().board_start], [`${BOARD}?start=2026-10-15`, "2026-10-15"]);
+		check("route_options consumed", desk.frappe.route_options, null);
+	});
 });
 
 (async () => {

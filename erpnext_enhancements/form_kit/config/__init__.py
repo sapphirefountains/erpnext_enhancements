@@ -31,6 +31,16 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     Choosing ``status`` (in ``status_field``, default ``status``) opens a *Set as Lost* dialog
     and runs the DocType's own ``method`` with the reasons and competitors as rows of the given
     child DocTypes (``field`` is the row's link column), as the Desk form does.
+``won``  ``{"status", "status_field"?, "fields": [...]}``
+    What a move into ``status`` must carry besides the status itself (on Opportunity, the three
+    ranks Closed Won is refused without). The board's side panel asks for them before it saves the
+    move (form kit P6.6).
+``quick``  ``{"fields": [...], "fixed"?: {fieldname: value}, "owner_field"?, "stage_field"?, "when"?: {fieldname: "dotted.path"}}``
+    The board's quick add (P6.7): only ``fields``, in order, then a create through
+    ``create_record`` like step 1. ``fixed`` sets fields step 1 needs that quick add does not ask
+    for; ``owner_field`` takes the person adding when it is blank; ``stage_field`` takes the
+    column's stage. ``when`` adds a field while ``frappe.get_attr(path)(doctype)`` is true, so the
+    server decides (a site setting that makes the field required) and the Desk reads no Settings.
 ``distinct``  ``[{"fields": [...], "message"}]``
     Fields that should not share a value: the page warns, as the form's script does, without
     blocking.
@@ -95,9 +105,12 @@ CONFIG_KEYS = {
 	"lost",
 	"distinct",
 	"clears",
+	"won",
+	"quick",
 	"open_by_default",
 }
 STAGES_KEYS = {"field", "default", "lists", "labels"}
+QUICK_KEYS = {"fields", "fixed", "owner_field", "stage_field", "when"}
 CREATE_KEYS = {"fields", "filled_on_create", "prefill_fields", "client_id_field"}
 MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag", "label"}
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
@@ -163,6 +176,24 @@ def check(config):
 			table = lost.get(key) or {}
 			if not table.get("doctype") or not table.get("field"):
 				problems.append(f"lost.{key} needs a doctype and a field")
+	won = config.get("won")
+	if won is not None:
+		if not str(won.get("status") or "").strip():
+			problems.append("won needs status")
+		if not isinstance(won.get("fields"), list) or not won.get("fields"):
+			problems.append("won needs a list of fields")
+	quick = config.get("quick")
+	if quick is not None:
+		unknown = set(quick) - QUICK_KEYS
+		if unknown:
+			problems.append(f"unknown quick keys {sorted(unknown)}")
+		if not isinstance(quick.get("fields"), list) or not quick.get("fields"):
+			problems.append("quick needs a list of fields")
+		if not isinstance(quick.get("fixed") or {}, dict):
+			problems.append("quick.fixed needs a dict of values")
+		for fieldname, path in (quick.get("when") or {}).items():
+			if not isinstance(path, str) or path.count(".") < 1:
+				problems.append(f"quick.when.{fieldname} needs a dotted path to a function")
 	mine = config.get("mine")
 	if mine is not None:
 		unknown = set(mine) - MINE_KEYS

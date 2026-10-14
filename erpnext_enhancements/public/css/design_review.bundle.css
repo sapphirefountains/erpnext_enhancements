@@ -3,77 +3,89 @@
  * www/review.html through bundled_asset('design_review.bundle.css'). Raw /assets paths are
  * cached for a year with no content hash, so edits would never reach a phone that had them.
  *
- * The layout and tokens are the claude.ai Concept Viewer's, which the team reviewed the
- * training concepts in: a navy bar, a screen rail, the stage, a notes panel. Every class is
- * prefixed rr- so nothing here can reach the concept screens, which are drawn in sandboxed
- * frames with their own documents anyway.
+ * The layout is the claude.ai Concept Viewer's, which the team reviewed the training concepts
+ * in: a navy bar, a screen rail, the stage, a notes panel. Every class is prefixed rr- so
+ * nothing here can reach the concept screens, which are drawn in sandboxed frames with their
+ * own documents anyway.
  *
- * Theme: the system setting, unless the THEME button set data-rr-theme on <html>. The attribute
- * is our own rather than data-theme, which the Desk owns.
+ * Colours are the app design tokens (docs/app-design-system.md, S3.5a, v1.659.0). A website page
+ * does not get sf_tokens.bundle.css (it is app_include_css, Desk only), so review.html links it
+ * itself, before this file. The --rr-* names below are this page's own vocabulary, mapped onto
+ * --sf-* in this one block; no rule anywhere in the file holds a literal colour
+ * (tests/test_www_app_tokens.py).
+ *
+ * Theme: the tokens switch on <html data-theme="light|dark">, and follow the device when the
+ * attribute is absent. The THEME button (design_review/app.js applyTheme) writes that same
+ * attribute: AUTO removes it, LIGHT and DARK set it. It used to write a data-rr-theme of its own,
+ * which the tokens cannot see. A website page has no Desk theme switcher, so nothing else on
+ * the page writes data-theme on <html>.
  *
  * Load-bearing, not cosmetic:
  *   1. 100dvh, not 100vh: under a mobile browser's collapsing toolbar 100vh hides the bottom.
  *   2. Focus outlines are styled, never removed.
  *   3. Verdicts and note status carry their word as well as a colour.
+ *   4. A concept frame's ground is off-white in both themes: the concepts are drawn for a light
+ *      page, so their box and the code tags over them read the fixed palette, not the theme.
  */
 
 :root {
-	--rr-chrome: #00263e;
-	--rr-chrome-2: #0b3a57;
-	--rr-on-chrome: #ffffff;
-	--rr-fill: #00a0df;
-	--rr-acc: #00609c;
-	--rr-pin: #ffb819;
-	--rr-pinsel: #ff6b35;
-	--rr-bg: #eef2f5;
-	--rr-surface: #ffffff;
-	--rr-surface-2: #f6f8fa;
-	--rr-line: #d5dde4;
-	--rr-ink: #14212b;
-	--rr-muted: #5b6b78;
-	--rr-yes: #1a7f37;
-	--rr-maybe: #9a6700;
-	--rr-no: #b42318;
-	--rr-radius: 8px;
+	/* The bar is the navy head band (--sf-band), the same in both themes; these are its words. */
+	--rr-on-chrome: var(--sf-on-band);
+	--rr-on-chrome-muted: var(--sf-on-band-muted);
+	/* Pressed toggles, the progress bars, a part's code tag: the primary fill and its label. */
+	--rr-fill: var(--sf-primary);
+	--rr-on-fill: var(--sf-on-primary);
+	/* Codes, links, the filled and ghost buttons. */
+	--rr-acc: var(--sf-link);
+	--rr-focus: var(--sf-focus);
+	/* A note's pin: the warn fill. Its 3px edge on a card is the warn chip edge (navy in light,
+	   where yellow on white is 1.7:1; yellow in dark). */
+	--rr-pin: var(--sf-warn);
+	--rr-on-pin: var(--sf-on-warn);
+	--rr-pin-edge: var(--sf-chip-edge-warn);
+	/* The selected part (its code tag over the frame, its row in the list). Violet-deep with an
+	   off-white label is 10:1; the frame's own outline for it is violet (design_review/frames.js),
+	   because a frame is a separate sandboxed document the tokens cannot reach. */
+	--rr-pinsel: var(--sf-violet-deep);
+	--rr-on-pinsel: var(--sf-off-white);
+	--rr-bg: var(--sf-bg);
+	--rr-surface: var(--sf-surface);
+	/* The inset ground under rows, tracks and thumbnails: off-white on a white card in light, the
+	   navy-900 page under a navy-800 card in dark. */
+	--rr-surface-2: var(--sf-bg);
+	--rr-line: var(--sf-rule);
+	--rr-ink: var(--sf-text);
+	--rr-muted: var(--sf-text-muted);
+	/* Verdicts and statuses: the three status fills with their labels and edges, and their text
+	   forms. A status fill is never text; mixed half-and-half with the strongest text colour it
+	   is (dark in light, light in dark), the guide's rule for warn, used for all three. */
+	--rr-yes: var(--sf-good);
+	--rr-on-yes: var(--sf-on-good);
+	--rr-yes-edge: var(--sf-chip-edge-good);
+	--rr-yes-text: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+	--rr-maybe: var(--sf-warn);
+	--rr-on-maybe: var(--sf-on-warn);
+	--rr-maybe-edge: var(--sf-chip-edge-warn);
+	--rr-no: var(--sf-danger);
+	--rr-on-no: var(--sf-on-danger);
+	--rr-no-edge: var(--sf-chip-edge-danger);
+	--rr-no-text: color-mix(in srgb, var(--sf-danger) 50%, var(--sf-text-strong));
+	/* A concept frame's ground (point 4 above). */
+	--rr-frame: var(--sf-off-white);
 	--rr-bar-h: 52px;
 	color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root:not([data-rr-theme="light"]) {
-		--rr-bg: #0d151c;
-		--rr-surface: #15212b;
-		--rr-surface-2: #1b2a36;
-		--rr-line: #2b3c49;
-		--rr-ink: #e5edf3;
-		--rr-muted: #9aabb8;
-		--rr-acc: #5cc6f2;
-		--rr-yes: #56d364;
-		--rr-maybe: #d4a72c;
-		--rr-no: #ff7b72;
-		color-scheme: dark;
-	}
-}
-
-:root[data-rr-theme="dark"] {
-	--rr-bg: #0d151c;
-	--rr-surface: #15212b;
-	--rr-surface-2: #1b2a36;
-	--rr-line: #2b3c49;
-	--rr-ink: #e5edf3;
-	--rr-muted: #9aabb8;
-	--rr-acc: #5cc6f2;
-	--rr-yes: #56d364;
-	--rr-maybe: #d4a72c;
-	--rr-no: #ff7b72;
+/* The browser's own widgets (scrollbars, a select's list) follow the same theme as the tokens:
+   the same two selectors sf_tokens.bundle.css switches on. */
+:root[data-theme="dark"] {
 	color-scheme: dark;
 }
 
-@font-face {
-	font-family: "Big Noodle Titling";
-	src: url("/assets/erpnext_enhancements/fonts/big_noodle_titling.woff2") format("woff2");
-	font-weight: 700;
-	font-display: swap;
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme]) {
+		color-scheme: dark;
+	}
 }
 
 /* `html body`, not `body`: the website stylesheet frappe puts on every web page sets the body's
@@ -82,7 +94,7 @@ html body {
 	margin: 0;
 	background: var(--rr-bg);
 	color: var(--rr-ink);
-	font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	font: 14px/1.45 var(--sf-font-sans);
 }
 
 /* templates/web.html's wrappers. review.py sets full_width, which drops the .container; these
@@ -119,15 +131,21 @@ body .page-footer {
 	flex-direction: column;
 }
 
+/* The display face (its @font-face is in sf_tokens.bundle.css) takes no letter-spacing. */
 .dsp {
-	font-family: "Big Noodle Titling", "Oswald", Impact, sans-serif;
-	font-weight: 700;
-	letter-spacing: 0.04em;
+	font-family: var(--sf-font-display);
+	font-weight: var(--sf-weight-bold);
 }
 
 :focus-visible {
-	outline: 3px solid var(--rr-fill);
+	outline: 3px solid var(--rr-focus);
 	outline-offset: 2px;
+}
+
+/* On the navy bar the theme's focus colour can sink into the band; the band's own text colour
+   cannot. */
+.rr-bar :focus-visible {
+	outline-color: var(--rr-on-chrome);
 }
 
 button,
@@ -175,7 +193,7 @@ textarea {
 	padding-left: max(14px, env(safe-area-inset-left));
 	padding-right: max(14px, env(safe-area-inset-right));
 	box-sizing: border-box;
-	background: var(--rr-chrome);
+	background: var(--sf-band);
 	color: var(--rr-on-chrome);
 }
 
@@ -187,7 +205,7 @@ textarea {
 .rr-bar-sub {
 	font-size: 11px;
 	letter-spacing: 0.14em;
-	opacity: 0.75;
+	color: var(--rr-on-chrome-muted);
 	margin-right: 8px;
 }
 
@@ -204,12 +222,13 @@ textarea {
 	letter-spacing: 0.1em;
 	min-width: 60px;
 	text-align: right;
-	opacity: 0.85;
+	color: var(--rr-on-chrome-muted);
 }
 
+/* "NOT SAVED" and the like, in the warn colour. The warn text rule mixes yellow with the
+   strongest text; on the band, whatever the theme, that is the band's own off-white. */
 .rr-status.bad {
-	color: var(--rr-pin);
-	opacity: 1;
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--rr-on-chrome));
 }
 
 .rr-toggle,
@@ -220,8 +239,8 @@ textarea {
 	gap: 4px;
 	min-height: 32px;
 	padding: 0 10px;
-	border: 1px solid rgba(255, 255, 255, 0.28);
-	border-radius: 6px;
+	border: 1px solid color-mix(in srgb, var(--rr-on-chrome) 28%, transparent);
+	border-radius: var(--sf-radius-control);
 	background: transparent;
 	color: var(--rr-on-chrome);
 	font-size: 12px;
@@ -235,7 +254,7 @@ textarea {
 .rr-toggle:hover,
 .rr-seg button:hover,
 .rr-tab:hover {
-	background: var(--rr-chrome-2);
+	background: color-mix(in srgb, var(--rr-on-chrome) 12%, transparent);
 }
 
 .rr-toggle[aria-pressed="true"],
@@ -243,7 +262,7 @@ textarea {
 .rr-tab[aria-pressed="true"] {
 	background: var(--rr-fill);
 	border-color: var(--rr-fill);
-	color: #00263e;
+	color: var(--rr-on-fill);
 }
 
 .rr-seg {
@@ -252,15 +271,15 @@ textarea {
 }
 
 .rr-seg button {
-	border-radius: 0;
+	border-radius: var(--sf-radius-none);
 }
 
 .rr-seg button:first-child {
-	border-radius: 6px 0 0 6px;
+	border-radius: var(--sf-radius-control) 0 0 var(--sf-radius-control);
 }
 
 .rr-seg button:last-child {
-	border-radius: 0 6px 6px 0;
+	border-radius: 0 var(--sf-radius-control) var(--sf-radius-control) 0;
 }
 
 .rr-seg button + button {
@@ -282,6 +301,8 @@ textarea {
 	text-overflow: ellipsis;
 }
 
+/* Inverted, as the guide's toast is: the strongest text colour as the ground and the card colour
+   as the words, so it stands out on the light page and the dark one. */
 .rr-toast {
 	position: fixed;
 	left: 50%;
@@ -289,14 +310,13 @@ textarea {
 	z-index: 100;
 	max-width: min(560px, calc(100vw - 32px));
 	padding: 10px 16px;
-	border-radius: var(--rr-radius);
-	background: var(--rr-chrome);
-	color: #fff;
-	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
 	transform: translate(-50%, 140%);
 	opacity: 0;
 	visibility: hidden;
-	transition: transform 0.2s ease, opacity 0.2s ease, visibility 0.2s;
+	transition: transform var(--sf-duration) var(--sf-ease), opacity var(--sf-duration) var(--sf-ease), visibility var(--sf-duration);
 	pointer-events: none;
 }
 
@@ -308,6 +328,8 @@ textarea {
 
 .rr-toast.bad {
 	background: var(--rr-no);
+	color: var(--rr-on-no);
+	border: 1px solid var(--rr-no-edge);
 }
 
 /* ---------------------------------------------------------------- pages: list and overview */
@@ -341,7 +363,7 @@ textarea {
 	padding: 10px 14px;
 	border-left: 4px solid var(--rr-fill);
 	background: var(--rr-surface);
-	border-radius: 0 var(--rr-radius) var(--rr-radius) 0;
+	border-radius: var(--sf-radius-none);
 }
 
 .rr-statusbox {
@@ -353,7 +375,7 @@ textarea {
 .rr-pill {
 	display: inline-block;
 	padding: 2px 10px;
-	border-radius: 999px;
+	border-radius: var(--sf-radius-pill);
 	font-size: 12px;
 	font-weight: 700;
 	letter-spacing: 0.06em;
@@ -364,28 +386,32 @@ textarea {
 
 .rr-pill.is-open {
 	background: var(--rr-yes);
-	border-color: var(--rr-yes);
-	color: #fff;
+	border-color: var(--rr-yes-edge);
+	color: var(--rr-on-yes);
 }
 
 .rr-pill.is-closed {
 	background: var(--rr-maybe);
-	border-color: var(--rr-maybe);
-	color: #fff;
+	border-color: var(--rr-maybe-edge);
+	color: var(--rr-on-maybe);
 }
 
+/* Decided: the neutral chip. Its closing stop is bahama-blue, and in dark its edge is sky-200,
+   because bahama on a navy-800 card is 2.48:1. */
 .rr-pill.is-decided {
-	background: var(--rr-acc);
-	border-color: var(--rr-acc);
-	color: #fff;
+	background: var(--sf-pillar-neutral-deep);
+	border-color: var(--sf-chip-edge-neutral);
+	color: var(--sf-on-pillar);
 }
 
+/* Fields stay white in both themes (the guide's single-palette dark). */
 .rr-select {
 	min-height: 32px;
 	padding: 0 8px;
-	border: 1px solid var(--rr-line);
-	border-radius: 6px;
-	background: var(--rr-surface);
+	border: 1px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
 }
 
 .rr-select.small {
@@ -405,7 +431,7 @@ textarea {
 	flex-direction: column;
 	background: var(--rr-surface);
 	border: 1px solid var(--rr-line);
-	border-radius: var(--rr-radius);
+	border-radius: var(--sf-radius-none);
 	overflow: hidden;
 	color: inherit;
 	text-decoration: none;
@@ -454,12 +480,14 @@ textarea {
 	cursor: pointer;
 }
 
+/* No shadow: a hairline outline (which takes no layout space, so the scaled frame inside keeps
+   its exact size) separates the off-white frame from the ground. */
 .rr-thumbbox {
 	position: relative;
 	overflow: hidden;
-	border-radius: 6px;
-	box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
-	background: #f8f8f8;
+	border-radius: var(--sf-radius-none);
+	outline: 1px solid var(--rr-line);
+	background: var(--rr-frame);
 }
 
 .rr-two {
@@ -477,7 +505,7 @@ textarea {
 .rr-panel {
 	background: var(--rr-surface);
 	border: 1px solid var(--rr-line);
-	border-radius: var(--rr-radius);
+	border-radius: var(--sf-radius-none);
 	padding: 16px;
 }
 
@@ -497,6 +525,8 @@ textarea {
 	justify-content: space-between;
 }
 
+/* The link colour as the fill and the card colour as the label: white on bahama-blue in light
+   (6.4:1), navy-800 on sky-200 in dark (8.5:1), which is what the old per-theme override did. */
 .rr-btn {
 	display: inline-flex;
 	align-items: center;
@@ -504,24 +534,14 @@ textarea {
 	min-height: 36px;
 	padding: 0 14px;
 	border: 1px solid var(--rr-acc);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-control);
 	background: var(--rr-acc);
-	color: #fff;
+	color: var(--rr-surface);
 	font-weight: 700;
 	font-size: 12px;
 	letter-spacing: 0.08em;
 	text-decoration: none;
 	cursor: pointer;
-}
-
-:root[data-rr-theme="dark"] .rr-btn {
-	color: #00263e;
-}
-
-@media (prefers-color-scheme: dark) {
-	:root:not([data-rr-theme="light"]) .rr-btn {
-		color: #00263e;
-	}
 }
 
 .rr-btn.ghost {
@@ -553,7 +573,7 @@ textarea {
 	width: 32px;
 	height: 32px;
 	border: 1px solid var(--rr-line);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-control);
 	background: var(--rr-surface-2);
 	cursor: pointer;
 }
@@ -578,18 +598,21 @@ textarea {
 	gap: 10px;
 	padding: 6px 8px;
 	border: 1px solid var(--rr-line);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-none);
 	background: var(--rr-surface-2);
 }
 
+/* A rank's number: the neutral chip, round. */
 .rr-n {
 	width: 26px;
 	height: 26px;
 	display: inline-grid;
 	place-items: center;
-	border-radius: 50%;
-	background: var(--rr-chrome);
-	color: #fff;
+	box-sizing: border-box;
+	border-radius: var(--sf-radius-circle);
+	border: 1px solid var(--sf-chip-edge-neutral);
+	background: var(--sf-pillar-neutral-deep);
+	color: var(--sf-on-pillar);
 	font-weight: 700;
 	flex: none;
 }
@@ -615,7 +638,7 @@ textarea {
 
 .rr-bar-track {
 	height: 10px;
-	border-radius: 5px;
+	border-radius: var(--sf-radius-none);
 	background: var(--rr-surface-2);
 	border: 1px solid var(--rr-line);
 	overflow: hidden;
@@ -645,16 +668,17 @@ textarea {
 .rr-lab {
 	font-size: 12px;
 	font-weight: 600;
-	color: var(--rr-muted);
+	color: var(--sf-label);
 	margin-top: 4px;
 }
 
 .rr-fld {
 	min-height: 36px;
 	padding: 6px 10px;
-	border: 1px solid var(--rr-line);
-	border-radius: 6px;
-	background: var(--rr-surface);
+	border: 1px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
 	box-sizing: border-box;
 	width: 100%;
 }
@@ -715,7 +739,7 @@ textarea.rr-fld {
 	min-height: 34px;
 	margin-bottom: 8px;
 	border: 1px solid var(--rr-acc);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-control);
 	background: transparent;
 	color: var(--rr-acc);
 	font-weight: 700;
@@ -741,7 +765,7 @@ textarea.rr-fld {
 	min-height: 34px;
 	padding: 4px 8px;
 	border: 0;
-	border-radius: 6px;
+	border-radius: var(--sf-radius-none);
 	background: transparent;
 	text-align: left;
 	cursor: pointer;
@@ -751,9 +775,11 @@ textarea.rr-fld {
 	background: var(--rr-surface-2);
 }
 
+/* The screen on the stage: the primary fill, which stands off a white card and a navy one alike
+   (the old navy fill was 1.06:1 against the dark card). */
 .rr-srow[aria-pressed="true"] {
-	background: var(--rr-chrome);
-	color: #fff;
+	background: var(--rr-fill);
+	color: var(--rr-on-fill);
 }
 
 .rr-sc {
@@ -771,23 +797,37 @@ textarea.rr-fld {
 	white-space: nowrap;
 }
 
+/* Your verdict on a screen: a small chip with its word (Yes, Maybe, No), never a dot of colour
+   alone (app.js writes the word). */
 .rr-vd {
-	width: 10px;
-	height: 10px;
-	border-radius: 50%;
+	padding: 0 6px;
+	border: 1px solid transparent;
+	border-radius: var(--sf-radius-pill);
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 16px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	white-space: nowrap;
 	flex: none;
 }
 
 .rr-vd.is-yes {
 	background: var(--rr-yes);
+	border-color: var(--rr-yes-edge);
+	color: var(--rr-on-yes);
 }
 
 .rr-vd.is-maybe {
 	background: var(--rr-maybe);
+	border-color: var(--rr-maybe-edge);
+	color: var(--rr-on-maybe);
 }
 
 .rr-vd.is-no {
 	background: var(--rr-no);
+	border-color: var(--rr-no-edge);
+	color: var(--rr-on-no);
 }
 
 .rr-pip {
@@ -795,9 +835,10 @@ textarea.rr-fld {
 	height: 18px;
 	padding: 0 4px;
 	box-sizing: border-box;
-	border-radius: 9px;
+	border: 1px solid var(--rr-pin-edge);
+	border-radius: var(--sf-radius-pill);
 	background: var(--rr-pin);
-	color: #00263e;
+	color: var(--rr-on-pin);
 	font-size: 11px;
 	font-weight: 700;
 	display: inline-grid;
@@ -854,7 +895,7 @@ textarea.rr-fld {
 .rr-say {
 	margin-top: 4px;
 	padding: 4px 10px;
-	border-left: 3px solid var(--rr-pin);
+	border-left: 3px solid var(--rr-pin-edge);
 	background: var(--rr-surface-2);
 	font-size: 13px;
 }
@@ -870,7 +911,7 @@ textarea.rr-fld {
 	min-height: 34px;
 	padding: 0 12px;
 	border: 2px solid var(--rr-line);
-	border-radius: 6px;
+	border-radius: var(--sf-radius-control);
 	background: var(--rr-surface);
 	font-weight: 700;
 	font-size: 12px;
@@ -885,26 +926,27 @@ textarea.rr-fld {
 
 .rr-vb.is-yes[aria-pressed="true"] {
 	background: var(--rr-yes);
-	border-color: var(--rr-yes);
-	color: #fff;
+	border-color: var(--rr-yes-edge);
+	color: var(--rr-on-yes);
 }
 
 .rr-vb.is-maybe[aria-pressed="true"] {
 	background: var(--rr-maybe);
-	border-color: var(--rr-maybe);
-	color: #fff;
+	border-color: var(--rr-maybe-edge);
+	color: var(--rr-on-maybe);
 }
 
 .rr-vb.is-no[aria-pressed="true"] {
 	background: var(--rr-no);
-	border-color: var(--rr-no);
-	color: #fff;
+	border-color: var(--rr-no-edge);
+	color: var(--rr-on-no);
 }
 
+/* NEXT: the one primary button beside the verdicts. */
 .rr-vb.nextb {
-	background: var(--rr-chrome);
-	border-color: var(--rr-chrome);
-	color: #fff;
+	background: var(--sf-primary);
+	border-color: var(--sf-primary);
+	color: var(--sf-on-primary);
 }
 
 .rr-stage {
@@ -942,9 +984,9 @@ textarea.rr-fld {
 .rr-fbox {
 	position: relative;
 	overflow: hidden;
-	border-radius: 8px;
-	background: #f8f8f8;
-	box-shadow: 0 2px 14px rgba(0, 0, 0, 0.18);
+	border-radius: var(--sf-radius-none);
+	outline: 1px solid var(--rr-line);
+	background: var(--rr-frame);
 }
 
 .rr-ov {
@@ -953,15 +995,17 @@ textarea.rr-fld {
 	pointer-events: none;
 }
 
+/* A part's code tag over the frame. The frame is always off-white, so these read fixed fills
+   that hold on a light ground, never the theme's. */
 .rr-pcode {
 	position: absolute;
 	transform: translate(-2px, -2px);
 	padding: 0 4px;
 	min-height: 16px;
 	border: 0;
-	border-radius: 3px;
+	border-radius: var(--sf-radius-none);
 	background: var(--rr-fill);
-	color: #00263e;
+	color: var(--rr-on-fill);
 	font: 700 10px/16px ui-monospace, Consolas, monospace;
 	pointer-events: auto;
 	cursor: pointer;
@@ -969,11 +1013,12 @@ textarea.rr-fld {
 
 .rr-pcode[data-has] {
 	background: var(--rr-pin);
+	color: var(--rr-on-pin);
 }
 
 .rr-pcode[data-sel] {
 	background: var(--rr-pinsel);
-	color: #fff;
+	color: var(--rr-on-pinsel);
 }
 
 .rr-grid {
@@ -989,7 +1034,7 @@ textarea.rr-fld {
 	gap: 10px;
 	padding: 12px;
 	border: 1px solid var(--rr-line);
-	border-radius: var(--rr-radius);
+	border-radius: var(--sf-radius-none);
 	background: var(--rr-surface);
 	cursor: pointer;
 }
@@ -1035,7 +1080,7 @@ textarea.rr-fld {
 }
 
 .rr-ptab[aria-pressed="true"] {
-	border-bottom-color: var(--rr-fill);
+	border-bottom-color: var(--rr-focus);
 	color: var(--rr-acc);
 }
 
@@ -1050,17 +1095,20 @@ textarea.rr-fld {
 	font-size: 13px;
 }
 
+/* The part being noted: a small navy band, edged so it still has a boundary on the dark card
+   (deep-sea-blue on navy-800 is 1.06:1; its chip edge in dark is sky-200). */
 .rr-sel {
 	padding: 10px 12px;
-	border-radius: 6px;
-	background: var(--rr-chrome);
-	color: #fff;
+	border: 1px solid var(--sf-chip-edge-neutral);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-band);
+	color: var(--sf-on-band);
 	margin-bottom: 10px;
 }
 
 .rr-sel-c {
 	font: 700 13px ui-monospace, Consolas, monospace;
-	color: var(--rr-pin);
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-on-band));
 }
 
 .rr-grp {
@@ -1079,8 +1127,8 @@ textarea.rr-fld {
 	margin: 6px 0;
 	padding: 8px 10px;
 	border: 1px solid var(--rr-line);
-	border-left: 3px solid var(--rr-pin);
-	border-radius: 6px;
+	border-left: 3px solid var(--rr-pin-edge);
+	border-radius: var(--sf-radius-none);
 	background: var(--rr-surface-2);
 	text-align: left;
 }
@@ -1112,6 +1160,7 @@ button.rr-note {
 	overflow-wrap: anywhere;
 }
 
+/* A note's status is its word (app.js writes it), in the status's text colour. */
 .rr-nst {
 	font-size: 11px;
 	font-weight: 700;
@@ -1120,11 +1169,11 @@ button.rr-note {
 
 .rr-nst.is-accepted,
 .rr-nst.is-done {
-	color: var(--rr-yes);
+	color: var(--rr-yes-text);
 }
 
 .rr-nst.is-rejected {
-	color: var(--rr-no);
+	color: var(--rr-no-text);
 }
 
 .rr-elist {
@@ -1139,8 +1188,8 @@ button.rr-note {
 	gap: 8px;
 	min-height: 30px;
 	padding: 2px 8px;
-	border: 0;
-	border-radius: 4px;
+	border: 1px solid transparent;
+	border-radius: var(--sf-radius-none);
 	background: transparent;
 	text-align: left;
 	cursor: pointer;
@@ -1150,9 +1199,12 @@ button.rr-note {
 	background: var(--rr-surface-2);
 }
 
+/* The selected part's row, in the same violet-deep as its code tag; the violet edge keeps the
+   row's boundary on the dark card, where violet-deep alone is 1.6:1. */
 .rr-erow[aria-pressed="true"] {
 	background: var(--rr-pinsel);
-	color: #fff;
+	border-color: var(--sf-chip-edge-design);
+	color: var(--rr-on-pinsel);
 }
 
 .rr-erow b {
@@ -1164,11 +1216,20 @@ button.rr-note {
 	flex: 1;
 }
 
+/* A part that has a note: the warn chip with the word NOTED (app.js), not a yellow dot. */
 .rr-dot2 {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
+	padding: 0 6px;
+	border: 1px solid var(--rr-pin-edge);
+	border-radius: var(--sf-radius-pill);
 	background: var(--rr-pin);
+	color: var(--rr-on-pin);
+	font-size: 10px;
+	font-style: normal;
+	font-weight: 700;
+	line-height: 16px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	flex: none;
 }
 
 /* ---------------------------------------------------------------- narrower desktops */
@@ -1188,6 +1249,9 @@ button.rr-note {
 
 /* ---------------------------------------------------------------- narrow screens */
 
+/* A layout breakpoint, not the phone one: the 248px rail and the 340px notes panel leave the
+   stage too little room below about 900px, a portrait tablet included, so from here they float
+   over it. */
 @media (max-width: 900px) {
 	.rr-two {
 		grid-template-columns: minmax(0, 1fr);
@@ -1220,7 +1284,8 @@ button.rr-note {
 		position: relative;
 	}
 
-	/* The rail is an overlay and the notes a bottom sheet, so the stage keeps the full width. */
+	/* The rail is an overlay and the notes a bottom sheet, so the stage keeps the full width.
+	   Square, no shadow: each is edged by a rule where it meets the stage. */
 	.rr-rail {
 		position: fixed;
 		z-index: 40;
@@ -1228,7 +1293,6 @@ button.rr-note {
 		bottom: 0;
 		left: 0;
 		width: min(300px, 84vw);
-		box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
 	}
 
 	.rr-panel-side {
@@ -1241,8 +1305,7 @@ button.rr-note {
 		max-height: 62dvh;
 		border-left: 0;
 		border-top: 1px solid var(--rr-line);
-		border-radius: 14px 14px 0 0;
-		box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.25);
+		border-radius: var(--sf-radius-none);
 		padding-bottom: env(safe-area-inset-bottom);
 	}
 
@@ -1260,6 +1323,47 @@ button.rr-note {
 
 	body.rr-sheet .rr-stage {
 		padding-bottom: 62dvh;
+	}
+}
+
+/* ---------------------------------------------------------------- phones */
+
+/* The phone breakpoint: every control a finger reaches is at least 44px, and a text field's
+   type is 16px, below which iOS zooms the page into it. The bar grows with its controls, and
+   the rail overlay starts under it. */
+@media (max-width: 767px) {
+	:root {
+		--rr-bar-h: 56px;
+	}
+
+	.rr-toggle,
+	.rr-seg button,
+	.rr-tab,
+	.rr-btn,
+	.rr-btn.small,
+	.rr-walk,
+	.rr-srow,
+	.rr-erow,
+	.rr-vb,
+	.rr-ptab,
+	.rr-select,
+	.rr-select.small,
+	.rr-fld {
+		min-height: var(--sf-touch-min);
+	}
+
+	.rr-icon {
+		width: var(--sf-touch-min);
+		height: var(--sf-touch-min);
+	}
+
+	.rr-link {
+		min-height: var(--sf-touch-min);
+	}
+
+	.rr-select,
+	.rr-fld {
+		font-size: var(--sf-text-input);
 	}
 }
 

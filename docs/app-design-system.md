@@ -23,7 +23,11 @@ exactly as it did until a screen reads a variable. `tests/test_app_design_tokens
 the build if a rule that styles something gets into the file.
 
 A web page outside the Desk (a `www/` page) can load the same file with
-`bundled_asset('sf_tokens.bundle.css')`.
+`bundled_asset('sf_tokens.bundle.css')`, linked in its own template before its own stylesheet
+(never through `web_include_css`, which would put it on every public page). The Review Room
+(`/review`) and the itinerary (`/itinerary`) do (S3.5a, v1.659.0; `tests/test_www_app_tokens.py`).
+A page with a theme toggle of its own writes `data-theme` on `<html>`, as the Review Room's THEME
+button does; one without leaves it unset and follows the device.
 
 ## Light and dark
 
@@ -134,8 +138,12 @@ pillar a stream takes:
 
 Products has always been drawn as Build in the project brief. Nik chose Build for Delivery on
 2026-10-13. A stream mapped to `None` would take the neutral band. `project_brief.js` carries a
-copy, and `tests/test_print_style.py` holds that copy to `STREAM_PILLAR`. The Kanban's own
-value-stream colours are retired by form kit P6.
+copy, and `tests/test_print_style.py` holds that copy to `STREAM_PILLAR`; so do the guided page's
+`form_kit/summary.js` (`tests/test_guided_entry.py`) and the report face's `report_face/cells.js`
+(`tests/test_report_face.py`). The Kanban's own
+value-stream colours are retired by form kit P6: the new Opportunity board
+(`crm_enhancements/page/opportunity_board`) draws each card's band from `form_kit/summary.js`'s copy, one segment
+per stream in the closing stop, edged in `--sf-chip-edge-<pillar>` so Build and Neutral still show on a dark card.
 
 ## Type
 
@@ -166,7 +174,8 @@ Two styles, one for each place a date is read. Neither is picked per screen.
   moves a field **only while it still holds the old value** and writes the global default as well
   as the Single, because the Desk reads `tabDefaultValue`, not System Settings. Code that needs a
   date for a screen uses `frappe.datetime.str_to_user` or `formatdate` and so follows the site
-  format; code that stores or compares a date keeps ISO `YYYY-MM-DD`.
+  format; code that stores or compares a date keeps ISO `YYYY-MM-DD`. **A script report is the
+  exception**: it shows dates through the report face (below), in the print style.
 - **Print, email and SMS show `10/14/2026 2:00 PM`.** A date alone is `10/14/2026`; a time alone is
   `2:00 PM`. The formatting is `format_date`, `format_datetime` and `format_time` in
   `utils/normalize.py` (no frappe import), and a Print Format or a Notification body reaches them
@@ -203,6 +212,98 @@ start/end dates, and these controllers throw on theirs: Rental Booking, Travel T
 Request, Work Restriction, Asset Booking, Asset Out of Service, Time Correction Request. Imported
 or generated pairs, child-table rows and flights (departure and arrival are local to different
 time zones) are left out for the reasons in the `date_pairs.py` docstring.
+
+## The report face
+
+Form kit P3.3 (v1.657.0, ERPNext TASK-2026-02756): one formatter that script reports call for
+their **phone, party, pillar, money and date** columns, so the same piece of information reads the
+same way in every report, and the way print already shows it (`print_style.ps_phone`, `ps_date`).
+
+| Kind | A cell shows | From |
+|---|---|---|
+| `phone` | `(801) 555-0100 x12` from the stored `+18015550100,12`; a value the rules can't read, as stored | `phone_display` in the normalization twin |
+| `party` | the record's human name, linked to the record (two column shapes, below) | `frappe.utils.get_form_link`; plain text when the person can't read the doctype, as Frappe's Link cells do |
+| `pillar` | each value stream as a chip in its pillar's colors (`Build, Service` is two chips); a word that is not a stream ("Unallocated") stays plain text | `STREAM_PILLAR` (above) and the Chip (below) |
+| `money` | the column's own currency formatting | Frappe's Currency formatter, with the column's `options` |
+| `date` / `datetime` / `time` | `10/14/2026`, `10/14/2026 2:00 PM`, `2:00 PM`; a datetime in the person's time zone | `format_date` / `format_datetime` / `format_time` in the twin, after `frappe.datetime.convert_to_user_tz` for a datetime (as v16's own Datetime formatter does) |
+
+**A column says what it is** with one key in the report's Python, `sf_face`. With no key, a
+`Date`, `Datetime`, `Time`, `Currency` or `Phone` column takes its kind from its fieldtype, so a
+report whose formatter calls the face gets its dates and money right with no marker at all.
+`sf_face: "none"` leaves a column to Frappe, and so does an unknown kind (a typo must not blank a
+column).
+
+```python
+{"label": _("Phone"), "fieldname": "phone", "fieldtype": "Data", "sf_face": "phone"},
+{"label": _("Value Streams"), "fieldname": "value_streams", "fieldtype": "Data", "sf_face": "pillar"},
+# A party, shape 1: the column is a Link (options = the doctype) or a Dynamic Link (options = the
+# row field naming it) holding the DOCNAME; sf_label names the row field with the name. For a
+# column that is the record itself (an account list's own Customer).
+{"label": _("Account"), "fieldname": "name", "fieldtype": "Link", "options": "Customer",
+ "sf_face": "party", "sf_label": "customer_name"},
+# A party, shape 2: a Data column holding the NAME; sf_name names the row field with the docname,
+# and sf_doctype (a doctype) or sf_doctype_field (a row field naming one) says what it is.
+{"label": _("Customer / Party"), "fieldname": "party", "fieldtype": "Data",
+ "sf_face": "party", "sf_name": "party_id", "sf_doctype_field": "party_type"},
+```
+
+**Prefer shape 2 for a party that belongs to the row** (an Opportunity's customer, an address's
+party). A cell's value is what export writes (`build_xlsx_data` takes the raw value), what the
+datatable sorts on and what its column search matches, so a Link cell exports and sorts by the
+docname while showing the name. Shape 2 keeps all three on the name, shows the name unlinked when
+there is no docname, and still shows it when the face is missing.
+
+**The report's formatter is two lines**, plus anything of its own (a status color, a threshold
+glow) wrapped around what the face returns:
+
+```js
+formatter(value, row, column, data, default_formatter) {
+	const face = window.erpnext_enhancements?.report_face;
+	return face?.format
+		? face.format(value, row, column, data, default_formatter)
+		: default_formatter(value, row, column, data);
+},
+```
+
+For HTML a report builds itself, a dialog or a message, the same answers come one at a time:
+`report_face.phone(v)`, `.date(v)`, `.datetime(v)`, `.time(v)`, `.money(v, currency)`,
+`.party(doctype, name, label, { new_tab })`, `.pillar(streams)` and `.chip(label, tone)`. Every
+one returns escaped HTML. The Python side of a report (its message, an HTML string built in
+`execute()`) uses `utils/normalize` (`format_date`, `phone_display`) or the `print_style` helpers,
+never `strftime`, `formatdate` or `frappe.format(x, {"fieldtype": "Date"})`.
+
+**Two decisions in it.**
+
+- **A report's date time is 12-hour.** The Desk's own fields show `14:00` because Frappe v16 has
+  no 12-hour Desk format (Dates and times, above). A report is read like a printed page and is
+  often printed, so it takes the print style, `2:00 PM`. A date alone is `10/14/2026` either way.
+- **The chip is drawn with inline declarations**, not a class. A report page loads no sf_kit
+  stylesheet, and loading the kit on every Desk page to style one pill would be the wrong trade.
+  `report_face/cells.js` carries `.sf-chip`'s declarations as a table, which
+  `tests/test_report_face.py` holds to `css/sf_kit.bundle.css` declaration for declaration; they
+  read only `--sf-*` tokens, which `sf_tokens.bundle.css` puts on every Desk page, so the chip
+  follows the light and dark themes like the kit's does. The markup carries the classes
+  `sf-report-chip sf-report-chip--<tone>` for anything that wants to find it.
+
+**Where it lives.** `public/js/report_face/cells.js` holds the rules: pure, no frappe and no DOM,
+run under node by `tests/test_report_face.py` against the Python twin's own answers.
+`report_face.js` is the Desk half, imported by `erpnext_enhancements.bundle.js` (a report's own
+`.js` can import nothing, so the face has to be global), and it fails open: if the face throws,
+the cell gets the report's default formatter and the console one warning.
+
+**Moving the reports.** The CRM and sales reports moved first (all seven in CRM Enhancements,
+plus Value Stream Performance). `tests/test_report_hand_formatting.py` reads every Script
+Report's `.js`, `.py` and `.html`, comments stripped, for a phone or a date formatted by hand:
+`frappe.datetime.str_to_user`, `moment(...).format`, `toLocaleDateString`, `strftime` with a day
+in its format (a `%Y-%m` or `%b %Y` key is not a shown date), `formatdate`,
+`frappe.format(x, {fieldtype: "Date"})`, a bare `*_date` passed into `.format(...)` (read with
+`ast`, so a keyword's name is not one), and a phone rebuilt with a regex or `[3:6]` slices of a
+phone-ish name. The CRM and sales reports fail the build on a finding, on not calling the face,
+or on a phone, party or value-stream column left unmarked. Every other report is listed in the
+CI log and on `KNOWN_REMAINING`, which pins a count per report and rule and **takes only
+removals**: a new report, a new rule or a higher count fails, and so does a count the report no
+longer reaches, until it is lowered. Move a report when you next touch it, and take it off the
+list. `ALLOWED` takes a report that legitimately differs, with its reason; it is empty today.
 
 ## Space and shape
 
@@ -442,12 +543,24 @@ value }], links: [{ label, href }] }`; `green` / `amber` / `red` are read as `go
 `danger`. Every text is escaped, and a link becomes a link only for a `/desk/` route or an http(s)
 URL; anything else is shown as plain text. A blank `href` (`null`, `""`) falls back to `route`.
 Malformed data costs only its own part: `metrics` or `links` that are not a list are skipped, so
-one bad tile never blanks the grid, and a tile with no title draws no empty heading.
+one bad tile never blanks the grid, and a tile with no title draws no empty heading. A metric may
+carry a `tone` too (v1.651.0): a status tone (or `green` / `amber` / `red`) draws its value as a
+chip of that tone, so a metric is never marked by colour alone; any other tone leaves the value as
+text.
 
 ```js
 el.innerHTML = sf_kit.tiles.html([{ title: "Google Drive", tone: "good", detail: "Synced 4 min ago",
+	metrics: [{ label: __("Failed (24h)"), value: 0, tone: "good" }],
 	links: [{ label: __("Settings"), href: "/desk/google-drive-settings" }] }]);
 ```
+
+Every health dashboard draws its tiles this way (S3.2, v1.651.0): Integrations Health, the Device
+Fleet Dashboard, the QuickBooks Online dashboard and the Stripe dashboard. A page may decide what a
+status *means* (a `{ Paid: "good", Failed: "danger" }` map onto the kit's tones), never what it
+looks like: no page keeps a colour map, a literal colour or hand-built tile markup
+(`tests/test_s3_health_tiles.py`). The two pages that show server health checks are thin callers of
+`public/js/health_board.bundle.js` (`window.sf_health_board.mount(page, opts)`), which draws them
+with the S3.1 states.
 
 **`sf_kit.t(text, args)`**: `__()` when the Desk is there, `{0}` substitution otherwise. It is
 for a caller's own dynamic text. The kit's own words are written as literal `__("...")` calls,
@@ -492,6 +605,7 @@ python -m unittest erpnext_enhancements.tests.test_app_design_tokens -v
 python -m unittest erpnext_enhancements.tests.test_print_style -v
 python -m unittest erpnext_enhancements.tests.test_desk_date_format_patch -v
 python -m unittest erpnext_enhancements.tests.test_date_pairs -v
+python -m unittest erpnext_enhancements.tests.test_report_face erpnext_enhancements.tests.test_report_hand_formatting -v
 ```
 
 All are bench-free, and CI runs each in its own step.

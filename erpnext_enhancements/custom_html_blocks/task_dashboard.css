@@ -124,15 +124,12 @@
 
 .tdb-projects .tdb-panel-body { max-height: none; }
 
-.tdb-loading,
-.tdb-empty {
+.tdb-loading {
     padding: 14px;
     text-align: center;
     font-size: 12px;
     color: var(--text-muted, #888);
 }
-
-.tdb-empty-good { font-size: 14px; }
 
 /* --- Top-10 project rows --- */
 
@@ -250,16 +247,8 @@
     color: var(--heading-color, inherit);
 }
 
-.tdb-overdue-badge {
-    flex-shrink: 0;
-    font-size: 10px;
-    font-weight: 800;
-    color: var(--sf-danger);
-    border: 1px solid var(--sf-danger);
-    border-radius: 9px;
-    padding: 0 7px;
-    white-space: nowrap;
-}
+/* The "3d overdue" chip (sf.chip) keeps its width beside a long subject. */
+.tdb-task-top .sf-chip { flex-shrink: 0; }
 
 .tdb-task-project {
     display: block;
@@ -278,6 +267,17 @@
     flex-wrap: wrap;
     gap: 4px;
     margin-top: 5px;
+}
+
+/* The priority in words, beside the border colour that also shows it. */
+.tdb-prio {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 0;
+    margin-right: 2px;
+    color: var(--text-muted, #888);
 }
 
 .tdb-chip {

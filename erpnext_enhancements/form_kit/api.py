@@ -17,6 +17,7 @@ from frappe import _
 from frappe.utils import escape_html
 
 from erpnext_enhancements.form_kit import field_help, saver
+from erpnext_enhancements.form_kit import party as party_rules
 from erpnext_enhancements.form_kit import steps as flow
 from erpnext_enhancements.form_kit.completeness import completeness_for as _completeness_for
 from erpnext_enhancements.form_kit.completeness import stage_completeness
@@ -75,6 +76,34 @@ def get_flow(doctype, name=None):
 		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
 	]
 	out["clears"] = config.get("clears") or {}
+	open_rule = (config.get("mine") or {}).get("open")
+	if open_rule:
+		# The statuses that close a record (Closed Won, Lost, Closed, Converted on Opportunity): the side
+		# panel offers no Undo for an edit that moved the record into or out of one (review of #1286:
+		# a plain save back out of Closed Won skips revert_won_status's refusal once a project exists).
+		out["closed"] = {"field": open_rule["field"], "in": list(open_rule["not_in"])}
+	won = config.get("won")
+	if won:
+		# What a move into Closed Won must carry (form kit P6.6): the board's side panel asks for it.
+		out["won"] = {
+			"status": won["status"],
+			"status_field": won.get("status_field", "status"),
+			"fields": list(won["fields"]),
+		}
+	quick = config.get("quick")
+	if quick and not name:
+		# The board's quick add (P6.7): the fields it asks for, and what it fills itself.
+		# A field quick add asks for only while the server says a new record needs it (the Lead
+		# Source, while Lead Attribution Settings require one): decided here, never in the Desk.
+		extra = [
+			fieldname for fieldname, path in (quick.get("when") or {}).items() if _quick_needs(path, doctype)
+		]
+		out["quick"] = {
+			"fields": list(quick["fields"]) + [f for f in extra if f not in quick["fields"]],
+			"fixed": dict(quick.get("fixed") or {}),
+			"owner_field": quick.get("owner_field"),
+			"stage_field": quick.get("stage_field"),
+		}
 	lost = config.get("lost")
 	if lost:
 		# What the page's Set as Lost dialog needs: the value that opens it and the child tables.
@@ -85,6 +114,45 @@ def get_flow(doctype, name=None):
 			"competitors": lost["competitors"]["doctype"],
 		}
 	return out
+
+
+#: ``quick.when`` rules that have raised in this process: logged once each, not on every page open.
+_QUICK_RULES_LOGGED = set()
+
+
+def _quick_needs(path, doctype):
+	"""Whether quick add must ask for a field, by the config's ``quick.when`` rule at ``path``.
+
+	It runs on every new-record ``get_flow``, so a rule that raises (a Settings field not migrated
+	yet, a bad path) must not take the guided page's step 1 down with it. The field is then
+	**offered**: read as "not required", a rule like Opportunity's Lead Source would hide the one
+	field ``attribution.enforce_source`` may still refuse the insert without, and nothing could ever
+	be created (review of #1291). The failure is logged once per process, not on every page open.
+	"""
+	try:
+		return bool(frappe.get_attr(path)(doctype))
+	except Exception:
+		if path not in _QUICK_RULES_LOGGED:
+			_QUICK_RULES_LOGGED.add(path)
+			frappe.log_error(
+				title=f"Guided entry: quick add rule {path} failed", message=frappe.get_traceback()
+			)
+		return True
+
+
+@frappe.whitelist(methods=["GET"])
+def party_details(doctype, party_type, party, contacts=None, addresses=None, name=None):
+	"""The Party entry component's answer when the account changes (form kit P3.2).
+
+	``{"defaults": {"contact", "billing", "site"}, "linked": {"Contact": [...], "Address": [...]}}``:
+	the account's own contact and addresses as ERPNext's form would suggest them, and which of the
+	names in ``contacts`` / ``addresses`` (JSON lists, the record's current values) are linked to it
+	or to the record ``name``. Read-only, GET only. See ``form_kit/party.py`` for the rules and the
+	permission checks.
+	"""
+	_require_configured(doctype)
+	frappe.has_permission(doctype, "read", throw=True)
+	return party_rules.details(doctype, party_type, party, contacts, addresses, name)
 
 
 @frappe.whitelist(methods=["POST"])

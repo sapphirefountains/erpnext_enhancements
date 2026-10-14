@@ -623,16 +623,27 @@ class TestPages(unittest.TestCase):
 			self.assertEqual(raw, [])
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour", "favour"):
 				self.assertNotIn(british, block.lower(), british)
-			style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
 			prefix = "pp" if block is self.pp_block else "mp"
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, on the tokens,
+			# with 44px touch targets and the 767px phone width.
+			raw = (PP_JS if prefix == "pp" else MP_JS).with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({prefix.upper()}6C_STYLE).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
+			coarse, phone, touch = (
+				"@media (pointer: coarse)",
+				"@media (max-width: 767px)",
+				"min-height: var(--sf-touch-min)",
+			)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual(
 				{c for c in classes if not c.startswith(f"{prefix}-")}, {"btn"} if "btn" in classes else set()
 			)
-			self.assertIn("@media (pointer:coarse)", style)
-			self.assertIn("@media (max-width:760px)", style)
-			self.assertIn("min-height:40px", style)
+			self.assertIn(coarse, style)
+			self.assertIn(phone, style)
+			self.assertIn(touch, style)
 		# The pages' storage helpers stay the only browser storage (tap to move is this device's pref).
 		self.assertEqual(self.pp.count("window.localStorage"), 2)
 		self.assertEqual(self.mp.count("localStorage"), 2)

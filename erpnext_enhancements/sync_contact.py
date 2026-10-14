@@ -291,6 +291,11 @@ def sanitize_primary_address_link(doc, method=None):
 
     Only applies where ``primary_address`` is a Link — never to Customer/Supplier,
     where it's a read-only Text Editor *display* and HTML is expected.
+
+    On Opportunity it also runs on ``validate``, after ERPNext's own (v1.677.0):
+    ``Opportunity.map_fields`` copies an empty column from the party by name, so an
+    Opportunity with no job site took the Customer's rendered ``primary_address`` HTML
+    on every save, after the ``before_validate`` run and after v16's link check.
     """
     value = doc.get("primary_address")
     if not value:

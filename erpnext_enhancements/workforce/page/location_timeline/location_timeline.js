@@ -17,20 +17,28 @@
 // The mode is a route segment: Trail is the bare route, which every way in opens,
 // and Live is location-timeline/live. A tap on a mode, or on a Live row, is a
 // history entry, so Back from a person's trail returns to the Live list and
-// Forward goes back to the trail; a reload keeps Live. The filters are not in the
-// URL (route_options never reach it on v16), so a reloaded Trail starts empty.
+// Forward goes back to the trail; a reload keeps Live.
+//
+// The trail on screen is in the address too (v1.662.0):
+// location-timeline?employee=…&from_date=YYYY-MM-DD&to_date=YYYY-MM-DD, and the bare
+// address is no one's trail. Each trail the manager picks (a person, a date, Load)
+// is an entry of its own, so Back returns to the one before; a reload or a pasted
+// link opens the same trail. The router copies the address's query into
+// frappe.route_options on every route change, so the same three keys arrive the
+// same way from the address, from a form's button and from Back, and every show
+// takes them out of route_options. A date that is not a real calendar day falls
+// back to today. The page writes the address itself (history.pushState for a new
+// trail, replaceState to tidy the entry on screen), on the path the router put
+// there: routing to the page it is on would make older v16 routers drop the query.
 //
 // Assets. The map is Google Maps: the API key comes from
 // erpnext_enhancements.api.travel.get_maps_config and window.EEGoogleMaps.load()
-// pulls the library in (loadAssets below). The stylesheet lives in
-// public/css/workforce/ and comes in through frappe.require with a BARE path. On v16
-// frappe.require appends
-// ?v=<build version> to a non-bundled same-origin path itself
-// (frappe/public/js/frappe/assets.js, AssetManager.execute), which is what keeps a
-// raw /assets URL out of the one-year immutable cache — and a path that already
-// carries "?v=" is NOT safe: frappe.assets.extn() reads the text after the last
-// "?" as the extension and loads the file as neither css nor js, silently.
-// public/js/training/desk_assets.js documents the same trap from the other side.
+// pulls the library in (loadAssets below). The stylesheet is the page's own
+// location_timeline.css beside this file, which Frappe's page loader sends with the
+// page (getpage), so it needs no loading here at all. It used to live in
+// public/css/workforce/ and come in through frappe.require of a raw /assets path
+// (moved in v1.652.0, S3.4b): one more request, behind a frappe.dom.freeze(), for a
+// file the page loader delivers for nothing.
 //
 // Every server string that reaches innerHTML, a tooltip or a popup goes through
 // esc(). Colours come from a fixed palette, never from data.
@@ -74,21 +82,29 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
     // the @frappe.whitelist() defs.
     const PAGE_ROUTE = 'location-timeline';
 
-    // Bare path on purpose — see the header. Only the stylesheet goes through
-    // frappe.require; the Google Maps library is loaded separately by loadAssets().
-    const ASSETS = [
-        '/assets/erpnext_enhancements/css/workforce/location_timeline.css'
-    ];
-
-    
     // Distinct colours cycled per clock-in interval.
     const PALETTE = [
         '#2490ef', '#8e44ad', '#28a745', '#f39c12', '#d63384',
         '#16a085', '#fd7e14', '#0dcaf0', '#6610f2', '#e03636'
     ];
-    const GAP_COLOR = '#e03636';
-    const STOP_COLOR = '#f39c12';
-    const SITE_COLOR = '#2490ef';
+    // The three map strokes the legend names are read from the app's tokens, so the legend
+    // swatches (location_timeline.css) and the lines on the map are the same colour. The Maps
+    // API takes a colour value, not var(), so the token's computed value is read once here;
+    // custom properties compute with var() already substituted, so --sf-danger comes back as
+    // the hex of --sf-red. All three are palette values that do not change with the theme.
+    // The hex after each is the old literal, kept as the fallback for a page without the
+    // token stylesheet.
+    function tokenColor(name, fallback) {
+        try {
+            const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return value || fallback;
+        } catch (e) {
+            return fallback;
+        }
+    }
+    const GAP_COLOR = tokenColor('--sf-danger', '#e03636');
+    const STOP_COLOR = tokenColor('--sf-warn', '#f39c12');
+    const SITE_COLOR = tokenColor('--sf-pillar-service', '#2490ef');
     const LOW_ACCURACY = 'Low Accuracy';
 
     // Before anything loads the map shows the Wasatch Front rather than a blank
@@ -201,6 +217,15 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
 
     function today() {
         return frappe.datetime.get_today();
+    }
+
+    // "YYYY-MM-DD" when the value is a real calendar day, else null: 2026-02-30 is not one.
+    // A datetime ("2026-10-01 08:00:00", as a Job Interval's start) gives its day.
+    function validDay(value) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[ T])/.exec(String(value == null ? '' : value).trim());
+        if (!m || +m[1] < 1900 || +m[1] > 2999) return null;
+        const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+        return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? m[1] + '-' + m[2] + '-' + m[3] : null;
     }
 
     // One server call -> Promise of r.message. Not frappe.xcall: that rejects with
@@ -467,8 +492,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         // ---- lifecycle ------------------------------------------------------
 
         onShow() {
-            const opts = frappe.route_options;
-            frappe.route_options = null;
+            const opts = this.takeRouteOptions();
             // `invalidateSize()` is Leaflet's; google.maps.Map has no such method, so
             // this threw a TypeError on every RETURN visit to the page (the first visit
             // survived only because `this.map` was still null) and took the rest of
@@ -477,18 +501,40 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             // hidden, and a map sized then stays wrong until told to re-measure.
             if (this.map) google.maps.event.trigger(this.map, 'resize');
             this.init().then(() => {
-                if (opts && (opts.employee || opts.from_date || opts.to_date)) {
-                    return this.applyRouteOptions(opts);
-                }
+                if (opts) return this.applyRouteOptions(opts);
                 // The route is read when init settles, not when the show fired: a Back
                 // or Forward pressed while the map was still loading has moved it since.
                 // A page left in the meantime keeps the mode it had.
                 if (pageIsCurrent()) this.setMode(this.routeMode());
+                // The bare Trail address is no one's trail: Back onto the entry from
+                // before a person was picked shows the hint again, not the last trail.
+                if (pageIsCurrent() && this.mode === 'trail' && (this.employeeField.get_value() || this.data)) {
+                    return this.applyRouteOptions({});
+                }
                 if (this.mode === 'live') this.startLivePolling();
                 return null;
             }).catch(() => {
                 // init() has already put the failure on screen in words.
             });
+        }
+
+        // The trail's three keys, taken out of frappe.route_options as the list view
+        // takes its filters: each key goes, and an emptied object goes too, or a later
+        // plain set_route to this page would replay it. Null when none was there.
+        takeRouteOptions() {
+            const opts = frappe.route_options;
+            if (!opts) return null;
+            const taken = {};
+            let any = false;
+            ['employee', 'from_date', 'to_date'].forEach((key) => {
+                if (Object.prototype.hasOwnProperty.call(opts, key)) {
+                    taken[key] = opts[key];
+                    any = true;
+                    delete opts[key];
+                }
+            });
+            if (!Object.keys(opts).length) frappe.route_options = null;
+            return any ? taken : null;
         }
 
         init() {
@@ -511,10 +557,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         }
 
         loadAssets() {
-            return new Promise((resolve, reject) => {
-                frappe.require(ASSETS, () => resolve());
-            })
-            .then(() => frappe.xcall("erpnext_enhancements.api.travel.get_maps_config"))
+            // The stylesheet came with the page; only the map library is fetched here.
+            return frappe.xcall("erpnext_enhancements.api.travel.get_maps_config")
             .then((cfg) => {
                 this.mapsConfig = cfg;
                 return window.EEGoogleMaps.load({ apiKey: cfg.api_key, libraries: ["marker", "geometry"] });
@@ -559,21 +603,89 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 __('Choose whose day to replay and press Load, or switch to Live to see who is clocked in right now.'));
         }
 
+        // The trail a route names: the address's query, a form's button, or Back and
+        // Forward. No employee is the hint; a date missing or not a real day is today
+        // (To falls back to From). The entry on screen is then corrected in place to
+        // say exactly that, which adds no history entry.
         async applyRouteOptions(opts) {
+            const employee = this.routeEmployee(opts.employee);
+            const from = validDay(opts.from_date) || today();
+            const to = validDay(opts.to_date) || from;
+            if (employee && this.data && this.trailIs(employee, from, to)) {
+                // Back or Forward onto the trail already drawn (from Live, say).
+                this.setMode('trail');
+                this.writeAddress(false);
+                return;
+            }
+            // Whatever is drawn, or still loading, is another trail.
+            this.loadSeq += 1;
+            this.data = null;
+            this.filters = null;
+            this.pausePlayback();
+            if (this.map) this.clearMapLayers();
             this.setMode('trail');
-            if (opts.employee && !this.employees.some((e) => e.value === String(opts.employee))) {
+            if (employee && !this.employees.some((e) => e.value === employee)) {
                 // An inactive employee still has a trail a manager may need to see;
-                // the picker only lists active ones, so admit this one by name.
-                this.employees.push({ value: String(opts.employee), label: String(opts.employee) });
+                // the picker only lists active ones, so admit this one by name. The
+                // Autocomplete draws a label as HTML; routeEmployee has already refused
+                // anything that is not a plain Employee name, and the label is escaped too.
+                this.employees.push({ value: employee, label: frappe.utils.escape_html(employee) });
                 this.employeeField.df.options = this.employees;
                 this.employeeField.set_data(this.employees);
             }
-            const from = opts.from_date ? String(opts.from_date).slice(0, 10) : null;
-            const to = opts.to_date ? String(opts.to_date).slice(0, 10) : from;
-            if (from) await this.setSilently(this.fromField, from);
-            if (to) await this.setSilently(this.toField, to);
-            if (opts.employee) await this.setSilently(this.employeeField, String(opts.employee));
+            await this.setSilently(this.fromField, from);
+            await this.setSilently(this.toField, to);
+            await this.setSilently(this.employeeField, employee);
+            this.writeAddress(false);
             this.loadTrail({ auto: true });
+        }
+
+        // The employee a route names, or '' for none. One the picker lists is taken as
+        // it is. Any other (an inactive employee, a pasted link) must look like an
+        // Employee name — letters, digits, space and . _ - / only, at most 140 — or it
+        // is dropped: the address is anyone's to write, and the Autocomplete draws
+        // labels as HTML, so ?employee=<img onerror=…> must never reach the picker.
+        routeEmployee(value) {
+            const employee = value == null ? '' : String(value).trim();
+            if (!employee || this.employees.some((e) => e.value === employee)) return employee;
+            return /^[\p{L}\p{N}][\p{L}\p{N} ._\/-]{0,139}$/u.test(employee) ? employee : '';
+        }
+
+        // Whether the trail last asked of the server is this one.
+        trailIs(employee, from, to) {
+            const f = this.filters;
+            return !!f && f.employee === employee
+                && f.from_datetime === from + ' 00:00:00' && f.to_datetime === to + ' 23:59:59';
+        }
+
+        // The trail in the pickers, as route options; null when no one is picked.
+        trailParams() {
+            const employee = String(this.employeeField.get_value() || '').trim();
+            if (!employee) return null;
+            const from = validDay(this.fromField.get_value()) || today();
+            const to = validDay(this.toField.get_value()) || from;
+            return { employee, from_date: from, to_date: to };
+        }
+
+        // The route to Trail for the trail in the pickers: the person and the dates go
+        // with it, so the show that follows finds that trail rather than the bare one.
+        trailRoute() {
+            const params = this.trailParams();
+            return params ? [PAGE_ROUTE, params] : [PAGE_ROUTE];
+        }
+
+        // Keep the address on the trail in the pickers. push: a trail the manager
+        // chose, a new entry; otherwise the entry on screen is corrected in place.
+        // Only on the Trail route of this page, never for a name that is not one of
+        // the people listed (a half-typed one), and not when it already says so.
+        writeAddress(push) {
+            if (!pageIsCurrent() || this.routeMode() !== 'trail') return;
+            const params = this.trailParams();
+            if (params && this.employees.length && !this.employees.some((e) => e.value === params.employee)) return;
+            const url = window.location.pathname + (params ? '?' + new URLSearchParams(params).toString() : '');
+            if (url === window.location.pathname + window.location.search) return;
+            if (push) window.history.pushState(null, '', url);
+            else window.history.replaceState(window.history.state, '', url);
         }
 
         async setSilently(field, value) {
@@ -587,6 +699,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
 
         onFilterChange() {
             if (this.silence || this.mode !== 'trail' || !this.map) return;
+            // A trail the manager chose: an entry of its own, so Back returns to the last.
+            this.writeAddress(true);
             this.loadTrail({ auto: true });
         }
 
@@ -747,12 +861,13 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
         // A mode the manager tapped: set it, then give it a history entry. The router's
         // show that follows finds the mode already set, and setMode returns early on the
         // mode it is in, so that show cannot redraw the previous trail over one that is
-        // loading. Tapping the mode already routed adds nothing.
+        // loading. Tapping the mode already routed adds nothing. Trail takes the trail in
+        // the pickers along in its route options, so it comes back as it was left.
         pickMode(mode) {
             if (mode !== 'trail' && mode !== 'live') return;
             this.setMode(mode);
             if (pageIsCurrent() && this.routeMode() !== mode) {
-                frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : [PAGE_ROUTE]);
+                frappe.set_route(mode === 'live' ? [PAGE_ROUTE, 'live'] : this.trailRoute());
             }
         }
 
@@ -775,7 +890,10 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 this.page.set_primary_action(__('Refresh'), () => this.pollLive(), 'refresh');
                 this.startLivePolling();
             } else {
-                this.page.set_primary_action(__('Load'), () => this.loadTrail(), 'refresh');
+                this.page.set_primary_action(__('Load'), () => {
+                    this.writeAddress(true);
+                    this.loadTrail();
+                }, 'refresh');
                 this.stopLivePolling();
                 if (this.map) {
                     if (this.data) this.renderTrail();
@@ -1462,7 +1580,8 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 const html = '<span class="lt-live-pin' + (stale ? ' stale' : '') + '">'
                     + '<i class="lt-live-dot"></i>'
                     + '<span class="lt-live-label"><b>' + esc(r.employee_name || r.employee) + '</b>'
-                    + '<small>' + esc((r.project_title || r.project || __('No project')) + ' · ' + fmtDuration(r.elapsed_seconds)) + '</small>'
+                    // A stale pin says so in a word, not only in its red dot.
+                    + '<small>' + esc((stale ? __('Stale') + ' · ' : '') + (r.project_title || r.project || __('No project')) + ' · ' + fmtDuration(r.elapsed_seconds)) + '</small>'
                     + '</span></span>';
                 
                 const marker = this.createMarker(ll, `<div class="lt-icon">${html}</div>`, stale ? 0 : 200, r.employee_name || r.employee);
@@ -1537,7 +1656,7 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
             return html;
         }
 
-        async openTrailFor(idx) {
+        openTrailFor(idx) {
             const rows = (this.live.data && this.live.data.employees) || [];
             const r = rows[idx];
             if (!r || !r.employee) return;
@@ -1546,12 +1665,12 @@ frappe.pages['location-timeline'].on_page_show = function (wrapper) {
                 this.employeeField.df.options = this.employees;
                 this.employeeField.set_data(this.employees);
             }
-            // pickMode, so the drill-down is an entry: Back returns to the Live list.
-            this.pickMode('trail');
-            await this.setSilently(this.fromField, today());
-            await this.setSilently(this.toField, today());
-            await this.setSilently(this.employeeField, String(r.employee));
-            this.loadTrail({ auto: true });
+            // A route of its own, so the drill-down is an entry (Back returns to the Live
+            // list), with today's trail for that person in its options: the show that
+            // follows loads it through applyRouteOptions and writes it into the address.
+            if (pageIsCurrent()) {
+                frappe.set_route([PAGE_ROUTE, { employee: String(r.employee), from_date: today(), to_date: today() }]);
+            }
         }
     }
 

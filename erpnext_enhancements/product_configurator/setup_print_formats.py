@@ -27,7 +27,7 @@ PRICING_PF = "Product Configuration - Pricing Summary"
 _HEADER = """
   <div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:2px solid #333; padding-bottom:6px;">
     <h2 style="margin:0;">{{ title }} &mdash; {{ doc.part_number | e }}</h2>
-    <span style="color:#777;">{{ doc.name | e }} &middot; {{ frappe.utils.formatdate(doc.modified) }}</span>
+    <span style="color:#777;">{{ doc.name | e }} &middot; {{ ps_date(doc.modified) }}</span>
   </div>
 
   <table style="width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:12px;">

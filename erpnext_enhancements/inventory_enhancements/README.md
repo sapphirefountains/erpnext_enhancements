@@ -58,7 +58,9 @@ warehouse itself. A group or disabled warehouse comes back `unknown` with a sent
 than an item search pre-filled with a URL. The page's camera also works on an iPhone now: it
 used `BarcodeDetector` alone, which Safari does not have, so the button never appeared there;
 it now falls back to the vendored jsQR decoder (QR only — an item *barcode* on an iPhone
-still wants the wedge scanner or "Find item").
+still wants the wedge scanner or "Find item"). Since v1.666.0 the camera, the decoder and the
+sheets' history handling are the scanner kit's (`public/js/scanner_kit`), shared with the
+Device Console; what a camera read's entry is used for while its lookup runs stays the page's.
 
 **The count page's sheets are route segments, so the phone's Back button closes them.**
 Camera Scan is `inventory-scanner-audit/camera` and Find Item is

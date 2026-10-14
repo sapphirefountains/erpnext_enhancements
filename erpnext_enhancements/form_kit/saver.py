@@ -334,10 +334,29 @@ def save_step(doctype, name, values, modified, step=None):
 		}
 
 	allowed = flow.editable_fields(steps, step)
+	# What the record shows before the save, to report what its hooks changed besides (below).
+	before = None if step else serialize(doc, shown)
 	assigned = assign(doc, allowed, values)
 	if assigned:
 		# Only when something was assigned: an empty save would still stamp a new ``modified``
 		# and turn every other open copy of the record into a conflict.
 		doc.save()
-	saved = shown if step else {key: field for key, field in shown.items() if key in assigned}
+	if step:
+		saved = shown
+	else:
+		# The fields sent, and any other field the flow shows that the save itself changed (form kit
+		# P3.2): Opportunity.map_fields fills an empty contact from the new account, party_mirrors
+		# copies the hidden contact up, a fetch_from refreshes. Without them the page would keep
+		# showing the old value until a reload, and its next save would put that value back.
+		changed = _changed(before, serialize(doc, shown))
+		saved = {key: field for key, field in shown.items() if key in assigned or key in changed}
 	return _result(doctype, doc, saved)
+
+
+def _changed(before, after):
+	"""The fieldnames whose serialised value differs between two :func:`serialize` results."""
+
+	def text(value):
+		return json.dumps(value, sort_keys=True, default=str)
+
+	return {key for key, value in after.items() if text(value) != text((before or {}).get(key))}

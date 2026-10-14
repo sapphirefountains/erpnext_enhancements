@@ -494,6 +494,43 @@ class TestFormatPhone(unittest.TestCase):
         self.assertEqual(ps.ps_phone(None), "")
 
 
+class TestPrintDates(unittest.TestCase):
+    """Form kit P3.4: print shows a date as every channel does (utils.normalize), not as
+    frappe.format does (System Settings, a 24-hour time)."""
+
+    def test_dates_times_and_nothing(self):
+        import datetime as dt
+
+        self.assertEqual(ps.ps_date("2026-10-14"), "10/14/2026")
+        self.assertEqual(ps.ps_date(dt.date(2026, 10, 14)), "10/14/2026")
+        self.assertEqual(ps.ps_date(dt.datetime(2026, 10, 14, 14, 5)), "10/14/2026")
+        self.assertEqual(ps.ps_datetime(dt.datetime(2026, 10, 14, 14, 5)), "10/14/2026 2:05 PM")
+        self.assertEqual(ps.ps_datetime("2026-10-14 00:30:00"), "10/14/2026 12:30 AM")
+        self.assertEqual(ps.ps_time(dt.timedelta(hours=14, minutes=5)), "2:05 PM")
+        for helper in (ps.ps_date, ps.ps_datetime, ps.ps_time):
+            with self.subTest(helper=helper.__name__):
+                self.assertEqual(helper(None), "")
+                self.assertEqual(helper(""), "")
+
+    def test_what_it_cannot_read_prints_as_written_and_escaped(self):
+        self.assertEqual(ps.ps_date("<b>soon</b>"), "&lt;b&gt;soon&lt;/b&gt;")
+
+    def test_no_print_template_formats_a_date_by_hand(self):
+        """Every print generator and the print-format fixture reach dates through ps_date,
+        ps_datetime or ps_time."""
+        # Any date fieldtype literal, not only one inside a simple frappe.format(...): v1.650.0's
+        # first version of this check stopped at the first ")" and so missed
+        # frappe.format(frappe.utils.nowdate(), {"fieldtype": "Date"}) in the Project formats.
+        by_hand = re.compile(
+            r'\\?"fieldtype\\?": ?\\?"(?:Date|Datetime|Time)\\?"|frappe\.utils\.formatdate\(|\bformatdate\('
+        )
+        sources = [*sorted(APP.rglob("setup_*print_formats.py")), APP / "fixtures" / "print_format.json"]
+        self.assertGreater(len(sources), 5)
+        for path in sources:
+            with self.subTest(file=str(path.relative_to(APP))):
+                self.assertIsNone(by_hand.search(path.read_text(encoding="utf-8")))
+
+
 class TestQtyText(unittest.TestCase):
     def test_whole_numbers_lose_the_float(self):
         """`{{ row.qty }}` printed `1.0` on every line of every format."""
@@ -1255,7 +1292,10 @@ class TestTrainingCertificate(unittest.TestCase):
             version_number=3, score_percent=94,
         )
         doc.__dict__.update(overrides)
-        return Environment().from_string(self.ns["_CERTIFICATE_HTML"]).render(doc=doc, frappe=frappe, letter_head="LETTERHEAD")
+        env = Environment()
+        # The ps_* Jinja globals hooks.py registers (dates print through ps_date, form kit P3.4).
+        env.globals.update({name: getattr(ps, name) for name in dir(ps) if name.startswith("ps_")})
+        return env.from_string(self.ns["_CERTIFICATE_HTML"]).render(doc=doc, frappe=frappe, letter_head="LETTERHEAD")
 
     def test_it_is_on_the_chrome_and_draws_no_second_logo(self):
         html = self.ns["_CERTIFICATE_HTML"]
