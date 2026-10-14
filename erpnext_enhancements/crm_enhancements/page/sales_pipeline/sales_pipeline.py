@@ -30,6 +30,7 @@ board (see the Project Dashboard docstring for the history there).
 import frappe
 from frappe.utils import cint, date_diff, flt, get_datetime, getdate, now_datetime, nowdate
 
+from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, has_field
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
 
 # Statuses that never appear on the board.
@@ -146,22 +147,27 @@ def get_pipeline_data():
 	open_stages, parked_stages = _stage_columns()
 	amber_days, red_days = _thresholds()
 
+	fields = [
+		"name",
+		"status",
+		"customer_name",
+		"party_name",
+		"opportunity_amount",
+		"opportunity_owner",
+		"custom_opportunity_summary",
+		"custom_stage_changed_on",
+		"custom_date_closed_won",
+		"custom_created_project",
+		"modified",
+	]
+	# Read only when the column exists: a field list naming a missing column fails the
+	# whole board, not just the one column that uses it.
+	if has_field():
+		fields.append(HISTORICAL_FIELD)
 	opportunities = frappe.get_all(
 		"Opportunity",
 		filters={"status": ("in", open_stages + parked_stages + [WON_STATUS])},
-		fields=[
-			"name",
-			"status",
-			"customer_name",
-			"party_name",
-			"opportunity_amount",
-			"opportunity_owner",
-			"custom_opportunity_summary",
-			"custom_stage_changed_on",
-			"custom_date_closed_won",
-			"custom_created_project",
-			"modified",
-		],
+		fields=fields,
 	)
 
 	owner_ids = {opp.opportunity_owner for opp in opportunities if opp.opportunity_owner}
@@ -209,7 +215,10 @@ def get_pipeline_data():
 	won_waiting = []
 	for opp in opportunities:
 		if opp.status == WON_STATUS:
-			if not opp.custom_created_project:
+			# Historical deals (pre-ERPNext, untouched for 90 days -- historical.py,
+			# v1.628.0) are not "awaiting" anything: they were delivered before this
+			# system existed, and the column is a hand-off worklist.
+			if not opp.custom_created_project and not cint(opp.get(HISTORICAL_FIELD)):
 				won_waiting.append(opp)
 		else:
 			by_status.setdefault(opp.status, []).append(opp)

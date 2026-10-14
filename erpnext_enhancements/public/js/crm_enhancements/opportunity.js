@@ -108,12 +108,16 @@ frappe.ui.form.on("Opportunity", {
 		// gets the same prompt once ("No" just dismisses — it was won intentionally
 		// earlier). Guarded to fire at most once per load and never for a status
 		// change made during this session (the realtime prompt covers transitions).
+		// Never for a historical deal (pre-ERPNext, untouched for 90 days —
+		// crm_enhancements/historical.py, v1.628.0): it is excluded from every
+		// won-without-project warning, and opening one to read it is not a hand-off.
 		if (
 			!frm._ee_reopen_checked &&
 			!frm.is_new() &&
 			frm._ee_loaded_status === "Closed Won" &&
 			frm.doc.status === "Closed Won" &&
 			!frm.doc.custom_created_project &&
+			!frm.doc.custom_is_historical &&
 			erpnext_enhancements.crm &&
 			erpnext_enhancements.crm.confirm_won_next_step
 		) {

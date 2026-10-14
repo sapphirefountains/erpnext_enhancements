@@ -15,11 +15,16 @@ source) and ``process_steps.py`` (the engine that seeds the steps).
 (Initial Payment From Customer) no longer blocks 6/7, so a project can show, e.g.,
 both "5. Initial Payment From Customer" and "6. Outline Tasks..." at once. Uses
 ``process_steps._actionable_steps`` rather than re-deriving that rule here.
+
+Historical deals (created before 2025-08-01, no person's activity in 90 days —
+``crm_enhancements/historical.py``, v1.628.0) are left out unless "Include
+historical" is ticked, like every other hand-off worklist.
 """
 
 import frappe
 from frappe import _
 
+from erpnext_enhancements.crm_enhancements.historical import exclude_filter_dict
 from erpnext_enhancements.process_steps import _actionable_steps
 
 
@@ -46,6 +51,8 @@ def get_data(filters):
 	opp_filters = {"custom_created_project": ("is", "set")}
 	if filters.get("opp_status"):
 		opp_filters["status"] = filters.opp_status
+	if not frappe.utils.cint(filters.get("include_historical")):
+		opp_filters.update(exclude_filter_dict())
 
 	opps = frappe.get_all(
 		"Opportunity",

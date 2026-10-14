@@ -29,3 +29,11 @@ Keyed restore of the three link fields from the pre-run export; retro projects d
 
 ## Explicitly NOT in this work item
 Retiring the two redundant link fields (`custom_project` deprecation is a FIXTURE change owned by the CRM workstream); opportunity amount/stage cleanup; `custom_date_closed_won` backfill.
+
+## Decision 2026-10-13 (Nik; TASK-2026-00917) — shipped in v1.628.0
+Historical Opportunities stop raising "Closed Won but no linked Project" warnings and are left out of KPI measurements. **This supersedes the "no invented status field" line in Scope (i):** the mechanism is a stored, read-only Check, `Opportunity.custom_is_historical` ("Historical (pre-ERPNext)"), because Number Cards, Dashboard Charts, Report Builder and the list view can only filter on a stored column.
+
+- **Rule:** `creation < 2025-08-01` (every Zoho import, whenever it was won) AND no activity in the last 90 days — a Comment (type Comment/Attachment), a ToDo, or a status-changing Version that was not a Data Import, by anyone other than Administrator/Guest; or a Communication on the deal (by reference or Communication Link) whoever logged it.
+- **Computed** nightly by `crm_enhancements/historical.py::refresh_historical_flags` (and once by the `set_historical_opportunities` patch); a person changing a historical deal's status un-flags it in the same save.
+- **Applied** to the nag, the reconciliation and hand-off coverage reports ("Include historical" checkbox, off by default), the Sales Dashboard backlog widget, the hand-off KPI and the Closed-Won KPIs, the Sales Pipeline's "Won — awaiting project" column, the Opportunity form's prompts and Hand-Off tab, the AI hand-off tool (which reports how many it left out), and the Closed-Won Number Card and the two by-status charts. See `crm_enhancements/README.md` → Historical opportunities.
+- The worksheet disposition "Historical - no project" in Scope (i) is now this flag; the triage of the non-historical remainder is unchanged.

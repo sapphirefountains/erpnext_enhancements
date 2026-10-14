@@ -1386,3 +1386,13 @@ erpnext_enhancements.patches.normalize_stored_values
 # the two training review pages, a page title), retires the Hierarchical Task View page (its sidebar/shortcut rows,
 # then the Page, without force) and moves the seeded /app/projects Desk Shortcut to /desk. Cannot raise, safe twice.
 erpnext_enhancements.patches.custom_pages_s1_navigation
+# Historical opportunities (v1.628.0, WI-024, Nik 2026-10-13): put back the real won date on the eleven deals the
+# 2026-06-30 re-import dated 06-30-2026 (stamp_won_date stamped on any save of a won deal; it is transition-only now).
+# Only where the value is still 2026-06-30, so a hand-corrected date stands; update_modified=False. CRM-OPP-2026-00123
+# really was won that day and is a documented no-op. Cannot raise; done+skipped+failed sums to 12. Safe twice.
+erpnext_enhancements.patches.restore_opportunity_won_dates
+# Historical opportunities (v1.628.0): creates Opportunity.custom_is_historical from its fixture record (patches run
+# before fixture sync) and runs the nightly refresh once, so the hand-off warnings are quiet from the first morning.
+# Order against the patch above does not matter: the rule reads creation and activity, never the won date.
+# Cannot raise, safe twice.
+erpnext_enhancements.patches.set_historical_opportunities

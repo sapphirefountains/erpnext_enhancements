@@ -21,6 +21,10 @@ Newest first, because a 2014 deal has no bearing on current reporting and a 2026
 one does. The default date filter starts at 2024-01-01 for the same reason — the
 whole 2014-2026 backlog is available, but opening the report should show you the
 part that matters.
+
+Historical deals (created before 2025-08-01, no person's activity in 90 days —
+`crm_enhancements/historical.py`, v1.628.0) are left out unless "Include
+historical" is ticked; `unlinked_won_opportunities` applies the filter.
 """
 
 import frappe

@@ -25,6 +25,7 @@ from frappe.utils import add_days, flt, getdate, nowdate
 
 from erpnext_enhancements.api.dashboard_widgets import fetch_all, widget_feed
 from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
+from erpnext_enhancements.crm_enhancements.historical import exclude_filter_dict
 
 ROW_LIMIT = 20
 
@@ -82,7 +83,9 @@ def get_funnel_cascade():
 			if frappe.db.has_column("Opportunity", "custom_date_closed_won")
 			else "modified"
 		)
-		won = _count("Opportunity", {"status": "Closed Won", won_col: (">=", since)})
+		# Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.628.0)
+		# never count as a win in the funnel, matching the KPI snapshot's won counts.
+		won = _count("Opportunity", {"status": "Closed Won", won_col: (">=", since), **exclude_filter_dict()})
 		return {
 			"leads": leads,
 			"converted": converted,

@@ -56,6 +56,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_months, flt, getdate, nowdate
 
+from erpnext_enhancements.crm_enhancements.historical import exclude_sql
+
 #: Statuses that count as won and lost.
 #:
 #: This used to read: "Closed" is neither -- on this site it is used for administratively
@@ -128,9 +130,13 @@ def _all_streams():
 
 
 def _opportunity_rollup(from_date, to_date):
-	"""Opportunity counts per stream. One row per (stream, outcome)."""
+	"""Opportunity counts per stream. One row per (stream, outcome).
+
+	Historical deals (pre-ERPNext, untouched for 90 days -- historical.py, v1.628.0) are
+	left out of every outcome, not just the wins, so the win rate is not skewed by them.
+	"""
 	rows = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			vs.value_stream AS stream,
 			SUM(1) AS total,
@@ -141,6 +147,7 @@ def _opportunity_rollup(from_date, to_date):
 		INNER JOIN `tabOpportunity` o
 			ON o.name = vs.parent AND vs.parenttype = 'Opportunity'
 		WHERE o.transaction_date BETWEEN %(from_date)s AND %(to_date)s
+		  AND {exclude_sql("o")}
 		GROUP BY vs.value_stream
 		""",
 		{"won": WON_STATUSES, "lost": LOST_STATUSES, "from_date": from_date, "to_date": to_date},
@@ -154,10 +161,11 @@ def _revenue_rollup(from_date, to_date):
 
 	`total_billed_amount` is the honest figure where a Project exists. Where it
 	does not — the WP-7 backlog — the opportunity amount is used instead, and the
-	count of those is returned so the report can say so.
+	count of those is returned so the report can say so. Historical deals are left out,
+	as in ``_opportunity_rollup``.
 	"""
 	rows = frappe.db.sql(
-		"""
+		f"""
 		SELECT
 			vs.value_stream AS stream,
 			SUM(COALESCE(NULLIF(p.total_billed_amount, 0), o.opportunity_amount, 0)) AS revenue,
@@ -168,6 +176,7 @@ def _revenue_rollup(from_date, to_date):
 		LEFT JOIN `tabProject` p ON p.custom_opportunity = o.name
 		WHERE o.status IN %(won)s
 		  AND o.transaction_date BETWEEN %(from_date)s AND %(to_date)s
+		  AND {exclude_sql("o")}
 		GROUP BY vs.value_stream
 		""",
 		{"won": WON_STATUSES, "from_date": from_date, "to_date": to_date},
@@ -273,7 +282,7 @@ def _message(from_date, to_date, spend, revenue):
 		notes.append(
 			_("{0} won opportunities in this window have no linked Project, so their revenue is the "
 			  "quoted amount rather than the billed one. Work the <i>Closed Won Reconciliation</i> "
-			  "report to close that gap.").format(orphaned)
+			  "report to close that gap. Historical (pre-ERPNext) deals are not counted here.").format(orphaned)
 		)
 
 	return "<br><br>".join(notes)

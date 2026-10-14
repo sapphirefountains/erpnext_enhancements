@@ -42,6 +42,10 @@
  *    tab from rendering blank, which was the pre-fix behavior for such records.
  *  - Without a linked Project, they're derived from the Opportunity: "Mark Won"
  *    completes when the status is Closed Won; the others are upcoming.
+ *  - A historical deal (`custom_is_historical`: pre-ERPNext and untouched for 90
+ *    days, v1.628.0) with no Project marks neither step 2 nor step 3 as next,
+ *    never reads Ready or OVERDUE, and shows one quiet line saying it is excluded
+ *    from hand-off warnings. Create Project stays, as a plain button.
  *
  * Styling matches the Project's hand-off bar (Frappe CSS vars; Light + Night).
  */
@@ -69,6 +73,7 @@
 			.ee-process-status.green { color: #16a34a; }
 			.ee-process-status.orange { color: #d97706; }
 			.ee-process-status.red { color: #dc2626; font-weight: 600; }
+			.ee-process-status.muted { color: var(--text-muted); }
 			/* A step's buttons live in the step's own box. Wider basis so the
 			   labels fit, stacked and full-width so they stay readable when the
 			   bar is squeezed. */
@@ -161,6 +166,9 @@
 			gate_message: s.gate_message || __("Schedule the Hand-Off Meeting on the Opportunity first."),
 			can_skip: !!s.can_skip,
 			project: (known ? s.project : frm.doc.custom_created_project) || "",
+			// Pre-ERPNext and untouched for 90 days (crm_enhancements/historical.py).
+			// Reported on both branches of handoff_state; the doc is the fallback.
+			historical: !!(state && "is_historical" in s ? s.is_historical : frm.doc.custom_is_historical),
 		};
 	}
 
@@ -196,12 +204,19 @@
 			handoff_meta = __("Hold the hand-off meeting");
 		}
 
+		// A historical deal is not waiting on a hand-off, so neither step 2 nor
+		// step 3 is "next" and nothing reads Ready or OVERDUE.
+		const quiet = f.historical && f.won && !project_created;
+		if (quiet && !f.held) handoff_meta = __("Not tracked (historical)");
+
 		// The gate, shown rather than merely enforced, so the order is visible
 		// before somebody hits a server error.
 		const unblocked = f.scheduled || f.held || !f.gate_applies;
 		let create_meta;
 		if (project_created) {
 			create_meta = __("Done");
+		} else if (quiet) {
+			create_meta = __("Not tracked (historical)");
 		} else if (f.won && !unblocked) {
 			create_meta = __("Blocked until the hand-off meeting is booked");
 		} else if (f.won) {
@@ -222,14 +237,14 @@
 				no: 2,
 				title: __("Hold Hand-Off Meeting"),
 				status: f.held ? (f.skip_reason ? "Skipped" : "Completed") : "Pending",
-				current: f.won && !f.held,
+				current: f.won && !f.held && !quiet,
 				meta: handoff_meta,
 			},
 			{
 				no: 3,
 				title: __("Create Project in PM System"),
 				status: project_created ? "Completed" : "Pending",
-				current: f.won && unblocked && !project_created,
+				current: f.won && unblocked && !project_created && !quiet,
 				meta: create_meta,
 			},
 		];
@@ -248,7 +263,10 @@
 		if (!f.won) return "";
 		let cls = "orange";
 		let text;
-		if (f.held && f.skip_reason) {
+		if (f.historical && !f.project) {
+			cls = "muted";
+			text = __("Historical (pre-ERPNext) — excluded from hand-off warnings.");
+		} else if (f.held && f.skip_reason) {
 			text = __("Hand-off SKIPPED {0} by {1}: {2}", [
 				when(f.held_on) || __("earlier"),
 				f.held_by || "",
@@ -293,6 +311,16 @@
 		const by_step = {};
 		if (!f.won) return by_step;
 		const at = (no, html) => (by_step[no] = by_step[no] || []).push(html);
+
+		// Historical (pre-ERPNext, untouched for 90 days): no meeting buttons and
+		// no primary call to action. Create Project stays available as a plain
+		// button, because "excluded from warnings" must not mean "impossible".
+		if (f.historical && !f.project) {
+			if (f.gate_open || !f.gate_applies) {
+				at(STEP_PROJECT, button("create", __("Create Project in PM System"), "default"));
+			}
+			return by_step;
+		}
 
 		// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
 		// can be offered together, and then this one still leads — one primary
@@ -472,7 +500,7 @@
 				// audit found 17 of 17 meetings silently past SLA, and a warning
 				// only visible to somebody who already went looking is the failure
 				// mode, not the fix.
-				if (f.overdue && !f.held) {
+				if (f.overdue && !f.held && !f.historical) {
 					frm.dashboard.add_comment(
 						__("Hand-off meeting is OVERDUE (due {0}). {1}", [
 							when(f.due_by),

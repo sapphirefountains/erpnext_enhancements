@@ -36,6 +36,7 @@ from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
 
 from erpnext_enhancements import email_style
+from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD, exclude_filters, has_field
 from erpnext_enhancements.feature_flags import process_automation_enabled
 
 
@@ -240,14 +241,18 @@ def _unconverted_list_url(names=None):
 		query = urlencode({"name": json.dumps(["in", list(names)])})
 		return get_url("/app/opportunity?" + query)
 
-	query = urlencode(
-		{
-			"status": "Closed Won",
-			"custom_created_project": '["is","not set"]',
-			"custom_date_closed_won": '["is","set"]',
-		}
-	)
-	return get_url("/app/opportunity?" + query)
+	params = {
+		"status": "Closed Won",
+		"custom_created_project": '["is","not set"]',
+		"custom_date_closed_won": '["is","set"]',
+	}
+	# The nag leaves historical deals out (crm_enhancements/historical.py, v1.628.0), so
+	# the fallback link does too -- for the same reason as above: a link must show the
+	# set the sentence counted. Only once the column exists; naming a missing field in
+	# a list-view filter is an error on the page.
+	if has_field():
+		params[HISTORICAL_FIELD] = "0"
+	return get_url("/app/opportunity?" + urlencode(params))
 
 
 def nag_unconverted_opportunities():
@@ -307,6 +312,11 @@ def nag_unconverted_opportunities():
 	# all -- the Link lives on Project -- so it is a second query and a set difference
 	# rather than a cleverer filter. That is the whole reason it was missed: the other
 	# two fit in the filter list and this one does not.
+	#
+	# And historical deals stay out (v1.628.0, WI-024, decided 2026-10-13): created before
+	# 2025-08-01 with no person's activity in 90 days. A dated Zoho-era win with no project
+	# is history, not a hand-off somebody forgot, and every day it is in this message is a
+	# day the message teaches people to skim past the real ones.
 	opportunities = frappe.get_all(
 		"Opportunity",
 		filters=[
@@ -315,6 +325,7 @@ def nag_unconverted_opportunities():
 			["custom_project", "is", "not set"],
 			["custom_date_closed_won", "is", "set"],
 			["custom_date_closed_won", "<=", cutoff],
+			*exclude_filters(),
 		],
 		fields=["name", "customer_name", "party_name"],
 		order_by="custom_date_closed_won asc",
