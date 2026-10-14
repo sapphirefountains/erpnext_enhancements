@@ -22,6 +22,11 @@
  *   drops           what a drop on a stage means: save the new status (open stages and On Hold),
  *                   open the side panel's required fields (Closed Won, Lost: they need ranks or
  *                   reasons, P6.6), nothing (its own stage), or refuse
+ *   closed          (v1.688.0) the Closed Won and Lost columns: the deals the server sends as
+ *                   `closed` (closed in its last `closed_days` days), kept apart from `deals`, so
+ *                   no open total, forecast, table, timeline, attention count or selection includes
+ *                   them. Column order is the server's: open stages, Closed Won, On Hold, Lost
+ *                   (Nik, 2026-10-14: "Put Lost last and On Hold second to last")
  *
  * Part C (v1.675.0):
  *
@@ -72,11 +77,13 @@ export const STREAM_ORDER = ["Design", "Build", "Service", "Events", "Products",
 export const NO_STREAM = "";
 
 // Stage kinds. open and parked (On Hold) are board columns a card can be dropped on and saved;
-// close (Closed Won, Lost) are drop targets that open their required fields in the side panel
-// (part C; before it, the guided Close step); other is an open
-// status the options no longer list: shown, so its deals are counted, but never a drop target.
+// close (Closed Won, Lost) are columns of recently closed deals (v1.688.0) and drop targets that
+// open their required fields in the side panel (part C; before it, the guided Close step); other is
+// an open status the options no longer list: shown, so its deals are counted, but never a drop
+// target. Every kind is a board column; only the others are forecast.
 export const KINDS = ["open", "parked", "other", "close"];
-export const BOARD_KINDS = ["open", "parked", "other"];
+export const BOARD_KINDS = ["open", "parked", "other", "close"];
+export const FORECAST_KINDS = ["open", "parked", "other"];
 // What a closing stage's move must carry (the server's `gate`): Closed Won's ranks, or Lost's reasons.
 export const GATES = ["won", "lost"];
 
@@ -252,9 +259,9 @@ export function days_between(today, since) {
 }
 
 // 0 fresh, 1 amber, 2 red; sales_pipeline._stale_level's rule (a threshold of 0 switches its
-// level off). A parked deal (On Hold) never glows: it is waiting on purpose.
+// level off). A parked deal (On Hold) never glows: it is waiting on purpose; a closed one is done.
 export function stale_level(days, thresholds, kind) {
-	if (kind === "parked" || days === null || days === undefined) return 0;
+	if (kind === "parked" || kind === "close" || days === null || days === undefined) return 0;
 	const amber = num((thresholds || {}).amber);
 	const red = num((thresholds || {}).red);
 	if (red > 0 && days >= red) return 2;
@@ -365,6 +372,14 @@ export function snooze_state(deal, today) {
 	return a > b ? "snoozed" : "returning";
 }
 
+// A closing column: the most recently closed first, then by title.
+export function sort_closed(deals) {
+	return (deals || []).slice().sort((a, b) => {
+		if (a.since !== b.since) return a.since < b.since ? 1 : -1;
+		return a.title.localeCompare(b.title) || a.name.localeCompare(b.name);
+	});
+}
+
 // Stalest first (the TV board's order), then by title, so a column reads the same each time.
 export function sort_deals(deals) {
 	return deals.slice().sort((a, b) => {
@@ -376,7 +391,10 @@ export function sort_deals(deals) {
 }
 
 // The server payload as the board's model:
-//   { stages: [{ key, label, kind }], deals: [deal], by_name, today, thresholds, currency }
+//   { stages: [{ key, label, kind }], deals: [deal], by_name, closed: [deal], closed_days, today,
+//     thresholds, currency }
+// `closed` (v1.688.0) is the Closed Won and Lost columns' deals, most recently closed first, and is
+// in neither `deals` nor `by_name`: a closed card is never dragged, selected or counted as open.
 // Stage columns are the server's (the status options, as the Sales Pipeline page reads them),
 // in its order; an open deal whose status is not among them gets an "other" column of its own,
 // after the open stages and before On Hold, so the board never drops a deal from its totals.
@@ -427,10 +445,22 @@ export function prepare(data) {
 		deals.push(deal);
 		by_name[deal.name] = deal;
 	});
+	const closed = [];
+	const seen = {};
+	(d.closed || []).forEach((raw) => {
+		const name = text((raw || {}).name);
+		if (!name || seen[name] || by_name[name]) return;
+		const stage = by_label[text(raw.status)];
+		if (!stage || stage.kind !== "close") return;
+		seen[name] = true;
+		closed.push(prepare_deal(raw, stage, today, thresholds));
+	});
 	return {
 		stages,
 		deals,
 		by_name,
+		closed: sort_closed(closed),
+		closed_days: num(d.closed_days),
 		today,
 		thresholds,
 		currency: text(d.currency) || "USD",
@@ -469,11 +499,16 @@ export function totals(deals) {
 	return { count, total };
 }
 
-// The plain board: one column per board stage, its deals (stalest first) and its totals.
+// The plain board: one column per board stage, its deals and its totals. An open column is
+// stalest first; a closing column holds the recently closed deals, the most recent first.
 export function columns(model) {
 	const deals = (model || {}).deals || [];
+	const closed = (model || {}).closed || [];
 	return board_stages(model).map((stage) => {
-		const list = sort_deals(deals.filter((d) => d.stage === stage.key));
+		const list =
+			stage.kind === "close"
+				? sort_closed(closed.filter((d) => d.stage === stage.key))
+				: sort_deals(deals.filter((d) => d.stage === stage.key));
 		return Object.assign({ stage, deals: list }, totals(list));
 	});
 }
@@ -483,12 +518,15 @@ export function columns(model) {
 // The rows: [{ stream, pillar, items: [{ deal, also: [other streams] }], count, total }], the six
 // of STREAM_ORDER always (a row with no deals says so), then any other stream a deal names, then
 // "No value stream" when a deal has none. A deal is in every row of its streams and counts in
-// full in each; the board's own total (totals(model.deals)) counts it once.
+// full in each; the board's own total (totals(model.deals)) counts it once. A row's items take in
+// its recently closed deals too, for the closing columns' cells; its count and total are open
+// deals only, like every total on the board.
 export function stream_rows(model) {
 	const deals = (model || {}).deals || [];
+	const closed = (model || {}).closed || [];
 	const extra = [];
 	let none = false;
-	deals.forEach((deal) => {
+	deals.concat(closed).forEach((deal) => {
 		if (!deal.streams.length) none = true;
 		deal.streams.forEach((s) => {
 			if (!STREAM_ORDER.includes(s) && !extra.includes(s)) extra.push(s);
@@ -498,9 +536,11 @@ export function stream_rows(model) {
 	const order = STREAM_ORDER.concat(extra);
 	if (none) order.push(NO_STREAM);
 	return order.map((stream) => {
-		const members =
-			stream === NO_STREAM ? deals.filter((d) => !d.streams.length) : deals.filter((d) => d.streams.includes(stream));
-		const items = sort_deals(members).map((deal) => ({ deal, also: deal.streams.filter((s) => s !== stream) }));
+		const member = (d) => (stream === NO_STREAM ? !d.streams.length : d.streams.includes(stream));
+		const members = deals.filter(member);
+		const items = sort_deals(members)
+			.concat(sort_closed(closed.filter(member)))
+			.map((deal) => ({ deal, also: deal.streams.filter((s) => s !== stream) }));
 		return Object.assign(
 			{ stream, pillar: stream === NO_STREAM ? "neutral" : pillar_for(stream), items },
 			totals(members)
@@ -537,7 +577,8 @@ function figures(deals) {
 // On Hold deals count in a month's deals and value but, as everywhere, not in its weighted.
 export function forecast(model) {
 	const deals = (model || {}).deals || [];
-	const stages = board_stages(model).map((stage) => {
+	const open_stages = ((model || {}).stages || []).filter((s) => FORECAST_KINDS.includes(s.kind));
+	const stages = open_stages.map((stage) => {
 		const f = figures(deals.filter((d) => d.stage === stage.key));
 		if (stage.kind === "parked") f.weighted = null;
 		return Object.assign({ stage }, f);
@@ -734,17 +775,19 @@ export function passes(deal, filters, user, today) {
 	return true;
 }
 
-// The model as the filters show it: the same stages, today and thresholds, `deals` narrowed, and
-// `by_name` still the whole board (a panel may be open on a deal the filters hide). Also `snoozed`,
-// how many snoozed deals pass the filters, and `hidden`, how many of those are hidden. Every view
-// and the forecast strip draw from this, so the strip forecasts what is shown.
+// The model as the filters show it: the same stages, today and thresholds, `deals` (and the
+// closing columns' `closed`) narrowed, and `by_name` still the whole board (a panel may be open on a
+// deal the filters hide). Also `snoozed`, how many snoozed deals pass the filters, and `hidden`, how
+// many of those are hidden. Every view and the forecast strip draw from this, so the strip forecasts
+// what is shown. A closed deal is never hidden as snoozed: it shows whenever it passes.
 export function filtered(model, filters, user) {
 	const m = model || {};
 	const f = clean_filters(filters);
 	const passing = (m.deals || []).filter((deal) => passes(deal, f, user, m.today));
 	const snoozed = passing.filter((deal) => deal.snooze === "snoozed").length;
 	const deals = f.show_snoozed ? passing : passing.filter((deal) => deal.snooze !== "snoozed");
-	return Object.assign({}, m, { deals, snoozed, hidden: passing.length - deals.length, filters: f });
+	const closed = (m.closed || []).filter((deal) => passes(deal, f, user, m.today));
+	return Object.assign({}, m, { deals, closed, snoozed, hidden: passing.length - deals.length, filters: f });
 }
 
 // The owners on the board, for the owner filter: [{ id, name }] by name. A `selected` owner no deal

@@ -647,6 +647,7 @@ def _install_frappe_stub():
 	utils.flt = lambda v, p=None: float(v or 0)
 	utils.cint = lambda v: int(float(v or 0))
 	utils.nowdate = lambda: TODAY
+	utils.add_days = lambda value, days: str(getdate(value) + datetime.timedelta(days=days))
 	utils.now_datetime = lambda: datetime.datetime(2026, 10, 14, 12)
 	utils.date_diff = lambda a, b: (getdate(a) - getdate(b)).days
 	utils.escape_html = lambda s: str(s)
@@ -929,12 +930,16 @@ class TestTheBulkEndpoint(unittest.TestCase):
 
 	def test_get_board_says_what_each_closing_stage_needs(self):
 		closing = [s for s in self.mod._stages() if s["kind"] == "close"]
+		# v1.688.0: Closed Won before On Hold, Lost last (Nik, 2026-10-14).
 		self.assertEqual(
 			closing,
 			[
-				{"label": "Lost", "kind": "close", "gate": "lost"},
 				{"label": "Closed Won", "kind": "close", "gate": "won"},
+				{"label": "Lost", "kind": "close", "gate": "lost"},
 			],
+		)
+		self.assertEqual(
+			[s["label"] for s in self.mod._stages()][-3:], ["Closed Won", "On Hold", "Lost"]
 		)
 
 

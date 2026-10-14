@@ -281,9 +281,27 @@ under Guided Entry.
   Each deal carries its value streams (one bound query on the `Value Stream` child table per 500
   names) and its stage completeness (`form_kit.completeness.completeness_for`, the P4.6 meter).
 - **Stages** are the Sales Pipeline page's own (`sales_pipeline._stage_columns`: the live status
-  options), then On Hold; Closed Won and Lost are drop targets along the bottom while a card is
-  dragged, and choices in the move panel. An open status the options no longer list gets a column
-  of its own, so no deal falls out of the totals.
+  options). Since v1.688.0 the columns run: the open stages, **Closed Won, On Hold, Lost** (Nik,
+  2026-10-14: "I don't see a Closed Won column or Lost column. Put Lost last and On Hold second to
+  last"). An open status the options no longer list gets a column of its own after the open
+  stages, so no deal falls out of the totals. Closed Won and Lost are also drop targets along the
+  bottom while a card is dragged, and choices in the move panel.
+- **Closed Won and Lost columns** (v1.688.0) hold the deals closed in the last 90 days
+  (`CLOSED_DAYS`, by `custom_stage_changed_on`, else `modified`; historical deals left out), most
+  recent first. On 2026-10-14 that was 24 won and 15 lost, of 104 and 89 (plus 577 historical), so
+  the columns stay short. `get_board` sends them as `closed`, apart from `deals`: no open total,
+  forecast, table, timeline, attention count, selection or bulk action ever includes them. A
+  closed card shows "Won <date>" or "Lost <date>" in place of its age and expected close, opens
+  in the side panel on a click, and has no Move and no drag; its stage is changed from the panel.
+- **Layout** (v1.688.0, Nik: "Make the Kanban columns uniform width, and scroll horizontally if
+  not all columns fit on the page"). Every column is the same width (`--ob-col-min`, 280px, and an
+  equal share of what is left); a folded On Hold no longer takes a narrow one. On a wide screen the
+  board sits in a box the height of the screen under the sticky page head (the page measures the
+  head and what follows the board into `--ob-fit-top` / `--ob-fit-bottom`), scrolling sideways
+  inside the box, and each column scrolls on its own. Before, every column stretched to the
+  longest (3,989px on prod) and the sideways scrollbar sat at the very bottom of the page. By
+  value stream, the rows scroll inside the same box under column heads that stay put. A phone
+  keeps its one-stage page.
 - **Cards** show the value-stream band (one segment per stream, in the pillar's closing stop, from
   `print_style.STREAM_PILLAR` by way of `form_kit/summary.js`), the stream chips, the amount or a
   plain "No amount", the expected close date, days in stage (from `custom_stage_changed_on`,
@@ -379,7 +397,8 @@ Nik's sign-off on the board).
   A deal opens in the side panel (since part C).
 - **On Hold folded** (P6.8). The column folds into a count by default: 36 of 74 open deals sat
   there on 2026-10-14. "Show them" unfolds it and "Fold" folds it again. A folded column is still a
-  drop target, and its deals still count in every total.
+  drop target, and its deals still count in every total. Since v1.688.0 it keeps the full column
+  width when folded.
 - **Snooze** (P6.8) is in the deal panel: "Hide it until" a date, and "Why" if the person wants to
   say.
   - A snoozed deal is hidden from every view and from the attention list until its date. On that

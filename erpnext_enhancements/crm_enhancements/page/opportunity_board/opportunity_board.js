@@ -21,6 +21,15 @@
 // and as named views on request, so it survives a reload and follows the person to another
 // device. A bare /desk/opportunity-board opens the last-used view; any other address wins.
 //
+// THE COLUMNS (v1.688.0, Nik, 2026-10-14: "I don't see a Closed Won column or Lost column. Put Lost
+// last and On Hold second to last ... Make the Kanban columns uniform width, and scroll horizontally
+// if not all columns fit on the page"). The open stages, Closed Won, On Hold, then Lost, every column
+// the same width; the board scrolls sideways inside its own box when they do not fit. Closed Won and
+// Lost hold the deals closed in the last 90 days (get_board's `closed`), most recent first; a closed
+// card opens in the side panel but is never dragged, selected or counted in an open total. On a wide
+// screen the board's box is the height of the screen under the sticky page head, and each column
+// scrolls on its own, so the page no longer runs as long as the longest column (it was 3,989px).
+//
 // The data is one GET (opportunity_board.py get_board: the open deals through frappe.get_list,
 // so the caller's permissions apply). Every decision about it (ages, rows, totals, forecast, what
 // a drop means, the routes) is a pure ES module, public/js/opportunity_board/board.js, loaded as
@@ -247,6 +256,32 @@ class OpportunityBoard {
 			if (this.media.addEventListener) this.media.addEventListener("change", relayout);
 			else if (this.media.addListener) this.media.addListener(relayout);
 		}
+		window.addEventListener("resize", () => {
+			if (this.fit_frame) return;
+			this.fit_frame = requestAnimationFrame(() => {
+				this.fit_frame = 0;
+				this.set_fit();
+			});
+		});
+	}
+
+	// v1.688.0: the board's box is exactly the screen's height when the page is scrolled to its end:
+	// it starts below whatever stays stuck to the top (the page head, sticky on the Desk) and leaves
+	// room for whatever follows it (the page's own bottom padding, the Desk's footer). Neither depends
+	// on the box's own height, so one measurement after each draw holds.
+	set_fit() {
+		const head = this.page && this.page.wrapper ? this.page.wrapper[0].querySelector(".page-head") : null;
+		let top = 0;
+		if (head) {
+			const style = getComputedStyle(head);
+			if (style.position === "sticky" || style.position === "fixed") top = (parseFloat(style.top) || 0) + head.offsetHeight;
+		}
+		const box = this.$root[0].querySelector(".ob-scroll--fit");
+		const below = box
+			? Math.max(0, document.documentElement.scrollHeight - (box.getBoundingClientRect().bottom + window.scrollY))
+			: 0;
+		this.$root[0].style.setProperty("--ob-fit-top", `${Math.round(top)}px`);
+		this.$root[0].style.setProperty("--ob-fit-bottom", `${Math.round(below)}px`);
 	}
 
 	showing() {
@@ -646,6 +681,7 @@ class OpportunityBoard {
 		if (panel_deal) parts.push(this.panel_html(panel_deal));
 		const focus = this.focus_marker();
 		this.$root.html(parts.join(""));
+		this.set_fit();
 		this.restore_focus(focus);
 		document.body.classList.toggle("ob-panel-open", !!panel_deal);
 		this.$root[0].classList.toggle("is-selecting", !!this.selecting);
@@ -806,11 +842,10 @@ class OpportunityBoard {
 						${toggle("closing_month", __("Closing this month"))}
 						${snooze_toggle}${clear}
 					</div>
-					<div class="ob-filter-row">
+					<div class="ob-filter-row ob-filter-row--views">
 						<label class="ob-field"><span class="ob-visually-hidden">${esc(__("Saved views"))}</span><select data-saved-view>${views}</select></label>
-						${naming}${remove}
+						${naming}${remove}${this.card_fields_html()}
 					</div>
-					<div class="ob-filter-row">${this.card_fields_html()}</div>
 				</div>
 			</section>`;
 	}
@@ -944,12 +979,16 @@ class OpportunityBoard {
 					__("New deal in {0}", [col.stage.label])
 			  )}" title="${esc(__("New deal in {0}", [col.stage.label]))}">+</button>`
 			: "";
+		const recent =
+			col.stage.kind === "close" && this.model.closed_days
+				? ` &middot; ${esc(__("last {0} days", [this.model.closed_days]))}`
+				: "";
 		return `
 			<header class="ob-col-head">
 				<div class="ob-col-titlebar"><h3 class="ob-col-title">${esc(col.stage.label)}</h3>${add}</div>
 				<span class="ob-col-meta">${esc(col.count === 1 ? __("1 deal") : __("{0} deals", [col.count]))} &middot; ${esc(
 					this.money(col.total)
-				)}</span>${fold}
+				)}${recent}</span>${fold}
 			</header>`;
 	}
 
@@ -962,18 +1001,26 @@ class OpportunityBoard {
 		</div>`;
 	}
 
-	cards_html(items) {
-		if (!items.length) return `<p class="ob-empty">${this.sf.esc(__("No deals"))}</p>`;
+	cards_html(items, stage) {
+		if (!items.length) {
+			const none =
+				stage && stage.kind === "close" && this.model.closed_days
+					? __("None in the last {0} days", [this.model.closed_days])
+					: __("No deals");
+			return `<p class="ob-empty">${this.sf.esc(none)}</p>`;
+		}
 		return items.map((item) => this.card_html(item.deal, item.also)).join("");
 	}
 
-	// The grid's columns: a folded On Hold takes a narrow one. A custom property, so the phone's
-	// one-column rule in the stylesheet still wins.
+	// The grid's columns, every one the same width (v1.688.0; a folded On Hold was narrow before). A
+	// custom property, so the phone's one-column rule in the stylesheet still wins.
 	grid_style(cols) {
-		const template = cols
-			.map((col) => (this.folded(col.stage) ? "minmax(150px, 190px)" : "minmax(240px, 1fr)"))
-			.join(" ");
-		return `--ob-template: ${template}`;
+		return `--ob-cols: ${cols.length}`;
+	}
+
+	// The board's box: on a wide screen it is the screen's height and scrolls both ways (v1.688.0).
+	scroll_class(phone, kind) {
+		return phone ? "ob-scroll" : `ob-scroll ob-scroll--fit ob-scroll--${kind}`;
 	}
 
 	columns_html(phone, current) {
@@ -988,12 +1035,17 @@ class OpportunityBoard {
 					<div class="ob-cards">${
 						this.folded(col.stage)
 							? this.fold_html(col.count)
-							: this.cards_html(col.deals.map((deal) => ({ deal, also: [] })))
+							: this.cards_html(
+									col.deals.map((deal) => ({ deal, also: [] })),
+									col.stage
+							  )
 					}</div>
 				</section>`
 			)
 			.join("");
-		return `<div class="ob-scroll"><div class="ob-grid" style="${this.grid_style(cols)}">${html}</div></div>`;
+		return `<div class="${this.scroll_class(phone, "cols")}"><div class="ob-grid" style="${this.grid_style(
+			cols
+		)}">${html}</div></div>`;
 	}
 
 	// `figures` is what the head counts: the whole row on a wide screen, the one stage on a phone.
@@ -1025,7 +1077,7 @@ class OpportunityBoard {
 					const cell = this.kit.row_cells(this.vm, row).find((c) => c.stage.key === current);
 					if (!cell || !cell.items.length) return "";
 					return `<section class="ob-row">${this.row_head_html(row, cell)}
-						<div class="ob-cards">${this.cards_html(cell.items)}</div></section>`;
+						<div class="ob-cards">${this.cards_html(cell.items, cell.stage)}</div></section>`;
 				})
 				.join("");
 			return `<div class="ob-phone-rows">${col ? this.col_head_html(col) : ""}${
@@ -1059,13 +1111,21 @@ class OpportunityBoard {
 				)}">${cells}</div></section>`;
 			})
 			.join("");
-		return `<div class="ob-scroll"><div class="ob-grid ob-grid--heads" style="${this.grid_style(
+		return `<div class="${this.scroll_class(phone, "rows")}"><div class="ob-grid ob-grid--heads" style="${this.grid_style(
 			cols
 		)}">${heads}</div>${body}</div>`;
 	}
 
 	age_html(deal) {
 		const esc = this.sf.esc;
+		// A closed deal (v1.688.0): the day it closed, in place of its days in stage.
+		if (deal.kind === "close") {
+			if (!deal.since) return "";
+			const stage = this.kit.stage_by_key(this.model, deal.stage);
+			const lost = !!stage && stage.gate === "lost";
+			const when = this.date_text(deal.since);
+			return this.sf.chip(lost ? __("Lost {0}", [when]) : __("Won {0}", [when]), lost ? "neutral" : "good");
+		}
 		if (deal.days === null || deal.days === undefined) return "";
 		if (deal.kind === "parked") {
 			const label = deal.days === 1 ? __("1 day on hold") : __("{0} days on hold", [deal.days]);
@@ -1094,6 +1154,8 @@ class OpportunityBoard {
 	card_html(deal, also) {
 		const esc = this.sf.esc;
 		const classes = ["ob-card"];
+		const closed = deal.kind === "close";
+		if (closed) classes.push("ob-card--closed");
 		if (deal.stale) classes.push(`ob-card--stale-${deal.stale}`);
 		if (this.saving.has(deal.name)) classes.push("is-saving");
 		if (deal.snooze === "snoozed") classes.push("is-snoozed");
@@ -1130,14 +1192,21 @@ class OpportunityBoard {
 		const facts = [
 			parts.has("amount") ? amount : "",
 			parts.has("probability") ? `<span class="ob-card-probability">${esc(`${this.kit.probability_of(deal)}%`)}</span>` : "",
-			parts.has("close") ? `<span class="ob-close">${esc(close)}</span>` : "",
+			// A closed card says when it closed (age_html) in place of when it was expected to.
+			parts.has("close") && !closed ? `<span class="ob-close">${esc(close)}</span>` : "",
 		].join("");
-		const foot = (parts.has("age") ? this.age_html(deal) : "") + (parts.has("meter") ? this.meter_html(deal) : "");
+		const foot = (parts.has("age") || closed ? this.age_html(deal) : "") + (parts.has("meter") ? this.meter_html(deal) : "");
+		// A closed card has no Move (its stage is changed from the side panel) and is never selected.
+		const move = closed
+			? ""
+			: `<button type="button" class="ob-move" data-move="${esc(deal.name)}" aria-label="${esc(
+					__("Move or snooze {0}", [deal.title])
+			  )}">${esc(__("Move"))}</button>`;
 		return `
 			<article class="${classes.join(" ")}" data-name="${esc(deal.name)}">
 				<div class="ob-band" aria-hidden="true">${band}</div>
 				<div class="ob-card-body">
-					<div class="ob-card-top">${this.pick_html(deal)}
+					<div class="ob-card-top">${closed ? "" : this.pick_html(deal)}
 					<button type="button" class="ob-card-open" data-open="${esc(deal.name)}">
 						<span class="ob-card-title">${esc(deal.title)}</span>${account}${owner}
 					</button></div>
@@ -1146,10 +1215,7 @@ class OpportunityBoard {
 					}
 					${facts ? `<div class="ob-facts">${facts}</div>` : ""}
 					<div class="ob-foot">
-						${foot}
-						<button type="button" class="ob-move" data-move="${esc(deal.name)}" aria-label="${esc(
-							__("Move or snooze {0}", [deal.title])
-						)}">${esc(__("Move"))}</button>
+						${foot}${move}
 					</div>
 				</div>
 			</article>`;
@@ -1601,7 +1667,7 @@ class OpportunityBoard {
 		if (!hit) return;
 		const name = hit.getAttribute("data-open") || hit.getAttribute("data-name");
 		if (!name) return;
-		if (this.selecting) return this.toggle_pick(name);
+		if (this.selecting && this.model.by_name[name]) return this.toggle_pick(name);
 		this.open_side({ kind: this.kit.EDIT, name, step: "" });
 	}
 
@@ -2386,6 +2452,8 @@ class OpportunityBoard {
 		const rect = scroller.getBoundingClientRect();
 		if (x < rect.left + 40) scroller.scrollLeft -= 14;
 		else if (x > rect.right - 40) scroller.scrollLeft += 14;
+		if (y < rect.top + 40) scroller.scrollTop -= 14;
+		else if (y > rect.bottom - 40) scroller.scrollTop += 14;
 	}
 
 	end_drag() {
