@@ -524,7 +524,10 @@ with the state before and undoable. **Stock still moves as the user**: the Mater
 move or a boneyard trip needs Stock Entry create and submit, and a count needs Stock
 Reconciliation create and submit (Stock Manager in stock ERPNext), exactly as before.
 `ensure_assignment(item_code, warehouse)` is the plain, log-free helper underneath, also for the
-guided Item flow; it passes the gate only when it changes something.
+guided Item flow; it passes the gate only when it changes something. Its other half for that flow
+is `release_if_empty(item_code, warehouse)` (v1.692.1): when the flow moves an item's bin, the old
+bin is taken off as a *Move to* that empties its source does, and stock still there keeps it
+(the answer is what is left; `None` when nothing claimed the pair).
 
 **The Boneyard** is a leaf warehouse `Boneyard` under `Inventory - SF`, created by
 `patches/add_boneyard_warehouse`, which also fills `Inventory Scanner Settings.boneyard_warehouse`
