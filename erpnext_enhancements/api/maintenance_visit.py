@@ -38,7 +38,9 @@ ALLOWED_ROW_FIELDS = {
     "maintenance_results": {"selection", "answer", "other_details", "photo"},
     "chemistry_readings": {"reading_value", "notes", "photo"},
     "cleaning_tasks": {"is_done", "not_applicable", "notes", "photo"},
-    "consumables": {"item", "qty", "warehouse", "uom"},
+    # serial_no (v1.635.0): the feature tab it was added on; the record's validate clears one
+    # the visit does not cover (sapphire_maintenance/follow_ups.py check_consumable_features).
+    "consumables": {"item", "qty", "warehouse", "uom", "serial_no"},
     # v1.600.0. serial_no and source_question are set when the wizard adds the row; the
     # record's validate keeps serial_no on a feature the visit covers.
     "follow_ups": {"description", "item", "qty", "told", "photo", "serial_no", "source_question"},

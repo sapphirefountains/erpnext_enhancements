@@ -69,6 +69,25 @@ def check_follow_ups(doc):
 			)
 
 
+def check_consumable_features(doc):
+	"""The record's ``validate`` (v1.635.0): keep a chemical on a water feature this visit covers.
+
+	The wizard tags a chemical with the feature tab it was added on. One naming a feature the
+	visit's template rows do not cover is cleared rather than refused: the tag is only where the
+	chemical shows, and refusing the save would cost the technician the quantity they entered.
+	"""
+	rows = [row for row in doc.get("consumables") or [] if row.get("serial_no")]
+	if not rows:
+		return
+	covered = {doc.get("serial_no")} if doc.get("serial_no") else set()
+	for table in ("chemistry_readings", "maintenance_results", "cleaning_tasks"):
+		covered.update(row.get("serial_no") for row in doc.get(table) or [] if row.get("serial_no"))
+	covered.update(row.get("serial_no") for row in doc.get("consumables") or [] if row.get("section") and row.get("serial_no"))
+	for row in rows:
+		if row.get("serial_no") not in covered:
+			row.serial_no = None
+
+
 def on_visit_submit(doc, method=None):
 	"""Approved: one Maintenance Follow-Up per row not already tracked for this visit, linked back
 	from the row. An amended visit's rows carry the canceled original's links (an amendment

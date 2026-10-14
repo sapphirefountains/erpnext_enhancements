@@ -238,10 +238,11 @@ class TestDoseUnitsAreTheTechniciansOwn(unittest.TestCase):
 	def test_a_chemical_added_on_site_can_carry_one(self):
 		wizard = (APP / "sapphire_maintenance/page/visit_wizard/visit_wizard.js").read_text(encoding="utf-8")
 		self.assertIn('fieldname: "uom"', wizard)
-		# Sent with the added row (VZ_ADDED, v1.600.0; before that a literal in vz_patch).
-		self.assertIn('sent: ["item", "qty", "warehouse", "uom"],', wizard)
+		# Sent with the added row (VZ_ADDED, v1.600.0; before that a literal in vz_patch). And
+		# since v1.635.0 the feature tab it was added on.
+		self.assertIn('sent: ["item", "qty", "warehouse", "uom", "serial_no"],', wizard)
 		visit_api = (APP / "api/maintenance_visit.py").read_text(encoding="utf-8")
-		self.assertIn('"consumables": {"item", "qty", "warehouse", "uom"},', visit_api)
+		self.assertIn('"consumables": {"item", "qty", "warehouse", "uom", "serial_no"},', visit_api)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.635.0] - 2026-10-13
+
+### Fixed
+
+Review of v1.634.0 (Once per Site Visit). That PR merged before the review finished, so these fixes
+follow it.
+
+- **The Whole site tab no longer opens empty.** It came first in the strip and every step opened on it,
+  including steps where the site-wide form had nothing, such as Water Chemistry beside a site-wide
+  cleaning list.
+  - It now comes last.
+  - A step change with no tab named (Next, Back, the step dots, opening a visit) moves to the first tab
+    with rows on that step (`tab_with_rows`).
+  - A tab chosen by hand or named in the address is kept, and Back restores it.
+- **A chemical added in the wizard no longer makes tabs appear on a one-fountain site visit.**
+  - The cause: the wizard's save list had no `serial_no` for consumables, so an added chemical was
+    saved untagged. In v1.634.0 one untagged row beside one feature's rows made a Whole site tab after
+    a reload.
+  - Only a template's untagged rows (they carry a `section`) add that tab now.
+  - A chemical added on a feature tab keeps that feature: `serial_no` is wizard-writable on consumables,
+    the wizard sends it, and `follow_ups.check_consumable_features` (from the record's `validate`)
+    clears one the visit does not cover rather than refusing the save.
+  - On a several-fountain visit, a chemical added before this, untagged, now shows on the Whole site
+    tab, where it showed on no tab before.
+- **The portal view labels an untagged row "Whole site"**, as the review email does. It printed a blank
+  cell. v1.634.0's changelog said the portal and the customer report already did; only the email did,
+  and the report lists the covered features only.
+- Tests:
+  - `test_wizard_back_forward.mjs`: two more tests (no empty tab on a step change; no tabs from an added
+    chemical on a one-fountain visit), and the Whole site tab test updated for its new place.
+  - `test_maintenance_follow_ups`: two more tests (a chemical keeps a covered feature, a foreign one is
+    cleared, a Per Feature visit keeps its own).
+
 ## [1.634.0] - 2026-10-13
 
 ### Fixed
