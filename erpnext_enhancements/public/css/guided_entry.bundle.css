@@ -350,6 +350,41 @@
 	margin: 0 0 var(--sf-space-10);
 }
 
+/* ---- The Party entry component (form kit P3.2, public/js/form_kit/ui/party.js) ----
+   "+ New" under the account, contact and address fields, and the note under a value the person
+   chose that the new account does not have. Both shells draw it: the guided page and the side panel. */
+.fk-party-tools {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-top: var(--sf-space-5);
+}
+.fk-party-new {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	color: var(--sf-link);
+	font-family: var(--sf-font-sans);
+}
+.fk-party-flag {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-5);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-left: 4px solid var(--sf-warn);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+}
+.fk-party-flag-text {
+	flex: 1 1 14rem;
+	margin: 0;
+	font-size: var(--sf-text-sm);
+}
+.fk-party-use {
+	min-height: var(--sf-touch-min);
+}
+
 /* ---- Conflict ---- */
 .ge-conflict {
 	border-left: 4px solid var(--sf-warn);

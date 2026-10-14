@@ -125,6 +125,9 @@ out.undo_allowed = {
 	out_of_won: fk.undo_allowed(closed_flow, { status: "Closed Won" }, { status: "Qualification" }),
 	unchanged_won: fk.undo_allowed(closed_flow, { status: "Closed Won" }, { status: "Closed Won", x: 1 }),
 	won_without_closed: fk.undo_allowed(flow, { status: "Qualification" }, { status: "Closed Won" }),
+	// v1.677.0: fails closed. No flow, or one that says nothing about closing, cannot be checked.
+	no_flow: fk.undo_allowed(null, { x: 1 }, { x: 2 }),
+	no_rules: fk.undo_allowed({ steps: [] }, { x: 1 }, { x: 2 }),
 };
 
 // ---- the save queue's manual mode: nothing autosaves; flush sends it all at once
@@ -380,7 +383,7 @@ class TestThePanelsDecisions(unittest.TestCase):
 		self.assertTrue(u["plain"])
 		self.assertTrue(u["open_to_open"])
 		self.assertTrue(u["unchanged_won"], "editing a won deal's other fields keeps its Undo")
-		for case in ("into_won", "into_lost", "into_converted", "out_of_won", "won_without_closed"):
+		for case in ("into_won", "into_lost", "into_converted", "out_of_won", "won_without_closed", "no_flow", "no_rules"):
 			with self.subTest(case=case):
 				self.assertFalse(u[case])
 

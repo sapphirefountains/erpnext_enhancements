@@ -115,8 +115,11 @@ export function panel_key(spec) {
 // plus `won` and `lost` themselves): a plain save back out of Closed Won would skip
 // revert_won_status's refusal once a project exists and leave the won date set, and one back into
 // it would fire the hand-off prompt again. Those moves are undone the way they are made, on purpose.
+// Fails closed (v1.677.0): with no flow, or a flow that says neither which statuses close a record
+// nor what Closed Won is, there is no way to tell, so no Undo is offered.
 export function undo_allowed(flow, before, saved) {
-	const f = flow || {};
+	if (!flow || (!flow.closed && !flow.won)) return false;
+	const f = flow;
 	const field = (f.closed && f.closed.field) || (f.won && f.won.status_field) || (f.lost && f.lost.status_field) || "status";
 	const closing = new Set([].concat((f.closed && f.closed.in) || [], f.won ? [f.won.status] : [], f.lost ? [f.lost.status] : []));
 	const b = before || {};

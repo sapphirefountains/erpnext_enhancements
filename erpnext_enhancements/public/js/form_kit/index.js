@@ -67,3 +67,16 @@ export {
 	undo_allowed,
 	undo_values,
 } from "./panel.js";
+// P3.2: the Party entry component's decisions. The component (./ui/party.js) draws with frappe and
+// reads the information blocks; the bundle adds it.
+export {
+	FOLLOWERS,
+	party_roles,
+	role_of,
+	account_type_of,
+	account_of,
+	create_kind,
+	details_args,
+	plan_account_change,
+	same_details_args,
+} from "./party.js";

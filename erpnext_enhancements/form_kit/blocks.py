@@ -27,7 +27,7 @@ import copy
 
 from erpnext_enhancements.form_kit.config.opportunity import REQUEST_TABLES, STREAMS_FIELD
 
-#: The task that builds the Party entry component (and the address half the Site block uses).
+#: The task that built the Party entry component (and the address half the Site block uses).
 PARTY_TASK = "TASK-2026-02755"
 #: The information-blocks phase itself: faces nobody has a narrower task for yet.
 BLOCKS_TASK = "TASK-2026-02753"
@@ -56,17 +56,35 @@ FRAMEWORK_HELPERS = {
 }
 
 #: The keys a resolved per-DocType entry may carry, besides ``fields``.
-DOCTYPE_KEYS = ("fields", "mirrors", "pairs", "core_pairs", "streams_field", "streams", "currency")
+DOCTYPE_KEYS = (
+	"fields",
+	"mirrors",
+	"roles",
+	"accounts",
+	"pairs",
+	"core_pairs",
+	"streams_field",
+	"streams",
+	"currency",
+)
+
+#: What each field of the Party and Site blocks is to the entry component (``roles``): the account
+#: (and, where the account can be of several kinds, the field that says which), the person, and an
+#: address. The component reads these, never fieldnames of its own.
+ROLES = ("account_type", "account", "contact", "address")
+
+#: The entry component of both blocks (P3.2, TASK-2026-02755, v1.677.0): one component finds or
+#: creates the account, the contact and the addresses.
+PARTY_ENTRY = {"module": "public/js/form_kit/ui/party.js", "export": "PartyEntry"}
 
 BLOCKS = {
 	"party": {
 		"label": "Party",
 		"what": "Who the record is for: the account, the person we deal with, and where invoices go.",
 		"faces": {
-			"entry": {
-				"pending": PARTY_TASK,
-				"builds": "One component that finds or creates the Account, Contact and Address (P3.2).",
-			},
+			# Finds or creates the Account, the Contact and the Billing Address, each filtered to the
+			# account, a new one linked to it (P3.2).
+			"entry": dict(PARTY_ENTRY),
 			"report": {"kinds": ["party"]},
 			"print": {"helpers": ["erpnext_enhancements.print_lookup.ps_party"]},
 		},
@@ -79,24 +97,39 @@ BLOCKS = {
 				# because stock mappings (Opportunity -> Quotation, the Prospect row) read it.
 				# crm_enhancements/party_mirrors.py applies it on save.
 				"mirrors": {"primary_contact": "contact_person"},
+				"roles": {
+					"account_type": "opportunity_from",
+					"account": "party_name",
+					"contact": "primary_contact",
+					"address": "customer_address",
+				},
+				# What opportunity_from may name (ERPNext's opportunity.js setup_queries), and so the
+				# only account kinds form_kit.api.party_details answers for.
+				"accounts": ["Customer", "Lead", "Prospect"],
 			},
-			"Project": {"fields": ["customer", "primary_contact", "custom_billing_address"]},
+			"Project": {
+				"fields": ["customer", "primary_contact", "custom_billing_address"],
+				"roles": {
+					"account": "customer",
+					"contact": "primary_contact",
+					"address": "custom_billing_address",
+				},
+				"accounts": ["Customer"],
+			},
 		},
 	},
 	"site": {
 		"label": "Site",
 		"what": "Where the work is: the job site address.",
 		"faces": {
-			"entry": {
-				"pending": PARTY_TASK,
-				"builds": "The Party component's address picker, offering the account's addresses (P3.2).",
-			},
+			# The Party component's address picker, offering the account's addresses (P3.2).
+			"entry": dict(PARTY_ENTRY),
 			"report": {"kinds": ["party"]},
 			"print": {"helpers": ["erpnext_enhancements.print_style.ps_address"]},
 		},
 		"doctypes": {
-			"Opportunity": {"fields": ["primary_address"]},
-			"Project": {"fields": ["primary_address"]},
+			"Opportunity": {"fields": ["primary_address"], "roles": {"address": "primary_address"}},
+			"Project": {"fields": ["primary_address"], "roles": {"address": "primary_address"}},
 		},
 	},
 	"schedule_window": {
@@ -225,6 +258,10 @@ def _resolve_doctype(doctype, spec):
 			fields.extend([tables["requests"], tables["deliverables"]])
 	if spec.get("mirrors"):
 		out["mirrors"] = dict(spec["mirrors"])
+	if spec.get("roles"):
+		out["roles"] = dict(spec["roles"])
+	if spec.get("accounts"):
+		out["accounts"] = list(spec["accounts"])
 	if "currency" in spec:
 		out["currency"] = spec["currency"]
 		if spec["currency"] and spec["currency"] not in fields:
@@ -258,6 +295,30 @@ def mirrors_for(doctype):
 	for block in BLOCKS.values():
 		out.update((block.get("doctypes", {}).get(doctype) or {}).get("mirrors") or {})
 	return out
+
+
+def party_roles(doctype, blocks=None):
+	"""What the Party entry component needs on ``doctype``, or None when no Party block names it.
+
+	``{"account_type", "account", "accounts", "contact", "billing", "site"}``: the Party block's
+	roles, its ``address`` being the billing address, and the Site block's address as ``site``. A
+	role the DocType does not carry is None (``account_type`` on Project). No frappe. The JS twin
+	is ``public/js/form_kit/party.js`` ``party_roles``.
+	"""
+	blocks = BLOCKS if blocks is None else blocks
+	party = ((blocks.get("party") or {}).get("doctypes") or {}).get(doctype)
+	if not party:
+		return None
+	roles = party.get("roles") or {}
+	site = (((blocks.get("site") or {}).get("doctypes") or {}).get(doctype) or {}).get("roles") or {}
+	return {
+		"account_type": roles.get("account_type"),
+		"account": roles.get("account"),
+		"accounts": list(party.get("accounts") or []),
+		"contact": roles.get("contact"),
+		"billing": roles.get("address"),
+		"site": site.get("address"),
+	}
 
 
 def all_fields(doctype, blocks=None):
@@ -318,6 +379,15 @@ def check(blocks=None, report_kinds=None):
 		for dt, spec in (block.get("doctypes") or {}).items():
 			if not (spec.get("fields") or spec.get("pairs") or spec.get("streams")):
 				problems.append(f"{key}.{dt}: names no field")
+			for role, fieldname in (spec.get("roles") or {}).items():
+				if role not in ROLES:
+					problems.append(f"{key}.{dt}: {role!r} is not a role")
+				if fieldname not in (spec.get("fields") or []):
+					problems.append(
+						f"{key}.{dt}: role {role} names {fieldname}, which the block does not carry"
+					)
+			if key == "party" and spec.get("roles") and not spec.get("accounts"):
+				problems.append(f"{key}.{dt}: a party with roles names the account kinds it may be")
 	return problems
 
 
