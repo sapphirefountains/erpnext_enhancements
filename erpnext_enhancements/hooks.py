@@ -3355,6 +3355,13 @@ assistant_tools = [
 	# PDT-0008 free while the sole record of that product holds it; unanchored, the
 	# five-digit "(deleted)" family collapses onto four-digit slots that are genuinely free.
 	"erpnext_enhancements.assistant_tools.item_naming_check.ItemNamingCheck",
+	# v1.694.0 Inventory (ER-2026-1320546) -- the guided Item flow's AI suggest step for the
+	# assistant: a description in, each suggested field (code family, POL-0602 name segments,
+	# group, unit) with a reason and the naming rules' and guard's verdict out. Read-only
+	# (EXPLICIT_READONLY): it writes no Item and no File. It never gives a PDT-/SRV- number or
+	# invents a vendor part number; api/item_suggest.py and the pure item_suggest_rules hold it
+	# to both. Gated on Item create, as the guided page's Suggest button is.
+	"erpnext_enhancements.assistant_tools.item_naming_suggest.ItemNamingSuggest",
 	# v1.339.0 CRM -- read-only naming advisor for the three doctypes that name themselves
 	# after a party. Same posture as item_naming_check: advisory, no doc_event, every
 	# judgement in the pure crm_enhancements.party_naming_rules so CI executes it.

@@ -10,11 +10,19 @@
  *   ext.render(name, $box, ctx)          draw block `name` into $box, above the step's fields
  *   ext.on_change(fieldname, value, ctx) a field on the step changed (optional)
  *   ext.leave()                          the step or the record is going away (optional)
+ *   ext.before_create()                  step 1 is about to create the record: "" lets it go, any
+ *                                        other text holds it back and is shown (optional)
+ *   ext.created(record)                  the create went through: { name, ... } (optional; never
+ *                                        called for a create that failed)
  *
  * and `ctx` is what the page lends a block:
  *
  *   ctx.doctype, ctx.name, ctx.is_new, ctx.step, ctx.sf (sf_kit), ctx.kit (sf_form_kit)
  *   ctx.values()               the record's values as the page holds them
+ *   ctx.carried()              a new record's start values for later steps (route options the
+ *                              create sends along); {} for a saved record or an older editor
+ *   ctx.started()              every start value of a new record, ones no field takes included
+ *                              (a buying line's supplier and rate); {} likewise
  *   ctx.set_value(f, v)        put a value into a field, on screen and in what the page saves
  *   ctx.save_first()           send what the page still holds; resolves when the record is saved
  *   ctx.record_changed()       the block wrote to the record on the server: take its new version

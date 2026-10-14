@@ -23,6 +23,14 @@ and the SOP clause it comes from), `duplicates`, `similar`, `block`,
 `reference` (the approved categories), `context` (live counts) and
 `corpus` (how many rows you actually saw).
 
+When the person has only a description, `item_naming_suggest` drafts the
+fields first (the code family, the seven segments, the Item Group and the
+unit, each with a reason) and runs them through the same rules. Treat its
+answer as a draft: it never gives a `PDT-`/`SRV-` number and never invents
+a vendor part number, so ask for the part number it says is missing, and
+still call `item_naming_check` on the final code and name. On the Desk the
+same step is the *Describe it* card at `/desk/guided-entry/Item/new`.
+
 **What is the tool's, and what is yours.** The tool decides: exact and
 normalised duplicates, near-neighbour scoring, code family, block
 occupancy, and every character-level name defect. You decide, because
