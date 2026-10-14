@@ -894,7 +894,7 @@ async function visitWizardSuite() {
 		assert.equal(last().step, "readings");
 	});
 
-	await test("a form filled in once per site gets a Whole site tab beside the features' tabs (v1.633.0)", async () => {
+	await test("a form filled in once per site gets a Whole site tab beside the features' tabs (v1.634.0)", async () => {
 		// Hardware's winterization names each fountain's steps itself: its rows carry no feature.
 		visitServer({
 			"MNT-1": visit({

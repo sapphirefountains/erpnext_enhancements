@@ -57,7 +57,11 @@
   },
   "primary_address": {
    "hint": "The job site address, from the account's addresses",
-   "help": "The form shows it on a map. If the address isn't listed, add it in the Address Directory on the form. The checklist asks for a site address from Proposal/Price Quote on."
+   "help": "The form shows it on a map. If the address isn't listed, add it in the Address Directory on the form. It is copied onto the Project's Primary Address when the Project is created. The checklist asks for a site address from Proposal/Price Quote on."
+  },
+  "customer_address": {
+   "hint": "Where this job's invoices go, if not the job site; from the account's addresses",
+   "help": "Kept beside the job site so both are on record. Quotations made from this opportunity use it as their billing address, and it is copied onto the Project's Billing Address when the Project is created. Leave it blank when the account bills to the job site."
   },
   "custom_general_scope_description": {
    "hint": "The whole job in a paragraph, across every value stream",
@@ -153,15 +157,15 @@
   },
   "custom_materials_budget": {
    "hint": "What you expect the materials for this job to cost",
-   "help": "Part of the estimated cost, alongside the time budget. It stays on the opportunity: the Project has its own Materials Budget, which this does not fill."
+   "help": "Part of the estimated cost, alongside the time budget. It is copied onto the Project's Materials Budget when the Project is created; after that the two are kept separately."
   },
   "custom_time_budget_in_hours": {
    "hint": "Labor hours you expect the job to take, as a number, e.g. 40",
-   "help": "Enter only the number of hours, so it can be added up later. It stays on the opportunity: the Project has its own Time Budget, which this does not fill."
+   "help": "Enter only the number of hours, so it can be added up later. It is copied onto the Project's Time Budget when the Project is created; after that the two are kept separately."
   },
   "custom_notes_relating_to_budget": {
    "hint": "Assumptions, exclusions, payment terms or other budget context",
-   "help": "Anything about the money that the numbers alone don't say. It stays on the opportunity; it is not copied onto the Project."
+   "help": "Anything about the money that the numbers alone don't say. It is copied onto the Project when the Project is created; after that the two are kept separately."
   },
   "custom_first_invoice_percentage": {
    "hint": "Percent of the Opportunity Amount to put on the first invoice",

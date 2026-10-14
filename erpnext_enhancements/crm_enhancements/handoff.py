@@ -971,8 +971,11 @@ def handoff_state(opportunity):
 	# offering Create Project as the next step. Reported on both branches so the prompt
 	# never asks about one just because the gate fields are missing.
 	historical = is_historical(opportunity)
+	# A deal still on a Lead cannot hand off cleanly: the Project takes the Lead as its customer
+	# and no Google Drive folder is made. The Closed Won prompt warns (Nik, 2026-10-13).
+	on_lead = frappe.db.get_value("Opportunity", opportunity, "opportunity_from") == "Lead"
 	if not _has_gate_fields():
-		return {"available": False, "is_historical": historical}
+		return {"available": False, "is_historical": historical, "on_lead": on_lead}
 
 	row = frappe.db.get_value(
 		"Opportunity",
@@ -1021,6 +1024,7 @@ def handoff_state(opportunity):
 		# Whether a Project may be created *right now* — the same predicate the
 		# three server-side enforcement layers use, so the tab's Create Project
 		# button can never be offered for something the insert will refuse.
+		"on_lead": on_lead,
 		"gate_open": not handoff_block_reason(opportunity),
 		"gate_message": _(GATE_MESSAGE),
 		"is_historical": historical,

@@ -254,7 +254,7 @@ function vz_required_chip(table, row) {
 		: `<span class="vz-chip vz-chip-req">${__("Required")}</span>`;
 }
 
-// The Whole site tab's key (v1.633.0): rows of a form ticked Once per Site Visit carry no
+// The Whole site tab's key (v1.634.0): rows of a form ticked Once per Site Visit carry no
 // serial_no. Not "" because an empty feature reads as "no tab" in the route and in go().
 const VZ_SITE = "whole-site";
 
@@ -1516,7 +1516,7 @@ class VisitWizard {
 	build_features() {
 		// Per Site Visit records tag every row with its water feature; one
 		// header serial (or untagged rows) means no tab strip. A form ticked Once per
-		// Site Visit (v1.633.0) leaves its rows untagged: with tagged rows beside them
+		// Site Visit (v1.634.0) leaves its rows untagged: with tagged rows beside them
 		// they get a Whole site tab of their own, first, or they would show on no tab.
 		const serials = new Set();
 		let untagged = false;

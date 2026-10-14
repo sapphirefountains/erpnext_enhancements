@@ -20,6 +20,7 @@ import frappe
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements import sync_contact
+from erpnext_enhancements.crm_enhancements.project_copy import copy_site_and_budget
 
 
 def _notify_recipients(users):
@@ -328,6 +329,9 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			}
 			for source_field, target_field in direct_mappings.items():
 				project.set(target_field, opp.get(source_field))
+			# The job site, the billing address and the budget (crm_enhancements/project_copy.py),
+			# shared with the Desk's "Create > Project" so the two cannot drift.
+			copy_site_and_budget(opp, project)
 
 			# The three read-through fields beside primary_contact are re-derived from
 			# the Contact rather than copied across from the Opportunity. Project's

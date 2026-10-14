@@ -394,7 +394,7 @@ class TestPayloadByWeekday(unittest.TestCase):
 
 
 class TestOncePerSiteVisit(unittest.TestCase):
-	"""v1.633.0: a form ticked Once per Site Visit is filled in once, for the whole site.
+	"""v1.634.0: a form ticked Once per Site Visit is filled in once, for the whole site.
 
 	Hardware's winterization names each fountain's steps itself, and every one of its seven
 	water features got the whole list; Sanctuary's thirteen would have too."""

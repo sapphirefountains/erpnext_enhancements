@@ -582,7 +582,7 @@ def get_visit_payload(
 	whose ``days`` names other weekdays is left off, so a daily site's Tuesday visit carries
 	the agreement's Tuesday tasks and not Monday's (``visit_days``).
 
-	A template ticked **Once per Site Visit** (``site_wide``, v1.633.0) is instantiated once on
+	A template ticked **Once per Site Visit** (``site_wide``, v1.634.0) is instantiated once on
 	a Per Site Visit, its rows untagged (no ``serial_no``: the Whole site tab), however many
 	water features resolve to it. Hardware's and Sanctuary's seasonal forms name each
 	fountain's steps themselves, and every feature used to get the whole list: seven copies of
@@ -663,7 +663,7 @@ def get_visit_payload(
 		sections, site_wide = template_cache[template_name]
 
 		feature_serial = feature["serial_no"]
-		# Once per Site Visit (v1.633.0): one untagged copy for the site, not one per feature.
+		# Once per Site Visit (v1.634.0): one untagged copy for the site, not one per feature.
 		if site_wide and per_site:
 			if template_name in site_wide_done:
 				continue
