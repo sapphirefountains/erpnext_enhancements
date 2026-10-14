@@ -190,6 +190,9 @@ DOCTYPES: Final[dict[str, dict]] = {
 		# customer_name is supplied by the caller; customer is the docname on the row.
 		"party_fields": ("customer_name", "customer"),
 		"party_label": "Customer",
+		# Where the party record is, so a report can link to it: (fixed doctype, or the field
+		# holding the doctype; the field holding the docname). See party_record.
+		"party_record": ("Customer", None, "customer"),
 	},
 	"Opportunity": {
 		"field": "title",
@@ -197,6 +200,7 @@ DOCTYPES: Final[dict[str, dict]] = {
 		"shape": SHAPE_PARTY_QUALIFIER,
 		"party_fields": ("customer_name", "party_name"),
 		"party_label": "Party",
+		"party_record": (None, "opportunity_from", "party_name"),
 	},
 	"Address": {
 		"field": "address_title",
@@ -206,6 +210,8 @@ DOCTYPES: Final[dict[str, dict]] = {
 		# party is the link's title, party_alias its docname.
 		"party_fields": ("party", "party_alias"),
 		"party_label": "Linked party",
+		# party_doctype is supplied with them.
+		"party_record": (None, "party_doctype", "party_alias"),
 	},
 }
 
@@ -539,6 +545,20 @@ def party_of(doctype: str, facts: dict) -> str:
 	return names[0] if names else ""
 
 
+def party_record(doctype: str, facts: dict) -> tuple[str, str]:
+	"""``(doctype, docname)`` of the record the party *is*, or ``("", "")``.
+
+	What a report links the party to (the report face, form kit P3.3), where :func:`party_of`
+	is the name it shows. Both parts or neither: a docname with no doctype cannot be opened.
+	"""
+	fixed, doctype_field, name_field = (DOCTYPES.get(doctype) or {}).get("party_record") or (None, None, None)
+	party_doctype = (fixed or (facts.get(doctype_field) if doctype_field else "") or "").strip()
+	docname = ((facts.get(name_field) if name_field else "") or "").strip()
+	if not party_doctype or not docname:
+		return "", ""
+	return party_doctype, docname
+
+
 # --- the checks ----------------------------------------------------------------
 
 _ADDRESS_TYPE_WORDS = ("BILLING", "SHIPPING", "OFFICE", "PERSONAL", "PLANT", "OTHER")
@@ -794,6 +814,7 @@ def audit(doctype: str, rows) -> list[dict]:
 			"name": str(row.get("name") or ""),
 			"value": row.get("value") or "",
 			"party": party_of(doctype, row),
+			"party_record": party_record(doctype, row),
 			"findings": findings,
 			"verdict": verdict(findings),
 		})

@@ -59,7 +59,8 @@ CORPUS_CEILING = 20000
 #: that stops existing fails loudly at the query instead of silently reading as empty.
 FIELDS = {
 	"Project": ("project_name", "project_type", "customer"),
-	"Opportunity": ("title", "party_name", "customer_name"),
+	# opportunity_from only to link the party in the report (party_naming_rules.party_record).
+	"Opportunity": ("title", "party_name", "customer_name", "opportunity_from"),
 	"Address": ("address_title", "address_type"),
 }
 

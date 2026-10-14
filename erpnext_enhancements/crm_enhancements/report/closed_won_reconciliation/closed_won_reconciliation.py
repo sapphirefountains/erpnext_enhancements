@@ -71,7 +71,9 @@ def execute(filters=None):
 def get_columns():
 	return [
 		{"label": _("Opportunity"), "fieldname": "opportunity", "fieldtype": "Link", "options": "Opportunity", "width": 160},
-		{"label": _("Customer"), "fieldname": "customer", "fieldtype": "Link", "options": "Customer", "width": 200},
+		# The report face (form kit P3.3): the customer by the name people know it by, linked.
+		{"label": _("Customer"), "fieldname": "customer", "fieldtype": "Link", "options": "Customer", "width": 200,
+		 "sf_face": "party", "sf_label": "customer_name"},
 		{"label": _("Closed"), "fieldname": "closed_on", "fieldtype": "Date", "width": 110},
 		{"label": _("Amount"), "fieldname": "amount", "fieldtype": "Currency", "width": 130},
 		{"label": _("Best Candidate"), "fieldname": "candidate", "fieldtype": "Link", "options": "Project", "width": 160},
