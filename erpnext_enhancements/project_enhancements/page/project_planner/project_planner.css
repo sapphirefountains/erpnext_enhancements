@@ -517,9 +517,16 @@
 	outline: none;
 }
 
-.pp-card:focus-visible {
-	outline: 2px solid var(--sf-focus);
-	outline-offset: 1px;
+/* Keyboard focus on a card is a ring drawn inside it, on ::after, not an outline. A card's
+ * outline carries its state (selected, being moved, drafted, a drop target), and one element has
+ * one outline: a focus outline lost to a later state rule, and would have hidden the state if it
+ * had won. On its own channel both show at once, whatever the order of the rules. */
+.pp-card:focus-visible::after {
+	content: "";
+	position: absolute;
+	inset: 1px;
+	border: 2px solid var(--sf-focus);
+	pointer-events: none;
 }
 
 .pp-card.pp-movable {
@@ -2537,9 +2544,10 @@ body.p6b-resizing * {
 	opacity: 0.22;
 }
 
+/* A highlighted card stands out by a tint (the rest are faded to 0.22). Not an outline, which
+ * would outrank (0,3,0) the selection, moving and drafted rings and hide them. */
 .pp-p6c-on .pp-card.pp-p6c-hi {
-	outline: 2px solid var(--sf-focus);
-	outline-offset: 1px;
+	background-color: color-mix(in srgb, var(--sf-focus) 14%, var(--sf-surface));
 }
 
 /* The team strip over the calendar: each day's free hours, its load as a word and a tint. */
@@ -2727,6 +2735,14 @@ body.p6b-resizing * {
 		align-items: center;
 		min-height: var(--sf-touch-min);
 		padding: 0 10px;
+	}
+
+	/* A month cell is about 53px wide on a phone, beside the day's "free" text: its number keeps
+	 * the 44px height as a tall, narrow hit area instead of a wide one. */
+	.pp-month .pp-day-num {
+		justify-content: center;
+		min-width: 32px;
+		padding: 0 4px;
 	}
 
 	.pp-p6c-sday {

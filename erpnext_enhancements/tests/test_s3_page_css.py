@@ -771,7 +771,8 @@ class TestProjectPlanner(unittest.TestCase):
 		self.assertIsNotNone(coarse, "no (pointer: coarse) block")
 		heights = re.findall(r"min-(?:height|width):\s*([^;]+);", coarse.group(1))
 		self.assertGreaterEqual(heights.count("var(--sf-touch-min)"), 8)
-		self.assertEqual([h for h in heights if h not in ("var(--sf-touch-min)", "64px")], [])
+		# 64px is the move bar's button width; 32px a month day number's (a tall, narrow target).
+		self.assertEqual([h for h in heights if h not in ("var(--sf-touch-min)", "64px", "32px")], [])
 		for selector in (
 			".pp-toolbar .btn",
 			".pp-seg button",
@@ -799,6 +800,50 @@ class TestProjectPlanner(unittest.TestCase):
 			r"\.pp-day-num:focus-visible,\s*\.pp-crew-head:focus-visible,\s*\.pp-title:focus-visible\s*"
 			r"\{\s*outline: 2px solid var\(--sf-focus\);",
 		)
+
+	def test_a_highlight_leaves_the_outline_to_state(self):
+		"""The highlight (0,3,0) used to be an outline, which outranked the selected, moving and
+		drafted rings and the drop target, so on a highlighted card none of them showed."""
+		body = self._rule(".pp-p6c-on .pp-card.pp-p6c-hi")
+		self.assertNotIn("outline", body)
+		self.assertIn("color-mix(in srgb, var(--sf-focus)", body)
+
+	def test_keyboard_focus_on_a_card_is_never_hidden_by_its_state(self):
+		"""A card's state is its outline; keyboard focus is a ring on ::after, so a selected or
+		drafted card shows both, whatever the rules' order and specificity. No card rule puts focus
+		on the outline, and nothing else draws a card's ::after."""
+		for selector in (
+			".pp-card.p6b-selected",
+			".pp-card.pp-p6c-moving",
+			".pp-card.pp-drafted",
+			".pp-card.pp-over",
+		):
+			with self.subTest(selector=selector):
+				self.assertIn("outline:", self._rule(selector))
+		ring = self._rule(".pp-card:focus-visible::after")
+		self.assertIn('content: ""', ring)
+		self.assertIn("border: 2px solid var(--sf-focus)", ring)
+		self.assertIn("pointer-events: none", ring)
+		self.assertIn("position: relative", self._rule(".pp-card"))
+		for prelude, body in re.findall(r"([^{}]+)\{([^{}]*)\}", self.css):
+			if ".pp-card" not in prelude:
+				continue
+			for selector in prelude.split(","):
+				selector = selector.strip()
+				if ":focus-visible" in selector and "::after" not in selector:
+					with self.subTest(selector=selector):
+						self.assertNotIn("outline", body)
+				if selector.endswith("::after") and ".p6b-grip" not in selector:
+					with self.subTest(selector=selector):
+						self.assertEqual(selector, ".pp-card:focus-visible::after")
+
+	def test_a_month_day_number_is_a_tall_narrow_target(self):
+		"""A month cell is about 53px wide on a phone; its number keeps 44px of height, not width."""
+		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", self.css, flags=re.S).group(1)
+		month = re.search(r"\.pp-month \.pp-day-num \{([^}]*)\}", coarse)
+		self.assertIsNotNone(month)
+		self.assertIn("min-width: 32px", month.group(1))
+		self.assertLess(coarse.index(".pp-day-num {"), coarse.index(".pp-month .pp-day-num {"))
 
 	def test_a_month_cell_says_its_load(self):
 		"""The month's one-line cells were a tint and nothing else; the words are read aloud now."""

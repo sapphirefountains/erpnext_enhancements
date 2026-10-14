@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing else; each now carries its words ("3h free", "Over 2h") for a screen reader.
 - **Less motion when asked.** The AI draft spinner and the jumped-to card's blink stop under
   `prefers-reduced-motion`.
+- **Review follow-ups.**
+  - A highlighted card (Color by's highlight) is now marked by a focus-colored tint, not an outline.
+    The outline rule (0,3,0) outranked the selected, moving and drafted rings and the drop target,
+    so on a highlighted card none of them showed (guarded).
+  - Keyboard focus on a card is a ring drawn inside it on `::after`, not an outline. A card's
+    outline carries its state, and one element has one outline: the focus outline lost to the later
+    state rules, so a selected or drafted card showed no focus at all. On its own channel, a card
+    that is both selected and focused shows both (guarded).
+  - On a touch screen a month cell's day number keeps its 44px height but is 32px wide rather than
+    about 44px, so it fits a phone's 53px cell beside the day's "free" text (guarded).
 
 ### Tests
 
