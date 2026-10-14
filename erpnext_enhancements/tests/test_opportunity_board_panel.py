@@ -647,6 +647,7 @@ def _install_frappe_stub():
 	utils.flt = lambda v, p=None: float(v or 0)
 	utils.cint = lambda v: int(float(v or 0))
 	utils.nowdate = lambda: TODAY
+	utils.add_days = lambda value, days: str(getdate(value) + datetime.timedelta(days=days))
 	utils.now_datetime = lambda: datetime.datetime(2026, 10, 14, 12)
 	utils.date_diff = lambda a, b: (getdate(a) - getdate(b)).days
 	utils.escape_html = lambda s: str(s)
@@ -929,12 +930,16 @@ class TestTheBulkEndpoint(unittest.TestCase):
 
 	def test_get_board_says_what_each_closing_stage_needs(self):
 		closing = [s for s in self.mod._stages() if s["kind"] == "close"]
+		# v1.688.0: Closed Won before On Hold, Lost last (Nik, 2026-10-14).
 		self.assertEqual(
 			closing,
 			[
-				{"label": "Lost", "kind": "close", "gate": "lost"},
 				{"label": "Closed Won", "kind": "close", "gate": "won"},
+				{"label": "Lost", "kind": "close", "gate": "lost"},
 			],
+		)
+		self.assertEqual(
+			[s["label"] for s in self.mod._stages()][-3:], ["Closed Won", "On Hold", "Lost"]
 		)
 
 
@@ -1125,7 +1130,8 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn("this.open_side({ kind: this.kit.CLOSING, name, stage: key }, true);", choose)
 		self.assertIn('this.open_side({ kind: this.kit.EDIT, name, step: "" });', page)
 		committed = _body(page, "\tside_committed(info) {")
-		self.assertIn("this.kit.remove_deal(this.model, info.name)", committed)
+		# v1.688.0: off the open board and into its closing column at once (close_deal).
+		self.assertIn("this.kit.close_deal(this.model, info.name, info.status)", committed)
 		self.assertIn("this.move_epoch += 1;", committed, "a load in flight cannot put the card back")
 
 	def test_quick_add_creates_through_the_form_kit(self):
