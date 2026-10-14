@@ -94,6 +94,10 @@ def boot_session(bootinfo):
 	``public/js/normalize/desk_display.js``). Absent when site_config's
 	``disable_value_normalization`` is set, and the Desk then installs nothing. See
 	``utils.normalize_hook.desk_registry``.
+
+	``frappe.boot.sf_field_help`` lists the DocTypes with a help file in the repo (form kit
+	P4.3, ``form_kit/help_text/``): their description tooltips also show the field's longer
+	explanation, fetched by ``field_description_icons.js``. See ``form_kit.field_help``.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -116,6 +120,18 @@ def boot_session(bootinfo):
 	normalize_registry = desk_registry()
 	if normalize_registry:
 		bootinfo.sf_normalize = normalize_registry
+	bootinfo.sf_field_help = _field_help_doctypes()
+
+
+def _field_help_doctypes():
+	"""The guided-flow DocTypes with a help file (form kit P4.3). Never raises: boot runs everywhere."""
+	try:
+		from erpnext_enhancements.form_kit import field_help
+		from erpnext_enhancements.form_kit.config import CONFIGS
+
+		return sorted(doctype for doctype in CONFIGS if field_help.has_help(doctype))
+	except Exception:
+		return []
 
 
 def _settings_for_forms():

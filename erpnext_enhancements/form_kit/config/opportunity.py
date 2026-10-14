@@ -72,6 +72,27 @@ CLOSED_WON = [
 # ``script_migrations.opportunity.validate_close_reason`` requires the table.
 LOST = [*QUALIFICATION, {"field": "lost_reasons", "row_field": "lost_reason", "label": "A lost reason"}]
 
+#: Website and lead attribution, written by the capture and copied from the Lead: read-only on
+#: the Desk form and left out of the flow (Nik, 2026-10-13), since typing into them rewrites
+#: where the deal came from.
+ATTRIBUTION_FIELDS = (
+	"custom_utm_source",
+	"custom_utm_medium",
+	"custom_utm_campaign",
+	"custom_utm_id",
+	"custom_utm_content",
+	"custom_utm_term",
+	"custom_gclid",
+	"custom_landing_page",
+	"custom_first_referrer",
+	"custom_attribution_captured_on",
+)
+_ATTRIBUTION = "Nik, 2026-10-13: attribution history from the website capture; read-only on the Desk form."
+_COMPANY_CURRENCY = (
+	"Nik, 2026-10-13: deals are always in the company currency, so it only repeats Opportunity "
+	"Amount; the Desk form hides it too."
+)
+
 CONFIG = {
 	"doctype": "Opportunity",
 	# HTML fields whose content the form's JavaScript draws: there is nothing to fill in, and the
@@ -87,6 +108,11 @@ CONFIG = {
 		"open_activities_html": "ERPNext's CRM open-activities widget.",
 		"all_activities_html": "ERPNext's CRM activity timeline widget.",
 		"notes_html": "ERPNext's CRM notes widget.",
+		# Fields the Desk form keeps that the flow leaves out (Nik's review, 2026-10-13).
+		"language": "Nik, 2026-10-13: not needed in the flow; it stays on the Desk form.",
+		"conversion_rate": _COMPANY_CURRENCY,
+		"base_opportunity_amount": _COMPANY_CURRENCY,
+		**{fieldname: _ATTRIBUTION for fieldname in ATTRIBUTION_FIELDS},
 	},
 	# Fields the form hides that the flow shows, because the form fills them through a widget the
 	# flow cannot draw, or because the owner named them for a step. Owner, 2026-10-13: Primary
@@ -140,8 +166,8 @@ CONFIG = {
 			"key": "basics",
 			"title": "Basics",
 			"intro": (
-				"Who the opportunity is for, what to call it, which value streams it touches and who "
-				"owns it; saving this step creates the opportunity."
+				"Who the opportunity is for, what to call it, its value streams, owner and lead source; "
+				"saving this step creates it."
 			),
 			"sections": ["_top"],
 		},
@@ -149,15 +175,15 @@ CONFIG = {
 			"key": "contact",
 			"title": "Contact & site",
 			"intro": (
-				"The person we deal with and where the work is, picked from the account's contacts and "
-				"addresses (the directories on the form add new ones)."
+				"The person we deal with and the job site, picked from the account's contacts and "
+				"addresses; add new ones on the form."
 			),
 			"sections": ["primary_contact_section", "section_break_map"],
 		},
 		{
 			"key": "scope",
 			"title": "Scope",
-			"intro": "The job in a paragraph and who helped shape it; each value stream you chose gets its own page next.",
+			"intro": "The whole job in a paragraph; each value stream you chose gets its own page next.",
 			"sections": ["custom_section_break_zozu1", "custom_section_break_ieovn"],
 		},
 		{
@@ -203,20 +229,27 @@ CONFIG = {
 		{
 			"key": "schedule",
 			"title": "Schedule",
-			"intro": "When the customer wants the work to start and finish, and anything that limits the timing.",
+			"intro": (
+				"When the customer wants the work to start and finish, and anything that limits the "
+				"timing."
+			),
 			"sections": ["custom_schedule", "custom_schedule_notes"],
 		},
 		{
 			"key": "schedule_events",
 			"title": "Events schedule",
-			"intro": "Delivery, setup, the event itself and take-down, each with its own notes.",
+			"intro": (
+				"Delivery, setup, the event itself and take-down, in that order, each with its own " "notes."
+			),
 			"sections": ["custom_rent"],
 			"applies": _stream("Events"),
 		},
 		{
 			"key": "budget",
 			"title": "Budget",
-			"intro": "What the opportunity is worth, what it should cost, and how the first invoice goes out.",
+			"intro": (
+				"What the opportunity is worth, what it should cost, and how the first invoice goes " "out."
+			),
 			"sections": [
 				"custom_customer_budget",
 				"section_break_14",
@@ -228,8 +261,8 @@ CONFIG = {
 			"key": "close",
 			"title": "Close",
 			"intro": (
-				"Where the deal stands: Closed Won needs scope, schedule and budget ranked 1, 2 and 3, "
-				"and a lost deal is marked Lost from the form so its reasons are recorded."
+				"Where the deal stands: Closed Won needs scope, schedule and budget ranked 1, 2 and 3; "
+				"choosing Lost asks for the reasons."
 			),
 			"fields": [
 				"status",
@@ -254,8 +287,8 @@ CONFIG = {
 			"key": "handoff",
 			"title": "Hand-off",
 			"intro": (
-				"What happened after the deal was won, shown here as a summary; the hand-off meeting is "
-				"recorded in the Hand-Off Process tab on the form."
+				"What happened after the win, shown read-only; book and record the hand-off meeting on "
+				"the form's Hand-Off Process tab."
 			),
 			"fields": ["custom_created_project"],
 			"sections": ["custom_process_tab"],

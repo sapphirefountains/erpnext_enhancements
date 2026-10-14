@@ -1,0 +1,315 @@
+{
+ "_readme": "Field help for the Opportunity form and its guided flow (form kit P4.3; see form_kit/field_help.py). hint: the short line under the field, which is also the field's description. help: the longer (i) explanation. Changed by PR. article: the Knowledge Article the Learn more links open, each field at its step's anchor.",
+ "doctype": "Opportunity",
+ "article": null,
+ "fields": {
+  "custom_opportunity_name": {
+   "hint": "Account name - what we're doing, e.g. Smith Residence - Backyard Pond Build",
+   "help": "This is the opportunity's title everywhere, and it becomes the Project's name when the Project is created. Separate the account and the job with a plain hyphen with a space on each side, not a long dash; the naming check flags anything else."
+  },
+  "naming_series": {
+   "hint": "Set automatically; gives the opportunity its ID (CRM-OPP-year-number)",
+   "help": "There is only one series, so there is nothing to choose. The ID stays the same even if the Opportunity Name changes later."
+  },
+  "opportunity_from": {
+   "hint": "Usually Account; choose Lead only if the customer isn't an account yet",
+   "help": "Defaults to Customer, shown as Account; Lead and Prospect are also allowed. At hand-off the Project takes this party as its customer, and the Google Drive folder is only made for an account, so a deal left on a Lead cannot hand off cleanly."
+  },
+  "party_name": {
+   "hint": "Pick the account (or lead) this opportunity is for",
+   "help": "Picking it fills blank details such as industry, territory and customer group from that record. Its contacts and addresses are the ones the Contact & site step offers, and at hand-off it becomes the Project's customer."
+  },
+  "custom_value_stream": {
+   "hint": "Every value stream this job involves; pick as many as apply",
+   "help": "Design, Build, Service and Events each add their own scope page (Events also adds an event schedule); Products and Delivery do not. The streams show as tags, copy onto the Project, and the first of Design, Build, Service, Events sets the Project Type."
+  },
+  "opportunity_owner": {
+   "hint": "The salesperson (Account Executive) responsible for this deal",
+   "help": "Required. The owner is invited to the hand-off meeting, is texted when the customer's payment is received on the Project, and is shown on the deal's Sales Pipeline card and in their own pipeline on the morning briefing."
+  },
+  "custom_opportunity_summary": {
+   "hint": "One plain line saying what this is, e.g. \"Hardware access + VNC for controller\"",
+   "help": "Written by the Account Executive. Keep it to one line; the detail belongs in Scope. It becomes the Project Description when the Project is created, and the checklist asks for it from the first stage."
+  },
+  "custom_lead_source": {
+   "hint": "Where this opportunity came from; pick the closest source on the list",
+   "help": "Copied from the lead or account when left blank, or worked out from website tracking; the first source recorded wins. A setting can make it required on new opportunities, the checklist asks for it from Needs Analysis on, and it is copied onto an account that has none."
+  },
+  "expected_closing": {
+   "hint": "The date you expect the deal to be won or lost",
+   "help": "The opportunity list flags an open deal past this date as overdue, and one closing within the next 7 days as due soon. The checklist asks for it from Needs Analysis on."
+  },
+  "probability": {
+   "hint": "Chance of winning, in percent; set from the stage unless you type one",
+   "help": "Each open stage has a default in Sales Activity Settings (10, 25, 50 and 75 for Qualification through Negotiation/Review, as first set up). Typing a number ticks Probability Set by Hand, and later stage changes keep it. On Hold has no default."
+  },
+  "custom_probability_by_hand": {
+   "hint": "Ticked when someone types the probability; untick to use the stage default",
+   "help": "While it is ticked, a stage change keeps the typed probability. Unticking puts the deal back on its stage's default at once (from Sales Activity Settings). A new deal that arrives with a probability other than 100 counts as set by hand."
+  },
+  "territory": {
+   "hint": "The sales territory; filled from the account or lead when left blank",
+   "help": "A standard ERPNext field. Nothing in our own pipeline board, alerts or hand-off reads it on the opportunity."
+  },
+  "primary_contact": {
+   "hint": "The person we deal with on this job, from the account's contacts",
+   "help": "Their job title, phone and email show beside it, copied from the Contact. Choosing them here does not change the account's own primary contact. Copied onto the Project at hand-off; the checklist asks for a contact from the first stage."
+  },
+  "primary_address": {
+   "hint": "The job site address, from the account's addresses",
+   "help": "The form shows it on a map. If the address isn't listed, add it in the Address Directory on the form. The checklist asks for a site address from Proposal/Price Quote on."
+  },
+  "custom_general_scope_description": {
+   "hint": "The whole job in a paragraph, across every value stream",
+   "help": "Use it for the overall picture; each value stream's specific asks go in its Customer Requests. It is copied onto the Project when the Project is created."
+  },
+  "custom_design_customer_requests": {
+   "hint": "The customer's Design asks, in their own words; don't break them down",
+   "help": "Entered by the Account Executive as requests come in; one row per ask or everything in one row is fine. If the ask changes, update it here, not only in a comment. Copied onto the Project; the checklist asks for a request from Needs Analysis on."
+  },
+  "custom_design_deliverables": {
+   "hint": "Our breakdown of what we'll deliver; filled in by PM and Design, not Sales",
+   "help": "Translated from the Customer Requests by the PM and design team before the hand-off: they are copied onto the Project once, when it is created, so rows added here afterward do not reach it."
+  },
+  "custom_build_customer_requests": {
+   "hint": "The customer's Build asks, in their own words; don't break them down",
+   "help": "Entered by the Account Executive as requests come in; one row per ask or everything in one row is fine. If the ask changes, update it here, not only in a comment. Copied onto the Project; the checklist asks for a request from Needs Analysis on."
+  },
+  "custom_build_deliverables": {
+   "hint": "Our breakdown of what we'll deliver; filled in by PM and Design, not Sales",
+   "help": "Translated from the Customer Requests by the PM and design team before the hand-off: they are copied onto the Project once, when it is created, so rows added here afterward do not reach it."
+  },
+  "custom_service_customer_requests": {
+   "hint": "The customer's Service asks, in their own words; don't break them down",
+   "help": "Entered by the Account Executive as requests come in; one row per ask or everything in one row is fine. If the ask changes, update it here, not only in a comment. Copied onto the Project; the checklist asks for a request from Needs Analysis on."
+  },
+  "custom_service_deliverables": {
+   "hint": "Our breakdown of what we'll deliver; filled in by PM and Design, not Sales",
+   "help": "Translated from the Customer Requests by the PM and design team before the hand-off: they are copied onto the Project once, when it is created, so rows added here afterward do not reach it."
+  },
+  "custom_rent_customer_requests": {
+   "hint": "The customer's event asks, in their own words; don't break them down",
+   "help": "Entered by the Account Executive as requests come in; one row per ask or everything in one row is fine. If the ask changes, update it here, not only in a comment. Copied onto the Project; the checklist asks for a request from Needs Analysis on."
+  },
+  "custom_rent_deliverables": {
+   "hint": "Our breakdown of what we'll deliver; filled in by PM and Design, not Sales",
+   "help": "Translated from the Customer Requests by the PM and design team before the hand-off: they are copied onto the Project once, when it is created, so rows added here afterward do not reach it."
+  },
+  "custom_project_start_date": {
+   "hint": "When the customer would like the work to start",
+   "help": "A request, not a commitment. Copied onto the Project. You'll get a warning (not a block) if it falls after the requested end date."
+  },
+  "custom_project_end_date": {
+   "hint": "When the customer needs the work finished",
+   "help": "A request, not a commitment. Copied onto the Project. You'll get a warning (not a block) if it falls before the requested start date."
+  },
+  "custom_notes_for_scheduling": {
+   "hint": "Site access, timing limits or anything else that affects scheduling",
+   "help": "Copied onto the Project, where the planner reads it when it drafts a schedule."
+  },
+  "custom_delivery_date_time": {
+   "hint": "When the rental is delivered to the event site",
+   "help": "The schedule should run delivery, setup, event, take-down; you get a warning if it is out of order. Copied onto the Project, and a contract generated from this deal uses it as the rental start."
+  },
+  "custom_delivery_date_time_notes": {
+   "hint": "Delivery logistics, access instructions or special requests",
+   "help": "Copied onto the Project with the delivery time."
+  },
+  "custom_setup_date_time": {
+   "hint": "When the crew sets up at the event site",
+   "help": "Should fall between delivery and the event; you get a warning if the schedule is out of order. Copied onto the Project."
+  },
+  "custom_setup_date_time_notes": {
+   "hint": "Setup requirements or crew instructions",
+   "help": "Copied onto the Project with the setup time."
+  },
+  "custom_event_date_time": {
+   "hint": "When the event itself starts",
+   "help": "Should fall between setup and take-down; you get a warning if the schedule is out of order. Copied onto the Project."
+  },
+  "custom_event_date_time_notes": {
+   "hint": "Event details such as duration, attendee count or special requests",
+   "help": "Copied onto the Project with the event time."
+  },
+  "custom_take_down_date_time": {
+   "hint": "When the crew takes the rental down and removes it",
+   "help": "The last step of the event schedule; you get a warning if it comes before the event. Copied onto the Project, and a contract generated from this deal uses it as the rental end."
+  },
+  "custom_take_down_date_time_notes": {
+   "hint": "Tear-down and removal logistics",
+   "help": "Copied onto the Project with the take-down time."
+  },
+  "opportunity_amount": {
+   "hint": "What we expect to charge the customer for this job",
+   "help": "The sell price, not the cost. It becomes the Project Dollar Amount, sets the dollar figure for the first invoice, and totals on the Sales Pipeline board. The checklist wants it above zero from Proposal/Price Quote on."
+  },
+  "base_opportunity_amount": {
+   "hint": "Calculated: the amount in the company's currency; nothing to enter",
+   "help": "Opportunity Amount times the Exchange Rate. Deals here are in the company's own currency, so it simply matches Opportunity Amount."
+  },
+  "conversion_rate": {
+   "hint": "Leave at 1; deals are in the company's own currency",
+   "help": "Only matters for a deal priced in another currency. The currency field is hidden on this form, so the rate is set to 1 automatically."
+  },
+  "custom_materials_budget": {
+   "hint": "What you expect the materials for this job to cost",
+   "help": "Part of the estimated cost, alongside the time budget. It stays on the opportunity: the Project has its own Materials Budget, which this does not fill."
+  },
+  "custom_time_budget_in_hours": {
+   "hint": "Labor hours you expect the job to take, as a number, e.g. 40",
+   "help": "Enter only the number of hours, so it can be added up later. It stays on the opportunity: the Project has its own Time Budget, which this does not fill."
+  },
+  "custom_notes_relating_to_budget": {
+   "hint": "Assumptions, exclusions, payment terms or other budget context",
+   "help": "Anything about the money that the numbers alone don't say. It stays on the opportunity; it is not copied onto the Project."
+  },
+  "custom_first_invoice_percentage": {
+   "hint": "Percent of the Opportunity Amount to put on the first invoice",
+   "help": "Named in the hand-off note to Billing with the dollar figure it works out to. Copied onto the Project, where the PM can change it. Left blank, the note asks Billing to confirm the amount with Sales."
+  },
+  "custom_billing_email": {
+   "hint": "Leave blank to use Billing; fill in only to send the note elsewhere",
+   "help": "Where the hand-off note asking Billing to set up the accounting project and send the invoice goes. Blank uses the configured Billing route (billing@sapphirefountains.com unless changed). Separate several addresses with commas. Copied onto the Project."
+  },
+  "status": {
+   "hint": "The deal's current stage",
+   "help": "Each stage sets a default probability. Closed Won needs all three ranks, texts the team and asks you to book the hand-off meeting; answering No puts the deal back where it was. Lost opens a dialog that needs at least one lost reason. On Hold has no default probability."
+  },
+  "custom_scope_rank": {
+   "hint": "Rank scope 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
+   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
+  },
+  "custom_schedule_rank": {
+   "hint": "Rank schedule 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
+   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
+  },
+  "custom_budget_rank": {
+   "hint": "Rank budget 1, 2 or 3 (1 is the customer's top priority); needed for Closed Won",
+   "help": "Scope, Schedule and Budget each take a different number. All three are required before the status can be Closed Won, and they are copied onto the Project."
+  },
+  "custom_date_closed_won": {
+   "hint": "Set automatically the day the deal is marked Closed Won",
+   "help": "Feeds the semi-monthly Closed Won commission report and the won column on the Sales Pipeline board. Cleared if you answer No to the Closed Won prompt."
+  },
+  "custom_stage_changed_on": {
+   "hint": "Set automatically whenever the status changes",
+   "help": "The Sales Pipeline board ages each card from this time and turns it amber, then red, after the thresholds in settings (7 and 14 days by default)."
+  },
+  "custom_is_historical": {
+   "hint": "Set nightly on old deals nobody is working; kept out of project warnings and sales KPIs",
+   "help": "Deals created before 2025-08-01 (mostly the Zoho import) with no comment, file, assignment, email or status change in 90 days, so they stop nagging for a project and don't skew win rate, won totals or pipeline. A status change clears it at once; the nightly check clears it after any of the others. Imports, bulk edits and auto emails don't count."
+  },
+  "lost_reasons": {
+   "hint": "Filled from the Lost dialog when the status is set to Lost",
+   "help": "Choosing Lost opens a dialog for the reasons, any competitors and a detailed reason. A deal can't be marked Lost without at least one reason, so loss analysis always has data."
+  },
+  "order_lost_reason": {
+   "hint": "The detailed reason written in the Lost dialog",
+   "help": "Optional free text, entered in the same dialog as the lost reasons; it can't be typed here directly."
+  },
+  "competitors": {
+   "hint": "Competitors named in the Lost dialog, if known",
+   "help": "Filled from the dialog that opens when the status is set to Lost; it can't be typed here directly."
+  },
+  "customer_group": {
+   "hint": "The account's customer group; filled from the account when blank",
+   "help": "Shown only when the opportunity is for an account. Change it on the account itself; this copy is filled only while blank and is not sent back."
+  },
+  "industry": {
+   "hint": "The customer's industry; filled from the account or lead when blank",
+   "help": "Change it on the account itself; this copy is filled only while blank and is not sent back."
+  },
+  "website": {
+   "hint": "The customer's website; a bare domain like smithponds.com is fine",
+   "help": "https:// is added for you when you save. Filled from the account or lead when left blank."
+  },
+  "custom_utm_source": {
+   "hint": "Filled automatically from the website link; don't edit",
+   "help": "The source tag on the link the visitor arrived by, recorded by the website. Copied from the lead or account when blank (the first visit wins), and used to work out the Lead Source."
+  },
+  "custom_utm_medium": {
+   "hint": "Filled automatically from the website link; don't edit",
+   "help": "The medium tag on the link. It sets a blank Lead Source: cpc, ppc or paid -> Advertisement, email -> Email Campaign, social -> Social Media Campaign."
+  },
+  "custom_utm_campaign": {
+   "hint": "Filled automatically from the website link; don't edit",
+   "help": "The campaign name tag on the link the visitor arrived by, kept exactly as it was in the link."
+  },
+  "custom_utm_id": {
+   "hint": "Filled automatically: the ad platform's campaign ID; don't edit",
+   "help": "Set by the ad platform's link (Google, Meta or LinkedIn). It matches the Ad Campaign's ID, which is how ad spend is tied to the deals it produced."
+  },
+  "custom_utm_content": {
+   "hint": "Filled automatically from the website link; don't edit",
+   "help": "Which ad or placement the visitor clicked, as tagged on the link."
+  },
+  "custom_utm_term": {
+   "hint": "Filled automatically: the paid search keyword; don't edit",
+   "help": "The keyword the visitor searched for when they clicked a paid ad, as tagged on the link."
+  },
+  "custom_gclid": {
+   "hint": "Filled automatically: the Google Ads click ID; don't edit",
+   "help": "Google adds it to every ad click even when the link has no other tags. When it is present, a blank Lead Source is set to Advertisement."
+  },
+  "custom_landing_page": {
+   "hint": "Filled automatically: the first page of the visit on our website",
+   "help": "Recorded by the website when the visitor arrived. If it is the only tracking present, a blank Lead Source is set to Website."
+  },
+  "custom_first_referrer": {
+   "hint": "Filled automatically: the site the visitor came from",
+   "help": "Recorded by the website at the start of the visit. With no link tags, it tells a search engine visit apart from someone typing our address."
+  },
+  "custom_attribution_captured_on": {
+   "hint": "Set automatically when tracking data first reached this record",
+   "help": "Stamped once and never changed, so a later edit doesn't make an old deal look newly acquired."
+  },
+  "transaction_date": {
+   "hint": "The date the opportunity was opened; defaults to today",
+   "help": "A standard ERPNext field, required. Change it only when entering a deal after the fact."
+  },
+  "language": {
+   "hint": "Language for printed documents; leave blank for the default",
+   "help": "A standard ERPNext field. Filled from the account or lead when left blank."
+  },
+  "first_response_time": {
+   "hint": "Set automatically: time from creating the deal to our first reply",
+   "help": "Measured the first time a staff member sends an email or message from this opportunity. Stamped once."
+  },
+  "custom_created_project": {
+   "hint": "Filled in when the Project is created from this deal",
+   "help": "Create the Project from the Closed Won prompt or the Hand-Off Process tab once the hand-off meeting is booked. While a won deal has no Project, a daily reminder text lists it (after 24 hours by default)."
+  },
+  "custom_handoff_meeting_held": {
+   "hint": "Ticked by the Hand-Off Meeting Finished button, or when the hand-off is skipped",
+   "help": "Booking the meeting is enough to let the Project be created; this records that it happened, closes hand-off step 2 and counts toward the hand-off SLA report. A skip ticks it too, with the reason recorded."
+  },
+  "custom_handoff_meeting_on": {
+   "hint": "When the hand-off meeting was recorded as finished or skipped",
+   "help": "Stamped by the system at the click, not typed. Copied onto the Project's step 2 row."
+  },
+  "custom_handoff_meeting_by": {
+   "hint": "Who recorded the hand-off meeting as finished or skipped",
+   "help": "Stamped by the system at the click, not typed. Copied onto the Project's step 2 row."
+  },
+  "custom_handoff_event": {
+   "hint": "The calendar event made by the Schedule Hand-Off Meeting button",
+   "help": "Booking creates the event and emails the invite to the Sales, Production and Billing attendees (the deal owner is always added to Sales). Once a meeting is booked the Project can be created; deleting the event does not undo that."
+  },
+  "custom_handoff_skip_reason": {
+   "hint": "Why the hand-off meeting was skipped, if it was",
+   "help": "Only a System Manager can skip, and a reason is required. It is copied onto the Project's step 2 row marked [SKIPPED], so it never reads as a meeting that happened."
+  },
+  "custom_handoff_due_by": {
+   "hint": "Set at Closed Won: two business days to hold the hand-off meeting",
+   "help": "Counted in business days, skipping weekends and any holidays in the hand-off holiday list. Stamped once. Once it passes with no meeting recorded, the hand-off shows as overdue."
+  },
+  "custom_launch_deadline": {
+   "hint": "Set at Closed Won: seven business days to the Project Launch Meeting",
+   "help": "The headline goal for the whole hand-off: hold the Project Launch Meeting (step 7) within seven business days of the win. Stamped once, so a later holiday change doesn't move it."
+  },
+  "custom_handoff_gate_applies": {
+   "hint": "Set automatically when a deal newly moves to Closed Won; never by hand",
+   "help": "While ticked, no Project can be created until the hand-off meeting is booked or skipped. Deals that were already won before the hand-off process began stay unticked and exempt."
+  }
+ }
+}

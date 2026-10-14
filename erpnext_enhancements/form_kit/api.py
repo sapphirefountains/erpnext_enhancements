@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import escape_html
 
-from erpnext_enhancements.form_kit import saver
+from erpnext_enhancements.form_kit import field_help, saver
 from erpnext_enhancements.form_kit import steps as flow
 from erpnext_enhancements.form_kit.completeness import completeness_for as _completeness_for
 from erpnext_enhancements.form_kit.completeness import stage_completeness
@@ -36,7 +36,9 @@ def _require_configured(doctype):
 def get_flow(doctype, name=None):
 	"""Everything the guided flow page needs for one record, or for a new one.
 
-	Returns ``{"doctype", "name", "modified", "steps", "values", "completeness", "can_write"}``.
+	Returns ``{"doctype", "name", "modified", "steps", "values", "completeness", "can_write",
+	"help_article"}``; ``help_article`` is the Knowledge Article each field's *Learn more* opens at
+	its step's anchor (``form_kit.field_help``), or None.
 	For a new record (no ``name``) ``name`` and ``modified`` are None, ``values`` are the new
 	record's defaults, and step 1 (``"create": 1``) is what ``create_record`` takes.
 	"""
@@ -62,6 +64,7 @@ def get_flow(doctype, name=None):
 		"values": saver.serialize(doc, flow.value_fields(steps)),
 		"completeness": stage_completeness(doctype, doc),
 		"can_write": 1 if can_write else 0,
+		"help_article": field_help.load(doctype)["article"],
 	}
 
 
@@ -80,6 +83,33 @@ def save_step(doctype, name, values, modified=None, step=None):
 	"""
 	_require_configured(doctype)
 	return saver.save_step(doctype, name, values, modified, step=step)
+
+
+@frappe.whitelist()
+def get_field_help(doctype):
+	"""The (i) help for the standard Desk form (``public/js/form_kit/field_help.js``).
+
+	``{"article", "fields": {fieldname: {"help", "anchor"}}}``: only fields with an explanation,
+	only fields this user may read (the flow's own permission walk decides), and each field's
+	``anchor`` is the key of the step it sits in, the section of the article it links to.
+	"""
+	_require_configured(doctype)
+	frappe.has_permission(doctype, "read", throw=True)
+	data = field_help.load(doctype)
+	anchors = {
+		field["fieldname"]: step["key"]
+		for step in flow.flow_steps(doctype, None)
+		for field in step["fields"]
+		if field["fieldtype"] not in flow.LAYOUT_TYPES
+	}
+	return {
+		"article": data["article"],
+		"fields": {
+			fieldname: {"help": entry["help"], "anchor": anchors[fieldname]}
+			for fieldname, entry in data["fields"].items()
+			if entry.get("help") and fieldname in anchors
+		},
+	}
 
 
 @frappe.whitelist()
