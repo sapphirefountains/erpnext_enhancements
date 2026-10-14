@@ -16,7 +16,8 @@ The rules live in one place each:
 | [`tests/fixtures/normalize_cases.json`](../erpnext_enhancements/tests/fixtures/normalize_cases.json) | The shared cases. `tests/test_normalize.py` runs every one through both and compares them field by field |
 | [`utils/normalize_fields.py`](../erpnext_enhancements/utils/normalize_fields.py) | Which fields the rules may touch, and which they must not |
 | *Data Normalization Preview* report | The dry run: what the cleanup would change, and what needs a person |
-| [`utils/normalize_cleanup.py`](../erpnext_enhancements/utils/normalize_cleanup.py) | P2-C: the one-time cleanup of stored values, run by the patch `normalize_stored_values` |
+| [`utils/normalize_cleanup.py`](../erpnext_enhancements/utils/normalize_cleanup.py) | P2-C: the one-time cleanup of stored values, run by the patch `normalize_stored_values`, and `apply_fixes` for the proposed fixes a System Manager ticks |
+| [`utils/normalize_fixes.py`](../erpnext_enhancements/utils/normalize_fixes.py) | P2-C part two: the rules that propose a fix for a value no rule can read |
 
 ## The one rule above the others
 
@@ -166,13 +167,13 @@ link to their parent document.
 3. **P2-C:** the one-time cleanup, run only after the product owner has read the preview and
    approved it, with the same rules and the same exclusions — below. Approved 2026-10-13
    (TASK-2026-02751), no exceptions.
-4. **Only after the cleanup** are fields re-typed `Phone`, `Email` or `URL`. Frappe v16 validates
-   a typed Data field on **every save**, so typing a field before its data is clean freezes every
-   record holding a bad value — edits to anything else on it fail. That is exactly how a website
-   field once froze 408 records. The cleanup does not make every field clean: the 84 values the
-   rules cannot read stay as typed. So typing is a separate change, decided field by field from
-   the report after the cleanup has run, and a field still holding a *Can't normalize* value is
-   not typed until a person has fixed it.
+4. **The fields are not typed `Phone`, `Email` or `URL`** (Nik, 2026-10-13, replacing the plan's
+   last step). Frappe v16 validates a typed Data field on **every save**, so a typed field turns a
+   bad value from the QuickBooks sync or a web form into a hard error — and freezes every record
+   already holding one, as a website field once froze 408 records. Instead the Desk shows a **soft
+   warning** (below): the field is marked, the record still saves.
+5. **P2-C part two:** the values no rule can read get a **proposed fix** in the report, applied
+   only where a System Manager ticks it — below.
 
 ## The cleanup (P2-C)
 
@@ -200,6 +201,41 @@ change's before and after; if it cannot be saved, nothing is written. To put the
 **Afterwards** the counts per field — never a value — are left as a comment on the *Data
 Normalization Preview* report, and printed in the migrate log. It never raises, a second run plans
 nothing, and the kill switch stops it.
+
+## Proposed fixes (P2-C, part two)
+
+The cleanup left 84 values exactly as typed: test numbers, international numbers typed without
+their `+`, text in phone fields, websites in an email field. `utils/normalize_fixes.propose`
+suggests a fix for each one a rule is sure about, and the report shows it in **Proposed fix**
+with **Why**; *Show → Has a proposed fix* lists only those. Nothing is applied until a System
+Manager ticks the rows and presses **Apply checked fixes**.
+
+| Value | Proposed | Only when |
+|---|---|---|
+| only spaces, in a phone, email or website field | blank | never a name or address part, which can be mandatory |
+| a placeholder (`123-456-7890`, `098-765-4321`, `(120) 120-1200`, one digit repeated) | blank | — |
+| `44 20 7946 0958`, `(39) 06…`, `+44 (0)20…` | `+442079460958` — the `+` added, a `(0)` trunk prefix dropped | the number opens with a real country calling code set apart from the rest **and** Google's `phonenumbers` (a Frappe v16 dependency) calls the result valid. Never a run of digits with no separator, never a leading `0` |
+| one North American number inside text (`X801-555-0142`, `(801) 555-0142 (front desk)`) | that number; a trailing `ext`/`x`/`PIN` and its digits become the extension | exactly one such number in the text |
+| a vanity number (`1-801-555-TEST`) | the keypad digits | it opens with an area code in digits and the result is a valid North American number |
+| an email in a phone field | moved to the record's email field | that field is empty (or already holds it: then just cleared) |
+| a website in an email field | moved to the record's website field | the same |
+| a job title in a Contact's email field | moved to Designation | the same |
+| other text in an email field, or text with no digits in a phone field | blank | — |
+| a four-digit ZIP | the leading zero back | the address is in a state whose ZIPs begin with 0, and the result is in that state's range |
+
+Everything else — a typo, a truncated number, `(055) …` (a foreign number with its trunk `0`,
+country unknown), an address missing its `.com` — has no proposal and stays for a person.
+
+**The rules hold no record's value.** The repository is public, so the proposals are computed on
+production inside the report; the tests use made-up numbers only.
+
+**Applying** (`normalize_cleanup.apply_fixes`, POST, System Manager only) receives the ticked
+rows' keys — table, row name, field — and **never a value**: it scans again and applies the fix it
+works out itself, so a stale page cannot write a stale proposal. Each row is re-read exactly and
+written only if its value, and the value of any field a fix moves into, is still what the proposal
+was made from; otherwise the whole row is left and counted. Then the same as the cleanup: an undo
+file first (no file, no writes), `set_value(update_modified=False)`, and a value-free comment on
+the report.
 
 ## Normalize on save (P2-B)
 
@@ -242,7 +278,7 @@ wraps exactly three things, each failing open to Frappe's own behaviour:
 | Form and grid-row input | `ControlData.format_for_input` shows `(801) 555-0100`; `ControlData.parse` hands the model `+18015550100` |
 
 The formatter matches a registered phone field on the docfield's `parent` + `fieldname`
-(`frappe.boot.sf_normalize`, phones only, from `normalize_hook.desk_registry`). A Data value in
+(`frappe.boot.sf_normalize`, from `normalize_hook.desk_registry`). A Data value in
 exactly the stored North American shape, `^\+1[2-9][0-9]{9}(,[0-9]{1,6})?$`, is shown the same way
 with no match, because script-report columns and hand-built dfs carry no `parent`. Phone,
 Read Only and Select have no formatter of their own in v16 and reach the same wrapper; a Link or
@@ -253,6 +289,17 @@ alone, so a search stays what was typed.
 
 Hand-built HTML on the Desk reads `erpnext_enhancements.normalize.phone_display` (the contacts
 directory in `unified_tab_controller.js` does).
+
+**The soft warning (P2-C, part two).** `frappe.boot.sf_normalize` also carries the registered
+email and website fields. A phone, email or website field whose value the rules cannot read gets
+the `sf-normalize-unreadable` class — a red border in Frappe's own theme-aware `--error-border` —
+and a one-line note under the input ("This doesn't look like a phone number. It will be saved
+exactly as typed."). The record still saves. It is deliberately **not** Frappe's `df.invalid`:
+that does not stop a form save, but it does stop a dialog's primary action
+(`FieldGroup.get_values` — Quick Entry, the planner kit) and a web form's submit. The mark is
+refreshed after `refresh_input` and `set_invalid`, so a stored value shows it on load as well as
+while typing. Read-only fields, filters, and fields Frappe validates itself (options `Email` or
+`URL`) are never marked.
 
 ## Print, email and SMS (P2-B)
 

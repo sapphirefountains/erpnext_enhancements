@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.624.0] - 2026-10-13
+## [1.625.0] - 2026-10-13
 
 ### Added
 
@@ -16,30 +16,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fair Mall's agreement ("service starts May 1st through September 30th, billed monthly", $7,920) and Day
   Dairy's ($1,330) would have been billed through the winter. Valley Fair's first period, 9 September to
   9 October 2026, would also have billed a September before its agreement starts on 5 October.
-  - **The fields.** A Monthly or Quarterly Sapphire Maintenance Contract now has **Bill From** and **Bill
-    Through** months (`billing_season_start` / `billing_season_end`). Blank both to bill all year, as
-    before. The contract refuses one without the other, and the season may wrap the year end.
-  - **The rule** (`maintenance_billing.period_is_billable`). A period bills its base fee when at least half
-    its days are service days: in season and on or after the contract's Start Date.
-    - Half, not "any day", because a period runs from billing date to billing date. One ending 5 May
-      holds five days of May, and billing it would make six invoices out of five months. With the half
-      rule it is five whatever day of the month the contract bills on.
-    - Counting from the Start Date keeps a contract signed for next season from billing the end of this
-      one. This also applies to year-round contracts, whose first period can now skip when most of it
-      falls before they start.
+  - **The fields.** A Monthly Sapphire Maintenance Contract now has **Bill From** and **Bill Through** months
+    (`billing_season_start` / `billing_season_end`).
+    - Blank both to bill all year, as before. A Monthly contract refuses one without the other, and the
+      season may wrap the year end.
+    - The season is independent of the winter pause (`pause_over_winter`), which moves visits, not bills.
+  - **The rule** (`maintenance_billing.period_is_billable`). A month bills its base fee when its billing
+    period's **middle day** is in season and on or after the contract's Start Date.
+    - A period runs from billing date to billing date. Billing every period that touched the season would
+      make six May-to-September invoices out of five months.
+    - The first version counted in-season days and billed at half or more. Review found that tie at
+      exactly half for a contract billing on the 16th, so that day billed six.
+    - The middle day gives five for every billing day, which is tested for the 1st to the 31st.
+    - The Start Date keeps a contract signed for next season from billing the end of this one. This also
+      applies to year-round Monthly contracts, whose first period now skips when its middle day falls
+      before they start.
+  - **Monthly only.** A quarter is billed whole or not at all, so a five-month season billed once or twice
+    a year depending on the month the contract started. Quarterly and Annually ignore the season.
+  - **The Annual Fee is split over the season.** When the Recurring Amount is derived from the agreement's
+    Annual Fee, it is divided by the months that bill (`billed_periods_per_year`), not by twelve. Otherwise
+    $7,920 a year billed five times would have come to $3,300. Changing the season re-derives an amount
+    still on the old split; an amount typed by hand is kept.
   - **Out of season** (`_bill_out_of_season`).
-    - The base fee is not billed, but chemicals are always extra. A period whose visits used chemicals
-      gets a chemicals-only draft, and its visits are stamped as billed.
-    - A period with none drafts nothing. Its visits roll into the next invoice like any other.
+    - The base fee is not billed, but chemicals are always extra. Chemicals with a selling price go on a
+      chemicals-only draft, and that period's visits are stamped as billed.
+    - With nothing to charge, nothing is drafted (no $0 drafts), and the visits roll into the next invoice.
     - Either way the next billing date moves on and the contract gets a comment saying why.
+    - The season check now runs before the fee-item check, so a period out of season never stalls on a
+      missing fee item.
     - The README's caveat still applies before invoicing is switched on: chemical lines bill the dose
       unit's quantity at the item's selling price.
-  - **Unchanged.** Annually ignores the season, because its one period is the whole year. Recurring
-    billing is still off ("Recurring Maintenance Billing" in ERPNext Enhancements Settings).
-  - **Tests.** `tests/test_maintenance_billing_season.py` (bench-free, own CI step) runs the real module.
-    It covers the season, five bills for each of five billing days, the start date, a wrapping season,
-    quarterly, the chemicals-only draft, a visit waiting for the next invoice, year-round and annual
-    contracts, and the half-season refusal.
+  - Recurring billing is still off ("Recurring Maintenance Billing" in ERPNext Enhancements Settings).
+  - **Tests.** `tests/test_maintenance_billing_season.py` (bench-free, own CI step, 19 tests) runs the real
+    module and contract controller. It covers:
+    - the season and the periods a year that bill;
+    - five bills for every billing day of two years;
+    - the start date, a wrapping season, and quarterly ignoring the season;
+    - the chemicals-only draft, unpriced chemicals and no fee item;
+    - year-round and annual contracts;
+    - the half-season refusal and the hidden fields;
+    - the Annual Fee split and its re-derivation.
+
+## [1.624.0] - 2026-10-13
+
+Form kit P2-C, part two (TASK-2026-02752): what replaces typing the fields, and fixes for the values
+the cleanup could not read. Both follow Nik's decisions of 2026-10-13, recorded on TASK-2026-02742.
+
+### Added
+
+- **A soft warning on the Desk.** A phone, email or website field holding a value the rules cannot
+  read gets a red border and a one-line note under the input, for example "This doesn't look like a
+  phone number. It will be saved exactly as typed."
+  - **The record still saves.** This replaces the plan's last step, typing the fields
+    `Phone`/`Email`/`URL`. Frappe v16 validates a typed field on every save, so a bad value from the
+    QuickBooks sync or a web form would become a hard error, and every record already holding one
+    would freeze.
+  - **It is never Frappe's `df.invalid`.** That flag doesn't stop a form save, but it does block a
+    dialog's primary action (Quick Entry, the planner kit) and a web form's submit.
+  - **When it shows:** it refreshes on load and after each change.
+  - **What is never marked:** read-only fields, filters, and fields Frappe validates itself.
+  - **Colors:** Frappe's own theme-aware `--error-border` and `--alert-text-danger`, so it reads
+    in light and dark.
+  - `frappe.boot.sf_normalize` now carries the registered email and website fields as well as phones.
+- **Proposed fixes in the Data Normalization Preview** (`utils/normalize_fixes.py`). A value no rule
+  can read gets a **Proposed fix** with a **Why** when a rule is sure. *Show → Has a proposed fix*
+  lists just those. The rules:
+  - **Placeholder phone numbers** are cleared.
+  - **An international number typed without its `+`** gets it, and a `(0)` trunk prefix is
+    dropped. This applies only when the number opens with a real country code set apart from the
+    rest *and* Google's `phonenumbers` (a Frappe v16 dependency) calls the result valid.
+  - **One phone number inside text** is kept. A trailing `PIN` or `ext` becomes the extension,
+    which the dialer sends after connecting.
+  - **Vanity numbers** become keypad digits.
+  - **Misplaced values move to an empty field where they belong:** an email in a phone field, a
+    website in an email field, a job title in a Contact's email field.
+  - **Notes and names in contact fields** are cleared.
+  - **A ZIP that lost its leading zero** gets it back, but only in a state whose ZIPs begin with 0.
+  - **Everything else stays for a person:** a typo, a truncated number, a foreign number with its
+    trunk `0`, an address missing its `.com`.
+  - **The rules hold no record's values,** because the repo is public. The tests use made-up
+    numbers only.
+- **Apply checked fixes,** a button on the report (`normalize_cleanup.apply_fixes`: POST, System
+  Manager only).
+  - **It receives the ticked rows' keys, never a value.** It scans again and applies only the fix it
+    works out itself, so a stale page can't write a stale proposal.
+  - **Exact re-read:** a row is written only if its value, and any field a fix moves into, is still
+    what the proposal was made from.
+  - **Same safeguards as the cleanup:** an undo file first, `set_value(update_modified=False)`, and
+    a comment on the report with counts and no values.
+
+### Changed
+
+- **A value of only spaces is proposed for blanking only in a phone, email or website field.** Never
+  in a name or address part, which can be mandatory. That leaves the 3 such values the cleanup
+  skipped (Customer Accounts email or phone) to be applied from the report.
+- `tests/test_normalize_fixes.py` gets its own CI step, which installs `phonenumbers~=9.0.23`. The
+  cleanup, report, display and hook suites gain the new cases.
 
 ## [1.623.0] - 2026-10-13
 

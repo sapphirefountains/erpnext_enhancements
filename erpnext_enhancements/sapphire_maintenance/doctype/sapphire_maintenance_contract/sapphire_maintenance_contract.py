@@ -93,7 +93,7 @@ class SapphireMaintenanceContract(Document):
 			self.non_renewal_notice_date = None
 
 	def _validate_billing_season(self):
-		"""Bill From and Bill Through come as a pair: blank both to bill all year (v1.624.0).
+		"""Bill From and Bill Through come as a pair: blank both to bill all year (v1.625.0).
 
 		Only for Monthly, the one cadence the fields show for and the season applies to.
 		"""
@@ -125,7 +125,7 @@ class SapphireMaintenanceContract(Document):
 
 		before = self.get_doc_before_save()
 		cadence_changed = bool(before and before.get("invoicing_frequency") != freq)
-		# A season bills fewer periods a year, so it changes the Annual Fee's share (v1.624.0).
+		# A season bills fewer periods a year, so it changes the Annual Fee's share (v1.625.0).
 		season = (self.get("billing_season_start"), self.get("billing_season_end"))
 		season_changed = bool(
 			before and (before.get("billing_season_start"), before.get("billing_season_end")) != season

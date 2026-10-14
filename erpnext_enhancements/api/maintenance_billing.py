@@ -20,7 +20,7 @@ contract is billed inside a savepoint so a partial failure rolls back cleanly
 Gated by "Recurring Maintenance Billing" in ERPNext Enhancements Settings (off
 by default), so a migrate bills no one until it is switched on.
 
-**Billing seasons (v1.624.0).** A seasonal agreement bills only in season: Valley
+**Billing seasons (v1.625.0).** A seasonal agreement bills only in season: Valley
 Fair Mall's reads "service starts May 1st through September 30th, billed monthly",
 and before this the job billed its $7,920 base every month of the year. A Monthly
 contract with **Bill From** / **Bill Through** months bills a period's base fee when
@@ -102,7 +102,7 @@ def billed_periods_per_year(frequency, season_start=None, season_end=None):
 
 
 def period_is_billable(contract, period_end):
-    """Whether the period ending ``period_end`` bills its base fee (v1.624.0).
+    """Whether the period ending ``period_end`` bills its base fee (v1.625.0).
 
     Monthly: when the period's middle day is in the contract's billing season (any month
     without one) and on or after its Start Date. Quarterly and Annually: always.

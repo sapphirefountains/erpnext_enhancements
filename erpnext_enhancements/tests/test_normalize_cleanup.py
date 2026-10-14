@@ -160,6 +160,8 @@ def setUpModule():
     frappe.conf = {}
     frappe.flags = _Dict()
     frappe.utils = types.SimpleNamespace(now_datetime=lambda: datetime.datetime(2026, 10, 13, 18, 5, 1))
+    frappe.whitelist = lambda *a, **k: (lambda fn: fn)
+    frappe.PermissionError = type("PermissionError", (Exception,), {})
     sys.modules["frappe"] = frappe
     report = importlib.import_module(REPORT_MODULE)
     cleanup = importlib.import_module("erpnext_enhancements.utils.normalize_cleanup")
@@ -387,6 +389,132 @@ class TestRecordAndSafety(CleanupCase):
         finally:
             cleanup.run = original
         self.assertTrue(self.logged)
+
+
+def fix_site():
+    db = site()
+    db.tables["Contact"] += [
+        contact("C-8", phone="X801-555-0142"),
+        contact("C-9", phone="(055) 555-0142"),
+    ]
+    db.tables["Customer"] = [
+        {"name": "CU-1", "docstatus": 0, "custom_accounts_phone_number": "someone@example.com",
+         "custom_accounts_email_address": ""},
+        {"name": "CU-2", "docstatus": 0, "custom_accounts_phone_number": "Email only",
+         "custom_accounts_email_address": ""},
+    ]
+    return db
+
+
+class TestApplyFixes(CleanupCase):
+    """The report's Apply checked fixes: only ticked rows, only the server's own proposal."""
+
+    def setUp(self):
+        super().setUp()
+        self.db = fix_site()
+        self.docs.db = self.db
+        frappe = sys.modules["frappe"]
+        frappe.db = self.db
+        self.roles = []
+        self.not_a_system_manager = False
+
+        def only_for(role):
+            self.roles.append(role)
+            if self.not_a_system_manager:
+                raise frappe.PermissionError("not allowed")
+
+        frappe.only_for = only_for
+
+    def keys(self, *triples):
+        return json.dumps([list(t) for t in triples])
+
+    def test_only_the_ticked_rows_are_written(self):
+        summary = cleanup.apply_fixes(
+            self.keys(("Contact", "C-8", "phone"), ("Customer", "CU-1", "custom_accounts_phone_number"))
+        )
+        self.assertEqual((summary["planned"], summary["written"], summary["not_offered"]), (2, 2, 0))
+        self.assertEqual(self.value("Contact", "C-8", "phone"), "+18015550142")
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_phone_number"), "")
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_email_address"), "someone@example.com")
+        self.assertEqual(self.value("Customer", "CU-2", "custom_accounts_phone_number"), "Email only")
+        self.assertEqual(self.value("Contact", "C-1", "phone"), "801-555-0100", "the cleanup's rows are not fixes")
+        self.assertEqual({w[4] for w in self.db.writes}, {False}, "update_modified=False")
+        self.assertEqual(self.roles, ["System Manager"])
+
+    def test_the_undo_file_holds_the_move_too(self):
+        summary = cleanup.apply_fixes(self.keys(("Customer", "CU-1", "custom_accounts_phone_number")))
+        (file_doc,) = [d for d in self.docs.inserted if d["doctype"] == "File"]
+        self.assertEqual(file_doc["file_name"], summary["undo_file"])
+        content = json.loads(file_doc["content"])
+        self.assertEqual(content["written_by"], "erpnext_enhancements.utils.normalize_cleanup.apply_fixes")
+        fields = {(c["field"], c["before"], c["after"]) for c in content["changes"]}
+        self.assertEqual(
+            fields,
+            {
+                ("custom_accounts_phone_number", "someone@example.com", ""),
+                ("custom_accounts_email_address", "", "someone@example.com"),
+            },
+        )
+        restored = cleanup.undo(summary["undo_file"])
+        self.assertEqual(restored["restored"], 2)
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_phone_number"), "someone@example.com")
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_email_address"), "")
+
+    def test_a_row_with_no_proposal_now_is_not_offered(self):
+        summary = cleanup.apply_fixes(
+            self.keys(("Contact", "C-9", "phone"), ("Contact", "nobody", "phone"), ("Contact", "C-8", "phone"))
+        )
+        self.assertEqual((summary["planned"], summary["not_offered"], summary["written"]), (1, 2, 1))
+        self.assertEqual(self.value("Contact", "C-9", "phone"), "(055) 555-0142")
+
+    def test_the_browser_chooses_rows_never_values(self):
+        # A key carries no value; there is nowhere to put one. A malformed key is ignored.
+        summary = cleanup.apply_fixes(json.dumps([["Contact", "C-8"], "C-8", ["Contact", "C-8", "phone", "+1999"]]))
+        self.assertEqual((summary["planned"], summary["written"]), (0, 0))
+        self.assertEqual(self.db.writes, [])
+
+    def test_a_moved_value_whose_target_changed_leaves_the_whole_row(self):
+        self.db.edits[("Customer", "CU-1", "custom_accounts_email_address")] = "billing@example.com"
+        summary = cleanup.apply_fixes(self.keys(("Customer", "CU-1", "custom_accounts_phone_number")))
+        self.assertEqual((summary["edited_since"], summary["written"]), (1, 0))
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_phone_number"), "someone@example.com")
+        self.assertEqual(self.value("Customer", "CU-1", "custom_accounts_email_address"), "billing@example.com")
+
+    def test_the_value_itself_changed_since_the_page_loaded(self):
+        self.db.edits[("Contact", "C-8", "phone")] = "X801-555-0199"
+        summary = cleanup.apply_fixes(self.keys(("Contact", "C-8", "phone")))
+        self.assertEqual((summary["edited_since"], summary["written"]), (1, 0))
+        self.assertEqual(self.value("Contact", "C-8", "phone"), "X801-555-0199")
+
+    def test_the_comment_says_fixes_were_applied_and_names_no_value(self):
+        cleanup.apply_fixes(self.keys(("Customer", "CU-1", "custom_accounts_phone_number")))
+        content = self.comment()["content"]
+        self.assertIn("Proposed fixes applied.", content)
+        self.assertIn("Customer.custom_accounts_phone_number: 1", content)
+        self.assertNotIn("example.com", content)
+
+    def test_only_a_system_manager(self):
+        self.not_a_system_manager = True
+        with self.assertRaises(Exception):
+            cleanup.apply_fixes(self.keys(("Contact", "C-8", "phone")))
+        self.assertEqual(self.db.writes, [])
+
+    def test_the_kill_switch_stops_it(self):
+        sys.modules["frappe"].conf = {"disable_value_normalization": 1}
+        summary = cleanup.apply_fixes(self.keys(("Contact", "C-8", "phone")))
+        self.assertIn("disable_value_normalization", summary["stopped"])
+        self.assertEqual(self.db.writes, [])
+
+    def test_no_undo_file_no_writes(self):
+        self.docs.fail_file = True
+        summary = cleanup.apply_fixes(self.keys(("Contact", "C-8", "phone")))
+        self.assertIn("nothing was written", summary["stopped"])
+        self.assertEqual(self.db.writes, [])
+
+    def test_the_cleanup_itself_is_unchanged_by_the_new_rows(self):
+        summary = cleanup.run()
+        self.assertEqual((summary["planned"], summary["written"]), (5, 5))
+        self.assertEqual(self.value("Contact", "C-8", "phone"), "X801-555-0142", "a fix is never applied by run()")
 
 
 if __name__ == "__main__":

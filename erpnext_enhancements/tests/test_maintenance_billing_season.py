@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
-"""Recurring billing bills a seasonal agreement only in season (v1.624.0).
+"""Recurring billing bills a seasonal agreement only in season (v1.625.0).
 
 Valley Fair Mall's agreement reads "service starts May 1st through September 30th, billed
 monthly", Village at Day Dairy's the same. The recurring-billing job billed a Monthly
@@ -286,7 +286,7 @@ class TestFiveSeasonalInvoices(unittest.TestCase):
         )
 
     def test_five_bills_whatever_day_of_the_month_it_bills_on(self):
-        """Review of v1.624.0: counting in-season days tied at exactly half on the 16th, and
+        """Review of v1.625.0: counting in-season days tied at exactly half on the 16th, and
         billed six. The middle day gives five for every day, the 29th to 31st included."""
         for year in (2027, 2028):
             for day in range(1, 32):
@@ -348,7 +348,7 @@ class TestOutOfSeason(unittest.TestCase):
         self.assertIsNone(STATE["records"][0]["sales_invoice"])
 
     def test_out_of_season_needs_no_fee_item(self):
-        """Review of v1.624.0: the fee-item check ran first, so a contract with none logged
+        """Review of v1.625.0: the fee-item check ran first, so a contract with none logged
         "misconfigured" every day off season and never moved on."""
         _contract(next_billing_date=D(2026, 12, 9), start_date=D(2026, 5, 1))
         STATE["fee_item"] = None
@@ -422,7 +422,7 @@ class TestTheContract(unittest.TestCase):
         self._doc(invoicing_frequency="Annually", billing_season_start="May")._validate_billing_season()
 
     def test_an_annual_fee_is_split_over_the_season(self):
-        """Review of v1.624.0: $7,920 a year split by twelve, billed five times, is $3,300."""
+        """Review of v1.625.0: $7,920 a year split by twelve, billed five times, is $3,300."""
         STATE["annual"] = 7920
         doc = self._doc(billing_season_start="May", billing_season_end="September")
         doc._recurring_billing_setup()
