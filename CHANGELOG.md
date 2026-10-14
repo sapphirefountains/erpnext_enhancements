@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.654.0] - 2026-10-13
+## [1.650.0] - 2026-10-13
 
 Form kit P3.4 (TASK-2026-02757): **print shows dates in the same style as every other channel.** That style is `10/14/2026` and `10/14/2026 2:00 PM`, from the one library the Desk, reports, emails and SMS already share (`utils.normalize`, P2.1).
 
