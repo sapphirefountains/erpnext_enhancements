@@ -79,9 +79,9 @@ _HEADER = """
   <div class="sf-meta">
     {{ _("Status") }}: <b>{{ doc.status or "" }}</b><br>
     {% if doc.expected_start_date or doc.expected_end_date %}
-      {{ frappe.format(doc.expected_start_date, {"fieldtype": "Date"}) or "—" }}
+      {{ ps_date(doc.expected_start_date) or "—" }}
       &ndash;
-      {{ frappe.format(doc.expected_end_date, {"fieldtype": "Date"}) or "—" }}<br>
+      {{ ps_date(doc.expected_end_date) or "—" }}<br>
     {% endif %}
     {{ _("Printed") }} {{ frappe.format(frappe.utils.nowdate(), {"fieldtype": "Date"}) }}
   </div>
@@ -147,8 +147,8 @@ SCHEDULE_HTML = (
   {% if data.has_dates %}
     <div class="sf-note">
       {{ _("Timeline spans") }}
-      {{ frappe.format(data.start, {"fieldtype": "Date"}) }} &ndash;
-      {{ frappe.format(data.end, {"fieldtype": "Date"}) }}
+      {{ ps_date(data.start) }} &ndash;
+      {{ ps_date(data.end) }}
       ({{ data.total_days }} {{ _("days") }}){% if data.undated_count %},
       {{ data.undated_count }} {{ _("task(s) have no dates and are listed without a bar") }}{% endif %}.
     </div>
@@ -190,9 +190,9 @@ TASK_LIST_HTML = (
         </td>
         <td class="sf-muted">{{ row.status }}</td>
         <td class="sf-muted">{{ row.priority }}</td>
-        <td>{{ frappe.format(row.start, {"fieldtype": "Date"}) or "" }}</td>
+        <td>{{ ps_date(row.start) or "" }}</td>
         <td class="{% if row.overdue %}sf-late{% endif %}">
-          {{ frappe.format(row.end, {"fieldtype": "Date"}) or "" }}
+          {{ ps_date(row.end) or "" }}
         </td>
         <td style="text-align:right;">{{ row.progress | round | int }}%</td>
         <td style="text-align:right;" class="sf-muted">

@@ -24,7 +24,7 @@ SHEET_HTML = """
   <table style="width:100%; border-collapse:collapse; margin:10px 0 6px; font-size:12px;">
     <tr>
       <td style="padding:3px 8px; color:#777; width:18%;">Dispatch Date</td>
-      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ frappe.format(doc.dispatch_date, {"fieldtype": "Date"}) or "______________" }}</td>
+      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ ps_date(doc.dispatch_date) or "______________" }}</td>
       <td style="padding:3px 8px; color:#777; width:18%;">Store / Carrier</td>
       <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ doc.carrier or "______________" }}{% if doc.service_level %} &middot; {{ doc.service_level }}{% endif %}</td>
     </tr>
@@ -95,7 +95,7 @@ SHEET_HTML = """
 
   <div style="margin-top:20px; color:#777; font-size:11px;">
     Requested by {{ doc.requested_by or "" }}
-    {% if doc.delivered_date %} &middot; Delivered {{ frappe.format(doc.delivered_date, {"fieldtype": "Date"}) }}{% endif %}
+    {% if doc.delivered_date %} &middot; Delivered {{ ps_date(doc.delivered_date) }}{% endif %}
   </div>
 </div>
 """.strip()

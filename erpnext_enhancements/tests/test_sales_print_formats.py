@@ -583,7 +583,7 @@ class TestInvoiceStates(_RenderCase):
 
     def test_a_later_due_date_prints_with_its_terms_under_it(self):
         out = self.render(due_date="2026-09-02", payment_terms_template="Net 30")
-        self.assertIn("2026-09-02", out)
+        self.assertIn("09/02/2026", out)
         self.assertNotIn("Due on receipt", out)
         self.assertIn("Net 30", out)
 
@@ -600,7 +600,7 @@ class TestInvoiceStates(_RenderCase):
         for terms in ("Due on receipt", "Due Upon Receipt"):
             with self.subTest(terms):
                 out = self.render(posting_date="2026-08-28", due_date="2026-09-01", payment_terms_template=terms)
-                self.assertIn("2026-09-01", out)
+                self.assertIn("09/01/2026", out)
                 self.assertNotIn("due on receipt", out.lower())
                 self.assertNotIn("due upon receipt", out.lower())
 
@@ -660,7 +660,7 @@ class TestFacts(_RenderCase):
         html = by_name(QUOTATION)
         dated = _render(html, _sample("Quotation", 2, valid_till="2026-10-24"))
         self.assertIn("VALID UNTIL", dated)
-        self.assertIn("Valid until 2026-10-24. Sign and return to accept this quotation.", dated)
+        self.assertIn("Valid until 10/24/2026. Sign and return to accept this quotation.", dated)
 
         undated = _render(html, _sample("Quotation", 2, valid_till=None))
         self.assertNotIn("VALID UNTIL", undated)
