@@ -373,6 +373,37 @@ await test("kit: a failed load (v16 calls back anyway) resolves a plain-text sta
 	sf.state.render(el, "loading");
 	assert.equal(el.textContent, "Loading…");
 	assert.equal(sf.state.render(null, "loading"), null, "no element: nothing, not a throw");
+
+	// The body as text and a plain Try again: without it a failed block with no refresh
+	// button (Weather, Astrology) could never retry while the kit is missing.
+	const nodes = [];
+	const doc = {
+		createTextNode: (text) => ({ text }),
+		createElement: (tag) => ({
+			tag,
+			listeners: {},
+			addEventListener(type, fn) {
+				this.listeners[type] = fn;
+			},
+		}),
+	};
+	const panel = { textContent: "", ownerDocument: doc, appendChild: (node) => nodes.push(node) };
+	let retried = 0;
+	sf.state.render(panel, "error", { title: "Could not load.", body: "The <server> said no.", on_action: () => retried++ });
+	assert.equal(panel.textContent, "Could not load.");
+	assert.equal(nodes[0].text, " The <server> said no.", "the body, as a text node");
+	const button = nodes.find((node) => node.tag === "button");
+	assert.ok(button, "no button for on_action");
+	assert.equal(button.textContent, "Try again");
+	assert.equal(button.type, "button");
+	button.listeners.click({ preventDefault() {} });
+	assert.equal(retried, 1, "the button does not call on_action");
+	nodes.length = 0;
+	sf.state.render(panel, "error", { title: "x", action_label: "Reload", on_action() {} });
+	assert.equal(nodes.find((node) => node.tag === "button").textContent, "Reload", "action_label is the label");
+	nodes.length = 0;
+	sf.state.render(panel, "empty", { title: "Nothing." });
+	assert.equal(nodes.length, 0, "no action, no body: the title alone");
 	assert.ok(roots.every((root) => root.adoptedStyleSheets.length === 0), "a stand-in adopts no styles");
 });
 
@@ -788,9 +819,11 @@ const REAL_KIT = await importRealKit();
 /** An element that keeps what is written into it, enough for state.render and its button. */
 function element() {
 	let html = "";
+	let text = "";
 	let button = null;
 	const el = {
-		textContent: "",
+		children: [],
+		ownerDocument: FAKE_DOC,
 		disabled: false,
 		listeners: {},
 		style: {},
@@ -803,7 +836,10 @@ function element() {
 			return button;
 		},
 		querySelectorAll: () => [],
-		appendChild() {},
+		appendChild(node) {
+			el.children.push(node);
+			return node;
+		},
 		click() {
 			for (const fn of el.listeners.click || []) fn({ preventDefault() {} });
 		},
@@ -813,10 +849,24 @@ function element() {
 		set: (value) => {
 			html = String(value);
 			button = null;
+			el.children = [];
+		},
+	});
+	// As in a browser, writing textContent replaces whatever was appended.
+	Object.defineProperty(el, "textContent", {
+		get: () => text,
+		set: (value) => {
+			text = String(value);
+			el.children = [];
 		},
 	});
 	return el;
 }
+
+const FAKE_DOC = {
+	createElement: (tag) => Object.assign(element(), { tag }),
+	createTextNode: (value) => ({ text: value }),
+};
 
 const onKit = fs
 	.readdirSync(BLOCKS_DIR)
@@ -836,7 +886,7 @@ async function runOnKit(file, answer, options = {}) {
 	const source = fs.readFileSync(path.join(BLOCKS_DIR, file), "utf8");
 	const desk = makeBlockDesk();
 	desk.sandbox.CSSStyleSheet = FakeSheet;
-	desk.sandbox.sf_kit = REAL_KIT;
+	if (!options.standIn) desk.sandbox.sf_kit = REAL_KIT;
 	if (options.old) {
 		delete desk.api.kit;
 		delete desk.api.ticket;
@@ -894,6 +944,24 @@ for (const file of onKit) {
 		assert.equal(failed.body.innerHTML, "", "the stand-in writes text, never markup");
 		const off = await runOnKit(file, () => Promise.resolve({ message: null }), { old: true });
 		assert.match(off.body.textContent, /turned off/i, "a switched-off block said nothing");
+		// Words, never the raw kind: a 403 reads "No access", not "no-access".
+		const refused = await runOnKit(file, fail(403), { old: true });
+		assert.equal(refused.body.textContent, "No access");
+		const waiting = await runOnKit(file, () => new Promise(() => {}), { old: true });
+		assert.equal(waiting.body.textContent, "Loading…");
+	});
+
+	await test(file + ": when the kit did not load, a failed call still offers Try again", async () => {
+		const { desk, body, root } = await runOnKit(file, fail(500), { standIn: true });
+		assert.match(body.textContent, /\S/, "the stand-in drew no title");
+		assert.equal(root.adoptedStyleSheets.length, 0, "a stand-in adopts no styles");
+		const button = body.children.find((node) => node.tag === "button");
+		assert.ok(button, "no Try again: a block with no refresh button could never retry");
+		assert.equal(button.textContent, "Try again");
+		const before = desk.calls.length;
+		button.click();
+		await settle(20);
+		assert.ok(desk.calls.length > before, "Try again asked the server nothing");
 	});
 }
 

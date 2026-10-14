@@ -25,7 +25,13 @@
             blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
             return;
         }
-        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
         const escape = frappe.utils.escape_html;
         startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
     }

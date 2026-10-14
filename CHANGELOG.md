@@ -68,6 +68,22 @@ chips and escaping from sf_kit, and their copies of the same shell are gone.
 - `custom_html_blocks/README.md` documents how a block gets the kit, the ticket helper and the
   fallback rule. `docs/app-design-system.md` points to it.
 
+### Fixed
+
+- **Design Sign-Off Queue put the customer's name into `innerHTML` unescaped.**
+  `[d.customer, state].join(" · ")` joins markup (`state`) with text, so the old `.map(esc)`
+  could not be used and the customer went in raw. It is now `sf.esc(d.customer)`. A sweep of the
+  other 33 converted blocks found no other joined list that does this. `test_block_kit.py` now
+  fails on a joined list that carries a bare row or `message` field, unless the list is escaped
+  (`.map(sf.esc)`, `sf.esc(field)`) or the joined result is.
+- **The stand-in for a kit that did not load now draws the panel's body and a Try again.** Its
+  `state.render` used to drop `body` and `on_action`, so a failed call had no way to retry, and
+  Weather and Astrology have no refresh button. It now adds the body as text and a plain
+  `<button>` wired to `on_action`, labelled `action_label` or `__("Try again")`.
+- **A block on a bundle from before `blocks.kit` no longer prints the raw kind.** It wrote
+  "loading" or "no-access" when a panel had no title. It now shows `__()` words: "Loading…",
+  "Nothing to show", "Could not load" and "No access".
+
 Not converted yet, and listed in `test_block_kit.py` as a follow-up: the KPI Cockpit, Morning
 Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk
 Shortcuts asks the server nothing and has no panel to convert.

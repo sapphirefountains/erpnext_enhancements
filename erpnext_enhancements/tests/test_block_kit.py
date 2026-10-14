@@ -106,10 +106,41 @@ REQUIRED = (
 	"blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));",
 	# The older bundle's stand-in: it must draw (plain text) and not throw.
 	"startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);",
+	# ... in words, never the raw kind ("no-access") on screen.
+	'const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");',
+	'"no-access": __("No access"),',
 	"sf.state.render(",
 	'"no-access"',
 	'"error", { title, on_action: ',
 )
+
+
+#: Joins of server values that are safe for a reason the scanner cannot see: (file, variable)
+#: -> why. Empty today; add an entry only with a reason that survives being read aloud.
+JOIN_ALLOWED = {}
+
+# `const meta = [ ... ]` then a chain (.filter / .map ...) then `.join(`.
+JOINED = re.compile(
+	r"const\s+(\w+)\s*=\s*\[((?:[^\[\]]|\[[^\[\]]*\])*)\]((?:\s*\.(?!join\b)\w+\((?:[^()]|\([^()]*\))*\))*)\s*\.join\("
+)
+# Calls whose result is safe to put in markup; their arguments are not looked at.
+SAFE_CALL = re.compile(r"\b(?:sf\.esc|sf\.chip|encodeURIComponent)\((?:[^()]|\([^()]*\))*\)")
+# A test written on a value, which is not what reaches the markup: `d.x ? a : b`, `d.x && a`.
+CONDITION = re.compile(r"[\w.]+\s*(?:\?|&&)")
+# A field of a row (`d.customer`, `row.owner`) or of the answer (`message.reason`).
+SERVER_VALUE = re.compile(r"\b(?:[a-z]|row|message)\.[A-Za-z_]\w*\b")
+
+
+def unescaped_joins(text):
+	"""(variable, field) for each joined list that puts a server value into markup unescaped."""
+	found = []
+	for match in JOINED.finditer(text):
+		name, items, chain = match.groups()
+		if ".map(sf.esc)" in chain or f"sf.esc({name})" in text or f"textContent = {name}" in text:
+			continue
+		bare = SERVER_VALUE.findall(CONDITION.sub(" ", SAFE_CALL.sub(" ", items)))
+		found.extend((name, field) for field in bare)
+	return found
 
 
 def strip_comments(text):
@@ -165,6 +196,28 @@ class TestTheScanner(unittest.TestCase):
 		)
 		self.assertEqual(violations(strip_comments(clean)), [])
 
+	def test_an_unescaped_join_is_caught(self):
+		# Design Sign-Off Queue before v1.647.0: the customer reached innerHTML as typed.
+		bug = 'const meta = [d.customer, state].filter(Boolean).join(" · ");'
+		self.assertEqual(unescaped_joins(bug), [("meta", "d.customer")])
+		wrapped = 'const meta = [\n    row.owner,\n    __("{0} h", [n]),\n]\n    .filter(Boolean)\n    .join(" · ");'
+		self.assertEqual(unescaped_joins(wrapped), [("meta", "row.owner")])
+		self.assertEqual(
+			unescaped_joins('const m = [message.reason, x].join(" ");'), [("m", "message.reason")]
+		)
+
+	def test_an_escaped_join_is_not(self):
+		for safe in (
+			'const meta = [d.customer && sf.esc(d.customer), state].filter(Boolean).join(" · ");',
+			'const meta = [d.owner, money(d.amount)].filter(Boolean).map(sf.esc).join(" · ");',
+			'const meta = [d.a, b]\n    .filter(Boolean)\n    .map(sf.esc)\n    .join(" · ");',
+			'const note = [f.source, f.as_of].filter(Boolean).join(" · "); x = `${sf.esc(note)}`;',
+			'const note = [trend, f.stale ? __("stale") : ""].filter(Boolean).join(" · ");',
+			'const sub = [sf.esc(a.subtype || a.type || ""), mask].filter(Boolean).join(" ");',
+		):
+			with self.subTest(safe):
+				self.assertEqual(unescaped_joins(safe), [])
+
 	def test_a_comment_neither_trips_nor_satisfies_it(self):
 		self.assertEqual(violations(strip_comments("// was: function esc(value) and muted()\n")), [])
 		self.assertNotIn("blocks.kit(", strip_comments("// blocks.kit(container).then(...)\n"))
@@ -192,6 +245,21 @@ class TestConvertedBlocksCarryNoShell(unittest.TestCase):
 				with self.subTest(block=prefix, rule=why):
 					self.fail(f"{prefix}.js: {why}")
 
+	def test_no_joined_list_puts_a_server_value_into_markup_unescaped(self):
+		"""``[d.customer, state].join(" · ")`` into innerHTML is markup injection by a customer
+		name. Escape each value (``.map(sf.esc)``, or ``sf.esc(...)`` on the one that is text) or
+		the joined result."""
+		seen = 0
+		for prefix in ON_KIT:
+			text = code(prefix)
+			seen += len(JOINED.findall(text))
+			for name, field in unescaped_joins(text):
+				if (prefix, name) in JOIN_ALLOWED:
+					continue
+				with self.subTest(block=prefix, variable=name, field=field):
+					self.fail(f"{prefix}.js: {field} is joined into `{name}` unescaped")
+		self.assertGreaterEqual(seen, 20, "the join scanner found almost nothing to look at")
+
 	def test_each_takes_the_kit_through_the_guarded_helper(self):
 		for prefix in ON_KIT:
 			text = code(prefix)
@@ -203,7 +271,8 @@ class TestConvertedBlocksCarryNoShell(unittest.TestCase):
 		"""Every "Could not load" sentence is the error panel's title, not markup."""
 		for prefix in ON_KIT:
 			for line in code(prefix).splitlines():
-				if "Could not load" in line and "Could not fetch" not in line:
+				# The older bundle's word for an error panel is the one exception.
+				if "Could not load" in line and line.strip() != 'error: __("Could not load"),':
 					with self.subTest(block=prefix, line=line.strip()):
 						self.assertRegex(line, r"const title = __\(\"Could not load ")
 

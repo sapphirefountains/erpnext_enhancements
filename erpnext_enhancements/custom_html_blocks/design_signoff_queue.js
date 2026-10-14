@@ -30,7 +30,13 @@
             blocks.kit(container).then((sf) => startApp(container, sf, blocks.ticket));
             return;
         }
-        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+        const words = {
+            loading: __("Loading…"),
+            empty: __("Nothing to show"),
+            error: __("Could not load"),
+            "no-access": __("No access"),
+        };
+        const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
         const escape = frappe.utils.escape_html;
         startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
     }
@@ -88,7 +94,8 @@
                     : d.ready
                       ? `<span class="dsq-good">${__("Ready")}</span>`
                       : "";
-                const meta = [d.customer, state].filter(Boolean).join(" · ");
+                // `state` is markup already; the customer is text from the server.
+                const meta = [d.customer && sf.esc(d.customer), state].filter(Boolean).join(" · ");
                 const tone = d.waiting_days >= 14 ? "dsq-bad" : d.waiting_days >= 7 ? "dsq-warn" : "";
                 return `
                     <div class="dsq-row">

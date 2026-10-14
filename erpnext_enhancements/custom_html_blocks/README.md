@@ -86,7 +86,13 @@ if (blocks && blocks.kit && blocks.ticket) {
 	return;
 }
 // A bundle cached from before the helpers: plain text, and every answer draws.
-const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || kind);
+const words = {
+	loading: __("Loading…"),
+	empty: __("Nothing to show"),
+	error: __("Could not load"),
+	"no-access": __("No access"),
+};
+const plain = (el, kind, opts) => (el.textContent = (opts && opts.title) || words[kind] || "");
 const escape = frappe.utils.escape_html;
 startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () => () => true);
 ```
@@ -100,7 +106,10 @@ startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () 
   script failed to load (`assets.js`: `script.onerror = resolve`), and marks the path executed
   either way, so a second require never fetches it again: when the kit is not there after the
   callback it never will be, and `kit()` resolves a **stand-in** instead, with `esc`, a
-  `state.render` that writes the title as plain text, and a `chip` that is its escaped word.
+  `state.render` that writes the title and body as plain text and adds a plain button for
+  `on_action` (labelled `action_label`, or "Try again"), and a `chip` that is its escaped word.
+  The button matters: Weather and Astrology have no refresh button, so without it a failed
+  call could never be retried while the kit is missing.
   A ten-second wait resolves it too, in case a callback never comes.
 - **`blocks.ticket(root)`** is the ticket the blocks each wrote by hand: every call takes the
   next number on the root, and the function it returns says whether that number is still the
@@ -108,8 +117,14 @@ startApp(container, { esc: escape, chip: escape, state: { render: plain } }, () 
   `if (current()) render(...)` when the answer lands.
 - **The fallback rule.** The global bundle is cached on an open Desk, so a block can meet a
   bundle from before these helpers. Every converted block keeps the guard above: without
-  `blocks.kit` it draws through a one-line stand-in of its own, as plain text, without the
-  ticket. It is ugly on purpose and only has to draw, not throw.
+  `blocks.kit` it draws through a small stand-in of its own: plain text, the panel's title or
+  else a short translated word for its kind ("Loading…", "Nothing to show", "Could not load",
+  "No access"), and no ticket. It is ugly on purpose and only has to draw, not throw.
+
+**Escape what you join.** A row's fields joined into one line (`[d.customer, d.owner].join(" · ")`)
+go into `innerHTML` like anything else: `.map(sf.esc)` before the join, or `sf.esc(...)` on each
+field that is text when another item is markup already. `tests/test_block_kit.py` fails on a
+joined list carrying a bare row or `message` field.
 
 What a converted block draws:
 

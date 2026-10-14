@@ -85,8 +85,8 @@
  * (assets.js: `script.onerror = resolve`, "for backward compatibility"), and it records the path
  * as executed either way, so a second require of the same path never fetches again. So when the
  * kit is not there after the callback it never will be, and kit() resolves to a stand-in instead:
- * esc, a state.render that writes the title as plain text, and a chip that is its escaped word.
- * A ten-second timer resolves it too, in case a callback never comes.
+ * esc, a state.render that writes the title and body as plain text plus a plain "Try again"
+ * button for on_action, and a chip that is its escaped word. A ten-second timer resolves it too, in case a callback never comes.
  *
  * ticket(root) is the counter the blocks each wrote as `root.__ee_ticket`: every call takes the
  * next number on the root, and the function it returns says whether that number is still the
@@ -295,11 +295,34 @@
 			esc,
 			chip: (label) => esc(label === null || label === undefined ? "" : String(label).trim()),
 			state: {
+				// The title as text, then the body as text, then a plain button for on_action:
+				// without it a failed Weather or Astrology (no refresh button) could never retry.
 				render(el, kind, opts) {
 					const host = el && el.jquery ? el[0] : el;
 					if (!host) return null;
-					const title = opts && opts.title;
-					host.textContent = title || translate(titles[kind] || "Nothing here yet.");
+					opts = opts || {};
+					host.textContent = opts.title || translate(titles[kind] || "Nothing here yet.");
+					try {
+						const doc = host.ownerDocument || (typeof document !== "undefined" ? document : null);
+						if (!doc || typeof host.appendChild !== "function") return host;
+						if (opts.body) host.appendChild(doc.createTextNode(" " + opts.body));
+						if (opts.action_label || typeof opts.on_action === "function") {
+							const button = doc.createElement("button");
+							button.type = "button";
+							button.textContent =
+								opts.action_label || (typeof __ === "function" ? __("Try again") : "Try again");
+							if (typeof opts.on_action === "function") {
+								button.addEventListener("click", (event) => {
+									if (event && typeof event.preventDefault === "function") event.preventDefault();
+									opts.on_action(event);
+								});
+							}
+							host.appendChild(doc.createTextNode(" "));
+							host.appendChild(button);
+						}
+					} catch (error) {
+						warn("the stand-in panel", error);
+					}
 					return host;
 				},
 			},
