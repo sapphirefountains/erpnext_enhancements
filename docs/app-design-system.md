@@ -23,7 +23,11 @@ exactly as it did until a screen reads a variable. `tests/test_app_design_tokens
 the build if a rule that styles something gets into the file.
 
 A web page outside the Desk (a `www/` page) can load the same file with
-`bundled_asset('sf_tokens.bundle.css')`.
+`bundled_asset('sf_tokens.bundle.css')`, linked in its own template before its own stylesheet
+(never through `web_include_css`, which would put it on every public page). The Review Room
+(`/review`) and the itinerary (`/itinerary`) do (S3.5a, v1.659.0; `tests/test_www_app_tokens.py`).
+A page with a theme toggle of its own writes `data-theme` on `<html>`, as the Review Room's THEME
+button does; one without leaves it unset and follows the device.
 
 ## Light and dark
 

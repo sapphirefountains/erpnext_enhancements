@@ -43,13 +43,13 @@ REPO = APP.parent
 TOKENS = APP / "public" / "css" / "sf_tokens.bundle.css"
 HOOKS = APP / "hooks.py"
 CI = REPO / ".github" / "workflows" / "ci.yml"
-TOKENS_LINK = "<link rel=\"stylesheet\" href=\"{{ bundled_asset('sf_tokens.bundle.css') }}\">"
+TOKENS_LINK = '<link rel="stylesheet" href="{{ bundled_asset(\'sf_tokens.bundle.css\') }}">'
 
 APPS = {
 	"review": {
 		"template": APP / "www" / "review.html",
 		"css": APP / "public" / "css" / "design_review.bundle.css",
-		"own_link": "<link rel=\"stylesheet\" href=\"{{ bundled_asset('design_review.bundle.css') }}\">",
+		"own_link": '<link rel="stylesheet" href="{{ bundled_asset(\'design_review.bundle.css\') }}">',
 		"prefix": "--rr-",
 		# Layout breakpoints besides the phone one: the option names drop out of the bar tabs at
 		# 1599px and its subtitle at 1299px, and at 900px the 248px rail and 340px notes panel
@@ -151,7 +151,9 @@ def _aliases(css, prefix):
 
 def _resolve(value, aliases):
 	for _ in range(5):
-		new = re.sub(r"var\(\s*(--[\w-]+)\s*\)", lambda m: f"var({aliases.get(m.group(1), m.group(1))})", value)
+		new = re.sub(
+			r"var\(\s*(--[\w-]+)\s*\)", lambda m: f"var({aliases.get(m.group(1), m.group(1))})", value
+		)
 		if new == value:
 			break
 		value = new
@@ -163,7 +165,9 @@ class TestTheTemplatesLinkTheTokens(unittest.TestCase):
 		for name, app in APPS.items():
 			head = _head(_read(app["template"]))
 			with self.subTest(app=name):
-				self.assertEqual(head.count(TOKENS_LINK), 1, "link sf_tokens.bundle.css through bundled_asset")
+				self.assertEqual(
+					head.count(TOKENS_LINK), 1, "link sf_tokens.bundle.css through bundled_asset"
+				)
 				self.assertIn(app["own_link"], head)
 				self.assertLess(head.index(TOKENS_LINK), head.index(app["own_link"]))
 
@@ -262,7 +266,9 @@ class TestTheCssIsOnTheTokens(unittest.TestCase):
 					continue
 				with self.subTest(app=name, value=value):
 					for part in re.findall(r"var\([^)]*\)|\S+", value):
-						self.assertTrue(part == "0" or part.startswith("var(--sf-radius-"), f"{prop}: {value}")
+						self.assertTrue(
+							part == "0" or part.startswith("var(--sf-radius-"), f"{prop}: {value}"
+						)
 
 	def test_the_breakpoints(self):
 		for name, css in self.css.items():
@@ -292,14 +298,21 @@ class TestTheCssIsOnTheTokens(unittest.TestCase):
 		for name, css in self.css.items():
 			aliases = _aliases(css, APPS[name]["prefix"])
 			declared = {
-				prop: value for sel, body in _rules(css) if sel == ":root" for prop, value in _declarations(body)
+				prop: value
+				for sel, body in _rules(css)
+				if sel == ":root"
+				for prop, value in _declarations(body)
 			}
 			for prop, value in _all_declarations(css):
 				if prop != "color":
 					continue
 				resolved = _resolve(value, aliases)
 				# One level of the app's own non-alias names (--ti-offline-text: color-mix(...)).
-				resolved = re.sub(r"var\(\s*(--(?:rr|ti)-[\w-]+)\s*\)", lambda m: declared.get(m.group(1), m.group(0)), resolved)
+				resolved = re.sub(
+					r"var\(\s*(--(?:rr|ti)-[\w-]+)\s*\)",
+					lambda m: declared.get(m.group(1), m.group(0)),
+					resolved,
+				)
 				for fill in STATUS_FILLS:
 					if f"var({fill})" not in resolved:
 						continue
@@ -328,7 +341,9 @@ class TestTheCssIsOnTheTokens(unittest.TestCase):
 				with self.subTest(app=name, rule=sel):
 					self.assertIn(sel, (':root[data-theme="dark"]', ":root:not([data-theme])"))
 					self.assertEqual([p for p, _v in _declarations(body)], ["color-scheme"])
-			for media in re.findall(r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{(.*?\})\s*\}", css, flags=re.S):
+			for media in re.findall(
+				r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{(.*?\})\s*\}", css, flags=re.S
+			):
 				for sel, body in _rules(media):
 					with self.subTest(app=name, media_rule=sel):
 						self.assertEqual(sel, ":root:not([data-theme])")
@@ -386,7 +401,15 @@ class TestTouchTargets(unittest.TestCase):
 	def test_the_review_phone_controls_are_44px(self):
 		css = _css_code(_read(APPS["review"]["css"]))
 		phone = re.search(r"@media \(max-width: 767px\) \{(.*?)\n\}", css, flags=re.S).group(1)
-		for selector in (".rr-toggle", ".rr-tab", ".rr-btn", ".rr-btn.small", ".rr-srow", ".rr-vb", ".rr-fld"):
+		for selector in (
+			".rr-toggle",
+			".rr-tab",
+			".rr-btn",
+			".rr-btn.small",
+			".rr-srow",
+			".rr-vb",
+			".rr-fld",
+		):
 			with self.subTest(selector=selector):
 				self.assertEqual(self._min_height(phone, selector), "var(--sf-touch-min)")
 		self.assertIn("font-size: var(--sf-text-input)", phone)
@@ -437,7 +460,7 @@ class TestTheFrameColoursAreTokensByValue(unittest.TestCase):
 		self.assertLessEqual(set(re.findall(r"#[0-9a-fA-F]{6}\b", frame_css)), palette)
 		for r, g, b in re.findall(r"rgba\((\d+),(\d+),(\d+),", frame_css):
 			with self.subTest(rgb=(r, g, b)):
-				self.assertIn("#{:02x}{:02x}{:02x}".format(int(r), int(g), int(b)), palette)
+				self.assertIn(f"#{int(r):02x}{int(g):02x}{int(b):02x}", palette)
 		tokens = _css_code(_read(TOKENS))
 		for hex_ in palette:
 			with self.subTest(hex=hex_):

@@ -335,7 +335,9 @@ class TestOnlyRealAnswersFromThisSiteAreKept(unittest.TestCase):
 			r"const TOKENS_PATH = /^\/assets\/erpnext_enhancements\/dist\/css(?:-rtl)?\/sf_tokens\.bundle\.[\w-]+\.css$/;",
 			code,
 		)
-		self.assertIn("const TOKENS = tokensPath(new URL(self.location.href).searchParams.get('tokens'));", code)
+		self.assertIn(
+			"const TOKENS = tokensPath(new URL(self.location.href).searchParams.get('tokens'));", code
+		)
 		body = _function("tokensPath")
 		self.assertIn("url.origin !== self.location.origin || url.search || url.hash", body)
 		self.assertIn("TOKENS_PATH.test(url.pathname)", body)
@@ -347,7 +349,9 @@ class TestOnlyRealAnswersFromThisSiteAreKept(unittest.TestCase):
 		self.assertIn("+ tokens,", _args)
 		fn = _function("registerWorker", PAGE_JS)
 		self.assertIn("'&tokens=' + encodeURIComponent(window.ITIN_TOKENS_CSS)", fn)
-		self.assertIn("window.ITIN_TOKENS_CSS = {{ bundled_asset('sf_tokens.bundle.css') | tojson }};", _read(SHELL))
+		self.assertIn(
+			"window.ITIN_TOKENS_CSS = {{ bundled_asset('sf_tokens.bundle.css') | tojson }};", _read(SHELL)
+		)
 
 	def test_ignore_search_is_only_for_its_own_two_assets(self):
 		"""`ignoreSearch` reduces a ?v= token to decoration (the kiosk worker's v1.229.0 lesson). Here
