@@ -32,6 +32,57 @@ const DC_SHEETS = ['camera', 'employee'];
 // How long to wait for the router to land our own history.back() before going on without it.
 const DC_BACK_TIMEOUT_MS = 1500;
 
+// sf_kit (v1.645.0): the shared loading / error / no-access panel, the toast and the quiet
+// server call, from the shared loader (public/js/sf_kit_loader.js, in the global bundle). It
+// never rejects: a kit that never arrived resolves to a plain stand-in, so the console carries
+// on. A Desk opened before the deploy that added the loader has no sf_kit_ready yet, and asks
+// frappe.require for the kit itself.
+function dc_kit() {
+	if (typeof window.sf_kit_ready === 'function') return window.sf_kit_ready();
+	return new Promise((resolve) =>
+		frappe.require(['sf_kit.bundle.js', 'sf_kit.bundle.css'], () =>
+			resolve(window.sf_kit && window.sf_kit.state ? window.sf_kit : dc_bare_kit())
+		)
+	);
+}
+
+// Neither the loader nor the kit: a Desk opened before this deploy whose old kit file is gone too.
+// A line of text and a button, so the page still says something instead of throwing.
+function dc_bare_kit() {
+	const failed = (x) => ({ status: (x && x.status) || 0, message: '', exc_type: '', session_expired: (x && x.status) === 401 });
+	const render = (el, kind, o) => {
+		const $el = $(el).empty().append($('<div class="text-muted"></div>').text((o && o.title) || ''));
+		if (o && o.on_action) $('<button class="btn btn-default btn-sm"></button>').text(o.action_label || __('Try again')).on('click', o.on_action).appendTo($el);
+	};
+	const call = (method, args) => Promise.resolve(frappe.call({ method, args: args || {} })).then((r) => r && r.message, (x) => Promise.reject(failed(x)));
+	return { esc: (v) => frappe.utils.escape_html(v == null ? '' : String(v)), call, state: { render }, toast: (message) => frappe.show_alert({ message, indicator: 'orange' }) };
+}
+
+// A failed load's panel: no access on a 403; a way back in when the session has lapsed (the
+// quiet path puts up no sign-in dialog of frappe's); otherwise what went wrong, with Try again.
+function dc_failed(sf, el, err, retry) {
+	err = err || {};
+	if (err.session_expired) {
+		return sf.state.render(el, 'error', {
+			title: __('You have been signed out.'),
+			body: __('Reload the page to sign in again.'),
+			action_label: __('Reload'),
+			on_action: () => window.location.reload(),
+		});
+	}
+	if (err.status === 403) {
+		return sf.state.render(el, 'no-access', {
+			title: __('You do not have access to the Device Console.'),
+			body: err.message,
+		});
+	}
+	return sf.state.render(el, 'error', {
+		title: __('Could not load the Device Console.'),
+		body: err.message,
+		on_action: retry,
+	});
+}
+
 class DeviceConsole {
 	constructor(page, wrapper) {
 		this.page = page;
@@ -55,12 +106,21 @@ class DeviceConsole {
 		return frappe.call({ method: DC_METHOD + method, args: args || {} }).then((r) => r.message);
 	}
 
+	// Quiet (v1.645.0): a failed start-up says so in the console's own panel, with Try again,
+	// instead of leaving the counts blank behind a frappe dialog. Scans still work either way.
 	boot() {
-		this.call('get_console_bootstrap').then((d) => {
-			this.state.camera = !!(d && d.enable_camera_scan);
-			this.renderCounts((d && d.counts) || {});
-			this.$cam.toggle(this.cameraOn());
-			this.focusScan();
+		dc_kit().then((sf) => {
+			sf.state.render(this.$load, 'loading', { title: __('Loading the console…') });
+			sf.call(DC_METHOD + 'get_console_bootstrap', {}, { quiet: true }).then(
+				(d) => {
+					this.$load.empty();
+					this.state.camera = !!(d && d.enable_camera_scan);
+					this.renderCounts((d && d.counts) || {});
+					this.$cam.toggle(this.cameraOn());
+					this.focusScan();
+				},
+				(err) => dc_failed(sf, this.$load, err, () => this.boot())
+			);
 		});
 	}
 
@@ -98,9 +158,9 @@ class DeviceConsole {
 	// Each replace the page asks for clears `route_flags.replace_route` as soon as set_route
 	// returns. set_route reads the flag as it writes the entry, but clears route_flags itself
 	// only once its promise settles, and that waits on every request then in flight (v16's
-	// after_ajax) — on a first show, the bootstrap call. Left set, the flag would turn the next
-	// tap into a replace of the console's own entry, and Back or X from the sheet it opened would
-	// then leave the page.
+	// after_ajax) — on a first show, the bootstrap call whenever it goes through frappe.call. Left
+	// set, the flag would turn the next tap into a replace of the console's own entry, and Back or X
+	// from the sheet it opened would then leave the page.
 
 	sheetRoute() {
 		const route = frappe.get_route() || [];
@@ -250,6 +310,7 @@ class DeviceConsole {
 		const $b = $(this.page.body);
 		$b.html(`
 			<div class="dc">
+				<div class="dc-load"></div>
 				<div class="dc-counts"></div>
 				<div class="dc-scanrow">
 					<input type="text" class="dc-scan" autocomplete="off" autocapitalize="characters"
@@ -260,6 +321,7 @@ class DeviceConsole {
 				<div class="dc-hint">${__('Scan a device to check it in or out.')}</div>
 			</div>
 		`);
+		this.$load = $b.find('.dc-load');
 		this.$counts = $b.find('.dc-counts');
 		this.$scan = $b.find('.dc-scan');
 		this.$cam = $b.find('.dc-cam');
@@ -286,8 +348,14 @@ class DeviceConsole {
 		);
 	}
 
+	// After an action, in the background: quiet, and a failure keeps the counts already showing.
 	refreshCounts() {
-		this.call('get_console_bootstrap').then((d) => this.renderCounts((d && d.counts) || {}));
+		dc_kit().then((sf) =>
+			sf.call(DC_METHOD + 'get_console_bootstrap', {}, { quiet: true }).then(
+				(d) => this.renderCounts((d && d.counts) || {}),
+				() => sf.toast(__('Could not refresh the device counts.'), { tone: 'warning' })
+			)
+		);
 	}
 
 	handleScan(raw) {

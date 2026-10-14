@@ -88,6 +88,105 @@ Not converted yet, and listed in `test_block_kit.py` as a follow-up: the KPI Coc
 Briefing, Task Dashboard, Projects Dashboard, My Training Dashboard and My Travel. Desk
 Shortcuts asks the server nothing and has no panel to convert.
 
+## [1.645.0] - 2026-10-13
+
+Custom pages, step 3.1 (TASK-2026-02820): the seven Desk pages that sat on "Loading…" or went blank
+when a server call failed now show `sf_kit`'s states. Step 3 moves pages onto the kit built in steps
+2 (v1.626.0) and its follow-up (v1.632.0).
+
+### Added
+
+- **`window.sf_kit_ready()`**, one loader for `sf_kit` on any Desk page (`public/js/sf_kit_loader.js`,
+  imported by the global bundle right after `workspace_block_return`). It returns one memoized promise
+  per Desk load that resolves to `window.sf_kit`, or to a plain stand-in (frappe.call, a line of text,
+  `show_alert`) when the kit never arrived. v16's `frappe.require` runs its callback even when a file
+  fails to load, so "the callback ran" is not "the kit is here", and the loader checks. It never
+  rejects. The kit itself stays a page-loaded bundle. The seven pages below call it instead of each
+  carrying its own forty-line loader and stand-in. A page guards with
+  `typeof window.sf_kit_ready === "function"` and otherwise asks `frappe.require` for the kit itself:
+  a Desk opened before this deploy still has the old global bundle while the page script arrives fresh.
+  If that tab's old kit file is gone too (old hashed bundles do not survive a deploy), the page gets a
+  bare stand-in of a few lines: the title as text, a button, frappe.call and `show_alert`. Before, it
+  received `undefined`, threw on its first `state.render` and went blank, the very hang this release fixes.
+- **Note:** the first time a Desk loads the kit, frappe shows its freeze overlay while the two files
+  load. That overlay comes from `frappe.require` itself and is expected. Later pages resolve at once.
+
+### Fixed
+
+- **Loading, error, empty and no-access states** on the Rental Planner, the Maintenance Day Board, the
+  Stripe and QuickBooks dashboards, the Water Engineering Wizard, the Device Console and the Inventory
+  Scanner Audit. A failed first load shows an error with **Try again**, which re-runs the same load
+  (the same date range on the Rental Planner). An empty result says what to do, a 403 shows the
+  no-access panel, and an expired session shows a Reload panel, because the quiet path never shows
+  frappe's sign-in dialog. The Rental Planner no longer hangs on "Loading the fleet…".
+- **Background refreshes are quiet.** These go through `call(..., {quiet: true})`: the Maintenance Day
+  Board's loads (its 60-second timer included), the QuickBooks status load and resync-preview poll,
+  and the start-up loads on the Water wizard and both scanner pages. A wall screen no longer stacks
+  frappe dialogs on a 5xx (v1.623.0's `silent` only quieted a `frappe.throw`). A refresh that fails
+  over data already showing keeps the data, with a toast.
+- **The Day Board's timer never blanks the screen.** It draws the loading panel only on the first
+  attempt, or when someone presses Try again. A failed tick used to redraw "Loading" over the error
+  panel every minute until the first success. A refresh that fails over a board keeps it, toasts once
+  per run of failures and keeps an "as of" line, which stays visible after the toast fades on a wall
+  screen. A 403 or a lapsed session stops the timer, since asking every minute cannot change that
+  answer. The next show of the page tries once and starts the timer again.
+- **The QuickBooks resync poll retries only what can pass.** A network failure (status 0) or a 5xx is
+  retried as an attempt. A 4xx stops the poll with a toast that gives the server's reason. Before, it
+  polled a refusal or a missing Sync Log every 3 s for up to 30 minutes. A lapsed session stops it and
+  draws the same signed-out panel the status load uses.
+- **The Water wizard drops a stale design reply.** If you picked one design and then another before
+  the first answered, the first reply or its error could overwrite the second. A reply is now drawn
+  only while the picker still shows the design it was asked for, and picking "Select a design…"
+  clears a load still in flight. The design picker's options are built with jQuery `val()`/`text()`
+  rather than as markup, so a design name with a quote in it no longer breaks its `<option>`.
+- **The Inventory Scanner Audit's start-up has its own slot.** Its loading panel, its error and a
+  Try again used to draw where the count's lines go. A clerk who had started counting while it loaded
+  could see those lines painted over. A late start-up reply also no longer replaces a session started
+  in the meantime.
+- **The loader's stand-in reports a lapsed session.** It used to reject every failure with
+  `session_expired: false` and no words. So on the stand-in path the Day Board kept polling after a
+  401, and frappe's own session dialog stacked up every minute. It now reads expiry the way
+  `sf_kit/call.js` does: a 401, exc_type `SessionExpired` or `AuthenticationError` (in the body or in
+  a server message), the body's `session_expired` flag, or a 403 to a signed-in page whose `user_id`
+  cookie v16 has already deleted. It also takes `exc_type` and the server's words as plain text from
+  the reply. The kit itself is not imported: this is the code that runs when the kit could not load.
+- **A late Scanner Audit start-up no longer brings back a cancelled count.** The start-up reply only
+  checked for a missing session. A clerk who started a count and cancelled it while the start-up was
+  in flight got the closed count back. Starting, cancelling and finishing now bump a counter, and a
+  start-up reply asked for before the last bump leaves the session alone.
+- **A 403 on a Day Board refresh says access is gone.** Over a board already showing, the toast and the
+  "as of" line now say "You no longer have access to the Day Board." rather than "Could not refresh…",
+  since the timer has stopped too.
+- **QuickBooks sync-log rows are escaped**, including their `data-route` attribute; they were
+  interpolated raw.
+- Button actions (QuickBooks actions, Stripe's Test Connection, the Rental Planner's wizard steps, every
+  scan and action on the scanner pages) keep frappe.call's normal dialogs, which is what a person who
+  just clicked expects.
+
+### Tests
+
+- `tests/test_s3_page_states.py` (35, own CI step). It checks that every page goes through the shared
+  loader, carries no copy of its stand-in, and never hands the page `undefined` when there is neither
+  loader nor kit. It checks the loader too: memoized, falling back when the
+  kit is missing, the stand-in's shape and its reading of a lapsed session, and its import line in the
+  global bundle. Every page needs
+  loading and error paths with a retry. It also pins each review fix above and that QuickBooks log rows
+  are escaped. It runs the new node harness.
+- **`scripts/test_s3_page_states.mjs`** (28 scenarios, 105 checks) loads the Day Board and the Stripe,
+  QuickBooks and Water pages with the REAL `sf_kit.bundle.js` and the real loader. Every panel comes
+  from the kit's own `state.render` and every failure is the kit's own rejection, so a page that reads
+  the kit wrong fails. Each page is run through a 500 with Try again, a 403 and a lapsed session,
+  plus each review fix above. Each page also runs with no loader and no kit, the old-tab case, and
+  must still say what failed and retry. The loader's stand-in runs alone: a 401 stops the Day Board's
+  timer, and its rejections are checked for a 401, an AuthenticationError message, a 403 with the
+  server's words, a 403 after the cookie is gone, a 500 and a dropped connection.
+- The rental-planner and desk-page-history node harnesses now run the real loader. Each gains
+  real-kit scenarios: the Rental Planner's 500 with Try again and its 403, the Device Console's 500
+  with Try again, and the Scanner Audit's 403, lapsed session, late start-up over a started count, and
+  late start-up after a count was started and cancelled.
+  The harnesses keep their stand-in scenarios, and the Device Console and the Scanner Audit keep every
+  Back/Forward assertion.
+
 ## [1.644.0] - 2026-10-13
 
 Form kit P5.2 and P4.5 (TASK-2026-02742): **the guided page is where an Opportunity opens, new or
