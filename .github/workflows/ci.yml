@@ -1740,6 +1740,13 @@ jobs:
       # validation blocks it), and saved views in the planners' own store. Own frappe stub.
       - name: Opportunity board part B (views, attention, snooze, saved views)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
+      # Form kit P4.4 / P6.6 / P6.7 (v1.675.0): the side panel's pure decisions and the save
+      # queue's manual mode under node (a move's required fields wait for the commit), the board's
+      # panel routes, quick add and bulk selection, bulk_update taking every deal through the
+      # single-change save with its own lock and savepoint, and the guided page and the side panel
+      # running one record editor. Own frappe stub; the form kit's saver is a recorder.
+      - name: Opportunity board part C (side panel, quick add, bulk)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_panel -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the
