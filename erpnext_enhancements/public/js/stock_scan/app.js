@@ -25,6 +25,13 @@
  * nearest existing items shown first. `boot.store_run` is null wherever that is not set up, and
  * then none of it appears.
  *
+ * BIN ASSIGNMENTS (v1.692.0, server side `inventory_enhancements/bin_assignments.py`): on an item
+ * at a bin, **Move to…** pushes stock out to another location (anyone who can take stock; the
+ * "Make <there> this item's bin" box only with `boot.can_manage`), and **Remove from this bin**
+ * takes the item off the bin's list (only with `can_manage`), offering Move to… or Send to the
+ * Boneyard first while stock is still recorded there. Both are sheets like every other, so the
+ * phone's Back closes them, and their saves land in Recent with Undo like every other save.
+ *
  * SAVES post immediately (submitted vouchers) and can be undone for a while. Each intended
  * save carries a `client_ref`; a retry after no answer reuses it (for `RETRY_WINDOW_MS`), so
  * the server returns the first save instead of posting twice (`logic.saveKey` /
@@ -33,7 +40,7 @@
  * item rather than written into whatever is on screen now (`post`).
  */
 
-import { M, call, upload } from "./transport.js";
+import { BIN, M, call, upload } from "./transport.js";
 import {
 	MAX_QTY,
 	REASON_ONLY_THIS_JOB,
@@ -44,6 +51,7 @@ import {
 	jobExpired,
 	keptRef,
 	logHeadline,
+	makeHomeDefault,
 	mayHaveSaved,
 	mintRef,
 	mintRunId,
@@ -762,11 +770,18 @@ export class StockScanApp {
 	recentRow(log) {
 		const undone = log.status !== "Posted";
 		const row = el("li", `ee-ss-recent-row${undone ? " is-undone" : ""}`);
-		const kind = log.action === "Take" ? "take" : log.action === "Move" ? "move" : "add";
-		const mark = glyph(kind === "take" ? "−" : kind === "move" ? "→" : "+", `ee-ss-recent-mark is-${kind}`);
+		// Move To and Boneyard (v1.692.0) move stock like Move here; taking an item off a bin, putting
+		// it on one or recounting it moves none, and gets a mark of its own.
+		const moved = log.action === "Move" || log.action === "Move To" || log.action === "Boneyard";
+		const binMarks = { Unassign: "×", Assign: "+", Count: "=" };
+		const kind = log.action === "Take" ? "take" : moved ? "move" : binMarks[log.action] ? "bin" : "add";
+		const mark = glyph(
+			kind === "take" ? "−" : kind === "move" ? "→" : kind === "bin" ? binMarks[log.action] : "+",
+			`ee-ss-recent-mark is-${kind}`
+		);
 		// A store run names the store it came from: "Home Depot → Bin A1".
 		const where =
-			log.action === "Move"
+			moved
 				? `${log.from_warehouse_name} → ${log.warehouse_name}`
 				: log.action === "Store Run" && log.supplier
 					? `${log.supplier} → ${log.warehouse_name}`
@@ -850,14 +865,15 @@ export class StockScanApp {
 		const list = el("ul", "ee-ss-list");
 		for (const item of items) {
 			const li = el("li");
+			// Why an item with nothing here still lists (v1.692.0): stock on its way to this bin, or
+			// a pair nobody has put on the bin or taken off it yet. The search list's quiet badge.
+			const sub = append(el("span", "ee-ss-row-sub"), item.item_code);
+			if (item.on_order > 0) append(sub, " ", el("span", "ee-ss-badge", "on order"));
+			if (item.undecided) append(sub, " ", el("span", "ee-ss-badge", "not assigned"));
 			const row = button(
 				[
 					thumb(item),
-					append(
-						el("span", "ee-ss-row-main"),
-						el("span", "ee-ss-row-title", item.item_name),
-						el("span", "ee-ss-row-sub", item.item_code)
-					),
+					append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", item.item_name), sub),
 					append(
 						el("span", `ee-ss-row-qty${item.on_hand > 0 ? "" : " is-zero"}`),
 						el("strong", null, plain(item.on_hand)),
@@ -920,19 +936,545 @@ export class StockScanApp {
 			}
 		} else {
 			view.appendChild(this.buildStepper(item));
+			// Both directions of a move, side by side, right under Save (v1.692.0). Move to… sits
+			// here rather than further down because the stock lead's history shows receipts
+			// ("Not on a purchase order") recorded where a move was meant.
+			const moves = [];
+			if (this.canMoveOut(item)) {
+				moves.push(
+					button([icon("moveOut"), el("span", null, "Move to…")], "ee-ss-btn ee-ss-btn-outline ee-ss-moveto-btn", () => this.openMoveTo())
+				);
+			}
 			if (item.elsewhere && item.elsewhere.length) {
-				view.appendChild(
+				moves.push(
 					button([icon("move"), el("span", null, "Move here from…")], "ee-ss-btn ee-ss-btn-outline ee-ss-move-btn", () => this.openMove())
 				);
 			}
+			if (moves.length) view.appendChild(append(el("div", `ee-ss-move-row${moves.length > 1 ? " is-two" : ""}`), ...moves));
 		}
 		if (item.elsewhere && item.elsewhere.length) {
 			const shown = item.elsewhere.slice(0, 3).map((p) => `${p.warehouse_name} (${plain(p.on_hand)})`);
 			const more = item.elsewhere.length > 3 ? `, and ${item.elsewhere.length - 3} more` : "";
 			view.appendChild(el("p", "ee-ss-also", `Also at: ${shown.join(", ")}${more}`));
 		}
+		if (this.canRemove(item)) {
+			view.appendChild(
+				button([icon("close"), el("span", null, "Remove from this bin")], "ee-ss-linkbtn ee-ss-remove-btn", () => this.openRemove())
+			);
+		}
 		this.updateStepper();
 		return view;
+	}
+
+	// --- Bin assignments (v1.692.0): Move to…, Remove from this bin ---------------------------
+
+	/**
+	 * May put items on bins and take them off: one of the page's roles and read on Item, the
+	 * owner's 2026-10-14 gate (`api.stock_scan._can_manage`; `bin_assignments.require_manage`
+	 * refuses the same people on the server, so this only hides what would be refused).
+	 */
+	canManage() {
+		return !!this.boot.can_manage;
+	}
+
+	/** Where "Send to the Boneyard" moves stock (Inventory Scanner Settings), or null: no button. */
+	boneyard() {
+		return this.settings.boneyard_warehouse || null;
+	}
+
+	/**
+	 * Move to… is a plain stock movement: `bin_assignments.move_to` without make-home needs only
+	 * Stock Entry create and submit, exactly as a take or Move here does, and the page shows those
+	 * to everyone too. So it shows wherever stock here is free to move; only its "Make … this
+	 * item's bin" box (the module gate on the server) waits for `can_manage`.
+	 */
+	canMoveOut(item) {
+		return !!(item && item.warehouse && !item.blocked && Math.max(Number(item.available) || 0, 0) > 0);
+	}
+
+	/** The row the bin's own list drew for this item, when that list is the screen under it. */
+	listedHere(item) {
+		for (let i = this.back.length - 1; i >= 0; i -= 1) {
+			const v = this.back[i];
+			if (v.name !== "location" || !v.location || v.location.warehouse !== item.warehouse) continue;
+			return (v.location.items || []).find((row) => row.item_code === item.item_code) || null;
+		}
+		return null;
+	}
+
+	/**
+	 * Remove from this bin: only with `can_manage`, and only where there is something to take off
+	 * — the item is on the bin (`assigned`), this is its default warehouse (`is_default`), nobody
+	 * has decided on the pair yet (`undecided`), or stock is recorded here: the reasons
+	 * `unassign` accepts. The item card carries all three (also when it was reached from Recent
+	 * or "Where is it?"); the bin's own list row, when it is the screen underneath, is read too in
+	 * case the card is older. A blocked item with stock cannot be moved by this page, so it would
+	 * be offered only moves the server refuses.
+	 */
+	canRemove(item) {
+		if (!this.canManage() || !item || !item.warehouse) return false;
+		const stocked = (Number(item.on_hand) || 0) > 0;
+		if (item.blocked && stocked) return false;
+		const why = (row) => !!(row && (row.assigned || row.is_default || row.undecided));
+		return stocked || why(item) || why(this.listedHere(item));
+	}
+
+	/**
+	 * Move to… (TASK-2026-02740): push stock OUT of this bin, the mirror of Move here. One sheet:
+	 * how many (all that is free here, by default), where to (scan its label, find it, or one of
+	 * the places the item is already), and — with `can_manage` — "Make <there> this item's bin",
+	 * ticked while the quantity is everything on hand here (`makeHomeDefault`) until the person
+	 * touches it. The camera and the location search open OVER this sheet and hand the place
+	 * back to it; the one history marker covers the stack, so the phone's Back closes it all.
+	 */
+	openMoveTo() {
+		if (this.reportBusy()) return;
+		const v = this.view;
+		const item = v.item;
+		if (v.name !== "item" || !this.canMoveOut(item)) return;
+		const uom = item.stock_uom;
+		const here = item.warehouse_name || item.warehouse;
+		const onHand = Math.max(Number(item.on_hand) || 0, 0);
+		const free = Math.min(Math.max(Number(item.available) || 0, 0), MAX_QTY);
+		const manage = this.canManage();
+		const boneyard = this.boneyard();
+		let handle = null;
+		let goBtn = null;
+		// A Move in flight outlives its sheet if the person closes it; its answer then goes to a
+		// toast (`post`), not to an error line nobody can see.
+		let closed = false;
+		let dest = null; // {warehouse, warehouse_name, trail}
+		let touched = false; // the person set the box: the quantity no longer decides it
+		let lookups = 0; // a scanned label's answer for an earlier scan, or a closed sheet, is dropped
+
+		const field = input({
+			className: "ee-ss-input ee-ss-qty-input",
+			inputmode: item.whole_number ? "numeric" : "decimal",
+			enterkeyhint: "done",
+			label: "How many to move",
+			value: plain(free),
+		});
+		const current = () => parseQty(field.value, item.whole_number, uom);
+		const step = (delta) => {
+			const r = current();
+			field.value = plain(Math.min(Math.max((r.qty || 0) + delta, 1), free));
+			relabel();
+		};
+		const less = button("−", "ee-ss-mini-step", () => step(-1));
+		less.setAttribute("aria-label", "One less");
+		const more = button("+", "ee-ss-mini-step", () => step(1));
+		more.setAttribute("aria-label", "One more");
+
+		const home = input({ type: "checkbox", className: "ee-ss-home-check-input" });
+		const homeText = el("span", "ee-ss-home-check-text");
+		const homeRow = append(el("label", "ee-ss-home-check"), home, homeText);
+		const homeNote = el("p", "ee-ss-note ee-ss-home-check-note");
+		const destBox = el("div", "ee-ss-dest");
+		const status = el("p", "ee-ss-search-status");
+		status.setAttribute("role", "status");
+		const setStatus = (text, isError) => {
+			status.textContent = text || "";
+			status.classList.toggle("is-error", !!isError);
+		};
+		const error = errorLine("ee-ss-field-error");
+		const showError = (text, action) => error.show(text, action);
+
+		/** The box: shown with `can_manage` once a place is picked, never for the boneyard. */
+		const refreshHome = () => {
+			const r = current();
+			const offered = !!(manage && dest && dest.warehouse !== boneyard);
+			homeRow.hidden = !offered;
+			if (!offered) home.checked = false;
+			else if (!touched) home.checked = makeHomeDefault(r.qty, onHand);
+			homeText.textContent = dest ? `Make ${dest.warehouse_name} this item's bin` : "";
+			let note = "";
+			if (offered && home.checked) {
+				const left = r.qty ? onHand - r.qty : onHand;
+				// The server's rule (`bin_assignments._plan_source`): the old bin lets go only when emptied.
+				note =
+					left > 1e-9
+						? `${plain(left)} ${uom} stay at ${here}, so ${here} stays its bin too.`
+						: `${item.item_name} comes off ${here}.`;
+			} else if (manage && dest && dest.warehouse === boneyard) {
+				note = "The Boneyard is never an item's bin.";
+			}
+			homeNote.textContent = note;
+			homeNote.hidden = !note;
+		};
+		/** The button names the move as typed now; held while a save is in flight ("Saving…"). */
+		const drawGo = () => {
+			const r = current();
+			if (goBtn && !this.saving) {
+				fill(
+					goBtn,
+					icon("moveOut"),
+					el("span", null, dest ? `Move ${r.qty ? `${plain(r.qty)} ` : ""}to ${dest.warehouse_name}` : "Pick where it goes first")
+				);
+				goBtn.disabled = !dest;
+			}
+		};
+		const relabel = () => {
+			drawGo();
+			refreshHome();
+			showError("");
+		};
+		const choose = (place) => {
+			if (closed || !place || !place.warehouse) return;
+			if (place.warehouse === item.warehouse) {
+				setStatus(`That is ${here}, where it is now. Pick where it goes.`, true);
+				return;
+			}
+			dest = { warehouse: place.warehouse, warehouse_name: place.warehouse_name || place.warehouse, trail: place.trail || "" };
+			drawDest();
+			relabel();
+		};
+		const lookUp = async (code) => {
+			const mine = ++lookups;
+			setStatus("Looking up…");
+			try {
+				// No `warehouse`: an item code typed here is not a reading of this bin's item.
+				const res = await call(M.RESOLVE, { code });
+				if (mine !== lookups || closed) return;
+				if (res && res.kind === "location" && res.location) {
+					setStatus("");
+					choose(res.location);
+				} else if (res && res.kind === "item") {
+					setStatus("That is an item's label. Scan the label on the location it goes to.", true);
+				} else {
+					setStatus((res && res.message) || "Nothing matches that code.", true);
+				}
+			} catch (e) {
+				if (mine !== lookups || closed) return;
+				setStatus("");
+				const text = scanFailure(code, e && e.message);
+				if (needsReload(e)) showError(text, RELOAD);
+				else showError(text);
+			}
+		};
+		const scanDest = () => {
+			if (this.reportBusy() || closed) return;
+			setStatus("");
+			openScanner({ decoderUrl: this.boot.decoder_url, onCode: (code) => lookUp(code) });
+		};
+		const findDest = () => {
+			if (closed) return;
+			setStatus("");
+			this.openSearch({ locationsOnly: true, onLocation: (row) => choose(row) });
+		};
+		const drawDest = () => {
+			if (dest) {
+				fill(
+					destBox,
+					append(
+						el("div", "ee-ss-row is-current ee-ss-dest-pick"),
+						icon("pin", "ee-ss-row-icon"),
+						append(
+							el("span", "ee-ss-row-main"),
+							el("span", "ee-ss-row-title", dest.warehouse_name),
+							dest.trail ? el("span", "ee-ss-row-sub", dest.trail) : null
+						)
+					),
+					button("Pick another place", "ee-ss-linkbtn ee-ss-dest-change", () => {
+						dest = null;
+						setStatus("");
+						drawDest();
+						relabel();
+					})
+				);
+				return;
+			}
+			const ways = append(
+				el("div", "ee-ss-dest-ways"),
+				button([icon("scan"), el("span", null, "Scan its label")], "ee-ss-btn ee-ss-btn-primary ee-ss-dest-scan", scanDest),
+				button([icon("search"), el("span", null, "Find a location")], "ee-ss-btn ee-ss-btn-outline ee-ss-dest-find", findDest)
+			);
+			fill(destBox, ways, status);
+			// The places the item is recorded already: consolidating into one is the common move.
+			const known = (item.elsewhere || []).filter((p) => p.warehouse && p.warehouse !== item.warehouse);
+			if (known.length) {
+				destBox.appendChild(el("h3", "ee-ss-group-title", "Or where it is already"));
+				const list = el("ul", "ee-ss-list");
+				for (const place of known) {
+					const row = button(
+						[
+							icon("pin", "ee-ss-row-icon"),
+							append(
+								el("span", "ee-ss-row-main"),
+								el("span", "ee-ss-row-title", place.warehouse_name),
+								el("span", "ee-ss-row-sub", placeAmount(place, uom))
+							),
+							icon("next", "ee-ss-row-go"),
+						],
+						"ee-ss-row",
+						() => choose(place)
+					);
+					list.appendChild(append(el("li"), row));
+				}
+				destBox.appendChild(list);
+			}
+		};
+		const go = () => {
+			const r = current();
+			if (!dest) return showError("Scan or pick where it goes first.");
+			if (r.problem) return showError(r.problem);
+			if (r.qty > free + 1e-9) {
+				return showError(
+					free < onHand
+						? `Only ${plain(free)} of the ${plain(onHand)} ${uom} here are free to move; the rest are reserved.`
+						: `Only ${plain(free)} ${uom} can be moved from ${here}.`
+				);
+			}
+			this.post(
+				v,
+				BIN.MOVE_TO,
+				{
+					action: "move_to",
+					item_code: item.item_code,
+					from_warehouse: item.warehouse,
+					to_warehouse: dest.warehouse,
+					qty: r.qty,
+					make_home: !homeRow.hidden && home.checked ? 1 : 0,
+				},
+				{
+					button: goBtn,
+					showError,
+					isOpen: () => !closed,
+					onDone: () => handle.close("action"),
+					keepChange: true,
+					after: (result) => this.afterMoveOut(v, result),
+				}
+			).then(() => {
+				// A refusal or no answer leaves the sheet open, and `busy` put back the label the
+				// button had when the save began: name the move as it is typed now, keeping the error.
+				if (!closed) drawGo();
+			});
+		};
+
+		home.addEventListener("change", () => {
+			touched = true;
+			refreshHome();
+		});
+		field.addEventListener("input", relabel);
+		field.addEventListener("keydown", (ev) => {
+			if (ev.key === "Enter") {
+				ev.preventDefault();
+				go();
+			}
+		});
+
+		const intro =
+			free < onHand
+				? `${plain(onHand)} ${uom} at ${here}, ${plain(free)} free to move. How many are you moving?`
+				: `${plain(onHand)} ${uom} at ${here}. How many are you moving?`;
+		handle = sheet({
+			title: "Move to…",
+			className: "ee-ss-moveto-sheet",
+			body: (body) =>
+				append(
+					body,
+					el("p", "ee-ss-sheet-text", intro),
+					append(el("div", "ee-ss-qty-row"), less, field, more, el("span", "ee-ss-qty-unit", uom)),
+					el("h3", "ee-ss-group-title", "To"),
+					destBox,
+					homeRow,
+					homeNote,
+					error.node
+				),
+			actions: [],
+			onClose: () => {
+				closed = true;
+				lookups += 1;
+			},
+		});
+		[goBtn] = handle.setActions([
+			{ label: "Pick where it goes first", kind: "primary", large: true, close: false, disabled: true, onClick: () => go() },
+			{ label: "Cancel", kind: "ghost" },
+		]);
+		drawDest();
+		relabel();
+	}
+
+	/**
+	 * A Move to… or a boneyard trip went through. The result's item is the destination's, so the
+	 * bin on screen is re-read; and when the save took the item off this bin (it emptied it, with
+	 * make-home or to the boneyard: `source_kept === false`) the person is taken back to the bin's
+	 * list, which no longer has it.
+	 */
+	afterMoveOut(v, result) {
+		const log = (result && result.log) || {};
+		if (this.view !== v) return;
+		if (log.source_kept === false) this.leaveItem(v);
+		else this.refreshView(v);
+	}
+
+	/**
+	 * Back to the bin's list after the item came off it. Waits until no sheet is open
+	 * (`whenNoSheets`: the save may land while the person has opened another sheet or the camera,
+	 * whose marker is the current entry, and the list must not be written over it under an open
+	 * sheet) and the closed sheets' marker has been stepped back over (`whenQuiet`), then walks the
+	 * history the back link would: onto the list's own entry when it is the one behind, else
+	 * REPLACING this entry with the list — never a new entry, so the phone's Back from the list
+	 * does not land on an item that is no longer there. If the person has gone elsewhere by then,
+	 * nothing moves.
+	 */
+	leaveItem(v) {
+		const walk = () => {
+			// A sheet that closed into a lookup (a scan, a search pick) is taking the person elsewhere:
+			// its marker belongs to the screen that lands, so neither it nor this view is ours to move.
+			// (Asked a tick after the last sheet closed: the camera starts its lookup just after.)
+			if (this.view !== v || this.loads || sheetDepth()) return;
+			this.nav.whenQuiet(() => {
+				if (this.view !== v || this.reportBusy() || sheetDepth()) return;
+				const parent = this.back[this.back.length - 1] || START;
+				if (this.nav.behindIs(parent, this.back.slice(0, -1))) {
+					this.goBack();
+					return;
+				}
+				this.back.pop();
+				this.show(parent, this.back, "replace");
+			});
+		};
+		// The usual case, the save's own sheet just closed and nothing else is open: now, while the
+		// closed sheet's marker is still waiting to be stepped back over.
+		if (!sheetDepth()) walk();
+		else whenNoSheets(() => setTimeout(walk, 0));
+	}
+
+	/**
+	 * Remove from this bin (TASK-2026-02741). With nothing recorded here: one tap posts
+	 * `unassign` and the bin's list drops the item. With stock here the server refuses that, so the
+	 * sheet offers what to do with the stock first, each said plainly: Move to… (anywhere; ticking
+	 * "Make … this item's bin" with everything moved takes it off this bin), or — when a Boneyard is
+	 * set in Inventory Scanner Settings — Send to the Boneyard, which moves everything free here
+	 * there and takes the item off this bin.
+	 */
+	openRemove() {
+		if (this.reportBusy()) return;
+		const v = this.view;
+		const item = v.item;
+		if (v.name !== "item" || !this.canRemove(item)) return;
+		const here = item.warehouse_name || item.warehouse;
+		const uom = item.stock_uom;
+		const onHand = Math.max(Number(item.on_hand) || 0, 0);
+		const free = Math.min(Math.max(Number(item.available) || 0, 0), MAX_QTY);
+		const boneyard = this.boneyard();
+		const error = errorLine("ee-ss-field-error");
+		const showError = (text, action) => error.show(text, action);
+		let closed = false;
+		const onClose = () => {
+			closed = true;
+		};
+
+		if (onHand <= 1e-9) {
+			sheet({
+				title: `Remove from ${here}`,
+				body: append(
+					el("div", "ee-ss-remove"),
+					el("p", "ee-ss-sheet-text", `Take ${item.item_name} off ${here}? It stops being listed here. No stock moves, and you can undo it.`),
+					error.node
+				),
+				onClose,
+				actions: [
+					{
+						label: `Remove from ${here}`,
+						kind: "primary",
+						large: true,
+						close: false,
+						onClick: (h, btn) =>
+							this.post(
+								v,
+								BIN.UNASSIGN,
+								{ action: "unassign", item_code: item.item_code, warehouse: item.warehouse },
+								{ button: btn, showError, isOpen: () => !closed, onDone: () => h.close("action"), after: () => this.leaveItem(v) }
+							),
+					},
+					{ label: "Cancel", kind: "ghost" },
+				],
+			});
+			return;
+		}
+
+		// Every way out of this sheet: while the Boneyard trip is posting, none may be tapped (a
+		// Move to… opened meanwhile would be a second save on the same stock).
+		const rows = [];
+		const enable = (on) => {
+			for (const r of rows) r.disabled = !on || free <= 0;
+		};
+		const option = (title, sub, onClick) => {
+			const row = button(
+				[append(el("span", "ee-ss-row-main"), el("span", "ee-ss-row-title", title), el("span", "ee-ss-row-sub", sub)), icon("next", "ee-ss-row-go")],
+				"ee-ss-row ee-ss-order",
+				() => onClick(row)
+			);
+			row.disabled = free <= 0;
+			rows.push(row);
+			return append(el("li"), row);
+		};
+		// The server takes the item off this bin only when the move empties it
+		// (`bin_assignments._plan_source`), and reserved stock cannot move: promise that only when
+		// everything here is free.
+		const empties = free >= onHand - 1e-9;
+		const reserved = `${plain(onHand - free)} ${uom}`;
+		sheet({
+			title: `Remove from ${here}`,
+			onClose,
+			body: (body, handle) => {
+				body.appendChild(
+					el(
+						"p",
+						"ee-ss-sheet-text",
+						`${plain(onHand)} ${uom} of ${item.item_name} ${onHand === 1 ? "is" : "are"} still recorded at ${here}. Move ${onHand === 1 ? "it" : "them"} out first:`
+					)
+				);
+				const list = el("ul", "ee-ss-list");
+				list.appendChild(
+					option(
+						"Move to…",
+						empties
+							? `Pick the location they go to. Moving all ${plain(free)} there and making it this item's bin takes ${item.item_name} off ${here}.`
+							: `Pick the location they go to. ${reserved} here are reserved and stay, so ${item.item_name} stays on ${here} until they are used.`,
+						() => {
+							handle.close("action");
+							this.openMoveTo();
+						}
+					)
+				);
+				if (boneyard && boneyard !== item.warehouse) {
+					list.appendChild(
+						option(
+							"Send to the Boneyard",
+							empties
+								? `Moves all ${plain(free)} ${uom} to the Boneyard and takes ${item.item_name} off ${here}. Undo puts them back.`
+								: `Moves the ${plain(free)} ${uom} free here to the Boneyard. ${reserved} are reserved and stay, so ${item.item_name} stays on ${here}. Undo puts them back.`,
+							(row) => {
+								enable(false);
+								this.post(
+									v,
+									BIN.BONEYARD,
+									{ action: "boneyard", item_code: item.item_code, from_warehouse: item.warehouse, qty: free },
+									{
+										button: row,
+										showError,
+										isOpen: () => !closed,
+										onDone: () => handle.close("action"),
+										keepChange: true,
+										after: (result) => this.afterMoveOut(v, result),
+									}
+								).then(() => {
+									if (!closed) enable(true);
+								});
+							}
+						)
+					);
+				}
+				body.appendChild(list);
+				if (free <= 0) {
+					body.appendChild(el("p", "ee-ss-note", `All ${plain(onHand)} ${uom} here are reserved, so none can be moved yet.`));
+				}
+				body.appendChild(error.node);
+			},
+			actions: [{ label: "Cancel", kind: "ghost" }],
+		});
 	}
 
 	buildStepper(item) {
