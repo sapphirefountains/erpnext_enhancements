@@ -171,13 +171,14 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 		if (!extra) return "";
 		let html = '<p class="ee-field-desc-more">' + frappe.utils.escape_html(extra.help) + "</p>";
 		if (extra.article) {
+			// get_form_link gives v16's /desk/... path, which the Desk routes in place; a
+			// hard-coded /app/ path would reload the whole Desk (test_desk_links).
 			const href =
-				"/app/knowledge-article/" +
-				encodeURIComponent(extra.article) +
+				frappe.utils.get_form_link("Knowledge Article", extra.article) +
 				(extra.anchor ? "#" + encodeURIComponent(extra.anchor) : "");
 			html +=
 				'<a class="ee-field-desc-learn" href="' +
-				href +
+				frappe.utils.escape_html(href) +
 				'">' +
 				frappe.utils.escape_html(__("Learn more")) +
 				"</a>";
