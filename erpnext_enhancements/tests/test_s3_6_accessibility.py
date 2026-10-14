@@ -1,4 +1,4 @@
-"""Custom pages S3.6 (v1.653.0): the accessibility pass, pinned file by file.
+"""Custom pages S3.6 (v1.656.0): the accessibility pass, pinned file by file.
 
 Each check names the file and the element it fixed, so a regression points at one line rather
 than at a repo-wide scan that is noisy enough to be ignored:

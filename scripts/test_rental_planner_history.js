@@ -16,7 +16,7 @@
  * Nik's rule: every screen of a multi-screen page is its own history entry, Back never loses
  * work, and Forward restores the screen.
  *
- * S3.6 (v1.653.0) adds the keyboard: `press` models Enter and Space as the browser handles them,
+ * S3.6 (v1.656.0) adds the keyboard: `press` models Enter and Space as the browser handles them,
  * so a booking bar or a step that is only a clickable <div> fails here.
  *
  * Run: node scripts/test_rental_planner_history.js
@@ -572,7 +572,7 @@ test("Starting over after a started draft asks first", async () => {
 	check("on step 1", desk.here(), "/desk/rental-planner/new/dates");
 });
 
-// S3.6 (v1.653.0): the board's booking bars and the wizard's step rail answer the keyboard.
+// S3.6 (v1.656.0): the board's booking bars and the wizard's step rail answer the keyboard.
 function boardWithBars() {
 	const world = makeWorld();
 	world.timeline = {
