@@ -371,6 +371,12 @@ standing weekly meeting — and runs in four queries total, because the
 `Value Stream` child table carries ~1,460 rows across three parent doctypes and a
 per-stream subquery re-scans it every time.
 
+It shows each stream as a chip in its pillar's colors and its money through the report face
+(form kit P3.3, v1.657.0; [docs/app-design-system.md](../../docs/app-design-system.md#the-report-face)),
+and the window in its message reads `10/14/2026` rather than an ISO date. It is one of the "CRM
+and sales" reports `tests/test_report_hand_formatting.py` holds to the face. Marketing Spend
+Rollup still prints its window ISO and is on that test's known-remaining list.
+
 ### Four KPIs were measuring a dead column
 
 `Lead.source` / `Opportunity.source` lost their DocField when erpnext v15 renamed
