@@ -8,6 +8,7 @@
   "customer",
   "project",
   "status",
+  "site_wide",
   "sections",
   "guidance_section",
   "safety_instructions",
@@ -43,6 +44,13 @@
    "in_list_view": 1,
    "label": "Status",
    "options": "Draft\nActive\nDisabled"
+  },
+  {
+   "default": "0",
+   "description": "Tick when this form is one checklist for the whole site, e.g. a winterization that names each fountain's steps itself. On a Per Site Visit it is filled in once, under Whole site, instead of once on every water feature's tab. Leave it unticked when each fountain gets the same steps (drain this basin, set this controller).",
+   "fieldname": "site_wide",
+   "fieldtype": "Check",
+   "label": "Once per Site Visit"
   },
   {
    "description": "Reusable building blocks this form is composed of. The same Section (e.g. Chemical Dosing) can be shared by many templates.",
@@ -81,7 +89,7 @@
    "options": "Sapphire Section Image"
   }
  ],
- "modified": "2024-05-22 12:00:00.000000",
+ "modified": "2026-10-13 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Template",
