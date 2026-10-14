@@ -15,6 +15,9 @@ Imports only ``frappe`` (lazily), so bench-free suites can load it whole.
 
 #: Canonical spellings, Monday first, as ``date.weekday()`` numbers them.
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+DAY_LONG = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+#: The field holding a checklist row's label, per visit table (consumables carry an item instead).
+LABEL_FIELDS = {"cleaning_tasks": "task", "maintenance_results": "question", "chemistry_readings": "reading"}
 
 _ALIASES = {
 	"mon": 0,
@@ -103,13 +106,77 @@ def scheduled_on(days, day):
 	saved before the check existed must not quietly drop work from a visit. So does a day
 	that is not a date (``getdate`` returns None for "0000-00-00").
 	"""
-	if not (days or "").strip() or day is None:
+	if day is None:
+		return True
+	return scheduled_on_weekday(days, day.weekday())
+
+
+def scheduled_on_weekday(days, weekday):
+	"""``scheduled_on`` for a weekday number (0 is Monday) rather than a date."""
+	if not (days or "").strip():
 		return True
 	try:
 		wanted = parse_days(days)
 	except ValueError:
 		return True
-	return not wanted or day.weekday() in wanted
+	return not wanted or weekday in wanted
+
+
+def _norm(text):
+	return (text or "").strip().lower()
+
+
+def review_lines(doc):
+	"""The visit's day-specific lines, for the Visit Review page (v1.678.0).
+
+	A visit's checklist is built once, on its first open, for the day it was scheduled or done
+	(``checklist_day``). A reviewer could not tell which lines were there because of the day,
+	nor see that a visit done a day late carried the wrong day's lines. Against the day the
+	visit was done (else scheduled), each line of its template's sections that names days is
+	one of: on the visit and due that day; due that day but missing; or on the visit but set
+	for other days.
+
+	Matched by section and label, across water features. Consumables are left out: they carry
+	an item, not a label. Returns None when nothing on the visit's sections names a day.
+	"""
+	import frappe
+
+	rows = [(table, row) for table in LABEL_FIELDS for row in doc.get(table) or []]
+	sections = {row.get("section") for _table, row in rows if row.get("section")}
+	if doc.get("template"):
+		sections.update(
+			frappe.get_all(
+				"Sapphire Template Section",
+				filters={"parent": doc.template, "parenttype": "Sapphire Maintenance Template"},
+				pluck="section",
+			)
+		)
+	sections.discard(None)
+	if not sections:
+		return None
+	items = frappe.get_all(
+		"Sapphire Section Item",
+		filters={
+			"parent": ["in", sorted(sections)],
+			"parenttype": "Sapphire Maintenance Section",
+			"days": ["is", "set"],
+		},
+		fields=["parent", "label", "days", "sequence", "idx"],
+		order_by="parent asc, idx asc",
+	)
+	if not items:
+		return None
+	day = checklist_day(doc.get("visit_date"), doc.get("scheduled_visit_date"))
+	present = {(row.get("section"), _norm(row.get(LABEL_FIELDS[table]))) for table, row in rows}
+	on_visit, missing, other_days = [], [], []
+	for item in items:
+		line = {"label": item.label, "days": item.days}
+		due = scheduled_on(item.days, day)
+		if (item.parent, _norm(item.label)) in present:
+			(on_visit if due else other_days).append(line)
+		elif due:
+			missing.append(line)
+	return {"day": DAY_LONG[day.weekday()], "on_visit": on_visit, "missing": missing, "other_days": other_days}
 
 
 def checklist_day(visit_date=None, scheduled_visit_date=None):

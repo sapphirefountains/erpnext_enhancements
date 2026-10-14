@@ -42,6 +42,7 @@ SECTION_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_mai
 DAYS_MODULE = "erpnext_enhancements.sapphire_maintenance.visit_days"
 SCOPE_MODULE = "erpnext_enhancements.sapphire_maintenance.agreement_scope"
 CONTRACT_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract"
+TEMPLATE_MODULE = "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_template.sapphire_maintenance_template"
 STUBBED = (
 	"frappe",
 	"frappe.utils",
@@ -52,9 +53,11 @@ STUBBED = (
 	DAYS_MODULE,
 	SCOPE_MODULE,
 	CONTRACT_MODULE,
+	TEMPLATE_MODULE,
 )
 
 record_module = None
+template_module = None
 contract_module = None
 section_module = None
 visit_days = None
@@ -111,12 +114,16 @@ def _reset():
 			"errors": [],
 			"active": {},
 			"serials": {},
+			"template_sections": {},
+			"day_items": [],
+			"records": [],
+			"readings": [],
 		}
 	)
 
 
 def setUpModule():
-	global record_module, section_module, visit_days, agreement_scope, contract_module
+	global record_module, section_module, visit_days, agreement_scope, contract_module, template_module
 	for name in STUBBED:
 		_saved[name] = sys.modules.pop(name, None)
 	_forget_package_attrs()
@@ -140,6 +147,23 @@ def setUpModule():
 		if doctype == "Serial No":
 			assert kwargs.get("as_list"), kwargs
 			return [(name, STATE["serials"].get(name)) for name in filters["name"][1]]
+		if doctype == "Sapphire Template Section":
+			assert pluck == "section", pluck
+			return list(STATE["template_sections"].get(filters["parent"], []))
+		if doctype == "Sapphire Section Item":
+			assert filters["days"] == ["is", "set"], filters
+			wanted = filters["parent"][1]
+			return [_Dict(r) for r in STATE["day_items"] if r["parent"] in wanted and r.get("days")]
+		if doctype == "Sapphire Maintenance Record":
+			rows = [r for r in STATE["records"] if r["project"] == filters["project"] and r["docstatus"] == 1]
+			if "serial_no" in filters:
+				rows = [r for r in rows if (r.get("serial_no") or "") in filters["serial_no"][1]]
+			return [_Dict(r) for r in rows]
+		if doctype == "Sapphire Chemistry Reading":
+			rows = [r for r in STATE["readings"] if r["parent"] in filters["parent"][1]]
+			if "serial_no" in filters:
+				rows = [r for r in rows if (r.get("serial_no") or "") in filters["serial_no"][1]]
+			return [_Dict(r) for r in rows]
 		if doctype == "Contract Service Option":
 			assert filters["included"] == 1 and filters["parenttype"] == "Project Contract", filters
 			rows = [r for r in STATE["options"] if r["parent"] == filters["parent"] and r["included"]]
@@ -195,6 +219,7 @@ def setUpModule():
 	section_module = importlib.import_module(SECTION_MODULE)
 	record_module = importlib.import_module(RECORD_MODULE)
 	contract_module = importlib.import_module(CONTRACT_MODULE)
+	template_module = importlib.import_module(TEMPLATE_MODULE)
 
 
 def _forget_package_attrs():
@@ -202,6 +227,7 @@ def _forget_package_attrs():
 	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract as contract_package
 	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record as record_package
 	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_section as section_package
+	import erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_template as template_package
 
 	for owner, attr in (
 		(package, "visit_days"),
@@ -209,6 +235,7 @@ def _forget_package_attrs():
 		(record_package, "sapphire_maintenance_record"),
 		(section_package, "sapphire_maintenance_section"),
 		(contract_package, "sapphire_maintenance_contract"),
+		(template_package, "sapphire_maintenance_template"),
 	):
 		if attr in vars(owner):
 			delattr(owner, attr)
@@ -766,6 +793,168 @@ class TestDeskFormAgreementCard(unittest.TestCase):
 		body = js[start : js.index("\n}\n", start)]
 		for value in ("visit", "template", "source"):
 			self.assertRegex(body, r"esc\(\s*row\." + value + r"\s*\)")
+
+
+class TestDayLinesOnReview(unittest.TestCase):
+	"""v1.678.0: the Visit Review page names a visit's day-specific lines, against its day."""
+
+	def setUp(self):
+		_reset()
+		STATE["template_sections"] = {"VF Daily": ["VF Service"]}
+		STATE["day_items"] = [
+			{"parent": "VF Service", "label": "Basket filters cleaned", "days": ""},
+			{"parent": "VF Service", "label": "Splash pad nozzle filters cleaned", "days": "Mon"},
+			{"parent": "VF Service", "label": "Cartridge filters cleaned", "days": "Tue, Fri"},
+			{"parent": "VF Service", "label": "Bowl fountain - bowl and pool vacuumed", "days": "Wed"},
+		]
+
+	def visit(self, visit_date, tasks):
+		return _Dict(
+			template="VF Daily",
+			visit_date=visit_date,
+			scheduled_visit_date=visit_date,
+			cleaning_tasks=[_Dict(section="VF Service", task=t) for t in tasks],
+			maintenance_results=[],
+			chemistry_readings=[],
+		)
+
+	def test_a_visit_on_its_day_lists_its_day_lines(self):
+		lines = visit_days.review_lines(
+			self.visit("2026-10-13", ["Basket filters cleaned", "Cartridge filters cleaned"])
+		)
+		self.assertEqual(lines["day"], "Tuesday")
+		self.assertEqual([line["label"] for line in lines["on_visit"]], ["Cartridge filters cleaned"])
+		self.assertEqual((lines["missing"], lines["other_days"]), ([], []))
+
+	def test_a_visit_done_a_day_late_says_what_is_missing_and_what_is_another_days(self):
+		"""Built for Tuesday, done on Wednesday."""
+		lines = visit_days.review_lines(self.visit("2026-10-14", ["Cartridge filters cleaned"]))
+		self.assertEqual(lines["day"], "Wednesday")
+		self.assertEqual(
+			[line["label"] for line in lines["missing"]], ["Bowl fountain - bowl and pool vacuumed"]
+		)
+		self.assertEqual(lines["other_days"], [{"label": "Cartridge filters cleaned", "days": "Tue, Fri"}])
+
+	def test_nothing_when_no_line_names_a_day(self):
+		STATE["day_items"] = [r for r in STATE["day_items"] if not r["days"]]
+		self.assertIsNone(visit_days.review_lines(self.visit("2026-10-13", ["Basket filters cleaned"])))
+		self.assertIsNone(visit_days.review_lines(_Dict(template=None, cleaning_tasks=[])))
+
+	def test_a_weekday_number_follows_the_same_rule(self):
+		self.assertTrue(visit_days.scheduled_on_weekday("", 3))
+		self.assertTrue(visit_days.scheduled_on_weekday("Tue, Fri", 4))
+		self.assertFalse(visit_days.scheduled_on_weekday("Tue, Fri", 0))
+		self.assertTrue(visit_days.scheduled_on_weekday("Mondy", 0), "unreadable keeps the line")
+
+
+class TestPreviewADay(unittest.TestCase):
+	"""v1.678.0: the template form's Preview a day."""
+
+	def setUp(self):
+		_reset()
+		section = _Document(
+			section_title="VF Service",
+			section_type="Cleaning Tasks",
+			disabled=0,
+			items=[
+				_item("Cartridge filters cleaned", "Tue, Fri", 2, 2),
+				_item("Basket filters cleaned", "", 1, 1),
+				_item("Splash pad nozzle filters cleaned", "Mon", 3, 3),
+			],
+		)
+		off = _Document(
+			section_title="Retired", section_type="Cleaning Tasks", disabled=1, items=[_item("x")]
+		)
+		template = _Document(
+			name="VF Daily",
+			site_wide=0,
+			sections=[_Dict(section="VF Service"), _Dict(section="Retired")],
+			check_permission=lambda ptype: STATE.setdefault("checked", []).append(ptype),
+		)
+		STATE["docs"].update(
+			{
+				("Sapphire Maintenance Template", "VF Daily"): template,
+				("Sapphire Maintenance Section", "VF Service"): section,
+				("Sapphire Maintenance Section", "Retired"): off,
+			}
+		)
+
+	def test_a_day_marks_the_lines_set_for_other_days(self):
+		preview = template_module.preview_day("VF Daily", "Tuesday")
+		self.assertEqual(STATE["checked"], ["read"])
+		self.assertEqual((preview["day"], preview["on"], preview["off"]), ("Tuesday", 2, 1))
+		(section,) = preview["sections"]
+		self.assertEqual(
+			[(line["label"], line["on"]) for line in section["lines"]],
+			[
+				("Basket filters cleaned", True),
+				("Cartridge filters cleaned", True),
+				("Splash pad nozzle filters cleaned", False),
+			],
+		)
+
+	def test_only_a_day_of_the_week(self):
+		with self.assertRaises(_Thrown):
+			template_module.preview_day("VF Daily", "Someday")
+
+
+class TestFeatureTrends(unittest.TestCase):
+	"""v1.678.0: a whole-site reading on a site visit is not one fountain's trend."""
+
+	def setUp(self):
+		_reset()
+		STATE["records"] = [
+			{
+				"name": "SITE-1",
+				"project": "P",
+				"docstatus": 1,
+				"serial_no": None,
+				"creation": datetime.datetime(2026, 10, 1),
+			},
+			{
+				"name": "EAST-1",
+				"project": "P",
+				"docstatus": 1,
+				"serial_no": "EAST",
+				"creation": datetime.datetime(2026, 9, 1),
+			},
+		]
+		STATE["readings"] = [
+			{
+				"parent": "SITE-1",
+				"reading": "pH",
+				"reading_value": 7.4,
+				"serial_no": "EAST",
+				"uom": "",
+				"min_value": 0,
+				"max_value": 0,
+				"out_of_range": 0,
+			},
+			{
+				"parent": "SITE-1",
+				"reading": "pH",
+				"reading_value": 9.9,
+				"serial_no": None,
+				"uom": "",
+				"min_value": 0,
+				"max_value": 0,
+				"out_of_range": 0,
+			},
+			{
+				"parent": "EAST-1",
+				"reading": "pH",
+				"reading_value": 7.2,
+				"serial_no": None,
+				"uom": "",
+				"min_value": 0,
+				"max_value": 0,
+				"out_of_range": 0,
+			},
+		]
+
+	def test_a_features_trend_leaves_out_site_wide_readings(self):
+		(trend,) = record_module._chemistry_trends("P", "EAST")
+		self.assertEqual([point["value"] for point in trend["points"]], [7.2, 7.4])
 
 
 if __name__ == "__main__":
