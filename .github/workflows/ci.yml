@@ -1739,6 +1739,13 @@ jobs:
       # static checks that every request is sf_kit's quiet call and nothing hard-codes /app/.
       - name: Guided Entry page (bench-free, node)
         run: python -m unittest erpnext_enhancements.tests.test_guided_entry -v
+      # v1.685.0, the guided page's inputs are the form's: every set_query in ERPNext's
+      # opportunity.js (version-16, trimmed into a fixture) and in every script this app runs on the
+      # Opportunity form is mirrored in the config's `queries` or waived with a reason, the relabel
+      # and the Closed Won requirement match the scripts, and Ctrl/Cmd+S binds once per editor
+      # (node). Imports only the config, no frappe stub.
+      - name: Form kit inputs match the form (bench-free, node)
+        run: python -m unittest erpnext_enhancements.tests.test_form_kit_inputs -v
       # Form kit P6, the new Opportunity board (crm_enhancements/page/opportunity_board and the pure
       # ES module public/js/opportunity_board/board.js): a multi-stream deal counted in full in each
       # value-stream row and once in the board's total, On Hold kept out of the weighted forecast

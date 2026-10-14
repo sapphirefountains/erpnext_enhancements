@@ -261,6 +261,45 @@ the steps, the guided page always and the side panel on every edit, and the shar
 A new DocType gets both with no work. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if
 the editor singles a DocType out, or if the Comments App starts reading more of `frm`.
 
+## The inputs are the form's (v1.685.0)
+
+**Rule (Nik, 2026-10-14): "We shouldn't have lost any fidelity or information on any of the UI/UX
+changes, and the inputs should be the same."** The editor draws a step in a `frappe.ui.FieldGroup`,
+which has no `frm`, so anything a form script does through `frm` never reaches it. Each such thing
+is carried as data and applied by the editor (`editor.js control_def`, `render_fields`), on the
+guided page and the side panel alike:
+
+| On the form | On the guided page |
+|---|---|
+| `frm.set_query(field, ...)` | the config's `queries` (schema in `config/__init__.py`), sent by `get_flow` without their `source`, applied as each Link's `get_query` (`fields.js resolve_query`). What a query reads that the values do not hold comes as `query_context`: the deal's `company` (a Prospect's search) and the directory's link sources |
+| a docfield's `link_filters`, `ignore_user_permissions`, `length` (a Data input's maxlength), `sort_options`, `placeholder`, `max_height`, `hide_days` / `hide_seconds` | carried by `steps.FIELD_KEYS`; v16's controls read them from the df with no `frm` |
+| `mandatory_depends_on` / `read_only_depends_on` | v16's `Layout.set_dependant_property` applies them only for a form, a dialog or a web form, so a plain FieldGroup skipped them in silence. The editor applies them (`apply_condition`); a condition adds "required" or "read-only", never removes it |
+| `set_df_property(<rank>, "reqd", ...)` on Closed Won (`opportunity_migrated_scripts.js`) | the config's `won` fields get `mandatory_depends_on: eval:doc.status==="Closed Won"` (`steps.won_conditions`); the side panel's move marks them required too |
+| ERPNext's `set_dynamic_field_label` (party_name labeled with `opportunity_from`) | the config's `label_from`; relabeled as the kind changes, translated as on the form ("Customer" shows as "Accounts") |
+| Ctrl/Cmd+S saves now | frappe's Ctrl+S ends in `frappe.container.page.save_action`; each editor adds itself to its host page's once (`ge_bind_save_key`): the queue is flushed now, a new record is created, a side panel's move is committed. A dialog keeps the key for itself, as on the form |
+
+Opportunity's `queries`, field by field:
+
+| Field | Query | Desk source |
+|---|---|---|
+| `opportunity_from` | DocType name in Customer, Lead, Prospect | ERPNext `opportunity.js` `setup` (and the field's `link_filters` Property Setter) |
+| `party_name` | Lead: `erpnext.controllers.queries.lead_query`; Customer: enabled only; Prospect: the deal's company | ERPNext `opportunity.js` `setup_queries` |
+| `primary_contact`, `primary_address` | Dynamic Link `link_name` in the deal, its stakeholder rows' parties and its live account | `unified_tab_controller.js` `setup_queries` |
+| `customer_address` | the same | ERPNext sets `address_query` (the account's only); widened so an address linked only to the deal can be picked back |
+
+Waived (`query_waivers`): `contact_person` (hidden; the page offers Primary Contact) and the items
+table's `item_code` / `uom` (the table is hidden on this site's form). `tests/test_form_kit_inputs.py`
+reads ERPNext's `opportunity.js` at version-16 (trimmed into
+`tests/fixtures/form_kit/erpnext_v16_opportunity_scripts.json`) and every script this app runs on
+the form, and fails on a `set_query` that is neither mirrored nor waived, on a mirror no script sets,
+and on a relabel or a Closed Won rule that drifted from the scripts.
+
+Checked and left as they are: `fetch_from` (the server fills it on every save and `save_step` returns
+what changed; a client fetch would queue a change to a field the person cannot edit), Select, Date,
+Datetime, Percent, Check, Text Editor and Table MultiSelect (their controls read nothing from `frm`),
+Currency (formatted in the record's currency only through a form; every deal is in the company
+currency, so the system currency is the same), Dynamic Link (`get_options` reads the live type).
+
 ## No signal (P4.7)
 
 The guided page keeps working when the signal drops while it is open. What has not reached the
@@ -418,9 +457,9 @@ thing. Its decisions are `public/js/form_kit/party.js`, pure, run under node by
 | Field | Search | "+ New" |
 |---|---|---|
 | Account (`party_name`, kind `opportunity_from`) | Frappe's own | Customer: the app's quick entry (`party_quick_entry.js`), then picked. Lead or Prospect: its form in a new tab, with a toast saying to pick it here once saved (neither has a quick entry on this site, and leaving the page would lose the step) |
-| Primary Contact | the account's own (`fields.js` `link_query`, ERPNext's `contact_query`) | the app's Contact quick entry, linked to the account and the deal, then picked |
-| Billing Address (`customer_address`) | the account's own (`address_query`) | the app's Address quick entry, starting on "Also <account>'s address" |
-| Primary Address (the site) | the account's own | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
+| Primary Contact | the Desk directory's (v1.685.0): the deal's own, its stakeholders' and the account's (`queries` `links: "directory"`) | the app's Contact quick entry, linked to the account and the deal, then picked |
+| Billing Address (`customer_address`) | the same | the app's Address quick entry, starting on "Also <account>'s address" |
+| Primary Address (the site) | the same | the same dialog, **no default** for "Whose address is this?" (the 2026-10-06 rule: a job site may be a general contractor's), type Shipping |
 
 Decisions, for review:
 

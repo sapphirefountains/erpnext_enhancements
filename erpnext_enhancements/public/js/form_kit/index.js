@@ -33,6 +33,10 @@ export {
 	PARTY_QUERIES,
 	party_of,
 	link_query,
+	directory_names,
+	resolve_filters,
+	resolve_query,
+	label_for,
 } from "./fields.js";
 export { same_value, split_conflict, resolve, value_text } from "./conflict.js";
 export { STATES, create_save_queue } from "./save_queue.js";

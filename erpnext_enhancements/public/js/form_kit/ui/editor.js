@@ -15,6 +15,10 @@
  *   - step 1's create (create_record, with the create's client_id), Set as Lost, `distinct`, `clears`
  *   - the Party entry component (./party.js, P3.2, v1.677.0) on the account, contact and address
  *     fields: "+ New" inline and linked to the account, re-suggested when the account changes
+ *   - the inputs the form's scripts shape, which a FieldGroup with no frm never gets (v1.685.0):
+ *     each Link's set_query (the config's `queries`, control_def), mandatory_depends_on and
+ *     read_only_depends_on (apply_condition), a label another field sets (relabel), and Ctrl/Cmd+S
+ *     (save_now, through the host page's save_action)
  *
  * What it asks of the shell that hosts it (the "host" methods; the guided page and the side panel
  * each define their own):
@@ -117,6 +121,37 @@ export function ge_client_id() {
 		// Falls through to the timestamp-and-random id.
 	}
 	return `ge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// Ctrl/Cmd+S on `host` (a Desk page's wrapper) saves `editor` while it shows (v1.685.0; see
+// RecordEditor.save_now). frappe's Ctrl+S ends in frappe.container.page.save_action, so the page gets
+// one save_action, made once, that saves every editor bound to it that is showing (a side panel open
+// over a page that has its own editor saves both: Ctrl+S saves what is on screen), and otherwise
+// falls back to the save_action the page had before. Binding the same editor again (every load)
+// changes nothing, so showing the page again never binds the key twice.
+export function ge_bind_save_key(host, editor) {
+	if (!host || !editor) return false;
+	if (!Array.isArray(host.fk_save_editors)) {
+		const editors = [];
+		const before = typeof host.save_action === "function" ? host.save_action : null;
+		host.fk_save_editors = editors;
+		host.save_action = function (...args) {
+			let saved = false;
+			editors.forEach((each) => {
+				let showing = false;
+				try {
+					showing = !!each.showing();
+				} catch (e) {
+					showing = false;
+				}
+				if (showing && each.save_now() !== false) saved = true;
+			});
+			if (!saved && before) return before.apply(this, args);
+		};
+	}
+	if (host.fk_save_editors.includes(editor)) return false;
+	host.fk_save_editors.push(editor);
+	return true;
 }
 
 export class RecordEditor {
@@ -412,6 +447,7 @@ export class RecordEditor {
 		this.queue = this.is_new ? null : this.make_queue(flow.modified);
 		if (this.is_new && !this.client_id) this.client_id = ge_client_id();
 		this.party_entry().reset();
+		this.bind_save_key();
 	}
 
 	// P3.2: the Party entry component (./party.js), one per editor: the account, contact and
@@ -455,7 +491,18 @@ export class RecordEditor {
 	// a step with this; each draws its own head around it.
 	render_fields(step, $fields, editable) {
 		const dfs = (step.fields || []).map((field) => this.control_def(field, step, editable));
-		this.fg = new frappe.ui.FieldGroup({ fields: dfs, body: $fields[0], no_submit_on_enter: true });
+		const editor = this;
+		this.fg = new frappe.ui.FieldGroup({
+			fields: dfs,
+			body: $fields[0],
+			no_submit_on_enter: true,
+			// v1.685.0: v16's Layout.set_dependant_property applies mandatory_depends_on and
+			// read_only_depends_on only for a form, a dialog or a web form; a plain FieldGroup skips
+			// them in silence, so Closed Won's ranks never showed as required. Applied here instead.
+			set_dependant_property(condition, fieldname, property) {
+				editor.apply_condition(this, condition, fieldname, property);
+			},
+		});
 		this.fg.make();
 		const fg = this.fg;
 		const initial = {};
@@ -541,9 +588,15 @@ export class RecordEditor {
 
 		const read_only = !editable || !!field.read_only;
 		if (read_only) df.read_only = 1;
+		// What the field is without its conditions: a condition adds "required" or "read-only" to it,
+		// never takes either away (apply_condition).
+		df.fk_reqd = df.reqd ? 1 : 0;
+		df.fk_read_only = df.read_only ? 1 : 0;
 		df.parent = this.doctype;
 		df.description = field.hint || "";
 		df.ee_desc_inline = 1;
+		const label_from = (this.flow && this.flow.label_from) || {};
+		if (label_from[field.fieldname]) df.label = kit.label_for(field, label_from, this.values);
 
 		if (kit.text_list_column(field)) {
 			// Drawn by render_text_list into this placeholder.
@@ -578,12 +631,90 @@ export class RecordEditor {
 		if (field.fieldtype === "Dynamic Link") {
 			df.get_options = () => this.current(field.options);
 		}
-		if (field.fieldtype === "Link" && kit.PARTY_QUERIES[field.options]) {
-			// Only Contact and Address: any other Link keeps its own filters untouched.
-			df.get_query = () => kit.link_query(field, kit.party_of(this.flow.steps, this.current_values())) || {};
+		const query = ((this.flow && this.flow.queries) || {})[field.fieldname];
+		if (query && (field.fieldtype === "Link" || field.fieldtype === "Dynamic Link")) {
+			// v1.685.0: the form scripts' set_query for this field (the config's `queries`). The
+			// docfield's own link_filters still apply on top, in the control, as on the form.
+			df.get_query = () => kit.resolve_query(query, this.query_ctx()) || {};
+		} else if (field.fieldtype === "Link" && kit.PARTY_QUERIES[field.options]) {
+			// A Contact or Address with no query of its own: the record's and its party's, as the
+			// Desk's directory offers them. Any other Link keeps its own filters untouched.
+			const ctx = () => this.query_ctx();
+			df.get_query = () => kit.link_query(field, ctx().party, ctx().directory) || {};
 		}
 		df.onchange = () => this.field_changed(field.fieldname);
 		return df;
+	}
+
+	// What a query reads (fields.js resolve_query): the values on screen over what get_flow sent
+	// for the fields the flow does not show, the live party, and the directory's link sources.
+	query_ctx() {
+		const context = (this.flow && this.flow.query_context) || {};
+		const values = Object.assign({}, context.fields || {}, this.current_values());
+		return {
+			values,
+			party: this.kit.party_of((this.flow && this.flow.steps) || [], values),
+			directory: this.is_new ? [] : context.directory || [],
+		};
+	}
+
+	// A mandatory_depends_on or read_only_depends_on, for the FieldGroup (see render_fields). The
+	// condition adds to what the field already is: a field read-only by permission stays read-only,
+	// and one required by its docfield stays required.
+	apply_condition(fg, condition, fieldname, property) {
+		const control = fg && fg.fields_dict && fg.fields_dict[fieldname];
+		if (!control || !control.df || (property !== "reqd" && property !== "read_only")) return;
+		const base = property === "reqd" ? control.df.fk_reqd : control.df.fk_read_only;
+		const value = base || fg.evaluate_depends_on_value(condition) ? 1 : 0;
+		if ((control.df[property] ? 1 : 0) === value) return;
+		control.df[property] = value;
+		control.refresh();
+	}
+
+	// The fields whose label is `fieldname`'s value (the config's label_from), relabeled on screen.
+	relabel(fieldname) {
+		const label_from = (this.flow && this.flow.label_from) || {};
+		Object.keys(label_from).forEach((target) => {
+			if (label_from[target] !== fieldname || !this.fg) return;
+			const control = this.fg.fields_dict[target];
+			const def = this.defs[target];
+			if (!control || !def || typeof control.set_label !== "function") return;
+			control.set_label(this.kit.label_for(def, label_from, this.values));
+		});
+	}
+
+	// ------------------------------------------------------------------ Ctrl/Cmd+S (v1.685.0)
+	// frappe's own Ctrl+S (keyboard.js) blurs the field and then runs frappe.app.trigger_primary_action:
+	// an open dialog's primary button, else a visible form's Save, else the current page's
+	// `save_action`. The guided page had none, so Ctrl+S only blurred and the change waited out the
+	// queue's 2.5 s. Each editor adds itself to its host page's save_action once (bind_save_key from
+	// take_flow): the guided page's own wrapper, or the list or board page a side panel opens over.
+	// A dialog keeps Ctrl+S for itself, as on the form, and on any other page nothing changes.
+
+	save_key_host() {
+		if (this.wrapper) return this.wrapper;
+		return (window.frappe && frappe.container && frappe.container.page) || null;
+	}
+
+	bind_save_key() {
+		ge_bind_save_key(this.save_key_host(), this);
+	}
+
+	// Save now what this editor holds: the step's inputs, then the queue flushed (a new record is
+	// created, as the form's Ctrl+S inserts). False when there is nothing it can do, so the page's
+	// earlier save_action gets the key.
+	save_now() {
+		if (!this.flow) return false;
+		if (this.is_new) {
+			this.create();
+			return true;
+		}
+		if (!this.queue || this.queue.manual) return false;
+		this.collect_step();
+		this.queue.flush().catch(() => {
+			// The reason is on screen: the saving line, a refusal notice or the conflict chooser.
+		});
+		return true;
 	}
 
 	// depends_on is written against the whole record (doc.status, doc.custom_value_stream ...),
@@ -804,6 +935,7 @@ export class RecordEditor {
 				this.show_value(cleared, null);
 			});
 			this.refresh_distinct();
+			this.relabel(fieldname);
 			this.party_entry().changed(fieldname, before, value);
 		}
 		this.fg.refresh_dependency();

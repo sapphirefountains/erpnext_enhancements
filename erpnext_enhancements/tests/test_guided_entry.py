@@ -270,6 +270,39 @@ out.party = {
 	address: kit.link_query({ fieldtype: "Link", options: "Address" }, party),
 	customer: kit.link_query({ fieldtype: "Link", options: "Customer" }, party),
 	no_party: kit.link_query({ fieldtype: "Link", options: "Contact" }, null),
+	// v1.685.0: a saved record's own sources, as the Desk directory searches them.
+	directory: kit.link_query({ fieldtype: "Link", options: "Address" }, party, ["CRM-OPP-1", "GC-1", "CUST-1"]),
+	directory_no_party: kit.link_query({ fieldtype: "Link", options: "Contact" }, null, ["CRM-OPP-1"]),
+	directory_other_link: kit.link_query({ fieldtype: "Link", options: "Customer" }, party, ["CRM-OPP-1"]),
+};
+const party_spec = {
+	by: "opportunity_from",
+	cases: {
+		Lead: { query: "erpnext.controllers.queries.lead_query" },
+		Customer: { filters: { disabled: 0 } },
+		Prospect: { filters: { company: { field: "company" } } },
+	},
+};
+out.queries = {
+	lead: kit.resolve_query(party_spec, { values: { opportunity_from: "Lead" } }),
+	customer: kit.resolve_query(party_spec, { values: { opportunity_from: "Customer" } }),
+	prospect: kit.resolve_query(party_spec, { values: { opportunity_from: "Prospect", company: "Sapphire" } }),
+	prospect_no_company: kit.resolve_query(party_spec, { values: { opportunity_from: "Prospect", company: "" } }),
+	no_kind: kit.resolve_query(party_spec, { values: {} }),
+	other_kind: kit.resolve_query(party_spec, { values: { opportunity_from: "Supplier" } }),
+	from: kit.resolve_query({ filters: { name: ["in", ["Customer", "Lead", "Prospect"]] } }, { values: {} }),
+	directory: kit.resolve_query({ links: "directory" }, { party, directory: ["CRM-OPP-1", "CUST-1", " ", null] }),
+	directory_empty: kit.resolve_query({ links: "directory" }, { party: null, directory: [] }),
+	list_filters: kit.resolve_filters([["Item", "company", "=", { field: "company" }], ["Item", "disabled", "=", 0]], {}),
+	dict_op: kit.resolve_filters({ company: ["=", { field: "company" }], x: { field: "x" } }, { company: "C" }),
+	nothing: kit.resolve_query(null, {}),
+};
+const party_field = { fieldname: "party_name", label: "Party" };
+out.labels = {
+	customer: kit.label_for(party_field, { party_name: "opportunity_from" }, { opportunity_from: "Customer" }),
+	empty: kit.label_for(party_field, { party_name: "opportunity_from" }, { opportunity_from: "" }),
+	unmapped: kit.label_for({ fieldname: "x", label: "X" }, { party_name: "opportunity_from" }, { opportunity_from: "Lead" }),
+	no_map: kit.label_for(party_field, null, { opportunity_from: "Lead" }),
 };
 
 // ---- conflicts
@@ -828,6 +861,36 @@ class TestGuidedEntryUnderNode(unittest.TestCase):
 		self.assertEqual(p["address"]["query"], "frappe.contacts.doctype.address.address.address_query")
 		self.assertIsNone(p["customer"])
 		self.assertIsNone(p["no_party"])
+
+	def test_a_saved_record_searches_its_own_contacts_and_addresses_too(self):
+		"""v1.685.0: the Desk directory's filter (unified_tab_controller.js setup_queries). On prod
+		36 contacts and 12 addresses were linked only to their Opportunity."""
+		p = self.out["party"]
+		self.assertEqual(p["directory"], {"filters": [["Dynamic Link", "link_name", "in", ["CRM-OPP-1", "GC-1", "CUST-1"]]]})
+		self.assertEqual(p["directory_no_party"], {"filters": [["Dynamic Link", "link_name", "in", ["CRM-OPP-1"]]]})
+		self.assertIsNone(p["directory_other_link"])
+
+	def test_the_form_scripts_queries_resolve_as_the_form_sets_them(self):
+		q = self.out["queries"]
+		self.assertEqual(q["lead"], {"query": "erpnext.controllers.queries.lead_query"})
+		self.assertEqual(q["customer"], {"filters": {"disabled": 0}})
+		self.assertEqual(q["prospect"], {"filters": {"company": "Sapphire"}})
+		self.assertIsNone(q["prospect_no_company"], "an empty value is dropped, as a form's Link filter drops it")
+		self.assertIsNone(q["no_kind"])
+		self.assertIsNone(q["other_kind"])
+		self.assertEqual(q["from"], {"filters": {"name": ["in", ["Customer", "Lead", "Prospect"]]}})
+		self.assertEqual(q["directory"], {"filters": [["Dynamic Link", "link_name", "in", ["CRM-OPP-1", "CUST-1"]]]})
+		self.assertIsNone(q["directory_empty"])
+		self.assertEqual(q["list_filters"], [["Item", "disabled", "=", 0]])
+		self.assertEqual(q["dict_op"], {"company": ["=", "C"]})
+		self.assertIsNone(q["nothing"])
+
+	def test_the_party_is_labeled_with_its_kind(self):
+		labels = self.out["labels"]
+		self.assertEqual(labels["customer"], "Customer")
+		self.assertEqual(labels["empty"], "Party")
+		self.assertEqual(labels["unmapped"], "X")
+		self.assertEqual(labels["no_map"], "Party")
 
 	# ---- conflicts
 

@@ -221,6 +221,69 @@ CONFIG = {
 		},
 	],
 	"clears": {"opportunity_from": ["party_name"]},
+	# Every set_query the Opportunity form's scripts set on a field the flow shows, as data the guided
+	# page applies to its own controls (v1.685.0). Nik, 2026-10-14: "the inputs should be the same".
+	# The page's controls have no frm, so frm.set_query never reached them: Opportunity From offered
+	# every DocType and the account's search was Frappe's plain one. tests/test_form_kit_inputs.py
+	# reads ERPNext's opportunity.js (at version-16) and every script hooks.py loads on the form, and
+	# fails on a set_query that is neither here nor in query_waivers.
+	"queries": {
+		"opportunity_from": {
+			"filters": {"name": ["in", ["Customer", "Lead", "Prospect"]]},
+			"source": (
+				"erpnext/crm/doctype/opportunity/opportunity.js setup; the field's link_filters Property "
+				"Setter says the same and reaches the page too (steps.FIELD_KEYS)."
+			),
+		},
+		"party_name": {
+			"by": "opportunity_from",
+			"cases": {
+				"Lead": {"query": "erpnext.controllers.queries.lead_query"},
+				"Customer": {"filters": {"disabled": 0}},
+				"Prospect": {"filters": {"company": {"field": "company"}}},
+			},
+			"source": (
+				"erpnext/crm/doctype/opportunity/opportunity.js setup_queries: erpnext.queries.lead, "
+				"erpnext.queries.customer (enabled accounts only), and a Prospect of the deal's company."
+			),
+		},
+		"primary_contact": {
+			"links": "directory",
+			"source": "public/js/global_enhancements/unified_tab_controller.js setup_queries.",
+		},
+		"primary_address": {
+			"links": "directory",
+			"source": (
+				"public/js/global_enhancements/unified_tab_controller.js setup_queries "
+				"(primary_address_link_field)."
+			),
+		},
+		"customer_address": {
+			"links": "directory",
+			"source": (
+				"erpnext/crm/doctype/opportunity/opportunity.js setup_queries sets erpnext.queries."
+				"address_query, the account's addresses only. The page offers the record's own too, as the "
+				"form's Address directory lists them: an address linked only to the deal could otherwise "
+				"not be picked back once cleared (the input-fidelity audit, 2026-10-14)."
+			),
+		},
+	},
+	"query_waivers": {
+		"contact_person": (
+			"ERPNext's contact_query on its own Contact Person, which the form hides and the flow does not "
+			"show; the page offers Primary Contact, and party_mirrors.py keeps the two equal."
+		),
+		"items.item_code": "ERPNext's items table, which this site's form hides and the flow does not show.",
+		"items.uom": "ERPNext's items table, which this site's form hides and the flow does not show.",
+	},
+	# ERPNext's set_dynamic_field_label: the account field is labeled with its kind ("Customer", shown
+	# as this site's translation, "Accounts"; "Lead"; "Prospect"), not the DocType's "Party".
+	"label_from": {
+		"party_name": {
+			"field": "opportunity_from",
+			"source": "erpnext/crm/doctype/opportunity/opportunity.js set_dynamic_field_label.",
+		},
+	},
 	# The guided page's start screen: the caller's open deals, newest change first. Historical
 	# deals (crm_enhancements/historical.py) are left out; they are not being worked.
 	"mine": {

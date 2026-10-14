@@ -5,6 +5,8 @@
  *   text_list_column(field)                a table drawn as a list of text boxes, or not
  *   add_row / remove_row / move_row        that list's edits, as new arrays (rows keep `name`)
  *   clean_rows(rows, columns)              a table's rows as save_step takes them
+ *   link_query / resolve_query             a Link's get_query: the form scripts' set_query, as data
+ *   label_for(field, label_from, values)   a label another field's value sets (party_name)
  *
  * Pure: no frappe, no DOM.
  */
@@ -99,9 +101,10 @@ export function clean_rows(rows, columns) {
 	});
 }
 
-// Contacts and addresses are picked from the record's own party, as the Desk form's Contact &
-// Address directory offers them: the same whitelisted queries ERPNext's forms use
-// (erpnext/public/js/queries.js contact_query / address_query, at version-16).
+// Contacts and addresses are picked from the record's own party: the same whitelisted queries
+// ERPNext's forms use (erpnext/public/js/queries.js contact_query / address_query, at version-16).
+// A saved record also offers its own (link_query's `sources`, below), as the Desk form's Contact &
+// Address directory does.
 export const PARTY_QUERIES = {
 	Contact: "frappe.contacts.doctype.contact.contact.contact_query",
 	Address: "frappe.contacts.doctype.address.address.address_query",
@@ -122,8 +125,113 @@ export function party_of(steps, values) {
 	return null;
 }
 
+// The names the Contact & Address directory searches by (unified_tab_controller.js
+// get_all_party_sources): the record's own sources (query_context.directory: the saved record, the
+// parties its tables name) and the live party, each once.
+export function directory_names(sources, party) {
+	const out = [];
+	[...(sources || []), party && party.name].forEach((name) => {
+		const text = name === null || name === undefined ? "" : String(name).trim();
+		if (text && !out.includes(text)) out.push(text);
+	});
+	return out;
+}
+
 // The get_query answer for a Link to Contact or Address, or null to leave the Link alone.
-export function link_query(df, party) {
-	if (!df || df.fieldtype !== "Link" || !party || !PARTY_QUERIES[df.options]) return null;
+// v1.685.0: with `sources` (a saved record's own, query_context.directory), the Desk directory's
+// filter: Dynamic Link link_name in the record and its party. On prod 36 contacts and 12 addresses
+// were linked only to their Opportunity (a general contractor's job site), and the party-only query
+// could not find them again once cleared. Without sources (a new record) it is the party's own.
+export function link_query(df, party, sources) {
+	if (!df || df.fieldtype !== "Link" || !PARTY_QUERIES[df.options]) return null;
+	if (sources && sources.length) {
+		const names = directory_names(sources, party);
+		return { filters: [["Dynamic Link", "link_name", "in", names]] };
+	}
+	if (!party) return null;
 	return { query: PARTY_QUERIES[df.options], filters: { link_doctype: party.doctype, link_name: party.name } };
+}
+
+// ---------------------------------------------------------------------------- queries (v1.685.0)
+// The form scripts' set_query, as data: the config's `queries` (form_kit/config/__init__.py), sent
+// by get_flow. The guided page's controls are a FieldGroup with no frm, so frm.set_query never
+// reaches them; the editor gives each control `get_query: () => resolve_query(spec, ctx)` instead.
+//
+//   ctx = { values, party, directory }   the record's values (plus query_context.fields), its live
+//                                        party ({ doctype, name } or null) and the directory's
+//                                        link sources (query_context.directory)
+//
+// Returns what a Link's get_query returns ({ query?, filters? }), or null for no filter.
+
+function blank_value(value) {
+	return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
+}
+
+// A filter value: { field } is the record's value of that field; anything else is itself.
+function filter_value(value, values) {
+	if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1 && "field" in value) {
+		const read = (values || {})[value.field];
+		return blank_value(read) ? undefined : read;
+	}
+	return value;
+}
+
+// Filters with every { field } read from the record. A filter whose value is still empty is left
+// out, as a form's Link drops an empty Link value from its filters (link.js set_custom_query).
+export function resolve_filters(filters, values) {
+	if (Array.isArray(filters)) {
+		const out = [];
+		filters.forEach((filter) => {
+			if (!Array.isArray(filter) || !filter.length) return;
+			const value = filter_value(filter[filter.length - 1], values);
+			if (value === undefined) return;
+			out.push([...filter.slice(0, -1), value]);
+		});
+		return out;
+	}
+	const out = {};
+	Object.keys(filters || {}).forEach((key) => {
+		const spec = filters[key];
+		if (Array.isArray(spec) && spec.length === 2) {
+			const value = filter_value(spec[1], values);
+			if (value !== undefined) out[key] = [spec[0], value];
+			return;
+		}
+		const value = filter_value(spec, values);
+		if (value !== undefined) out[key] = value;
+	});
+	return out;
+}
+
+export function resolve_query(spec, ctx) {
+	if (!spec || typeof spec !== "object") return null;
+	const c = ctx || {};
+	const values = c.values || {};
+	if (spec.by) {
+		const key = values[spec.by];
+		const cases = spec.cases || {};
+		const chosen = !blank_value(key) && Object.prototype.hasOwnProperty.call(cases, key) ? cases[key] : null;
+		return chosen ? resolve_query(chosen, ctx) : null;
+	}
+	if (spec.links === "directory") {
+		const names = directory_names(c.directory, c.party);
+		return names.length ? { filters: [["Dynamic Link", "link_name", "in", names]] } : null;
+	}
+	const out = {};
+	if (spec.query) out.query = spec.query;
+	if (spec.filters) {
+		const filters = resolve_filters(spec.filters, values);
+		if (Array.isArray(filters) ? filters.length : Object.keys(filters).length) out.filters = filters;
+	}
+	return Object.keys(out).length ? out : null;
+}
+
+// A field's label as the form shows it: another field's value where the config's `label_from` says
+// so (ERPNext's set_dynamic_field_label: party_name reads "Customer", "Lead" or "Prospect"), else
+// its own. The control translates it (__), as the form does.
+export function label_for(field, label_from, values) {
+	if (!field) return "";
+	const from = (label_from || {})[field.fieldname];
+	const value = from ? (values || {})[from] : null;
+	return blank_value(value) ? field.label || field.fieldname || "" : String(value);
 }

@@ -32,12 +32,14 @@ Four things it is careful about:
   value stream without a round trip.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import cint
 
 from erpnext_enhancements.form_kit import field_help
-from erpnext_enhancements.form_kit.config import get_config
+from erpnext_enhancements.form_kit.config import get_config, query_fieldnames
 
 LAYOUT_TYPES = {"Section Break", "Column Break", "Tab Break"}
 DISPLAY_TYPES = {"HTML", "Heading", "Image", "Button", "Fold"}
@@ -48,6 +50,15 @@ TABLE_TYPES = {"Table", "Table MultiSelect"}
 TOP = "_top"
 
 #: The docfield keys that shape a control on the page. ``read_only`` is recomputed per user.
+#: v1.685.0 added the ones v16's controls read from the docfield itself (Nik, 2026-10-14: "the
+#: inputs should be the same"): ``link_filters`` (ControlLink.set_custom_query applies it with no
+#: ``frm``; Opportunity From's Property Setter limits it to Lead, Customer and Prospect),
+#: ``ignore_user_permissions`` (search_link's own flag; the form reads it from the meta, which the
+#: page does not load), ``length`` (a Data input's maxlength, 140 when absent), ``sort_options``,
+#: ``placeholder``, ``max_height`` (Text Editor) and ``hide_days`` / ``hide_seconds`` (Duration).
+#: ``fetch_from`` is left out on purpose: v16 fills it on the server in ``_validate_links`` on every
+#: save, ``save_step`` returns what the save changed, and a client fetch inside a FieldGroup would
+#: queue a change to a field the person cannot edit.
 FIELD_KEYS = (
 	"fieldname",
 	"fieldtype",
@@ -59,6 +70,14 @@ FIELD_KEYS = (
 	"read_only_depends_on",
 	"precision",
 	"bold",
+	"link_filters",
+	"ignore_user_permissions",
+	"length",
+	"sort_options",
+	"placeholder",
+	"max_height",
+	"hide_days",
+	"hide_seconds",
 )
 
 #: Defaults evaluated at insert time; sending them as a value would be wrong.
@@ -308,6 +327,82 @@ def _tidy(items):
 	return out
 
 
+def won_conditions(config):
+	"""``{fieldname: mandatory_depends_on}`` for the config's ``won`` fields.
+
+	What a move into the won status must carry is required while the record has that status: the
+	Desk's own rule (``opportunity_migrated_scripts.js`` ``set_rank_fields_mandatory`` sets the three
+	ranks ``reqd`` while the status is Closed Won, and ``validate_ranks_on_won`` refuses the save
+	without them). The form says it with ``set_df_property``, which the page cannot run, so the flow
+	carries it as the docfield's own condition and the page shows the asterisk the form shows.
+	"""
+	won = config.get("won") or {}
+	status = won.get("status")
+	if not status:
+		return {}
+	field = won.get("status_field") or "status"
+	condition = f"eval:doc.{field}==={json.dumps(status)}"
+	return {fieldname: condition for fieldname in won.get("fields") or []}
+
+
+def query_context(doctype, doc, steps, user=None):
+	"""What the page's queries read that its values do not hold: ``{"fields", "directory"}``.
+
+	``fields`` are the record's values of the fields a ``queries`` entry names (``by`` and
+	``{"field": ...}``) that the flow does not show (Opportunity's ``company``, for a Prospect),
+	each only at a permlevel the user can read. ``directory`` is the Contact & Address directory's
+	link sources (``unified_tab_controller.js`` ``get_all_party_sources``) other than the live
+	party, which the page adds itself as it changes: the saved record's own name, its
+	``customer`` / ``supplier`` / ``custom_opportunity`` links, and every party a readable child
+	table names (``customer``, ``supplier``, ``party_name`` with ``party_type``, ``link_name`` with
+	``link_doctype``: Opportunity's stakeholder rows). Names only, as the directory matches them.
+	"""
+	config = get_config(doctype) or {}
+	queries = config.get("queries") or {}
+	out = {"fields": {}, "directory": []}
+	if not queries or doc is None:
+		return out
+	meta = frappe.get_meta(doctype)
+	access = access_for(doctype, meta, doc, user)
+	shown = value_fields(steps)
+
+	def readable(fieldname):
+		df = meta.get_field(fieldname)
+		return df is not None and cint(df.get("permlevel")) in access["read_levels"]
+
+	for query in queries.values():
+		for fieldname in query_fieldnames(query):
+			if fieldname in shown or fieldname in out["fields"] or not readable(fieldname):
+				continue
+			value = doc.get(fieldname)
+			out["fields"][fieldname] = None if value is None else str(value)
+	if not any(query.get("links") == "directory" for query in queries.values()) or _is_new(doc):
+		return out
+	names = []
+
+	def add(name):
+		name = str(name or "").strip()
+		if name and name not in names:
+			names.append(name)
+
+	add(doc.get("name"))
+	for fieldname in ("customer", "supplier", "custom_opportunity"):
+		if readable(fieldname):
+			add(doc.get(fieldname))
+	for df in meta.fields:
+		if df.get("fieldtype") != "Table" or cint(df.get("permlevel")) not in access["read_levels"]:
+			continue
+		for row in doc.get(df.get("fieldname")) or []:
+			add(row.get("customer"))
+			add(row.get("supplier"))
+			if row.get("party_type"):
+				add(row.get("party_name"))
+			if row.get("link_doctype"):
+				add(row.get("link_name"))
+	out["directory"] = names
+	return out
+
+
 def _section_break(section):
 	return {
 		"fieldtype": "Section Break",
@@ -335,6 +430,7 @@ def flow_steps(doctype, doc=None, user=None):
 	create = create_fieldnames(meta, config)
 	forced = set(config.get("show_hidden") or {}) | set(create)
 	read_only_names = set(config.get("read_only_fields") or {})
+	required_when = won_conditions(config)
 	specs = list(config["steps"])
 
 	# Every create field lives in step 1: moved there from wherever the meta put it.
@@ -366,6 +462,8 @@ def flow_steps(doctype, doc=None, user=None):
 			)
 			if field is None:
 				continue
+			if field["fieldname"] in required_when and not field.get("mandatory_depends_on"):
+				field["mandatory_depends_on"] = required_when[field["fieldname"]]
 			if mark_create and field["fieldname"] in create:
 				field["create"] = 1
 			out.append(field)
