@@ -63,6 +63,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     pages S3.6 accessibility"). `scripts/test_rental_planner_history.js` now models Enter and Space as
     the browser handles them and opens a booking from a bar, and a step from the rail, by keyboard.
 
+## [1.650.0] - 2026-10-13
+
+Form kit P3.4 (TASK-2026-02757): **print shows dates in the same style as every other channel.** That style is `10/14/2026` and `10/14/2026 2:00 PM`, from the one library the Desk, reports, emails and SMS already share (`utils.normalize`, P2.1).
+
+### Changed
+
+- **Print templates use the new date helpers.**
+  - New Jinja globals `ps_date`, `ps_datetime` and `ps_time` in `print_style.py`, which stays frappe-free. They are registered in `hooks.py` with the other `ps_*` helpers.
+  - The templates call them instead of `frappe.format(..., {"fieldtype": "Date"})`, which follows System Settings and prints a 24-hour time, and `frappe.utils.formatdate`.
+  - The changed templates are the Python-composed print formats (sales, procurement, project, training, package dispatch, product configurator) and the `Maintenance Record Print` fixture.
+- **What prints differently:** dates read as before (`10/14/2026`). The one date-and-time on a printed document, a Purchase Order's approval stamp, now prints `10/14/2026 2:00 PM` instead of `14:00`.
+- **Blank dates:** a blank date still prints nothing, so the `or "—"` placeholders keep working. A value the library can't read prints as written, escaped.
+- **Phones were already shared.** `ps_phone` has used the shared library since P2-A.
+
+### Added
+
+- **`test_print_style` guards the change.** It fails on any print generator (`setup_*print_formats.py`) or print-format fixture that formats a date by hand, and it tests the three helpers directly.
+- **The print suites now check the real printed dates** (`09/21/2026`) rather than the stub's passthrough.
+- `docs/print-design-system.md` lists the helpers.
+
 ## [1.649.0] - 2026-10-13
 
 Custom pages S3.3b (TASK-2026-02822): the 34 department dashboard widgets draw their panels,

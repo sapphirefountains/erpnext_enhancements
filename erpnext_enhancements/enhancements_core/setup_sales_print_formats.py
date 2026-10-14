@@ -142,7 +142,7 @@ _DASH = f'<span style="color:{ps.INK_700}">&mdash;</span>'
 
 
 def _date(expr):
-	return "{{ frappe.format(" + expr + ', {"fieldtype": "Date"}) }}'
+	return "{{ ps_date(" + expr + ') }}'
 
 
 def _date_or_dash(expr):
