@@ -177,6 +177,9 @@ class TestTheShortcuts(unittest.TestCase):
 		self.assertIn('description: translate("Go to {0}", [title])', src)
 		self.assertNotIn("ignore_inputs", src, "the shortcuts must keep add_shortcut's input guard")
 		self.assertIn("make_function_searchable", src)
+		# jQuery 3.7.1 does not copy `repeat` onto the event frappe.ui.keys passes along.
+		self.assertIn("const oe = e && (e.originalEvent || e);", src)
+		self.assertNotIn("e.repeat", src.replace("oe.repeat", ""))
 
 
 class TestWiring(unittest.TestCase):

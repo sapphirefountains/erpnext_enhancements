@@ -287,12 +287,25 @@ function makeWorld(options) {
 	vm.createContext(context);
 	vm.runInContext(SOURCE, context, { filename: FILE });
 
+	// The event frappe.ui.keys hands a handler is jQuery's: jQuery 3.7.1 copies keyCode, the
+	// modifier flags and target onto it, but NOT `repeat`, which stays on originalEvent only.
 	function press(keyCode, mods, target) {
-		const e = Object.assign(
-			{ keyCode, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, repeat: false },
-			mods || {}
+		mods = Object.assign({}, mods || {});
+		const repeat = !!mods.repeat;
+		delete mods.repeat;
+		const native = Object.assign(
+			{ keyCode, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, repeat },
+			mods
 		);
-		e.target = target || document.activeElement;
+		const e = {
+			keyCode: native.keyCode,
+			altKey: native.altKey,
+			shiftKey: native.shiftKey,
+			ctrlKey: native.ctrlKey,
+			metaKey: native.metaKey,
+			originalEvent: native,
+		};
+		e.target = native.target = target || document.activeElement;
 		e.defaultPrevented = false;
 		e.preventDefault = () => (e.defaultPrevented = true);
 		const list = handlers[get_key(e)] || [];
@@ -460,6 +473,37 @@ console.log('routing');
 		'and routes with frappe.set_route'
 	);
 	check(w.api.nav_set('zzzz', w.frappe) === null, 'no section when nothing matches');
+
+	// Rows carry a real href where the dialog can draw one: SearchDialog.get_link makes it from
+	// `route` with frappe.router.make_url, i.e. /desk/<page>.
+	const qrows = w.api.nav_set('qbo', w.frappe).results;
+	check(
+		qrows.every((r) => Array.isArray(r.route) && r.route.length === 1 && /^quickbooks-/.test(r.route[0])),
+		'a Desk page row carries its route, so the dialog gives it a /desk/<page> href (new tab works)'
+	);
+	const srow = w.api.nav_set('scan', w.frappe).results.find((r) => r.match === 'Stock Scan');
+	check(srow && srow.route === undefined, 'a www row carries no route (make_url would spell it as a Desk path)');
+
+	// A Ctrl/Cmd/Shift-click belongs to the browser: no routing, no closing.
+	const opened = [];
+	w.context.open = (url, target) => opened.push([url, target]);
+	const before = { routes: w.calls.set_route.length, hidden: w.calls.hidden, assign: w.calls.assign.length };
+	w.context.event = { ctrlKey: true, metaKey: false, shiftKey: false };
+	qrows[0].onclick();
+	check(
+		w.calls.set_route.length === before.routes && w.calls.hidden === before.hidden,
+		'Ctrl-click on a Desk page row leaves the current tab alone (its href opens the new tab)'
+	);
+	w.context.event = { ctrlKey: false, metaKey: true, shiftKey: false };
+	srow.onclick();
+	check(
+		JSON.stringify(opened) === JSON.stringify([['/stock-scan', '_blank']]) && w.calls.assign.length === before.assign,
+		'Cmd-click on the www row opens it in a new tab itself'
+	);
+	w.context.event = { ctrlKey: false, metaKey: false, shiftKey: false };
+	qrows[0].onclick();
+	check(w.calls.set_route.length === before.routes + 1 && w.calls.hidden === before.hidden + 1, 'a plain click still closes the dialog and routes with set_route');
+	w.context.event = undefined;
 }
 
 // ------------------------------------------------------------------ 4. the awesomebar wrap

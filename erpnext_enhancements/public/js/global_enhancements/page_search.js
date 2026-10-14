@@ -377,15 +377,30 @@
 			fetch_type: "Nav",
 			results: hits.map((hit) => {
 				const title = translate(hit.entry.title);
-				return {
+				const row = {
 					label: escape_html(title),
 					value: title,
 					match: hit.entry.title,
 					onclick: () => {
+						// A Ctrl/Cmd/Shift-click is the browser's: the row's href opens a new tab
+						// (a middle-click never reaches here). A www row has no href, so it opens
+						// the tab itself. The row handler is handed no event, hence window.event.
+						const ev = root.event;
+						if (ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
+							if (hit.entry.url && typeof root.open === "function") {
+								root.open(hit.entry.url, "_blank");
+							}
+							return;
+						}
 						hide_search_dialog(fr);
 						open_entry(hit.entry, fr);
 					},
 				};
+				// A Desk page's route gives the row a real /desk/<page> href (SearchDialog.get_link
+				// runs it through frappe.router.make_url), so it can open in a new tab. Not for a
+				// www page: make_url would spell /stock-scan as a Desk path.
+				if (hit.entry.page) row.route = [hit.entry.page];
+				return row;
 			}),
 		};
 	}
@@ -412,7 +427,10 @@
 	// The action behind a shortcut: false (keystroke untouched) when it must not fire.
 	function shortcut_action(entry, fr) {
 		return function (e) {
-			if (e && e.repeat) return false;
+			// frappe.ui.keys hands over a jQuery event, and jQuery 3.7.1 does not copy `repeat`
+			// onto it: the native event's flag is only on originalEvent.
+			const oe = e && (e.originalEvent || e);
+			if (oe && oe.repeat) return false;
 			const doc = root.document;
 			if (is_typing(doc && doc.activeElement) || is_typing(e && e.target)) return false;
 			if (dialog_open()) return false;

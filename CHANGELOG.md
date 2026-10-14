@@ -60,9 +60,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[contenteditable=true]`. That selector misses `contenteditable=""`, `"plaintext-only"` and the
   child nodes of an editor, so the action also refuses there. It also refuses on a held-down repeat
   and while a dialog is open. A refusal leaves the keystroke untouched.
+- **Fixed before release (review).** Two fixes from review:
+  - **Key repeat.** The repeat guard first read `e.repeat`. `frappe.ui.keys` passes a jQuery
+    event, and jQuery 3.7.1 does not copy `repeat` onto it, so the guard could never fire. It now
+    reads `e.originalEvent.repeat`. The harness builds its key events the way jQuery does, so it
+    fails on the old check.
+  - **New tabs from the search dialog.** A Desk page row in the dialog's "Pages" section now
+    carries its route, so it has a real `/desk/<page>` href and opens in a new tab on Ctrl, Cmd or
+    middle click. A plain click still closes the dialog and routes with `set_route`. A
+    Ctrl/Cmd/Shift-click leaves the current tab alone. Stock Scan, a www page, has no Desk href, so
+    its row opens the new tab itself.
 - **Tests.** `scripts/test_page_search.js` runs the real module under node against a stubbed
   frappe (`page_info`, `ui.keys` with v16.50's handler and `get_key`, `set_route`, a fake
-  AwesomeBar and SearchDialog), with 107 checks. `tests/test_custom_pages_s4c.py` holds the map to
+  AwesomeBar and SearchDialog), with 112 checks. `tests/test_custom_pages_s4c.py` holds the map to
   real Page records and www templates, Stock Scan's roles to `stock_scan_rules.SCAN_ROLES`, the
   chords to nowhere else in the app, and the bundle and CI wiring. Both run in their own CI steps.
 
