@@ -67,6 +67,15 @@
  *     camera's code box or a sheet's Escape. Loaded last, after every pure module has proved it
  *     imports without a window.
  *
+ *   - **Move to… and Remove from this bin** (v1.692.0), on the real app.js: Move to… for anyone
+ *     with stock free to move, its "Make … this item's bin" box and Remove only with
+ *     `can_manage`; the box ticked while the quantity is everything on hand until the person
+ *     touches it; Remove with stock offering Move to… or Send to the Boneyard (the latter only
+ *     where one is set) and with none posting `unassign`; every save to its `bin_assignments`
+ *     endpoint with a client_ref, into Recent with Undo; Back closing each new sheet (and a
+ *     camera or search over it) on the same screen; and a save that takes the item off the bin
+ *     walking back to the bin's list without adding a history entry.
+ *
  * Loads the modules by file URL. If one grows a DOM or `window` access at import time this
  * fails loudly (exit 2) rather than asserting nothing.
  *
@@ -206,7 +215,19 @@ class FakeNode {
 	set textContent(value) {
 		for (const n of this.childNodes) n.parentNode = null;
 		this.childNodes = [];
-		this.data = String(value);
+		this.data = "";
+		if (this.tagName === "#TEXT") {
+			this.data = String(value);
+			return;
+		}
+		// As a browser does: the text is a child node, so emptying the element's children (dom.js's
+		// `fill`, relabelling a button) removes it too.
+		const text = String(value);
+		if (text) {
+			const node = new FakeNode(this.ownerDocument, "#text");
+			node.data = text;
+			this.appendChild(node);
+		}
 	}
 	get isConnected() {
 		let n = this;
@@ -1180,6 +1201,481 @@ async function appStoreRuns() {
 	}
 }
 
+/**
+ * Bin assignments on the item sheet (v1.692.0), on the real app.js: Move to… (anyone who can
+ * move stock; its "Make … this item's bin" box only with `can_manage`, ticked while the quantity
+ * is everything on hand until the person touches it), Remove from this bin (only with
+ * `can_manage`: one tap with nothing here, Move to… or Send to the Boneyard first with stock, the
+ * Boneyard only where one is set). Each save posts to its `bin_assignments` endpoint with a
+ * client_ref, lands in Recent and offers Undo; and the phone's Back closes each new sheet (and a
+ * camera or search opened over it) without leaving the screen, while a save that takes the item
+ * off the bin walks back to the bin's list without adding a history entry.
+ */
+async function appBinActions() {
+	const today = "2026-10-14";
+	const BIN_A1 = { warehouse: "Bin A1 - SF", warehouse_name: "Bin A1" };
+	const widget = {
+		item_code: "PDT-0008", item_name: "Widget", ...BIN_A1, stock_uom: "Each", on_hand: 5, available: 5, assigned: true,
+		open_orders: [], elsewhere: [{ warehouse: "Stores - SF", warehouse_name: "Stores", on_hand: 3, available: 3 }], whole_number: true,
+	};
+	const location = {
+		...BIN_A1, trail: "Shop", company: "SF", truncated: false, can_manage: true,
+		items: [
+			{ item_code: "PDT-0008", item_name: "Widget", stock_uom: "Each", on_hand: 5, on_order: 0, assigned: true, is_default: false, undecided: false },
+			{ item_code: "PDT-0009", item_name: "Gasket", stock_uom: "Each", on_hand: 0, on_order: 4, assigned: true, is_default: false, undecided: false },
+			{ item_code: "PDT-0010", item_name: "Nozzle", stock_uom: "Each", on_hand: 0, on_order: 0, assigned: false, is_default: false, undecided: true },
+		],
+	};
+	const realFetch = globalThis.fetch;
+	const posted = [];
+	let n = 0;
+	// What the NEXT bin-assignment save gets: null (it saves), "refuse" (a 417 sentence),
+	// "drop" (no answer at all), or "hold" (it saves once `release()` is called: a slow signal).
+	let nextBin = null;
+	let release = null;
+	const BIN_SAVES = [".move_to", ".unassign", ".send_to_boneyard"];
+	const fetchStub = async (url, init) => {
+		const body = JSON.parse((init && init.body) || "{}");
+		const u = String(url);
+		posted.push({ url: u, body });
+		let message = null;
+		if (BIN_SAVES.some((s) => u.endsWith(s)) && nextBin) {
+			const plan = nextBin;
+			nextBin = null;
+			if (plan === "drop") throw new TypeError("Failed to fetch");
+			if (plan === "refuse") {
+				const said = "Only 2 Each of Widget is recorded at Bin A1.";
+				return new Response(JSON.stringify({ exc_type: "ValidationError", _server_messages: serverMessages({ message: said, raise_exception: 1 }) }), {
+					status: 417,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (plan === "hold" || plan === "hold-refuse") {
+				await new Promise((resolve) => (release = resolve));
+				release = null;
+				if (plan === "hold-refuse") {
+					return new Response(JSON.stringify({ exc_type: "ValidationError", _server_messages: serverMessages({ message: "Refused.", raise_exception: 1 }) }), {
+						status: 417,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
+			}
+		}
+		const logOf = (extra) => ({
+			name: `SCAN-2026-${String(++n).padStart(5, "0")}`, status: "Posted", item_code: body.item_code, item_name: "Widget", stock_uom: "Each", can_undo: 1, posted_at: `${today} 10:00:00`, ...extra,
+		});
+		if (u.endsWith(".get_location")) message = location;
+		else if (u.endsWith(".get_item")) message = { ...widget, item_code: body.item_code, warehouse: body.warehouse };
+		else if (u.endsWith(".get_recent")) message = [];
+		else if (u.endsWith(".search_locations")) message = [{ warehouse: "Bin C3 - SF", warehouse_name: "Bin C3", trail: "Shop › Rack C" }];
+		else if (u.endsWith(".resolve")) {
+			message =
+				body.code === "BIN-B2"
+					? { kind: "location", location: { warehouse: "Bin B2 - SF", warehouse_name: "Bin B2", items: [] } }
+					: body.code === "BIN-A1"
+						? { kind: "location", location: { ...location } }
+						: body.code === "PDT-0008"
+							? { kind: "item", item: { ...widget } }
+							: { kind: "unknown", message: "Nothing matches that code." };
+		} else if (u.endsWith(".move_to")) {
+			const home = !!body.make_home;
+			message = {
+				log: logOf({ action: "Move To", qty: body.qty, warehouse: body.to_warehouse, warehouse_name: "Bin B2", from_warehouse: body.from_warehouse, from_warehouse_name: "Bin A1", moved_home: home, source_kept: home ? body.qty < 5 : null }),
+				item: { ...widget, warehouse: body.to_warehouse, warehouse_name: "Bin B2", on_hand: body.qty },
+				message: `Moved ${body.qty} Each of Widget from Bin A1 to Bin B2.`,
+				repeated: false,
+				run: null,
+			};
+		} else if (u.endsWith(".unassign")) {
+			message = { log: logOf({ action: "Unassign", qty: 0, warehouse: body.warehouse, warehouse_name: "Bin A1" }), item: { ...widget, on_hand: 0, available: 0, assigned: false }, message: "Widget is off Bin A1.", repeated: false, run: null };
+		} else if (u.endsWith(".send_to_boneyard")) {
+			message = {
+				log: logOf({ action: "Boneyard", qty: body.qty, warehouse: "Boneyard - SF", warehouse_name: "Boneyard", from_warehouse: body.from_warehouse, from_warehouse_name: "Bin A1", source_kept: false }),
+				item: { ...widget, warehouse: "Boneyard - SF", warehouse_name: "Boneyard" },
+				message: "Sent 5 Each of Widget from Bin A1 to the boneyard (Boneyard). It is off Bin A1.",
+				repeated: false,
+				run: null,
+			};
+		} else if (u.endsWith(".undo")) {
+			message = { log: { name: body.log, status: "Undone", action: "Move To", item_code: "PDT-0008", warehouse: "Bin B2 - SF", from_warehouse: "Bin A1 - SF" }, item: null, message: "Undone.", repeated: false, run: null };
+		}
+		return new Response(JSON.stringify({ message }), { status: 200, headers: { "Content-Type": "application/json" } });
+	};
+
+	const A = await load("app.js");
+	const U = await load("ui.js");
+	/** A fresh page and app: Start, then Bin A1's list, then Widget on it (three screens). */
+	const open = async (extra, item) => {
+		U.closeAllSheets(); // a sheet left open on the last page is not this one's
+		await settle();
+		const page = fakePage();
+		globalThis.window = page.win;
+		globalThis.document = page.doc;
+		const boot = Object.assign(
+			{ user: "tina@example.com", today, now: `${today} 10:00:00`, recent: [], settings: { boneyard_warehouse: "Boneyard - SF" }, initial: null, decoder_url: "/jsqr.js", csrf_token: "tok", can_manage: true },
+			extra
+		);
+		page.win.EE_STOCK_SCAN_BOOT = boot;
+		const root = page.doc.createElement("div");
+		root.className = "ee-ss-root";
+		page.doc.body.appendChild(root);
+		const app = new A.StockScanApp(root, boot);
+		app.mount();
+		// `viaRecent`: opened from Start (a Recent row, "Where is it?"), so no bin list is underneath.
+		if (!(extra && extra.viaRecent)) app.showLocation({ ...location }, {});
+		app.showItem({ ...widget, ...(item || {}) }, {});
+		await settle();
+		const walkFind = (top, test) => {
+			if (!top) return null;
+			for (const node of top.walk()) if (test(node)) return node;
+			return null;
+		};
+		const host = () => page.doc.getElementById("ee-ss-sheets");
+		const t = {
+			page,
+			app,
+			sheetText: () => (host() ? host().textContent : ""),
+			inSheets: (test) => walkFind(host(), test),
+			inMain: (label) => walkFind(app.main, (node) => node.tagName === "BUTTON" && node.textContent.trim() === label),
+			sheetButton: (label) => walkFind(host(), (node) => node.tagName === "BUTTON" && node.textContent.trim() === label),
+			sheetButtonStarting: (label) => walkFind(host(), (node) => node.tagName === "BUTTON" && node.textContent.trim().startsWith(label)),
+			toastAction: (label) => walkFind(page.doc.getElementById("ee-ss-toasts"), (node) => node.tagName === "BUTTON" && node.textContent.trim() === label),
+			fire: (node, type) => {
+				for (const fn of (node.listeners[type] || []).slice()) fn({ type, target: node, preventDefault() {} });
+			},
+			pushes: () => page.calls.filter((c) => c === "push").length,
+		};
+		t.qtyField = () => t.inSheets((node) => node.tagName === "INPUT" && node.getAttribute("aria-label") === "How many to move");
+		t.homeBox = () => t.inSheets((node) => node.tagName === "INPUT" && node.type === "checkbox");
+		t.homeRow = () => t.inSheets((node) => node.classList && node.classList.contains("ee-ss-home-check"));
+		t.typeQty = (value) => {
+			const field = t.qtyField();
+			field.value = value;
+			t.fire(field, "input");
+		};
+		/** The camera's "Type a code" box, as a scanner gun or a thumb would fill it. */
+		t.scanCode = async (code) => {
+			t.sheetButton("Scan its label").click();
+			const box = t.inSheets((node) => node.tagName === "INPUT" && node.placeholder === "Type a code");
+			box.value = code;
+			t.sheetButton("Go").click();
+			await settle();
+		};
+		return t;
+	};
+	const sent = (suffix) => posted.filter((p) => p.url.endsWith(suffix)).map((p) => p.body);
+
+	globalThis.fetch = fetchStub;
+	try {
+		console.log("\nstock scan bin assignments: Move to…, Remove from this bin\n");
+
+		// 1. Who sees what.
+		let t = await open({ can_manage: false });
+		check("gate: without can_manage, Move to… shows (a plain move) and Remove does not", [!!t.inMain("Move to…"), !!t.inMain("Remove from this bin")], [true, false]);
+		truthy("gate: Move to… sits beside Move here from…, right under Save", !!t.inMain("Move here from…") && /ee-ss-move-row is-two/.test(t.inMain("Move to…").parentNode.className));
+		U.closeAllSheets();
+		t = await open({}, { available: 0, on_hand: 0 });
+		check("gate: nothing free here, no Move to…; can_manage and on the bin, Remove", [!!t.inMain("Move to…"), !!t.inMain("Remove from this bin")], [false, true]);
+		t = await open({}, { blocked: "Serial numbers are tracked.", on_hand: 2, available: 2 });
+		check("gate: a blocked item with stock gets neither (the server would refuse both moves)", [!!t.inMain("Move to…"), !!t.inMain("Remove from this bin")], [false, false]);
+		t.app.goBack();
+		await settle();
+		const listText = t.app.main.textContent;
+		truthy("list: an item on order and an undecided one carry quiet badges", /Gasket.*on order/.test(listText) && /Nozzle.*not assigned/.test(listText), listText);
+
+		// 2. Move to…: the sheet, the scanned destination and the box.
+		t = await open({});
+		const before = { kinds: t.page.kinds().length, pushes: t.pushes() };
+		t.inMain("Move to…").click();
+		check("move to: opens one sheet and one history marker", [U.sheetDepth(), t.page.here(), t.page.kinds().length], [1, "M", before.kinds + 1]);
+		check("move to: the quantity starts at everything free here", t.qtyField().value, "5");
+		check("move to: no place yet, so no box and the button waits", [t.homeRow().hidden, !!t.sheetButton("Pick where it goes first"), t.sheetButton("Pick where it goes first").disabled], [true, true, true]);
+		truthy("move to: offers the camera, the search and where it is already", ["Scan its label", "Find a location", "Or where it is already", "Stores"].every((s) => t.sheetText().includes(s)), t.sheetText());
+		await t.scanCode("PDT-0008");
+		truthy("move to: an item's label is not a place", /item's label/.test(t.sheetText()) && t.homeRow().hidden, t.sheetText());
+		await t.scanCode("BIN-A1");
+		truthy("move to: this bin is not a place to move to", /where it is now/.test(t.sheetText()) && t.homeRow().hidden, t.sheetText());
+		await t.scanCode("BIN-B2");
+		check("move to: a scanned bin is the place; camera closed, sheet still open", [U.sheetDepth(), /Bin B2/.test(t.sheetText())], [1, true]);
+		check("move to: everything on hand ticks 'Make Bin B2 this item's bin'", [t.homeRow().hidden, t.homeBox().checked, /Make Bin B2 this item's bin/.test(t.sheetText())], [false, true, true]);
+		check("move to: the button names the move", !!t.sheetButton("Move 5 to Bin B2"), true);
+		t.typeQty("3");
+		check("move to: a partial move unticks it", t.homeBox().checked, false);
+		t.typeQty("5");
+		check("move to: back to everything ticks it again", t.homeBox().checked, true);
+		t.homeBox().checked = false;
+		t.fire(t.homeBox(), "change");
+		t.typeQty("4");
+		t.typeQty("5");
+		check("move to: once the person unticks it, the quantity no longer decides it", t.homeBox().checked, false);
+		t.homeBox().checked = true;
+		t.fire(t.homeBox(), "change");
+		t.typeQty("3");
+		truthy("move to: ticked on a partial move, it says the old bin keeps it too", t.homeBox().checked && /2 Each stay at Bin A1, so Bin A1 stays its bin too/.test(t.sheetText()), t.sheetText());
+		t.typeQty("5");
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		const move = sent(".move_to").slice(-1)[0] || {};
+		check(
+			"move to: posts move_to with the item, both places, the quantity and make_home",
+			[move.item_code, move.from_warehouse, move.to_warehouse, move.qty, move.make_home],
+			["PDT-0008", "Bin A1 - SF", "Bin B2 - SF", 5, 1]
+		);
+		truthy("move to: with a client_ref, and no page-only keys", typeof move.client_ref === "string" && move.client_ref.startsWith("ss-") && !("action" in move), JSON.stringify(move));
+		check("move to: lands in Recent, undoable", [t.app.recent[0] && t.app.recent[0].action, t.app.recent[0] && t.app.recent[0].can_undo], ["Move To", 1]);
+		check(
+			"move to: everything moved and the item off this bin, so back on the bin's list, on its own entry, no entry added",
+			[U.sheetDepth(), t.app.view.name, t.page.here(), t.page.index(), t.pushes()],
+			[0, "location", "S", 1, before.pushes + 1]
+		);
+		const undo = t.toastAction("Undo");
+		truthy("move to: the toast offers Undo", !!undo);
+		undo.click();
+		t.sheetButton("Undo it").click();
+		await settle();
+		check("move to: Undo undoes that save", (sent(".undo").slice(-1)[0] || {}).log, t.app.recent[0].name);
+
+		// A partial move without the box stays on the item and re-reads it.
+		t = await open({});
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		t.typeQty("2");
+		const reads = sent(".get_item").length;
+		t.sheetButton("Move 2 to Bin B2").click();
+		await settle();
+		check("move to: a partial move posts make_home 0 and stays on the item, re-read", [sent(".move_to").slice(-1)[0].make_home, t.app.view.name, sent(".get_item").length > reads], [0, "item", true]);
+
+		// Without can_manage: no box, and make_home is never sent as 1.
+		t = await open({ can_manage: false });
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		check("move to: without can_manage, no box even for everything", t.homeRow().hidden, true);
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		check("move to: ... and make_home is 0", sent(".move_to").slice(-1)[0].make_home, 0);
+
+		// The search picks a place too.
+		t = await open({});
+		t.inMain("Move to…").click();
+		t.sheetButton("Find a location").click();
+		check("move to: Find a location opens the search over the sheet", U.sheetDepth(), 2);
+		const search = t.inSheets((node) => node.tagName === "INPUT" && node.getAttribute("aria-label") === "Search");
+		search.value = "C3";
+		t.fire(search, "input");
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		await settle();
+		t.sheetButtonStarting("Bin C3").click();
+		check("move to: a searched place is the place; search closed, sheet open", [U.sheetDepth(), !!t.sheetButton("Move 5 to Bin C3")], [1, true]);
+
+		// 3. Back closes each new sheet, and whatever is open over it, and stays on the item.
+		t = await open({});
+		let entries = t.page.entries.length;
+		t.inMain("Move to…").click();
+		t.sheetButton("Scan its label").click();
+		check("back: Move to… with the camera over it is still one marker", [U.sheetDepth(), t.page.entries.length], [2, entries + 1]);
+		t.page.userBack();
+		await settle();
+		check("back: Back closes the camera and Move to… together, and stays on the item", [U.sheetDepth(), t.app.view.name, t.page.here(), t.page.index()], [0, "item", "S", 2]);
+		t.inMain("Move to…").click();
+		t.sheetButton("Find a location").click();
+		t.page.userBack();
+		await settle();
+		check("back: ... and the search over it", [U.sheetDepth(), t.app.view.name, t.page.here()], [0, "item", "S"]);
+		t.inMain("Remove from this bin").click();
+		check("back: Remove opens one marker", [U.sheetDepth(), t.page.here()], [1, "M"]);
+		t.page.userBack();
+		await settle();
+		check("back: Back closes Remove and stays on the item", [U.sheetDepth(), t.app.view.name, t.page.here(), t.page.index()], [0, "item", "S", 2]);
+
+		// 4. Remove with stock offers the two ways out, each said plainly; no unassign is posted.
+		entries = t.page.entries.length;
+		t.inMain("Remove from this bin").click();
+		const removeText = t.sheetText();
+		truthy(
+			"remove with stock: offers Move to… and Send to the Boneyard, and says what each does",
+			/5 Each of Widget are still recorded at Bin A1/.test(removeText) && /Pick the location they go to/.test(removeText) && /Moves all 5 Each to the Boneyard and takes Widget off Bin A1/.test(removeText),
+			removeText
+		);
+		check("remove with stock: nothing is posted to unassign", sent(".unassign").length, 0);
+		t.sheetButtonStarting("Move to…").click();
+		// The marker Back stepped off is still there as a forward entry; the new one takes its place.
+		check("remove → Move to…: the sheet is swapped, under the same marker", [U.sheetDepth(), !!t.qtyField(), t.page.here(), t.page.index(), t.page.entries.length], [1, true, "M", 3, entries]);
+		U.closeAllSheets();
+		await settle();
+		t.inMain("Remove from this bin").click();
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		const bone = sent(".send_to_boneyard").slice(-1)[0] || {};
+		check("boneyard: posts send_to_boneyard with everything free here", [bone.item_code, bone.from_warehouse, bone.qty, typeof bone.client_ref], ["PDT-0008", "Bin A1 - SF", 5, "string"]);
+		check("boneyard: lands in Recent with Undo, and the item leaves this bin's list", [t.app.recent[0].action, t.app.recent[0].can_undo, t.app.view.name, !!t.toastAction("Undo")], ["Boneyard", 1, "location", true]);
+
+		// 5. No boneyard set: only Move to….
+		t = await open({ settings: {} });
+		t.inMain("Remove from this bin").click();
+		check("no boneyard: Send to the Boneyard is not offered, Move to… is", [!!t.sheetButtonStarting("Send to the Boneyard"), !!t.sheetButtonStarting("Move to…")], [false, true]);
+		U.closeAllSheets();
+		await settle();
+
+		// 6. Remove with nothing here: one tap posts unassign; the item leaves the list.
+		t = await open({}, { on_hand: 0, available: 0 });
+		const pushesBefore = t.pushes();
+		t.inMain("Remove from this bin").click();
+		truthy("remove, nothing here: asks once, saying nothing moves", /Take Widget off Bin A1\?/.test(t.sheetText()) && /No stock moves/.test(t.sheetText()), t.sheetText());
+		t.sheetButton("Remove from Bin A1").click();
+		await settle();
+		const off = sent(".unassign").slice(-1)[0] || {};
+		check("remove, nothing here: posts unassign for the item and this bin, with a client_ref", [off.item_code, off.warehouse, typeof off.client_ref], ["PDT-0008", "Bin A1 - SF", "string"]);
+		check("remove, nothing here: Recent has it with Undo", [t.app.recent[0].action, t.app.recent[0].can_undo, !!t.toastAction("Undo")], ["Unassign", 1, true]);
+		check("remove, nothing here: back on the bin's list, its own entry, nothing pushed", [t.app.view.name, t.page.here(), t.page.index(), t.pushes()], ["location", "S", 1, pushesBefore + 1]);
+
+		// 7. (Review) A save that lands while ANOTHER sheet is open does not write the list over that
+		// sheet's marker: it waits until the sheets are closed, then walks back without a push.
+		for (const [label, openOther] of [
+			["Move here from…", (tt) => tt.inMain("Move here from…").click()],
+			["the camera", (tt) => tt.app.scanBtn.click()],
+		]) {
+			t = await open({});
+			t.inMain("Move to…").click();
+			await t.scanCode("BIN-B2");
+			nextBin = "hold";
+			t.sheetButton("Move 5 to Bin B2").click();
+			await settle();
+			t.page.userBack(); // Back while it is saving: the sheet closes, the save goes on
+			await settle();
+			openOther(t);
+			check(`late save (${label}): another sheet is open on its own marker`, [U.sheetDepth(), t.page.here(), t.page.index(), t.page.entries.length], [1, "M", 3, 4]);
+			release();
+			await settle();
+			check(
+				`late save (${label}): it lands, and nothing moves under the open sheet`,
+				[t.app.recent[0].action, t.app.view.name, U.sheetDepth(), t.page.here(), t.page.index(), t.page.entries.length],
+				["Move To", "item", 1, "M", 3, 4]
+			);
+			U.closeAllSheets(); // the person closes it
+			await settle();
+			await settle();
+			check(
+				`late save (${label}): once it closes, back on the bin's list, on its own entry, no entry added`,
+				[U.sheetDepth(), t.app.view.name, t.page.here(), t.page.index(), t.page.entries.length],
+				[0, "location", "S", 1, 4]
+			);
+			t.page.win.history.forward();
+			await settle();
+			check(`late save (${label}): Forward is the item screen it left, an entry of ours`, [t.app.view.name, t.page.here(), t.page.index()], ["item", "S", 2]);
+		}
+
+		// 8. (Review) A refusal or no answer on each new sheet: the sheet stays, its button works
+		// again, a retry after no answer sends the SAME client_ref, and a changed save a new one.
+		t = await open({});
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		nextBin = "refuse";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		const refusedRef = sent(".move_to").slice(-1)[0].client_ref;
+		check("refused move: the sentence in the sheet, the button enabled again", [U.sheetDepth(), /Only 2 Each of Widget/.test(t.sheetText()), t.sheetButton("Move 5 to Bin B2").disabled], [1, true, false]);
+		nextBin = "drop";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		const droppedRef = sent(".move_to").slice(-1)[0].client_ref;
+		truthy("refused move: tapped again, a new client_ref (nothing was saved)", droppedRef !== refusedRef);
+		check("no answer: said so, sheet open, button enabled", [U.sheetDepth(), /will not save it twice/.test(t.sheetText()), t.sheetButton("Move 5 to Bin B2").disabled], [1, true, false]);
+		nextBin = "drop";
+		t.sheetButton("Move 5 to Bin B2").click();
+		await settle();
+		check("no answer: the same move again sends the same client_ref", sent(".move_to").slice(-1)[0].client_ref, droppedRef);
+		t.typeQty("4");
+		nextBin = "hold-refuse";
+		t.sheetButton("Move 4 to Bin B2").click();
+		await settle();
+		truthy("no answer: a changed move is a new client_ref", sent(".move_to").slice(-1)[0].client_ref !== droppedRef);
+		t.typeQty("3"); // typed while it is saving: the button keeps "Saving…"
+		release();
+		await settle();
+		truthy("refused after an edit mid-save: the button names the move as typed now, the error stays", !!t.sheetButton("Move 3 to Bin B2") && /Refused\./.test(t.sheetText()), t.sheetText());
+
+		t = await open({}, { on_hand: 0, available: 0 });
+		t.inMain("Remove from this bin").click();
+		nextBin = "drop";
+		t.sheetButton("Remove from Bin A1").click();
+		await settle();
+		const offRef = sent(".unassign").slice(-1)[0].client_ref;
+		check("no answer on Remove: sheet open, button enabled", [U.sheetDepth(), t.sheetButton("Remove from Bin A1").disabled], [1, false]);
+		t.sheetButton("Remove from Bin A1").click();
+		await settle();
+		check("no answer on Remove: the retry sends the same client_ref, and goes through", [sent(".unassign").slice(-1)[0].client_ref, t.app.view.name], [offRef, "location"]);
+
+		t = await open({});
+		t.inMain("Remove from this bin").click();
+		nextBin = "hold";
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		check("boneyard posting: every way out of the sheet is shut, Move to… too", [t.sheetButtonStarting("Move to…").disabled], [true]);
+		release();
+		await settle();
+		t = await open({});
+		t.inMain("Remove from this bin").click();
+		nextBin = "drop";
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		const boneRef = sent(".send_to_boneyard").slice(-1)[0].client_ref;
+		check("no answer on the Boneyard: both ways out work again", [t.sheetButtonStarting("Move to…").disabled, t.sheetButtonStarting("Send to the Boneyard").disabled], [false, false]);
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		check("no answer on the Boneyard: the retry sends the same client_ref", sent(".send_to_boneyard").slice(-1)[0].client_ref, boneRef);
+
+		// 9. (Review) Reserved stock: only what is free moves, the box starts unticked (the bin keeps
+		// the item), and Remove promises nothing the server will not do.
+		t = await open({}, { on_hand: 5, available: 3 });
+		t.inMain("Move to…").click();
+		await t.scanCode("BIN-B2");
+		check("reserved: Move to… starts at the 3 free, the box unticked", [t.qtyField().value, t.homeBox().checked], ["3", false]);
+		U.closeAllSheets();
+		await settle();
+		t.inMain("Remove from this bin").click();
+		const reservedText = t.sheetText();
+		truthy(
+			"reserved: Remove says 2 stay reserved and the item stays on the bin, never 'takes it off'",
+			/2 Each here are reserved and stay/.test(reservedText) && /2 Each are reserved and stay, so Widget stays on Bin A1/.test(reservedText) && !/off Bin A1/.test(reservedText),
+			reservedText
+		);
+		t.sheetButtonStarting("Send to the Boneyard").click();
+		await settle();
+		check("reserved: the Boneyard trip moves the 3 free", sent(".send_to_boneyard").slice(-1)[0].qty, 3);
+
+		// 10. (Review) Reached from Recent, no bin list underneath: the card's own flags decide.
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: true, undecided: false });
+		check("from Recent: the item's default warehouse is here, so Remove shows", !!t.inMain("Remove from this bin"), true);
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: false, undecided: true });
+		check("from Recent: undecided here, so Remove shows", !!t.inMain("Remove from this bin"), true);
+		t = await open({ viaRecent: true }, { on_hand: 0, available: 0, assigned: false, is_default: false, undecided: false });
+		check("from Recent: on none of the three counts, no Remove (the server would say it is not on the bin)", !!t.inMain("Remove from this bin"), false);
+
+		// 11. Both stay shut while the report form is on its way.
+		const page = fakePage();
+		const rec = fakeRecorder(page);
+		globalThis.window = page.win;
+		globalThis.document = page.doc;
+		page.win.ee_capture = rec;
+		const root = page.doc.createElement("div");
+		root.className = "ee-ss-root";
+		page.doc.body.appendChild(root);
+		const app = new A.StockScanApp(root, { user: "tina@example.com", today, recent: [], settings: { boneyard_warehouse: "Boneyard - SF" }, initial: null, can_manage: true });
+		app.mount();
+		app.showItem({ ...widget }, {});
+		app.reportBtn.click();
+		app.openMoveTo();
+		app.openRemove();
+		check("report form loading: Move to… and Remove open nothing", U.sheetDepth(), 0);
+		rec.fail();
+		await settle();
+	} finally {
+		U.closeAllSheets();
+		globalThis.fetch = realFetch;
+		delete globalThis.window;
+		delete globalThis.document;
+	}
+}
+
 (async () => {
 	if (typeof globalThis.window !== "undefined") {
 		console.error("a window global exists before the modules load; this test must load them without one");
@@ -1202,8 +1698,10 @@ async function appStoreRuns() {
 		// The v1.536.0 review fixes: other people's runs only while recent, an emptied run reopened,
 		// and "Check the receipt total".
 		"siteTimeMs", "runOffered", "OTHERS_RUN_HOURS", "reopenedDraft", "receiptCheck", "RECEIPT_CHECK_ABOVE", "TAX_BAND",
+		// Bin assignments (v1.692.0): Move to…'s "Make … this item's bin" default.
+		"makeHomeDefault",
 	]);
-	exported(T, "transport.js", ["M", "call", "upload", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
+	exported(T, "transport.js", ["M", "BIN", "call", "upload", "StockScanCallError", "errorMessage", "isSignedOut", "SIGNED_OUT"]);
 	exported(N, "nav.js", ["NavHistory", "MAX_ENTRIES", "TRAVERSE_TIMEOUT_MS"]);
 
 	console.log("stock scan client\n");
@@ -1495,6 +1993,31 @@ async function appStoreRuns() {
 	truthy("undoQuestion: a created item stays", /new item stays/.test(L.undoQuestion({ ...runLog, created_item: 1 })));
 	truthy("undoQuestion: bought for a job says to undo the take first", /undo that take first/.test(L.undoQuestion({ ...runLog, store_run_reason: L.REASON_ONLY_THIS_JOB })));
 	check("saveLabel: a store-run line", L.saveLabel("store_run", 3, "Unit", "Widget"), "Record buying 3 Unit of Widget");
+
+	// ------------------------------------------------------------------ bin assignments (v1.692.0)
+	// "Make <there> this item's bin" starts ticked only when the move takes everything on hand:
+	// the server takes the item off its old bin only when the move empties it.
+	check("makeHomeDefault: everything on hand ticks the box", L.makeHomeDefault(5, 5), true);
+	check("makeHomeDefault: a partial move does not", L.makeHomeDefault(4, 5), false);
+	check("makeHomeDefault: float noise is still everything", L.makeHomeDefault(4.9999999999, 5), true);
+	check("makeHomeDefault: nothing typed, a bad number, nothing on hand", [L.makeHomeDefault(null, 5), L.makeHomeDefault("x", 5), L.makeHomeDefault(0, 0)], [false, false, false]);
+	const moveTo = { action: "move_to", item_code: "PDT-0008", from_warehouse: "Bin A1 - SF", to_warehouse: "Bin B2 - SF", qty: 3, make_home: 1 };
+	truthy("saveKey: Move to… another place is a different save", L.saveKey(moveTo) !== L.saveKey({ ...moveTo, to_warehouse: "Bin C3 - SF" }));
+	truthy("saveKey: the same move with the box changed is a different save", L.saveKey(moveTo) !== L.saveKey({ ...moveTo, make_home: 0 }));
+	check("saveKey: the same Move to… is the same save", L.saveKey({ ...moveTo }), L.saveKey(moveTo));
+	check("saveLabel: Move to…", L.saveLabel("move_to", 3, "Each", "Widget"), "Move 3 Each of Widget");
+	check("saveLabel: the Boneyard", L.saveLabel("boneyard", 3, "Each", "Widget"), "Send 3 Each of Widget to the Boneyard");
+	check("saveLabel: Remove names no amount (no stock moves)", L.saveLabel("unassign", undefined, "Each", "Widget"), "Remove Widget from the bin");
+	const binLog = { qty: 3, stock_uom: "Each", item_name: "Widget", warehouse_name: "Bin B2", from_warehouse_name: "Bin A1" };
+	check("logHeadline: Move To, Boneyard, Unassign", [L.logHeadline({ ...binLog, action: "Move To" }), L.logHeadline({ ...binLog, action: "Boneyard" }), L.logHeadline({ ...binLog, action: "Unassign" })], ["Moved 3 Each", "Boneyard 3 Each", "Off the bin"]);
+	check("undoQuestion: a plain Move To", L.undoQuestion({ ...binLog, action: "Move To" }), "Undo: moved 3 Each of Widget from Bin A1 to Bin B2?");
+	truthy("undoQuestion: a make-home Move To says the bins go back", /bins go back/.test(L.undoQuestion({ ...binLog, action: "Move To", moved_home: true })));
+	check("undoQuestion: Unassign", L.undoQuestion({ ...binLog, action: "Unassign", warehouse_name: "Bin A1" }), "Undo: took Widget off Bin A1? It goes back on that bin.");
+	check(
+		"undoQuestion: a boneyard trip that emptied the bin puts it back on the bin; one that did not, does not say so",
+		[/goes back on Bin A1/.test(L.undoQuestion({ ...binLog, action: "Boneyard", source_kept: false })), /goes back/.test(L.undoQuestion({ ...binLog, action: "Boneyard", source_kept: true }))],
+		[true, false]
+	);
 
 	// ------------------------------------------------------------------ reportAvailable
 	// The header's "Report a problem": the recorder on the page AND the System User cookie
@@ -2248,6 +2771,7 @@ async function appStoreRuns() {
 
 	await appUnderTheReportForm();
 	await appStoreRuns();
+	await appBinActions();
 
 	console.log(`\n${passes} passed, ${failures} failed`);
 	process.exit(failures ? 1 : 0);

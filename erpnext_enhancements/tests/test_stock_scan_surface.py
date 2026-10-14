@@ -158,7 +158,19 @@ UI_JS = CLIENT / "ui.js"
 # The payload shapes the page reads (the spec's "Shapes"). Asserted as subsets: a key the
 # server adds is harmless, a key it drops is ``undefined`` on a phone.
 LOCATION_KEYS = {"warehouse", "warehouse_name", "trail", "company", "items", "truncated"}
-LOCATION_ITEM_KEYS = {"item_code", "item_name", "image", "stock_uom", "on_hand"}
+LOCATION_ITEM_KEYS = {
+	"item_code",
+	"item_name",
+	"image",
+	"stock_uom",
+	"on_hand",
+	# bin assignments (v1.689.0): why a row lists; the page badges on_order and undecided and
+	# offers "Remove from this bin" by assigned / is_default / undecided (v1.692.0)
+	"on_order",
+	"assigned",
+	"is_default",
+	"undecided",
+}
 ITEM_KEYS = {
 	"item_code",
 	"item_name",
@@ -177,6 +189,11 @@ ITEM_KEYS = {
 	"is_stock_item",
 	"store_run_ok",
 	"reorder_level",
+	# bin assignments: "Remove from this bin" shows by any of the three (v1.692.0), also on an
+	# item reached from Recent or "Where is it?", where no bin list is underneath
+	"assigned",
+	"is_default",
+	"undecided",
 }
 ELSEWHERE_KEYS = {"warehouse", "warehouse_name", "on_hand", "available"}
 OPEN_ORDER_KEYS = {
@@ -590,8 +607,9 @@ def _js_string(expr, consts):
 	return None
 
 
-def _method_map():
-	"""``{M key: dotted method}`` read from ``transport.js``'s ``export const M``.
+def _method_map(map_name="M"):
+	"""``{M key: dotted method}`` read from ``transport.js``'s ``export const M`` (or the map
+	called ``map_name``: ``BIN``, the bin-assignment endpoints, v1.692.0).
 
 	Read from the map's own braces rather than by grepping the file for method names: the
 	module names endpoints in prose too, and a scan that cannot tell a comment from the
@@ -604,9 +622,9 @@ def _method_map():
 			r"\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*([\"'])([A-Za-z0-9_.]+)\2\s*;", code
 		)
 	)
-	head = re.search(r"export\s+const\s+M\s*=\s*(?:Object\.freeze\(\s*)?\{", code)
+	head = re.search(r"export\s+const\s+" + re.escape(map_name) + r"\s*=\s*(?:Object\.freeze\(\s*)?\{", code)
 	if not head:
-		raise AssertionError("transport.js has no `export const M = {...}`; the spec names it")
+		raise AssertionError(f"transport.js has no `export const {map_name} = {{...}}`; the spec names it")
 	out, unreadable = {}, []
 	for entry in _split_entries(_object_body(code, head.end() - 1)):
 		match = re.fullmatch(r"([A-Za-z_$][\w$]*)\s*:\s*(.+)", entry, flags=re.S)
@@ -738,6 +756,99 @@ class TestTheClientDialsExactlyTheEndpoints(unittest.TestCase):
 					path.startswith(DOTTED + "."), f"M.{key} = {path} is not in api/stock_scan.py"
 				)
 				self.assertIn(path.rsplit(".", 1)[-1], endpoints)
+
+
+#: Bin assignments (v1.692.0): the page's ``BIN`` map, key -> function in ``bin_assignments.py``.
+BIN_API = APP / "inventory_enhancements" / "bin_assignments.py"
+BIN_DOTTED = "erpnext_enhancements.inventory_enhancements.bin_assignments"
+BIN_CONTRACT = {"MOVE_TO": "move_to", "UNASSIGN": "unassign", "BONEYARD": "send_to_boneyard"}
+
+
+def _bin_posts():
+	"""``{BIN key: [set of keys sent], ...}`` from every ``this.post(v, BIN.KEY, {...})`` in app.js.
+	``action`` is the page's own label for the save and is not sent (``post`` strips it)."""
+	code = _strip_js_comments(_read(APP_JS))
+	out = {}
+	for match in re.finditer(r"this\.post\(", code):
+		args = _call_args(code, match.end() - 1)
+		if len(args) < 3 or not args[1].startswith("BIN."):
+			continue
+		body = args[2].strip()
+		if not body.startswith("{"):
+			raise AssertionError(f"this.post({args[1]}, ...) must send an object literal the scan can read")
+		keys = set()
+		for entry in _split_entries(_object_body(body, 0)):
+			key = re.match(r"([A-Za-z_$][\w$]*)\s*:", entry)
+			if not key:
+				raise AssertionError(f"this.post({args[1]}, ...): cannot read the entry {entry!r}")
+			keys.add(key.group(1))
+		out.setdefault(args[1][len("BIN.") :], []).append(keys - {"action"})
+	return out
+
+
+class TestTheBinButtonsDialBinAssignments(unittest.TestCase):
+	"""``transport.js``'s ``BIN`` map (v1.692.0): Move to…, Remove from this bin and Send to the
+	Boneyard post to ``bin_assignments``, not ``api/stock_scan``. A renamed function is a 404 and a
+	renamed parameter a ``TypeError``, both in front of someone holding the part."""
+
+	def test_the_map_dials_whitelisted_bin_assignment_functions(self):
+		dialled = _method_map("BIN")
+		self.assertEqual(set(dialled), set(BIN_CONTRACT))
+		endpoints = _whitelisted(BIN_API)
+		for key, fn in BIN_CONTRACT.items():
+			with self.subTest(key=key):
+				self.assertEqual(dialled[key], f"{BIN_DOTTED}.{fn}")
+				self.assertIn(fn, endpoints)
+
+	def test_every_post_sends_the_parameters_the_function_takes(self):
+		posts = _bin_posts()
+		self.assertEqual(set(posts), set(BIN_CONTRACT), "each BIN endpoint is posted from app.js")
+		endpoints = _whitelisted(BIN_API)
+		for key, sends in posts.items():
+			node = endpoints[BIN_CONTRACT[key]]
+			names = [a.arg for a in node.args.args]
+			optional = set(names[len(names) - len(node.args.defaults) :]) if node.args.defaults else set()
+			# client_ref is added by post() itself, from the save's kept or freshly minted reference.
+			required = set(names) - optional - {"client_ref"}
+			for sent in sends:
+				with self.subTest(key=key, sent=sorted(sent)):
+					self.assertLessEqual(required, sent, f"{key}: a required parameter is not sent")
+					self.assertLessEqual(sent, set(names), f"{key}: sends a key the function does not take")
+
+	def test_make_home_is_sent_as_0_or_1(self):
+		"""``move_to`` reads ``cint(make_home)``: the page sends exactly 1 (the box shown and
+		ticked) or 0, never the checkbox's ``true``/``false`` or an absent key that a later
+		default could flip."""
+		app = _strip_js_comments(_read(APP_JS))
+		body = _method_body(app, "openMoveTo")
+		self.assertIn("make_home: !homeRow.hidden && home.checked ? 1 : 0", body)
+
+	def test_no_class_has_two_unrelated_rule_sets(self):
+		"""v1.692.0 review: the Move to… box first shipped as ``.ee-ss-check``, already the
+		store-run quick item's name-check panel, and the later rule (the panel's column layout)
+		won over the box. A bare one-class rule written twice at the top level is that collision;
+		a class is styled in one place, and a modifier or a descendant rule is written as such."""
+		css = _read(CSS)
+		seen = re.findall(r"^(\.ee-ss-[A-Za-z0-9_-]+)\s*\{", css, flags=re.M)
+		self.assertGreater(len(seen), 50, "the scan reads the stylesheet's top-level rules")
+		twice = sorted({name for name in seen if seen.count(name) > 1})
+		self.assertEqual(twice, [], f"defined twice at the top level of stock_scan.bundle.css: {twice}")
+
+	def test_the_make_home_box_classes_are_its_own(self):
+		app = _strip_js_comments(_read(APP_JS))
+		body = _method_body(app, "openMoveTo")
+		for name in ("ee-ss-home-check", "ee-ss-dest"):
+			with self.subTest(cls=name):
+				self.assertEqual(
+					len(re.findall(r'"[^"]*\b' + re.escape(name), app)),
+					len(re.findall(r'"[^"]*\b' + re.escape(name), body)),
+					f"{name}* is used outside Move to…; give the new use its own class",
+				)
+
+	def test_the_buttons_are_doors(self):
+		"""Move to… and Remove are doors like any other: nothing opens under the report form."""
+		self.assertIn("openMoveTo", TestReportAProblem.DOORS)
+		self.assertIn("openRemove", TestReportAProblem.DOORS)
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1193,25 @@ class TestPayloadShapes(unittest.TestCase):
 		self.assertCarries(
 			_appended_dicts(self._fn("_open_order_lines")), OPEN_ORDER_KEYS, "Item.open_orders[]"
 		)
+
+	def test_item_at_a_bin_says_why_it_is_there(self):
+		"""The keys default to None; at a location each must be computed, or "Remove from this
+		bin" hides on an item reached from Recent that the server would take off (v1.692.0)."""
+		updates = [
+			_dict_keys(sub.args[0])
+			for sub in ast.walk(self._fn("_item_payload"))
+			if isinstance(sub, ast.Call)
+			and ast.unparse(sub.func) == "payload.update"
+			and sub.args
+			and isinstance(sub.args[0], ast.Dict)
+		]
+		self.assertCarries(
+			[k for k in updates if k], {"assigned", "is_default", "undecided"}, "Item at a bin"
+		)
+		source = ast.unparse(self._fn("_item_payload"))
+		self.assertIn("'Item Default'", source)
+		self.assertIn("'parenttype': 'Item'", source)
+		self.assertIn("'company': location.company", source)
 
 	def test_log_row_and_save_result(self):
 		self.assertCarries(_returned_dicts(self._fn("_log_row")), LOG_ROW_KEYS, "LogRow")
@@ -1860,6 +1990,9 @@ class TestReportAProblem(unittest.TestCase):
 		"openQuickItem",
 		"finishRun",
 		"offerTakeNow",
+		# Bin assignments (v1.692.0): Move to… and Remove from this bin.
+		"openMoveTo",
+		"openRemove",
 	)
 
 	def test_no_door_opens_under_the_form(self):

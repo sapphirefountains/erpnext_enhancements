@@ -572,6 +572,8 @@ def _item_payload(item_code, location=None):
 		"on_hand": None,
 		"available": None,
 		"assigned": None,
+		"is_default": None,
+		"undecided": None,
 		"elsewhere": [],
 		"open_orders": [],
 	}
@@ -589,6 +591,28 @@ def _item_payload(item_code, location=None):
 				"assigned": bool(
 					frappe.db.exists(
 						"Putaway Rule", {"item_code": item.name, "warehouse": location.name, "disable": 0}
+					)
+				),
+				# The other two reasons the bin's list draws an item that ``unassign`` takes off
+				# (``_items_at``): this is its default warehouse for the bin's company, or it has a
+				# Bin row here and nobody has decided on it (no Putaway Rule at all). The page
+				# offers "Remove from this bin" by any of the three (v1.692.0), also when the item
+				# was reached from Recent or "Where is it?" rather than from the bin's list.
+				"is_default": bool(
+					frappe.db.exists(
+						"Item Default",
+						{
+							"parent": item.name,
+							"parenttype": "Item",
+							"default_warehouse": location.name,
+							"company": location.company,
+						},
+					)
+				),
+				"undecided": bool(
+					frappe.db.exists("Bin", {"item_code": item.name, "warehouse": location.name})
+					and not frappe.db.exists(
+						"Putaway Rule", {"item_code": item.name, "warehouse": location.name}
 					)
 				),
 			}
