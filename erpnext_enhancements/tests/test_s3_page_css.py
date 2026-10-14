@@ -580,6 +580,36 @@ class TestPlanATrip(unittest.TestCase):
 		self.assertEqual(sorted(drawn - styled), [], "drawn by the script, styled nowhere")
 		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
 
+	def test_a_link_field_and_the_person_search_stay_white_while_focused(self):
+		"""A Link field's input is a Bootstrap .form-control, whose :focus rule (0,2,0) outranked
+		.tp-field input (0,1,1) and turned it grey while typing; the person search on Who's going
+		is a bare .form-control outside .tp-field."""
+		self.assertIn('class="form-control tp-search"', self.js)
+		for selector in (".tp-wrap .tp-field .form-control:focus", ".tp-wrap .tp-search.form-control:focus"):
+			with self.subTest(selector=selector):
+				body = self._rule(selector)
+				self.assertIn("background: var(--sf-field-bg)", body)
+				self.assertIn("color: var(--sf-field-text)", body)
+				self.assertIn("font-size: var(--sf-text-input)", body)
+		self.assertRegex(
+			self.css,
+			r"\.tp-wrap \.tp-field \.form-control:focus,\s*\.tp-wrap \.tp-search\.form-control:focus\s*"
+			r"\{\s*border-color: var\(--sf-focus\);\s*\}",
+		)
+
+	def test_the_chosen_person_in_the_view_bar_does_not_shift(self):
+		"""A wider border on the chosen select moved the bar by a pixel; only the colour changes,
+		and the outline (outside the layout) doubles it."""
+		body = self._rule(".tp-viewbar select.tp-active")
+		self.assertNotRegex(body, r"(?m)^\s*border(?:-width)?\s*:")
+		self.assertIn("border-color: var(--sf-focus)", body)
+		self.assertIn("outline:", body)
+
+	def test_a_changed_hue_falls_back_to_itself(self):
+		"""Pick-up and the drive lines changed hue; their fallback is the new colour, not the old."""
+		self.assertIn('tp_token_color("--sf-green", "#1e7e51")', self.js)
+		self.assertEqual(self.js.count('tp_token_color("--sf-fresh-blue", "#00a0df")'), 2)
+
 
 class TestThisSuiteRunsInCi(unittest.TestCase):
 	def test_registered(self):

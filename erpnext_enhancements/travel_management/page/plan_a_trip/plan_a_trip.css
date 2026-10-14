@@ -224,6 +224,27 @@
 	font-size: var(--sf-text-input);
 }
 
+/* A Link field is a frappe control, so its input is a Bootstrap .form-control, and Bootstrap's
+ * .form-control:focus (0,2,0) outranks the rule above (0,1,1) and turned it grey while typing.
+ * The person search on Who's going is a bare .form-control outside .tp-field. Both stay white,
+ * square and 16px; focus changes the edge's colour only. Under .tp-wrap these are (0,4,0), above
+ * the Desk's dark-theme form-control rules as well. */
+.tp-wrap .tp-field .form-control,
+.tp-wrap .tp-field .form-control:focus,
+.tp-wrap .tp-search.form-control,
+.tp-wrap .tp-search.form-control:focus {
+	border-radius: var(--sf-radius-none);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-size: var(--sf-text-input);
+}
+
+.tp-wrap .tp-field .form-control:focus,
+.tp-wrap .tp-search.form-control:focus {
+	border-color: var(--sf-focus);
+}
+
 .tp-field input[type="checkbox"],
 .tp-field input[type="radio"] {
 	width: auto;
@@ -773,7 +794,8 @@ a.tp-btn:focus {
 }
 
 .tp-viewbar select.tp-active {
-	border: var(--sf-border-control) solid var(--sf-focus);
+	border-color: var(--sf-focus);
+	outline: var(--sf-border-hairline) solid var(--sf-focus);
 	font-weight: 600;
 }
 

@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A step tab's red count says "missing".** It was a number in red and nothing else; the tab's
   tooltip now reads "2 missing" and a screen reader hears it. Review's per-person confirmation list
   marks "missing" with a class instead of an inline red.
+- **Review follow-ups.**
+  - A Link field turned grey while typing: its input is a Bootstrap `.form-control`, whose `:focus`
+    rule (0,2,0) outranked `.tp-field input` (0,1,1). Link fields and the "Find a person" search on
+    Who's going (a bare `.form-control`, now also `.tp-search`) stay white, square and 16px, under
+    `.tp-wrap` at (0,4,0); focus changes the edge to `--sf-focus` (guarded).
+  - The person chosen in the view bar's "View as" select no longer moves the bar by a pixel: the
+    border keeps its width and changes colour, and a 1px outline doubles it (guarded).
+  - Pick-up and the drive lines fall back to their new hues (`#1e7e51`, `#00a0df`), not the old
+    orange and teal (guarded). Stop and pick-up keep the red and green status hues on purpose: the
+    palette's other dark hues are two blues too close to the airport's, and each kind says its word.
 
 ### Tests
 

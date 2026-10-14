@@ -311,7 +311,8 @@ const TP_ICONS = {
 // A design token's value, for the Maps API, which takes a colour value rather than a CSS
 // variable. sf_tokens.bundle.css is on every Desk page (app_include_css) before any page script
 // runs, and the palette tokens read here never change with the theme, so reading them once is
-// enough. The fallback is the colour this page drew before it moved onto the tokens.
+// enough. The fallback is the colour this page drew before it moved onto the tokens, or the
+// token's own value where the hue changed (pick-up, the drive lines).
 function tp_token_color(name, fallback) {
 	try {
 		const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -326,7 +327,9 @@ function tp_token_color(name, fallback) {
 // from elements), and its marker's colour. A kind is a category, not a status, so it takes a
 // palette hue dark enough for a white number. plan_a_trip.css paints the list's numbers and the
 // HTML markers from the same token (keyed by data-kind); `color` is only for the older Marker,
-// whose fill is a value.
+// whose fill is a value. Stop and pick-up borrow the red and green status hues: the palette's
+// other dark hues are two blues too close to the airport's to tell apart on a map, and every
+// kind also says its word in the list and the popup.
 const TP_PLACE_KINDS = {
 	airport: {
 		label: __("Airport"),
@@ -350,7 +353,7 @@ const TP_PLACE_KINDS = {
 		label: __("Pick-up"),
 		icon: "&#128663;",
 		glyph: "\u{1F697}",
-		color: tp_token_color("--sf-green", "#ea580c"),
+		color: tp_token_color("--sf-green", "#1e7e51"),
 	},
 	dropoff: {
 		label: __("Drop-off"),
@@ -372,8 +375,8 @@ const TP_MARKER_WHITE = tp_token_color("--sf-white", "#ffffff");
 // The lines between places on the Map view (`legs`), by their `kind`: a drive in the Service
 // pillar's bright blue, which stands off the basemap's roads, and a flight in muted grey dashes.
 const TP_LEG_COLORS = {
-	drive: tp_token_color("--sf-fresh-blue", "#0f766e"),
-	walk: tp_token_color("--sf-fresh-blue", "#0f766e"),
+	drive: tp_token_color("--sf-fresh-blue", "#00a0df"),
+	walk: tp_token_color("--sf-fresh-blue", "#00a0df"),
 	flight: tp_token_color("--sf-ink-500", "#475569"),
 };
 
@@ -3287,9 +3290,9 @@ class TripPlanner {
 				"Tick everyone on the trip and pick the trip lead. Change someone's dates only if they arrive late or leave early."
 			)
 		);
-		const $search = $(`<input type="text" class="form-control" placeholder="${__("Find a person")}">`).appendTo(
-			$step
-		);
+		const $search = $(
+			`<input type="text" class="form-control tp-search" placeholder="${__("Find a person")}">`
+		).appendTo($step);
 		const $list = $('<div style="margin-top:10px;"></div>').appendTo($step);
 		const t = this.state.trip;
 
