@@ -80,7 +80,7 @@ and `public/js/device_management/employee_devices.js` (Employee panel).
   in a row and the next Back would seem to do nothing. "Showing" means no other page has
   been shown since, which the console learns from the `hide` frappe fires on the page it
   leaves. A reload on a sheet entry the console pushed (a tab discarded with the camera
-  open, since the console's camera has no visibilitychange close) steps back the same way:
+  open before it could close) steps back the same way:
   `history.state` survives the reload, and the entry behind a marked one is always the
   console's own. Each replace the console asks for (`route_flags.replace_route`) is cleared
   the moment `set_route` returns: v16 reads the flag while writing the entry but clears it
@@ -99,3 +99,12 @@ and `public/js/device_management/employee_devices.js` (Employee panel).
   `get_form_link` /desk path: an /app href is a full page load on v16, and Back from it
   used to rebuild the console with the scanned device gone. Behaviour tests:
   `scripts/test_desk_page_history.js`, run by `tests/test_desk_page_history.py`.
+- **The console's camera and its sheets' history handling are the scanner kit's**
+  (`public/js/scanner_kit`, v1.666.0), shared with the Inventory Scanner Audit. The console
+  used `BarcodeDetector` alone, which iPhone Safari does not have, so the camera button never
+  appeared there; it now falls back to the vendored jsQR decoder (QR only, so a device's 1D
+  barcode on an iPhone still wants the wedge scanner or typing). The camera button shows when
+  the bootstrap says camera scanning is on and the browser can give the page a camera at all
+  (a secure context with `getUserMedia`). The camera turns off when the phone locks, the tab
+  is hidden or another Desk page is shown. Without the kit (a file that failed to load) the
+  sheets are plain dialogs with no entry of their own and the camera button stays hidden.

@@ -5,7 +5,10 @@
  * Loads the REAL page scripts — Device Console, Inventory Scanner Audit, Sales Pipeline,
  * QuickBooks Record Matching, Question Review and Location Timeline — into a vm context over a
  * small fake Desk, then taps, scans and presses Back and Forward. Plain node, no runner, no
- * npm install.
+ * npm install. The two scanner pages run on the REAL scanner kit (public/js/scanner_kit, v1.666.0),
+ * installed on the fake Desk's window when they ask frappe.require for it; a Desk can be made
+ * without it ({ scanner: false }), with it arriving late ({ scannerLate: true }), or as an
+ * iPhone ({ iphone: true }: no BarcodeDetector, so the kit loads the vendored jsQR).
  *
  * The Desk is modelled on `git show origin/version-16:frappe/public/js/frappe/…`, never the
  * develop tree, in the places these pages depend on:
@@ -55,6 +58,13 @@ const APP = path.join(__dirname, "..", "erpnext_enhancements");
 const LOADER = path.join(APP, "public", "js", "sf_kit_loader.js");
 const SF_BUNDLE = path.join(APP, "public", "js", "sf_kit.bundle.js");
 let kitCopies = 0;
+// The scanner kit both scanner pages load (v1.666.0): its index module, imported once before the
+// scenarios run, and installed on each Desk's window when a page asks frappe.require for
+// "scanner_kit.bundle.js", as the bundle installs it on a live Desk. Each install is bound to its
+// own Desk's window, so a reload's new Desk gets a copy of its own.
+const SCANNER_KIT = path.join(APP, "public", "js", "scanner_kit", "index.js");
+const JSQR_PATH = "/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js";
+let scannerKit = null;
 const SCRIPTS = {
 	"device-console": "device_management/page/device_console/device_console.js",
 	"inventory-scanner-audit": "inventory_enhancements/page/inventory_scanner_audit/inventory_scanner_audit.js",
@@ -107,6 +117,7 @@ function makeDesk(options) {
 		alerts: [],
 		messages: [],
 		cameras: [],
+		required: [], // every path frappe.require was asked for
 		violations: [],
 		respond: {}, // server method (last dotted part) -> (args) => message | Error | undefined
 		cameraAuto: "allow",
@@ -367,7 +378,13 @@ function makeDesk(options) {
 		head: makeElement("head"),
 		body,
 		getElementById: () => null,
-		createElement: (tag) => makeElement(tag),
+		createElement: (tag) =>
+			makeElement(
+				tag,
+				tag === "canvas"
+					? { getContext: () => ({ drawImage() {}, getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }) }
+					: {}
+			),
 		createTextNode: (text) => makeElement("#text", { textContent: String(text) }),
 		addEventListener(type, fn) {
 			(docListeners[type] = docListeners[type] || []).push(fn);
@@ -854,7 +871,23 @@ function makeDesk(options) {
 			now_time: () => "12:00",
 			str_to_user: (s) => s,
 		},
+		// The scanner kit arrives on request (unless the Desk is made with { scanner: false }, a file
+		// that failed to load, or { scannerLate: true }, which holds it until desk.scannerArrives()),
+		// and so does the vendored jsQR, as window.jsQR. v16 runs the callback either way.
 		require(paths, cb) {
+			const list = [].concat(paths);
+			desk.required.push(...list);
+			if (list.includes("scanner_kit.bundle.js")) {
+				if (opts.scannerLate) {
+					desk.scannerArrives = () => {
+						scannerKit.install(ctx);
+						if (typeof cb === "function") cb();
+					};
+					return new Promise(() => {});
+				}
+				if (opts.scanner !== false) scannerKit.install(ctx);
+			}
+			if (list.includes(JSQR_PATH)) ctx.jsQR = jsQR;
 			if (typeof cb === "function") cb();
 			return Promise.resolve();
 		},
@@ -875,6 +908,15 @@ function makeDesk(options) {
 			out = out.split(`{${i}}`).join(String(a));
 		});
 		return out;
+	}
+
+	// An iPhone's decoder (makeDesk({ iphone: true }): no BarcodeDetector): jsQR reads what the
+	// camera shows, the code the test put in front of it.
+	function jsQR() {
+		const code = desk.nextCode;
+		if (!code) return null;
+		desk.nextCode = null;
+		return { data: code };
 	}
 
 	class BarcodeDetector {
@@ -900,11 +942,18 @@ function makeDesk(options) {
 						req.stream = { stopped: 0, getTracks: () => [{ stop: () => (req.stream.stopped += 1) }] };
 						resolve(req.stream);
 					};
-					req.deny = () => reject(new Error("NotAllowedError"));
+					// A bare Error by default; with a name, getUserMedia's own DOMException name.
+					req.deny = (name) => {
+						const err = new Error(name || "NotAllowedError");
+						if (name) err.name = name;
+						reject(err);
+					};
 				});
 				desk.cameras.push(req);
 				if (desk.cameraAuto === "allow") setTimeout_(() => req.allow(), 10);
 				if (desk.cameraAuto === "deny") setTimeout_(() => req.deny(), 10);
+				if (desk.cameraAuto === "blocked") setTimeout_(() => req.deny("NotAllowedError"), 10);
+				if (desk.cameraAuto === "none") setTimeout_(() => req.deny("NotFoundError"), 10);
 				return req.promise;
 			},
 		},
@@ -944,6 +993,7 @@ function makeDesk(options) {
 		cint: (v) => parseInt(v, 10) || 0,
 	};
 	if (opts.kit) ctx.fetch = fetch_;
+	if (opts.iphone) delete ctx.BarcodeDetector;
 	ctx.window = ctx;
 	vm.createContext(ctx);
 	// The global bundle's sf_kit loader (window.sf_kit_ready), as the Desk boots with it. With no
@@ -1066,6 +1116,26 @@ async function deviceConsole(extra) {
 
 const dc = (desk) => desk.wrapper("device-console").device_console;
 
+// The console on a Desk made with `opts` (iphone, scanner, scannerLate), reached from Home.
+async function deviceConsoleWith(opts) {
+	const desk = makeDesk(opts);
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	desk.respond.resolve_device_scan = ({ code }) =>
+		code.startsWith("DEV")
+			? { type: "device", device: { name: code, device_name: "Phone " + code, status: "In Stock" } }
+			: { type: "unknown" };
+	desk.respond.check_out = (args) => ({ name: args.device, status: "Assigned", assigned_to_employee: args.employee });
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	return desk;
+}
+
+// The last show/hide the console's camera button was given.
+const camButton = (desk, label) => {
+	const toggles = desk.calls.filter((c) => c.label === label && c.method === "toggle");
+	return toggles.length ? toggles[toggles.length - 1].args[0] : undefined;
+};
+
 test("Device Console: Back closes the camera and stays; Forward opens it again", async () => {
 	const desk = await deviceConsole();
 	check("on the console", [desk.current(), desk.route()], ["device-console", "device-console"]);
@@ -1158,7 +1228,8 @@ test("Device Console: a reload on the camera's own entry steps back onto the con
 	let desk = await deviceConsole();
 	await desk.tap(() => dc(desk).openCamera());
 	check("the camera's entry is marked as the console's own", desk.ctx.history.state, { dc_sheet: "camera" });
-	// A tab discarded with the camera open: the console's camera has no visibilitychange close.
+	// A tab discarded with the camera open, before it could close (the kit closes the camera on
+	// visibilitychange and pagehide, but a discard need not fire either).
 	desk = await desk.reload();
 	check("no camera nobody tapped for", [desk.shown(), desk.cameras.length], [[], 0]);
 	check("stepped back onto the console's own entry, the camera's still ahead", [desk.route(), desk.at(), desk.urls()], [
@@ -1297,6 +1368,122 @@ test("Device Console: a camera refused shows why, after the step back", async ()
 	check("it says the camera", desk.messages.slice(-1), ["Could not access the camera."]);
 });
 
+// S6b (v1.666.0): the console's camera is the scanner kit's, the same as the count's.
+
+test("Device Console: on an iPhone (no BarcodeDetector) the camera reads a QR code through jsQR", async () => {
+	const desk = await deviceConsoleWith({ iphone: true });
+	check("the camera button shows", camButton(desk, ".dc-cam"), true);
+	check("jsQR is not loaded until the camera is opened", desk.required.filter((p) => p.includes("jsQR")), []);
+	await desk.tap(() => dc(desk).openCamera());
+	check("opening it loads the vendored jsQR, by its bare path", desk.required.filter((p) => p.includes("jsQR")), [
+		"/assets/erpnext_enhancements/js/stock_scan/lib/jsQR-1.4.0.min.js",
+	]);
+	check("the camera is its own entry, and running", [desk.route(), desk.shown(), desk.cameraLive()], ["device-console/camera", ["Camera Scan"], 1]);
+	check("the back camera, no microphone", desk.cameras[0].constraints, { video: { facingMode: "environment" }, audio: false });
+	desk.nextCode = "DEV-7";
+	await desk.settle();
+	check("the read closed the sheet and stepped back off its entry", [desk.shown(), desk.route(), desk.at().index], [[], "device-console", 1]);
+	check("the device is on the card", dc(desk).state.device && dc(desk).state.device.name, "DEV-7");
+	check("the camera is off", desk.cameraLive(), 0);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: where BarcodeDetector reads QR, jsQR is never loaded", async () => {
+	const desk = await deviceConsole();
+	await desk.tap(() => dc(desk).openCamera());
+	desk.nextCode = "DEV-3";
+	await desk.settle();
+	check("read natively", dc(desk).state.device && dc(desk).state.device.name, "DEV-3");
+	check("no jsQR", desk.required.filter((p) => p.includes("jsQR")), []);
+});
+
+test("Device Console: another Desk page shown while the camera fades in stops it", async () => {
+	const desk = await deviceConsole();
+	desk.press(() => dc(desk).openCamera());
+	await desk.wait(150); // the route has settled (100 ms), the camera started, the sheet fading in
+	check("the camera is running under a sheet still fading in", [desk.cameraLive(), desk.ctx.cur_dialog], [1, null]);
+	desk.press(() => desk.frappe.set_route("home"));
+	await desk.settle();
+	check("on Home, with no sheet left over it and the camera off", [desk.current(), desk.shown(), desk.cameraLive()], ["home", [], 0]);
+});
+
+test("Device Console: the phone locking with the camera open turns it off and closes the sheet", async () => {
+	const desk = await deviceConsole();
+	await desk.tap(() => dc(desk).openCamera());
+	check("running", desk.cameraLive(), 1);
+	desk.document.hidden = true;
+	desk.fire("visibilitychange");
+	check("the light goes off at once", desk.cameraLive(), 0);
+	desk.document.hidden = false;
+	await desk.settle();
+	check("the sheet closed and stepped back off its entry", [desk.shown(), desk.route(), desk.at().index], [[], "device-console", 1]);
+	check("nothing said: nothing failed", desk.messages, []);
+});
+
+test("Device Console: a camera blocked for the site says how to allow it", async () => {
+	const desk = await deviceConsole();
+	desk.cameraAuto = "blocked";
+	await desk.tap(() => dc(desk).openCamera());
+	check("the message is up, on the console's entry", [desk.shown(), desk.route()], [["Message"], "device-console"]);
+	check("it says what to do", desk.messages.slice(-1), [
+		"Camera access is blocked for this site. Allow the camera in the browser's settings, then try again.",
+	]);
+});
+
+test("Device Console: a device with no camera says so", async () => {
+	const desk = await deviceConsole();
+	desk.cameraAuto = "none";
+	await desk.tap(() => dc(desk).openCamera());
+	check("it says there is none", desk.messages.slice(-1), ["No camera was found on this device."]);
+});
+
+test("Device Console: with no scanner kit the console still scans, picks and checks out", async () => {
+	const desk = await deviceConsoleWith({ scanner: false });
+	check("no camera button", camButton(desk, ".dc-cam"), false);
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("the picker opens as a plain dialog, with no entry of its own", [desk.shown(), desk.route(), desk.at().length], [["Choose Employee"], "device-console", 2]);
+	const pick = desk.handler("click", ".dc-emp-pick");
+	await desk.tap(() => pick({ currentTarget: { __data: { emp: "EMP-9" } } }));
+	check("check_out went with the picked employee", desk.sent("check_out").map((r) => r.args.employee), ["EMP-9"]);
+	check("no step back off an entry it never had", [desk.route(), desk.at().index], ["device-console", 1]);
+	await desk.tap(() => dc(desk).openCamera());
+	check("the camera says it could not be loaded", desk.messages.slice(-1), [
+		"Camera scanning could not be loaded. Reload the page, or use a hardware/Bluetooth scanner.",
+	]);
+	check("no push without a tap", desk.violations, []);
+});
+
+test("Device Console: a first visit waits for the kit before it decides what a sheet URL is", async () => {
+	const desk = makeDesk({ scannerLate: true });
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	await desk.load("/desk/device-console/camera");
+	check("still the camera's URL while the kit loads, no camera", [desk.route(), desk.cameras.length, desk.shown()], ["device-console/camera", 0, []]);
+	check("the counts came anyway", desk.sent("get_console_bootstrap").length, 1);
+	check("the camera button waits for the kit", camButton(desk, ".dc-cam"), false);
+	desk.scannerArrives();
+	await desk.settle();
+	check("then the entry became the console", [desk.route(), desk.at()], ["device-console", { index: 0, length: 1, url: "/desk/device-console" }]);
+	check("and the camera button shows", camButton(desk, ".dc-cam"), true);
+	check("no camera nobody tapped for", desk.cameras.length, 0);
+});
+
+test("Device Console: a sheet tapped open while the kit loads opens once it has arrived", async () => {
+	const desk = makeDesk({ scannerLate: true });
+	desk.respond.get_console_bootstrap = () => ({ enable_camera_scan: 1, counts: {} });
+	desk.respond.resolve_device_scan = ({ code }) => ({ type: "device", device: { name: code, device_name: code, status: "In Stock" } });
+	await desk.load("/desk/home");
+	await desk.tap(() => desk.frappe.set_route("device-console"));
+	await desk.key(() => dc(desk).handleScan("DEV-1"));
+	await desk.tap(() => dc(desk).pickEmployeeAndCheckOut());
+	check("nothing pushed yet", [desk.route(), desk.shown()], ["device-console", []]);
+	desk.scannerArrives();
+	await desk.settle();
+	check("the picker is up on its own entry", [desk.route(), desk.shown(), desk.at().index], ["device-console/employee", ["Choose Employee"], 2]);
+	await desk.back();
+	check("Back closes it and stays", [desk.route(), desk.shown()], ["device-console", []]);
+});
+
 test("Device Console: a sheet's URL reached from another page opens the console, not the sheet", async () => {
 	const desk = await deviceConsole();
 	await desk.key(() => dc(desk).handleScan("DEV-1"));
@@ -1422,8 +1609,8 @@ test("Device Console: Forward onto a picker whose action no longer applies steps
 
 // ---------------------------------------------------------------------------- Inventory Scanner Audit
 
-async function inventory(settings) {
-	const desk = makeDesk();
+async function inventory(settings, opts) {
+	const desk = makeDesk(opts);
 	desk.respond.get_bootstrap = () => ({
 		settings: Object.assign({ enable_camera_scan: 1, allow_unknown_item: 1, default_warehouse: "Stores" }, settings || {}),
 		session: { name: "ICS-1", lines: [], summary: { lines: 0, with_variance: 0 } },
@@ -1561,6 +1748,19 @@ test("Scanner Audit: a Find Item pick is looked up after the step back and focus
 	check("the pending card is ITEM-5", isa(desk).state.pendingItem && isa(desk).state.pendingItem.item_code, "ITEM-5");
 	check("the counted-qty box has focus", desk.focused(".isa-qty"), 1);
 	check("the scan box did not take it back", desk.focused(".isa-scan"), scanFocus);
+});
+
+test("Scanner Audit: on an iPhone the camera reads a location's QR label through jsQR (the kit's)", async () => {
+	const desk = await inventory(null, { iphone: true });
+	check("the camera button shows", camButton(desk, ".isa-cam"), true);
+	await desk.tap(() => isa(desk).openCamera());
+	check("jsQR loaded once, on first use", desk.required.filter((p) => p.includes("jsQR")).length, 1);
+	check("the camera is its own entry", [desk.route(), desk.shown(), desk.cameraLive()], ["inventory-scanner-audit/camera", ["Camera Scan"], 1]);
+	desk.nextCode = "LOC-A";
+	await desk.settle();
+	check("the location is set, back on the count's own entry", [desk.route(), desk.at().index, desk.alerts.slice(-1)], ["inventory-scanner-audit", 1, ["Location: LOC-A"]]);
+	check("the camera is off", desk.cameraLive(), 0);
+	check("no push without a tap", desk.violations, []);
 });
 
 test("Scanner Audit: a camera read of an item is looked up on the camera's entry, then steps back", async () => {
@@ -2368,6 +2568,7 @@ test("Location Timeline: the Employee form's route_options still open a trail", 
 // ---------------------------------------------------------------------------- run
 
 (async () => {
+	scannerKit = await import(pathToFileURL(SCANNER_KIT).href);
 	for (const t of tests) {
 		console.log(t.name);
 		try {

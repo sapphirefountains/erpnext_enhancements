@@ -3440,6 +3440,18 @@ jobs:
       # in this job, so TestTheBehaviourHarness cannot skip here.
       - name: Desk pages Back/Forward (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_desk_page_history -v
+      # S6b (v1.666.0): the scanner kit (public/js/scanner_kit), the camera sheet and the sheets'
+      # Back/Forward handling the Device Console and the Inventory Scanner Audit share. The node
+      # step runs it against stubbed mediaDevices, a BarcodeDetector present / absent (an iPhone) /
+      # without QR, and jsQR: the decoder chosen, jsQR never loaded where the detector reads QR,
+      # every track stopped on close and on page hide, one history entry per sheet popped by Back.
+      # The unittest step fails the build if either page keeps its own camera loop, loads the kit
+      # without its guard, or the kit bundles jsQR. Both pages run on the real kit in the Desk
+      # pages Back/Forward step above.
+      - name: Scanner kit (bench-free, node)
+        run: node scripts/test_scanner_kit.mjs
+      - name: Scanner kit (pages on the kit, iOS rules)
+        run: python -m unittest erpnext_enhancements.tests.test_scanner_kit -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
