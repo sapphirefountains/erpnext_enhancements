@@ -962,7 +962,7 @@ class TestPageSource(unittest.TestCase):
 		self.assertIn("PP6B_PURE.offset_moves(cards, days, modified_of)", pp_pure)
 		self.assertNotIn("new Date(`${ymd}T00:00:00Z`).setUTCDate", pp_pure)
 		mp_pure = _strip(
-			self.mp_block[self.mp_block.index("const MP6E_PURE") : self.mp_block.index("const MP6E_STYLE")]
+			self.mp_block[self.mp_block.index("const MP6E_PURE") : self.mp_block.index("const MP6E_METHODS")]
 		)
 		self.assertIn("MP6B_PURE.ymd_add(", mp_pure)
 		self.assertIn("MP6B_PURE.ymd_diff(", mp_pure)
@@ -1000,15 +1000,14 @@ class TestPageSource(unittest.TestCase):
 
 	def test_the_house_rules_hold_for_the_new_blocks(self):
 		for block, prefix in ((self.pp_block, "p6e-"), (self.mp_block, "mp-p6e-")):
-			if block is self.pp_block:
-				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
-				# section of it, from its banner to the next.
-				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
-				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6E_STYLE).")))
-				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertNotIn("_STYLE = `", block)
-			else:
-				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, from its banner
+			# to the next.
+			js, tag = (PP_JS, "PP6E_STYLE") if block is self.pp_block else (MP_JS, "MP6E_STYLE")
+			raw = js.with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({tag}).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes and all(c.startswith(prefix) for c in classes), classes)
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour"):

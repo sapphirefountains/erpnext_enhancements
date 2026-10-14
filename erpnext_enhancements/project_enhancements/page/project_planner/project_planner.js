@@ -4323,7 +4323,9 @@ Object.assign(ProjectPlanner.prototype, PP5_METHODS);
 // p6a_links and p6a_action (open_card).
 
 const PP6A = {
-	kit: "planner_kit.bundle.js",
+	// The kit and its stylesheet, both content-hashed bundles (S3.4e). The stylesheet's <link> lands
+	// after this page's CSS, so the kit's rules come after the page's, as they always have.
+	kit: ["planner_kit.bundle.js", "planner_kit.bundle.css"],
 	views: "erpnext_enhancements.api.planner_views",
 	owner: "pp",
 	// Drawer widths on a wide screen; a phone gets the whole screen.

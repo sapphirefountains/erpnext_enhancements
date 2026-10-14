@@ -624,25 +624,18 @@ class TestPages(unittest.TestCase):
 			for british in ("colour", "cancelled", "labour", "centre", "behaviour", "favour"):
 				self.assertNotIn(british, block.lower(), british)
 			prefix = "pp" if block is self.pp_block else "mp"
-			if prefix == "pp":
-				# The Project Planner's CSS is project_planner.css (S3.4d, v1.664.0): this block's
-				# section of it, on the tokens, with 44px touch targets and the 767px phone width.
-				raw = PP_JS.with_suffix(".css").read_text(encoding="utf-8")
-				start = raw.index("*/", raw.index("/* ===", raw.index("(PP6C_STYLE).")))
-				style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
-				self.assertNotIn("_STYLE = `", block)
-				coarse, phone, touch = (
-					"@media (pointer: coarse)",
-					"@media (max-width: 767px)",
-					"min-height: var(--sf-touch-min)",
-				)
-			else:
-				style = block[block.index("_STYLE = `") : block.index("`;", block.index("_STYLE = `"))]
-				coarse, phone, touch = (
-					"@media (pointer:coarse)",
-					"@media (max-width:760px)",
-					"min-height:40px",
-				)
+			# Each planner's CSS is its page's stylesheet (S3.4d v1.664.0 for the Project Planner,
+			# S3.4e v1.673.0 for the Maintenance Planner): this block's section of it, on the tokens,
+			# with 44px touch targets and the 767px phone width.
+			raw = (PP_JS if prefix == "pp" else MP_JS).with_suffix(".css").read_text(encoding="utf-8")
+			start = raw.index("*/", raw.index("/* ===", raw.index(f"({prefix.upper()}6C_STYLE).")))
+			style = re.sub(r"/\*.*?\*/", "", raw[start + 2 : raw.index("\n/* ===", start)], flags=re.S)
+			self.assertNotIn("_STYLE = `", block)
+			coarse, phone, touch = (
+				"@media (pointer: coarse)",
+				"@media (max-width: 767px)",
+				"min-height: var(--sf-touch-min)",
+			)
 			classes = set(re.findall(r"\.([a-zA-Z][\w-]*)", style))
 			self.assertTrue(classes)
 			self.assertEqual(

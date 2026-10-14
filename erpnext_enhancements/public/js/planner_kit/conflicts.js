@@ -841,45 +841,7 @@ export function create_conflicts(env) {
 	return { center };
 }
 
-export const CONFLICTS_CSS = `
-.pk-cc-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 6px;font-size:12px;color:var(--text-muted);}
-.pk-cc-count{font-weight:600;}
-.pk-cc-day{margin:0 0 10px;}
-.pk-cc-day-head{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;}
-.pk-cc-item{border:1px solid var(--border-color);border-left:3px solid #dc2626;border-radius:8px;padding:6px 8px;margin-bottom:6px;background:var(--card-bg);font-size:12px;}
-.pk-cc-item.pk-cc-k-qualification{border-left-color:#d97706;}
-.pk-cc-item.pk-cc-k-equipment{border-left-color:#7c3aed;}
-.pk-cc-item.pk-cc-kept{border-left-color:#94a3b8;opacity:.8;}
-.pk-cc-item.pk-cc-focus{box-shadow:0 0 0 2px var(--primary,#2490ef);}
-.pk-cc-head{display:flex;align-items:center;gap:6px;min-width:0;}
-.pk-cc-icon{display:inline-flex;color:#b91c1c;flex:0 0 auto;}
-.pk-cc-k-qualification .pk-cc-icon{color:#b45309;}
-.pk-cc-k-equipment .pk-cc-icon{color:#6d28d9;}
-.pk-cc-kept .pk-cc-icon{color:var(--text-muted);}
-.pk-cc-who{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
-.pk-cc-kind{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);white-space:nowrap;}
-.pk-cc-msg{margin:3px 0 4px;}
-.pk-cc-note{margin:0 0 4px;color:var(--text-muted);font-style:italic;}
-.pk-cc-records{list-style:none;margin:0;padding:0;}
-.pk-cc-record{border-top:1px dashed var(--border-color);padding:4px 0;}
-.pk-cc-record-main{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
-.pk-cc-title{font-weight:600;min-width:0;}
-.pk-cc-meta{font-size:11px;color:var(--text-muted);}
-.pk-cc-fixes{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
-.pk-cc-ack{margin-top:4px;font-size:11px;color:var(--text-muted);}
-.pk-cc-keep{margin-top:6px;}
-.pk-cc-keep label{font-size:11px;font-weight:normal;color:var(--text-muted);margin:0 0 2px;}
-.pk-cc-keep-error{font-size:11px;color:#b91c1c;margin-top:2px;}
-.pk-cc-keep-error[hidden]{display:none;}
-.pk-cc-hint{font-size:11px;color:var(--text-muted);margin-top:2px;}
-.pk-cc-pick-head{margin:0 0 6px;}
-.pk-cc-pick-title{margin:0 0 2px;font-size:14px;font-weight:600;}
-.pk-cc-pick-context{margin:0;font-size:12px;color:var(--text-muted);}
-.pk-cc-people{list-style:none;margin:0;padding:0;}
-.pk-cc-person{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:8px 10px;margin:0 0 4px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg);color:var(--text-color);font-size:13px;text-align:left;cursor:pointer;}
-.pk-cc-person:hover,.pk-cc-person:focus{border-color:var(--primary,#2490ef);outline:none;}
-.pk-cc-person.pk-cc-busy{opacity:.6;}
-.pk-cc-person[disabled]{opacity:.45;cursor:default;}
-.pk-cc-person-name{font-weight:600;min-width:0;}
-.pk-cc-person-facts{font-size:11px;color:var(--text-muted);text-align:right;}
-`;
+// The Conflict center's styles are a section of public/css/planner_kit.bundle.css (S3.4e, v1.673.0).
+// planner_kit.bundle.js still appends this to its <style id="pk-style">; it stays empty, so no rule is
+// injected beside the stylesheet the planners load.
+export const CONFLICTS_CSS = "";

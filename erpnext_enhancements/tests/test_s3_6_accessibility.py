@@ -235,9 +235,12 @@ class TestPlannerDayLinksAnswerTheKeyboard(unittest.TestCase):
 		crew = _statement(code, code.index('.find("[data-week]")'))
 		self.assertIn('.on("click", open_week)', crew)
 		self.assertIn("open_week(e);", crew)
-		self.assertIn(
-			".mp-day-num:focus-visible,.mp-crew-head:focus-visible,.mp-title:focus-visible{outline:2px solid var(--sf-focus);",
-			code,
+		# The page's CSS moved out of the script into maintenance_planner.css in S3.4e (v1.673.0).
+		css = re.sub(r"/\*[\s\S]*?\*/", "", MAINTENANCE.with_suffix(".css").read_text(encoding="utf-8"))
+		self.assertRegex(
+			css,
+			r"(?m)^\.mp-day-num:focus-visible,\s*\.mp-crew-head:focus-visible,\s*\.mp-title:focus-visible\s*"
+			r"\{\s*outline: 2px solid var\(--sf-focus\);",
 		)
 
 
