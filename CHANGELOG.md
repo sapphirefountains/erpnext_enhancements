@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.684.0] - 2026-10-14
+
+### Added
+- **A saved record on the guided page is laid out the way each person chooses** (Nik, 2026-10-14:
+  "once a document has been created via the flow, the presentation could be better ... Let's make
+  it somewhat flexible and customizable by the user and their preferences"). A **View** button (a
+  gear) in a saved record's band opens the settings, applied as they change, with *Reset to
+  defaults*. A new record's setup flow is unchanged, and so is the rest of the walk its step 1
+  starts, until the person leaves the record. Settings, per DocType, first value the default:
+  - **Layout**: *One page* (Nik's default: "all sections on one page, but leave the ability for tabs
+    to be used and visible"; every step a section under its Desk tab, the tab bar a sticky jump menu
+    with scroll-spy, sections collapse), *Tabs* (one tab at a time; a tab is a route, so Back and
+    Forward walk the tabs and Next/Back move between them), *Step by step* (the setup flow's page).
+  - **Where the steps sit** (left, right, top; always top on a phone), **Summary** (right, left,
+    hidden; it folds above the form on a phone and tablet), **Notes and comments** (below the form,
+    side column, or collapsed behind a "Notes and comments (N)" bar), **Record tools** (the
+    `.ge-tools` block another change fills: side column, below, collapsed).
+  - **Focus mode** (only the form and its nav; the button in the band, or F), **text size** (normal,
+    large, larger) and **high contrast** for a phone in the sun (both through the CSS tokens only),
+    **spacing** (comfortable, compact), **field hints** (under each field, or only in the (i), which
+    then holds the hint), and **only fields with a value**.
+  - **Pinned sections** (drawn first in One page and Tabs, marked in the nav, pinned from the
+    section's head), **where a record opens** (where the person left it, which the page remembers per
+    record for the last 50; the first section; or a chosen one), **fields and sections put away**
+    per person, **summary fields** (up to 12 of the record's fields instead of the standard summary),
+    and **saved views** (named presets such as "Phone").
+  - **Shortcuts**, none of them while typing except Save, and none over the browser's or the Desk's:
+    J and K next and previous section, Ctrl/Cmd+S save now, C notes and comments, V view settings,
+    F focus mode, ? the list (which links to the Desk's own).
+  - **A first-time pop-up** says what can be changed, with *Open view settings* and *Got it*: once
+    per person, remembered on the server the moment it shows, never on a new record's setup flow.
+- **Opportunity board: Card fields.** A picker in the filter bar chooses what each card shows beside
+  its title (account, value streams, owner, amount, probability, close date, days in stage,
+  completeness), saved with the board's own views as the text key `card`. A view that never chose,
+  or was saved before this, shows the card exactly as before.
+- `planner_views_prefs.get_guided_view` (GET), `save_guided_view`, `remember_guided_section` and
+  `mark_guided_intro_seen` (POST). Each acts only on the caller's own `__UserSettings` row (`Guided
+  Entry`, key `guided_view`), written straight to the table: frappe's own user settings live only in
+  Redis until a sync, and every deploy flushes Redis, so a choice saved minutes before a merge would
+  vanish. Everything is cleaned on the way in and again on the way out (unknown keys dropped, unknown
+  values back to their defaults, every list capped); a DocType the guided page does not serve is
+  refused, and read on it is checked. One person's choices never change anyone else's page.
+
+### Changed
+- **The guided page's fields, tightened, in every layout and in the board's side panel** (Nik's
+  review of the Events schedule step, 2026-10-14: "the layouts and such need to be tightened up").
+  The (i) stays on its label's line, so the inputs of a row start level (it wrapped alone under
+  two of four labels); a form's columns wrap at about 240px (four on a wide stage, two on a medium
+  one, one on a phone) instead of four squeezed ones, in the DocType's own order; inputs are the
+  Desk's height (38px, 44px on a phone) with their own ground and a visible edge in light and dark
+  (an empty Datetime read as a dark nothing); text boxes start at three lines and grow with what
+  they hold up to 320px (Frappe draws Text at 300px and Small Text at 150px whatever they hold); a
+  hint is clamped to two lines, with the whole of a longer one in the (i); the Datetime time-zone
+  line shows only when the person's zone differs from the site's (v16's `ControlDatetime` writes it
+  under every Datetime unless `hide_timezone`); and Frappe's 15px section and 15px column padding no
+  longer push every field 30px in from the step title.
+- **One renderer, several FieldGroups.** One page and Tabs draw one `frappe.ui.FieldGroup` per step,
+  held together by `form_kit/field_groups.js`, so the editor's collect, save queue, conflict chooser,
+  phone journal, help, Party component and `focus_field` work across every section on screen
+  (`shown_steps()`); `collect_step` redraws the chrome once for the lot instead of once per field.
+  The side panel is unchanged: still step by step, no settings.
+- `guided_entry.bundle.js` is version 3 and `opportunity_board.bundle.js` version 2, so a tab still
+  holding the older bundle takes the new one.
+
 ## [1.681.0] - 2026-10-14
 
 ### Added
