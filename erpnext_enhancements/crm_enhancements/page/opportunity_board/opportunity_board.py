@@ -39,7 +39,7 @@ Things it is careful about, including the ones that look like bugs:
 """
 
 import frappe
-from frappe.utils import flt, getdate, nowdate
+from frappe.utils import date_diff, escape_html, flt, formatdate, get_datetime, getdate, nowdate
 
 from erpnext_enhancements.crm_enhancements.historical import HISTORICAL_FIELD
 from erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline import (
@@ -72,7 +72,23 @@ OPTIONAL_FIELDS = (
 	"probability",
 	"expected_closing",
 	"custom_stage_changed_on",
+	"opportunity_owner",
+	"custom_snoozed_until",
+	"custom_snooze_reason",
 )
+
+#: P6.8's snooze: a date the deal stays hidden until, and an optional reason. Hidden on the form,
+#: no_copy, defined in fixtures/custom_field.json; the guided flow never shows them (hidden fields
+#: are not in it), so snoozing has its own endpoint, :func:`snooze`, rather than ``save_step``.
+SNOOZE_UNTIL = "custom_snoozed_until"
+SNOOZE_REASON = "custom_snooze_reason"
+SNOOZE_FIELDS = (SNOOZE_UNTIL, SNOOZE_REASON)
+
+#: The furthest ahead a snooze may run. A deal parked for longer than a year belongs On Hold.
+MAX_SNOOZE_DAYS = 366
+
+#: ``custom_snooze_reason`` is Small Text; a reason is a sentence, not a document.
+MAX_REASON = 500
 
 
 def _stages():
@@ -135,15 +151,27 @@ def _date(value):
 	return str(getdate(value)) if value else None
 
 
+def _owner_names(records):
+	"""``{user: full name}`` for the owners on the board (the owner filter's choices and the table)."""
+	names = {}
+	for record in records:
+		user = record.get("opportunity_owner")
+		if user and user not in names:
+			names[user] = frappe.utils.get_fullname(user) or user
+	return names
+
+
 @frappe.whitelist(methods=["GET"])
 def get_board():
-	"""The open deals, with exactly what the board's cards, rows and forecast strip read.
+	"""The open deals, with exactly what the board's views, filters and forecast strip read.
 
 	Returns ``{"stages": [{"label", "kind"}], "deals": [...], "thresholds": {"amber", "red"},
-	"today", "currency", "truncated"}``; each deal is ``{"name", "title", "account", "status",
-	"amount", "probability", "expected_closing", "since", "modified", "streams",
-	"completeness"}``. ``amount`` is None when the deal has none above zero. See the module
-	docstring for what is read and why.
+	"today", "currency", "truncated", "can_snooze"}``; each deal is ``{"name", "title", "account",
+	"status", "amount", "probability", "expected_closing", "since", "modified", "streams",
+	"completeness", "owner", "owner_name", "snoozed_until", "snooze_reason"}``. ``amount`` is None
+	when the deal has none above zero. Snoozed deals are sent too: the page hides them (and says how
+	many), so "Show snoozed" needs no second request. See the module docstring for what is read and
+	why.
 	"""
 	frappe.has_permission(DOCTYPE, "read", throw=True)
 	meta = frappe.get_meta(DOCTYPE)
@@ -163,6 +191,7 @@ def get_board():
 	names = [record.get("name") for record in records]
 	streams = _streams(meta, names)
 	completeness = _completeness(names)
+	owner_names = _owner_names(records)
 	amber, red = _thresholds()
 
 	deals = []
@@ -184,6 +213,10 @@ def get_board():
 				"modified": str(record.get("modified")),
 				"streams": streams.get(name, []),
 				"completeness": completeness.get(name),
+				"owner": record.get("opportunity_owner") or "",
+				"owner_name": owner_names.get(record.get("opportunity_owner"), ""),
+				"snoozed_until": _date(record.get(SNOOZE_UNTIL)),
+				"snooze_reason": record.get(SNOOZE_REASON) or "",
 			}
 		)
 
@@ -194,4 +227,90 @@ def get_board():
 		"today": nowdate(),
 		"currency": frappe.defaults.get_global_default("currency") or "USD",
 		"truncated": truncated,
+		# Whether to draw the snooze controls at all: the fields exist and the caller may write some
+		# Opportunity. :func:`snooze` still checks write on the deal itself.
+		"can_snooze": all(meta.has_field(fieldname) for fieldname in SNOOZE_FIELDS)
+		and bool(frappe.has_permission(DOCTYPE, "write")),
 	}
+
+
+def _snooze_values(doc):
+	return {
+		"snoozed_until": _date(doc.get(SNOOZE_UNTIL)),
+		"snooze_reason": doc.get(SNOOZE_REASON) or "",
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def snooze(name, until=None, reason=None, modified=None):
+	"""Snooze ``name`` until ``until`` (a date after today), with an optional ``reason``; a blank
+	``until`` wakes it (clears both fields).
+
+	P6.8: a snoozed deal is hidden from the board until its date, then comes back marked as
+	returning. Returns ``{"name", "modified", "snoozed_until", "snooze_reason"}``, or, when the deal
+	changed since ``modified``, the form kit's conflict shape without saving
+	(``{"conflict": True, "name", "modified", "modified_by", "server": {...}}``).
+
+	Careful about:
+
+	* **Its own permission check**: write on this deal (``doc.check_permission("write")``, which
+	  includes user permissions, sharing and if-owner rules), and only on an open deal.
+	* **The ``modified`` lock**, as ``form_kit.saver.save_step`` does it (``str`` against ``str``),
+	  and a snooze without one is refused, because it could overwrite somebody silently.
+	* **Only these two fields are written, with ``db_set``**, not ``save()``. A snooze is a focus
+	  tool, and an unrelated validation (an old deal missing a field that became required since) must
+	  not stop it; nor may it run the save hooks that stamp the stage clock or reset a probability.
+	  ``db_set`` still stamps ``modified``, so the next save of the deal is checked against it. The
+	  board is told through the same realtime event an Opportunity save sends, and the deal's
+	  timeline gets an Info comment saying who snoozed it and until when.
+	* **An open form is told too.** ``db_set(..., notify=True)`` runs ``Document.notify_update``
+	  (``doc_update`` to the deal's room and ``list_update``, after commit; ``version-16``), which a
+	  form open on the deal reads as "this record changed". That is a different event from the
+	  board's ``sales_pipeline_updated``, so neither publish repeats the other.
+	"""
+	if not isinstance(name, str) or not name:
+		frappe.throw(frappe._("Say which deal to snooze."))
+	doc = frappe.get_doc(DOCTYPE, name)
+	doc.check_permission("write")
+	meta = frappe.get_meta(DOCTYPE)
+	if not all(meta.has_field(fieldname) for fieldname in SNOOZE_FIELDS):
+		frappe.throw(frappe._("Snoozing is not set up on this site yet."))
+	if doc.get("status") in CLOSED_STATUSES:
+		frappe.throw(frappe._("{0} is closed, so there is nothing to snooze.").format(name))
+	if not modified:
+		frappe.throw(
+			frappe._(
+				"The snooze did not say which version of {0} it was made on. Reload and try again."
+			).format(name)
+		)
+	if str(doc.modified) != str(modified):
+		return {
+			"conflict": True,
+			"name": doc.name,
+			"modified": str(doc.modified),
+			"modified_by": doc.get("modified_by"),
+			"server": _snooze_values(doc),
+		}
+
+	until_date = getdate(until) if until else None
+	if until_date:
+		days = date_diff(until_date, getdate(nowdate()))
+		if days < 1:
+			frappe.throw(frappe._("Pick a date after today."))
+		if days > MAX_SNOOZE_DAYS:
+			frappe.throw(frappe._("A snooze can run at most a year. Put a deal parked longer On Hold."))
+	text = " ".join(str(reason or "").split())[:MAX_REASON] if until_date else ""
+
+	doc.db_set({SNOOZE_UNTIL: until_date, SNOOZE_REASON: text or None}, notify=True)
+	if until_date:
+		note = frappe._("Snoozed on the Opportunity Board until {0}").format(formatdate(until_date))
+		if text:
+			note += ": " + escape_html(text)
+	else:
+		note = frappe._("Woken on the Opportunity Board")
+	doc.add_comment("Info", note)
+	frappe.publish_realtime("sales_pipeline_updated", {"opportunity": doc.name})
+	# db_set stamps `modified` as now()'s text, which always carries microseconds; read back from the
+	# table, a datetime with none prints without them. str(get_datetime(...)) is the form the next
+	# lock check (save_step, or this one) compares against.
+	return {"name": doc.name, "modified": str(get_datetime(doc.modified)), **_snooze_values(doc)}

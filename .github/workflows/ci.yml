@@ -1719,6 +1719,13 @@ jobs:
       # the form kit's exact `modified` string, or every move is a conflict. Own frappe stub.
       - name: Opportunity board (bench-free, node + SQL check)
         run: python -m unittest erpnext_enhancements.tests.test_opportunity_board -v
+      # Form kit P6 part B (P6.3, P6.4, P6.8): the needs-attention list held deal for deal to the
+      # README's SQL (run on SQLite with the child tables, through the real get_board and the form
+      # kit's real completeness), the quick filters, a snoozed deal hidden until its date then
+      # back, the snooze endpoint's write check and modified lock (never save(), so no unrelated
+      # validation blocks it), and saved views in the planners' own store. Own frappe stub.
+      - name: Opportunity board part B (views, attention, snooze, saved views)
+        run: python -m unittest erpnext_enhancements.tests.test_opportunity_board_focus -v
       # Form kit P5.5, the default forecast probability per Opportunity stage
       # (crm_enhancements/opportunity_probability.py and its three patches): entering a stage takes
       # its default unless the probability was set by hand; the seed never saves the Single; the

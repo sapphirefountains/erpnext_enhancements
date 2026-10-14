@@ -125,7 +125,8 @@
 }
 .ob-grid {
 	display: grid;
-	grid-template-columns: repeat(var(--ob-cols, 1), minmax(240px, 1fr));
+	/* --ob-template is set by the page: a folded On Hold column is narrow (P6.8). */
+	grid-template-columns: var(--ob-template, repeat(var(--ob-cols, 1), minmax(240px, 1fr)));
 	gap: var(--sf-space-10);
 }
 .ob-col,
@@ -520,8 +521,401 @@ body.ob-drag-active * {
 	margin-top: var(--sf-space-15);
 }
 
+/* ---- Views (P6.3): a row of tabs, each a route ---- */
+.ob-views {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin-bottom: var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-view {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: 0;
+	border-bottom: 3px solid transparent;
+	background: transparent;
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	cursor: pointer;
+}
+.ob-view[aria-current="page"] {
+	border-bottom-color: var(--sf-focus);
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-view:focus-visible,
+.ob-toggle:focus-visible,
+.ob-sort:focus-visible,
+.ob-link:focus-visible,
+.ob-filters-toggle:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ---- The filter bar (P6.8) ---- */
+.ob-filters {
+	margin-bottom: var(--sf-space-15);
+}
+.ob-filters-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+}
+.ob-filters-body[hidden] {
+	display: none;
+}
+.ob-filter-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10);
+}
+.ob-toggle,
+.ob-filters-toggle {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	cursor: pointer;
+}
+.ob-toggle[aria-pressed="true"] {
+	border-color: var(--sf-text-strong);
+	background: var(--sf-text-strong);
+	color: var(--sf-surface);
+}
+.ob-field {
+	display: inline-flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	color: var(--sf-label);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-field select,
+.ob-field input,
+.ob-field textarea {
+	min-height: var(--sf-touch-min);
+	min-width: 0;
+	padding: 0 var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-field-bg);
+	color: var(--sf-field-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-input);
+	font-weight: var(--sf-weight-regular);
+}
+.ob-field textarea {
+	padding: var(--sf-space-10);
+	resize: vertical;
+}
+.ob-field select:focus-visible,
+.ob-field input:focus-visible,
+.ob-field textarea:focus-visible {
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: 0;
+}
+.ob-field--stack {
+	display: flex;
+	width: 100%;
+}
+.ob-name-view {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--sf-space-10);
+}
+.ob-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* ---- On Hold folded (P6.8) and snoozed cards ---- */
+.ob-fold {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10);
+	color: var(--sf-text-muted);
+}
+.ob-fold p {
+	margin: 0;
+}
+.ob-fold-btn {
+	align-self: flex-start;
+}
+.ob-card.is-snoozed {
+	opacity: 0.7;
+	border-style: dashed;
+}
+
+/* ---- The table (P6.3) ---- */
+.ob-table-wrap {
+	overflow-x: auto;
+}
+.ob-table {
+	width: 100%;
+	border-collapse: collapse;
+	background: var(--sf-surface);
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-table th,
+.ob-table td {
+	padding: var(--sf-space-10);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+	text-align: left;
+	vertical-align: top;
+}
+.ob-table th {
+	padding: 0;
+	color: var(--sf-eyebrow);
+	font-size: var(--sf-text-xs);
+	white-space: nowrap;
+}
+.ob-sort {
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-10);
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	cursor: pointer;
+}
+.ob-table tbody tr {
+	cursor: pointer;
+}
+.ob-table tbody tr:hover {
+	background: color-mix(in srgb, var(--sf-focus) 6%, transparent);
+}
+.ob-num {
+	white-space: nowrap;
+}
+.ob-link {
+	display: block;
+	min-height: var(--sf-touch-min);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--sf-text-strong);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	text-align: left;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+.ob-row-actions {
+	text-align: right;
+}
+
+/* ---- The timeline (P6.3) ---- */
+.ob-timeline {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-20);
+}
+.ob-month {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-month.is-past {
+	border-left: var(--sf-space-5) solid var(--sf-danger);
+}
+.ob-month-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-15);
+	padding: var(--sf-space-10) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-tl-list,
+.ob-att-list,
+.ob-att-counts {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ob-tl-item,
+.ob-att-item {
+	display: grid;
+	grid-template-columns: 110px minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) var(--sf-space-15);
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-tl-item:last-child,
+.ob-att-item:last-child {
+	border-bottom: 0;
+}
+.ob-tl-date {
+	color: var(--sf-text-muted);
+}
+.ob-tl-main,
+.ob-att-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ob-tl-amount {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	white-space: nowrap;
+}
+
+/* ---- Needs attention (P6.4) ---- */
+.ob-att-counts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5) var(--sf-space-20);
+	margin-bottom: var(--sf-space-15);
+	color: var(--sf-text-muted);
+}
+.ob-att-counts strong {
+	color: var(--sf-text-strong);
+}
+.ob-att-list {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+}
+.ob-att-item {
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	cursor: pointer;
+}
+.ob-att-main .ob-chips {
+	margin-top: var(--sf-space-5);
+}
+
+/* ---- Snooze, in the deal panel (P6.8) ---- */
+.ob-snooze {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	margin-top: var(--sf-space-20);
+	padding-top: var(--sf-space-15);
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+.ob-snooze-title {
+	margin: 0;
+	color: var(--sf-heading);
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+}
+.ob-snooze-state {
+	margin: 0;
+	color: var(--sf-text);
+}
+.ob-snooze-form {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+}
+
 /* ---- Phone ---- */
 @media (max-width: 767px) {
+	.ob-filter-row {
+		align-items: stretch;
+	}
+	.ob-filter-row > .ob-field {
+		flex: 1 1 140px;
+	}
+	.ob-filters-toggle {
+		width: 100%;
+		margin-bottom: var(--sf-space-10);
+	}
+	.ob-view {
+		flex: 1 1 auto;
+		padding: 0 var(--sf-space-10);
+		font-size: var(--sf-text-sm);
+	}
+	/* The table becomes one block per deal, each value under its column's name: nothing scrolls
+	   sideways at 390px. */
+	.ob-table-wrap {
+		overflow-x: visible;
+	}
+	.ob-table,
+	.ob-table tbody,
+	.ob-table tr,
+	.ob-table td {
+		display: block;
+		width: 100%;
+	}
+	.ob-table thead {
+		display: block;
+	}
+	.ob-table thead tr {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sf-space-5);
+		padding: var(--sf-space-5);
+	}
+	.ob-table thead th {
+		border: 0;
+	}
+	.ob-table thead th:last-child {
+		display: none;
+	}
+	.ob-sort {
+		border: var(--sf-border-hairline) solid var(--sf-rule);
+		border-radius: var(--sf-radius-control);
+	}
+	.ob-table tbody tr {
+		padding: var(--sf-space-10);
+		border-bottom: var(--sf-border-control) solid var(--sf-rule);
+	}
+	.ob-table td {
+		display: grid;
+		grid-template-columns: 40% minmax(0, 1fr);
+		gap: var(--sf-space-10);
+		padding: var(--sf-space-5) 0;
+		border: 0;
+	}
+	.ob-table td::before {
+		content: attr(data-label);
+		color: var(--sf-text-muted);
+		font-size: var(--sf-text-xs);
+		font-weight: var(--sf-weight-bold);
+	}
+	.ob-table td:first-child,
+	.ob-table td.ob-row-actions {
+		display: block;
+	}
+	.ob-table td:first-child::before,
+	.ob-table td.ob-row-actions::before {
+		content: none;
+	}
+	.ob-tl-item {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.ob-tl-date {
+		grid-column: 1 / -1;
+	}
+	.ob-att-item {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.ob-att-item .ob-tl-amount {
+		grid-column: 1;
+	}
 	.ob-app {
 		padding: var(--sf-space-10) 16px calc(var(--sf-space-40) + env(safe-area-inset-bottom));
 		overflow-x: hidden;
