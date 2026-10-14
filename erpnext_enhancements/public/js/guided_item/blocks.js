@@ -45,6 +45,34 @@ export function supplier_row(setup, supplier) {
 	return rows.find((r) => r.supplier === supplier) || null;
 }
 
+// The boxes for `supplier`: their own row's details, or blank when the Item has no row for them
+// yet. Never the previously picked supplier's, which would be saved under the new one.
+export function supplier_fields(setup, supplier) {
+	const row = supplier_row(setup, supplier);
+	return {
+		supplier_part_no: row ? text(row.supplier_part_no) : "",
+		purchase_url: row ? text(row.purchase_url) : "",
+		rate: row && row.rate !== null && row.rate !== undefined ? row.rate : "",
+	};
+}
+
+// Whether "reorders go to this supplier" starts ticked: only when the Item has no default supplier
+// yet, or `supplier` already is it. Picking a second supplier never takes the default by accident.
+export function default_ticked(setup, supplier) {
+	const current = text((setup || {}).default_supplier);
+	return !current || current === text(supplier);
+}
+
+// The rate to send: what was typed, only when it differs from the rate shown for that supplier
+// (blank or unchanged sends nothing, so a stale or untouched price is never written again).
+export function rate_to_send(shown, typed) {
+	if (!given(typed)) return null;
+	const value = Number(typed);
+	if (!Number.isFinite(value)) return text(typed);
+	if (given(shown) && Number(shown) === value) return null;
+	return text(typed);
+}
+
 // What the stock block starts from: the default bin and its Purchase reorder rule.
 export function stock_start(setup) {
 	const s = setup || {};

@@ -98,6 +98,36 @@ form's new *Guided* button, the guided page's start screen, or `/desk/guided-ent
   shares behind its own permission check (Item create, not Stock Scan's roles). Same answer.
 - `boot._guided_doctypes` tries each DocType on its own, so one broken flow no longer empties
   `frappe.boot.sf_guided` and with it Opportunity's default.
+- **The default now follows what a person may do with the records.** `sf_guided` carries
+  `default` (a saved record opens on the guided page) only for someone with write permission on
+  the DocType, and `default_new` (a New does) only for someone with create permission, both on
+  top of `open_by_default`. Without it, letting Item Managers onto the guided page would have
+  taken deals off the form for an Item Manager who can read Opportunities but holds no Sales role.
+  A person who may only read keeps the form; the flow is still there to open on purpose.
+- **The Desk Item form changes for everyone, not only guided users.** The 19 new `description`
+  Property Setters and the two custom-field descriptions replace the descriptions the Item form
+  shows under those fields (and in Quick Entry and grids), and because Item now has a help file,
+  the form's (i) tooltips on those fields show the longer explanation too.
+- `create_record` also settles a resend racing the first insert when it collides on the primary
+  key (`DuplicateEntryError`) rather than on the id's unique index: an Item is named by its code,
+  so its primary key is hit first. Same rollback and re-read.
+- Config `once_fields`: editable while the record is created, read-only once it exists. Item
+  Code is one, so a saved Item's code is never typed over in the flow (it changes by renaming).
+
+### Fixed (from the review of #1270, before merge)
+
+- Picking a supplier that has no Item Supplier row yet cleared nothing: the previous supplier's
+  part number, link and price stayed in the boxes and were saved for the new one, with a new
+  Item Price at the old price. The boxes now hold the picked supplier's own details or nothing,
+  and "Reorders go to this supplier" starts ticked only when the Item has no default supplier yet
+  or the picked one already is it.
+- The price shown for a supplier could be a stale one: the rows were read newest first into a
+  dict, which kept the oldest, across units. Now only the stock unit's price, the newest per
+  supplier. A save sends a price only when it was changed in the box.
+- Moving an Item to another bin left the old bin's Purchase reorder rule behind. It moves with the
+  item now; when the new bin already has its own rule the old one is kept and the page says so.
+- The page catches a block's `before_create` that throws, as it does `render`, `on_change` and
+  `leave`.
 
 ### Found, not changed
 

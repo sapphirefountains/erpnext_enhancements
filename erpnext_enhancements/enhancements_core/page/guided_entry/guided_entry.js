@@ -792,7 +792,7 @@ class GuidedEntry {
 		if (can_create) {
 			// frappe.new_doc reaches this page only for a DocType that opens here by default; one
 			// reached on purpose (Item, P8.1) would open its form, so its New starts here directly.
-			const by_default = window.sf_guided && window.sf_guided.is_guided && window.sf_guided.is_guided(doctype);
+			const by_default = window.sf_guided && window.sf_guided.is_guided && window.sf_guided.is_guided(doctype, true);
 			$new.text(__("New {0}", [__(doctype)])).on("click", () =>
 				by_default ? frappe.new_doc(doctype) : frappe.set_route(this.kit.build_route(doctype, null, null))
 			);
@@ -2151,7 +2151,13 @@ class GuidedEntry {
 		this.collect_step();
 		const step = (this.flow.steps || []).find((s) => s.create) || this.flow.steps[0];
 		// The step's block may know the insert would be refused (the Item flow's naming guard).
-		const held = this.ext && typeof this.ext.before_create === "function" ? this.ext.before_create() : "";
+		let held = "";
+		try {
+			held = this.ext && typeof this.ext.before_create === "function" ? this.ext.before_create() : "";
+		} catch (e) {
+			// A block that cannot answer holds nothing back: the server still checks the insert.
+			if (window.console) window.console.error("[Guided Entry] the step's block failed", e);
+		}
 		if (held) {
 			this.notice = { kind: "create", title: __("Not created yet"), body: held };
 			this.refresh_notices();

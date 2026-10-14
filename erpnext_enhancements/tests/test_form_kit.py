@@ -399,6 +399,9 @@ class FakeDoc:
             raise FRAPPE.UniqueValidationError("Duplicate entry for custom_guided_client_id")
         if STATE.get("unique_fail"):
             raise FRAPPE.UniqueValidationError(f"Duplicate entry for {STATE['unique_fail']}")
+        if STATE.get("primary_key_fail"):
+            # An Item is named by its code: a racing resend hits the primary key before the id's index.
+            raise FRAPPE.DuplicateEntryError("Duplicate entry for PRIMARY")
         STATE["seq"] += 1
         self._d["name"] = f"CRM-OPP-2026-{STATE['seq']:05d}"
         self._d["docstatus"] = 0
@@ -623,6 +626,7 @@ def _reset(metas=None, user="ae@example.com", **perm):
     STATE["snapshot_hides"] = set()
     STATE["rollbacks"] = 0
     STATE["unique_fail"] = None
+    STATE["primary_key_fail"] = False
     FRAPPE.session.user = user
 
 
@@ -1463,6 +1467,22 @@ class TestCreateIsNeverRepeated(unittest.TestCase):
         self.assertEqual(STATE["rollbacks"], 1)
         self.assertEqual(STATE["inserts"], [first["name"]])
 
+    def test_a_resend_racing_on_the_primary_key_returns_the_first_too(self):
+        """Review of #1270: an Item is named by its code, so the racing resend collides on the
+        primary key (DuplicateEntryError) before the id's unique index; same rollback, same read."""
+        first = self._create()
+        STATE["snapshot_hides"] = {first["name"]}
+        STATE["primary_key_fail"] = True
+        again = self._create()
+        self.assertEqual((again["name"], again["deduped"]), (first["name"], 1))
+        self.assertEqual(STATE["rollbacks"], 1)
+
+    def test_a_primary_key_collision_without_the_id_is_raised(self):
+        STATE["primary_key_fail"] = True
+        with self.assertRaises(FRAPPE.DuplicateEntryError):
+            self._create()
+        self.assertEqual(STATE["rollbacks"], 1)
+
     def test_a_record_that_is_gone_is_made_again(self):
         first = self._create()
         del STATE["db"][first["name"]]
@@ -1625,12 +1645,45 @@ class TestGuidedBoot(unittest.TestCase):
         """P8.1: Parker and Clegg use the Item form daily and nobody has reviewed the Item flow, so
         an Item keeps opening in the form; Opportunity is the default it has been since v1.640.0."""
         out = self._run({})
-        self.assertEqual(out["Opportunity"]["default"], 1)
-        self.assertEqual(out["Item"]["default"], 0)
+        self.assertEqual((out["Opportunity"]["default"], out["Opportunity"]["default_new"]), (1, 1))
+        self.assertEqual((out["Item"]["default"], out["Item"]["default_new"]), (0, 0))
         self.assertNotIn("open_by_default", config.CONFIGS["Opportunity"], "absent means True")
         self.assertIs(config.CONFIGS["Item"]["open_by_default"], False)
         self.assertTrue(config.opens_by_default({}))
         self.assertFalse(config.opens_by_default({"open_by_default": False}))
+
+    def _run_as(self, denied):
+        """``_run`` with ``(doctype, ptype)`` pairs in ``denied`` refused, everything else allowed."""
+        original = FRAPPE.has_permission
+
+        def has_permission(doctype=None, ptype="read", doc=None, user=None, throw=False, **kwargs):
+            allowed = (doctype, ptype) not in denied
+            if throw and not allowed:
+                raise FRAPPE.PermissionError(f"No permission for {doctype}")
+            return allowed
+
+        FRAPPE.has_permission = has_permission
+        try:
+            return self._run({})
+        finally:
+            FRAPPE.has_permission = original
+
+    def test_a_person_who_may_only_read_keeps_the_form(self):
+        """Review of #1270: Item Manager can open the guided page now (for the Item flow), and an
+        Item Manager who reads deals but holds no Sales role must not have them taken off the form.
+        The default follows write (a saved record) and create (a New), on top of open_by_default."""
+        reader = self._run_as({("Opportunity", "write"), ("Opportunity", "create")})
+        self.assertEqual((reader["Opportunity"]["default"], reader["Opportunity"]["default_new"]), (0, 0))
+        self.assertIn("Opportunity", reader, "the flow is still there to open on purpose")
+        writer_only = self._run_as({("Opportunity", "create")})
+        self.assertEqual((writer_only["Opportunity"]["default"], writer_only["Opportunity"]["default_new"]), (1, 0))
+        creator_only = self._run_as({("Opportunity", "write")})
+        self.assertEqual((creator_only["Opportunity"]["default"], creator_only["Opportunity"]["default_new"]), (0, 1))
+        # Item is never the default, whatever the person may do with Items.
+        for denied in (set(), {("Item", "write")}, {("Item", "write"), ("Item", "create")}):
+            with self.subTest(denied=denied):
+                out = self._run_as(denied)
+                self.assertEqual((out["Item"]["default"], out["Item"]["default_new"]), (0, 0))
 
     def test_one_broken_flow_leaves_the_others(self):
         original = steps.flow_steps
@@ -2064,7 +2117,7 @@ class TestItemConfig(unittest.TestCase):
         self.assertEqual(self.cfg["doctype"], "Item")
 
     def test_every_configured_fieldname_and_section_exists(self):
-        named = list(self.cfg["skip_fields"]) + self.cfg["create"]["fields"]
+        named = list(self.cfg["skip_fields"]) + list(self.cfg["once_fields"]) + self.cfg["create"]["fields"]
         named += [name for names in self.cfg["clears"].items() for name in [names[0], *names[1]]]
         named += [self.cfg["mine"]["owner_field"], self.cfg["mine"]["title_field"], *self.cfg["mine"]["detail_fields"]]
         named.append(self.cfg["mine"]["open"]["field"])
@@ -2216,6 +2269,16 @@ class TestItemSteps(unittest.TestCase):
                 "custom_price_per_dose",
             ],
         )
+
+    def test_the_code_is_typed_once_and_read_only_on_a_saved_item(self):
+        """Review of #1270: the block says a saved Item's code changes only by renaming it."""
+        new = _field(self.flow, "item_code")
+        self.assertEqual((new["read_only"], new.get("create")), (0, 1))
+        STATE["db"]["LG-505025"] = {"name": "LG-505025", "item_code": "LG-505025", "docstatus": 0}
+        saved = steps.flow_steps("Item", FakeDoc("Item", dict(STATE["db"]["LG-505025"])))
+        self.assertEqual(_field(saved, "item_code")["read_only"], 1)
+        self.assertNotIn("item_code", steps.editable_fields(saved), "the saver never assigns it either")
+        self.assertEqual(_field(saved, "item_name")["read_only"], 0)
 
     def test_which_steps_apply_follows_the_item(self):
         rules = {step["key"]: step["applies"] for step in self.flow if step["applies"]}

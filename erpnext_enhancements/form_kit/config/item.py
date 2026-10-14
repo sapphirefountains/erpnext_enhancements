@@ -62,6 +62,11 @@ CONFIG = {
 		"custom_pump_curve_chart": "The pump curve chart water_engineering/pump_curve_chart.js draws from the curve points.",
 		"custom_comments_field": "The Comments app (comments_auto.js) mounts here; the flow has none.",
 	},
+	# The code is the Item's name: on a saved Item it changes only by renaming the Item on its form,
+	# as the name and code step says, so the flow never offers to type over it.
+	"once_fields": {
+		"item_code": "The Item's name; a saved Item's code changes only by renaming it on the form.",
+	},
 	"create": {
 		# Step 1: what an Item needs to exist. Maintain Stock and Is Fixed Asset are asked here
 		# because they decide which steps follow, and a fixed asset cannot be saved without its

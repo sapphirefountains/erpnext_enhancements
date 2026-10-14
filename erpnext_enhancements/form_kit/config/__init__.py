@@ -14,6 +14,8 @@ A config is a plain dict (see ``opportunity.py`` for a full one):
     Fields the form hides that the flow shows anyway (a Link the form sets through a widget).
 ``read_only_fields``  ``{fieldname: reason}``
     Shown, never written by the flow.
+``once_fields``  ``{fieldname: reason}``
+    Editable while the record is being created (step 1), read-only once it exists.
 ``site_only_fields``  ``{fieldname}``
     Fieldnames above that exist on the production site but are not created by this repo.
 ``create``  ``{"fields": [...], "filled_on_create": {fieldname: reason}, "prefill_fields": {fieldname: reason}}``
@@ -84,6 +86,7 @@ CONFIG_KEYS = {
 	"skip_fields",
 	"show_hidden",
 	"read_only_fields",
+	"once_fields",
 	"site_only_fields",
 	"create",
 	"steps",
@@ -133,7 +136,7 @@ def check(config):
 	for key in ("doctype", "steps", "create", "stages"):
 		if not config.get(key):
 			problems.append(f"missing {key}")
-	for key in ("skip_fields", "show_hidden", "read_only_fields"):
+	for key in ("skip_fields", "show_hidden", "read_only_fields", "once_fields"):
 		for fieldname, reason in (config.get(key) or {}).items():
 			if not str(reason or "").strip():
 				problems.append(f"{key}.{fieldname} has no reason")

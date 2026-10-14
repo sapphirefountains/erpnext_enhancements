@@ -335,6 +335,10 @@ def flow_steps(doctype, doc=None, user=None):
 	create = create_fieldnames(meta, config)
 	forced = set(config.get("show_hidden") or {}) | set(create)
 	read_only_names = set(config.get("read_only_fields") or {})
+	# Editable while the record is being created, read-only once it exists (an Item's code is its
+	# name: it changes by renaming the Item, never by typing over it).
+	if not access["is_new"]:
+		read_only_names |= set(config.get("once_fields") or {})
 	specs = list(config["steps"])
 
 	# Every create field lives in step 1: moved there from wherever the meta put it.

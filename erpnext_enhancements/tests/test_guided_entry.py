@@ -1247,10 +1247,10 @@ class TestTheDefaultIsWired(unittest.TestCase):
 		"""P8.1: a DocType reached on purpose (Item) gets no create route and no redirect; the
 		Guided button and the start screen ask has_flow instead."""
 		code = _code(DEFAULT_JS)
-		self.assertIn("return page_open() && opens_by_default(guided()[doctype]);", code)
+		self.assertIn("return page_open() && opens_by_default(guided()[doctype], !!is_new);", code)
 		self.assertIn("return page_open() && !!guided()[doctype];", code)
-		self.assertIn('if (api.is_guided(doctype)) frappe.create_routes[doctype] = ["guided-entry", doctype, "new"];', code)
-		self.assertIn('route[0] !== "Form" || !api.is_guided(route[1])', code)
+		self.assertIn('if (api.is_guided(doctype, true)) frappe.create_routes[doctype] = ["guided-entry", doctype, "new"];', code)
+		self.assertIn("if (!api.is_guided(route[1]) && !api.is_guided(route[1], true)) return false;", code)
 
 	def test_only_for_people_who_may_open_the_page(self):
 		code = _code(DEFAULT_JS)

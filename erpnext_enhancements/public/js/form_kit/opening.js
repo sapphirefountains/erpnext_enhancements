@@ -45,9 +45,12 @@ function plain_row(row) {
 // Whether records of a DocType open on the guided page by default: its frappe.boot.sf_guided
 // entry, whose `default` is 0 for a flow that is reached on purpose (Item, form kit P8.1). An
 // entry without the key (a boot from before it) counts as a default, as Opportunity always was.
-export function opens_by_default(entry) {
+// With `is_new`, a New of the DocType: the entry's `default_new` (create permission), falling back
+// to `default` for a boot that does not carry it. Without, an existing record: `default` (write).
+export function opens_by_default(entry, is_new) {
 	if (!entry || typeof entry !== "object") return false;
-	return entry.default === undefined || entry.default === null || !!Number(entry.default);
+	const flag = is_new && entry.default_new !== undefined && entry.default_new !== null ? entry.default_new : entry.default;
+	return flag === undefined || flag === null || !!Number(flag);
 }
 
 // The Desk names an unsaved record "new-<doctype>-<random>"; "/desk/<doctype>/new" asks for one.
@@ -113,7 +116,9 @@ export function redirect_for(route, ctx) {
 	const name = route.slice(2).map(text).join("/");
 	const c = ctx || {};
 	const config = (c.guided || {})[doctype];
-	if (!doctype || !name || !c.page_open || !opens_by_default(config)) return null;
+	// A New (or an unsaved record the Desk holds) asks the create flag; a saved record the write one.
+	const starting = !!c.local || is_new_name(name);
+	if (!doctype || !name || !c.page_open || !opens_by_default(config, starting)) return null;
 	if (text(c.hash).replace(/^#/, "")) return null;
 	if ((c.full_form || []).includes(full_form_key(doctype, name))) return null;
 	if ((c.renamed || []).includes(name)) return null;

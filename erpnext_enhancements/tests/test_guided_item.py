@@ -120,6 +120,13 @@ out.default = {
 	opportunity_old_boot: kit.redirect_for(["Form", "Opportunity", "CRM-OPP-1"], ctx({ Opportunity: { accepts: [] } })),
 	item: kit.redirect_for(["Form", "Item", "LG-505025"], ctx({ Item: { accepts: [], default: 0 } })),
 	item_new: kit.redirect_for(["Form", "Item", "new"], ctx({ Item: { accepts: [], default: 0 } })),
+	// A reader (an Item Manager let in for the Item flow, who may only read deals) keeps the form.
+	reader_saved: kit.redirect_for(["Form", "Opportunity", "CRM-OPP-1"], ctx({ Opportunity: { accepts: [], default: 0, default_new: 0 } })),
+	reader_new: kit.redirect_for(["Form", "Opportunity", "new"], ctx({ Opportunity: { accepts: [], default: 0, default_new: 0 } })),
+	// Someone who may create deals but not change this one: New opens here, a saved deal does not.
+	creator_saved: kit.redirect_for(["Form", "Opportunity", "CRM-OPP-1"], ctx({ Opportunity: { accepts: [], default: 0, default_new: 1 } })),
+	creator_new: kit.redirect_for(["Form", "Opportunity", "new"], ctx({ Opportunity: { accepts: [], default: 0, default_new: 1 } })),
+	new_flags: [{ default: 1 }, { default: 1, default_new: 0 }, { default: 0, default_new: 1 }].map((e) => kit.opens_by_default(e, true)),
 };
 
 // ---- the name builder
@@ -210,6 +217,23 @@ out.blocks = {
 	stock_start: blocks.stock_start(setup),
 	stock_start_empty: blocks.stock_start({}),
 	given: ["", null, undefined, 0, "0", " "].map(blocks.given),
+	fields_known: blocks.supplier_fields(setup, "Aquascape"),
+	fields_unknown: blocks.supplier_fields(setup, "Pentair"),
+	ticked: [
+		blocks.default_ticked(setup, "Little Giant"),
+		blocks.default_ticked(setup, "Aquascape"),
+		blocks.default_ticked({ default_supplier: "" }, "Aquascape"),
+		blocks.default_ticked({}, ""),
+	],
+	rate: [
+		blocks.rate_to_send(41.5, "41.5"),
+		blocks.rate_to_send(41.5, "41.50"),
+		blocks.rate_to_send(41.5, "45"),
+		blocks.rate_to_send("", "12"),
+		blocks.rate_to_send(41.5, ""),
+		blocks.rate_to_send("", ""),
+		blocks.rate_to_send(41.5, "0"),
+	],
 };
 
 // ---- the bundle the page loads installs all of it
@@ -284,6 +308,11 @@ class TestTheModules(unittest.TestCase):
 		self.assertEqual(d["opportunity_old_boot"], d["opportunity"])
 		self.assertIsNone(d["item"], "an Item keeps opening in its form")
 		self.assertIsNone(d["item_new"])
+		self.assertIsNone(d["reader_saved"], "a person who may only read deals keeps the form")
+		self.assertIsNone(d["reader_new"])
+		self.assertIsNone(d["creator_saved"])
+		self.assertEqual(d["creator_new"]["route"], ["guided-entry", "Opportunity", "new"])
+		self.assertEqual(d["new_flags"], [True, False, True])
 
 	# ---- the name builder
 
@@ -436,6 +465,25 @@ class TestTheModules(unittest.TestCase):
 		self.assertEqual(b["stock_start_empty"], {"warehouse": "", "reorder_level": "", "reorder_qty": ""})
 		self.assertEqual(b["given"], [False, False, False, True, True, False])
 
+	def test_picking_another_supplier_never_carries_the_last_ones_details(self):
+		b = self.out["blocks"]
+		self.assertEqual(b["fields_known"], {"supplier_part_no": "AQ-1", "purchase_url": "", "rate": ""})
+		self.assertEqual(b["fields_unknown"], {"supplier_part_no": "", "purchase_url": "", "rate": ""})
+		self.assertEqual(
+			b["ticked"], [True, False, True, True], "a second supplier never takes the default by itself"
+		)
+
+	def test_a_price_is_sent_only_when_it_was_changed(self):
+		self.assertEqual(self.out["blocks"]["rate"], [None, None, "45", "12", None, None, "0"])
+
+	def test_the_supplier_block_uses_them(self):
+		code = _code(EXTENSION_JS)
+		self.assertIn("const fields = supplier_fields(this.setup, picked);", code)
+		self.assertNotIn("if (!row) return;", code)
+		self.assertIn('$default.find("input").prop("checked", default_ticked(this.setup, picked));', code)
+		self.assertIn("const rate = $rate ? rate_to_send(shown_rate, $rate.val()) : null;", code)
+		self.assertNotIn('<input type="checkbox" checked>', code)
+
 
 class TestTheWiring(unittest.TestCase):
 	def test_the_page_draws_a_steps_block_and_keeps_its_fields_if_it_fails(self):
@@ -449,6 +497,12 @@ class TestTheWiring(unittest.TestCase):
 		self.assertIn("$box.remove();", body)
 		self.assertIn("this.ext_notify(fieldname, value);", code)
 		self.assertIn("this.ext.before_create()", code)
+		create = code[code.index("\tcreate() {") :]
+		self.assertLess(
+			create.index("try {"),
+			create.index("this.ext.before_create()"),
+			"a block that throws holds nothing",
+		)
 
 	def test_a_block_writes_after_the_pages_save_and_the_page_takes_the_new_version(self):
 		page = _code(PAGE_JS)
@@ -468,7 +522,7 @@ class TestTheWiring(unittest.TestCase):
 
 	def test_new_item_on_the_start_screen_starts_on_the_guided_page(self):
 		code = _code(PAGE_JS)
-		self.assertIn("window.sf_guided.is_guided(doctype)", code)
+		self.assertIn("window.sf_guided.is_guided(doctype, true)", code)
 		self.assertIn("frappe.set_route(this.kit.build_route(doctype, null, null))", code)
 
 	def test_the_bundle_carries_the_item_extension(self):

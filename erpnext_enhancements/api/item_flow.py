@@ -110,15 +110,25 @@ def _set(row, fieldname, value):
 	return True
 
 
-def _price_rows(item, price_list):
+def _prices_by_supplier(item, price_list):
+	"""``{supplier: Item Price row}`` on the buying list, in the stock unit, the newest per supplier.
+
+	The same key ``_price_for`` writes to: a price in another unit is a different price, and an
+	older row for the same supplier must never be the one shown, or the page would offer a stale
+	rate (rows come newest first, so the first one per supplier is kept).
+	"""
 	if not price_list or not frappe.has_permission("Item Price", "read"):
-		return []
-	return frappe.get_list(
+		return {}
+	rows = frappe.get_list(
 		"Item Price",
-		filters={"item_code": item.name, "price_list": price_list},
+		filters={"item_code": item.name, "price_list": price_list, "uom": item.stock_uom},
 		fields=["name", "supplier", "price_list_rate", "uom", "currency"],
 		order_by="modified desc",
 	)
+	out = {}
+	for row in rows:
+		out.setdefault(row.supplier or "", row)
+	return out
 
 
 def _price_for(item, price_list, supplier):
@@ -199,7 +209,7 @@ def _setup(item):
 	"""What the supplier, stock and asset blocks show for ``item`` (see ``get_setup``)."""
 	company = _company()
 	price_list = _buying_price_list()
-	prices = {row.supplier or "": row for row in _price_rows(item, price_list)}
+	prices = _prices_by_supplier(item, price_list)
 	defaults = next((row for row in item.get("item_defaults") or [] if row.company == company), None)
 	suppliers = [row for row in item.get("supplier_items") or [] if row.supplier]
 	names = {}
@@ -365,7 +375,8 @@ def save_supplier(item_code, supplier, supplier_part_no=None, purchase_url=None,
 def save_stock(item_code, warehouse, reorder_level=None, reorder_qty=None):
 	"""Record where a stock Item is kept: the company's default warehouse (its bin) and, when a
 	level is given, the bin's reorder rule (a Purchase request). Keyed on the company and the bin.
-	Returns ``get_setup``.
+	Moving to another bin moves the old bin's Purchase rule with it, unless the new bin has its
+	own, when the old one is left and ``note`` says so. Returns ``get_setup`` plus ``note``.
 	"""
 	item = _item(item_code, "write")
 	if not cint(item.is_stock_item):
@@ -390,16 +401,26 @@ def save_stock(item_code, warehouse, reorder_level=None, reorder_qty=None):
 	if problem:
 		frappe.throw(_(problem))
 
-	changed = _set(_default_row(item, bin_row.company), "default_warehouse", name)
+	defaults = _default_row(item, bin_row.company)
+	before = defaults.get("default_warehouse")
+	changed = _set(defaults, "default_warehouse", name)
+	row = _purchase_rule(item, name)
+	note = None
+	if before and before != name:
+		old = _purchase_rule(item, before)
+		if old is not None and row is None:
+			# The item moved bins: its buy-more rule moves with it, rather than staying on a bin it
+			# no longer lives in and raising requests for stock that is not there.
+			old.warehouse = name
+			old.warehouse_group = name
+			row = old
+			changed = True
+			note = _("The reorder rule moved from {0} to {1}.").format(before, name)
+		elif old is not None:
+			note = _(
+				"{0} still has its own reorder rule; remove it under Auto re-order below if it no longer applies."
+			).format(before)
 	if reorder_level not in (None, ""):
-		row = next(
-			(
-				r
-				for r in item.get("reorder_levels") or []
-				if r.warehouse == name and (r.material_request_type or REORDER_TYPE) == REORDER_TYPE
-			),
-			None,
-		)
 		if row is None:
 			row = item.append(
 				"reorder_levels",
@@ -410,7 +431,21 @@ def save_stock(item_code, warehouse, reorder_level=None, reorder_qty=None):
 		changed = _set(row, "warehouse_reorder_qty", flt(reorder_qty)) or changed
 	if changed:
 		item.save()
-	return _setup(frappe.get_doc("Item", item.name))
+	out = _setup(frappe.get_doc("Item", item.name))
+	out["note"] = note
+	return out
+
+
+def _purchase_rule(item, warehouse):
+	"""The Item's Purchase reorder rule for ``warehouse``, or None (a Transfer rule is not ours)."""
+	return next(
+		(
+			r
+			for r in item.get("reorder_levels") or []
+			if r.warehouse == warehouse and (r.material_request_type or REORDER_TYPE) == REORDER_TYPE
+		),
+		None,
+	)
 
 
 def _asset_made(client_id):

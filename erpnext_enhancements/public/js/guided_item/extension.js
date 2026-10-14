@@ -27,7 +27,16 @@ import { register_extension } from "../form_kit/extensions.js";
 import { SEGMENTS, assemble_name, split_name, part_options } from "./naming.js";
 import { FAMILIES, CONSUMABLE_GROUPS, FAMILY_PREFIX, classify, build_code, code_problem } from "./codes.js";
 import { verdict, answers } from "./advice.js";
-import { label_url, new_client_id, supplier_start, supplier_row, stock_start, given } from "./blocks.js";
+import {
+	label_url,
+	new_client_id,
+	supplier_start,
+	supplier_fields,
+	default_ticked,
+	rate_to_send,
+	stock_start,
+	given,
+} from "./blocks.js";
 
 const API = "erpnext_enhancements.api.item_flow.";
 const NAMING_CHECK = "erpnext_enhancements.inventory_enhancements.item_naming.check_item";
@@ -516,15 +525,21 @@ class ItemExtension {
 		if (!can.price) {
 			$('<p class="gi-note"></p>').text(__("Recording a price needs the Purchase Master Manager role; the rest is saved without it.")).appendTo($form);
 		}
-		const $default = $('<label class="gi-tick"><input type="checkbox" checked> <span></span></label>').appendTo($form);
+		const $default = $('<label class="gi-tick"><input type="checkbox"> <span></span></label>').appendTo($form);
 		$default.find("span").text(__("Reorders go to this supplier (the default supplier)"));
+		$default.find("input").prop("checked", default_ticked(setup, start.supplier));
+		// The rate shown for the supplier in the box: a save sends a rate only when it was changed.
+		let shown_rate = start.rate;
 		supplier.set_value(start.supplier || "");
 		supplier.df.onchange = () => {
-			const row = supplier_row(this.setup, supplier.get_value());
-			if (!row) return;
-			$part.val(row.supplier_part_no || "");
-			if ($url) $url.val(row.purchase_url || "");
-			if ($rate) $rate.val(given(row.rate) ? row.rate : "");
+			const picked = supplier.get_value();
+			// A supplier with no row yet starts blank: never the previous supplier's details.
+			const fields = supplier_fields(this.setup, picked);
+			$part.val(fields.supplier_part_no);
+			if ($url) $url.val(fields.purchase_url);
+			if ($rate) $rate.val(fields.rate);
+			shown_rate = fields.rate;
+			$default.find("input").prop("checked", default_ticked(this.setup, picked));
 		};
 		$('<p class="gi-error" role="alert"></p>').appendTo($form);
 		$('<button type="button" class="sf-btn sf-btn--primary gi-save"></button>')
@@ -537,7 +552,8 @@ class ItemExtension {
 					make_default: $default.find("input").prop("checked") ? 1 : 0,
 				};
 				if ($url) args.purchase_url = $url.val() || "";
-				if ($rate && given($rate.val())) args.rate = $rate.val();
+				const rate = $rate ? rate_to_send(shown_rate, $rate.val()) : null;
+				if (rate !== null) args.rate = rate;
 				this.write($form, ctx, "save_supplier", args, (setup_now) => {
 					ctx.sf.toast(__("Supplier saved."), { tone: "success", timeout: 3000 });
 					this.setup = setup_now;
@@ -587,7 +603,9 @@ class ItemExtension {
 						args.reorder_qty = $qty.val();
 					}
 					this.write($form, ctx, "save_stock", args, (setup_now) => {
-						ctx.sf.toast(__("Bin saved."), { tone: "success", timeout: 3000 });
+						// The server says when the reorder rule moved bins, or when the old bin kept its own.
+						const note = setup_now.note ? ` ${setup_now.note}` : "";
+						ctx.sf.toast(__("Bin saved.") + note, { tone: setup_now.note ? "warning" : "success", timeout: note ? 8000 : 3000 });
 						this.setup = setup_now;
 						$box.empty();
 						this.render_stock($box, ctx, setup_now);

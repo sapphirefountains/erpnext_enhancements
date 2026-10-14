@@ -227,8 +227,10 @@ configured DocType's records open there; the form is the fallback. `public/js/gu
   guided page cannot take whole. One it can take (the Customer mapping) opens on step 1 with its
   values. The rules are `public/js/form_kit/opening.js`, run under node by `test_guided_entry`.
 - `frappe.boot.sf_guided` lists the DocTypes, with what a new one accepts and whether its records
-  open on the guided page (`default`). site_config `disable_guided_default` empties it, and every
-  record opens in the form again.
+  open on the guided page: `default` for a saved record, only for someone with write permission on
+  the DocType, and `default_new` for a New, only with create permission. A person who may only read
+  keeps the form. site_config `disable_guided_default` empties it, and every record opens in the
+  form again.
 - **Not every flow is the default** (P8.1). A config with `open_by_default: False` (Item) keeps
   the form as where its records open: `default` is 0, `guided_default.js` sets no create route and
   redirects nothing (`opening.js` `opens_by_default`), and the flow is reached on purpose, by the

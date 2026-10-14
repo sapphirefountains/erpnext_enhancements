@@ -224,11 +224,13 @@ def create_record(doctype, values, prefill=None, client_id=None):
 		doc.set(id_field, client_id)
 	try:
 		doc.insert()
-	except frappe.UniqueValidationError:
+	except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
 		if not id_field:
 			raise
 		# Another request with this id may have won the unique index (see above): a fresh
-		# transaction sees its commit. Anything else that collided is raised as it was.
+		# transaction sees its commit. Anything else that collided is raised as it was. A record
+		# named by a field (an Item is named by its code) collides on the primary key first, which
+		# Frappe raises as DuplicateEntryError, so a racing resend of an Item comes here too.
 		frappe.db.rollback()
 		won = already_created(doctype, client_id)
 		if won is None:

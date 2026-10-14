@@ -305,9 +305,11 @@ def _install_frappe_stub():
 		doctype, {"asset_type": "Existing Asset"} if doctype == "Asset" else {}
 	)
 
-	def get_list(doctype, filters=None, fields=None, **kwargs):
+	def get_list(doctype, filters=None, fields=None, order_by=None, **kwargs):
 		STATE["get_list"].append(doctype)
 		rows = [r for r in STATE["db"].get(doctype, {}).values() if _matches(r, filters)]
+		if order_by == "modified desc":
+			rows.sort(key=lambda r: r.get("modified") or "", reverse=True)
 		return [types.SimpleNamespace(**{f: r.get(f) for f in fields}) for r in rows]
 
 	frappe.get_list = get_list
@@ -662,6 +664,52 @@ class TestStock(unittest.TestCase):
 		self.assertIn("how many to buy", str(caught.exception))
 		self.assertEqual(STATE["saves"], [])
 
+	def test_moving_bins_moves_the_reorder_rule(self):
+		"""Review of #1270: the old bin's Purchase rule would otherwise keep asking for stock in a
+		bin the item no longer lives in."""
+		STATE["db"]["Warehouse"]["Bin B2-1-1 - SF"] = dict(
+			STATE["db"]["Warehouse"]["Bin A1-3-1 - SF"], name="Bin B2-1-1 - SF"
+		)
+		api.save_stock("LG-505025", "Bin A1-3-1 - SF", reorder_level="4", reorder_qty="12")
+		out = api.save_stock("LG-505025", "Bin B2-1-1 - SF")
+		rules_now = _stored("LG-505025")["reorder_levels"]
+		self.assertEqual(
+			[(r["warehouse"], r["warehouse_group"], r["warehouse_reorder_level"]) for r in rules_now],
+			[("Bin B2-1-1 - SF", "Bin B2-1-1 - SF", 4.0)],
+		)
+		self.assertEqual(_stored("LG-505025")["item_defaults"][0]["default_warehouse"], "Bin B2-1-1 - SF")
+		self.assertIn("moved from Bin A1-3-1 - SF to Bin B2-1-1 - SF", out["note"])
+
+	def test_a_new_bin_with_its_own_rule_leaves_the_old_one_and_says_so(self):
+		STATE["db"]["Warehouse"]["Bin B2-1-1 - SF"] = dict(
+			STATE["db"]["Warehouse"]["Bin A1-3-1 - SF"], name="Bin B2-1-1 - SF"
+		)
+		_item(
+			"LG-505025",
+			is_stock_item=1,
+			item_defaults=[{"company": "Sapphire Fountains", "default_warehouse": "Bin A1-3-1 - SF"}],
+			reorder_levels=[
+				{
+					"warehouse": "Bin A1-3-1 - SF",
+					"material_request_type": "Purchase",
+					"warehouse_reorder_level": 4,
+					"warehouse_reorder_qty": 12,
+				},
+				{
+					"warehouse": "Bin B2-1-1 - SF",
+					"material_request_type": "Purchase",
+					"warehouse_reorder_level": 2,
+					"warehouse_reorder_qty": 6,
+				},
+			],
+		)
+		out = api.save_stock("LG-505025", "Bin B2-1-1 - SF")
+		self.assertEqual(len(_stored("LG-505025")["reorder_levels"]), 2)
+		self.assertIn("Bin A1-3-1 - SF still has its own reorder rule", out["note"])
+		self.assertIsNone(
+			api.save_stock("LG-505025", "Bin B2-1-1 - SF")["note"], "nothing moved, nothing said"
+		)
+
 	def test_the_bin_alone_is_fine(self):
 		api.save_stock("LG-505025", "Bin A1-3-1 - SF")
 		self.assertEqual(_stored("LG-505025")["reorder_levels"], [])
@@ -771,6 +819,35 @@ class TestReads(unittest.TestCase):
 		STATE["meta"]["Item Supplier"] = set()
 		out = api.get_setup("RENTAL-FOUNTAIN-01")
 		self.assertEqual(out["can"], {"write": 1, "price": 0, "link": 0, "asset": 0, "label": 0})
+
+	def _price(self, name, supplier, rate, uom="Unit", modified="2026-10-01 00:00:00"):
+		STATE["db"]["Item Price"][name] = {
+			"name": name,
+			"item_code": "LG-505025",
+			"price_list": "Standard Buying",
+			"supplier": supplier,
+			"uom": uom,
+			"price_list_rate": rate,
+			"currency": "USD",
+			"modified": modified,
+		}
+
+	def test_the_price_shown_is_the_newest_in_the_stock_unit(self):
+		"""Review of #1270: a dict built over rows newest-first kept the OLDEST, and a price in
+		another unit could stand in for the stock unit's, so a stale rate was offered and re-sent."""
+		api.save_supplier("LG-505025", "Little Giant", rate="")
+		self._price("IP-OLD", "Little Giant", 30.0, modified="2026-09-01 00:00:00")
+		self._price("IP-NEW", "Little Giant", 41.5, modified="2026-10-01 00:00:00")
+		self._price("IP-BOX", "Little Giant", 400.0, uom="Box", modified="2026-10-05 00:00:00")
+		out = api.get_setup("LG-505025")
+		self.assertEqual(out["suppliers"][0]["rate"], 41.5)
+
+	def test_a_save_without_a_rate_leaves_the_price_alone(self):
+		api.save_supplier("LG-505025", "Little Giant", rate="")
+		self._price("IP-NEW", "Little Giant", 41.5)
+		api.save_supplier("LG-505025", "Little Giant", supplier_part_no="505025-B")
+		self.assertEqual(STATE["db"]["Item Price"]["IP-NEW"]["price_list_rate"], 41.5)
+		self.assertNotIn(("Item Price", "IP-NEW"), STATE["saves"])
 
 	def test_prices_and_assets_are_read_through_the_callers_permissions(self):
 		api.create_asset("RENTAL-FOUNTAIN-01", "gi-mg8x1-abcdefghijkl", "Upstairs Rental Warehouse", "1200")

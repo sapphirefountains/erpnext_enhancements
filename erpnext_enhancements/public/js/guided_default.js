@@ -94,9 +94,10 @@ function tagged(from) {
 }
 
 const api = {
-	// Whether records of `doctype` open on the guided page for this person.
-	is_guided(doctype) {
-		return page_open() && opens_by_default(guided()[doctype]);
+	// Whether records of `doctype` open on the guided page for this person: a saved one when they
+	// may change it (`default`), a New when they may create one (`is_new`, `default_new`).
+	is_guided(doctype, is_new) {
+		return page_open() && opens_by_default(guided()[doctype], !!is_new);
 	},
 	// Whether `doctype` has a guided flow this person may open, default or not: the form's Guided
 	// button and the guided page's start screen offer it (Item, which is not the default, P8.1).
@@ -198,7 +199,9 @@ function ignored_fields(doctype) {
 }
 
 function redirect(route) {
-	if (!Array.isArray(route) || route[0] !== "Form" || !api.is_guided(route[1])) return false;
+	if (!Array.isArray(route) || route[0] !== "Form") return false;
+	// Only a DocType that opens here (saved, or new) for this person; redirect_for decides which.
+	if (!api.is_guided(route[1]) && !api.is_guided(route[1], true)) return false;
 	const doctype = route[1];
 	const name = route.slice(2).join("/");
 	const held = locals[doctype] && locals[doctype][name];
@@ -226,7 +229,7 @@ function redirect(route) {
 
 function set_create_routes() {
 	Object.keys(guided()).forEach((doctype) => {
-		if (api.is_guided(doctype)) frappe.create_routes[doctype] = ["guided-entry", doctype, "new"];
+		if (api.is_guided(doctype, true)) frappe.create_routes[doctype] = ["guided-entry", doctype, "new"];
 	});
 }
 
