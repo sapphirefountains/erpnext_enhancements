@@ -1213,6 +1213,22 @@ class TestWhatTheFormScriptsDid(unittest.TestCase):
 		self.assertIn('frappe.realtime.on("project_creation_status"', code)
 		self.assertIn('crm.confirm_won_next_step(this.name, { mode: "reopen" });', code)
 
+	def test_the_reminder_is_only_for_a_deal_won_before_the_visit(self):
+		code = _code(PAGE_JS)
+		body = code[code.index("nudge_won_without_project() {") :]
+		body = body[: body.index("\n\t}\n")]
+		# Marked on the first load whatever the status, so a reload after the prompt's Yes (the
+		# project still being made) never asks again and queues a second project.
+		self.assertLess(body.index("this.nudged.add(this.name);"), body.index('v.status !== "Closed Won"'))
+		self.assertIn("this.nudged.delete(this.name);", code)
+
+	def test_nothing_unsaved_is_dropped_by_a_reload_or_declare_lost(self):
+		code = _code(PAGE_JS)
+		reload = code[code.index("reload_record() {") :]
+		self.assertLess(reload.index("this.queue.has_unsaved()) return;"), reload.index("this.load(doctype, name, step)"))
+		declare = code[code.index("declare_lost(dialog, values) {") :]
+		self.assertLess(declare.index("this.queue.has_unsaved()"), declare.index('GE_API + "declare_lost"'))
+
 	def test_project_messages_are_escaped(self):
 		code = _code(PAGE_JS)
 		self.assertIn("frappe.utils.escape_html(data.blocked_reason", code)

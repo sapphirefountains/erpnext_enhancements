@@ -96,7 +96,10 @@ found five things the guided page was missing, two of them serious, and all five
   - The page reports the background project's creation (made, refused by the hand-off gate,
     or made without its Drive folder) as the form does. Every message is escaped.
   - A won deal without a project gets the form's "create it now?" reminder once per visit, unless
-    it is historical.
+    it is historical. Like the form, it applies only to a deal already won when the visit began. A
+    reload after the prompt's "Yes" comes while the project is still being made, and asking again
+    there could queue a second one.
+  - A reload, or Set as Lost, never runs over a change that has not reached the server.
 - **What the form checks as a value is chosen** (config `distinct` and `clears`):
   - Two equal Scope, Schedule or Budget ranks bring a warning, never a block, as on the form.
   - Changing *Opportunity From* empties the party, as ERPNext's form script does.

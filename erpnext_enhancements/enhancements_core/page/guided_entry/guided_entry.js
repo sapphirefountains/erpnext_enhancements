@@ -165,6 +165,9 @@ class GuidedEntry {
 		this.save_before_moving()
 			.catch(() => {})
 			.then(() => {
+				// What did not reach the server stays on screen; its next save settles it (a conflict
+				// if the record moved on), rather than a reload dropping it.
+				if (this.queue && this.queue.has_unsaved()) return;
 				if (this.doctype === doctype && this.name === name) this.load(doctype, name, step);
 			});
 	}
@@ -350,6 +353,8 @@ class GuidedEntry {
 			this.collect_step();
 			this.queue.flush().catch(() => {});
 		}
+		// The next visit to this record decides the won-without-project reminder afresh.
+		if (this.name) this.nudged.delete(this.name);
 	}
 
 	// ------------------------------------------------------------------ loading
@@ -451,14 +456,17 @@ class GuidedEntry {
 	// ------------------------------------------------------------------ what the form's scripts did (P4.5)
 
 	// The Desk form offers to make the project when it opens a won deal that has none
-	// (crm_enhancements/opportunity.js); so does this page, once per record per visit.
+	// (crm_enhancements/opportunity.js); so does this page, once per visit, and only for a deal
+	// that was already won when the visit began (the form's _ee_loaded_status rule). A deal won
+	// during the visit has the server's own prompt, and a reload after its "Yes" comes while the
+	// project is still being made: asking again there could queue a second project.
 	nudge_won_without_project() {
 		const crm = window.erpnext_enhancements && erpnext_enhancements.crm;
 		const v = this.values || {};
 		if (this.is_new || this.doctype !== "Opportunity" || !crm || !crm.confirm_won_next_step) return;
-		if (v.status !== "Closed Won" || v.custom_created_project || v.custom_is_historical) return;
 		if (this.nudged.has(this.name)) return;
 		this.nudged.add(this.name);
+		if (v.status !== "Closed Won" || v.custom_created_project || v.custom_is_historical) return;
 		crm.confirm_won_next_step(this.name, { mode: "reopen" });
 	}
 
@@ -522,10 +530,19 @@ class GuidedEntry {
 		const doctype = this.doctype;
 		const name = this.name;
 		const $error = dialog.fields_dict.error.$wrapper.empty();
+		const refuse = (message) => {
+			dialog.enable_primary_action();
+			$('<p class="ge-lost-error" role="alert"></p>').text(message).appendTo($error);
+		};
 		dialog.disable_primary_action();
 		this.save_before_moving()
-			.then(() =>
-				this.sf.call(
+			.then(() => {
+				// A change that has not reached the server would be lost behind the new version.
+				if (this.queue && this.queue.has_unsaved()) {
+					refuse(__("Your last change has not saved yet. Try again in a moment."));
+					return null;
+				}
+				return this.sf.call(
 					GE_API + "declare_lost",
 					{
 						doctype,
@@ -536,9 +553,10 @@ class GuidedEntry {
 						modified: this.queue ? this.queue.modified : this.flow.modified,
 					},
 					{ quiet: true }
-				)
-			)
+				);
+			})
 			.then((result) => {
+				if (result === null) return;
 				dialog.hide();
 				if (result && result.conflict) {
 					this.sf.toast(__("Someone else changed this record, so it has been reloaded. Choose Lost again."), {
@@ -550,12 +568,7 @@ class GuidedEntry {
 				}
 				if (this.doctype === doctype && this.name === name) this.load(doctype, name, this.step_key);
 			})
-			.catch((err) => {
-				dialog.enable_primary_action();
-				$('<p class="ge-lost-error" role="alert"></p>')
-					.text((err && err.message) || __("It could not be declared lost."))
-					.appendTo($error);
-			});
+			.catch((err) => refuse((err && err.message) || __("It could not be declared lost.")));
 	}
 
 	// Fields that should not share a value (the config's `distinct`): said, never blocked.
