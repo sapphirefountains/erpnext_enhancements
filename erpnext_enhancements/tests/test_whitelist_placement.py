@@ -219,6 +219,7 @@ EXACT_SURFACE = {
         # the registry and the caller's permission, tested in test_form_kit.
         "my_records",
         "declare_lost",
+        "find_created",
     },
 }
 

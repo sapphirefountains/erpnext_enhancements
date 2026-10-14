@@ -88,14 +88,28 @@ def get_flow(doctype, name=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def create_record(doctype, values, prefill=None):
+def create_record(doctype, values, prefill=None, client_id=None):
 	"""Insert a new draft from step 1's values (JSON). Returns the save result.
 
 	``prefill`` (JSON, optional) is what the record was started with elsewhere; see
-	``saver.create_record`` for what is taken from it.
+	``saver.create_record`` for what is taken from it. ``client_id`` (optional) is the page's id
+	for this create: sent again, it returns the record it made rather than a second one.
 	"""
 	_require_configured(doctype)
-	return saver.create_record(doctype, values, prefill)
+	return saver.create_record(doctype, values, prefill, client_id)
+
+
+@frappe.whitelist()
+def find_created(doctype, client_id):
+	"""``{"name"}`` of the record the caller's create with ``client_id`` made, or ``{}``.
+
+	The guided page asks when it puts back a create it kept on the phone (P4.7): the first attempt
+	may have arrived with its answer lost, and the record should open rather than be typed again.
+	"""
+	_require_configured(doctype)
+	frappe.has_permission(doctype, "read", throw=True)
+	doc = saver.already_created(doctype, client_id)
+	return {"name": doc.name} if doc is not None else {}
 
 
 @frappe.whitelist(methods=["POST"])
