@@ -165,6 +165,9 @@ CONFIG = {
 		},
 		# Hidden fields a deal started elsewhere arrives with (the guided page is where every new
 		# Opportunity opens, Nik, 2026-10-13), taken on create alongside the flow's own fields.
+		# A hidden unique column holding the guided page's id for the create that made the deal
+		# (form kit P4.7): a create resent after a lost answer finds it rather than making two.
+		"client_id_field": "custom_guided_client_id",
 		"prefill_fields": {
 			"contact_person": (
 				"ERPNext's Create > Opportunity on a Customer sets it (customer._set_missing_values), "
