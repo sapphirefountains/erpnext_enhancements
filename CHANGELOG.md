@@ -47,9 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `property_setter.json` is not name-sorted; 16 later records were appended out of order. So the
     generator's own functions were run, and only the three field_order records were written, with
     its own dump. Re-sorting the file would have reordered unrelated records.
-  - **Spec cleanup:** the Purchase Order spec no longer names `custom_comments`. v1.159.2 retired
-    that field from the fixtures as an orphan "Comments" tab, so the array leaves it out, as it
-    already did.
+  - **Spec cleanup:** the Purchase Order and Supplier Quotation specs no longer name
+    `custom_comments`. v1.159.2 retired that field from the fixtures as an orphan "Comments" tab,
+    so the arrays leave it out, as they already did. A full generator run, with no `--only`, now
+    lints clean on all seven forms. Supplier Quotation's array is unchanged.
 - **New guard:** `tests/test_layout_field_order_coverage.py`, in its own CI step, fails the build if
   any of these slips into one of the seven generator-owned forms without being in its field_order
   and placed in its spec:
