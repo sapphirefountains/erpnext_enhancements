@@ -1,0 +1,22 @@
+{
+	"_source": {
+		"repository": "https://github.com/frappe/erpnext",
+		"ref": "origin/version-16",
+		"path": "erpnext/crm/doctype/opportunity/opportunity.js",
+		"last_commit": "b26c4e76142ef56305408ebf2b806ea95353a253",
+		"blob": "05679482a435dd35740c247e3e1ae3fac4e691c6",
+		"taken": "2026-10-14",
+		"trimmed": "Only the lines of the form script that set a Link's query or relabel a field, verbatim, with their line numbers. tests/test_form_kit_inputs.py parses them with the same rules it applies to this app's own form scripts. To refresh: read the file at version-16 (git show origin/version-16:<path> in an erpnext checkout) and copy every line matching set_query(, .get_query or set_df_property(... \"label\" ...)."
+	},
+	"lines": [
+		{"line": 14, "text": "frm.set_query(\"opportunity_from\", function () {"},
+		{"line": 199, "text": "frm.set_df_property(\"party_name\", \"label\", frm.doc.opportunity_from);"},
+		{"line": 302, "text": "me.frm.set_query(\"customer_address\", erpnext.queries.address_query);"},
+		{"line": 304, "text": "this.frm.set_query(\"item_code\", \"items\", function () {"},
+		{"line": 311, "text": "this.frm.set_query(\"uom\", \"items\", function (doc, cdt, cdn) {"},
+		{"line": 326, "text": "me.frm.set_query(\"contact_person\", erpnext.queries[\"contact_query\"]);"},
+		{"line": 329, "text": "me.frm.set_query(\"party_name\", erpnext.queries[\"lead\"]);"},
+		{"line": 331, "text": "me.frm.set_query(\"party_name\", erpnext.queries[\"customer\"]);"},
+		{"line": 333, "text": "me.frm.set_query(\"party_name\", function () {"}
+	]
+}

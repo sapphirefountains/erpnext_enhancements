@@ -79,6 +79,18 @@ def get_flow(doctype, name=None):
 		{"fields": rule["fields"], "message": _(rule["message"])} for rule in config.get("distinct") or []
 	]
 	out["clears"] = config.get("clears") or {}
+	if config.get("queries"):
+		# The form scripts' set_query, as data (v1.685.0): the page's controls have no frm. Sent
+		# without each entry's ``source``, which is documentation, with what the queries read that
+		# the values do not hold (the deal's company, the directory's link sources).
+		out["queries"] = {
+			fieldname: {key: value for key, value in query.items() if key != "source"}
+			for fieldname, query in config["queries"].items()
+		}
+		out["query_context"] = flow.query_context(doctype, doc, steps)
+	if config.get("label_from"):
+		# A field labeled with another field's value, as the form relabels it (party_name).
+		out["label_from"] = {fieldname: rule["field"] for fieldname, rule in config["label_from"].items()}
 	open_rule = (config.get("mine") or {}).get("open")
 	if open_rule:
 		# The statuses that close a record (Closed Won, Lost, Closed, Converted on Opportunity): the side
