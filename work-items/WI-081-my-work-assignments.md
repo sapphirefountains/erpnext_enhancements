@@ -1,5 +1,8 @@
 # WI-081: My Work — reimagine ToDos and assigning, on top of Frappe's own assignments
 
+**Status:** complete — Phases 1 to 3 shipped, v1.696.0 → v1.698.0; the backlog triage was applied on
+production on 2026-10-20 (970 closed, 340 left open). Closed in v1.698.1; what was checked is
+[below](#verified-on-production-2026-10-20).
 **Phase:** 2   **Type:** APP_CODE   **Size:** L (three phases; Phase 1 M, v1.696.0; Phase 2 M, v1.697.0; Phase 3 M, v1.698.0)
 **Blocked by:** nothing
 **Blocks:** nothing
@@ -218,6 +221,43 @@ Built 2026-10-20 after Phase 2 merged (Nik: "create the PR, merge, and begin pha
 10. **The sidebar count** equals the page's Overdue + Today + No due date for the same person; snoozing
     an item lowers it by one.
 11. CI: `test_my_work` and `test_s3_page_css` pass.
+
+## Verified on production (2026-10-20)
+
+Production at v1.698.0. Nik applied the triage from `/desk/my-work/tidy` at 12:14, batch
+`triage-20261020-121428`:
+
+| Rule | Status given | Closed |
+|---|---|---|
+| `record_finished` | Closed | 291 |
+| `not_a_prospect` | Cancelled | 288 |
+| `nobody_owns` (Administrator, Guest) | Cancelled | 286 |
+| `stale` (90 days) | Cancelled | 104 |
+| `record_missing` | Cancelled | 1 |
+| **Total** | | **970** |
+
+- **Open ToDos went from 1,310 to 340**, and 340 + 970 = 1,310, so the batch is the only thing that
+  moved. The estimate above was 976 closed and 334 kept; the stale rule closed 104, not ≈110.
+- **None open on Administrator or Guest** (Phase 1 criterion 2).
+- **No Triton follow-up from the last 90 days was closed.** All 129 open ToDos with nobody assigned are
+  Triton's, and they stay on Unclaimed.
+- **`_assign` was rebuilt.** The batch touched 574 Customers, 205 Tasks, 20 Opportunities, 12 Projects
+  and a handful of other records. None of the Customers, Tasks, Opportunities or Projects still lists an
+  assignee while having no open ToDo.
+- **"Finished" meant what the rules say.** `record_finished` closed Tasks that were Completed (213),
+  Canceled (35) or Invoiced (2), and Opportunities that were Lost (17). The four on Closed Won Opportunities
+  went only by the 90-day rule, never as finished (criterion 8's rule).
+- **No Error Log entries** in the three hours around the v1.698.0 deploy and the triage.
+- **Both email layouts** (the assignment email from the Notification fixture, and the morning summary
+  from `assignment_alerts`) were rendered with live data and sent to Nik as `[Test]` emails. The Email
+  Queue shows both as Sent.
+
+Not exercised on production, because they need either a morning or someone working through them:
+- **Undo** on a real batch. It is covered by `test_my_work`, and the batch stays undoable from the Tidy page.
+- **The morning-after checks:** the first weekday summary, due-date bells and escalation (Phase 2
+  criteria 3 and 4), and the customer reminder holding (Phase 1 criterion 4).
+- **The click-through criteria:** Phase 1 criteria 5–7, 9 and 10; Phase 2 criteria 1, 2 and 5; Phase 3
+  criteria 1–4. These are checked by first use.
 
 ## Rollback
 

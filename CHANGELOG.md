@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.698.1] - 2026-10-20
+
+### Notes
+- **WI-081 (My Work) is complete.** Docs only; no code changes. All three phases are live (v1.696.0 to
+  v1.698.0), and Nik applied the backlog triage on production on 2026-10-20 as batch
+  `triage-20261020-121428`. It closed 970 of 1,310 open ToDos (291 on finished records as Done; 288
+  follow-ups for customers no longer prospects, 286 on Administrator, 104 untouched for 90 days and 1
+  on a deleted record, all as Cancelled), and 340 are left open. No open ToDo is on Administrator. No
+  Triton follow-up from the last 90 days was closed, and all 129 unassigned ToDos still open are
+  Triton's. No record the batch touched still shows an assignee with no open ToDo. The work item's new
+  "Verified on production" section records these checks, and also what was not checked on production:
+  Undo, the morning-after summary, escalation and reminder checks, and the click-through criteria.
+
 ## [1.698.0] - 2026-10-20
 
 ### Added
