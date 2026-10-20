@@ -1217,6 +1217,14 @@ doc_events = {
 		# (Employee cell_number, through the Triton gateway), queued after the commit. Kill switch:
 		# site config my_work_sms_disabled. task_enhancements/assignment_alerts.py.
 		"after_insert": "erpnext_enhancements.task_enhancements.assignment_alerts.on_todo_insert",
+		# My Work (WI-081 Phase 3): a repeating assignment (custom_repeat) makes its next one when it
+		# changes to Closed -- not Cancelled, and not when auto-close or the triage closed it. The next
+		# is due one step after this one's due date. task_enhancements/recurrence.py.
+		"on_update": "erpnext_enhancements.task_enhancements.recurrence.on_update",
+		# My Work (WI-081 Phase 3): a team queue item's timeline line says "put this in the Sales queue"
+		# and "took this from the Sales queue", not Frappe's "Nik assigned Nik" (get_fullname(None) is the
+		# session user). before_save: after the controller's validate words it, before on_update writes it.
+		"before_save": "erpnext_enhancements.api.my_work.todo_queue_comment",
 	},
 	# knowledge_base (WI-080 PR 4 review, v1.557.0): an Auto Email Report on a Knowledge Base report
 	# (or a Custom Report built on one) is refused unless BOTH the person saving it and the user it

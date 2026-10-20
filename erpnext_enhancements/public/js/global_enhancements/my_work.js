@@ -181,7 +181,21 @@
 		if (item.bucket === "overdue") parts.push(`<b>${esc(__("overdue since {0}", [frappe.datetime.str_to_user(item.due)]))}</b>`);
 		else if (item.due) parts.push(esc(__("due {0}", [frappe.datetime.str_to_user(item.due)])));
 		if (item.priority === "High") parts.push(`<b>${esc(__("High priority"))}</b>`);
+		if (item.repeat) parts.push(esc(__("repeats: {0}", [__(item.repeat)])));
 		const ask = item.ask ? `<div class="ee-mw-banner-ask">${esc(item.ask)}</div>` : "";
+		// Phase 3: the checklist, ticked in place (api.my_work.checklist_toggle).
+		const steps = item.checklist || [];
+		const checklist = steps.length
+			? `<ul class="ee-mw-steps">` +
+			  steps
+					.map(
+						(step) =>
+							`<li><label><input type="checkbox" data-ee-mw-step="${esc(step.name)}"${step.done ? " checked" : ""}> ` +
+							`${esc(step.item)}</label></li>`
+					)
+					.join("") +
+			  `</ul>`
+			: "";
 		const can = item.can || {};
 		const btn = (act, label, cls) =>
 			`<button type="button" class="btn btn-sm ${cls || "btn-default"}" data-ee-mw="${act}">${esc(label)}</button>`;
@@ -201,7 +215,7 @@
 			`</div></div>`;
 		return (
 			`<div class="ee-mw-banner" data-todo="${esc(item.name)}" role="region" aria-label="${esc(__("Your assignment"))}">` +
-			`<div class="ee-mw-banner-text"><div class="ee-mw-banner-who">${parts.join(" · ")}</div>${ask}</div>` +
+			`<div class="ee-mw-banner-text"><div class="ee-mw-banner-who">${parts.join(" · ")}</div>${ask}${checklist}</div>` +
 			`<div class="ee-mw-banner-actions">` +
 			(can.complete ? btn("complete", __("Done"), "btn-primary") : "") +
 			(can.reschedule ? snooze : "") +
@@ -347,6 +361,16 @@
 		open_banner_form($banner, what);
 	});
 
+	$(document).on("change", ".ee-mw-banner [data-ee-mw-step]", function () {
+		const $box = $(this);
+		const todo = $box.closest(".ee-mw-banner").attr("data-todo");
+		$box.prop("disabled", true);
+		frappe
+			.xcall(API + "checklist_toggle", { todo, row: $box.attr("data-ee-mw-step"), done: $box.is(":checked") ? 1 : 0 })
+			.catch(() => $box.prop("checked", !$box.is(":checked")))
+			.finally(() => $box.prop("disabled", false));
+	});
+
 	$(document).on("submit", ".ee-mw-form", function (e) {
 		e.preventDefault();
 		const frm = window.cur_frm;
@@ -415,6 +439,9 @@
 	// for a Desk where it is somehow missing, and for a second evaluation of this file.
 
 	const WORKLOAD_DEBOUNCE = 250;
+	const OUR_METHODS = ["frappe.desk.form.assign_to.add", "frappe.desk.form.assign_to.add_multiple"];
+	// The values of ToDo.custom_repeat (assignments.REPEATS on the server).
+	const REPEATS = ["Daily", "Weekly", "Every 2 weeks", "Monthly", "Quarterly", "Yearly"];
 
 	function friday_of(today) {
 		const dow = frappe.datetime.str_to_obj(today).getDay();
@@ -478,11 +505,23 @@
 						this.ee_refresh_workload();
 					};
 				}
+				// Phase 3: people OR a team. Assign To stops being required; ee_submit checks one is set.
+				if (assign && this.ee_ours()) assign.reqd = 0;
 				const out = [];
 				head.forEach((f) => {
 					out.push(f);
 					if (f.fieldname === "assign_to") out.push({ fieldtype: "HTML", fieldname: "ee_workload" });
 				});
+				if (this.ee_ours()) {
+					out.push({
+						label: __("Or a team's queue"),
+						fieldtype: "Link",
+						fieldname: "ee_team",
+						options: "Role",
+						description: __("Everyone in the team sees it; the first to take it owns it."),
+						get_query: () => ({ filters: { name: ["like", "% Team"], disabled: 0 } }),
+					});
+				}
 				if (description) {
 					out.push({ fieldtype: "Section Break" });
 					out.push(
@@ -492,6 +531,14 @@
 							description: __("The one line they see first: in the email, on My Work and on the record."),
 						})
 					);
+				}
+				if (this.ee_ours()) {
+					out.push({
+						label: __("Checklist"),
+						fieldtype: "Small Text",
+						fieldname: "ee_checklist",
+						description: __("Optional. One step per line; they tick them off as they go."),
+					});
 				}
 				out.push({ fieldtype: "Section Break" });
 				if (date) {
@@ -512,7 +559,22 @@
 					priority.default = ["Low", "Medium", "High"].includes(own) ? own : "Medium";
 					out.push(priority);
 				}
+				if (this.ee_ours()) {
+					out.push({
+						label: __("Repeat"),
+						fieldtype: "Select",
+						fieldname: "ee_repeat",
+						options: ["", ...REPEATS].map((value) => ({ value, label: value ? __(value) : __("Does not repeat") })),
+						description: __("When it is done, the next one is made, due one step later."),
+					});
+				}
 				return out;
+			}
+
+			// Only Frappe's own two call sites (the sidebar, the list view's bulk Assign To) go through
+			// api.my_work.assign. Anything else that opens this dialog with another method keeps it.
+			ee_ours() {
+				return OUR_METHODS.includes(this.method);
 			}
 
 			make() {
@@ -522,6 +584,44 @@
 				} catch (e) {
 					/* the dialog still works without the shortcuts */
 				}
+				if (this.ee_ours()) this.dialog.set_primary_action(__("Add"), () => this.ee_submit());
+			}
+
+			// Phase 3: one call for people, a team, a repeat and a checklist. For people it is still
+			// Frappe's assign_to.add, inside api.my_work.assign.
+			ee_submit() {
+				const values = this.dialog.get_values() || {};
+				const people = values.assign_to || [];
+				if (!people.length && !values.ee_team) {
+					frappe.msgprint(__("Pick someone, or a team."));
+					return;
+				}
+				this.dialog.set_message(__("Assigning..."));
+				frappe.call({
+					method: API + "assign",
+					args: {
+						doctype: this.doctype,
+						name: Array.isArray(this.docname) ? JSON.stringify(this.docname) : this.docname,
+						assign_to: JSON.stringify(people),
+						description: values.description || "",
+						date: values.date || "",
+						priority: values.priority || "Medium",
+						team: values.ee_team || "",
+						repeat: values.ee_repeat || "",
+						checklist: values.ee_checklist || "",
+					},
+					btn: this.dialog.get_primary_btn(),
+					callback: (r) => {
+						if (r.exc) {
+							this.dialog.clear_message();
+							return;
+						}
+						if (this.callback) this.callback(r);
+						this.dialog.hide();
+						refresh_count(true);
+					},
+					error: () => this.dialog.clear_message(),
+				});
 			}
 
 			// Deliberately empty: see the comment above.
@@ -590,7 +690,9 @@
 						.join(" · ");
 					return (
 						`<li class="ee-mw-sidebar-item${item.bucket === "overdue" ? " ee-mw-sidebar-item--late" : ""}">` +
-						`<div class="ee-mw-sidebar-who">${esc(item.allocated_to_name)}</div>${ask}` +
+						`<div class="ee-mw-sidebar-who">${esc(
+							!item.allocated_to && item.team ? __("{0} team queue", [item.team]) : item.allocated_to_name
+						)}</div>${ask}` +
 						(meta ? `<div class="ee-mw-sidebar-meta">${esc(meta)}</div>` : "") +
 						`</li>`
 					);

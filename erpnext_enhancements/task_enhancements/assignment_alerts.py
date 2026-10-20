@@ -337,6 +337,9 @@ def on_todo_insert(doc, method=None):
 	try:
 		if _off("my_work_sms_disabled") or (doc.get("priority") or "") != "High":
 			return
+		# The next occurrence of a repeating assignment is not news (recurrence.py).
+		if getattr(doc, "flags", None) is not None and doc.flags.get("ee_repeat_of"):
+			return
 		assignee, assigner = doc.get("allocated_to"), doc.get("assigned_by")
 		if not assignee or assignee in assignments.NOBODY or assignee == (assigner or doc.get("owner")):
 			return

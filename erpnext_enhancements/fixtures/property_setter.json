@@ -6793,7 +6793,7 @@
   "property": "field_order",
   "property_type": "Data",
   "row_name": null,
-  "value": "[\"description_and_status\", \"status\", \"custom_start_date\", \"priority\", \"custom_calendar_datetime_start\", \"column_break_2\", \"color\", \"date\", \"allocated_to\", \"custom_calendar_datetime_end\", \"description_section\", \"description\", \"section_break_6\", \"reference_type\", \"reference_name\", \"custom_google_event_id\", \"column_break_10\", \"role\", \"assigned_by\", \"assigned_by_full_name\", \"sender\", \"assignment_rule\", \"custom_triage_batch\", \"custom_escalated_on\"]"
+  "value": "[\"description_and_status\", \"status\", \"custom_start_date\", \"priority\", \"custom_calendar_datetime_start\", \"column_break_2\", \"color\", \"date\", \"custom_repeat\", \"allocated_to\", \"custom_calendar_datetime_end\", \"description_section\", \"description\", \"custom_checklist\", \"section_break_6\", \"reference_type\", \"reference_name\", \"custom_google_event_id\", \"column_break_10\", \"role\", \"assigned_by\", \"assigned_by_full_name\", \"sender\", \"assignment_rule\", \"custom_triage_batch\", \"custom_escalated_on\"]"
  },
  {
   "default_value": null,

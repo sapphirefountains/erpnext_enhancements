@@ -86,9 +86,26 @@ _TODO_FIELDS = [
 	"owner",
 	"reference_type",
 	"reference_name",
+	"role",
 	"creation",
 	"modified",
 ]
+
+#: Roles that see the team load board and may reschedule, reassign or take back anyone's
+#: assignment (Phase 3). System Manager could already; the others run the work day to day.
+LEAD_ROLES = ("System Manager", "President", "Executive Team", "Operations Manager", "Production Manager")
+
+
+def _todo_fields():
+	"""The ToDo columns every read takes, plus this app's own where the site has them yet."""
+	fields = list(_TODO_FIELDS)
+	if frappe.db.has_column("ToDo", "custom_repeat"):
+		fields.append("custom_repeat")
+	return fields
+
+
+def _is_lead(user=None):
+	return bool(set(frappe.get_roles(user or frappe.session.user)) & set(LEAD_ROLES))
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +135,7 @@ def get_items(view: str = "mine"):
 		"counts": counts,
 		"tabs": {v: (len(items) if v == view else _count_view(v, user)) for v in VIEWS},
 		"is_manager": "System Manager" in frappe.get_roles(user),
+		"is_lead": _is_lead(user),
 	}
 
 
@@ -166,7 +184,7 @@ def get_record_assignments(doctype: str, name: str):
 			"reference_type": doctype,
 			"reference_name": str(name),
 		},
-		fields=_TODO_FIELDS,
+		fields=_todo_fields(),
 		order_by="creation desc",
 	)
 	return _present(rows, user, getdate(nowdate()), with_facts=False)
@@ -184,7 +202,7 @@ def _rows(view, user):
 	return frappe.get_all(
 		"ToDo",
 		filters=filters,
-		fields=_TODO_FIELDS,
+		fields=_todo_fields(),
 		order_by="creation desc",
 		limit_page_length=MAX_ROWS,
 	)
@@ -196,14 +214,20 @@ def _unclaimed_rows(user):
 	rows = frappe.get_all(
 		"ToDo",
 		filters={"status": "Open", "allocated_to": ["is", "not set"]},
-		fields=_TODO_FIELDS,
+		fields=_todo_fields(),
 		order_by="creation desc",
 		limit_page_length=MAX_ROWS,
 	)
 	return [row for row in rows if _may_see_unclaimed(row, user)]
 
 
-def _may_see_unclaimed(row, user):
+def _may_see_unclaimed(row, user, roles=None):
+	"""An unclaimed ToDo is for a team (``role``) or for anyone. A team's is for its members and the
+	leads; one on a record, only for those who may read the record."""
+	if row.get("role"):
+		roles = roles if roles is not None else set(frappe.get_roles(user))
+		if row.role not in roles and not (roles & set(LEAD_ROLES)):
+			return False
 	if not (row.reference_type and row.reference_name):
 		return True
 	try:
@@ -226,7 +250,9 @@ def _present(rows, user, today, with_facts=True):
 		return []
 	records = _record_info(rows, with_facts)
 	people = _full_names({r.allocated_to for r in rows} | {r.assigned_by for r in rows})
-	is_manager = "System Manager" in frappe.get_roles(user)
+	roles = set(frappe.get_roles(user))
+	is_manager = bool(roles & set(LEAD_ROLES))
+	checklists = _checklists([r.name for r in rows])
 	day_ago = add_to_date(now_datetime(), days=-1)
 	items = []
 	for row in rows:
@@ -253,7 +279,10 @@ def _present(rows, user, today, with_facts=True):
 				or (row.reference_name if row.reference_type else (ask or row.name)),
 				"facts": info.get("facts") or [],
 				"record_missing": bool(row.reference_type and row.reference_name and not info),
-				"can": _abilities(row, user, is_manager),
+				"team": assignments.team_label(row.get("role")) if row.get("role") else None,
+				"repeat": row.get("custom_repeat") or None,
+				"checklist": checklists.get(row.name, []),
+				"can": _abilities(row, user, is_manager, roles),
 			}
 		)
 	items.sort(
@@ -267,19 +296,41 @@ def _present(rows, user, today, with_facts=True):
 	return items
 
 
-def _abilities(row, user, is_manager):
+def _abilities(row, user, is_manager, roles=None):
+	"""What ``user`` may do to one assignment. ``is_manager`` is a lead (LEAD_ROLES)."""
 	mine = row.allocated_to == user
 	theirs = row.assigned_by == user or (not row.assigned_by and row.owner == user)
 	unclaimed = not row.allocated_to
+	team = row.get("role") if hasattr(row, "get") else getattr(row, "role", None)
+	in_team = not team or is_manager or (roles is not None and team in roles)
 	return {
 		"complete": mine,
 		"reschedule": mine or is_manager,
 		"reassign": mine or theirs or is_manager,
 		"reply": mine and bool(row.assigned_by) and row.assigned_by != user,
-		"claim": unclaimed,
+		"claim": unclaimed and in_team,
 		"nudge": theirs and bool(row.allocated_to) and not mine,
 		"withdraw": (theirs or is_manager) and not mine and not unclaimed,
+		"checklist": mine or theirs or is_manager or (unclaimed and in_team),
 	}
+
+
+def _checklists(names):
+	"""{todo: [{"name", "item", "done"}]} for the ToDos given, in their order on the form."""
+	if not names or not frappe.db.table_exists("Assignment Checklist Item"):
+		return {}
+	out = {}
+	for row in frappe.get_all(
+		"Assignment Checklist Item",
+		filters={"parenttype": "ToDo", "parentfield": "custom_checklist", "parent": ["in", names]},
+		fields=["name", "parent", "item", "done"],
+		order_by="idx asc",
+		limit_page_length=0,
+	):
+		out.setdefault(row.parent, []).append(
+			{"name": row.name, "item": row.item, "done": int(row.done or 0)}
+		)
+	return out
 
 
 def _record_info(rows, with_facts):
@@ -414,7 +465,7 @@ def get_record_overview(doctype: str, name: str):
 	rows = frappe.get_all(
 		"ToDo",
 		filters={"status": "Open", "reference_type": doctype, "reference_name": str(name)},
-		fields=_TODO_FIELDS,
+		fields=_todo_fields(),
 		order_by="creation asc",
 		limit_page_length=50,
 	)
@@ -433,7 +484,8 @@ def _load(todo, need):
 	if doc.status != "Open":
 		frappe.throw(_("That to-do is already {0}.").format(_(doc.status).lower()))
 	user = frappe.session.user
-	can = _abilities(doc, user, "System Manager" in frappe.get_roles(user))
+	roles = set(frappe.get_roles(user))
+	can = _abilities(doc, user, bool(roles & set(LEAD_ROLES)), roles)
 	if need == "claim":
 		if doc.allocated_to:
 			frappe.throw(_("{0} has already taken this one.").format(get_fullname(doc.allocated_to)))
@@ -669,6 +721,359 @@ def withdraw(todo: str):
 			),
 		)
 	return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: assigning to people or a team, repeats, checklists
+
+
+#: The most team members told about one new queue item (a bell each).
+TEAM_NOTIFY_LIMIT = 30
+
+
+def _team_members(role):
+	"""Enabled desk users holding ``role``."""
+	users = frappe.get_all(
+		"Has Role", filters={"role": role, "parenttype": "User"}, pluck="parent", limit_page_length=0
+	)
+	if not users:
+		return []
+	return frappe.get_all(
+		"User",
+		filters={"name": ["in", users], "enabled": 1, "user_type": "System User"},
+		pluck="name",
+		limit_page_length=0,
+	)
+
+
+def _teams():
+	"""Every team: a Role named "... Team" that is not disabled. [{"role", "label"}]."""
+	roles = frappe.get_all(
+		"Role",
+		filters={"name": ["like", "%" + assignments.TEAM_SUFFIX], "disabled": 0},
+		pluck="name",
+		order_by="name asc",
+	)
+	return [{"role": r, "label": assignments.team_label(r)} for r in roles if assignments.is_team_role(r)]
+
+
+def _steps(checklist):
+	"""Checklist lines from the dialog's text box (one per line) or a JSON list, cleaned."""
+	if not checklist:
+		return []
+	if isinstance(checklist, str) and checklist.strip().startswith("["):
+		checklist = frappe.parse_json(checklist)
+	if isinstance(checklist, str):
+		checklist = checklist.splitlines()
+	steps = [assignments.plain_text(line).lstrip("-*• ").strip() for line in checklist or []]
+	return [{"item": step[:200]} for step in steps if step][:50]
+
+
+def _apply_extras(todo_names, repeat, steps):
+	"""Set a repeat and a checklist on ToDos ``assign_to.add`` just made."""
+	if not (repeat or steps):
+		return
+	for name in todo_names:
+		doc = frappe.get_doc("ToDo", name)
+		if repeat and frappe.db.has_column("ToDo", "custom_repeat"):
+			doc.custom_repeat = repeat
+		if steps and frappe.db.table_exists("Assignment Checklist Item"):
+			for step in steps:
+				doc.append("custom_checklist", dict(step))
+		doc.save(ignore_permissions=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def assign(
+	doctype: str,
+	name: str,
+	assign_to: str | None = None,
+	description: str | None = None,
+	date: str | None = None,
+	priority: str | None = None,
+	team: str | None = None,
+	repeat: str | None = None,
+	checklist: str | None = None,
+):
+	"""The Assign To dialog's action (WI-081 Phase 3): people, a team queue, or both.
+
+	For the people picked this is Frappe's own ``assign_to.add`` -- the same permission check, share,
+	follow and notification as ever -- and then the repeat and the checklist go on the ToDos it made.
+	A team (a Role named "... Team") gets one queue item: a ToDo with that Role in its native
+	``role`` field and nobody in ``allocated_to``, which every member sees on My Work's Unclaimed
+	tab and the first to take it owns; each member gets a bell. ``name`` is one record, or a JSON
+	list of them (the list view's bulk Assign To). Returns ``assign_to.get`` for one record, which
+	the form's sidebar draws.
+	"""
+	from frappe.desk.form.assign_to import add, get
+
+	people = frappe.parse_json(assign_to) if assign_to else []
+	if isinstance(people, str):
+		people = [people]
+	people = [p for p in dict.fromkeys(people or []) if p]
+	if team and not (assignments.is_team_role(team) and frappe.db.exists("Role", team)):
+		frappe.throw(_("{0} is not a team.").format(team))
+	if not people and not team:
+		frappe.throw(_("Pick someone, or a team."))
+	if repeat and repeat not in assignments.REPEATS:
+		frappe.throw(_("Unknown repeat."))
+	if priority and priority not in ("Low", "Medium", "High"):
+		priority = "Medium"
+	steps = _steps(checklist)
+	names = frappe.parse_json(name) if isinstance(name, str) and name.strip().startswith("[") else [name]
+	for docname in names:
+		started = now_datetime()
+		if people:
+			args = {
+				"assign_to": people,
+				"doctype": doctype,
+				"name": docname,
+				"description": description,
+				"priority": priority or "Medium",
+			}
+			if date:
+				args["date"] = date
+			add(args)
+			made = frappe.get_all(
+				"ToDo",
+				filters={
+					"reference_type": doctype,
+					"reference_name": str(docname),
+					"allocated_to": ["in", people],
+					"status": "Open",
+					"creation": [">=", add_to_date(started, seconds=-2)],
+				},
+				pluck="name",
+			)
+			_apply_extras(made, repeat, steps)
+		if team:
+			_queue(doctype, docname, team, description, date, priority, repeat, steps)
+	if len(names) == 1:
+		return get({"doctype": doctype, "name": names[0]})
+	return None
+
+
+def _queue(doctype, docname, team, description, date, priority, repeat, steps):
+	"""One team queue item on one record, and a bell for each member."""
+	frappe.get_doc(doctype, docname).check_permission("read")
+	text = description or _("Assignment for {0} {1}").format(doctype, docname)
+	values = {
+		"doctype": "ToDo",
+		"status": "Open",
+		"role": team,
+		"assigned_by": frappe.session.user,
+		"reference_type": doctype,
+		"reference_name": str(docname),
+		"description": text,
+		"priority": priority or "Medium",
+	}
+	if date:
+		values["date"] = date
+	if repeat and frappe.db.has_column("ToDo", "custom_repeat"):
+		values["custom_repeat"] = repeat
+	if steps and frappe.db.table_exists("Assignment Checklist Item"):
+		values["custom_checklist"] = [dict(step) for step in steps]
+	todo = frappe.get_doc(values).insert(ignore_permissions=True)
+	title = _record_title(todo) or docname
+	subject = _("New in the {0} queue: {1}").format(
+		frappe.bold(escape_html(assignments.team_label(team))), frappe.bold(escape_html(title))
+	)
+	for member in _team_members(team)[:TEAM_NOTIFY_LIMIT]:
+		_notify(member, todo, subject)
+	return todo
+
+
+@frappe.whitelist(methods=["POST"])
+def set_repeat(todo: str, repeat: str | None = None):
+	"""Make an assignment repeat when it is done, or stop it repeating (an empty ``repeat``)."""
+	doc = _load(todo, "checklist")
+	if repeat and repeat not in assignments.REPEATS:
+		frappe.throw(_("Unknown repeat."))
+	if not frappe.db.has_column("ToDo", "custom_repeat"):
+		frappe.throw(_("Run bench migrate first."))
+	doc.db_set("custom_repeat", repeat or None)
+	return {"ok": True}
+
+
+def _checklist_row(doc, row):
+	for item in doc.get("custom_checklist") or []:
+		if item.name == row:
+			return item
+	frappe.throw(_("That step is not on this to-do."))
+
+
+@frappe.whitelist(methods=["POST"])
+def checklist_toggle(todo: str, row: str, done: int | str = 1):
+	"""Tick or untick one step; a tick records who and when."""
+	doc = _load(todo, "checklist")
+	item = _checklist_row(doc, row)
+	ticked = 1 if str(done) in ("1", "true", "True") else 0
+	item.db_set(
+		{
+			"done": ticked,
+			"done_by": frappe.session.user if ticked else None,
+			"done_on": now_datetime() if ticked else None,
+		}
+	)
+	done_count, total = assignments.checklist_progress(doc.get("custom_checklist") or [])
+	return {"ok": True, "done": done_count, "total": total}
+
+
+@frappe.whitelist(methods=["POST"])
+def checklist_add(todo: str, item: str):
+	"""Add a step to an assignment's checklist."""
+	doc = _load(todo, "checklist")
+	steps = _steps([item])
+	if not steps:
+		frappe.throw(_("Write the step first."))
+	if not frappe.db.table_exists("Assignment Checklist Item"):
+		frappe.throw(_("Run bench migrate first."))
+	doc.append("custom_checklist", steps[0])
+	doc.save(ignore_permissions=True)
+	return {"ok": True}
+
+
+@frappe.whitelist(methods=["POST"])
+def checklist_remove(todo: str, row: str):
+	"""Take a step off an assignment's checklist."""
+	doc = _load(todo, "checklist")
+	item = _checklist_row(doc, row)
+	doc.remove(item)
+	doc.save(ignore_permissions=True)
+	return {"ok": True}
+
+
+@frappe.whitelist(methods=["GET"])
+def get_teams():
+	"""The teams the Assign To dialog offers (Roles named "... Team")."""
+	if not _is_system_user(frappe.session.user):
+		return []
+	return _teams()
+
+
+def todo_queue_comment(doc, method=None):
+	"""doc_events ToDo ``before_save``: say the right thing on the record's timeline for a queue item.
+
+	Frappe's ``ToDo.validate`` words a new assignment "{assigner} assigned {assignee}: ...", and with
+	nobody assigned ``get_fullname(None)`` falls back to the session user, so a team queue item read
+	"Nik assigned Nik: ...". ``before_save`` runs after the controller's ``validate`` and before its
+	``on_update`` writes the comment, so the text is replaced here: "Nik put this in the Sales queue:
+	...", and "Ann took this from the Sales queue" when someone claims it. Never raises.
+	"""
+	try:
+		role = doc.get("role")
+		if not role:
+			return
+		team = assignments.team_label(role)
+		if doc.is_new() and not doc.get("allocated_to"):
+			ask = assignments.truncate(
+				assignments.the_ask(doc.description, doc.reference_type, doc.reference_name), 140
+			)
+			text = _("{0} put this in the {1} queue").format(
+				get_fullname(doc.get("assigned_by") or frappe.session.user), team
+			)
+			doc._assignment = {"text": f"{text}: {ask}" if ask else text, "comment_type": "Assigned"}
+			return
+		before = doc.get_doc_before_save() if not doc.is_new() else None
+		if before is not None and not before.get("allocated_to") and doc.get("allocated_to"):
+			doc._assignment = {
+				"text": _("{0} took this from the {1} queue").format(get_fullname(doc.allocated_to), team),
+				"comment_type": "Assigned",
+			}
+	except Exception:
+		frappe.log_error(title="My Work: queue comment failed", message=frappe.get_traceback())
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: the team load board and the calendar
+
+#: The most rows the board shows per person; the rest are a count.
+BOARD_ROWS = 25
+
+
+@frappe.whitelist(methods=["GET"])
+def get_team_board(team: str | None = None):
+	"""Leads only (LEAD_ROLES): each person's load and open assignments, and each team's queue.
+
+	``team`` narrows it to one team's members and queue. A person appears when they hold open
+	assignments, or are a member of the team asked for (so an idle member shows as free).
+	"""
+	if not _is_lead():
+		frappe.throw(_("The team board is for leads."), frappe.PermissionError)
+	user = frappe.session.user
+	today = getdate(nowdate())
+	members = set(_team_members(team)) if team else None
+	filters = {"status": "Open"}
+	rows = frappe.get_all(
+		"ToDo", filters=filters, fields=_todo_fields(), order_by="creation desc", limit_page_length=0
+	)
+	assigned = [r for r in rows if r.allocated_to]
+	if members is not None:
+		assigned = [r for r in assigned if r.allocated_to in members]
+	queued = [r for r in rows if not r.allocated_to and r.get("role") and (not team or r.role == team)]
+	items = _present(assigned + queued, user, today, with_facts=False)
+	by_name = {i["name"]: i for i in items}
+	people_users = {r.allocated_to for r in assigned} | (members or set())
+	enabled = set(
+		frappe.get_all(
+			"User",
+			filters={"name": ["in", list(people_users) or [""]], "enabled": 1, "user_type": "System User"},
+			pluck="name",
+		)
+	)
+	names = _full_names(enabled)
+	people = []
+	for person in enabled:
+		mine = [by_name[r.name] for r in assigned if r.allocated_to == person and r.name in by_name]
+		mine.sort(key=lambda i: (assignments.BUCKETS.index(i["bucket"]), i["due"] or "9999-12-31"))
+		counts = {b: 0 for b in assignments.BUCKETS}
+		for item in mine:
+			counts[item["bucket"]] += 1
+		people.append(
+			{
+				"user": person,
+				"name": names.get(person) or person,
+				"counts": counts,
+				"actionable": sum(counts[b] for b in assignments.ACTIONABLE),
+				"items": mine[:BOARD_ROWS],
+				"more": max(len(mine) - BOARD_ROWS, 0),
+			}
+		)
+	people.sort(key=lambda p: (-p["counts"]["overdue"], -p["actionable"], p["name"]))
+	queues = {}
+	for r in queued:
+		if r.name in by_name:
+			queues.setdefault(r.role, []).append(by_name[r.name])
+	return {
+		"today": str(today),
+		"team": team,
+		"teams": _teams(),
+		"people": people,
+		"queues": [
+			{"role": role, "label": assignments.team_label(role), "items": queue[:BOARD_ROWS]}
+			for role, queue in sorted(queues.items())
+		],
+	}
+
+
+@frappe.whitelist(methods=["GET"])
+def get_calendar(start: str, end: str):
+	"""Your open assignments with a real due date between ``start`` and ``end`` (a month view).
+
+	Undated ones are left off: a calendar of creation-day stamps is the ToDo calendar this replaces.
+	"""
+	user = frappe.session.user
+	first, last = getdate(start), getdate(end)
+	if (last - first).days > 62:
+		frappe.throw(_("Ask for two months at most."))
+	rows = frappe.get_all(
+		"ToDo",
+		filters={"status": "Open", "allocated_to": user, "date": ["between", [first, last]]},
+		fields=_todo_fields(),
+		limit_page_length=0,
+	)
+	items = _present(rows, user, getdate(nowdate()), with_facts=False)
+	return {"today": nowdate(), "items": [i for i in items if i["due"]]}
 
 
 # ---------------------------------------------------------------------------

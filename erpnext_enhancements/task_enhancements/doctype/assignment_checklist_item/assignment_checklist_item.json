@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "creation": "2026-10-20 17:00:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item",
+  "done",
+  "done_by",
+  "done_on"
+ ],
+ "fields": [
+  {
+   "columns": 6,
+   "fieldname": "item",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step",
+   "length": 200,
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "done",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Done"
+  },
+  {
+   "columns": 2,
+   "fieldname": "done_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Done By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "done_on",
+   "fieldtype": "Datetime",
+   "label": "Done On",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-20 17:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Task Enhancements",
+ "name": "Assignment Checklist Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

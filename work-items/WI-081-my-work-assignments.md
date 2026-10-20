@@ -1,6 +1,6 @@
 # WI-081: My Work — reimagine ToDos and assigning, on top of Frappe's own assignments
 
-**Phase:** 2   **Type:** APP_CODE   **Size:** L (three phases; Phase 1 M, v1.696.0; Phase 2 M, v1.697.0)
+**Phase:** 2   **Type:** APP_CODE   **Size:** L (three phases; Phase 1 M, v1.696.0; Phase 2 M, v1.697.0; Phase 3 M, v1.698.0)
 **Blocked by:** nothing
 **Blocks:** nothing
 
@@ -125,17 +125,55 @@ What shipped:
 - **Kill switches** (site config, live): `my_work_digest_disabled`, `my_work_escalation_disabled`,
   `my_work_nudge_disabled`, `my_work_sms_disabled`.
 
-### Phase 3 — teams and structure (not started)
+### Phase 3 — teams and structure (v1.698.0)
 
-- Team queues on ToDo's native `role` field (unused on production: 0 open ToDos carry one, 2026-10-20).
-- Team load board (manager view; drag between people).
-- Recurring assignments; checklists inside an assignment; calendar view (ToDo is already
-  calendar-enabled here and carries a Google event field).
+Built 2026-10-20 after Phase 2 merged (Nik: "create the PR, merge, and begin phase 3").
+
+- **Team queues, on native pieces only.** A team is a **Role named "… Team"** — production already
+  has nine (Support 14 people, Production 13, Sales 9, Design 7, Finance 6, Operations 4, Executive 4,
+  HR 3, Marketing 3; 2026-10-20). A queue item is a ToDo with that Role in ToDo's native `role` field
+  (unused until now: 0 open ToDos carried one) and nobody in `allocated_to`. The Assign To dialog
+  offers "Or a team's queue"; every member gets a bell and sees it on My Work's **Unclaimed & queues**
+  tab, and the first to press Take it owns it. User Groups were the alternative and were passed over:
+  production's eight are partial (Production 4, Sales 2 … Finance 1).
+- **Team load board** (`/desk/my-work/team`), for leads — System Manager, President, Executive Team,
+  Operations Manager, Production Manager (`api.my_work.LEAD_ROLES`, a constant to edit): a column per
+  person with overdue / today / open counts and their assignments, a column per team queue, a team
+  filter, and drag a card onto someone to hand it over (Frappe's own `assign_to.add` underneath).
+  Leads may also reschedule, reassign and take back anyone's assignment, as System Managers could.
+- **Repeating assignments**: `ToDo.custom_repeat` (Daily … Yearly), set in the dialog or from a row's
+  Repeat menu. Marking one done makes the next — same person or queue, record, ask, priority and steps
+  (unticked) — due one step after this one's due date, never already overdue and never on the day it
+  is made (`task_enhancements/recurrence.py`). Cancelled, auto-closed and triaged ones do not repeat.
+- **Checklists**: `ToDo.custom_checklist`, a child table (**Assignment Checklist Item**, new in this
+  module). Steps go in from the dialog (one per line) or the row; they are ticked on My Work, on the
+  record's banner, or in the ToDo form's grid, and a tick records who and when.
+- **Calendar** (`/desk/my-work/calendar`): your assignments with a real due date on a Monday-first
+  month grid; drag one to another day. Undated ones are left off on purpose — the stock ToDo calendar
+  plots creation-day stamps. On a phone it is a list of the days with something on them.
+- The guided page's Assign To (`form_kit/ui/record_tools.js`) no longer pre-fills the ask with the
+  record's title, for the reason the sidebar's no longer does (Phase 2).
 
 ## Preconditions
 
 - `bench migrate` has run the v1.696.0 deploy (adds `ToDo.custom_triage_batch`; the triage refuses to
   apply without it and says so).
+
+## Acceptance criteria (Phase 3)
+
+1. **Assign to a team only** from a record's sidebar ("Or a team's queue": Sales Team, no person): every
+   Sales Team member gets a bell; it is on their Unclaimed & queues tab with a "Sales team" chip; the
+   first to press Take it owns it and it leaves the others' tab. A Support Team member cannot take it.
+2. **A weekly with three steps**: assign with Repeat = Weekly and three checklist lines; tick two on
+   the record's banner (the ToDo form's grid shows who ticked them); mark it done; a new one appears
+   for the same person, due a week after the first's due date, with three unticked steps. Withdraw
+   that one: nothing new appears.
+3. **The Team board** (as a lead): drag a card from one person to another; the record's Assign To
+   avatars change accordingly. As a non-lead, `/desk/my-work/team` has no tab and the endpoint refuses.
+4. **The Calendar** shows only dated assignments; dragging one to next Tuesday moves its due date and
+   it shows under "This week" on My Work.
+5. `SELECT COUNT(*) FROM tabToDo WHERE role LIKE '% Team' AND allocated_to IS NULL AND status='Open'`
+   counts the open queue items the board shows.
 
 ## Acceptance criteria (Phase 2)
 

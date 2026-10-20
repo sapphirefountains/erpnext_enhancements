@@ -377,3 +377,79 @@ def sms_text(assigner_name, title, ask, url, limit=SMS_LIMIT):
 	tail = f" {url}" if url else ""
 	room = max(limit - len(head) - len(tail), 20)
 	return f"{head}{truncate(what, room)}{tail}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: teams, repeats, checklists
+
+#: A team is a Role whose name ends with this. Production already has nine (2026-10-20): Support,
+#: Production, Sales, Design, Finance, Operations, Executive, HR and Marketing Team. A queue item is
+#: a ToDo with that Role in ToDo's native ``role`` field and nobody in ``allocated_to``.
+TEAM_SUFFIX = " Team"
+
+#: ``ToDo.custom_repeat`` options -> (unit, size). Months are counted from the first due date, not
+#: chained, so a monthly on the 31st comes back on the 31st (or the month's last day), not the 28th
+#: forever after February.
+REPEATS = {
+	"Daily": ("days", 1),
+	"Weekly": ("days", 7),
+	"Every 2 weeks": ("days", 14),
+	"Monthly": ("months", 1),
+	"Quarterly": ("months", 3),
+	"Yearly": ("months", 12),
+}
+
+
+def is_team_role(role):
+	return bool(role) and str(role).endswith(TEAM_SUFFIX) and len(str(role)) > len(TEAM_SUFFIX)
+
+
+def team_label(role):
+	""" "Sales Team" -> "Sales"."""
+	return str(role)[: -len(TEAM_SUFFIX)] if is_team_role(role) else str(role or "")
+
+
+def add_months(day, months):
+	"""``day`` plus ``months`` calendar months, the day clamped to the month's last."""
+	import calendar
+
+	month_index = day.month - 1 + months
+	year = day.year + month_index // 12
+	month = month_index % 12 + 1
+	return datetime.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def next_occurrence(due, today, repeat):
+	"""The next due date of a repeating assignment finished on ``today``, or ``None``.
+
+	Counted from its own due date, in whole steps, to the first one after today: a weekly due on
+	Mondays and finished on a Wednesday comes back next Monday, not next Wednesday, and one that
+	fell weeks behind does not come back already overdue. With no due date, one step from today.
+	"""
+	spec = REPEATS.get(repeat or "")
+	if not spec:
+		return None
+	unit, size = spec
+	base = due or today
+	step = 1
+	while True:
+		if unit == "days":
+			nxt = base + datetime.timedelta(days=size * step)
+		else:
+			nxt = add_months(base, size * step)
+		if nxt > today:
+			return nxt
+		step += 1
+
+
+def checklist_progress(rows):
+	"""(done, total) over a checklist's rows (dicts or objects with ``done``)."""
+	rows = list(rows or [])
+	done = 0
+	for row in rows:
+		value = row.get("done") if hasattr(row, "get") else getattr(row, "done", 0)
+		try:
+			done += 1 if int(value or 0) else 0
+		except (TypeError, ValueError):
+			pass
+	return done, len(rows)

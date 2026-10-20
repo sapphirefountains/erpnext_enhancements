@@ -12,9 +12,11 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 |---|---|---|
 | `assignments.py` | My Work's shared rules, frappe-free: when an assignment is due (a ToDo dated its own creation day has **no** due date -- `assign_to.add` stamps `nowdate()`), its bucket, what it asks, the email subject, which record states are finished (`FINISHED_STATES`), and the backlog triage's rules | `due_date`, `bucket`, `the_ask`, `paragraphs`, `email_subject`, `finished_value`, `just_finished`, `triage_rule` |
 | `assignment_alerts.py` | My Work's alerts (Phase 2): the weekday 06:40 job (a bell on items due today, the assigner told once at 2 days late, the morning summary email for everyone not emailed the Morning Briefing) and the text for a High-priority assignment. Site-config kill switches per step | `daily_run`, `nudge_due_today`, `escalate`, `send_digests`, `digest_sections`, `on_todo_insert`, `send_high_priority_text` |
+| `recurrence.py` | Phase 3: a ToDo with `custom_repeat` makes its next one when it changes to Closed (not Cancelled; not when auto-close or the triage closed it), due one step after its due date (`assignments.next_occurrence`) | `on_update`, `make_next` |
+| `doctype/assignment_checklist_item/` | Phase 3: **Assignment Checklist Item**, the child table behind `ToDo.custom_checklist` (step, done, done by, done on) | `AssignmentChecklistItem` |
 | `auto_close.py` | Closes a record's open assignments when the record moves into a finished state (doc_events `on_change`), and cancels them when it is cancelled (`"*"` `on_cancel`). Never raises | `on_change`, `on_cancel`, `close_todo`, `close_open_assignments` |
 | `backlog_triage.py` | The one-time backlog clean-up behind My Work's **Tidy the backlog**: dry run, apply (background job, each ToDo stamped `custom_triage_batch`), undo | `preview`, `apply`, `undo`, `batches` |
-| `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
+| `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/calendar`, `/team`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
 | `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`before_save`, `on_update`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
 | `doctype/task/task.js` | Form script: render the child-task tree on refresh | `frappe.ui.form.on("Task", {refresh})`, `add_toggle_functionality` |
 
@@ -60,6 +62,10 @@ ERPNext's ToDo list shows "Assignment for Opportunity CRM-OPP-2026-00187", a not
 | **Assign To dialog** (Phase 2) | `public/js/global_enhancements/my_work.js` | "What do you need?" first and empty (Frappe pre-filled the record's title), quick dates, Priority from the record, and each picked person's load and time off. Subclasses Frappe's `AssignToDialog`, so the list view's bulk Assign To gets it too. |
 | **Record sidebar** (Phase 2) | same file | Under the Assigned To avatars: each person, what was asked, when it is due. |
 | **Morning summary, nudges, escalation, texts** (Phase 2) | `assignment_alerts.py` | See the file map. The Morning Briefing carries the same summary for whoever is emailed it (`api/briefing._user_todos`). |
+| **Team queues** (Phase 3) | `api/my_work.assign`, Unclaimed & queues tab | A team is a Role named "… Team"; a queue item is a ToDo with that Role in its native `role` field and no assignee. Members get a bell; the first to Take it owns it. |
+| **Team board** (Phase 3) | `/desk/my-work/team`, `api/my_work.get_team_board` | Leads (`LEAD_ROLES`): a column per person and per queue; drag a card to hand it over. |
+| **Repeats and checklists** (Phase 3) | `recurrence.py`, `ToDo.custom_repeat`, `ToDo.custom_checklist` | Set in the dialog or on a row; ticked on My Work, the banner or the ToDo form. |
+| **Calendar** (Phase 3) | `/desk/my-work/calendar`, `api/my_work.get_calendar` | Dated assignments only, on a month grid; drag to another day. |
 | **Tidy the backlog** | `backlog_triage.py`, `/desk/my-work/tidy` | System Manager only. A dry run per rule, then Apply, then Undo per batch. |
 
 Rules worth knowing before you change anything here:
@@ -70,6 +76,7 @@ Rules worth knowing before you change anything here:
 - **Unassigned is not junk.** Triton files every call follow-up with no assignee and no record. They are on the Unclaimed tab for every System User, and the triage closes one only when nobody has touched it in 90 days.
 - **The sidebar count's class is `.ee-my-work-count`, never `.notification-count`**: Frappe writes the bell's unread number into every element with that class.
 - **Email policy (Phase 2):** the "New ToDo Created" Notification fires for **High** priority only, and `hooks.notification_skip_email_types` holds `"Assignment"`, so Frappe never emails an Assignment bell entry. Everything else reaches people in the bell and the next morning's summary. Before this, most assignees got two emails per assignment (231 + 78 in the 30 days to 2026-10-20).
+- **Repeats never fire on the day they are made, and never already overdue**: `next_occurrence` steps whole periods from the due date to the first one *after* today. A next one dated today would equal its creation day and read as having no due date.
 - **Escalations are said once**, marked on the row (`ToDo.custom_escalated_on`), not in redis, which every deploy flushes.
 - **The customer inactivity reminder** (`script_migrations/customer.py`) counts a closed follow-up as following up, and no longer writes reminders to Administrator, Guest or a disabled user -- without both, the triage's closures would have been rewritten the next morning.
 

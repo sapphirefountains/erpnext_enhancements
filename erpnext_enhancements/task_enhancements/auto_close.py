@@ -51,7 +51,7 @@ def _skip():
 	)
 
 
-def close_todo(todo, status="Closed"):
+def close_todo(todo, status="Closed", repeat=True):
 	"""Set one ToDo to ``status`` through its controller and return it.
 
 	``todo`` is a name or a ToDo document. The controller adds the "Assignment of X removed by Y"
@@ -64,6 +64,9 @@ def close_todo(todo, status="Closed"):
 	if todo.status == status:
 		return todo
 	todo.status = status
+	if repeat is False:
+		# A record that finished took its work with it: recurrence.py makes no next one.
+		todo.flags.ee_no_repeat = True
 	todo.save(ignore_permissions=True)
 	_clear_assigned_to(todo)
 	return todo
@@ -90,11 +93,13 @@ def open_assignments(doctype, name):
 
 
 def close_open_assignments(doctype, name, status="Closed"):
-	"""Close every open ToDo on one record. Returns how many were closed; never raises."""
+	"""Close every open ToDo on one record. Returns how many were closed; never raises.
+
+	A repeating assignment closed this way does not repeat: the record's work is over."""
 	closed = 0
 	for todo in open_assignments(doctype, name):
 		try:
-			close_todo(todo, status)
+			close_todo(todo, status, repeat=False)
 			closed += 1
 		except Exception:
 			frappe.log_error(
