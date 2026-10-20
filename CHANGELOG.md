@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and every member gets a bell. Members see it on My Work's tab, renamed **Unclaimed & queues**, with
     a team chip, and the first to press Take it owns it. Nobody outside the team, other than a lead,
     sees or takes it. User Groups were passed over: production's eight are partial (Finance has one
-    member).
+    member). The record's timeline says "Nik put this in the Sales queue" and "Ann took this from the
+    Sales queue" instead of Frappe's "Nik assigned Nik", which is what an assignee-less ToDo reads as
+    (`api.my_work.todo_queue_comment`, a ToDo `before_save`).
   - **The Team board** (`/desk/my-work/team`), for leads: System Manager, President, Executive Team,
     Operations Manager and Production Manager (`api.my_work.LEAD_ROLES`). It has a column per person
     with overdue, today and open counts and their assignments, a column per team queue, and a team
