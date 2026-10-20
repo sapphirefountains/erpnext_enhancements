@@ -25,9 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `validate_status` will not complete a Task while one it depends on is anything but Completed or
     Cancelled. On production that was 59 of the 179 open Task assignments. My Work checks this first,
     so nothing changes and the message names the Task in the way: "Not marked done: TASK-1 depends on
-    TASK-0 (Order the pump), which is Working." Only ERPNext's spelling "Cancelled" lets a dependency
-    through. This site's "Canceled" still blocks, because that is what ERPNext's own check reads. Any
-    other refusal from the Task's validation fails the whole Done, with the assignment still open.
+    TASK-0 (Order the pump), which is Working." Any other refusal from the Task's validation fails the
+    whole Done, with the assignment still open.
   - **Saved with `ignore_permissions`.** Being assigned the Task is what entitles someone to finish it,
     and an assignee may hold only the read share that Assign To gives. `_load` has already checked that
     the session user is the assignee.
@@ -36,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that is already Completed, Canceled, Invoiced or a Template is left as it is.
 
 ### Fixed
+- **A Task depending on a "Canceled" one could never be completed**, from its form, the list, the
+  Kanban or My Work. ERPNext's `validate_status` accepts a dependency only if it is "Completed" or
+  "Cancelled", in its own spelling. This site's Property Setter offers "Canceled", so 10 open Tasks on
+  2026-10-20, all with someone assigned, were stuck behind a canceled Task. The Task override's
+  `validate_status` now hides the rows that point at a "Canceled" Task from ERPNext's check, for that
+  one call, and puts them back straight after. ERPNext's rule and everything else the core method does
+  are otherwise unchanged. `depends_on_tasks` still lists the canceled ones. My Work's own pre-check
+  uses the same three statuses (`assignments.TASK_DEPENDENCY_DONE`, held equal to the controller's
+  `DEPENDENCY_DONE` by `test_my_work`). No Task was held up by an "Invoiced" one, so that status is
+  left as ERPNext has it.
 - **Completing a Task that had a repeating assignment on it left a trail of extra ToDos.** This was
   introduced in v1.698.0. ERPNext closes every open assignment on a Task the moment it becomes
   Completed: once from `validate_status`, before the Task's row says Completed, and again from

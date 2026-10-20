@@ -1153,13 +1153,20 @@ class TestDoneCompletesTheTask(unittest.TestCase):
 		self.assertFalse(rules.done_completes_task("Opportunity", None))
 		self.assertFalse(rules.done_completes_task(None, None))
 
-	def test_erpnext_own_spelling_is_what_lets_a_dependency_through(self):
-		self.assertIsNone(rules.blocking_dependency([("A", "Completed"), ("B", "Cancelled")]))
+	def test_finished_dependencies_in_either_spelling_let_it_through(self):
+		self.assertIsNone(
+			rules.blocking_dependency([("A", "Completed"), ("B", "Cancelled"), ("C", "Canceled")])
+		)
 		self.assertEqual(
-			rules.blocking_dependency([("A", "Completed"), ("B", "Canceled")]), ("B", "Canceled")
+			rules.blocking_dependency([("A", "Completed"), ("B", "Invoiced")]), ("B", "Invoiced")
 		)
 		self.assertEqual(rules.blocking_dependency([("A", None)]), ("A", None))
 		self.assertEqual(rules.blocking_dependency([("A", "Working"), ("B", "Open")]), ("A", "Working"))
+
+	def test_done_and_the_task_controller_agree_on_what_unblocks(self):
+		source = (Path(__file__).resolve().parents[1] / "task_enhancements/doctype/task/task.py").read_text()
+		literal = re.search(r"^DEPENDENCY_DONE = (\(.*\))$", source, re.MULTILINE).group(1)
+		self.assertEqual(ast.literal_eval(literal), rules.TASK_DEPENDENCY_DONE)
 
 	def test_an_open_task_is_the_one_to_complete(self):
 		self.assertEqual(api._task_to_complete(self.todo()), "TASK-1")

@@ -17,7 +17,7 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 | `auto_close.py` | Closes a record's open assignments when the record moves into a finished state (doc_events `on_change`), and cancels them when it is cancelled (`"*"` `on_cancel`). Never raises | `on_change`, `on_cancel`, `close_todo`, `close_open_assignments` |
 | `backlog_triage.py` | The one-time backlog clean-up behind My Work's **Tidy the backlog**: dry run, apply (background job, each ToDo stamped `custom_triage_batch`), undo | `preview`, `apply`, `undo`, `batches` |
 | `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/calendar`, `/team`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
-| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`validate`, `before_save`, `on_update`, `update_status`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
+| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`validate`, `validate_status`, `before_save`, `on_update`, `update_status`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
 | `doctype/task/task.js` | Form script: render the child-task tree on refresh | `frappe.ui.form.on("Task", {refresh})`, `add_toggle_functionality` |
 
 ## The Task override
@@ -31,6 +31,7 @@ override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctyp
 - `validate` — when the Task is being saved into a finished status, marks it as finishing for the request (`recurrence.mark_finishing`) **before** calling `super().validate()`. ERPNext's `validate_status` closes every open assignment on a Task becoming Completed, before the Task's row says so; the mark stops a repeating assignment closed that way from making a next one (v1.699.0).
 - `before_save` — promotes the task's `parent_task` to a **group** (`is_group=1`, saved with `ignore_permissions`) so the NestedSet tree stays valid. It does **not** chain `super()`.
 - `on_update` — simply calls `super().on_update()`.
+- `validate_status` — lets a dependency this site marked **"Canceled"** stop blocking completion. ERPNext's check accepts only "Completed" and "Cancelled" (its spelling), so a Task depending on a canceled one could never be completed. The override hides those rows from the core check for that one call and puts them back (`DEPENDENCY_DONE`, v1.699.0).
 - `update_status` — never flips a finished Task (Completed, Canceled, Cancelled, Invoiced, Template) to Overdue.
 
 ## Data flow
@@ -79,7 +80,7 @@ Rules worth knowing before you change anything here:
 - **The sidebar count's class is `.ee-my-work-count`, never `.notification-count`**: Frappe writes the bell's unread number into every element with that class.
 - **Email policy (Phase 2):** the "New ToDo Created" Notification fires for **High** priority only, and `hooks.notification_skip_email_types` holds `"Assignment"`, so Frappe never emails an Assignment bell entry. Everything else reaches people in the bell and the next morning's summary. Before this, most assignees got two emails per assignment (231 + 78 in the 30 days to 2026-10-20).
 - **Repeats never fire on the day they are made, and never already overdue**: `next_occurrence` steps whole periods from the due date to the first one *after* today. A next one dated today would equal its creation day and read as having no due date.
-- **Done on a Task completes the Task** (v1.699.0), with `completed_on` today and `completed_by` whoever pressed Done; ERPNext then closes the other assignees' assignments, as it does for any completion. Not for a repeating assignment (`assignments.done_completes_task`). A Task that depends on one not yet Completed or Cancelled **refuses the Done** with the blocking Task named, before anything changes (Nik's call: 59 of 179 open Task assignments were in that state on 2026-10-20). Only ERPNext's spelling "Cancelled" lets a dependency through; this site's "Canceled" still blocks, because ERPNext's own check reads only its own spelling.
+- **Done on a Task completes the Task** (v1.699.0), with `completed_on` today and `completed_by` whoever pressed Done; ERPNext then closes the other assignees' assignments, as it does for any completion. Not for a repeating assignment (`assignments.done_completes_task`). A Task that depends on one not yet Completed or Cancelled **refuses the Done** with the blocking Task named, before anything changes (Nik's call: 59 of 179 open Task assignments were in that state on 2026-10-20). A dependency that is Completed, Cancelled or this site's "Canceled" lets it through (see `validate_status` below).
 - **Escalations are said once**, marked on the row (`ToDo.custom_escalated_on`), not in redis, which every deploy flushes.
 - **The customer inactivity reminder** (`script_migrations/customer.py`) counts a closed follow-up as following up, and no longer writes reminders to Administrator, Guest or a disabled user -- without both, the triage's closures would have been rewritten the next morning.
 

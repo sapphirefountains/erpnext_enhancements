@@ -459,11 +459,11 @@ def checklist_progress(rows):
 # Done on a Task (Nik, 2026-10-20: "when marking a Task as Done it should also change the task's
 # status to Completed, marked as completed on that day, and by the person marking it done").
 
-#: The statuses ERPNext's ``Task.validate_status`` accepts on a Task another depends on. Its own
-#: spelling only: a dependency this site marked "Canceled" (the Property Setter's spelling) still
-#: blocks, because that is what ERPNext checks, and a check here that let it through would only
-#: move the refusal from this message to ERPNext's.
-TASK_DEPENDENCY_DONE = ("Completed", "Cancelled")
+#: The statuses of a Task another depends on that let that other Task be completed: ERPNext's
+#: "Completed" and "Cancelled", plus this site's spelling "Canceled", which the Task override's
+#: ``validate_status`` lets through too (``doctype/task/task.py`` ``DEPENDENCY_DONE``; the two are
+#: held equal by ``test_my_work``). Done checks this first, so its refusal names the Task in the way.
+TASK_DEPENDENCY_DONE = ("Completed", "Cancelled", "Canceled")
 
 
 def done_completes_task(reference_type, repeat):

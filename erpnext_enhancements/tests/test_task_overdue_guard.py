@@ -7,7 +7,8 @@ too, so all three kept coming back as Overdue. This app's Task override now retu
 them and hands everything else to the core method unchanged.
 
 The same override marks a Task saved into a finished state before ERPNext's own ``validate``
-closes its assignments, so a repeating assignment closed that way makes no next one (v1.699.0).
+closes its assignments, so a repeating assignment closed that way makes no next one, and lets a
+dependency this site spelled "Canceled" stop blocking completion (v1.699.0).
 
 ``erpnext`` is stubbed with a base class that records the call, so this suite installs stub
 modules and runs in its own CI step.
@@ -47,9 +48,20 @@ class BaseTask:
         # ERPNext's validate is where a Completed Task's assignments are closed.
         self.validated_after = list(marked)
 
+    def get(self, key):
+        return getattr(self, key, None)
+
+    def validate_status(self):
+        # ERPNext's dependency check loops over depends_on; record what it would have seen.
+        self.core_saw = [row.task for row in self.depends_on]
+        if any(canceled_tasks.get(row.task) not in ("Completed", "Cancelled") for row in self.depends_on):
+            raise RuntimeError("Cannot complete task")
+
 
 #: What the stub recurrence module was told, in order.
 marked = []
+#: Task name -> status, for the stub frappe.get_all.
+canceled_tasks = {}
 
 
 def setUpModule():
@@ -58,6 +70,9 @@ def setUpModule():
         _saved[name] = sys.modules.get(name)
     frappe = types.ModuleType("frappe")
     frappe.whitelist = lambda *a, **k: (lambda f: f)
+    frappe.get_all = lambda doctype, filters=None, pluck=None, **k: [
+        name for name in filters["name"][1] if canceled_tasks.get(name) == filters["status"]
+    ]
     sys.modules["frappe"] = frappe
     for name in STUBS[1:]:
         sys.modules[name] = types.ModuleType(name)
@@ -118,6 +133,37 @@ class TestFinishingMark(unittest.TestCase):
         task = self.task("Working")
         task.validate()
         self.assertEqual(task.validated_after, [])
+
+
+class TestCanceledSpelling(unittest.TestCase):
+    """This site spells it "Canceled"; ERPNext's dependency check accepts only "Cancelled"."""
+
+    def task(self, status, *deps):
+        task = task_module.Task(status)
+        task.depends_on = [types.SimpleNamespace(task=name) for name in deps]
+        return task
+
+    def setUp(self):
+        canceled_tasks.clear()
+        canceled_tasks.update({"A": "Completed", "B": "Canceled", "C": "Working", "D": "Cancelled"})
+
+    def test_a_canceled_dependency_no_longer_blocks_completion(self):
+        task = self.task("Completed", "A", "B", "D")
+        task.validate_status()
+        self.assertEqual(task.core_saw, ["A", "D"])
+        self.assertEqual([row.task for row in task.depends_on], ["A", "B", "D"], "rows put back")
+
+    def test_an_open_dependency_still_blocks_and_the_rows_come_back(self):
+        task = self.task("Completed", "B", "C")
+        with self.assertRaises(RuntimeError):
+            task.validate_status()
+        self.assertEqual([row.task for row in task.depends_on], ["B", "C"])
+
+    def test_nothing_is_hidden_unless_the_task_is_being_completed(self):
+        task = self.task("Working", "A", "B")
+        canceled_tasks["B"] = "Completed"
+        task.validate_status()
+        self.assertEqual(task.core_saw, ["A", "B"])
 
 
 if __name__ == "__main__":

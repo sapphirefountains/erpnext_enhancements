@@ -268,6 +268,10 @@ and whoever pressed Done. Two decisions go with it:
   the assignment and leaving the Task open, and over bypassing ERPNext's check.
 - **A repeating assignment does not complete its Task.**
 
+The same release makes a Task this site marked "Canceled" stop blocking the Tasks that depend on it.
+ERPNext's check knows only its own spelling, "Cancelled", which had left 10 open Tasks impossible to
+complete by any route.
+
 The same release fixes a v1.698.0 bug: completing a Task with a repeating assignment on it chained
 extra ToDos, because ERPNext closes a Task's assignments before its row says Completed.
 
