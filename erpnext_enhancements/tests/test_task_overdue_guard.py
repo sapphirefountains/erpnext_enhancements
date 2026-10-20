@@ -6,6 +6,9 @@ passed. This site spells the status ``Canceled``, and ``Invoiced`` and ``Templat
 too, so all three kept coming back as Overdue. This app's Task override now returns early for
 them and hands everything else to the core method unchanged.
 
+The same override marks a Task saved into a finished state before ERPNext's own ``validate``
+closes its assignments, so a repeating assignment closed that way makes no next one (v1.699.0).
+
 ``erpnext`` is stubbed with a base class that records the call, so this suite installs stub
 modules and runs in its own CI step.
 
@@ -24,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
 
 MODULE = "erpnext_enhancements.task_enhancements.doctype.task.task"
 STUBS = ("frappe", "erpnext", "erpnext.projects", "erpnext.projects.doctype", "erpnext.projects.doctype.task", "erpnext.projects.doctype.task.task")
+RECURRENCE = "erpnext_enhancements.task_enhancements.recurrence"
 _saved = {}
 task_module = None
 
@@ -39,10 +43,18 @@ class BaseTask:
         self.core_calls += 1
         self.status = "Overdue"
 
+    def validate(self):
+        # ERPNext's validate is where a Completed Task's assignments are closed.
+        self.validated_after = list(marked)
+
+
+#: What the stub recurrence module was told, in order.
+marked = []
+
 
 def setUpModule():
     global task_module
-    for name in (*STUBS, MODULE):
+    for name in (*STUBS, MODULE, RECURRENCE):
         _saved[name] = sys.modules.get(name)
     frappe = types.ModuleType("frappe")
     frappe.whitelist = lambda *a, **k: (lambda f: f)
@@ -50,6 +62,9 @@ def setUpModule():
     for name in STUBS[1:]:
         sys.modules[name] = types.ModuleType(name)
     sys.modules["erpnext.projects.doctype.task.task"].Task = BaseTask
+    recurrence = types.ModuleType(RECURRENCE)
+    recurrence.mark_finishing = lambda doctype, name: marked.append((doctype, name))
+    sys.modules[RECURRENCE] = recurrence
     sys.modules.pop(MODULE, None)
     task_module = importlib.import_module(MODULE)
 
@@ -80,6 +95,29 @@ class TestOverdueGuard(unittest.TestCase):
     def test_both_spellings_of_canceled_are_covered(self):
         self.assertIn("Canceled", task_module.FINISHED_STATUSES)
         self.assertIn("Cancelled", task_module.FINISHED_STATUSES)
+
+
+class TestFinishingMark(unittest.TestCase):
+    def setUp(self):
+        marked.clear()
+
+    def task(self, status):
+        task = task_module.Task(status)
+        task.doctype, task.name = "Task", "TASK-1"
+        return task
+
+    def test_a_finishing_task_is_marked_before_erpnext_closes_its_assignments(self):
+        for status in ("Completed", "Canceled", "Cancelled", "Invoiced"):
+            with self.subTest(status=status):
+                marked.clear()
+                task = self.task(status)
+                task.validate()
+                self.assertEqual(task.validated_after, [("Task", "TASK-1")])
+
+    def test_open_work_is_not_marked(self):
+        task = self.task("Working")
+        task.validate()
+        self.assertEqual(task.validated_after, [])
 
 
 if __name__ == "__main__":

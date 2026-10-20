@@ -434,12 +434,14 @@ function make_my_work(wrapper, page) {
 		return null;
 	}
 
+	// done_message may be a function of the server's reply (complete names the Task it completed).
 	function act(method, args, done_message, keep_open) {
 		return kit().then((sf) =>
 			sf.call(API + method, args, { quiet: true }).then(
-				() => {
+				(reply) => {
 					if (!keep_open) state.open = null;
-					if (done_message) sf.toast(done_message, { tone: "success" });
+					const message = typeof done_message === "function" ? done_message(reply) : done_message;
+					if (message) sf.toast(message, { tone: "success" });
 					refresh_count();
 					return load();
 				},
@@ -487,10 +489,17 @@ function make_my_work(wrapper, page) {
 						: __("Note (optional)")
 				)}</label>` +
 				`<textarea id="myw-note" name="note" rows="2" class="myw-input"></textarea>` +
-				`<div class="myw-hint">${sf.esc(__("It goes on the record's timeline."))}</div>`,
+				`<div class="myw-hint">${sf.esc(__("It goes on the record's timeline."))}</div>` +
+				(item.completes_task
+					? `<div class="myw-hint">${sf.esc(__("This also marks the Task Completed, today, by you."))}</div>`
+					: ""),
 			submit: () => __("Mark done"),
 			send: (item, $form) =>
-				act("complete", { todo: item.name, note: $form.find("[name=note]").val() }, __("Done: {0}", [item.title])),
+				act("complete", { todo: item.name, note: $form.find("[name=note]").val() }, (reply) =>
+					reply && reply.completed
+						? __("Done: {0}. The Task is Completed.", [item.title])
+						: __("Done: {0}", [item.title])
+				),
 		},
 		reply: {
 			html: (sf, item) =>

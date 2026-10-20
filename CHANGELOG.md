@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.699.0] - 2026-10-20
+
+### Added
+- **Done on a Task completes the Task** (WI-081 follow-on; Nik, 2026-10-20: "when marking a Task as
+  Done it should also change the task's status to Completed, marked as completed on that day, and by
+  the person marking it done"). Pressing Done on My Work or on the record's banner closes your
+  assignment and sets the Task to Completed. `completed_on` is today and `completed_by` is you.
+  ERPNext fills in `completed_on` itself when it is missing, but it never sets `completed_by`. Its form
+  asks for it; its list bulk action and Kanban leave it blank. Saving the Task runs ERPNext's own
+  completion, so the other assignees' assignments close and a recurring Task makes its next one, as
+  they do when a Task is completed from its form. Both the page and the banner show "This also marks
+  the Task Completed, today, by you." before you press Done, and the message after names the Task. A
+  Task form left open with unsaved edits is told to reload, since a save would now fail on the stale
+  copy (`api.my_work.complete`, `_task_to_complete`, `_complete_task`).
+  - **A Task ERPNext will not complete refuses the Done** (Nik's call, from three options). ERPNext's
+    `validate_status` will not complete a Task while one it depends on is anything but Completed or
+    Cancelled. On production that was 59 of the 179 open Task assignments. My Work checks this first,
+    so nothing changes and the message names the Task in the way: "Not marked done: TASK-1 depends on
+    TASK-0 (Order the pump), which is Working." Only ERPNext's spelling "Cancelled" lets a dependency
+    through. This site's "Canceled" still blocks, because that is what ERPNext's own check reads. Any
+    other refusal from the Task's validation fails the whole Done, with the assignment still open.
+  - **Saved with `ignore_permissions`.** Being assigned the Task is what entitles someone to finish it,
+    and an assignee may hold only the read share that Assign To gives. `_load` has already checked that
+    the session user is the assignee.
+  - **Not for a repeating assignment** (`assignments.done_completes_task`). The repeat says the work
+    comes back, and completing the Task would close the next occurrence as soon as it was made. A Task
+    that is already Completed, Canceled, Invoiced or a Template is left as it is.
+
+### Fixed
+- **Completing a Task that had a repeating assignment on it left a trail of extra ToDos.** This was
+  introduced in v1.698.0. ERPNext closes every open assignment on a Task the moment it becomes
+  Completed: once from `validate_status`, before the Task's row says Completed, and again from
+  `on_update`. Both go through the ToDo controller with no flag that `recurrence.py` could read. So the
+  weekly made a next one, the second close closed that and made another, and auto-close finally closed
+  the third. The Task override now marks a Task saved into a finished status as finishing for the
+  request (`recurrence.mark_finishing`) before ERPNext's `validate` runs. A repeat also stops when its
+  record is already stored as finished. Nothing on production had a repeat yet, so there was nothing
+  to clean up.
+
 ## [1.698.1] - 2026-10-20
 
 ### Notes

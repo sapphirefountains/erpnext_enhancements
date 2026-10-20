@@ -259,6 +259,18 @@ Not exercised on production, because they need either a morning or someone worki
 - **The click-through criteria:** Phase 1 criteria 5–7, 9 and 10; Phase 2 criteria 1, 2 and 5; Phase 3
   criteria 1–4. These are checked by first use.
 
+## Follow-on: Done completes the Task (v1.699.0)
+
+Asked by Nik after the close-out. Done on a Task assignment now completes the Task, with today's date
+and whoever pressed Done. Two decisions go with it:
+- **A Task ERPNext will not complete refuses the Done.** On 2026-10-20 that was 59 of the 179 open Task
+  assignments: their Task depended on one not yet Completed or Cancelled. Nik chose this over closing
+  the assignment and leaving the Task open, and over bypassing ERPNext's check.
+- **A repeating assignment does not complete its Task.**
+
+The same release fixes a v1.698.0 bug: completing a Task with a repeating assignment on it chained
+extra ToDos, because ERPNext closes a Task's assignments before its row says Completed.
+
 ## Rollback
 
 - **Triage:** Undo per batch (`/desk/my-work/tidy`), or

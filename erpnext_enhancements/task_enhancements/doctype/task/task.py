@@ -37,6 +37,19 @@ class Task(BaseTask):
     customised, everything else is inherited from ``BaseTask``.
     """
 
+    def validate(self):
+        """Mark a finishing Task before ERPNext's validate closes its assignments.
+
+        ERPNext's ``validate_status`` closes every open assignment on a Task the moment it becomes
+        Completed, before the Task's row says so. ``task_enhancements/recurrence.py`` reads the
+        mark so a repeating assignment closed that way makes no next one (v1.699.0).
+        """
+        if self.status in FINISHED_STATUSES:
+            from erpnext_enhancements.task_enhancements import recurrence
+
+            recurrence.mark_finishing(self.doctype, self.name)
+        super().validate()
+
     def before_save(self):
         """Promote the parent task to a group before saving.
 
