@@ -397,6 +397,238 @@
 		if (frappe.realtime && frappe.realtime.on) frappe.realtime.on("notification", () => refresh_count(true));
 	});
 
+	// ------------------------------------------------------------------ Assign To (WI-081 Phase 2)
+	//
+	// Frappe's Assign To dialog (form/sidebar/assign_to.js, AssignToDialog) is the one every
+	// assignment starts from: the form sidebar, and the list view's bulk "Assign To". It is
+	// subclassed here, not replaced, so both get:
+	//   - "What do you need?" first, as one plain line, instead of a "Comment" editor at the bottom
+	//     that Frappe pre-fills with the record's own title (set_description_from_doc) -- which is
+	//     why so many production ToDos "asked" for nothing but the project name. It now starts empty;
+	//     left empty, assign_to.add writes "Assignment for X", which My Work reads as no ask.
+	//   - quick dates under "Complete By": Today, Tomorrow, Friday, Next Monday, In a week.
+	//   - each picked person's load (open, overdue, due that day) and, for staff, whether they are
+	//     off that day (api.my_work.get_workload). Counts only, never what someone is working on.
+	//   - Priority defaulting to the record's priority, else Medium. Frappe's own default is the
+	//     result of an `includes(...)` -- true or false -- which no option matches.
+	// AssignToDialog is in form.bundle.js, which Frappe loads before this app's bundle; the guard is
+	// for a Desk where it is somehow missing, and for a second evaluation of this file.
+
+	const WORKLOAD_DEBOUNCE = 250;
+
+	function friday_of(today) {
+		const dow = frappe.datetime.str_to_obj(today).getDay();
+		return frappe.datetime.add_days(today, (5 - dow + 7) % 7 || 7);
+	}
+
+	function quick_dates(today) {
+		return [
+			[__("Today"), today],
+			[__("Tomorrow"), frappe.datetime.add_days(today, 1)],
+			[__("Friday"), friday_of(today)],
+			[__("Next Monday"), next_monday(today)],
+			[__("In a week"), frappe.datetime.add_days(today, 7)],
+		];
+	}
+
+	function workload_html(rows) {
+		if (!rows || !rows.length) return "";
+		return (
+			`<div class="ee-mw-load">` +
+			rows
+				.map((r) => {
+					// Every piece is escaped here, once; only the overdue count is wrapped in <b>.
+					const bits = [esc(__("{0} open", [r.open]))];
+					if (r.overdue) bits.push(`<b>${esc(__("{0} overdue", [r.overdue]))}</b>`);
+					if (r.due_that_day) bits.push(esc(__("{0} due that day", [r.due_that_day])));
+					const away = (r.away || []).length
+						? `<div class="ee-mw-load-away">${esc(__("Away"))}: ${esc(r.away.join("; "))}</div>`
+						: "";
+					return `<div class="ee-mw-load-row"><span class="ee-mw-load-name">${esc(r.name)}</span> · ${bits.join(
+						" · "
+					)}${away}</div>`;
+				})
+				.join("") +
+			`</div>`
+		);
+	}
+
+	function install_assign_dialog() {
+		const form = frappe.ui && frappe.ui.form;
+		const Base = form && form.AssignToDialog;
+		if (!Base || Base.__ee_my_work) return;
+
+		class MyWorkAssignToDialog extends Base {
+			get_fields() {
+				const fields = super.get_fields();
+				const take = (name) => {
+					const i = fields.findIndex((f) => f.fieldname === name);
+					return i >= 0 ? fields.splice(i, 1)[0] : null;
+				};
+				const description = take("description");
+				const date = take("date");
+				const priority = take("priority");
+				// What is left: Assign to me, Assign To, User Group, and Frappe's section/column breaks.
+				const head = fields.filter((f) => !["Section Break", "Column Break"].includes(f.fieldtype));
+				const assign = head.find((f) => f.fieldname === "assign_to");
+				if (assign) {
+					const before = assign.onchange;
+					assign.onchange = () => {
+						if (before) before();
+						this.ee_refresh_workload();
+					};
+				}
+				const out = [];
+				head.forEach((f) => {
+					out.push(f);
+					if (f.fieldname === "assign_to") out.push({ fieldtype: "HTML", fieldname: "ee_workload" });
+				});
+				if (description) {
+					out.push({ fieldtype: "Section Break" });
+					out.push(
+						Object.assign(description, {
+							label: __("What do you need?"),
+							fieldtype: "Small Text",
+							description: __("The one line they see first: in the email, on My Work and on the record."),
+						})
+					);
+				}
+				out.push({ fieldtype: "Section Break" });
+				if (date) {
+					const before = date.onchange;
+					out.push(
+						Object.assign(date, {
+							onchange: () => {
+								if (before) before();
+								this.ee_refresh_workload();
+							},
+						})
+					);
+					out.push({ fieldtype: "HTML", fieldname: "ee_quick_dates" });
+				}
+				out.push({ fieldtype: "Column Break" });
+				if (priority) {
+					const own = this.frm && this.frm.doc && this.frm.doc.priority;
+					priority.default = ["Low", "Medium", "High"].includes(own) ? own : "Medium";
+					out.push(priority);
+				}
+				return out;
+			}
+
+			make() {
+				super.make();
+				try {
+					this.ee_draw_quick_dates();
+				} catch (e) {
+					/* the dialog still works without the shortcuts */
+				}
+			}
+
+			// Deliberately empty: see the comment above.
+			set_description_from_doc() {}
+
+			ee_draw_quick_dates() {
+				const field = this.dialog.fields_dict.ee_quick_dates;
+				if (!field) return;
+				const today = frappe.datetime.get_today();
+				const $wrap = $(field.wrapper).empty().addClass("ee-mw-quick-dates");
+				quick_dates(today).forEach(([label, day]) => {
+					$(`<button type="button" class="btn btn-xs btn-default"></button>`)
+						.text(label)
+						.attr("title", frappe.datetime.str_to_user(day))
+						.on("click", () => this.dialog.set_value("date", day))
+						.appendTo($wrap);
+				});
+			}
+
+			ee_refresh_workload() {
+				clearTimeout(this.__ee_load_timer);
+				this.__ee_load_timer = setTimeout(() => {
+					const field = this.dialog && this.dialog.fields_dict.ee_workload;
+					if (!field) return;
+					const users = this.dialog.get_value("assign_to") || [];
+					if (!users.length) {
+						$(field.wrapper).empty();
+						return;
+					}
+					const ticket = (this.__ee_load_ticket = (this.__ee_load_ticket || 0) + 1);
+					quiet_get(API + "get_workload", {
+						users: JSON.stringify(users),
+						date: this.dialog.get_value("date") || "",
+					})
+						.then((rows) => {
+							if (ticket === this.__ee_load_ticket) $(field.wrapper).html(workload_html(rows));
+						})
+						.catch(() => $(field.wrapper).empty());
+				}, WORKLOAD_DEBOUNCE);
+			}
+		}
+		MyWorkAssignToDialog.__ee_my_work = true;
+		form.AssignToDialog = MyWorkAssignToDialog;
+	}
+
+	// ------------------------------------------------------------------ record sidebar (WI-081 Phase 2)
+	//
+	// The form sidebar's "Assigned To" shows avatars and nothing else. Under them, each open
+	// assignment's person, what was asked and when it is due (api.my_work.get_record_overview,
+	// one GET, made only when the record has assignments at all). Frappe's AssignTo.render empties
+	// its wrapper each time, so the list is drawn again after every render.
+
+	function sidebar_html(items) {
+		if (!items || !items.length) return "";
+		return (
+			`<ul class="ee-mw-sidebar-list">` +
+			items
+				.map((item) => {
+					let when = "";
+					if (item.bucket === "overdue") when = __("overdue since {0}", [frappe.datetime.str_to_user(item.due)]);
+					else if (item.bucket === "today") when = __("due today");
+					else if (item.due) when = __("due {0}", [frappe.datetime.str_to_user(item.due)]);
+					const ask = item.ask ? `<div class="ee-mw-sidebar-ask">${esc(item.ask)}</div>` : "";
+					const meta = [when, item.assigned_by_name ? __("from {0}", [item.assigned_by_name]) : ""]
+						.filter(Boolean)
+						.join(" · ");
+					return (
+						`<li class="ee-mw-sidebar-item${item.bucket === "overdue" ? " ee-mw-sidebar-item--late" : ""}">` +
+						`<div class="ee-mw-sidebar-who">${esc(item.allocated_to_name)}</div>${ask}` +
+						(meta ? `<div class="ee-mw-sidebar-meta">${esc(meta)}</div>` : "") +
+						`</li>`
+					);
+				})
+				.join("") +
+			`</ul>`
+		);
+	}
+
+	function install_sidebar_detail() {
+		const AssignTo = frappe.ui && frappe.ui.form && frappe.ui.form.AssignTo;
+		if (!AssignTo || AssignTo.prototype.__ee_my_work) return;
+		const render = AssignTo.prototype.render;
+		AssignTo.prototype.render = function (assignments) {
+			const out = render.apply(this, arguments);
+			try {
+				const frm = this.frm;
+				const $wrap = this.parent && this.parent.find(".assignments");
+				if (!frm || !$wrap || !$wrap.length || frm.is_new() || !(assignments || []).length) return out;
+				const ticket = (this.__ee_mw_ticket = (this.__ee_mw_ticket || 0) + 1);
+				quiet_get(API + "get_record_overview", { doctype: frm.doctype, name: frm.docname })
+					.then((items) => {
+						if (ticket !== this.__ee_mw_ticket) return;
+						$wrap.find(".ee-mw-sidebar-list").remove();
+						$wrap.append(sidebar_html(items));
+					})
+					.catch(() => null);
+			} catch (e) {
+				/* the avatars are already drawn */
+			}
+			return out;
+		};
+		AssignTo.prototype.__ee_my_work = true;
+	}
+
+	install_assign_dialog();
+	install_sidebar_detail();
+
 	window.erpnext_enhancements = window.erpnext_enhancements || {};
 	window.erpnext_enhancements.my_work = { refresh_count: () => refresh_count(true) };
 })();

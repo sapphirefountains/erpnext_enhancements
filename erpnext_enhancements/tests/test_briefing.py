@@ -36,7 +36,7 @@ SAMPLE_DATA = {
 class TestComposers(FrappeTestCase):
     def test_fallback_contains_all_sections(self):
         text = compose_fallback(SAMPLE_DATA, TEST_USER)
-        for fragment in ("Today's Schedule", "Tasks Today", "Overdue", "Pipeline Pulse", "ToDos Due"):
+        for fragment in ("Today's Schedule", "Tasks Today", "Overdue", "Pipeline Pulse", "My Work"):
             self.assertIn(fragment, text)
         self.assertIn("Fix the leak", text)
         self.assertIn("Big fountain", text)

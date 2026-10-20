@@ -319,3 +319,61 @@ def triage_rule(row, now):
 	):
 		return "stale"
 	return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: alerts (task_enhancements/assignment_alerts.py)
+
+#: Days past a real due date before whoever assigned it is told, once.
+ESCALATE_AFTER_DAYS = 2
+
+#: The longest text message the High-priority alert sends: two SMS segments.
+SMS_LIMIT = 300
+
+
+def escalation_due(row, today, after_days=ESCALATE_AFTER_DAYS):
+	"""True when an open assignment is ``after_days`` past a real due date, someone else assigned
+	it, and they have not been told yet (``custom_escalated_on`` empty).
+
+	Only a *real* due date counts (:func:`due_date`): the creation-day stamp is not a promise
+	anyone made, so escalating on it would tell every assigner about every assignment two days
+	after making it.
+	"""
+	if row.get("custom_escalated_on"):
+		return False
+	assigner, assignee = row.get("assigned_by"), row.get("allocated_to")
+	if not assigner or not assignee or assigner == assignee:
+		return False
+	due = due_date(row.get("date"), row.get("creation"))
+	return due is not None and (today - due).days >= after_days
+
+
+def due_today(row, today):
+	"""True when an open assignment's real due date is ``today``: the morning nudge."""
+	return due_date(row.get("date"), row.get("creation")) == today
+
+
+def digest_worth_sending(sections):
+	"""Whether a morning summary has anything to say. ``sections`` maps a section to its rows.
+
+	"No due date" alone is not news: it is the standing pile, which the page and the sidebar
+	count already show. A summary goes when something is overdue, due today, new since yesterday,
+	or late with someone you assigned it to.
+	"""
+	return any(sections.get(key) for key in ("overdue", "today", "new", "waiting"))
+
+
+def sms_text(assigner_name, title, ask, url, limit=SMS_LIMIT):
+	"""The High-priority assignment text: who, what, and the link, cut to fit two segments.
+
+	"High priority from James Harris: Smith Residence rebuild - Send revised quote. <url>". The
+	link is never cut; the ask gives way first.
+	"""
+	head = f"High priority from {assigner_name}: " if assigner_name else "High priority: "
+	what = (title or "").strip()
+	ask = (ask or "").strip()
+	if ask and ask != what:
+		what = f"{what} - {ask}" if what else ask
+	tail = f" {url}" if url else ""
+	room = max(limit - len(head) - len(tail), 20)
+	return f"{head}{truncate(what, room)}{tail}"

@@ -341,6 +341,86 @@ def _is_system_user(user):
 	return frappe.db.get_value("User", user, "user_type") == "System User"
 
 
+def _is_staff(user):
+	"""An active Employee: the gate ``hr_enhancements.availability.unavailable_on`` uses, because
+	every customer contact on this site holds a login and who is off is none of their business."""
+	return bool(frappe.db.exists("Employee", {"user_id": user, "status": "Active"}))
+
+
+#: The most people the Assign To dialog asks about at once.
+MAX_WORKLOAD_USERS = 20
+
+
+@frappe.whitelist(methods=["GET"])
+def get_workload(users: str | None = None, date: str | None = None):
+	"""For the Assign To dialog (WI-081 Phase 2): how loaded each picked person already is.
+
+	``[{"user", "name", "open", "overdue", "due_that_day", "away": [sentence, ...]}]`` in the order
+	asked. ``open`` counts what is overdue, due today or undated (the sidebar number);
+	``due_that_day`` is what else falls on ``date`` (the day being picked, else today). ``away`` is
+	approved time off and work restrictions on that day (``hr_enhancements.availability``), sent
+	only to staff, the same gate as ``unavailable_on``. Counts only, no titles: the dialog says how
+	busy someone is, never what they are busy with.
+	"""
+	me = frappe.session.user
+	if not _is_system_user(me):
+		frappe.throw(_("Only desk users can see this."), frappe.PermissionError)
+	picked = frappe.parse_json(users) if isinstance(users, str) and users.strip().startswith("[") else users
+	if isinstance(picked, str):
+		picked = [picked]
+	picked = [u for u in dict.fromkeys(picked or []) if isinstance(u, str) and u][:MAX_WORKLOAD_USERS]
+	if not picked:
+		return []
+	today = getdate(nowdate())
+	day = getdate(date) if date else today
+	load = {u: {"user": u, "open": 0, "overdue": 0, "due_that_day": 0, "away": []} for u in picked}
+	for row in frappe.get_all(
+		"ToDo",
+		filters={"status": "Open", "allocated_to": ["in", picked]},
+		fields=["allocated_to", "date", "creation"],
+		limit_page_length=0,
+	):
+		entry = load.get(row.allocated_to)
+		if not entry:
+			continue
+		due = assignments.due_date(row.date, row.creation)
+		which = assignments.bucket(due, today)
+		if which in assignments.ACTIONABLE:
+			entry["open"] += 1
+		if which == "overdue":
+			entry["overdue"] += 1
+		if due == day:
+			entry["due_that_day"] += 1
+	if _is_staff(me):
+		from erpnext_enhancements.hr_enhancements.availability import reasons_unavailable
+
+		for user, reasons in (reasons_unavailable(picked, day) or {}).items():
+			if user in load:
+				load[user]["away"] = [str(r) for r in reasons]
+	names = _full_names(set(picked))
+	for user, entry in load.items():
+		entry["name"] = names.get(user) or user
+	return [load[u] for u in picked]
+
+
+@frappe.whitelist(methods=["GET"])
+def get_record_overview(doctype: str, name: str):
+	"""Every open assignment on one record, for the form sidebar (WI-081 Phase 2): who, what was
+	asked, when it is due. The sidebar's own avatars say only who."""
+	if not (doctype and name and frappe.db.exists("DocType", doctype)):
+		return []
+	if not frappe.has_permission(doctype, "read", doc=name):
+		return []
+	rows = frappe.get_all(
+		"ToDo",
+		filters={"status": "Open", "reference_type": doctype, "reference_name": str(name)},
+		fields=_TODO_FIELDS,
+		order_by="creation asc",
+		limit_page_length=50,
+	)
+	return _present(rows, frappe.session.user, getdate(nowdate()), with_facts=False)
+
+
 # ---------------------------------------------------------------------------
 # Acting
 

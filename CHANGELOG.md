@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.697.0] - 2026-10-20
+
+### Added
+- **My Work, Phase 2: assigning and alerts** (WI-081; Nik, 2026-10-20: "create the PR, merge, and then
+  begin phase 2"). What production showed decided two things before any code: the Morning Briefing
+  reaches **two** people while 19 hold open assignments, and most assignees were getting **two emails
+  per assignment** (231 from the "New ToDo Created" Notification and 78 from Frappe's own Assignment
+  notification in the 30 days to 2026-10-20).
+  - **The Assign To dialog asks "What do you need?" first.** One plain line, empty. Frappe pre-filled
+    its "Comment" editor with the record's own title (`AssignToDialog.set_description_from_doc`),
+    which is why so many open ToDos "asked" for nothing but the project name. Left empty, the
+    assignment reads as having no ask, as before.
+  - **Quick dates** under Complete By: Today, Tomorrow, Friday, Next Monday, In a week.
+  - **Each picked person's load**, under Assign To: open, overdue and due-that-day counts, and, for
+    staff, approved time off or a work restriction on the chosen day
+    (`hr_enhancements.availability.reasons_unavailable`, the same staff gate as `unavailable_on`).
+    Counts only; never what someone is working on. New endpoint `api.my_work.get_workload`.
+  - **Priority defaults to the record's priority, else Medium.** Frappe's own default is the result
+    of `["Low", "Medium", "High"].includes(...)`, so it was `true` or `false` and matched no option.
+  - The dialog is subclassed, not replaced, so the list view's bulk Assign To gets all of it.
+  - **The form sidebar says who has what**: under the Assigned To avatars, each person, what was
+    asked, when it is due, and who assigned it (`api.my_work.get_record_overview`, asked only when the
+    record has assignments).
+  - **A morning summary for everyone** (`task_enhancements/assignment_alerts.py`, weekdays 06:40):
+    overdue, due today, new since the last weekday morning (Monday covers the weekend), and what is
+    late with people you assigned. Sent only when one of those has something in it. The Morning
+    Briefing carries the same list for whoever is emailed the briefing, and they are not sent the
+    separate email.
+  - **A bell on the due date**, and **the assigner told once** when an assignment is two days past a
+    real due date (`ToDo.custom_escalated_on`, a new hidden field, keeps it to once).
+  - **A text for High priority**: a High assignment that someone else made texts the assignee's
+    Employee cell number through the Triton gateway, after the commit.
+  - Kill switches, in site config and live without a deploy: `my_work_digest_disabled`,
+    `my_work_escalation_disabled`, `my_work_nudge_disabled`, `my_work_sms_disabled`.
+  - **Careful about:**
+    - **Only a real due date nudges or escalates.** A ToDo dated its own creation day has no due
+      date (v1.696.0), or every assignment made without a date would escalate two days later.
+    - **Escalation is marked on the row, not in redis.** Every deploy FLUSHDBs redis; the reminders
+      in this app that survived that (training, e-sign, the planner digest) keep their marker on a row.
+    - **Record titles are user-typed**, so they are escaped before they become Markdown links in the
+      summary; `email_style.markdown` sanitizes the result again.
+    - **The text never holds up the person assigning**: it is queued with `enqueue_after_commit`, and
+      a rolled-back assignment texts nobody. A gateway failure is logged, not raised.
+    - **"In the field" is not in the picker.** Booked hours live in the planner's availability engine
+      (`crew_availability.availability`), which is too heavy to run per keystroke in a dialog.
+
+### Changed
+- **Individual assignment emails are for High priority only.** The "New ToDo Created" Notification now
+  has the condition `doc.priority == "High"`, and `notification_skip_email_types` holds
+  `"Assignment"`, so Frappe never emails an Assignment bell entry. The bell entries are unchanged, and
+  everything else reaches people in the bell and in the next morning's summary. My Work's own
+  Assignment bells (done, nudged, handed over, escalated) are bell-only for the same reason.
+- **The Morning Briefing's ToDo list is My Work's summary.** It read `date <= today`, and a ToDo's date
+  is usually the day it was made, so it listed the five oldest assignments rather than anything due.
+  It now lists up to eight from overdue, due today, new, and late with others, under "My Work".
+
 ## [1.696.0] - 2026-10-20
 
 ### Added

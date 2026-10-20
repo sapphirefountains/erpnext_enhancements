@@ -214,7 +214,8 @@
   "message_type": "HTML",
   "condition_type": "Python",
   "enabled": 1,
-  "message": "{% set a = ee_assignment(doc) %}\n{% set body %}\n{% if a.body %}{{ ee_prose(a.body) }}{% endif %}\n{{ ee_kv([\n\t(\"Record\", a.record),\n\t(\"Assigned to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else \"Nobody yet\"),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", a.due or \"No due date\")\n]) }}\n{{ ee_button(a.url, (\"Open \" ~ doc.get(\"reference_type\")) if a.record else \"Open My Work\") }}\n{% endset %}\n{{ ee_email(body, title=a.title, eyebrow=\"Assignment\") }}"
+  "message": "{% set a = ee_assignment(doc) %}\n{% set body %}\n{% if a.body %}{{ ee_prose(a.body) }}{% endif %}\n{{ ee_kv([\n\t(\"Record\", a.record),\n\t(\"Assigned to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else \"Nobody yet\"),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", a.due or \"No due date\")\n]) }}\n{{ ee_button(a.url, (\"Open \" ~ doc.get(\"reference_type\")) if a.record else \"Open My Work\") }}\n{% endset %}\n{{ ee_email(body, title=a.title, eyebrow=\"Assignment\") }}",
+  "condition": "doc.priority == \"High\""
  },
  {
   "doctype": "Notification",

@@ -1213,6 +1213,10 @@ doc_events = {
 	},
 	"ToDo": {
 		"before_validate": "erpnext_enhancements.knowledge_base.references.guard_todo",
+		# My Work (WI-081 Phase 2): a High-priority assignment someone else made texts the assignee
+		# (Employee cell_number, through the Triton gateway), queued after the commit. Kill switch:
+		# site config my_work_sms_disabled. task_enhancements/assignment_alerts.py.
+		"after_insert": "erpnext_enhancements.task_enhancements.assignment_alerts.on_todo_insert",
 	},
 	# knowledge_base (WI-080 PR 4 review, v1.557.0): an Auto Email Report on a Knowledge Base report
 	# (or a Custom Report built on one) is refused unless BOTH the person saving it and the user it
@@ -1411,6 +1415,12 @@ scheduler_events = {
 		# in the site's System Settings timezone (must be America/Denver here).
 		# The handler immediately enqueues the batch onto the long queue.
 		"30 6 * * 1-5": ["erpnext_enhancements.api.briefing.scheduled_briefing_run"],
+		# My Work (WI-081 Phase 2), weekdays 06:40, after the briefing: a bell for each assignment due
+		# today, the assigner told once when one is 2 days late, and the morning summary email for
+		# everyone not already emailed the briefing (whose briefing carries it). Kill switches in
+		# site config: my_work_nudge_disabled, my_work_escalation_disabled, my_work_digest_disabled.
+		# See task_enhancements/assignment_alerts.py.
+		"40 6 * * 1-5": ["erpnext_enhancements.task_enhancements.assignment_alerts.daily_run"],
 		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
 		# KPI Snapshot per department. Handler enqueues the batch onto long.
 		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
@@ -3138,7 +3148,16 @@ has_permission = {
 #
 # The names are keys, not labels: they must match the installed `Notification Type` records,
 # and renaming one silently re-enables email for it.
-notification_skip_email_types = []
+#
+# WI-081 Phase 2 (v1.697.0): "Assignment". Nik chose one morning summary instead of an email per
+# assignment, with individual emails for High priority only. Frappe emails every Assignment bell
+# entry ("Assignment Update on ...", 78 in the 30 days to 2026-10-20) on top of this app's own
+# "New ToDo Created" Notification (231), so assignees mostly got two. The bell entries stay; the
+# High-priority email is the Notification, which this hook does not touch (it is not a Notification
+# Log email); the summary is task_enhancements/assignment_alerts.py. This also silences My Work's
+# own Assignment bells (done, nudged, handed over, escalated) by email: they reach people in the
+# bell and in the next morning's summary.
+notification_skip_email_types = ["Assignment"]
 
 # `tabNotification Log` has grown untrimmed since this site was built, and nothing anywhere
 # was ever going to stop it.

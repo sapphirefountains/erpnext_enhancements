@@ -1,6 +1,6 @@
 # WI-081: My Work — reimagine ToDos and assigning, on top of Frappe's own assignments
 
-**Phase:** 2   **Type:** APP_CODE   **Size:** L (three phases; Phase 1 M, shipped v1.696.0)
+**Phase:** 2   **Type:** APP_CODE   **Size:** L (three phases; Phase 1 M, v1.696.0; Phase 2 M, v1.697.0)
 **Blocked by:** nothing
 **Blocks:** nothing
 
@@ -86,17 +86,44 @@ Two departures from the options as offered, both made because the data said so a
 - **The customer reminder**: a closed follow-up restarts the window; no reminder to Administrator, Guest
   or a disabled user.
 
-### Phase 2 — assigning and alerts (not started)
+### Phase 2 — assigning and alerts (v1.697.0)
 
-- Assign To dialog: quick dates (Today / Tomorrow / Friday / Next week) and a "What do you need?" line.
-- Load-aware picker: each person's open and overdue counts, and off/in-the-field from crew availability
-  and time-off.
-- Daily digest folded into the morning briefing (`api/briefing.py`); single emails only for High.
-- Due-date nudge to the assignee; escalation to the assigner after N days overdue.
-- SMS for High/Urgent through the existing Twilio path.
-- Better record sidebar: who, what was asked, due, status — not bare avatars.
-- Frappe's own Assignment notification email and the Notification fixture both email the assignee on a
-  new assignment; decide which one stays.
+Built 2026-10-20, right after Phase 1 merged (Nik: "create the PR, merge, and then begin phase 2").
+Two facts from production shaped it:
+
+- **The Morning Briefing reaches two people** (Briefing Recipients: Nik with email, James without)
+  while 19 people hold open assignments. So "fold the digest into the briefing" became: the briefing
+  carries it (`api/briefing._user_todos`, on My Work's rules), and everyone *not* emailed the
+  briefing gets the same summary as a short "My Work" email at 06:40. Nobody gets both.
+- **Two emails per assignment.** In the 30 days to 2026-10-20 the "New ToDo Created" Notification
+  sent 231 emails and Frappe's own Assignment notification 78. The Notification now fires for High
+  priority only, and `notification_skip_email_types = ["Assignment"]` stops Frappe's; the bell
+  entries are unchanged.
+
+What shipped:
+
+
+- **Assign To dialog** (subclassed, so the sidebar and the list view's bulk Assign To both get it):
+  "What do you need?" first, as one plain line, no longer pre-filled with the record's title;
+  quick dates (Today, Tomorrow, Friday, Next Monday, In a week); Priority defaulting to the
+  record's (Frappe's default evaluated to `true`).
+- **Load-aware picker:** under Assign To, each picked person's open, overdue and due-that-day
+  counts, and — for staff — approved time off or a work restriction on the chosen day
+  (`hr_enhancements.availability.reasons_unavailable`). Counts only, never titles.
+  "In the field" (booked hours from the planner) is **not** shown: `crew_availability.availability`
+  is the planner's whole engine and too heavy for a dialog; it is a follow-up if wanted.
+- **Morning summary** (`task_enhancements/assignment_alerts.py`, weekdays 06:40): overdue, due
+  today, new since the last weekday morning, and what is late with people you assigned; sent only
+  when one of those is non-empty.
+- **Due-date nudge:** a bell entry on the morning an assignment's real due date arrives.
+- **Escalation:** the assigner is told once, by bell and in their summary, when an assignment is 2
+  days past a real due date (`ToDo.custom_escalated_on` keeps it to once).
+- **Text for High:** a High-priority assignment someone else made texts the assignee's Employee
+  cell number through the Triton gateway (`api/telephony.send_system_sms`), after the commit.
+  ToDo priorities are Low / Medium / High, so "urgent" is High.
+- **Record sidebar:** under the avatars, each open assignment's person, ask, due state and assigner.
+- **Kill switches** (site config, live): `my_work_digest_disabled`, `my_work_escalation_disabled`,
+  `my_work_nudge_disabled`, `my_work_sms_disabled`.
 
 ### Phase 3 — teams and structure (not started)
 
@@ -109,6 +136,21 @@ Two departures from the options as offered, both made because the data said so a
 
 - `bench migrate` has run the v1.696.0 deploy (adds `ToDo.custom_triage_batch`; the triage refuses to
   apply without it and says so).
+
+## Acceptance criteria (Phase 2)
+
+1. **Assign from a record's sidebar**: the dialog asks "What do you need?" first and empty; picking a
+   person shows their open/overdue counts (and "Away: …" if they have approved time off that day);
+   the Friday button fills Complete By with this Friday.
+2. **A Medium assignment** produces a bell entry and no email; **a High one** emails (subject
+   "Record: the ask") and, if the assignee's Employee has a `cell_number`, texts them within a
+   minute: `SELECT COUNT(*) FROM tabEmail Queue WHERE message LIKE '%Assignment Upd%' AND
+   creation > <deploy time>` = 0.
+3. **The morning after**, everyone with something overdue, due today or new who is not emailed the
+   briefing has one "My Work: …" email; Nik's briefing has a "My Work" section instead.
+4. **Escalation**: an assignment due two weekdays ago, assigned by someone else, puts a bell on the
+   assigner and `custom_escalated_on` is set; the next morning there is no second bell.
+5. **The record sidebar** lists each assignee with what was asked and when it is due.
 
 ## Acceptance criteria (Phase 1)
 
@@ -155,6 +197,8 @@ Two departures from the options as offered, both made because the data said so a
 - **Accept/decline and an AI one-line brief.** Not chosen.
 - **Changing Assignment Rules, the crew mirrors or Triton.** They keep writing ToDos as they do;
   Triton's missing assignee is surfaced (Unclaimed), not fixed at its source, which is outside this repo.
+- **Booked hours ("in the field") in the Assign To picker.** Phase 2 shows time off and work
+  restrictions only; the planner's availability engine is the source if it is wanted.
 - **A daily auto-close sweep.** Auto-close is event-driven; the triage covers the past. A status written
   with a raw `frappe.db.set_value` (no `on_change`) is a known gap, and the next triage catches it.
 - **Prospects with no reminder assignee.** The reminder now skips them instead of assigning

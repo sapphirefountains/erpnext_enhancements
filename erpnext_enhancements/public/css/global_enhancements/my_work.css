@@ -119,3 +119,68 @@
 		font-size: var(--sf-text-input);
 	}
 }
+
+/* WI-081 Phase 2: the Assign To dialog's load lines and quick dates, and the record sidebar's
+   list of who has what. */
+
+.ee-mw-load {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	margin: calc(-1 * var(--sf-space-5)) 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+.ee-mw-load-name {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.ee-mw-load-away {
+	color: var(--sf-text);
+}
+
+.ee-mw-quick-dates {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	margin: calc(-1 * var(--sf-space-5)) 0 var(--sf-space-10);
+}
+
+.ee-mw-sidebar-list {
+	list-style: none;
+	margin: var(--sf-space-10) 0 0;
+	padding: 0;
+	font-size: var(--sf-text-sm);
+}
+
+.ee-mw-sidebar-item {
+	padding: var(--sf-space-5) 0 var(--sf-space-5) var(--sf-space-10);
+	border-left: 2px solid var(--sf-rule);
+	margin-bottom: var(--sf-space-5);
+}
+
+.ee-mw-sidebar-item--late {
+	border-left-color: var(--sf-danger);
+}
+
+.ee-mw-sidebar-who {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+}
+
+.ee-mw-sidebar-ask {
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+}
+
+.ee-mw-sidebar-meta {
+	color: var(--sf-text-muted);
+}
+
+@media (max-width: 767px) {
+	.ee-mw-quick-dates .btn {
+		min-height: var(--sf-touch-min);
+	}
+}
