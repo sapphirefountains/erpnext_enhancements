@@ -15,7 +15,10 @@
   "variance",
   "scanned_barcode",
   "scan_time",
-  "reason"
+  "reason_code",
+  "reason",
+  "recount",
+  "counted_by"
  ],
  "fields": [
   {
@@ -88,15 +91,36 @@
    "read_only": 1
   },
   {
+   "fieldname": "reason_code",
+   "fieldtype": "Select",
+   "label": "Variance Reason Code",
+   "options": "\nEarlier count was wrong\nUsed and not recorded\nReceived and not recorded\nIn a different bin\nDamaged or scrapped\nUnit mix-up (box vs each)\nMissing, cause unknown\nFound, cause unknown\nOther"
+  },
+  {
    "fieldname": "reason",
    "fieldtype": "Small Text",
    "label": "Variance Reason"
+  },
+  {
+   "default": "0",
+   "description": "Flagged on the Count Desk to be counted again before the count is posted.",
+   "fieldname": "recount",
+   "fieldtype": "Check",
+   "label": "Recount"
+  },
+  {
+   "description": "Who typed or scanned this count. Blank on lines from before v1.700.0: the session's Counted By counted them.",
+   "fieldname": "counted_by",
+   "fieldtype": "Link",
+   "label": "Counted By",
+   "options": "User",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-06-13 10:00:00.000000",
+ "modified": "2026-10-20 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Count Line",

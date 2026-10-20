@@ -1446,3 +1446,7 @@ erpnext_enhancements.patches.add_boneyard_warehouse
 # the new Desk page bin-manager (a shortcut beside Stock Scan; the Inventory and Counts cards). Timestamp-bumped too;
 # this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.bin_manager_hub_links
+# Count Desk (v1.700.0): force-import the Operations Hub and the Inventory Enhancements workspace, which now link
+# the new Desk page count-desk (a shortcut beside the Bin Manager and beside Stock Scan; the Inventory and Counts
+# cards). Timestamp-bumped too; this is the belt. Logs each failure, never raises, safe twice.
+erpnext_enhancements.patches.count_desk_hub_links

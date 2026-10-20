@@ -1,0 +1,35 @@
+{
+ "_comment": "Read by tests/test_count_desk.py (count_desk_rules) and scripts/test_count_desk.mjs (public/js/count_desk/logic.js): the row key and the sheet summary must come out the same on both sides, because the page computes the summary while the server judges the post.",
+ "keys": [
+  {"item_code": "PDT-0042", "warehouse": "Bin A1-1-1 - SF", "storage_location": null, "key": "Bin A1-1-1 - SF\u001f\u001fPDT-0042"},
+  {"item_code": "806-020", "warehouse": "Shelf B/2 - SF", "storage_location": "LOC-7", "key": "Shelf B/2 - SF\u001fLOC-7\u001f806-020"}
+ ],
+ "summaries": [
+  {
+   "name": "a sheet with a match, a short, an over, an uncounted, a refused and a recount",
+   "rows": [
+    {"item_code": "A", "warehouse": "W1", "counted": true, "variance": 0, "value_variance": 0, "recount": false, "moved": 0, "refusal": null},
+    {"item_code": "B", "warehouse": "W1", "counted": true, "variance": -2, "value_variance": -10.5, "recount": true, "moved": -1, "refusal": null},
+    {"item_code": "C", "warehouse": "W1", "counted": true, "variance": 3, "value_variance": 4.25, "recount": false, "moved": 0, "refusal": null},
+    {"item_code": "D", "warehouse": "W2", "counted": false, "variance": null, "value_variance": null, "recount": false, "moved": 0, "refusal": null},
+    {"item_code": "E", "warehouse": "W2", "counted": false, "variance": null, "value_variance": null, "recount": false, "moved": 0, "refusal": "Serialized items are counted by serial number on the Stock Reconciliation form."}
+   ],
+   "summary": {"expected": 4, "counted": 3, "uncounted": 1, "matched": 1, "variances": 2, "accuracy": 33.3, "net_value": -6.25, "gross_value": 14.75, "recount": 1, "moved": 1}
+  },
+  {
+   "name": "one item over two storage locations counts once",
+   "rows": [
+    {"item_code": "A", "warehouse": "W1", "storage_location": "L1", "counted": true, "variance": -1, "value_variance": -2, "recount": false, "moved": 0, "refusal": null},
+    {"item_code": "A", "warehouse": "W1", "storage_location": "L2", "counted": true, "variance": -1, "value_variance": -2, "recount": true, "moved": 0, "refusal": null}
+   ],
+   "summary": {"expected": 1, "counted": 1, "uncounted": 0, "matched": 0, "variances": 1, "accuracy": 0.0, "net_value": -2.0, "gross_value": 2.0, "recount": 1, "moved": 0}
+  },
+  {
+   "name": "nothing counted",
+   "rows": [
+    {"item_code": "A", "warehouse": "W1", "counted": false, "variance": null, "value_variance": null, "recount": false, "moved": 0, "refusal": null}
+   ],
+   "summary": {"expected": 1, "counted": 0, "uncounted": 1, "matched": 0, "variances": 0, "accuracy": null, "net_value": 0.0, "gross_value": 0.0, "recount": 0, "moved": 0}
+  }
+ ]
+}

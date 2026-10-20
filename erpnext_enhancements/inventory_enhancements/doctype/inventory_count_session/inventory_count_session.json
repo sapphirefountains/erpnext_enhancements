@@ -7,6 +7,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "count_title",
   "counted_by",
   "company",
   "default_warehouse",
@@ -15,6 +16,10 @@
   "start_time",
   "end_time",
   "naming_series",
+  "count_desk_section",
+  "blind_count",
+  "column_break_desk",
+  "scope",
   "lines_section",
   "lines",
   "result_section",
@@ -22,6 +27,13 @@
   "notes"
  ],
  "fields": [
+  {
+   "description": "What this count covers, as the Count Desk names it: Shelf B1-2, Row 3 + 2 more.",
+   "fieldname": "count_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title"
+  },
   {
    "fieldname": "counted_by",
    "fieldtype": "Link",
@@ -76,6 +88,30 @@
    "options": "INV-CNT-.YYYY.-.#####"
   },
   {
+   "collapsible": 1,
+   "fieldname": "count_desk_section",
+   "fieldtype": "Section Break",
+   "label": "Count Desk"
+  },
+  {
+   "default": "0",
+   "description": "The Count Desk hid the system quantity while this was counted, so the counter was not steered by it. The review shows it.",
+   "fieldname": "blind_count",
+   "fieldtype": "Check",
+   "label": "Blind Count"
+  },
+  {
+   "fieldname": "column_break_desk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The locations a Count Desk count covers (a JSON list of Warehouse names). Empty for a count taken on the phone page, which covers whatever was scanned.",
+   "fieldname": "scope",
+   "fieldtype": "Small Text",
+   "label": "Locations",
+   "read_only": 1
+  },
+  {
    "fieldname": "lines_section",
    "fieldtype": "Section Break",
    "label": "Counted Lines"
@@ -107,7 +143,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-13 10:00:00.000000",
+ "modified": "2026-10-20 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Inventory Enhancements",
  "name": "Inventory Count Session",
@@ -154,5 +190,7 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1
+ "track_changes": 1,
+ "title_field": "count_title",
+ "show_title_field_in_link": 0
 }

@@ -1,21 +1,25 @@
 """Controller for the Inventory Count Session doctype.
 
-A persistent, resumable physical-count audit run by one clerk. Each counted row
-lives in the ``lines`` child table (Inventory Count Line) with the system-qty
-snapshot and variance captured at scan time. Finalizing the session (see
-``erpnext_enhancements.api.inventory_scanner.finalize_session``) aggregates the
-lines per (item, warehouse) into a draft Stock Reconciliation for a Stock
-Manager to review and submit; ``stock_reconciliation`` links back to it.
+A persistent, resumable physical-count audit. Each counted row lives in the ``lines`` child table
+(Inventory Count Line) with the system-qty snapshot captured at scan time. The phone page
+(``api.inventory_scanner``) and the Count Desk (``api.count_desk``, v1.700.0) both write here;
+a Count Desk count carries a ``scope`` (the bins it covers), a phone count does not.
+Finalizing turns the variances into a Stock Reconciliation; ``stock_reconciliation`` links
+back to it.
 """
 
-import frappe
 from frappe.model.document import Document
-from frappe.utils import flt
+
+from erpnext_enhancements.inventory_enhancements import count_desk_rules
 
 
 class InventoryCountSession(Document):
 	def validate(self):
-		# Keep each line's variance consistent with its counted/system qty,
-		# whether the line was appended by the scanner API or edited in the desk.
+		# A variance is a fact about (item, warehouse), not one line: each line's system_qty is the
+		# warehouse's on-hand, and an item spread over two Storage Locations is only short once both
+		# are counted. Until v1.700.0 this set every line to its own counted - system_qty on each
+		# save, which undid the per-item variance add_count had just stamped (count_desk_rules.groups).
+		group_map = count_desk_rules.groups([line.as_dict() for line in self.lines])
 		for line in self.lines:
-			line.variance = flt(line.counted_qty) - flt(line.system_qty)
+			group = group_map.get((line.item_code, line.warehouse))
+			line.variance = group["variance"] if group else 0.0

@@ -329,6 +329,7 @@ def add_count(session, item_code, counted_qty, storage_location=None, warehouse=
 		"scanned_barcode": scanned_barcode,
 		"scan_time": now_datetime(),
 		"reason": reason,
+		"counted_by": frappe.session.user,
 	}
 
 	# Upsert: one line per (storage_location, item, warehouse).
@@ -491,8 +492,14 @@ def _build_reconciliation(company, aggregated):
 
 
 def _active_session_name(user=None):
+	"""The caller's open phone count. A Count Desk count (v1.700.0) carries a ``scope`` and is
+	left out: someone may have several of those open, and a scan on the phone must not land in
+	whichever of them the database happens to return first."""
 	user = user or frappe.session.user
-	return frappe.db.get_value("Inventory Count Session", {"counted_by": user, "status": "Open"}, "name")
+	filters = {"counted_by": user, "status": "Open"}
+	if frappe.db.has_column("Inventory Count Session", "scope"):
+		filters["scope"] = ["is", "not set"]
+	return frappe.db.get_value("Inventory Count Session", filters, "name", order_by="modified desc")
 
 
 def _get_open_session(session):

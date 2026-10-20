@@ -258,7 +258,7 @@ def _location_payload(row):
 	}
 
 
-def _items_at(row):
+def _items_at(row, limit=LOCATION_ITEM_LIMIT):
 	"""The items kept at a location (v1.689.0). An item lists here when any of:
 
 	* **it is on hand here** (``tabBin.actual_qty > 0``): stock nobody can see is stock that
@@ -296,6 +296,10 @@ def _items_at(row):
 	joined as small derived tables (one location's worth each) rather than as a correlated
 	``exists`` per Item, and ``distinct`` keeps a duplicate rule from listing an item twice
 	(ERPNext refuses one in ``validate``, but there is no unique index behind it).
+
+	Capped at ``limit`` for a phone (``truncated`` says so). The Count Desk passes ``limit=None``
+	(v1.700.0): a count sheet that silently stopped at 150 items would leave the rest of
+	``Stores - SF`` uncounted with nothing on screen to say so.
 	"""
 	items = frappe.db.sql(
 		"""
@@ -349,7 +353,9 @@ def _items_at(row):
 		for item in items
 	]
 	rows.sort(key=lambda r: (r["on_hand"] <= 0, rules.natural_key(r["item_name"])))
-	return rows[:LOCATION_ITEM_LIMIT], len(rows) > LOCATION_ITEM_LIMIT
+	if limit is None:
+		return rows, False
+	return rows[:limit], len(rows) > limit
 
 
 # ---------------------------------------------------------------------------
