@@ -19,7 +19,8 @@ convention), ``briefing_use_gemini`` cost switch, and the
 """
 
 import frappe
-from frappe.utils import add_days, cint, now_datetime, nowdate
+from frappe import _
+from frappe.utils import add_days, cint, getdate, now_datetime, nowdate
 
 from erpnext_enhancements import email_style
 from erpnext_enhancements.api.task_dashboard import (
@@ -34,7 +35,7 @@ RETENTION_DAYS = 60
 TASK_LIMIT = 15
 EVENT_LIMIT = 10
 PIPELINE_LIMIT = 5
-TODO_LIMIT = 5
+TODO_LIMIT = 8
 
 # Won/dead opportunities don't belong in a "what needs my attention" briefing.
 CLOSED_OPPORTUNITY_STATUSES = ("Lost", "Closed", "Converted")
@@ -194,34 +195,47 @@ def _user_pipeline(user):
 
 
 def _user_todos(user, today):
-	# The same trap as the task queries a hundred lines above, missed in the commit
-	# that fixed those: `ToDo.date` carries a `default: "Today"` but no `reqd` and no
-	# `not_nullable` (frappe v16 `todo.json`), and `prepare_filter_condition` never
-	# consults a default — so a row that reached the table another way would be
-	# coalesced to the year 1 and always read as due.
-	#
-	# Latent, not live: every one of the 1,339 open ToDos on this site carries a date,
-	# because the default fires on the ordinary path. That is a fact about today's
-	# data, not a property of the query.
-	todos = frappe.get_all(
+	"""My Work's morning list for this person (WI-081 Phase 2): overdue, due today, new since the
+	last weekday morning, and what is late with people they assigned -- the same summary the
+	"My Work" email sends everyone who is not emailed this briefing, so nobody gets both.
+
+	Until v1.697.0 this read ``date <= today``, and a ToDo's date is usually the day it was made
+	(``assign_to.add`` stamps ``nowdate()``), so it listed the five oldest assignments rather than
+	anything due. ``task_enhancements/assignments.due_date`` reads that stamp as no due date.
+	``description`` and ``date`` keep their meaning for the prompt and the fallback; ``bucket`` says
+	which list a row came from.
+	"""
+	from erpnext_enhancements.task_enhancements import assignment_alerts, assignments
+
+	day = getdate(today)
+	rows = frappe.get_all(
 		"ToDo",
-		filters=[
-			["allocated_to", "=", user],
-			["status", "=", "Open"],
-			["date", "is", "set"],
-			["date", "<=", today],
+		filters={"status": "Open"},
+		or_filters={"allocated_to": user, "assigned_by": user},
+		fields=[
+			"name",
+			"allocated_to",
+			"assigned_by",
+			"date",
+			"creation",
+			"description",
+			"reference_type",
+			"reference_name",
 		],
-		fields=["description", "date", "priority"],
-		order_by="date asc",
-		limit_page_length=TODO_LIMIT,
+		limit_page_length=0,
 	)
-	return [
-		{
-			"description": frappe.utils.strip_html(t.description or "")[:140],
-			"date": str(t.date) if t.date else "",
-		}
-		for t in todos
-	]
+	sections = assignment_alerts.digest_sections(user, rows, day, assignment_alerts._since(day))
+	picked = [(key, row) for key in ("overdue", "today", "new", "waiting") for row in sections[key]]
+	titles = assignment_alerts._titles([row for _key, row in picked[:TODO_LIMIT]])
+	out = []
+	for key, row in picked[:TODO_LIMIT]:
+		title, ask = assignment_alerts._what(row, titles)
+		text = f"{title}: {ask}" if ask and ask != title else title
+		if key == "waiting":
+			text = _("{0} (waiting on {1})").format(text, frappe.utils.get_fullname(row.allocated_to))
+		due = assignments.due_date(row.date, row.creation)
+		out.append({"description": text[:140], "date": str(due) if due else "", "bucket": key})
+	return out
 
 
 def gather_briefing_data(user):
@@ -280,7 +294,11 @@ def _format_data_blocks(data):
 		lambda o: f"- {o['title']} — {o['party']} [{o['status']}]"
 		+ (f" ${o['amount']:,.0f}" if o["amount"] else ""),
 	)
-	block("OPEN TODOS DUE", data["todos"], lambda t: f"- {t['description']} (due {t['date']})")
+	block(
+		"MY WORK (assignments overdue, due today, new, or late with people this user assigned)",
+		data["todos"],
+		lambda t: f"- [{t.get('bucket') or 'due'}] {t['description']}" + (f" (due {t['date']})" if t["date"] else ""),
+	)
 	return "\n".join(lines)
 
 
@@ -334,7 +352,12 @@ def compose_fallback(data, user):
 		data["pipeline"],
 		lambda o: f"- {o['title']} — {o['party']} [{o['status']}]",
 	)
-	section("✅ ToDos Due", data["todos"], lambda t: f"- {t['description']}")
+	labels = {"overdue": "overdue", "today": "due today", "new": "new", "waiting": "waiting"}
+	section(
+		"✅ My Work",
+		data["todos"],
+		lambda t: f"- {t['description']}" + (f" ({labels[t['bucket']]})" if t.get("bucket") in labels else ""),
+	)
 
 	if len(parts) == 1:
 		parts.append("\nNothing scheduled, due, or overdue on your plate. Enjoy the clear runway!")

@@ -44,10 +44,23 @@ AUTO_CLOSE = "erpnext_enhancements.task_enhancements.auto_close"
 TRIAGE = "erpnext_enhancements.task_enhancements.backlog_triage"
 API = "erpnext_enhancements.api.my_work"
 CUSTOMER = "erpnext_enhancements.script_migrations.customer"
-STUBS = ("frappe", "frappe.utils")
+ALERTS = "erpnext_enhancements.task_enhancements.assignment_alerts"
+NOTIFICATION_LOG = "frappe.desk.doctype.notification_log.notification_log"
+PLANNER_NOTICES = "erpnext_enhancements.project_enhancements.planner_notices"
+TELEPHONY = "erpnext_enhancements.api.telephony"
+STUBS = (
+	"frappe",
+	"frappe.utils",
+	"frappe.desk",
+	"frappe.desk.doctype",
+	"frappe.desk.doctype.notification_log",
+	NOTIFICATION_LOG,
+	PLANNER_NOTICES,
+	TELEPHONY,
+)
 _saved = {}
 
-rules = auto_close = triage = api = customer = None
+rules = auto_close = triage = api = customer = alerts = None
 fake = None
 
 
@@ -113,6 +126,17 @@ class FakeFrappe(types.ModuleType):
 		self.errors = []
 		self.inserted = []
 		self.all_rows = {}
+		self.conf = {}
+		self.enqueued = []
+		self.bells = []
+		self.texts = []
+		self.cells = {}
+
+	def enqueue(self, method, **kwargs):
+		self.enqueued.append((method, kwargs))
+
+	def bold(self, text):
+		return f"<b>{text}</b>"
 
 	# decorators and translation
 	def whitelist(self, *args, **kwargs):
@@ -132,7 +156,11 @@ class FakeFrappe(types.ModuleType):
 				and t.status == "Open"
 			]
 			return names
-		return list(self.all_rows.get(doctype, []))
+		rows = list(self.all_rows.get(doctype, []))
+		wanted = (filters or {}).get("name") if isinstance(filters, dict) else None
+		if isinstance(wanted, list) and wanted[:1] == ["in"]:
+			rows = [r for r in rows if getattr(r, "name", None) in wanted[1]]
+		return rows
 
 	def get_doc(self, doctype, name=None):
 		if isinstance(doctype, dict):
@@ -164,9 +192,24 @@ def _install_frappe():
 	utils.escape_html = lambda v: html.escape(str(v))
 	utils.get_fullname = lambda u: u
 	utils.cint = lambda v: int(v or 0)
+	utils.get_url = lambda path="": "https://erp.test" + path
+	utils.get_url_to_form = lambda dt, dn: f"https://erp.test/desk/{dt.lower().replace(' ', '-')}/{dn}"
+	utils.formatdate = lambda d: str(d)
 	frappe.utils = utils
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.utils"] = utils
+	for name in ("frappe.desk", "frappe.desk.doctype", "frappe.desk.doctype.notification_log"):
+		sys.modules[name] = types.ModuleType(name)
+	log = types.ModuleType(NOTIFICATION_LOG)
+	log.get_title = lambda doctype, name: f"Title of {name}"
+	log.enqueue_create_notification = lambda user, doc: sys.modules["frappe"].bells.append((user, doc))
+	sys.modules[NOTIFICATION_LOG] = log
+	notices = types.ModuleType(PLANNER_NOTICES)
+	notices.cell_number = lambda user: sys.modules["frappe"].cells.get(user)
+	sys.modules[PLANNER_NOTICES] = notices
+	telephony = types.ModuleType(TELEPHONY)
+	telephony.send_system_sms = lambda number, message: sys.modules["frappe"].texts.append((number, message))
+	sys.modules[TELEPHONY] = telephony
 	return frappe
 
 
@@ -179,8 +222,8 @@ def rules_as_date(value):
 
 
 def setUpModule():
-	global rules, auto_close, triage, api, customer, fake
-	for name in (*STUBS, RULES, AUTO_CLOSE, TRIAGE, API, CUSTOMER):
+	global rules, auto_close, triage, api, customer, alerts, fake
+	for name in (*STUBS, RULES, AUTO_CLOSE, TRIAGE, API, CUSTOMER, ALERTS):
 		_saved[name] = sys.modules.get(name)
 		if name not in STUBS:
 			sys.modules.pop(name, None)
@@ -190,6 +233,7 @@ def setUpModule():
 	triage = importlib.import_module(TRIAGE)
 	api = importlib.import_module(API)
 	customer = importlib.import_module(CUSTOMER)
+	alerts = importlib.import_module(ALERTS)
 
 
 def tearDownModule():
@@ -647,6 +691,243 @@ class TestWiring(unittest.TestCase):
 		):
 			self.assertEqual(methods.get(name), "POST", name)
 		self.assertEqual(len(re.findall(r"@frappe\.whitelist\(", source)), len(decorated))
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: alerts
+
+
+class Row(dict):
+	"""frappe._dict: a ToDo row read both as row.field and row.get("field")."""
+
+	__getattr__ = dict.get
+
+
+TODAY = D(2026, 10, 20)  # a Tuesday
+
+
+def todo(name, **kw):
+	base = {
+		"name": name,
+		"allocated_to": "crew@x",
+		"assigned_by": "boss@x",
+		"owner": "boss@x",
+		"date": "2026-10-01",
+		"creation": DT(2026, 10, 1, 9),
+		"description": "Do it",
+		"reference_type": "Task",
+		"reference_name": name,
+		"priority": "Medium",
+		"custom_escalated_on": None,
+	}
+	base.update(kw)
+	return Row(base)
+
+
+class TestAlertRules(unittest.TestCase):
+	def test_escalation_needs_a_real_date_two_days_gone(self):
+		self.assertTrue(rules.escalation_due(todo("A", date="2026-10-18"), TODAY))
+		self.assertFalse(rules.escalation_due(todo("B", date="2026-10-19"), TODAY))
+		# the creation-day stamp is not a promise anyone made
+		self.assertFalse(rules.escalation_due(todo("C", date="2026-10-01"), TODAY))
+
+	def test_escalation_is_said_once_and_only_to_someone_else(self):
+		self.assertFalse(
+			rules.escalation_due(todo("A", date="2026-10-18", custom_escalated_on="2026-10-19"), TODAY)
+		)
+		self.assertFalse(rules.escalation_due(todo("A", date="2026-10-18", assigned_by="crew@x"), TODAY))
+		self.assertFalse(rules.escalation_due(todo("A", date="2026-10-18", assigned_by=None), TODAY))
+
+	def test_due_today(self):
+		self.assertTrue(rules.due_today(todo("A", date="2026-10-20"), TODAY))
+		self.assertFalse(rules.due_today(todo("B", date="2026-10-20", creation=DT(2026, 10, 20, 8)), TODAY))
+
+	def test_the_standing_pile_alone_sends_nothing(self):
+		self.assertFalse(
+			rules.digest_worth_sending({"overdue": [], "today": [], "new": [], "waiting": [], "undated": 40})
+		)
+		self.assertTrue(rules.digest_worth_sending({"new": [1]}))
+
+	def test_the_text_keeps_its_link_and_fits(self):
+		url = "https://erp.test/desk/opportunity/CRM-OPP-2026-00187"
+		text = rules.sms_text("James Harris", "Smith Residence", "word " * 200, url)
+		self.assertLessEqual(len(text), rules.SMS_LIMIT)
+		self.assertTrue(text.endswith(url))
+		self.assertTrue(text.startswith("High priority from James Harris: Smith Residence - "))
+		self.assertEqual(rules.sms_text(None, "T", "T", None), "High priority: T")
+
+
+class TestDigest(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def test_sections(self):
+		since = DT(2026, 10, 19, 9)
+		rows = [
+			todo("late", allocated_to="me", date="2026-10-15"),
+			todo("today", allocated_to="me", date="2026-10-20"),
+			todo("new", allocated_to="me", date="2026-10-19", creation=DT(2026, 10, 19, 15)),
+			todo("pile", allocated_to="me"),
+			todo("theirs", allocated_to="crew@x", assigned_by="me", date="2026-10-10"),
+			todo("theirs_fine", allocated_to="crew@x", assigned_by="me", date="2026-10-30"),
+		]
+		got = alerts.digest_sections("me", rows, TODAY, since)
+		self.assertEqual([r.name for r in got["overdue"]], ["late"])
+		self.assertEqual([r.name for r in got["today"]], ["today"])
+		self.assertEqual([r.name for r in got["new"]], ["new"])
+		self.assertEqual([r.name for r in got["waiting"]], ["theirs"])
+		self.assertEqual(got["undated"], 1)
+
+	def test_monday_covers_the_weekend(self):
+		since = alerts._since(D(2026, 10, 19))
+		self.assertEqual(since, DT(2026, 10, 17, 9, 0))
+
+	def test_record_titles_cannot_inject_markdown(self):
+		row = todo("X", reference_name="](javascript:alert(1))", date="2026-10-15", allocated_to="me")
+		md = alerts.digest_markdown(
+			{"overdue": [row]}, {("Task", row.reference_name): "Evil](javascript:x)"}, TODAY
+		)
+		self.assertIn("Evil\\]\\(javascript:x\\)", md)
+		self.assertIn("5 days late", md)
+
+	def test_briefing_readers_do_not_get_it_twice(self):
+		fake.db.values[("ERPNext Enhancements Settings", None, "briefing_enabled")] = 1
+		fake.all_rows["Briefing Recipient"] = ["me"]
+		fake.all_rows["User"] = [Row(name="me", email="me@x", full_name="Me")]
+		sent = []
+		alerts._send_digest = lambda person, *a: sent.append(person.name)
+		try:
+			alerts.send_digests([todo("late", allocated_to="me", date="2026-10-15")], TODAY)
+		finally:
+			importlib.reload(alerts)
+		self.assertEqual(sent, [])
+
+
+class TestEscalateAndNudge(unittest.TestCase):
+	def setUp(self):
+		_reset()
+		fake.all_rows["User"] = [
+			Row(name="crew@x", email="crew@x", full_name="Crew Person"),
+			Row(name="boss@x", email="boss@x", full_name="Boss Person"),
+		]
+
+	def test_escalation_tells_the_assigner_and_stamps_the_row(self):
+		sent = alerts.escalate([todo("A", date="2026-10-17"), todo("B", date="2026-10-19")], TODAY)
+		self.assertEqual(sent, 1)
+		self.assertEqual(fake.bells[0][0], "boss@x")
+		self.assertIn("3 days late", fake.bells[0][1]["subject"])
+		self.assertEqual(fake.db.set_calls[0][0], ("ToDo", "A", "custom_escalated_on", "2026-10-20"))
+		self.assertEqual(fake.db.set_calls[0][1], {"update_modified": False})
+
+	def test_due_today_bells_the_assignee(self):
+		sent = alerts.nudge_due_today([todo("A", date="2026-10-20"), todo("B", date="2026-10-21")], TODAY)
+		self.assertEqual(sent, 1)
+		self.assertEqual(fake.bells[0][0], "crew@x")
+		self.assertIn("Due today", fake.bells[0][1]["subject"])
+
+	def test_a_kill_switch_skips_its_step(self):
+		fake.conf["my_work_nudge_disabled"] = 1
+		fake.conf["my_work_escalation_disabled"] = 1
+		fake.conf["my_work_digest_disabled"] = 1
+		fake.all_rows["ToDo"] = [todo("A", date="2026-10-20")]
+		alerts.daily_run()
+		self.assertEqual(fake.bells, [])
+
+
+class TestHighPriorityText(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def doc(self, **kw):
+		base = {
+			"name": "T1",
+			"priority": "High",
+			"allocated_to": "crew@x",
+			"assigned_by": "boss@x",
+			"owner": "boss@x",
+		}
+		base.update(kw)
+		return Row(base)
+
+	def test_high_from_someone_else_queues_after_commit(self):
+		alerts.on_todo_insert(self.doc())
+		self.assertEqual(len(fake.enqueued), 1)
+		self.assertTrue(fake.enqueued[0][1]["enqueue_after_commit"])
+
+	def test_nothing_else_is_texted(self):
+		for doc in (
+			self.doc(priority="Medium"),
+			self.doc(assigned_by="crew@x"),
+			self.doc(assigned_by=None, owner="crew@x"),
+			self.doc(allocated_to="Administrator"),
+			self.doc(allocated_to=None),
+		):
+			alerts.on_todo_insert(doc)
+		self.assertEqual(fake.enqueued, [])
+		fake.conf["my_work_sms_disabled"] = 1
+		alerts.on_todo_insert(self.doc())
+		self.assertEqual(fake.enqueued, [])
+
+	def test_the_job_texts_the_cell_number(self):
+		fake.db.exists = lambda *a, **k: True
+		row = Row(todo("T1", status="Open", priority="High", reference_name="TASK-9"))
+		fake.db.get_value = lambda dt, name, field=None, **k: row if dt == "ToDo" else "Boss Person"
+		fake.cells["crew@x"] = "+18015550100"
+		self.assertTrue(alerts.send_high_priority_text("T1"))
+		number, message = fake.texts[0]
+		self.assertEqual(number, "+18015550100")
+		self.assertIn("High priority from Boss Person: Title of TASK-9 - Do it", message)
+		self.assertTrue(message.endswith("https://erp.test/desk/task/TASK-9"))
+
+	def test_no_cell_number_no_text(self):
+		fake.db.exists = lambda *a, **k: True
+		fake.db.get_value = lambda dt, name, field=None, **k: (
+			Row(todo("T1", status="Open")) if dt == "ToDo" else None
+		)
+		self.assertFalse(alerts.send_high_priority_text("T1"))
+		self.assertEqual(fake.texts, [])
+
+
+class TestPhaseTwoWiring(unittest.TestCase):
+	def hooks(self):
+		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
+		out = {}
+		for node in tree.body:
+			if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+				try:
+					out[node.targets[0].id] = ast.literal_eval(node.value)
+				except ValueError:
+					pass
+		return out
+
+	def test_frappes_assignment_emails_are_off_and_the_morning_job_runs(self):
+		hooks = self.hooks()
+		self.assertIn("Assignment", hooks["notification_skip_email_types"])
+		self.assertIn(
+			"erpnext_enhancements.task_enhancements.assignment_alerts.daily_run",
+			hooks["scheduler_events"]["cron"]["40 6 * * 1-5"],
+		)
+		self.assertEqual(
+			hooks["doc_events"]["ToDo"]["after_insert"],
+			"erpnext_enhancements.task_enhancements.assignment_alerts.on_todo_insert",
+		)
+
+	def test_the_assignment_email_is_for_high_priority_only(self):
+		records = json.loads((APP / "fixtures" / "notification.json").read_text(encoding="utf-8"))
+		todo_mail = next(r for r in records if r.get("document_type") == "ToDo")
+		self.assertEqual(todo_mail.get("condition"), 'doc.priority == "High"')
+
+	def test_the_escalation_field_is_a_fixture_and_on_the_form(self):
+		fields = json.loads((APP / "fixtures" / "custom_field.json").read_text(encoding="utf-8"))
+		self.assertTrue(any(f["name"] == "ToDo-custom_escalated_on" for f in fields))
+		setters = json.loads((APP / "fixtures" / "property_setter.json").read_text(encoding="utf-8"))
+		order = next(s for s in setters if s["name"] == "ToDo-main-field_order")
+		self.assertIn(alerts.FIELD_ESCALATED, json.loads(order["value"]))
+
+	def test_the_new_reads_are_get(self):
+		source = (APP / "api" / "my_work.py").read_text()
+		for name in ("get_workload", "get_record_overview"):
+			self.assertRegex(source, rf'@frappe\.whitelist\(methods=\["GET"\]\)\ndef {name}\(')
 
 
 if __name__ == "__main__":

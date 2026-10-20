@@ -11,6 +11,7 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `assignments.py` | My Work's shared rules, frappe-free: when an assignment is due (a ToDo dated its own creation day has **no** due date -- `assign_to.add` stamps `nowdate()`), its bucket, what it asks, the email subject, which record states are finished (`FINISHED_STATES`), and the backlog triage's rules | `due_date`, `bucket`, `the_ask`, `paragraphs`, `email_subject`, `finished_value`, `just_finished`, `triage_rule` |
+| `assignment_alerts.py` | My Work's alerts (Phase 2): the weekday 06:40 job (a bell on items due today, the assigner told once at 2 days late, the morning summary email for everyone not emailed the Morning Briefing) and the text for a High-priority assignment. Site-config kill switches per step | `daily_run`, `nudge_due_today`, `escalate`, `send_digests`, `digest_sections`, `on_todo_insert`, `send_high_priority_text` |
 | `auto_close.py` | Closes a record's open assignments when the record moves into a finished state (doc_events `on_change`), and cancels them when it is cancelled (`"*"` `on_cancel`). Never raises | `on_change`, `on_cancel`, `close_todo`, `close_open_assignments` |
 | `backlog_triage.py` | The one-time backlog clean-up behind My Work's **Tidy the backlog**: dry run, apply (background job, each ToDo stamped `custom_triage_batch`), undo | `preview`, `apply`, `undo`, `batches` |
 | `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
@@ -56,6 +57,9 @@ ERPNext's ToDo list shows "Assignment for Opportunity CRM-OPP-2026-00187", a not
 | **Sidebar count** | same file | A "My Work" row after the bell, counting what is overdue, due today or undated. Snoozing an item takes it off. |
 | **The email** | `fixtures/notification.json` "New ToDo Created", `email_style.ee_assignment` | Subject "Smith Residence rebuild: send revised quote"; the button opens the record, not the ToDo form. |
 | **Auto-close** | `auto_close.py` | A record moving into a finished state closes its open assignments (`assignments.FINISHED_STATES`). |
+| **Assign To dialog** (Phase 2) | `public/js/global_enhancements/my_work.js` | "What do you need?" first and empty (Frappe pre-filled the record's title), quick dates, Priority from the record, and each picked person's load and time off. Subclasses Frappe's `AssignToDialog`, so the list view's bulk Assign To gets it too. |
+| **Record sidebar** (Phase 2) | same file | Under the Assigned To avatars: each person, what was asked, when it is due. |
+| **Morning summary, nudges, escalation, texts** (Phase 2) | `assignment_alerts.py` | See the file map. The Morning Briefing carries the same summary for whoever is emailed it (`api/briefing._user_todos`). |
 | **Tidy the backlog** | `backlog_triage.py`, `/desk/my-work/tidy` | System Manager only. A dry run per rule, then Apply, then Undo per batch. |
 
 Rules worth knowing before you change anything here:
@@ -65,6 +69,8 @@ Rules worth knowing before you change anything here:
 - **Auto-close fires on the change *into* a finished state**, through `on_change`, which v16 runs after a `db_set` too (ERPNext's `set_status(update=True)` moves a PO or Material Request without any `on_update`). An assignment made on an already-finished record survives later saves.
 - **Unassigned is not junk.** Triton files every call follow-up with no assignee and no record. They are on the Unclaimed tab for every System User, and the triage closes one only when nobody has touched it in 90 days.
 - **The sidebar count's class is `.ee-my-work-count`, never `.notification-count`**: Frappe writes the bell's unread number into every element with that class.
+- **Email policy (Phase 2):** the "New ToDo Created" Notification fires for **High** priority only, and `hooks.notification_skip_email_types` holds `"Assignment"`, so Frappe never emails an Assignment bell entry. Everything else reaches people in the bell and the next morning's summary. Before this, most assignees got two emails per assignment (231 + 78 in the 30 days to 2026-10-20).
+- **Escalations are said once**, marked on the row (`ToDo.custom_escalated_on`), not in redis, which every deploy flushes.
 - **The customer inactivity reminder** (`script_migrations/customer.py`) counts a closed follow-up as following up, and no longer writes reminders to Administrator, Guest or a disabled user -- without both, the triage's closures would have been rewritten the next morning.
 
 Tests: `tests/test_my_work.py` (bench-free, own CI step), and `tests/test_s3_page_css.py` holds the page's stylesheet to the design-system rules.
