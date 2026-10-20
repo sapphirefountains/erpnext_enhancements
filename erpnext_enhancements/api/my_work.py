@@ -281,6 +281,10 @@ def _present(rows, user, today, with_facts=True):
 				"record_missing": bool(row.reference_type and row.reference_name and not info),
 				"team": assignments.team_label(row.get("role")) if row.get("role") else None,
 				"repeat": row.get("custom_repeat") or None,
+				# Done on it also completes its Task (the page and banner say so before you press it).
+				"completes_task": assignments.done_completes_task(
+					row.reference_type, row.get("custom_repeat")
+				),
 				"checklist": checklists.get(row.name, []),
 				"can": _abilities(row, user, is_manager, roles),
 			}
@@ -559,9 +563,16 @@ def complete(todo: str, note: str | None = None):
 
 	The note goes on the record's timeline as a comment (so it is where the next person looks),
 	and whoever assigned it is told it is done, note included.
+
+	On a Task it also completes the Task, dated today and by you (:func:`_task_to_complete`), and
+	``completed`` in the reply names it. A Task ERPNext will not complete yet refuses the Done
+	before anything changes.
 	"""
 	doc = _load(todo, "complete")
+	task = _task_to_complete(doc)
 	close_todo(doc, "Closed")
+	if task:
+		_complete_task(task)
 	note = (note or "").strip()
 	if note:
 		_comment(doc, f"<p><b>{escape_html(_('Done'))}:</b> {escape_html(note)}</p>")
@@ -574,7 +585,72 @@ def complete(todo: str, note: str | None = None):
 			),
 			f"<p>{escape_html(note)}</p>" if note else None,
 		)
-	return {"ok": True}
+	return {"ok": True, "completed": task}
+
+
+def _task_to_complete(doc):
+	"""The Task that Done on ``doc`` completes, or ``None``; refuses the Done if ERPNext would.
+
+	``None`` when the assignment is not on a Task, repeats (``assignments.done_completes_task``),
+	or its Task is gone or already finished (Completed, Canceled, Invoiced, Template). When the
+	Task depends on another that is not Completed or Cancelled, ERPNext's ``validate_status``
+	refuses to complete it; that is checked here first, so the person is told which Task is in
+	the way and nothing has changed (Nik, 2026-10-20: refuse the Done rather than close the
+	assignment and leave the Task open). 59 of the 179 open Task assignments were in that state.
+	"""
+	if not assignments.done_completes_task(doc.reference_type, getattr(doc, "custom_repeat", None)):
+		return None
+	task = frappe.db.get_value("Task", doc.reference_name, ["name", "status"], as_dict=True)
+	if not task or task.status in assignments.TASK_FINISHED:
+		return None
+	names = frappe.get_all(
+		"Task Depends On",
+		filters={"parent": task.name, "parenttype": "Task", "parentfield": "depends_on"},
+		pluck="task",
+		order_by="idx asc",
+	)
+	names = [n for n in names if n]
+	statuses = (
+		{
+			r.name: r
+			for r in frappe.get_all(
+				"Task", filters={"name": ["in", names]}, fields=["name", "subject", "status"]
+			)
+		}
+		if names
+		else {}
+	)
+	blocked = assignments.blocking_dependency([(n, (statuses.get(n) or {}).get("status")) for n in names])
+	if blocked:
+		other, status = blocked
+		subject = (statuses.get(other) or {}).get("subject")
+		label = f"{other} ({assignments.truncate(subject, 60)})" if subject else other
+		frappe.throw(
+			_(
+				"Not marked done: {0} depends on {1}, which is {2}. ERPNext completes a Task only once "
+				"every Task it depends on is Completed or Cancelled."
+			).format(task.name, label, _(status) if status else _("missing"))
+		)
+	return task.name
+
+
+def _complete_task(name):
+	"""Complete Task ``name`` as the session user, today.
+
+	``completed_by`` is set here because ERPNext never sets it (its form asks; the list's bulk
+	action and the Kanban leave it blank); ``completed_on`` too, rather than leaving it to
+	ERPNext's ``today()`` fallback, so both say who and when in one place. Saved with
+	``ignore_permissions``: being assigned the Task is what entitles someone to finish it, and an
+	assignee may hold only the read share Assign To gives. Saving runs ERPNext's own completion --
+	the other assignees' assignments close, a recurring Task makes its next one -- and its
+	validation; anything it refuses fails the whole Done, with the ToDo still open.
+	"""
+	task = frappe.get_doc("Task", name)
+	task.status = "Completed"
+	task.completed_on = nowdate()
+	task.completed_by = frappe.session.user
+	task.flags.ignore_permissions = True
+	task.save()
 
 
 @frappe.whitelist(methods=["POST"])

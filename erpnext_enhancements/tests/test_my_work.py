@@ -1100,6 +1100,165 @@ class TestQueueTimelineLine(unittest.TestCase):
 		self.assertEqual(doc._assignment["text"], "nik assigned ann: x")
 
 
+class Refused(Exception):
+	pass
+
+
+class FakeTask(Row):
+	def __init__(self, **kw):
+		super().__init__(**kw)
+		self["flags"] = Flags()
+		self["saves"] = []
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+	def save(self):
+		self["saves"].append(
+			(self.status, self.completed_on, self.completed_by, self.flags.ignore_permissions)
+		)
+
+
+class TestDoneCompletesTheTask(unittest.TestCase):
+	"""Nik, 2026-10-20: Done on a Task completes it, dated today, by whoever pressed Done; a Task
+	ERPNext will not complete yet refuses the Done before anything changes."""
+
+	def setUp(self):
+		_reset()
+		fake.session = types.SimpleNamespace(user="ann@x")
+		fake.throw = lambda message, *a, **k: (_ for _ in ()).throw(Refused(message))
+		self.tasks = {"TASK-1": Row(name="TASK-1", status="Working", subject="Install the pump")}
+		self.depends = []
+		fake.db.get_value = lambda doctype, name, fields=None, as_dict=False, **k: self.tasks.get(name)
+
+		def get_all(doctype, filters=None, pluck=None, **k):
+			if doctype == "Task Depends On":
+				return list(self.depends)
+			names = (filters or {}).get("name", [None, []])[1]
+			return [self.tasks[n] for n in names if n in self.tasks]
+
+		fake.get_all = get_all
+
+	def tearDown(self):
+		# _reset swaps in fresh state but cannot see what a test pinned on the module object.
+		for name in ("get_all", "get_doc", "throw", "session"):
+			fake.__dict__.pop(name, None)
+
+	def todo(self, **kw):
+		return Row({"name": "T1", "reference_type": "Task", "reference_name": "TASK-1", **kw})
+
+	def test_only_a_task_that_does_not_repeat(self):
+		self.assertTrue(rules.done_completes_task("Task", None))
+		self.assertFalse(rules.done_completes_task("Task", "Weekly"))
+		self.assertFalse(rules.done_completes_task("Opportunity", None))
+		self.assertFalse(rules.done_completes_task(None, None))
+
+	def test_finished_dependencies_in_either_spelling_let_it_through(self):
+		self.assertIsNone(
+			rules.blocking_dependency([("A", "Completed"), ("B", "Cancelled"), ("C", "Canceled")])
+		)
+		self.assertEqual(
+			rules.blocking_dependency([("A", "Completed"), ("B", "Invoiced")]), ("B", "Invoiced")
+		)
+		self.assertEqual(rules.blocking_dependency([("A", None)]), ("A", None))
+		self.assertEqual(rules.blocking_dependency([("A", "Working"), ("B", "Open")]), ("A", "Working"))
+
+	def test_done_and_the_task_controller_agree_on_what_unblocks(self):
+		source = (Path(__file__).resolve().parents[1] / "task_enhancements/doctype/task/task.py").read_text()
+		literal = re.search(r"^DEPENDENCY_DONE = (\(.*\))$", source, re.MULTILINE).group(1)
+		self.assertEqual(ast.literal_eval(literal), rules.TASK_DEPENDENCY_DONE)
+
+	def test_an_open_task_is_the_one_to_complete(self):
+		self.assertEqual(api._task_to_complete(self.todo()), "TASK-1")
+
+	def test_nothing_to_complete_off_a_task_or_on_a_finished_one(self):
+		self.assertIsNone(
+			api._task_to_complete(Row(name="T1", reference_type="Opportunity", reference_name="O-1"))
+		)
+		self.assertIsNone(api._task_to_complete(self.todo(custom_repeat="Weekly")))
+		for status in ("Completed", "Canceled", "Invoiced", "Template"):
+			self.tasks["TASK-1"]["status"] = status
+			self.assertIsNone(api._task_to_complete(self.todo()), status)
+		self.assertIsNone(api._task_to_complete(self.todo(reference_name="TASK-GONE")))
+
+	def test_a_dependency_still_open_refuses_and_names_it(self):
+		self.depends = ["TASK-0"]
+		self.tasks["TASK-0"] = Row(name="TASK-0", status="Working", subject="Order the pump")
+		with self.assertRaises(Refused) as caught:
+			api._task_to_complete(self.todo())
+		self.assertIn("TASK-0 (Order the pump)", str(caught.exception))
+		self.assertIn("Working", str(caught.exception))
+		self.tasks["TASK-0"]["status"] = "Completed"
+		self.assertEqual(api._task_to_complete(self.todo()), "TASK-1")
+
+	def test_the_task_is_completed_today_by_whoever_pressed_done(self):
+		task = FakeTask(name="TASK-1", status="Working", completed_on=None, completed_by=None)
+		fake.get_doc = lambda doctype, name=None: task
+		api._complete_task("TASK-1")
+		self.assertEqual(task.saves, [("Completed", "2026-10-20", "ann@x", True)])
+
+	def test_done_closes_the_assignment_first_and_says_which_task(self):
+		calls = []
+		saved = {name: getattr(api, name) for name in ("_load", "close_todo", "_complete_task", "_notify")}
+		doc = self.todo(allocated_to="ann@x", assigned_by="ann@x")
+		try:
+			api._load = lambda todo, need: doc
+			api.close_todo = lambda d, status: calls.append(("close", d.name, status))
+			api._complete_task = lambda name: calls.append(("complete", name))
+			api._notify = lambda *a, **k: calls.append(("notify",))
+			self.assertEqual(api.complete("T1"), {"ok": True, "completed": "TASK-1"})
+			self.assertEqual(calls, [("close", "T1", "Closed"), ("complete", "TASK-1")])
+			calls.clear()
+			self.depends = ["TASK-0"]
+			self.tasks["TASK-0"] = Row(name="TASK-0", status="Open", subject="Order the pump")
+			with self.assertRaises(Refused):
+				api.complete("T1")
+			self.assertEqual(calls, [])
+		finally:
+			for name, fn in saved.items():
+				setattr(api, name, fn)
+
+
+class TestRepeatsStopWhenTheRecordFinishes(unittest.TestCase):
+	"""ERPNext closes a Task's assignments while it is being Completed, before its row says so."""
+
+	def setUp(self):
+		_reset()
+
+	def closed(self):
+		return FakeDoc(
+			before=Row(status="Open"),
+			name="T1",
+			status="Closed",
+			custom_repeat="Weekly",
+			date="2026-10-19",
+			creation=DT(2026, 10, 12, 9),
+			allocated_to="crew@x",
+			assigned_by="boss@x",
+			role=None,
+			reference_type="Task",
+			reference_name="TASK-1",
+			description="Check the pump log",
+			priority="Medium",
+			custom_checklist=[],
+		)
+
+	def test_a_task_marked_finishing_makes_no_next_one(self):
+		recurrence.mark_finishing("Task", "TASK-1")
+		recurrence.on_update(self.closed())
+		self.assertEqual(fake.inserted, [])
+
+	def test_a_task_stored_as_finished_makes_no_next_one(self):
+		fake.db.values[("Task", "TASK-1", "status")] = "Completed"
+		recurrence.on_update(self.closed())
+		self.assertEqual(fake.inserted, [])
+
+	def test_another_task_finishing_does_not_stop_this_one(self):
+		recurrence.mark_finishing("Task", "TASK-2")
+		recurrence.on_update(self.closed())
+		self.assertEqual(len(fake.inserted), 1)
+
+
 class TestPhaseThreeWiring(unittest.TestCase):
 	def test_repeat_hook_and_fields(self):
 		events = _doc_events()

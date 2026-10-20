@@ -29,6 +29,11 @@ from erpnext.projects.doctype.task.task import Task as BaseTask
 #: Property Setter offers "Canceled", ERPNext's own code writes "Cancelled".
 FINISHED_STATUSES = ("Completed", "Canceled", "Cancelled", "Invoiced", "Template")
 
+#: The statuses of a Task another depends on that let that other Task be completed: ERPNext's
+#: two, plus this site's spelling of Cancelled. Mirrored by
+#: ``task_enhancements.assignments.TASK_DEPENDENCY_DONE``, which My Work checks before Done.
+DEPENDENCY_DONE = ("Completed", "Cancelled", "Canceled")
+
 
 class Task(BaseTask):
     """ERPNext Task controller override (installed via override_doctype_class).
@@ -36,6 +41,45 @@ class Task(BaseTask):
     Extends the stock controller; only the lifecycle hooks below are
     customised, everything else is inherited from ``BaseTask``.
     """
+
+    def validate(self):
+        """Mark a finishing Task before ERPNext's validate closes its assignments.
+
+        ERPNext's ``validate_status`` closes every open assignment on a Task the moment it becomes
+        Completed, before the Task's row says so. ``task_enhancements/recurrence.py`` reads the
+        mark so a repeating assignment closed that way makes no next one (v1.699.0).
+        """
+        if self.status in FINISHED_STATUSES:
+            from erpnext_enhancements.task_enhancements import recurrence
+
+            recurrence.mark_finishing(self.doctype, self.name)
+        super().validate()
+
+    def validate_status(self):
+        """Let a Task this site marked "Canceled" stop blocking the Tasks that depend on it.
+
+        ERPNext's ``validate_status`` refuses to complete a Task while any Task it depends on is
+        not "Completed" or "Cancelled", in its own spelling. This site's Property Setter offers
+        "Canceled", so a Task depending on a canceled one could never be completed, from its form
+        or from My Work. On 2026-10-20 that was 10 open Tasks, all with someone assigned. The core
+        check loops over ``self.depends_on``, so the rows pointing at a "Canceled" Task are hidden
+        from that one call and put back straight after. Everything else the core method does is
+        unchanged, and ``depends_on_tasks`` (built later in ``validate``) still lists them.
+        """
+        rows = self.get("depends_on") or []
+        names = [row.task for row in rows if row.task]
+        canceled = set()
+        if self.status == "Completed" and names:
+            canceled = set(
+                frappe.get_all("Task", filters={"name": ["in", names], "status": "Canceled"}, pluck="name")
+            )
+        if not canceled:
+            return super().validate_status()
+        self.depends_on = [row for row in rows if row.task not in canceled]
+        try:
+            return super().validate_status()
+        finally:
+            self.depends_on = rows
 
     def before_save(self):
         """Promote the parent task to a group before saving.

@@ -12,12 +12,12 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 |---|---|---|
 | `assignments.py` | My Work's shared rules, frappe-free: when an assignment is due (a ToDo dated its own creation day has **no** due date -- `assign_to.add` stamps `nowdate()`), its bucket, what it asks, the email subject, which record states are finished (`FINISHED_STATES`), and the backlog triage's rules | `due_date`, `bucket`, `the_ask`, `paragraphs`, `email_subject`, `finished_value`, `just_finished`, `triage_rule` |
 | `assignment_alerts.py` | My Work's alerts (Phase 2): the weekday 06:40 job (a bell on items due today, the assigner told once at 2 days late, the morning summary email for everyone not emailed the Morning Briefing) and the text for a High-priority assignment. Site-config kill switches per step | `daily_run`, `nudge_due_today`, `escalate`, `send_digests`, `digest_sections`, `on_todo_insert`, `send_high_priority_text` |
-| `recurrence.py` | Phase 3: a ToDo with `custom_repeat` makes its next one when it changes to Closed (not Cancelled; not when auto-close or the triage closed it), due one step after its due date (`assignments.next_occurrence`) | `on_update`, `make_next` |
+| `recurrence.py` | Phase 3: a ToDo with `custom_repeat` makes its next one when it changes to Closed (not Cancelled; not when auto-close or the triage closed it; not when its record is finishing or finished), due one step after its due date (`assignments.next_occurrence`) | `on_update`, `make_next`, `mark_finishing` |
 | `doctype/assignment_checklist_item/` | Phase 3: **Assignment Checklist Item**, the child table behind `ToDo.custom_checklist` (step, done, done by, done on) | `AssignmentChecklistItem` |
 | `auto_close.py` | Closes a record's open assignments when the record moves into a finished state (doc_events `on_change`), and cancels them when it is cancelled (`"*"` `on_cancel`). Never raises | `on_change`, `on_cancel`, `close_todo`, `close_open_assignments` |
 | `backlog_triage.py` | The one-time backlog clean-up behind My Work's **Tidy the backlog**: dry run, apply (background job, each ToDo stamped `custom_triage_batch`), undo | `preview`, `apply`, `undo`, `batches` |
 | `page/my_work/` | The **My Work** desk page (`/desk/my-work`, `/by-me`, `/unclaimed`, `/calendar`, `/team`, `/tidy`) and its stylesheet | `my_work.js`, `my_work.css` |
-| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`before_save`, `on_update`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
+| `doctype/task/task.py` | Core Task override + child-task HTML feed | `Task(BaseTask)` (`validate`, `validate_status`, `before_save`, `on_update`, `update_status`); whitelisted `get_child_tasks_html`; helpers `_get_all_descendants`, `_build_task_tree_html` |
 | `doctype/task/task.js` | Form script: render the child-task tree on refresh | `frappe.ui.form.on("Task", {refresh})`, `add_toggle_functionality` |
 
 ## The Task override
@@ -28,8 +28,11 @@ Overrides ERPNext's core **Task** controller (via `override_doctype_class`) to k
 override_doctype_class = {"Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task"}
 ```
 
+- `validate` — when the Task is being saved into a finished status, marks it as finishing for the request (`recurrence.mark_finishing`) **before** calling `super().validate()`. ERPNext's `validate_status` closes every open assignment on a Task becoming Completed, before the Task's row says so; the mark stops a repeating assignment closed that way from making a next one (v1.699.0).
 - `before_save` — promotes the task's `parent_task` to a **group** (`is_group=1`, saved with `ignore_permissions`) so the NestedSet tree stays valid. It does **not** chain `super()`.
 - `on_update` — simply calls `super().on_update()`.
+- `validate_status` — lets a dependency this site marked **"Canceled"** stop blocking completion. ERPNext's check accepts only "Completed" and "Cancelled" (its spelling), so a Task depending on a canceled one could never be completed. The override hides those rows from the core check for that one call and puts them back (`DEPENDENCY_DONE`, v1.699.0).
+- `update_status` — never flips a finished Task (Completed, Canceled, Cancelled, Invoiced, Template) to Overdue.
 
 ## Data flow
 
@@ -54,7 +57,7 @@ ERPNext's ToDo list shows "Assignment for Opportunity CRM-OPP-2026-00187", a not
 
 | Surface | Where | What it does |
 |---|---|---|
-| **My Work page** | `page/my_work/` -> `api/my_work.py` | Three tabs (assigned to me, assigned by me, unclaimed), rows that lead with the record, buckets Overdue / Today / No due date / This week / Later, and Done (with a note for the record's timeline), Snooze, Reassign, Reply, Take it, Nudge and Take back on each row. Drag a row to another bucket on a desktop. |
+| **My Work page** | `page/my_work/` -> `api/my_work.py` | Three tabs (assigned to me, assigned by me, unclaimed), rows that lead with the record, buckets Overdue / Today / No due date / This week / Later, and Done (with a note for the record's timeline; on a Task it also completes the Task), Snooze, Reassign, Reply, Take it, Nudge and Take back on each row. Drag a row to another bucket on a desktop. |
 | **The banner** | `public/js/global_enhancements/my_work.js` | "Assigned to you by James · due Fri · *what they asked*" with Done, Snooze, Reassign and Reply, at the top of any record you are assigned on. On a ToDo's own form it says which record the to-do is for, with a button to open it. |
 | **Sidebar count** | same file | A "My Work" row after the bell, counting what is overdue, due today or undated. Snoozing an item takes it off. |
 | **The email** | `fixtures/notification.json` "New ToDo Created", `email_style.ee_assignment` | Subject "Smith Residence rebuild: send revised quote"; the button opens the record, not the ToDo form. |
@@ -77,6 +80,7 @@ Rules worth knowing before you change anything here:
 - **The sidebar count's class is `.ee-my-work-count`, never `.notification-count`**: Frappe writes the bell's unread number into every element with that class.
 - **Email policy (Phase 2):** the "New ToDo Created" Notification fires for **High** priority only, and `hooks.notification_skip_email_types` holds `"Assignment"`, so Frappe never emails an Assignment bell entry. Everything else reaches people in the bell and the next morning's summary. Before this, most assignees got two emails per assignment (231 + 78 in the 30 days to 2026-10-20).
 - **Repeats never fire on the day they are made, and never already overdue**: `next_occurrence` steps whole periods from the due date to the first one *after* today. A next one dated today would equal its creation day and read as having no due date.
+- **Done on a Task completes the Task** (v1.699.0), with `completed_on` today and `completed_by` whoever pressed Done; ERPNext then closes the other assignees' assignments, as it does for any completion. Not for a repeating assignment (`assignments.done_completes_task`). A Task that depends on one not yet Completed or Cancelled **refuses the Done** with the blocking Task named, before anything changes (Nik's call: 59 of 179 open Task assignments were in that state on 2026-10-20). A dependency that is Completed, Cancelled or this site's "Canceled" lets it through (see `validate_status` below).
 - **Escalations are said once**, marked on the row (`ToDo.custom_escalated_on`), not in redis, which every deploy flushes.
 - **The customer inactivity reminder** (`script_migrations/customer.py`) counts a closed follow-up as following up, and no longer writes reminders to Administrator, Guest or a disabled user -- without both, the triage's closures would have been rewritten the next morning.
 

@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.699.0] - 2026-10-20
+
+### Added
+- **Done on a Task completes the Task** (WI-081 follow-on; Nik, 2026-10-20: "when marking a Task as
+  Done it should also change the task's status to Completed, marked as completed on that day, and by
+  the person marking it done"). Pressing Done on My Work or on the record's banner closes your
+  assignment and sets the Task to Completed. `completed_on` is today and `completed_by` is you.
+  ERPNext fills in `completed_on` itself when it is missing, but it never sets `completed_by`. Its form
+  asks for it; its list bulk action and Kanban leave it blank. Saving the Task runs ERPNext's own
+  completion, so the other assignees' assignments close and a recurring Task makes its next one, as
+  they do when a Task is completed from its form. Both the page and the banner show "This also marks
+  the Task Completed, today, by you." before you press Done, and the message after names the Task. A
+  Task form left open with unsaved edits is told to reload, since a save would now fail on the stale
+  copy (`api.my_work.complete`, `_task_to_complete`, `_complete_task`).
+  - **A Task ERPNext will not complete refuses the Done** (Nik's call, from three options). ERPNext's
+    `validate_status` will not complete a Task while one it depends on is anything but Completed or
+    Cancelled. On production that was 59 of the 179 open Task assignments. My Work checks this first,
+    so nothing changes and the message names the Task in the way: "Not marked done: TASK-1 depends on
+    TASK-0 (Order the pump), which is Working." Any other refusal from the Task's validation fails the
+    whole Done, with the assignment still open.
+  - **Saved with `ignore_permissions`.** Being assigned the Task is what entitles someone to finish it,
+    and an assignee may hold only the read share that Assign To gives. `_load` has already checked that
+    the session user is the assignee.
+  - **Not for a repeating assignment** (`assignments.done_completes_task`). The repeat says the work
+    comes back, and completing the Task would close the next occurrence as soon as it was made. A Task
+    that is already Completed, Canceled, Invoiced or a Template is left as it is.
+
+### Fixed
+- **A Task depending on a "Canceled" one could never be completed**, from its form, the list, the
+  Kanban or My Work. ERPNext's `validate_status` accepts a dependency only if it is "Completed" or
+  "Cancelled", in its own spelling. This site's Property Setter offers "Canceled", so 10 open Tasks on
+  2026-10-20, all with someone assigned, were stuck behind a canceled Task. The Task override's
+  `validate_status` now hides the rows that point at a "Canceled" Task from ERPNext's check, for that
+  one call, and puts them back straight after. ERPNext's rule and everything else the core method does
+  are otherwise unchanged. `depends_on_tasks` still lists the canceled ones. My Work's own pre-check
+  uses the same three statuses (`assignments.TASK_DEPENDENCY_DONE`, held equal to the controller's
+  `DEPENDENCY_DONE` by `test_my_work`). No Task was held up by an "Invoiced" one, so that status is
+  left as ERPNext has it.
+- **Completing a Task that had a repeating assignment on it left a trail of extra ToDos.** This was
+  introduced in v1.698.0. ERPNext closes every open assignment on a Task the moment it becomes
+  Completed: once from `validate_status`, before the Task's row says Completed, and again from
+  `on_update`. Both go through the ToDo controller with no flag that `recurrence.py` could read. So the
+  weekly made a next one, the second close closed that and made another, and auto-close finally closed
+  the third. The Task override now marks a Task saved into a finished status as finishing for the
+  request (`recurrence.mark_finishing`) before ERPNext's `validate` runs. A repeat also stops when its
+  record is already stored as finished. Nothing on production had a repeat yet, so there was nothing
+  to clean up.
+
+## [1.698.1] - 2026-10-20
+
+### Notes
+- **WI-081 (My Work) is complete.** Docs only; no code changes. All three phases are live (v1.696.0 to
+  v1.698.0), and Nik applied the backlog triage on production on 2026-10-20 as batch
+  `triage-20261020-121428`. It closed 970 of 1,310 open ToDos (291 on finished records as Done; 288
+  follow-ups for customers no longer prospects, 286 on Administrator, 104 untouched for 90 days and 1
+  on a deleted record, all as Cancelled), and 340 are left open. No open ToDo is on Administrator. No
+  Triton follow-up from the last 90 days was closed, and all 129 unassigned ToDos still open are
+  Triton's. No record the batch touched still shows an assignee with no open ToDo. The work item's new
+  "Verified on production" section records these checks, and also what was not checked on production:
+  Undo, the morning-after summary, escalation and reminder checks, and the click-through criteria.
+
 ## [1.698.0] - 2026-10-20
 
 ### Added

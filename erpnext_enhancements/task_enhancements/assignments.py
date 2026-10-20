@@ -453,3 +453,34 @@ def checklist_progress(rows):
 		except (TypeError, ValueError):
 			pass
 	return done, len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Done on a Task (Nik, 2026-10-20: "when marking a Task as Done it should also change the task's
+# status to Completed, marked as completed on that day, and by the person marking it done").
+
+#: The statuses of a Task another depends on that let that other Task be completed: ERPNext's
+#: "Completed" and "Cancelled", plus this site's spelling "Canceled", which the Task override's
+#: ``validate_status`` lets through too (``doctype/task/task.py`` ``DEPENDENCY_DONE``; the two are
+#: held equal by ``test_my_work``). Done checks this first, so its refusal names the Task in the way.
+TASK_DEPENDENCY_DONE = ("Completed", "Cancelled", "Canceled")
+
+
+def done_completes_task(reference_type, repeat):
+	"""Whether Done on an assignment also completes the Task it is on.
+
+	Not for a repeating assignment: its repeat says the work comes back, and completing the Task
+	would close the next occurrence as soon as it was made. A Task that is already finished is
+	left as it is; that is checked against the Task when Done is pressed.
+	"""
+	return reference_type == "Task" and not repeat
+
+
+def blocking_dependency(depends_on):
+	"""The first of ``depends_on`` -- ``[(task, status)]`` -- that stops ERPNext completing the
+	Task, as ``(task, status)``, or ``None``. A dependency that no longer exists has no status,
+	and blocks, as it does in ERPNext."""
+	for task, status in depends_on or []:
+		if task and status not in TASK_DEPENDENCY_DONE:
+			return task, status
+	return None

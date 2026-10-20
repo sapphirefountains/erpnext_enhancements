@@ -261,13 +261,23 @@
 		return null;
 	}
 
-	function after_action(frm, message) {
+	function after_action(frm, message, reply) {
 		if (message) frappe.show_alert({ message, indicator: "green" });
 		refresh_count(true);
 		if (!frm) return;
 		if (!frm.is_dirty()) {
 			frm.reload_doc();
 			return;
+		}
+		// Done completed the Task this form has open, under unsaved edits that would now fail to save.
+		if (reply && reply.completed && frm.doctype === "Task" && frm.docname === reply.completed) {
+			frappe.msgprint({
+				title: __("Task completed"),
+				message: __("{0} is now Completed. Reload the page to see it; the changes you had not saved here will need making again.", [
+					frappe.utils.escape_html(reply.completed),
+				]),
+				indicator: "green",
+			});
 		}
 		// Unsaved edits: keep them, and refresh only the docinfo (assignments, timeline).
 		frappe.call({
@@ -285,10 +295,11 @@
 		});
 	}
 
+	// message may be a function of the server's reply (complete names the Task it completed).
 	function send(frm, method, args, message) {
 		return frappe
 			.xcall(API + method, args)
-			.then(() => after_action(frm, message))
+			.then((reply) => after_action(frm, typeof message === "function" ? message(reply) : message, reply))
 			.catch(() => {
 				/* frappe.xcall has already shown the server's message */
 			});
@@ -312,10 +323,15 @@
 			kind === "pick"
 				? `<input type="date" class="form-control ee-mw-input" min="${esc(frappe.datetime.get_today())}">`
 				: `<textarea class="form-control ee-mw-input" rows="2"></textarea>`;
+		const item = ($banner.parent().data("items") || []).find((i) => i.name === $banner.attr("data-todo"));
+		const hint =
+			kind === "complete" && item && item.completes_task
+				? `<div class="ee-mw-hint">${esc(__("This also marks the Task Completed, today, by you."))}</div>`
+				: "";
 		$form.html(
 			`<form class="ee-mw-form">` +
 				(kind === "reassign" ? `<div class="ee-mw-user"></div>` : "") +
-				`<label class="ee-mw-label">${esc(label)}</label>${field}` +
+				`<label class="ee-mw-label">${esc(label)}</label>${field}${hint}` +
 				`<div class="ee-mw-form-row"><button type="submit" class="btn btn-sm btn-primary">${esc(submit)}</button>` +
 				`<button type="button" class="btn btn-sm btn-default" data-ee-mw="close-form">${esc(__("Cancel"))}</button></div>` +
 				`</form>`
@@ -379,7 +395,11 @@
 		const todo = $form.closest(".ee-mw-banner").attr("data-todo");
 		const kind = $box.attr("data-kind");
 		const value = ($form.find(".ee-mw-input").val() || "").trim();
-		if (kind === "complete") return send(frm, "complete", { todo, note: value }, __("Marked done"));
+		if (kind === "complete") {
+			return send(frm, "complete", { todo, note: value }, (reply) =>
+				reply && reply.completed ? __("Marked done. {0} is Completed.", [reply.completed]) : __("Marked done")
+			);
+		}
 		if (kind === "reply") {
 			if (!value) return;
 			return send(frm, "reply", { todo, message: value }, __("Reply sent"));
