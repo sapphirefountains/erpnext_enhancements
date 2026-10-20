@@ -184,3 +184,27 @@
 		min-height: var(--sf-touch-min);
 	}
 }
+
+/* WI-081 Phase 3: the banner's checklist. */
+
+.ee-mw-steps {
+	list-style: none;
+	margin: var(--sf-space-10) 0 0;
+	padding: 0;
+	font-size: var(--sf-text-md);
+	color: var(--sf-text);
+}
+
+.ee-mw-steps label {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin: 0;
+	font-weight: var(--sf-weight-regular);
+	cursor: pointer;
+}
+
+.ee-mw-steps input {
+	margin-top: var(--sf-space-5);
+}

@@ -392,7 +392,6 @@ export class RecordTools {
 	open_assign() {
 		const doctype = this.doctype;
 		const name = this.name;
-		const title = this.title();
 		this.dialog(() => {
 			const kept = this.assign_to;
 			const assign =
@@ -408,8 +407,8 @@ export class RecordTools {
 			this.assign_to = assign;
 			assign.dialog.clear();
 			assign.dialog.show();
-			// The sidebar starts the comment from the record's title field; here, its title.
-			if (title && title !== name) assign.dialog.set_value("description", title);
+			// The ask starts empty (WI-081): My Work's dialog is "What do you need?", and a ToDo whose
+			// text is the record's own title -- what this used to fill in -- asks for nothing.
 			return assign;
 		});
 	}

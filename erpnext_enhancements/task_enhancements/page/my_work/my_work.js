@@ -33,11 +33,17 @@ frappe.pages["my-work"].on_page_show = function (wrapper) {
 
 function make_my_work(wrapper, page) {
 	const API = "erpnext_enhancements.api.my_work.";
+	// The roles that see the Team board (api.my_work.LEAD_ROLES).
+	const LEAD_ROLES = ["System Manager", "President", "Executive Team", "Operations Manager", "Production Manager"];
+	const is_lead = LEAD_ROLES.some((role) => frappe.user.has_role(role));
 	const TABS = [
 		{ view: "mine", segment: "", label: __("Assigned to me") },
 		{ view: "delegated", segment: "by-me", label: __("Assigned by me") },
-		{ view: "unclaimed", segment: "unclaimed", label: __("Unclaimed") },
-	];
+		{ view: "unclaimed", segment: "unclaimed", label: __("Unclaimed & queues") },
+		{ view: "calendar", segment: "calendar", label: __("Calendar") },
+	].concat(is_lead ? [{ view: "team", segment: "team", label: __("Team") }] : []);
+	// ToDo.custom_repeat's options (assignments.REPEATS on the server).
+	const REPEATS = ["Daily", "Weekly", "Every 2 weeks", "Monthly", "Quarterly", "Yearly"];
 	const BUCKETS = [
 		{ key: "overdue", label: __("Overdue"), drop: false },
 		{ key: "today", label: __("Today"), drop: true },
@@ -55,6 +61,12 @@ function make_my_work(wrapper, page) {
 		more: {}, // bucket -> rows shown beyond PAGE_SIZE
 		highlight: null,
 		loading: 0,
+		today: frappe.datetime.get_today(),
+		tab_counts: {},
+		board: null, // the Team view's answer
+		team: "", // the Team view's filter
+		cal: null, // the Calendar view's answer
+		month: null, // the Calendar view's month, "YYYY-MM-01"
 	};
 
 	const $root = $('<div class="myw-page"></div>').appendTo(page.body);
@@ -148,6 +160,8 @@ function make_my_work(wrapper, page) {
 	// ------------------------------------------------------------------ loading
 
 	function load() {
+		if (state.view === "team") return load_team();
+		if (state.view === "calendar") return load_calendar();
 		const ticket = ++state.loading;
 		return kit().then((sf) => {
 			if (!state.data) sf.state.render($body[0], "loading");
@@ -156,6 +170,8 @@ function make_my_work(wrapper, page) {
 				(data) => {
 					if (ticket !== state.loading) return;
 					state.data = data;
+					state.today = data.today;
+					state.tab_counts = data.tabs || {};
 					draw(sf);
 				},
 				(err) => {
@@ -178,7 +194,7 @@ function make_my_work(wrapper, page) {
 	// ------------------------------------------------------------------ drawing
 
 	function draw_tabs(sf) {
-		const counts = (state.data && state.data.tabs) || {};
+		const counts = state.tab_counts || {};
 		$tabs.html(
 			TABS.map((t) => {
 				const selected = t.view === state.view;
@@ -247,13 +263,7 @@ function make_my_work(wrapper, page) {
 		const title = link
 			? `<a class="myw-title" href="${sf.esc(link)}">${sf.esc(item.title)}</a>`
 			: `<span class="myw-title myw-title--plain">${sf.esc(item.title)}</span>`;
-		const chips = [
-			item.doctype_label ? sf.chip(item.doctype_label, "neutral") : "",
-			item.priority === "High" ? sf.chip(__("High"), "warn") : "",
-			item.is_new ? sf.chip(__("New"), "good") : "",
-			item.record_missing ? sf.chip(__("Record deleted"), "danger") : "",
-			when_chip(sf, item),
-		].join(" ");
+		const chips = chips_html(sf, item);
 		const ask = item.ask && item.ask !== item.title ? `<div class="myw-ask">${sf.esc(item.ask)}</div>` : "";
 		const people = who_line(item);
 		const facts = (item.facts || []).map((f) => `${f[0]}: ${f[1]}`);
@@ -275,8 +285,28 @@ function make_my_work(wrapper, page) {
 		);
 	}
 
+	function chips_html(sf, item) {
+		return [
+			item.doctype_label ? sf.chip(item.doctype_label, "neutral") : "",
+			item.priority === "High" ? sf.chip(__("High"), "warn") : "",
+			item.is_new ? sf.chip(__("New"), "good") : "",
+			item.record_missing ? sf.chip(__("Record deleted"), "danger") : "",
+			when_chip(sf, item),
+			item.team && !item.allocated_to ? sf.chip(__("{0} team", [item.team]), "build") : "",
+			item.repeat ? sf.chip(__("Repeats: {0}", [__(item.repeat)]), "neutral") : "",
+			checklist_chip(sf, item),
+		].join(" ");
+	}
+
+	function checklist_chip(sf, item) {
+		const steps = item.checklist || [];
+		if (!steps.length) return "";
+		const done = steps.filter((st) => st.done).length;
+		return sf.chip(__("{0}/{1} steps", [done, steps.length]), done === steps.length ? "good" : "neutral");
+	}
+
 	function when_chip(sf, item) {
-		const today = state.data.today;
+		const today = state.today;
 		if (item.bucket === "overdue") {
 			const late = frappe.datetime.get_day_diff(today, item.due);
 			return sf.chip(late === 1 ? __("1 day late") : __("{0} days late", [late]), "danger");
@@ -300,7 +330,7 @@ function make_my_work(wrapper, page) {
 
 	function assigned_ago(day) {
 		if (!day) return "";
-		const n = frappe.datetime.get_day_diff(state.data.today, day);
+		const n = frappe.datetime.get_day_diff(state.today, day);
 		if (n <= 0) return __("Assigned today");
 		if (n === 1) return __("Assigned yesterday");
 		return __("Assigned {0} days ago", [n]);
@@ -323,7 +353,26 @@ function make_my_work(wrapper, page) {
 		if (can.reassign) out.push(b("reassign", __("Reassign"), "quiet"));
 		if (can.nudge) out.push(b("nudge", __("Nudge"), "secondary"));
 		if (can.withdraw) out.push(b("withdraw", __("Take back"), "quiet"));
+		if (can.checklist) {
+			const steps = item.checklist || [];
+			out.push(b("checklist", steps.length ? __("Steps") : __("Add steps"), "quiet"));
+			out.push(repeat_html(sf, item));
+		}
 		return out.join("");
+	}
+
+	function repeat_html(sf, item) {
+		const opt = (value, label) =>
+			`<button type="button" class="dropdown-item" data-act="repeat" data-repeat="${sf.esc(value)}"` +
+			`${(item.repeat || "") === value ? ' aria-current="true"' : ""}>${sf.esc(label)}</button>`;
+		return (
+			`<div class="dropdown myw-snooze">` +
+			`<button type="button" class="sf-btn sf-btn--quiet myw-btn dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">${sf.esc(__("Repeat"))}</button>` +
+			`<div class="dropdown-menu dropdown-menu-right">` +
+			REPEATS.map((r) => opt(r, __(r))).join("") +
+			opt("", __("Does not repeat")) +
+			`</div></div>`
+		);
 	}
 
 	function snooze_html(sf) {
@@ -350,7 +399,7 @@ function make_my_work(wrapper, page) {
 	}
 
 	function snooze_date(when) {
-		const today = state.data.today;
+		const today = state.today;
 		if (when === "tomorrow") return frappe.datetime.add_days(today, 1);
 		if (when === "monday") return next_monday(today);
 		if (when === "week") return frappe.datetime.add_days(today, 7);
@@ -361,7 +410,7 @@ function make_my_work(wrapper, page) {
 	// The day a row dropped on a bucket gets. This week means soon (tomorrow); Later is the Monday
 	// after next, which is always past the seven days "This week" covers.
 	function drop_date(bucket) {
-		const today = state.data.today;
+		const today = state.today;
 		if (bucket === "today") return today;
 		if (bucket === "undated") return "";
 		if (bucket === "week") return frappe.datetime.add_days(today, 1);
@@ -372,14 +421,24 @@ function make_my_work(wrapper, page) {
 	// ------------------------------------------------------------------ acting
 
 	function find(name) {
-		return ((state.data && state.data.items) || []).find((i) => i.name === name);
+		const pools = [
+			(state.data && state.data.items) || [],
+			(state.cal && state.cal.items) || [],
+			...((state.board && state.board.people) || []).map((p) => p.items),
+			...((state.board && state.board.queues) || []).map((q) => q.items),
+		];
+		for (const pool of pools) {
+			const hit = pool.find((i) => i.name === name);
+			if (hit) return hit;
+		}
+		return null;
 	}
 
-	function act(method, args, done_message) {
+	function act(method, args, done_message, keep_open) {
 		return kit().then((sf) =>
 			sf.call(API + method, args, { quiet: true }).then(
 				() => {
-					state.open = null;
+					if (!keep_open) state.open = null;
 					if (done_message) sf.toast(done_message, { tone: "success" });
 					refresh_count();
 					return load();
@@ -487,10 +546,34 @@ function make_my_work(wrapper, page) {
 			submit: () => __("Take it back"),
 			send: (item) => act("withdraw", { todo: item.name }, __("Taken back: {0}", [item.title])),
 		},
+		// Phase 3: the checklist, in the row. A tick saves at once; the box adds a step.
+		checklist: {
+			html: (sf, item) =>
+				`<ul class="myw-steps">` +
+				(item.checklist || [])
+					.map(
+						(st) =>
+							`<li class="myw-step"><label><input type="checkbox" data-step="${sf.esc(st.name)}"${st.done ? " checked" : ""}> ` +
+							`<span>${sf.esc(st.item)}</span></label>` +
+							`<button type="button" class="sf-btn sf-btn--quiet myw-step-remove" data-step-remove="${sf.esc(st.name)}" aria-label="${sf.esc(
+								__("Remove step")
+							)}">×</button></li>`
+					)
+					.join("") +
+				`</ul>` +
+				`<label class="myw-form-label" for="myw-step">${sf.esc(__("Add a step"))}</label>` +
+				`<input id="myw-step" type="text" name="step" class="myw-input" maxlength="200">`,
+			submit: () => __("Add"),
+			send: (item, $form) => {
+				const step = ($form.find("[name=step]").val() || "").trim();
+				if (!step) return Promise.resolve();
+				return act("checklist_add", { todo: item.name, item: step }, null, true);
+			},
+		},
 		pick: {
 			html: (sf, item) =>
 				`<label class="myw-form-label" for="myw-day">${sf.esc(__("Due on"))}</label>` +
-				`<input id="myw-day" type="date" name="day" class="myw-input" min="${sf.esc(state.data.today)}" value="${sf.esc(item.due || "")}">`,
+				`<input id="myw-day" type="date" name="day" class="myw-input" min="${sf.esc(state.today)}" value="${sf.esc(item.due || "")}">`,
 			submit: () => __("Set the day"),
 			send: (item, $form) => {
 				const day = $form.find("[name=day]").val();
@@ -534,6 +617,14 @@ function make_my_work(wrapper, page) {
 		if (action === "snooze") return snooze(item, $(this).attr("data-when"));
 		if (action === "claim") return act("claim", { todo: name }, __("It is yours: {0}", [item.title]));
 		if (action === "nudge") return act("nudge", { todo: name }, __("Nudged {0}", [item.allocated_to_name]));
+		if (action === "repeat") {
+			const repeat = $(this).attr("data-repeat") || "";
+			return act(
+				"set_repeat",
+				{ todo: name, repeat },
+				repeat ? __("Repeats: {0}", [__(repeat)]) : __("It does not repeat now")
+			);
+		}
 		if (FORMS[action]) {
 			if (state.open && state.open.name === name && state.open.kind === action) {
 				state.open = null;
@@ -553,6 +644,30 @@ function make_my_work(wrapper, page) {
 		if (!item || !form) return;
 		const $submit = $form.find("[type=submit]").prop("disabled", true);
 		Promise.resolve(form.send(item, $form)).catch(() => {}).finally(() => $submit.prop("disabled", false));
+	});
+
+	$body.on("change", ".myw-steps [data-step]", function () {
+		const $box = $(this);
+		const name = $box.closest(".myw-item").attr("data-name");
+		const item = find(name);
+		const step = (item && item.checklist || []).find((st) => st.name === $box.attr("data-step"));
+		$box.prop("disabled", true);
+		kit()
+			.then((sf) =>
+				sf.call(API + "checklist_toggle", { todo: name, row: $box.attr("data-step"), done: $box.is(":checked") ? 1 : 0 }, { quiet: true })
+			)
+			.then(() => {
+				if (step) step.done = $box.is(":checked") ? 1 : 0;
+				return kit().then((sf) => $box.closest(".myw-item").find(".myw-chips").html(chips_html(sf, item)));
+			})
+			.catch(() => $box.prop("checked", !$box.is(":checked")))
+			.finally(() => $box.prop("disabled", false));
+	});
+
+	$body.on("click", "[data-step-remove]", function (e) {
+		e.preventDefault();
+		const name = $(this).closest(".myw-item").attr("data-name");
+		act("checklist_remove", { todo: name, row: $(this).attr("data-step-remove") }, null, true);
 	});
 
 	// Enter sends a note or reply; Shift+Enter is a new line. Escape closes the form.
@@ -614,6 +729,282 @@ function make_my_work(wrapper, page) {
 			{ todo: name, date: day },
 			day ? __("Moved to {0}", [day_label(day)]) : __("Due date taken off")
 		);
+	});
+
+	// ------------------------------------------------------------------ the Team board (Phase 3)
+	//
+	// Leads only (api.my_work.LEAD_ROLES). A column per person -- overdue, today and open counts,
+	// then their assignments -- and a column per team queue. Drag a card onto another person to hand
+	// it over (api.my_work.reassign, which is Frappe's own assign_to.add for the new person). The
+	// team filter narrows it to one team's members and queue, members with nothing open included.
+
+	function load_team() {
+		const ticket = ++state.loading;
+		return kit().then((sf) => {
+			if (!state.board) sf.state.render($body[0], "loading");
+			draw_tabs(sf);
+			return sf.call(API + "get_team_board", { team: state.team || "" }, { quiet: true, method: "GET" }).then(
+				(board) => {
+					if (ticket !== state.loading) return;
+					state.board = board;
+					state.today = board.today;
+					draw_team(sf);
+				},
+				(err) => {
+					if (ticket !== state.loading) return;
+					sf.state.render($body[0], "error", {
+						title: __("The team board could not be loaded."),
+						body: (err && err.message) || "",
+						on_action: load_team,
+					});
+				}
+			);
+		});
+	}
+
+	function card_html(sf, item) {
+		const link =
+			item.reference_type && item.reference_name && !item.record_missing
+				? frappe.utils.get_form_link(item.reference_type, item.reference_name)
+				: frappe.utils.get_form_link("ToDo", item.name);
+		const ask = item.ask && item.ask !== item.title ? `<div class="myw-card-ask">${sf.esc(item.ask)}</div>` : "";
+		return (
+			`<li class="myw-card" data-name="${sf.esc(item.name)}"${item.can.reassign ? ' draggable="true"' : ""}>` +
+			`<a class="myw-card-title" href="${sf.esc(link)}">${sf.esc(item.title)}</a>` +
+			`<span class="myw-chips">${when_chip(sf, item)} ${checklist_chip(sf, item)}</span>` +
+			ask +
+			`</li>`
+		);
+	}
+
+	function draw_team(sf) {
+		const board = state.board;
+		const teams = board.teams || [];
+		const options =
+			`<option value="">${sf.esc(__("Everyone"))}</option>` +
+			teams
+				.map(
+					(t) =>
+						`<option value="${sf.esc(t.role)}"${t.role === state.team ? " selected" : ""}>${sf.esc(t.label)}</option>`
+				)
+				.join("");
+		const people = (board.people || [])
+			.map((p) => {
+				const counts = p.counts || {};
+				const chips = [
+					counts.overdue ? sf.chip(__("{0} overdue", [counts.overdue]), "danger") : "",
+					counts.today ? sf.chip(__("{0} today", [counts.today]), "warn") : "",
+					sf.chip(__("{0} open", [p.actionable]), "neutral"),
+				].join(" ");
+				const cards = p.items.map((item) => card_html(sf, item)).join("");
+				return (
+					`<section class="myw-col" data-user="${sf.esc(p.user)}" data-drop="1">` +
+					`<h3 class="myw-col-head"><span class="myw-col-name">${sf.esc(p.name)}</span><span class="myw-chips">${chips}</span></h3>` +
+					`<ul class="myw-cards">${cards || `<li class="myw-hint">${sf.esc(__("Nothing open"))}</li>`}</ul>` +
+					(p.more ? `<div class="myw-hint">${sf.esc(__("and {0} more", [p.more]))}</div>` : "") +
+					`</section>`
+				);
+			})
+			.join("");
+		const queues = (board.queues || [])
+			.map(
+				(q) =>
+					`<section class="myw-col myw-col--queue">` +
+					`<h3 class="myw-col-head"><span class="myw-col-name">${sf.esc(__("{0} queue", [q.label]))}</span>` +
+					`<span class="myw-chips">${sf.chip(String(q.items.length), "build")}</span></h3>` +
+					`<ul class="myw-cards">${q.items.map((item) => card_html(sf, item)).join("")}</ul>` +
+					`</section>`
+			)
+			.join("");
+		$body.html(
+			`<div class="myw-team">` +
+				`<div class="myw-team-bar"><label class="myw-form-label" for="myw-team">${sf.esc(__("Team"))}</label>` +
+				`<select id="myw-team" class="myw-input myw-team-select">${options}</select>` +
+				`<span class="myw-hint">${sf.esc(__("Drag a card onto someone to hand it over."))}</span></div>` +
+				`<div class="myw-board">${people}${queues}</div>` +
+				`</div>`
+		);
+	}
+
+	$body.on("change", ".myw-team-select", function () {
+		state.team = $(this).val() || "";
+		state.board = null;
+		load_team();
+	});
+
+	let carrying = null;
+	$body.on("dragstart", ".myw-card[draggable=true]", function (e) {
+		carrying = $(this).attr("data-name");
+		const dt = e.originalEvent && e.originalEvent.dataTransfer;
+		if (dt) {
+			dt.effectAllowed = "move";
+			dt.setData("text/plain", carrying);
+		}
+	});
+	$body.on("dragend", ".myw-card", function () {
+		carrying = null;
+		$body.find(".myw-col--over").removeClass("myw-col--over");
+	});
+	$body.on("dragover", ".myw-col[data-drop]", function (e) {
+		if (!carrying) return;
+		e.preventDefault();
+		$body.find(".myw-col--over").not(this).removeClass("myw-col--over");
+		$(this).addClass("myw-col--over");
+	});
+	$body.on("drop", ".myw-col[data-drop]", function (e) {
+		e.preventDefault();
+		const name = carrying;
+		const user = $(this).attr("data-user");
+		carrying = null;
+		$(this).removeClass("myw-col--over");
+		const item = find(name);
+		if (!item || !user || item.allocated_to === user) return;
+		const person = ((state.board && state.board.people) || []).find((p) => p.user === user);
+		act("reassign", { todo: name, user }, __("Handed to {0}", [(person && person.name) || user]));
+	});
+
+	// ------------------------------------------------------------------ the Calendar (Phase 3)
+	//
+	// Your assignments with a real due date, on a month grid that starts on Monday. Undated ones are
+	// not on it: a calendar of creation-day stamps is the ToDo calendar this replaces. Drag one to
+	// another day to move it (today or later). On a phone the grid becomes a list of the days that
+	// have something on them.
+
+	function month_start(day) {
+		return day.slice(0, 8) + "01";
+	}
+
+	function grid_range(month) {
+		const first = frappe.datetime.str_to_obj(month);
+		const back = (first.getDay() + 6) % 7; // days since Monday
+		const start = frappe.datetime.add_days(month, -back);
+		return { start, end: frappe.datetime.add_days(start, 41) };
+	}
+
+	function load_calendar() {
+		const ticket = ++state.loading;
+		if (!state.month) state.month = month_start(state.today || frappe.datetime.get_today());
+		const range = grid_range(state.month);
+		return kit().then((sf) => {
+			if (!state.cal) sf.state.render($body[0], "loading");
+			draw_tabs(sf);
+			return sf.call(API + "get_calendar", range, { quiet: true, method: "GET" }).then(
+				(cal) => {
+					if (ticket !== state.loading) return;
+					state.cal = cal;
+					state.today = cal.today;
+					draw_calendar(sf, range);
+				},
+				(err) => {
+					if (ticket !== state.loading) return;
+					sf.state.render($body[0], "error", {
+						title: __("The calendar could not be loaded."),
+						body: (err && err.message) || "",
+						on_action: load_calendar,
+					});
+				}
+			);
+		});
+	}
+
+	function draw_calendar(sf, range) {
+		const by_day = {};
+		(state.cal.items || []).forEach((item) => (by_day[item.due] = by_day[item.due] || []).push(item));
+		const label = typeof moment === "function" ? moment(state.month).format("MMMM YYYY") : state.month.slice(0, 7);
+		const heads = [__("Mon"), __("Tue"), __("Wed"), __("Thu"), __("Fri"), __("Sat"), __("Sun")]
+			.map((d) => `<div class="myw-cal-head">${sf.esc(d)}</div>`)
+			.join("");
+		const cells = [];
+		for (let i = 0; i < 42; i++) {
+			const day = frappe.datetime.add_days(range.start, i);
+			const items = by_day[day] || [];
+			const classes = ["myw-cal-day"];
+			if (day.slice(0, 7) !== state.month.slice(0, 7)) classes.push("myw-cal-day--other");
+			if (day === state.today) classes.push("myw-cal-day--today");
+			if (!items.length) classes.push("myw-cal-day--empty");
+			const entries = items
+				.map((item) => {
+					const link =
+						item.reference_type && item.reference_name && !item.record_missing
+							? frappe.utils.get_form_link(item.reference_type, item.reference_name)
+							: frappe.utils.get_form_link("ToDo", item.name);
+					return (
+						`<li class="myw-cal-item${item.bucket === "overdue" ? " myw-cal-item--late" : ""}" data-name="${sf.esc(item.name)}"` +
+						`${item.can.reschedule ? ' draggable="true"' : ""}>` +
+						`<a href="${sf.esc(link)}">${sf.esc(item.title)}</a>` +
+						(item.bucket === "overdue" ? ` ${sf.chip(__("Late"), "danger")}` : "") +
+						`</li>`
+					);
+				})
+				.join("");
+			const date_label = typeof moment === "function" ? moment(day).format("ddd D MMM") : day;
+			cells.push(
+				`<div class="${classes.join(" ")}" data-day="${day}">` +
+					`<div class="myw-cal-date"><span class="myw-cal-num">${sf.esc(String(Number(day.slice(8))))}</span>` +
+					`<span class="myw-cal-long">${sf.esc(date_label)}</span></div>` +
+					`<ul class="myw-cal-items">${entries}</ul>` +
+					`</div>`
+			);
+		}
+		const undated = __("Assignments with no due date are on the other tabs.");
+		$body.html(
+			`<div class="myw-cal">` +
+				`<div class="myw-cal-bar">` +
+				`<button type="button" class="sf-btn sf-btn--secondary" data-cal="prev" aria-label="${sf.esc(__("Previous month"))}">‹</button>` +
+				`<h3 class="myw-bucket-head myw-cal-title">${sf.esc(label)}</h3>` +
+				`<button type="button" class="sf-btn sf-btn--secondary" data-cal="next" aria-label="${sf.esc(__("Next month"))}">›</button>` +
+				`<button type="button" class="sf-btn sf-btn--quiet" data-cal="today">${sf.esc(__("Today"))}</button>` +
+				`</div>` +
+				`<p class="myw-hint">${sf.esc(undated)}</p>` +
+				`<div class="myw-cal-grid">${heads}${cells.join("")}</div>` +
+				`</div>`
+		);
+	}
+
+	$body.on("click", "[data-cal]", function () {
+		const what = $(this).attr("data-cal");
+		const month = state.month || month_start(state.today);
+		if (what === "today") state.month = month_start(state.today);
+		else if (typeof moment === "function") {
+			state.month = moment(month)
+				.add(what === "next" ? 1 : -1, "months")
+				.format("YYYY-MM-01");
+		}
+		load_calendar();
+	});
+
+	let moving = null;
+	$body.on("dragstart", ".myw-cal-item[draggable=true]", function (e) {
+		moving = $(this).attr("data-name");
+		const dt = e.originalEvent && e.originalEvent.dataTransfer;
+		if (dt) {
+			dt.effectAllowed = "move";
+			dt.setData("text/plain", moving);
+		}
+	});
+	$body.on("dragend", ".myw-cal-item", function () {
+		moving = null;
+		$body.find(".myw-cal-day--over").removeClass("myw-cal-day--over");
+	});
+	$body.on("dragover", ".myw-cal-day", function (e) {
+		if (!moving) return;
+		e.preventDefault();
+		$body.find(".myw-cal-day--over").not(this).removeClass("myw-cal-day--over");
+		$(this).addClass("myw-cal-day--over");
+	});
+	$body.on("drop", ".myw-cal-day", function (e) {
+		e.preventDefault();
+		const name = moving;
+		const day = $(this).attr("data-day");
+		moving = null;
+		$(this).removeClass("myw-cal-day--over");
+		const item = find(name);
+		if (!item || !day || item.due === day) return;
+		if (day < state.today) {
+			kit().then((sf) => sf.toast(__("Pick today or a later day."), { tone: "warning" }));
+			return;
+		}
+		act("reschedule", { todo: name, date: day }, __("Moved to {0}", [day_label(day)]));
 	});
 
 	// ------------------------------------------------------------------ backlog triage

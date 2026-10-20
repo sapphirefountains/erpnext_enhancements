@@ -45,6 +45,7 @@ TRIAGE = "erpnext_enhancements.task_enhancements.backlog_triage"
 API = "erpnext_enhancements.api.my_work"
 CUSTOMER = "erpnext_enhancements.script_migrations.customer"
 ALERTS = "erpnext_enhancements.task_enhancements.assignment_alerts"
+RECURRENCE = "erpnext_enhancements.task_enhancements.recurrence"
 NOTIFICATION_LOG = "frappe.desk.doctype.notification_log.notification_log"
 PLANNER_NOTICES = "erpnext_enhancements.project_enhancements.planner_notices"
 TELEPHONY = "erpnext_enhancements.api.telephony"
@@ -60,7 +61,7 @@ STUBS = (
 )
 _saved = {}
 
-rules = auto_close = triage = api = customer = alerts = None
+rules = auto_close = triage = api = customer = alerts = recurrence = None
 fake = None
 
 
@@ -96,6 +97,16 @@ class FakeDB:
 		return True
 
 
+class Flags(dict):
+	"""frappe._dict as Document.flags: read as attributes or with .get."""
+
+	def __getattr__(self, key):
+		return self.get(key)
+
+	def __setattr__(self, key, value):
+		self[key] = value
+
+
 class FakeToDo:
 	def __init__(self, name, fail=False, **fields):
 		self.name = name
@@ -103,6 +114,7 @@ class FakeToDo:
 		self.fields = fields
 		self.fail = fail
 		self.saved = []
+		self.flags = types.SimpleNamespace()
 
 	def get(self, key):
 		return self.fields.get(key)
@@ -131,6 +143,9 @@ class FakeFrappe(types.ModuleType):
 		self.bells = []
 		self.texts = []
 		self.cells = {}
+
+	def parse_json(self, value):
+		return json.loads(value) if isinstance(value, str) else value
 
 	def enqueue(self, method, **kwargs):
 		self.enqueued.append((method, kwargs))
@@ -165,6 +180,7 @@ class FakeFrappe(types.ModuleType):
 	def get_doc(self, doctype, name=None):
 		if isinstance(doctype, dict):
 			doc = types.SimpleNamespace(**doctype)
+			doc.flags = Flags()
 			doc.insert = lambda **kw: self.inserted.append(doctype)
 			return doc
 		return self.todos[name]
@@ -222,8 +238,8 @@ def rules_as_date(value):
 
 
 def setUpModule():
-	global rules, auto_close, triage, api, customer, alerts, fake
-	for name in (*STUBS, RULES, AUTO_CLOSE, TRIAGE, API, CUSTOMER, ALERTS):
+	global rules, auto_close, triage, api, customer, alerts, recurrence, fake
+	for name in (*STUBS, RULES, AUTO_CLOSE, TRIAGE, API, CUSTOMER, ALERTS, RECURRENCE):
 		_saved[name] = sys.modules.get(name)
 		if name not in STUBS:
 			sys.modules.pop(name, None)
@@ -234,6 +250,7 @@ def setUpModule():
 	api = importlib.import_module(API)
 	customer = importlib.import_module(CUSTOMER)
 	alerts = importlib.import_module(ALERTS)
+	recurrence = importlib.import_module(RECURRENCE)
 
 
 def tearDownModule():
@@ -928,6 +945,206 @@ class TestPhaseTwoWiring(unittest.TestCase):
 		source = (APP / "api" / "my_work.py").read_text()
 		for name in ("get_workload", "get_record_overview"):
 			self.assertRegex(source, rf'@frappe\.whitelist\(methods=\["GET"\]\)\ndef {name}\(')
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: teams, repeats, checklists
+
+
+class TestRepeatRules(unittest.TestCase):
+	def test_counted_from_the_due_date_to_the_first_one_after_today(self):
+		monday = D(2026, 10, 19)
+		self.assertEqual(rules.next_occurrence(monday, D(2026, 10, 21), "Weekly"), D(2026, 10, 26))
+		# finished weeks late: comes back on the next Monday, not already overdue
+		self.assertEqual(rules.next_occurrence(D(2026, 9, 7), D(2026, 10, 21), "Weekly"), D(2026, 10, 26))
+		self.assertEqual(rules.next_occurrence(monday, D(2026, 10, 19), "Every 2 weeks"), D(2026, 11, 2))
+
+	def test_never_due_the_day_it_is_made(self):
+		"""A step landing on today would be dated its creation day, which reads as no due date."""
+		self.assertEqual(rules.next_occurrence(D(2026, 10, 13), D(2026, 10, 20), "Weekly"), D(2026, 10, 27))
+		self.assertEqual(rules.next_occurrence(D(2026, 10, 19), D(2026, 10, 20), "Daily"), D(2026, 10, 21))
+
+	def test_months_keep_their_day(self):
+		self.assertEqual(rules.next_occurrence(D(2026, 1, 31), D(2026, 2, 1), "Monthly"), D(2026, 2, 28))
+		# counted from the first due date, so March is the 31st again, not the 28th
+		self.assertEqual(rules.next_occurrence(D(2026, 1, 31), D(2026, 3, 1), "Monthly"), D(2026, 3, 31))
+		self.assertEqual(rules.next_occurrence(D(2026, 10, 1), D(2026, 10, 2), "Quarterly"), D(2027, 1, 1))
+		self.assertEqual(rules.add_months(D(2024, 2, 29), 12), D(2025, 2, 28))
+
+	def test_no_due_date_is_one_step_from_today_and_unknown_is_none(self):
+		self.assertEqual(rules.next_occurrence(None, D(2026, 10, 20), "Daily"), D(2026, 10, 21))
+		self.assertIsNone(rules.next_occurrence(D(2026, 10, 20), D(2026, 10, 20), "Hourly"))
+		self.assertIsNone(rules.next_occurrence(D(2026, 10, 20), D(2026, 10, 20), ""))
+
+	def test_teams_and_progress(self):
+		self.assertTrue(rules.is_team_role("Sales Team"))
+		self.assertFalse(rules.is_team_role("Sales Manager"))
+		self.assertFalse(rules.is_team_role(" Team"))
+		self.assertEqual(rules.team_label("Support Team"), "Support")
+		self.assertEqual(rules.checklist_progress([{"done": 1}, {"done": 0}, {"done": "1"}]), (2, 3))
+		self.assertEqual(rules.checklist_progress(None), (0, 0))
+
+
+class FakeDoc(Row):
+	"""A ToDo document: attribute and .get access, flags, and a before-image."""
+
+	def __init__(self, before=None, **kw):
+		super().__init__(**kw)
+		self["flags"] = Flags()
+		self["_before"] = before
+
+	def get_doc_before_save(self):
+		return self["_before"]
+
+
+class TestRecurrence(unittest.TestCase):
+	def setUp(self):
+		_reset()
+
+	def closed(self, **kw):
+		base = dict(
+			name="T1",
+			status="Closed",
+			custom_repeat="Weekly",
+			date="2026-10-19",
+			creation=DT(2026, 10, 12, 9),
+			allocated_to="crew@x",
+			assigned_by="boss@x",
+			role=None,
+			reference_type="Task",
+			reference_name="TASK-1",
+			description="Check the pump log",
+			priority="High",
+			custom_checklist=[Row(item="Read the meter", done=1), Row(item="Photo", done=0)],
+		)
+		base.update(kw)
+		before = Row(status="Open")
+		return FakeDoc(before=before, **base)
+
+	def test_done_makes_the_next_one(self):
+		recurrence.on_update(self.closed())
+		self.assertEqual(len(fake.inserted), 1)
+		nxt = fake.inserted[0]
+		self.assertEqual(nxt["date"], "2026-10-26")
+		self.assertEqual(nxt["allocated_to"], "crew@x")
+		self.assertEqual(nxt["custom_repeat"], "Weekly")
+		self.assertEqual(nxt["custom_checklist"], [{"item": "Read the meter"}, {"item": "Photo"}])
+
+	def test_cancelled_or_auto_closed_or_resaved_makes_nothing(self):
+		recurrence.on_update(self.closed(status="Cancelled"))
+		auto = self.closed()
+		auto.flags.ee_no_repeat = True
+		recurrence.on_update(auto)
+		resaved = self.closed()
+		resaved["_before"] = Row(status="Closed")
+		recurrence.on_update(resaved)
+		recurrence.on_update(self.closed(custom_repeat=""))
+		self.assertEqual(fake.inserted, [])
+
+	def test_the_next_one_is_not_texted(self):
+		doc = Row(name="T2", priority="High", allocated_to="crew@x", assigned_by="boss@x", owner="boss@x")
+		doc["flags"] = types.SimpleNamespace(
+			ee_repeat_of="T1", get=lambda k: "T1" if k == "ee_repeat_of" else None
+		)
+		alerts.on_todo_insert(doc)
+		self.assertEqual(fake.enqueued, [])
+
+	def test_auto_close_marks_its_closes_as_not_repeating(self):
+		fake.todos = {"T1": FakeToDo("T1", reference_type="Task", reference_name="TASK-1", allocated_to="a")}
+		auto_close.on_change(Doc("Task", "TASK-1", {"status": "Working"}, status="Completed"))
+		self.assertTrue(fake.todos["T1"].flags.ee_no_repeat)
+
+
+class TestTeamsAndSteps(unittest.TestCase):
+	def test_a_team_queue_item_is_claimed_by_its_team(self):
+		row = types.SimpleNamespace(allocated_to=None, assigned_by="boss", owner="boss", role="Sales Team")
+		self.assertTrue(api._abilities(row, "me", False, {"Sales Team"})["claim"])
+		self.assertFalse(api._abilities(row, "me", False, {"Support Team"})["claim"])
+		self.assertTrue(api._abilities(row, "lead", True, set())["claim"])
+		self.assertTrue(api._abilities(row, "me", False, {"Sales Team"})["checklist"])
+
+	def test_steps_from_the_dialog(self):
+		self.assertEqual(
+			api._steps("- Drain the basin\n\n* Photo of the label\n  "),
+			[{"item": "Drain the basin"}, {"item": "Photo of the label"}],
+		)
+		self.assertEqual(api._steps('["a", "", "b"]'), [{"item": "a"}, {"item": "b"}])
+		self.assertEqual(api._steps(None), [])
+		self.assertEqual(len(api._steps("\n".join(str(i) for i in range(80)))), 50)
+
+
+class QueueDoc(FakeDoc):
+	def is_new(self):
+		return bool(self.get("_new"))
+
+
+class TestQueueTimelineLine(unittest.TestCase):
+	def test_a_new_queue_item_says_which_queue(self):
+		doc = QueueDoc(
+			_new=True, role="Sales Team", allocated_to=None, assigned_by="nik", description="Call back Mike"
+		)
+		doc._assignment = {"text": "nik assigned nik: Call back Mike", "comment_type": "Assigned"}
+		api.todo_queue_comment(doc)
+		self.assertEqual(doc._assignment["text"], "nik put this in the Sales queue: Call back Mike")
+
+	def test_claiming_says_who_took_it(self):
+		doc = QueueDoc(before=Row(allocated_to=None), role="Sales Team", allocated_to="ann", description="x")
+		doc._assignment = None
+		api.todo_queue_comment(doc)
+		self.assertEqual(doc._assignment["text"], "ann took this from the Sales queue")
+
+	def test_an_ordinary_assignment_is_left_alone(self):
+		doc = QueueDoc(_new=True, role=None, allocated_to="ann", assigned_by="nik", description="x")
+		doc._assignment = {"text": "nik assigned ann: x", "comment_type": "Assigned"}
+		api.todo_queue_comment(doc)
+		self.assertEqual(doc._assignment["text"], "nik assigned ann: x")
+
+
+class TestPhaseThreeWiring(unittest.TestCase):
+	def test_repeat_hook_and_fields(self):
+		events = _doc_events()
+		self.assertEqual(
+			events["ToDo"]["on_update"], "erpnext_enhancements.task_enhancements.recurrence.on_update"
+		)
+		self.assertEqual(events["ToDo"]["before_save"], "erpnext_enhancements.api.my_work.todo_queue_comment")
+		fields = {
+			f["name"]: f
+			for f in json.loads((APP / "fixtures" / "custom_field.json").read_text(encoding="utf-8"))
+		}
+		repeat = fields["ToDo-custom_repeat"]
+		self.assertEqual([o for o in repeat["options"].split("\n") if o], list(rules.REPEATS))
+		self.assertEqual(fields["ToDo-custom_checklist"]["options"], "Assignment Checklist Item")
+
+	def test_the_checklist_doctype_is_a_child_table_in_its_module(self):
+		folder = APP / "task_enhancements" / "doctype" / "assignment_checklist_item"
+		meta = json.loads((folder / "assignment_checklist_item.json").read_text())
+		self.assertEqual(
+			(meta["name"], meta["istable"], meta["module"]),
+			("Assignment Checklist Item", 1, "Task Enhancements"),
+		)
+		self.assertIn(
+			"class AssignmentChecklistItem(Document)", (folder / "assignment_checklist_item.py").read_text()
+		)
+
+	def test_the_browser_copies_match_the_server(self):
+		page = (APP / "task_enhancements" / "page" / "my_work" / "my_work.js").read_text()
+		desk = (APP / "public" / "js" / "global_enhancements" / "my_work.js").read_text()
+		for source in (page, desk):
+			found = re.search(r"const REPEATS = (\[[^\]]*\]);", source)
+			self.assertEqual(json.loads(found.group(1)), list(rules.REPEATS))
+		leads = re.search(r"const LEAD_ROLES = (\[[^\]]*\]);", page)
+		self.assertEqual(tuple(json.loads(leads.group(1))), api.LEAD_ROLES)
+
+	def test_phase_three_endpoints(self):
+		source = (APP / "api" / "my_work.py").read_text()
+		decorated = dict(
+			(n, v)
+			for v, n in re.findall(r'@frappe\.whitelist\(methods=\["(GET|POST)"\]\)\ndef (\w+)', source)
+		)
+		for name in ("get_team_board", "get_calendar", "get_teams"):
+			self.assertEqual(decorated.get(name), "GET", name)
+		for name in ("assign", "set_repeat", "checklist_toggle", "checklist_add", "checklist_remove"):
+			self.assertEqual(decorated.get(name), "POST", name)
 
 
 if __name__ == "__main__":

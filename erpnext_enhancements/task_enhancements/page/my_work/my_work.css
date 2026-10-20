@@ -301,6 +301,227 @@
 	border-bottom: 1px solid var(--sf-rule);
 }
 
+/* Phase 3: a row's checklist */
+.myw-steps {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.myw-step {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sf-space-10);
+	border-bottom: 1px solid var(--sf-rule);
+}
+
+.myw-step label {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	min-height: var(--sf-touch-min);
+	margin: 0;
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-text);
+	cursor: pointer;
+}
+
+.myw-step input:checked + span {
+	color: var(--sf-text-muted);
+	text-decoration: line-through;
+}
+
+/* Phase 3: the Team board */
+.myw-team-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-20);
+}
+
+.myw-team-select {
+	width: auto;
+	min-width: 220px;
+}
+
+.myw-board {
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(260px, 320px);
+	gap: var(--sf-space-15);
+	overflow-x: auto;
+	padding-bottom: var(--sf-space-10);
+}
+
+.myw-col {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-10);
+	background: var(--sf-bg);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+}
+
+.myw-col--queue {
+	border-style: dashed;
+}
+
+.myw-col--over {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.myw-col-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	margin: 0;
+	font-size: var(--sf-text-md);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.myw-cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.myw-card {
+	padding: var(--sf-space-10);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+}
+
+.myw-card[draggable="true"] {
+	cursor: grab;
+}
+
+.myw-card-title {
+	display: block;
+	color: var(--sf-link);
+	text-decoration: underline;
+	font-weight: var(--sf-weight-bold);
+	overflow-wrap: anywhere;
+}
+
+.myw-card-ask {
+	margin-top: var(--sf-space-5);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+/* Phase 3: the Calendar */
+.myw-cal-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+
+.myw-cal-title {
+	margin: 0;
+	min-width: 200px;
+	text-align: center;
+}
+
+.myw-cal-grid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	border-top: 1px solid var(--sf-rule);
+	border-left: 1px solid var(--sf-rule);
+}
+
+.myw-cal-head {
+	padding: var(--sf-space-5) var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-muted);
+	border-right: 1px solid var(--sf-rule);
+	border-bottom: 1px solid var(--sf-rule);
+}
+
+.myw-cal-day {
+	min-height: 110px;
+	padding: var(--sf-space-5);
+	background: var(--sf-surface);
+	border-right: 1px solid var(--sf-rule);
+	border-bottom: 1px solid var(--sf-rule);
+}
+
+.myw-cal-day--other {
+	background: var(--sf-bg);
+}
+
+.myw-cal-day--other .myw-cal-num {
+	color: var(--sf-text-muted);
+}
+
+.myw-cal-day--today {
+	box-sizing: border-box;
+	border-top: 3px solid var(--sf-focus);
+}
+
+.myw-cal-day--today .myw-cal-num {
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text-strong);
+}
+
+.myw-cal-day--over {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.myw-cal-date {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text);
+}
+
+.myw-cal-long {
+	display: none;
+}
+
+.myw-cal-items {
+	list-style: none;
+	margin: var(--sf-space-5) 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	font-size: var(--sf-text-sm);
+}
+
+.myw-cal-item {
+	padding: 2px var(--sf-space-5);
+	border-left: 3px solid var(--sf-rule);
+	overflow-wrap: anywhere;
+}
+
+.myw-cal-item a {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.myw-cal-item--late {
+	border-left-color: var(--sf-danger);
+}
+
+.myw-cal-item[draggable="true"] {
+	cursor: grab;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.myw-tab {
 		transition: none;
@@ -333,5 +554,36 @@
 
 	.myw-tidy-rules {
 		grid-template-columns: minmax(0, 1fr);
+	}
+
+	/* The board's columns stack; the calendar becomes a list of the days with something on them. */
+	.myw-board {
+		grid-auto-flow: row;
+		grid-auto-columns: auto;
+		overflow-x: visible;
+	}
+
+	.myw-cal-grid {
+		display: block;
+		border-left: 0;
+	}
+
+	.myw-cal-head,
+	.myw-cal-day--empty {
+		display: none;
+	}
+
+	.myw-cal-day {
+		min-height: 0;
+		border-right: 0;
+	}
+
+	.myw-cal-num {
+		display: none;
+	}
+
+	.myw-cal-long {
+		display: inline;
+		font-weight: var(--sf-weight-bold);
 	}
 }

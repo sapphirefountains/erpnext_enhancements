@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.698.0] - 2026-10-20
+
+### Added
+- **My Work, Phase 3: teams and structure** (WI-081; Nik, 2026-10-20: "create the PR, merge, and begin
+  phase 3").
+  - **Team queues, on native pieces.** A team is a Role named "… Team". Production already has nine:
+    Support (14 people), Production (13), Sales (9), Design (7), Finance (6), Operations (4), Executive
+    (4), HR (3) and Marketing (3). A queue item is a ToDo with that Role in ToDo's own `role` field (no
+    open ToDo used it until now) and nobody assigned. The Assign To dialog offers "Or a team's queue",
+    and every member gets a bell. Members see it on My Work's tab, renamed **Unclaimed & queues**, with
+    a team chip, and the first to press Take it owns it. Nobody outside the team, other than a lead,
+    sees or takes it. User Groups were passed over: production's eight are partial (Finance has one
+    member).
+  - **The Team board** (`/desk/my-work/team`), for leads: System Manager, President, Executive Team,
+    Operations Manager and Production Manager (`api.my_work.LEAD_ROLES`). It has a column per person
+    with overdue, today and open counts and their assignments, a column per team queue, and a team
+    filter that also shows members with nothing open. Drag a card onto someone to hand it over; that
+    is Frappe's own `assign_to.add` underneath. Leads may now also reschedule, reassign and take back
+    anyone's assignment, as System Managers could.
+  - **Repeating assignments.** `ToDo.custom_repeat` takes Daily, Weekly, Every 2 weeks, Monthly,
+    Quarterly or Yearly, set in the dialog or from a row's Repeat menu. Marking one done makes the next
+    for the same person or queue, record, ask and priority, with its steps unticked
+    (`task_enhancements/recurrence.py`).
+  - **Checklists.** `ToDo.custom_checklist` uses a new child DocType, **Assignment Checklist Item**
+    (step, done, done by, done on). Steps go in from the dialog (one per line) or from a row. They are
+    ticked on My Work, on the record's banner or in the ToDo form, and a tick records who and when.
+  - **A calendar** (`/desk/my-work/calendar`): your assignments with a real due date on a month grid
+    that starts on Monday. Drag one to another day to move it. Undated assignments are left off on
+    purpose, because the stock ToDo calendar plots creation-day stamps. On a phone it is a list of the
+    days that have something on them.
+  - The dialog's people, team, repeat and checklist go in one call, `api.my_work.assign`. For people
+    that is still Frappe's `assign_to.add`, with its permission check, sharing, following and
+    notification. Only Frappe's own two callers (the sidebar and the list view's bulk Assign To) are
+    routed through it; anything else that opens the dialog with another method keeps Frappe's.
+  - **Careful about:**
+    - **A repeat is never due the day it is made, and never already overdue.** It steps whole periods
+      from the due date to the first one *after* today. A next one dated today would equal its creation
+      day and read as having no due date (v1.696.0). Months count from the first due date, so a
+      monthly on the 31st returns on the 31st, not the 28th forever after February.
+    - **Only Closed repeats.** Cancelled, auto-closed (`auto_close` sets `flags.ee_no_repeat`) and
+      triaged ones do not, and the next occurrence is not texted as a new High assignment
+      (`flags.ee_repeat_of`).
+    - **The browser's copies of the repeat options and the lead roles are held equal to the server's**
+      by `test_my_work`.
+
+### Changed
+- **The guided page's Assign To no longer pre-fills the ask with the record's title**
+  (`form_kit/ui/record_tools.js`), for the reason the sidebar's no longer does (v1.697.0): a ToDo whose
+  text is its record's own title asks for nothing.
+
 ## [1.697.0] - 2026-10-20
 
 ### Added
