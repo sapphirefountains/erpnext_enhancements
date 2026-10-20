@@ -83,7 +83,7 @@ The app ships the Frappe modules registered in [`modules.txt`](erpnext_enhanceme
 | **Enhancements Core** (`enhancements_core/`) | Catch-all: app Single settings, Directory Link Exclusion, contact/address directory UI | [README](erpnext_enhancements/enhancements_core/README.md) |
 | **Project Enhancements** (`project_enhancements/`) | Project Dashboard page, Master Project, procurement status, project merge, contracts + e-signature | [README](erpnext_enhancements/project_enhancements/README.md) |
 | **CRM Enhancements** (`crm_enhancements/`) | Opportunity customizations, fountain-move intake, lead attribution | [README](erpnext_enhancements/crm_enhancements/README.md) |
-| **Task Enhancements** (`task_enhancements/`) | Overrides the core Task class; in-form child-task table | [README](erpnext_enhancements/task_enhancements/README.md) |
+| **Task Enhancements** (`task_enhancements/`) | Overrides the core Task class; in-form child-task table; **My Work** (WI-081): the assignments page, the "Assigned to you" banner, the sidebar count, auto-close and the backlog triage | [README](erpnext_enhancements/task_enhancements/README.md) |
 | **Sapphire Maintenance** (`sapphire_maintenance/`) | Template→Record→Result maintenance subsystem, visit wizard, portal, on-submit automation | [README](erpnext_enhancements/sapphire_maintenance/README.md) |
 | **Fleet Maintenance** (`fleet_maintenance/`) | Vehicle maintenance scheduling | [README](erpnext_enhancements/fleet_maintenance/README.md) |
 | **Travel Management** (`travel_management/`) | Travel Trip workflow + child tables → draft Expense Claim | [README](erpnext_enhancements/travel_management/README.md) |

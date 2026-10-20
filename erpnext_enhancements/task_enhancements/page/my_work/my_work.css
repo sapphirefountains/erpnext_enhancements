@@ -1,0 +1,337 @@
+/* My Work (WI-081). Loaded with the page by Frappe's page loader (Page.load_assets), so an edit is
+   never served stale. Every selector starts .myw-: a page's CSS stays in <head> for the rest of the
+   session. Colours are the app's --sf-* tokens only, which follow the Desk theme
+   (docs/app-design-system.md); test_s3_page_css holds this file to that. */
+
+.myw-page {
+	font-family: var(--sf-font-sans);
+	color: var(--sf-text);
+	padding: var(--sf-space-10) 0 var(--sf-space-60);
+}
+
+/* Tabs: a route segment each, so Back and Forward step between them. The selected one is marked
+   by its bar and its weight, never by colour alone. */
+.myw-tabs {
+	display: flex;
+	gap: var(--sf-space-5);
+	border-bottom: 1px solid var(--sf-rule);
+	margin-bottom: var(--sf-space-20);
+	overflow-x: auto;
+}
+
+.myw-tab {
+	min-height: var(--sf-touch-min);
+	padding: 0 var(--sf-space-15);
+	background: transparent;
+	border: 0;
+	border-bottom: 3px solid transparent;
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-md);
+	white-space: nowrap;
+	cursor: pointer;
+	transition: color var(--sf-duration) var(--sf-ease);
+}
+
+.myw-tab[aria-selected="true"] {
+	color: var(--sf-text-strong);
+	font-weight: var(--sf-weight-bold);
+	border-bottom-color: var(--sf-focus);
+}
+
+.myw-tab:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.myw-tab-count {
+	color: var(--sf-text-muted);
+	font-weight: var(--sf-weight-regular);
+	margin-left: var(--sf-space-5);
+}
+
+/* Buckets */
+.myw-bucket {
+	margin-bottom: var(--sf-space-30);
+}
+
+.myw-bucket-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sf-space-10);
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	line-height: var(--sf-leading-display);
+	font-weight: var(--sf-weight-regular);
+	color: var(--sf-heading);
+}
+
+.myw-bucket-head .sf-chip {
+	font-family: var(--sf-font-sans);
+}
+
+/* An empty bucket is only a drop target, so it shows only while a row is being dragged. */
+.myw-bucket--empty {
+	display: none;
+}
+
+.myw-page--dragging .myw-bucket--empty {
+	display: block;
+}
+
+.myw-bucket-drop {
+	padding: var(--sf-space-15);
+	border: 1px dashed var(--sf-rule);
+	color: var(--sf-text-muted);
+	font-size: var(--sf-text-sm);
+}
+
+.myw-bucket--over .myw-list,
+.myw-bucket--over .myw-bucket-drop {
+	outline: 2px dashed var(--sf-focus);
+	outline-offset: 2px;
+}
+
+.myw-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border-top: 1px solid var(--sf-rule);
+}
+
+/* A row: the record and what is asked on the left, the actions on the right, and the one open
+   form under both. */
+.myw-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: var(--sf-space-10) var(--sf-space-20);
+	padding: var(--sf-space-15) var(--sf-space-20);
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-rule);
+	border-top: 0;
+	border-radius: var(--sf-radius-none);
+}
+
+.myw-item[draggable="true"] {
+	cursor: grab;
+}
+
+/* The row a link pointed at (?todo=): a bar on its leading edge, as the step rail marks the
+   current step. */
+.myw-item--marked {
+	border-left: 3px solid var(--sf-focus);
+}
+
+.myw-item-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--sf-space-5) var(--sf-space-10);
+}
+
+.myw-title {
+	font-size: var(--sf-text-lg);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-link);
+	text-decoration: underline;
+	overflow-wrap: anywhere;
+}
+
+.myw-title:hover,
+.myw-title:focus {
+	color: var(--sf-link);
+}
+
+.myw-title--plain {
+	color: var(--sf-text-strong);
+	text-decoration: none;
+}
+
+.myw-chips {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+}
+
+.myw-ask {
+	margin-top: var(--sf-space-5);
+	font-size: var(--sf-text-md);
+	line-height: var(--sf-leading-body);
+	color: var(--sf-text);
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
+.myw-facts {
+	margin-top: var(--sf-space-5);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+	overflow-wrap: anywhere;
+}
+
+.myw-details {
+	color: var(--sf-link);
+	text-decoration: underline;
+}
+
+.myw-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	justify-content: flex-end;
+	gap: var(--sf-space-5);
+}
+
+.myw-btn {
+	white-space: nowrap;
+}
+
+.myw-snooze .dropdown-item {
+	min-height: var(--sf-touch-min);
+	font-size: var(--sf-text-md);
+}
+
+.myw-more {
+	margin-top: var(--sf-space-10);
+}
+
+/* The inline forms */
+.myw-inline {
+	grid-column: 1 / -1;
+}
+
+.myw-inline:empty {
+	display: none;
+}
+
+.myw-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	padding-top: var(--sf-space-10);
+	border-top: 1px solid var(--sf-rule);
+}
+
+.myw-form-label {
+	margin: 0;
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-label);
+}
+
+.myw-input {
+	width: 100%;
+	min-height: var(--sf-touch-min);
+	padding: var(--sf-space-10);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-input);
+	color: var(--sf-field-text);
+	background: var(--sf-field-bg);
+	border: 1px solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+}
+
+.myw-input:focus {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 0;
+}
+
+.myw-hint {
+	font-size: var(--sf-text-sm);
+	color: var(--sf-hint);
+}
+
+.myw-form-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-10);
+}
+
+/* Tidy the backlog */
+.myw-tidy-lead {
+	font-size: var(--sf-text-lg);
+	color: var(--sf-text-strong);
+}
+
+.myw-tidy-rules {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	gap: var(--sf-space-15);
+	margin: var(--sf-space-20) 0;
+}
+
+.myw-tidy-rule {
+	padding: var(--sf-space-15);
+}
+
+.myw-tidy-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-5) var(--sf-space-10);
+	margin-bottom: var(--sf-space-10);
+	color: var(--sf-text-strong);
+}
+
+.myw-tidy-sample {
+	margin: var(--sf-space-10) 0 0;
+	padding-left: var(--sf-space-20);
+	font-size: var(--sf-text-sm);
+}
+
+.myw-tidy-actions {
+	margin-bottom: var(--sf-space-30);
+}
+
+.myw-tidy-batches {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.myw-tidy-batches li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+	padding: var(--sf-space-5) 0;
+	border-bottom: 1px solid var(--sf-rule);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.myw-tab {
+		transition: none;
+	}
+}
+
+/* Phones: one column, actions under the text, full-width buttons in reach of a thumb. */
+@media (max-width: 767px) {
+	.myw-item {
+		grid-template-columns: minmax(0, 1fr);
+		padding: var(--sf-space-15);
+	}
+
+	.myw-actions {
+		justify-content: flex-start;
+	}
+
+	.myw-actions .myw-btn,
+	.myw-actions .myw-snooze {
+		flex: 1 1 auto;
+	}
+
+	.myw-actions .myw-snooze .myw-btn {
+		width: 100%;
+	}
+
+	.myw-item[draggable="true"] {
+		cursor: auto;
+	}
+
+	.myw-tidy-rules {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

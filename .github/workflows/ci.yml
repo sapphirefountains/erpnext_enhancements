@@ -578,6 +578,13 @@ jobs:
       # it stubs erpnext's Task base class.
       - name: Task overdue guard (bench-free, erpnext stub)
         run: python -m unittest erpnext_enhancements.tests.test_task_overdue_guard -v
+      # My Work (WI-081): what is due, what is finished, what the backlog triage may close, who may
+      # complete, reassign or take back an assignment, auto-close on the change INTO a finished
+      # state, and the customer reminder that rewrote a closed follow-up every morning. Wrong, the
+      # inbox shows 1,141 fake overdue items, a won Opportunity's "create the project" closes itself,
+      # or the triage cancels Triton's live call follow-ups. Its own step: it installs a frappe stub.
+      - name: My Work rules, abilities, auto-close and wiring (bench-free, frappe stub)
+        run: python -m unittest erpnext_enhancements.tests.test_my_work -v
       # Filesystem + ast only, its own step like every other bench-free suite that
       # installs no stub set. Guards the marketing data model's three silent-failure
       # promises: POSITIVE_DIALS agreeing with the JSON defaults it heals to, the

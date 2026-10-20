@@ -1,0 +1,121 @@
+/*
+ * My Work's pieces outside its page (WI-081): the sidebar row's count and the "Assigned to you"
+ * banner at the top of a form. Script: public/js/global_enhancements/my_work.js. Imported by
+ * desk_addons.bundle.scss.
+ *
+ * The banner is on the app's --sf-* tokens, so it follows the Desk theme; its buttons are the
+ * Desk's own (btn btn-sm), because it sits in a Desk form among Desk buttons. The count copies the
+ * bell's pill (frappe notification.scss .notification-count) so the two read as a pair; overdue
+ * turns it to the status red, and its aria-label and title say "overdue" in words.
+ */
+
+.ee-my-work-count {
+	padding: 1px 7px;
+	background-color: var(--surface-gray-2);
+	color: var(--ink-gray-7);
+	font-size: var(--text-sm);
+	line-height: 1.2;
+	text-align: center;
+	border-radius: var(--sf-radius-pill);
+}
+
+.ee-my-work-count.hidden {
+	display: none;
+}
+
+.ee-my-work-count--overdue {
+	background-color: var(--sf-danger);
+	color: var(--sf-on-danger);
+}
+
+.ee-mw-banners:empty {
+	display: none;
+}
+
+.ee-mw-banners {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-10);
+	margin-bottom: var(--sf-space-15);
+}
+
+.ee-mw-banner {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: var(--sf-space-10) var(--sf-space-20);
+	align-items: center;
+	padding: var(--sf-space-10) var(--sf-space-15);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	border: 1px solid var(--sf-rule);
+	border-left: 3px solid var(--sf-focus);
+	border-radius: var(--sf-radius-none);
+	font-family: var(--sf-font-sans);
+}
+
+.ee-mw-banner-who {
+	color: var(--sf-text-strong);
+	font-size: var(--sf-text-md);
+}
+
+.ee-mw-banner-ask {
+	margin-top: var(--sf-space-5);
+	color: var(--sf-text);
+	font-size: var(--sf-text-md);
+	overflow-wrap: anywhere;
+}
+
+.ee-mw-banner-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sf-space-5);
+	justify-content: flex-end;
+}
+
+.ee-mw-banner-form {
+	grid-column: 1 / -1;
+}
+
+.ee-mw-banner-form:empty {
+	display: none;
+}
+
+.ee-mw-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sf-space-5);
+	padding-top: var(--sf-space-10);
+	border-top: 1px solid var(--sf-rule);
+}
+
+.ee-mw-label {
+	margin: 0;
+	color: var(--sf-label);
+	font-size: var(--sf-text-sm);
+	font-weight: var(--sf-weight-bold);
+}
+
+.ee-mw-form-row {
+	display: flex;
+	gap: var(--sf-space-5);
+}
+
+@media (max-width: 767px) {
+	.ee-mw-banner {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.ee-mw-banner-actions {
+		justify-content: flex-start;
+	}
+
+	.ee-mw-banner-actions .btn,
+	.ee-mw-banner-actions .ee-mw-snooze {
+		flex: 1 1 auto;
+		min-height: var(--sf-touch-min);
+	}
+
+	.ee-mw-input {
+		font-size: var(--sf-text-input);
+	}
+}

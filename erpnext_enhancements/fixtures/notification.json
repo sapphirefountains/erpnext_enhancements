@@ -193,7 +193,7 @@
   "channel": "Email",
   "document_type": "ToDo",
   "event": "New",
-  "subject": "ToDo: {{ doc.reference_name}}{% if doc.reference_type %} [For {{ doc.reference_type }} {{ doc.reference_name }}]{% endif %}",
+  "subject": "{{ ee_assignment(doc).subject }}",
   "send_to_all_assignees": 1,
   "attach_print": 0,
   "recipients": [
@@ -214,7 +214,7 @@
   "message_type": "HTML",
   "condition_type": "Python",
   "enabled": 1,
-  "message": "{% set body %}\n{{ ee_kv([\n\t(\"Allocated to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else None),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", doc.get_formatted(\"date\") if doc.get(\"date\") else None)\n]) }}\n{% if doc.get(\"description\") %}{{ ee_prose(doc.description) }}{% endif %}\n{{ ee_doc_button(doc, \"Open the to-do\") }}\n{% endset %}\n{{ ee_email(body, title=\"To-do: \" ~ (doc.get(\"reference_name\") or doc.name), eyebrow=\"Tasks\") }}"
+  "message": "{% set a = ee_assignment(doc) %}\n{% set body %}\n{% if a.body %}{{ ee_prose(a.body) }}{% endif %}\n{{ ee_kv([\n\t(\"Record\", a.record),\n\t(\"Assigned to\", frappe.get_fullname(doc.get(\"allocated_to\")) if doc.get(\"allocated_to\") else \"Nobody yet\"),\n\t(\"Assigned by\", frappe.get_fullname(doc.get(\"assigned_by\")) if doc.get(\"assigned_by\") else None),\n\t(\"Priority\", doc.get(\"priority\")),\n\t(\"Due\", a.due or \"No due date\")\n]) }}\n{{ ee_button(a.url, (\"Open \" ~ doc.get(\"reference_type\")) if a.record else \"Open My Work\") }}\n{% endset %}\n{{ ee_email(body, title=a.title, eyebrow=\"Assignment\") }}"
  },
  {
   "doctype": "Notification",

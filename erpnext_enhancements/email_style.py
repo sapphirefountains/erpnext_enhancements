@@ -452,3 +452,47 @@ def ee_email_logo_url():
 	generic name into every Print Format and web template on the site.
 	"""
 	return logo_url()
+
+
+def ee_assignment(doc):
+	"""What an assignment email says, for the ToDo Notification (WI-081): a dict of ``subject``,
+	``title``, ``record`` ("Opportunity CRM-OPP-2026-00187"), ``ask`` (one line), ``body`` (the ask
+	with its paragraph breaks), ``due`` and ``url``.
+
+	The old email was titled "ToDo: CRM-OPP-2026-00187 [For Opportunity CRM-OPP-2026-00187]" and its
+	button opened the ToDo form, where the record you were actually assigned to is a link at the
+	bottom. ``url`` is the record itself, where the "Assigned to you" banner waits with Done, Snooze,
+	Reassign and Reply; a ToDo that names no record opens My Work on that assignment instead.
+	``due`` is ``None`` when the ToDo's date is only the day it was made
+	(``task_enhancements/assignments.due_date``). Degrades to the bare names rather than raising,
+	because Notification.send() turns a raise into a dropped email.
+	"""
+	from urllib.parse import quote
+
+	from erpnext_enhancements.task_enhancements import assignments
+
+	ref_type, ref_name = doc.get("reference_type"), doc.get("reference_name")
+	title = None
+	if ref_type and ref_name:
+		try:
+			from frappe.desk.doctype.notification_log.notification_log import get_title
+
+			title = get_title(ref_type, ref_name)
+		except Exception:
+			title = ref_name
+		url = frappe.utils.get_url_to_form(ref_type, ref_name)
+	else:
+		url = frappe.utils.get_url(f"/desk/my-work?todo={quote(str(doc.get('name') or ''))}")
+	ask = assignments.the_ask(doc.get("description"), ref_type, ref_name)
+	body = assignments.paragraphs(doc.get("description")) if ask else ""
+	label = frappe._(ref_type) if ref_type else None
+	due = assignments.due_date(doc.get("date"), doc.get("creation"))
+	return {
+		"subject": assignments.email_subject(title, ask, label),
+		"title": title or assignments.truncate(ask, 80) or frappe._("New to-do"),
+		"record": f"{label} {ref_name}" if ref_type and ref_name else None,
+		"ask": ask,
+		"body": body,
+		"due": frappe.utils.formatdate(due) if due else None,
+		"url": url,
+	}

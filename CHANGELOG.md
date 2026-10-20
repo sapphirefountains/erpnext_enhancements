@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.696.0] - 2026-10-20
+
+### Added
+- **My Work: one place to see and act on what you have been assigned** (WI-081 Phase 1; Nik,
+  2026-10-20: "If I get assigned a task, I get a ToDo notification, which takes me to a weird doctype
+  that links to the actual thing I've been assigned to, but that is buried on the bottom"). Built **on
+  top of Frappe's own assignments**, which Nik asked for by name: an assignment is still a ToDo made by
+  the sidebar's Assign To, an Assignment Rule, the crew mirrors, Triton or the AI follow-up tool, and
+  every one of them shows up here unchanged. Nothing is stored anywhere else.
+  - **The My Work page** (`/desk/my-work`, `task_enhancements/page/my_work`). Three tabs: Assigned to
+    me, Assigned by me (with Nudge and Take back) and **Unclaimed**. Each row leads with the *record* —
+    "Smith Residence rebuild · Opportunity · Amount $48,000 · From James" — and what was asked, not
+    "Assignment for Opportunity CRM-OPP-2026-00187". Rows sit in Overdue, Today, No due date, This week
+    and Later, and each has Done (with an optional note that goes on the record's timeline and to the
+    assigner), Snooze, Reassign, Reply and Take it, as forms inside the row rather than dialogs. Drag a
+    row to another bucket on a desktop. Phone layout below 767px. Each tab is a route segment, so Back
+    and Forward step between them. Also in the awesomebar's Pages search as "todo", "my tasks" or
+    "assignments".
+  - **The "Assigned to you" banner** at the top of any record you are assigned on: who assigned it,
+    when it is due, what they asked, and Done, Snooze, Reassign and Reply. On a ToDo's own form it says
+    which record the to-do is for, with a button to open it.
+  - **A "My Work" row in the Desk sidebar**, after the bell, counting what is overdue, due today or has
+    no due date. Snoozing an item takes it off the count.
+  - **Assignments close themselves when their record finishes** (`task_enhancements/auto_close.py`):
+    a Task to Completed, Canceled, Cancelled or Invoiced, an Opportunity to Lost, a Project to Completed,
+    a Lead to Converted, a disabled Customer, a received Material Request, a completed Purchase Order, a
+    submitted maintenance visit, and any cancelled document. On production 225 open ToDos sat on
+    Completed Tasks and 35 on "Canceled" ones on 2026-10-20.
+  - **Tidy the backlog** (System Manager, `/desk/my-work/tidy`): a dry run per rule — the record is
+    finished, the record is gone, it sits on Administrator, it is a generated follow-up for someone no
+    longer a prospect, or nobody has touched it or its record in 90 days — then Apply in a background
+    job, and Undo per batch (`ToDo.custom_triage_batch`, a new hidden field). A read-only SQL rendering
+    of the rules on 2026-10-20 put it at about 976 of 1,310 open ToDos closed and 334 kept.
+  - Endpoints in `api/my_work.py`; rules in `task_enhancements/assignments.py`;
+    `tests/test_my_work.py` has its own CI step.
+  - **Careful about:**
+    - **A ToDo's date is usually not a due date.** `assign_to.add` writes `args.get("date",
+      nowdate())`, so an assignment made without a "Complete By" date is stamped with the day it was
+      made: 1,141 of production's 1,310 open ToDos, which is why the old list read "97% overdue". My
+      Work reads that stamp as *no due date*. The one case it costs is a date picked as "today" on
+      purpose and then missed, which shows under No due date rather than Overdue. Reassign carries a
+      date over only when it is a real one.
+    - **"Closed Won" and Task "Pending Review" are not finished.** An open assignment on a won
+      Opportunity on production read "Will you please create a new project for this?".
+    - **Auto-close runs on `on_change`, and only on the change *into* a finished state.** v16 runs
+      `on_change` after a `db_set` too, with the before-image loaded, and ERPNext moves a Purchase
+      Order or Material Request with `set_status(update=True)`, which fires no `on_update`. An
+      assignment made on an already-finished record survives its later saves. It closes through the
+      ToDo controller, so `_assign` and the timeline stay right, but without `close_all_assignments`'
+      "Your assignment on X has been removed" notification to every assignee.
+    - **The triage does not close a ToDo for having no assignee**, a departure from the option as
+      offered: Triton files every call follow-up with no assignee and no record (201 open, the newest
+      that morning). They are on the Unclaimed tab for every System User, and only the staleness rule
+      reaches one. **It is a button, not a patch**, so nothing closes at deploy before anyone has seen
+      the numbers. It closes quietly — no comment on a thousand timelines, no notifications.
+    - **The sidebar count is `.ee-my-work-count`, never `.notification-count`**: Frappe's
+      `update_count_badge` writes the bell's unread number into every element with that class.
+    - **The background reads never show a dialog.** The count and the banner fetch with a plain GET,
+      so a failed read does not put "Server Error" in front of someone who asked for nothing.
+    - **Permission is checked per action against the ToDo's own people**, because v16's ToDo
+      permission query is not applied to a whitelisted call.
+
+### Changed
+- **The assignment email** ("New ToDo Created" Notification) now reads "Smith Residence rebuild: Send
+  revised quote" instead of "ToDo: CRM-OPP-… [For Opportunity CRM-OPP-…]", and its button opens the
+  record instead of the ToDo form (an assignment with no record opens My Work on it). Through a new
+  Jinja global, `email_style.ee_assignment`.
+
+### Fixed
+- **The assignment email printed HTML tags.** It passed the ToDo's Text Editor HTML to `ee_prose`,
+  which escapes what it is given, so the body read `<div class="ql-editor read-mode"><p>…`. It now gets
+  the text with its paragraph breaks.
+- **A closed customer follow-up came back the next morning.** `customer_inactivity_reminder` checked
+  only for an *Open* ToDo, and closing one never touches `custom_last_activity_date`, so closing a
+  reminder was undone overnight for as long as nobody re-saved the Customer. Closing or cancelling a
+  follow-up now restarts the window.
+- **Prospect reminders no longer go to Administrator.** The fallback to the Customer's owner made
+  Administrator the assignee of every imported prospect's reminder: 286 open on 2026-10-20 that nobody
+  would ever read. A reminder whose assignee would be Administrator, Guest or a disabled user is not
+  written; set the Customer's Reminder Assignee instead.
+
 ## [1.695.0] - 2026-10-14
 
 ### Added
