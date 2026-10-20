@@ -531,6 +531,29 @@ doc_events = {
 	# phone display, via boot). See docs/data-normalization.md.
 	"*": {
 		"before_validate": "erpnext_enhancements.utils.normalize_hook.normalize_doc",
+		# My Work (WI-081): a cancelled document's open assignments are cancelled with it,
+		# whatever its doctype. Returns on one indexed ToDo query for a document with none.
+		"on_cancel": "erpnext_enhancements.task_enhancements.auto_close.on_cancel",
+	},
+	# My Work (WI-081 Phase 1): an assignment closes itself when its record finishes. The
+	# finished states, and why "Closed Won" and "Pending Review" are not among them, are
+	# task_enhancements/assignments.FINISHED_STATES; each doctype there has this on_change
+	# (Task, Opportunity, Project, Lead, Customer, Purchase Order and Sapphire Maintenance Record
+	# carry it inside their own blocks below). on_change rather than on_update because v16 runs
+	# it after a save, a submit, an update-after-submit AND a db_set, with the before-image
+	# loaded -- and ERPNext moves a PO or Material Request to Completed/Received with
+	# set_status(update=True), a db_set that fires no on_update. Only the change INTO a finished
+	# state closes anything, so an assignment made on an already-finished record survives. Closes
+	# through the ToDo controller (timeline line, _assign rebuilt), without assign_to's "your
+	# assignment was removed" notification. Never raises. See task_enhancements/auto_close.py.
+	"Material Request": {
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+	},
+	"Quotation": {
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
+	},
+	"Issue": {
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# asset_management (v1.562.0): a pending ERPNext Asset Repair on a rental-fleet fountain
 	# opens an Asset Out of Service record, which blocks the fountain's rental calendar;
@@ -657,6 +680,8 @@ doc_events = {
 			# ERPNext's own exp_*/act_* pairs are already validated by core. See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 		],
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	"Project": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
@@ -720,6 +745,8 @@ doc_events = {
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_project_change",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	"Master Project": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
@@ -836,6 +863,8 @@ doc_events = {
 			# A visit change also re-projects its contract's later visits (one job per request).
 			"erpnext_enhancements.project_enhancements.calendar_sync.triggers.on_change",
 		],
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# Calendar sync (C2, v1.604.0): a contract's dates, frequencies or features change its projected
 	# visits on the Maintenance calendar. Queues one re-projection after commit; off unless Calendar
@@ -1008,6 +1037,8 @@ doc_events = {
 			"erpnext_enhancements.po_segregation.enforce_requester_separation",
 			"erpnext_enhancements.po_approval.enforce_threshold_after_submit",
 		],
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# The far end of Purchase Order.custom_order_stage (see po_order_stage.py). The stage
 	# is set by hand everywhere else on purpose -- submitting an order in ERPNext is
@@ -1047,6 +1078,8 @@ doc_events = {
 			# See utils/date_pairs.py.
 			"erpnext_enhancements.utils.date_pairs.warn_out_of_order",
 		],
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	"Opportunity": {
 		"before_validate": [
@@ -1131,6 +1164,8 @@ doc_events = {
 		# Drive folder per Customer-party opportunity (settings opt-in)
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	"File": {
 		# knowledge_base (WI-080 PR 2, v1.539.0): every File attached to Knowledge Article
@@ -1342,6 +1377,8 @@ doc_events = {
 		# Drive folder per customer (Project Folder Google Drive Settings opt-in)
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_customer_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+		# My Work (WI-081): close its open assignments when it moves into a finished state.
+		"on_change": "erpnext_enhancements.task_enhancements.auto_close.on_change",
 	},
 	# stripe_payments: auto-charge a saved method when an invoice for an
 	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
@@ -2058,6 +2095,9 @@ jinja = {
 		# never defined, so each of those emails would raise and be dropped.
 		"erpnext_enhancements.email_style.ee_h",
 		"erpnext_enhancements.email_style.ee_p",
+		# WI-081: the assignment email's subject, title, ask, due date and button URL (the record,
+		# not the ToDo form), computed once and read as fields: {% set a = ee_assignment(doc) %}.
+		"erpnext_enhancements.email_style.ee_assignment",
 		# The letterhead logo URL. Computed in Python because it must be
 		# absolute (an email client has no site origin) and cache-busted with
 		# the deploy token, which is www/ page context, not a Jinja global.

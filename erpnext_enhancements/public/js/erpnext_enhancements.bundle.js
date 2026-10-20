@@ -138,6 +138,10 @@ import "./global_enhancements/workspace_block_return.js";
 // never arrived, which seven pages used to carry a copy each.
 import "./sf_kit_loader.js";
 import "./global_enhancements/page_search.js"; // S4c: a "Pages" search section + Alt+Shift page shortcuts
+// WI-081 Phase 1: the "My Work" row and count in the desk sidebar, and the "Assigned to you"
+// banner (Done / Snooze / Reassign / Reply) at the top of any record you are assigned on. Sets
+// erpnext_enhancements.my_work.refresh_count, which the My Work page calls after it acts.
+import "./global_enhancements/my_work.js";
 import "./global_enhancements/unlink_and_delete.js";
 // Generic document merge — global "Merge into…" form button + list bulk merge
 // (gated by frappe.boot.ee_merge_tool). Server: document_merge.py.

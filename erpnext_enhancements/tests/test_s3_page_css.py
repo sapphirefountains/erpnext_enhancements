@@ -103,6 +103,8 @@ PAGES = {
 	"maintenance_planner": APP / "sapphire_maintenance" / "page" / "maintenance_planner",
 	# S3.4f
 	"rental_planner": APP / "asset_management" / "page" / "rental_planner",
+	# WI-081 (v1.696.0): built on the tokens from the start.
+	"my_work": APP / "task_enhancements" / "page" / "my_work",
 }
 
 # What each page's selectors must start with: the first compound of every selector carries the
@@ -127,6 +129,7 @@ NAMESPACES = {
 	# Every class of the Maintenance Planner is mp-, its phases' too (mp-p6a-, mp-p6b- ...).
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 	"rental_planner": re.compile(r"\.rp-[\w-]+"),
+	"my_work": re.compile(r"\.myw-[\w-]+"),
 }
 
 # A @keyframes name is global in the same way a selector is: two pages that both define
@@ -145,6 +148,7 @@ KEYFRAME_PREFIXES = {
 	"project_planner": ("pp-", "p6b-", "p6e-", "t1-", "t4-"),
 	"maintenance_planner": ("mp-",),
 	"rental_planner": ("rp-",),
+	"my_work": ("myw-",),
 }
 
 # Width breakpoints a page may keep besides 767px. Both Training pages are two-column Desk pages

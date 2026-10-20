@@ -80,6 +80,12 @@ def customer_inactivity_reminder():
 	already exists. The ToDo allocation sends Frappe's assignment-notification
 	email to that user.
 
+	Two rules since WI-081 (v1.696.0): the window runs from the later of the last
+	activity and the last time a follow-up on the Customer was closed or cancelled
+	(closing one *is* following up, and used to be undone the next morning); and a
+	reminder whose assignee would be Administrator, Guest or a disabled user is not
+	written at all (:func:`_can_hold_reminder`).
+
 	Side effects:
 		Inserts ToDo documents and commits the DB.
 	"""
@@ -105,15 +111,22 @@ def customer_inactivity_reminder():
 	)
 
 	current_date = frappe.utils.get_datetime(frappe.utils.today())
+	last_closed = _last_closed_follow_up([c.name for c in customers])
 
 	for customer in customers:
 		reminder_days = frappe.utils.cint(customer.custom_reminder_days) or default_reminder_days
 		if reminder_days <= 0:
 			continue
 
-		follow_up_date = frappe.utils.get_datetime(
-			frappe.utils.add_days(customer.custom_last_activity_date, reminder_days)
-		)
+		# Closing (or cancelling) the last follow-up counts as following up. Without this, a
+		# closed reminder was written again the next morning for as long as nobody re-saved the
+		# Customer, since closing a ToDo never touches custom_last_activity_date (WI-081).
+		last_activity = frappe.utils.getdate(customer.custom_last_activity_date)
+		closed_on = last_closed.get(customer.name)
+		if closed_on and frappe.utils.getdate(closed_on) > last_activity:
+			last_activity = frappe.utils.getdate(closed_on)
+
+		follow_up_date = frappe.utils.get_datetime(frappe.utils.add_days(last_activity, reminder_days))
 
 		if follow_up_date <= current_date:
 			existing_todo = frappe.db.exists(
@@ -125,7 +138,8 @@ def customer_inactivity_reminder():
 				},
 			)
 
-			if not existing_todo:
+			assignee = customer.custom_reminder_assignee or customer.owner
+			if not existing_todo and _can_hold_reminder(assignee):
 				todo_description = f"Follow up with {customer.customer_name} ({customer.name})"
 				frappe.get_doc(
 					{
@@ -138,10 +152,43 @@ def customer_inactivity_reminder():
 						# (custom_reminder_assignee) so prospect follow-ups reach the
 						# chosen account executive; fall back to the document owner
 						# when it is left blank.
-						"allocated_to": customer.custom_reminder_assignee or customer.owner,
+						"allocated_to": assignee,
 						"reference_type": "Customer",
 						"reference_name": customer.name,
 					}
 				).insert()
 
 	frappe.db.commit()
+
+
+def _last_closed_follow_up(customer_names):
+	"""{customer: the latest ``modified`` of a Closed or Cancelled ToDo on it}, for the reminder.
+
+	Raw SQL with bound parameters: v16 refuses ``max(modified)`` as a ``get_all`` field string.
+	"""
+	if not customer_names:
+		return {}
+	rows = frappe.db.sql(
+		"""
+		select reference_name, max(modified)
+		from `tabToDo`
+		where reference_type = 'Customer'
+			and status in ('Closed', 'Cancelled')
+			and reference_name in %(names)s
+		group by reference_name
+		""",
+		{"names": tuple(customer_names)},
+	)
+	return {name: modified for name, modified in rows}
+
+
+def _can_hold_reminder(user):
+	"""Whether ``user`` is a real, enabled person a reminder can go to.
+
+	The fallback to the Customer's owner made Administrator the assignee of every imported
+	prospect's reminder -- 286 open ToDos on 2026-10-20 that nobody would ever read. Such a
+	prospect gets no reminder until someone sets its Reminder Assignee (WI-081).
+	"""
+	if not user or user in ("Administrator", "Guest"):
+		return False
+	return bool(frappe.db.get_value("User", user, "enabled"))

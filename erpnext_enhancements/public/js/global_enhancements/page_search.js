@@ -118,6 +118,7 @@
 			page: "quickbooks-online-dashboard",
 			aliases: ["qbo", "qb", "quickbooks", "health", "accounting sync"],
 		},
+		{ page: "my-work", aliases: ["todo", "todos", "to do", "my tasks", "assignments", "assigned to me", "inbox"] },
 		{ page: "quickbooks-record-matching", aliases: ["qbo", "qb", "quickbooks", "matching"] },
 		{ page: "stripe-payments-dashboard", aliases: ["stripe", "payments", "health", "card payments"] },
 		{ page: "opportunity-board", aliases: ["board", "pipeline", "opportunities", "deals", "crm"] },
