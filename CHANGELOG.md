@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.704.0] - 2026-10-21
+
+### Added
+- **The Project Planner shows phase and crew work only** (P2 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` D6; Nik approved the redesign on 2026-10-21). A customer job carries
+  about 40 template admin and billing tasks, all dated its first day, and they filled the week and the
+  Unscheduled tray. `get_planner` now leaves out an open task unless it sits **under a phase group** (a
+  group Task whose subject starts with a three-digit phase number, `planner_templates.phase_number`,
+  at any depth) **or has someone on it** (a crew row, or an open assignee who is a Planner Resource).
+  The week, month and crew views and the Unscheduled tray all follow it.
+  - **`get_planner(..., all_tasks=1)`** is the whole set, as it always was. The answer says which it
+    is (`all_tasks`) and how many tasks it left out (`hidden_tasks`).
+  - **More ▸ Display ▸ Show all tasks** turns it on, and shows how many the view leaves out ("38 not
+    shown"). It is remembered per person with the view (`all_tasks` in the Project Planner's saved
+    views and "last used", so it follows them to any device), is part of the address
+    (`?all_tasks=1`, like `?project=`, `?pm=` and `?group=`, so Back, Forward and a copied link keep it)
+    and is in a saved view's summary. A link that does not name it is the default, as for the other
+    filters. The print says "Phase and crew work only (N tasks not shown)" when it left some out.
+  - **Display only.** The engine still counts every booking, so capacity, conflicts and the heatmap
+    are unchanged, and a task with a crew booking is by this rule never hidden. The Project filter
+    still lists every project with open work, so a remembered project does not reset because its tasks
+    are all admin. A task the person has drafted is never hidden, and rental crew tasks are not
+    subject to the rule.
+  - **Nothing becomes unreachable.** The project's drawer (`get_project_overview`), search
+    (`search_planner`) and the Task form are not filtered. A search result for a task the schedule
+    leaves out says why it is not drawn and offers **Show all tasks** in the same alert.
+- `crew_availability.tasks_under_a_phase(names)`: the tree question of the rule, one read per level of
+  `parent_task` for the whole set, bounded at 8 levels so a loop in bad data ends.
+
+### Changed
+- `get_planner`'s answer has two new keys, `all_tasks` and `hidden_tasks`. Its signature grew
+  `all_tasks` after `draft`, so a positional `draft` still works.
+- **The Overdue tray is not filtered** (the spec names the schedule and the Unscheduled tray). If admin
+  tasks crowd it, that is a follow-up.
+
 ## [1.703.0] - 2026-10-21
 
 ### Added

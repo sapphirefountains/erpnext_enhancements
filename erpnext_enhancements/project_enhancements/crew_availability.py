@@ -1361,6 +1361,52 @@ def read_crews(task_names):
 	return rows, todos
 
 
+#: How many levels of ``parent_task`` the schedulable-task rule climbs. Phase groups sit at the top of
+#: a project's tree (decision 2026-10-12), so a real tree is two or three deep; the cap also ends a
+#: loop in bad data.
+PHASE_CLIMB = 8
+
+
+def tasks_under_a_phase(task_names):
+	"""The subset of ``task_names`` that sit under a phase group (D6, the planner UX redesign).
+
+	A phase is a group Task whose subject starts with a three-digit phase number
+	(``planner_templates.phase_number``: "Phase 300", "300 Rough-in"); a task is under it when any of
+	its ancestors, through ``parent_task``, is one. Climbs level by level, one read per level for the
+	whole set, so the cost is the tree's depth, not the number of tasks. The caller decides what else
+	makes a task schedulable (a crew); this answers only the tree question.
+	"""
+	from erpnext_enhancements.project_enhancements.planner_templates import phase_number
+
+	names = sorted({n for n in task_names or () if n})
+	if not names:
+		return set()
+	parents, subjects, seen, frontier = {}, {}, set(), names
+	for _level in range(PHASE_CLIMB):
+		frontier = [n for n in frontier if n not in seen]
+		if not frontier:
+			break
+		seen.update(frontier)
+		for row in frappe.get_all(
+			"Task",
+			filters={"name": ["in", frontier]},
+			fields=["name", "subject", "parent_task"],
+			limit_page_length=0,
+		):
+			parents[row.get("name")] = row.get("parent_task") or None
+			subjects[row.get("name")] = row.get("subject")
+		frontier = sorted({parents.get(n) for n in frontier if parents.get(n)})
+	under = set()
+	for name in names:
+		node, hops = parents.get(name), 0
+		while node and hops < PHASE_CLIMB:
+			if phase_number(subjects.get(node)) is not None:
+				under.add(name)
+				break
+			node, hops = parents.get(node), hops + 1
+	return under
+
+
 EQUIPMENT_DOCTYPE = "Task Equipment"
 
 

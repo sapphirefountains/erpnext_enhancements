@@ -91,6 +91,8 @@ SCHEMA = {
 		# UX redesign). An older "last used" view stores "default" (Task color) either way, so the page
 		# honors a saved "default" only when this is set.
 		"color_chosen": ("bool",),
+		# Show all tasks (P2 of the planner UX redesign, D6): off, the default, is phase and crew work only.
+		"all_tasks": ("bool",),
 	},
 	"maintenance": {
 		"view": ("enum", ("month", "week", "crew")),

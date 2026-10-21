@@ -284,6 +284,11 @@ class TestCleaning(unittest.TestCase):
 		# It survives as "last used" and through the stored copy, and the Maintenance Planner has none.
 		self.assertIn("color_chosen", prefs.clean_view("project", {"color_chosen": True}, remembered=True))
 		self.assertNotIn("color_chosen", prefs.clean_view("maintenance", {"color_chosen": True}))
+		# P2: Show all tasks is part of a Project Planner view (and not the Maintenance Planner's).
+		self.assertEqual(prefs.clean_view("project", {"all_tasks": "1"}), {"all_tasks": True})
+		self.assertIs(prefs.clean_view("project", {"all_tasks": 0})["all_tasks"], False)
+		self.assertIn("all_tasks", prefs.clean_view("project", {"all_tasks": True}, remembered=True))
+		self.assertNotIn("all_tasks", prefs.clean_view("maintenance", {"all_tasks": True}))
 		prefs.save_last_view("project", json.dumps({"color_by": "default", "color_chosen": True}))
 		self.assertEqual(
 			prefs.get_views("project")["last"], {"color_by": "default", "color_chosen": True}
@@ -1433,6 +1438,7 @@ class TestUnderNode(unittest.TestCase):
 				"panel": True,
 				"color_by": "pm",
 				"color_chosen": False,
+				"all_tasks": False,
 			},
 		)
 		self.assertIs(pp["state_named"]["over_only"], True)

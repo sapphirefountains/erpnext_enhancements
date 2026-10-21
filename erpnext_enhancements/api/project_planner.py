@@ -32,6 +32,13 @@ free (Nik, 2026-10-08).
 
 Things this module is careful about, some of which look like bugs:
 
+* **The schedule shows phase and crew work only (D6, P2 of the planner UX redesign).** A customer job
+  carries about 40 template admin tasks, all dated its first day. :func:`get_planner` leaves out an
+  open task that is neither under a ``Phase 100``-style group nor has a crew or a Planner Resource
+  assignee (:func:`_hidden_by_display_rule`), and ``all_tasks=1`` brings them back. It is display only:
+  the engine's capacity and bookings are the whole set, the Project filter still lists every project
+  with open work, and the project drawer, search and the Task form are not filtered.
+
 * **Overbooking never blocks.** When a change would leave someone over their hours, double-booked
   or booked on a day off, the save is *not* made and the caller gets ``needs_reason`` with the
   conflicts. Sent again with a ``reason``, it saves and the reason goes on the Task's timeline.
@@ -539,11 +546,12 @@ def _require_planner():
 
 
 @frappe.whitelist()
-def get_planner(start, end, draft=0):
+def get_planner(start, end, draft=0, all_tasks=0):
 	"""Everything the planner draws for ``start``..``end`` (inclusive). See the module docstring.
 
 	``draft=1`` (Phase 3B draft mode) overlays the caller's unpublished Draft rows first; see
-	:func:`_draft_overlay`. Without it the answer is exactly what it always was.
+	:func:`_draft_overlay`. ``all_tasks=1`` brings back the tasks the schedule leaves out by default
+	(D6, P2 of the planner UX redesign: :func:`_hidden_by_display_rule`) and is today's answer.
 	"""
 	_require_planner()
 	start, end = getdate(start), getdate(end)
@@ -562,6 +570,22 @@ def get_planner(start, end, draft=0):
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	unscheduled_rows = _unscheduled()
 	crew_rows, todo_users = engine.read_crews([row.get("name") for row in unscheduled_rows])
+	# The projects listed are the ones with open work, hidden or not: the display rule thins the cards,
+	# not the Project filter (a remembered project must not reset because its tasks are all admin).
+	project_names = {
+		row.get("project")
+		for row in list(data["tasks"]) + list(unscheduled_rows)
+		if row.get("project") and not row.get("custom_rental_booking")
+	}
+	all_tasks = bool(cint(given(all_tasks)))
+	hidden = (
+		set()
+		if all_tasks
+		else _hidden_by_display_rule(
+			data, unscheduled_rows, crew_rows, todo_users, overlay["drafted"] if overlay else ()
+		)
+	)
+	unscheduled_rows = [row for row in unscheduled_rows if row.get("name") not in hidden]
 	card_names = [t.get("name") for t in data["tasks"]] + [r.get("name") for r in unscheduled_rows]
 	credentials = _credentials(card_names)
 	depends_on = _dependencies(card_names)
@@ -597,6 +621,8 @@ def get_planner(start, end, draft=0):
 		if task.get("custom_rental_booking"):
 			if not data["crews"].get(name):
 				foreign.extend(_crewless_rental(task, start, end))
+			continue
+		if name in hidden:
 			continue
 		card = build_card(
 			task,
@@ -648,7 +674,6 @@ def get_planner(start, end, draft=0):
 	_phase5_cards(tasks + unscheduled, today)  # Phase 5: outdoor / customer-facing flags, weather
 	fountain_move_jobs.mark_read_only(tasks + unscheduled)  # moved on the Maintenance Planner
 
-	project_names = {card["project"] for card in tasks + unscheduled if card.get("project")}
 	result = {
 		"start": str(start),
 		"end": str(end),
@@ -665,9 +690,46 @@ def get_planner(start, end, draft=0):
 			"maintenance_visit_hours": data["settings"]["maintenance_visit_hours"],
 		},
 		"can_edit": can_edit,
+		# P2: whether this answer is the whole set, and how many open tasks the display rule left out of it.
+		"all_tasks": all_tasks,
+		"hidden_tasks": len(hidden),
 	}
 	result.update(_phase6d().payload_extras(start, end, data["days"]))  # day_notes, block_notes, can_schedule
 	return _with_drafts(result, overlay, start, end) if overlay is not None else result
+
+
+def _hidden_by_display_rule(data, unscheduled_rows, crew_rows, todo_users, drafted=()):
+	"""Names of the open tasks the schedule leaves out unless ``all_tasks`` (D6, P2 of the planner UX
+	redesign): "phases + crew work only".
+
+	A task shows when it sits under a phase group (:func:`engine.tasks_under_a_phase`) or has someone
+	on it: a crew row, or an open assignee who is a Planner Resource. Everything else is the template
+	admin and billing checklist (about 40 tasks a job, all dated the project's first day), which stays
+	on the project, on the Task and in search, and comes back with "Show all tasks".
+
+	**Display only.** ``data`` is the engine's whole answer; the capacity, the bookings and the
+	conflicts it computed are untouched, and a task with a crew booking is by this rule never hidden.
+	A rental crew task is not subject to it (it is not a template task), and neither is a task the
+	caller has drafted, which would otherwise vanish the moment it was created.
+	"""
+	drafted = set(drafted or ())
+	crewed, candidates = {}, []
+	for task in data["tasks"]:
+		name = task.get("name")
+		if task.get("custom_rental_booking") or name in drafted:
+			continue
+		candidates.append(name)
+		crewed[name] = bool(data["crews"].get(name))
+	for row in unscheduled_rows:
+		name = row.get("name")
+		if name in drafted:
+			continue
+		candidates.append(name)
+		crewed[name] = bool(
+			engine.resolve_crew(crew_rows.get(name), todo_users.get(name), data["user_to_resource"])
+		)
+	under = engine.tasks_under_a_phase([name for name in candidates if not crewed[name]])
+	return {name for name in candidates if not crewed[name] and name not in under}
 
 
 def _crewless_rental(task, start, end):

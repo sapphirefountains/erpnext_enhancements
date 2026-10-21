@@ -81,7 +81,9 @@ const PP = {
 		panel: "ee_project_planner_panel",
 	},
 	// The filters the address carries (S5c), in the order they are written: ?project=&pm=&group=.
-	url_filters: ["project", "pm", "group"],
+	// all_tasks (P2, D6) is a filter like the rest, "1" when "Show all tasks" is on and "" (the default,
+	// phase and crew work only) when not; the server filters, so a change of it loads the week again.
+	url_filters: ["project", "pm", "group", "all_tasks"],
 	// The longest value the address may give one of them: a document name's limit.
 	url_value_max: 140,
 	hold_ms: 300,
@@ -164,6 +166,8 @@ class ProjectPlanner {
 		this.pm = this.load_pref(PP.prefs.pm, "");
 		this.group = this.load_pref(PP.prefs.group, "");
 		this.show_foreign = this.load_pref(PP.prefs.foreign, "1") !== "0";
+		// "Show all tasks" (P2): a saved view's, not the browser's, so it follows the person to any device.
+		this.all_tasks = "";
 		this.panel_open = this.load_pref(PP.prefs.panel, "1") !== "0";
 		this.show_all_unscheduled = false;
 		this.data = null;
@@ -305,7 +309,12 @@ class ProjectPlanner {
 	//     planner's are not its to take.
 
 	filters() {
-		return { project: this.project || "", pm: this.pm || "", group: this.group || "" };
+		return {
+			project: this.project || "",
+			pm: this.pm || "",
+			group: this.group || "",
+			all_tasks: this.all_tasks ? "1" : "",
+		};
 	}
 
 	// The filters set_route carries to another planner screen: only those that are not All.
@@ -324,6 +333,10 @@ class ProjectPlanner {
 		const text = String(value).trim();
 		if (text.length > PP.url_value_max) return null;
 		if (key === "group" && text && !PP.groups.includes(text)) return null;
+		if (key === "all_tasks") {
+			if (["1", "true", "yes", "on"].includes(text.toLowerCase())) return "1";
+			return ["", "0", "false", "no", "off"].includes(text.toLowerCase()) ? "" : null;
+		}
 		return text;
 	}
 
@@ -348,7 +361,7 @@ class ProjectPlanner {
 		const same = (a, b) => PP.url_filters.every((key) => a[key] === b[key]);
 		let next = null;
 		if (Object.keys(named).length) {
-			next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };
+			next = { project: named.project || "", pm: named.pm || "", group: named.group || "", all_tasks: named.all_tasks || "" };
 			// The planner's own screens carry the filters on screen: nothing changes, nothing is marked.
 			if (same(next, now)) next = null;
 			else this.url_filters = Object.assign({}, next);
@@ -369,7 +382,7 @@ class ProjectPlanner {
 	}
 
 	own_filter_values() {
-		return Object.assign({ project: "", pm: "", group: "" }, this.own_filters);
+		return Object.assign({ project: "", pm: "", group: "", all_tasks: "" }, this.own_filters);
 	}
 
 	// A key the address gave stops being the address's: the person picked it, or the loaded planner
@@ -390,9 +403,15 @@ class ProjectPlanner {
 		if (this.url_filters && PP.url_filters.every((name) => this[name] === this.own_filters[name])) {
 			this.url_filters = null;
 		}
-		this.save_pref(PP.prefs[key], this[key]);
+		// all_tasks is remembered with the person's view (p6c_state), not in this browser.
+		if (PP.prefs[key]) this.save_pref(PP.prefs[key], this[key]);
 		this.write_filter_url();
-		this.render();
+		// The server decides which tasks it sends, so that one asks again; the rest filter what is here.
+		if (key === "all_tasks") {
+			this.load();
+			// The kit's menu is outside the page body, whose clicks save "last used" (p6c_state_soon).
+			if (this.p6c) this.p6c_state_soon();
+		} else this.render();
 	}
 
 	// The page's one history write: the filters on screen into the entry on screen, in place. Only
@@ -634,6 +653,11 @@ class ProjectPlanner {
 		this.render();
 	}
 
+	// "Show all tasks" in Display: remembered with the person's view and carried in the address.
+	set_all_tasks(on) {
+		this.pick_filter("all_tasks", on ? "1" : "");
+	}
+
 	make_select($bar, label, on_change) {
 		const $select = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", label)
@@ -657,7 +681,7 @@ class ProjectPlanner {
 		return Promise.resolve(
 			frappe.call({
 				method: `${PP.api}.get_planner`,
-				args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end) }, this.draft_args()),
+				args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end) }, this.draft_args(), this.all_tasks ? { all_tasks: 1 } : {}),
 			})
 		)
 			.then((r) => {
@@ -6852,7 +6876,18 @@ const PP6B_METHODS = {
 		);
 		if (!el) {
 			if (flash.wait) {
-				frappe.show_alert({ message: __("{0} is hidden by the filters on screen.", [flash.name]), indicator: "orange" }, 6);
+				// A task the schedule leaves out (no phase, no crew; P2) is found by search all the same:
+				// say why it is not drawn, and offer the switch that draws it.
+				const show = () => {
+					// Flash it once it is drawn: the jump's own flash was spent on this load.
+					this.p6b.flash = { name: flash.name, date: flash.date, wait: false };
+					this.set_all_tasks(true);
+				};
+				const actions = this.all_tasks ? {} : { [__("Show all tasks")]: show };
+				const message = this.all_tasks
+					? __("{0} is hidden by the filters on screen.", [flash.name])
+					: __("{0} is hidden by the filters on screen, or is not phase or crew work.", [flash.name]);
+				frappe.show_alert({ message, indicator: "orange" }, 10, actions);
 			}
 			return;
 		}
@@ -7089,6 +7124,8 @@ const PP6C = {
 		panel: ["bool"],
 		color_by: ["enum", ["default", "person", "job_type", "project", "pm", "status"]],
 		color_chosen: ["bool"],
+		// Show all tasks (P2, D6): off is phase and crew work only.
+		all_tasks: ["bool"],
 	},
 	// What the cards are colored by until someone chooses (D12, the planner UX redesign): Job type. The
 	// stored value "default" is the old Task color, which every "last used" view saved before this carries
@@ -7843,6 +7880,7 @@ const PP6C_METHODS = {
 			pm: this.pm || "",
 			group: this.group || "",
 			foreign: !!this.show_foreign,
+			all_tasks: !!this.all_tasks,
 			panel: !!this.panel_open,
 			color_by: this.p6c.color_by,
 			color_chosen: !!this.p6c.color_chosen,
@@ -7860,6 +7898,10 @@ const PP6C_METHODS = {
 		if ("pm" in view) this.pm = view.pm;
 		if ("group" in view) this.group = view.group;
 		if ("foreign" in view) this.show_foreign = !!view.foreign;
+		// A view that does not say (one saved before P2) is the default, phase and crew work only.
+		const all_tasks = "all_tasks" in view ? (view.all_tasks ? "1" : "") : "";
+		const reload = all_tasks !== (this.all_tasks ? "1" : "");
+		this.all_tasks = all_tasks;
 		if ("panel" in view) this.panel_open = !!view.panel;
 		if ("over_only" in view) this.over_only = !!view.over_only;
 		if ("color_by" in view) {
@@ -7884,7 +7926,11 @@ const PP6C_METHODS = {
 		}
 		if (opts.render === false) return;
 		this.write_filter_url();
-		if (this.data) this.render();
+		if (!this.data) return;
+		// A view that shows another set of tasks asks the server again (a week that is not on screen yet
+		// loads anyway).
+		if (reload && PP.views.includes(this.view)) this.load();
+		else this.render();
 	},
 
 	p6c_state_soon() {
@@ -7903,6 +7949,8 @@ const PP6C_METHODS = {
 		Object.keys(this.url_filters || {}).forEach((key) => {
 			if (key in state) state[key] = this.own_filter_values()[key];
 		});
+		// The address's filters are text; a view's all_tasks is a flag.
+		if ("all_tasks" in state) state.all_tasks = !!state.all_tasks;
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;
@@ -7924,6 +7972,8 @@ const PP6C_METHODS = {
 		const key = (state) => {
 			const view = Object.assign({}, state);
 			delete view.color_chosen;
+			// A view saved before P2 does not say, which is off.
+			if (!view.all_tasks) delete view.all_tasks;
 			return JSON.stringify(Object.keys(view).sort().map((name) => [name, view[name]]));
 		};
 		const now = key(this.p6c_state(false));
@@ -7968,6 +8018,7 @@ const PP6C_METHODS = {
 		if (view.project) parts.push(this.p6c_project_label(view.project));
 		if (view.pm) parts.push(view.pm);
 		if (view.over_only) parts.push(__("Running over"));
+		if (view.all_tasks) parts.push(__("All tasks"));
 		if (view.foreign === false) parts.push(__("No maintenance, rentals, travel"));
 		if (view.color_by && view.color_by !== PP6C.default_color) {
 			parts.push(view.color_by === "default" ? __("Task colors") : __("{0} colors", [this.p6c_mode_label(view.color_by)]));
@@ -8203,6 +8254,9 @@ const PP6C_METHODS = {
 		if (this.pm) lines.push(__("Project manager: {0}", [this.pm]));
 		if (this.group) lines.push(__("Group: {0}", [__(this.group)]));
 		if (this.over_only) lines.push(__("Only tasks running over"));
+		if (!this.all_tasks && this.data && this.data.hidden_tasks) {
+			lines.push(__("Phase and crew work only ({0} tasks not shown)", [this.data.hidden_tasks]));
+		}
 		if (!this.show_foreign && this.view !== PP.heatmap_view) lines.push(__("Maintenance, rentals and travel hidden"));
 		if (this.p6c.color_by !== "default") lines.push(__("Colored by {0}", [this.p6c_mode_label(this.p6c.color_by)]));
 		if (this.p6c.highlight) lines.push(__("Highlighting {0}", [this.p6c.highlight.label]));
@@ -10795,7 +10849,24 @@ const PPTB_METHODS = {
 				title: __("Maintenance visits, rental crew work and travel, read-only: they move on their own planners"),
 				on_click: () => this.set_show_foreign(!this.show_foreign),
 			},
+			this.tb_all_tasks_item(),
 		]);
+	},
+
+	// "Show all tasks" (P2, D6): the schedule shows phase and crew work only, and this brings back the
+	// template admin and billing checklist tasks. The server does the filtering, so a hidden task is not
+	// on the page at all; the count says how many this view left out.
+	tb_all_tasks_item() {
+		const hidden = (this.data && this.data.hidden_tasks) || 0;
+		return {
+			label: __("Show all tasks"),
+			checked: !!this.all_tasks,
+			hint: !this.all_tasks && hidden ? __("{0} not shown", [hidden]) : "",
+			title: __(
+				"The schedule shows tasks under a phase and tasks with a crew. Turn this on for every open task, such as the template admin and billing checklists."
+			),
+			on_click: () => this.set_all_tasks(!this.all_tasks),
+		};
 	},
 
 	// Highlight a project: on, it can be switched off here (Esc and the pill's × do too); off, a project
