@@ -4703,6 +4703,152 @@ def get_my_week(date=None):
 	return answer
 
 
+def leave_by_clock(arrive, drive_minutes):
+	"""``"HH:MM"``: when to leave for a stop reached at ``arrive`` after ``drive_minutes`` of driving.
+
+	The route view's own arithmetic (``route_slots``: leave-by is the arrival less the drive to it).
+	None when the stop is not driven to, when there is no drive, or when the arrival is unknown.
+	"""
+	if not arrive or drive_minutes in (None, "") or flt(drive_minutes) <= 0:
+		return None
+	return routing.fmt_clock(routing.parse_minutes(arrive) - flt(drive_minutes))
+
+
+def task_day_of(task, day):
+	"""``(n, of)`` for a task on the n-th of its ``of`` working days, or None for a one-day or undated task."""
+	span = engine.task_span(task or {})
+	if not span or span[0] >= span[1] or not span[0] <= day <= span[1]:
+		return None
+	return working_days_between(span[0], day) + 1, working_days_between(span[0], span[1]) + 1
+
+
+def today_items(entry, payload, tasks, equipment, moves, day):
+	"""The stops of one day of Today: :func:`day_entry`'s ``items`` with what the phone view adds.
+
+	``payload`` is the same day's :func:`route_payload`; its stops and the entry's items are in the
+	same order. Added to each: ``order``, ``leave_by`` ("HH:MM", the first drive's departure), ``miles`` (the drive
+	to it, imperial), ``weather`` (flag sentences), ``equipment`` (labels), ``day_of`` (``[n, of]``)
+	and ``fountain_move`` (a move task is shown, never moved, here). Nothing here is writable.
+	"""
+	out = []
+	for item, stop in zip(entry.get("items") or [], payload.get("stops") or [], strict=False):
+		ref = stop.get("ref")
+		is_task = stop.get("kind") in ("task", "rental")
+		day_of = task_day_of((tasks or {}).get(ref), day) if is_task else None
+		out.append(
+			dict(
+				item,
+				order=stop.get("order"),
+				located=bool(stop.get("located")),
+				leave_by=leave_by_clock(stop.get("arrive"), stop.get("drive_minutes")),
+				drive_minutes=stop.get("drive_minutes"),
+				miles=stop.get("miles"),
+				weather=list(stop.get("weather") or []),
+				equipment=[e.get("label") or e.get("name") for e in (equipment or {}).get(ref) or []]
+				if is_task
+				else [],
+				day_of=list(day_of) if day_of else None,
+				fountain_move=bool(is_task and stop.get("project") in (moves or ())),
+			)
+		)
+	return out
+
+
+@frappe.whitelist()
+def get_today(date=None):
+	"""The signed-in person's own day and the day after, for the phone: ``/desk/project-planner/today``.
+
+	P8 of the Planner UX redesign (``docs/planner-ux-redesign.md`` §4.4). Found through Planner
+	Resource ``user``, as :func:`get_my_week` is, and open to every planner role. Read-only.
+
+	``{"resource", "label", "date", "tomorrow", "today", "can_schedule", "days": [entry, entry],
+	"route", "blocks", "day_notes"}``. Each entry is a :func:`day_entry` whose items carry the leave-by
+	time, the drive in miles, the weather, the equipment and which day of a multi-day task it is
+	(:func:`today_items`); each entry also has the day's ``drive_minutes``, ``miles`` and ``long_drive``. ``route`` is the
+	whole :func:`get_route` answer for ``date`` (the stops with their points, the shop, and the
+	Google Maps key the inline map needs), so the page draws it without a second request. With no
+	active Planner Resource, ``resource`` is None and ``message`` says so.
+	"""
+	_require_planner()
+	from erpnext_enhancements.api.pickup_routing import _depot_address
+	from erpnext_enhancements.project_enhancements import planner_notices
+
+	day = getdate(given(date) or nowdate())
+	following = day + datetime.timedelta(days=1)
+	answer = {
+		"today": nowdate(),
+		"date": str(day),
+		"tomorrow": str(following),
+		"resource": None,
+		"label": None,
+		"can_schedule": bool(_phase6d().can_schedule()),
+		"days": [],
+		"route": None,
+		"blocks": [],
+		"day_notes": {},
+	}
+	resource = planner_notices.resource_of(frappe.session.user)
+	if not resource:
+		answer["message"] = _(
+			"You are not on the planner's list of people yet, so there is no day to show. "
+			"Ask a project manager to add you under Planner Resources."
+		)
+		return answer
+	data, days = _people_days(day, following, [resource])
+	person = next((r for r in data["resources"] if r["name"] == resource), None)
+	if not person:
+		answer["message"] = _("Your planner entry is not active, so there is no day to show.")
+		return answer
+
+	cells = data["days"].get(resource) or {}
+	stop_bookings = [
+		b
+		for d in (day, following)
+		for b in (cells.get(str(d)) or {}).get("bookings") or []
+		if b.get("kind") in routing.STOP_KINDS
+	]
+	details = routing.locate(stop_bookings, detail=True) if stop_bookings else {}
+	titles = _project_titles(b.get("project") for b in stop_bookings)
+	moves = fountain_move_jobs.move_projects(b.get("project") for b in stop_bookings if b.get("project"))
+	# Labels read fresh (an Asset's asset_name), as get_planner does, not the one frozen on the row.
+	equipment = _equipment_labelled(
+		engine.read_equipment(
+			[b.get("ref") for b in stop_bookings if b.get("kind") in ("task", "rental") and b.get("ref")]
+		)
+	)
+	tasks = {t.get("name"): t for t in data.get("tasks") or []}
+	routes = data.get("routes") or {}
+	maps = _maps_config()
+	entries = []
+	for entry, d in zip(days.get(resource) or [], (day, following), strict=False):
+		payload = _route_weather(
+			route_payload(
+				person,
+				d,
+				cells.get(str(d)) or {},
+				routes.get((resource, d)),
+				data["settings"],
+				details,
+				titles,
+				maps if d == day else {},
+				_depot_address() if d == day else None,
+			)
+		)
+		if d == day:
+			answer["route"] = payload
+		entries.append(
+			dict(
+				entry,
+				items=today_items(entry, payload, tasks, equipment, moves, d),
+				miles=payload.get("miles"),
+				long_drive=bool(payload.get("long_drive")),
+			)
+		)
+	answer.update(resource=resource, label=person["label"], days=entries)
+	answer.update(_phase6d().my_week_extras(resource, day, following))  # own blocks, day notes
+	return answer
+
+
 def _sheet_cell(entry):
 	"""One person-day of the crew sheet as print-safe HTML; every value escaped."""
 	from erpnext_enhancements import print_style as ps

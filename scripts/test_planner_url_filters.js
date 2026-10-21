@@ -82,6 +82,7 @@ function makeDesk(options) {
 		shows: [],
 		handlers: {},
 		prefs: {},
+		tabs: {},
 		calls: [],
 		timers: [],
 		listeners: [],
@@ -242,13 +243,16 @@ function makeDesk(options) {
 		desk.listeners.forEach((fn) => fn({ type: "popstate", state: history.state }));
 	}
 
+	// The device's remembered tab (P8: "ee_project_planner_tab:<user>") is kept apart from the filter
+	// prefs, which these scenarios compare whole.
+	const store_for = (key) => (String(key).startsWith("ee_project_planner_tab") ? desk.tabs : desk.prefs);
 	const storage = {
-		getItem: (key) => (key in desk.prefs ? desk.prefs[key] : null),
+		getItem: (key) => (key in store_for(key) ? store_for(key)[key] : null),
 		setItem: (key, value) => {
-			desk.prefs[key] = String(value);
+			store_for(key)[key] = String(value);
 		},
 		removeItem: (key) => {
-			delete desk.prefs[key];
+			delete store_for(key)[key];
 		},
 	};
 	const window = {
@@ -662,8 +666,9 @@ test("Project Planner: a link's filters stay one-off; a pick saves only the filt
 	check(
 		"last used never takes the link's project or its All PM",
 		saved(desk).map((s) => [s.project, s.pm, s.group]),
+		// Two saves: the month is no longer a different state from the week (the tab is not saved), so the
+		// second save of the same filters is skipped.
 		[
-			["PRJ-MINE", "me@example.com", ""],
 			["PRJ-MINE", "me@example.com", ""],
 			["PRJ-MINE", "me@example.com", "Field"],
 		]
@@ -758,21 +763,32 @@ test("Project Planner: no filter is left in route_options to leak into the next 
 	check("a person's route carries them too", desk.here(), "/desk/project-planner/route/RES-1/2026-10-13?project=PRJ-00001&pm=Pat%20Lee&group=Field");
 });
 
-test("Project Planner: the last-used view replaces a bare address, and the address's filters still win", () => {
+test("Project Planner: the device's tab replaces a bare address; the person's last-used filters are restored; a link's filters win", () => {
+	// (A link's filters win over the person's, and the device's calendar tab still applies to them.)
+	// The tab is the device's (P8, Nik 2026-10-21): an old row's `view` is ignored.
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	const last = { view: "month", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
+	desk.tabs["ee_project_planner_tab:"] = "month";
+	const last = { view: "crew", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
 	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	desk.go("project-planner", { project: "PRJ-00001" });
-	check("the month replaces the entry, the query kept", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/month/2026-10-14?project=PRJ-00001"]);
+	check("a link that names a filter opens the device's tab with it, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/month/2026-10-14?project=PRJ-00001"]);
 	check("the link's project, the rest All", f3(pp), { project: "PRJ-00001", pm: "", group: "" });
 	check("loaded once", pp.loads.length, 1);
 
-	// With no filter in the address, the restored ones are written into it.
+	// With no filter in the address, the restored ones are written into the device's tab.
 	const fresh = makeDesk({ start: "/desk/project/PRJ-00001" });
+	fresh.tabs["ee_project_planner_tab:"] = "month";
 	const own = projectPlanner(fresh, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	fresh.go("project-planner");
 	check("the last used filters", f3(own), { project: "PRJ-OLD", pm: "pm@example.com", group: "PM" });
-	check("in the address of the month", fresh.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM");
+	check("in the address of this device's month", fresh.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM");
+	check("replacing the bare entry", fresh.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/month/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM"]);
+
+	// A device with no tab of its own opens the default view, whatever the row's view says.
+	const other = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	projectPlanner(other, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
+	other.go("project-planner");
+	check("the default view, bare", other.here().split("?")[0], "/desk/project-planner");
 });
 
 test("Project Planner: a pick made under a drawer reaches the entry below once the kit's Back lands", () => {
