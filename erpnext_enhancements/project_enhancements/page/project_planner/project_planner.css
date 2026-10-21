@@ -965,10 +965,6 @@
 	order: 2;
 	flex: 0 0 260px;
 	max-width: 260px;
-	position: sticky;
-	top: 8px;
-	max-height: calc(100vh - 150px);
-	overflow-y: auto;
 }
 
 .pp-main-crew > .pp-trays:empty {
@@ -989,9 +985,6 @@
 		order: 0;
 		flex: none;
 		max-width: none;
-		position: static;
-		max-height: none;
-		overflow: visible;
 	}
 }
 

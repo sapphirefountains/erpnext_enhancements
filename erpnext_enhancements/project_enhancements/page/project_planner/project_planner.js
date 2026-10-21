@@ -273,9 +273,9 @@ class ProjectPlanner {
 	}
 
 	// The route options a planner screen's address carries: the filters, and Capacity's flag.
-	route_options_for(view, extra) {
+	route_options_for(view) {
 		const out = this.filter_options();
-		if (view === PP.capacity_view) out.capacity = extra || "1";
+		if (view === PP.capacity_view) out.capacity = "1";
 		return out;
 	}
 
@@ -302,6 +302,7 @@ class ProjectPlanner {
 		}
 		// The flag is the address's, like the filters: consumed, so no later route writes it again.
 		this.capacity_asked = target.capacity === "utilization" ? "utilization" : "";
+		this.capacity_scrolled = false;
 		if (frappe.route_options && typeof frappe.route_options === "object") {
 			delete frappe.route_options.capacity;
 		}
@@ -1347,7 +1348,8 @@ class ProjectPlanner {
 	set_crew_hours(on) {
 		this.crew_hours = !!on;
 		this.save_pref(PP.prefs_crew_hours, this.crew_hours ? "1" : "0");
-		this.render_crew_bar();
+		// The header is not redrawn: the checkbox already shows the state, and redrawing it would take the
+		// keyboard's focus away from the box that was just toggled.
 		if (this.view === "crew" && this.data) this.render();
 	}
 

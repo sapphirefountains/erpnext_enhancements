@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.706.0] - 2026-10-21
+
+### Added
+- **The Project Planner's Crew tab counts in days, and Capacity replaces the Heatmap and Utilization tabs**
+  (P7 of the Planner UX redesign, `docs/planner-ux-redesign.md` §4.5 and D12; Nik approved the redesign
+  on 2026-10-21). The page is `project_planner.js` and its CSS; there is no server change beyond one
+  accepted saved-view value.
+  - **Crew board in days.** A task is a bar along a person's row: its chips on neighboring days are drawn
+    joined (`pp-span-prev` / `pp-span-next`) and each reads *Day 2 of 5* where it used to read its hours.
+    A chip is still the unit that is dragged, resized and tapped, so every move, hand-over
+    (`swap_crew`), resize and tap-to-move is unchanged. **Show hours** (a header checkbox, kept in this
+    browser, off) puts the hours or time slot back beside the days; the tooltip always has them. A task
+    with no hours still books a full day in the engine (only 96 of 1,764 open tasks have hours), so the
+    day cell still says *Full*, *3h free* or *Off*. Day counts come from the person's bookings when the
+    whole task is on screen, and from weekdays between the task's own dates when it runs past the edge
+    of the week.
+  - **Side tray.** *Not scheduled* and *Needs crew* sit beside the board on a laptop and above it on a
+    phone (`.pp-main-crew`; the trays and the grid now share a `.pp-main` box).
+  - **Capacity** is the Crew tab's second screen, switched from a *Board | Capacity* header, at
+    `/project-planner/crew/<date>?capacity=1`. It shows the eight-week heatmap on top and the Crew
+    Utilization report's rows under it for the same eight weeks. Every heatmap figure (percentage, booked
+    and total hours, pencilled hours, days over) and every Utilization column (capacity, booked, actual
+    (kiosk), Planned %, Actual %, the Over and Near full chips, *Open the full report*) is kept. The
+    sections load on their own, so a slow report never holds the heatmap back. ‹ › step four weeks.
+  - **The Utilization gate is unchanged**: the report's own roles (`allowed_reports`) and
+    `can_get_report("Task")`. Someone without access sees the heatmap alone and nothing is asked of the
+    server; a refusal from the server, or arriving by the old Utilization address without access, draws
+    the no-access panel in the table's place. Labor cost is not touched.
+  - **Old addresses and saved views.** `/project-planner/heatmap/<date>` and `/utilization/<date>` are
+    replaced (never pushed, so Back does not return to them) by `/crew/<date>?capacity=1` with their
+    filters, `?capacity=utilization` for the old Utilization address, which scrolls to the table. A saved
+    view or "last used" view that says `heatmap` opens Capacity and still matches Capacity as the view on
+    screen; `capacity` is saved as itself. Board and Capacity are history entries, so Back steps between
+    them.
+
+### Changed
+- The view switcher has three tabs, Month, Week and Crew; the Heatmap and Utilization tabs and their
+  Utilization-only gate on a tab are gone (the gate now decides whether Capacity has its table). Capacity
+  has Heatmap's toolbar behavior: Draft mode, saved views and Print stay, there is no Undo.
+- `planner_views_prefs.SCHEMA["project"]["view"]` accepts `capacity` beside the legacy `heatmap`. The set of
+  keys is unchanged.
+- The Utilization table covers whole weeks (they begin on the site's first weekday, as the report's do),
+  so the month view's clipped first and last weeks are gone, and the month-stepping arrows with them.
+
+### Tests
+- `scripts/test_planner_toolbar.js` runs the Crew board's days (chips, joins, day counts, Show hours), the
+  header as routes, Capacity's two sections, the Utilization gate, and the saved-view redirects;
+  `scripts/test_planner_url_filters.js` runs Capacity's address, the old addresses' redirects and
+  `?capacity=` against a model of the v16.50 router.
+
 ## [1.704.0] - 2026-10-21
 
 ### Added

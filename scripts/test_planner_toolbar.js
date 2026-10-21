@@ -1931,9 +1931,9 @@ test("Project Planner: Show hours is the person's, kept in this browser, and red
 	pp.render = () => (drawn += 1);
 	pp.view = "crew";
 	pp.set_crew_hours(true);
-	check("on: saved, the header redrawn, the board redrawn", [pp.crew_hours, saved, drawn], [true, [["ee_project_planner_crew_hours", "1"], "bar"], 1]);
+	check("on: saved and the board redrawn, the header left alone (it keeps the keyboard's focus)", [pp.crew_hours, saved, drawn], [true, [["ee_project_planner_crew_hours", "1"]], 1]);
 	pp.set_crew_hours(false);
-	check("and off", [pp.crew_hours, saved[2]], [false, ["ee_project_planner_crew_hours", "0"]]);
+	check("and off", [pp.crew_hours, saved[1]], [false, ["ee_project_planner_crew_hours", "0"]]);
 	check("it starts off, in days", vm.runInContext("PP.prefs_crew_hours", ctx), "ee_project_planner_crew_hours");
 });
 
