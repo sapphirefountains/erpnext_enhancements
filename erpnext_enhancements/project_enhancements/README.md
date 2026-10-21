@@ -722,7 +722,7 @@ under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
 **Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
 (`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
-or to `/week/<expected_start_date>` for a project that has not started yet. The button is only on
+or to `/lookahead/<expected_start_date>` for a project that has not started yet (the week view before P5). The button is only on
 an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
 those whose roles open the page. The planner reads `project` as one of its address filters (below):
 after the last-used view is restored, so it wins over that, with the PM filter at All so it cannot
@@ -734,7 +734,7 @@ address; it now stays there, as the Project filter.)
 
 **Its filters are in the address** (custom pages S5c, v1.676.0, TASK-2026-02807). The Project,
 Project manager and Group filters ride on every planner screen as `?project=`, `?pm=` and
-`?group=`, e.g. `/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field`, so a copied
+`?group=`, e.g. `/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&group=Field`, so a copied
 link shows what its sender saw and a reload keeps it. The Maintenance Planner does the same for its
 Technician (`?technician=`, see the Sapphire Maintenance README). The rules, in the page's "filters
 in the address" block:

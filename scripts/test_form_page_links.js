@@ -463,7 +463,8 @@ test("Project: View > Open in Project Planner opens the planner on that project"
 	check("the PM filter is cleared, so it cannot hide the project's cards", pp.pm, "");
 	check("the unscheduled tray is back to its short list", pp.show_all_unscheduled, false);
 	check("route_options is consumed", desk.frappe.route_options, null);
-	check("one load, this week", pp.loads, [{ view: "week", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
+	// P5: the planner's home tab, the Lookahead, with no last-used view to say otherwise.
+	check("one load, the Lookahead on this week", pp.loads, [{ view: "lookahead", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
 	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there.
 	check("a history entry of its own, its ?project= kept as the filter on screen", desk.entries, [
 		"/desk/project/PRJ-00001",
@@ -522,16 +523,16 @@ test("Project: Back after switching to All does not snap the filter back", () =>
 	check("and nothing is left in route_options to apply later", desk.frappe.route_options, null);
 });
 
-test("Project: a project that starts later opens on the week it starts", () => {
+test("Project: a project that starts later opens the Lookahead on the week it starts", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk);
 	openForm(desk, "Project", project({ name: "PRJ-00002", expected_start_date: "2026-11-02" })).press(
 		"Open in Project Planner"
 	);
-	check("the week holding its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "week", "2026-11-02"]);
-	check("its address keeps the project", desk.here(), "/desk/project-planner/week/2026-11-02?project=PRJ-00002");
+	check("the Lookahead from its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "lookahead", "2026-11-02"]);
+	check("its address keeps the project", desk.here(), "/desk/project-planner/lookahead/2026-11-02?project=PRJ-00002");
 	check("loaded there with the filter", pp.loads.slice(-1)[0], {
-		view: "week",
+		view: "lookahead",
 		anchor: "2026-11-02",
 		project: "PRJ-00002",
 		pm: "",
@@ -547,10 +548,11 @@ test("Project: a project that starts later opens on the week it starts", () => {
 test("Project: the planner's last-used view still applies, and the project wins over its filter", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk, {
-		p6c: { loaded: true, restored: false, last: { view: "month", project: "PRJ-OLD", pm: "pm@example.com" } },
+		// P5: saved since the tabs, so its view is a choice of tab.
+		p6c: { loaded: true, restored: false, last: { view: "month", project: "PRJ-OLD", pm: "pm@example.com", tabbed: true } },
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
-	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-00001");
+	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-00001");
 	check("still one entry past the form", desk.entries.length, 2);
 	check("the form's project, not the remembered one", pp.project, "PRJ-00001");
 	check("and no remembered PM hiding it", pp.pm, "");
