@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.711.0] - 2026-10-21
+
+### Added
+- **The guided layout surfaces a record's attachments and, on an Opportunity, its stage in the head
+  band** (form kit P4.9; Nik, 2026-10-21: "Need to surface attachments and show stage of opportunity at
+  the top header for the new guided layout.").
+  - **Attachments up front, on every guided DocType.** They already existed, as a group inside the
+    *Record tools* block (v1.686.0), which a person may collapse or place away from the form, and which
+    is a closed bar on a phone. The guided page now gives them a section of their own straight under the
+    steps (`.ge-files`), open by default (folded in focus mode), whatever the notes and tools do. It
+    lists each file with its kind, size, who and when, opens it, and has **Attach a file**; **Remove**
+    shows where the Desk sidebar allows it. The rules are the sidebar's own, unchanged
+    (`can_add_file`, `can_remove_files`, `protect_attached_files`, `max_attachments`, "Home/Attachments",
+    `make_attachments_public`, frappe's own delete question).
+  - **A files chip in the head band** ("3 files" / "Attach a file" / "No files") jumps to the
+    section and opens it. It is a 44px target, so a phone reaches the files without scrolling past
+    every step.
+  - **Drag and drop, like the Desk form.** A file dropped anywhere on the page opens frappe's uploader
+    with it, as `Form.setup_file_drop` does. Every file drag over the page is claimed, so a miss no
+    longer makes the browser open the file and leave the record; a new record answers "Please save
+    before attaching.", and a person who may not attach (or a record at `max_attachments`) is told so.
+    The board's side panel gets the same drop and keeps its files in its tools.
+  - **The stage in the head band.** A DocType declares a header status field in its form kit config
+    (`header: {"status": {"field", "label", "tones"}}`; `get_flow` sends it as `header`), and the band
+    shows its value as a chip that follows the field the moment it changes (the Close step, a save, a
+    conflict choice), announced politely to a screen reader as "Stage: …". Only Opportunity declares
+    one. Its stage is the `status` field, the one the board's columns are made from and the completeness
+    lists are measured by, so the chip carries the board's words: Closed Won green, Lost red, On Hold
+    amber, every open stage neutral (a pillar colour keeps meaning a pillar); a stage added later still
+    shows, neutral.
+  - New pure module `public/js/form_kit/header.js` (`header_status`, `files_chip`, `files_drop`), run
+    under node by the new `tests/test_guided_header.py` (its own CI step). `tests/test_form_kit.py` holds
+    the config to the flow, the board and the DocType's real status options.
+  - **Nothing changes on production by deploying this:** no patch, no fixture, no Custom Field.
+
 ## [1.708.0] - 2026-10-21
 
 ### Added

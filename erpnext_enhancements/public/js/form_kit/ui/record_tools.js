@@ -17,8 +17,14 @@
  *   Tags          frappe.desk.doctype.tag.tag.add_tag / remove_tag, suggestions from get_tags
  *   Shared with   docinfo.shared, read only; sharing is on the full form (frappe's Share is the form's)
  *   Attachments   docinfo.attachments; add with frappe.ui.FileUploader on the record ("Home/
- *                 Attachments", the DocType's make_attachments_public and max_attachments), remove
- *                 with frappe.desk.form.utils.remove_attach after frappe's own question
+ *                 Attachments", the DocType's make_attachments_public and max_attachments), by its
+ *                 button or by dropping files anywhere on the page (the form's own
+ *                 setup_file_drop), remove with frappe.desk.form.utils.remove_attach after
+ *                 frappe's own question. Since v1.711.0 the guided page gives them a section of
+ *                 their own under the steps (.ge-files) and a count in the head band
+ *                 (.ge-files-chip), because they sat in the record tools, which a person may
+ *                 collapse or place away from the form; the side panel has no such section and
+ *                 keeps them in the tools
  *   Activity      the timeline with "Show all activity" on: created, last edited, Versions (as
  *                 sentences, version_timeline_content_builder.js's rules), emails, the assignment,
  *                 attachment, info and workflow logs, milestones; ERPNext's CRM Activities (open
@@ -128,7 +134,11 @@ export class RecordTools {
 		$root.find(".ge-tools-actions").remove();
 		const $box = $root.find(".ge-tools");
 		this.$box = $box;
+		this.$dock = $root.find(".ge-files");
+		this.files_count = null;
+		this.dock_reset();
 		if (!$box.length) return;
+		this.bind_drop($root);
 		if (ed.is_new || !ed.name || !ed.doctype) {
 			$box.empty().prop("hidden", true);
 			return;
@@ -214,7 +224,7 @@ export class RecordTools {
 		this.$people = $('<div class="ge-tools-meta"></div>').appendTo($box);
 		this.sf().state.render(this.$people, "loading");
 		const wide = !!(window.matchMedia && window.matchMedia("(min-width: 1024px)").matches) && this.ed.id_prefix !== "fkp";
-		this.$files = this.group("attachments", __("Attachments"), wide);
+		this.$files = this.$dock.length ? this.dock_files() : this.group("attachments", __("Attachments"), wide);
 		this.$activity = this.group("activity", __("Activity"), wide);
 		const widgets = rules.directory_widgets((this.meta().fields || []).map((f) => f.fieldname));
 		if (widgets.contacts || widgets.addresses) {
@@ -244,6 +254,96 @@ export class RecordTools {
 
 	count(key, text) {
 		this.$box.find(`.ge-tools-group[data-tool="${key}"] .ge-tools-count`).text(text === "" || text === null ? "" : String(text));
+	}
+
+	// ------------------------------------------------------------------ the files section (v1.711.0)
+
+	// Nothing of the files section or the band's chip belongs to a record that is not shown.
+	dock_reset() {
+		if (this.$dock) this.$dock.empty().prop("hidden", true);
+		this.ed.$root.find(".ge-files-chip").prop("hidden", true).empty();
+	}
+
+	// The guided page's own place for the record's files: a section under the steps, open unless the
+	// page says otherwise (focus mode), with the same body the tools' group has. Drawn here, in the
+	// frame, so it exists while the files load.
+	dock_files() {
+		const open = typeof this.ed.files_open_default === "function" ? this.ed.files_open_default() : true;
+		const $details = $('<details class="ge-files-group"></details>').appendTo(this.$dock.empty().prop("hidden", false));
+		if (open) $details.attr("open", "");
+		const $summary = $('<summary class="ge-files-summary"></summary>').appendTo($details);
+		$('<h2 class="ge-files-title"></h2>').text(__("Attachments")).appendTo($summary);
+		$('<span class="ge-files-count"></span>').appendTo($summary);
+		return $('<div class="ge-files-body"></div>').appendTo($details);
+	}
+
+	// The count, in the files section and the band's chip.
+	show_count(n) {
+		this.files_count = n;
+		this.$dock.find(".ge-files-count").text(n ? String(n) : "");
+		const $chip = this.ed.$root.find(".ge-files-chip");
+		if (!$chip.length || !this.$dock.length) return;
+		const chip = this.ed.kit.files_chip(n);
+		let word;
+		if (n === 1) word = __("1 file");
+		else if (n) word = __("{0} files", [n]);
+		else word = this.can_add_file() ? __("Attach a file") : __("No files");
+		$chip.empty().prop("hidden", false).attr("aria-label", chip.aria);
+		$('<span class="ge-files-chip-icon" aria-hidden="true"></span>').appendTo($chip);
+		$('<span class="ge-files-chip-text"></span>').text(word).appendTo($chip);
+	}
+
+	// Whether another file may be attached: write, and the DocType's max_attachments not reached.
+	can_add_file() {
+		return rules.can_add_file({
+			write: this.perms().write,
+			max_attachments: this.meta().max_attachments,
+			count: ((this.info && this.info.attachments) || []).length,
+		});
+	}
+
+	// ------------------------------------------------------------------ dropping files on the page
+
+	// The form accepts a file dropped anywhere on it (frappe's Form.setup_file_drop); the guided page
+	// does the same, over the whole page. A file dragged over a page that does not claim it is opened
+	// by the browser, which would take the person off the record they were typing in, so every file
+	// drag over the page is claimed, and answered (header.js files_drop). Bound once per mount, under
+	// a namespace, because the page's root outlives the record.
+	bind_drop($root) {
+		const ns = ".gefiles";
+		const is_files = (event) => {
+			const dt = event.originalEvent && event.originalEvent.dataTransfer;
+			return !!dt && Array.prototype.indexOf.call(dt.types || [], "Files") > -1;
+		};
+		$root.off(ns);
+		$root.on(`dragenter${ns} dragover${ns}`, (event) => {
+			if (!is_files(event)) return;
+			event.preventDefault();
+			$root.addClass("is-dropping-files");
+		});
+		$root.on(`dragleave${ns}`, (event) => {
+			// Leaving for a child fires too; only leaving the root ends the highlight.
+			if (event.relatedTarget && $root[0].contains(event.relatedTarget)) return;
+			$root.removeClass("is-dropping-files");
+		});
+		$root.on(`drop${ns}`, (event) => {
+			$root.removeClass("is-dropping-files");
+			const dt = event.originalEvent && event.originalEvent.dataTransfer;
+			const files = dt && dt.files;
+			const verdict = this.ed.kit.files_drop({
+				has_files: !!(files && files.length),
+				is_new: !!this.ed.is_new,
+				loaded: !!this.info && this.current(),
+				can_add: this.can_add_file(),
+			});
+			if (verdict === "ignore") return;
+			event.preventDefault();
+			event.stopPropagation();
+			if (verdict === "attach") this.attach(files);
+			else if (verdict === "save") this.sf().toast(__("Please save before attaching."), { tone: "warning", timeout: 5000 });
+			else if (verdict === "wait") this.sf().toast(__("This record's files are still loading. Try again in a moment."), { tone: "warning", timeout: 5000 });
+			else this.sf().toast(__("You cannot attach more files to this record."), { tone: "warning", timeout: 5000 });
+		});
 	}
 
 	sf() {
@@ -509,6 +609,7 @@ export class RecordTools {
 		const all = info.attachments || [];
 		const files = rules.unique_files(all);
 		this.count("attachments", files.length || "");
+		this.show_count(files.length);
 		const $body = this.$files.empty();
 		const can_remove = rules.can_remove_files({
 			protect_attached_files: meta.protect_attached_files,
@@ -527,7 +628,10 @@ export class RecordTools {
 				.appendTo($body);
 		}
 		if (!files.length) {
-			$('<p class="ge-muted ge-tools-none"></p>').text(__("No files attached.")).appendTo($body);
+			const dropping = this.$dock.length && this.can_add_file();
+			$('<p class="ge-muted ge-tools-none"></p>')
+				.text(dropping ? __("No files attached. Drop files anywhere on this page, or attach one.") : __("No files attached."))
+				.appendTo($body);
 			return;
 		}
 		const $list = $('<ul class="ge-tools-list ge-tools-files"></ul>').appendTo($body);
@@ -558,7 +662,7 @@ export class RecordTools {
 
 	// frappe's sidebar new_attachment, without a form: the record, "Home/Attachments", the DocType's
 	// public default, and what is left of max_attachments.
-	attach() {
+	attach(dropped) {
 		const meta = this.meta();
 		const doctype = this.doctype;
 		const name = this.name;
@@ -578,6 +682,8 @@ export class RecordTools {
 				make_attachments_public: meta.make_attachments_public,
 				on_success: uploaded,
 				restrictions,
+				// Files dropped on the page, as the form's drop passes them.
+				files: dropped && dropped.length ? dropped : undefined,
 			});
 		};
 		this.dialog(() => {

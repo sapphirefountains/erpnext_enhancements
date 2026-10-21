@@ -765,6 +765,7 @@ class GuidedEntry {
 	render_shell() {
 		this.page.set_title(this.is_new ? __("New {0}", [__(this.doctype)]) : this.name);
 		// Drawn again below: whatever panel or pop-up was open goes with the old shell.
+		this.files_focus = null;
 		this.$panel = null;
 		this.$overlay = null;
 		this.sections = null;
@@ -774,6 +775,10 @@ class GuidedEntry {
 					<div class="ge-band-text">
 						<div class="ge-eyebrow"></div>
 						<h1 class="ge-title"></h1>
+						<div class="ge-chips">
+							<span class="ge-stage-chip" aria-live="polite"></span>
+							<button type="button" class="ge-files-chip" aria-controls="ge-files-region" hidden></button>
+						</div>
 					</div>
 					<div class="ge-band-actions"></div>
 				</div>
@@ -792,6 +797,7 @@ class GuidedEntry {
 					<div class="ge-conflict-slot"></div>
 					<div class="ge-viewbar" hidden></div>
 					<section class="ge-stage"></section>
+					<section class="ge-files" id="ge-files-region" hidden></section>
 					<div class="ge-block ge-block--notes">
 						<button type="button" class="ge-block-bar" aria-expanded="false" aria-controls="ge-comments-region" hidden></button>
 						<section class="ge-comments" hidden></section>
@@ -846,6 +852,8 @@ class GuidedEntry {
 			this.block_open[kind] = !this.block_open[kind];
 			this.refresh_blocks();
 		});
+		// The attachments chip in the band: the files section, opened and scrolled to (v1.711.0).
+		this.$root.find(".ge-files-chip").on("click", () => this.show_files());
 		this.$root.find(".ge-comments").attr("id", "ge-comments-region");
 		this.$root.find(".ge-tools").attr("id", "ge-tools-region");
 		this.watch_blocks();
@@ -868,6 +876,36 @@ class GuidedEntry {
 		if (typeof this.mount_comments === "function") this.mount_comments();
 	}
 
+	// The band's stage chip (v1.711.0): the field the DocType's config names under `header` (on
+	// Opportunity its `status`, the board's own stage), with the board's words and a tone, redrawn as
+	// the value changes: chosen on the Close step, set by a save, or put back by a conflict choice.
+	// Drawn only when its content changes, because the span is a live region.
+	render_stage_chip() {
+		const $chip = this.$root.find(".ge-stage-chip");
+		const status = this.kit.header_status(this.flow && this.flow.header, this.values);
+		const key = status ? `${status.tone}|${status.label}|${status.value}` : "";
+		if ($chip.attr("data-key") === key) return;
+		$chip.attr("data-key", key).empty();
+		if (!status) return;
+		$chip.append($('<span class="sr-only"></span>').text(`${status.label}: `));
+		$chip.append(this.sf.chip(__(status.value), status.tone));
+		$chip.attr("title", status.aria);
+	}
+
+	// Whether the files section starts open: it does, except in focus mode (record_tools.js).
+	files_open_default() {
+		return !(this.view && this.view.focus === "on");
+	}
+
+	// The attachments chip's click: open the files section and bring it into view, focus on its
+	// first control (a phone has no other way to reach it without scrolling the whole page).
+	show_files() {
+		const $files = this.$root.find(".ge-files");
+		if (!$files.length || $files.prop("hidden")) return;
+		$files.find("details").prop("open", true);
+		this.scroll_into($files[0], $files.find("summary, button, a").first()[0]);
+	}
+
 	// Band, rail, progress, summary and footer: everything that follows the values.
 	refresh_chrome() {
 		if (!this.$shell || !this.flow) return;
@@ -883,6 +921,7 @@ class GuidedEntry {
 		this.$root
 			.find(".ge-stripe")
 			.attr("class", `ge-stripe ge-stripe--${kit.lead_pillar(this.doctype, this.values)}`);
+		this.render_stage_chip();
 
 		const $track = this.$root.find(".ge-progress-track");
 		$track.attr("aria-valuenow", model.percent).attr("aria-label", __("Complete for this stage"));
@@ -1328,6 +1367,14 @@ class GuidedEntry {
 		else $notes.insertAfter(this.$root.find(".ge-stage"));
 		if (attrs.tools === "side") $tools.insertAfter(this.$root.find(".ge-summary"));
 		else $tools.appendTo($main);
+		// The files stay straight under the steps, whatever the notes and tools do (v1.711.0), and
+		// fold away in focus mode as the notes and tools do; the band's chip opens them.
+		this.$root.find(".ge-files").insertAfter(this.$root.find(".ge-stage"));
+		const focus = attrs.focus === "on";
+		if (focus !== this.files_focus) {
+			this.files_focus = focus;
+			this.$root.find(".ge-files details").prop("open", !focus);
+		}
 		this.refresh_blocks();
 		this.refresh_view_controls();
 	}

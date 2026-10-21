@@ -431,6 +431,19 @@ CONFIG = {
 			"link": {"label": "Open the Hand-Off Process tab", "tab": "custom_process_tab"},
 		},
 	],
+	# The head band's stage chip (v1.711.0). Nik, 2026-10-21: "show stage of opportunity at the top
+	# header". The stage is the ``status`` field, the one the Opportunity board's columns are made
+	# from (``sales_pipeline._stage_columns`` reads its options; ``board.js`` carries the same words),
+	# and the one ``stages`` below measures completeness by. The tones echo the board's column kinds:
+	# Closed Won good, Lost danger, On Hold (the board's parked column) warn; the open stages, and
+	# ERPNext's Closed and Converted, stay neutral, so a pillar colour keeps meaning a pillar.
+	"header": {
+		"status": {
+			"field": "status",
+			"label": "Stage",
+			"tones": {"Closed Won": "good", "Lost": "danger", "On Hold": "warn"},
+		}
+	},
 	"stages": {
 		"field": "status",
 		"default": "Qualification",

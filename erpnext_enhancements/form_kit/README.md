@@ -32,6 +32,7 @@ Three decisions from the product owner (2026-10-13) shape it:
 | `config/__init__.py` | `CONFIGS`, the registry and allowlist; the config schema and `check()` |
 | `config/opportunity.py` | Opportunity: steps, intros, skipped widgets, step 1, stage lists |
 | `config/item.py` | Item (P8.1): the core steps with their blocks, the `more` steps, `open_by_default: False` |
+| `public/js/form_kit/header.js` | The head band's decisions (v1.711.0): the stage chip, the files chip, what a dropped file does. See *The head band and the files* below |
 | `blocks.py` | The information blocks (P3.1): Party, Site, Schedule window, Scope by pillar, Money, Crew, with their fields per DocType and their three faces. JavaScript twin: `public/js/info_blocks/blocks.js`. See *Information blocks* below |
 
 ## How the steps are built
@@ -278,6 +279,44 @@ the steps, the guided page always and the side panel on every edit, and the shar
 A new DocType gets both with no work. `tests/test_guided_entry.py TestTheCommentsAreShown` fails if
 the editor singles a DocType out, or if the Comments App starts reading more of `frm`.
 
+## The head band and the files (v1.711.0)
+
+**Nik, 2026-10-21:** "Need to surface attachments and show stage of opportunity at the top header for
+the new guided layout." Both are for the guided page's band and body; the decisions are
+`public/js/form_kit/header.js` (pure, run under node by `tests/test_guided_header.py`), the drawing is
+`guided_entry.js` and `ui/record_tools.js`.
+
+- **The stage chip.** A config's `header` (`{"status": {"field", "label", "tones"}}`, schema in
+  `config/__init__.py`) names the field the band shows as a chip under the title; `get_flow` sends it
+  as `header`. The chip is sf_kit's, in the tone `tones` gives the value (neutral for a value not
+  listed), redrawn by `refresh_chrome` as the value changes, saved or not, and announced politely as
+  "Stage: ..." (`label`). **Opportunity's stage is its `status` field**, not a custom one: it is what
+  the board's columns are made from (`sales_pipeline._stage_columns` reads the field's options, a
+  Property Setter: Qualification, Needs Analysis, Proposal/Price Quote, Negotiation/Review, Lost,
+  Closed Won, On Hold), what `stages` measures completeness by and what the summary panel shows. The
+  tones echo the board's column kinds: Closed Won good, Lost danger, On Hold warn; open stages stay
+  neutral, because a pillar colour means a pillar. `tests/test_form_kit.py` holds the field to
+  `stages.field`, to the board's source and to the real options. **To give another DocType a header
+  status,** add a `header` to its config; nothing else changes.
+- **The files.** The Desk sidebar's attachments were already in the record tools (above), which a
+  person may collapse, place beside or below the form, or fold into a bar, so on the guided page they
+  have a section of their own, `.ge-files`, straight under the steps whatever the notes and tools do,
+  open unless focus mode folds it. `RecordTools` fills it when the shell draws one (`this.$dock`) and
+  keeps the old Attachments group in the tools when it does not (the side panel). It is the same body:
+  the same list, the same **Attach a file**, the same **Remove** (`rules.can_add_file`,
+  `can_remove_files`, `protect_attached_files`, `max_attachments`, frappe's own question), so the rules
+  were not touched. A **files chip** in the band shows the count ("3 files", "Attach a file" while
+  there are none and the person may add one, "No files" when they may not) and opens and scrolls to the
+  section; it is hidden until the files have loaded, so it never says "none" before it knows.
+- **Drag and drop.** A file dropped anywhere on the page (or the side panel) opens frappe's uploader
+  with it, as `Form.setup_file_drop` does for the Desk form (`files`, folder "Home/Attachments"), so
+  upload and drag-drop both work. Every file drag over the page is claimed, because a drop the page
+  does not take is opened by the browser, which would leave the record; `files_drop` answers
+  `attach`, `save` ("Please save before attaching."), `denied`, or `wait` (the record's permissions
+  have not arrived), and ignores a drag that is not a file. A phone has the button, whose uploader
+  offers the camera.
+- **Nothing is stored or migrated.** No patch, fixture or Custom Field.
+
 ## The record tools, on every guided DocType (v1.686.0)
 
 **Rule (Nik, 2026-10-14): "We shouldn't have lost any fidelity or information on any of the UI/UX
@@ -298,7 +337,7 @@ button (`.ge-band-actions`, `.fk-head-row`).
 | Follow | Follow / Unfollow, where the DocType tracks changes and the person gets follow emails | `frappe.desk.form.document_follow.update_follow`, the form menu's rule |
 | Tags | tags; add (with suggestions) and remove, with write | `frappe.desk.doctype.tag.tag.add_tag/remove_tag/get_tags` |
 | Shared with | who has it shared, read only; sharing itself is on the full form | docinfo `shared` (frappe's Share is the form's own) |
-| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
+| Attachments | name, kind, size, private, who and when, open; attach, remove (the sidebar's `protect_attached_files` rule). On the guided page they have a section of their own, not a place in this block (v1.711.0, below) | `frappe.ui.FileUploader` on the record, `"Home/Attachments"`, `make_attachments_public`, `max_attachments`; `frappe.desk.form.utils.remove_attach` after frappe's own question |
 | Activity | created, last edited, Versions as sentences (the timeline's display rule per field), emails (as text, Reply), assignment / attachment / info / workflow logs, milestones; ERPNext's open ToDos and Events with Done; New email, New task, New event | `frappe.desk.form.load.get_docinfo` and the open half of `erpnext.crm.utils.get_open_activities` (`get_open_todos` / `get_open_events`, behind its own permission check) through `record_info`; `frappe.views.CommunicationComposer`; `frappe.views.InteractionComposer` set up as `crm_activities.js` does; `frappe.client.set_value` for Done |
 | People & places | where the form has `contact_list_html` / `address_list_html`: the same lists, New contact / address, Link existing (with "Also add to"), Import contacts, Set primary, Unlink | `sync_contact.get_contacts_for_context` and the rest of the widget's endpoints; `global_enhancements/party_sources.js`, which `unified_tab_controller.js` calls too; `contacts_ux.create_for`; Set primary writes the record's own field through the editor's save queue |
 | Connections | the dashboard's linked documents with counts, each opening its list filtered to this record | `meta.__dashboard` (this app's `override_doctype_dashboards` included), `frappe.desk.notifications.get_open_count`, `dashboard.js`'s list filter |
