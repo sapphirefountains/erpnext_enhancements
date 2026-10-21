@@ -1977,7 +1977,7 @@ function richMoment(value) {
 				.replace("DD", two(date.getUTCDate()))
 				.replace("MMM", months[date.getUTCMonth()])
 				.replace("ddd", names[date.getUTCDay()])
-				.replace(/D/, date.getUTCDate()),
+				.replace(/\bD\b/, date.getUTCDate()),
 	};
 	return m;
 }
