@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `/gantt` offers a project picker. The tab opens the Project filter's project, else the one this
     device opened last (remembered per signed-in user). Each project opened is a history entry, so Back
     and Forward step through them; the zoom and a collapsed phase are not.
+  - **A bare `/project-planner` reopens the Gantt where this device left it** (the Sapphire Manager,
+    2026-10-21: Nik's "last-used tab per device" rule applied without an exception, so not put to him
+    again). The Gantt is one of P8's remembered tabs, and its project is kept beside it in this browser
+    (`ee_project_planner_gantt:<user>`). The bare address is replaced, never pushed, by
+    `/gantt/<that project>`, so Back leaves the planner. With no project stored, or one the server will
+    not open (deleted, or not the person's to read), the device forgets it and the address is replaced
+    by the Lookahead: no dead end, no extra entry. A link that names a filter (`?project=`, `?pm=`,
+    `?group=`) opens the Lookahead with it, never an old Gantt (and never Today). A phone's first visit
+    is still Today.
   - **What it draws.** The app's own DHTMLX widget (the one the Project form's Schedule tab and the
     Projects Dashboard use), fed by the planner's read, `api/planner_gantt.get_project_gantt`: the
     project's tasks as planner cards, phase and crew work only unless More ▸ Display ▸ Show all tasks

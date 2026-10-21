@@ -576,7 +576,7 @@ test("The address: /gantt/<project> is the Gantt's, and the tab opens the projec
 	tab.project = "PRJ-3";
 	tab.go("gantt", "2026-10-21");
 	check("the Project filter wins, and rides along", ctx.routes.slice(-1)[0], ["project-planner", "gantt", "PRJ-3", { project: "PRJ-3" }]);
-	check("remembered per signed-in user", ctx.store["ee_project_planner_gantt_project:nik@example.com"], "PRJ-9");
+	check("remembered per signed-in user", ctx.store["ee_project_planner_gantt:nik@example.com"], "PRJ-9");
 	// On the Gantt, the Today button scrolls the chart rather than routing anywhere.
 	ctx.frappe.route = ["project-planner", "gantt", "PRJ-1"];
 	ctx.routes.length = 0;

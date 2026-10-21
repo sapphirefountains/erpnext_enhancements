@@ -121,7 +121,7 @@ class TestTheBlock(unittest.TestCase):
 		self.assertIn('view: ["enum", ["week", "month", "crew", "heatmap", "lookahead"]],', code)
 		# The tab is the device's (P8's store, Nik 2026-10-21): the Lookahead is one of its tabs, and the
 		# landing writes a remembered tab's own address (/calendar/week/…, /lookahead/…).
-		self.assertIn('tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],', code)
+		self.assertIn('tabs: ["week", "month", "crew", "heatmap", "today", "lookahead", "gantt"],', code)
 		self.assertIn("frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));", code)
 		self.assertNotIn("tabbed", code)
 		prefs = PREFS.read_text(encoding="utf-8")

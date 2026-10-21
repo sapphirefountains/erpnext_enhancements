@@ -3851,11 +3851,19 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // server's "last used" row as before; that row no longer carries a view, and the landing never reads
 // one (an older row's is ignored). First visit: a phone opens Today, a desktop the default calendar view
 // (the week). The redirect replaces the bare address (replace_route), so Back leaves the planner as it
-// would have; a link that names a filter (?project=, the Project form's "Open in Project Planner") is
-// the sender's: it opens a calendar view with that filter (this device's tab, never Today, which has no
-// filters to show), so Today is never restored over it; and someone the planner does not list,
+// would have; a link that names a filter (?project=, ?pm=, ?group=) is the sender's: it opens a
+// calendar view with that filter (this device's tab, never Today, which has no filters to show, and
+// never a remembered Gantt: the Lookahead instead), so Today is never restored over it; and someone the planner does not list,
 // sent to Today by the landing, gets the planner instead of its note. Named saved views ("Save view
 // as…") still carry their view.
+//
+// The Gantt (P6; approved by the Sapphire Manager on 2026-10-21 as Nik's rule applied without an
+// exception) is a tab like the others, and this device remembers its project with it
+// (ee_project_planner_gantt:<user>). A bare address with the Gantt remembered is replaced by
+// /gantt/<that project>. With no project stored, or one the server will not open (gone, or not the
+// person's to read), the device forgets it and the address is replaced by the Lookahead: never a dead
+// end, never an extra entry. The Project form's "Open in Project Planner" names /gantt/<project> itself,
+// so none of this applies to it.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
 // (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
@@ -3864,8 +3872,9 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 
 const PP8 = {
 	view: "today",
-	// The screens whose tab a device remembers; the Lookahead (P5) joins them.
-	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],
+	// The screens whose tab a device remembers; the Lookahead (P5) joins them, and the Gantt (P6), whose
+	// project this device remembers beside it (PPG.prefs.project).
+	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead", "gantt"],
 	tab_pref: "ee_project_planner_tab",
 };
 
@@ -3966,6 +3975,7 @@ const PP8_METHODS = {
 		// A link that names a filter is the sender's: it opens a calendar view with that filter, the device's
 		// own when it has one, but never Today, which has no filters to show.
 		if (link && tab === PP8.view) tab = PP6C.default_view;
+		if (tab === PPG.view) return this.ppg_land(link); // P6: its own project, or the default view
 		// The default view is what the bare address already opens.
 		if (tab === PP6C.default_view) return false;
 		// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
@@ -12633,8 +12643,9 @@ Object.assign(ProjectPlanner.prototype, PPL_METHODS);
 // A project is a screen: /gantt/<project> is a route, so Back and Forward step through the projects
 // opened, and the Project form's "Open in Project Planner" lands here. Collapsing a phase and the zoom
 // are not screens. The project this device opened last is remembered (per signed-in user), so the Gantt
-// tab reopens it; the toolbar's Project filter, when set, wins. Leaving the tab destroys the chart (its
-// listeners included).
+// tab reopens it; the toolbar's Project filter, when set, wins. A bare /project-planner on a device whose
+// tab is the Gantt reopens that project (ppg_land; the rule is in the P8 block's comment). Leaving the
+// tab destroys the chart (its listeners included).
 //
 // Hooks into the class above, one line each: ppg_route_target (route_target), ppg_take_target
 // (handle_route), the gantt branch of ppl_route_parts, ppg_open (go), ppg_load (load), ppg_render
@@ -12651,7 +12662,7 @@ const PPG = {
 	default_zoom: "week",
 	prefs: {
 		zoom: "ee_project_planner_gantt_zoom",
-		project: "ee_project_planner_gantt_project",
+		project: "ee_project_planner_gantt",
 	},
 	// The synthetic row the undated work hangs under. Not a Task name: those never contain a colon.
 	not_scheduled: "ppg:not-scheduled",
@@ -12901,6 +12912,7 @@ const PPG_METHODS = {
 				this.data = (r && r.message) || {};
 				this.$body.removeClass("pp-loading");
 				state.failed = "";
+				state.landed = null;
 				this.index();
 				this.fill_filters();
 				this.write_filter_url();
@@ -12910,15 +12922,41 @@ const PPG_METHODS = {
 			() => {
 				if (token !== this.request) return;
 				this.$body.removeClass("pp-loading");
-				// The server said why (gone, or not yours to read). This device forgets it, and the tab
-				// offers the picker in its place.
-				if (state.project && this.ppg_remembered() === state.project) this.ppg_remember("");
-				state.failed = state.project;
-				this.data = { projects: (this.data && this.data.projects) || [], tasks: [], unscheduled: [], gantt: null };
-				this.index();
-				this.render();
+				this.ppg_refused();
 			}
 		);
+	},
+
+	// The server would not open the project (it said why: gone, or not the person's to read). This device
+	// forgets it. Reached from the landing, the address is replaced by the Lookahead (no dead end, no
+	// extra entry); opened by a link or the picker, the tab offers the picker with a sentence.
+	ppg_refused() {
+		const state = this.ppg_state();
+		if (state.project && this.ppg_remembered() === state.project) this.ppg_remember("");
+		if (state.landed && state.landed === state.project) {
+			state.landed = null;
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			frappe.set_route(PP.route, ...this.ppl_route_parts(PPL.view, frappe.datetime.get_today()));
+			return;
+		}
+		state.failed = state.project;
+		this.data = { projects: (this.data && this.data.projects) || [], tasks: [], unscheduled: [], gantt: null };
+		this.index();
+		this.render();
+	},
+
+	// A bare /project-planner on a device whose tab is the Gantt (p8_landing): its own project, in place.
+	// False (the bare address then opens the default view, the Lookahead, in place) for a link that names
+	// a filter, and when no project is stored.
+	ppg_land(link) {
+		const project = this.ppg_remembered();
+		if (link || !project) return false;
+		this.ppg_state().landed = project;
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		frappe.set_route(PP.route, ...PPG_PURE.address(project));
+		return true;
 	},
 
 	// ------------------------------------------------------------------ render
