@@ -1713,6 +1713,9 @@ class MaintenancePlanner {
 		// C1 draft mode: a write it cannot hold back is refused here; the rest go with draft=1.
 		if (this.c1_refuse(method)) return Promise.resolve(null);
 		args = this.c1_with_draft(method, args);
+		// P4: a live change to who is on a visit, or when, asks "Notify crew?" first.
+		const asked = this.mpas_with_notify(method, args, opts);
+		if (asked) return asked;
 		return Promise.resolve(frappe.call({ method: MP.methods[method], args }))
 			.then((r) => {
 				const result = (r && r.message) || {};
@@ -1875,6 +1878,8 @@ class MaintenancePlanner {
 		};
 		const date_back = !!(snap.date && snap.date >= today);
 		if (date_back) args.date = snap.date;
+		// P4: the change's "Notify crew?" answer, again. null, not undefined: an Undo is never asked.
+		args.notify = snap.notify != null ? snap.notify : null;
 		// Crew, length and Full day go back too, but only what differs now (everything, when the visit is
 		// not on screen to compare with).
 		if (snap.crew && (!card || this.crew_key(this.crew_rows(card)) !== this.crew_key(snap.crew))) {
@@ -3558,6 +3563,11 @@ const MP6B_METHODS = {
 	},
 
 	p6b_run_moves(plans) {
+		// P4: one "Notify crew?" for every visit in the move, before the first is sent.
+		return this.mpas_batch(plans, (notify) => this.p6b_send_moves(plans, notify));
+	},
+
+	p6b_send_moves(plans, notify) {
 		plans.forEach((plan) => (plan.card.saving = true));
 		this.render();
 		const moved = [];
@@ -3571,11 +3581,9 @@ const MP6B_METHODS = {
 							return null;
 						}
 						const before = plan.card.date;
-						return this.send(
-							"move_visit",
-							{ record: plan.card.name, modified: this.modified[plan.card.name] || plan.card.modified, date: plan.date },
-							{ noun: "visit" }
-						).then((result) => {
+						const args = { record: plan.card.name, modified: this.modified[plan.card.name] || plan.card.modified, date: plan.date };
+						if (notify !== undefined) args.notify = notify;
+						return this.send("move_visit", args, { noun: "visit" }).then((result) => {
 							if (result) moved.push({ record: plan.card.name, site: this.site_of(plan.card), date: before });
 							else missed.push(plan);
 						});
@@ -3586,7 +3594,7 @@ const MP6B_METHODS = {
 			.then(() => {
 				if (moved.length) {
 					const message = __("{0} visits moved", [moved.length]);
-					const snapshot = { p6b: "many", site: __("{0} visits", [moved.length]), items: moved };
+					const snapshot = { p6b: "many", site: __("{0} visits", [moved.length]), items: moved, notify };
 					if (!this.push_undo(snapshot, message)) frappe.show_alert({ message, indicator: "green" }, 5);
 				}
 				if (missed.length) {
@@ -3640,6 +3648,8 @@ const MP6B_METHODS = {
 							record: item.record,
 							modified: this.modified[item.record] || (this.by_key[item.record] || {}).modified || "",
 							date: item.date,
+							// P4: the move's "Notify crew?" answer, again. null, not undefined: an Undo is never asked.
+							notify: snap.notify != null ? snap.notify : null,
 						},
 						{ auto_reason: __(MP.undo_reason), noun: "visit" }
 					)
@@ -7227,3 +7237,151 @@ const MPTB_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);
+
+// ====================================================================== P4: "Notify crew?"
+//
+// P4 of the planner UX redesign (docs/planner-ux-redesign.md, D11, Nik 2026-10-21), the Maintenance
+// Planner's part: a change to a visit's day, technician or crew asks "Notify crew?" once per gesture
+// (a multi-select move asks once for all of them) before move_visit or add_crew (a technician chip
+// dropped on a visit) is sent. Notify is the default
+// when the change touches today through the 14th day (the old day or the new one), Don't notify beyond
+// that; Enter takes the default and Esc puts the change back. The answer goes as notify=1 or 0, the
+// Undo entry keeps it, and Undo sends the same answer again. Nothing is asked in Draft mode (a draft
+// tells nobody until it is published) or for a visit nobody is on.
+//
+// Hooks into the class above, one line each: mpas_with_notify (send), mpas_batch (p6b_run_moves,
+// whose moves then carry the answer), and the Undo entries' `notify` (undo, p6b_undo).
+
+const MPAS = {
+	notify_days: 14,
+	// The live writes that change who is on a visit, or when: both take `notify`.
+	notify_methods: ["move_visit", "add_crew"],
+};
+
+// Pure helpers, an identical copy of the Project Planner's PPAS_PURE.notify_window/notify_default
+// (scripts/test_planner_autoshift.js runs both through the same cases).
+const MPAS_PURE = {
+	notify_window(today) {
+		return [today, MP6B_PURE.ymd_add(today, MPAS.notify_days - 1)];
+	},
+	notify_default(spans, today) {
+		const [first, last] = MPAS_PURE.notify_window(today);
+		return (spans || []).some((span) => !!(span && span[0] && span[0] <= last && (span[1] || span[0]) >= first));
+	},
+	// The users a move_visit leaves on the visit and the ones it had: who a notice could reach.
+	// `before` is a visit card or its Undo snapshot: {technician, crew: [{user}]}.
+	people(before, args) {
+		const people = new Set();
+		if (before) {
+			if (before.technician) people.add(before.technician);
+			(before.crew || []).forEach((row) => row && row.user && people.add(row.user));
+		}
+		if (args) {
+			if (args.technician) people.add(args.technician);
+			if (args.user) people.add(args.user); // add_crew's person
+			let rows = args.crew;
+			if (typeof rows === "string") {
+				try {
+					rows = JSON.parse(rows);
+				} catch (e) {
+					rows = [];
+				}
+			}
+			(rows || []).forEach((row) => {
+				const user = row && typeof row === "object" ? row.user : row;
+				if (user) people.add(user);
+			});
+		}
+		return people;
+	},
+	// Whether a move_visit or add_crew changes what a notice is about: the day, the technician or the
+	// crew.
+	changes(args) {
+		return !!(
+			args &&
+			(args.date || args.technician !== undefined || args.crew !== undefined || args.from_user || args.user)
+		);
+	},
+};
+
+const MPAS_METHODS = {
+	// send()'s hook: a live move_visit with no answer yet gets one first. Resolves to send()'s answer;
+	// null when the planner backed out. Returns null (nothing to ask) to let send() carry on.
+	mpas_with_notify(method, args, opts) {
+		if (!MPAS.notify_methods.includes(method) || args.draft || args.notify !== undefined || !MPAS_PURE.changes(args)) return null;
+		const card = this.by_key && this.by_key[args.record];
+		const before = opts.snapshot && opts.snapshot.kind === "visit" ? opts.snapshot : card ? this.snapshot_of(card) : null;
+		const people = MPAS_PURE.people(before, args);
+		if (!people.size) return null;
+		const old_day = (before && before.date) || (card && card.date) || null;
+		const spans = [old_day, args.date || old_day].filter(Boolean).map((day) => [day, day]);
+		return this.mpas_ask(MPAS_PURE.notify_default(spans, this.today()), [...people], 1).then((notify) => {
+			if (notify === null) return null;
+			if (opts.snapshot) opts.snapshot.notify = notify;
+			return this.send(method, Object.assign({}, args, { notify }), opts);
+		});
+	},
+
+	// A multi-select move (p6b_run_moves): one question for every visit in it, asked before the first
+	// is sent, then `go(answer)`. With nobody to tell (or Draft mode) `go(undefined)` runs at once;
+	// backing out of the question runs nothing and resolves null.
+	mpas_batch(plans, go) {
+		const people = new Set();
+		const spans = [];
+		(plans || []).forEach((plan) => {
+			MPAS_PURE.people(plan.card, null).forEach((user) => people.add(user));
+			if (plan.card.date) spans.push([plan.card.date, plan.card.date]);
+			if (plan.date) spans.push([plan.date, plan.date]);
+		});
+		if (this.draft_on || !people.size) return go(undefined);
+		return this.mpas_ask(MPAS_PURE.notify_default(spans, this.today()), [...people], (plans || []).length).then(
+			(notify) => (notify === null ? null : go(notify))
+		);
+	},
+
+	mpas_ask(notify, people, count) {
+		return new Promise((resolve) => {
+			let settled = false;
+			const settle = (value) => {
+				if (settled) return;
+				settled = true;
+				resolve(value);
+			};
+			const names = people.slice(0, 6).map((user) => this.tech_name(user));
+			if (people.length > 6) names.push(__("{0} more", [people.length - 6]));
+			const ask =
+				count > 1
+					? __("Tell {0} about these {1} changes?", [names.join(", "), count])
+					: __("Tell {0} about this change?", [names.join(", ")]);
+			const why = notify
+				? __("It touches the next two weeks, so Notify is the default.")
+				: __("It is more than two weeks out, so Don't notify is the default.");
+			const dialog = new frappe.ui.Dialog({
+				title: __("Notify crew?"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "notify",
+						options: `<p>${mp_esc(ask)}</p><p class="text-muted">${mp_esc(why)} ${mp_esc(__("Esc puts the change back."))}</p>`,
+					},
+				],
+				primary_action_label: notify ? __("Notify") : __("Don't notify"),
+				primary_action: () => {
+					settle(notify ? "1" : "0");
+					dialog.hide();
+				},
+				secondary_action_label: notify ? __("Don't notify") : __("Notify"),
+				secondary_action: () => {
+					settle(notify ? "0" : "1");
+					dialog.hide();
+				},
+			});
+			dialog.onhide = () => settle(null);
+			dialog.show();
+			// The default has the focus, so Enter takes it (and a keyboard user lands on it).
+			if (typeof dialog.get_primary_btn === "function") dialog.get_primary_btn().trigger("focus");
+		});
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);

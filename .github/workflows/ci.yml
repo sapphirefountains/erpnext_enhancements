@@ -899,6 +899,15 @@ jobs:
       # Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner per-project publish and baseline (P3)
         run: python -m unittest erpnext_enhancements.tests.test_planner_publish_baseline -v
+      # Planner UX redesign P4: moving a task moves the tasks that wait on it, both ways, by working
+      # days, in one request. Saved in the wrong order, ERPNext's own calendar-day push moves a
+      # follower first and the planner then moves it again, so a crew turns up a day off with nothing
+      # flagged; a follower in a project whose schedule says otherwise must not cross the line; a
+      # Draft schedule must draft every write; and the page must ask "Notify crew?" once per gesture
+      # (Ctrl/Cmd moves one task, Undo puts all of them back). Reuses the Phase 3B harness, so it is
+      # unittest, in its own step; under node it runs scripts/test_planner_autoshift.js on both pages.
+      - name: Project planner tasks that follow, Draft schedules, Notify crew (P4)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_autoshift -v
       # Planner UX redesign P5, the Lookahead (the planner's home tab). get_lookahead must be get_planner
       # over whole weeks from the site's first weekday (Sunday on prod) with draft and all_tasks passed
       # through, so the P2 display rule, P3's drafts and the Fountain Move read-only rule hold on it too;

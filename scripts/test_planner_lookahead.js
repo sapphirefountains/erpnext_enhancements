@@ -336,15 +336,14 @@ test("The project row: its schedule, Publish… through P4, Build out for no tas
 	check("the name opens the project's peek", label(html, "PRJ-1").includes('class="ppl-project-name" data-pk-project="PRJ-1"'), true);
 	check("its PM", label(html, "PRJ-1").includes("PM Clegg"), true);
 	check("no tasks yet, with Build out", [label(html, "PRJ-3").includes("No tasks yet"), label(html, "PRJ-3").includes('data-ppl-build="PRJ-3"')], [true, true]);
-	// A Draft schedule offers Publish… once P4's confirmation is there, to someone who may write.
+	// A Draft schedule offers Publish… (P4's own confirmation) to someone who may write.
 	pp.data.lookahead.projects[1].fountain_move = false;
 	html = grid(pp);
-	check("Draft without P4's publish: the chip only", [label(html, "PRJ-2").includes("◐ Draft schedule"), label(html, "PRJ-2").includes("data-ppl-publish")], [true, false]);
+	check("Draft: the chip and Publish…", [label(html, "PRJ-2").includes("◐ Draft schedule"), label(html, "PRJ-2").includes('data-ppl-publish="PRJ-2"')], [true, true]);
+	check("Published: no Publish…", label(html, "PRJ-1").includes("data-ppl-publish"), false);
 	const seen = [];
 	pp.as4_confirm_publish = (entry) => seen.push(entry);
 	pp.as4_project_title = (name) => `${name} title`;
-	html = grid(pp);
-	check("Draft with P4: Publish…", label(html, "PRJ-2").includes('data-ppl-publish="PRJ-2"'), true);
 	pp.ppl_publish("PRJ-5");
 	check("Publish… hands P4 the project and its drafts", seen, [{ project: "PRJ-5", title: "PRJ-5 title", count: 3, shared: 1, draft_schedule: true }]);
 	pp.data.can_edit = false;
@@ -357,6 +356,7 @@ test("Not scheduled: chips that drag onto a day, Needs crew on those nobody is o
 	const line = rows(html).find((r) => r.startsWith('<div class="ppl-row ppl-undated-row'));
 	check("one line for the project, counted", line.includes("Not scheduled (2)"), true);
 	check("each a movable planner card with no day", ["U1", "U2"].map((n) => line.includes(`class="pp-card ppl-undated pp-movable" data-task="${n}" data-date=""`)), [true, true]);
+	check("each with a place for P4's Draft / New chip", (line.match(/<span class="pp-card-chips">/g) || []).length, 2);
 	check("Needs crew only on the one nobody is on", (line.match(/>Needs crew<\/span>/g) || []).length, 1);
 	const many = planner();
 	many.data.unscheduled = Array.from({ length: 15 }, (_v, i) => card(`X${i}`));

@@ -436,7 +436,7 @@ ctx.MaintenancePlanner.prototype.ask_reason = () => Promise.resolve("A reason");
 vm.createContext(ctx);
 vm.runInContext(
 	pp_source + "\n" + mp_source +
-	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS); this.MP6E = MP6E; this.MPTB_M = MPTB_METHODS;",
+	"\nthis.PPM = Object.assign({}, PP6B_METHODS, PP6E_METHODS, PPAS_METHODS); this.MPM = Object.assign({}, MP6B_METHODS, MP6E_METHODS, MPAS_METHODS); this.MP6E = MP6E; this.MPTB_M = MPTB_METHODS;",
 	ctx
 );
 const out = {};
@@ -523,6 +523,8 @@ const buttons = (bar) => bar.node.kids.flatMap((k) => k.node.kids).filter((k) =>
 		go(view, date) { this.went = [view, date]; },
 		range_days: () => ["2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14"],
 		push_undo: (snap, message) => { pushed.push([snap, message]); return true; },
+		// P4: "Notify crew?" answers Notify at once (scripts/test_planner_autoshift.js tests the question).
+		mpas_ask: (notify) => Promise.resolve(notify ? "1" : "0"),
 		send: (method, args, opts) => { msent.push([method, args, opts]); return Promise.resolve(method === "create_visit" ? { name: "SMR-NEW", modified: "mod-1", date: args.date } : { removed: "SMR-NEW" }); },
 		build_crew_editor: () => null,
 		read_crew_editor: (panel, lead) => [{ user: "korben@x.com", hours: 2 }].filter((row) => row.user !== lead),
@@ -661,7 +663,9 @@ class TestPagesUnderNode(unittest.TestCase):
 			t6b._phase_source(pp, "const PP6B = {", "Object.assign(ProjectPlanner.prototype, PP6B_METHODS);")
 			+ t6b._phase_source(
 				pp, "const PP6E = {", "Object.assign(ProjectPlanner.prototype, PP6E_METHODS);"
-			),
+			)
+			# P4: a move goes through as4_prepare (the tasks that follow, "Notify crew?").
+			+ t6b._phase_source(pp, "const PPAS = {", "Object.assign(ProjectPlanner.prototype, PPAS_METHODS);"),
 			t6b._phase_source(
 				mp, "const MP6B = {", "Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);"
 			)
@@ -671,7 +675,9 @@ class TestPagesUnderNode(unittest.TestCase):
 			# The toolbar's + Add menu offers 6E's Add visit… (v2).
 			+ t6b._phase_source(
 				mp, "const MPTB = {", "Object.assign(MaintenancePlanner.prototype, MPTB_METHODS);"
-			),
+			)
+			# P4: a multi-select move asks "Notify crew?" once (mpas_batch).
+			+ t6b._phase_source(mp, "const MPAS = {", "Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);"),
 		]
 		result = subprocess.run(
 			[node, "-e", PAGE_HARNESS],
