@@ -1460,3 +1460,9 @@ erpnext_enhancements.patches.seed_fountain_move_template
 # 11 Open, untouched Service-template tasks -> Canceled (none deleted; a started one is kept and logged); the 3 move
 # tasks added undated. Runs after the seed; one savepoint; safe twice; cannot raise.
 erpnext_enhancements.patches.make_prj_00775_a_move_job
+# Planner UX redesign P4 (v1.705.0, Nik 2026-10-21: "publish the 47 active Draft jobs before P4 merges"): every Active
+# customer job (the planner's own rule, crew_availability.planner_job_sql / is_planner_job) whose custom_schedule_status is
+# not Published becomes Published, before P4 drafts their edits. 47 on production on 2026-10-21. One raw UPDATE: no save,
+# no baseline, no published_on; never un-publishes; Completed/Canceled untouched. New projects still start Draft. Cannot
+# raise, safe twice. After mark_project_schedule_states, which creates the column.
+erpnext_enhancements.patches.publish_active_job_schedules

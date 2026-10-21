@@ -1750,20 +1750,31 @@ def _move_report(doc, old, new):
 	}
 
 
-def _draft_many(entries):
+def _draft_many(entries, follow=False, auto=False, exclude=()):
 	"""``move_many`` in draft mode: each move into the caller's Draft row of that task (Phase 3B),
-	never the Task. A stale task or a rental one fails the whole request, which rolls back."""
-	moved, warnings, conflicts = [], [], {}
+	never the Task. A stale task or a rental one fails the whole request, which rolls back.
+
+	``follow`` (P4): the tasks that follow each moved one are drafted along by the working days its
+	end moved (``pp._draft_followers``), each once, marked ``"dependent": True``. ``auto``: a
+	follower in a published project is left alone (``shift_skipped``). ``exclude``: tasks the same
+	request moves another way. What the lot creates together comes back as warnings
+	(``pp._draft_checks``), and when two moved tasks reach the same follower, the one nearer it, the
+	downstream one, carries it (``pp._downstream_first``)."""
+	moved, warnings, conflicts, skipped = [], [], {}, []
+	taken = {entry["task"] for entry in entries} | set(exclude or ())
+	roots, holidays = {}, pp._shift_holidays()
 	for entry in entries:
 		context = pp._draft_context(entry["task"], entry["modified"])
 		doc = context["doc"]
 		if entry["start"] or entry["end"]:
 			_refuse_rental(doc, _("moved"))
-		old = pp._span_text(pp._state(doc))
+		before_state = pp._state(doc)
+		old = pp._span_text(before_state)
 		result = pp._store_draft(
 			context, start=entry["start"], end=entry["end"], tentative=entry["tentative"]
 		)
-		report = _move_report(doc, old, pp._span_text(pp._state(doc)))
+		new = pp._span_text(pp._state(doc))
+		report = _move_report(doc, old, new)
 		report["modified"] = result.get("modified")
 		moved.append(report)
 		warnings.extend(result.get("warnings") or [])
@@ -1772,11 +1783,32 @@ def _draft_many(entries):
 			for line in lines:
 				if line not in known:
 					known.append(line)
-	return {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
+		roots[doc.name] = {
+			"doc": doc,
+			"stored": context["stored"],
+			"before": before_state,
+			"after": (pp._state(doc), pp._current_crew(doc)),
+			"days": pp.dependent_days(old, new, holidays) if follow and old[0] and new[0] else 0,
+		}
+	answer = {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
+	if not follow:
+		return answer
+	followers = []
+	for name in pp._downstream_first(list(roots)):
+		if not roots[name]["days"]:
+			continue
+		shifted, left, found = pp._draft_followers(name, roots[name]["days"], auto=auto, exclude=taken)
+		taken.update(move["task"] for move in shifted)
+		moved.extend(dict(move, dependent=True, drafted=True) for move in shifted)
+		skipped.extend(left)
+		followers.extend(found)
+	pp._merge_info(answer, pp._draft_checks(list(roots.values()), followers))
+	answer["shift_skipped"] = skipped
+	return answer
 
 
 @frappe.whitelist(methods=["POST"])
-def move_many(moves, reason=None, notify=None, draft=0):
+def move_many(moves, reason=None, dependents=None, notify=None, draft=0):
 	"""Move several tasks in one go: the multi-select drag, and the selection bar's Move and Pencil.
 
 	``moves`` is a JSON list of ``{"task", "modified", "start", "end", "tentative"}``: ``start`` and
@@ -1797,12 +1829,40 @@ def move_many(moves, reason=None, notify=None, draft=0):
 	``notify`` (P3, the "Notify crew?" answer, as ``project_planner.save_task`` takes it): one notice
 	per person whose bookings the moves changed (``"notified"``); ``auto`` notifies when any move
 	touches the next 14 days. Ignored with ``draft=1``.
+
+	``draft="auto"`` (P4): each move is drafted when its task's project schedule is Draft and saved
+	otherwise, in one request (the saves first, all or nothing; a drafted move is marked
+	``"drafted": True``). ``dependents=1`` (P4, D10 and D15): the tasks that follow each moved task
+	move with it by the working days its end moved, later or earlier, checked with the batch and
+	marked ``"dependent": True`` in ``moved``; ``shift_skipped`` lists the ones left where they were.
+	A task the request moves itself is never moved again as a follower.
 	"""
 	pp._require_planner()
 	entries = _parse_moves(moves)
-	if cint(pp.given(draft)):
-		return _draft_many(entries)
+	follow = pp.as_bool(dependents) if pp.given(dependents) is not None else False
+	choice = pp.draft_choice(draft)
+	if choice is True:
+		return _draft_many(entries, follow=follow)
+	auto = choice == pp.DRAFT_AUTO
+	held = [entry for entry in entries if auto and pp._drafting(draft, entry["task"])]
+	live = [entry for entry in entries if entry not in held]
+	if not live:
+		return _draft_many(held, follow=follow, auto=True)
+	result = _move_live(live, reason, notify, follow, auto, exclude={entry["task"] for entry in held})
+	if result.get("needs_reason") or not held:
+		return result
+	taken = {move["task"] for move in result["moved"]}
+	drafts = _draft_many(held, follow=follow, auto=True, exclude=taken)
+	result["moved"].extend(dict(move, drafted=True) for move in drafts["moved"])
+	result["warnings"].extend(drafts["warnings"])
+	if follow:
+		result["shift_skipped"] = result.get("shift_skipped", []) + drafts.get("shift_skipped", [])
+	return result
 
+
+def _move_live(entries, reason, notify, follow, auto, exclude=()):
+	""":func:`move_many`'s saving half: the moves (and with ``follow`` the tasks that follow them)
+	checked together and saved, or ``needs_reason``."""
 	docs = []
 	for entry in entries:
 		doc = pp._load(entry["task"], entry["modified"])
@@ -1823,7 +1883,43 @@ def move_many(moves, reason=None, notify=None, draft=0):
 		after.append((new_state, crew))
 		reports.append(_move_report(doc, old, pp._span_text(new_state)))
 
+	skipped = []
+	if follow:
+		taken = {doc.name for doc in docs} | set(exclude or ())
+		holidays = pp._shift_holidays()
+		by_task = {report["task"]: report for report in reports}
+		# Downstream first: a follower two moved tasks reach takes the nearer one's shift.
+		for name in pp._downstream_first([report["task"] for report in reports]):
+			report = by_task[name]
+			days = (
+				pp.dependent_days(
+					(report["from"], report["from_end"]), (report["to"], report["to_end"]), holidays
+				)
+				if report["from"] and report["to"]
+				else 0
+			)
+			followers, left = pp._follower_docs(report["task"], days, exclude=taken, auto=auto)
+			skipped.extend(left)
+			if not followers:
+				continue
+			was, now, moves = pp._shift_docs(followers, days)
+			taken.update(doc.name for doc in followers)
+			docs.extend(followers)
+			before.extend(was)
+			after.extend(now)
+			reports.extend(
+				dict(move, tentative=engine.is_tentative(doc), dependent=True)
+				for doc, move in zip(followers, moves, strict=True)
+			)
+
 	conflicts = pp.conflict_delta(engine.preview_batch(before), engine.preview_batch(after))
+	# P4: each task the batch moves against every task it waits on, where those go ("Starts before").
+	lines = pp._follower_dependency_lines(
+		[(doc, was[0], now[0]) for doc, was, now in zip(docs, before, after, strict=True)],
+		{doc.name: now[0] for doc, now in zip(docs, after, strict=True)},
+	)
+	if lines:
+		conflicts[pp.DEPENDENCY_KEY] = lines
 	reason = (pp.given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts, "moves": reports}
@@ -1841,9 +1937,12 @@ def move_many(moves, reason=None, notify=None, draft=0):
 		for doc, was, now in zip(docs, before, after, strict=True)
 	]
 	warnings, moved = [], []
+	# P4: a task ERPNext's own reschedule pushed during the batch is reloaded and put back on its
+	# planned dates (pp._save_planned / pp._settle), rather than failing as "changed since".
+	planned = {doc.name: pp._planned(doc) for doc in docs}
 	with pp._quiet_alerts(notify):
 		for doc in order:
-			warnings.extend(pp._save(doc))
+			warnings.extend(pp._save_planned(doc, planned[doc.name]))
 			if conflicts:
 				_comment_reason(
 					doc,
@@ -1852,7 +1951,11 @@ def move_many(moves, reason=None, notify=None, draft=0):
 					reason,
 				)
 			moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
-	return pp._with_notice({"moved": moved, "warnings": warnings, "conflicts": conflicts}, notify, pairs)
+		warnings.extend(pp._settle(docs, planned, moved))
+	result = {"moved": moved, "warnings": warnings, "conflicts": conflicts}
+	if follow:
+		result["shift_skipped"] = skipped
+	return pp._with_notice(result, notify, pairs)
 
 
 # ---------------------------------------------------------------------- undo of a created task

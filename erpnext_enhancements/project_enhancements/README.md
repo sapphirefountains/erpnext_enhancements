@@ -899,12 +899,11 @@ shop" is one setting), through each located task, rental crew task and maintenan
   `crew_sync` gives a tentative task no assignments, and adds the whole crew when it is firmed up,
   so nobody is notified of work that may not happen.
 - **Dependencies** (`depends_on`): moving a task to start before a predecessor ends adds a
-  "Starts before …" line under *Dependencies* in the reason prompt. After a move later, the page
-  offers to shift the tasks that follow by the same number of **working** days
-  (`shift_successors`, all-or-nothing, furthest first). ERPNext's own
-  `Task.on_update → reschedule_dependent_tasks` already pushes Open same-project dependents by
-  calendar days on every save. The planner detects those (`successors.auto_moved`) and leaves
-  them out of its offer, so nothing moves twice.
+  "Starts before …" line under *Dependencies* in the reason prompt. Since P4 a move, later or
+  earlier, takes the tasks that follow along by the same number of **working** days in the same
+  request (`dependents=1`; Ctrl/Cmd moves one task), which replaced the offer to shift them
+  (`shift_successors`, still an endpoint). See
+  [P4](#tasks-that-follow-draft-schedules-and-notify-crew-p4-planner-ux-redesign).
 - **Qualification gaps**: a task's *Qualifications needed* that no crew member holds as a current
   Employee Credential (Valid or Expiring, not expired by the task's last day) shows as a chip.
   It is a warning only.
@@ -1178,7 +1177,7 @@ approved 2026-10-21) folds those four into two, and gives both planners the same
 | Move by (calendar or working days) | the Move… panel's first field | the same |
 | Utilization (button to the report) | the fifth **view**, `/project-planner/utilization/<date>` | (none: the Project Planner's view counts visits already) |
 | First-time tip banners | the first section of "?" | the same |
-| Draft mode's bottom bar | a strip **under the toolbar**: "Draft mode on: N changes not published yet", Publish, Discard | the same |
+| Draft mode's bottom bar | a strip **under the toolbar**: "Holding your changes: N not published yet", Publish, Discard; since P4 also a line per project with drafts (*Publish…* on a Draft schedule) | "Draft mode on: N changes not published yet", Publish, Discard |
 
 **On a phone** (767px and under) the bar is ‹ Today ›, the title, the view switcher and **Filters and
 tools** (with the alerts' total), which opens `planner_kit.toolbar.sheet`: the filters and search
@@ -1964,6 +1963,75 @@ that calls it is P4; until then nothing on screen changes.
   nothing. `1` sends the publish notice to the people whose bookings moved (never the editor); `0`
   tells nobody; `auto` is Notify when the change touches today or the 13 days after it, before or
   after the move. Any answer holds back that save's 48-hour change alert.
+
+### Tasks that follow, Draft schedules and "Notify crew?" (P4, Planner UX redesign)
+
+Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at the end of
+`project_planner.js` (and `MPAS` at the end of `maintenance_planner.js`); the server side is in
+`api/project_planner.py` ("P4: the tasks that follow") and `planner_actions.move_many`.
+
+- **The tasks that follow move with a task, both ways.** A drag, a resize, a dialog's dates, *Next free
+  day*, a booked suggestion and *Tap to move* send `dependents=1` on `save_task` / `swap_crew`. The server
+  moves every open, dated task that waits on it, directly or through others, by the **working days its
+  end moved** (`dependent_days`). That covers a move later or earlier and a resize of the right edge;
+  a resize of the left edge moves nothing after it. It happens in the same request: one conflict check
+  for the lot (`needs_reason` then lists the `moves`), one reason, one notice per person and one Undo.
+  The answer carries `shifted`, `shift_skipped` and `shift_days`. Finished, rental, undated and
+  Fountain Move followers, and those the person cannot change, stay where they are and are named in an
+  orange alert. **The walk only goes on through tasks that move** (`_walk_followers`), so a task that
+  waits on the moved one only through a task that stays, stays too. Tasks past the cap (200, 25 levels)
+  are named. **Working days skip the company's holidays** (its default Holiday List,
+  `_shift_holidays`). **Every follower is checked against every task it waits on**, where those go
+  (`_follower_dependency_lines`). Drafted followers get one batch overbooking check
+  (`_draft_checks`), as warnings. **Hold Ctrl (Cmd on a Mac) as the card or its
+  edge is dropped** and just that task moves. A multi-select move does the same through
+  `move_many(dependents=1)`. A task that is itself in the selection is moved where it was put, never
+  again as a follower. This replaces the old "Shift N tasks that follow?" offer. `shift_successors`
+  stays as an endpoint for other callers and shares the helpers.
+- **The order of the saves is the point.** Moving later, the furthest follower is saved first and the
+  task itself last. ERPNext's own `Task.on_update → reschedule_dependent_tasks` pushes an Open dependent
+  the saved task now overlaps to the day after its end, by the calendar. Done in this order, it finds
+  nothing to push, so every follower moves by working days as D10 says. Moving earlier, the task goes
+  first. **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
+  still pushes that dependent by calendar days, as it always did.
+- **A Draft schedule drafts every write** (D8). The page sends `draft="auto"` on `save_task`, `add_crew`,
+  `swap_crew` and `move_many` unless *Hold all my changes* is on (then `draft=1`, as before). The server
+  drafts a task whose project schedule is Draft, blank included (`_drafting`), and saves the rest.
+  `move_many` splits one batch between the two. Its followers are drafted along (`_draft_followers`,
+  each from its own drafted days). A follower in a project whose schedule says otherwise is left alone
+  and named, so a draft never moves a published schedule and a live save never reaches into a draft one.
+  The creating writes (quick add, duplicate, build out, AI draft) send `draft=1` for a Draft schedule's
+  project; the page decides there, because those endpoints take only `draft=1`. **Still live on a Draft
+  schedule:** a split, Copy week and the Overdue tray's bulk actions, which have no draft form.
+- **The read always asks for drafts** (`get_planner(draft=1)`), so a Draft schedule's drafts are seen by
+  everyone, another scheduler's with a "Draft · Clegg" chip (`drafted_by`). `drafts.projects` counts the
+  rows per project (`shared`: how many are other people's). **The strip under the toolbar** has one line
+  per project with drafts. A Draft schedule's line offers *Publish…*, which runs
+  `publish_project_schedule` after a confirmation, sets the baseline and tells each person once, and
+  *Discard*, which drops everyone's drafts on it after saying how many are other people's. A published
+  project with held changes gets *Publish* (`publish_drafts(project=)`) and *Discard*. With one project
+  filtered whose schedule is Draft, the line shows even before anything is drafted. While the hold is
+  on, its own line comes first ("Holding your changes: N not published yet") and only Draft schedules get
+  a line of their own. The **project peek** offers *Publish schedule…* (Draft) and *Set baseline…* /
+  *Reset baseline…* (a dry run first, then a confirmation that names how many tasks change).
+- **"Notify crew?"** (D11). On a published schedule, a change to the dates or crew of a task somebody is
+  on asks **once per gesture**, however many tasks it moves. The dialog names the people. Notify is the
+  default (the primary button, so Enter takes it) when the change touches today through the 14th day,
+  the old days counting as much as the new; past that, Don't notify is the default. **Esc puts the change
+  back**, and nothing is sent. The answer goes as `notify=1` or `0`, the Undo entry keeps it, and Undo
+  sends it again. Nothing is asked on a Draft schedule, while the hold is on, for a task nobody is on, or
+  for a pencil or firm-up. In those cases `notify` is not sent and the save behaves as before P3. The
+  Maintenance Planner asks the same way before `move_visit` (`mpas_with_notify` in its `send()`), once
+  for a multi-select move (`mpas_batch`), and never for an Undo (which sends `notify: null`).
+- **Publish keeps a drafted chain on its drafted days.** `_apply_plans` saves drafts furthest first.
+  A push by ERPNext's own reschedule made during the publish is not "changed by someone else"
+  (`since`): the push is undone and the draft applied. A push after a task was saved is put back
+  (`_settle_plans`).
+- **Undo** of a change that moved followers is one `move_many` that puts every task back on its days,
+  with the same Notify answer. When the change was more than dates, such as a crew handover with a move
+  or a dialog save, the plain Undo's `save_task` then restores the rest of the task.
+- **Tests:** `tests/test_planner_autoshift.py` covers the server on the Phase 3B harness, and
+  `scripts/test_planner_autoshift.js` drives both real pages under node.
 
 ## Calendar sync (C2, v1.604.0)
 

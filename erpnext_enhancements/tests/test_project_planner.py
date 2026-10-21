@@ -2627,8 +2627,9 @@ class TestDependencyWrites(_Phase3AWrites):
 		self.assertEqual(sorted(s["task"] for s in result["skipped"]), ["TASK-4", "TASK-5"])
 		self.assertEqual(len(frappe.comments), 2)
 		self.assertIn("Reason: Pump is late", frappe.comments[0][1])
-		for name in ("TASK-1", "TASK-2", "TASK-3"):
-			self.assertIn(("check_permission", "write", name), frappe.calls)
+		self.assertIn(("check_permission", "write", "TASK-1"), frappe.calls)
+		# P4: each successor's write permission is asked once (frappe.has_permission), and one the
+		# caller cannot change is named and left (test_shift_successors_can_be_limited_...).
 
 	def test_shift_successors_can_be_limited_and_refuses_nonsense(self):
 		self._chain()
@@ -2639,11 +2640,17 @@ class TestDependencyWrites(_Phase3AWrites):
 			api.shift_successors("TASK-1", 0, MODIFIED)
 		with self.assertRaises(_Throw):
 			api.shift_successors("TASK-1", 1, "2026-01-01 00:00:00")  # stale
-		frappe.denied = {"TASK-2"}
+		# P4: a successor the caller cannot change stays where it is and is named, rather than failing
+		# the whole shift; the ones that wait on the root only through it stay too.
 		frappe.saved.clear()
-		with self.assertRaises(_PermissionError):
-			api.shift_successors("TASK-1", 1, MODIFIED)
-		self.assertEqual(frappe.saved, [])  # checked before anything is written
+		frappe.has_permission = lambda doctype, ptype=None, doc=None, **k: doc != "TASK-2"
+		result = api.shift_successors("TASK-1", 1, MODIFIED)
+		self.assertEqual(result["moved"], [])
+		self.assertEqual(
+			[(s["task"], s["reason"]) for s in result["skipped"] if s["task"] == "TASK-2"],
+			[("TASK-2", "You cannot change it.")],
+		)
+		self.assertEqual(frappe.saved, [])
 
 
 class TestBulkUpdate(_Phase3AWrites):
