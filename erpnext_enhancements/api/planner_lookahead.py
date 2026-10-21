@@ -284,19 +284,23 @@ def get_lookahead(start=None, weeks=DEFAULT_WEEKS, project=None, pm=None, group=
 	result = pp.get_planner(str(first), str(last), draft=draft, all_tasks=all_tasks)
 	cards = list(result.get("tasks") or [])
 	undated = list(result.get("unscheduled") or [])
-	parents, subjects, baselines = _ancestry(card.get("name") for card in cards + undated)
+	# A drafted new task has no Task row yet: its card names the group it is filed under, which is read
+	# (and climbed from) with the rest. A group that is itself a draft cannot be read, so its tasks are
+	# Other work until it is published.
+	drafted = {
+		card.get("name"): card.get("parent_task")
+		for card in cards + undated
+		if pp.is_draft_ref(card.get("name")) and card.get("parent_task")
+	}
+	parents, subjects, baselines = _ancestry(
+		[card.get("name") for card in cards + undated] + list(drafted.values())
+	)
+	parents.update(drafted)
 	for card in cards + undated:
 		name = card.get("name")
-		if name not in parents and card.get("parent_task"):
-			# A drafted new task has no Task row yet; its card may name the phase it was filed under.
-			parents[name] = card.get("parent_task")
 		card["phase"] = nearest_phase(name, parents, subjects)
 		card["baseline"] = baselines.get(name)
 		card["span_days"] = span_days(card.get("start"), card.get("end")) if card.get("start") else 0
-	missing = {card["phase"] for card in cards + undated if card["phase"] and card["phase"] not in subjects}
-	if missing:
-		_parents, more, _baselines = _ancestry(missing)
-		subjects.update(more)
 	phases = {card["phase"]: subjects.get(card["phase"]) for card in cards + undated if card["phase"]}
 	projects = {row.get("name"): row for row in result.get("projects") or []}
 	groups = {row.get("name"): row.get("group") for row in result.get("resources") or []}

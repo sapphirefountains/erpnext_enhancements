@@ -1180,8 +1180,8 @@ class TestSavedViewsUseThePlannersStore(unittest.TestCase):
 		self.assertEqual(
 			set(self.prefs.SCHEMA["project"]),
 			# color_chosen is the planner UX redesign's P1 (whether the saved color_by was picked, not
-			# left at the page's default) and all_tasks is P2's (Show all tasks); the board's own views
-			# did not add either.
+			# left at the page's default), all_tasks is P2's (Show all tasks) and tabbed is P5's (a view
+			# saved since the Lookahead became the home tab); the board's own views added none of them.
 			{
 				"view",
 				"project",
@@ -1193,6 +1193,7 @@ class TestSavedViewsUseThePlannersStore(unittest.TestCase):
 				"color_by",
 				"color_chosen",
 				"all_tasks",
+				"tabbed",
 			},
 		)
 		self.assertEqual(self.prefs.PLANNERS["project"], "Project Planner")

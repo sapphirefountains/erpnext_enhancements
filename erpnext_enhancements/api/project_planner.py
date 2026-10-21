@@ -3593,6 +3593,8 @@ def _new_card(doc, spec):
 	card["new_task"] = True
 	card["depends_on"] = spec_waits(spec)
 	card["modified"] = str(doc.get("modified"))
+	# The phase it is filed under, for the Lookahead (P5): a draft has no Task row to read it from.
+	card["parent_task"] = doc.get("parent_task") or None
 	return card
 
 

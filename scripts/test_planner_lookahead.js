@@ -405,9 +405,31 @@ test("The bar over the board: the weeks, and the Needs crew chip with its count"
 	const head = pp.ppl_head_html();
 	check("four lengths, three pressed", [(head.match(/data-ppl-weeks="/g) || []).length, /data-ppl-weeks="3" aria-pressed="true"/.test(head)], [4, true]);
 	check("the chip counts the tasks short of crew", /data-ppl-needs aria-pressed="false"[^>]*><span class="pp-tb-count">2<\/span>/.test(head), true);
+	// The count is what pressing it shows: with Group = PM, only the PM's short work (none here).
+	const grouped = planner({ group: "PM" });
+	check("the Group filter counts too", grouped.ppl_head_html().includes("data-ppl-needs"), false);
+	const field = planner({ group: "Field" });
+	check("Field: the one short task with a Field crew", /<span class="pp-tb-count">1<\/span>/.test(field.ppl_head_html()), true);
+	// A new answer (each load is one) is read afresh.
+	pp.data = Object.assign({}, pp.data, { lookahead: Object.assign({}, pp.data.lookahead, { needs_crew: [] }) });
 	pp.data.tasks.forEach((c) => (c.short = 0));
-	pp.data.lookahead.needs_crew = [];
 	check("none, no chip", pp.ppl_head_html().includes("data-ppl-needs"), false);
+});
+
+test("Crossing the phone width redraws the board as a list or a grid", () => {
+	const listeners = [];
+	ctx.window.matchMedia = () => ({ matches: false, addEventListener: (type, fn) => listeners.push([type, fn]) });
+	const pp = planner();
+	let drawn = 0;
+	pp.render = () => (drawn += 1);
+	pp.ppl_state();
+	check("one listener, for changes", listeners.map(([type]) => type), ["change"]);
+	listeners[0][1]();
+	check("a change on the Lookahead redraws", drawn, 1);
+	pp.view = "week";
+	listeners[0][1]();
+	check("not on another tab", drawn, 1);
+	ctx.window.matchMedia = () => ({ matches: false });
 });
 
 // ------------------------------------------------------------------ 3. the rest

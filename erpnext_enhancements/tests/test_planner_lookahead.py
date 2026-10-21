@@ -299,6 +299,25 @@ class TestGetLookahead(h._Base):
 		self.assertIsNone(cards["T2"]["baseline"])
 		self.assertEqual((cards["T1"]["span_days"], cards["T2"]["span_days"], cards["T3"]["span_days"]), (4, 1, 0))
 
+	def test_a_drafted_new_task_finds_its_phase_through_the_group_it_is_filed_under(self):
+		self.answer["unscheduled"].append(_card("draft-new:xyz", "PRJ-2", parent_task="G5"))
+		self.answer["unscheduled"][-1].pop("phase")
+		self.frappe.tables["Task"] += [
+			{"name": "G5", "subject": "Fountain head", "parent_task": "P500"},
+			{"name": "P500", "subject": "Phase 500 — Finishes", "parent_task": None},
+		]
+		result = la.get_lookahead("2026-10-21")
+		card = next(c for c in result["unscheduled"] if c["name"] == "draft-new:xyz")
+		self.assertEqual(card["phase"], "P500")
+		phases = result["lookahead"]["projects"][1]["phases"]
+		self.assertIn(("P500", "Phase 500 — Finishes"), [(f["name"], f["subject"]) for f in phases])
+
+	def test_a_drafted_new_card_names_the_group_it_is_filed_under(self):
+		code = (APP / "api/project_planner.py").read_text(encoding="utf-8")
+		start = code.index("def _new_card(doc, spec):")
+		end = code.index("\n\n\ndef ", start)
+		self.assertIn('card["parent_task"] = doc.get("parent_task") or None', code[start:end])
+
 	def test_the_tree_and_needs_crew(self):
 		look = la.get_lookahead("2026-10-21")["lookahead"]
 		self.assertEqual([p["name"] for p in look["projects"]], ["PRJ-1", "PRJ-2", "PRJ-9"])

@@ -22,7 +22,7 @@
 //                                             the planner (the arrows step a month)
 //
 // The Project, Project manager and Group filters ride along on every one of those as the query
-// (S5c): /desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
+// (S5c): /desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
 // opens the planner as its sender saw it, and a reload keeps them. Picking a filter rewrites the
 // address in place; it is not a screen of its own. See "filters in the address" below.
 //
@@ -11522,7 +11522,21 @@ const PPL_METHODS = {
 				needs_only: false,
 				shown_all: new Set(),
 				linked: null,
+				// The tasks short of crew, as a set, for the answer it was built from (ppl_needs).
+				needs: null,
+				needs_for: null,
 			};
+			// Crossing the phone width (a rotation, a resized window) swaps the grid and the list.
+			try {
+				const query = window.matchMedia && window.matchMedia(`(max-width: ${PPL.phone_max}px)`);
+				if (query && typeof query.addEventListener === "function") {
+					query.addEventListener("change", () => {
+						if (this.view === PPL.view && this.data) this.render();
+					});
+				}
+			} catch (e) {
+				// No media queries: the width read at each render still decides.
+			}
 		}
 		return this.ppl;
 	},
@@ -11608,9 +11622,11 @@ const PPL_METHODS = {
 
 	// ------------------------------------------------------------------ what is on screen
 
-	ppl_card_visible(card) {
+	// Whether a card is on the board: the page's filters, Group (someone of it on the crew) and, unless
+	// `any_crew`, the Needs crew chip.
+	ppl_card_visible(card, any_crew) {
 		if (!card || !this.task_visible(card)) return false;
-		if (this.ppl_state().needs_only && !this.ppl_needs(card)) return false;
+		if (!any_crew && this.ppl_state().needs_only && !this.ppl_needs(card)) return false;
 		if (this.group) {
 			return (card.crew || []).some((member) => {
 				const resource = this.by_resource[member.resource];
@@ -11621,8 +11637,12 @@ const PPL_METHODS = {
 	},
 
 	ppl_needs(card) {
-		const look = (this.data && this.data.lookahead) || {};
-		return Number(card.short) > 0 || (look.needs_crew || []).includes(card.name);
+		const state = this.ppl_state();
+		if (state.needs_for !== this.data) {
+			state.needs = new Set(((this.data && this.data.lookahead) || {}).needs_crew || []);
+			state.needs_for = this.data;
+		}
+		return Number(card.short) > 0 || state.needs.has(card.name);
 	},
 
 	ppl_project_visible(project) {
@@ -11696,9 +11716,10 @@ const PPL_METHODS = {
 				}">${pp_esc(__("{0} weeks", [n]))}</button>`;
 			})
 			.join("");
+		// What pressing the chip would show: the cards the other filters leave, short of crew.
 		const needs = []
 			.concat(this.data.tasks || [], this.data.unscheduled || [])
-			.filter((card) => this.task_visible(card) && this.ppl_needs(card)).length;
+			.filter((card) => this.ppl_card_visible(card, true) && this.ppl_needs(card)).length;
 		const needs_chip =
 			needs || state.needs_only
 				? `<button type="button" class="pp-tb-alert pp-tb-warn ppl-needs" data-ppl-needs aria-pressed="${
