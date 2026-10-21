@@ -1762,6 +1762,15 @@ class TestDisplayRule(unittest.TestCase):
 		self.assertEqual(only_admin["tasks"], [])
 		self.assertEqual([p["name"] for p in only_admin["projects"]], ["PRJ-1"])
 
+	def test_a_fountain_move_task_is_filtered_like_any_other_and_stays_read_only(self):
+		# Fountain Move (v1.703.0) marks a move project's cards read-only on the Project Planner; its tasks
+		# are subject to the display rule the same as a project's other tasks.
+		with mock.patch.object(api.fountain_move_jobs, "move_projects", lambda names: {"PRJ-1"}):
+			self.assertNotIn("T-ADMIN", self.names(self.read())[0])
+			cards = {card["name"]: card for card in self.read(all_tasks=1)["tasks"]}
+		self.assertEqual((cards["T-ADMIN"]["movable"], cards["T-ADMIN"]["fountain_move"]), (False, True))
+		self.assertFalse(cards["T-PHASED"]["movable"])
+
 	def test_a_drafted_task_is_never_hidden(self):
 		data = {
 			"tasks": [_task("NEW-1", start=MON), _task("T-ADMIN", start=MON)],

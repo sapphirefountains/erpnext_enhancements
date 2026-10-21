@@ -42,6 +42,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Overdue tray is not filtered** (the spec names the schedule and the Unscheduled tray). If admin
   tasks crowd it, that is a follow-up.
 
+## [1.703.0] - 2026-10-21
+
+### Added
+- **Fountain Move jobs: a project can be a move, it gets a simple move template, and the Maintenance
+  Planner schedules it.** Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves" (first
+  job: PRJ-00775, Michelle Ainge - 4 Pots Moved). `project_enhancements/fountain_move_jobs.py`.
+  - **A move job is a Service project with the new Check *Fountain Move*** (`Project.custom_is_fountain_move`,
+    in the list's standard filters). Not a Project Type of its own, by Nik's choice, so Service reports and
+    KPIs keep counting moves, and the planners' customer-job set needed no change (Service is in it).
+  - **The Fountain Move template** (Project Template "Fountain Move", type Service), seeded once and Nik's
+    to edit: *Confirm move date with customer* (office, 0 h), *Move day* (drain, disconnect, load,
+    transport, set, reconnect, fill, startup test and walkthrough; 4 h for the crew, so 2 h each for the
+    crew of 2; Outdoor, so the weather flags apply) and *Invoice the move* (office, 0 h).
+  - **Ticking the box on a new project uses the template** (`Project.before_insert`): a blank template is
+    filled with Fountain Move and a blank type becomes Service; choosing the Fountain Move template ticks
+    the box. An explicit other template or type is never replaced. `project_template` is hidden on this
+    site's Project form, so the box is the way a Desk-created move gets its tasks; ERPNext's own
+    `after_insert` then copies them and `task_templates` carries the hours and crew size across.
+  - **An Opportunity from the /fountain-move intake** (a Fountain Move Request whose `created_opportunity`
+    it is) makes a ticked project, and the Create Project dialog preselects the Fountain Move template.
+  - **Move tasks are moved on the Maintenance Planner, read-only on the Project Planner.** A deliberate
+    exception to "each planner moves only its own work". Each open move task with hours is a card on the
+    Maintenance Planner (*Move* chip; the Unscheduled tray until it has a day): drag it to a day, onto
+    another person's row in the crew view, or drop a technician on it. The new POST
+    `maintenance_planner.move_fountain_move` saves through the Project Planner's own write, so a conflict
+    asks for a reason and overbooking warns, never blocks; Undo puts the day and crew back; Draft mode
+    refuses them (its drafts are visits). The Maintenance Planner only shows people, so a crew change keeps
+    every crew member with no login (a subcontractor, a vehicle) and anyone whose resource has since gone
+    inactive. The task's read-only *Project* booking is left off that page so it is not shown twice; the
+    hours still count in each person's day. The 0-hour office tasks get no card.
+  - On the Project Planner a move task's card is not movable, `_load` refuses a single-task edit of one
+    (save, add or swap crew, drafts), the Overdue tray's *Reschedule* reports it as failed, and *move
+    successors* skips it. Copy week still copies one (that makes new tasks, it moves nothing).
+- **Patches.** `seed_fountain_move_template` creates the template and its three template Tasks only when
+  no template of that name exists, in one savepoint. `make_prj_00775_a_move_job`, approved by Nik on
+  2026-10-21, makes PRJ-00775 the first move job: it creates the Fountain Move Custom Field from its
+  fixture when missing (patches run before fixture sync); sets `project_type` Build -> Service, ticks the
+  box and sets the template, with `db.set_value` so no Project hook re-runs; sets each of the project's 11
+  tasks from *Service Project Template* that is still Open and untouched (no assignee, hours or timesheet)
+  to **Canceled**, deleting nothing (anything started is kept and logged); and adds the three move tasks
+  **undated**, so the Move day waits in the Maintenance Planner's Unscheduled tray for its real day. Both
+  are safe twice and cannot raise.
+
 ## [1.702.0] - 2026-10-21
 
 ### Added

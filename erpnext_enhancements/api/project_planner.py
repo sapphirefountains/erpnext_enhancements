@@ -83,7 +83,7 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
-from erpnext_enhancements.project_enhancements import planner_tracking, routing
+from erpnext_enhancements.project_enhancements import fountain_move_jobs, planner_tracking, routing
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -672,6 +672,7 @@ def get_planner(start, end, draft=0, all_tasks=0):
 		for row in unscheduled_rows
 	]
 	_phase5_cards(tasks + unscheduled, today)  # Phase 5: outdoor / customer-facing flags, weather
+	fountain_move_jobs.mark_read_only(tasks + unscheduled)  # moved on the Maintenance Planner
 
 	result = {
 		"start": str(start),
@@ -962,10 +963,14 @@ def _projects(names):
 # ---------------------------------------------------------------------- writes
 
 
-def _load(task, modified):
+def _load(task, modified, allow_move_job=False):
+	"""The task to edit, permission- and staleness-checked. A Fountain Move task is refused unless
+	``allow_move_job``: those are scheduled on the Maintenance Planner (``fountain_move_jobs``)."""
 	_require_planner()
 	doc = frappe.get_doc("Task", task)
 	doc.check_permission("write")
+	if not allow_move_job:
+		fountain_move_jobs.refuse_on_project_planner(doc)
 	if str(doc.modified) != str(modified):
 		frappe.throw(
 			_("This task was changed by someone else since the planner loaded. Refresh and try again."),
@@ -1505,8 +1510,14 @@ def shift_successors(task, days, modified, reason=None, tasks=None, notify=None)
 		names = [name for name in names if name in wanted]
 
 	docs, skipped = [], []
+	moves = fountain_move_jobs.move_projects(
+		frappe.get_all("Task", filters={"name": ["in", names or [""]]}, pluck="project")
+	)
 	for name in names:
 		doc = frappe.get_doc("Task", name)
+		if doc.get("project") in moves:
+			skipped.append({"task": name, "reason": _("It is a Fountain Move: move it on the Maintenance Planner.")})
+			continue
 		if doc.get("status") in engine.FINISHED_STATUSES:
 			skipped.append({"task": name, "reason": _("It is {0}.").format(doc.get("status"))})
 			continue
@@ -1802,6 +1813,7 @@ def bulk_update(tasks, action, date=None, reason=None):
 			doc = frappe.get_doc("Task", name)
 			doc.check_permission("write")
 			if action == "reschedule":
+				fountain_move_jobs.refuse_on_project_planner(doc)
 				old = _span_text(_state(doc))
 				_move(doc, str(day), None)
 				new = _span_text(_state(doc))
