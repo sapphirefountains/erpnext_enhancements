@@ -1810,6 +1810,24 @@ test("Maintenance Planner: tb_render before the first load, with data null, thro
 	});
 });
 
+test("Project Planner: calendar cards say their length in days and people, with hours only when set", () => {
+	const { pp } = projectPlanner();
+	const label = (card) => pp.duration_text(card);
+	const three = { start: "2026-10-14", end: "2026-10-16" };
+	check("three days, two people", label({ ...three, crew: [{}, {}] }), "3 days · 2 people");
+	check("one day, one person", label({ start: "2026-10-14", end: "2026-10-14", crew: [{}] }), "1 day · 1 person");
+	check("no end date is one day", label({ start: "2026-10-14", end: "", crew: [] }), "1 day");
+	check("Friday to Monday is two working days", label({ start: "2026-10-16", end: "2026-10-19", crew: [] }), "2 days");
+	check("Thursday to Monday is three working days", label({ start: "2026-10-15", end: "2026-10-19", crew: [] }), "3 days");
+	check("a weekend-only task still reads one day", label({ start: "2026-10-17", end: "2026-10-18", crew: [] }), "1 day");
+	check("hours show after the people when set", label({ ...three, crew: [{}, {}], expected_time: 20 }), "3 days · 2 people · 20h");
+	const slot = ["09:00", "11:00"];
+	check("a time slot shows as a range", label({ start: "2026-10-14", end: "2026-10-14", crew: [], slot }), "1 day · 09:00–11:00");
+	check("no dates, no label", label({ start: "", end: "", crew: [] }), "");
+	const source = fs.readFileSync(PP_JS, "utf8");
+	check("the calendar card and its quick look use the day label", (source.match(/this\.duration_text\(card\)/g) || []).length, 2);
+});
+
 // ------------------------------------------------------------------ run
 
 (async () => {
