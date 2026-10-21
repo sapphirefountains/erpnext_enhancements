@@ -142,7 +142,8 @@
  *     `changes` is what update_gantt_row takes (`start`/`end` in wire format,
  *     end exclusive, or `progress`); `info` is `{mode, event}` (the drop's
  *     pointer event, for a held Ctrl/⌘). It resolves `{status: "success"}`
- *     to keep the bar, or anything else to put it back (`message` shown).
+ *     to keep the bar, `{status: "cancelled"}` to put it back silently, or
+ *     anything else to put it back with its `message`.
  *   - `on_link({source, target, type})` makes a link drawn from a bar's end
  *     dot onto another bar; dhtmlx never adds it itself, so a refused link
  *     never shows, and an accepted one arrives with the next refresh. Only
@@ -1462,6 +1463,10 @@ frappe.provide("erpnext_enhancements.gantt");
 				} else if (result.status === "conflict") {
 					rollback(result.message || __("Changed by someone else"));
 					this.refresh();
+				} else if (result.status === "cancelled") {
+					// The host backed out (a question answered No, a refusal it already explained): the
+					// bar goes back and nothing more is said.
+					rollback(null);
 				} else {
 					rollback(result.message || __("Could not save the change"));
 				}
@@ -1559,6 +1564,16 @@ frappe.provide("erpnext_enhancements.gantt");
 				}
 				if (t.end_date && (!max || t.end_date > max)) {
 					max = t.end_date;
+				}
+				// A baseline (config.baseline) may start before every task or end after them; off the
+				// scale, posFromDate gives 0 and its bar would be pinned to the chart's left edge.
+				const base_start = t.ee_baseline_start ? `${t.ee_baseline_start} 00:00` : null;
+				const base_end = t.ee_baseline_end || t.ee_baseline_start;
+				if (base_start && (!min || base_start < min)) {
+					min = base_start;
+				}
+				if (base_end && (!max || `${base_end} 23:59` > max)) {
+					max = `${base_end} 23:59`;
 				}
 			});
 			const today = new Date();

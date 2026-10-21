@@ -26,11 +26,11 @@ planner's own :func:`project_planner.build_card`. A card is the same shape as ev
 * **Each card gains** ``baseline`` (P3's ``custom_baseline_start``/``_end``), ``span_days`` (working
   days, D7), ``parent_task``, ``gantt_parent`` (the group drawn above it, or None) and ``finished``.
 
-Reads only, after the planner's role gate and a read permission check on the project.
+Reads only, after the planner's role gate and a read permission check on the project; a project that
+fails either check is answered with ``refused``, not raised, so Frappe opens no dialog and re-routes nothing.
 """
 
 import frappe
-from frappe import _
 from frappe.utils import cint, getdate, nowdate
 
 from erpnext_enhancements.api import project_planner as pp
@@ -43,6 +43,8 @@ from erpnext_enhancements.project_enhancements.planner_templates import phase_nu
 MAX_TASKS = 1000
 #: Statuses never drawn: a canceled task is gone from the plan, a template is not work.
 LEFT_OUT = ("Canceled", "Cancelled", "Template")
+#: Why a project's chart was not drawn: it does not exist, or the caller may not read it.
+REFUSED_MISSING, REFUSED_FORBIDDEN = "missing", "forbidden"
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -108,6 +110,18 @@ def project_span(cards):
 # ---------------------------------------------------------------------- reads
 
 
+def _picker():
+	"""The answer with no chart: the projects to pick one from, as the toolbar's Project filter lists them."""
+	return {
+		"today": nowdate(),
+		"can_edit": bool(frappe.has_permission("Task", "write")),
+		"projects": pp._projects(set()),
+		"tasks": [],
+		"unscheduled": [],
+		"gantt": None,
+	}
+
+
 def _project_rows(project):
 	"""Every Task of ``project`` the chart may draw (groups and work), with what a card needs."""
 	cols = engine._task_columns()
@@ -149,22 +163,21 @@ def _baseline(row):
 @frappe.whitelist()
 def get_project_gantt(project=None, all_tasks=0, draft=1):
 	"""One project's schedule for the Gantt tab: get_planner-shaped cards plus ``"gantt"``. See the
-	module docstring. With no ``project``, only ``projects`` (the picker's list) and ``"gantt": None``."""
+	module docstring. With no ``project``, only ``projects`` (the picker's list) and ``"gantt": None``; for a
+	project that is gone or not the caller's to read, the same plus ``refused`` (``"missing"`` or
+	``"forbidden"``), never an exception."""
 	pp._require_planner()
 	project = pp.given(project)
 	if not project:
 		# A bare /gantt: the projects to pick one from, as the toolbar's Project filter lists them.
-		return {
-			"today": nowdate(),
-			"can_edit": bool(frappe.has_permission("Task", "write")),
-			"projects": pp._projects(set()),
-			"tasks": [],
-			"unscheduled": [],
-			"gantt": None,
-		}
+		return _picker()
+	# A project that is gone, or not the caller's to read, is an answer, not an error: a 404 or 403 from
+	# here would open Frappe's own dialog, and the 403's re_route would send the address back to this
+	# project after the page had moved on, loading it again. The page forgets it and moves on instead.
 	if not frappe.db.exists("Project", project):
-		frappe.throw(_("Project {0} was not found.").format(project or ""), frappe.DoesNotExistError)
-	frappe.has_permission("Project", "read", doc=project, throw=True)
+		return dict(_picker(), refused=REFUSED_MISSING)
+	if not frappe.has_permission("Project", "read", doc=project):
+		return dict(_picker(), refused=REFUSED_FORBIDDEN)
 	today = getdate(nowdate())
 	can_edit = bool(frappe.has_permission("Task", "write"))
 	all_tasks = bool(cint(pp.given(all_tasks)))

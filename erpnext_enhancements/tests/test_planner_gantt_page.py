@@ -70,8 +70,13 @@ class TestTheBlock(unittest.TestCase):
 			self.assertNotIn(write, self.block, write)
 		self.assertIn('this.commit(card, "save_task", Object.assign({ task: card.name }, args), message, { solo })', self.block)
 		self.assertIn("on_write: (task, changes, info) => this.ppg_write(task, changes, info),", self.block)
-		self.assertIn('this.send(\n\t\t\t"add_dependency",', self.block)
-		self.assertIn('this.send(\n\t\t\t\t"remove_dependency",', self.block)
+		self.assertIn('this.ppg_link_send(\n\t\t\t"add_dependency",', self.block)
+		self.assertIn('this.ppg_link_send(\n\t\t\t\t"remove_dependency",', self.block)
+		# One send() for both, given no snapshot: the Undo entry is pushed only for a change that happened.
+		link_send = self.block[self.block.index("\tppg_link_send(method, args, snapshot, message, extra) {") :]
+		link_send = link_send[: link_send.index("\n\t},\n")]
+		self.assertIn("return this.send(method, args, extra || {})", link_send)
+		self.assertIn("if (result && result[done]) {", link_send)
 		# The only frappe.call is the read.
 		self.assertEqual(self.block.count("frappe.call("), 1)
 		self.assertIn("frappe.call({ method: PPG.method, args })", self.block)

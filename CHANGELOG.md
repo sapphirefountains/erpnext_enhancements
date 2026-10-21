@@ -87,6 +87,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drafted against it as it was move on to the save, so they do not read as changed by someone else.
   While More ▸ Tools ▸ Hold all my changes is on, drawing or removing a link is refused with a
   sentence, because it would reach the tasks at once.
+- **A project that is gone, or that the person may not read, is an answer, not an error.**
+  `get_project_gantt` answers `refused: "missing" | "forbidden"` instead of raising. A 404 or 403 would
+  open Frappe's own dialog, and the 403's `re_route` sends the address back to the project after the
+  page has moved on, so it loaded and asked twice before settling. Two production users have Project User
+  Permissions. Only that answer makes the device forget its project. A request that fails (the network, a
+  timeout, a server error) keeps it and offers *Try again*. The device remembers a project only once its
+  chart has drawn, so one that will not open never replaces the last good one.
+- An Undo entry for a link is pushed only when the server says the link was made or removed (`linked`,
+  `removed`). A link that was already there is not this gesture's, and undoing it would remove a link
+  someone else made.
+- A drag the planner backs out of (a question answered No, a refusal it already explained) puts the bar
+  back with no "Could not save" toast. A baseline that starts before every task is kept on the chart's
+  scale. A phase with no dated work is left out of the tree (its undated work is under Not scheduled), not
+  drawn as an empty row with a made-up day. P4's Reset baseline messages escape the project title.
 - `project_planner.drafts_block(overlay)` is the `drafts` block `get_planner` answers with, now shared
   with `get_project_gantt` instead of built in two places.
 - No patch, fixture or data change.

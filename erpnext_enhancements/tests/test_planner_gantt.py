@@ -323,18 +323,22 @@ class TestTheGates(_Feed):
 		self.assertEqual([p["name"] for p in answer["projects"]], ["PRJ-1"])
 		self.assertEqual((answer["tasks"], answer["unscheduled"]), ([], []))
 
-	def test_a_project_that_is_gone_or_not_yours(self):
-		with self.assertRaises(h._DoesNotExist):
-			pg.get_project_gantt("PRJ-GONE")
+	def test_a_project_that_is_gone_or_not_yours_is_an_answer_not_an_error(self):
+		# A 404 or 403 would open Frappe's dialog, and the 403's re_route would send the page back.
+		gone = pg.get_project_gantt("PRJ-GONE")
+		self.assertEqual((gone["refused"], gone["gantt"], gone["tasks"]), ("missing", None, []))
+		self.assertEqual([p["name"] for p in gone["projects"]], ["PRJ-1"])
+		h.frappe.has_permission = lambda doctype, ptype="read", doc=None, throw=False, **k: doctype != "Project"
+		forbidden = pg.get_project_gantt("PRJ-1")
+		self.assertEqual((forbidden["refused"], forbidden["gantt"]), ("forbidden", None))
+		self.assertNotIn("Riverwalk", str(forbidden.get("tasks")))
 
-		def refuse(*args, **kwargs):
-			if kwargs.get("throw"):
-				raise h._PermissionError("no")
-			return False
-
-		h.frappe.has_permission = refuse
-		with self.assertRaises(h._PermissionError):
-			pg.get_project_gantt("PRJ-1")
+	def test_the_feed_never_throws_for_a_gone_or_forbidden_project(self):
+		tree = ast.parse(GANTT_PATH.read_text(encoding="utf-8"))
+		fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_project_gantt")
+		body = ast.unparse(fn)
+		self.assertNotIn("frappe.throw", body)
+		self.assertNotIn("throw=True", body)
 
 	def test_the_planner_role_gate(self):
 		h.frappe.roles = ["Accounts User"]

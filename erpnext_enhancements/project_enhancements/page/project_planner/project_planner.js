@@ -12748,7 +12748,21 @@ const PPG_PURE = {
 	// scheduled" with the undated work. A link is finish-to-start, kept only when both ends are drawn.
 	rows(answer, labels, initials) {
 		const gantt = (answer && answer.gantt) || {};
-		const groups = gantt.groups || [];
+		const dated = (answer && answer.tasks) || [];
+		const undated = (answer && answer.unscheduled) || [];
+		// A group with no dated work under it would be an empty row whose bar DHTMLX makes up (a day stub on
+		// no day in particular): its undated work is under Not scheduled, so the group is left out.
+		const parent_of = {};
+		(gantt.groups || []).forEach((group) => (parent_of[group.name] = group.parent || null));
+		const holding = new Set();
+		dated.forEach((card) => {
+			let node = card.gantt_parent;
+			for (let hops = 0; node && node in parent_of && !holding.has(node) && hops < 50; hops++) {
+				holding.add(node);
+				node = parent_of[node];
+			}
+		});
+		const groups = (gantt.groups || []).filter((group) => holding.has(group.name));
 		const drawn = new Set(groups.map((group) => group.name));
 		const tasks = groups.map((group) => ({
 			id: group.name,
@@ -12761,8 +12775,6 @@ const PPG_PURE = {
 			ee_readonly: true,
 			ee_class: "ppg-group",
 		}));
-		const dated = (answer && answer.tasks) || [];
-		const undated = (answer && answer.unscheduled) || [];
 		dated.forEach((card) => tasks.push(PPG_PURE.task_row(card, drawn, initials)));
 		if (undated.length) {
 			tasks.push({
@@ -12783,7 +12795,7 @@ const PPG_PURE = {
 		const links = [];
 		dated.concat(undated).forEach((card) =>
 			(card.depends_on || []).forEach((pred) => {
-				if (ids.has(pred) && pred !== card.name && !drawn.has(pred)) {
+				if (ids.has(pred) && pred !== card.name && !(pred in parent_of)) {
 					links.push({ id: `${pred}>${card.name}`, source: pred, target: card.name, type: "0" });
 				}
 			})
@@ -12842,7 +12854,8 @@ const PPG_METHODS = {
 		if (target.view === PPG.view) {
 			if (target.project !== state.project) state.drawn_for = null;
 			state.project = target.project || "";
-			if (state.project) this.ppg_remember(state.project);
+			// Remembered only once the server has drawn it (ppg_load), so a project that will not open
+			// never replaces this device's last good one.
 			return;
 		}
 		this.ppg_destroy();
@@ -12909,10 +12922,15 @@ const PPG_METHODS = {
 		return Promise.resolve(frappe.call({ method: PPG.method, args })).then(
 			(r) => {
 				if (token !== this.request) return;
-				this.data = (r && r.message) || {};
+				const answer = (r && r.message) || {};
 				this.$body.removeClass("pp-loading");
+				state.trouble = "";
+				// Gone, or not the person's to read: an answer of its own, so Frappe opened no dialog.
+				if (answer.refused && state.project) return this.ppg_refused(answer);
+				this.data = answer;
 				state.failed = "";
 				state.landed = null;
+				if (answer.gantt && answer.gantt.project === state.project) this.ppg_remember(state.project);
 				this.index();
 				this.fill_filters();
 				this.write_filter_url();
@@ -12922,15 +12940,27 @@ const PPG_METHODS = {
 			() => {
 				if (token !== this.request) return;
 				this.$body.removeClass("pp-loading");
-				this.ppg_refused();
+				this.ppg_trouble();
 			}
 		);
 	},
 
-	// The server would not open the project (it said why: gone, or not the person's to read). This device
-	// forgets it. Reached from the landing, the address is replaced by the Lookahead (no dead end, no
-	// extra entry); opened by a link or the picker, the tab offers the picker with a sentence.
-	ppg_refused() {
+	// The request itself failed (the network, a timeout, a server error): nothing is known about the
+	// project, so this device keeps it and the tab offers to try again. The landing stays where it is.
+	ppg_trouble() {
+		const state = this.ppg_state();
+		state.trouble = state.project || "-";
+		this.data = { projects: (this.data && this.data.projects) || [], tasks: [], unscheduled: [], gantt: null };
+		this.index();
+		this.render();
+	},
+
+	// The server will not open the project: get_project_gantt answered `refused` ("missing" or
+	// "forbidden"), never a 404 or 403, so no Frappe dialog opened and no re_route will send the address
+	// back here. This device forgets it. Reached from the landing, the address is replaced by the
+	// Lookahead, once (no dead end, no extra entry); opened by a link or the picker, the tab offers the
+	// picker with a sentence.
+	ppg_refused(answer) {
 		const state = this.ppg_state();
 		if (state.project && this.ppg_remembered() === state.project) this.ppg_remember("");
 		if (state.landed && state.landed === state.project) {
@@ -12941,7 +12971,9 @@ const PPG_METHODS = {
 			return;
 		}
 		state.failed = state.project;
-		this.data = { projects: (this.data && this.data.projects) || [], tasks: [], unscheduled: [], gantt: null };
+		state.refused = (answer && answer.refused) || "";
+		const projects = (answer && answer.projects) || (this.data && this.data.projects) || [];
+		this.data = { projects, tasks: [], unscheduled: [], gantt: null };
 		this.index();
 		this.render();
 	},
@@ -12966,7 +12998,8 @@ const PPG_METHODS = {
 		this.$panel.hide();
 		this.$trays.empty();
 		// Another tab's answer, still on screen while the Gantt's loads.
-		if (!this.data || (state.project && !this.data.gantt && state.failed !== state.project)) return;
+		const stopped = state.failed === state.project || state.trouble === (state.project || "-");
+		if (!this.data || (state.project && !this.data.gantt && !stopped)) return;
 		let root = state.$root && state.$root[0];
 		if (!root || !this.$grid_wrap[0].contains(root)) {
 			this.ppg_destroy();
@@ -12983,11 +13016,19 @@ const PPG_METHODS = {
 		const chart = root.querySelector(".ppg-chart");
 		if (!gantt) {
 			this.ppg_destroy();
-			chart.innerHTML = `<p class="ppg-empty">${pp_esc(
-				state.failed && state.failed === state.project
-					? __("{0} could not be opened. Pick a project to see its Gantt.", [state.project])
-					: __("Pick a project to see its schedule from start to finish.")
-			)}</p>`;
+			const trouble = !!state.trouble && state.trouble === (state.project || "-");
+			const text = trouble
+				? __("The Gantt could not load. Check the connection, then try again.")
+				: state.failed && state.failed === state.project
+				? state.refused === "forbidden"
+					? __("You cannot open {0}. Pick a project to see its Gantt.", [state.project])
+					: __("{0} was not found. Pick a project to see its Gantt.", [state.project])
+				: __("Pick a project to see its schedule from start to finish.");
+			chart.innerHTML = `<p class="ppg-empty">${pp_esc(text)}${
+				trouble ? ` <button type="button" class="btn btn-default btn-xs" data-ppg-retry>${pp_esc(__("Try again"))}</button>` : ""
+			}</p>`;
+			const retry = chart.querySelector("[data-ppg-retry]");
+			if (retry) retry.addEventListener("click", () => this.load());
 		} else if (!state.widget || state.widget_project !== state.project || state.widget.destroyed) {
 			chart.innerHTML = "";
 			this.ppg_mount(chart, gantt);
@@ -13256,14 +13297,40 @@ const PPG_METHODS = {
 		if (this.ppg_held()) return Promise.resolve(null);
 		const subject = card.subject || card.name;
 		const other = pred.subject || pred.name;
-		return this.send(
+		return this.ppg_link_send(
 			"add_dependency",
 			{ task: card.name, depends_on: pred.name, modified: this.modified[card.name] || card.modified },
-			{
-				snapshot: { ppg: "link", task: card.name, depends_on: pred.name, subject, added: true },
-				message: __("{0} now waits for {1}", [subject, other]),
-			}
-		).finally(() => this.load());
+			{ ppg: "link", task: card.name, depends_on: pred.name, subject, added: true },
+			__("{0} now waits for {1}", [subject, other])
+		);
+	},
+
+	// add_dependency or remove_dependency through send(), then the reload. The Undo entry (and its toast)
+	// is pushed here, and only when the server says the link was made or removed (`linked`, `removed`):
+	// a link that was there already, or gone already, is not this gesture's, and an Undo of it would
+	// remove or restore a link somebody else made. send() is given no snapshot for that reason.
+	ppg_link_send(method, args, snapshot, message, extra) {
+		const done = method === "add_dependency" ? "linked" : "removed";
+		return this.send(method, args, extra || {})
+			.then((result) => {
+				if (result && result[done]) {
+					const toasted = snapshot ? this.push_undo(snapshot, message) : false;
+					if (!toasted) frappe.show_alert({ message, indicator: "green" }, 5);
+				} else if (result) {
+					frappe.show_alert(
+						{
+							message:
+								done === "linked"
+									? __("Nothing changed: {0} already waited for it.", [(snapshot && snapshot.subject) || args.task])
+									: __("Nothing changed: that link was already gone."),
+							indicator: "blue",
+						},
+						5
+					);
+				}
+				return result;
+			})
+			.finally(() => this.load());
 	},
 
 	// A link double-clicked: remove it, once asked.
@@ -13275,14 +13342,12 @@ const PPG_METHODS = {
 		const subject = card.subject || card.name;
 		const other = (pred && (pred.subject || pred.name)) || args.depends_on;
 		frappe.confirm(pp_esc(__("Remove the link? {0} will no longer wait for {1}.", [subject, other])), () =>
-			this.send(
+			this.ppg_link_send(
 				"remove_dependency",
 				{ task: card.name, depends_on: args.depends_on, modified: this.modified[card.name] || card.modified },
-				{
-					snapshot: { ppg: "link", task: card.name, depends_on: args.depends_on, subject, added: false },
-					message: __("{0} no longer waits for {1}", [subject, other]),
-				}
-			).finally(() => this.load())
+				{ ppg: "link", task: card.name, depends_on: args.depends_on, subject, added: false },
+				__("{0} no longer waits for {1}", [subject, other])
+			)
 		);
 	},
 
@@ -13292,7 +13357,7 @@ const PPG_METHODS = {
 		const card = this.by_task[snap.task];
 		const method = snap.added ? "remove_dependency" : "add_dependency";
 		const args = { task: snap.task, depends_on: snap.depends_on, modified: this.modified[snap.task] || (card && card.modified) || "" };
-		this.send(method, args, { message: __("Undone: {0}", [snap.subject]), auto_reason: __(PP.undo_reason) }).finally(() => this.load());
+		this.ppg_link_send(method, args, null, __("Undone: {0}", [snap.subject]), { auto_reason: __(PP.undo_reason) });
 		return true;
 	},
 
@@ -13875,16 +13940,17 @@ const PPAS_METHODS = {
 				const preview = (r && r.message) || {};
 				const count = Number(preview.changed) || 0;
 				if (!count) {
-					frappe.show_alert({ message: __("{0}: the baseline already matches every task's days.", [title]), indicator: "blue" }, 6);
+					frappe.show_alert({ message: pp_esc(__("{0}: the baseline already matches every task's days.", [title])), indicator: "blue" }, 6);
 					return null;
 				}
+				// The title is a record's text and both messages are HTML (S3: escaped where it meets markup).
 				frappe.confirm(
-					__("Reset the baseline of {0}? {1} task(s) get their days now as their baseline.", [title, count]),
+					pp_esc(__("Reset the baseline of {0}? {1} task(s) get their days now as their baseline.", [title, count])),
 					() =>
 						Promise.resolve(frappe.call({ method: `${PP.api}.reset_baseline`, args: { project } }))
 							.then((done) => {
 								const changed = Number(((done && done.message) || {}).changed) || 0;
-								frappe.show_alert({ message: __("{0}: baseline set for {1} task(s).", [title, changed]), indicator: "green" }, 6);
+								frappe.show_alert({ message: pp_esc(__("{0}: baseline set for {1} task(s).", [title, changed])), indicator: "green" }, 6);
 								return this.load();
 							})
 							.catch(() => null)

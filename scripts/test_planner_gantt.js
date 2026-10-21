@@ -296,6 +296,12 @@ test("Widget: on_write replaces update_gantt_row; a refusal puts the bar back", 
 	await settle();
 	check("put back where it was", to_wire(env.g.getTask("T2").start_date), "2026-10-26 00:00");
 	check("and the host's message shown", env.alerts.slice(-1), ["Pour cannot be changed from the planner."]);
+	// The host backed out (Esc on a question, a refusal it already explained): back, and not a word.
+	answer = { status: "cancelled" };
+	const said = env.alerts.length;
+	drag(env.g, "T2", "2026-11-02 00:00", "2026-11-03 00:00");
+	await settle();
+	check("cancelled: put back, no toast", [to_wire(env.g.getTask("T2").start_date), env.alerts.length], ["2026-10-26 00:00", said]);
 	const plain = await mountWith({ fetch: undefined, on_write: undefined });
 	plain.g.parse({ data: ROWS().tasks, links: [] });
 	plain.g.getTask("T2").ee_editable = true;
@@ -365,6 +371,21 @@ test("Widget: the baseline is a bar the task renderer appends, not addTaskLayer"
 	check("none for a task without a baseline", render(g.getTask("T2"), () => new El("div")).children.length, 0);
 	const off = await mountWith();
 	check("not asked for, not drawn", !!(off.g.config.type_renderers && off.g.config.type_renderers.task), false);
+	// A baseline long before every task (and today) is inside the scale, or posFromDate pins it to the edge.
+	const early = await mountWith({
+		baseline: true,
+		today: true,
+		fetch: () =>
+			Promise.resolve({
+				tasks: [{ id: "T9", text: "Late", start_date: "2026-12-01 00:00", end_date: "2026-12-02 00:00", ref_doctype: "Task", ref_name: "T9", ee_baseline_start: "2026-06-01", ee_baseline_end: "2027-02-10" }],
+				links: [],
+				meta: { can_write: { Task: true } },
+			}),
+	});
+	check("the scale starts a week before the baseline and ends a week after it", [to_wire(early.g.config.start_date), to_wire(early.g.config.end_date)], [
+		"2026-05-25 00:00",
+		"2027-02-17 23:59",
+	]);
 	check("and the layers API is never relied on", /addTaskLayer\s*\(/.test(strip(fs.readFileSync(WIDGET_JS, "utf-8"))), false);
 });
 
@@ -556,6 +577,15 @@ test("PPG_PURE: the rows and links the widget draws", () => {
 	]);
 	check("editable as the server says", out.meta, { can_write: { Task: true } });
 	check("no Not scheduled row with nothing undated", G.rows(Object.assign(answer(), { unscheduled: [] })).tasks.some((t) => t.id === "ppg:not-scheduled"), false);
+	// A phase whose work is all undated would be an empty row with a made-up day stub: left out.
+	const undated_phase = answer();
+	undated_phase.gantt.groups.push({ name: "G400", subject: "Phase 400", parent: null, number: 400 }, { name: "G410", subject: "410 Wiring", parent: "G400", number: 410 });
+	undated_phase.unscheduled.push(card("U2", { gantt_parent: "G410" }));
+	const kept = G.rows(undated_phase).tasks.map((t) => t.id);
+	check("a phase with only undated work is not drawn", [kept.includes("G400"), kept.includes("G410"), kept.includes("U2")], [false, false, true]);
+	undated_phase.tasks.push(card("T7", { start: "2026-11-02", end: "2026-11-02", gantt_parent: "G410" }));
+	const both = G.rows(undated_phase).tasks;
+	check("once one task under it is dated, it and its parent phase are", [both.some((t) => t.id === "G400"), (both.find((t) => t.id === "G410") || {}).parent], [true, "G400"]);
 });
 
 test("The address: /gantt/<project> is the Gantt's, and the tab opens the project", () => {
@@ -664,17 +694,19 @@ test("A past day asks first, and backing out settles the widget", async () => {
 
 test("A link is add_dependency through send(), with Undo; a double-click removes one", async () => {
 	const sent = [];
+	const undos = [];
 	const pp = planner({
-		send: (method, args, opts) => (sent.push([method, args, opts]), Promise.resolve({})),
+		send: (method, args, opts) => (sent.push([method, args, opts]), Promise.resolve(method === "add_dependency" ? { linked: true } : { removed: true })),
 		load: () => sent.push(["load"]),
+		push_undo: (snapshot, message) => (undos.push([snapshot, message]), true),
 	});
 	await pp.ppg_link({ id: "T2", ref_name: "T2" }, { id: "U1", ref_name: "U1" });
 	check("U1 now waits on T2... it already did, so nothing is sent", sent.length, 0);
 	await pp.ppg_link({ id: "T1", ref_name: "T1" }, { id: "U1", ref_name: "U1" });
 	check("add_dependency, with the task's modified", sent[0].slice(0, 2), ["add_dependency", { task: "U1", depends_on: "T1", modified: "m-U1" }]);
-	check("an Undo entry and a message", [sent[0][2].snapshot, sent[0][2].message], [
-		{ ppg: "link", task: "U1", depends_on: "T1", subject: "Pull wire", added: true },
-		"Pull wire now waits for Excavate basin",
+	check("send() is given no Undo entry of its own", [sent[0][2].snapshot, sent[0][2].message], [undefined, undefined]);
+	check("the Undo entry and its message, once the server says it linked", undos.slice(-1), [
+		[{ ppg: "link", task: "U1", depends_on: "T1", subject: "Pull wire", added: true }, "Pull wire now waits for Excavate basin"],
 	]);
 	check("then the chart reloads", sent[1], ["load"]);
 	check("the writes are planner_actions'", [pp.p6_send_modules.add_dependency, pp.p6_send_modules.remove_dependency], [
@@ -690,12 +722,37 @@ test("A link is add_dependency through send(), with Undo; a double-click removes
 	ctx.confirms[0].yes();
 	await settle();
 	check("then remove_dependency", sent[0].slice(0, 2), ["remove_dependency", { task: "T2", depends_on: "T1", modified: "m-T2" }]);
-	check("its Undo entry", sent[0][2].snapshot, { ppg: "link", task: "T2", depends_on: "T1", subject: "Set forms", added: false });
+	check("its Undo entry", undos.slice(-1)[0][0], { ppg: "link", task: "T2", depends_on: "T1", subject: "Set forms", added: false });
+});
+
+test("No Undo entry for a link the server did not make or remove: an Undo of it would undo someone else's", async () => {
+	const undos = [];
+	let answer_ = { linked: false };
+	const pp = planner({
+		send: () => Promise.resolve(answer_),
+		load: () => null,
+		push_undo: (snapshot) => (undos.push(snapshot), true),
+	});
+	await pp.ppg_link({ id: "T1", ref_name: "T1" }, { id: "U1", ref_name: "U1" });
+	check("linked: false (it was there already)", undos.length, 0);
+	check("and it says nothing changed", ctx.alerts.slice(-1)[0], "Nothing changed: Pull wire already waited for it.");
+	answer_ = { removed: false };
+	ctx.confirms.length = 0;
+	pp.ppg_unlink({ id: "T1", ref_name: "T1" }, { id: "T2", ref_name: "T2" });
+	ctx.confirms[0].yes();
+	await settle();
+	check("removed: false (it was gone already)", undos.length, 0);
+	answer_ = null;
+	await pp.ppg_link({ id: "T1", ref_name: "T1" }, { id: "U1", ref_name: "U1" });
+	check("nothing saved (a reason not given): no entry either", undos.length, 0);
+	answer_ = { linked: true };
+	await pp.ppg_link({ id: "T1", ref_name: "T1" }, { id: "U1", ref_name: "U1" });
+	check("linked: one entry", undos.length, 1);
 });
 
 test("Undo of a link is the opposite call, with the planner's Undo reason", async () => {
 	const sent = [];
-	const pp = planner({ send: (method, args, opts) => (sent.push([method, args, opts.auto_reason]), Promise.resolve({})), load: () => null });
+	const pp = planner({ send: (method, args, opts) => (sent.push([method, args, opts.auto_reason]), Promise.resolve({ linked: true, removed: true })), load: () => null, push_undo: () => true });
 	check("drawn: removed again", pp.ppg_undo({ ppg: "link", task: "U1", depends_on: "T1", subject: "Pull wire", added: true }), true);
 	check("removed: drawn again", pp.ppg_undo({ ppg: "link", task: "T2", depends_on: "T1", subject: "Set forms", added: false }), true);
 	check("the calls", sent, [
@@ -768,12 +825,23 @@ test("load() asks get_project_gantt for the project, with the drafts and Show al
 	pp.ppg.project = "";
 	await pp.load();
 	check("a bare /gantt asks for the picker's list; Show all tasks rides along", ctx.calls[1].args, { draft: 1, all_tasks: 1 });
-	// A project the server refuses: this device forgets it, and the picker says so.
+	check("a drawn project is remembered", pp.ppg_remembered(), "PRJ-1");
+	// A project the server refuses is an answer (never a 404 or 403, so no Frappe dialog): this device
+	// forgets it, and the picker says why.
 	pp.ppg.project = "PRJ-GONE";
 	pp.ppg_remember("PRJ-GONE");
-	ctx.frappe.call = (opts) => (ctx.calls.push(opts), Promise.reject(new Error("not found")));
+	ctx.frappe.call = (opts) => (ctx.calls.push(opts), Promise.resolve({ message: { refused: "forbidden", projects: [], tasks: [], unscheduled: [], gantt: null } }));
 	await pp.load();
-	check("refused: forgotten, marked, drawn without a chart", [pp.ppg_remembered(), pp.ppg.failed, drawn.slice(-1)[0]], ["", "PRJ-GONE", null]);
+	check("refused: forgotten, marked, drawn without a chart", [pp.ppg_remembered(), pp.ppg.failed, pp.ppg.refused, drawn.slice(-1)[0]], ["", "PRJ-GONE", "forbidden", null]);
+	// A request that fails (the network, a 500, a timeout) says nothing about the project: kept.
+	pp.ppg.project = "PRJ-1";
+	pp.ppg_remember("PRJ-1");
+	ctx.frappe.call = (opts) => (ctx.calls.push(opts), Promise.reject({ status: 500 }));
+	await pp.load();
+	check("trouble: kept, marked for a retry, not refused", [pp.ppg_remembered(), pp.ppg.trouble, pp.ppg.failed], ["PRJ-1", "PRJ-1", "PRJ-GONE"]);
+	// Opening a project does not make it this device's until it has drawn.
+	pp.ppg_take_target({ view: "gantt", project: "PRJ-NEW" });
+	check("not remembered on the way in", pp.ppg_remembered(), "PRJ-1");
 	// A slip while drawing is not a refusal: the device keeps its project.
 	pp.ppg.project = "PRJ-1";
 	pp.ppg_remember("PRJ-1");
