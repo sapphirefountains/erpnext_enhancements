@@ -2139,12 +2139,21 @@ class VisitWizard {
 				: `${what}${where}: ${change.field.replace(/_/g, " ")}`;
 		};
 		const shown = (value) => (value === null || value === undefined || value === "" ? __("(blank)") : String(value));
+		// A chemical's size is a change of item (v1.712.0): named as the technician chose it, 1" or
+		// 3", not by item code.
+		const as_text = (change, value) => {
+			if (change.table === "consumables" && change.field === "item" && value) {
+				const size = (this.size_choices_for(value) || []).find((c) => c.item === value);
+				if (size) return size.item_name;
+			}
+			return shown(value);
+		};
 		const lines = choice.conflicts
 			.map(
 				(change) =>
 					`<li><b>${frappe.utils.escape_html(label(change))}</b>: ${__("this phone")} <b>${frappe.utils.escape_html(
-						shown(change.value)
-					)}</b>, ${__("the server")} <b>${frappe.utils.escape_html(shown(change.server))}</b></li>`
+						as_text(change, change.value)
+					)}</b>, ${__("the server")} <b>${frappe.utils.escape_html(as_text(change, change.server))}</b></li>`
 			)
 			.join("");
 		this.$wrap.empty().append(`

@@ -123,6 +123,24 @@ class WithSize(unittest.TestCase):
         once = item_sizes.with_size("CHLORINE TABLETS", '3"')
         self.assertEqual(item_sizes.with_size(once, '3"'), once)
 
+    def test_a_size_is_a_token_not_a_substring(self):
+        """Review of #1329: 1" is not said by 11" or 1.1", nor 3 IN by 13 IN."""
+        self.assertEqual(item_sizes.with_size('NOZZLE, 11"', '1"'), 'NOZZLE, 11" (1")')
+        self.assertEqual(item_sizes.with_size('PIPE, 1.1"', '1"'), 'PIPE, 1.1" (1")')
+        self.assertEqual(item_sizes.with_size("PIPE, 13 IN", "3 IN"), "PIPE, 13 IN (3 IN)")
+        self.assertEqual(item_sizes.with_size('chlorine tablets 3"', '3"'), 'chlorine tablets 3"')
+        self.assertEqual(item_sizes.with_size('CHLORINE TABLETS (3")', '3"'), 'CHLORINE TABLETS (3")')
+
+    def test_never_longer_than_the_field(self):
+        """Review of #1329: item_name is a 140-character Data field, and a longer value fails the save."""
+        name = "CHLORINE TABLETS, " + "X" * 122  # 140 characters, the longest an Item name can be
+        labelled = item_sizes.with_size(name, '3"')
+        self.assertLessEqual(len(labelled), item_sizes.NAME_LENGTH)
+        self.assertTrue(labelled.endswith('… (3")'), labelled)
+        self.assertEqual(item_sizes.with_size(labelled, '3"'), labelled, "stable on the next save")
+        self.assertEqual(len(item_sizes.with_size("", "Z" * 200)), item_sizes.NAME_LENGTH)
+        self.assertLessEqual(len(item_sizes.with_size("A" * 140, "Z" * 150)), item_sizes.NAME_LENGTH)
+
     def test_no_size_no_change(self):
         self.assertEqual(item_sizes.with_size("ACID, GALLON", ""), "ACID, GALLON")
         self.assertEqual(item_sizes.with_size("ACID, GALLON", None), "ACID, GALLON")
@@ -210,6 +228,18 @@ class Wiring(unittest.TestCase):
         wizard = self._read("sapphire_maintenance", "page", "visit_wizard", "visit_wizard.js")
         self.assertIn("this.sizes = data.sizes || {};", wizard)
         self.assertIn("this.render_size_choice($card, row);", wizard)
+
+    def test_the_portal_and_the_desk_grid_show_the_name(self):
+        """Review of #1329: both showed the item code, so the size the name carries never appeared."""
+        record = ("sapphire_maintenance", "doctype", "sapphire_maintenance_record")
+        portal = self._read(*record, "sapphire_maintenance_record.html")
+        consumed = portal.split("{% for item in used_consumables %}", 1)[1].split("{% endfor %}", 1)[0]
+        self.assertIn("{{ item.item_name or item.item }}", consumed)
+        self.assertNotIn("{{ item.item }}", consumed)
+        consumable = ("sapphire_maintenance", "doctype", "sapphire_maintenance_consumable")
+        meta = json.loads(self._read(*consumable, "sapphire_maintenance_consumable.json"))
+        in_grid = [field["fieldname"] for field in meta["fields"] if field.get("in_list_view")]
+        self.assertIn("item_name", in_grid)
 
     def test_the_item_fields_ship_as_fixtures(self):
         fields = json.loads(self._read("fixtures", "custom_field.json"))

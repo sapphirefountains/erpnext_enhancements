@@ -47,23 +47,43 @@ def size_key(size):
 	return (0 if match else 1, float(match.group()) if match else 0.0, text.lower())
 
 
+#: A Data field's length (``item_name`` on the visit's row): a longer value fails the save.
+NAME_LENGTH = 140
+
+
 def with_size(name, size):
 	"""The name with its size, unless the name already says it.
 
 	``("CHLORINE TABLETS", '3"')`` reads ``CHLORINE TABLETS (3")``; ``('CHLORINE TABLETS, 3"',
-	'3"')`` is left as it is. Compared without spaces or case, so ``3 "`` and ``3"`` match.
+	'3"')`` is left as it is. The size must stand as its own token, so ``1"`` is not found in
+	``11"`` or ``1.1"``; compared without case, and ``3 "`` matches ``3"``. Never longer than
+	:data:`NAME_LENGTH`: a long name is cut, with "…", so that the size still shows.
 	"""
 	name = name or ""
 	size = (size or "").strip()
 	if not size:
 		return name
-	if _squash(size) in _squash(name):
+	if _says(name, size):
 		return name
-	return f"{name} ({size})" if name else size
+	if not name:
+		return size[:NAME_LENGTH]
+	suffix = f" ({size})"
+	if len(name) + len(suffix) > NAME_LENGTH:
+		room = NAME_LENGTH - len(suffix) - 1
+		if room < 1:
+			return name[:NAME_LENGTH]
+		name = name[:room].rstrip() + "…"
+	return f"{name}{suffix}"
 
 
-def _squash(text):
-	return re.sub(r"\s+", "", text).lower()
+def _normal(text):
+	"""Lower case, one space between words, none before an inch or foot mark."""
+	return re.sub(r"\s+(?=[\"'])", "", re.sub(r"\s+", " ", text)).strip().lower()
+
+
+def _says(name, size):
+	pattern = r"(?<![\w.])" + re.escape(_normal(size)) + r"(?!\w)"
+	return re.search(pattern, _normal(name)) is not None
 
 
 def item_sizes(items):

@@ -34,6 +34,15 @@ or items used or added". TASK-2026-02901.
     already say it. That covers the desk form, the review email, the Visit Review page, the
     customer's report, the portal, the sign-off page and the invoice line. Stock Scan and the
     follow-ups' parts pick the Item itself.
+    - The size is added only where the name does not already say it as a token of its own, so
+      `1"` is not found in `11"` or `1.1"`.
+    - The result never exceeds the row's 140-character `item_name`. A long name is cut with "…" so
+      the size still shows, and a save can't fail on it.
+  - **Two places that showed the item code now show the name.**
+    - The portal's consumables table rendered `item.item` and now renders the name.
+    - The desk form's chemicals grid gains an Item Name column (`in_list_view`), so the size shows
+      without opening a row.
+    - The wizard's "Answers kept on this phone" screen names a size change by item name, not by code.
   - Both Item fields are read behind `has_column`, so a fresh install or ERPNext's own test bootstrap
     (before fixtures sync) saves a visit as before.
   - `tests/test_item_sizes.py` (bench-free, own CI step) and four wizard tests in
