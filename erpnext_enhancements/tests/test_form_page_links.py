@@ -182,10 +182,11 @@ class TestTheProjectPlannerRead(unittest.TestCase):
 		self.assertIn("Object.prototype.hasOwnProperty.call(opts, key)", read)
 		self.assertIn("delete opts[key];", read)
 		self.assertIn("if (!Object.keys(opts).length) frappe.route_options = null;", read)
-		self.assertIn('url_filters: ["project", "pm", "group"],', code)
+		self.assertIn('url_filters: ["project", "pm", "group", "all_tasks"],', code)
 		# The link names only the project, so the PM filter is All and cannot hide its cards.
 		self.assertIn(
-			'next = { project: named.project || "", pm: named.pm || "", group: named.group || "" };', read
+			'next = { project: named.project || "", pm: named.pm || "", group: named.group || "", all_tasks: named.all_tasks || "" };',
+			read,
 		)
 
 	def test_the_link_saves_nothing(self):
