@@ -792,7 +792,7 @@ class TestProjectBookings(unittest.TestCase):
 
 	def test_get_planner_survives_an_engine_failure(self):
 		self.result = RuntimeError("project side broke")
-		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians")
+		names = ("_records_between", "_unscheduled_drafts", "_projections", "_decorate", "_technicians", "_move_cards")
 		saved = {name: getattr(planner, name) for name in names}
 		try:
 			planner._records_between = lambda start, end: []
@@ -800,6 +800,8 @@ class TestProjectBookings(unittest.TestCase):
 			planner._projections = lambda start, end, today: []
 			planner._decorate = lambda cards: None
 			planner._technicians = lambda cards: self.TECHS
+			# Fountain Move cards (v1.703.0) have their own suite, test_fountain_move_jobs.
+			planner._move_cards = lambda start, end, today: ([], [])
 			data = planner.get_planner("2026-10-12", "2026-10-13")
 		finally:
 			for name, value in saved.items():
@@ -1510,14 +1512,19 @@ class TestPlannerParity(unittest.TestCase):
 		# init_phase6e adds to MP.methods so that send() reaches them)
 		self.assertEqual(
 			set(re.findall(r'this\.send\(\s*"(\w+)"', code)),
-			{"move_projected", "move_visit", "add_crew", "create_visit", "remove_created_visit"},
+			# move_fountain_move (v1.703.0): a Fountain Move task's day and crew (MPFM).
+			{"move_projected", "move_visit", "add_crew", "create_visit", "remove_created_visit", "move_fountain_move"},
 		)
 		self.assertIn('visit ? "move_visit" : "move_projected"', code)
 		self.assertIn("frappe.call({ method: MP.methods[method], args })", code)
 		methods = self._body("MP.methods = {", "};")
 		found = set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods))
 		self.assertEqual(
-			found, {(name, name) for name in ("get_planner", "move_visit", "move_projected", "add_crew")}
+			found,
+			{
+				(name, name)
+				for name in ("get_planner", "move_visit", "move_projected", "add_crew", "move_fountain_move")
+			},
 		)
 
 

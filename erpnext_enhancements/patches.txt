@@ -1446,6 +1446,11 @@ erpnext_enhancements.patches.add_boneyard_warehouse
 # the new Desk page bin-manager (a shortcut beside Stock Scan; the Inventory and Counts cards). Timestamp-bumped too;
 # this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.bin_manager_hub_links
+# Planner UX redesign P3 (v1.702.0): creates the Project schedule-state fields from their fixture records (patches run before fixture
+# sync), then sets custom_schedule_status Published on each project with dated, crewed work (10 of 661 on 2026-10-21) and Draft on any
+# blank one. Keyed on the rule, since the column's ALTER writes Draft into every row. Raw UPDATEs; never un-publishes. Cannot raise,
+# safe twice.
+erpnext_enhancements.patches.mark_project_schedule_states
 # Fountain Move jobs (v1.703.0, Nik 2026-10-21): create the Project Template "Fountain Move" (type Service) and its
 # three template Tasks (Confirm move date, 0 h; Move day, 4 h, crew 2, Outdoor; Invoice the move, 0 h) ONLY when no
 # template of that name exists, never touching one that does. One savepoint, all or nothing. Cannot raise.

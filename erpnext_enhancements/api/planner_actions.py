@@ -1776,7 +1776,7 @@ def _draft_many(entries):
 
 
 @frappe.whitelist(methods=["POST"])
-def move_many(moves, reason=None, draft=0):
+def move_many(moves, reason=None, notify=None, draft=0):
 	"""Move several tasks in one go: the multi-select drag, and the selection bar's Move and Pencil.
 
 	``moves`` is a JSON list of ``{"task", "modified", "start", "end", "tentative"}``: ``start`` and
@@ -1793,6 +1793,10 @@ def move_many(moves, reason=None, draft=0):
 	crew task's dates are refused. ``draft=1``: each move goes into the caller's drafts instead.
 	Returns ``{"moved": [{task, subject, from, to, from_end, to_end, tentative, modified}],
 	"warnings", "conflicts"}``.
+
+	``notify`` (P3, the "Notify crew?" answer, as ``project_planner.save_task`` takes it): one notice
+	per person whose bookings the moves changed (``"notified"``); ``auto`` notifies when any move
+	touches the next 14 days. Ignored with ``draft=1``.
 	"""
 	pp._require_planner()
 	entries = _parse_moves(moves)
@@ -1832,18 +1836,23 @@ def move_many(moves, reason=None, draft=0):
 
 	later = sum(shift(report) for report in reports) > 0
 	order = sorted(docs, key=lambda d: by_name[d.name]["from"] or "", reverse=later)
+	pairs = [
+		{"name": doc.name, "before": was, "after": now}
+		for doc, was, now in zip(docs, before, after, strict=True)
+	]
 	warnings, moved = [], []
-	for doc in order:
-		warnings.extend(pp._save(doc))
-		if conflicts:
-			_comment_reason(
-				doc,
-				_("Moved with other tasks on the Project Planner over a conflict: {0}. Reason: {1}"),
-				conflicts,
-				reason,
-			)
-		moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
-	return {"moved": moved, "warnings": warnings, "conflicts": conflicts}
+	with pp._quiet_alerts(notify):
+		for doc in order:
+			warnings.extend(pp._save(doc))
+			if conflicts:
+				_comment_reason(
+					doc,
+					_("Moved with other tasks on the Project Planner over a conflict: {0}. Reason: {1}"),
+					conflicts,
+					reason,
+				)
+			moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
+	return pp._with_notice({"moved": moved, "warnings": warnings, "conflicts": conflicts}, notify, pairs)
 
 
 # ---------------------------------------------------------------------- undo of a created task
@@ -1939,7 +1948,7 @@ def _discard_new(refs):
 	for ref in live:
 		draft = frappe.get_doc(DRAFT_DOCTYPE, mine[ref].get("name"))
 		draft.status = pp.DISCARDED
-		draft.save()
+		pp._save_draft_row(draft)
 	return live, gone
 
 

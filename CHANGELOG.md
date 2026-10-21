@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.703.0] - 2026-10-21
+
+### Added
+- **Fountain Move jobs: a project can be a move, it gets a simple move template, and the Maintenance
+  Planner schedules it.** Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves" (first
+  job: PRJ-00775, Michelle Ainge - 4 Pots Moved). `project_enhancements/fountain_move_jobs.py`.
+  - **A move job is a Service project with the new Check *Fountain Move*** (`Project.custom_is_fountain_move`,
+    in the list's standard filters). Not a Project Type of its own, by Nik's choice, so Service reports and
+    KPIs keep counting moves, and the planners' customer-job set needed no change (Service is in it).
+  - **The Fountain Move template** (Project Template "Fountain Move", type Service), seeded once and Nik's
+    to edit: *Confirm move date with customer* (office, 0 h), *Move day* (drain, disconnect, load,
+    transport, set, reconnect, fill, startup test and walkthrough; 4 h for the crew, so 2 h each for the
+    crew of 2; Outdoor, so the weather flags apply) and *Invoice the move* (office, 0 h).
+  - **Ticking the box on a new project uses the template** (`Project.before_insert`): a blank template is
+    filled with Fountain Move and a blank type becomes Service; choosing the Fountain Move template ticks
+    the box. An explicit other template or type is never replaced. `project_template` is hidden on this
+    site's Project form, so the box is the way a Desk-created move gets its tasks; ERPNext's own
+    `after_insert` then copies them and `task_templates` carries the hours and crew size across.
+  - **An Opportunity from the /fountain-move intake** (a Fountain Move Request whose `created_opportunity`
+    it is) makes a ticked project, and the Create Project dialog preselects the Fountain Move template.
+  - **Move tasks are moved on the Maintenance Planner, read-only on the Project Planner.** A deliberate
+    exception to "each planner moves only its own work". Each open move task with hours is a card on the
+    Maintenance Planner (*Move* chip; the Unscheduled tray until it has a day): drag it to a day, onto
+    another person's row in the crew view, or drop a technician on it. The new POST
+    `maintenance_planner.move_fountain_move` saves through the Project Planner's own write, so a conflict
+    asks for a reason and overbooking warns, never blocks; Undo puts the day and crew back; Draft mode
+    refuses them (its drafts are visits). The Maintenance Planner only shows people, so a crew change keeps
+    every crew member with no login (a subcontractor, a vehicle) and anyone whose resource has since gone
+    inactive. The task's read-only *Project* booking is left off that page so it is not shown twice; the
+    hours still count in each person's day. The 0-hour office tasks get no card.
+  - On the Project Planner a move task's card is not movable, `_load` refuses a single-task edit of one
+    (save, add or swap crew, drafts), the Overdue tray's *Reschedule* reports it as failed, and *move
+    successors* skips it. Copy week still copies one (that makes new tasks, it moves nothing).
+- **Patches.** `seed_fountain_move_template` creates the template and its three template Tasks only when
+  no template of that name exists, in one savepoint. `make_prj_00775_a_move_job`, approved by Nik on
+  2026-10-21, makes PRJ-00775 the first move job: it creates the Fountain Move Custom Field from its
+  fixture when missing (patches run before fixture sync); sets `project_type` Build -> Service, ticks the
+  box and sets the template, with `db.set_value` so no Project hook re-runs; sets each of the project's 11
+  tasks from *Service Project Template* that is still Open and untouched (no assignee, hours or timesheet)
+  to **Canceled**, deleting nothing (anything started is kept and logged); and adds the three move tasks
+  **undated**, so the Move day waits in the Maintenance Planner's Unscheduled tray for its real day. Both
+  are safe twice and cannot raise.
+
+## [1.702.0] - 2026-10-21
+
+### Added
+- **Per-project schedule state and baseline for the Project Planner** (P3 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.8; Nik's D5, D8 and D11 of 2026-10-21). This is the back end
+  only. The page that calls it is P4, so nothing on screen changes yet.
+  - **Fields.** On Project: `custom_schedule_status` (*Draft* / *Published*, default Draft),
+    `custom_schedule_published_on` and `custom_baseline_set_on`, in a *Planner schedule* section on
+    the Schedule tab. On Task: `custom_baseline_start` / `custom_baseline_end`, in a collapsible
+    *Baseline* section. All are read-only and `no_copy`, so a copied project or task starts over.
+    `get_planner`'s `projects` now carry `schedule: {status, published_on, baseline_set_on}`.
+  - **`publish_project_schedule(project, reason=None)`** publishes that project's drafts. It uses
+    the existing path: one conflict check, one reason, and one notice per person. It then marks the
+    project Published and **sets the baseline**: each dated task's first and last day, copied
+    **once**. A task that already has a baseline keeps it.
+    - A publish that asks for a reason changes nothing.
+    - If a draft is skipped or fails, or a Draft project still has Draft rows the publish did not
+      reach, the project stays Draft (`drafts_left`).
+  - **`reset_baseline(project, dry_run=0)`** re-copies every task's days now, for a re-plan.
+    `dry_run=1` only counts the tasks that would change, for the confirmation. It also gives a
+    project the patch published its first baseline.
+  - **`publish_drafts(project=)` and `discard_drafts(project=)`** act on one project's drafts.
+    Without `project`, both act on the caller's own rows only, as before. A board-wide publish now
+    lists, under `skipped`, any of the caller's drafts that another scheduler's newer shared draft
+    replaced, instead of dropping them silently.
+  - **"Notify crew?"**: `notify` on `save_task`, `add_crew`, `swap_crew`, `shift_successors`,
+    `planner_actions.move_many` and `maintenance_planner.move_visit`.
+    - `1` sends the existing publish notice to the people whose bookings moved, never to the
+      person editing.
+    - `0` tells nobody.
+    - `auto` notifies when the change touches today or any of the next 13 days, before or after
+      the move.
+    - Any answer holds back that save's 48-hour change alert. Unset changes nothing, and an
+      unknown answer is refused rather than read as "don't notify".
+
+### Changed
+- **A Draft project's drafts are shared between schedulers.** Today a Planner Draft Change row
+  belongs to its author, so a schedule Nik drafts is invisible to Clegg. On a project whose
+  schedule is still Draft, `_draft_rows` now also returns the other schedulers' rows (raw SQL after
+  the role gate). The planner builds on them, so there is one row per task, and publishes them
+  with the project. This is the one change to an existing path. It touches nothing until someone
+  drafts: production had 0 Planner Draft Change rows on 2026-10-21. On a Published project, rows
+  stay private as before.
+  - **Workaround: saved with `ignore_permissions`.** The doctype's `if_owner` permission would
+    refuse a Projects User another person's row. The doctype's permissions are unchanged, so a
+    list view still shows only your own rows. The planner's role gate and the task's write check
+    run first.
+
+### Notes
+- **Patch `mark_project_schedule_states`.** It creates the five Project fields from their fixture
+  records first, because patches run before fixture sync. It then sets *Published* on every project
+  that already has dated work with someone on it. That means a Task that is not Canceled or a
+  template, has a date, and has either a Task Crew Member resource or an open ToDo for an active
+  Planner Resource's user. Any still-blank status becomes *Draft*.
+  - **Measured read-only on production (2026-10-21):** 10 of 661 projects become Published (9
+    Active, 1 Completed). The other 651 stay Draft.
+  - It is keyed on that rule, not on emptiness: the column's `ALTER` writes the default `Draft`
+    into every row.
+  - Raw `UPDATE`s, so no project is saved and `modified` does not move. It never un-publishes a
+    project, cannot raise, and is safe to run twice.
+- **Baseline and state writes are `db.set_value(update_modified=False)`, never a save.** Copying a
+  date is not an edit. So there is no assignment sync, change alert, calendar sync or ERPNext
+  reschedule of dependants, and no planner with the task open is told "changed by someone else".
+  The project's timeline gets a comment instead.
+
+### Tests
+- `tests/test_planner_publish_baseline.py` (58 tests, bench-free, its own CI step). It reuses the
+  Phase 3B harness and covers publish setting the baseline once, reset, the project filters, shared
+  drafts, the 14-day Notify default, and the patch (by the rule, safe twice, never raises).
+  `test_planner_phase3b` now models a site without the P3 columns.
+
+### After deploy
+- Open a Project's Schedule tab and check the *Planner schedule* section. PRJ-00597, 00699, 00604,
+  00219, 00706, 00130, 00438, 00567, 00754 (and the Completed PRJ-00473) should read Published;
+  the rest should read Draft.
+- `bench migrate` should print `mark_project_schedule_states: 10 project(s) already scheduled, 10
+  set Published, 0 blank set Draft.` (the last number is 651 if the column arrived without its
+  default).
+
 ## [1.701.0] - 2026-10-21
 
 ### Changed

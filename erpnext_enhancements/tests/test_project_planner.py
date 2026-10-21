@@ -1616,7 +1616,19 @@ class TestGetPlanner(unittest.TestCase):
 				("visit", "SMR-1", "2026-10-12", "RES-1"),
 			],
 		)
-		self.assertEqual(data["projects"], [{"name": "PRJ-1", "title": "Vegas", "pm": "Nik Bradshaw"}])
+		# P3: with the schedule columns present, each project says whether its schedule is published
+		# (this row has no value stored, which reads Draft).
+		self.assertEqual(
+			data["projects"],
+			[
+				{
+					"name": "PRJ-1",
+					"title": "Vegas",
+					"pm": "Nik Bradshaw",
+					"schedule": {"status": "Draft", "published_on": None, "baseline_set_on": None},
+				}
+			],
+		)
 		self.assertEqual(data["settings"], {"default_day_hours": 8.0, "maintenance_visit_hours": 2.0})
 		self.assertTrue(data["can_edit"])
 		self.assertEqual(
@@ -2893,9 +2905,13 @@ class TestWiring(unittest.TestCase):
 		# tests/test_planner_phase5.py.
 		phase5_writes = ("set_task_flags", "preview_customer_confirmation")
 		phase5_reads = ("who_is_free",)
+		# P3 of the Planner UX redesign (per-project publish and baseline) is pinned in
+		# tests/test_planner_publish_baseline.py.
+		p3_writes = ("publish_project_schedule", "reset_baseline")
 		writes = (
 			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes,
 			*phase5_writes,
+			*p3_writes,
 		)
 		# Phase 4 (tracking) reads are pinned in tests/test_planner_phase4.py.
 		phase4_reads = ("get_actuals", "get_labor_forecast", "get_equipment")
