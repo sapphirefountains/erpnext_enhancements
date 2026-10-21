@@ -5588,7 +5588,7 @@ const PP6B_METHODS = {
 			const resource = cell.getAttribute("data-resource");
 			return { kind: "cell", resource, user: this.p6b_user(resource), ymd: cell.getAttribute("data-date"), el: cell };
 		}
-		const day = el.closest(".pp-day[data-date]");
+		const day = el.closest(".pp-day[data-date], .ppl-day[data-date]"); // P5: a Lookahead day, for quick add
 		if (day) return { kind: "cell", resource: null, user: null, ymd: day.getAttribute("data-date"), el: day };
 		return null;
 	},
