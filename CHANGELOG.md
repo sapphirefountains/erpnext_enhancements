@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.703.0] - 2026-10-21
+## [1.704.0] - 2026-10-21
 
 ### Added
 - **The Project Planner shows phase and crew work only** (P2 of the Planner UX redesign,
