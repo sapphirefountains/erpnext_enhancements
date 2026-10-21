@@ -908,6 +908,93 @@
 	padding: 2px 5px;
 }
 
+/* The crew board counts in days (P7): one task's chips on neighboring days are drawn as one bar. The chip
+ * reaches across the cell's padding and its neighbor's rule (5px) and drops the edge it shares. */
+.pp-cell .pp-card.pp-span-next {
+	margin-right: -5px;
+	border-right-color: transparent;
+	z-index: 1;
+}
+
+.pp-cell .pp-card.pp-span-prev {
+	margin-left: -5px;
+	border-left-width: 0;
+}
+
+.pp-cell .pp-card.pp-span-prev .pp-card-title {
+	color: var(--sf-text-muted);
+}
+
+/* The Crew tab's header: Board | Capacity, and Show hours. */
+.pp-crewbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin: 0 0 8px;
+}
+
+.pp-crewbar-hours {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	font-size: 13px;
+	font-weight: normal;
+	cursor: pointer;
+}
+
+.pp-crewbar-hours input {
+	margin: 0;
+}
+
+/* The Crew board has its tray (Not scheduled, Needs crew) beside it rather than above; on a phone it goes back above, where it was. */
+.pp-main-crew {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.pp-main-crew > .pp-grid-wrap {
+	order: 1;
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.pp-main-crew > .pp-trays {
+	order: 2;
+	flex: 0 0 260px;
+	max-width: 260px;
+	position: sticky;
+	top: 8px;
+	max-height: calc(100vh - 150px);
+	overflow-y: auto;
+}
+
+.pp-main-crew > .pp-trays:empty {
+	display: none !important;
+}
+
+.pp-main-crew > .pp-trays .pp-tray .pp-card {
+	width: 100%;
+}
+
+@media (max-width: 767px) {
+	.pp-main-crew {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.pp-main-crew > .pp-trays {
+		order: 0;
+		flex: none;
+		max-width: none;
+		position: static;
+		max-height: none;
+		overflow: visible;
+	}
+}
+
 /* The card under a finger or the pointer while it is dragged. A 2px focus edge, not a drop
  * shadow, lifts it off the grid. */
 .pp-ghost {
@@ -1209,8 +1296,23 @@ body.pp-drag-active * {
 
 .pp-util-head {
 	display: flex;
-	justify-content: flex-end;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	margin: 0 0 8px;
+}
+
+.pp-util-title {
+	margin: 0;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+}
+
+/* Capacity (P7): the heatmap, then the Utilization table under it. */
+.pp-cap-util {
+	margin-top: 18px;
 }
 
 .pp-util-scroll {

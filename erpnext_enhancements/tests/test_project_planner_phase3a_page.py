@@ -153,15 +153,20 @@ class TestDependenciesAndQualifications(unittest.TestCase):
 class TestHeatmap(unittest.TestCase):
 	def test_the_heatmap_is_a_route_and_steps_four_weeks_as_routes(self):
 		code = _code_without_comments()
-		self.assertIn('heatmap_view: "heatmap"', code)
-		self.assertIn("heatmap_weeks: 8", code)
+		# Capacity (P7) is the Crew tab's second screen: /crew/<date>?capacity=1, and the old
+		# /heatmap/<date> address redirects to it.
+		self.assertIn('capacity_view: "capacity"', code)
+		self.assertIn("capacity_weeks: 8", code)
 		target = _method(code, "route_target")
-		self.assertIn("route[1] === PP.heatmap_view", target)
+		self.assertIn("PP.capacity_aliases[route[1]]", target)
+		self.assertIn("this.capacity_param()", target)
 		self.assertIn('moment(route[2], "YYYY-MM-DD", true).isValid()', target)
-		self.assertIn("PP.heatmap_weeks / 2", _method(code, "shift"))
+		self.assertIn("PP.capacity_weeks / 2", _method(code, "shift"))
 		# Stepping and the toolbar button are route changes, so Back and Forward step through them.
 		self.assertIn("this.go(this.view, pp_ymd(next))", _method(code, "shift"))
-		self.assertIn("[PP.heatmap_view, __(", code)
+		# The Heatmap is no tab of its own now: it is Capacity, under the Crew tab's header.
+		self.assertNotIn("[PP.heatmap_view", code)
+		self.assertIn("[PP.capacity_view, __(\"Capacity\")", _method(code, "render_crew_bar"))
 		# It is not one of the three calendar views.
 		self.assertIn('views: ["week", "month", "crew"]', code)
 
@@ -169,10 +174,12 @@ class TestHeatmap(unittest.TestCase):
 		code = _code_without_comments()
 		load = _method(code, "load_heatmap")
 		self.assertIn("${PP.api}.get_heatmap", load)
-		self.assertIn("weeks: PP.heatmap_weeks", load)
+		self.assertIn("weeks: PP.capacity_weeks", load)
 		# One load per view change: the heatmap never calls get_planner.
 		self.assertNotIn("get_planner", load)
-		self.assertIn("if (this.view === PP.heatmap_view) return this.load_heatmap();", code)
+		self.assertIn("if (this.view === PP.capacity_view) return this.load_capacity();", code)
+		# Capacity loads the heatmap and the Utilization table together, each on its own.
+		self.assertIn("this.load_heatmap(token), this.load_utilization(token)", _method(code, "load_capacity"))
 
 	def test_cells_are_colored_by_firm_load_with_a_hatch_for_pencil(self):
 		code = _code_without_comments()
@@ -198,8 +205,8 @@ class TestHeatmap(unittest.TestCase):
 	def test_the_heatmap_hides_the_calendar_only_controls(self):
 		code = _code_without_comments()
 		mode = _method(code, "set_mode")
-		# The heatmap and Utilization (v1.687.0) are both boards with no calendar controls.
-		self.assertIn("const board = mode === PP.heatmap_view || mode === PP.util_view;", mode)
+		# Capacity (the heatmap and Utilization, merged by P7) is a board with no calendar controls.
+		self.assertIn("const board = mode === PP.capacity_view;", mode)
 		for control in ("$project", "$pm", "$undo"):
 			self.assertIn(control, mode)
 		self.assertIn("this.$trays.toggle(!route && !board)", mode)
@@ -317,7 +324,7 @@ class TestWeeksFollowTheSite(unittest.TestCase):
 			)
 		]
 		# range() serves every view: only its heatmap branch is checked.
-		parts.append(_method(code, "range").split("PP.heatmap_view")[1].split("if (this.view")[0])
+		parts.append(_method(code, "range").split("PP.capacity_view")[1].split("if (this.view")[0])
 		for part in parts:
 			for monday in ("isoWeekday", ".day(1)", ".weekday(", "startOf(\"isoWeek\")", "startOf(\"week\")"):
 				self.assertNotIn(monday, part)
@@ -325,7 +332,7 @@ class TestWeeksFollowTheSite(unittest.TestCase):
 
 	def test_the_page_sends_each_weeks_first_day(self):
 		code = _code_without_comments()
-		self.assertIn("args: { start: pp_ymd(start), weeks: PP.heatmap_weeks }", _method(code, "load_heatmap"))
+		self.assertIn("args: { start: pp_ymd(start), weeks: PP.capacity_weeks }", _method(code, "load_heatmap"))
 		preview = _method(code, "preview_copy")
 		self.assertIn("{ source_start, target_start,", preview)
 		# Columns come from the server's weeks (or its week_start), and a cell routes to its exact start.

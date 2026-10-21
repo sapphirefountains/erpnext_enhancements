@@ -267,14 +267,17 @@ class TestEquipment(unittest.TestCase):
 
 
 class TestUtilizationView(unittest.TestCase):
-	"""Utilization was a toolbar button that left for the Crew Utilization report; since v1.687.0 it is
-	the fifth view, drawing that report's own rows, and the report is one click on from it."""
+	"""Utilization was a toolbar button that left for the Crew Utilization report; since v1.687.0 it drew
+	that report's own rows as a view, and since the planner UX redesign's P7 it is the table under
+	Capacity's heatmap (the Heatmap and Utilization tabs merged), the report one click on from it."""
 
-	def test_the_view_switcher_has_it_and_it_reads_the_report(self):
+	def test_capacity_has_it_and_it_reads_the_report(self):
 		block = _strip(_block())
 		code = _strip(_code())
 		self.assertIn('report: "Crew Utilization"', block)
-		self.assertIn('[PP.util_view, __("Utilization")],', _method(code, "build_shell"))
+		# No tab of its own any more.
+		self.assertNotIn("PP.util_view", code)
+		self.assertIn("this.load_utilization(token)", _method(code, "load_capacity"))
 		load = _obj_method(block, "load_utilization")
 		self.assertIn('run: "frappe.desk.query_report.run",', block)
 		self.assertIn("const args = { report_name: PP4.report, filters: JSON.stringify(filters) };", load)

@@ -18,7 +18,10 @@
  *      say their state, the alert chips are there only above zero and open what their buttons did,
  *      the draft strip shows only in Draft mode and its Publish and Discard call the existing
  *      publish and discard, the phone's sheet takes the filters in and gives them back, and the
- *      Project Planner's Utilization view is a route.
+ *      Project Planner's Capacity screen (the Heatmap and Utilization merged, P7) is a route.
+ *   3. The Crew board in days (P7): bars of a task's days along a person's row, Show hours, the Board |
+ *      Capacity header as routes, Capacity's two sections (the heatmap, and the Utilization table behind
+ *      the report's own gate), and the saved views and old addresses that say heatmap or utilization.
  *
  * Run: node scripts/test_planner_toolbar.js
  */
@@ -981,8 +984,9 @@ const PP_OLD_TOOLBAR = [
 	["‹ Earlier", "bar", "this.shift(-1)"],
 	["Today", "bar", "this.go(this.view, frappe.datetime.get_today())"],
 	["Later ›", "bar", "this.shift(1)"],
-	["Month / Week / Crew / Heatmap", "bar", '[PP.heatmap_view, __("Heatmap")],'],
-	["Utilization (was a button to the report)", "bar", '[PP.util_view, __("Utilization")],'],
+	["Month / Week / Crew", "bar", '["crew", __("Crew")],'],
+	["Heatmap (now Capacity, in the Crew tab's header)", "bar", '[PP.capacity_view, __("Capacity"), __('],
+	["Utilization (now Capacity's table under the heatmap)", "bar", "this.load_utilization(token)"],
 	["Search", "bar", "$wrap.prependTo(this.$filters)"],
 	["Project filter", "bar", 'this.make_select(this.$filters, __("Project")'],
 	["Project manager filter", "bar", 'this.make_select(this.$filters, __("Project manager")'],
@@ -1102,10 +1106,8 @@ test("Project Planner: + Add starts the double-click's dialog, the build-out gri
 	pp.data.can_schedule = false;
 	check("someone who cannot edit or schedule is offered none of it", pp.tb_add_items(), []);
 	pp.data.can_edit = true;
-	pp.view = "heatmap";
-	check("off the calendar views only the build-out grid is offered", pp.tb_add_items().map((item) => item.label), ["Build out tasks…"]);
-	pp.view = "utilization";
-	check("Utilization keeps the build-out grid, which needs no calendar", pp.tb_add_items().map((item) => item.label), ["Build out tasks…"]);
+	pp.view = "capacity";
+	check("off the calendar views only the build-out grid is offered (Capacity, the heatmap and Utilization merged)", pp.tb_add_items().map((item) => item.label), ["Build out tasks…"]);
 });
 
 test("Project Planner: switches say their state; items follow the screen", () => {
@@ -1137,18 +1139,21 @@ test("Project Planner: switches say their state; items follow the screen", () =>
 	check("which is the pill's ×", cleared[0][0], "p6c_clear_highlight");
 	pp.view = "month";
 	check("no Copy week on the month view", find(section(pp, "tools"), "Copy week…"), null);
-	pp.view = "heatmap";
+	pp.view = "capacity";
 	check(
-		"the heatmap: no calendar switches, no Undo; the saved views and Print stay",
+		"Capacity: no calendar switches, no Undo; the saved views and Print stay",
 		[!!find(section(pp, "tools"), "Tap to move"), !!find(section(pp, "tools"), "Undo"), section(pp, "display").length, !!find(section(pp, "views"), "Field crew"), !!find(section(pp, "print"), "Print this view")],
 		[false, false, 0, true, true]
 	);
 	check("and the Display section, empty there, is left out with its heading", pp.tb_items("more").filter((item) => item.section).map((item) => item.heading), ["Views", "Tools", "Print"]);
-	pp.view = "utilization";
 	check(
-		"Utilization: My week and the crew sheet, nothing that needs cards",
-		[section(pp, "views").map((i) => i.label), section(pp, "print").map((i) => i.label), section(pp, "tools")],
-		[["My week"], ["Print crew sheet"], []]
+		"Capacity: My week with the saved views, Print this view and the crew sheet, only Draft mode in Tools",
+		[
+			section(pp, "views").map((i) => i.label).filter((label) => label === "My week"),
+			section(pp, "print").map((i) => i.label).filter((label) => label === "Print crew sheet"),
+			section(pp, "tools").map((i) => i.label),
+		],
+		[["My week"], ["Print crew sheet"], ["Hold all my changes"]]
 	);
 	check("no chips off the calendar", pp.tb_alerts(), []);
 });
@@ -1171,10 +1176,8 @@ test("Project Planner: More > Display has Show all tasks, which says how many it
 	pp.all_tasks = "";
 	pp.data.hidden_tasks = 0;
 	check("with nothing left out there is no count", find(section(pp, "display"), "Show all tasks").hint, "");
-	for (const view of ["heatmap", "utilization"]) {
-		pp.view = view;
-		check(`not on ${view}: it only changes the calendar`, find(section(pp, "display"), "Show all tasks"), null);
-	}
+	pp.view = "capacity";
+	check("not on Capacity: it only changes the calendar", find(section(pp, "display"), "Show all tasks"), null);
 });
 
 test("Project Planner: Show all tasks is part of the view, and the print says what was left out", () => {
@@ -1409,18 +1412,28 @@ test("Project Planner: the draft strip shows only in Draft mode; Publish and Dis
 	check("nothing drafted yet: it says so, no buttons", [bar.querySelector(".pp-draft-text").textContent, bar.querySelectorAll("button").length], ["Draft mode on: nothing drafted yet. Your changes stay yours until you publish them.", 0]);
 });
 
-test("Project Planner: Utilization is a view with a route", () => {
-	const { pp, route } = projectPlanner();
+test("Project Planner: Capacity is the Crew address with ?capacity=, and the old addresses are redirects", () => {
+	const { pp, route, frappe } = projectPlanner();
+	route.now = ["project-planner", "crew", "2026-10-01"];
+	frappe.route_options = { capacity: "1" };
+	check("its route", pp.route_target(), { view: "capacity", anchor: "2026-10-01", capacity: "1" });
+	frappe.route_options = null;
+	check("without the flag it is the Board", pp.route_target(), { view: "crew", anchor: "2026-10-01" });
 	route.now = ["project-planner", "utilization", "2026-10-01"];
-	check("its route", pp.route_target(), { view: "utilization", anchor: "2026-10-01" });
+	check("the old Utilization address redirects, asking for the table", pp.route_target(), { view: "capacity", anchor: "2026-10-01", redirect: true, capacity: "utilization" });
+	route.now = ["project-planner", "heatmap", "2026-10-12"];
+	check("the old Heatmap address redirects", pp.route_target(), { view: "capacity", anchor: "2026-10-12", redirect: true, capacity: "1" });
+	route.now = ["project-planner", "crew", "2026-10-01"];
+	frappe.route_options = { capacity: "1" };
 	const steps = [];
 	pp.p6c_before_route = () => false;
 	pp.take_route_filters = () => steps.push("filters");
 	pp.set_mode = (mode) => steps.push(["mode", mode]);
-	pp.load_utilization = () => steps.push("load");
+	pp.load_capacity = () => steps.push("load");
 	pp.handle_route();
-	check("landing: the filters, the mode, the load", steps, ["filters", ["mode", "utilization"], "load"]);
-	check("the view", [pp.view, pp.anchor], ["utilization", "2026-10-01"]);
+	check("landing: the filters, the mode, the load", steps, ["filters", ["mode", "capacity"], "load"]);
+	check("the view", [pp.view, pp.anchor], ["capacity", "2026-10-01"]);
+	check("the flag is taken off route_options (it is the address's, like the filters)", Object.prototype.hasOwnProperty.call(frappe.route_options || {}, "capacity"), false);
 	check(
 		"a week over capacity carries its word, not only a color (Planned %)",
 		[pp.util_pct_html(112, true), pp.util_pct_html(80, true), pp.util_pct_html(40, true), pp.util_pct_html(null, true)],
@@ -1439,7 +1452,7 @@ test("Project Planner: Utilization is a view with a route", () => {
 	check("Actual % is never flagged", [pp.util_pct_html(130, false), pp.util_pct_html(90, false)], ["130%", "90%"]);
 });
 
-// A Utilization page with the pieces render_utilization draws into, and a kit whose quiet call is
+// A Capacity page with the pieces render_utilization draws into, and a kit whose quiet call is
 // recorded and answers as told.
 function utilizationPage(answer, access) {
 	const env = projectPlanner();
@@ -1449,14 +1462,15 @@ function utilizationPage(answer, access) {
 	frappe.boot.user = { can_get_report: access.task === false ? [] : ["Task"] };
 	frappe.model = { can_get_report: (dt) => frappe.boot.user.can_get_report.indexOf(dt) !== -1 };
 	const asked = [];
+	const quiet_args = [];
 	const dialogs = [];
 	frappe.call = (opts) => (asked.push(["frappe.call", opts.method]), Promise.resolve({}));
 	frappe.msgprint = (m) => dialogs.push(m);
 	ctx.window.planner_kit = {
-		quiet_call: (method, args) => (asked.push(["quiet", method, args.report_name]), answer()),
+		quiet_call: (method, args) => (asked.push(["quiet", method, args.report_name]), quiet_args.push(args), answer()),
 		state_html: (kind, opts) => `<div class="sf-state sf-state--${kind}"><p class="sf-state-title">${opts.title}</p></div>`,
 	};
-	pp.view = "utilization";
+	pp.view = "capacity";
 	pp.anchor = "2026-10-01";
 	pp.request = 0;
 	pp.p6a_require = (fn) => Promise.resolve().then(fn);
@@ -1464,77 +1478,84 @@ function utilizationPage(answer, access) {
 	pp.title = () => "October 2026";
 	pp.take_title_focus = () => null;
 	pp.$title = $("<span></span>");
-	pp.$view_buttons = { week: $("<button></button>"), utilization: $("<button></button>") };
+	pp.$view_buttons = { week: $("<button></button>"), crew: $("<button></button>") };
 	pp.$body = $("<div></div>");
 	pp.$grid_wrap = $("<div></div>");
 	pp.p6a_route = (fn) => fn();
-	return Object.assign(env, { asked, dialogs });
+	return Object.assign(env, { asked, dialogs, quiet_args });
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("Project Planner: Utilization's button and panel answer to the report's access", async () => {
+test("Project Planner: Capacity's Utilization table answers to the report's access", async () => {
 	const ok = utilizationPage(() => Promise.resolve({ result: [] }));
 	check("both gates pass: offered", ok.pp.util_allowed(), true);
 	const no_task = utilizationPage(() => Promise.resolve({}), { task: false });
 	check("no report permission on Task: not offered", no_task.pp.util_allowed(), false);
 	const no_report = utilizationPage(() => Promise.resolve({}), { reports: { "Other Report": {} } });
 	check("the report not among the user's: not offered", no_report.pp.util_allowed(), false);
-	no_report.pp.init_toolbar();
-	check("the view switcher hides its button", no_report.pp.$view_buttons.utilization.nodes[0].style.display, "none");
-	ok.pp.init_toolbar();
-	check("and shows it to someone it lets in", ok.pp.$view_buttons.utilization.nodes[0].style.display, "");
-
-	await no_report.pp.load_utilization();
+	// Someone the report is not for sees the heatmap alone: no section, and nothing asked of the server.
+	await no_report.pp.load_utilization(0);
 	await settle();
-	const text = no_report.pp.$grid_wrap.nodes[0].querySelector(".pp-util-denied");
-	check("arrived by the address anyway: the no-access panel", !!text && text.innerHTML.includes("You don't have access to the Crew Utilization report."), true);
-	check("the kit's no-access markup", !!text && text.innerHTML.includes("sf-state--no-access"), true);
+	check("no access: the table's section is hidden, no panel", [no_report.pp.$cap_util.nodes[0].style.display, no_report.pp.$cap_util.nodes[0].querySelector(".pp-util-denied")], ["none", null]);
 	check("and nothing asked of the server, no dialog", [no_report.asked, no_report.dialogs], [[], []]);
+	// Arrived by the old Utilization address anyway: the no-access panel says why it is not there.
+	no_report.pp.capacity_asked = "utilization";
+	await no_report.pp.load_utilization(0);
+	await settle();
+	const text = no_report.pp.$cap_util.nodes[0].querySelector(".pp-util-denied");
+	check("arrived by the old address: the no-access panel", !!text && text.innerHTML.includes("You don't have access to the Crew Utilization report."), true);
+	check("the kit's no-access markup", !!text && text.innerHTML.includes("sf-state--no-access"), true);
+	check("still nothing asked of the server, no dialog", [no_report.asked, no_report.dialogs], [[], []]);
+	await ok.pp.load_utilization(0);
+	await settle();
+	check("someone the report lets in: asked through the quiet call, the section shown", [ok.asked, ok.pp.$cap_util.nodes[0].style.display], [[["quiet", "frappe.desk.query_report.run", "Crew Utilization"]], ""]);
 });
 
 test("Project Planner: a refusal from the server is a panel, not frappe's red dialog", async () => {
 	const page = utilizationPage(() => Promise.reject({ status: 403, exc_type: "PermissionError", message: "No" }));
-	await page.pp.load_utilization();
+	await page.pp.load_utilization(0);
 	await settle();
 	check("asked through the kit's quiet call only", page.asked, [["quiet", "frappe.desk.query_report.run", "Crew Utilization"]]);
 	check("no dialog", page.dialogs, []);
-	check("the no-access panel", !!page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-denied"), true);
+	check("the no-access panel", !!page.pp.$cap_util.nodes[0].querySelector(".pp-util-denied"), true);
 	const broken = utilizationPage(() => Promise.reject({ status: 0, exc_type: "", message: "offline" }));
-	await broken.pp.load_utilization();
+	await broken.pp.load_utilization(0);
 	await settle();
 	check(
 		"any other failure says it could not be loaded",
-		broken.pp.$grid_wrap.nodes[0].textContent.includes("Utilization could not be loaded"),
+		broken.pp.$cap_util.nodes[0].textContent.includes("Utilization could not be loaded"),
 		true
 	);
 });
 
-test("Project Planner: Utilization's table flags Planned % only, and explains its partial weeks", async () => {
+test("Project Planner: Utilization's table keeps every column and flags Planned % only", async () => {
 	const rows = [
 		{ resource: "R1", label: "Austin", group: "Field", period: "Week of Sep 28", capacity: 24, booked: 24.1, actual: 30, utilization: 100.4, actual_pct: 125 },
 		{ resource: "R1", label: "Austin", group: "Field", period: "Week of Oct 5", capacity: 40, booked: 10, actual: 8, utilization: 25, actual_pct: 20 },
 	];
 	const page = utilizationPage(() => Promise.resolve({ result: rows }));
-	await page.pp.load_utilization();
+	await page.pp.load_utilization(0);
 	await settle();
-	const html = page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-scroll").innerHTML;
+	const html = page.pp.$cap_util.nodes[0].querySelector(".pp-util-scroll").innerHTML;
 	check("Planned % past 100 (raw 100.4) is Over", html.includes('<span class="pp-chip pp-red">100% · Over</span>'), true);
 	check("Actual % at 125 is not flagged", [html.includes("125%"), html.includes("125% · Over")], [true, false]);
-	check("the column says Planned %", html.includes("Planned %"), true);
-	const note = page.pp.$grid_wrap.nodes[0].querySelector(".pp-util-note");
-	check("a note explains the partial first and last weeks", !!note && note.textContent.includes("first and last weeks"), true);
+	check("every column the view had", ["Person", "Week", "Capacity", "Booked", "Actual (kiosk)", "Planned %", "Actual %"].every((name) => html.includes(`>${name}</th>`)), true);
+	check("and every figure of a row: capacity, booked and clocked hours", ["24h", "24.1h", "30h"].every((text) => html.includes(text)), true);
+	const note = page.pp.$cap_util.nodes[0].querySelector(".pp-util-note");
+	check("a note explains Planned %, Over and Near full", !!note && note.textContent.includes("Near full 75% or more"), true);
+	check("the heading and the way on to the full report", page.pp.$cap_util.nodes[0].querySelector(".pp-util-head").textContent.includes("Open the full report"), true);
 });
 
-test("Project Planner: on Utilization, Ctrl+Z is not the planner's and empty menus are not offered", () => {
+test("Project Planner: on Capacity, Ctrl+Z is not the planner's and + Add has nothing to offer", () => {
 	const { pp } = projectPlanner();
 	const undone = [];
 	pp.undo = () => undone.push(1);
-	pp.view = "utilization";
-	check("Ctrl+Z on Utilization: not taken, nothing undone", [pp.p6b_run_key("undo"), undone.length], [false, 0]);
+	pp.view = "capacity";
+	check("Ctrl+Z on Capacity: not taken, nothing undone", [pp.p6b_run_key("undo"), undone.length], [false, 0]);
 	pp.view = "week";
 	check("Ctrl+Z on the week still undoes", [pp.p6b_run_key("undo"), undone.length], [true, 1]);
-	pp.view = "utilization";
+	pp.view = "capacity";
 	pp.data = null;
 	pp.tb_render();
 	const off = (name) => pp.tb.$menus[name].hasClass("pp-tb-off");
@@ -1553,12 +1574,12 @@ test("Project Planner: the view buttons are tabs, and the tab on screen is the s
 	pp.tb.tabs = { sync: (view) => tabs.push(view) };
 	pp.view = "crew";
 	pp.tb_render();
-	pp.view = "utilization";
+	pp.view = "capacity";
 	pp.tb_render();
-	check("every redraw hands the screen's view to the tablist", tabs, ["crew", "utilization"]);
+	check("every redraw hands the screen's tab to the tablist (Capacity sits under Crew)", tabs, ["crew", "crew"]);
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("each button names its view for it", source.includes('.attr("data-tb-tab", view)'), true);
-	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view })'), true);
+	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.tab_of_view() })'), true);
 });
 
 test("Project Planner: the phone's sheet takes the filters in and gives them back", () => {
@@ -1806,6 +1827,289 @@ test("Maintenance Planner: tb_render before the first load, with data null, thro
 		}
 		check(`Color by ${mode}: nothing thrown`, error, null);
 	});
+});
+
+// ------------------------------------------------------------------ Crew board in days + Capacity (P7)
+
+// A Project Planner with the crew board's data: one task, T1, Mon to Wed, booked 8h a day on R1.
+function crewPage(extra) {
+	const env = projectPlanner();
+	const { pp } = env;
+	const week = ["2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"];
+	const booking = (ref) => ({ ref, kind: "task", label: ref, hours: 8, slot: null });
+	const T1 = { name: "T1", subject: "Install pumps", project: "PRJ-1", start: "2026-10-12", end: "2026-10-14", movable: true, crew: [] };
+	pp.by_task = { T1 };
+	pp.data = Object.assign(
+		{
+			can_edit: true,
+			tasks: [T1],
+			unscheduled: [],
+			days: { R1: { "2026-10-12": { bookings: [booking("T1")] }, "2026-10-13": { bookings: [booking("T1")] }, "2026-10-14": { bookings: [booking("T1")] } } },
+		},
+		extra || {}
+	);
+	pp.task_visible = () => true;
+	["dependency_lines", "gap_lines", "p4_card_chips", "p4_tip_lines"].forEach((name) => (pp[name] = () => []));
+	pp.crew_hours = false;
+	return Object.assign(env, { week, T1, booking });
+}
+
+test("Project Planner: the crew board counts a task in days, and joins a task's days into one bar", () => {
+	const { pp, week } = crewPage();
+	const booked_on = pp.crew_booked_days([{ name: "R1" }], week);
+	check("each person's booked days of each task", Array.from(booked_on.R1.T1), ["2026-10-12", "2026-10-13", "2026-10-14"]);
+	const ctx = (ymd) => pp.crew_span_ctx(booked_on, "R1", week, ymd, pp.data.days.R1[ymd].bookings[0]);
+	check("the first day: joined only to the next", [ctx("2026-10-12").prev, ctx("2026-10-12").next], [false, true]);
+	check("the middle day: joined both ways", [ctx("2026-10-13").prev, ctx("2026-10-13").next], [true, true]);
+	check("the last day: joined only to the one before", [ctx("2026-10-14").prev, ctx("2026-10-14").next], [true, false]);
+	check("each chip says which day of how many", ["2026-10-12", "2026-10-13", "2026-10-14"].map((ymd) => pp.crew_days_text(ctx(ymd).count)), ["Day 1 of 3", "Day 2 of 3", "Day 3 of 3"]);
+	const html = (ymd) => pp.booking_html("R1", ymd, pp.data.days.R1[ymd].bookings[0], ctx(ymd));
+	const sub_text = (ymd) => (/<div class="pp-card-sub">([^<]*)<\/div>/.exec(html(ymd)) || [])[1];
+	check("a chip is labeled in days, with no hours", sub_text("2026-10-13"), "Day 2 of 3");
+	check("and carries its place in the bar", [html("2026-10-12").includes("pp-span-next"), html("2026-10-12").includes("pp-span-prev"), html("2026-10-14").includes("pp-span-prev")], [true, false, true]);
+	check("it is still the chip that is dragged: task, day and person stay on it", ['data-task="T1"', 'data-date="2026-10-13"', 'data-resource="R1"'].every((attr) => html("2026-10-13").includes(attr)), true);
+	pp.crew_hours = true;
+	check("Show hours adds the hours beside the days", sub_text("2026-10-13"), "Day 2 of 3 · 8h");
+	pp.crew_hours = false;
+	check("a task of one day reads 1 day", pp.crew_days_text({ n: 1, total: 1 }), "1 day");
+	// A block or someone else's visit is no part of a bar.
+	check("a personal block is no task: no bar", pp.crew_span_ctx(booked_on, "R1", week, "2026-10-12", { ref: "B1", kind: "block" }), null);
+	check("nor is a drive", pp.crew_span_ctx(booked_on, "R1", week, "2026-10-12", { ref: "T1", kind: "drive" }), null);
+	// The tooltip keeps the hours, whatever the label says.
+	pp.crew_hours = false;
+	check("the hours stay in the tooltip", /title="[^"]*8h[^"]*"/.test(html("2026-10-13")), true);
+});
+
+test("Project Planner: a task running past the edge of the week is counted in weekdays from its own dates", () => {
+	const { pp, week, T1 } = crewPage();
+	// Friday of the week before to Wednesday: four weekdays, and Monday is the second.
+	T1.start = "2026-10-09";
+	T1.end = "2026-10-14";
+	const set = new Set(["2026-10-12", "2026-10-13", "2026-10-14"]);
+	check("Monday: day 2 of 4 (Friday, Monday, Tuesday, Wednesday)", pp.crew_day_count(T1, "2026-10-12", set, week), { n: 2, total: 4 });
+	check("Tuesday: day 3 of 4", pp.crew_day_count(T1, "2026-10-13", set, week), { n: 3, total: 4 });
+	// A task with no end is one day.
+	T1.start = "2026-10-12";
+	T1.end = null;
+	check("no end: a day", pp.crew_day_count(T1, "2026-10-12", new Set(["2026-10-12"]), week), { n: 1, total: 1 });
+	// A day off inside the task is not a day of work: counted from the bookings when the whole task is on screen.
+	T1.end = "2026-10-15";
+	const gap = new Set(["2026-10-12", "2026-10-14", "2026-10-15"]);
+	check("counted from the person's bookings when the task is all on screen", pp.crew_day_count(T1, "2026-10-14", gap, week), { n: 2, total: 3 });
+});
+
+test("Project Planner: the whole crew board draws a bar of days along the person's row", () => {
+	const { pp, week, ctx, $ } = crewPage();
+	ctx.moment = richMoment;
+	pp.range_days = () => week;
+	pp.today = () => "2026-10-14";
+	pp.resources = () => [{ name: "R1", label: "Austin", group: "Field" }];
+	pp.resource_color = () => "#123456";
+	pp.avail_state = () => ({ cls: "pp-green", text: "Full", ratio: 1, soft: 0, soft_ratio: 0 });
+	pp.day_tip = () => "";
+	pp.drive_html = () => "";
+	pp.p6d_crew_notes_row = () => "";
+	pp.p4_equipment_rows = () => "";
+	pp.bind_week_links = () => null;
+	pp.$grid_wrap = $("<div></div>");
+	pp.render_crew();
+	const html = pp.$grid_wrap.nodes[0].querySelector(".pp-crew").innerHTML;
+	const chips = html.match(/<div class="pp-card(?: [^"]*)?"/g) || [];
+	check("one chip a booked day, three in all", chips.length, 3);
+	check("joined: first to the next, middle both, last to the one before", chips.map((c) => [c.includes("pp-span-prev"), c.includes("pp-span-next")]), [[false, true], [true, true], [true, false]]);
+	check("every one says its day", ["Day 1 of 3", "Day 2 of 3", "Day 3 of 3"].every((text) => html.includes(`>${text}</div>`)), true);
+	check("the cells are still the drop targets, a day and a person", html.includes('data-date="2026-10-13" data-resource="R1"'), true);
+	check("and the day cell still says Full", html.includes("Full"), true);
+});
+
+test("Project Planner: Show hours is the person's, kept in this browser, and redraws the board", () => {
+	const { pp, ctx } = crewPage();
+	const saved = [];
+	pp.save_pref = (key, value) => saved.push([key, value]);
+	pp.render_crew_bar = () => saved.push("bar");
+	let drawn = 0;
+	pp.render = () => (drawn += 1);
+	pp.view = "crew";
+	pp.set_crew_hours(true);
+	check("on: saved, the header redrawn, the board redrawn", [pp.crew_hours, saved, drawn], [true, [["ee_project_planner_crew_hours", "1"], "bar"], 1]);
+	pp.set_crew_hours(false);
+	check("and off", [pp.crew_hours, saved[2]], [false, ["ee_project_planner_crew_hours", "0"]]);
+	check("it starts off, in days", vm.runInContext("PP.prefs_crew_hours", ctx), "ee_project_planner_crew_hours");
+});
+
+test("Project Planner: Capacity's header switches Board and Capacity as routes of the Crew tab", () => {
+	const { pp, route, $ } = crewPage();
+	const here = [];
+	pp.$crewbar = $("<div></div>");
+	pp.view = "crew";
+	pp.go = (view, anchor) => here.push([view, anchor]);
+	pp.render_crew_bar();
+	const buttons = () => pp.$crewbar.nodes[0].querySelectorAll("button");
+	check("on the Board: two screens, the Board pressed", [Array.from(buttons()).map((b) => [b.textContent, b.getAttribute("aria-pressed")])], [[["Board", "true"], ["Capacity", "false"]]]);
+	check("and Show hours is on the Board only", pp.$crewbar.nodes[0].querySelectorAll("input").length, 1);
+	buttons()[1].click();
+	check("Capacity is a route (a history entry), not a toggle in place", here, [["capacity", "2026-10-14"]]);
+	pp.view = "capacity";
+	pp.render_crew_bar();
+	check("on Capacity: the Capacity button pressed, no Show hours", [Array.from(buttons()).map((b) => b.getAttribute("aria-pressed")), pp.$crewbar.nodes[0].querySelectorAll("input").length], [["false", "true"], 0]);
+	buttons()[0].click();
+	check("the Board is a route too", here[1], ["crew", "2026-10-14"]);
+	pp.view = "week";
+	pp.render_crew_bar();
+	check("the header is only on the Crew tab", pp.$crewbar.nodes[0].style.display, "none");
+	check("Capacity sits under the Crew tab", [pp.tab_of_view("capacity"), pp.tab_of_view("week")], ["crew", "week"]);
+});
+
+// A moment with the little the heatmap draws with: parse, clone, add days, format.
+function richMoment(value) {
+	const date = typeof value === "string" ? new Date(`${value}T00:00:00Z`) : new Date(value);
+	const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	const two = (n) => String(n).padStart(2, "0");
+	const m = {
+		isValid: () => !Number.isNaN(date.getTime()),
+		clone: () => richMoment(date.getTime()),
+		add: (n) => (date.setUTCDate(date.getUTCDate() + n), m),
+		format: (fmt) =>
+			fmt
+				.replace("YYYY", date.getUTCFullYear())
+				.replace("MM", two(date.getUTCMonth() + 1))
+				.replace("DD", two(date.getUTCDate()))
+				.replace("MMM", months[date.getUTCMonth()])
+				.replace("ddd", names[date.getUTCDay()])
+				.replace(/D/, date.getUTCDate()),
+	};
+	return m;
+}
+
+// The heatmap's answer for one person over two weeks, and the page around it.
+function capacityPage(report) {
+	const env = utilizationPage(report || (() => Promise.resolve({ result: [] })));
+	const { pp, frappe } = env;
+	pp.$crewbar = env.$("<div></div>");
+	pp.$body = env.$("<div></div>");
+	pp.group = "";
+	pp.today = () => "2026-10-14";
+	pp.resource_color = () => "#123456";
+	pp.p6d_state = () => null;
+	pp.p4_set_mode = () => null;
+	const week = (start) => ({ start });
+	frappe.call = (opts) => {
+		env.asked.push(["frappe.call", opts.method, opts.args]);
+		if (String(opts.method).endsWith("get_heatmap")) {
+			return Promise.resolve({
+				message: {
+					weeks: [week("2026-10-11"), week("2026-10-18")],
+					resources: [{ name: "R1", label: "Austin", group: "Field" }],
+					cells: {
+						R1: {
+							"2026-10-11": { capacity: 40, booked: 44, soft_booked: 0, over_days: 1, off_days: 0, level: "red" },
+							"2026-10-18": { capacity: 40, booked: 10, soft_booked: 4, over_days: 0, off_days: 0 },
+						},
+					},
+				},
+			});
+		}
+		return Promise.resolve({});
+	};
+	return env;
+}
+
+test("Project Planner: Capacity loads the heatmap and the Utilization table together, each into its own box", async () => {
+	const rows = [{ resource: "R1", label: "Austin", group: "Field", period: "Week of Oct 11", capacity: 40, booked: 44, actual: 30, utilization: 110, actual_pct: 75 }];
+	const env = capacityPage(() => Promise.resolve({ result: rows }));
+	env.ctx.moment = richMoment;
+	const { pp, asked } = env;
+	pp.view = "capacity";
+	pp.range = () => ({ start: { format: () => "2026-10-11" }, end: { format: () => "2026-12-05" } });
+	// pp_ymd is the page's own: the moment stand-in's format is all it needs.
+	await pp.load_capacity();
+	await settle();
+	const heat = pp.$cap_heat.nodes[0];
+	const util = pp.$cap_util.nodes[0];
+	check("the heatmap asked for eight weeks from the first of them", asked.find((a) => a[1] && a[1].endsWith("get_heatmap"))[2], { start: "2026-10-11", weeks: 8 });
+	check(
+		"the report asked for the same eight weeks, week by week",
+		env.quiet_args.map((args) => JSON.parse(args.filters)),
+		[{ from_date: "2026-10-11", to_date: "2026-12-05", granularity: "Week" }]
+	);
+	const grid = heat.querySelector(".pp-hm").innerHTML;
+	check("both sections drew: the heatmap's grid and the table", [grid.includes("pp-hm-cell"), util.querySelector(".pp-util-scroll").innerHTML.includes('class="pp-util"')], [true, true]);
+	check("every heatmap figure survives: the percentage and the hours of each week", [grid.includes("110%"), grid.includes("44h of 40h"), grid.includes("1 day over")], [true, true, true]);
+	check("pencilled hours too", grid.includes("+4h pencil"), true);
+	check("the heatmap's cell still opens its week", grid.includes('data-hm-week="2026-10-11"'), true);
+	check("the table's Planned % is flagged Over", util.querySelector(".pp-util-scroll").innerHTML.includes("110% · Over"), true);
+	check("both are in the one grid, the heatmap above the table", [pp.$grid_wrap.nodes[0].childNodes.length, pp.$grid_wrap.nodes[0].childNodes[0] === heat], [2, true]);
+});
+
+test("Project Planner: without the report's access Capacity is the heatmap alone, and never asks for it", async () => {
+	const env = capacityPage(() => Promise.resolve({ result: [] }));
+	env.ctx.moment = richMoment;
+	env.frappe.boot.allowed_reports = { "Other Report": {} };
+	const { pp, asked } = env;
+	pp.view = "capacity";
+	pp.range = () => ({ start: { format: () => "2026-10-11" }, end: { format: () => "2026-12-05" } });
+	await pp.load_capacity();
+	await settle();
+	check("the heatmap is there", !!pp.$cap_heat.nodes[0].querySelector(".pp-hm"), true);
+	check("the table's box is hidden and empty", [pp.$cap_util.nodes[0].style.display, pp.$cap_util.nodes[0].childNodes.length], ["none", 0]);
+	check("the report was never asked", asked.some((a) => a[0] === "quiet"), false);
+});
+
+test("Project Planner: leaving Capacity drops its boxes, and Capacity is not a calendar view", () => {
+	const { pp, $ } = capacityPage();
+	pp.$cap_heat = $("<div></div>");
+	pp.$cap_util = $("<div></div>");
+	pp.$main = $("<div></div>");
+	pp.$p6c_pill = null;
+	pp.p6c_set_mode = () => null;
+	pp.$toolbar = $("<div></div>");
+	pp.$grid_wrap = $("<div></div>");
+	pp.$route = $("<div></div>");
+	pp.$panel = $("<div></div>");
+	pp.view = "week";
+	pp.set_mode("");
+	check("a calendar screen takes the grid: the boxes are gone", [pp.$cap_heat, pp.$cap_util], [null, null]);
+	check("Capacity is not one of the calendar views", [pp.tb_calendar(), (pp.view = "capacity", pp.tb_calendar())], [true, false]);
+});
+
+// A saved or last-used view that says heatmap (before P7) is Capacity.
+test("Project Planner: saved views and the last used view that say heatmap open Capacity", () => {
+	const env = projectPlanner();
+	const { pp, route, frappe } = env;
+	delete pp.p6c_matching_view;
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.p6c.restored = true;
+	pp.p6c.loaded = true;
+	const set = route.set;
+	route.now = ["project-planner"];
+	pp.p6c.last = { view: "heatmap", group: "Field" };
+	check("a bare address restores it as Capacity: replaced, never pushed", [pp.p6c_before_route(), frappe.route_flags && frappe.route_flags.replace_route], [true, true]);
+	check("on the Crew path with the flag", set[0], ["project-planner", "crew", "2026-10-14", { capacity: "1" }]);
+	pp.p6c.last = { view: "capacity" };
+	frappe.route_flags = {};
+	pp.p6c_before_route();
+	check("a view saved as Capacity does the same", set[1], ["project-planner", "crew", "2026-10-14", { capacity: "1" }]);
+	pp.p6c.last = { view: "crew" };
+	pp.p6c_before_route();
+	check("the Board is a plain Crew route", set[2], ["project-planner", "crew", "2026-10-14"]);
+	// Picking a saved view that says heatmap.
+	const went = [];
+	pp.go = (view, anchor) => went.push([view, anchor]);
+	pp.view = "week";
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.write_filter_url = () => null;
+	pp.render = () => null;
+	pp.p6c_apply_state({ view: "heatmap" }, { route: true });
+	check("picking it from the week goes to Capacity", went, [["heatmap", "2026-10-14"]]);
+	pp.view = "capacity";
+	pp.p6c_apply_state({ view: "heatmap" }, { route: true });
+	check("and while on Capacity it does not move", went.length, 1);
+	// Capacity is saved as itself, and the old name still matches the saved view that holds it.
+	pp.p6c_state = () => ({ view: "capacity", group: "" });
+	pp.p6c.views = [{ name: "Old heat", data: { view: "heatmap", group: "" } }];
+	check("a view saved as Heatmap is the one on screen when Capacity is", (pp.p6c_matching_view() || {}).name, "Old heat");
+	check("saved views list it as Capacity", vm.runInContext("PP6C.view_labels", env.ctx), { week: "Week", month: "Month", crew: "Crew", heatmap: "Capacity", capacity: "Capacity" });
 });
 
 // ------------------------------------------------------------------ run

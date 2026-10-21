@@ -6,16 +6,17 @@
 //   /desk/project-planner                     this week
 //   /desk/project-planner/week/2026-10-12     the week holding that day
 //   /desk/project-planner/month/2026-10-01    the month holding that day
-//   /desk/project-planner/crew/2026-10-12     the crew timeline for the week holding that day
+//   /desk/project-planner/crew/2026-10-12     the crew board for the week holding that day: bars in days,
+//                                             hours optional (P7 of the planner UX redesign)
+//   /desk/project-planner/crew/2026-10-12?capacity=1
+//                                             Capacity, the Crew tab's other half: eight weeks of load per
+//                                             person (the arrows step four weeks; a cell opens its week)
+//                                             with the Crew Utilization report's figures under it. It
+//                                             replaces the Heatmap and Utilization views, whose old
+//                                             addresses (/heatmap/<date>, /utilization/<date>) redirect here.
 //   /desk/project-planner/route/<person>/2026-10-12
 //                                             one person's driving day: stops in order, drive
 //                                             time between them, and a map
-//   /desk/project-planner/heatmap/2026-10-12  eight weeks of load per person, one cell per week
-//                                             (the arrows step four weeks; a cell opens its week)
-//   /desk/project-planner/utilization/2026-10-01
-//                                             the Crew Utilization report's figures for the month
-//                                             holding that day, per person per week, as a view of
-//                                             the planner (the arrows step a month)
 //
 // The Project, Project manager and Group filters ride along on every one of those as the query
 // (S5c): /desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
@@ -68,10 +69,16 @@ const PP = {
 	api: "erpnext_enhancements.api.project_planner",
 	views: ["week", "month", "crew"],
 	route_view: "route",
-	heatmap_view: "heatmap",
-	heatmap_weeks: 8,
-	// The Utilization view (toolbar redesign, v1.687.0): the Crew Utilization report's rows, drawn here.
-	util_view: "utilization",
+	// Capacity (P7): the Crew tab's second screen, which merged the Heatmap and Utilization views. It is
+	// a view of its own inside the page (this.view), and a route of the Crew tab's (/crew/<date>?capacity=1).
+	capacity_view: "capacity",
+	capacity_weeks: 8,
+	// The views that used to be tabs and are now Capacity: their old addresses and saved views land there.
+	// "utilization" opens Capacity on the Utilization table.
+	capacity_aliases: { heatmap: "capacity", utilization: "capacity" },
+	// What ?capacity= may say: anything that reads as on, and "utilization" for the old Utilization address.
+	capacity_param_on: ["1", "true", "yes", "on", "heatmap", "utilization"],
+	prefs_crew_hours: "ee_project_planner_crew_hours",
 	groups: ["Field", "PM", "Design", "Subcontractor"],
 	prefs: {
 		project: "ee_project_planner_project",
@@ -197,6 +204,13 @@ class ProjectPlanner {
 		this.overdue_selected = new Set();
 		this.overdue_request = 0;
 		this.heatmap = null;
+		// Capacity (P7): the Utilization rows under the heatmap (undefined until asked for), and the two
+		// boxes the sections draw into (built by capacity_shell, dropped when another screen takes the grid).
+		this.util = undefined;
+		this.$cap_heat = null;
+		this.$cap_util = null;
+		// The Crew board counts in days; "Show hours" adds each bar's hours (a browser preference).
+		this.crew_hours = this.load_pref(PP.prefs_crew_hours, "0") === "1";
 
 		this.page.add_menu_item(__("Planner Resources"), () => frappe.set_route("List", "Planner Resource"));
 		this.page.add_menu_item(__("Project Planner Settings"), () =>
@@ -232,25 +246,65 @@ class ProjectPlanner {
 			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
 			return { view: PP.route_view, resource: route[2], anchor: date };
 		}
-		// /project-planner/heatmap/<date>
-		if (route[1] === PP.heatmap_view) {
-			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
-			return { view: PP.heatmap_view, anchor: date };
+		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+		// /project-planner/heatmap/<date> and /utilization/<date> (the old tabs) are Capacity now: the
+		// router replaces them with /crew/<date>?capacity=… (handle_route), so bookmarks, the digest and the
+		// forms' links still land on the same content.
+		if (PP.capacity_aliases[route[1]]) {
+			return { view: PP.capacity_aliases[route[1]], anchor: day, redirect: true, capacity: route[1] === "utilization" ? "utilization" : "1" };
 		}
-		// /project-planner/utilization/<date>
-		if (route[1] === PP.util_view) {
-			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
-			return { view: PP.util_view, anchor: date };
+		// /project-planner/crew/<date>?capacity=1: Capacity, the Crew tab's other screen.
+		if (route[1] === "crew") {
+			const capacity = this.capacity_param();
+			if (capacity) return { view: PP.capacity_view, anchor: day, capacity };
 		}
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
-		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
+	}
+
+	// ?capacity= on the address, as "1" (on), "utilization" (on, for the old Utilization address) or ""
+	// (Board). Read from route_options, where the router copies the query.
+	capacity_param() {
+		const opts = frappe.route_options;
+		if (!opts || typeof opts !== "object" || !Object.prototype.hasOwnProperty.call(opts, "capacity")) return "";
+		const text = String(opts.capacity == null ? "" : opts.capacity).trim().toLowerCase();
+		if (!PP.capacity_param_on.includes(text)) return "";
+		return text === "utilization" ? "utilization" : "1";
+	}
+
+	// The route options a planner screen's address carries: the filters, and Capacity's flag.
+	route_options_for(view, extra) {
+		const out = this.filter_options();
+		if (view === PP.capacity_view) out.capacity = extra || "1";
+		return out;
 	}
 
 	handle_route() {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		if (target.redirect) {
+			// Replace, never push: Back from here leaves the planner, as it would have from the old address.
+			// The old address's filters travel with it (take_route_filters has not read them yet).
+			const options = {};
+			const opts = frappe.route_options;
+			if (opts && typeof opts === "object") {
+				PP.url_filters.forEach((key) => {
+					if (Object.prototype.hasOwnProperty.call(opts, key)) options[key] = opts[key];
+				});
+			}
+			options.capacity = target.capacity;
+			frappe.route_options = null;
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			frappe.set_route(PP.route, "crew", target.anchor, options);
+			return;
+		}
+		// The flag is the address's, like the filters: consumed, so no later route writes it again.
+		this.capacity_asked = target.capacity === "utilization" ? "utilization" : "";
+		if (frappe.route_options && typeof frappe.route_options === "object") {
+			delete frappe.route_options.capacity;
+		}
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
@@ -265,14 +319,9 @@ class ProjectPlanner {
 			this.load_route();
 			return;
 		}
-		if (target.view === PP.heatmap_view) {
-			this.set_mode("heatmap");
-			this.load_heatmap();
-			return;
-		}
-		if (target.view === PP.util_view) {
-			this.set_mode(PP.util_view);
-			this.load_utilization();
+		if (target.view === PP.capacity_view) {
+			this.set_mode(PP.capacity_view);
+			this.load_capacity();
 			return;
 		}
 		this.set_mode("");
@@ -449,13 +498,20 @@ class ProjectPlanner {
 	}
 
 	// The route view replaces the toolbar, panel, trays and calendar; the others replace it.
-	// The heatmap and Utilization keep the toolbar but swap the calendar for their own grid, and drop
-	// the controls that only mean something on the calendar (the menus leave out theirs too:
-	// tb_calendar). (The panel is shown and hidden by render_panel, so leaving a view does not reveal
-	// a stale one.)
+	// Capacity keeps the toolbar but swaps the calendar for its own grids, and drops the controls that
+	// only mean something on the calendar (the menus leave out theirs too: tb_calendar). (The panel is
+	// shown and hidden by render_panel, so leaving a view does not reveal a stale one.)
 	set_mode(mode) {
 		const route = mode === "route";
-		const board = mode === PP.heatmap_view || mode === PP.util_view;
+		const board = mode === PP.capacity_view;
+		// Another screen takes the grid: Capacity's boxes are gone with it, and the next visit builds them.
+		if (!board) {
+			this.$cap_heat = null;
+			this.$cap_util = null;
+		}
+		// The Crew board has its tray beside it (P7); every other screen keeps it above.
+		if (this.$main) this.$main.toggleClass("pp-main-crew", !route && this.view === "crew");
+		this.render_crew_bar();
 		this.$toolbar.toggle(!route);
 		this.$trays.toggle(!route && !board);
 		this.$grid_wrap.toggle(!route);
@@ -483,14 +539,30 @@ class ProjectPlanner {
 		this.p6a_route(() => frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options()), false);
 	}
 
+	// Capacity is the Crew tab's other screen: its route is /crew/<date>?capacity=1, so a click on Board or
+	// Capacity is a history entry like any other (Back steps between them). A saved view or old link that
+	// still says heatmap or utilization lands on Capacity.
 	go(view, anchor) {
+		view = PP.capacity_aliases[view] || view;
+		if (view === PP.capacity_view) return this.go_capacity(anchor);
 		const route = frappe.get_route() || [];
-		if (route[0] === PP.route && route[1] === view && route[2] === anchor) {
+		// Leaving Capacity for the Board is a move even though the path is the same: the query is what differs.
+		if (route[0] === PP.route && route[1] === view && route[2] === anchor && this.view !== PP.capacity_view) {
 			this.load();
 			return;
 		}
 		this.self_route = [PP.route, view, anchor].join("/");
 		this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);
+	}
+
+	go_capacity(anchor) {
+		const route = frappe.get_route() || [];
+		if (route[0] === PP.route && route[1] === "crew" && route[2] === anchor && this.view === PP.capacity_view) {
+			this.load();
+			return;
+		}
+		this.self_route = [PP.route, "crew", anchor].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, "crew", anchor, this.route_options_for(PP.capacity_view)), true);
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -527,15 +599,12 @@ class ProjectPlanner {
 	range() {
 		const first = this.first_weekday();
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
-		if (this.view === PP.util_view) {
-			// The month holding the anchor, as the Crew Utilization report reads it by default.
-			return { start: anchor.clone().startOf("month"), end: anchor.clone().endOf("month").startOf("day") };
-		}
-		if (this.view === PP.heatmap_view) {
+		if (this.view === PP.capacity_view) {
 			// The same weeks as the calendar: they begin on the site's first weekday, which is also
-			// what get_heatmap and copy_week snap to.
+			// what get_heatmap, copy_week and the Crew Utilization report's weeks snap to. The heatmap
+			// and the Utilization table under it both cover these eight weeks.
 			const start = anchor.clone().subtract((anchor.day() - first + 7) % 7, "days");
-			return { start, end: start.clone().add(PP.heatmap_weeks * 7 - 1, "days") };
+			return { start, end: start.clone().add(PP.capacity_weeks * 7 - 1, "days") };
 		}
 		if (this.view !== "month") {
 			const start = anchor.clone().subtract((anchor.day() - first + 7) % 7, "days");
@@ -558,17 +627,17 @@ class ProjectPlanner {
 
 	shift(sign) {
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
-		// The heatmap steps half its span, so each step keeps four weeks in common.
+		// Capacity steps half its span, so each step keeps four weeks in common.
 		const next =
-			this.view === "month" || this.view === PP.util_view
+			this.view === "month"
 				? anchor.startOf("month").add(sign, "months")
-				: anchor.add(sign * (this.view === PP.heatmap_view ? (PP.heatmap_weeks / 2) * 7 : 7), "days");
+				: anchor.add(sign * (this.view === PP.capacity_view ? (PP.capacity_weeks / 2) * 7 : 7), "days");
 		this.go(this.view, pp_ymd(next));
 	}
 
 	title() {
 		const { start, end } = this.range();
-		if (this.view === "month" || this.view === PP.util_view) return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
+		if (this.view === "month") return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
 		if (start.year() !== end.year()) return `${start.format("MMM D, YYYY")} – ${end.format("MMM D, YYYY")}`;
 		if (start.month() !== end.month()) return `${start.format("MMM D")} – ${end.format("MMM D, YYYY")}`;
 		return `${start.format("MMM D")} – ${end.format("D, YYYY")}`;
@@ -602,8 +671,6 @@ class ProjectPlanner {
 			["month", __("Month")],
 			["week", __("Week")],
 			["crew", __("Crew")],
-			[PP.heatmap_view, __("Heatmap")],
-			[PP.util_view, __("Utilization")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
 				.attr("data-tb-tab", view)
@@ -640,10 +707,24 @@ class ProjectPlanner {
 		this.update_undo_button();
 
 		this.$panel = $('<div class="pp-section pp-res"></div>').appendTo(this.$body);
-		this.$trays = $("<div></div>").appendTo(this.$body);
-		this.$grid_wrap = $("<div></div>").appendTo(this.$body);
+		// The Crew tab's header (Board | Capacity, Show hours), filled by render_crew_bar.
+		this.$crewbar = $('<div class="pp-crewbar"></div>').hide().appendTo(this.$body);
+		// The trays and the grid share one box so the Crew board can set its tray beside it (P7).
+		this.$main = $('<div class="pp-main"></div>').appendTo(this.$body);
+		this.$trays = $('<div class="pp-trays"></div>').appendTo(this.$main);
+		this.$grid_wrap = $('<div class="pp-grid-wrap"></div>').appendTo(this.$main);
 		this.$hint = $('<div class="pp-hint"></div>').appendTo(this.$body);
 		this.$route = $('<div class="pp-route-view"></div>').hide().appendTo(this.$body);
+	}
+
+	// The tab a screen sits under: Capacity is the Crew tab's second screen.
+	tab_of_view(view) {
+		return (view || this.view) === PP.capacity_view ? "crew" : view || this.view;
+	}
+
+	mark_view_buttons() {
+		const tab = this.tab_of_view();
+		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === tab));
 	}
 
 	// "Maintenance, rentals, travel" in Display: the other planners' bookings, read-only.
@@ -670,13 +751,12 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ data
 
 	load() {
-		if (this.view === PP.heatmap_view) return this.load_heatmap();
-		if (this.view === PP.util_view) return this.load_utilization();
+		if (this.view === PP.capacity_view) return this.load_capacity();
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.mark_view_buttons();
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
 			frappe.call({
@@ -803,12 +883,8 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ render
 
 	render() {
-		if (this.view === PP.heatmap_view) {
-			this.render_heatmap();
-			return;
-		}
-		if (this.view === PP.util_view) {
-			this.render_utilization();
+		if (this.view === PP.capacity_view) {
+			this.render_capacity();
 			return;
 		}
 		if (!this.data) return;
@@ -827,7 +903,7 @@ class ProjectPlanner {
 		this.$hint.text(
 			this.view === "crew"
 				? __(
-						"Drag a task to another day on the same row to move it, or onto someone else's row to hand their place on the crew to that person. On a touch screen, hold for a moment first."
+						"A task is a bar along a person's row, counted in days (Show hours adds the hours). Drag it to another day on the same row to move it, or onto someone else's row to hand their place on the crew to that person. Tasks still to schedule, and tasks that need a crew, wait in the tray beside the board. On a touch screen, hold for a moment first."
 				  )
 				: __(
 						"Drag a task card to another day to move it; it keeps its length. Drag a person from Resources available onto a task to add them to its crew. On a touch screen, hold for a moment first. Click a card to change its dates, hours and crew."
@@ -1058,8 +1134,13 @@ class ProjectPlanner {
 			.sort((a, b) => this.compare(a, b));
 		if (unscheduled.length) {
 			const $tray = $('<div class="pp-tray pp-tray-unscheduled"></div>').appendTo(this.$trays);
+			// The Crew board's side tray (P7) calls it by its name there.
+			const heading =
+				this.view === "crew"
+					? __("Not scheduled ({0}): drag onto a person's day", [unscheduled.length])
+					: __("Unscheduled ({0}): drag onto a day", [unscheduled.length]);
 			const $h = $("<h5></h5>")
-				.append(document.createTextNode(__("Unscheduled ({0}): drag onto a day", [unscheduled.length])))
+				.append(document.createTextNode(heading))
 				.appendTo($tray);
 			const shown = this.show_all_unscheduled ? unscheduled : unscheduled.slice(0, PP.tray_limit);
 			if (unscheduled.length > shown.length) {
@@ -1161,13 +1242,16 @@ class ProjectPlanner {
 			);
 		});
 		html.push(this.p6d_crew_notes_row(days));
+		const booked_on = this.crew_booked_days(resources, days);
 		resources.forEach((resource) => {
 			html.push(this.person_html(resource, true));
 			days.forEach((ymd) => {
 				const day = this.day_of(resource.name, ymd);
 				const state = this.avail_state(day);
 				const chips = ((day && day.bookings) || [])
-					.map((booking) => this.booking_html(resource.name, ymd, booking))
+					.map((booking) =>
+						this.booking_html(resource.name, ymd, booking, this.crew_span_ctx(booked_on, resource.name, days, ymd, booking))
+					)
 					.join("");
 				html.push(`
 					<div class="pp-cell${ymd < today ? " pp-past" : ""}" data-date="${pp_esc(ymd)}" data-resource="${pp_esc(
@@ -1193,6 +1277,114 @@ class ProjectPlanner {
 		const $scroll = $('<div class="pp-scroll"></div>').appendTo(this.$grid_wrap);
 		const $crew = $('<div class="pp-crew"></div>').html(html.join("")).appendTo($scroll);
 		this.bind_week_links($crew);
+	}
+
+	// ------------------------------------------------------------------ crew board in days (P7)
+	//
+	// A task is a bar along a person's row: its days, side by side, one chip a day (a chip is the unit
+	// that is dragged, resized and tapped, so every move still works on it). The chips of one task on
+	// neighboring days are drawn joined (pp-span-prev / pp-span-next), and each says "Day 2 of 5" where the
+	// old chip said its hours. "Show hours" puts the hours (or the time slot) back beside the days.
+
+	// {person: {task: Set of the days of this range it is booked}}.
+	crew_booked_days(resources, days) {
+		const out = {};
+		resources.forEach((resource) => {
+			const mine = (out[resource.name] = {});
+			days.forEach((ymd) => {
+				const day = this.day_of(resource.name, ymd);
+				((day && day.bookings) || []).forEach((booking) => {
+					if (!booking.ref || booking.kind === "drive" || booking.kind === "block" || !this.by_task[booking.ref]) return;
+					(mine[booking.ref] = mine[booking.ref] || new Set()).add(ymd);
+				});
+			});
+		});
+		return out;
+	}
+
+	// How a chip sits in its task's bar: joined to the day before and the day after, and which day of how
+	// many it is. null for what is not a task of this planner (a block, a visit, a drive).
+	crew_span_ctx(booked_on, resource, days, ymd, booking) {
+		const card = booking && booking.ref && this.by_task[booking.ref];
+		if (!card || booking.kind === "drive" || booking.kind === "block") return null;
+		const set = (booked_on[resource] || {})[booking.ref] || new Set();
+		const at = days.indexOf(ymd);
+		return {
+			prev: at > 0 && set.has(days[at - 1]),
+			next: at >= 0 && at < days.length - 1 && set.has(days[at + 1]),
+			count: this.crew_day_count(card, ymd, set, days),
+		};
+	}
+
+	// Day n of N for one chip. When the whole task is inside the days on screen it is counted from this
+	// person's bookings (so a day off inside it is not a day of work); a task that runs past the edge of
+	// the range is counted in weekdays from the task's own dates, which is the same number for a plain
+	// Monday-to-Friday crew.
+	crew_day_count(card, ymd, set, days) {
+		const start = card.start;
+		const end = card.end && card.end >= start ? card.end : start;
+		if (!start) return { n: 1, total: 1 };
+		if (set.size && start >= days[0] && end <= days[days.length - 1]) {
+			const list = Array.from(set).sort();
+			return { n: Math.max(1, list.indexOf(ymd) + 1), total: list.length };
+		}
+		const utc = (ymd_text) => Date.UTC(Number(ymd_text.slice(0, 4)), Number(ymd_text.slice(5, 7)) - 1, Number(ymd_text.slice(8, 10)));
+		const weekdays = (a, b) => {
+			let count = 0;
+			for (let t = utc(a); t <= utc(b); t += 86400000) {
+				const dow = new Date(t).getUTCDay();
+				if (dow !== 0 && dow !== 6) count += 1;
+			}
+			return count;
+		};
+		return { n: Math.max(1, weekdays(start, ymd)), total: Math.max(1, weekdays(start, end)) };
+	}
+
+	crew_days_text(count) {
+		return count.total > 1 ? __("Day {0} of {1}", [count.n, count.total]) : __("1 day");
+	}
+
+	set_crew_hours(on) {
+		this.crew_hours = !!on;
+		this.save_pref(PP.prefs_crew_hours, this.crew_hours ? "1" : "0");
+		this.render_crew_bar();
+		if (this.view === "crew" && this.data) this.render();
+	}
+
+	// The Crew tab's header: Board | Capacity, and on the Board "Show hours". Its own box under the
+	// toolbar, so it stays put while the grids under it are redrawn.
+	render_crew_bar() {
+		if (!this.$crewbar) return;
+		const capacity = this.view === PP.capacity_view;
+		const here = this.view === "crew" || capacity;
+		this.$crewbar.toggle(here).empty();
+		if (!here) return;
+		const $seg = $('<span class="pp-seg pp-crewbar-seg" role="group"></span>')
+			.attr("aria-label", __("Crew screens"))
+			.appendTo(this.$crewbar);
+		[
+			["crew", __("Board"), __("Who is where, a bar a task, in days")],
+			[PP.capacity_view, __("Capacity"), __("Eight weeks of load per person, and the Crew Utilization figures")],
+		].forEach(([view, label, title]) => {
+			const on = view === "crew" ? !capacity : capacity;
+			$('<button type="button"></button>')
+				.attr("data-crew-screen", view)
+				.attr("aria-pressed", on ? "true" : "false")
+				.attr("title", title)
+				.toggleClass("pp-on", on)
+				.text(label)
+				.on("click", () => {
+					if (!on) this.go(view, this.anchor);
+				})
+				.appendTo($seg);
+		});
+		if (capacity) return;
+		const $hours = $('<label class="pp-crewbar-hours"></label>').appendTo(this.$crewbar);
+		$('<input type="checkbox">')
+			.prop("checked", !!this.crew_hours)
+			.on("change", (e) => this.set_crew_hours(!!e.currentTarget.checked))
+			.appendTo($hours);
+		$("<span></span>").text(__("Show hours")).appendTo($hours);
 	}
 
 	// The words a day link's label reads its date in (S3.6).
@@ -1225,7 +1417,8 @@ class ProjectPlanner {
 	}
 
 	// One booking in a crew-view cell: a task the planner can move, or someone else's (static).
-	booking_html(resource, ymd, booking) {
+	// `span` (the crew board's, P7): how the chip sits in its task's bar, see crew_span_ctx.
+	booking_html(resource, ymd, booking, span) {
 		// Driving is padding on the day's hours, not a thing to open: the cell's drive line shows it.
 		if (booking.kind === "drive") return "";
 		if (booking.kind === "block") return this.p6d_block_html(resource, ymd, booking);
@@ -1233,6 +1426,11 @@ class ProjectPlanner {
 		const hours = booking.slot ? booking.slot.join("–") : `${pp_hours(booking.hours)}h`;
 		if (card) {
 			const classes = ["pp-card"];
+			if (span) {
+				classes.push("pp-span");
+				if (span.prev) classes.push("pp-span-prev");
+				if (span.next) classes.push("pp-span-next");
+			}
 			if (card.movable && this.data.can_edit) classes.push("pp-movable");
 			if (card.saving) classes.push("pp-saving");
 			if (!this.task_visible(card)) classes.push("pp-dim");
@@ -1251,7 +1449,15 @@ class ProjectPlanner {
 			]
 				.filter(Boolean)
 				.join("\n");
-			const sub = [hours, pencil ? __("Pencil") : "", warned ? "⚠" : ""].filter(Boolean).join(" · ");
+			// The crew board counts in days and shows the hours only when asked for (P7).
+			const sub = [
+				span ? this.crew_days_text(span.count) : "",
+				!span || this.crew_hours ? hours : "",
+				pencil ? __("Pencil") : "",
+				warned ? "⚠" : "",
+			]
+				.filter(Boolean)
+				.join(" · ");
 			return `
 				<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(ymd)}"
 					data-resource="${pp_esc(resource)}" tabindex="0" title="${pp_esc(
@@ -2382,7 +2588,7 @@ class ProjectPlanner {
 				[...this.overdue_selected].forEach((name) => {
 					if (!known.has(name)) this.overdue_selected.delete(name);
 				});
-				// The trays are the calendar views' (not the heatmap's or Utilization's).
+				// The trays are the calendar views' (not Capacity's).
 				if (PP.views.includes(this.view) && this.data) this.render_trays();
 				this.tb_render();
 			})
@@ -2665,27 +2871,57 @@ class ProjectPlanner {
 		run();
 	}
 
-	// ------------------------------------------------------------------ capacity heatmap
+	// ------------------------------------------------------------------ Capacity (P7)
+	//
+	// The Crew tab's second screen, one view where the Heatmap and Utilization were two: eight weeks of
+	// load per person on top (get_heatmap), and the Crew Utilization report's rows under them for the same
+	// eight weeks (the PPU block below). Each section loads and draws on its own, so a slow report never
+	// holds the heatmap back, and the report's own gate (PPU's util_allowed) decides whether its section is
+	// there at all.
 
-	load_heatmap() {
-		const { start } = this.range();
+	load_capacity() {
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.mark_view_buttons();
+		this.capacity_shell();
 		this.$body.addClass("pp-loading");
+		return Promise.all([this.load_heatmap(token), this.load_utilization(token)]).then(() => {
+			if (token === this.request) this.$body.removeClass("pp-loading");
+		});
+	}
+
+	// The two boxes the sections draw into, built once per visit to Capacity.
+	capacity_shell() {
+		if (this.$cap_heat && this.$cap_util) return;
+		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view");
+		this.$cap_heat = $('<div class="pp-cap-heat"></div>').appendTo(this.$grid_wrap);
+		this.$cap_util = $('<div class="pp-cap-util"></div>').appendTo(this.$grid_wrap);
+	}
+
+	render_capacity() {
+		this.capacity_shell();
+		this.$hint.text(
+			__(
+				"Each square is one person's week: firm booked hours against their hours. Hatching is pencilled (tentative) work. Driving here uses saved and estimated times only. Click a week to open it. Under the squares, the Crew Utilization report's figures for the same weeks: what was booked, and what each person clocked at the kiosk on customer jobs."
+			)
+		);
+		this.render_heatmap();
+		this.render_utilization();
+	}
+
+	load_heatmap(token) {
+		const { start } = this.range();
 		return Promise.resolve(
-			frappe.call({ method: `${PP.api}.get_heatmap`, args: { start: pp_ymd(start), weeks: PP.heatmap_weeks } })
+			frappe.call({ method: `${PP.api}.get_heatmap`, args: { start: pp_ymd(start), weeks: PP.capacity_weeks } })
 		)
 			.then((r) => {
 				if (token !== this.request) return;
-				this.$body.removeClass("pp-loading");
 				this.heatmap = this.normalize_heatmap((r && r.message) || {}, start);
 				this.render_heatmap();
 			})
 			.catch(() => {
 				if (token !== this.request) return;
-				this.$body.removeClass("pp-loading");
 				this.heatmap = null;
 				this.render_heatmap();
 			});
@@ -2699,7 +2935,7 @@ class ProjectPlanner {
 		if (!weeks.length) {
 			// Without a week list, count on from the server's week_start (else the week asked for).
 			const first = moment(raw.week_start || pp_ymd(start), "YYYY-MM-DD");
-			weeks = Array.from({ length: PP.heatmap_weeks }, (v, i) => ({ start: pp_ymd(first.clone().add(i * 7, "days")) }));
+			weeks = Array.from({ length: PP.capacity_weeks }, (v, i) => ({ start: pp_ymd(first.clone().add(i * 7, "days")) }));
 		}
 		const people = raw.resources || raw.rows || raw.people || [];
 		const rows = (Array.isArray(people) ? people : Object.entries(people).map(([name, row]) => Object.assign({ name }, row))).map(
@@ -2770,16 +3006,12 @@ class ProjectPlanner {
 
 	render_heatmap() {
 		const data = this.heatmap;
-		this.$hint.text(
-			__(
-				"Each square is one person's week: firm booked hours against their hours. Hatching is pencilled (tentative) work. Driving here uses saved and estimated times only. Click a week to open it."
-			)
-		);
-		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view");
+		this.capacity_shell();
+		const $box = this.$cap_heat.empty();
 		if (!data) {
 			$('<div class="pp-section pp-empty-note"></div>')
 				.text(__("The heatmap could not be loaded. Refresh the planner and try again."))
-				.appendTo(this.$grid_wrap);
+				.appendTo($box);
 			return;
 		}
 		const order = (group) => {
@@ -2793,7 +3025,7 @@ class ProjectPlanner {
 		if (!rows.length) {
 			$('<div class="pp-section pp-empty-note"></div>')
 				.text(__("No planner resources to show. Add the people you schedule under Planner Resources."))
-				.appendTo(this.$grid_wrap);
+				.appendTo($box);
 			return;
 		}
 		const today = this.today();
@@ -2828,14 +3060,14 @@ class ProjectPlanner {
 			});
 		});
 		const columns = `170px repeat(${data.weeks.length},minmax(78px,1fr))`;
-		const $scroll = $('<div class="pp-section pp-hm-scroll"></div>').appendTo(this.$grid_wrap);
+		const $scroll = $('<div class="pp-section pp-hm-scroll"></div>').appendTo($box);
 		$('<div class="pp-hm"></div>').css("grid-template-columns", columns).html(html.join("")).appendTo($scroll);
 		$(`<div class="pp-hm-legend">
 				<span class="pp-hm-key"><i class="pp-green"></i>${pp_esc(__("Up to 75% booked"))}</span>
 				<span class="pp-hm-key"><i class="pp-amber"></i>${pp_esc(__("Up to 100%"))}</span>
 				<span class="pp-hm-key"><i class="pp-red"></i>${pp_esc(__("Over (or a day over)"))}</span>
 				<span class="pp-hm-key"><i class="pp-soft-key"></i>${pp_esc(__("Pencilled (tentative) hours"))}</span>
-			</div>`).appendTo(this.$grid_wrap);
+			</div>`).appendTo($box);
 	}
 
 	// ------------------------------------------------------------------ copy week
@@ -3791,7 +4023,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 //     to save_task as `equipment`, an equipment conflict arrives in needs_reason under the
 //     "Equipment" key and is asked about like any other, and the crew view gains an Equipment row
 //     group (get_equipment): each vehicle or asset, the tasks using it each day
-//   - the Crew Utilization report's figures are the planner's Utilization view (PPU, v1.687.0)
+//   - the Crew Utilization report's figures are the table under Capacity's heatmap (PPU, v1.687.0, merged into Capacity by P7)
 //
 // Everything Phase 4 adds is in this block, mixed into ProjectPlanner below. The hooks into the
 // class above are one line each: init_phase4 (constructor), p4_set_mode (set_mode), load_phase4
@@ -3823,7 +4055,7 @@ const PP4_METHODS = {
 		this.$forecast = $('<div class="pp-forecast"></div>').hide().insertBefore(this.$panel);
 	},
 
-	// The route, heatmap, Utilization and My week views have none of this; the calendar views draw it.
+	// The route, Capacity and My week views have none of this; the calendar views draw it.
 	p4_set_mode(mode) {
 		const calendar = mode === "";
 		if (this.$forecast && !calendar) this.$forecast.hide();
@@ -5435,7 +5667,7 @@ const PP6B_METHODS = {
 			{ passive: false }
 		);
 		this.p6b_bind_keys();
-		// The route view, My week and the heatmap draw no cards: the selection bar and an open search
+		// The route view, My week and Capacity draw no cards: the selection bar and an open search
 		// list must not stay on top of them.
 		if (frappe.router && typeof frappe.router.on === "function") {
 			frappe.router.on("change", () => this.p6b_route_changed());
@@ -5444,7 +5676,9 @@ const PP6B_METHODS = {
 
 	p6b_route_changed() {
 		const route = frappe.get_route() || [];
-		const calendar = route[0] === PP.route && (!route[1] || PP.views.includes(route[1]));
+		// Capacity is the Crew address with ?capacity=: no cards either.
+		const capacity = route[1] === "crew" && !!this.capacity_param();
+		const calendar = route[0] === PP.route && (!route[1] || PP.views.includes(route[1])) && !capacity;
 		if (!calendar && this.$p6b_bar) this.$p6b_bar.hide();
 		if (this.p6b.resize) this.p6b_resize_end(false);
 		this.p6b_close_results();
@@ -6966,7 +7200,7 @@ const PP6B_METHODS = {
 
 	p6b_run_key(action) {
 		// The route view and My week keep their own buttons.
-		if (!PP.views.includes(this.view) && this.view !== PP.heatmap_view && this.view !== PP.util_view) return false;
+		if (!PP.views.includes(this.view) && this.view !== PP.capacity_view) return false;
 		if (action === "today") {
 			this.go(this.view, frappe.datetime.get_today());
 			return true;
@@ -6982,8 +7216,8 @@ const PP6B_METHODS = {
 			return true;
 		}
 		if (action === "undo") {
-			// Utilization changes nothing and offers no Undo (v1.687.0): the key is not the planner's there.
-			if (this.view === PP.util_view) return false;
+			// Capacity changes nothing and offers no Undo (v1.687.0): the key is not the planner's there.
+			if (this.view === PP.capacity_view) return false;
 			this.undo();
 			return true;
 		}
@@ -7022,7 +7256,7 @@ const PP6B_METHODS = {
 				note: __("Not while typing in a box or with a dialog open."),
 				items: [
 					item(key("T"), "Go to today."),
-					item(key("←") + key("→"), "The previous or next week (month, or four weeks of the heatmap)."),
+					item(key("←") + key("→"), "The previous or next week (month, or four weeks on Capacity)."),
 					item(key("1") + key("2") + key("3"), "Week, month or crew view."),
 					item(key("Ctrl") + key("Z"), "Undo the last change (⌘Z on a Mac)."),
 					item(key("/"), "Search tasks, projects and people."),
@@ -7115,7 +7349,9 @@ const PP6C = {
 	legend_limit: 40,
 	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["project"].
 	schema: {
-		view: ["enum", ["week", "month", "crew", "heatmap"]],
+		// "heatmap" is what a view saved before P7 says for Capacity (the Heatmap and Utilization tabs merged);
+		// it is still accepted, and the page treats it as Capacity (PP.capacity_aliases).
+		view: ["enum", ["week", "month", "crew", "heatmap", "capacity"]],
 		project: ["text"],
 		pm: ["text"],
 		group: ["enum", ["", "Field", "PM", "Design", "Subcontractor"]],
@@ -7143,7 +7379,7 @@ const PP6C = {
 		["pm", "Project manager"],
 		["status", "Status"],
 	],
-	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap" },
+	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Capacity", capacity: "Capacity" },
 	none_color: "#94a3b8",
 };
 
@@ -7209,7 +7445,7 @@ const PP6C_METHODS = {
 		this.p6c_state_soon();
 	},
 
-	// The route, heatmap, Utilization and My week views have no cards to color, highlight or move (the
+	// The route, Capacity and My week views have no cards to color, highlight or move (the
 	// menus leave Color by and Tap to move out there: PPTB's tb_calendar).
 	p6c_set_mode(mode) {
 		if (!this.p6c) return;
@@ -7861,12 +8097,14 @@ const PP6C_METHODS = {
 				p6c.saved_text = JSON.stringify(last);
 			}
 		}
-		const view = last && last.view;
+		// A "last used" view saved before P7 may say heatmap: Capacity is the Crew tab's second screen.
+		const view = last && last.view && (PP.capacity_aliases[last.view] || last.view);
 		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
 			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
 			frappe.route_flags = frappe.route_flags || {};
 			frappe.route_flags.replace_route = true;
-			frappe.set_route(PP.route, view, frappe.datetime.get_today());
+			if (view === PP.capacity_view) frappe.set_route(PP.route, "crew", frappe.datetime.get_today(), { capacity: "1" });
+			else frappe.set_route(PP.route, view, frappe.datetime.get_today());
 			return true;
 		}
 		return false;
@@ -7920,7 +8158,7 @@ const PP6C_METHODS = {
 		this.url_filters = null;
 		this.own_filters = this.filters();
 		this.p6c_sync_controls();
-		if (opts.route && view.view && view.view !== this.view) {
+		if (opts.route && view.view && (PP.capacity_aliases[view.view] || view.view) !== this.view) {
 			this.go(view.view, this.anchor);
 			return;
 		}
@@ -7972,6 +8210,8 @@ const PP6C_METHODS = {
 		const key = (state) => {
 			const view = Object.assign({}, state);
 			delete view.color_chosen;
+			// A view saved as Heatmap before P7 is Capacity.
+			if (view.view) view.view = PP.capacity_aliases[view.view] || view.view;
 			// A view saved before P2 does not say, which is off.
 			if (!view.all_tasks) delete view.all_tasks;
 			return JSON.stringify(Object.keys(view).sort().map((name) => [name, view[name]]));
@@ -8153,12 +8393,12 @@ const PP6C_METHODS = {
 	// in when the print design system's chrome arrives; the body is built from the data now.
 	p6c_print(selection_only) {
 		const kit = this.p6c_kit();
-		if (!kit || (!this.data && this.view !== PP.heatmap_view)) {
+		if (!kit || (!this.data && this.view !== PP.capacity_view)) {
 			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 			return;
 		}
 		if (!PP6C.schema.view[1].includes(this.view)) {
-			frappe.msgprint(__("Open the week, month, crew or heatmap view to print it."));
+			frappe.msgprint(__("Open the week, month, crew or capacity view to print it."));
 			return;
 		}
 		const win = window.open("", "_blank");
@@ -8245,8 +8485,8 @@ const PP6C_METHODS = {
 
 	p6c_print_lines(selection_only, count) {
 		const lines = [];
-		if (this.view === PP.heatmap_view) {
-			// The heatmap answers to the group filter only.
+		if (this.view === PP.capacity_view) {
+			// Capacity answers to the group filter only.
 			if (this.group) lines.push(__("Group: {0}", [__(this.group)]));
 			return lines;
 		}
@@ -8257,7 +8497,7 @@ const PP6C_METHODS = {
 		if (!this.all_tasks && this.data && this.data.hidden_tasks) {
 			lines.push(__("Phase and crew work only ({0} tasks not shown)", [this.data.hidden_tasks]));
 		}
-		if (!this.show_foreign && this.view !== PP.heatmap_view) lines.push(__("Maintenance, rentals and travel hidden"));
+		if (!this.show_foreign && this.view !== PP.capacity_view) lines.push(__("Maintenance, rentals and travel hidden"));
 		if (this.p6c.color_by !== "default") lines.push(__("Colored by {0}", [this.p6c_mode_label(this.p6c.color_by)]));
 		if (this.p6c.highlight) lines.push(__("Highlighting {0}", [this.p6c.highlight.label]));
 		if (selection_only) lines.push(__("Selected tasks only ({0})", [count]));
@@ -8307,7 +8547,7 @@ const PP6C_METHODS = {
 			return model;
 		}
 		model.lines = this.p6c_print_lines(false, 0);
-		if (view === PP.heatmap_view) return Object.assign(model, this.p6c_print_heatmap());
+		if (view === PP.capacity_view) return Object.assign(model, this.p6c_print_heatmap());
 		if (view === "crew") return Object.assign(model, this.p6c_print_crew());
 		return Object.assign(model, this.p6c_print_calendar());
 	},
@@ -10705,9 +10945,6 @@ const PPTB_METHODS = {
 			.appendTo(this.$toolbar);
 		$("<span></span>").text(__("Filters and tools")).appendTo(this.$tb_more);
 		this.$tb_more_count = $('<span class="pp-tb-count" aria-hidden="true"></span>').hide().appendTo(this.$tb_more);
-		// Utilization's button only for someone the report would let in (PPU's util_allowed).
-		const util_button = this.$view_buttons && this.$view_buttons[PP.util_view];
-		if (util_button) util_button.toggle(this.util_allowed());
 		// A menu or the sheet left open when the page hides (another page) closes with it; a route
 		// change of the planner's own closes a menu through the kit (toolbar.js).
 		const wrapper = this.page && this.page.wrapper;
@@ -10735,7 +10972,7 @@ const PPTB_METHODS = {
 			});
 		});
 		if (this.$seg && this.$seg[0] && typeof kit.toolbar.tabs === "function") {
-			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view });
+			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.tab_of_view() });
 		}
 		this.tb_render();
 	},
@@ -10836,7 +11073,7 @@ const PPTB_METHODS = {
 				on_click: () => this.go_my_week(frappe.datetime.get_today()),
 			},
 		];
-		if (this.tb_calendar() || this.view === PP.heatmap_view) items.push({ divider: true }, ...this.p6c_view_items());
+		if (this.tb_calendar() || this.view === PP.capacity_view) items.push({ divider: true }, ...this.p6c_view_items());
 		return items;
 	},
 
@@ -10914,8 +11151,6 @@ const PPTB_METHODS = {
 	},
 
 	tb_tools_items() {
-		// Utilization edits nothing: no Draft mode, no Undo, so no Tools at all (tb_render).
-		if (this.view === PP.util_view) return [];
 		const items = [];
 		if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {
 			items.push({
@@ -10954,7 +11189,7 @@ const PPTB_METHODS = {
 			title: __("Draft mode: keep every change to yourself until you publish them"),
 			on_click: () => this.set_draft_mode(!this.draft_on),
 		});
-		if (this.view !== PP.heatmap_view && this.view !== PP.util_view) {
+		if (this.view !== PP.capacity_view) {
 			const last = this.undo_stack[this.undo_stack.length - 1];
 			items.push(
 				{ divider: true },
@@ -10971,7 +11206,7 @@ const PPTB_METHODS = {
 	},
 
 	tb_print_items() {
-		const items = this.tb_calendar() || this.view === PP.heatmap_view ? this.p6c_print_items() : [];
+		const items = this.tb_calendar() || this.view === PP.capacity_view ? this.p6c_print_items() : [];
 		return items.concat([
 			{
 				label: __("Print crew sheet"),
@@ -11073,7 +11308,7 @@ const PPTB_METHODS = {
 		// empty (My week, the crew sheet), so it is not built here just to be counted.
 		const $add = this.tb.$menus.add;
 		if ($add) $add.toggleClass("pp-tb-off", !this.tb_add_items().length);
-		if (this.tb.tabs) this.tb.tabs.sync(this.view);
+		if (this.tb.tabs) this.tb.tabs.sync(this.tab_of_view());
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
 
@@ -11142,28 +11377,30 @@ const PPTB_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPTB_METHODS);
 
-// ====================================================================== Utilization (v1.687.0)
+// ====================================================================== Utilization (v1.687.0, Capacity's table since P7)
 //
-//   /desk/project-planner/utilization/2026-10-01
+//   /desk/project-planner/crew/2026-10-12?capacity=1
 //
-// The fifth view beside Month, Week, Crew and Heatmap. Utilization was a button that left the
-// planner for the Crew Utilization script report; Nik asked for it as a view of its own. It reads the
-// report itself (frappe.desk.query_report.run, so the report's own roles decide who may see it, and
-// both always show the same figures): the month holding the date, a row per person per week, with
-// capacity, booked and clocked hours and the two percentages. A week booked past capacity carries an
-// "Over" chip and one at 75% or more "Near full", so the color is never the only sign.
+// Utilization was a view of its own (v1.687.0, after a button that left the planner for the Crew
+// Utilization script report); the planner UX redesign (P7, D12) merged it with the Heatmap into Capacity,
+// so this is now the table under the heatmap. It reads the report itself (frappe.desk.query_report.run, so
+// the report's own roles decide who may see it, and both always show the same figures): the heatmap's
+// eight weeks, a row per person per week, with capacity, booked and clocked hours and the two percentages.
+// A week booked past capacity carries an "Over" chip and one at 75% or more "Near full", so the color is
+// never the only sign. Every column the view had is here. The weeks are whole weeks now (they begin on the
+// site's first weekday, as the report's do), so the month view's partial first and last weeks are gone.
 //
-// It is a route like the other views (‹ › step a month, T is today, Back and Forward step through
-// months), and the S5c filters ride along in the address: Group narrows it to that group's people;
-// Project and Project manager do not apply to a person's whole week, so they are hidden here and kept
-// in the address for the next calendar view. "Open the full report" opens the report on the same
-// month and group, for its chart and its split of booked hours.
+// The Project, Project manager and Group filters ride along in the address as everywhere: Group narrows
+// the table to that group's people; Project and Project manager do not apply to a person's whole week, so
+// they are hidden on Capacity and kept in the address for the next screen. "Open the full report" opens
+// the report on the same weeks and group, for its chart and its split of booked hours.
 //
 // Who may see it is the report's own rule (query_report.get_report_doc: the Report's roles, then
-// "report" permission on its ref doctype, Task). The view's button shows only for someone the boot
-// says passes both (util_allowed), and anyone who arrives by the address anyway gets a no-access
-// panel, not frappe's red dialog: the rows are asked for through the kit's quiet call, which shows
-// no dialog of its own, and a refusal is drawn in the page.
+// "report" permission on its ref doctype, Task). The table's section is there only for someone the boot
+// says passes both (util_allowed): everyone else sees the heatmap alone, with nothing to ask for. Someone
+// whose roles the server then refuses, or who arrives by the old /utilization address without access, gets
+// the no-access panel in its place, not frappe's red dialog: the rows are asked for through the kit's
+// quiet call, which shows no dialog of its own, and a refusal is drawn in the page.
 
 const PPU = {
 	run: "frappe.desk.query_report.run",
@@ -11191,20 +11428,21 @@ const PPU_METHODS = {
 		return true;
 	},
 
-	load_utilization() {
+	// `token`: the load this belongs to (load_capacity's), so an answer that arrives after the person has
+	// moved on draws nothing.
+	load_utilization(token) {
 		const { start, end } = this.range();
-		const token = ++this.request;
-		this.$title.text(this.title());
-		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
 		const filters = { from_date: pp_ymd(start), to_date: pp_ymd(end), granularity: PPU.granularity };
 		if (!this.util_allowed()) {
-			// Arrived by the address without access: say so, and ask the server nothing.
-			this.util = { denied: true, filters, rows: [] };
+			// Without access there is no section to draw, and the server is asked nothing; arrived at by the
+			// old Utilization address (?capacity=utilization), the no-access panel says why it is not there.
+			this.util =
+				this.capacity_asked === "utilization"
+					? { denied: true, filters, rows: [] }
+					: { hidden: true, filters, rows: [] };
 			this.render_utilization();
 			return Promise.resolve();
 		}
-		this.$body.addClass("pp-loading");
 		const args = { report_name: PP4.report, filters: JSON.stringify(filters) };
 		// The kit's quiet call (sf_kit's call on its quiet path) shows no dialog: a refusal is the
 		// page's to draw. Before the kit has loaded it is waited for; without it, a plain call.
@@ -11216,14 +11454,12 @@ const PPU_METHODS = {
 		})
 			.then((answer) => {
 				if (token !== this.request) return;
-				this.$body.removeClass("pp-loading");
 				answer = answer || {};
 				this.util = { filters, rows: Array.isArray(answer.result) ? answer.result : [] };
 				this.render_utilization();
 			})
 			.catch((err) => {
 				if (token !== this.request) return;
-				this.$body.removeClass("pp-loading");
 				const refused = !!err && (err.exc_type === "PermissionError" || err.status === 403);
 				this.util = refused ? { denied: true, filters, rows: [] } : null;
 				this.render_utilization();
@@ -11245,23 +11481,25 @@ const PPU_METHODS = {
 		const data = this.util;
 		// Nothing asked for yet (a filter picked while the first answer is on its way): it draws then.
 		if (data === undefined) return;
-		this.$hint.text(
-			__(
-				"Booked hours against each person's hours, week by week, and the hours they clocked at the kiosk on customer jobs: the Crew Utilization report's figures. Driving here uses saved and estimated times only."
-			)
-		);
-		this.$grid_wrap.empty().removeClass("pp-month pp-week pp-crew-view");
+		this.capacity_shell();
+		const $box = this.$cap_util.empty();
+		if (data && data.hidden) {
+			// No access to the report and nobody asked for it: the heatmap stands alone.
+			$box.hide();
+			return;
+		}
+		$box.show();
 		if (!data) {
 			$('<div class="pp-section pp-empty-note"></div>')
 				.text(__("Utilization could not be loaded. Refresh the planner and try again."))
-				.appendTo(this.$grid_wrap);
+				.appendTo($box);
 			return;
 		}
 		if (data.denied) {
 			// The kit's no-access panel (sf_kit's state markup), or the same words without the kit.
 			const kit = window.planner_kit;
 			const title = __("You don't have access to the Crew Utilization report.");
-			const $note = $('<div class="pp-section pp-empty-note pp-util-denied"></div>').appendTo(this.$grid_wrap);
+			const $note = $('<div class="pp-section pp-empty-note pp-util-denied"></div>').appendTo($box);
 			if (kit && typeof kit.state_html === "function") $note[0].innerHTML = kit.state_html("no-access", { title });
 			else $note.attr("role", "status").text(title);
 			return;
@@ -11269,16 +11507,17 @@ const PPU_METHODS = {
 		const rows = data.rows.filter((row) => row && (!this.group || row.group === this.group));
 		const report = { from_date: data.filters.from_date, to_date: data.filters.to_date, granularity: PPU.granularity };
 		if (this.group) report.group = this.group;
-		const $head = $('<div class="pp-util-head"></div>').appendTo(this.$grid_wrap);
+		const $head = $('<div class="pp-util-head"></div>').appendTo($box);
+		$('<h5 class="pp-util-title"></h5>').text(__("Utilization")).appendTo($head);
 		$('<button type="button" class="btn btn-default btn-sm"></button>')
 			.text(__("Open the full report"))
-			.attr("title", __("The Crew Utilization report for this month: its chart and booked hours by kind"))
+			.attr("title", __("The Crew Utilization report for these weeks: its chart and booked hours by kind"))
 			.on("click", () => this.p6a_route(() => frappe.set_route("query-report", PP4.report, report), false))
 			.appendTo($head);
 		if (!rows.length) {
 			$('<div class="pp-section pp-empty-note"></div>')
-				.text(__("Nobody to show for this month. Add the people you schedule under Planner Resources."))
-				.appendTo(this.$grid_wrap);
+				.text(__("Nobody to show for these weeks. Add the people you schedule under Planner Resources."))
+				.appendTo($box);
 			return;
 		}
 		const hours = (value) => pp_esc(`${pp_hours(value)}h`);
@@ -11295,7 +11534,7 @@ const PPU_METHODS = {
 			</tr>`;
 		});
 		const th = (text, num) => `<th scope="col"${num ? ' class="pp-util-num"' : ""}>${pp_esc(text)}</th>`;
-		const $scroll = $('<div class="pp-section pp-util-scroll"></div>').appendTo(this.$grid_wrap);
+		const $scroll = $('<div class="pp-section pp-util-scroll"></div>').appendTo($box);
 		$scroll[0].innerHTML = `<table class="pp-util">
 			<caption class="pp-sr">${pp_esc(__("Utilization, {0}", [this.title()]))}</caption>
 			<thead><tr>${th(__("Person"))}${th(__("Week"))}${th(__("Capacity"), true)}${th(__("Booked"), true)}${th(
@@ -11303,14 +11542,18 @@ const PPU_METHODS = {
 				true
 			)}${th(__("Planned %"), true)}${th(__("Actual %"), true)}</tr></thead>
 			<tbody>${body.join("")}</tbody></table>`;
-		// The report clips its weeks to the month, so the first and last carry only that month's days.
 		$('<p class="pp-util-note"></p>')
 			.text(
 				__(
-					"The first and last weeks count only this month's days, so their capacity is part of a week. Planned % is booked hours against capacity; Over is past 100%, Near full 75% or more."
+					"Planned % is booked hours against capacity; Over is past 100%, Near full 75% or more. Actual is the hours clocked at the kiosk on customer jobs."
 				)
 			)
-			.appendTo(this.$grid_wrap);
+			.appendTo($box);
+		// Arrived by the old Utilization address: the table is what they came for.
+		if (this.capacity_asked === "utilization" && !this.capacity_scrolled) {
+			this.capacity_scrolled = true;
+			if ($box[0] && typeof $box[0].scrollIntoView === "function") $box[0].scrollIntoView({ block: "start" });
+		}
 	},
 };
 

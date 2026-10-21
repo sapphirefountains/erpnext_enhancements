@@ -79,7 +79,9 @@ BOARD_SORT_KEYS = (
 #: own constants are checked against this by tests/test_planner_phase6c.py.
 SCHEMA = {
 	"project": {
-		"view": ("enum", ("week", "month", "crew", "heatmap")),
+		# "heatmap" is what a view saved before the planner UX redesign's P7 says for Capacity (the Heatmap and
+		# Utilization tabs merged into the Crew tab's Capacity screen); the page treats it as Capacity.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "capacity")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),
