@@ -1844,6 +1844,137 @@ body.pp-drag-active * {
 }
 
 /* ======================================================================================== */
+/* P8: Today (phone), the person's day and tomorrow.                                        */
+/* ======================================================================================== */
+
+.pp-today {
+	max-width: 720px;
+	padding-bottom: 24px;
+}
+
+.pp-td-day {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	margin-bottom: 10px;
+	overflow: hidden;
+}
+
+.pp-td-head {
+	padding: 8px 10px;
+	font-size: 13px;
+	border-bottom: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.pp-td-now .pp-td-head b {
+	color: var(--sf-link);
+}
+
+.pp-td-mapbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 8px 10px 0;
+}
+
+.pp-td-cols {
+	display: block;
+	padding: 8px 10px;
+}
+
+.pp-td-cols.pp-nomap {
+	display: none;
+}
+
+.pp-td-cols .pp-map {
+	height: 240px;
+}
+
+.pp-td-stops {
+	min-width: 0;
+}
+
+.pp-td-stop {
+	display: flex;
+	gap: 10px;
+	padding: 10px;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.pp-td-stop:first-child {
+	border-top: none;
+}
+
+/* The stop's number focuses its pin on the map. */
+.pp-td-stop[data-marker]:not([data-marker=""]) .pp-stop-num {
+	cursor: pointer;
+}
+
+/* A stop with no location is not on the map: its number is grey. */
+.pp-td-unlocated .pp-stop-num {
+	background: var(--sf-text-muted);
+}
+
+.pp-td-body {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.pp-td-when {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+}
+
+.pp-td-site {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.pp-td-work {
+	font-size: 13px;
+}
+
+.pp-td-sub {
+	font-size: 13px;
+	color: var(--sf-text-muted);
+}
+
+.pp-td-addr {
+	display: inline-block;
+	font-size: 13px;
+	padding: 6px 0;
+	min-height: var(--sf-touch-min);
+	box-sizing: border-box;
+}
+
+.pp-td-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 2px;
+}
+
+.pp-td-notes {
+	font-size: 12px;
+	color: var(--sf-text-muted);
+	margin-top: 2px;
+	white-space: pre-wrap;
+}
+
+.pp-td-foot {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.pp-td-foot button {
+	min-height: var(--sf-touch-min);
+}
+
+/* ======================================================================================== */
 /* Phase 4: vehicles and assets, Running over, the labor forecast (PP4_STYLE).              */
 /* ======================================================================================== */
 

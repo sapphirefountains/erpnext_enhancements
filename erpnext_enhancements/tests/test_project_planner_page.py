@@ -72,6 +72,8 @@ API_CONTRACT = {
 	"publish_drafts": {"reason"},
 	"discard_drafts": {"tasks"},
 	"get_my_week": {"date"},
+	# P8 (tests/test_planner_today.py): the phone's Today.
+	"get_today": {"date"},
 	"crew_sheet_html": {"start", "group"},
 	# Phase 4 (tests/test_project_planner_phase4_page.py checks each feature): worked hours against
 	# the plan, the labor forecast of the project on screen, and the equipment grid of the crew view.

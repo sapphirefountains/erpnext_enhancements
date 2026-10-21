@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.706.0] - 2026-10-21
+
+### Added
+- **Today, the phone view of the Project Planner** (P8 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.4; Nik approved the redesign on 2026-10-21, D4: "Today + tomorrow
+  list", "Today's route map", "Block my own time"). `/desk/project-planner/today/<date>` lists the
+  signed-in person's stops for the day and the day after, in route order. Each stop shows its **leave-by
+  and arrival times**, the site, what the work is ("Excavate basin · day 2/3", "Visit, 2h"), the address
+  (tap for Maps), crewmates, equipment and weather chips and the task's note. Above the stops: the day's
+  notes and the person's own blocks, and the day's **route map** (the route view's own, drawn from the
+  `get_route` payload) with *Full route* and *Open in Google Maps*. Below: **Block my time** (the My week
+  form, for the person's own time only) and **This week** (My week, unchanged). The header's *Planner*
+  button opens the week view, so nothing the planner does is lost on a phone.
+  - **`project_planner.get_today(date)`** is the back end: a GET for any planner role, found through
+    Planner Resource `user` like `get_my_week`. Each day is a `day_entry` plus the stop's `order`,
+    `leave_by` (the arrival less the drive, `route_slots`' arithmetic, so the calendar and the leave-by
+    ping say the same), `miles`, `weather`, `equipment`, `day_of` (the n-th of a multi-day task's working
+    days) and `fountain_move`; the answer carries today's whole `route_payload` for the map, and the
+    person's blocks and day notes. It writes nothing.
+  - **Landing.** A bare `/project-planner` on a phone (under 768 px) opens Today for anyone who is not
+    a scheduler (not a System Manager, Projects Manager, Projects User or Maintenance Supervisor). The
+    address replaces the bare one, so Back leaves the planner as before. This deliberately beats "last
+    used": the planner saves every screen a person opens as last used, so one visit to the week view
+    would otherwise keep a phone there for good. A link that names a filter (the Project form's *Open in
+    Project Planner*) and a scheduler on a phone keep their screen, and a scheduler reaches Today from
+    *More ▸ Views ▸ Today* (phones only). Someone with planner access but no Planner Resource gets the
+    planner they always had, not a note. Desktop is unchanged. Today is never saved as a last-used view.
+  - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
+    Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
+    Back).
+  - **Read-only.** The only write is the person's own block. A Fountain Move task (v1.703.0) shows a
+    *Move* chip and stays the Maintenance Planner's to schedule. The "running late" / "can't make it"
+    buttons and the phone ICS feed are declined (Nik, 2026-10-21) and are not here.
+  - **Miles.** Distances on Today are miles; routing still measures in km underneath, as the route view
+    does.
+- Tests: `tests/test_planner_today.py` (bench-free: the arithmetic, `get_today` against the Phase 3B
+  stub, the page's wiring) and `scripts/test_planner_today.js` (the real page script against a model of
+  v16.50's router: the landing, history and Back, Block my time, escaping), in their own CI step.
+
+### Changed
+- `test_project_planner` and `test_project_planner_page` list `get_today` among the planner's GET
+  endpoints and its one `date` argument.
+
 ## [1.704.0] - 2026-10-21
 
 ### Added

@@ -1578,6 +1578,33 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
   `get_my_week`, filled through `block_notes` on the server), the day's notes for their group, and a
   **Block my time** button that opens the same form limited to themselves (`self_only`: no person is
   sent).
+- **Today (the phone view, P8 of the Planner UX redesign, `docs/planner-ux-redesign.md` §4.4).**
+  `/desk/project-planner/today/<date>`: the signed-in person's stops for the day and the day after, in
+  route order, each with its leave-by and arrival times, site, what the work is ("Excavate basin · day
+  2/3", "Visit, 2h"), address (tap for Maps), crewmates, equipment and weather chips, and the day's
+  notes; the day's route map (the route view's own `draw_route_map`, fed by the `get_route` payload
+  `get_today` carries) with *Full route* and *Open in Google Maps*; **Block my time** (the My week form,
+  `self_only`) and **This week**. Distances are miles on screen (routing stays in km). Read-only: its one
+  write is the person's own block, and a Fountain Move task shows a *Move* chip and stays the
+  Maintenance Planner's to schedule. The declined field buttons ("running late", "can't make it") and
+  the phone ICS feed are not here.
+  - **Server:** `project_planner.get_today(date)` (a GET, planner roles). Found through Planner Resource
+    `user`; `{resource, label, date, tomorrow, today, can_schedule, days: [2], route, blocks, day_notes}`.
+    Each day is a `day_entry` plus `today_items`: `order`, `leave_by` (`leave_by_clock`: arrival less the
+    drive, `route_slots`' arithmetic), `miles`, `weather`, `equipment` (`engine.read_equipment`), `day_of`
+    (`task_day_of`: working days, so a weekend is not a day) and `fountain_move`.
+  - **Landing (`p8_landing`, called first in `p6c_before_route`):** a bare `/project-planner` on a phone
+    (`max-width: 767px`) opens Today for anyone who is not a scheduler (not one of
+    `crew_availability.SCHEDULER_ROLES`), by `replace_route`, so Back leaves the planner as before. It
+    deliberately beats "last used": every screen a person opens is saved as last used, so one visit to the
+    week view would otherwise pin a phone there for good (the spec's "last-used tab, else Today" would
+    do that). A link that names a filter (`?project=`, the Project form's *Open in Project Planner*) and a
+    scheduler on a phone keep their screen; a scheduler reaches Today from *More ▸ Views ▸ Today*
+    (phones only). Desktop is unchanged. Today is not a saved/last-used view.
+  - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
+    Forward step through them. *Block my time* takes none of its own (the kit's form owns its Back).
+  - **Tests:** `tests/test_planner_today.py` and `scripts/test_planner_today.js` (the real page script
+    against a model of v16.50's router).
 - **Right-click menu** (6B's registry, `p6_menu_providers`): *Show conflicts* on a card in a conflict,
   *Conflicts this day*, *Add a day note…* (schedulers) and *Block time…* on a cell, *Block time…* on a
   name. Every one also has a way in without the menu.
