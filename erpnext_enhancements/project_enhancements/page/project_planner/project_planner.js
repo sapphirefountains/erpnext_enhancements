@@ -749,7 +749,8 @@ class ProjectPlanner {
 			const index = PP.groups.indexOf(group);
 			return index < 0 ? PP.groups.length : index;
 		};
-		return (this.data.resources || [])
+		// this.data is null until the first load answers, and the toolbar's Color by key (Display, "person") asks for the people on every tb_render.
+		return ((this.data && this.data.resources) || [])
 			.filter((resource) => !this.group || resource.group === this.group)
 			.slice()
 			.sort((a, b) => order(a.group) - order(b.group) || String(a.label).localeCompare(String(b.label)));
