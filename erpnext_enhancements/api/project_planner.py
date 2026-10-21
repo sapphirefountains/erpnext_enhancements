@@ -1424,8 +1424,14 @@ def shift_successors(task, days, modified, reason=None, tasks=None):
 		names = [name for name in names if name in wanted]
 
 	docs, skipped = [], []
+	moves = fountain_move_jobs.move_projects(
+		frappe.get_all("Task", filters={"name": ["in", names or [""]]}, pluck="project")
+	)
 	for name in names:
 		doc = frappe.get_doc("Task", name)
+		if doc.get("project") in moves:
+			skipped.append({"task": name, "reason": _("It is a Fountain Move: move it on the Maintenance Planner.")})
+			continue
 		if doc.get("status") in engine.FINISHED_STATUSES:
 			skipped.append({"task": name, "reason": _("It is {0}.").format(doc.get("status"))})
 			continue
@@ -1714,6 +1720,7 @@ def bulk_update(tasks, action, date=None, reason=None):
 			doc = frappe.get_doc("Task", name)
 			doc.check_permission("write")
 			if action == "reschedule":
+				fountain_move_jobs.refuse_on_project_planner(doc)
 				old = _span_text(_state(doc))
 				_move(doc, str(day), None)
 				new = _span_text(_state(doc))

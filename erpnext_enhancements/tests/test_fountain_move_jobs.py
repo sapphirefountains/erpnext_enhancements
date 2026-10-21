@@ -396,7 +396,8 @@ def test_conversion_is_safe_twice(fm, monkeypatch):
 	again = fm.make_move_job("PRJ-00775", cancel_from_template="Service Project Template")
 
 	assert again["fields"] == {} and again["added"] == [] and again["canceled"] == []
-	assert again["kept"] == ["T1"]  # already Canceled: nothing to do
+	# Already Canceled is done, not "kept because somebody started it" (which the patch logs).
+	assert again["kept"] == []
 	assert len(site.tasks) == count and len(site.writes) == writes
 
 
@@ -454,6 +455,10 @@ def test_move_card_has_a_visit_shape(fm):
 	past = fm.move_card(row, [], "2026-10-21", True, datetime.date(2026, 10, 20), datetime.date(2026, 10, 20))
 	assert past["overdue"]
 
+	# A task that began before the visible range sits on the range's first day and says when it began.
+	early = fm.move_card(row, [], "2026-10-21", True, datetime.date(2026, 10, 24), day.replace(day=27), day.replace(day=25))
+	assert (early["date"], early["start"], early["end"]) == ("2026-10-25", "2026-10-24", "2026-10-27")
+
 
 def test_crew_users_puts_the_lead_first_and_skips_people_without_a_user(fm):
 	crew = [
@@ -478,6 +483,25 @@ def test_crew_entries_keep_hours_lead_first_and_report_missing(fm):
 		{"resource": "R-A", "hours": 2, "is_lead": 0},
 	]
 	assert missing == ["ghost@x"]
+
+
+def test_crew_entries_never_drop_what_the_page_cannot_see(fm):
+	"""A subcontractor or vehicle on the crew (no user) stays; a person whose resource went inactive
+	keeps it instead of being refused."""
+	current = [
+		{"resource": "R-OLD", "hours": 0, "is_lead": True, "user": "old@x"},
+		{"resource": "R-SUB", "hours": 3, "is_lead": False, "user": None},
+	]
+	entries, missing = fm.crew_entries(["old@x", "new@x"], current, {"new@x": "R-NEW"})
+	assert missing == []
+	assert entries == [
+		{"resource": "R-OLD", "hours": 0, "is_lead": 1},
+		{"resource": "R-NEW", "hours": 0, "is_lead": 0},
+		{"resource": "R-SUB", "hours": 3, "is_lead": 0},
+	]
+	# The first person who has a resource leads, even when an earlier one has none.
+	entries, missing = fm.crew_entries(["ghost@x", "new@x"], [], {"new@x": "R-NEW"})
+	assert entries == [{"resource": "R-NEW", "hours": 0, "is_lead": 1}] and missing == ["ghost@x"]
 
 
 def test_project_planner_cards_of_move_jobs_are_read_only(fm, monkeypatch):

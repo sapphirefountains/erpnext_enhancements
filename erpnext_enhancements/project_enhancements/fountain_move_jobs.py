@@ -121,8 +121,11 @@ def cardable(row):
 	return not cint(row.get("is_group")) and flt(row.get("expected_time")) > 0
 
 
-def move_card(row, crew, today, can_move, first_day=None, last_day=None):
+def move_card(row, crew, today, can_move, first_day=None, last_day=None, shown=None):
 	"""One Maintenance Planner card for a move task.
+
+	``shown`` is the day the card sits on when that is not its first day (a task that started before
+	the visible range); ``start`` then says when it really starts.
 
 	``row`` is the Task row (``project_title``, ``customer`` joined in), ``crew`` its people as
 	``[{"user", "name", "hours"}]``, the lead first. The card's ``technician`` is the lead and
@@ -141,7 +144,8 @@ def move_card(row, crew, today, can_move, first_day=None, last_day=None):
 		"key": f"move|{row.get('name')}",
 		"name": row.get("name"),
 		"subject": row.get("subject") or row.get("name"),
-		"date": str(first_day) if first_day else None,
+		"date": str(shown or first_day) if first_day else None,
+		"start": str(first_day) if first_day else None,
 		"end": str(last_day) if last_day and last_day != first_day else None,
 		"project": row.get("project"),
 		"customer": row.get("customer"),
@@ -188,14 +192,20 @@ def crew_users(crew, resources):
 def crew_entries(users, current, user_to_resource):
 	"""The Project Planner's crew list for ``users`` (lead first), keeping current rows' hours.
 
-	``current`` is the task's crew now (``[{"resource", "hours", "is_lead"}]``); ``user_to_resource``
-	maps a user to their active Planner Resource. Returns ``(entries, missing)``: ``missing`` are the
-	users with no resource, which the caller refuses. The first user is the lead.
+	``current`` is the task's crew now (``[{"resource", "hours", "is_lead", "user"}]``, ``user`` None
+	for a resource with no login: a subcontractor, a vehicle); ``user_to_resource`` maps a user to
+	their active Planner Resource. A person already on the crew keeps their own resource even when it
+	is no longer active, and every crew member with no user is kept, after the people: the
+	Maintenance Planner only shows people, so it must not drop what it cannot see. Returns
+	``(entries, missing)``: ``missing`` are the users with no resource, which the caller refuses. The
+	first user is the lead.
 	"""
 	by_resource = {m.get("resource"): m for m in current or []}
+	mapping = dict(user_to_resource or {})
+	mapping.update({m["user"]: m.get("resource") for m in current or [] if m.get("user") and m.get("resource")})
 	entries, missing, seen = [], [], set()
-	for index, user in enumerate(users or []):
-		resource = (user_to_resource or {}).get(user)
+	for user in users or []:
+		resource = mapping.get(user)
 		if not resource:
 			missing.append(user)
 			continue
@@ -203,7 +213,12 @@ def crew_entries(users, current, user_to_resource):
 			continue
 		seen.add(resource)
 		kept = by_resource.get(resource) or {}
-		entries.append({"resource": resource, "hours": kept.get("hours") or 0, "is_lead": 1 if index == 0 else 0})
+		entries.append({"resource": resource, "hours": kept.get("hours") or 0, "is_lead": 0 if entries else 1})
+	for member in current or []:
+		resource = member.get("resource")
+		if resource and not member.get("user") and resource not in seen:
+			seen.add(resource)
+			entries.append({"resource": resource, "hours": member.get("hours") or 0, "is_lead": 0})
 	return entries, missing
 
 
@@ -325,8 +340,9 @@ def refuse_on_project_planner(doc):
 def planner_cards(start, end, today, can_move):
 	"""The move-task cards for the Maintenance Planner: ``(dated, undated)``.
 
-	Open leaf tasks with hours on move projects that are not closed. A dated task shows on its first
-	day when that day is in ``start``..``end``; an undated one goes to the Unscheduled tray.
+	Open leaf tasks with hours on move projects that are not closed. A dated task overlapping
+	``start``..``end`` shows once, on its first day (or the range's first day when it began earlier);
+	an undated one goes to the Unscheduled tray.
 	"""
 	from erpnext_enhancements.project_enhancements import crew_availability as engine
 
@@ -373,8 +389,10 @@ def planner_cards(start, end, today, can_move):
 		crew = crews.get(row.get("name")) or []
 		if not span:
 			undated.append(move_card(row, crew, today, can_move))
-		elif start <= span[0] <= end:
-			dated.append(move_card(row, crew, today, can_move, span[0], span[1]))
+		elif span[0] <= end and span[1] >= start:
+			# One card per task: on its first day, or on the range's first day when it began earlier.
+			shown = span[0] if span[0] >= start else start
+			dated.append(move_card(row, crew, today, can_move, span[0], span[1], shown))
 	return dated, undated
 
 
@@ -418,7 +436,18 @@ def move_task(task, modified, date=None, crew=None, reason=None):
 			"Planner Resource", filters={"is_active": 1}, fields=["name", "user"], limit_page_length=0
 		)
 		user_to_resource = {r.get("user"): r.get("name") for r in active if r.get("user")}
-		entries, missing = crew_entries(users, project_planner._current_crew(doc), user_to_resource)
+		current = project_planner._current_crew(doc)
+		owners = {
+			r.get("name"): r.get("user")
+			for r in frappe.get_all(
+				"Planner Resource",
+				filters={"name": ["in", [m.get("resource") for m in current] or [""]]},
+				fields=["name", "user"],
+				limit_page_length=0,
+			)
+		}
+		current = [dict(m, user=owners.get(m.get("resource"))) for m in current]
+		entries, missing = crew_entries(users, current, user_to_resource)
 		if missing:
 			names = ", ".join(frappe.utils.get_fullname(u) or u for u in missing)
 			frappe.throw(_("{0} is not on the planner's resource list, so they cannot be booked on a task.").format(names))
@@ -506,6 +535,8 @@ def make_move_job(project, cancel_from_template=None):
 			fields=["name", "status", "actual_time", "_assign"],
 			order_by="lft desc",
 		):
+			if row.get("status") in (CANCELED, "Cancelled"):
+				continue
 			if row.get("status") == "Open" and not flt(row.get("actual_time")) and not _assigned(row) and not _timesheets(row.name):
 				frappe.db.set_value("Task", row.name, "status", CANCELED)
 				report["canceled"].append(row.name)

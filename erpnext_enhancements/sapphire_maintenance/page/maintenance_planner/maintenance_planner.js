@@ -908,7 +908,7 @@ class MaintenancePlanner {
 					.attr("title", this.drive_line(cell))
 					.appendTo($head);
 			}
-			const visit_count = day_cards.filter((card) => card.kind !== "booking").length;
+			const visit_count = day_cards.filter((card) => card.kind !== "booking" && card.kind !== "move").length;
 			if (visit_count > 1) {
 				$('<span class="mp-day-count"></span>').text(__("{0} visits", [visit_count])).appendTo($head);
 			}
@@ -5104,8 +5104,14 @@ const MP6C_METHODS = {
 			marks.push(__(MP.booking_kinds[card.booking_kind] || "Project"));
 		} else {
 			title = card.site || card.site_full || card.name;
-			const what = card.label ? __(card.label) : card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
+			const what =
+				card.kind === "move"
+					? card.subject
+					: card.label
+					? __(card.label)
+					: card.feature || (card.kind === "projected" ? __(card.frequency || "") : __("Regular visit"));
 			sub = [what, row ? "" : names || __("Unassigned")].filter(Boolean).join(" · ");
+			if (card.kind === "move") marks.push(__("Move"));
 			if (card.kind === "projected") marks.push(card.movable ? __("Next visit") : __("Projected"));
 			if (card.status === "pending") marks.push(__("Pending review"));
 			if (card.status === "done") marks.push(__("Done"));
@@ -6351,6 +6357,7 @@ const MPFM_METHODS = {
 		const people = this.visit_people(card);
 		const in_row = this.view === "crew" && !!card.date;
 		const sub = [card.subject, __("{0}h", [mp_hours(card.hours)])];
+		if (card.start && card.start !== card.date) sub.push(__("from {0}", [mp_when(card.start)]));
 		if (card.end) sub.push(__("until {0}", [mp_when(card.end)]));
 		const chips = [`<span class="mp-chip mp-move-chip">${mp_esc(__("Move"))}</span>`];
 		if (card.tentative) chips.push(`<span class="mp-chip mp-pencil-chip">${mp_esc(__("Pencil"))}</span>`);
@@ -6425,7 +6432,7 @@ const MPFM_METHODS = {
 
 	// Show it straight away, save it, reload: the reload is the truth.
 	fm_apply(card, change) {
-		const before = { date: card.date || null, crew: this.visit_people(card) };
+		const before = { date: card.start || card.date || null, crew: this.visit_people(card) };
 		const site = this.site_of(card);
 		const args = { task: card.name, modified: this.modified[card.name] || card.modified };
 		if (change.date) {
@@ -6449,7 +6456,15 @@ const MPFM_METHODS = {
 		card.saving = true;
 		this.render();
 		return this.send("move_fountain_move", args, {
-			snapshot: { kind: "move", site, task: card.name, date: before.date, crew: before.crew },
+			// The crew goes back only when this change touched it: sending it otherwise would turn a
+			// crew read from assignments into crew rows.
+			snapshot: {
+				kind: "move",
+				site,
+				task: card.name,
+				date: change.date ? before.date : null,
+				crew: change.crew ? before.crew : null,
+			},
 			message,
 			noun: "task",
 		}).finally(() => this.load());
@@ -6459,11 +6474,21 @@ const MPFM_METHODS = {
 	fm_undo(snap) {
 		if (!snap || snap.kind !== "move") return false;
 		const card = this.by_key[`move|${snap.task}`];
-		const args = {
-			task: snap.task,
-			modified: this.modified[snap.task] || (card && card.modified) || "",
-			crew: JSON.stringify(snap.crew || []),
-		};
+		if (!snap.crew && !(snap.date && snap.date >= this.today())) {
+			// Only a day to undo, and it is gone (scheduled from the tray, or a day that has passed).
+			frappe.show_alert(
+				{
+					message: __("{0} keeps its day: a task cannot go back to a day that has passed or to unscheduled.", [
+						snap.site,
+					]),
+					indicator: "orange",
+				},
+				8
+			);
+			return true;
+		}
+		const args = { task: snap.task, modified: this.modified[snap.task] || (card && card.modified) || "" };
+		if (snap.crew) args.crew = JSON.stringify(snap.crew);
 		const date_back = !!(snap.date && snap.date >= this.today());
 		if (date_back) args.date = snap.date;
 		if (card) {
@@ -6476,7 +6501,7 @@ const MPFM_METHODS = {
 			noun: "task",
 		})
 			.then((result) => {
-				if (result && !date_back && card && card.date !== snap.date) {
+				if (result && snap.date && !date_back) {
 					frappe.show_alert(
 						{
 							message: __(
