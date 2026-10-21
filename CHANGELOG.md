@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-P7 (Crew board in days + Capacity, PR #1325): the version number is assigned when it is its turn to merge (after P5 and P6).
+## [1.710.0] - 2026-10-21
 
 ### Added
 - **The Project Planner's Crew tab counts in days, and Capacity replaces the Heatmap and Utilization tabs**
