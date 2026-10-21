@@ -61,7 +61,6 @@ API_CONTRACT = {
 	"get_route": {"resource", "date"},
 	"suggest_dates": {"task"},
 	# Phase 3A: planning helpers (tests/test_project_planner_phase3a_page.py checks each feature).
-	"shift_successors": {"task", "days", "modified", "reason", "tasks"},
 	"get_heatmap": {"start", "weeks"},
 	"get_overdue": {"limit"},
 	"bulk_update": {"tasks", "action", "date", "reason"},
@@ -69,8 +68,12 @@ API_CONTRACT = {
 	# Phase 3B (tests/test_planner_phase3b.py): draft mode adds ``draft`` to the read and to every
 	# write (send() adds it to save_task/add_crew/swap_crew), then publish or discard; My week; the
 	# printable crew sheet.
-	"publish_drafts": {"reason"},
-	"discard_drafts": {"tasks"},
+	"publish_drafts": {"reason", "project"},
+	"discard_drafts": {"tasks", "project"},
+	# P4 (tests/test_planner_autoshift.py): a project's own Publish… and Set/Reset baseline. The page no
+	# longer calls shift_successors: a change of days sends dependents=1 on the save itself.
+	"publish_project_schedule": {"project", "reason"},
+	"reset_baseline": {"project", "dry_run"},
 	"get_my_week": {"date"},
 	"crew_sheet_html": {"start", "group"},
 	# Phase 4 (tests/test_project_planner_phase4_page.py checks each feature): worked hours against
@@ -89,6 +92,11 @@ API_CONTRACT = {
 }
 for _method in ("get_planner", "save_task", "add_crew", "swap_crew"):
 	API_CONTRACT[_method] = API_CONTRACT[_method] | {"draft"}
+# P4: the "Notify crew?" answer on the live writes, and the tasks that follow on the two that move days.
+for _method in ("save_task", "add_crew", "swap_crew"):
+	API_CONTRACT[_method] = API_CONTRACT[_method] | {"notify"}
+for _method in ("save_task", "swap_crew"):
+	API_CONTRACT[_method] = API_CONTRACT[_method] | {"dependents"}
 
 # What the route view reads from get_route (spec section B) and the per-day keys the engine adds
 # to a day cell. The page only ever reads these; a rename on the server must be a conscious one.

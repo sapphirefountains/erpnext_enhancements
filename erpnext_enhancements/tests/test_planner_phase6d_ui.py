@@ -327,8 +327,9 @@ class TestFixesGoThroughTheWritePath(unittest.TestCase):
 		methods = dict(re.findall(r'\[`\$\{PP\.api\}\.(\w+)`\]: "(\w+)"', PP_BLOCK))
 		self.assertEqual(set(methods.values()), {"save_task", "swap_crew", "add_crew"})
 		self.assertTrue(all(key == value for key, value in methods.items()))
-		# Draft mode drafts every one of them: send() adds draft=1 to exactly these methods.
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew"]', PP)
+		# The hold drafts every one of them: send() adds draft=1 (P4: or "auto", so a Draft schedule
+		# drafts them too) to exactly these methods, and to move_many.
+		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', PP)
 		send = _class_method(PP, "send")
 		self.assertIn("args = this.with_draft(method, args);", send)
 		self.assertIn("this.ask_reason(result.conflicts || {})", send)
