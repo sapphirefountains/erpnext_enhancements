@@ -1397,6 +1397,49 @@ test("Maintenance Planner: the phone's sheet", () => {
 	check("closed: the filter is back before the chips", mp.$filters.nodes[0].parentNode.childNodes.indexOf(mp.$filters.nodes[0]) + 1, mp.$alerts.nodes[0].parentNode.childNodes.indexOf(mp.$alerts.nodes[0]));
 });
 
+// The planner kit can already be loaded when the page is first routed, so tb_render runs from set_mode
+// before load() has answered: this.data is still null. A saved Color by of "person" (or any mode that
+// reads the data) must not throw there, or handle_route aborts and load() never runs.
+test("Project Planner: tb_render before the first load, with data null, throws in no Color by mode", () => {
+	["person", "project", "pm", "job_type", "status"].forEach((mode) => {
+		const { pp, ctx } = projectPlanner();
+		const proto = vm.runInContext("ProjectPlanner", ctx).prototype;
+		pp.p6c_legend_entries = proto.p6c_legend_entries;
+		pp.p6a = { kit: { big_picture: { palette_legend: () => [], hash_color: () => "#123456" } } };
+		pp.by_resource = {};
+		pp.data = null;
+		pp.p6c.color_by = mode;
+		let error = null;
+		try {
+			pp.tb_render();
+			pp.tb_items("display");
+		} catch (e) {
+			error = e && e.message;
+		}
+		check(`Color by ${mode}: nothing thrown`, error, null);
+		check(`Color by ${mode}: no people to list`, pp.resources(), []);
+	});
+});
+
+test("Maintenance Planner: tb_render before the first load, with data null, throws in no Color by mode", () => {
+	["technician", "site", "contract", "status"].forEach((mode) => {
+		const { mp, ctx } = maintenancePlanner();
+		const proto = vm.runInContext("MaintenancePlanner", ctx).prototype;
+		mp.p6c_legend_entries = proto.p6c_legend_entries;
+		mp.p6a = { kit: { big_picture: { palette_legend: () => [], hash_color: () => "#123456" } } };
+		mp.data = null;
+		mp.p6c.color_by = mode;
+		let error = null;
+		try {
+			mp.tb_render();
+			mp.tb_items("display");
+		} catch (e) {
+			error = e && e.message;
+		}
+		check(`Color by ${mode}: nothing thrown`, error, null);
+	});
+});
+
 // ------------------------------------------------------------------ run
 
 (async () => {

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.699.1] - 2026-10-21
+
+### Fixed
+- **The Project Planner opened to a blank page, toolbar only, for anyone whose saved Color by was
+  "person"** (seen live 2026-10-21, v1.699.0; only Nik had that setting on production). No calendar
+  and no `get_planner` request, and the console said `TypeError: Cannot read properties of null
+  (reading 'resources')`. The v1.687.0 toolbar redesign builds the Display menu, Color by key
+  included, from page state on every `tb_render`. In "person" mode the key lists
+  `this.resources()`, which read `this.data.resources`. `this.data` is null until the first
+  `get_planner` answers, and `handle_route` calls `set_mode` (which runs `tb_render`) *before*
+  `load()`. Normally the kit is not loaded yet, so the key is empty and nothing reads the data. When
+  the planner kit was already cached, the key was built first, the throw aborted `handle_route`, and
+  `load()` never ran. The Display menu runs the same code, so there was no way to change the setting
+  from the page. `resources()` now returns an empty list while `this.data` is null. The other Color
+  by modes (project, project manager, job type, status) and the Maintenance Planner's (technician,
+  site, contract, status) were checked and already guard it. New checks in
+  `scripts/test_planner_toolbar.js` run `tb_render` and the Display items with no data in every
+  mode, in both planners.
+
 ## [1.699.0] - 2026-10-20
 
 ### Added
