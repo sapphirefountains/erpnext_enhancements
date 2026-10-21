@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.699.1] - 2026-10-21
+## [1.699.2] - 2026-10-21
 
 ### Added
 - **Planner UX redesign proposal** (`docs/planner-ux-redesign.md`, R1 of the Planner UX rethink,
