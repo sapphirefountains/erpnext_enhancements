@@ -1446,3 +1446,8 @@ erpnext_enhancements.patches.add_boneyard_warehouse
 # the new Desk page bin-manager (a shortcut beside Stock Scan; the Inventory and Counts cards). Timestamp-bumped too;
 # this is the belt. Logs each failure, never raises, safe twice.
 erpnext_enhancements.patches.bin_manager_hub_links
+# Planner UX redesign P3 (v1.702.0): creates the Project schedule-state fields from their fixture records (patches run before fixture
+# sync), then sets custom_schedule_status Published on each project with dated, crewed work (10 of 661 on 2026-10-21) and Draft on any
+# blank one. Keyed on the rule, since the column's ALTER writes Draft into every row. Raw UPDATEs; never un-publishes. Cannot raise,
+# safe twice.
+erpnext_enhancements.patches.mark_project_schedule_states

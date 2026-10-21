@@ -58,6 +58,8 @@ TODAY = D(2026, 10, 8)  # a Thursday
 NOW = DT(2026, 10, 8, 7, 0, 0)
 MON, TUE, WED, THU, FRI = (D(2026, 10, 12) + datetime.timedelta(days=i) for i in range(5))
 BASE = "2026-10-08 09:00:00"
+#: The columns P3 of the Planner UX redesign adds (``api.project_planner._has_schedule_columns``).
+P3_COLUMNS = ("custom_schedule_status", "custom_baseline_start")
 
 STUBBED = (
 	"frappe",
@@ -177,9 +179,11 @@ class _Row(_Doc):
 		frappe.sequence.append(f"insert:{doctype}")
 		return self
 
-	def save(self):
+	def save(self, ignore_permissions=False):
 		frappe.counter += 1
 		self["modified"] = f"2026-10-08 09:{frappe.counter:02d}:30"
+		if ignore_permissions:
+			frappe.calls.append(("save_ignoring_permissions", self["doctype"], self.get("name")))
 		rows = frappe.tables.setdefault(self["doctype"], [])
 		for index, row in enumerate(rows):
 			if row.get("name") == self.get("name"):
@@ -380,7 +384,9 @@ def _reset():
 	frappe.db = types.SimpleNamespace(
 		sql=_sql,
 		exists=_exists,
-		has_column=lambda doctype, column: True,
+		# A site from before P3 (per-project schedules): the Project and Task schedule columns are not
+		# there, so drafts stay their author's. tests/test_planner_publish_baseline.py turns them on.
+		has_column=lambda doctype, column: column not in P3_COLUMNS,
 		get_value=lambda doctype, name, field=None, *a, **k: frappe.values.get((doctype, _key(name), field)),
 		get_single_value=lambda doctype, field, *a, **k: None,
 		set_value=lambda *a, **k: frappe.db_calls.append(("set_value", a, k)),

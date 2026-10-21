@@ -938,6 +938,7 @@ def move_visit(
 	full_day=None,
 	from_user=None,
 	tentative=None,
+	notify=None,
 	draft=0,
 ):
 	"""Reschedule an open draft visit, hand it to someone else, or change who is on it.
@@ -973,6 +974,11 @@ def move_visit(
 	caller's Planner Draft Change row for the visit (``maintenance_drafts.draft_move``) and is saved
 	through :func:`_apply_visit`, this very path, when they publish.
 
+	``notify`` (P3, the "Notify crew?" answer): ``1`` sends the people whose visit moved, or who
+	came on or off it, the Maintenance Planner's publish notice (never the person editing), ``0``
+	sends nothing, ``auto`` notifies when the visit's day before or after is within the next 14
+	days. The answer carries ``"notified"``. Unset, nothing changes. Ignored with ``draft=1``.
+
 	Returns ``{"name", "date", "technician", "crew": [{"user", "name", "hours"}],
 	"planned_hours", "full_day", "tentative", "modified", "warnings"}``, plus ``conflicts`` when
 	saved over some.
@@ -995,7 +1001,30 @@ def move_visit(
 	doc.check_permission("write")
 	_refuse_finished(doc)
 	_check_fresh(doc, modified)
-	return _apply_visit(doc, reason=reason, **edits)
+	from erpnext_enhancements.api.maintenance_drafts import _given
+
+	if _given(notify) is None:
+		return _apply_visit(doc, reason=reason, **edits)
+	return _apply_visit_notified(doc, notify, reason=reason, **edits)
+
+
+def _apply_visit_notified(doc, notify, reason=None, **edits):
+	""":func:`_apply_visit` with a "Notify crew?" answer (P3): the visit as the engine reads it
+	before and after (``maintenance_drafts.engine_row``) goes to that planner's own publish notice,
+	so a live move with Notify tells people exactly what publishing the same draft would."""
+	from erpnext_enhancements.api import maintenance_drafts
+	from erpnext_enhancements.api.project_planner import notify_choice
+
+	before = maintenance_drafts.engine_row(doc)
+	result = _apply_visit(doc, reason=reason, **edits)
+	if result.get("needs_reason"):
+		return result
+	after = maintenance_drafts.engine_row(doc)
+	spans = [(row["plan_date"], row["plan_date"]) for row in (before, after) if row.get("plan_date")]
+	choice = notify_choice(notify, spans, getdate(nowdate()))
+	plan = {"name": doc.name, "subject": maintenance_drafts._subject(doc), "before": before, "after": after}
+	result["notified"] = maintenance_drafts._notify_publish([plan]) if choice else 0
+	return result
 
 
 def _apply_visit(doc, reason=None, **edits):
