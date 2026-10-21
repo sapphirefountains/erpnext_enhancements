@@ -75,10 +75,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The board-wide switch is called "Hold all my changes" everywhere** (Nik, 2026-10-21). That is
   the menu, the strip ("Holding your changes: N not published yet") and the toast. "Draft" now
   means only a project's Draft schedule.
-- **What today's users will notice.** P3's patch left **651 of 661 projects Draft**. A drag on any
-  of their tasks is now a draft, shown with a dashed outline and a strip line, and it reaches nobody
-  until someone presses *Publish…*. The 10 Published projects save live as before, plus the "Notify
-  crew?" question.
+- **Every active customer job is published on this deploy** (patch `publish_active_job_schedules`;
+  Nik, 2026-10-21: "Keep Draft/Published as designed; publish the 47 active Draft jobs before P4
+  merges"). P4 drafts every write to a Draft project, so this runs first, after P3's
+  `mark_project_schedule_states`.
+  - **The rule:** `status` Active, a customer job by the planner's own rule
+    (`crew_availability.planner_job_sql` / `is_planner_job`, so it cannot drift), and a schedule that
+    is not Published.
+  - **Measured on production on 2026-10-21, read-only: 47 projects**, all Draft, none blank. That is
+    Service 33 (PRJ-00775, the Fountain Move, among them), Design 8, Events 5 and Build 1: PRJ-00119, PRJ-00127, PRJ-00134, PRJ-00136, PRJ-00179, PRJ-00183, PRJ-00228, PRJ-00262, PRJ-00280, PRJ-00316, PRJ-00385, PRJ-00408, PRJ-00443, PRJ-00446, PRJ-00459, PRJ-00469, PRJ-00471, PRJ-00500, PRJ-00581, PRJ-00599, PRJ-00600, PRJ-00608, PRJ-00614, PRJ-00617, PRJ-00694, PRJ-00695, PRJ-00696, PRJ-00701, PRJ-00703, PRJ-00705, PRJ-00710, PRJ-00713, PRJ-00715, PRJ-00717, PRJ-00740, PRJ-00741, PRJ-00744, PRJ-00753, PRJ-00756, PRJ-00766, PRJ-00768, PRJ-00769, PRJ-00770, PRJ-00773, PRJ-00774, PRJ-00775, PRJ-00776.
+  - **How it writes:** one raw `UPDATE`, as P3's did, with no save, hooks, `modified` bump or calendar
+    sync.
+  - **Not written:** no baseline and no `custom_schedule_published_on`, as for P3's ten; the first
+    *Set baseline* gives each its baseline.
+  - **Never touched:** a Published project is never set back, and Completed and Canceled projects
+    are left alone. The patch cannot raise and is safe twice.
+  - **New projects still start Draft**, as designed (D8). Their writes are drafts until someone
+    presses *Publish…*.
+- **What today's users will notice.** After this deploy, the 10 projects P3 published and these 47
+  active jobs save live, as before, now with the "Notify crew?" question. Every other project
+  (inactive, completed or not a customer job) is a Draft schedule. A planner edit on one of those is
+  a draft, shown with a dashed outline and a strip line, and it reaches nobody until *Publish…*.
 - **Undo** of a change that moved followers is one `move_many` that puts every task back. When the
   change was more than dates, the plain Undo's save then restores the rest of the task.
 

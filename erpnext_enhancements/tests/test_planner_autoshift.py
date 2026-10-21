@@ -37,10 +37,12 @@ Run: python -m unittest erpnext_enhancements.tests.test_planner_autoshift
 import ast
 import copy
 import datetime
+import importlib
 import json
 import shutil
 import subprocess
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -852,6 +854,129 @@ class TestDraftsPerProject(unittest.TestCase):
 		out = api._with_drafts(result, overlay, D(2026, 10, 11), D(2026, 10, 17))
 		self.assertEqual(out["tasks"][0]["drafted_by"], "clegg@example.com")
 		self.assertEqual(out["drafts"]["projects"], {"PRJ-2": {"count": 1, "shared": 1}})
+
+
+# ====================================================================== publishing the active jobs (patch)
+
+
+class TestPublishActiveJobSchedules(unittest.TestCase):
+	"""``patches/publish_active_job_schedules`` (Nik, 2026-10-21: "publish the 47 active Draft jobs
+	before P4 merges"): the planner's own customer-job rule, one raw UPDATE, never un-publishes,
+	safe twice, never raises."""
+
+	PROJECTS = {
+		"PRJ-SVC": {"status": "Active", "schedule": "Draft", "project_type": "Service", "stream": 0},
+		"PRJ-BLANK": {"status": "Active", "schedule": "", "project_type": "Design", "stream": 0},
+		"PRJ-STREAM": {"status": "Active", "schedule": "Draft", "project_type": "", "stream": 1},
+		"PRJ-RENT": {"status": "Active", "schedule": "Draft", "project_type": "Rent", "stream": 0},
+		"PRJ-INTERNAL": {"status": "Active", "schedule": "Draft", "project_type": "Internal", "stream": 0},
+		"PRJ-DONE": {"status": "Completed", "schedule": "Draft", "project_type": "Build", "stream": 0},
+		"PRJ-GONE": {"status": "Cancelled", "schedule": "Draft", "project_type": "Service", "stream": 0},
+		"PRJ-PUB": {"status": "Active", "schedule": "Published", "project_type": "Service", "stream": 0},
+	}
+
+	def setUp(self):
+		h._reset()
+		self.frappe = h.frappe
+		self.rows = copy.deepcopy(self.PROJECTS)
+		self.queries, self.printed, self.fail = [], [], None
+		self.frappe.db.has_column = lambda doctype, column: True
+		self.frappe.db._cursor = types.SimpleNamespace(rowcount=0)
+
+		def sql(query, values=None, as_dict=False, **kwargs):
+			self.queries.append(" ".join(query.split()))
+			if self.fail and self.fail in query:
+				raise RuntimeError("database is down")
+			if "SELECT p.name" in query:
+				# The query's own WHERE (Active, not Published); the job rule is is_planner_job's.
+				return [
+					h._Doc(name=name, project_type=row["project_type"], planner_stream=row["stream"])
+					for name, row in sorted(self.rows.items())
+					if row["status"] == values["active"] and row["schedule"] != values["published"]
+				]
+			if "UPDATE `tabProject`" in query:
+				changed = 0
+				for name in values["names"]:
+					row = self.rows[name]
+					if row["status"] == values["active"] and row["schedule"] != values["published"]:
+						row["schedule"] = values["published"]
+						changed += 1
+				self.frappe.db._cursor.rowcount = changed
+			return []
+
+		self.frappe.db.sql = sql
+		sys.modules.pop("erpnext_enhancements.patches.publish_active_job_schedules", None)
+		self.patch = importlib.import_module("erpnext_enhancements.patches.publish_active_job_schedules")
+		self.print = mock.patch("builtins.print", lambda *a, **k: self.printed.append(" ".join(map(str, a))))
+		self.print.start()
+
+	def tearDown(self):
+		self.print.stop()
+
+	def _schedules(self):
+		return {name: row["schedule"] for name, row in self.rows.items()}
+
+	def test_the_active_customer_jobs_are_published_and_nothing_else(self):
+		self.patch.execute()
+		self.assertEqual(
+			self._schedules(),
+			{
+				"PRJ-SVC": "Published",
+				"PRJ-BLANK": "Published",  # blank reads Draft
+				"PRJ-STREAM": "Published",  # a qualifying value stream, as the planner counts it
+				"PRJ-RENT": "Published",  # Rent is a planner type
+				"PRJ-INTERNAL": "Draft",  # not a customer job: the planner never shows it
+				"PRJ-DONE": "Draft",  # Completed: untouched
+				"PRJ-GONE": "Draft",  # Cancelled: untouched
+				"PRJ-PUB": "Published",
+			},
+		)
+		self.assertIn(
+			"4 active customer job(s) on Draft, 4 set Published: PRJ-BLANK, PRJ-RENT", self.printed[-1]
+		)
+
+	def test_the_rule_is_the_planners_and_the_write_is_one_raw_update(self):
+		self.patch.execute()
+		select = next(q for q in self.queries if "SELECT p.name" in q)
+		type_expr, stream = h.engine.planner_job_sql("p")
+		self.assertIn(" ".join(type_expr.split()), select)
+		self.assertIn(" ".join(stream.split()), select)
+		update = next(q for q in self.queries if q.startswith("UPDATE"))
+		self.assertIn(
+			"WHERE name IN %(names)s AND status = %(active)s AND IFNULL(custom_schedule_status, '') <> %(published)s",
+			update,
+		)
+		self.assertNotIn("custom_schedule_published_on", update)
+		self.assertNotIn("modified", update)
+		self.assertEqual(self.frappe.saved, [])  # no Project or Task saved
+
+	def test_it_is_safe_twice_and_never_unpublishes(self):
+		self.patch.execute()
+		first = self._schedules()
+		self.patch.execute()
+		self.assertEqual(self._schedules(), first)
+		self.assertIn("0 active customer job(s) on Draft, 0 set Published.", self.printed[-1])
+
+	def test_it_never_raises(self):
+		self.fail = "SELECT"
+		self.patch.execute()
+		self.assertEqual(self.frappe.errors[-1][1]["title"], "Planner: active jobs not published")
+		self.fail = "UPDATE"
+		self.patch.execute()
+		self.assertEqual(len(self.frappe.errors), 2)
+		self.assertEqual(self._schedules(), {name: row["schedule"] for name, row in self.PROJECTS.items()})
+		self.frappe.db.has_column = lambda doctype, column: False
+		self.patch.execute()
+		self.assertIn("is missing; nothing published", self.printed[-1])
+
+	def test_it_runs_after_p3s_patch_and_is_documented(self):
+		lines = (APP / "patches.txt").read_text(encoding="utf-8").splitlines()
+		ours = lines.index("erpnext_enhancements.patches.publish_active_job_schedules")
+		self.assertGreater(ours, lines.index("erpnext_enhancements.patches.mark_project_schedule_states"))
+		self.assertEqual(lines.count("erpnext_enhancements.patches.publish_active_job_schedules"), 1)
+		self.assertIn(
+			"`publish_active_job_schedules`", (APP / "patches/README.md").read_text(encoding="utf-8")
+		)
 
 
 # ====================================================================== wiring
