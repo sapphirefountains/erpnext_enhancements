@@ -8,9 +8,13 @@
  *      and the phone's sheet over planner_kit/history.js and a fake browser (one history entry, Back
  *      closes it without the router routing, Esc closes it and steps off its entry, an item closes
  *      it first, a switch keeps it open and redraws it).
+ *      Toolbar v2 (the planner UX redesign, P1): the kit's tabs control (a tablist: roles, roving
+ *      tabindex, arrow keys that move focus only) and the section flattening that turns Display,
+ *      Views, Tools and Print into More's one list.
  *   2. Both planner pages' toolbar blocks (PPTB, MPTB) on an instance of each page's own class, with
  *      a recording stand-in for jQuery over the same fake DOM: every control the old toolbar had is
- *      still reachable (an explicit list, each item run and the method it calls checked), toggles
+ *      still reachable under + Add or More (an explicit list, each item run and the method it calls
+ *      checked, in the menu's list and in the phone's sheet), Split and Move by keep a home, toggles
  *      say their state, the alert chips are there only above zero and open what their buttons did,
  *      the draft strip shows only in Draft mode and its Publish and Discard call the existing
  *      publish and discard, the phone's sheet takes the filters in and gives them back, and the
@@ -248,10 +252,16 @@ function kitSource() {
 		.join("\n");
 }
 
+// What a page's toolbar block asks of the kit besides menus and the sheet, from the real module.
+function kitHelpers() {
+	const kit = loadKit();
+	return { sections_to_items: kit.sections_to_items, tidy: kit.tidy };
+}
+
 function loadKit() {
 	const ctx = { console, Date, Math, Array, Object, String, Number, JSON };
 	vm.createContext(ctx);
-	vm.runInContext(`${kitSource()}\nthis.kit = { create_guard, create_toolbar, item_role, tidy };`, ctx);
+	vm.runInContext(`${kitSource()}\nthis.kit = { create_guard, create_toolbar, item_role, tidy, sections_to_items };`, ctx);
 	return ctx.kit;
 }
 
@@ -549,6 +559,59 @@ test("tidy drops headings and dividers that say nothing", () => {
 	check("tidied", out, [{ label: "A" }]);
 });
 
+test("sections_to_items makes one menu list out of named sections", () => {
+	const { kit } = toolbarEnv();
+	const out = kit.sections_to_items([
+		{ title: "Display", items: [{ heading: "Color by" }, { label: "Color: Job type", radio: true, checked: true }, { divider: true }] },
+		{ title: "Views", items: [] },
+		null,
+		{ title: "Tools", items: [{ divider: true }, { label: "Undo" }] },
+		{ title: "Print", items: [{ heading: "Nothing under me" }] },
+	]);
+	check(
+		"a heading over each section with something in it, a divider between, nothing for an empty one",
+		out.map((entry) => (entry.divider ? "—" : entry.heading || entry.label)),
+		["Display", "Color by", "Color: Job type", "—", "Tools", "Undo"]
+	);
+	check("a section heading is marked, so the menu can set it apart from a sub-heading", [out[0].section, out[1].section], [true, undefined]);
+	check("no sections, no list", kit.sections_to_items([]), []);
+});
+
+test("The view tabs are a tablist: roles, a roving tabindex, arrow keys that move focus only", () => {
+	const { doc, b, toolbar, bar } = toolbarEnv();
+	const group = doc.createElement("span");
+	bar.appendChild(group);
+	const make = (view) => {
+		const button = doc.createElement("button");
+		button.setAttribute("data-tb-tab", view);
+		group.appendChild(button);
+		return button;
+	};
+	const [month, week, crew, heatmap] = ["month", "week", "crew", "heatmap"].map(make);
+	const tabs = toolbar.tabs(group, { label: "Planner views", selected: "week" });
+	check("the group is a tablist with a name", [group.getAttribute("role"), group.getAttribute("aria-label")], ["tablist", "Planner views"]);
+	check("each button is a tab", [month, week, crew, heatmap].map((button) => button.getAttribute("role")), ["tab", "tab", "tab", "tab"]);
+	check("the selected tab says so; only it is in the tab order", [month, week, crew, heatmap].map((button) => [button.getAttribute("aria-selected"), button.getAttribute("tabindex")]), [["false", "-1"], ["true", "0"], ["false", "-1"], ["false", "-1"]]);
+	week.focus();
+	const right = key(week, "ArrowRight");
+	check("ArrowRight moves focus to the next tab, and does not open it", [right.defaultPrevented, doc.activeElement === crew, week.getAttribute("aria-selected")], [true, true, "true"]);
+	key(crew, "End");
+	check("End", doc.activeElement === heatmap, true);
+	key(heatmap, "ArrowRight");
+	check("ArrowRight from the last wraps to the first", doc.activeElement === month, true);
+	key(month, "ArrowLeft");
+	check("ArrowLeft from the first wraps to the last", doc.activeElement === heatmap, true);
+	heatmap.style.display = "none";
+	month.focus();
+	key(month, "ArrowLeft");
+	check("a tab the page has hidden (Utilization without the report) is skipped", doc.activeElement === crew, true);
+	tabs.sync("crew");
+	check("sync moves the selection and the tab stop", [week.getAttribute("aria-selected"), crew.getAttribute("aria-selected"), crew.getAttribute("tabindex"), week.getAttribute("tabindex")], ["false", "true", "0", "-1"]);
+	tabs.sync("my-week");
+	check("on a screen that is no tab, none is selected and the first one stays reachable", [[month, week, crew].map((button) => button.getAttribute("aria-selected")), month.getAttribute("tabindex")], [["false", "false", "false"], "0"]);
+	check("tabs push no history entry", pushes(b), 0);
+});
+
 // ------------------------------------------------------------------ 1b. the phone's sheet
 
 test("The sheet takes one history entry, and Back closes it without the router routing", () => {
@@ -761,7 +824,7 @@ const translate = (text, args) => String(text).replace(/\{(\d+)\}/g, (all, i) =>
 function loadPage(file) {
 	const doc = makeDoc();
 	const $ = makeJQuery(doc);
-	const route = { now: [] };
+	const route = { now: [], set: [] };
 	const frappe = {
 		pages: new Proxy({}, { get: (target, k) => (target[k] = target[k] || {}) }),
 		utils: {
@@ -775,6 +838,7 @@ function loadPage(file) {
 		datetime: { get_today: () => "2026-10-14" },
 		boot: { sysdefaults: { first_day_of_the_week: "Sunday" } },
 		get_route: () => route.now,
+		set_route: (...args) => route.set.push(args),
 		show_alert: () => null,
 		route_options: null,
 	};
@@ -825,10 +889,12 @@ function projectPlanner() {
 		draft_on: false,
 		over_only: false,
 		undo_stack: [],
-		by_project: {},
+		by_project: { "PRJ-1": { name: "PRJ-1", title: "Plaza" } },
+		t1: {},
 		data: {
 			can_edit: true,
 			can_schedule: true,
+			projects: [{ name: "PRJ-1", title: "Plaza" }],
 			tasks: [
 				{ name: "T1", over_plan: true, project: "" },
 				{ name: "T2", over_plan: false, project: "" },
@@ -853,6 +919,7 @@ function projectPlanner() {
 	pp.p6c_swatch_html = () => "<i></i>";
 	pp.p6c_legend_entries = () => [];
 	pp.init_toolbar();
+	pp.tb.kit = { toolbar: kitHelpers() };
 	return Object.assign(env, { pp });
 }
 
@@ -896,12 +963,20 @@ function maintenancePlanner() {
 	mp.p6c_legend_entries = () => [];
 	mp.tech_name = (user) => user;
 	mp.init_toolbar();
+	mp.tb.kit = { toolbar: kitHelpers() };
 	return Object.assign(env, { mp });
 }
 
+// One of More's four sections, or + Add's list, as the page builds them.
+function section(page, where) {
+	if (where === "add") return page.tb_add_items();
+	const found = page.tb_more_sections().find((entry) => entry.key === where);
+	return found ? found.items : [];
+}
+
 // The Project Planner's old toolbar, control by control, and where each is now. "bar" controls are
-// pinned in the page source; the rest are menu items (run, and the method they reach checked) or
-// alert chips.
+// pinned in the page source; the rest are items of + Add or of one of More's sections (run, and the
+// method they reach checked) or alert chips.
 const PP_OLD_TOOLBAR = [
 	["‹ Earlier", "bar", "this.shift(-1)"],
 	["Today", "bar", "this.go(this.view, frappe.datetime.get_today())"],
@@ -921,16 +996,20 @@ const PP_OLD_TOOLBAR = [
 	["Views: Save view as…", "views", "Save current view as…", "p6c_save_as"],
 	["Views: Manage views…", "views", "Manage views…", "p6c_manage_views"],
 	["Color by", "display", "Color: Person", "p6c_set_color"],
+	["Highlight a project", "display", "Highlight a project…", "tb_highlight_prompt"],
 	["Maintenance, rentals, travel", "display", "Maintenance, rentals, travel", "set_show_foreign"],
-	["Draft mode", "edit", "Draft mode", "set_draft_mode"],
-	["Tap to move", "edit", "Tap to move", "p6c_set_tap"],
-	["Block time", "edit", "Block time…", "p6d_block_form"],
-	["Copy week…", "edit", "Copy week…", "open_copy_week"],
-	["Conflicts (also a chip)", "edit", "Conflicts…", "p6d_open_conflicts"],
-	["Undo", "edit", "Undo", "undo"],
+	["Draft mode (Hold all my changes)", "tools", "Hold all my changes", "set_draft_mode"],
+	["Tap to move", "tools", "Tap to move", "p6c_set_tap"],
+	["Block time", "tools", "Block time…", "p6d_block_form"],
+	["Copy week…", "tools", "Copy week…", "open_copy_week"],
+	["Conflicts (also a chip)", "tools", "Conflicts…", "p6d_open_conflicts"],
+	["Undo", "tools", "Undo", "undo"],
 	["Print: this view", "print", "Print this view", "p6c_print"],
 	["Print: selection only", "print", "Print selection only (2)", "p6c_print"],
 	["Print crew sheet", "print", "Print crew sheet", "print_crew_sheet"],
+	["Quick add (the double-click's dialog)", "add", "Quick add task…", "p6b_quick_add"],
+	["Build out tasks", "add", "Build out tasks…", "tb_build_out"],
+	["Day note", "add", "Day note…", "p6d_note_form"],
 	["Conflicts (N)", "chip", "conflicts", "p6d_open_conflicts"],
 	["Running over (N)", "chip", "over", "p4_toggle_over"],
 	["Overdue (the tray's heading)", "chip", "overdue", "tb_open_overdue"],
@@ -942,6 +1021,7 @@ const PP_ACTIONS = [
 	"p6c_save_as",
 	"p6c_manage_views",
 	"p6c_set_color",
+	"tb_highlight_prompt",
 	"set_show_foreign",
 	"set_draft_mode",
 	"p6c_set_tap",
@@ -951,17 +1031,21 @@ const PP_ACTIONS = [
 	"undo",
 	"p6c_print",
 	"print_crew_sheet",
+	"p6b_quick_add",
+	"tb_build_out",
+	"p6d_note_form",
 	"p4_toggle_over",
 	"tb_open_overdue",
 ];
 
-test("Project Planner: nothing in the old toolbar is lost", () => {
+test("Project Planner: nothing in the old toolbar is lost, and + Add and More are all that is left of the menus", () => {
 	const { pp } = projectPlanner();
 	const source = fs.readFileSync(PP_JS, "utf8");
 	pp.undo_stack = [{ subject: "Dig" }];
 	const calls = record(pp, PP_ACTIONS);
 	pp.p6d_default_date = () => "2026-10-14";
 	const alerts = pp.tb_alerts();
+	const more = pp.tb_items("more");
 	PP_OLD_TOOLBAR.forEach(([what, where, label, method]) => {
 		if (where === "bar") {
 			check(`${what}: still in the bar`, source.includes(label), true);
@@ -973,18 +1057,55 @@ test("Project Planner: nothing in the old toolbar is lost", () => {
 			check(`${what}: a chip`, !!chip, true);
 			if (chip) chip.open();
 		} else {
-			const item = find(pp.tb_items(where), label);
+			const item = find(section(pp, where), label);
 			check(`${what}: in ${where}`, !!item, true);
+			// Reached by the menu a person opens too: the flat list, with the same item in it.
+			check(`${what}: in the menu's list`, !!find(where === "add" ? pp.tb_items("add") : more, label), true);
 			if (item) item.on_click();
 		}
 		check(`${what}: reaches ${method}`, calls.length ? calls[0][0] : null, method);
 	});
-	check("the four menus, in the bar's order", pp.tb_menu_list().map((m) => m[1]), ["Views", "Display", "Edit", "Print"]);
+	check("two menus", pp.tb_menu_list().map((m) => m[1]), ["Add", "More"]);
+	check("their buttons read + Add and More", pp.tb_menu_list().map((m) => m[3]), ["+ Add", "More"]);
+	check("More's sections, in order", more.filter((item) => item.section).map((item) => item.heading), ["Display", "Views", "Tools", "Print"]);
 	check(
 		"tips are the help's first section",
-		source.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),"),
+		source.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),") || source.includes("this.p6a_tip_section(),\r\n\t\t\t\t...this.p6c_legend_sections(),"),
 		true
 	);
+});
+
+test("Project Planner: + Add starts the double-click's dialog, the build-out grid and the day note", () => {
+	const { pp, frappe } = projectPlanner();
+	const calls = record(pp, ["p6b_quick_add", "t1_open_build_out", "p6d_note_form"]);
+	pp.p6d_default_date = () => "2026-10-14";
+	pp.by_project = { "PRJ-1": { name: "PRJ-1", title: "Plaza" } };
+	pp.data.projects = [{ name: "PRJ-1", title: "Plaza" }];
+	check("labels", pp.tb_add_items().map((item) => item.label), ["Quick add task…", "Build out tasks…", "Day note…"]);
+	find(pp.tb_add_items(), "Quick add task…").on_click();
+	check("Quick add opens on the first day on screen, on nobody's row", calls[0], ["p6b_quick_add", { kind: "cell", resource: "", ymd: "2026-10-14" }]);
+	find(pp.tb_add_items(), "Day note…").on_click();
+	check("the day note opens on that day", calls[1], ["p6d_note_form", { date: "2026-10-14" }]);
+	// Build out: the project in the filter, else the person is asked.
+	pp.project = "PRJ-1";
+	find(pp.tb_add_items(), "Build out tasks…").on_click();
+	check("with a project filtered, the grid opens for it", calls[2], ["t1_open_build_out", "PRJ-1", "Plaza"]);
+	pp.project = "";
+	let prompted = null;
+	frappe.prompt = (fields, done, title) => (prompted = { fields, done, title });
+	find(pp.tb_add_items(), "Build out tasks…").on_click();
+	check("with none, a Project field is asked for first", [prompted.fields.map((f) => f.fieldname), prompted.fields[0].reqd, prompted.title], [["project"], 1, "Build out tasks for"]);
+	prompted.done({ project: "PRJ-1" });
+	check("and the grid opens for the answer", calls[3], ["t1_open_build_out", "PRJ-1", "Plaza"]);
+	// Who sees what.
+	pp.data.can_edit = false;
+	pp.data.can_schedule = false;
+	check("someone who cannot edit or schedule is offered none of it", pp.tb_add_items(), []);
+	pp.data.can_edit = true;
+	pp.view = "heatmap";
+	check("off the calendar views only the build-out grid is offered", pp.tb_add_items().map((item) => item.label), ["Build out tasks…"]);
+	pp.view = "utilization";
+	check("Utilization keeps the build-out grid, which needs no calendar", pp.tb_add_items().map((item) => item.label), ["Build out tasks…"]);
 });
 
 test("Project Planner: switches say their state; items follow the screen", () => {
@@ -993,37 +1114,156 @@ test("Project Planner: switches say their state; items follow the screen", () =>
 	pp.p6c.tap = false;
 	pp.show_foreign = false;
 	pp.p6c.color_by = "job_type";
-	const edit = pp.tb_items("edit");
-	check("Draft mode ticked, Tap to move not", [find(edit, "Draft mode").checked, find(edit, "Tap to move").checked], [true, false]);
-	check("Maintenance, rentals, travel unticked", find(pp.tb_items("display"), "Maintenance, rentals, travel").checked, false);
-	const colors = pp.tb_items("display").filter((item) => item.radio);
+	const tools = section(pp, "tools");
+	check("Hold all my changes ticked, Tap to move not", [find(tools, "Hold all my changes").checked, find(tools, "Tap to move").checked], [true, false]);
+	check("Maintenance, rentals, travel unticked", find(section(pp, "display"), "Maintenance, rentals, travel").checked, false);
+	const colors = section(pp, "display").filter((item) => item.radio);
 	check("Color by is one radio group with the mode on screen ticked", colors.filter((item) => item.checked).map((item) => item.label), ["Color: Job type"]);
-	check("the saved view on screen is ticked", find(pp.tb_items("views"), "Field crew").checked, true);
-	check("Undo is there but disabled with nothing to undo", find(edit, "Undo").disabled, true);
+	check("the saved view on screen is ticked", find(section(pp, "views"), "Field crew").checked, true);
+	check("Undo is there but disabled with nothing to undo", find(tools, "Undo").disabled, true);
 	pp.p6c_legend_entries = () => [
 		{ key: "PRJ-1", label: "Plaza", color: "#123456", hi: "PRJ-1" },
 		{ key: "x", label: "Other", color: "#abcdef" },
 	];
-	pp.p6c.highlight = { key: "PRJ-1" };
-	const display = pp.tb_items("display");
+	pp.p6c.highlight = { key: "PRJ-1", label: "Plaza" };
+	const display = section(pp, "display");
 	check("the color key is in Display", [!!find(display, "Plaza"), !!find(display, "Other")], [true, true]);
 	check("a project in the key is a switch for its highlight, ticked while it is on", find(display, "Plaza").checked, true);
 	check("anything else in the key is read-only", find(display, "Other").info, true);
+	const stop = find(display, "Highlighting Plaza");
+	check("a highlight that is on can be switched off from Display, and says it is on", [!!stop, stop && stop.checked, find(display, "Highlight a project…")], [true, true, null]);
+	const cleared = record(pp, ["p6c_clear_highlight"]);
+	stop.on_click();
+	check("which is the pill's ×", cleared[0][0], "p6c_clear_highlight");
 	pp.view = "month";
-	check("no Copy week on the month view", find(pp.tb_items("edit"), "Copy week…"), null);
+	check("no Copy week on the month view", find(section(pp, "tools"), "Copy week…"), null);
 	pp.view = "heatmap";
 	check(
 		"the heatmap: no calendar switches, no Undo; the saved views and Print stay",
-		[!!find(pp.tb_items("edit"), "Tap to move"), !!find(pp.tb_items("edit"), "Undo"), pp.tb_items("display").length, !!find(pp.tb_items("views"), "Field crew"), !!find(pp.tb_items("print"), "Print this view")],
+		[!!find(section(pp, "tools"), "Tap to move"), !!find(section(pp, "tools"), "Undo"), section(pp, "display").length, !!find(section(pp, "views"), "Field crew"), !!find(section(pp, "print"), "Print this view")],
 		[false, false, 0, true, true]
 	);
+	check("and the Display section, empty there, is left out with its heading", pp.tb_items("more").filter((item) => item.section).map((item) => item.heading), ["Views", "Tools", "Print"]);
 	pp.view = "utilization";
 	check(
 		"Utilization: My week and the crew sheet, nothing that needs cards",
-		[pp.tb_items("views").map((i) => i.label), pp.tb_items("print").map((i) => i.label)],
-		[["My week"], ["Print crew sheet"]]
+		[section(pp, "views").map((i) => i.label), section(pp, "print").map((i) => i.label), section(pp, "tools")],
+		[["My week"], ["Print crew sheet"], []]
 	);
 	check("no chips off the calendar", pp.tb_alerts(), []);
+});
+
+test("Project Planner: Job type is the colors until someone chooses, and the view carries the choice", () => {
+	const { pp, ctx } = projectPlanner();
+	check("the default color", vm.runInContext("PP6C.default_color", ctx), "job_type");
+	const source = fs.readFileSync(PP_JS, "utf8");
+	check("a fresh planner starts on it, unchosen", /color_by: PP6C\.default_color,\s*\n\s*color_chosen: false,/.test(source), true);
+	// "Task color" saved in "last used" before the flag existed is the old default, not a wish.
+	let applied = null;
+	pp.p6c_apply_state = (state) => {
+		applied = state;
+	};
+	delete pp.p6c_view_summary;
+	delete pp.p6c_matching_view;
+	pp.p6c.loaded = true;
+	pp.p6c.restored = false;
+	pp.p6c.last = { view: "week", color_by: "default", project: "PRJ-1" };
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	vm.runInContext("frappe", ctx).get_route = () => ["project-planner", "week", "2026-10-14"];
+	pp.p6c_before_route();
+	check("an old saved Task color, with no flag, is dropped on the first open", applied, { view: "week", project: "PRJ-1" });
+	pp.p6c.restored = false;
+	pp.p6c.last = { view: "week", color_by: "default", color_chosen: false };
+	pp.p6c_before_route();
+	check("so is one the view says was not chosen", applied, { view: "week", color_chosen: false });
+	// The person picks a color (Task color included): the view says so, on the server, for any device.
+	pp.render = () => null;
+	pp.p6c_set_color("default");
+	check("picking Task color sets the flag", [pp.p6c.color_by, pp.p6c.color_chosen], ["default", true]);
+	check("and the saved state carries it, \"last used\" included", [pp.p6c_state(true).color_by, pp.p6c_state(true).color_chosen, pp.p6c_state(false).color_chosen], ["default", true, true]);
+	pp.p6c.restored = false;
+	pp.p6c.last = { view: "week", color_by: "default", color_chosen: true };
+	pp.p6c_before_route();
+	check("and then a saved Task color is restored, on any device", applied, { view: "week", color_by: "default", color_chosen: true });
+	pp.p6c_set_color("nonsense");
+	check("an unknown mode falls back to the default", pp.p6c.color_by, "job_type");
+	check("a saved view's summary words a non-default color, Task color included", [pp.p6c_view_summary({ color_by: "job_type" }), pp.p6c_view_summary({ color_by: "default" }), pp.p6c_view_summary({ color_by: "person" })], ["", "Task colors", "Person colors"]);
+});
+
+test("Project Planner: applying a view sets whether its color was chosen, and a view still matches without the flag", () => {
+	const { pp } = projectPlanner();
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.p6c_sync_controls = () => null;
+	pp.filters = () => ({});
+	pp.write_filter_url = () => null;
+	pp.render = () => null;
+	pp.p6c_apply_state({ view: "week", color_by: "job_type" }, { render: false });
+	check("a view saved before the flag with another color: not a choice", [pp.p6c.color_by, pp.p6c.color_chosen], ["job_type", false]);
+	pp.p6c_apply_state({ view: "week", color_by: "default" }, { render: false });
+	check("a view saved before the flag that holds Task color is a snapshot someone took: a choice", [pp.p6c.color_by, pp.p6c.color_chosen], ["default", true]);
+	pp.p6c_apply_state({ view: "week", color_by: "default", color_chosen: false }, { render: false });
+	check("a view that says it was not chosen is not", pp.p6c.color_chosen, false);
+	pp.p6c_apply_state({ view: "week", color_by: "pm", color_chosen: true }, { render: false });
+	check("and one that says it was is", [pp.p6c.color_by, pp.p6c.color_chosen], ["pm", true]);
+	// The Views menu ticks the saved view on screen, flag or no flag.
+	delete pp.p6c_matching_view;
+	pp.p6c.views = [{ name: "Old", data: { view: "week", project: "", pm: "", group: "", foreign: true, over_only: false, panel: true, color_by: "pm" } }];
+	pp.view = "week";
+	pp.project = "";
+	pp.pm = "";
+	pp.group = "";
+	pp.show_foreign = true;
+	pp.over_only = false;
+	pp.panel_open = true;
+	check("a view saved without color_chosen still matches the page showing it", (pp.p6c_matching_view() || {}).name, "Old");
+});
+
+test("Both planners: Split stays in the right-click menu, and Move by is a field of the Move… panel", () => {
+	const source = fs.readFileSync(PP_JS, "utf8");
+	check("Split is in the right-click menu", source.includes('multi ? __("Split across days…") : __("Split in two…")'), true);
+	[[PP_JS, "pp"], [MP_JS, "mp"]].forEach(([file, name]) => {
+		const code = fs.readFileSync(file, "utf8");
+		check(`${name}: the selection bar no longer draws the Move by switch`, code.includes("p6e_bar_switch"), false);
+	});
+	const prefs = {};
+	const pages = [
+		[projectPlanner().pp, "Move by (working days)", "p6e_move_label"],
+		[maintenancePlanner().mp, "Move by (working days)", "p6e_move_label"],
+	];
+	pages.forEach(([page, label], index) => {
+		const name = index ? "mp" : "pp";
+		page.load_pref = (key, fallback) => (key in prefs ? prefs[key] : fallback);
+		page.save_pref = (key, value) => {
+			prefs[key] = value;
+		};
+		page.p6b_render_bar = () => null;
+		page.p6b_selected_cards = () => [{ name: "T1", key: "T1" }];
+		let opts = null;
+		const sets = [];
+		const days = { df: {}, set_label: (l) => (days.label = l), set_description: (d) => (days.description = d) };
+		const values = { unit: "Calendar days" };
+		page.p6b_panel = (o) => {
+			opts = o;
+			return {
+				set_primary_action: () => null,
+				show: () => null,
+				get_value: (field) => values[field],
+				set_value: (field, value) => sets.push([field, value]),
+				fields_dict: { days },
+			};
+		};
+		page.p6b_move_panel();
+		const unit = opts.fields.find((field) => field.fieldname === "unit");
+		check(`${name}: a Move by field, calendar days to begin with`, [unit.fieldtype, unit.label, unit.options, unit.default], ["Select", "Move by", "Calendar days\nWorking days", "Calendar days"]);
+		check(`${name}: the number field follows it`, opts.fields.map((field) => field.fieldname), ["unit", "days"]);
+		values.unit = "Working days";
+		unit.change();
+		check(`${name}: choosing working days is remembered on the device and re-words the number`, [page.p6e_unit(), days.label, sets], ["working", label, [["days", 5]]]);
+		unit.change();
+		check(`${name}: choosing the same again changes nothing`, sets.length, 1);
+		values.unit = "Calendar days";
+		page.p6e_unit_value = "calendar";
+	});
 });
 
 test("Project Planner: the alert chips are there only above zero, with their counts", () => {
@@ -1219,12 +1459,30 @@ test("Project Planner: on Utilization, Ctrl+Z is not the planner's and empty men
 	pp.view = "week";
 	check("Ctrl+Z on the week still undoes", [pp.p6b_run_key("undo"), undone.length], [true, 1]);
 	pp.view = "utilization";
+	pp.data = null;
 	pp.tb_render();
 	const off = (name) => pp.tb.$menus[name].hasClass("pp-tb-off");
-	check("Display and Edit have nothing there and are hidden; Views and Print stay", [off("views"), off("display"), off("edit"), off("print")], [false, true, true, false]);
+	check("+ Add has nothing there and is hidden; More stays (My week, the crew sheet)", [off("add"), off("more")], [true, false]);
 	pp.view = "week";
+	pp.data = { can_edit: true, can_schedule: true, tasks: [], unscheduled: [], projects: [] };
 	pp.tb_render();
-	check("back on the week, all four", [off("views"), off("display"), off("edit"), off("print")], [false, false, false, false]);
+	check("back on the week, both", [off("add"), off("more")], [false, false]);
+});
+
+test("Project Planner: the view buttons are tabs, and the tab on screen is the selected one", () => {
+	const { pp } = projectPlanner();
+	const tabs = [];
+	pp.$seg = pp.$toolbar;
+	pp.tb.kit = null;
+	pp.tb.tabs = { sync: (view) => tabs.push(view) };
+	pp.view = "crew";
+	pp.tb_render();
+	pp.view = "utilization";
+	pp.tb_render();
+	check("every redraw hands the screen's view to the tablist", tabs, ["crew", "utilization"]);
+	const source = fs.readFileSync(PP_JS, "utf8");
+	check("each button names its view for it", source.includes('.attr("data-tb-tab", view)'), true);
+	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view })'), true);
 });
 
 test("Project Planner: the phone's sheet takes the filters in and gives them back", () => {
@@ -1244,10 +1502,15 @@ test("Project Planner: the phone's sheet takes the filters in and gives them bac
 	opts.top(slot);
 	check("the filters moved into the sheet, marked", [slot.contains(pp.$filters.nodes[0]), pp.$filters.hasClass("pp-tb-in-sheet")], [true, true]);
 	const sections = opts.sections();
-	check("its sections", sections.map((s) => s.title), ["Alerts", "Views", "Display", "Edit", "Print", "This page"]);
+	check("its sections: the same ones the menus have", sections.map((s) => s.title), ["Alerts", "Add", "Display", "Views", "Tools", "Print", "This page"]);
 	check("the chips are in it", sections[0].items.map((i) => [i.label, i.tone]), [["3 Conflicts", "danger"], ["1 Running over", "warn"], ["2 Overdue", "danger"]]);
-	check("a switch keeps the sheet open; an action does not", [find(sections[3].items, "Draft mode").keep_open, find(sections[3].items, "Copy week…").keep_open], [true, false]);
-	check("the help and refresh, which the phone's bar has no room for", sections[5].items.map((i) => i.label), ["How to read the planner", "Refresh"]);
+	check("+ Add is in it", sections[1].items.map((i) => i.label), ["Quick add task…", "Build out tasks…", "Day note…"]);
+	check("a switch keeps the sheet open; an action does not", [find(sections[4].items, "Hold all my changes").keep_open, find(sections[4].items, "Copy week…").keep_open], [true, false]);
+	check("the help and refresh, which the phone's bar has no room for", sections[6].items.map((i) => i.label), ["How to read the planner", "Refresh"]);
+	// Everything More offers, the sheet offers: nothing is reachable only on a big screen.
+	const menu = pp.tb_items("more").filter((item) => item.label && !item.info).map((item) => item.label).sort();
+	const sheet = sections.slice(2, 6).flatMap((s) => s.items).filter((item) => item.label && !item.info).map((item) => item.label).sort();
+	check("every More item is in the sheet", sheet, menu);
 	opts.on_close("back");
 	const bar = pp.$toolbar.nodes[0];
 	check("closed: the filters are back in the bar, before the chips", [bar.contains(pp.$filters.nodes[0]), bar.childNodes.indexOf(pp.$filters.nodes[0]) + 1 === bar.childNodes.indexOf(pp.$alerts.nodes[0]), pp.$filters.hasClass("pp-tb-in-sheet")], [true, true, false]);
@@ -1272,18 +1535,21 @@ const MP_OLD_TOOLBAR = [
 	["Projected visits", "display", "Projected visits", "set_show_projected"],
 	["Project work", "display", "Project work", "set_show_project_work"],
 	["The visit-kind legend row", "display", "Pending review", null],
-	["Draft mode", "edit", "Draft mode", "set_draft_mode"],
-	["Tap to move", "edit", "Tap to move", "p6c_set_tap"],
-	["Add visit", "edit", "Add visit…", "p6e_add_visit"],
-	["Block time", "edit", "Block time…", "p6d_block_form"],
-	["Conflicts", "edit", "Conflicts…", "p6d_open_conflicts"],
-	["Undo", "edit", "Undo", "undo"],
+	["Draft mode", "tools", "Draft mode", "set_draft_mode"],
+	["Tap to move", "tools", "Tap to move", "p6c_set_tap"],
+	["Add visit", "add", "Add visit…", "p6e_add_visit"],
+	["Day note", "add", "Day note…", "p6d_note_form"],
+	["Block time", "tools", "Block time…", "p6d_block_form"],
+	["Conflicts", "tools", "Conflicts…", "p6d_open_conflicts"],
+	["Undo", "tools", "Undo", "undo"],
 	["Print", "print", "Print this view", "p6c_print"],
+	["Day Board (the page head keeps its button)", "print", "Day Board", null],
 	["Overdue (new chip)", "chip", "overdue", "tb_open_overdue"],
 ];
 
-test("Maintenance Planner: nothing in the old toolbar is lost", () => {
-	const { mp } = maintenancePlanner();
+test("Maintenance Planner: nothing in the old toolbar is lost, and + Add and More are all that is left of the menus", () => {
+	const env = maintenancePlanner();
+	const { mp } = env;
 	const source = fs.readFileSync(MP_JS, "utf8");
 	const calls = record(mp, [
 		"p6c_save_as",
@@ -1293,6 +1559,7 @@ test("Maintenance Planner: nothing in the old toolbar is lost", () => {
 		"set_draft_mode",
 		"p6c_set_tap",
 		"p6e_add_visit",
+		"p6d_note_form",
 		"p6d_block_form",
 		"p6d_open_conflicts",
 		"undo",
@@ -1300,6 +1567,7 @@ test("Maintenance Planner: nothing in the old toolbar is lost", () => {
 		"tb_open_overdue",
 	]);
 	mp.p6d_default_date = () => "2026-10-14";
+	const more = mp.tb_items("more");
 	MP_OLD_TOOLBAR.forEach(([what, where, label, method]) => {
 		if (where === "bar") {
 			check(`${what}: still in the bar`, source.includes(label), true);
@@ -1311,20 +1579,24 @@ test("Maintenance Planner: nothing in the old toolbar is lost", () => {
 			check(`${what}: a chip`, !!chip, true);
 			if (chip) chip.open();
 		} else {
-			const item = find(mp.tb_items(where), label);
+			const item = find(section(mp, where), label);
 			check(`${what}: in ${where}`, !!item, true);
+			check(`${what}: in the menu's list`, !!find(where === "add" ? mp.tb_items("add") : more, label), true);
 			if (item && item.on_click) item.on_click();
 		}
 		check(`${what}: reaches ${method}`, calls.length ? calls[0][0] : null, method);
 	});
-	check("the four menus", mp.tb_menu_list().map((m) => m[1]), ["Views", "Display", "Edit", "Print"]);
+	check("the Day Board item goes to the Day Board", env.route.set, [["maintenance-day-board"]]);
+	check("two menus", mp.tb_menu_list().map((m) => m[1]), ["Add", "More"]);
+	check("their buttons read + Add and More", mp.tb_menu_list().map((m) => m[3]), ["+ Add", "More"]);
+	check("More's sections, in order", more.filter((item) => item.section).map((item) => item.heading), ["Display", "Views", "Tools", "Print"]);
 	check("tips are the help's first section", source.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),"), true);
 	check("the legend row is gone from under the toolbar", source.includes('class="mp-legend"'), false);
 });
 
 test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 	const { mp } = maintenancePlanner();
-	const display = mp.tb_items("display");
+	const display = section(mp, "display");
 	check("Projected visits ticked, Project work not", [find(display, "Projected visits").checked, find(display, "Project work").checked], [true, false]);
 	check(
 		"the visit kinds are Display's key, read-only, each drawn with its card's class",
@@ -1334,12 +1606,14 @@ test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 			["Seasonal", '<i class="mp-swatch mp-seasonal"></i>'],
 		]
 	);
-	const edit = mp.tb_items("edit");
+	const edit = section(mp, "tools");
 	check("Tap to move ticked, Draft mode not", [find(edit, "Tap to move").checked, find(edit, "Draft mode").checked], [true, false]);
 	check("Undo can run", find(edit, "Undo").disabled, false);
 	mp.data.can_create_visits = false;
 	mp.data.can_schedule = false;
-	check("Add visit and Block time only for those who may", [find(mp.tb_items("edit"), "Add visit…"), find(mp.tb_items("edit"), "Block time…")], [null, null]);
+	check("Add visit and Block time only for those who may", [find(mp.tb_add_items(), "Add visit…"), find(section(mp, "tools"), "Block time…")], [null, null]);
+	check("and a day note only for schedulers", find(mp.tb_add_items(), "Day note…"), null);
+	check("with nobody to offer + Add to, it has nothing in it", mp.tb_add_items(), []);
 
 	mp.tb_render();
 	check("Overdue only (no conflicts): one chip", mp.$alerts.nodes[0].childNodes.map((el) => [el.className, el.textContent]), [["mp-tb-alert mp-tb-danger", "1Overdue"]]);
@@ -1386,15 +1660,33 @@ test("Maintenance Planner: switches, kinds, chips and the draft strip", () => {
 test("Maintenance Planner: the phone's sheet", () => {
 	const { mp } = maintenancePlanner();
 	let opts = null;
-	mp.tb.kit = { toolbar: { sheet: (o) => ((opts = o), { is_open: () => true, refresh: () => null }) } };
+	mp.tb.kit = { toolbar: Object.assign(kitHelpers(), { sheet: (o) => ((opts = o), { is_open: () => true, refresh: () => null }) }) };
 	mp.tb_open_sheet();
 	const slot = mp.$body.nodes[0].ownerDocument.createElement("div");
 	opts.top(slot);
 	check("the filter moved in", slot.contains(mp.$filters.nodes[0]), true);
-	check("its sections", opts.sections().map((s) => s.title), ["Alerts", "Views", "Display", "Edit", "Print", "This page"]);
-	check("the page head's Day Board is in it too", opts.sections()[5].items.map((i) => i.label), ["How to read the planner", "Day Board", "Refresh"]);
+	const sections = opts.sections();
+	check("its sections: the same ones the menus have", sections.map((s) => s.title), ["Alerts", "Add", "Display", "Views", "Tools", "Print", "This page"]);
+	check("+ Add is in it", sections[1].items.map((i) => i.label), ["Add visit…", "Day note…"]);
+	check("the Day Board is in Print, where the menu has it", sections[5].items.map((i) => i.label), ["Print this view", "Day Board"]);
+	check("the help and refresh", sections[6].items.map((i) => i.label), ["How to read the planner", "Refresh"]);
+	const menu = mp.tb_items("more").filter((item) => item.label && !item.info).map((item) => item.label).sort();
+	const sheet = sections.slice(2, 6).flatMap((s) => s.items).filter((item) => item.label && !item.info).map((item) => item.label).sort();
+	check("every More item is in the sheet", sheet, menu);
 	opts.on_close("user");
 	check("closed: the filter is back before the chips", mp.$filters.nodes[0].parentNode.childNodes.indexOf(mp.$filters.nodes[0]) + 1, mp.$alerts.nodes[0].parentNode.childNodes.indexOf(mp.$alerts.nodes[0]));
+});
+
+test("Maintenance Planner: the view buttons are tabs", () => {
+	const { mp } = maintenancePlanner();
+	const tabs = [];
+	mp.tb.tabs = { sync: (view) => tabs.push(view) };
+	mp.view = "crew";
+	mp.tb_render();
+	check("a redraw hands the screen's view to the tablist", tabs, ["crew"]);
+	const source = fs.readFileSync(MP_JS, "utf8");
+	check("each button names its view", source.includes('.attr("data-tb-tab", view)'), true);
+	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view })'), true);
 });
 
 // The planner kit can already be loaded when the page is first routed, so tb_render runs from set_mode
@@ -1412,7 +1704,7 @@ test("Project Planner: tb_render before the first load, with data null, throws i
 		let error = null;
 		try {
 			pp.tb_render();
-			pp.tb_items("display");
+			pp.tb_items("more");
 		} catch (e) {
 			error = e && e.message;
 		}
@@ -1432,7 +1724,7 @@ test("Maintenance Planner: tb_render before the first load, with data null, thro
 		let error = null;
 		try {
 			mp.tb_render();
-			mp.tb_items("display");
+			mp.tb_items("more");
 		} catch (e) {
 			error = e && e.message;
 		}

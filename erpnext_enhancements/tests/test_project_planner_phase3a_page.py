@@ -204,12 +204,12 @@ class TestHeatmap(unittest.TestCase):
 			self.assertIn(control, mode)
 		self.assertIn("this.$trays.toggle(!route && !board)", mode)
 		# The calendar-only controls folded into the toolbar's menus (v1.687.0) are offered only on the
-		# calendar views: "Maintenance, rentals, travel" in Display, Copy week in Edit.
+		# calendar views: "Maintenance, rentals, travel" in Display, Copy week in Tools.
 		self.assertIn("return PP.views.includes(this.view);", _obj_method(code, "tb_calendar"))
 		self.assertIn("if (!this.tb_calendar()) return [];", _obj_method(code, "tb_display_items"))
 		self.assertIn(
 			'if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {',
-			_obj_method(code, "tb_edit_items"),
+			_obj_method(code, "tb_tools_items"),
 		)
 
 
@@ -269,9 +269,9 @@ class TestOverdueTray(unittest.TestCase):
 
 class TestCopyWeek(unittest.TestCase):
 	def test_copy_week_is_a_toolbar_action_on_week_and_crew_views(self):
-		# An item of the toolbar's Edit menu since v1.687.0, on the week and crew views, for planners.
+		# An item of the toolbar's More ▸ Tools since v1.687.0, on the week and crew views, for planners.
 		code = _code_without_comments()
-		edit = _obj_method(code, "tb_edit_items")
+		edit = _obj_method(code, "tb_tools_items")
 		self.assertIn('label: __("Copy week…"),', edit)
 		self.assertIn('this.view !== "month" && this.data && this.data.can_edit', edit)
 		self.assertIn("on_click: () => this.open_copy_week(),", edit)

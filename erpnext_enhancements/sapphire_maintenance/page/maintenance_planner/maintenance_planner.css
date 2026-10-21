@@ -141,7 +141,7 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-/* ---- The toolbar (v1.687.0): the filter, alert chips, four menus, the phone's one button ----- */
+/* ---- The toolbar (v1.687.0): the filter, alert chips, + Add and More, the phone's one button ----- */
 
 .mp-tb-filters,
 .mp-tb-tools,
@@ -1935,30 +1935,6 @@ body.mp-drag-active * {
 /* ======================================================================================== */
 /* Phase 6E: Move by calendar or working days (MP6E_STYLE).                                 */
 /* ======================================================================================== */
-
-.mp-p6e-switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.mp-p6e-switch-label {
-	font-size: 12px;
-	color: var(--sf-text-muted);
-}
-
-.mp-p6e-opt {
-	border-color: var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-}
-
-/* The unit in use: the primary fill and the weight (it was violet). */
-.mp-p6e-opt.mp-p6e-on {
-	background: var(--sf-primary);
-	border-color: var(--sf-primary);
-	color: var(--sf-on-primary);
-	font-weight: var(--sf-weight-bold);
-}
 
 .mp-p6e-note {
 	font-size: 12px;
