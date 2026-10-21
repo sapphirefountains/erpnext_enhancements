@@ -1938,6 +1938,51 @@ that calls it is P4; until then nothing on screen changes.
   tells nobody; `auto` is Notify when the change touches today or the 13 days after it, before or
   after the move. Any answer holds back that save's 48-hour change alert.
 
+### The Lookahead, the planner's home tab (P5, vVERSION_P5, Planner UX redesign)
+
+Nik's D2 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.2): the screen a PM lands on is a lookahead
+across all jobs. Rows are projects, then their phases, then tasks; three weeks run across, starting on
+the site's first weekday (Sunday on production). It is the page's `PPL` block and
+`api/planner_lookahead.get_lookahead`.
+
+- **Addresses.** `/desk/project-planner/lookahead/<date>` (three weeks from the week holding that day;
+  `/<date>/4` for 2, 4 or 6 weeks), `/calendar/week/<date>` and `/calendar/month/<date>` for the old
+  week and month views, now under the **Calendar** tab with a Week/Month switch. The old `/week/<date>`
+  and `/month/<date>` addresses (bookmarks, the digests, the Project form's link) are **replaced**, not
+  pushed, by their new ones, with the filters and any other query keys. A bare `/project-planner` opens
+  the last-used tab, and the Lookahead when there is none. A "last used" view saved before the tabs
+  (no `tabbed` flag) does not count as a choice of tab: everyone had the week view saved, because it
+  was the only landing screen. The tabs are Lookahead, Crew, Calendar, Heatmap and Utilization until
+  P7 folds the last two into Crew. Each tab, week and range is a route, so Back and Forward step
+  through them. Collapsing a row and the Needs crew chip are not routes.
+- **The bars are the planner's cards.** `get_lookahead` is `get_planner` over the window plus the tree,
+  so every bar is a `.pp-card[data-task]` the page already knows. A drag (measured from the day under
+  the pointer), an edge (6B's resize), a click (the side panel), a right-click (6B's menu), selection,
+  search, Color by and Tap to move all work unchanged, and every write goes through `commit`/`send`
+  with P4's auto-draft, tasks that follow, Ctrl/⌘ and "Notify crew?". There is no second save path.
+- **A bar** shows the crew's initials, the task's size in working days (D7), and the chips a card
+  carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification, and
+  weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it
+  is a thin red tail. A bar that runs past the window is cut, dashed and without a grip on that end.
+  A Fountain Move task is read-only.
+- **Hovering or focusing a bar** draws arrows from what it waits on and to what waits on it. With
+  hundreds of links, only that chain is drawn.
+- **The project row** carries its schedule (D8):
+  - ● *Published* with the date;
+  - ◐ *Draft schedule* with **Publish…** (P4's own confirmation and `publish_project_schedule`);
+  - *Fountain Move*;
+  - *No tasks yet* with **Build out** (T1's grid). This replaces the Needs tasks tray.
+  Clicking the name opens the project peek.
+- **Not scheduled** is a line per project whose chips drag onto a day, as the Unscheduled tray's
+  cards did. A **Needs crew** chip in the board's own bar narrows it to the tasks short of crew,
+  which replaces the Needs crew tray. The Overdue tray stays. The Resources panel is not on this tab.
+- **Collapsing** a project or a phase draws its work as plain runs, and is remembered in this browser.
+- The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
+- **On a phone** the board is a list by day, and each day is a drop target.
+- **Print this view** prints the board's rows as a list.
+- **The Project, PM and Group filters** apply as on every tab. Group keeps the tasks with someone of
+  that group on the crew.
+
 ## Calendar sync (C2, v1.604.0)
 
 When planners commit work, ERPNext pushes it **one way** to Sapphire's existing shared Google

@@ -34,7 +34,7 @@ so ``tests/test_planner_lookahead.py`` runs them without a bench.
 import datetime
 
 import frappe
-from frappe.utils import cint, getdate, nowdate
+from frappe.utils import getdate, nowdate
 
 from erpnext_enhancements.api import project_planner as pp
 from erpnext_enhancements.project_enhancements import crew_availability as engine
@@ -51,8 +51,11 @@ OTHER_WORK = "Other work"
 
 
 def lookahead_weeks(value):
-	"""``value`` as one of :data:`LOOKAHEAD_WEEKS`; anything else is the default."""
-	weeks = cint(pp.given(value))
+	"""``value`` as one of :data:`LOOKAHEAD_WEEKS`; anything else, text included, is the default."""
+	try:
+		weeks = int(str(pp.given(value) or "").strip())
+	except ValueError:
+		return DEFAULT_WEEKS
 	return weeks if weeks in LOOKAHEAD_WEEKS else DEFAULT_WEEKS
 
 

@@ -315,7 +315,16 @@ function fakeMoment(value) {
 			const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
 			return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
 		})();
-	return { isValid: () => valid, format: () => text };
+	const m_obj = { text, isValid: () => valid, format: () => m_obj.text };
+	// P5's › steps the Lookahead by days (shift): moment's add, mutating, for whole days only.
+	m_obj.add = (amount, unit) => {
+		if (unit !== "days" || !valid) throw new Error(`fakeMoment.add(${amount}, ${unit}) is not modelled`);
+		const d = new Date(`${m_obj.text}T00:00:00Z`);
+		d.setUTCDate(d.getUTCDate() + Number(amount));
+		m_obj.text = d.toISOString().slice(0, 10);
+		return m_obj;
+	};
+	return m_obj;
 }
 
 // A recording stand-in for jQuery: an element remembers its value; anything else returns it.
@@ -888,6 +897,94 @@ test("Project Planner: a value Show all tasks cannot take is ignored", () => {
 });
 
 // ------------------------------------------------------------------ Maintenance Planner
+
+// ------------------------------------------------------------------ P5: the Lookahead and the Calendar tab
+//
+// The planner UX redesign's P5: the Lookahead is the home tab (/lookahead/<date>[/<weeks>]), the week
+// and month views moved under the Calendar tab (/calendar/week|month/<date>), and the old /week and
+// /month addresses are replaced by their new ones, never pushed, with the filters and any other keys.
+
+const weeks_of = (pp) => pp.ppl_state().weeks;
+
+test("P5: an old /week address is replaced by /calendar/week, its filters and other keys kept, no new entry", () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	const pp = projectPlanner(desk);
+	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00001", foo: "1" });
+	check("one entry for the planner, at its new address", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&foo=1",
+	]);
+	check("the week, on that day, with the link's project", [pp.view, pp.anchor, f3(pp).project], ["week", "2026-10-12", "PRJ-00001"]);
+	check("loaded once, after the redirect", pp.loads.map((l) => l.view), ["week"]);
+	desk.back();
+	check("Back leaves the planner, as it would have from the old address", desk.here(), "/desk/project/PRJ-00001");
+});
+
+test("P5: an old /month address lands on the Calendar tab's month", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/month/2026-10-01?group=Field" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	check("replaced in place", desk.urls(), ["/desk/project-planner/calendar/month/2026-10-01?group=Field"]);
+	check("the month with its group", [pp.view, pp.anchor, f3(pp).group], ["month", "2026-10-01", "Field"]);
+	check("the Calendar tab is the one on screen", pp.ppl_tab(), "calendar");
+});
+
+test("P5: /calendar/<date> alone is the calendar view used last; a bad date is today", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/month/2026-10-01" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	desk.go("project-planner", "calendar", "2026-10-20");
+	check("the month again, on that day", [pp.view, pp.anchor], ["month", "2026-10-20"]);
+	desk.go("project-planner", "lookahead", "not-a-date");
+	check("a bad date is today", [pp.view, pp.anchor], ["lookahead", desk.today]);
+});
+
+test("P5: the range is a screen: Back and Forward step through the weeks shown and the days", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00001" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	check("three weeks by default", [pp.view, weeks_of(pp)], ["lookahead", 3]);
+	pp.ppl_pick_weeks(4);
+	check("four weeks is a new entry, the filters carried", desk.here(), "/desk/project-planner/lookahead/2026-10-14/4?project=PRJ-00001");
+	check("remembered for the next bare /project-planner", desk.prefs.ee_project_planner_lookahead_weeks, "4");
+	pp.shift(1);
+	check("› steps one week, keeping four", desk.here(), "/desk/project-planner/lookahead/2026-10-21/4?project=PRJ-00001");
+	pp.ppl_calendar_tab();
+	check("the Calendar tab: the week holding the day", desk.here(), "/desk/project-planner/calendar/week/2026-10-21?project=PRJ-00001");
+	desk.back();
+	check("Back: the four weeks from the 21st", [pp.view, pp.anchor, weeks_of(pp)], ["lookahead", "2026-10-21", 4]);
+	desk.back();
+	desk.back();
+	check("Back twice: three weeks, as that entry showed", [pp.view, pp.anchor, weeks_of(pp)], ["lookahead", "2026-10-14", 3]);
+	desk.forward();
+	check("Forward: four again", [pp.view, weeks_of(pp)], ["lookahead", 4]);
+	check("every entry kept its address", desk.urls(), [
+		"/desk/project-planner/lookahead/2026-10-14?project=PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-14/4?project=PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-21/4?project=PRJ-00001",
+		"/desk/project-planner/calendar/week/2026-10-21?project=PRJ-00001",
+	]);
+	check("an unknown length in the address is three weeks", (desk.go("project-planner", "lookahead", "2026-10-14", "5"), weeks_of(pp)), 3);
+});
+
+test("P5: the tabs are routes, each with its own entry; the Lookahead loads get_lookahead's window", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/lookahead/2026-10-14" });
+	const pp = projectPlanner(desk);
+	desk.land();
+	const range = pp.range();
+	check("whole weeks from the Sunday", [range.start.format("YYYY-MM-DD"), range.end.format("YYYY-MM-DD")], ["2026-10-11", "2026-10-31"]);
+	pp.go("crew", pp.anchor);
+	pp.go("week", pp.anchor);
+	pp.go("month", pp.anchor);
+	check("one entry each", desk.urls(), [
+		"/desk/project-planner/lookahead/2026-10-14",
+		"/desk/project-planner/crew/2026-10-14",
+		"/desk/project-planner/calendar/week/2026-10-14",
+		"/desk/project-planner/calendar/month/2026-10-14",
+	]);
+	check("the same screen again only loads", (pp.go("month", pp.anchor), desk.entries.length), 4);
+	check("what each landing loaded", pp.loads.map((l) => l.view), ["lookahead", "crew", "week", "month", "month"]);
+});
 
 const TECHS = {
 	technicians: [
