@@ -41,7 +41,7 @@ export {
 } from "./fields.js";
 export { same_value, split_conflict, resolve, value_text } from "./conflict.js";
 export { STATES, create_save_queue } from "./save_queue.js";
-export { header_status, files_chip, files_drop, tone_of, TONES } from "./header.js";
+export { header_status, files_chip, files_chip_label, files_drop, chip_action, tone_of, TONES } from "./header.js";
 export { STREAM_PILLAR, SUMMARY, pillar_for, streams_of, lead_pillar, summary_model } from "./summary.js";
 export { is_new_name, full_form_key, carry_over, redirect_for, split_prefill, opens_by_default } from "./opening.js";
 export { register_extension, extension_for, has_extension } from "./extensions.js";

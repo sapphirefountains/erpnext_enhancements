@@ -249,6 +249,8 @@ class GuidedEntry {
 		// the constructor, the editor's methods are not mixed in yet and there is none to leave).
 		if (this.ext && this.leave_extension) this.leave_extension();
 		this.ext = null;
+		// v1.711.0: the landing and loading screens take no dropped file (record_tools.js bind_drop).
+		if (this.record_tools && typeof this.record_tools.unbind_drop === "function") this.record_tools.unbind_drop();
 		if (this.queue && this.queue.has_unsaved()) this.retired.push(this.queue);
 		this.retired = this.retired.filter((queue) => queue.has_unsaved());
 		this.flow = null;
@@ -853,7 +855,11 @@ class GuidedEntry {
 			this.refresh_blocks();
 		});
 		// The attachments chip in the band: the files section, opened and scrolled to (v1.711.0).
-		this.$root.find(".ge-files-chip").on("click", () => this.show_files());
+		// With none yet it opens the uploader instead (record_tools.js chip_action).
+		this.$root.find(".ge-files-chip").on("click", () => {
+			if (this.record_tools && typeof this.record_tools.chip_action === "function") this.record_tools.chip_action();
+			else this.show_files();
+		});
 		this.$root.find(".ge-comments").attr("id", "ge-comments-region");
 		this.$root.find(".ge-tools").attr("id", "ge-tools-region");
 		this.watch_blocks();
@@ -882,7 +888,9 @@ class GuidedEntry {
 	// Drawn only when its content changes, because the span is a live region.
 	render_stage_chip() {
 		const $chip = this.$root.find(".ge-stage-chip");
-		const status = this.kit.header_status(this.flow && this.flow.header, this.values);
+		// A tab that loaded an older kit bundle before the deploy (the board's side panel does) has no
+		// header_status: no chip, not a TypeError out of refresh_chrome.
+		const status = typeof this.kit.header_status === "function" ? this.kit.header_status(this.flow && this.flow.header, this.values) : null;
 		const key = status ? `${status.tone}|${status.label}|${status.value}` : "";
 		if ($chip.attr("data-key") === key) return;
 		$chip.attr("data-key", key).removeAttr("title").empty();

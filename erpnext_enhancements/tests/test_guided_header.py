@@ -39,6 +39,7 @@ SIDE_PANEL_JS = FORM_KIT_JS / "ui" / "side_panel.js"
 PAGE_JS = APP / "enhancements_core" / "page" / "guided_entry" / "guided_entry.js"
 CSS = APP / "public" / "css" / "guided_entry.bundle.css"
 CHIP_JS = JS / "sf_kit" / "chip.js"
+BUNDLE_JS = JS / "guided_entry.bundle.js"
 
 
 def _text(path):
@@ -65,7 +66,7 @@ const opp = {
 		tones: { "Closed Won": "good", Lost: "danger", "On Hold": "warn" },
 	},
 };
-out.exported = ["header_status", "files_chip", "files_drop", "tone_of"].every((k) => typeof kit[k] === "function");
+out.exported = ["header_status", "files_chip", "files_chip_label", "files_drop", "chip_action", "tone_of"].every((k) => typeof kit[k] === "function");
 out.stage = {
 	open: h.header_status(opp, { status: "Proposal/Price Quote" }),
 	won: h.header_status(opp, { status: "Closed Won" }),
@@ -106,6 +107,24 @@ out.drop = {
 	denied: h.files_drop({ ...base, can_add: false }),
 	empty: h.files_drop(),
 	new_beats_loading: h.files_drop({ ...base, is_new: true, loaded: false }),
+	failed: h.files_drop({ ...base, failed: true, loaded: false }),
+	failed_loaded: h.files_drop({ ...base, failed: true }),
+	failed_not_files: h.files_drop({ ...base, failed: true, has_files: false }),
+};
+out.action = {
+	new_record: h.chip_action({ is_new: true, count: 0, can_add: true }),
+	empty_may_add: h.chip_action({ is_new: false, count: 0, can_add: true }),
+	empty_may_not: h.chip_action({ is_new: false, count: 0, can_add: false }),
+	with_files: h.chip_action({ is_new: false, count: 3, can_add: true }),
+	unknown: h.chip_action({ is_new: false, count: null, can_add: true }),
+	nothing: h.chip_action(),
+};
+out.label = {
+	attach: h.files_chip_label(0, true),
+	none: h.files_chip_label(0, false),
+	one: h.files_chip_label(1, true),
+	many: h.files_chip_label(7, false),
+	unknown: h.files_chip_label(null, true),
 };
 out.tones = h.TONES;
 console.log(JSON.stringify(out));
@@ -200,6 +219,29 @@ class TestTheDecisionsUnderNode(unittest.TestCase):
 		self.assertEqual(drop["denied"], "denied")
 		self.assertEqual(drop["empty"], "ignore")
 
+	def test_a_failed_load_is_told_apart_from_a_slow_one(self):
+		drop = self.out["drop"]
+		self.assertEqual(drop["failed"], "failed")
+		self.assertEqual(drop["failed_loaded"], "failed")
+		self.assertEqual(drop["failed_not_files"], "ignore")
+
+	def test_the_chip_opens_the_uploader_only_when_it_says_attach(self):
+		action = self.out["action"]
+		self.assertEqual(action["empty_may_add"], "attach")
+		self.assertEqual(action["new_record"], "save")
+		self.assertEqual(action["empty_may_not"], "show", "'No files' has nothing to attach with")
+		self.assertEqual(action["with_files"], "show")
+		self.assertEqual(action["unknown"], "show")
+		self.assertEqual(action["nothing"], "show")
+
+	def test_the_chip_word_and_its_accessible_name_agree(self):
+		label = self.out["label"]
+		self.assertEqual(label["attach"], {"kind": "attach", "count": 0})
+		self.assertEqual(label["none"], {"kind": "none", "count": 0})
+		self.assertEqual(label["one"], {"kind": "one", "count": 1})
+		self.assertEqual(label["many"], {"kind": "many", "count": 7})
+		self.assertEqual(label["unknown"], {"kind": "unknown", "count": None})
+
 	def test_the_tones_are_sf_kits_chip_tones(self):
 		chip = _text(CHIP_JS)
 		declared = re.search(r"PILLAR_TONES = \[(.*?)\];", chip).group(1) + "," + re.search(r"STATUS_TONES = \[(.*?)\];", chip).group(1)
@@ -225,7 +267,8 @@ class TestTheShellDrawsThem(unittest.TestCase):
 
 	def test_the_files_chip_starts_hidden_and_opens_the_section(self):
 		self.assertRegex(self.page, r'<button type="button" class="ge-files-chip"[^>]*hidden>')
-		self.assertIn('find(".ge-files-chip").on("click", () => this.show_files())', self.page)
+		self.assertIn('find(".ge-files-chip").on("click", () => {', self.page)
+		self.assertIn("else this.show_files();", self.page, "the fallback when the tools are not mounted")
 		self.assertIn("show_files() {", self.page)
 
 	def test_the_files_section_sits_under_the_steps_whatever_the_view(self):
@@ -255,8 +298,41 @@ class TestTheShellDrawsThem(unittest.TestCase):
 		self.assertIn('this.$dock = $root.find(".ge-files")', self.tools)
 		self.assertIn("this.$dock.length ? this.dock_files() : this.group(", self.tools)
 		self.assertIn("this.show_count(files.length)", self.tools)
-		self.assertIn("this.ed.kit.files_chip(n)", self.tools)
+		self.assertIn("header.files_chip_label(n, this.can_add_file())", self.tools)
+		self.assertNotIn("this.ed.kit.files", self.tools, "imported, not read off a kit an older tab may hold")
+		self.assertIn('import * as header from "../header.js";', self.tools)
 		self.assertIn(".ge-files-chip", self.tools)
+
+	def test_the_chip_label_is_the_accessible_name(self):
+		show = self.tools[self.tools.index("\tshow_count(n) {") :]
+		show = show[: show.index("\n\t}\n")]
+		self.assertIn('attach: [__("Attach a file"), __("Attach a file")]', show)
+		self.assertRegex(show, r'none: \[__\("No files"\), __\("No files attached"\)\]')
+
+	def test_the_chip_opens_the_uploader_when_there_are_no_files(self):
+		self.assertIn("this.record_tools.chip_action()", self.page)
+		chip = self.tools[self.tools.index("\tchip_action() {") :]
+		chip = chip[: chip.index("\n\t}\n")]
+		self.assertIn("header.chip_action(", chip)
+		self.assertIn("this.attach()", chip)
+		self.assertIn("Please save before attaching.", chip)
+
+	def test_the_drop_is_unbound_when_the_record_is_left(self):
+		"""The landing screen and the loading screen take no drop; reset() runs on both."""
+		self.assertIn("\tunbind_drop() {", self.tools)
+		for src in (self.page, _code(SIDE_PANEL_JS)):
+			reset = src[src.index("\treset() {") :]
+			reset = reset[: reset.index("\n\t}\n")]
+			self.assertIn("this.record_tools.unbind_drop()", reset)
+		self.assertIn("this.load_failed = true", self.tools)
+		self.assertIn("this.unbind_drop();", self.tools[self.tools.index("\tmount() {") :][:1800])
+
+	def test_a_tab_holding_an_older_kit_does_not_crash_refresh_chrome(self):
+		method = self.page[self.page.index("\trender_stage_chip() {") :]
+		method = method[: method.index("\n\t}\n")]
+		self.assertIn('typeof this.kit.header_status === "function"', method)
+		version = re.search(r"const VERSION = (\d+);", _code(BUNDLE_JS))
+		self.assertTrue(version and int(version.group(1)) >= 5, "a tab holding 4 has no header_status")
 
 	def test_the_side_panel_keeps_its_files_in_the_tools(self):
 		"""It draws no .ge-files, so the tools' own Attachments group is still where they are."""
@@ -274,10 +350,13 @@ class TestTheShellDrawsThem(unittest.TestCase):
 		self.assertIn("dragenter", drop)
 		self.assertIn("dragover", drop)
 		self.assertIn("event.preventDefault()", drop)
-		self.assertIn("this.ed.kit.files_drop(", drop)
+		self.assertIn("header.files_drop(", drop)
+		self.assertIn("failed: !!this.load_failed", drop)
+		self.assertIn("dragend", drop, "the outline ends when the drag does")
+		self.assertIn("setTimeout(clear", drop, "and when a swallowed drop leaves no event here")
 		self.assertIn("this.attach(files)", drop)
 		self.assertIn('"Please save before attaching."', drop, "the form's own sentence")
-		self.assertIn("$root.off(ns)", drop, "bound once per mount, not once per record")
+		self.assertIn("this.unbind_drop();", drop, "bound once per mount, not once per record")
 		self.assertIn("Array.from(dt.files)", drop, "the event's DataTransfer is emptied once the handler returns")
 		attach = self.tools[self.tools.index("\tattach(dropped) {") :]
 		attach = attach[: attach.index("\n\t}\n")]
@@ -325,6 +404,32 @@ class TestTheShellDrawsThem(unittest.TestCase):
 		new = self.css[self.css.index("The head band's chips and the files section") :]
 		self.assertNotRegex(new, r"#[0-9a-fA-F]{3,8}\b")
 		self.assertNotRegex(new, r"rgba?\(")
+
+
+class TestNoStrayControlCharacters(unittest.TestCase):
+	"""A heredoc or a shell that eats a backslash leaves a control character where an escape was meant:
+	v1.711.0's first CSS had `content: "\\2212"` written as U+0091 and a "2", so every open section read
+	"Attachments 3 ... 2". Nothing else would have caught it: it parses, it styles, it ships."""
+
+	BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+	def test_the_form_kit_and_the_guided_page_have_none(self):
+		paths = [CSS, PAGE_JS, BUNDLE_JS]
+		paths += sorted(FORM_KIT_JS.rglob("*.js"))
+		paths += sorted((APP / "form_kit").rglob("*.py"))
+		paths += sorted((JS / "guided_item").rglob("*.js"))
+		self.assertGreater(len(paths), 20)
+		found = []
+		for path in paths:
+			for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+				if self.BAD.search(line):
+					found.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()!r}")
+		self.assertEqual(found, [])
+
+	def test_the_check_catches_the_one_that_shipped(self):
+		self.assertTrue(self.BAD.search('content: "\x912";'))
+		self.assertFalse(self.BAD.search('content: "\\2212";'))
+		self.assertFalse(self.BAD.search("a\ttab and \r\n"))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@
  *   files_chip     the attachments chip: a count and a sentence, "No files" when there are none.
  *   files_drop     what dropping files on the page does (the Desk form's own drop, with the guard
  *                  the Desk form gets from "Please save before attaching").
+ *   chip_action    what a click on the files chip does: scroll to the section, or, when there are no
+ *                  files to show, open the uploader.
  */
 
 // sf_kit's chip tones (public/js/sf_kit/chip.js CHIP_TONES). A tone from data is checked here too:
@@ -69,12 +71,40 @@ export function files_chip(count) {
  *   save     a new record: "Please save before attaching."
  *   denied   no write permission, or the DocType's max_attachments is reached
  *   wait     the record's permissions have not arrived yet (record_info is still loading)
+ *   failed   record_info failed, so what the person may do is not known: say so, not "still loading"
  *   ignore   not a file drag (text dragged out of a field, a link): leave it to the browser
  */
 export function files_drop(opts) {
 	const o = opts || {};
 	if (!o.has_files) return "ignore";
 	if (o.is_new) return "save";
+	if (o.failed) return "failed";
 	if (!o.loaded) return "wait";
 	return o.can_add ? "attach" : "denied";
+}
+
+/**
+ * What a click on the band's files chip does: `save` (a record not saved yet cannot take files),
+ * `attach` (no files yet and the person may add one: the chip says "Attach a file", so it does), or
+ * `show` (scroll to the section and open it).
+ */
+export function chip_action(opts) {
+	const o = opts || {};
+	if (o.is_new) return "save";
+	// Not Number(null) === 0: files not loaded yet are not "no files".
+	const known = o.count !== null && o.count !== undefined && o.count !== "";
+	return known && Number(o.count) === 0 && o.can_add ? "attach" : "show";
+}
+
+/**
+ * Which sentence the files chip shows: `{ kind, count }`, kind one of `unknown` (files not loaded),
+ * `attach` (none yet and the person may add one: the chip is a call to action), `none`, `one`, `many`.
+ * The page words each kind (translated) and gives it an accessible name that contains the visible
+ * word (WCAG label in name), so "Attach a file" is both when there is nothing yet to count.
+ */
+export function files_chip_label(count, can_add) {
+	const chip = files_chip(count);
+	if (chip.count === null) return { kind: "unknown", count: null };
+	if (chip.count === 0) return { kind: can_add ? "attach" : "none", count: 0 };
+	return { kind: chip.count === 1 ? "one" : "many", count: chip.count };
 }

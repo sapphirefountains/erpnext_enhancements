@@ -28,7 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with it, as `Form.setup_file_drop` does. Every file drag over the page is claimed, so a miss no
     longer makes the browser open the file and leave the record; a new record answers "Please save
     before attaching.", and a person who may not attach (or a record at `max_attachments`) is told so.
-    The board's side panel gets the same drop and keeps its files in its tools.
+    **Where it works, exactly:** anywhere inside the guided page while a record (saved or new) is shown,
+    and inside the board's side panel while it edits a record (it keeps its files in its tools; the
+    new-record and move panels take no drop). **Where it does not:** the Desk navbar and the page head,
+    which sit outside the page, the landing and loading screens (the drop is unbound there, so
+    nothing says "still loading" over a screen with no record), and frappe's Text Editor, which takes a
+    drop on itself exactly as on the Desk form. The drop outline ends with the drag, not only with a
+    drop, so a drop the Text Editor swallows does not leave it on.
+  - **The files chip says what it does.** With no files and a right to add one it reads "Attach a file"
+    (its accessible name too) and opens the uploader; with files it reads "3 files" and scrolls to the
+    section; "No files" is shown, and only scrolls, when the person may not add one. A record whose
+    attachments failed to load says so in the section and on a drop.
+  - A tab that loaded the older kit bundle (the board's side panel does) before this deploy no longer
+    throws out of the head band: the page checks for `header_status`, and the bundle's `VERSION`
+    is 5, so the newer kit replaces the older one.
+  - A guard against a bug class: `tests/test_guided_header.py` now fails on any control character
+    in the form kit's and the guided page's CSS, JavaScript and Python. The first version of this
+    change had `content: "\2212"` written through a shell as U+0091 and a "2", so every open
+    Attachments section read "Attachments 3 … 2"; it parses, styles and ships.
   - **The stage in the head band.** A DocType declares a header status field in its form kit config
     (`header: {"status": {"field", "label", "tones"}}`; `get_flow` sends it as `header`), and the band
     shows its value as a chip that follows the field the moment it changes (the Close step, a save, a

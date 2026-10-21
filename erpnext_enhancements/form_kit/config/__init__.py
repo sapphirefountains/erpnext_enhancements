@@ -149,7 +149,7 @@ MINE_KEYS = {"owner_field", "title_field", "detail_fields", "open", "hide_flag",
 REQUIREMENT_KINDS = ("field", "any", "chosen_rows")
 QUERY_KEYS = {"query", "filters", "by", "cases", "links", "source"}
 QUERY_LINKS = ("directory",)
-#: sf_kit's chip tones (public/js/sf_kit/chip.js CHIP_TONES); tests/test_form_kit_header holds this equal.
+#: sf_kit's chip tones (public/js/sf_kit/chip.js CHIP_TONES); tests/test_guided_header holds this equal.
 CHIP_TONES = ("design", "build", "service", "rent", "neutral", "danger", "warn", "good")
 HEADER_STATUS_KEYS = {"field", "label", "tones"}
 

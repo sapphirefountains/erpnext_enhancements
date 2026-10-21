@@ -2467,7 +2467,7 @@ body.ge-page-active .triton-fab {
 	color: var(--sf-text-muted);
 }
 .ge-files-group[open] > .ge-files-summary::after {
-	content: "2";
+	content: "\2212";
 }
 .ge-files-summary:focus-visible {
 	outline: 2px solid var(--sf-focus);

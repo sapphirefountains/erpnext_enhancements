@@ -307,8 +307,8 @@ the new guided layout." Both are for the guided page's band and body; the decisi
   `can_remove_files`, `protect_attached_files`, `max_attachments`, frappe's own question), so the rules
   were not touched. A **files chip** in the band shows the count ("3 files", "Attach a file" while
   there are none and the person may add one, "No files" when they may not) and opens and scrolls to the
-  section; it is hidden until the files have loaded, so it never says "none" before it knows.
-- **Drag and drop.** A file dropped anywhere on the page (or the side panel) opens frappe's uploader
+  section, or, with no files yet and a right to add one, opens the uploader as its "Attach a file" says; it is hidden until the files have loaded, so it never says "none" before it knows.
+- **Drag and drop.** A file dropped anywhere on the page (or on the side panel while it edits a record; not on the landing screen, the Desk navbar or frappe's Text Editor) opens frappe's uploader
   with it, as `Form.setup_file_drop` does for the Desk form (`files`, folder "Home/Attachments"), so
   upload and drag-drop both work. Every file drag over the page is claimed, because a drop the page
   does not take is opened by the browser, which would leave the record; `files_drop` answers
