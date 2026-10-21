@@ -81,6 +81,7 @@ function makeDesk(options) {
 		handlers: {},
 		forms: {},
 		prefs: {},
+		tabs: {},
 		calls: [],
 	};
 	const current = () => desk.entries[desk.index];
@@ -203,13 +204,16 @@ function makeDesk(options) {
 		if (show) show();
 	}
 
+	// The Project Planner's remembered tab is the device's (P8: "ee_project_planner_tab:<user>"); it is
+	// kept apart from the filter prefs, which these scenarios compare whole.
+	const store_for = (key) => (String(key).startsWith("ee_project_planner_tab") ? desk.tabs : desk.prefs);
 	const storage = {
-		getItem: (key) => (key in desk.prefs ? desk.prefs[key] : null),
+		getItem: (key) => (key in store_for(key) ? store_for(key)[key] : null),
 		setItem: (key, value) => {
-			desk.prefs[key] = String(value);
+			store_for(key)[key] = String(value);
 		},
 		removeItem: (key) => {
-			delete desk.prefs[key];
+			delete store_for(key)[key];
 		},
 	};
 	const window = { location, history, localStorage: storage };
@@ -545,11 +549,12 @@ test("Project: a project that starts later opens the Lookahead on the week it st
 	check("filtered to it", pp.project, "PRJ-00003");
 });
 
-test("Project: the planner's last-used view still applies, and the project wins over its filter", () => {
+test("Project: this device's last tab still applies, and the project wins over the person's filter", () => {
 	const desk = projectDesk();
+	// The tab is the device's since P8; the person's saved row holds filters only.
+	desk.tabs["ee_project_planner_tab:"] = "month";
 	const pp = projectPlanner(desk, {
-		// P5: saved since the tabs, so its view is a choice of tab.
-		p6c: { loaded: true, restored: false, last: { view: "month", project: "PRJ-OLD", pm: "pm@example.com", tabbed: true } },
+		p6c: { loaded: true, restored: false, last: { project: "PRJ-OLD", pm: "pm@example.com" } },
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
 	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-00001");

@@ -54,11 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Crew, Calendar, Heatmap and Utilization; Heatmap and Utilization fold into Crew in P7.
 
 ### Changed
-- **Landing.** A bare `/project-planner` opens the person's last-used tab, and the **Lookahead** when
-  there is none, each replacing the bare address with its own (`/lookahead/<today>`): an entry left bare
-  would be taken over by "last used" on the way Back, so Back from another tab would bounce off it. A "last used" view saved before this release opens the Lookahead too: everyone had the
-  week view saved, because it was the only landing screen. Saved views now carry `tabbed`, so a tab
-  picked from now on is remembered (`api/planner_views_prefs`: `lookahead` view, `tabbed` flag).
+- **Landing.** The **Lookahead** is the default view: a desktop with no tab of its own (P8's per-device
+  tab store, 1.707.0) opens it, and so does Today's *Planner* button and its fallback for someone the
+  planner does not list. A phone's first visit stays Today. The Lookahead is one of the tabs a device
+  remembers, and a bare `/project-planner` is replaced by the tab's own address (`/lookahead/<today>`,
+  `/calendar/week/<today>`): an entry left bare would be taken over by the device's tab on the way Back,
+  so Back from another tab would bounce off the Lookahead. A named saved view may name the Lookahead
+  (`api/planner_views_prefs`: `lookahead` view).
 - **Old addresses redirect.** `/project-planner/week/<date>` and `/month/<date>` (bookmarks, the
   digests, Google Calendar event links) are **replaced**, never pushed, by their `/calendar/…`
   addresses, with the filters and any other query keys. Back from the new address goes where Back
@@ -78,6 +80,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/test_planner_url_filters.js`.
 - Updated the existing pins that named the old `/week` address, the view list, the tab sync and the
   saved-view keys.
+
+## [1.707.0] - 2026-10-21
+
+### Added
+- **Today, the phone view of the Project Planner** (P8 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.4; Nik approved the redesign on 2026-10-21, D4: "Today + tomorrow
+  list", "Today's route map", "Block my own time"). `/desk/project-planner/today/<date>` lists the
+  signed-in person's stops for the day and the day after, in route order. Each stop shows its **leave-by
+  and arrival times**, the site, what the work is ("Excavate basin · day 2/3", "Visit, 2h"), the address
+  (tap for Maps), crewmates, equipment and weather chips and the task's note. Above the stops: the day's
+  notes and the person's own blocks, and the day's **route map** (the route view's own, drawn from the
+  `get_route` payload) with *Full route* and *Open in Google Maps*. Below: **Block my time** (the My week
+  form, for the person's own time only) and **This week** (My week, unchanged). The header's *Planner*
+  button opens the week view, so nothing the planner does is lost on a phone.
+  - **`project_planner.get_today(date)`** is the back end: a GET for any planner role, found through
+    Planner Resource `user` like `get_my_week`. Each day is a `day_entry` plus the stop's `order`,
+    `leave_by` (the arrival less the drive, `route_slots`' arithmetic, so the calendar and the leave-by
+    ping say the same), `miles`, `weather`, `equipment`, `day_of` (the n-th of a multi-day task's working
+    days) and `fountain_move`; the answer carries today's whole `route_payload` for the map, and the
+    person's blocks and day notes. It writes nothing.
+  - **Landing** (Nik, 2026-10-21: "Use the spec's landing rule for P8: everyone lands on the tab they used
+    last, or Today the first time", then "Remember the last-used tab per device: my phone keeps its own
+    last tab (Today the first time) and my desktop keeps its own. Filters can stay per person."). A bare
+    `/project-planner` opens **the tab this device last showed**: week, month, crew, heatmap or Today,
+    remembered in the browser's own storage under a key that carries the signed-in user (two people on one
+    browser do not cross) and written whenever one of those screens opens. A blocked or empty store is a
+    first visit. **First visit on a device:** a phone opens Today, scheduler or technician alike; a desktop
+    opens the default calendar view (the week, as before). **Filters and colors stay per person**, in the
+    server's "last used" row as before; that row no longer holds a tab (the page stopped saving one, and
+    the landing never reads an older row's), so `planner_views_prefs` and its list of views are
+    unchanged, and "Save view as…" still carries its view as an explicit choice. The redirect replaces the
+    bare address, so Back leaves the planner; it waits for the saved filters to load. A link that names a
+    filter (the Project form's *Open in Project Planner*) opens this device's calendar tab with that
+    filter, as it always has, and never opens Today, which has no filters to show. Someone with planner access but no Planner
+    Resource, sent to Today by the landing, gets the planner they always had, not a note. Today is also
+    reachable from *Planner* and *More ▸ Views ▸ Today* (phones only).
+  - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
+    Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
+    Back).
+  - **Read-only.** The only write is the person's own block. A Fountain Move task (v1.703.0) shows a
+    *Move* chip and stays the Maintenance Planner's to schedule. The "running late" / "can't make it"
+    buttons and the phone ICS feed are declined (Nik, 2026-10-21) and are not here.
+  - **Miles.** Distances on Today are miles; routing still measures in km underneath, as the route view
+    does.
+- Tests: `tests/test_planner_today.py` (bench-free: the arithmetic, `get_today` against the Phase 3B
+  stub, the page's wiring) and `scripts/test_planner_today.js` (the real page script against a model of
+  v16.50's router: the landing, history and Back, Block my time, escaping), in their own CI step.
+
+### Changed
+- `test_project_planner` and `test_project_planner_page` list `get_today` among the planner's GET
+  endpoints and its one `date` argument.
 
 ## [1.706.0] - 2026-10-21
 

@@ -3073,6 +3073,8 @@ class TestWiring(unittest.TestCase):
 		# P3 of the Planner UX redesign (per-project publish and baseline) is pinned in
 		# tests/test_planner_publish_baseline.py.
 		p3_writes = ("publish_project_schedule", "reset_baseline")
+		# P8 (the phone's Today) is pinned in tests/test_planner_today.py.
+		p8_reads = ("get_today",)
 		writes = (
 			"save_task", "add_crew", "swap_crew", "shift_successors", "bulk_update", "copy_week", *phase3b_writes,
 			*phase5_writes,
@@ -3084,6 +3086,7 @@ class TestWiring(unittest.TestCase):
 			"get_planner", "get_route", "suggest_dates", "check_routes", "get_heatmap", "get_overdue", *phase3b_reads,
 			*phase4_reads,
 			*phase5_reads,
+			*p8_reads,
 		)
 		self.assertEqual(set(endpoints), set(writes) | set(reads))
 		for name in writes:

@@ -94,9 +94,6 @@ SCHEMA = {
 		"color_chosen": ("bool",),
 		# Show all tasks (P2 of the planner UX redesign, D6): off, the default, is phase and crew work only.
 		"all_tasks": ("bool",),
-		# P5: saved since the Lookahead became the home tab. A "last used" view without it was saved while
-		# the week view was the only landing screen, so the page does not take its view as a choice of tab.
-		"tabbed": ("bool",),
 	},
 	"maintenance": {
 		"view": ("enum", ("month", "week", "crew")),

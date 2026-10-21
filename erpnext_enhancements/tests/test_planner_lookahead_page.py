@@ -118,11 +118,14 @@ class TestTheBlock(unittest.TestCase):
 		code = self.code
 		self.assertIn('default_view: "lookahead",', code)
 		self.assertIn('view: ["enum", ["week", "month", "crew", "heatmap", "lookahead"]],', code)
-		self.assertIn("const view = last && last.tabbed && last.view;", code)
-		self.assertIn("state.tabbed = true;", code)
+		# The tab is the device's (P8's store, Nik 2026-10-21): the Lookahead is one of its tabs, and the
+		# landing writes a remembered tab's own address (/calendar/week/…, /lookahead/…).
+		self.assertIn('tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],', code)
+		self.assertIn("frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));", code)
+		self.assertNotIn("tabbed", code)
 		prefs = PREFS.read_text(encoding="utf-8")
 		self.assertIn('"view": ("enum", ("week", "month", "crew", "heatmap", "lookahead")),', prefs)
-		self.assertIn('"tabbed": ("bool",),', prefs)
+		self.assertNotIn('"tabbed"', prefs)
 
 	def test_a_collapse_and_the_needs_crew_chip_are_not_screens(self):
 		for name in ("ppl_toggle(key) {", "ppl_set_all(collapsed) {"):
@@ -142,8 +145,8 @@ class TestTheBlock(unittest.TestCase):
 		for name in (
 			"P5: an old /week address is replaced by /calendar/week",
 			"P5: the range is a screen: Back and Forward step through the weeks shown and the days",
-			"a last-used view saved before the tabs opens the Lookahead",
-			"P5: Back onto the Lookahead stays on the Lookahead after another tab became last used",
+			"A desktop with no tab of its own opens the default view, the Lookahead (P5)",
+			"P5: Back onto the Lookahead stays on the Lookahead after another tab became this device's",
 		):
 			self.assertIn(name, harness)
 

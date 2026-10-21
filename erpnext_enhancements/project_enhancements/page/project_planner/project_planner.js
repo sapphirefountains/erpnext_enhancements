@@ -216,6 +216,7 @@ class ProjectPlanner {
 		this.url_filters = null;
 		this.watch_filter_url();
 		this.init_phase3b();
+		this.init_phase8();
 		this.init_phase4();
 		this.init_phase5();
 		this.init_phase6a();
@@ -234,6 +235,8 @@ class ProjectPlanner {
 		if (route[0] !== PP.route) return null;
 		const mine = this.my_week_target(route);
 		if (mine) return mine;
+		const today = this.today_target(route);
+		if (today) return today;
 		// /project-planner/route/<person>/<date>
 		if (route[1] === PP.route_view && route[2]) {
 			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
@@ -265,8 +268,13 @@ class ProjectPlanner {
 		this.view = target.view;
 		this.anchor = target.anchor;
 		this.ppl_take_target(target);
+		this.p8_remember_tab(target.view);
 		if (target.view === PP3B.my_week) {
 			this.show_my_week(target.anchor);
+			return;
+		}
+		if (target.view === PP8.view) {
+			this.show_today(target.anchor);
 			return;
 		}
 		if (target.view === PP.route_view) {
@@ -473,6 +481,7 @@ class ProjectPlanner {
 		this.$hint.toggle(!route);
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
+		if (this.$today) this.$today.hide();
 		this.p4_set_mode(mode);
 		this.p6c_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
@@ -3807,6 +3816,351 @@ const PP3B_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
+
+// ====================================================================== P8: Today (phone)
+//
+//   /desk/project-planner/today/2026-10-21   the signed-in person's day and the day after, for a phone
+//
+// P8 of the Planner UX redesign (docs/planner-ux-redesign.md §4.4; Nik's D4: "Today + tomorrow list",
+// "Today's route map", "Block my own time"). Today lists the person's stops for the day in route
+// order, each with its leave-by and arrival times, the site, what the work is ("Excavate basin · day
+// 2/3", or "Visit, 2h"), the address (tap for Maps), crewmates, equipment and weather; then tomorrow.
+// The day's route map is the route view's own (draw_route_map), drawn from the get_route answer that
+// get_today carries. "Block my time" is My week's personal-block form (self_only); "This week" opens My
+// week as it is; "Full route" opens the route view. Distances are miles. It is read-only apart from
+// blocking one's own time: no drag, no save_task, no "running late" buttons (declined), and a Fountain
+// Move task is marked Move and stays the Maintenance Planner's to schedule.
+//
+// The landing rule (§4.4; Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the first
+// time", then "remember the last-used tab per device: my phone keeps its own last tab, Today the first
+// time, and my desktop keeps its own. Filters can stay per person"). The TAB (week, month, crew,
+// heatmap, Today) is remembered per device, in this browser's own storage (load_pref, save_pref) under a key that carries the
+// signed-in user (two people sharing a browser do not cross), written whenever one of those screens
+// opens (p8_remember_tab) and read for a bare /project-planner (p8_landing). A store that is blocked,
+// empty or throws is a first visit on that device. The FILTERS and colors stay per person, in the
+// server's "last used" row as before; that row no longer carries a view, and the landing never reads
+// one (an older row's is ignored). First visit: a phone opens Today, a desktop the default calendar view
+// (the week). The redirect replaces the bare address (replace_route), so Back leaves the planner as it
+// would have; a link that names a filter (?project=, the Project form's "Open in Project Planner") is
+// the sender's: it opens a calendar view with that filter (this device's tab, never Today, which has no
+// filters to show), so Today is never restored over it; and someone the planner does not list,
+// sent to Today by the landing, gets the planner instead of its note. Named saved views ("Save view
+// as…") still carry their view.
+//
+// Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
+// (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
+// branch of set_mode, the Today item of the toolbar's Views menu (tb_views_items), and the Today
+// branches of p6d_block_click and p6d_reload.
+
+const PP8 = {
+	view: "today",
+	// The screens whose tab a device remembers; the Lookahead (P5) joins them.
+	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],
+	tab_pref: "ee_project_planner_tab",
+};
+
+// "07:35" -> "7:35 am"; "25:10" (past midnight, as routing.fmt_clock counts it) -> "1:10 am".
+const pp8_clock = (text) => {
+	const m = /^(\d{1,2}):(\d{2})/.exec(String(text == null ? "" : text));
+	if (!m) return "";
+	const h = Number(m[1]) % 24;
+	return `${h % 12 || 12}:${m[2]} ${h < 12 ? "am" : "pm"}`;
+};
+// Miles as the server sent them (get_today answers in miles already), one decimal.
+const pp8_miles = (miles) => String(Math.round((Number(miles) || 0) * 10) / 10);
+
+// One stop of the list. Every value is escaped; the address links to Google Maps only when the server
+// sent a Google Maps URL, and opens without an opener.
+const pp8_stop_html = (stop) => {
+	const slot = stop.slot && stop.slot.length === 2 ? stop.slot : null;
+	const maps = stop.maps_url && /^https:\/\/www\.google\.com\/maps\//.test(stop.maps_url) ? stop.maps_url : "";
+	const hours = Number(stop.hours) > 0 ? `${pp_hours(stop.hours)}h` : "";
+	const is_visit = stop.kind === "visit";
+	const site = is_visit ? stop.label : stop.project_title || stop.label;
+	const parts = [];
+	if (!is_visit && stop.project_title && stop.label && stop.label !== stop.project_title) parts.push(stop.label);
+	if (stop.day_of && stop.day_of.length === 2) parts.push(__("day {0}/{1}", [stop.day_of[0], stop.day_of[1]]));
+	if (!is_visit && hours) parts.push(hours);
+	const work = is_visit ? [hours ? `${__("Visit")}, ${hours}` : __("Visit")].concat(parts).join(" · ") : parts.join(" · ");
+	const when = [];
+	if (stop.leave_by) when.push(`${__("Leave")} ${pp8_clock(stop.leave_by)}`);
+	if (slot) when.push(`${pp8_clock(slot[0]) || slot[0]}–${pp8_clock(slot[1]) || slot[1]}`);
+	else if (stop.arrive) when.push(`${stop.leave_by ? __("Arrive") + " " : ""}${pp8_clock(stop.arrive)}`);
+	const drive =
+		Number(stop.drive_minutes) > 0
+			? `${pp_drive(stop.drive_minutes)}${Number(stop.miles) > 0 ? ` · ${pp8_miles(stop.miles)} mi` : ""}`
+			: "";
+	const chips = []
+		.concat(stop.fountain_move ? [`<span class="pp-chip">${pp_esc(__("Move"))}</span>`] : [])
+		.concat((stop.equipment || []).map((name) => `<span class="pp-chip pp-equip">${pp_esc(name)}</span>`))
+		.concat((stop.weather || []).length ? [`<span class="pp-chip pp-weather">${pp_esc(stop.weather.join(" · "))}</span>`] : []);
+	const place = pp_esc(stop.address);
+	const address = !stop.address
+		? ""
+		: maps
+		? `<a class="pp-td-addr" href="${pp_esc(maps)}" target="_blank" rel="noopener noreferrer">${place}</a>`
+		: `<div class="pp-td-addr">${place}</div>`;
+	const klass = stop.located ? "pp-td-stop" : "pp-td-stop pp-td-unlocated";
+	const marker = stop.located ? stop.order : "";
+	const notes = stop.notes ? `<div class="pp-td-notes">${pp_esc(stop.notes)}</div>` : "";
+	return `
+		<div class="${klass}" data-marker="${pp_esc(marker)}">
+			<span class="pp-stop-num">${pp_esc(stop.order)}</span>
+			<div class="pp-td-body">
+				${when.length ? `<div class="pp-td-when">${pp_esc(when.join(" · "))}</div>` : ""}
+				<div class="pp-td-site">${pp_esc(site || stop.ref)}</div>
+				${work ? `<div class="pp-td-work">${pp_esc(work)}</div>` : ""}
+				${drive ? `<div class="pp-td-sub">${pp_esc(__("Drive {0}", [drive]))}</div>` : ""}
+				${address}
+				${(stop.crew || []).length ? `<div class="pp-td-sub">${pp_esc(__("With {0}", [stop.crew.join(", ")]))}</div>` : ""}
+				${chips.length ? `<div class="pp-td-chips">${chips.join("")}</div>` : ""}
+				${notes}
+			</div>
+		</div>`;
+};
+
+const PP8_METHODS = {
+	init_phase8() {
+		this.today_date = "";
+		this.today_data = null;
+		this.$today = $('<div class="pp-today"></div>').hide().appendTo(this.$body);
+	},
+
+	// A phone, as the planner's toolbar sheet and stylesheet count one.
+	p8_is_phone() {
+		return !!(window.matchMedia && window.matchMedia(`(max-width: ${PPTB.phone_max}px)`).matches);
+	},
+
+	// This device's remembered tab for the signed-in user, or null (a first visit on this device, a
+	// store that is blocked or throws, a value that is not a tab).
+	p8_tab() {
+		const user = (frappe.session && frappe.session.user) || "";
+		const tab = this.load_pref(`${PP8.tab_pref}:${user}`, "");
+		return PP8.tabs.includes(tab) ? tab : null;
+	},
+
+	p8_remember_tab(view) {
+		if (!PP8.tabs.includes(view)) return;
+		const user = (frappe.session && frappe.session.user) || "";
+		this.save_pref(`${PP8.tab_pref}:${user}`, view);
+	},
+
+	// True when it took a bare /project-planner over for this device's tab (see the block comment).
+	// Called only once the person's saved views (their filters) are in.
+	p8_landing() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== PP.route || route[1]) return false;
+		const opts = frappe.route_options || {};
+		const link = PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key));
+		let tab = this.p8_tab() || (this.p8_is_phone() ? PP8.view : PP6C.default_view);
+		// A link that names a filter is the sender's: it opens a calendar view with that filter, the device's
+		// own when it has one, but never Today, which has no filters to show.
+		if (link && tab === PP8.view) tab = PP6C.default_view;
+		// The default view is what the bare address already opens.
+		if (tab === PP6C.default_view) return false;
+		// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		// Sent to Today unasked: someone the planner does not list gets the planner (render_today).
+		if (tab === PP8.view) this.p8_landed = true;
+		// P5: the tab's own address (/calendar/week/<date>, /lookahead/<date>).
+		frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));
+		return true;
+	},
+
+	today_target(route) {
+		if (route[1] !== PP8.view) return null;
+		const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+		return { view: PP8.view, anchor: date };
+	},
+
+	go_today(ymd) {
+		const route = frappe.get_route() || [];
+		if (route[0] === PP.route && route[1] === PP8.view && route[2] === ymd) {
+			this.load_today();
+			return;
+		}
+		this.self_route = [PP.route, PP8.view, ymd].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, PP8.view, ymd, this.filter_options()), false);
+	},
+
+	// Today is a screen of its own, as the route view is: set_mode takes the last screen away (My week's
+	// way in), then the calendar's chrome goes, and nothing here shows it again but the next set_mode.
+	show_today(anchor) {
+		this.today_date = anchor;
+		this.set_mode(true);
+		[this.$toolbar, this.$trays, this.$grid_wrap, this.$hint, this.$panel, this.$draft_bar].forEach(
+			($el) => $el && $el.hide()
+		);
+		this.$route.hide();
+		this.$today.show();
+		this.load_today();
+	},
+
+	load_today() {
+		const token = ++this.request;
+		this.$body.addClass("pp-loading");
+		return Promise.resolve(frappe.call({ method: `${PP.api}.get_today`, args: { date: this.today_date } }))
+			.then((r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.today_data = (r && r.message) || null;
+				this.render_today(token);
+			})
+			.catch(() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				this.today_data = null;
+				this.render_today(token);
+			});
+	},
+
+	// "Today" / "Tomorrow" for those two days of the calendar, else the weekday.
+	p8_day_name(ymd, data) {
+		if (ymd === data.today) return __("Today");
+		if (ymd === pp_ymd(moment(data.today, "YYYY-MM-DD").add(1, "days"))) return __("Tomorrow");
+		return moment(ymd, "YYYY-MM-DD").format("dddd");
+	},
+
+	render_today(token) {
+		this.clear_route_map();
+		const data = this.today_data;
+		const date = this.today_date || frappe.datetime.get_today();
+		// Only the landing sends someone here unasked. A person the planner does not list (office staff with
+		// the role but no Planner Resource) has no day to show: they get the planner they always had, in
+		// place of Today's one-line note.
+		const landed = this.p8_landed;
+		this.p8_landed = false;
+		if (landed && data && !data.resource) {
+			frappe.route_flags = frappe.route_flags || {};
+			frappe.route_flags.replace_route = true;
+			// P5: the planner's home tab.
+			this.go(PPL.view, date);
+			return;
+		}
+		const step = (sign) => this.go_today(pp_ymd(moment(date, "YYYY-MM-DD").add(sign, "days")));
+		const $root = this.$today.empty();
+		const $head = $('<div class="pp-route-head"></div>').appendTo($root);
+		$('<button type="button" class="btn btn-default btn-sm">‹</button>')
+			.attr("title", __("Previous day"))
+			.attr("aria-label", __("Previous day"))
+			.on("click", () => step(-1))
+			.appendTo($head);
+		$('<button type="button" class="btn btn-default btn-sm">›</button>')
+			.attr("title", __("Next day"))
+			.attr("aria-label", __("Next day"))
+			.on("click", () => step(1))
+			.appendTo($head);
+		$('<span class="pp-mw-title"></span>').text(moment(date, "YYYY-MM-DD").format("ddd, MMM D")).appendTo($head);
+		$('<span class="pp-spacer"></span>').appendTo($head);
+		// The rest of the planner, one tap away: nothing it does is lost on a phone.
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Planner"))
+			.on("click", () => this.go(PPL.view, date))
+			.appendTo($head);
+
+		if (!data) {
+			$('<div class="pp-route-note"></div>').text(__("Your day could not be loaded. Refresh to try again.")).appendTo($root);
+			return;
+		}
+		if (!data.resource) {
+			$('<div class="pp-route-note"></div>').text(data.message || __("There is no day to show.")).appendTo($root);
+			return;
+		}
+		(data.days || []).forEach((entry, index) => {
+			const $day = $('<section class="pp-td-day"></section>').appendTo($root);
+			if (entry.date === data.today) $day.addClass("pp-td-now");
+			const items = entry.items || [];
+			const facts = [moment(entry.date, "YYYY-MM-DD").format("ddd MMM D"), __("{0} stop(s)", [items.length])];
+			if (Number(entry.drive_minutes) > 0) facts.push(__("{0} driving", [pp_drive(entry.drive_minutes)]));
+			const $dh = $('<div class="pp-td-head"></div>').appendTo($day);
+			$("<b></b>").text(this.p8_day_name(entry.date, data).toUpperCase()).appendTo($dh);
+			$("<span></span>").text(` · ${facts.join(" · ")}`).appendTo($dh);
+			if (entry.off) $('<span class="pp-chip"></span>').text(__(entry.off)).appendTo($dh);
+			if (entry.long_drive) $('<span class="pp-chip pp-red"></span>').text(__("Long drive")).appendTo($dh);
+			this.p8_day_extras($day, entry, data);
+			if (entry.travel) $('<div class="pp-mw-empty"></div>').text(entry.travel).appendTo($day);
+			if (index === 0 && data.route && items.length) this.p8_map($day, data, token);
+			if (!items.length && !entry.travel) {
+				$('<div class="pp-mw-empty"></div>').text(entry.off ? __("Off") : __("Nothing booked")).appendTo($day);
+			}
+			if (items.length) {
+				const $list = $('<div class="pp-td-stops"></div>').html(items.map(pp8_stop_html).join("")).appendTo($day);
+				$list.find(".pp-td-stop[data-marker] .pp-stop-num").on("click", (e) => {
+					const order = e.currentTarget.parentNode.getAttribute("data-marker");
+					if (order) this.focus_marker(order);
+				});
+			}
+		});
+		const $foot = $('<div class="pp-td-foot"></div>').appendTo($root);
+		$('<button type="button" class="btn btn-primary btn-sm"></button>')
+			.text(__("Block my time"))
+			.attr("title", __("Mark yourself unavailable for part of this day or all of it"))
+			.on("click", () => this.p8_block(data.date, null))
+			.appendTo($foot);
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("This week"))
+			.attr("title", __("Your own week: each day's stops in route order, crewmates and notes"))
+			.on("click", () => this.go_my_week(date))
+			.appendTo($foot);
+	},
+
+	// The day's notes for the person's group, then their own blocks (a chip opens the form on a tap).
+	p8_day_extras($day, entry, data) {
+		const kit = this.p6d_kit();
+		if (!kit) return;
+		const notes = (data.day_notes || {})[entry.date] || [];
+		const mine = (data.blocks || []).filter((block) => block && block.date === entry.date);
+		if (!notes.length && !mine.length) return;
+		const $box = $('<div class="pp-p6d-mw"></div>').appendTo($day);
+		if (notes.length) $box.append(kit.blocks.notes_html(notes, { date: entry.date, full: true }));
+		mine.forEach((block) =>
+			$box.append(kit.blocks.chip_html(block, { note: block.note, date: entry.date, editable: !!block.can_edit }))
+		);
+	},
+
+	// The route map of the day on screen, from the get_route answer get_today carries, with the route
+	// view and Google Maps one tap away. draw_route_map never throws and never leaves a blank pane.
+	p8_map($day, data, token) {
+		const route = data.route;
+		const $bar = $('<div class="pp-td-mapbar"></div>').appendTo($day);
+		$('<button type="button" class="btn btn-default btn-xs"></button>')
+			.text(__("Full route"))
+			.attr("title", __("This day's stops in order, with drive times and a map"))
+			.on("click", () => this.go_route(data.resource, data.date))
+			.appendTo($bar);
+		const maps_url = route.maps_url;
+		if (maps_url && /^https:\/\/www\.google\.com\/maps\//.test(maps_url)) {
+			$('<button type="button" class="btn btn-default btn-xs"></button>')
+				.text(__("Open in Google Maps"))
+				.on("click", () => window.open(maps_url, "_blank", "noopener"))
+				.appendTo($bar);
+		}
+		const $note = $('<div class="pp-route-note"></div>').hide().appendTo($day);
+		const $cols = $('<div class="pp-route-cols pp-td-cols"></div>').appendTo($day);
+		const $map = $('<div class="pp-map"></div>').appendTo($cols);
+		this.draw_route_map(token, route, $map, $note, $cols);
+	},
+
+	// Block my time: My week's own form, for the person themselves only.
+	p8_block(ymd, block) {
+		const kit = this.p6d_kit();
+		const data = this.today_data;
+		if (!kit || !data || !data.resource) return;
+		kit.blocks.form({
+			block: block || null,
+			note: block ? block.note : "",
+			date: ymd,
+			resource_label: data.label,
+			self_only: true,
+			can_delete: block ? !!block.can_edit : false,
+			on_saved: () => this.load_today(),
+			on_deleted: () => this.load_today(),
+		});
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PP8_METHODS);
 
 // ====================================================================== Phase 4: tracking
 //
@@ -7182,9 +7536,6 @@ const PP6C = {
 		color_chosen: ["bool"],
 		// Show all tasks (P2, D6): off is phase and crew work only.
 		all_tasks: ["bool"],
-		// P5: saved since the Lookahead became the home tab. A "last used" view without it was saved when
-		// the week view was the only landing screen, so its view is not taken as a choice of tab.
-		tabbed: ["bool"],
 	},
 	// What the cards are colored by until someone chooses (D12, the planner UX redesign): Job type. The
 	// stored value "default" is the old Task color, which every "last used" view saved before this carries
@@ -7920,16 +8271,8 @@ const PP6C_METHODS = {
 				p6c.saved_text = JSON.stringify(last);
 			}
 		}
-		// P5: only a view saved since the tabs (tabbed) chooses the tab; an older one opens the Lookahead.
-		const view = last && last.tabbed && last.view;
-		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
-			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
-			frappe.route_flags = frappe.route_flags || {};
-			frappe.route_flags.replace_route = true;
-			frappe.set_route(PP.route, ...this.ppl_route_parts(view, frappe.datetime.get_today()));
-			return true;
-		}
-		return false;
+		// The tab to open on a bare address is this device's (P8, Nik 2026-10-21), not the saved row's.
+		return !route[1] && this.p8_landing();
 	},
 
 	// The page's state as a view. `remembered`: as "last used" (without the Running over chip).
@@ -7945,8 +8288,10 @@ const PP6C_METHODS = {
 			color_by: this.p6c.color_by,
 			color_chosen: !!this.p6c.color_chosen,
 		};
-		if (views.includes(this.view)) state.view = this.view;
-		state.tabbed = true;
+		// "Last used" is the person's filters and colors. The tab they were on is the device's (P8,
+		// p8_remember_tab), so it is not saved in the row that follows them to every device; a named
+		// view ("Save view as…") is an explicit choice and carries its view.
+		if (!remembered && views.includes(this.view)) state.view = this.view;
 		if (!remembered) state.over_only = !!this.over_only;
 		return this.p6c_pick(state);
 	},
@@ -8033,8 +8378,6 @@ const PP6C_METHODS = {
 		const key = (state) => {
 			const view = Object.assign({}, state);
 			delete view.color_chosen;
-			// Nor is whether it was saved before the tabs (P5).
-			delete view.tabbed;
 			// A view saved before P2 does not say, which is off.
 			if (!view.all_tasks) delete view.all_tasks;
 			return JSON.stringify(Object.keys(view).sort().map((name) => [name, view[name]]));
@@ -8739,6 +9082,7 @@ const PP6D_METHODS = {
 
 	p6d_reload() {
 		if (this.view === PP3B.my_week) return this.load_my_week();
+		if (this.view === PP8.view) return this.load_today();
 		if (PP.views.includes(this.view)) return this.load();
 		return null;
 	},
@@ -8786,6 +9130,11 @@ const PP6D_METHODS = {
 		if (this.view === PP3B.my_week) {
 			const mine = ((this.my_week_data && this.my_week_data.blocks) || []).find((block) => block && block.name === name);
 			if (mine) this.p6d_my_week_block(mine.date, mine);
+			return;
+		}
+		if (this.view === PP8.view) {
+			const mine = ((this.today_data && this.today_data.blocks) || []).find((block) => block && block.name === name);
+			if (mine) this.p8_block(mine.date, mine);
 			return;
 		}
 		const resource = el.getAttribute("data-pk-block-resource");
@@ -10895,13 +11244,22 @@ const PPTB_METHODS = {
 	},
 
 	tb_views_items() {
-		const items = [
+		const items = [];
+		// Schedulers land on the week view on a phone; Today is one tap away (P8).
+		if (this.p8_is_phone()) {
+			items.push({
+				label: __("Today"),
+				title: __("Your day and tomorrow: stops in order, the route map, and Block my time"),
+				on_click: () => this.go_today(frappe.datetime.get_today()),
+			});
+		}
+		items.push(
 			{
 				label: __("My week"),
 				title: __("Your own week: each day's stops in route order, crewmates and notes"),
 				on_click: () => this.go_my_week(frappe.datetime.get_today()),
-			},
-		];
+			}
+		);
 		if (this.tb_calendar() || this.view === PP.heatmap_view) items.push({ divider: true }, ...this.p6c_view_items());
 		return items;
 	},
