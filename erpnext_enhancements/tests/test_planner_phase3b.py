@@ -1681,15 +1681,19 @@ class TestPage(unittest.TestCase):
 			"this.init_phase3b();",
 			"const mine = this.my_week_target(route);",
 			"this.show_my_week(target.anchor);",
-			"this.draft_args())",
+			"this.draft_args(card.project))",
 			"args = this.with_draft(method, args);",
+			# P4: the read always asks for the drafts (a Draft schedule's, anyone's, show to everyone).
+			"args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks",
 			"this.render_phase3b();",
 			"Object.assign(ProjectPlanner.prototype, PP3B_METHODS);",
 		):
 			self.assertIn(line, self.code, line)
 
 	def test_draft_mode_sends_draft_on_every_write_and_the_read(self):
-		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew"]', self.block)
+		self.assertIn('draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"]', self.block)
+		# P4: off, the writes say draft="auto" and the server drafts a Draft schedule's tasks.
+		self.assertIn("PPAS_PURE.draft_value(this.draft_on)", self.block)
 		self.assertIn("{ draft: 1 }", self.block)
 		# Remembered through the page's guarded prefs, never a new localStorage call.
 		self.assertIn("this.load_pref(PP3B.pref", self.block)

@@ -1816,13 +1816,14 @@ body.pp-drag-active * {
 	font-weight: 600;
 }
 
-/* Draft mode on: a strip right under the toolbar, a dashed focus edge like a drafted card's, so the
- * mode is seen before anything is dragged. */
+/* The drafts strip right under the toolbar, a dashed focus edge like a drafted card's: the hold's
+ * line while "Hold all my changes" is on, then one line per project with drafts (P4), each with its
+ * Publish and Discard, so a Draft schedule is seen before anything is dragged. */
 .pp-draft-bar {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
 	padding: 8px 12px;
 	margin: -2px 0 10px;
 	border: var(--sf-border-control) dashed var(--sf-focus);
@@ -1833,6 +1834,13 @@ body.pp-drag-active * {
 
 .pp-draft-text {
 	font-weight: 600;
+}
+
+.pp-draft-line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
 }
 
 .pp-my-week {
