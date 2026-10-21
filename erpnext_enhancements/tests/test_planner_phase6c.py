@@ -689,7 +689,12 @@ class TestPages(unittest.TestCase):
 			body = _obj_method(block, "p6c_before_route")
 			guard = body.index("if (!route[1] && view && view !== ")
 			flag = body.index("frappe.route_flags.replace_route = true;")
-			go = body.index(f"frappe.set_route({route}, view, frappe.datetime.get_today());")
+			# P5: the Project Planner writes the view's address through ppl_route_parts (/calendar/week/…).
+			go = body.index(
+				"frappe.set_route(PP.route, ...this.ppl_route_parts(view, frappe.datetime.get_today()));"
+				if route == "PP.route"
+				else f"frappe.set_route({route}, view, frappe.datetime.get_today());"
+			)
 			self.assertLess(guard, flag)
 			self.assertLess(flag, go)
 			# The first open restores the filters whatever the route; only once.
@@ -911,7 +916,7 @@ function pp_instance(env) {
 	const out_pp = {};
 	// A bare route and a saved crew view: the route is replaced, once, with the filters applied.
 	let p = pp_instance(env);
-	p.p6c.last = { view: "crew", group: "Field", color_by: "job_type", evil: "x", over_only: true };
+	p.p6c.last = { view: "crew", group: "Field", color_by: "job_type", evil: "x", over_only: true, tabbed: true };
 	env.frappe.route_flags = {};
 	out_pp.bare_taken = p.p6c_before_route();
 	out_pp.bare_calls = env.calls.set_route.splice(0);
@@ -919,7 +924,7 @@ function pp_instance(env) {
 	// The URL names a view: used as it is (no route change), filters still restored.
 	env.frappe.route = ["project-planner", "week", "2026-10-12"];
 	p = pp_instance(env);
-	p.p6c.last = { view: "crew", group: "PM" };
+	p.p6c.last = { view: "crew", group: "PM", tabbed: true };
 	env.frappe.route_flags = {};
 	out_pp.named_taken = p.p6c_before_route();
 	out_pp.named_calls = env.calls.set_route.splice(0);
@@ -931,12 +936,26 @@ function pp_instance(env) {
 	out_pp.again_taken = p.p6c_before_route();
 	out_pp.again_calls = env.calls.set_route.splice(0);
 	out_pp.again_group = p.group;
-	// The default view needs no route change.
+	// The default view (P5: the Lookahead) needs no route change.
 	p = pp_instance(env);
-	p.p6c.last = { view: "week" };
+	p.p6c.last = { view: "lookahead", tabbed: true };
 	env.frappe.route_flags = {};
 	out_pp.default_taken = p.p6c_before_route();
 	out_pp.default_calls = env.calls.set_route.splice(0);
+	// P5: a view saved before the tabs (no tabbed) is not a choice of tab: the bare route opens the
+	// Lookahead, and its filters are still restored.
+	p = pp_instance(env);
+	p.p6c.last = { view: "crew", group: "PM" };
+	env.frappe.route_flags = {};
+	out_pp.untabbed_taken = p.p6c_before_route();
+	out_pp.untabbed_calls = env.calls.set_route.splice(0);
+	out_pp.untabbed_group = p.group;
+	// A saved week, since the tabs: the Calendar tab's address.
+	p = pp_instance(env);
+	p.p6c.last = { view: "week", tabbed: true };
+	env.frappe.route_flags = {};
+	out_pp.week_taken = p.p6c_before_route();
+	out_pp.week_calls = env.calls.set_route.splice(0);
 	// Not loaded yet: it waits, asks once, and runs handle_route when the answer is in.
 	p = pp_instance(env);
 	p.p6c.loaded = false;
@@ -1414,6 +1433,13 @@ class TestUnderNode(unittest.TestCase):
 		self.assertEqual(pp["again_group"], "Design")
 		self.assertIs(pp["default_taken"], False)
 		self.assertEqual(pp["default_calls"], [])
+		self.assertIs(pp["untabbed_taken"], False)
+		self.assertEqual(pp["untabbed_calls"], [])
+		self.assertEqual(pp["untabbed_group"], "PM")
+		self.assertIs(pp["week_taken"], True)
+		self.assertEqual(
+			pp["week_calls"], [{"args": ["project-planner", "calendar", "week", "2026-10-09"], "replace": True}]
+		)
 		self.assertEqual(pp["wait_taken"], [True, True])
 		self.assertIs(pp["other_taken"], False)
 		mp = self.out["mp"]
@@ -1439,6 +1465,7 @@ class TestUnderNode(unittest.TestCase):
 				"color_by": "pm",
 				"color_chosen": False,
 				"all_tasks": False,
+				"tabbed": True,
 			},
 		)
 		self.assertIs(pp["state_named"]["over_only"], True)

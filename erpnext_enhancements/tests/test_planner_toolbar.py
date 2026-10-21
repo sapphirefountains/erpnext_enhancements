@@ -252,7 +252,9 @@ class TestToolbarV2(unittest.TestCase):
 			with self.subTest(page=path.name):
 				self.assertIn('.attr("data-tb-tab", view)', code)
 				self.assertIn("kit.toolbar.tabs(this.$seg[0]", code)
-				self.assertIn("this.tb.tabs.sync(this.view);", _obj_method(code, "tb_render"))
+				# P5: the Project Planner's tab is ppl_tab() (week and month are the Calendar tab).
+				sync = "this.tb.tabs.sync(this.ppl_tab());" if path == PP_JS else "this.tb.tabs.sync(this.view);"
+				self.assertIn(sync, _obj_method(code, "tb_render"))
 
 	def test_move_by_left_the_selection_bar_and_split_is_still_in_the_right_click_menu(self):
 		for path in (PP_JS, MP_JS):

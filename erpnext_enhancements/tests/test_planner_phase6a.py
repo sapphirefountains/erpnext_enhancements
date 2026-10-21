@@ -1079,7 +1079,7 @@ class TestPages(unittest.TestCase):
 			self.assertIn(line, self.mp, line)
 		# Each carries the planner's filters (S5c, v1.676.0).
 		self.assertIn(
-			"this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);",
+			"this.p6a_route(() => frappe.set_route(PP.route, ...parts, this.filter_options()), true);",
 			self.pp,
 		)
 		self.assertIn(

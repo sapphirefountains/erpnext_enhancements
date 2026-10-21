@@ -79,7 +79,8 @@ BOARD_SORT_KEYS = (
 #: own constants are checked against this by tests/test_planner_phase6c.py.
 SCHEMA = {
 	"project": {
-		"view": ("enum", ("week", "month", "crew", "heatmap")),
+		# P5 of the planner UX redesign: the Lookahead is a tab a view can name, and the home tab.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "lookahead")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),
@@ -93,6 +94,9 @@ SCHEMA = {
 		"color_chosen": ("bool",),
 		# Show all tasks (P2 of the planner UX redesign, D6): off, the default, is phase and crew work only.
 		"all_tasks": ("bool",),
+		# P5: saved since the Lookahead became the home tab. A "last used" view without it was saved while
+		# the week view was the only landing screen, so the page does not take its view as a choice of tab.
+		"tabbed": ("bool",),
 	},
 	"maintenance": {
 		"view": ("enum", ("month", "week", "crew")),

@@ -1558,7 +1558,8 @@ test("Project Planner: the view buttons are tabs, and the tab on screen is the s
 	check("every redraw hands the screen's view to the tablist", tabs, ["crew", "utilization"]);
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("each button names its view for it", source.includes('.attr("data-tb-tab", view)'), true);
-	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view })'), true);
+	// P5: the tab of the view on screen (week and month are the Calendar tab).
+	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.ppl_tab() })'), true);
 });
 
 test("Project Planner: the phone's sheet takes the filters in and gives them back", () => {

@@ -174,7 +174,8 @@ class TestTheAddress(unittest.TestCase):
 		pp = _code(PROJECT_PLANNER)
 		mp = _code(MAINTENANCE_PLANNER)
 		for line in (
-			"frappe.set_route(PP.route, view, anchor, this.filter_options())",
+			# P5: a view's address is ppl_route_parts' (/lookahead/…, /calendar/week|month/…).
+			"frappe.set_route(PP.route, ...parts, this.filter_options())",
 			"frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options())",
 			"frappe.set_route(PP.route, PP3B.my_week, ymd, this.filter_options())",
 		):

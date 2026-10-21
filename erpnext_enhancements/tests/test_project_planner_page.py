@@ -199,7 +199,8 @@ class TestRouting(unittest.TestCase):
 		for forbidden in ("pushState", "replaceState", "window.location", "location.href", "history."):
 			self.assertNotIn(forbidden, code)
 		# Every screen change is a route, carrying the filters (S5c).
-		self.assertIn("frappe.set_route(PP.route, view, anchor, this.filter_options())", code)
+		self.assertIn("frappe.set_route(PP.route, ...parts, this.filter_options())", code)
+		self.assertIn("const parts = this.ppl_route_parts(view, anchor);", code)
 		self.assertIn("on_page_show", code)
 		self.assertRegex(
 			code,
@@ -208,13 +209,16 @@ class TestRouting(unittest.TestCase):
 
 	def test_the_four_route_shapes(self):
 		# /desk/project-planner, and /week|month|crew/<date> (the route and heatmap views are separate shapes).
+		# P5: week and month live at /calendar/week|month/<date>, the Lookahead at /lookahead/<date>, and
+		# the old /week and /month addresses redirect (scripts/test_planner_lookahead.js drives them).
 		code = _code()
 		self.assertIn('route: "project-planner"', code)
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 		self.assertIn('PP.views.includes(route[1]) ? route[1] : "week"', code)
 		self.assertIn('moment(route[2], "YYYY-MM-DD", true).isValid()', code)
 		for view in ("month", "week", "crew"):
 			self.assertIn(f'["{view}", __(', code)
+		self.assertIn("const lookahead = this.ppl_route_target(route);", code)
 
 	def test_the_route_shape(self):
 		# /desk/project-planner/route/<resource>/<date>: a full view, re-rendered from handle_route
@@ -225,8 +229,8 @@ class TestRouting(unittest.TestCase):
 		self.assertIn("frappe.set_route(PP.route, PP.route_view, resource, ymd, this.filter_options())", code)
 		self.assertRegex(code, r"step = \(sign\) =>\s*this\.go_route\(")
 		self.assertIn("this.load_route()", code)
-		# The route view is not one of the three calendar views.
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		# The route view is not one of the views drawn from cards.
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 		self.assertNotIn('"route"', code.split("views:")[1].split("\n")[0])
 
 	def test_the_route_view_degrades_when_the_map_cannot_load(self):

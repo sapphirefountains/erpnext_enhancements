@@ -456,7 +456,7 @@ const saved = (desk) => desk.calls.filter((c) => c.method === SAVE_LAST).map((c)
 // ------------------------------------------------------------------ Project Planner
 
 test("Project Planner: a link with all three filters opens the planner on them", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field" });
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk);
 	desk.land();
@@ -466,7 +466,7 @@ test("Project Planner: a link with all three filters opens the planner on them",
 		{ view: "week", anchor: "2026-10-12", filters: { project: "PRJ-00001", pm: "Pat Lee", group: "Field" } },
 	]);
 	check("route_options consumed", desk.frappe.route_options, null);
-	check("the address is left as it came", desk.urls(), ["/desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field"]);
+	check("the address is left as it came", desk.urls(), ["/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field"]);
 	check("the remembered filters are untouched", desk.prefs, MINE);
 });
 
@@ -490,13 +490,13 @@ test("Project Planner: a bare address writes the remembered filters into it, in 
 });
 
 test("Project Planner: picking a filter rewrites the address in place and is remembered", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001&keep=1" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&keep=1" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	pp.pick_filter("group", "Design");
-	check("the group joins the address", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Design&keep=1");
+	check("the group joins the address", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&group=Design&keep=1");
 	pp.pick_filter("project", "");
-	check("All leaves the address", desk.here(), "/desk/project-planner/week/2026-10-12?group=Design&keep=1");
+	check("All leaves the address", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?group=Design&keep=1");
 	check("no history entry for either", desk.entries.length, 1);
 	check("rendered each time", pp.renders, 2);
 	check(
@@ -505,20 +505,20 @@ test("Project Planner: picking a filter rewrites the address in place and is rem
 		["", undefined, "Design"]
 	);
 	pp.pick_filter("pm", "Pat Lee");
-	check("a name with a space, encoded as set_route encodes it", desk.here(), "/desk/project-planner/week/2026-10-12?pm=Pat%20Lee&group=Design&keep=1");
+	check("a name with a space, encoded as set_route encodes it", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?pm=Pat%20Lee&group=Design&keep=1");
 });
 
 test("Project Planner: a reload keeps the address's filters over the remembered and the last used", () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00002" });
 	Object.assign(desk.prefs, MINE);
 	projectPlanner(desk);
-	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00002", group: "Field" });
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { project: "PRJ-00002", group: "Field" });
 	desk.reload();
 	const last = { view: "week", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
 	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	desk.land();
 	check("the address wins", f3(pp), { project: "PRJ-00002", pm: "", group: "Field" });
-	check("the same address", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00002&group=Field");
+	check("the same address", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00002&group=Field");
 	check("one entry past the form", desk.entries.length, 2);
 	pp.p6c_save_last();
 	check(
@@ -532,17 +532,17 @@ test("Project Planner: a reload keeps the address's filters over the remembered 
 test("Project Planner: Back and Forward walk the screens, each with the filters it showed", () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	const pp = projectPlanner(desk);
-	desk.go("project-planner", "week", "2026-10-12");
+	desk.go("project-planner", "calendar", "week", "2026-10-12");
 	pp.pick_filter("project", "PRJ-00001");
 	pp.go("month", "2026-10-12");
-	check("the month carries the filter", desk.here(), "/desk/project-planner/month/2026-10-12?project=PRJ-00001");
+	check("the month carries the filter", desk.here(), "/desk/project-planner/calendar/month/2026-10-12?project=PRJ-00001");
 	pp.pick_filter("group", "Field");
 	pp.go("crew", "2026-10-12");
 	check("the crew view carries both", desk.here(), "/desk/project-planner/crew/2026-10-12?project=PRJ-00001&group=Field");
 	check("a picked filter is no screen: one entry per view", desk.urls(), [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner/week/2026-10-12?project=PRJ-00001",
-		"/desk/project-planner/month/2026-10-12?project=PRJ-00001&group=Field",
+		"/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001",
+		"/desk/project-planner/calendar/month/2026-10-12?project=PRJ-00001&group=Field",
 		"/desk/project-planner/crew/2026-10-12?project=PRJ-00001&group=Field",
 	]);
 	const prefs = Object.assign({}, desk.prefs);
@@ -554,8 +554,8 @@ test("Project Planner: Back and Forward walk the screens, each with the filters 
 	desk.forward();
 	check("Forward: the month with its group again", [pp.view, f3(pp)], ["month", { project: "PRJ-00001", pm: "", group: "Field" }]);
 	check("walking the entries rewrote none of them", desk.urls().slice(1, 3), [
-		"/desk/project-planner/week/2026-10-12?project=PRJ-00001",
-		"/desk/project-planner/month/2026-10-12?project=PRJ-00001&group=Field",
+		"/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001",
+		"/desk/project-planner/calendar/month/2026-10-12?project=PRJ-00001&group=Field",
 	]);
 	check("and remembered nothing", desk.prefs, prefs);
 	desk.back();
@@ -565,7 +565,7 @@ test("Project Planner: Back and Forward walk the screens, each with the filters 
 });
 
 test("Project Planner: Utilization is a view, a route of its own with the filters in the address", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?group=Field" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?group=Field" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	pp.go("utilization", "2026-10-12");
@@ -594,11 +594,11 @@ test("Project Planner: a link to Utilization opens it on the link's filters", ()
 	check("the link's filters, the others All", f3(pp), { project: "PRJ-00001", pm: "", group: "PM" });
 	check("the address as it came", desk.here(), "/desk/project-planner/utilization/2026-10-01?project=PRJ-00001&group=PM");
 	pp.go("week", "2026-10-01");
-	check("the next calendar view keeps the project the link named", desk.here(), "/desk/project-planner/week/2026-10-01?project=PRJ-00001&group=PM");
+	check("the next calendar view keeps the project the link named", desk.here(), "/desk/project-planner/calendar/week/2026-10-01?project=PRJ-00001&group=PM");
 });
 
 test("Project Planner: malformed or unknown values are ignored", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?group=Bogus&foo=1" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?group=Bogus&foo=1" });
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk);
 	desk.land();
@@ -607,11 +607,11 @@ test("Project Planner: malformed or unknown values are ignored", () => {
 		pm: "me@example.com",
 		group: "",
 	});
-	check("the bad group leaves the address; a key that is not the planner's stays", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-MINE&pm=me%40example.com&foo=1");
+	check("the bad group leaves the address; a key that is not the planner's stays", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-MINE&pm=me%40example.com&foo=1");
 	check("and stays in route_options, not the planner's to take", desk.frappe.route_options, { foo: "1" });
 
 	const long = "P".repeat(141);
-	desk.go("project-planner", "week", "2026-10-12", { project: long, group: "PM" });
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { project: long, group: "PM" });
 	check("an overlong project is ignored, the group taken", f3(pp), { project: "", pm: "", group: "PM" });
 	// The router before v16.50 left an object in route_options as it was given.
 	desk.frappe.route_options = { project: { nested: 1 }, pm: null };
@@ -625,9 +625,9 @@ test("Project Planner: malformed or unknown values are ignored", () => {
 
 	// A PM the planner does not list: All once the planner has loaded, and the address says so.
 	pp.answer = ANSWER;
-	desk.go("project-planner", "week", "2026-10-26", { project: "PRJ-00001", pm: "Nobody" });
+	desk.go("project-planner", "calendar", "week", "2026-10-26", { project: "PRJ-00001", pm: "Nobody" });
 	check("the project kept, the PM reset", f3(pp), { project: "PRJ-00001", pm: "", group: "" });
-	check("the address follows", desk.here(), "/desk/project-planner/week/2026-10-26?project=PRJ-00001");
+	check("the address follows", desk.here(), "/desk/project-planner/calendar/week/2026-10-26?project=PRJ-00001");
 });
 
 test("Project Planner: a link's project the planner does not list stays the filter", () => {
@@ -682,22 +682,22 @@ test("Project Planner: a link's PM the planner does not list is let go, so the n
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk, { answer: ANSWER });
-	desk.go("project-planner", "week", "2026-10-12", { pm: "Nobody" });
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { pm: "Nobody" });
 	check("All once loaded", f3(pp), { project: "", pm: "", group: "" });
-	check("the address says so", desk.here(), "/desk/project-planner/week/2026-10-12");
+	check("the address says so", desk.here(), "/desk/project-planner/calendar/week/2026-10-12");
 	// The › button: shift(1) is go(view, the next week).
 	pp.go("week", "2026-10-19");
 	check("the next week is still All, not the person's own", f3(pp), { project: "", pm: "", group: "" });
-	check("on the next week", desk.here(), "/desk/project-planner/week/2026-10-19");
+	check("on the next week", desk.here(), "/desk/project-planner/calendar/week/2026-10-19");
 });
 
 test("Project Planner: Back onto the person's own entry makes the filters theirs again", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12" });
 	Object.assign(desk.prefs, MINE);
 	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: true, last: null, saved_text: null, views: [] } });
 	desk.land();
-	check("their own, in the address", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-MINE&pm=me%40example.com");
-	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00002" });
+	check("their own, in the address", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-MINE&pm=me%40example.com");
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { project: "PRJ-00002" });
 	check("a link's", pp.url_filters !== null, true);
 	desk.back();
 	check("Back: their own entry", f3(pp), { project: "PRJ-MINE", pm: "me@example.com", group: "" });
@@ -708,11 +708,11 @@ test("Project Planner: Back onto the person's own entry makes the filters theirs
 });
 
 test("Project Planner: an apostrophe is written as the browser reads it back, once", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	pp.pick_filter("pm", "o'neil@example.com");
-	check("written as %27", desk.here(), "/desk/project-planner/week/2026-10-12?pm=o%27neil%40example.com");
+	check("written as %27", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?pm=o%27neil%40example.com");
 	const writes = desk.replaces;
 	pp.write_filter_url();
 	pp.go("month", "2026-10-12");
@@ -737,7 +737,7 @@ test("Project Planner: a bare address after a link brings back the person's own 
 });
 
 test("Project Planner: no filter is left in route_options to leak into the next route", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	check("consumed on landing", desk.frappe.route_options, null);
@@ -752,7 +752,7 @@ test("Project Planner: no filter is left in route_options to leak into the next 
 	// Whatever a page left in route_options, the planner's own screens replace it.
 	desk.frappe.route_options = { stale: "1" };
 	pp.go("month", "2026-10-12");
-	check("the planner's own route sends only its filters", desk.here(), "/desk/project-planner/month/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field");
+	check("the planner's own route sends only its filters", desk.here(), "/desk/project-planner/calendar/month/2026-10-12?project=PRJ-00001&pm=Pat%20Lee&group=Field");
 	check("and leaves nothing behind", desk.frappe.route_options, null);
 	pp.go_route("RES-1", "2026-10-13");
 	check("a person's route carries them too", desk.here(), "/desk/project-planner/route/RES-1/2026-10-13?project=PRJ-00001&pm=Pat%20Lee&group=Field");
@@ -760,10 +760,11 @@ test("Project Planner: no filter is left in route_options to leak into the next 
 
 test("Project Planner: the last-used view replaces a bare address, and the address's filters still win", () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	const last = { view: "month", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
+	// P5: saved since the tabs (tabbed), so its view is a choice of tab.
+	const last = { view: "month", project: "PRJ-OLD", pm: "pm@example.com", group: "PM", tabbed: true };
 	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	desk.go("project-planner", { project: "PRJ-00001" });
-	check("the month replaces the entry, the query kept", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/month/2026-10-14?project=PRJ-00001"]);
+	check("the month replaces the entry, the query kept", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-00001"]);
 	check("the link's project, the rest All", f3(pp), { project: "PRJ-00001", pm: "", group: "" });
 	check("loaded once", pp.loads.length, 1);
 
@@ -772,29 +773,42 @@ test("Project Planner: the last-used view replaces a bare address, and the addre
 	const own = projectPlanner(fresh, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	fresh.go("project-planner");
 	check("the last used filters", f3(own), { project: "PRJ-OLD", pm: "pm@example.com", group: "PM" });
-	check("in the address of the month", fresh.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM");
+	check("in the address of the month", fresh.here(), "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM");
+});
+
+test("Project Planner: a last-used view saved before the tabs opens the Lookahead, its filters kept (P5)", () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	const last = { view: "week", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
+	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
+	desk.go("project-planner");
+	check("the bare address stays, with the filters written in", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner?project=PRJ-OLD&pm=pm%40example.com&group=PM",
+	]);
+	check("the Lookahead, on today's weeks", [pp.view, pp.anchor], ["lookahead", desk.today]);
+	check("loaded once", pp.loads.length, 1);
 });
 
 test("Project Planner: a pick made under a drawer reaches the entry below once the kit's Back lands", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	// The kit's URL-less entry while a drawer is open.
 	desk.window.history.pushState({ planner_kit: "pk1" }, "");
 	pp.pick_filter("group", "Field");
 	check("the drawer's entry says it, its state kept", desk.entries[1], {
-		url: "/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field",
+		url: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&group=Field",
 		state: { planner_kit: "pk1" },
 	});
 	desk.kit_back();
-	check("the entry below until the router has had its turn", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001");
+	check("the entry below until the router has had its turn", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001");
 	desk.flush();
-	check("then brought up to the screen", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001&group=Field");
+	check("then brought up to the screen", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&group=Field");
 	check("still one planner entry under it", desk.index, 0);
 });
 
 test("Project Planner: never writes another page's address, or over filters it has not read", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	desk.go("Form", "Task", "TASK-0001");
@@ -804,17 +818,17 @@ test("Project Planner: never writes another page's address, or over filters it h
 	desk.back();
 	desk.frappe.route_options = { project: "PRJ-00002" };
 	pp.write_filter_url();
-	check("nor while the router holds a filter the page has not read", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001");
+	check("nor while the router holds a filter the page has not read", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001");
 });
 
 test("Project Planner: on the router before v16.50 the address still gets the filters", () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001", queryInUrl: false });
 	const pp = projectPlanner(desk);
-	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00001" });
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { project: "PRJ-00001" });
 	check("read from route_options", pp.project, "PRJ-00001");
-	check("and written by the planner", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001");
+	check("and written by the planner", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001");
 	pp.go("month", "2026-10-12");
-	check("carried to the next screen", desk.here(), "/desk/project-planner/month/2026-10-12?project=PRJ-00001");
+	check("carried to the next screen", desk.here(), "/desk/project-planner/calendar/month/2026-10-12?project=PRJ-00001");
 	desk.back();
 	check("Back reads it from the address", f3(pp), { project: "PRJ-00001", pm: "", group: "" });
 });
@@ -822,26 +836,26 @@ test("Project Planner: on the router before v16.50 the address still gets the fi
 // ------------------------------------------------------------------ Show all tasks (P2, D6)
 
 test("Project Planner: Show all tasks is a filter of the address, and asks the server again", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?project=PRJ-00001&all_tasks=1" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&all_tasks=1" });
 	const pp = projectPlanner(desk);
 	desk.land();
 	check("the link's: on", [pp.all_tasks, pp.filters().all_tasks], ["1", "1"]);
-	check("the address is left as it came", desk.urls(), ["/desk/project-planner/week/2026-10-12?project=PRJ-00001&all_tasks=1"]);
+	check("the address is left as it came", desk.urls(), ["/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&all_tasks=1"]);
 	pp.set_all_tasks(false);
-	check("off leaves the address, in place", [desk.here(), desk.entries.length], ["/desk/project-planner/week/2026-10-12?project=PRJ-00001", 1]);
+	check("off leaves the address, in place", [desk.here(), desk.entries.length], ["/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001", 1]);
 	check("and the week is loaded again, not just drawn", [pp.loads.length, pp.renders], [2, 0]);
 	pp.set_all_tasks(true);
-	check("on joins it, last, in place", desk.here(), "/desk/project-planner/week/2026-10-12?project=PRJ-00001&all_tasks=1");
+	check("on joins it, last, in place", desk.here(), "/desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&all_tasks=1");
 	check("a pick is not a screen: no history entry, and nothing in the browser's prefs", [desk.entries.length, Object.keys(desk.prefs).filter((k) => /all_tasks/.test(k))], [1, []]);
 });
 
 test("Project Planner: Show all tasks follows Back and Forward with the week it was picked on", () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	const pp = projectPlanner(desk);
-	desk.go("project-planner", "week", "2026-10-12");
+	desk.go("project-planner", "calendar", "week", "2026-10-12");
 	pp.set_all_tasks(true);
 	pp.go("month", "2026-10-12");
-	check("the month carries it", desk.here(), "/desk/project-planner/month/2026-10-12?all_tasks=1");
+	check("the month carries it", desk.here(), "/desk/project-planner/calendar/month/2026-10-12?all_tasks=1");
 	desk.back();
 	check("Back: the week, still showing all", [pp.view, pp.all_tasks], ["week", "1"]);
 	desk.forward();
@@ -854,14 +868,14 @@ test("Project Planner: a link that does not name Show all tasks is the default, 
 	const pp = projectPlanner(desk);
 	pp.all_tasks = "1";
 	pp.own_filters = Object.assign(pp.filters());
-	desk.go("project-planner", "week", "2026-10-12", { project: "PRJ-00001" });
+	desk.go("project-planner", "calendar", "week", "2026-10-12", { project: "PRJ-00001" });
 	check("a link naming only the project is the whole filter: phase and crew work", pp.all_tasks, "");
-	desk.go("project-planner", "week", "2026-10-19");
+	desk.go("project-planner", "calendar", "week", "2026-10-19");
 	check("a bare address after it brings back theirs", pp.all_tasks, "1");
 });
 
 test("Project Planner: a value Show all tasks cannot take is ignored", () => {
-	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-12?all_tasks=banana" });
+	const desk = makeDesk({ start: "/desk/project-planner/calendar/week/2026-10-12?all_tasks=banana" });
 	const pp = projectPlanner(desk);
 	pp.all_tasks = "1";
 	pp.own_filters = Object.assign(pp.filters());

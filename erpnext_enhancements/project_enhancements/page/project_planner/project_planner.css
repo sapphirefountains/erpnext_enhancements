@@ -3172,3 +3172,438 @@ body.p6b-resizing * {
 		animation: none;
 	}
 }
+
+/* ======================================================================================== */
+/* P5: the Lookahead, the planner's home tab (PPL).                                          */
+/* ======================================================================================== */
+
+/* The bar over the board: its title, the range picker (2, 3, 4 or 6 weeks), the Needs crew chip and
+ * Expand all / Collapse all. */
+.ppl-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppl-head-title {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.ppl-weeks {
+	display: inline-flex;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+
+.ppl-weeks-btn {
+	border: 0;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	padding: 2px 8px;
+}
+
+.ppl-weeks-btn + .ppl-weeks-btn {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppl-weeks-btn.pp-on {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+/* The Calendar tab's Week/Month switch sits beside the tabs and reads as a smaller one. */
+.ppl-cal-seg {
+	font-size: 12px;
+}
+
+/* The board scrolls inside itself, as the crew view does, so the day headings and the names stay in
+ * view. The grid: a label column, then one column a day. */
+.ppl-scroll {
+	max-height: calc(100vh - 190px);
+	overflow: auto;
+}
+
+.ppl-grid {
+	position: relative;
+	min-width: calc(260px + var(--ppl-days, 21) * 34px);
+}
+
+.ppl-row {
+	display: grid;
+	grid-template-columns: 260px repeat(var(--ppl-days, 21), minmax(34px, 1fr));
+	grid-auto-rows: minmax(32px, auto);
+	align-items: center;
+	border-top: var(--sf-border-hairline) solid var(--sf-rule);
+}
+
+.ppl-label {
+	grid-column: 1;
+	grid-row: 1;
+	position: sticky;
+	left: 0;
+	z-index: 2;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding: 2px 6px;
+	background: var(--sf-surface);
+	border-right: var(--sf-border-hairline) solid var(--sf-rule);
+	font-size: 12px;
+	overflow: hidden;
+}
+
+.ppl-heads {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	background: var(--sf-surface);
+}
+
+.ppl-corner {
+	z-index: 5;
+	color: var(--sf-text-muted);
+	font-weight: 600;
+}
+
+.ppl-dayhead {
+	grid-row: 1;
+	text-align: center;
+	font-size: 11px;
+	white-space: nowrap;
+	padding: 4px 0;
+	color: var(--sf-text-muted);
+	cursor: pointer;
+	position: relative;
+}
+
+.ppl-dayhead.ppl-today {
+	color: var(--sf-link);
+	font-weight: 700;
+}
+
+.ppl-note-dot {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 3px;
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-focus);
+	vertical-align: middle;
+}
+
+/* A day cell: the row's ground, under the bars. Weekends are quiet, a week starts with a rule, today
+ * is tinted. A task row's cells are the drop targets. */
+.ppl-day,
+.ppl-cell {
+	grid-row: 1;
+	align-self: stretch;
+	min-height: 32px;
+}
+
+.ppl-weekend {
+	background: color-mix(in srgb, var(--sf-text-muted) 6%, var(--sf-surface));
+}
+
+.ppl-week-start {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppl-day.ppl-today,
+.ppl-cell.ppl-today {
+	background: color-mix(in srgb, var(--sf-focus) 8%, var(--sf-surface));
+}
+
+.ppl-day.pp-over {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.ppl-toggle {
+	border: 0;
+	background: none;
+	color: var(--sf-text-muted);
+	width: 18px;
+	padding: 0;
+	flex: 0 0 auto;
+}
+
+.ppl-toggle-gap {
+	display: inline-block;
+	width: 18px;
+	flex: 0 0 auto;
+}
+
+.ppl-project {
+	background: var(--sf-bg);
+}
+
+.ppl-project .ppl-label {
+	background: var(--sf-bg);
+	flex-wrap: wrap;
+	row-gap: 2px;
+}
+
+.ppl-project-name {
+	font-weight: 700;
+	color: var(--sf-text-strong);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
+}
+
+.ppl-project-name:hover,
+.ppl-project-name:focus-visible {
+	text-decoration: underline;
+}
+
+.ppl-project-id,
+.ppl-pm,
+.ppl-count {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.pp-chip.ppl-draft {
+	background: color-mix(in srgb, var(--sf-focus) 14%, var(--sf-surface));
+	color: var(--sf-link);
+	font-weight: 600;
+}
+
+.pp-chip.ppl-published {
+	background: color-mix(in srgb, var(--sf-good) 14%, var(--sf-surface));
+	color: color-mix(in srgb, var(--sf-good) 50%, var(--sf-text-strong));
+	font-weight: 600;
+}
+
+.ppl-phase .ppl-label {
+	padding-left: 18px;
+}
+
+.ppl-phase-name {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.ppl-task .ppl-label {
+	padding-left: 40px;
+}
+
+.ppl-task-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+/* A collapsed project's or phase's work: the days it covers, as plain runs. */
+.ppl-roll {
+	grid-row: 1;
+	align-self: center;
+	height: 8px;
+	background: color-mix(in srgb, var(--sf-text-muted) 40%, var(--sf-surface));
+	pointer-events: none;
+}
+
+/* A bar is the task's card, laid across its days. */
+.pp-card.ppl-bar {
+	grid-row: 1;
+	align-self: center;
+	z-index: 1;
+	margin: 3px 1px;
+	padding: 1px 4px;
+	min-height: 24px;
+	display: flex;
+	align-items: center;
+	overflow: visible;
+}
+
+.ppl-bar .pp-card-top {
+	width: 100%;
+	overflow: hidden;
+}
+
+.ppl-size {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--sf-text-muted);
+	flex: 0 0 auto;
+}
+
+.ppl-bar .pp-card-chips {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* A bar that runs on past the window: that end is square and dashed. */
+.pp-card.ppl-cut-l {
+	border-left-style: dashed;
+}
+
+.pp-card.ppl-cut-r {
+	border-right: 2px dashed var(--sf-field-border);
+}
+
+/* The baseline (D5): a grey ghost behind the live bar. A slip past it: a thin red tail. */
+.ppl-base {
+	grid-row: 1;
+	align-self: center;
+	height: 26px;
+	margin: 0 1px;
+	background: color-mix(in srgb, var(--sf-text-muted) 18%, transparent);
+	border: var(--sf-border-hairline) dashed color-mix(in srgb, var(--sf-text-muted) 50%, transparent);
+	pointer-events: none;
+}
+
+.ppl-slip {
+	grid-row: 1;
+	align-self: end;
+	height: 3px;
+	margin-bottom: 3px;
+	background: var(--sf-danger);
+	z-index: 2;
+	pointer-events: none;
+}
+
+/* While a bar or an edge is dragged, the bars let the day cells under them take the drop. */
+body.pp-drag-active .ppl-bar,
+body.p6b-resizing .ppl-bar {
+	pointer-events: none;
+}
+
+/* A project's Not scheduled line: chips that drag onto a day. */
+.ppl-undated-row .ppl-label {
+	padding-left: 18px;
+}
+
+.ppl-undated-chips {
+	grid-row: 1;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 6px;
+}
+
+.pp-card.ppl-undated {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 240px;
+	padding: 1px 6px;
+}
+
+.ppl-undated .pp-card-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ppl-hint {
+	color: var(--sf-text-muted);
+	font-size: 11px;
+	font-style: italic;
+}
+
+.ppl-no-tasks .ppl-label {
+	color: var(--sf-text-muted);
+}
+
+.ppl-empty {
+	padding: 16px;
+	color: var(--sf-text-muted);
+	text-align: center;
+}
+
+/* Dependency arrows for the hovered or focused bar's chain, over the grid. */
+.ppl-links {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	overflow: visible;
+	z-index: 3;
+}
+
+.ppl-link {
+	fill: none;
+	stroke: var(--sf-text-strong);
+	stroke-width: 1.5;
+}
+
+.ppl-link-head {
+	fill: var(--sf-text-strong);
+	stroke: none;
+}
+
+.ppl-link.ppl-link-late {
+	stroke: var(--sf-danger);
+}
+
+.ppl-link-head.ppl-link-late {
+	fill: var(--sf-danger);
+}
+
+/* On a tablet, rows stay 40px tall (§4.2). */
+@media (pointer: coarse) {
+	.ppl-row {
+		grid-auto-rows: minmax(40px, auto);
+	}
+
+	.pp-card.ppl-bar {
+		min-height: 32px;
+	}
+}
+
+/* A phone draws a list by day (ppl_list_html): each day a section and a drop target. */
+.ppl-list-day,
+.ppl-list-undated,
+.ppl-list-empty {
+	margin-bottom: 12px;
+}
+
+.ppl-list-day > h5,
+.ppl-list-undated > h5,
+.ppl-list-empty > h5 {
+	font-size: 13px;
+	margin: 0 0 4px;
+	color: var(--sf-text-strong);
+}
+
+.ppl-list-day.ppl-today > h5 {
+	color: var(--sf-link);
+}
+
+.ppl-list-day .pp-card,
+.ppl-list-undated .pp-card {
+	margin-bottom: 4px;
+}
+
+.ppl-list-project {
+	padding: 4px 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+}
+
+@media (max-width: 767px) {
+	.ppl-scroll {
+		max-height: none;
+	}
+}
