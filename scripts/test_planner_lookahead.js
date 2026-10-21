@@ -266,7 +266,11 @@ test("PPL_PURE: a collapsed row's runs, a task's size, its slip, its address and
 			[7, 8],
 		]
 	);
-	check("working days", [P.span_days("2026-10-19", "2026-10-23"), P.span_days("2026-10-23", "2026-10-26"), P.span_days("2026-10-24", "2026-10-25"), P.span_days(null)], [5, 2, 2, 0]);
+	check("working days", [P.span_days("2026-10-19", "2026-10-23"), P.span_days("2026-10-23", "2026-10-26"), P.span_days(null)], [5, 2, 0]);
+	// P11's duration_text counts the same way: a weekend-only task is 1 day, never 2 or 0.
+	check("a weekend is one day, as the calendar says", [P.span_days("2026-10-24", "2026-10-25"), P.span_days("2026-10-24")], [1, 1]);
+	const pp11 = Object.create(ctx.ProjectPlanner.prototype);
+	check("the same as duration_text", pp11.duration_text({ start: "2026-10-24", end: "2026-10-25", crew: [] }), "1 day");
 	check("a slip past the baseline", P.slip({ start: "2026-10-19", end: "2026-10-22", baseline: { start: "2026-10-19", end: "2026-10-20" } }), ["2026-10-21", "2026-10-22"]);
 	check("ahead of it, or none", [P.slip({ start: "2026-10-19", end: "2026-10-19", baseline: { end: "2026-10-20" } }), P.slip({ start: "2026-10-19" })], [null, null]);
 	check(
@@ -288,7 +292,9 @@ test("The board: projects, then phases, then tasks, in the server's order", () =
 	check("21 day headings, a day note marked", [(html.match(/class="ppl-dayhead/g) || []).length, (html.match(/ppl-note-dot/g) || []).length], [21, 1]);
 	check("today's heading", /class="ppl-dayhead ppl-today[^"]*" data-pp6a-day="2026-10-21"/.test(html), true);
 	check("every task row's days are drop targets", (row_of(html, "T1").match(/class="ppl-day[^"]*" data-date="/g) || []).length, 21);
-	check("a phase row's days are not", rows(html).filter((r) => r.startsWith('<div class="ppl-row ppl-phase')).every((r) => !r.includes('class="ppl-day')), true);
+	const kind = (prefix) => rows(html).filter((r) => r.startsWith(`<div class="ppl-row ${prefix}`));
+	check("so are a phase's and a project's", [...kind("ppl-phase"), ...kind("ppl-project\"")].map((r) => (r.match(/class="ppl-day[^"]*" data-date="/g) || []).length), [21, 21, 21, 21, 21]);
+	check("a project with no tasks has none", kind("ppl-project ppl-no-tasks").map((r) => r.includes('class="ppl-day')), [false]);
 });
 
 test("A bar is the task's card across its days, with initials, size, baseline and slip", () => {
@@ -368,6 +374,24 @@ test("Not scheduled: chips that drag onto a day, Needs crew on those nobody is o
 	check("all once asked", (grid(many).match(/ppl-undated pp-movable/g) || []).length, 15);
 });
 
+test("A project with only undated work still has days to drop on (the form link on a new build-out)", () => {
+	const pp = planner({ project: "PRJ-1" });
+	pp.data.tasks = [];
+	pp.index();
+	pp.data.lookahead.projects[0].phases[0].tasks = [];
+	const html = grid(pp);
+	check("no task rows", shown_rows(html), []);
+	const targets = (html.match(/class="ppl-day[^"]*" data-date="/g) || []).length;
+	check("the project's and its phase's days take a drop", targets, 42);
+	pp.ppl_state().collapsed.add("p:PRJ-1");
+	check("collapsed, the project row still does", (grid(pp).match(/class="ppl-day[^"]*" data-date="/g) || []).length, 21);
+	const phone = pp.ppl_list_html(pp.data.lookahead.projects.filter((p) => pp.ppl_project_visible(p)), pp.range_days());
+	check("on a phone, every day", (phone.match(/<section class="ppl-list-day ppl-day/g) || []).length, 21);
+	// A chip dropped on one of them is scheduled that day, through the page's own drop.
+	const plan = pp.plan_drop({ kind: "card", card: pp.by_task.U1, from_date: null }, { date: "2026-10-27" });
+	check("the drop schedules the chip on the day", [plan.method, plan.args], ["save_task", { task: "U1", start: "2026-10-27" }]);
+});
+
 test("Collapsing a project or a phase draws its work as runs", () => {
 	const pp = planner();
 	pp.ppl_state().collapsed.add("p:PRJ-1");
@@ -437,8 +461,12 @@ test("Crossing the phone width redraws the board as a list or a grid", () => {
 test("The phone: a list by day, each day a drop target, then Not scheduled and No tasks yet", () => {
 	const pp = planner();
 	const html = pp.ppl_list_html(pp.data.lookahead.projects, pp.range_days());
-	const days = (html.match(/<section class="ppl-list-day ppl-day[^"]*" data-date="([^"]+)"/g) || []).map((s) => s.slice(-11, -1));
-	check("only the days with work", days, ["2026-10-18", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-27", "2026-11-05", "2026-11-06", "2026-11-07"]);
+	const days_of = (h) => (h.match(/<section class="ppl-list-day ppl-day[^"]*" data-date="([^"]+)"/g) || []).map((s) => s.slice(-11, -1));
+	check("with undated work to place, every day of the window", days_of(html).length, 21);
+	check("an empty day is a short line", (html.match(/ppl-list-free/g) || []).length, 12);
+	pp.data.lookahead.projects[0].not_scheduled = [];
+	const dated_only = pp.ppl_list_html(pp.data.lookahead.projects, pp.range_days());
+	check("without any, only the days with work", days_of(dated_only), ["2026-10-18", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-27", "2026-11-05", "2026-11-06", "2026-11-07"]);
 	check("a task on each of its days, as a card drawn on that day", (html.match(/data-task="T1" data-date="/g) || []).length, 4);
 	check("the undated work, then the no-task projects", [html.includes("Not scheduled (2): drag onto a day"), html.includes("No tasks yet (1)")], [true, true]);
 });

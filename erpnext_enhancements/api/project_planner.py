@@ -581,12 +581,15 @@ def _require_planner():
 
 
 @frappe.whitelist()
-def get_planner(start, end, draft=0, all_tasks=0):
+def get_planner(start, end, draft=0, all_tasks=0, google=1):
 	"""Everything the planner draws for ``start``..``end`` (inclusive). See the module docstring.
 
 	``draft=1`` (Phase 3B draft mode) overlays the caller's unpublished Draft rows first; see
 	:func:`_draft_overlay`. ``all_tasks=1`` brings back the tasks the schedule leaves out by default
 	(D6, P2 of the planner UX redesign: :func:`_hidden_by_display_rule`) and is today's answer.
+	``google=0`` prices each person-day's drive padding from the engine's own estimate and the drive
+	time cache, never asking Google: the Lookahead (P5, ``planner_lookahead.get_lookahead``) reads
+	three to six weeks at once, and spec §6 runs it with Google off. Unset, as before.
 	"""
 	_require_planner()
 	start, end = getdate(start), getdate(end)
@@ -597,11 +600,14 @@ def get_planner(start, end, draft=0, all_tasks=0):
 	today = getdate(nowdate())
 	can_edit = bool(frappe.has_permission("Task", "write"))
 	overlay = _draft_overlay() if cint(given(draft)) else None
+	google = True if given(google) is None else as_bool(google)
 
 	if overlay:
-		data = engine._compute(start, end, exclude=overlay["exclude"], extra=overlay["extra"], equipment=True)
+		data = engine._compute(
+			start, end, exclude=overlay["exclude"], extra=overlay["extra"], equipment=True, google=google
+		)
 	else:
-		data = engine._compute(start, end, equipment=True)
+		data = engine._compute(start, end, equipment=True, google=google)
 	labels = {r["name"]: r["label"] for r in data["resources"]}
 	unscheduled_rows = _unscheduled()
 	crew_rows, todo_users = engine.read_crews([row.get("name") for row in unscheduled_rows])
@@ -3656,6 +3662,8 @@ def _draft_overlay():
 			"new": True,
 			"depends_on": spec_waits(spec),
 			"by": _shared_by(by.get(doc.name) or {}),
+			# P5: the group it is filed under, which the Lookahead reads its phase from (no Task row yet).
+			"parent_task": doc.get("parent_task") or None,
 		}
 	return overlay
 
@@ -3694,6 +3702,7 @@ def _with_drafts(result, overlay, start, end):
 				# v1.603.0: a task that does not exist yet. Its predecessors, not read from the database.
 				card["new_task"] = True
 				card["depends_on"] = list(drafted[card["name"]].get("depends_on") or [])
+				card["parent_task"] = drafted[card["name"]].get("parent_task")
 			if not card.get("start"):
 				tray.append(card)
 				continue

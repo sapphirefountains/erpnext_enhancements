@@ -3593,6 +3593,19 @@ body.p6b-resizing .ppl-bar {
 	color: var(--sf-text-strong);
 }
 
+/* An empty day, listed so a Not scheduled chip has somewhere to land: one short line. */
+.ppl-list-day.ppl-list-free {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-bottom: 4px;
+	min-height: var(--sf-touch-min);
+}
+
+.ppl-list-day.ppl-list-free > h5 {
+	margin: 0;
+}
+
 .ppl-list-day.ppl-today > h5 {
 	color: var(--sf-link);
 }

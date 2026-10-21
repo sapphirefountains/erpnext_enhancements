@@ -468,7 +468,7 @@ test("Project: View > Open in Project Planner opens the planner on that project"
 	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there.
 	check("a history entry of its own, its ?project= kept as the filter on screen", desk.entries, [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner?project=PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-14?project=PRJ-00001",
 	]);
 	desk.back();
 	check("Back returns to the form", desk.route, ["project", "PRJ-00001"]);
@@ -514,11 +514,11 @@ test("Project: Back after switching to All does not snap the filter back", () =>
 	// "All projects" in the select, then a task opened from the calendar. The pick rewrites the
 	// entry's address in place (S5c), so the entry Back lands on says All.
 	pp.pick_filter("project", "");
-	check("the pick took the project out of the address", desk.here(), "/desk/project-planner");
+	check("the pick took the project out of the address", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
 	desk.frappe.set_route("Form", "Task", "TASK-0001");
 	check("on the task", desk.route, ["Form", "Task", "TASK-0001"]);
 	desk.back();
-	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner");
+	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
 	check("the filter stays All", pp.project, "");
 	check("and nothing is left in route_options to apply later", desk.frappe.route_options, null);
 });
@@ -541,7 +541,7 @@ test("Project: a project that starts later opens the Lookahead on the week it st
 	openForm(desk, "Project", project({ name: "PRJ-00003", expected_start_date: "2026-09-01" })).press(
 		"Open in Project Planner"
 	);
-	check("a started project opens on this week", desk.here(), "/desk/project-planner?project=PRJ-00003");
+	check("a started project opens on this week", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00003");
 	check("filtered to it", pp.project, "PRJ-00003");
 });
 
@@ -568,7 +568,7 @@ test("Project: a name that needs escaping arrives whole, and other options are l
 	// Another page's key in the same options is not the planner's to take.
 	desk.frappe.set_route("project-planner", { project: "PRJ-00009", other: "x" });
 	check("only `project` is taken", desk.frappe.route_options, { other: "x" });
-	check("and the other key stays in the address beside it", desk.here(), "/desk/project-planner?project=PRJ-00009&other=x");
+	check("and the other key stays in the address beside it", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00009&other=x");
 	check("the new project applies", pp.project, "PRJ-00009");
 });
 

@@ -485,7 +485,7 @@ test("Project Planner: one filter in the address is the whole filter", () => {
 	const pp = projectPlanner(desk);
 	desk.land();
 	check("the others are All, not the remembered ones", f3(pp), { project: "", pm: "", group: "Design" });
-	check("the address says exactly that", desk.here(), "/desk/project-planner?group=Design");
+	check("the address says exactly that", desk.here(), "/desk/project-planner/lookahead/2026-10-14?group=Design");
 });
 
 test("Project Planner: a bare address writes the remembered filters into it, in place", () => {
@@ -494,7 +494,7 @@ test("Project Planner: a bare address writes the remembered filters into it, in 
 	const pp = projectPlanner(desk);
 	desk.land();
 	check("the remembered filters", f3(pp), { project: "PRJ-MINE", pm: "me@example.com", group: "" });
-	check("now in the address", desk.here(), "/desk/project-planner?project=PRJ-MINE&pm=me%40example.com");
+	check("now in the address", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-MINE&pm=me%40example.com");
 	check("no entry added", desk.entries.length, 1);
 });
 
@@ -644,7 +644,7 @@ test("Project Planner: a link's project the planner does not list stays the filt
 	const pp = projectPlanner(desk, { answer: ANSWER });
 	desk.land();
 	check("kept", pp.project, "PRJ-ELSEWHERE");
-	check("in the address", desk.here(), "/desk/project-planner?project=PRJ-ELSEWHERE");
+	check("in the address", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-ELSEWHERE");
 });
 
 test("Project Planner: a link's filters stay one-off; a pick saves only the filter picked", () => {
@@ -739,7 +739,7 @@ test("Project Planner: a bare address after a link brings back the person's own 
 	desk.go("Form", "Task", "TASK-0001");
 	desk.go("project-planner");
 	check("the sidebar's bare planner: the person's own", f3(pp), { project: "PRJ-MINE", pm: "me@example.com", group: "" });
-	check("and its address says so", desk.here(), "/desk/project-planner?project=PRJ-MINE&pm=me%40example.com");
+	check("and its address says so", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-MINE&pm=me%40example.com");
 	desk.back();
 	desk.back();
 	check("Back onto the link's entry shows the link's again", f3(pp), { project: "PRJ-00001", pm: "", group: "" });
@@ -790,9 +790,9 @@ test("Project Planner: a last-used view saved before the tabs opens the Lookahea
 	const last = { view: "week", project: "PRJ-OLD", pm: "pm@example.com", group: "PM" };
 	const pp = projectPlanner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [] } });
 	desk.go("project-planner");
-	check("the bare address stays, with the filters written in", desk.urls(), [
+	check("the bare address is replaced by the Lookahead's, with the filters written in", desk.urls(), [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner?project=PRJ-OLD&pm=pm%40example.com&group=PM",
+		"/desk/project-planner/lookahead/2026-10-14?project=PRJ-OLD&pm=pm%40example.com&group=PM",
 	]);
 	check("the Lookahead, on today's weeks", [pp.view, pp.anchor], ["lookahead", desk.today]);
 	check("loaded once", pp.loads.length, 1);
@@ -918,6 +918,32 @@ test("P5: an old /week address is replaced by /calendar/week, its filters and ot
 	check("loaded once, after the redirect", pp.loads.map((l) => l.view), ["week"]);
 	desk.back();
 	check("Back leaves the planner, as it would have from the old address", desk.here(), "/desk/project/PRJ-00001");
+});
+
+test("P5: Back onto the Lookahead stays on the Lookahead after another tab became last used", () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	const p6c = { loaded: true, restored: false, last: null, saved_text: null, views: [] };
+	const pp = projectPlanner(desk, { p6c });
+	desk.go("project-planner");
+	check("the bare address became the Lookahead's own, in place", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-14",
+	]);
+	pp.go("crew", pp.anchor);
+	// The Crew tab is now "last used" (p6c_save_last), as the server would answer next time.
+	p6c.last = { view: "crew", tabbed: true };
+	desk.back();
+	check("Back: the Lookahead, not bounced to Crew", [pp.view, desk.here()], ["lookahead", "/desk/project-planner/lookahead/2026-10-14"]);
+	check("no entry was added or replaced on the way", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-14",
+		"/desk/project-planner/crew/2026-10-14",
+	]);
+	desk.forward();
+	check("Forward: Crew again", pp.view, "crew");
+	// A bare address later (the sidebar) opens the last-used tab, replacing itself.
+	desk.go("project-planner");
+	check("the sidebar's bare address opens Crew, in place", desk.here(), "/desk/project-planner/crew/2026-10-14");
 });
 
 test("P5: an old /month address lands on the Calendar tab's month", () => {

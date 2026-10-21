@@ -112,9 +112,11 @@ class TestSpanDays(unittest.TestCase):
 		self.assertEqual(la.span_days("2026-10-21", "2026-10-21"), 1)
 		self.assertEqual(la.span_days("2026-10-21", None), 1)
 
-	def test_a_weekend_only_task_is_its_calendar_days_never_zero(self):
-		self.assertEqual(la.span_days("2026-10-24", "2026-10-25"), 2)
+	def test_a_weekend_only_task_is_one_day_as_the_calendar_says(self):
+		# P11's duration_text: working days across the span, at least one.
+		self.assertEqual(la.span_days("2026-10-24", "2026-10-25"), 1)
 		self.assertEqual(la.span_days("2026-10-24", "2026-10-24"), 1)
+		self.assertEqual(la.span_days("2026-10-23", "2026-10-25"), 1)  # Fri-Sun
 
 	def test_no_start_is_zero_and_an_end_before_the_start_is_one_day(self):
 		self.assertEqual(la.span_days(None, "2026-10-21"), 0)
@@ -265,8 +267,8 @@ class TestGetLookahead(h._Base):
 		]
 		self.frappe.db.has_column = lambda doctype, column: True
 
-		def get_planner(start, end, draft=0, all_tasks=0):
-			self.calls.append({"start": start, "end": end, "draft": draft, "all_tasks": all_tasks})
+		def get_planner(start, end, draft=0, all_tasks=0, google=1):
+			self.calls.append({"start": start, "end": end, "draft": draft, "all_tasks": all_tasks, "google": google})
 			return self.answer
 
 		self.patches += [
@@ -279,7 +281,9 @@ class TestGetLookahead(h._Base):
 
 	def test_it_is_get_planner_over_the_window_with_draft_and_all_tasks_passed_through(self):
 		result = la.get_lookahead("2026-10-21", weeks="3", draft=1, all_tasks="1")
-		self.assertEqual(self.calls, [{"start": "2026-10-18", "end": "2026-11-07", "draft": 1, "all_tasks": "1"}])
+		self.assertEqual(
+			self.calls, [{"start": "2026-10-18", "end": "2026-11-07", "draft": 1, "all_tasks": "1", "google": 0}]
+		)
 		self.assertIs(result, self.answer)
 		self.assertEqual(
 			{k: result["lookahead"][k] for k in ("start", "end", "weeks", "choices")},
@@ -300,8 +304,16 @@ class TestGetLookahead(h._Base):
 		self.assertEqual((cards["T1"]["span_days"], cards["T2"]["span_days"], cards["T3"]["span_days"]), (4, 1, 0))
 
 	def test_a_drafted_new_task_finds_its_phase_through_the_group_it_is_filed_under(self):
-		self.answer["unscheduled"].append(_card("draft-new:xyz", "PRJ-2", parent_task="G5"))
-		self.answer["unscheduled"][-1].pop("phase")
+		# The card as get_planner(draft=1) returns it: build_card's shape (no parent_task of its own),
+		# then _with_drafts, which copies the group from the draft overlay.
+		state = {"name": "draft-new:xyz", "subject": "Set heads", "project": "PRJ-2", "status": "Open"}
+		card = h.api.build_card(state, [], {}, [], h.TODAY, True)
+		overlay = {
+			"drafted": {"draft-new:xyz": {"credentials": [], "new": True, "depends_on": [], "parent_task": "G5"}},
+			"stale": [],
+		}
+		shown = h.api._with_drafts({"tasks": [card], "unscheduled": [], "needs_crew": []}, overlay, D(2026, 10, 18), D(2026, 11, 7))
+		self.answer["unscheduled"] += shown["unscheduled"]
 		self.frappe.tables["Task"] += [
 			{"name": "G5", "subject": "Fountain head", "parent_task": "P500"},
 			{"name": "P500", "subject": "Phase 500 — Finishes", "parent_task": None},
@@ -312,11 +324,19 @@ class TestGetLookahead(h._Base):
 		phases = result["lookahead"]["projects"][1]["phases"]
 		self.assertIn(("P500", "Phase 500 — Finishes"), [(f["name"], f["subject"]) for f in phases])
 
-	def test_a_drafted_new_card_names_the_group_it_is_filed_under(self):
+	def test_a_drafted_new_task_under_a_drafted_phase_is_other_work(self):
+		state = {"name": "draft-new:abc2", "subject": "Wire", "project": "PRJ-2", "status": "Open"}
+		card = dict(h.api.build_card(state, [], {}, [], h.TODAY, True), parent_task="draft-new:phase", new_task=True)
+		self.answer["unscheduled"].append(card)
+		result = la.get_lookahead("2026-10-21")
+		self.assertIsNone(next(c for c in result["unscheduled"] if c["name"] == "draft-new:abc2")["phase"])
+		asked = [n for q in self.frappe.queries if q[0] == "Task" for n in q[1]["filters"]["name"][1]]
+		self.assertNotIn("draft-new:phase", asked)
+
+	def test_the_overlay_carries_the_group_to_the_card(self):
 		code = (APP / "api/project_planner.py").read_text(encoding="utf-8")
-		start = code.index("def _new_card(doc, spec):")
-		end = code.index("\n\n\ndef ", start)
-		self.assertIn('card["parent_task"] = doc.get("parent_task") or None', code[start:end])
+		self.assertIn('"parent_task": doc.get("parent_task") or None,', code)
+		self.assertIn('card["parent_task"] = drafted[card["name"]].get("parent_task")', code)
 
 	def test_the_tree_and_needs_crew(self):
 		look = la.get_lookahead("2026-10-21")["lookahead"]
@@ -357,6 +377,30 @@ class TestGetLookahead(h._Base):
 		self.assertTrue(self.frappe.errors)
 
 
+class TestGoogleIsOff(h._Base):
+	"""Spec §6: the Lookahead runs the engine with Google off; every other read is unchanged."""
+
+	def compute_kwargs(self, **kwargs):
+		seen = {}
+
+		class Stop(Exception):
+			pass
+
+		def compute(start, end, *args, **kw):
+			seen.update(kw)
+			raise Stop
+
+		with mock.patch.object(h.engine, "_compute", compute), self.assertRaises(Stop):
+			h.api.get_planner("2026-10-18", "2026-11-07", **kwargs)
+		return seen
+
+	def test_google_0_reaches_the_engine_and_unset_is_as_before(self):
+		self.assertIs(self.compute_kwargs(google=0)["google"], False)
+		self.assertIs(self.compute_kwargs(google="0")["google"], False)
+		self.assertIs(self.compute_kwargs()["google"], True)
+		self.assertIs(self.compute_kwargs(google=None)["google"], True)
+
+
 # ====================================================================== wiring
 
 
@@ -370,7 +414,7 @@ class TestWiring(unittest.TestCase):
 
 	def test_it_reads_through_get_planner_which_holds_the_role_gate(self):
 		code = MODULE_PATH.read_text(encoding="utf-8")
-		self.assertIn("result = pp.get_planner(str(first), str(last), draft=draft, all_tasks=all_tasks)", code)
+		self.assertIn("result = pp.get_planner(str(first), str(last), draft=draft, all_tasks=all_tasks, google=0)", code)
 		self.assertNotIn("frappe.db.sql", code)
 
 	def test_the_readme_and_ci_know_it(self):

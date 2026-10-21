@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **What it shows.** Rows are projects, then their phases, then tasks. The next three weeks run
     across, starting on the site's first weekday (Sunday on production). The range picker offers 2, 3, 4
     or 6 weeks, and ‹ › step one week.
-  - **A bar is a task.** It shows the crew's initials, its size in working days (D7) and the chips a
+  - **A bar is a task.** It shows the crew's initials, its size in days (D7: working days across its
+    span, at least one, counted as the calendar's labels count them since 1.706.0) and the chips a
     card carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification and
     weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it a
     thin red tail. A bar that runs past the window is cut and dashed at that end.
@@ -30,9 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - *Fountain Move* (read-only here; it moves on the Maintenance Planner);
     - *No tasks yet* with **Build out**, replacing the Needs tasks tray.
   - **Not scheduled** is a line per project whose chips drag onto a day, as the Unscheduled tray's did.
+    Every row's days take a drop, the project's and its phases' too, so a project with no dated work
+    yet (a fresh build-out opened from its form) still has days to drop on.
     A **Needs crew** chip narrows the board to the tasks short of crew, replacing the Needs crew tray.
     The Overdue tray stays.
-  - **On a phone** the board is a list by day, and each day is a drop target. **Print this view**
+  - **On a phone** the board is a list by day, and each day is a drop target; with undated work to
+    place, every day of the window is listed, an empty one as a short line. **Print this view**
     prints its rows as a list.
   - **No second save path.** Every bar is the planner's own card, so drag (measured from the day under
     the pointer), edge resize, the side panel, the right-click menu, selection, search, Color by, Tap to
@@ -41,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "Notify crew?" apply unchanged.
   - **The server** is `api/planner_lookahead.get_lookahead(start, weeks, project, pm, group,
     all_tasks, draft)`. It is `get_planner` over the window plus the tree, so P2's phase-and-crew rule,
-    P3's drafts and schedule state, and the Fountain Move rule are get_planner's own. Each card gains
+    P3's drafts and schedule state, and the Fountain Move rule are get_planner's own. It reads with
+    Google off (spec §6; `get_planner` gained `google`, unset as before). Each card gains
     `phase`, `baseline` and `span_days`. Baselines are read only once P3's columns exist. A failure to
     read the no-task projects is logged and the rest still answers.
 - **Calendar tab.** The week and month views move under a *Calendar* tab with a Week/Month switch, at
@@ -50,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Landing.** A bare `/project-planner` opens the person's last-used tab, and the **Lookahead** when
-  there is none. A "last used" view saved before this release opens the Lookahead too: everyone had the
+  there is none, each replacing the bare address with its own (`/lookahead/<today>`): an entry left bare
+  would be taken over by "last used" on the way Back, so Back from another tab would bounce off it. A "last used" view saved before this release opens the Lookahead too: everyone had the
   week view saved, because it was the only landing screen. Saved views now carry `tabbed`, so a tab
   picked from now on is remembered (`api/planner_views_prefs`: `lookahead` view, `tabbed` flag).
 - **Old addresses redirect.** `/project-planner/week/<date>` and `/month/<date>` (bookmarks, the
@@ -61,8 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a row and the Needs crew chip change nothing in the address.
 - The Project form's *Open in Project Planner* sends a project that starts later to the Lookahead on its
   start week, instead of the week view.
-- A drafted new task's card names the group it is filed under (`parent_task`), so the Lookahead
-  shows it under its phase.
+- A drafted new task's card names the group it is filed under (`parent_task`, carried from the draft
+  overlay through `_with_drafts`), so the Lookahead shows it under its phase. One filed under a phase
+  that is itself still a draft is *Other work* until that phase is published.
 
 ### Tests
 - New: `tests/test_planner_lookahead.py` (server, on the Phase 3B harness) and

@@ -69,16 +69,14 @@ def lookahead_window(day, weeks, first):
 
 
 def span_days(start, end):
-	"""A task's size in working days (D7): the weekdays from ``start`` to ``end``, both counted.
-
-	A task that sits on a weekend only is its calendar days, never 0."""
+	"""A task's size in days (D7), as the calendar's labels count it (P11, ``duration_text``): the
+	working days (Monday to Friday) across its span, at least one. A weekend-only task is 1 day."""
 	first, last = engine._as_date(start), engine._as_date(end or start)
 	if not first:
 		return 0
 	if not last or last < first:
 		last = first
-	days = list(engine.daterange(first, last))
-	return sum(1 for day in days if day.weekday() < 5) or len(days)
+	return max(sum(1 for day in engine.daterange(first, last) if day.weekday() < 5), 1)
 
 
 def nearest_phase(name, parents, subjects, limit=engine.PHASE_CLIMB):
@@ -281,7 +279,8 @@ def get_lookahead(start=None, weeks=DEFAULT_WEEKS, project=None, pm=None, group=
 	``start`` (today when not given), plus ``"lookahead"``: ``{start, end, weeks, projects, needs_crew}``.
 	See the module docstring."""
 	first, last = lookahead_window(pp.given(start) or nowdate(), weeks, pp._site_first_weekday())
-	result = pp.get_planner(str(first), str(last), draft=draft, all_tasks=all_tasks)
+	# Google off (spec §6): the engine's own drive estimates over the whole window, never a Routes call.
+	result = pp.get_planner(str(first), str(last), draft=draft, all_tasks=all_tasks, google=0)
 	cards = list(result.get("tasks") or [])
 	undated = list(result.get("unscheduled") or [])
 	# A drafted new task has no Task row yet: its card names the group it is filed under, which is read

@@ -2017,7 +2017,8 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   week and month views, now under the **Calendar** tab with a Week/Month switch. The old `/week/<date>`
   and `/month/<date>` addresses (bookmarks, the digests, the Project form's link) are **replaced**, not
   pushed, by their new ones, with the filters and any other query keys. A bare `/project-planner` opens
-  the last-used tab, and the Lookahead when there is none. A "last used" view saved before the tabs
+  the last-used tab, and the Lookahead when there is none, each replacing the bare address with its own
+  (a bare entry would be taken over by "last used" on the way Back, so Back would bounce off it). A "last used" view saved before the tabs
   (no `tabbed` flag) does not count as a choice of tab: everyone had the week view saved, because it
   was the only landing screen. The tabs are Lookahead, Crew, Calendar, Heatmap and Utilization until
   P7 folds the last two into Crew. Each tab, week and range is a route, so Back and Forward step
@@ -2027,7 +2028,8 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   the pointer), an edge (6B's resize), a click (the side panel), a right-click (6B's menu), selection,
   search, Color by and Tap to move all work unchanged, and every write goes through `commit`/`send`
   with P4's auto-draft, tasks that follow, Ctrl/⌘ and "Notify crew?". There is no second save path.
-- **A bar** shows the crew's initials, the task's size in working days (D7), and the chips a card
+- **A bar** shows the crew's initials, the task's size in days (D7: working days across its span, at
+  least one, as P11's calendar labels count), and the chips a card
   carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification, and
   weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it
   is a thin red tail. A bar that runs past the window is cut, dashed and without a grip on that end.
@@ -2045,7 +2047,11 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
   which replaces the Needs crew tray. The Overdue tray stays. The Resources panel is not on this tab.
 - **Collapsing** a project or a phase draws its work as plain runs, and is remembered in this browser.
 - The **range picker** offers 2, 3, 4 or 6 weeks. The choice is remembered for the next bare open.
-- **On a phone** the board is a list by day, and each day is a drop target.
+- **Drop targets.** Every row's days take a drop, a project's and a phase's too, so a project with no
+  dated work yet still has days to drop its Not scheduled chips on.
+- **On a phone** the board is a list by day, and each day is a drop target. With undated work to place,
+  every day of the window is listed.
+- **Google is off** on this tab (spec §6): `get_lookahead` calls `get_planner(google=0)`.
 - **Print this view** prints the board's rows as a list.
 - **The Project, PM and Group filters** apply as on every tab. Group keeps the tasks with someone of
   that group on the crew.

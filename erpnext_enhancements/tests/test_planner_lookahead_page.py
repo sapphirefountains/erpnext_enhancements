@@ -143,6 +143,7 @@ class TestTheBlock(unittest.TestCase):
 			"P5: an old /week address is replaced by /calendar/week",
 			"P5: the range is a screen: Back and Forward step through the weeks shown and the days",
 			"a last-used view saved before the tabs opens the Lookahead",
+			"P5: Back onto the Lookahead stays on the Lookahead after another tab became last used",
 		):
 			self.assertIn(name, harness)
 

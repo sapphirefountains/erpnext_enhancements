@@ -11385,6 +11385,7 @@ Object.assign(ProjectPlanner.prototype, PPU_METHODS);
 // ====================================================================== P5: Lookahead, the planner's home
 //
 //   /desk/project-planner                         the person's last-used tab; Lookahead with none
+//                                                 (both replace the bare address with their own)
 //   /desk/project-planner/lookahead/2026-10-19    three weeks from the week holding that day
 //   /desk/project-planner/lookahead/2026-10-19/4  the same, four weeks (2, 3, 4 or 6; 3 is not written)
 //   /desk/project-planner/calendar/week/<date>    the old week view, under the Calendar tab
@@ -11487,11 +11488,12 @@ const PPL_PURE = {
 		}
 		return runs;
 	},
-	// A task's size in working days (D7): its weekdays, or its calendar days when it sits on a weekend.
+	// A task's size in days (D7), as the calendar's labels count it (P11, duration_text): the working
+	// days across its span, at least one. A weekend-only task is 1 day.
 	span_days(start, end) {
 		if (!start) return 0;
 		const stop = end && end >= start ? end : start;
-		return PP6B_PURE.working_days(start, stop) || PP6B_PURE.ymd_diff(start, stop) + 1;
+		return Math.max(PP6E_PURE.working_between(PP6B_PURE.ymd_add(start, -1), stop), 1);
 	},
 	// The part of a task past its baseline's last day, as [first, last], or null.
 	slip(card) {
@@ -11565,8 +11567,10 @@ const PPL_METHODS = {
 		}
 		// The old addresses: bookmarks, the digest's links, the Project form's link.
 		if (PPL.calendar_views.includes(route[1])) return { redirect: [PPL.calendar, route[1], day(route[2])] };
-		// A bare /project-planner the last-used view did not take over (p6c_before_route) is the home tab.
-		if (!route[1]) return { view: PPL.view, anchor: frappe.datetime.get_today(), weeks: this.ppl_state().weeks };
+		// A bare /project-planner the last-used view did not take over (p6c_before_route) is the home tab,
+		// at its own address, in place: an entry left bare would be taken over by "last used" on the way
+		// Back (open Crew from here, and Back would bounce to Crew), so the Lookahead could never be returned to.
+		if (!route[1]) return { redirect: this.ppl_route_parts(PPL.view, frappe.datetime.get_today()) };
 		return null;
 	},
 
@@ -11776,7 +11780,9 @@ const PPL_METHODS = {
 			.join("");
 	},
 
-	// The day cells of one row. A task row's are drop targets (.ppl-day); a project's or phase's are not.
+	// The day cells of one row. A task's, a phase's and a project's are drop targets (.ppl-day), so a
+	// Not scheduled chip has somewhere to land even on a project with no dated work yet; a dated bar
+	// dropped on them moves by the days it was dragged, as anywhere. A no-task project's are not.
 	ppl_cells_html(days, target) {
 		return days
 			.map((ymd, index) => {
@@ -11837,7 +11843,7 @@ const PPL_METHODS = {
 		rows.push(`<div class="${row_class}" role="row">
 			<div class="ppl-label" role="rowheader">${toggle}${this.ppl_project_label_html(project)}</div>${this.ppl_cells_html(
 			days,
-			false
+			!project.no_tasks
 		)}${open ? "" : this.ppl_roll_html(dated, first, last)}</div>`);
 		if (!open) return rows;
 		phases.forEach(({ phase, tasks, undated }) => {
@@ -11854,7 +11860,7 @@ const PPL_METHODS = {
 				<div class="ppl-label" role="rowheader">${this.ppl_toggle_html(fkey, phase_open, __("Show or hide {0}", [subject]))}
 					<span class="ppl-phase-name" title="${pp_esc(subject)}">${pp_esc(subject)}</span>
 					<span class="ppl-count">${pp_esc(counts)}</span>
-				</div>${this.ppl_cells_html(days, false)}${phase_open ? "" : this.ppl_roll_html(tasks, first, last)}</div>`);
+				</div>${this.ppl_cells_html(days, true)}${phase_open ? "" : this.ppl_roll_html(tasks, first, last)}</div>`);
 			if (phase_open) tasks.forEach((card) => rows.push(this.ppl_task_row(card, days, first, last)));
 		});
 		const undated = phases.reduce((all, entry) => all.concat(entry.undated), []);
@@ -12042,23 +12048,13 @@ const PPL_METHODS = {
 	},
 
 	// The phone: a list by day, each day a drop target, then the work with no dates and the projects
-	// with no tasks.
+	// with no tasks. With undated work to place, every day of the window is listed, an empty one as a
+	// short line, so a chip always has a day to land on.
 	ppl_list_html(projects, days) {
 		const state = this.ppl_state();
 		const names = [];
 		projects.forEach((project) => (project.phases || []).forEach((phase) => names.push(...(phase.tasks || []))));
 		const cards = names.map((name) => this.by_task[name]).filter((card) => this.ppl_card_visible(card));
-		const out = [];
-		days.forEach((ymd) => {
-			const on = cards
-				.filter((card) => card.start <= ymd && (card.end && card.end >= card.start ? card.end : card.start) >= ymd)
-				.sort((a, b) => this.compare(a, b));
-			if (!on.length) return;
-			out.push(`<section class="${["ppl-list-day", "ppl-day"].concat(this.ppl_day_classes(ymd)).join(" ")}" data-date="${pp_esc(ymd)}">
-				<h5 data-pp6a-day="${pp_esc(ymd)}" tabindex="0">${pp_esc(pp_when(ymd))}</h5>
-				${on.map((card) => this.card_html(card, ymd)).join("")}
-			</section>`);
-		});
 		const undated = [];
 		projects.forEach((project) =>
 			(project.not_scheduled || []).forEach((name) => {
@@ -12066,6 +12062,18 @@ const PPL_METHODS = {
 				if (this.ppl_card_visible(card)) undated.push(card);
 			})
 		);
+		const out = [];
+		days.forEach((ymd) => {
+			const on = cards
+				.filter((card) => card.start <= ymd && (card.end && card.end >= card.start ? card.end : card.start) >= ymd)
+				.sort((a, b) => this.compare(a, b));
+			if (!on.length && !undated.length) return;
+			const cls = ["ppl-list-day", "ppl-day"].concat(this.ppl_day_classes(ymd), on.length ? [] : ["ppl-list-free"]);
+			out.push(`<section class="${cls.join(" ")}" data-date="${pp_esc(ymd)}">
+				<h5 data-pp6a-day="${pp_esc(ymd)}" tabindex="0">${pp_esc(pp_when(ymd))}</h5>
+				${on.length ? on.map((card) => this.card_html(card, ymd)).join("") : `<div class="ppl-hint">${pp_esc(__("Nothing yet"))}</div>`}
+			</section>`);
+		});
 		if (undated.length) {
 			out.push(`<section class="ppl-list-undated"><h5>${pp_esc(__("Not scheduled ({0}): drag onto a day", [undated.length]))}</h5>
 				${undated.map((card) => this.card_html(card, null)).join("")}</section>`);
