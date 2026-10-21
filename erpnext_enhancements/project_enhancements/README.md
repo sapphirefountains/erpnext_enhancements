@@ -2102,6 +2102,11 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
   through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
   routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
   zoom, and Today scrolls to today.
+- **The landing** (approved 2026-10-21 as Nik's per-device rule, no exception). The Gantt is one of P8's
+  remembered tabs, with its project kept beside it (`ee_project_planner_gantt:<user>`). A bare
+  `/project-planner` on a device whose tab is the Gantt is replaced by `/gantt/<that project>`; with no
+  project stored, or one the server refuses (`ppg_refused`), the device forgets it and the Lookahead
+  replaces the address instead. A link that names a filter opens the Lookahead with it.
 - **The feed is the planner's, not `api/gantt.py`'s.** `get_project_gantt` reads the project's Task rows
   itself (a job runs for months; `get_planner` stops at 100 days) and builds each task with
   `project_planner.build_card`, so the page indexes them as it does every tab's cards. The D6 rule
