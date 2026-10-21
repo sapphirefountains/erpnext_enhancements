@@ -407,8 +407,11 @@ class ProjectPlanner {
 		if (PP.prefs[key]) this.save_pref(PP.prefs[key], this[key]);
 		this.write_filter_url();
 		// The server decides which tasks it sends, so that one asks again; the rest filter what is here.
-		if (key === "all_tasks") this.load();
-		else this.render();
+		if (key === "all_tasks") {
+			this.load();
+			// The kit's menu is outside the page body, whose clicks save "last used" (p6c_state_soon).
+			if (this.p6c) this.p6c_state_soon();
+		} else this.render();
 	}
 
 	// The page's one history write: the filters on screen into the entry on screen, in place. Only
@@ -6875,7 +6878,12 @@ const PP6B_METHODS = {
 			if (flash.wait) {
 				// A task the schedule leaves out (no phase, no crew; P2) is found by search all the same:
 				// say why it is not drawn, and offer the switch that draws it.
-				const actions = this.all_tasks ? {} : { [__("Show all tasks")]: () => this.set_all_tasks(true) };
+				const show = () => {
+					// Flash it once it is drawn: the jump's own flash was spent on this load.
+					this.p6b.flash = { name: flash.name, date: flash.date, wait: false };
+					this.set_all_tasks(true);
+				};
+				const actions = this.all_tasks ? {} : { [__("Show all tasks")]: show };
 				const message = this.all_tasks
 					? __("{0} is hidden by the filters on screen.", [flash.name])
 					: __("{0} is hidden by the filters on screen, or is not phase or crew work.", [flash.name]);
@@ -7941,6 +7949,8 @@ const PP6C_METHODS = {
 		Object.keys(this.url_filters || {}).forEach((key) => {
 			if (key in state) state[key] = this.own_filter_values()[key];
 		});
+		// The address's filters are text; a view's all_tasks is a flag.
+		if ("all_tasks" in state) state.all_tasks = !!state.all_tasks;
 		const text = JSON.stringify(state);
 		if (text === p6c.saved_text) return;
 		p6c.saved_text = text;

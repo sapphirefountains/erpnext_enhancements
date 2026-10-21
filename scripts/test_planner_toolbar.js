@@ -1207,6 +1207,28 @@ test("Project Planner: Show all tasks is part of the view, and the print says wh
 	check("a view saved before this one is phase and crew work only", [pp.all_tasks, calls.map((c) => c[0])], ["", ["load"]]);
 });
 
+test("Project Planner: 'last used' keeps Show all tasks a flag even when the address named it, and a toggle saves it", () => {
+	const { pp, frappe } = projectPlanner();
+	const sent = [];
+	frappe.call = (opts) => (sent.push(opts.args && opts.args.data ? JSON.parse(opts.args.data) : null), Promise.resolve({}));
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.p6c.saved_text = null;
+	pp.all_tasks = "1";
+	pp.own_filters = { project: "", pm: "", group: "", all_tasks: "" };
+	pp.url_filters = { all_tasks: "1" };
+	pp.p6c_save_last();
+	check("a link's all_tasks is that visit's: the person's own value, as a flag", [typeof sent[0].all_tasks, sent[0].all_tasks], ["boolean", false]);
+	pp.url_filters = null;
+	pp.p6c.saved_text = null;
+	sent.length = 0;
+	pp.p6c_save_last();
+	check("their own pick is saved as true", sent[0].all_tasks, true);
+	// The kit's menu sits outside the page body, so a pick from it asks for the save itself.
+	const soon = record(pp, ["load", "p6c_state_soon", "write_filter_url"]);
+	pp.set_all_tasks(false);
+	check("a pick from the menu loads the week and schedules the save", soon.map((c) => c[0]).sort(), ["load", "p6c_state_soon", "write_filter_url"]);
+});
+
 test("Project Planner: Job type is the colors until someone chooses, and the view carries the choice", () => {
 	const { pp, ctx } = projectPlanner();
 	check("the default color", vm.runInContext("PP6C.default_color", ctx), "job_type");
