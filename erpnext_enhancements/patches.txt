@@ -1451,3 +1451,12 @@ erpnext_enhancements.patches.bin_manager_hub_links
 # blank one. Keyed on the rule, since the column's ALTER writes Draft into every row. Raw UPDATEs; never un-publishes. Cannot raise,
 # safe twice.
 erpnext_enhancements.patches.mark_project_schedule_states
+# Fountain Move jobs (v1.703.0, Nik 2026-10-21): create the Project Template "Fountain Move" (type Service) and its
+# three template Tasks (Confirm move date, 0 h; Move day, 4 h, crew 2, Outdoor; Invoice the move, 0 h) ONLY when no
+# template of that name exists, never touching one that does. One savepoint, all or nothing. Cannot raise.
+erpnext_enhancements.patches.seed_fountain_move_template
+# PRJ-00775 becomes the first move job (v1.703.0, Nik approved 2026-10-21): Custom Field custom_is_fountain_move created
+# from its fixture if missing; project_type -> Service, the box ticked, template -> Fountain Move (db.set_value); its
+# 11 Open, untouched Service-template tasks -> Canceled (none deleted; a started one is kept and logged); the 3 move
+# tasks added undated. Runs after the seed; one savepoint; safe twice; cannot raise.
+erpnext_enhancements.patches.make_prj_00775_a_move_job

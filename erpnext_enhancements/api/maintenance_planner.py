@@ -348,14 +348,16 @@ def get_planner(start, end, draft=0):
 	projected = _projections(start, end, today)
 	for card in projected:
 		card["movable"] = card["movable"] and can_move_projected
+	moves, unscheduled_moves = _move_cards(start, end, today)
 
 	_decorate(visits + unscheduled + projected)
 	view = _project_view(
-		_technicians(visits + unscheduled + projected),
+		_technicians(visits + unscheduled + projected + moves + unscheduled_moves),
 		start,
 		end,
 		visit_overrides=(overlay or {}).get("engine"),
 	)
+	_drop_move_bookings(view["bookings"], moves + unscheduled_moves)
 	_set_lead_hours(visits + unscheduled + projected, view["bookings"])
 	extra = {"drafts": maintenance_drafts.summary(overlay)} if overlay is not None else {}
 	return {
@@ -366,6 +368,9 @@ def get_planner(start, end, draft=0):
 		"visits": visits,
 		"unscheduled": unscheduled,
 		"projected": projected,
+		# Fountain Move tasks (v1.703.0): moved here, read-only on the Project Planner.
+		"moves": moves,
+		"unscheduled_moves": unscheduled_moves,
 		"technicians": view["technicians"],
 		"bookings": view["bookings"],
 		"can_move_visits": can_move_visits,
@@ -374,6 +379,54 @@ def get_planner(start, end, draft=0):
 		"can_create_visits": bool(frappe.has_permission("Sapphire Maintenance Record", "create")),
 		**_planner_extras(start, end, view["bookings"]),  # Phase 6D: day_notes, block_notes, can_schedule
 	}
+
+
+def _move_cards(start, end, today):
+	"""``(dated, undated)`` Fountain Move task cards (``project_enhancements.fountain_move_jobs``).
+
+	Movable for anyone who may write Tasks. Never raises: a failure is logged and the calendar shows
+	its visits without the moves, because the visits come first here.
+	"""
+	try:
+		from erpnext_enhancements.project_enhancements import fountain_move_jobs
+
+		return fountain_move_jobs.planner_cards(
+			start, end, today, bool(frappe.has_permission("Task", "write"))
+		)
+	except Exception:
+		_log_failure("Maintenance Planner: Fountain Move cards failed")
+		return [], []
+
+
+def _drop_move_bookings(bookings, moves):
+	"""Take the move tasks out of the read-only project bookings: each has a card of its own.
+
+	Only the cards (``items``) go; the day's capacity, booked and free hours still count them.
+	"""
+	refs = {card.get("name") for card in moves or [] if card.get("name")}
+	if not refs:
+		return
+	for per_day in (bookings or {}).values():
+		for cell in (per_day or {}).values():
+			cell["items"] = [
+				item for item in cell.get("items") or [] if not (item.get("kind") == "task" and item.get("ref") in refs)
+			]
+
+
+@frappe.whitelist(methods=["POST"])
+def move_fountain_move(task, modified, date=None, crew=None, reason=None):
+	"""Move a Fountain Move task to ``date`` and/or set its crew (a JSON list of users, lead first).
+
+	The Project Planner's own write does the work (``fountain_move_jobs.move_task``), so it answers
+	the same way: ``needs_reason`` with the conflicts when the change creates one and no ``reason``
+	came with it, otherwise the saved task. Overbooking warns and never blocks.
+	"""
+	_require_planner()
+	from erpnext_enhancements.project_enhancements import fountain_move_jobs
+
+	if date and getdate(date) < getdate(nowdate()):
+		frappe.throw(_("Move jobs can only be moved to today or a later day."))
+	return fountain_move_jobs.move_task(task, modified, date=date, crew=crew, reason=reason)
 
 
 # Booking kinds the Maintenance Planner shows read-only. Visits are its own cards; the engine's
