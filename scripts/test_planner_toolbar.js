@@ -1189,6 +1189,23 @@ test("Project Planner: Job type is the colors until someone chooses, and a choic
 	check("a saved view's summary words a non-default color, Task color included", [pp.p6c_view_summary({ color_by: "job_type" }), pp.p6c_view_summary({ color_by: "default" }), pp.p6c_view_summary({ color_by: "person" })], ["", "Task colors", "Person colors"]);
 });
 
+test("Project Planner: applying a saved view that holds Task color makes it the person's choice", () => {
+	const { pp } = projectPlanner();
+	const prefs = {};
+	pp.save_pref = (key, value) => {
+		prefs[key] = value;
+	};
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.p6c_sync_controls = () => null;
+	pp.filters = () => ({});
+	pp.write_filter_url = () => null;
+	pp.render = () => null;
+	pp.p6c_apply_state({ view: "week", color_by: "job_type" }, { render: false });
+	check("a view with another color leaves the flag alone", [pp.p6c.color_by, prefs], ["job_type", {}]);
+	pp.p6c_apply_state({ view: "week", color_by: "default" }, { render: false });
+	check("a view with Task color sets it, so \"last used\" keeps Task color from now on", [pp.p6c.color_by, prefs.ee_project_planner_color_chosen], ["default", "1"]);
+});
+
 test("Both planners: Split stays in the right-click menu, and Move by is a field of the Move… panel", () => {
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("Split is in the right-click menu", source.includes('multi ? __("Split across days…") : __("Split in two…")'), true);

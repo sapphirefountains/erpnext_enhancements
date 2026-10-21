@@ -7858,7 +7858,12 @@ const PP6C_METHODS = {
 		if ("foreign" in view) this.show_foreign = !!view.foreign;
 		if ("panel" in view) this.panel_open = !!view.panel;
 		if ("over_only" in view) this.over_only = !!view.over_only;
-		if ("color_by" in view) this.p6c.color_by = view.color_by;
+		if ("color_by" in view) {
+			this.p6c.color_by = view.color_by;
+			// A view that holds Task color (every view saved before Job type became the default does) is the
+			// person's choice: "last used" keeps it from now on (p6c_before_route).
+			if (view.color_by === "default") this.save_pref(PP6C.color_pref, "1");
+		}
 		if (this.data) {
 			// A project or PM no longer on the planner would filter out everything.
 			if (this.project && !this.by_project[this.project]) this.project = "";
@@ -10983,11 +10988,10 @@ const PPTB_METHODS = {
 		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
 		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
 		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
-		// A menu with nothing for this screen is not offered (+ Add on Utilization).
-		this.tb_menu_list().forEach(([name]) => {
-			const $button = this.tb.$menus[name];
-			if ($button) $button.toggleClass("pp-tb-off", !this.tb_kit_tidy(this.tb_items(name)).length);
-		});
+		// + Add with nothing for this screen is not offered (Utilization, or no right to add). More is never
+		// empty (My week, the crew sheet), so it is not built here just to be counted.
+		const $add = this.tb.$menus.add;
+		if ($add) $add.toggleClass("pp-tb-off", !this.tb_add_items().length);
 		if (this.tb.tabs) this.tb.tabs.sync(this.view);
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
