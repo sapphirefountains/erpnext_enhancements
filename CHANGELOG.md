@@ -7,6 +7,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.705.0] - 2026-10-21
+
+### Added
+- **Moving a task moves the tasks that follow it, later or earlier** (P4 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md`; Nik's D10 and D15 of 2026-10-21).
+  - **What moves, and by how much.** A drag, a resize, a dialog's dates, *Next free day*, a booked
+    suggestion and *Tap to move* now send `dependents=1` on `save_task` and `swap_crew`. The server
+    moves every open, dated task that waits on the moved one, directly or through others. Each moves
+    by the **working days the task's end moved**:
+    - a drag later or earlier moves them by the same amount;
+    - a resize of the right edge moves them by its change;
+    - a resize of the left edge moves nothing after it.
+  - **One request.** Everything is in one conflict check for the lot (`needs_reason` lists the
+    `moves`), with one reason, one notice per person and one Undo.
+  - **Ctrl (Cmd on a Mac) held as you drop moves just that one task.**
+  - A multi-select move does the same through `planner_actions.move_many(dependents=1)`. A task in
+    the selection is never moved a second time as a follower.
+  - Finished, rental, undated and Fountain Move followers stay where they are, and the page names
+    them.
+  - This replaces the "Shift N tasks that follow?" offer. `shift_successors` is still an endpoint.
+- **A Draft schedule drafts every write** (Nik's D8). The page now sends `draft="auto"` on
+  `save_task`, `add_crew`, `swap_crew` and `move_many`, unless *Hold all my changes* is on. The
+  server drafts a task whose project schedule is Draft (blank counts as Draft) and saves the rest.
+  `move_many` splits one batch between the two, and followers are drafted along.
+  - A follower in a project whose schedule says otherwise is left where it is. A draft never moves a
+    published schedule, and a live save never reaches into a Draft one.
+  - Quick add, duplicate, build out and the AI draft are drafted on a Draft schedule's project.
+  - The planner now always reads with the drafts. Another scheduler's draft shows as "Draft ·
+    Clegg" (`drafted_by`), and `drafts.projects` counts the drafts per project, out-of-date ones
+    included.
+- **A line per project with drafts in the strip under the toolbar.**
+  - A Draft schedule's line offers *Publish…*. After a confirmation, it runs
+    `publish_project_schedule`, which sets the baseline and tells each person once, and asks for a
+    reason when one is needed.
+  - Its *Discard* says how many of the drafts are other people's.
+  - A published project with held changes offers *Publish* (`publish_drafts(project=)`) and
+    *Discard*.
+  - The project peek offers *Publish schedule…* and *Set baseline…* / *Reset baseline…*. A reset
+    does a dry run first, then a confirmation that names how many tasks change.
+- **"Notify crew?"** (Nik's D11), on both planners. On a published schedule, a change to the dates
+  or crew of a task somebody is on asks once per gesture, however many tasks it moves. That includes
+  the crews of the tasks that follow, on screen.
+  - **Notify is the default** when the change touches today through the 14th day, counting the old
+    days as much as the new. It is the primary button and has the focus, so Enter takes it. Past
+    the 14th day, Don't notify is the default.
+  - **Esc puts the change back.**
+  - The answer goes as `notify=1` or `0`, and Undo sends the same answer again.
+  - **Nothing is asked** on a Draft schedule, while the hold is on, for a task nobody is on, or for
+    a pencil.
+  - On the Maintenance Planner, `move_visit` asks the same way. `add_crew` (a technician chip
+    dropped on a visit) asks too, and the server's `add_crew` now takes `notify`. A multi-select
+    move asks once for all of its visits.
+
+### Changed
+- **The board-wide switch is called "Hold all my changes" everywhere** (Nik, 2026-10-21). That is
+  the menu, the strip ("Holding your changes: N not published yet") and the toast. "Draft" now
+  means only a project's Draft schedule.
+- **What today's users will notice.** P3's patch left **651 of 661 projects Draft**. A drag on any
+  of their tasks is now a draft, shown with a dashed outline and a strip line, and it reaches nobody
+  until someone presses *Publish…*. The 10 Published projects save live as before, plus the "Notify
+  crew?" question.
+- **Undo** of a change that moved followers is one `move_many` that puts every task back. When the
+  change was more than dates, the plain Undo's save then restores the rest of the task.
+
+### Fixed
+- **A follower that ERPNext's own reschedule pushed mid-move is put back, and the move no longer
+  fails.** ERPNext's `Task.on_update → reschedule_dependent_tasks` pushes an Open dependent the saved
+  task now overlaps to the day after its end, by the calendar, and saves it. The followers' save
+  order (furthest first when later) leaves it nothing to push. The exception is a dependent that
+  already overlapped the task before it: shifted alike, it still overlaps.
+  - **Moving earlier**, that left the copy in hand stale, so the save raised "changed since you
+    opened it" and the whole move rolled back.
+  - **Moving later**, the follower moved twice.
+  - `_save_planned` now reloads a task saved since it was loaded and gives it its planned dates.
+    `_settle` then puts back any follower pushed after it was saved, nearest first. `move_many` uses
+    both.
+
+### Notes
+- **Still live on a Draft schedule:** Split, Copy week and the Overdue tray's actions, including
+  dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
+- **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
+  still pushes that dependent by calendar days, as it always did.
+- Tests: `tests/test_planner_autoshift.py` (its own CI step) covers the server on the Phase 3B
+  harness, and `scripts/test_planner_autoshift.js` drives both real pages under node.
+
+## [1.704.0] - 2026-10-21
+
+### Added
+- **The Project Planner shows phase and crew work only** (P2 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` D6; Nik approved the redesign on 2026-10-21). A customer job carries
+  about 40 template admin and billing tasks, all dated its first day, and they filled the week and the
+  Unscheduled tray. `get_planner` now leaves out an open task unless it sits **under a phase group** (a
+  group Task whose subject starts with a three-digit phase number, `planner_templates.phase_number`,
+  at any depth) **or has someone on it** (a crew row, or an open assignee who is a Planner Resource).
+  The week, month and crew views and the Unscheduled tray all follow it.
+  - **`get_planner(..., all_tasks=1)`** is the whole set, as it always was. The answer says which it
+    is (`all_tasks`) and how many tasks it left out (`hidden_tasks`).
+  - **More ▸ Display ▸ Show all tasks** turns it on, and shows how many the view leaves out ("38 not
+    shown"). It is remembered per person with the view (`all_tasks` in the Project Planner's saved
+    views and "last used", so it follows them to any device), is part of the address
+    (`?all_tasks=1`, like `?project=`, `?pm=` and `?group=`, so Back, Forward and a copied link keep it)
+    and is in a saved view's summary. A link that does not name it is the default, as for the other
+    filters. The print says "Phase and crew work only (N tasks not shown)" when it left some out.
+  - **Display only.** The engine still counts every booking, so capacity, conflicts and the heatmap
+    are unchanged, and a task with a crew booking is by this rule never hidden. The Project filter
+    still lists every project with open work, so a remembered project does not reset because its tasks
+    are all admin. A task the person has drafted is never hidden, and rental crew tasks are not
+    subject to the rule.
+  - **Nothing becomes unreachable.** The project's drawer (`get_project_overview`), search
+    (`search_planner`) and the Task form are not filtered. A search result for a task the schedule
+    leaves out says why it is not drawn and offers **Show all tasks** in the same alert.
+- `crew_availability.tasks_under_a_phase(names)`: the tree question of the rule, one read per level of
+  `parent_task` for the whole set, bounded at 8 levels so a loop in bad data ends.
+
+### Changed
+- `get_planner`'s answer has two new keys, `all_tasks` and `hidden_tasks`. Its signature grew
+  `all_tasks` after `draft`, so a positional `draft` still works.
+- **The Overdue tray is not filtered** (the spec names the schedule and the Unscheduled tray). If admin
+  tasks crowd it, that is a follow-up.
+
+## [1.703.0] - 2026-10-21
+
+### Added
+- **Fountain Move jobs: a project can be a move, it gets a simple move template, and the Maintenance
+  Planner schedules it.** Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves" (first
+  job: PRJ-00775, Michelle Ainge - 4 Pots Moved). `project_enhancements/fountain_move_jobs.py`.
+  - **A move job is a Service project with the new Check *Fountain Move*** (`Project.custom_is_fountain_move`,
+    in the list's standard filters). Not a Project Type of its own, by Nik's choice, so Service reports and
+    KPIs keep counting moves, and the planners' customer-job set needed no change (Service is in it).
+  - **The Fountain Move template** (Project Template "Fountain Move", type Service), seeded once and Nik's
+    to edit: *Confirm move date with customer* (office, 0 h), *Move day* (drain, disconnect, load,
+    transport, set, reconnect, fill, startup test and walkthrough; 4 h for the crew, so 2 h each for the
+    crew of 2; Outdoor, so the weather flags apply) and *Invoice the move* (office, 0 h).
+  - **Ticking the box on a new project uses the template** (`Project.before_insert`): a blank template is
+    filled with Fountain Move and a blank type becomes Service; choosing the Fountain Move template ticks
+    the box. An explicit other template or type is never replaced. `project_template` is hidden on this
+    site's Project form, so the box is the way a Desk-created move gets its tasks; ERPNext's own
+    `after_insert` then copies them and `task_templates` carries the hours and crew size across.
+  - **An Opportunity from the /fountain-move intake** (a Fountain Move Request whose `created_opportunity`
+    it is) makes a ticked project, and the Create Project dialog preselects the Fountain Move template.
+  - **Move tasks are moved on the Maintenance Planner, read-only on the Project Planner.** A deliberate
+    exception to "each planner moves only its own work". Each open move task with hours is a card on the
+    Maintenance Planner (*Move* chip; the Unscheduled tray until it has a day): drag it to a day, onto
+    another person's row in the crew view, or drop a technician on it. The new POST
+    `maintenance_planner.move_fountain_move` saves through the Project Planner's own write, so a conflict
+    asks for a reason and overbooking warns, never blocks; Undo puts the day and crew back; Draft mode
+    refuses them (its drafts are visits). The Maintenance Planner only shows people, so a crew change keeps
+    every crew member with no login (a subcontractor, a vehicle) and anyone whose resource has since gone
+    inactive. The task's read-only *Project* booking is left off that page so it is not shown twice; the
+    hours still count in each person's day. The 0-hour office tasks get no card.
+  - On the Project Planner a move task's card is not movable, `_load` refuses a single-task edit of one
+    (save, add or swap crew, drafts), the Overdue tray's *Reschedule* reports it as failed, and *move
+    successors* skips it. Copy week still copies one (that makes new tasks, it moves nothing).
+- **Patches.** `seed_fountain_move_template` creates the template and its three template Tasks only when
+  no template of that name exists, in one savepoint. `make_prj_00775_a_move_job`, approved by Nik on
+  2026-10-21, makes PRJ-00775 the first move job: it creates the Fountain Move Custom Field from its
+  fixture when missing (patches run before fixture sync); sets `project_type` Build -> Service, ticks the
+  box and sets the template, with `db.set_value` so no Project hook re-runs; sets each of the project's 11
+  tasks from *Service Project Template* that is still Open and untouched (no assignee, hours or timesheet)
+  to **Canceled**, deleting nothing (anything started is kept and logged); and adds the three move tasks
+  **undated**, so the Move day waits in the Maintenance Planner's Unscheduled tray for its real day. Both
+  are safe twice and cannot raise.
+
 ## [1.702.0] - 2026-10-21
 
 ### Added

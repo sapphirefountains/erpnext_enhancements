@@ -451,7 +451,7 @@ test("Creating writes draft on a Draft schedule; the read always asks for drafts
 	check("an explicit draft is left alone", pp.with_draft("save_task", { draft: 0 }), { draft: 0 });
 	check("other writes are not touched", pp.with_draft("bulk_update", { tasks: "[]" }), { tasks: "[]" });
 	const source = fs.readFileSync(PP_JS, "utf8");
-	check("load reads with draft=1", source.includes("args: { start: pp_ymd(start), end: pp_ymd(end), draft: 1 },"), true);
+	check("load reads with draft=1", source.includes("args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks"), true);
 });
 
 // ------------------------------------------------------------------ 3. the strip and the peek

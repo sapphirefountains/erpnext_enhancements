@@ -696,6 +696,11 @@ doc_events = {
 			# It runs FIRST so a refused project never seeds its tracker rows.
 			"erpnext_enhancements.process_steps.enforce_handoff_gate",
 			"erpnext_enhancements.process_steps.seed_process_steps",
+			# Fountain Move jobs (Nik, 2026-10-21): a ticked custom_is_fountain_move fills a blank
+			# project_template with "Fountain Move" (and the template ticks the box; an intake
+			# Opportunity ticks it too), so ERPNext's after_insert copies the move tasks in the same
+			# insert. before_insert because the Opportunity path sets ignore_validate. Never raises.
+			"erpnext_enhancements.project_enhancements.fountain_move_jobs.apply_on_insert",
 		],
 		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
 		# WI-075 sub-phase M. Derives the per-category budget rollup and, when category lines

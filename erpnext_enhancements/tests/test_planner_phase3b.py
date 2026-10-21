@@ -945,7 +945,8 @@ class TestOverlay(_Base):
 		_draft_row("TASK-4", {"start": "2026-10-16"}, base="2026-09-30 00:00:00")  # changed since
 		_draft_row("TASK-5", {"start": "2026-10-26", "end": "2026-10-26"})  # drafted out of the week
 		_draft_row("TASK-2", {"start": "2026-10-16"}, owner="lisa@example.com")  # somebody else's
-		data = api.get_planner("2026-10-11", "2026-10-17", draft="1")
+		# all_tasks: the fake tasks here have no crew, and this test is about the overlay, not the display rule.
+		data = api.get_planner("2026-10-11", "2026-10-17", draft="1", all_tasks="1")
 
 		self.assertEqual(self.calls[0]["exclude"], {"TASK-1", "TASK-3", "TASK-5"})
 		cards = {card["name"]: card for card in data["tasks"]}
@@ -1549,8 +1550,10 @@ class TestWiring(unittest.TestCase):
 		functions = _functions(API_PATH)
 		for name in ("get_planner", "save_task", "add_crew", "swap_crew"):
 			args = functions[name].args
-			self.assertEqual(args.args[-1].arg, "draft", name)
-			self.assertEqual(ast.literal_eval(args.defaults[-1]), 0, name)
+			# get_planner's all_tasks (P2) comes after draft, so a positional draft still works.
+			last = -2 if name == "get_planner" else -1
+			self.assertEqual(args.args[last].arg, "draft", name)
+			self.assertEqual(ast.literal_eval(args.defaults[last]), 0, name)
 
 	def test_hooks_register_the_digest_and_the_alert(self):
 		tree = ast.parse((APP / "hooks.py").read_text(encoding="utf-8"))
@@ -1681,7 +1684,7 @@ class TestPage(unittest.TestCase):
 			"this.draft_args(card.project))",
 			"args = this.with_draft(method, args);",
 			# P4: the read always asks for the drafts (a Draft schedule's, anyone's, show to everyone).
-			"args: { start: pp_ymd(start), end: pp_ymd(end), draft: 1 },",
+			"args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks",
 			"this.render_phase3b();",
 			"Object.assign(ProjectPlanner.prototype, PP3B_METHODS);",
 		):

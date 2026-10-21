@@ -1153,6 +1153,82 @@ test("Project Planner: switches say their state; items follow the screen", () =>
 	check("no chips off the calendar", pp.tb_alerts(), []);
 });
 
+test("Project Planner: More > Display has Show all tasks, which says how many it leaves out and asks again", () => {
+	const { pp } = projectPlanner();
+	pp.data.hidden_tasks = 38;
+	let item = find(section(pp, "display"), "Show all tasks");
+	check("it is there on the calendar, off, with the count", [!!item, item.checked, item.hint], [true, false, "38 not shown"]);
+	check("and explains the rule", /phase/i.test(item.title) && /crew/i.test(item.title), true);
+	const calls = record(pp, ["pick_filter"]);
+	item.on_click();
+	check("turning it on is a filter pick (remembered, in the address, a new load)", calls, [["pick_filter", "all_tasks", "1"]]);
+	pp.all_tasks = "1";
+	item = find(section(pp, "display"), "Show all tasks");
+	check("on: ticked, and nothing to count", [item.checked, item.hint], [true, ""]);
+	calls.length = 0;
+	item.on_click();
+	check("and it turns off the same way", calls, [["pick_filter", "all_tasks", ""]]);
+	pp.all_tasks = "";
+	pp.data.hidden_tasks = 0;
+	check("with nothing left out there is no count", find(section(pp, "display"), "Show all tasks").hint, "");
+	for (const view of ["heatmap", "utilization"]) {
+		pp.view = view;
+		check(`not on ${view}: it only changes the calendar`, find(section(pp, "display"), "Show all tasks"), null);
+	}
+});
+
+test("Project Planner: Show all tasks is part of the view, and the print says what was left out", () => {
+	const { pp } = projectPlanner();
+	pp.all_tasks = "";
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	check("a view carries it", [pp.p6c_state(true).all_tasks, (pp.all_tasks = "1", pp.p6c_state(true).all_tasks)], [false, true]);
+	delete pp.p6c_view_summary;
+	check("the summary names it", pp.p6c_view_summary({ all_tasks: true }), "All tasks");
+	pp.all_tasks = "";
+	pp.data.hidden_tasks = 38;
+	pp.show_foreign = true;
+	pp.p6c.highlight = null;
+	check("the print says tasks were not shown", pp.p6c_print_lines(false, 0).filter((line) => /not shown/.test(line)), ["Phase and crew work only (38 tasks not shown)"]);
+	pp.all_tasks = "1";
+	check("and says nothing when it is all", pp.p6c_print_lines(false, 0).filter((line) => /not shown/.test(line)), []);
+	// Applying a view that shows another set of tasks asks the server; one that does not, only draws.
+	pp.p6c_sync_controls = () => null;
+	pp.write_filter_url = () => null;
+	pp.show_all_unscheduled = false;
+	const calls = record(pp, ["load", "render"]);
+	pp.all_tasks = "";
+	pp.p6c_apply_state({ view: "week", all_tasks: true }, {});
+	check("a view with Show all tasks loads again", [pp.all_tasks, calls.map((c) => c[0])], ["1", ["load"]]);
+	calls.length = 0;
+	pp.p6c_apply_state({ view: "week", all_tasks: true }, {});
+	check("the same set is only drawn", calls.map((c) => c[0]), ["render"]);
+	calls.length = 0;
+	pp.p6c_apply_state({ view: "week" }, {});
+	check("a view saved before this one is phase and crew work only", [pp.all_tasks, calls.map((c) => c[0])], ["", ["load"]]);
+});
+
+test("Project Planner: 'last used' keeps Show all tasks a flag even when the address named it, and a toggle saves it", () => {
+	const { pp, frappe } = projectPlanner();
+	const sent = [];
+	frappe.call = (opts) => (sent.push(opts.args && opts.args.data ? JSON.parse(opts.args.data) : null), Promise.resolve({}));
+	pp.p6c_pick = (state) => Object.assign({}, state);
+	pp.p6c.saved_text = null;
+	pp.all_tasks = "1";
+	pp.own_filters = { project: "", pm: "", group: "", all_tasks: "" };
+	pp.url_filters = { all_tasks: "1" };
+	pp.p6c_save_last();
+	check("a link's all_tasks is that visit's: the person's own value, as a flag", [typeof sent[0].all_tasks, sent[0].all_tasks], ["boolean", false]);
+	pp.url_filters = null;
+	pp.p6c.saved_text = null;
+	sent.length = 0;
+	pp.p6c_save_last();
+	check("their own pick is saved as true", sent[0].all_tasks, true);
+	// The kit's menu sits outside the page body, so a pick from it asks for the save itself.
+	const soon = record(pp, ["load", "p6c_state_soon", "write_filter_url"]);
+	pp.set_all_tasks(false);
+	check("a pick from the menu loads the week and schedules the save", soon.map((c) => c[0]).sort(), ["load", "p6c_state_soon", "write_filter_url"]);
+});
+
 test("Project Planner: Job type is the colors until someone chooses, and the view carries the choice", () => {
 	const { pp, ctx } = projectPlanner();
 	check("the default color", vm.runInContext("PP6C.default_color", ctx), "job_type");

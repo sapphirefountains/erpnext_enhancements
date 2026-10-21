@@ -1751,7 +1751,7 @@ class TestPages(unittest.TestCase):
 		]
 		self.assertEqual(
 			set(re.findall(r"(\w+): `\$\{MP\.api\}\.(\w+)`", methods)),
-			{(n, n) for n in ("get_planner", "move_visit", "move_projected", "add_crew")},
+			{(n, n) for n in ("get_planner", "move_visit", "move_projected", "add_crew", "move_fountain_move")},
 		)
 		calls = set(re.findall(r"planner_actions\.(\w+)", _strip(self.pp_block) + _strip(self.mp_block)))
 		self.assertTrue(calls <= set(ACTIONS_CONTRACT), calls)
