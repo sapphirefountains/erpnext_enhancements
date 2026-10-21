@@ -31,13 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     number below it), and dragging several selected cards still counts in the unit it picks. Split was
     already only in the right-click menu and the task panel.
   - **Job type is the default color on the Project Planner** (it was Task color). The stored value
-    `default` is the old Task color, and every "last used" view carried it whether or not anyone had
-    chosen it, so the page ignores a saved `default` until the person has picked a color, or applied a
-    saved view that holds Task color, on that device (`ee_project_planner_color_chosen`). The
-    Maintenance Planner's default is still Visit type.
-- **Known limit:** that flag is per device and "last used" is stored on the server, so a device that
-  has never chosen a color saves Job type over a choice made on another device. Keeping it across
-  devices needs a server-side field (`api/planner_views_prefs`), which this UI-only PR leaves alone.
+    `default` is the old Task color, and every "last used" view saved before this carries it whether or
+    not anyone had chosen it. So a Project Planner view now says whether its color was picked: a new
+    `color_chosen` flag in `api/planner_views_prefs.SCHEMA["project"]` (and the page's `PP6C.schema`, held
+    equal by a test), saved with the view on the server, so it follows the person to any device. The page
+    honors a saved `default` only when `color_chosen` is set; a "last used" view without it is dropped of
+    its color. Applying a named view saved before the flag that holds Task color counts as a choice (it was
+    a snapshot someone took). The Maintenance Planner's default is still Visit type.
 - Tests: `scripts/test_planner_toolbar.js` now covers the kit's tabs and section flattening, every old
   control's new home in both planners (each item run and the method it reaches checked, in the menu's
   list and in the phone's sheet), + Add, the Highlight and Build out prompts, the Move by field, the

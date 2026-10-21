@@ -266,9 +266,12 @@ class TestToolbarV2(unittest.TestCase):
 		code = _code(PP_JS)
 		self.assertIn('default_color: "job_type",', code)
 		self.assertIn("color_by: PP6C.default_color,", code)
-		# A "Task color" that only the old default put in "last used" is not restored as a wish.
-		self.assertIn('last.color_by === "default" && this.load_pref(PP6C.color_pref, "") !== "1"', code)
-		self.assertIn('this.save_pref(PP6C.color_pref, "1");', _obj_method(code, "p6c_set_color"))
+		# A "Task color" that only the old default put in "last used" is not restored as a wish: the view
+		# says whether the color was chosen (color_chosen, on the server), not a device preference.
+		self.assertIn('last.color_by === "default" && !last.color_chosen', code)
+		self.assertIn("this.p6c.color_chosen = true;", _obj_method(code, "p6c_set_color"))
+		self.assertIn("color_chosen: !!this.p6c.color_chosen,", _obj_method(code, "p6c_state"))
+		self.assertNotIn("ee_project_planner_color_chosen", code)
 
 	def test_a_more_section_heading_is_styled_apart_from_a_sub_heading(self):
 		self.assertRegex(_css(KIT_CSS), r"(?m)^\.pk-tb-section\s*\{")

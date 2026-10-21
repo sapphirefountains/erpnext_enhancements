@@ -1153,57 +1153,69 @@ test("Project Planner: switches say their state; items follow the screen", () =>
 	check("no chips off the calendar", pp.tb_alerts(), []);
 });
 
-test("Project Planner: Job type is the colors until someone chooses, and a choice sticks", () => {
+test("Project Planner: Job type is the colors until someone chooses, and the view carries the choice", () => {
 	const { pp, ctx } = projectPlanner();
 	check("the default color", vm.runInContext("PP6C.default_color", ctx), "job_type");
 	const source = fs.readFileSync(PP_JS, "utf8");
-	check("a fresh planner starts on it", /color_by: PP6C\.default_color,\s*\n\s*highlight: null,/.test(source), true);
-	// "Task color" saved in "last used" before it was a choice is the old default, not a wish.
-	const prefs = {};
+	check("a fresh planner starts on it, unchosen", /color_by: PP6C\.default_color,\s*\n\s*color_chosen: false,/.test(source), true);
+	// "Task color" saved in "last used" before the flag existed is the old default, not a wish.
 	let applied = null;
-	pp.load_pref = (key, fallback) => (key in prefs ? prefs[key] : fallback);
-	pp.save_pref = (key, value) => {
-		prefs[key] = value;
-	};
 	pp.p6c_apply_state = (state) => {
 		applied = state;
 	};
 	delete pp.p6c_view_summary;
+	delete pp.p6c_matching_view;
 	pp.p6c.loaded = true;
 	pp.p6c.restored = false;
 	pp.p6c.last = { view: "week", color_by: "default", project: "PRJ-1" };
 	pp.p6c_pick = (state) => Object.assign({}, state);
 	vm.runInContext("frappe", ctx).get_route = () => ["project-planner", "week", "2026-10-14"];
 	pp.p6c_before_route();
-	check("an old saved Task color is dropped on the first open", applied, { view: "week", project: "PRJ-1" });
-	// After the person picks a color (Task color included) the choice is theirs.
+	check("an old saved Task color, with no flag, is dropped on the first open", applied, { view: "week", project: "PRJ-1" });
+	pp.p6c.restored = false;
+	pp.p6c.last = { view: "week", color_by: "default", color_chosen: false };
+	pp.p6c_before_route();
+	check("so is one the view says was not chosen", applied, { view: "week", color_chosen: false });
+	// The person picks a color (Task color included): the view says so, on the server, for any device.
 	pp.render = () => null;
 	pp.p6c_set_color("default");
-	check("picking Task color is remembered as a choice", [pp.p6c.color_by, prefs.ee_project_planner_color_chosen], ["default", "1"]);
+	check("picking Task color sets the flag", [pp.p6c.color_by, pp.p6c.color_chosen], ["default", true]);
+	check("and the saved state carries it, \"last used\" included", [pp.p6c_state(true).color_by, pp.p6c_state(true).color_chosen, pp.p6c_state(false).color_chosen], ["default", true, true]);
 	pp.p6c.restored = false;
-	pp.p6c.last = { view: "week", color_by: "default" };
+	pp.p6c.last = { view: "week", color_by: "default", color_chosen: true };
 	pp.p6c_before_route();
-	check("and then a saved Task color is restored", applied, { view: "week", color_by: "default" });
+	check("and then a saved Task color is restored, on any device", applied, { view: "week", color_by: "default", color_chosen: true });
 	pp.p6c_set_color("nonsense");
 	check("an unknown mode falls back to the default", pp.p6c.color_by, "job_type");
 	check("a saved view's summary words a non-default color, Task color included", [pp.p6c_view_summary({ color_by: "job_type" }), pp.p6c_view_summary({ color_by: "default" }), pp.p6c_view_summary({ color_by: "person" })], ["", "Task colors", "Person colors"]);
 });
 
-test("Project Planner: applying a saved view that holds Task color makes it the person's choice", () => {
+test("Project Planner: applying a view sets whether its color was chosen, and a view still matches without the flag", () => {
 	const { pp } = projectPlanner();
-	const prefs = {};
-	pp.save_pref = (key, value) => {
-		prefs[key] = value;
-	};
 	pp.p6c_pick = (state) => Object.assign({}, state);
 	pp.p6c_sync_controls = () => null;
 	pp.filters = () => ({});
 	pp.write_filter_url = () => null;
 	pp.render = () => null;
 	pp.p6c_apply_state({ view: "week", color_by: "job_type" }, { render: false });
-	check("a view with another color leaves the flag alone", [pp.p6c.color_by, prefs], ["job_type", {}]);
+	check("a view saved before the flag with another color: not a choice", [pp.p6c.color_by, pp.p6c.color_chosen], ["job_type", false]);
 	pp.p6c_apply_state({ view: "week", color_by: "default" }, { render: false });
-	check("a view with Task color sets it, so \"last used\" keeps Task color from now on", [pp.p6c.color_by, prefs.ee_project_planner_color_chosen], ["default", "1"]);
+	check("a view saved before the flag that holds Task color is a snapshot someone took: a choice", [pp.p6c.color_by, pp.p6c.color_chosen], ["default", true]);
+	pp.p6c_apply_state({ view: "week", color_by: "default", color_chosen: false }, { render: false });
+	check("a view that says it was not chosen is not", pp.p6c.color_chosen, false);
+	pp.p6c_apply_state({ view: "week", color_by: "pm", color_chosen: true }, { render: false });
+	check("and one that says it was is", [pp.p6c.color_by, pp.p6c.color_chosen], ["pm", true]);
+	// The Views menu ticks the saved view on screen, flag or no flag.
+	delete pp.p6c_matching_view;
+	pp.p6c.views = [{ name: "Old", data: { view: "week", project: "", pm: "", group: "", foreign: true, over_only: false, panel: true, color_by: "pm" } }];
+	pp.view = "week";
+	pp.project = "";
+	pp.pm = "";
+	pp.group = "";
+	pp.show_foreign = true;
+	pp.over_only = false;
+	pp.panel_open = true;
+	check("a view saved without color_chosen still matches the page showing it", (pp.p6c_matching_view() || {}).name, "Old");
 });
 
 test("Both planners: Split stays in the right-click menu, and Move by is a field of the Move… panel", () => {

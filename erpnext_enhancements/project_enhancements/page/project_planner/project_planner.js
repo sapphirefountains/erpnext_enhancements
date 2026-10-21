@@ -7088,12 +7088,14 @@ const PP6C = {
 		over_only: ["bool"],
 		panel: ["bool"],
 		color_by: ["enum", ["default", "person", "job_type", "project", "pm", "status"]],
+		color_chosen: ["bool"],
 	},
 	// What the cards are colored by until someone chooses (D12, the planner UX redesign): Job type. The
-	// stored value "default" is the old Task color, which every saved "last used" view carries whether
-	// or not anyone picked it, so it counts as a choice only once color_pref says the person made one.
+	// stored value "default" is the old Task color, which every "last used" view saved before this carries
+	// whether or not anyone picked it. So a view says whether its color was picked (color_chosen, kept on
+	// the server with the view, so it follows the person to any device), and a saved "default" counts only
+	// when it was.
 	default_color: "job_type",
-	color_pref: "ee_project_planner_color_chosen",
 	// Phase 4's Running over chip is never restored on its own the next morning (a named view may hold it).
 	not_remembered: ["over_only"],
 	color_modes: [
@@ -7112,6 +7114,7 @@ const PP6C_METHODS = {
 	init_phase6c() {
 		this.p6c = {
 			color_by: PP6C.default_color,
+			color_chosen: false,
 			highlight: null,
 			moving: null,
 			tap: this.p6c_tap_default(),
@@ -7225,8 +7228,8 @@ const PP6C_METHODS = {
 	p6c_set_color(mode) {
 		const known = PP6C.color_modes.map(([value]) => value);
 		this.p6c.color_by = known.includes(mode) ? mode : PP6C.default_color;
-		// A choice, even of Task color: from now on the planner opens with it (p6c_before_route).
-		this.save_pref(PP6C.color_pref, "1");
+		// A choice, even of Task color: the view says so from now on (p6c_before_route).
+		this.p6c.color_chosen = true;
 		this.render();
 	},
 
@@ -7813,7 +7816,7 @@ const PP6C_METHODS = {
 		// The server never remembers these; nor does the page, whatever an older row says.
 		if (last) PP6C.not_remembered.forEach((key) => delete last[key]);
 		// "Task color" saved before it was a choice is the old default, not a wish: Job type instead.
-		if (last && last.color_by === "default" && this.load_pref(PP6C.color_pref, "") !== "1") delete last.color_by;
+		if (last && last.color_by === "default" && !last.color_chosen) delete last.color_by;
 		if (!p6c.restored) {
 			p6c.restored = true;
 			if (last) {
@@ -7842,6 +7845,7 @@ const PP6C_METHODS = {
 			foreign: !!this.show_foreign,
 			panel: !!this.panel_open,
 			color_by: this.p6c.color_by,
+			color_chosen: !!this.p6c.color_chosen,
 		};
 		if (views.includes(this.view)) state.view = this.view;
 		if (!remembered) state.over_only = !!this.over_only;
@@ -7860,9 +7864,9 @@ const PP6C_METHODS = {
 		if ("over_only" in view) this.over_only = !!view.over_only;
 		if ("color_by" in view) {
 			this.p6c.color_by = view.color_by;
-			// A view that holds Task color (every view saved before Job type became the default does) is the
-			// person's choice: "last used" keeps it from now on (p6c_before_route).
-			if (view.color_by === "default") this.save_pref(PP6C.color_pref, "1");
+			// A view saved before the flag existed and holding Task color is a snapshot someone took, so a
+			// choice; "last used" views without the flag were dropped of it in p6c_before_route.
+			this.p6c.color_chosen = "color_chosen" in view ? !!view.color_chosen : view.color_by === "default";
 		}
 		if (this.data) {
 			// A project or PM no longer on the planner would filter out everything.
@@ -7916,8 +7920,14 @@ const PP6C_METHODS = {
 
 	// The saved view the page shows right now, if any.
 	p6c_matching_view() {
-		const now = JSON.stringify(this.p6c_state(false));
-		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
+		// Whether the color was picked is no part of what a view shows, so views saved without it still match.
+		const key = (state) => {
+			const view = Object.assign({}, state);
+			delete view.color_chosen;
+			return JSON.stringify(Object.keys(view).sort().map((name) => [name, view[name]]));
+		};
+		const now = key(this.p6c_state(false));
+		return (this.p6c.views || []).find((entry) => key(this.p6c_pick(entry.data || {})) === now) || null;
 	},
 
 	// The saved views of More ▸ Views: one radio item each (the one on screen is ticked), then Save and

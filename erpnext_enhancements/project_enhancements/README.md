@@ -1153,8 +1153,9 @@ approved 2026-10-21) folds those four into two, and gives both planners the same
   panel on the selection bar, and a drag still counts in the unit it picks; Color by, the saved views,
   Copy week and Print are in More.
 - **Job type is the default color.** The stored value `default` is the old *Task color*, which every
-  "last used" view carried whether or not anyone picked it, so the planner ignores a saved `default` until
-  the person has picked a color themselves (a device preference, `ee_project_planner_color_chosen`).
+  "last used" view carried whether or not anyone picked it, so a view now carries `color_chosen` (a bool in
+  `api/planner_views_prefs.SCHEMA["project"]`, on the server, so it follows the person to any device) and the
+  planner honors a saved `default` only when it is set.
 
 | Old control | Project Planner now | Maintenance Planner now |
 |---|---|---|
