@@ -16,7 +16,7 @@
  *      still reachable under + Add or More (an explicit list, each item run and the method it calls
  *      checked, in the menu's list and in the phone's sheet), Split and Move by keep a home, toggles
  *      say their state, the alert chips are there only above zero and open what their buttons did,
- *      the draft strip shows only in Draft mode and its Publish and Discard call the existing
+ *      the hold's strip line shows only while "Hold all my changes" is on and its Publish and Discard call the existing
  *      publish and discard, the phone's sheet takes the filters in and gives them back, and the
  *      Project Planner's Utilization view is a route.
  *
@@ -1312,17 +1312,18 @@ test("Project Planner: the alert chips are there only above zero, with their cou
 	check("Overdue opens the tray", [pp.overdue_open, trays], [true, [true]]);
 });
 
-test("Project Planner: the draft strip shows only in Draft mode; Publish and Discard are the existing ones", () => {
+test("Project Planner: the hold's strip line shows only while Hold all my changes is on; Publish and Discard are the existing ones", () => {
 	const { pp } = projectPlanner();
 	const calls = record(pp, ["publish_drafts", "discard_drafts"]);
 	pp.data.drafts = { count: 3, stale: [] };
 	pp.render_draft_bar();
-	check("Draft mode off: hidden and empty", [pp.$draft_bar.nodes[0].style.display, pp.$draft_bar.text()], ["none", ""]);
+	// P4 draws a line per project with drafts too (scripts/test_planner_autoshift.js); none here.
+	check("the hold off: hidden and empty", [pp.$draft_bar.nodes[0].style.display, pp.$draft_bar.text()], ["none", ""]);
 	pp.draft_on = true;
 	pp.render_draft_bar();
 	const bar = pp.$draft_bar.nodes[0];
-	check("Draft mode on: shown under the toolbar", [bar.style.display, bar.previousSibling === undefined, bar.parentNode.childNodes.indexOf(bar) === bar.parentNode.childNodes.indexOf(pp.$toolbar.nodes[0]) + 1], ["", true, true]);
-	check("it says so, with the count", bar.querySelector(".pp-draft-text").textContent, "Draft mode on: 3 change(s) not published yet");
+	check("the hold on: shown under the toolbar", [bar.style.display, bar.previousSibling === undefined, bar.parentNode.childNodes.indexOf(bar) === bar.parentNode.childNodes.indexOf(pp.$toolbar.nodes[0]) + 1], ["", true, true]);
+	check("it says so, with the count", bar.querySelector(".pp-draft-text").textContent, "Holding your changes: 3 not published yet");
 	const buttons = bar.querySelectorAll("button");
 	check("Publish and Discard", buttons.map((b) => b.textContent), ["Publish", "Discard"]);
 	buttons[0].click();
@@ -1330,7 +1331,7 @@ test("Project Planner: the draft strip shows only in Draft mode; Publish and Dis
 	check("each calls the existing function", calls.map((c) => c[0]), ["publish_drafts", "discard_drafts"]);
 	pp.data.drafts = { count: 0, stale: [] };
 	pp.render_draft_bar();
-	check("nothing drafted yet: it says so, no buttons", [bar.querySelector(".pp-draft-text").textContent, bar.querySelectorAll("button").length], ["Draft mode on: nothing drafted yet. Your changes stay yours until you publish them.", 0]);
+	check("nothing drafted yet: it says so, no buttons", [bar.querySelector(".pp-draft-text").textContent, bar.querySelectorAll("button").length], ["Holding your changes: nothing held yet. They stay yours until you publish them.", 0]);
 });
 
 test("Project Planner: Utilization is a view with a route", () => {

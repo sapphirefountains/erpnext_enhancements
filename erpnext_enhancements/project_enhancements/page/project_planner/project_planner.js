@@ -49,8 +49,9 @@
 // Planning helpers (Phase 3A):
 //   - a Tentative (pencil) task is hatched; its hours are "soft" load, drawn apart from the firm
 //     hours, and "Firm up" turns it into a real booking (checked like any other change)
-//   - a task that starts before a predecessor ends carries a warning, and moving a task later
-//     offers to shift the tasks that follow it by the same working days (shift_successors)
+//   - a task that starts before a predecessor ends carries a warning, and moving a task moves the
+//     tasks that follow it by the same working days, later or earlier (P4: dependents=1 on the save;
+//     hold Ctrl/Cmd to move just the one)
 //   - a task whose required qualifications nobody on the crew holds says so (never a block)
 //   - the Overdue tray lists late open tasks by project: reschedule, mark done or cancel them in
 //     bulk (bulk_update), or drag one onto a day
@@ -657,7 +658,8 @@ class ProjectPlanner {
 		return Promise.resolve(
 			frappe.call({
 				method: `${PP.api}.get_planner`,
-				args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end) }, this.draft_args()),
+				// P4: always with the drafts, so a Draft schedule's (anyone's) and held changes show.
+				args: { start: pp_ymd(start), end: pp_ymd(end), draft: 1 },
 			})
 		)
 			.then((r) => {
@@ -1614,6 +1616,7 @@ class ProjectPlanner {
 		if (!drag || e.pointerId !== drag.id) return;
 		const was_active = drag.active;
 		const target = was_active ? this.find_target(e.clientX, e.clientY) : null;
+		if (target) target.solo = this.as4_solo(e);
 		this.end_drag();
 		if (!was_active) return;
 		this.click_blocked_until = Date.now() + 400;
@@ -1790,7 +1793,7 @@ class ProjectPlanner {
 			frappe.show_alert({ message: plan.refuse, indicator: "orange" }, 6);
 			return;
 		}
-		const run = () => this.commit(plan.card, plan.method, plan.args, plan.message);
+		const run = () => this.commit(plan.card, plan.method, plan.args, plan.message, { solo: !!target.solo });
 		if (plan.past) {
 			// Tasks, unlike visits, may be recorded after the fact; a past day only needs a yes.
 			frappe.confirm(__("{0} is before today. Schedule the task on a past day?", [pp_when(plan.past)]), run);
@@ -1817,17 +1820,23 @@ class ProjectPlanner {
 	}
 
 	// Save one change to a task: fade its card, send it, ask for a reason if the server reports
-	// conflicts, then reload, which is the truth either way.
-	commit(card, method, args, message) {
+	// conflicts, then reload, which is the truth either way. P4: a change of days takes the tasks that
+	// follow along (not with `opts.solo`, Ctrl/Cmd held), and a published schedule asks "Notify crew?"
+	// first (as4_prepare); backing out of that question sends nothing.
+	commit(card, method, args, message, opts) {
 		const snapshot = this.snapshot(card);
-		card.saving = true;
-		this.render();
-		return this.send(method, Object.assign({ modified: this.modified[card.name] || card.modified }, args), {
-			snapshot,
-			message,
-		})
-			.then((result) => this.offer_shift(snapshot, method, result))
-			.finally(() => this.load());
+		const go = (extra) => {
+			card.saving = true;
+			this.render();
+			snapshot.notify = extra.notify;
+			snapshot.dates_only = method === "save_task" && Object.keys(args).every((key) => ["task", "start", "end"].includes(key));
+			return this.send(method, Object.assign({ modified: this.modified[card.name] || card.modified }, args, extra), {
+				snapshot,
+				message,
+				decorate: (result, sent) => this.as4_decorate(result, sent),
+			});
+		};
+		return Promise.resolve(this.as4_prepare([this.as4_change(card, method, args)], opts, go)).finally(() => this.load());
 	}
 
 	// Resolves either way: a refusal has already shown the server's own message.
@@ -1850,6 +1859,7 @@ class ProjectPlanner {
 						reason ? this.send(method, Object.assign({}, args, { reason }), opts) : null
 					);
 				}
+				if (opts.decorate) opts.decorate(result, opts);
 				const toasted = opts.snapshot ? this.push_undo(opts.snapshot, opts.message) : false;
 				if (result.name && result.modified) this.modified[result.name] = result.modified;
 				if (opts.message && !toasted) frappe.show_alert({ message: opts.message, indicator: "green" }, 5);
@@ -1932,6 +1942,7 @@ class ProjectPlanner {
 		}
 		if (this.t1_undo(snap)) return;
 		if (this.p6b_undo(snap)) return;
+		if (this.as4_undo(snap)) return;
 		const card = this.by_task[snap.task];
 		if (card) {
 			card.saving = true;
@@ -1947,6 +1958,8 @@ class ProjectPlanner {
 		};
 		if (snap.tentative != null) args.tentative = snap.tentative;
 		if (snap.equipment) args.equipment = JSON.stringify(snap.equipment);
+		// P4: the change's "Notify crew?" answer, again: whoever was told hears it went back.
+		if (snap.notify != null) args.notify = snap.notify;
 		if (snap.start) {
 			args.start = snap.start;
 			args.end = snap.end || snap.start;
@@ -2279,69 +2292,8 @@ class ProjectPlanner {
 		);
 	}
 
-	// Mon-Fri days stepped from `from` (exclusive) to `to` (inclusive); 0 unless `to` is later.
-	working_days_between(from, to) {
-		if (!from || !to || to <= from) return 0;
-		const day = moment(from, "YYYY-MM-DD");
-		const last = moment(to, "YYYY-MM-DD");
-		let count = 0;
-		for (let i = 0; i < 400 && day.isBefore(last, "day"); i++) {
-			day.add(1, "days");
-			if (day.isoWeekday() <= 5) count++;
-		}
-		return count;
-	}
-
-	// After a task moved later: when other tasks depend on it, offer to move them by the same
-	// working days. `successors` is the server's answer to the move (a count and the names).
-	offer_shift(snapshot, method, result) {
-		const found = result && result.successors;
-		if (method !== "save_task" || !found) return result;
-		const names = Array.isArray(found) ? found : found.names || found.tasks || [];
-		const count = Number((Array.isArray(found) ? found.length : found.count) || names.length) || 0;
-		if (!count) return result;
-		const moved_to = (result.card && result.card.start) || "";
-		const days = Number(found.working_days || found.days) || this.working_days_between(snapshot.start, moved_to);
-		if (days <= 0) return result;
-		const what = count === 1 ? __("Shift 1 task that follows") : __("Shift {0} tasks that follow", [count]);
-		const by = days === 1 ? __("by 1 working day?") : __("by {0} working days?", [days]);
-		const shown = names.slice(0, 8).map((name) => {
-			const known = this.by_task[name];
-			const label = known && known.subject ? `${name} · ${known.subject}` : name;
-			return `<li>${pp_esc(label)}</li>`;
-		});
-		if (names.length > 8) shown.push(`<li>${pp_esc(__("and {0} more", [names.length - 8]))}</li>`);
-		const message =
-			`<p>${pp_esc(`${what} ${by}`)}</p>` +
-			(shown.length ? `<ul>${shown.join("")}</ul>` : "") +
-			`<p class="pp-stop-sub">${pp_esc(__("Each keeps its length and time of day. Weekends are skipped."))}</p>`;
-		const task = result.name || snapshot.task;
-		frappe.confirm(message, () => this.shift_successors(task, days, result.modified, count, names));
-		return result;
-	}
-
-	// `names` are the successors save_task reported as still to move: passing them keeps a task
-	// ERPNext already pushed during the save from being moved twice.
-	shift_successors(task, days, modified, count, names) {
-		const args = { task, days, modified: modified || this.modified[task] || "" };
-		if ((names || []).length) args.tasks = JSON.stringify(names);
-		return this.send("shift_successors", args)
-			.then((result) => {
-				if (!result) return;
-				const moved = (result.moved || []).length || count;
-				frappe.show_alert(
-					{
-						message:
-							days === 1
-								? __("{0} later task(s) shifted by 1 working day", [moved])
-								: __("{0} later task(s) shifted by {1} working days", [moved, days]),
-						indicator: "green",
-					},
-					6
-				);
-			})
-			.finally(() => this.load());
-	}
+	// P4: the old "Shift N tasks that follow?" offer (offer_shift / shift_successors) is gone. A change
+	// of days takes the tasks that follow along in the same request; see as4_prepare.
 
 	// ------------------------------------------------------------------ overdue tray
 
@@ -3367,11 +3319,14 @@ class ProjectPlanner {
 //                                             (tap for Google Maps), crewmates, hours and notes,
 //                                             and a link to that day's route view
 //
-// Draft mode is a switch in the toolbar's More ▸ Tools, remembered per browser. While it is on, every
-// drag, dialog save and Undo is sent with draft=1, so it lands on the planner's own drafts (Planner
-// Draft Change) instead of the Task: nobody's assignments move and nobody is told. Drafted cards get
-// a dashed outline and a "Draft" chip, and a strip under the toolbar says "Draft mode on: N changes
-// not published yet · Publish · Discard". Publish asks once for a reason when the drafts conflict
+// "Hold all my changes" (Draft mode until Nik named it on 2026-10-21) is a switch in the toolbar's
+// More ▸ Tools, remembered per browser. While it is on, every drag, dialog save and Undo is sent with
+// draft=1, so it lands on the planner's own drafts (Planner Draft Change) instead of the Task: nobody's
+// assignments move and nobody is told. Drafted cards get a dashed outline and a "Draft" chip, and a
+// strip under the toolbar says "Holding your changes: N not published yet · Publish · Discard". P4: with
+// the switch off, writes go with draft="auto" and a project whose schedule is Draft drafts them anyway;
+// the read always asks for the drafts, and the strip lists each project's (see the P4 block at the
+// end of the file). Publish asks once for a reason when the drafts conflict
 // together (all or nothing) and then tells each person whose days moved. "My week" is in the Views
 // menu and "Print crew sheet" in Print (toolbar redesign, v1.687.0); the crew sheet opens in a new
 // window and prints there (server PDF is broken on production).
@@ -3379,7 +3334,7 @@ class ProjectPlanner {
 // Everything Phase 3B adds to the page is in this block, mixed into ProjectPlanner below, so the
 // Phase 3A work on the same file merges cleanly. The hooks into the class above are one line each:
 // init_phase3b (constructor), my_week_target (route_target), show_my_week (handle_route),
-// draft_args (load), with_draft (send) and render_phase3b (render).
+// draft_args (the creating writes), with_draft (send) and render_phase3b (render).
 //
 // v1.603.0: a NEW task can be a draft too. Quick add, duplicate and the build-out grid send draft=1 in
 // Draft mode and the server keeps the task-to-be as a "New task" Draft row, not a Task: it comes back
@@ -3391,8 +3346,8 @@ class ProjectPlanner {
 const PP3B = {
 	my_week: "my-week",
 	pref: "ee_project_planner_draft",
-	// The writes that go to the drafts while draft mode is on.
-	draft_methods: ["save_task", "add_crew", "swap_crew"],
+	// The writes that go to the drafts while "Hold all my changes" is on, and (P4) on a Draft schedule.
+	draft_methods: ["save_task", "add_crew", "swap_crew", "move_many"],
 };
 
 const PP3B_METHODS = {
@@ -3411,12 +3366,17 @@ const PP3B_METHODS = {
 
 	// ------------------------------------------------------------------ draft mode
 
-	draft_args() {
-		return this.draft_on ? { draft: 1 } : {};
+	// A write that creates a task (quick add, duplicate, build out): drafted while the hold is on, and
+	// (P4) when the project's schedule is Draft. The page decides here: those endpoints take draft=1 only.
+	draft_args(project) {
+		return this.draft_on || this.as4_draft_project(project) ? { draft: 1 } : {};
 	},
 
+	// P4: every other write says draft="auto" unless the hold is on, and the server drafts it when the
+	// task's project schedule is Draft. A write that already says (an explicit draft) is left alone.
 	with_draft(method, args) {
-		return this.draft_on && PP3B.draft_methods.includes(method) ? Object.assign({}, args, { draft: 1 }) : args;
+		if (!PP3B.draft_methods.includes(method) || args.draft !== undefined) return args;
+		return Object.assign({}, args, { draft: PPAS_PURE.draft_value(this.draft_on) });
 	},
 
 	set_draft_mode(on) {
@@ -3428,8 +3388,10 @@ const PP3B_METHODS = {
 		frappe.show_alert(
 			{
 				message: this.draft_on
-					? __("Draft mode: your changes are kept for you until you publish them.")
-					: __("Draft mode off: changes save straight to the tasks. Your unpublished drafts are kept."),
+					? __("Holding your changes until you publish them.")
+					: __(
+							"Hold all my changes is off: changes save straight to the tasks, except on a project whose schedule is still Draft. Your held changes are kept."
+					  ),
 				indicator: "blue",
 			},
 			7
@@ -3444,7 +3406,7 @@ const PP3B_METHODS = {
 
 	// A drafted card is drawn by the same card code as any other; the outline and chip go on after.
 	decorate_drafts() {
-		if (!this.draft_on || !this.data) return;
+		if (!this.data) return;
 		this.$body.find(".pp-card[data-task]").each((_index, el) => {
 			const card = this.by_task[el.getAttribute("data-task")];
 			if (!card || !card.drafted) return;
@@ -3453,55 +3415,69 @@ const PP3B_METHODS = {
 			const holder = el.querySelector(".pp-card-chips") || el.querySelector(".pp-card-sub");
 			if (holder) {
 				// A task that does not exist yet says so: "New" rather than a change to a task.
-				const label = card.new_task ? __("New") : __("Draft");
+				let label = card.new_task ? __("New") : __("Draft");
+				// P4: another scheduler's draft on a Draft schedule says whose it is.
+				if (card.drafted_by) label = __("{0} · {1}", [label, this.as4_drafter(card.drafted_by)]);
 				holder.insertAdjacentHTML("afterbegin", `<span class="pp-chip pp-draft-chip">${pp_esc(label)}</span>`);
 			}
 		});
 	},
 
+	// The strip under the toolbar. While the hold is on, its line comes first, as before; then (P4) a
+	// line per project with drafts, and its Publish (as4_render_strip). Hidden when there is nothing.
 	render_draft_bar() {
 		const $bar = this.$draft_bar;
 		if (!$bar) return;
-		if (!this.draft_on || !this.data || this.view === PP.route_view || this.view === PP3B.my_week) {
+		if (!this.data || this.view === PP.route_view || this.view === PP3B.my_week) {
 			$bar.hide().empty();
 			return;
 		}
 		const drafts = this.data.drafts || {};
 		const count = Number(drafts.count) || 0;
 		const stale = drafts.stale || [];
-		$bar.empty().show();
-		$('<span class="pp-draft-text"></span>')
-			.text(
-				count
-					? __("Draft mode on: {0} change(s) not published yet", [count])
-					: __("Draft mode on: nothing drafted yet. Your changes stay yours until you publish them.")
-			)
-			.appendTo($bar);
-		if (stale.length) {
-			$('<span class="pp-chip pp-amber"></span>')
-				.text(__("{0} out of date", [stale.length]))
-				.attr("title", stale.map((entry) => `${entry.subject || entry.task}: ${entry.reason}`).join("\n"))
-				.appendTo($bar);
+		$bar.empty();
+		let shown = false;
+		if (this.draft_on || stale.length) {
+			shown = true;
+			const $line = $('<div class="pp-draft-line"></div>').appendTo($bar);
+			if (this.draft_on) {
+				$('<span class="pp-draft-text"></span>')
+					.text(
+						count
+							? __("Holding your changes: {0} not published yet", [count])
+							: __("Holding your changes: nothing held yet. They stay yours until you publish them.")
+					)
+					.appendTo($line);
+			}
+			if (stale.length) {
+				$('<span class="pp-chip pp-amber"></span>')
+					.text(__("{0} out of date", [stale.length]))
+					.attr("title", stale.map((entry) => `${entry.subject || entry.task}: ${entry.reason}`).join("\n"))
+					.appendTo($line);
+			}
+			$('<span class="pp-spacer"></span>').appendTo($line);
+			if (stale.length) {
+				$('<button type="button" class="btn btn-default btn-xs"></button>')
+					.text(__("Discard out-of-date"))
+					.on("click", () => this.discard_drafts(stale.map((entry) => entry.task)))
+					.appendTo($line);
+			}
+			if (this.draft_on && count > stale.length) {
+				$('<button type="button" class="btn btn-primary btn-xs"></button>')
+					.text(__("Publish"))
+					.on("click", () => this.publish_drafts())
+					.appendTo($line);
+			}
+			if (this.draft_on && count) {
+				$('<button type="button" class="btn btn-default btn-xs"></button>')
+					.text(__("Discard"))
+					.on("click", () => this.discard_drafts())
+					.appendTo($line);
+			}
 		}
-		$('<span class="pp-spacer"></span>').appendTo($bar);
-		if (stale.length) {
-			$('<button type="button" class="btn btn-default btn-xs"></button>')
-				.text(__("Discard out-of-date"))
-				.on("click", () => this.discard_drafts(stale.map((entry) => entry.task)))
-				.appendTo($bar);
-		}
-		if (count > stale.length) {
-			$('<button type="button" class="btn btn-primary btn-xs"></button>')
-				.text(__("Publish"))
-				.on("click", () => this.publish_drafts())
-				.appendTo($bar);
-		}
-		if (count) {
-			$('<button type="button" class="btn btn-default btn-xs"></button>')
-				.text(__("Discard"))
-				.on("click", () => this.discard_drafts())
-				.appendTo($bar);
-		}
+		if (this.as4_render_strip($bar)) shown = true;
+		if (shown) $bar.show();
+		else $bar.hide();
 	},
 
 	// Publish every draft. Conflicts across the batch come back as needs_reason; the same reason
@@ -4850,6 +4826,7 @@ const PP6A_METHODS = {
 			actions.unshift({ label: __("Show only this project"), on_click: () => this.p6a_filter_project(project) });
 		}
 		actions.push(...this.t1_project_actions(project));
+		actions.push(...this.as4_project_actions(project));
 		const handle = kit.drawer.open({
 			title: (known && known.title) || project,
 			subtitle: project,
@@ -5933,7 +5910,7 @@ const PP6B_METHODS = {
 
 	p6b_duplicate(card, date) {
 		const subject = card.subject || card.name;
-		const args = Object.assign({ task: card.name }, this.draft_args());
+		const args = Object.assign({ task: card.name }, this.draft_args(card.project));
 		if (date) args.date = date;
 		const message = date ? __("{0} duplicated to {1}", [subject, pp_when(date)]) : __("{0} duplicated", [subject]);
 		return this.p6b_create("duplicate_task", args, subject, message);
@@ -6183,7 +6160,7 @@ const PP6B_METHODS = {
 		const subject = String(values.subject || "").trim();
 		if (!values.project || !subject || !values.date) return null;
 		// draft=1 in Draft mode (v1.603.0): the task is kept as a draft, not created.
-		const args = Object.assign({ project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 }, this.draft_args());
+		const args = Object.assign({ project: values.project, subject, date: values.date, tentative: values.tentative ? 1 : 0 }, this.draft_args(values.project));
 		if (Number(values.hours) > 0) args.hours = Number(values.hours);
 		if (values.resource) args.resource = values.resource;
 		// v1.602.0: only what was filled in is sent, so a plain add sends what it always sent.
@@ -6262,6 +6239,7 @@ const PP6B_METHODS = {
 	p6b_pointer_up(e) {
 		const resize = this.p6b.resize;
 		if (resize && e.pointerId === resize.id) {
+			resize.solo = this.as4_solo(e);
 			this.p6b_resize_end(true);
 			return;
 		}
@@ -6359,7 +6337,10 @@ const PP6B_METHODS = {
 				: __("{0} now runs {1} – {2}", [subject, pp_when(resize.new_start), pp_when(resize.new_end)]);
 		// The same save as the dialog's: both dates, through send(), so a conflict asks for a reason
 		// and Undo puts the old span back.
-		const run = () => this.commit(card, "save_task", { task: card.name, start: resize.new_start, end: resize.new_end }, message);
+		const run = () =>
+			this.commit(card, "save_task", { task: card.name, start: resize.new_start, end: resize.new_end }, message, {
+				solo: !!resize.solo,
+			});
 		if (resize.new_start !== resize.start && resize.new_start < this.today()) {
 			frappe.confirm(__("{0} is before today. Schedule the task on a past day?", [pp_when(resize.new_start)]), run);
 			return;
@@ -6498,7 +6479,7 @@ const PP6B_METHODS = {
 		const from = source.from_date || source.card.start;
 		if (!from || !target.date) return true;
 		const days = this.p6e_drop_days(from, target.date);
-		if (days) this.p6b_move_selection(days);
+		if (days) this.p6b_move_selection(days, { solo: !!target.solo });
 		return true;
 	},
 
@@ -6540,7 +6521,7 @@ const PP6B_METHODS = {
 		panel.show();
 	},
 
-	p6b_move_selection(days) {
+	p6b_move_selection(days, opts) {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length || !days) return null;
 		const moves = this.p6e_moves(cards, days, (name) => this.modified[name] || (this.by_task[name] || {}).modified);
@@ -6551,7 +6532,7 @@ const PP6B_METHODS = {
 			items: cards.map((card) => ({ task: card.name, start: card.start, end: card.end || card.start })),
 		};
 		const message = this.p6e_message(cards.length, days);
-		const run = () => this.p6b_commit_many(cards, moves, snapshot, message);
+		const run = () => this.p6b_commit_many(cards, moves, snapshot, message, opts);
 		if (moves.some((move) => move.start < this.today())) {
 			frappe.confirm(__("Some of these tasks would start before today. Move them anyway?"), run);
 			return null;
@@ -6573,18 +6554,31 @@ const PP6B_METHODS = {
 		return this.p6b_commit_many(cards, moves, snapshot, message);
 	},
 
-	// One move_many through send(): one reason prompt for the lot, all or nothing, one Undo entry.
-	p6b_commit_many(cards, moves, snapshot, message) {
-		cards.forEach((card) => (card.saving = true));
-		this.render();
-		return this.p6b_send("move_many", { moves: JSON.stringify(moves), draft: this.draft_on ? 1 : 0 }, { snapshot, message })
-			.then((result) => {
+	// One move_many through send(): one reason prompt for the lot, all or nothing, one Undo entry. P4:
+	// the tasks that follow move too (not with `opts.solo`), one "Notify crew?" for the lot, and send()
+	// adds draft (the hold's 1, or "auto" for a Draft schedule).
+	p6b_commit_many(cards, moves, snapshot, message, opts) {
+		const changes = moves.map((move) => {
+			const card = this.by_task[move.task] || cards.find((one) => one.name === move.task) || { name: move.task };
+			return this.as4_change(card, "save_task", move.start || move.end ? { start: move.start, end: move.end } : {});
+		});
+		const go = (extra) => {
+			cards.forEach((card) => (card.saving = true));
+			this.render();
+			snapshot.notify = extra.notify;
+			const args = Object.assign({ moves: JSON.stringify(moves) }, extra);
+			return this.p6b_send("move_many", args, {
+				snapshot,
+				message,
+				decorate: (result, sent) => this.as4_decorate(result, sent),
+			}).then((result) => {
 				((result && result.moved) || []).forEach((move) => {
 					if (move.modified) this.modified[move.task] = move.modified;
 				});
 				return result;
-			})
-			.finally(() => this.load());
+			});
+		};
+		return Promise.resolve(this.as4_prepare(changes, opts, go)).finally(() => this.load());
 	},
 
 	// ------------------------------------------------------------------ undo
@@ -6600,11 +6594,10 @@ const PP6B_METHODS = {
 				else Object.assign(move, { start: item.start, end: item.end });
 				return move;
 			});
-			this.p6b_send(
-				"move_many",
-				{ moves: JSON.stringify(moves), draft: this.draft_on ? 1 : 0 },
-				{ message, auto_reason: __(PP.undo_reason) }
-			).finally(() => this.load());
+			const args = { moves: JSON.stringify(moves) };
+			// P4: the move's "Notify crew?" answer, again (send() adds the draft argument).
+			if (snap.notify != null) args.notify = snap.notify;
+			this.p6b_send("move_many", args, { message, auto_reason: __(PP.undo_reason) }).finally(() => this.load());
 			return true;
 		}
 		// A task created here (a duplicate, a quick add, a split's second half): delete it again, and
@@ -8207,7 +8200,9 @@ const PP6C_METHODS = {
 		if (this.p6c.color_by !== "default") lines.push(__("Colored by {0}", [this.p6c_mode_label(this.p6c.color_by)]));
 		if (this.p6c.highlight) lines.push(__("Highlighting {0}", [this.p6c.highlight.label]));
 		if (selection_only) lines.push(__("Selected tasks only ({0})", [count]));
-		if (this.draft_on) lines.push(__("With your unpublished drafts"));
+		if (this.draft_on || Number((this.data && this.data.drafts && this.data.drafts.count) || 0)) {
+			lines.push(__("With unpublished drafts"));
+		}
 		return lines;
 	},
 
@@ -9732,7 +9727,7 @@ const PPT1_METHODS = {
 			},
 		});
 		// In Draft mode the grid is also offered the phases and tasks an earlier drafted build-out made.
-		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_build_out_context`, args: Object.assign({ project }, this.draft_args()) }))
+		return Promise.resolve(frappe.call({ method: `${PPT1.actions}.get_build_out_context`, args: Object.assign({ project }, this.draft_args(project)) }))
 			.then((r) => {
 				const context = (r && r.message) || {};
 				state.phases = context.phases || [];
@@ -10156,7 +10151,7 @@ const PPT1_METHODS = {
 		}
 		state.busy = true;
 		// draft=1 in Draft mode: the tasks are kept as drafts and created when the planner publishes.
-		const args = Object.assign({ project: state.project, rows: JSON.stringify(built.rows) }, this.draft_args());
+		const args = Object.assign({ project: state.project, rows: JSON.stringify(built.rows) }, this.draft_args(state.project));
 		// A new phase that came from a template takes its procurement checklist along (T3).
 		const checklists = PPT1_PURE.checklists_for(state.checklists, built.new_phases);
 		if (checklists) args.phase_checklists = JSON.stringify(checklists);
@@ -10516,7 +10511,7 @@ const PPT4_METHODS = {
 		// Replace (chosen, or nothing typed to keep) tells the AI nothing of the grid: it is going away.
 		const replacing = values.t4_how === "Replace" || !state.rows.some((row) => !PPT1_PURE.is_blank(row));
 		const how = replacing ? "replace" : "append";
-		const args = PPT4_PURE.call_args(state.project, values.t4_brief, state.rows, how, this.draft_args());
+		const args = PPT4_PURE.call_args(state.project, values.t4_brief, state.rows, how, this.draft_args(state.project));
 		state.t4_busy = true;
 		this.t4_busy(dialog, true);
 		this.t4_say(dialog, `<span class="t4-spin"></span>${pp_esc(__("Drafting… this can take up to a minute."))}`, false);
@@ -10880,7 +10875,7 @@ const PPTB_METHODS = {
 		items.push({
 			label: __("Hold all my changes"),
 			checked: !!this.draft_on,
-			title: __("Draft mode: keep every change to yourself until you publish them"),
+			title: __("Keep every change to yourself until you publish it, on any project"),
 			on_click: () => this.set_draft_mode(!this.draft_on),
 		});
 		if (this.view !== PP.heatmap_view && this.view !== PP.util_view) {
@@ -11244,3 +11239,585 @@ const PPU_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPU_METHODS);
+
+// ====================================================================== P4: the tasks that follow, Draft schedules, "Notify crew?"
+//
+// P4 of the planner UX redesign (docs/planner-ux-redesign.md; Nik's D8, D10, D11 and D15, approved
+// 2026-10-21). Three things, all on the page's one write path (commit, send, p6b_commit_many):
+//
+//   - **The tasks that follow move with a task** (D10, D15). A drag, a resize, a dialog's dates, Next
+//     free day, a booked suggestion or Tap to move sends dependents=1, and the server moves every task
+//     that waits on it by the working days its end moved, later or earlier, in the same request: one
+//     conflict check, one reason, one Undo. Holding Ctrl (Cmd on a Mac) as the card or its edge is
+//     dropped moves just that one task. A multi-select move does the same through move_many. The old
+//     "Shift N tasks that follow?" offer is gone.
+//   - **A Draft schedule drafts every write** (D8). A project whose schedule is not published (P3's
+//     Project.custom_schedule_status; blank reads Draft) keeps every change to its tasks as a draft:
+//     send() adds draft="auto" and the server decides per task, so nothing needs switching on. The page
+//     always reads with draft=1, so drafts show, another scheduler's too ("Draft · Clegg"). The strip
+//     under the toolbar lists each project with drafts: Publish… on a Draft schedule runs
+//     publish_project_schedule (one reason for the lot, the baseline set, the crew told once), and
+//     Discard drops its drafts. The project peek offers Publish schedule… and Set/Reset baseline….
+//     The board-wide switch, More ▸ Tools ▸ "Hold all my changes" (Nik named it on 2026-10-21), still
+//     holds every change, on any project.
+//   - **"Notify crew?"** (D11). On a published schedule, a change to the dates or crew of a task
+//     somebody is on asks once per gesture, however many tasks it moves. Notify is the default when the
+//     change touches today through the 14th day (old days or new), Don't notify beyond that; Enter
+//     takes the default and Esc puts the change back. The answer goes as notify=1 or 0, and Undo sends
+//     the same answer again.
+//
+// Hooks into the class above, one line each: as4_prepare (commit, p6b_commit_many), as4_decorate
+// (send), as4_undo (undo), as4_solo (on_up, p6b_pointer_up), as4_project_actions
+// (p6a_open_project); render_draft_bar and decorate_drafts in the Phase 3B block draw the strip and
+// the chips for every draft now, not only in hold mode.
+
+const PPAS = {
+	// D11: Notify is the default for a change that touches one of the next 14 days, today included.
+	notify_days: 14,
+	// The writes that can move a task's days, and so carry the tasks that follow it.
+	date_methods: ["save_task", "swap_crew"],
+	// The most projects the strip names before it says "and N more".
+	strip_max: 4,
+	published: "Published",
+};
+
+// Pure helpers: no frappe, no page. scripts/test_planner_autoshift.js runs them under node, and the
+// Maintenance Planner keeps an identical copy of notify_default (MPAS_PURE). The window is
+// api/project_planner.notify_window, kept in step.
+const PPAS_PURE = {
+	// The first and last day of "the next 14 days".
+	notify_window(today) {
+		return [today, PP6B_PURE.ymd_add(today, PPAS.notify_days - 1)];
+	},
+	// Whether "Notify crew?" defaults to Notify: one of `spans` ([first, last], old days or new)
+	// touches the window. A task moved from next week to March is news to its crew too.
+	notify_default(spans, today) {
+		const [first, last] = PPAS_PURE.notify_window(today);
+		return (spans || []).some((span) => !!(span && span[0] && span[0] <= last && (span[1] || span[0]) >= first));
+	},
+	// A card's days as [first, last], or null for an undated one.
+	span_of(card) {
+		if (!card || !card.start) return null;
+		return [card.start, card.end && card.end >= card.start ? card.end : card.start];
+	},
+	// The days a write gives the card, as api/project_planner.plan_span works them out: a start alone
+	// keeps the length (an undated task becomes one day here), an end alone keeps the start.
+	new_span(card, args) {
+		const old = PPAS_PURE.span_of(card);
+		const start = (args && (args.start || args.date)) || "";
+		const end = (args && args.end) || "";
+		if (start && end) return [start, end];
+		if (start) return old ? [start, PP6B_PURE.ymd_add(start, PP6B_PURE.ymd_diff(old[0], old[1]))] : [start, start];
+		if (end) return [old ? old[0] : end, end];
+		return old;
+	},
+	// The board-wide hold drafts everything; otherwise the server drafts per project (auto).
+	draft_value(hold) {
+		return hold ? 1 : "auto";
+	},
+	// The Undo entries for the tasks that moved along: each back to the days it had.
+	undo_items(moves) {
+		return (moves || [])
+			.filter((move) => move && move.task && move.from)
+			.map((move) => ({ task: move.task, start: move.from, end: move.from_end || move.from }));
+	},
+	// The people on a write's task after it: the crew it had, the crew it sends, the person it adds.
+	people_after(card, method, args) {
+		const people = new Set(((card && card.crew) || []).map((member) => member.resource).filter(Boolean));
+		if (args && args.crew !== undefined) {
+			people.clear();
+			let rows = args.crew;
+			if (typeof rows === "string") {
+				try {
+					rows = JSON.parse(rows);
+				} catch (e) {
+					rows = [];
+				}
+			}
+			(rows || []).forEach((row) => row && row.resource && people.add(row.resource));
+		}
+		if (method === "add_crew" && args && args.resource) people.add(args.resource);
+		if (method === "swap_crew" && args) {
+			if (args.from_resource) people.delete(args.from_resource);
+			if (args.to_resource) people.add(args.to_resource);
+		}
+		return people;
+	},
+};
+
+const PPAS_METHODS = {
+	// ------------------------------------------------------------------ schedule state
+
+	// The project's schedule as get_planner gives it ({status, published_on, baseline_set_on}), or null
+	// before the P3 fields exist (then nothing here changes how a write is sent).
+	as4_schedule(project) {
+		const known = project && this.by_project && this.by_project[project];
+		return (known && known.schedule) || null;
+	},
+
+	as4_draft_project(project) {
+		const schedule = this.as4_schedule(project);
+		return !!(schedule && schedule.status !== PPAS.published);
+	},
+
+	// Whether a write to this card saves live on a published schedule: the writes that ask "Notify crew?".
+	as4_published(card) {
+		if (!card || this.draft_on || card.new_task) return false;
+		const schedule = this.as4_schedule(card.project);
+		return !!(schedule && schedule.status === PPAS.published);
+	},
+
+	as4_project_title(project) {
+		const known = this.by_project && this.by_project[project];
+		return (known && known.title) || project;
+	},
+
+	// ------------------------------------------------------------------ the write path
+
+	// What one write changes, for as4_prepare: the card, its days before and after, whether those
+	// moved (and so carry the tasks that follow) and who is on it before and after.
+	as4_change(card, method, args) {
+		const from = PPAS_PURE.span_of(card);
+		const to = PPAS_PURE.new_span(card, args);
+		const moved = !!(to && (!from || to[0] !== from[0] || to[1] !== from[1]));
+		const before = new Set(((card && card.crew) || []).map((member) => member.resource).filter(Boolean));
+		const after = PPAS_PURE.people_after(card, method, args);
+		const recrewed = [...after].some((r) => !before.has(r)) || [...before].some((r) => !after.has(r));
+		const moves = moved && PPAS.date_methods.includes(method);
+		// The tasks that follow move too (unless Ctrl/Cmd): whoever is on the ones on screen is asked
+		// about as well (as4_question).
+		const followers = moves ? this.as4_follower_people(card && card.name) : new Set();
+		return { card, from, to, moves, changes: moved || recrewed, people: new Set([...before, ...after]), followers };
+	},
+
+	// The people on the tasks on screen that wait on `name`, directly or through others (the server
+	// moves those off screen too; they cannot be named here).
+	as4_follower_people(name) {
+		const people = new Set();
+		if (!name) return people;
+		const waiting = {};
+		Object.values(this.by_task || {}).forEach((other) =>
+			(other.depends_on || []).forEach((on) => (waiting[on] = waiting[on] || []).push(other))
+		);
+		const seen = new Set([name]);
+		const queue = [name];
+		while (queue.length) {
+			(waiting[queue.shift()] || []).forEach((other) => {
+				if (seen.has(other.name)) return;
+				seen.add(other.name);
+				queue.push(other.name);
+				(other.crew || []).forEach((member) => member.resource && people.add(member.resource));
+			});
+		}
+		return people;
+	},
+
+	// Run `go(extra)` with the extra arguments of one gesture's write: dependents=1 when it moves days
+	// (unless Ctrl/Cmd was held, `opts.solo`), and the "Notify crew?" answer. With nothing to ask, `go`
+	// runs at once (no flicker, and the write is sent in the same turn as before P4); after a question,
+	// once it is answered. Backing out of the question runs nothing and resolves null.
+	as4_prepare(changes, opts, go) {
+		opts = opts || {};
+		const extra = {};
+		if (!opts.solo && (changes || []).some((change) => change.moves)) extra.dependents = 1;
+		const question = this.as4_question(changes || [], !!opts.solo);
+		if (!question) return go(extra);
+		return this.as4_notify_dialog(question.notify, question.people, question.count).then((notify) =>
+			notify === null ? null : go(Object.assign(extra, { notify }))
+		);
+	},
+
+	// What to ask about the gesture: {notify (the default), people, count}, or null when there is
+	// nothing to ask (a Draft schedule, the hold, nobody on the tasks, nothing that moves anyone).
+	as4_question(changes, solo) {
+		const live = changes.filter((change) => change.changes && this.as4_published(change.card));
+		const people = new Set();
+		live.forEach((change) => {
+			change.people.forEach((resource) => people.add(resource));
+			if (!solo) (change.followers || []).forEach((resource) => people.add(resource));
+		});
+		if (!people.size) return null;
+		const spans = [];
+		live.forEach((change) => {
+			if (change.from) spans.push(change.from);
+			if (change.to) spans.push(change.to);
+		});
+		return { notify: PPAS_PURE.notify_default(spans, this.today()), people: [...people], count: live.length };
+	},
+
+	as4_notify_dialog(notify, people, count) {
+		return new Promise((resolve) => {
+			let settled = false;
+			const settle = (value) => {
+				if (settled) return;
+				settled = true;
+				resolve(value);
+			};
+			const names = people.slice(0, 6).map((resource) => this.resource_label(resource));
+			if (people.length > 6) names.push(__("{0} more", [people.length - 6]));
+			const ask =
+				count > 1
+					? __("Tell {0} about these {1} changes?", [names.join(", "), count])
+					: __("Tell {0} about this change?", [names.join(", ")]);
+			const why = notify
+				? __("It touches the next two weeks, so Notify is the default.")
+				: __("It is more than two weeks out, so Don't notify is the default.");
+			const dialog = new frappe.ui.Dialog({
+				title: __("Notify crew?"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "notify",
+						options: `<p>${pp_esc(ask)}</p><p class="pp-stop-sub">${pp_esc(why)} ${pp_esc(
+							__("Esc puts the change back.")
+						)}</p>`,
+					},
+				],
+				primary_action_label: notify ? __("Notify") : __("Don't notify"),
+				primary_action: () => {
+					settle(notify ? "1" : "0");
+					dialog.hide();
+				},
+				secondary_action_label: notify ? __("Don't notify") : __("Notify"),
+				secondary_action: () => {
+					settle(notify ? "0" : "1");
+					dialog.hide();
+				},
+			});
+			dialog.onhide = () => settle(null);
+			dialog.show();
+			// The default has the focus, so Enter takes it (and a keyboard user lands on it).
+			if (typeof dialog.get_primary_btn === "function") dialog.get_primary_btn().trigger("focus");
+		});
+	},
+
+	// Ctrl (Cmd on a Mac) held as a card or an edge is dropped: just that task moves.
+	as4_solo(e) {
+		return !!(e && (e.ctrlKey || e.metaKey));
+	},
+
+	// send()'s answer, before its toast: the tasks that moved along go into the Undo entry and the
+	// message, the ones left where they were are named, and a drafted change says it is a draft.
+	as4_decorate(result, opts) {
+		if (!result) return;
+		const many = !!(opts.snapshot && opts.snapshot.p6b === "many");
+		const shifted = many ? (result.moved || []).filter((move) => move.dependent) : result.shifted || [];
+		shifted.forEach((move) => {
+			if (move.modified) this.modified[move.task] = move.modified;
+		});
+		if (shifted.length && opts.snapshot) {
+			const items = PPAS_PURE.undo_items(shifted);
+			if (many) opts.snapshot.items = (opts.snapshot.items || []).concat(items);
+			else opts.snapshot.shifted = items;
+		}
+		if (shifted.length && opts.message) {
+			opts.message += ` ${
+				shifted.length === 1 ? __("and 1 task that follows") : __("and {0} tasks that follow", [shifted.length])
+			}`;
+		}
+		const left = result.shift_skipped || [];
+		if (left.length) {
+			const named = left
+				.slice(0, 3)
+				.map((entry) => `${entry.subject || entry.task}: ${entry.reason}`)
+				.join("; ");
+			frappe.show_alert(
+				{ message: __("{0} task(s) that follow stayed where they were. {1}", [left.length, named]), indicator: "orange" },
+				10
+			);
+		}
+		if (result.drafted && !this.draft_on && opts.message) {
+			opts.message += ` (${__("a draft: the schedule is not published yet")})`;
+		}
+	},
+
+	// Undo of a change that moved the tasks that follow: one move_many puts every task back on its
+	// days (the same Notify answer as the change), then, when the change was more than dates (a crew
+	// handover with a move, a dialog save), the plain Undo's save puts the rest of the task back.
+	as4_undo(snap) {
+		if (!snap || snap.p6b || !(snap.shifted || []).length) return false;
+		const modified = (name) => this.modified[name] || (this.by_task[name] || {}).modified || "";
+		const items = (snap.start ? [{ task: snap.task, start: snap.start, end: snap.end || snap.start }] : []).concat(snap.shifted);
+		const args = {
+			moves: JSON.stringify(items.map((item) => ({ task: item.task, modified: modified(item.task), start: item.start, end: item.end }))),
+		};
+		if (snap.notify != null) args.notify = snap.notify;
+		const opts = { message: __("Undone: {0}", [snap.subject]), auto_reason: __(PP.undo_reason) };
+		this.p6b_send("move_many", args, opts)
+			.then((result) => {
+				if (!result) return null;
+				(result.moved || []).forEach((move) => {
+					if (move.modified) this.modified[move.task] = move.modified;
+				});
+				if (snap.dates_only) return result;
+				const rest = {
+					task: snap.task,
+					modified: modified(snap.task),
+					expected_time: snap.expected_time,
+					crew_size: snap.crew_size,
+					crew: JSON.stringify(snap.crew),
+					credentials: JSON.stringify(snap.credentials),
+				};
+				if (snap.tentative != null) rest.tentative = snap.tentative;
+				if (snap.equipment) rest.equipment = JSON.stringify(snap.equipment);
+				if (snap.notify != null) rest.notify = snap.notify;
+				return this.send("save_task", rest, { auto_reason: __(PP.undo_reason) });
+			})
+			.finally(() => this.load());
+		return true;
+	},
+
+	// ------------------------------------------------------------------ the strip and Publish
+
+	// The strip's lines: the hold first (as Phase 3B drew it), then each project with drafts. A Draft
+	// schedule offers Publish… (the project's own publish: baseline, status, one notice per person); a
+	// published project with held changes offers Publish (its drafts only). Both offer Discard.
+	as4_strip_entries() {
+		const drafts = (this.data && this.data.drafts) || {};
+		const entries = Object.entries(drafts.projects || {})
+			.filter(([, entry]) => entry && Number(entry.count) > 0)
+			.map(([project, entry]) => ({
+				project,
+				title: this.as4_project_title(project),
+				count: Number(entry.count) || 0,
+				shared: Number(entry.shared) || 0,
+				draft_schedule: this.as4_draft_project(project),
+			}))
+			// While the hold is on, its own line carries the held changes; only Draft schedules get theirs.
+			.filter((entry) => !this.draft_on || entry.draft_schedule)
+			.sort((a, b) => Number(b.draft_schedule) - Number(a.draft_schedule) || String(a.title).localeCompare(String(b.title)));
+		// One project on screen whose schedule is Draft: say so even before anything is drafted, so
+		// Publish… is one click away.
+		const only = this.project;
+		if (only && this.as4_draft_project(only) && !entries.some((entry) => entry.project === only)) {
+			entries.unshift({ project: only, title: this.as4_project_title(only), count: 0, shared: 0, draft_schedule: true });
+		}
+		return entries;
+	},
+
+	as4_strip_line(entry) {
+		const counted =
+			entry.shared > 0
+				? __("{0} change(s), {1} by others", [entry.count, entry.shared])
+				: __("{0} change(s)", [entry.count]);
+		if (entry.draft_schedule) {
+			return entry.count
+				? __("{0} · Draft schedule · {1}", [entry.title, counted])
+				: __("{0} · Draft schedule: changes here stay drafts until you publish", [entry.title]);
+		}
+		return __("{0} · {1} held, not published yet", [entry.title, counted]);
+	},
+
+	as4_render_strip($bar) {
+		const entries = this.as4_strip_entries();
+		if (!entries.length) return false;
+		const shown = entries.slice(0, PPAS.strip_max);
+		shown.forEach((entry) => {
+			const $line = $('<div class="pp-draft-line"></div>').appendTo($bar);
+			$('<span class="pp-draft-text"></span>').text(this.as4_strip_line(entry)).appendTo($line);
+			$('<span class="pp-spacer"></span>').appendTo($line);
+			if (!this.data || !this.data.can_edit) return;
+			$('<button type="button" class="btn btn-primary btn-xs"></button>')
+				.text(entry.draft_schedule ? __("Publish…") : __("Publish"))
+				.attr(
+					"title",
+					entry.draft_schedule
+						? __("Publish this schedule: the drafts go live, the baseline is set and each person is told once")
+						: __("Publish these held changes")
+				)
+				.on("click", () => (entry.draft_schedule ? this.as4_confirm_publish(entry) : this.as4_publish_held(entry)))
+				.appendTo($line);
+			if (entry.count) {
+				$('<button type="button" class="btn btn-default btn-xs"></button>')
+					.text(__("Discard"))
+					.on("click", () => this.as4_discard(entry))
+					.appendTo($line);
+			}
+		});
+		if (entries.length > shown.length) {
+			$('<div class="pp-draft-line pp-stop-sub"></div>')
+				.text(__("and {0} more project(s) with drafts", [entries.length - shown.length]))
+				.appendTo($bar);
+		}
+		return true;
+	},
+
+	as4_confirm_publish(entry) {
+		const lines = [
+			entry.count
+				? entry.shared
+					? __("{0} drafted change(s) go live, {1} of them by other schedulers.", [entry.count, entry.shared])
+					: __("{0} drafted change(s) go live.", [entry.count])
+				: __("Nothing is drafted; the schedule is published as it stands."),
+			__("Each task gets its baseline (its days now), the crew are told once, and calendars pick the tasks up."),
+			__("After this, changes save straight away and ask whether to notify the crew."),
+		];
+		frappe.confirm(
+			`<p>${pp_esc(__("Publish the schedule of {0}?", [entry.title]))}</p><ul>${lines
+				.map((line) => `<li>${pp_esc(line)}</li>`)
+				.join("")}</ul>`,
+			() => this.as4_publish(entry.project)
+		);
+	},
+
+	// publish_project_schedule: one conflict check and one reason for the project's drafts.
+	as4_publish(project, reason) {
+		const args = reason ? { project, reason } : { project };
+		return Promise.resolve(
+			frappe.call({
+				method: `${PP.api}.publish_project_schedule`,
+				args,
+				freeze: true,
+				freeze_message: __("Publishing the schedule…"),
+			})
+		)
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.needs_reason) {
+					if (reason) {
+						frappe.msgprint(__("Nothing was published. Refresh the planner and try again."));
+						return null;
+					}
+					return this.ask_reason(result.conflicts || {}).then((given) => (given ? this.as4_publish(project, given) : null));
+				}
+				this.show_publish_result(result);
+				const title = this.as4_project_title(project);
+				const schedule = result.schedule || {};
+				if (schedule.status === PPAS.published) {
+					frappe.show_alert(
+						{
+							message: __("{0}: schedule published, {1} task(s) given a baseline.", [title, Number(result.baselined) || 0]),
+							indicator: "green",
+						},
+						8
+					);
+				} else if (Number(result.drafts_left) > 0) {
+					frappe.show_alert(
+						{
+							message: __("{0} stays Draft: {1} draft(s) are still to publish.", [title, result.drafts_left]),
+							indicator: "orange",
+						},
+						10
+					);
+				}
+				this.undo_stack = [];
+				this.update_undo_button();
+				return this.load();
+			})
+			.catch(() => null);
+	},
+
+	// A published project's held changes: publish_drafts for that project only.
+	as4_publish_held(entry, reason) {
+		const args = reason ? { project: entry.project, reason } : { project: entry.project };
+		return Promise.resolve(
+			frappe.call({ method: `${PP.api}.publish_drafts`, args, freeze: true, freeze_message: __("Publishing your changes…") })
+		)
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.needs_reason) {
+					if (reason) {
+						frappe.msgprint(__("Nothing was published. Refresh the planner and try again."));
+						return null;
+					}
+					return this.ask_reason(result.conflicts || {}).then((given) => (given ? this.as4_publish_held(entry, given) : null));
+				}
+				this.show_publish_result(result);
+				this.undo_stack = [];
+				this.update_undo_button();
+				return this.load();
+			})
+			.catch(() => null);
+	},
+
+	as4_discard(entry) {
+		const question =
+			entry.shared > 0
+				? __("Discard the {0} drafted change(s) on {1}, {2} of them by other schedulers? The tasks stay as they are.", [
+						entry.count,
+						entry.title,
+						entry.shared,
+				  ])
+				: __("Discard the {0} drafted change(s) on {1}? The tasks stay as they are.", [entry.count, entry.title]);
+		frappe.confirm(question, () =>
+			Promise.resolve(frappe.call({ method: `${PP.api}.discard_drafts`, args: { project: entry.project } }))
+				.then((r) => {
+					const done = ((r && r.message) || {}).discarded || 0;
+					frappe.show_alert({ message: __("{0} draft(s) discarded", [done]), indicator: "blue" }, 5);
+					this.undo_stack = [];
+					this.update_undo_button();
+					return this.load();
+				})
+				.catch(() => null)
+		);
+	},
+
+	// ------------------------------------------------------------------ baseline
+
+	// Reset baseline (or the first Set baseline of a project published without one): ask the server how
+	// many tasks change, say so, then copy.
+	as4_reset_baseline(project) {
+		const title = this.as4_project_title(project);
+		return Promise.resolve(frappe.call({ method: `${PP.api}.reset_baseline`, args: { project, dry_run: 1 } }))
+			.then((r) => {
+				const preview = (r && r.message) || {};
+				const count = Number(preview.changed) || 0;
+				if (!count) {
+					frappe.show_alert({ message: __("{0}: the baseline already matches every task's days.", [title]), indicator: "blue" }, 6);
+					return null;
+				}
+				frappe.confirm(
+					__("Reset the baseline of {0}? {1} task(s) get their days now as their baseline.", [title, count]),
+					() =>
+						Promise.resolve(frappe.call({ method: `${PP.api}.reset_baseline`, args: { project } }))
+							.then((done) => {
+								const changed = Number(((done && done.message) || {}).changed) || 0;
+								frappe.show_alert({ message: __("{0}: baseline set for {1} task(s).", [title, changed]), indicator: "green" }, 6);
+								return this.load();
+							})
+							.catch(() => null)
+				);
+				return null;
+			})
+			.catch(() => null);
+	},
+
+	// The project peek's schedule actions: Publish schedule… on a Draft schedule, and Set or Reset
+	// baseline. None before the P3 fields exist, or for someone who cannot change tasks.
+	as4_project_actions(project) {
+		const schedule = this.as4_schedule(project);
+		if (!schedule || !this.data || !this.data.can_edit) return [];
+		const actions = [];
+		if (schedule.status !== PPAS.published) {
+			const drafts = ((this.data.drafts || {}).projects || {})[project] || {};
+			actions.push({
+				label: __("Publish schedule…"),
+				on_click: () =>
+					this.as4_confirm_publish({
+						project,
+						title: this.as4_project_title(project),
+						count: Number(drafts.count) || 0,
+						shared: Number(drafts.shared) || 0,
+					}),
+			});
+		}
+		actions.push({
+			label: schedule.baseline_set_on ? __("Reset baseline…") : __("Set baseline…"),
+			on_click: () => this.as4_reset_baseline(project),
+		});
+		return actions;
+	},
+
+	// The name on another scheduler's draft: their first name, from the boot's user info when it has it.
+	as4_drafter(user) {
+		let name = user;
+		try {
+			if (frappe.user && typeof frappe.user.full_name === "function") name = frappe.user.full_name(user) || user;
+		} catch (e) {
+			name = user;
+		}
+		return String(name || "").split(/[\s@]/)[0] || user;
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPAS_METHODS);

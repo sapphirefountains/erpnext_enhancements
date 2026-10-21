@@ -125,6 +125,8 @@ DEPENDENCY_KEY = "Dependencies"
 #: An Employee Credential in one of these counts as held (Expired and Revoked do not).
 CURRENT_CREDENTIAL_STATUSES = ("Valid", "Expiring")
 DATE_FIELDS = ("exp_start_date", "exp_end_date", "custom_start_datetime", "custom_end_datetime")
+#: P4: ``draft="auto"`` drafts a write when the task's project schedule is Draft (§4.8).
+DRAFT_AUTO = "auto"
 
 
 # ---------------------------------------------------------------------- pure helpers
@@ -254,6 +256,34 @@ def working_days_between(first, second):
 	return sign * sum(
 		1 for day in engine.daterange(low + datetime.timedelta(days=1), high) if day.weekday() < 5
 	)
+
+
+def dependent_days(old_span, new_span):
+	"""How many working days the tasks that follow move with a task (P4, D10 and D15), signed.
+
+	The tasks that follow wait on this one's **end**, so it is the end's move that carries them: a
+	drag moves both ends alike, a resize of the right edge moves only the end, and a resize of the
+	left edge moves nothing after it (0). An end moved from one weekend day to another still counts
+	one day in its direction, as the old offer did. 0 when either span is missing.
+	"""
+	if not old_span or not new_span:
+		return 0
+	old_last, new_last = engine._as_date(old_span[1]), engine._as_date(new_span[1])
+	if not old_last or not new_last or old_last == new_last:
+		return 0
+	days = working_days_between(old_last, new_last)
+	if not days:
+		days = 1 if new_last > old_last else -1
+	return days
+
+
+def draft_choice(draft):
+	"""The ``draft`` argument of a planner write: ``True`` (draft it), ``False`` (save it) or
+	:data:`DRAFT_AUTO` (P4: draft it when its project's schedule is Draft, see :func:`_drafting`)."""
+	value = given(draft)
+	if isinstance(value, str) and value.strip().lower() == DRAFT_AUTO:
+		return DRAFT_AUTO
+	return bool(cint(value)) if value is not None else False
 
 
 def shift_working(value, count):
@@ -1161,8 +1191,15 @@ def _apply(
 	reason=None,
 	tentative=None,
 	equipment=None,
+	dependents=False,
+	auto=False,
+	pairs=None,
 ):
-	"""The shared write: edit, check for new conflicts, save or ask for a reason."""
+	"""The shared write: edit, check for new conflicts, save or ask for a reason.
+
+	``dependents`` (P4): the tasks that follow move with it (:func:`_follower_docs`), checked and
+	saved together; ``auto`` skips a follower whose project would draft it (``draft="auto"``).
+	``pairs``, when a list, gets each follower's ``{"name", "before", "after"}`` for the notice."""
 	before_state = _state(doc)
 	before_crew = _current_crew(doc)
 
@@ -1192,21 +1229,46 @@ def _apply(
 
 	after_state = _state(doc)
 	after_crew = _current_crew(doc)
+	old_span, new_span = engine.task_span(before_state), engine.task_span(after_state)
+	days = dependent_days(old_span, new_span) if dependents else 0
+	followers, skipped = _follower_docs(doc.name, days, auto=auto) if days else ([], [])
+	follow_before, follow_after, moves = _shift_docs(followers, days)
 	conflicts = {}
 	if schedule_state(before_state, before_crew) != schedule_state(after_state, after_crew):
-		before = engine.preview_conflicts(before_state, before_crew) if engine.task_span(before_state) else {}
-		conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
+		if followers:
+			# The task and the ones that follow it, checked together: only what the lot creates counts.
+			conflicts = conflict_delta(
+				engine.preview_batch([(before_state, before_crew), *follow_before]),
+				engine.preview_batch([(after_state, after_crew), *follow_after]),
+			)
+		else:
+			before = (
+				engine.preview_conflicts(before_state, before_crew) if engine.task_span(before_state) else {}
+			)
+			conflicts = conflict_delta(before, engine.preview_conflicts(after_state, after_crew))
 		dependency = _new_dependency_conflicts(doc, before_state, after_state)
 		if dependency:
 			conflicts[DEPENDENCY_KEY] = dependency
 		reason = (reason or "").strip()
 		if conflicts and not reason:
-			return {"needs_reason": True, "conflicts": conflicts}
+			answer = {"needs_reason": True, "conflicts": conflicts}
+			if moves:
+				answer["moves"] = moves
+			return answer
 
-	old_span, new_span = engine.task_span(before_state), engine.task_span(after_state)
 	later = bool(old_span and new_span and new_span[0] > old_span[0])
-	snapshot = _successor_snapshot(doc.name) if later else None
-	warnings = _save(doc)
+	# The old "shift the tasks that follow?" offer, for a caller that did not ask them to follow.
+	snapshot = _successor_snapshot(doc.name) if later and not dependents else None
+	shifted = []
+	if followers:
+		warnings, shifted = _save_with_followers(doc, followers, moves, days, conflicts, reason)
+	else:
+		warnings = _save(doc)
+	if pairs is not None:
+		pairs.extend(
+			{"name": follower.name, "before": was, "after": now}
+			for follower, was, now in zip(followers, follow_before, follow_after, strict=True)
+		)
 
 	if conflicts and reason:
 		doc.add_comment(
@@ -1222,7 +1284,9 @@ def _apply(
 		"conflicts": conflicts,
 		"card": _card(doc),
 	}
-	if later:
+	if days and dependents:
+		result.update(shifted=shifted, shift_skipped=skipped, shift_days=days)
+	if snapshot is not None:
 		# A move onto a weekend is still a move later: offer at least one working day.
 		report = _successor_report(snapshot, max(working_days_between(old_span[0], new_span[0]), 1))
 		if report:
@@ -1272,6 +1336,7 @@ def save_task(
 	reason=None,
 	tentative=None,
 	equipment=None,
+	dependents=None,
 	notify=None,
 	draft=0,
 ):
@@ -1294,11 +1359,24 @@ def save_task(
 	``0`` tells nobody, ``auto`` applies the 14-day default; see :func:`_apply_notified`. Unset, the
 	save behaves exactly as before. Ignored with ``draft=1``: a draft tells nobody until it is
 	published.
+
+	``draft="auto"`` (P4): drafted when the task's project schedule is Draft, saved otherwise
+	(:func:`_drafting`); the page sends it for every write unless "Hold all my changes" is on.
+
+	``dependents=1`` (P4, D10 and D15): the tasks that follow move with this one, by the working
+	days its end moved, later or earlier, in the same request: one conflict check for them all
+	(``needs_reason`` then also carries ``moves``), one reason, one "Notify crew?" answer, and saved
+	furthest first when later so ERPNext's own calendar-day push finds nothing to move. The answer
+	then carries ``shifted`` (the moves, as :func:`shift_successors` reports them), ``shift_skipped``
+	and ``shift_days``, and no ``successors`` offer. In a draft, they are drafted with it.
 	"""
 	tentative = given(tentative)
-	if cint(given(draft)):
-		return _store_draft(
+	follow = as_bool(dependents) if given(dependents) is not None else False
+	if _drafting(draft, task):
+		return _store_draft_followed(
 			_draft_context(task, modified),
+			follow,
+			draft,
 			start=given(start),
 			end=given(end),
 			expected_time=given(expected_time),
@@ -1312,6 +1390,8 @@ def save_task(
 	return _apply_notified(
 		doc,
 		notify,
+		dependents=follow,
+		auto=draft_choice(draft) == DRAFT_AUTO,
 		start=given(start),
 		end=given(end),
 		expected_time=given(expected_time),
@@ -1330,9 +1410,9 @@ def add_crew(task, resource, modified, reason=None, notify=None, draft=0):
 
 	A task crewed only by assignments gets crew rows for those people first, so adding one person
 	does not silently drop the others from the planner. ``draft=1``: into the caller's draft.
-	``notify``: as :func:`save_task` takes it.
+	``notify`` and ``draft`` (``auto`` included): as :func:`save_task` takes them.
 	"""
-	drafting = _draft_context(task, modified) if cint(given(draft)) else None
+	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
 	if resource in [m["resource"] for m in crew]:
@@ -1350,12 +1430,24 @@ def add_crew(task, resource, modified, reason=None, notify=None, draft=0):
 
 
 @frappe.whitelist(methods=["POST"])
-def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None, notify=None, draft=0):
+def swap_crew(
+	task,
+	from_resource,
+	to_resource,
+	modified,
+	date=None,
+	reason=None,
+	dependents=None,
+	notify=None,
+	draft=0,
+):
 	"""A crew chip dropped on another person's row: hand that person's place on the task over,
 	keeping its hours and lead flag. With ``date``, the task also moves there, keeping its length.
-	``draft=1``: into the caller's draft. ``notify``: as :func:`save_task` takes it.
+	``draft=1``: into the caller's draft. ``notify``, ``draft="auto"`` and ``dependents``: as
+	:func:`save_task` takes them.
 	"""
-	drafting = _draft_context(task, modified) if cint(given(draft)) else None
+	follow = as_bool(dependents) if given(dependents) is not None else False
+	drafting = _draft_context(task, modified) if _drafting(draft, task) else None
 	doc = drafting["doc"] if drafting else _load(task, modified)
 	crew = _current_crew(doc)
 	place = next((i for i, m in enumerate(crew) if m["resource"] == from_resource), None)
@@ -1367,8 +1459,16 @@ def swap_crew(task, from_resource, to_resource, modified, date=None, reason=None
 		else:
 			crew[place] = dict(crew[place], resource=to_resource, label=None)
 	if drafting:
-		return _store_draft(drafting, start=given(date), crew=crew)
-	return _apply_notified(doc, notify, start=given(date), crew=crew, reason=reason)
+		return _store_draft_followed(drafting, follow, draft, start=given(date), crew=crew)
+	return _apply_notified(
+		doc,
+		notify,
+		dependents=follow,
+		auto=draft_choice(draft) == DRAFT_AUTO,
+		start=given(date),
+		crew=crew,
+		reason=reason,
+	)
 
 
 # ---------------------------------------------------------------------- Phase 3A: dependencies
@@ -1414,6 +1514,254 @@ def _span_text(task):
 	return (str(span[0]), str(span[1])) if span else (None, None)
 
 
+# ---------------------------------------------------------------------- P4: the tasks that follow
+#
+# Moving a task moves the tasks that wait on it (D10, D15): by the working days its end moved, later
+# or earlier, in the same request as the task itself, so there is one conflict check, one reason,
+# one "Notify crew?" answer and one Undo for the gesture. The page asks for it with ``dependents=1``
+# on save_task, swap_crew and planner_actions.move_many, and leaves it off while Ctrl/Cmd is held.
+# The order of the saves matters: ERPNext's own Task.on_update pushes an Open dependent the saved
+# task now overlaps to the day after its end, by the calendar. Saving the furthest follower first
+# (when moving later) leaves nothing for it to push, so every follower moves by working days as D10
+# says. Moving earlier, the task goes first and nothing overlaps.
+
+
+def _project_drafts(project):
+	"""Whether a write to a task of ``project`` is drafted under ``draft="auto"``: its schedule is
+	Draft (blank included, as :func:`schedule_status` reads it). A task with no project saves as
+	before, and so does every task until the P3 columns exist."""
+	if not project or not _has_schedule_columns():
+		return False
+	return (
+		schedule_status(frappe.db.get_value("Project", project, "custom_schedule_status")) == SCHEDULE_DRAFT
+	)
+
+
+def _drafting(draft, task):
+	"""Whether a write to ``task`` is drafted: ``draft=1`` always, ``0`` never, and ``auto`` when its
+	project's schedule is Draft (a drafted new task, ``draft-new:…``, is always a draft)."""
+	choice = draft_choice(draft)
+	if choice != DRAFT_AUTO:
+		return choice
+	if is_draft_ref(task):
+		return True
+	return _project_drafts(frappe.db.get_value("Task", task, "project"))
+
+
+def _follower_problem(doc, auto=False, drafting=False):
+	"""Why a task that follows cannot move with the one in hand, or None. ``auto``: a follower in a
+	project whose schedule says otherwise (drafted when this write is live, or the reverse) is left
+	where it is; moving it belongs to its own project's schedule."""
+	if doc.get("status") in engine.FINISHED_STATUSES:
+		return _("It is {0}.").format(doc.get("status"))
+	if doc.get("custom_rental_booking"):
+		return _("Its dates follow Rental Booking {0}.").format(doc.custom_rental_booking)
+	if not engine.task_span(_state(doc)):
+		return _("It has no dates.")
+	if auto and _project_drafts(doc.get("project")) != bool(drafting):
+		if drafting:
+			return _("Its project's schedule is published: move it on that project.")
+		return _("Its project's schedule is Draft: move it on that project.")
+	return None
+
+
+def _skip(doc, problem):
+	return {"task": doc.name, "subject": doc.get("subject") or doc.name, "reason": problem}
+
+
+def _follower_docs(root, days, wanted=None, exclude=(), auto=False):
+	"""``(docs, skipped)``: the tasks that follow ``root`` (:func:`successors`) that a live shift of
+	``days`` moves, loaded and write-checked. ``wanted`` limits them to those names; ``exclude``
+	leaves out tasks the request already moves. Finished, rental and undated ones are ``skipped``."""
+	if not days:
+		return [], []
+	leave = set(exclude or ())
+	names = [name for name in successors(root) if name not in leave]
+	if wanted is not None:
+		wanted = set(wanted)
+		names = [name for name in names if name in wanted]
+	docs, skipped = [], []
+	for name in names:
+		doc = frappe.get_doc("Task", name)
+		problem = _follower_problem(doc, auto=auto)
+		if problem:
+			skipped.append(_skip(doc, problem))
+			continue
+		doc.check_permission("write")
+		docs.append(doc)
+	return docs, skipped
+
+
+def _shift_docs(docs, days):
+	"""Move ``docs`` by ``days`` working days in memory: ``(before, after, moves)``, the first two as
+	``[(state, crew)]`` for ``engine.preview_batch`` and ``moves`` as ``[{task, subject, from, to,
+	from_end, to_end}]``. Each keeps its crew."""
+	before, after, moves = [], [], []
+	for doc in docs:
+		state, crew = _state(doc), _current_crew(doc)
+		_shift_doc(doc, days)
+		new_state = _state(doc)
+		old, new = _span_text(state), _span_text(new_state)
+		before.append((state, crew))
+		after.append((new_state, crew))
+		moves.append(
+			{
+				"task": doc.name,
+				"subject": doc.get("subject") or doc.name,
+				"from": old[0],
+				"to": new[0],
+				"from_end": old[1],
+				"to_end": new[1],
+			}
+		)
+	return before, after, moves
+
+
+def _planned(doc):
+	"""The dates ``doc`` is about to be saved with, kept to put back (:func:`_save_planned`)."""
+	return {field: doc.get(field) for field in DATE_FIELDS}
+
+
+def _pushed_since(doc):
+	"""Whether the Task was saved by someone else since ``doc`` was loaded or last saved here: in a
+	planner move, that is ERPNext's own ``reschedule_dependent_tasks`` from another task's save."""
+	stored = frappe.db.get_value("Task", doc.name, "modified")
+	return stored is not None and not same_moment(stored, doc.modified)
+
+
+def _save_planned(doc, planned):
+	"""Save ``doc`` with its ``planned`` dates.
+
+	ERPNext's ``Task.on_update`` pushes an Open dependent that the saved task now overlaps to the day
+	after its end, by the calendar, and saves it. The save order of a move (:func:`_save_shifted`)
+	leaves it nothing to push, **except** a dependent that already overlapped the task before it
+	(a "Starts before" line): shifted by the same days, it still overlaps. Then the copy in hand is
+	stale, and saving it would raise "changed since you opened it" and fail the whole move. So it is
+	reloaded and given its planned dates again: the push is undone, the move goes through."""
+	if _pushed_since(doc):
+		doc.reload()
+		doc.update(planned)
+	return _save(doc)
+
+
+def _settle(docs, planned, moved):
+	"""After every save of a move: put back on its planned dates any task ERPNext's own reschedule
+	pushed after it was saved here (see :func:`_save_planned`), nearest first, so that a re-save that
+	pushes the next one is put right in turn and nothing moves twice. ``moved`` (the reports) get the
+	new ``modified``. Returns the saves' warnings."""
+	reports = {move["task"]: move for move in moved}
+	warnings = []
+	for doc in sorted(docs, key=lambda d: (reports.get(d.name) or {}).get("to") or ""):
+		if not _pushed_since(doc):
+			continue
+		doc.reload()
+		doc.update(planned[doc.name])
+		warnings.extend(_save(doc))
+		if doc.name in reports:
+			reports[doc.name]["modified"] = str(doc.modified)
+	return warnings
+
+
+def _save_shifted(docs, moves, days, conflicts, reason, settle=True):
+	"""Save shifted tasks furthest first when later (nearest first when earlier): each save then
+	finds the tasks after it already out of its way, so ERPNext's reschedule_dependent_tasks moves
+	nothing (and where it still does, :func:`_save_planned` and :func:`_settle` undo it). ``(warnings,
+	moved)``, ``moved`` being ``moves`` with each task's new ``modified``."""
+	by_name = {move["task"]: move for move in moves}
+	planned = {doc.name: _planned(doc) for doc in docs}
+	order = sorted(docs, key=lambda d: by_name[d.name]["from"] or "", reverse=days > 0)
+	warnings, moved = [], []
+	for doc in order:
+		warnings.extend(_save_planned(doc, planned[doc.name]))
+		if conflicts:
+			doc.add_comment(
+				"Comment",
+				_(
+					"Shifted with the tasks before it on the Project Planner, over a conflict: {0}. Reason: {1}"
+				).format(
+					frappe.utils.escape_html(conflict_summary(conflicts)),
+					frappe.utils.escape_html(reason),
+				),
+			)
+		moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
+	if settle:
+		warnings.extend(_settle(docs, planned, moved))
+	return warnings, moved
+
+
+def _save_with_followers(doc, followers, moves, days, conflicts, reason):
+	"""Save a task and the ones that follow it (:func:`_apply`): the followers first when it moved
+	later, after it when it moved earlier, then any follower its save pushed put back
+	(:func:`_settle`). ``(warnings, shifted)``."""
+	planned = {follower.name: _planned(follower) for follower in followers}
+	if days > 0:
+		warnings, shifted = _save_shifted(followers, moves, days, conflicts, reason, settle=False)
+		warnings += _save(doc)
+	else:
+		warnings = _save(doc)
+		more, shifted = _save_shifted(followers, moves, days, conflicts, reason, settle=False)
+		warnings += more
+	return warnings + _settle(followers, planned, shifted), shifted
+
+
+def _draft_followers(root, days, auto=False, exclude=()):
+	"""Draft the tasks that follow ``root`` ``days`` working days on, each from its own drafted days
+	(:func:`_draft_context`), as a draft of ``root`` moves them. ``(shifted, skipped)``, as
+	:func:`_follower_docs` and :func:`shift_successors` report them. ``auto``: a follower whose
+	project is published is left alone (a draft never moves a published schedule)."""
+	shifted, skipped = [], []
+	if not days:
+		return shifted, skipped
+	leave = set(exclude or ())
+	# Read once: each follower's own row is all its context looks at, and no other follower's draft
+	# touches it.
+	drafts = _draft_rows()
+	for name in successors(root):
+		if name in leave:
+			continue
+		modified = frappe.db.get_value("Task", name, "modified")
+		if modified is None:
+			continue
+		context = _draft_context(name, modified, drafts)
+		doc = context["doc"]
+		problem = _follower_problem(doc, auto=auto, drafting=True)
+		if problem:
+			skipped.append(_skip(doc, problem))
+			continue
+		old = _span_text(_state(doc))
+		result = _store_draft(
+			context, start=str(shift_working(old[0], days)), end=str(shift_working(old[1], days))
+		)
+		new = _span_text(_state(doc))
+		shifted.append(
+			{
+				"task": doc.name,
+				"subject": doc.get("subject") or doc.name,
+				"from": old[0],
+				"to": new[0],
+				"from_end": old[1],
+				"to_end": new[1],
+				"modified": result.get("modified"),
+			}
+		)
+	return shifted, skipped
+
+
+def _store_draft_followed(context, dependents, draft, **edit):
+	""":func:`_store_draft`, then with ``dependents`` the tasks that follow drafted along by the
+	working days the task's end moved (``shifted``, ``shift_skipped``, ``shift_days``)."""
+	doc = context["doc"]
+	old_span = engine.task_span(_state(doc))
+	result = _store_draft(context, **edit)
+	if not dependents or context.get("new"):
+		return result
+	days = dependent_days(old_span, engine.task_span(_state(doc)))
+	if days:
+		shifted, skipped = _draft_followers(doc.name, days, auto=draft_choice(draft) == DRAFT_AUTO)
+		result.update(shifted=shifted, shift_skipped=skipped, shift_days=days)
+	return result
+
+
 @frappe.whitelist(methods=["POST"])
 def shift_successors(task, days, modified, reason=None, tasks=None, notify=None):
 	"""Move every task that follows ``task`` by ``days`` working days (Monday to Friday).
@@ -1431,83 +1779,30 @@ def shift_successors(task, days, modified, reason=None, tasks=None, notify=None)
 
 	``notify`` (P3): as :func:`save_task` takes it, for every successor moved, one notice per person
 	(``"notified"`` in the answer). ``auto`` notifies when any of the moves touches the next 14 days.
+
+	P4: the planner page no longer calls this; ``dependents=1`` on the write itself moves the tasks
+	that follow in the same request. It stays for other callers, and shares that path's helpers.
 	"""
 	root = _load(task, modified)
 	days = cint(given(days) or 0)
 	if not days:
 		frappe.throw(_("Say how many working days to shift by."))
-	names = successors(root.name)
-	wanted = parse_list(given(tasks))
-	if wanted is not None:
-		wanted = set(wanted)
-		names = [name for name in names if name in wanted]
-
-	docs, skipped = [], []
-	for name in names:
-		doc = frappe.get_doc("Task", name)
-		if doc.get("status") in engine.FINISHED_STATUSES:
-			skipped.append({"task": name, "reason": _("It is {0}.").format(doc.get("status"))})
-			continue
-		if doc.get("custom_rental_booking"):
-			skipped.append(
-				{
-					"task": name,
-					"reason": _("Its dates follow Rental Booking {0}.").format(doc.custom_rental_booking),
-				}
-			)
-			continue
-		if not engine.task_span(_state(doc)):
-			skipped.append({"task": name, "reason": _("It has no dates.")})
-			continue
-		doc.check_permission("write")
-		docs.append(doc)
+	docs, skipped = _follower_docs(root.name, days, wanted=parse_list(given(tasks)))
 	if not docs:
 		return _with_notice({"moved": [], "skipped": skipped, "warnings": [], "conflicts": {}}, notify, [])
 
-	before = [(_state(doc), _current_crew(doc)) for doc in docs]
-	moves = []
-	for doc, (state, _crew) in zip(docs, before, strict=True):
-		_shift_doc(doc, days)
-		old, new = _span_text(state), _span_text(_state(doc))
-		moves.append(
-			{
-				"task": doc.name,
-				"subject": doc.get("subject") or doc.name,
-				"from": old[0],
-				"to": new[0],
-				"from_end": old[1],
-				"to_end": new[1],
-			}
-		)
-	after = [(_state(doc), crew) for doc, (_state_before, crew) in zip(docs, before, strict=True)]
+	before, after, moves = _shift_docs(docs, days)
 	conflicts = conflict_delta(engine.preview_batch(before), engine.preview_batch(after))
 	reason = (reason or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts, "moves": moves}
 
-	# Furthest first when moving later (nearest first when earlier): each save then finds the
-	# tasks after it already out of its way, so ERPNext's reschedule_dependent_tasks moves nothing.
-	by_name = {move["task"]: move for move in moves}
-	order = sorted(docs, key=lambda d: by_name[d.name]["from"] or "", reverse=days > 0)
 	pairs = [
 		{"name": doc.name, "before": was, "after": now}
 		for doc, was, now in zip(docs, before, after, strict=True)
 	]
-	warnings, moved = [], []
 	with _quiet_alerts(notify):
-		for doc in order:
-			warnings.extend(_save(doc))
-			if conflicts:
-				doc.add_comment(
-					"Comment",
-					_(
-						"Shifted with the tasks before it on the Project Planner, over a conflict: {0}. Reason: {1}"
-					).format(
-						frappe.utils.escape_html(conflict_summary(conflicts)),
-						frappe.utils.escape_html(reason),
-					),
-				)
-			moved.append(dict(by_name[doc.name], modified=str(doc.modified)))
+		warnings, moved = _save_shifted(docs, moves, days, conflicts, reason)
 	result = {"moved": moved, "skipped": skipped, "warnings": warnings, "conflicts": conflicts}
 	return _with_notice(result, notify, pairs)
 
@@ -2807,17 +3102,18 @@ def _drafted_doc(row):
 	return doc, None
 
 
-def _draft_context(task, modified):
+def _draft_context(task, modified, drafts=None):
 	"""Load a task for drafting: as a save would, then with the caller's draft so far applied.
 
 	A Draft row whose task changed since it was drafted is not built on: the new draft starts from
 	the task as it is now, and the planner is told (``reset``). A drafted new task
-	(``draft-new:<row>``) is loaded from its Draft row instead (:func:`_new_context`).
+	(``draft-new:<row>``) is loaded from its Draft row instead (:func:`_new_context`). ``drafts``
+	(P4) is :func:`_draft_rows` read once already, for a request that drafts many tasks.
 	"""
 	if is_draft_ref(task):
 		return _new_context(task, modified)
 	doc = _load(task, modified)
-	rows, duplicates = _draft_rows()
+	rows, duplicates = drafts or _draft_rows()
 	row = next((r for r in rows if r.get("task") == doc.name), None)
 	stored = (_state(doc), _current_crew(doc))
 	stored_rest = _draft_rest(doc)
@@ -2960,8 +3256,8 @@ def _draft_overlay():
 	count it; a drafted new **phase** has no days and no card, and is listed in ``phases`` so the
 	count of unpublished changes is the count of Draft rows."""
 	rows, _duplicates = _draft_rows()
-	overlay = {"exclude": set(), "extra": [], "drafted": {}, "stale": [], "phases": []}
-	docs = []
+	overlay = {"exclude": set(), "extra": [], "drafted": {}, "stale": [], "phases": [], "projects": {}}
+	docs, by, stale = [], {}, []
 	for row in rows:
 		if is_new_row(row):
 			continue
@@ -2970,9 +3266,19 @@ def _draft_overlay():
 			overlay["stale"].append(
 				{"task": row.get("task"), "subject": row.get("subject") or row.get("task"), "reason": problem}
 			)
+			stale.append(row)
 			continue
 		docs.append(doc)
+		by[doc.name] = row
+	# An out-of-date draft still counts on its project, so the project's line stays on the strip with
+	# its Discard (one read, and only when there is one).
+	if stale:
+		owners = _row_projects(stale)
+		_count_projects(overlay, [(owners.get(row.get("task")), row) for row in stale])
 	news = _overlay_new_tasks(overlay, [row for row in rows if is_new_row(row)])
+	_count_projects(overlay, [(doc.get("project"), by[doc.name]) for doc in docs])
+	_count_projects(overlay, [(row.get("project"), row) for row in rows if is_new_row(row)])
+	by.update({draft_ref(row.get("name")): row for row in rows if is_new_row(row)})
 	titles = _project_titles(doc.get("project") for doc in docs + [doc for doc, _spec in news])
 	for doc in docs:
 		state = _state(doc)
@@ -2982,7 +3288,8 @@ def _draft_overlay():
 		overlay["drafted"][doc.name] = {
 			"credentials": [
 				row.get("credential_type") for row in (doc.get("custom_required_credentials") or [])
-			]
+			],
+			"by": _shared_by(by[doc.name]),
 		}
 	for doc, spec in news:
 		state = _state(doc)
@@ -2994,8 +3301,26 @@ def _draft_overlay():
 			],
 			"new": True,
 			"depends_on": spec_waits(spec),
+			"by": _shared_by(by.get(doc.name) or {}),
 		}
 	return overlay
+
+
+def _shared_by(row):
+	"""Who drafted a shared row (another scheduler's, on a Draft project), or None for the caller's own."""
+	return row.get("owner") if row.get("shared") else None
+
+
+def _count_projects(overlay, entries):
+	"""P4: ``overlay["projects"]`` = ``{project: {"count", "shared"}}``, the Draft rows per project
+	(``shared``: how many are other schedulers'), so the page can offer each project's Publish."""
+	for project, row in entries:
+		if not project:
+			continue
+		entry = overlay["projects"].setdefault(project, {"count": 0, "shared": 0})
+		entry["count"] += 1
+		if row.get("shared"):
+			entry["shared"] += 1
 
 
 def _with_drafts(result, overlay, start, end):
@@ -3008,6 +3333,9 @@ def _with_drafts(result, overlay, start, end):
 		if card["name"] in drafted:
 			card["drafted"] = True
 			card["credentials"] = list(drafted[card["name"]]["credentials"])
+			if drafted[card["name"]].get("by"):
+				# P3/P4: another scheduler's draft of a Draft project's task, shown to everyone.
+				card["drafted_by"] = drafted[card["name"]]["by"]
 			if drafted[card["name"]].get("new"):
 				# v1.603.0: a task that does not exist yet. Its predecessors, not read from the database.
 				card["new_task"] = True
@@ -3027,6 +3355,7 @@ def _with_drafts(result, overlay, start, end):
 		"tasks": sorted(drafted),
 		"phases": list(overlay.get("phases") or []),
 		"stale": overlay["stale"],
+		"projects": overlay.get("projects") or {},
 	}
 	return result
 
@@ -4948,14 +5277,16 @@ def _with_notice(result, notify, pairs):
 
 
 def _apply_notified(doc, notify, **kwargs):
-	""":func:`_apply` with a "Notify crew?" answer (see :func:`save_task`)."""
+	""":func:`_apply` with a "Notify crew?" answer (see :func:`save_task`). The tasks that follow
+	(``dependents``) are in the same notice: one per person, whatever moved."""
 	if given(notify) is None:
 		return _apply(doc, **kwargs)
 	before = (_state(doc), _current_crew(doc))
+	followers = []
 	with _quiet_alerts(notify):
-		result = _apply(doc, **kwargs)
+		result = _apply(doc, pairs=followers, **kwargs)
 	pair = {"name": doc.name, "before": before, "after": (_state(doc), _current_crew(doc))}
-	return _with_notice(result, notify, [pair])
+	return _with_notice(result, notify, [pair, *followers])
 
 
 def _schedule_project(project):
