@@ -64,6 +64,11 @@ def item_terms(items):
 	):
 		if price.item_code in terms:
 			terms[price.item_code]["container_price"] = flt(price.price_list_rate)
+	# A chemical sold in sizes says which on the review page and the invoice (v1.712.0).
+	from erpnext_enhancements.sapphire_maintenance.item_sizes import item_sizes, with_size
+
+	for item, size in item_sizes(terms).items():
+		terms[item]["item_name"] = with_size(terms[item]["item_name"], size["size"])
 	return terms
 
 
