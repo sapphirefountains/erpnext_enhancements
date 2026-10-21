@@ -49,8 +49,10 @@ def _code(path):
 
 
 def _block(code):
+	"""The PPL block alone: from its constants to its methods' Object.assign (other blocks follow it)."""
 	start = code.index("const PPL = {")
-	return code[start:]
+	end = code.index("Object.assign(ProjectPlanner.prototype, PPL_METHODS);", start)
+	return code[start:end]
 
 
 def _method(code, signature):
