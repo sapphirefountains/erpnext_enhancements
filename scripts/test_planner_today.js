@@ -220,6 +220,7 @@ function makeDesk(options) {
 				},
 			}
 		),
+		session: { user: "nik@example.com" },
 		boot: { sysdefaults: { first_day_of_the_week: "Sunday" } },
 		datetime: { get_today: () => desk.today },
 		utils: {
@@ -545,7 +546,22 @@ test("a stop: leave and arrival, the work, miles, escaped", () => {
 
 // ------------------------------------------------------------------ the landing
 
-test("landing: a phone, nothing saved yet, a bare address -> Today, in place", async () => {
+// ------------------------------------------------------------------ the landing: the tab is the device's
+
+const TAB_KEY = "ee_project_planner_tab:nik@example.com";
+const nothingSaved = () => ({ loaded: true, restored: false, last: null, saved_text: null, views: [], color_by: "default" });
+// A stand-in for the planner's per-person "last used" row (planner_views_prefs): what save_last_view keeps.
+function serverRow(desk, store) {
+	desk.answers.save_last_view = (args) => {
+		store.last = JSON.parse(args.data);
+		return { last: store.last };
+	};
+}
+// A page on `desk` with the person's saved row, as a reload opens one.
+const openPage = (desk, store) =>
+	planner(desk, { p6c: { loaded: true, restored: false, last: store.last, saved_text: null, views: [], color_by: "default" } });
+
+test("landing: a phone, nothing remembered on it -> Today, in place", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	desk.answers.get_today = ME;
 	const pp = planner(desk);
@@ -554,90 +570,20 @@ test("landing: a phone, nothing saved yet, a bare address -> Today, in place", a
 	check("the address is Today on today's date", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/today/2026-10-21"]);
 	check("the bare entry was replaced, not kept", desk.replaces, 1);
 	check("asked for today", desk.called("get_today").map((c) => c.args.date), ["2026-10-21"]);
-	check("Back leaves the planner", (desk.back(), desk.urls()[desk.index]), "/desk/project/PRJ-00001");
+	check("Today is now this device's tab", desk.prefs[TAB_KEY], "today");
 	check("the planner was not loaded", pp.loads, []);
+	desk.back();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
 });
 
-test("landing: someone the planner does not list gets the planner, in place", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	desk.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
-	const pp = planner(desk);
-	desk.go("project-planner");
-	await settle();
-	check("the week, not a note", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/week/2026-10-21"]);
-	check("the week loaded", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
-	// A deliberate visit to Today by someone unlisted still says why there is nothing.
-	const desk2 = makeDesk({ start: "/desk/project-planner/today/2026-10-21" });
-	desk2.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
-	const pp2 = planner(desk2);
-	desk2.land();
-	await settle();
-	check("stays on Today with the note", [desk2.urls(), pp2.$today.all().some((el) => el.textValue === "not listed")], [["/desk/project-planner/today/2026-10-21"], true]);
-});
-
-test("landing: a phone goes back to the screen used last, not to Today", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	desk.answers.get_today = ME;
-	const last = { view: "crew" };
-	const pp = planner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [], color_by: "default" } });
-	desk.go("project-planner");
-	await settle();
-	check("the crew view, in place of the bare entry", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/crew/2026-10-21"]);
-	check("the planner loaded it", pp.loads, [{ view: "crew", anchor: "2026-10-21" }]);
-	check("no Today request", desk.called("get_today"), []);
-});
-
-test("landing: a saved week view (the default) stays bare and is not Today", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	desk.answers.get_today = ME;
-	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "week" }, saved_text: null, views: [], color_by: "default" } });
-	desk.go("project-planner");
-	await settle();
-	check("the address is left", desk.urls()[desk.index], "/desk/project-planner");
-	check("the week loads", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
-	check("no Today request", desk.called("get_today"), []);
-});
-
-test("landing: saved filters alone do not stop the first-time Today", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	desk.answers.get_today = ME;
-	planner(desk, { p6c: { loaded: true, restored: false, last: { project: "PRJ-1" }, saved_text: null, views: [], color_by: "default" } });
-	desk.go("project-planner");
-	await settle();
-	// The remembered filters ride in the address as they do on every planner screen.
-	check("Today", desk.urls()[desk.index].split("?")[0], "/desk/project-planner/today/2026-10-21");
-});
-
-test("landing: it waits for the saved views before it decides", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	desk.answers.get_today = ME;
-	desk.answers.get_views = { last: { view: "month" }, views: [] };
-	const pp = planner(desk, { p6c: { loaded: false, restored: false, last: null, saved_text: null, views: [], color_by: "default" } });
-	let release;
-	pp.p6c_fetch_views = () =>
-		new Promise((resolve) => {
-			release = () => {
-				pp.p6c.loaded = true;
-				pp.p6c.last = { view: "month" };
-				resolve();
-			};
-		});
-	desk.go("project-planner");
-	await settle();
-	check("nothing decided while the views are on their way", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner"]);
-	check("no Today flash", desk.called("get_today"), []);
-	release();
-	await settle();
-	check("then the month they used last", desk.urls()[desk.index], "/desk/project-planner/month/2026-10-21");
-});
-
-test("landing: a desktop keeps the screen it had", async () => {
+test("landing: a desktop with nothing remembered opens the default view and remembers it", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
 	const pp = planner(desk);
 	desk.go("project-planner");
 	await settle();
-	check("the bare address is left", desk.urls()[desk.index], "/desk/project-planner");
+	check("the address is left bare", desk.urls().pop(), "/desk/project-planner");
 	check("the week loads", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+	check("and is the device's tab", desk.prefs[TAB_KEY], "week");
 	check("no Today request", desk.called("get_today"), []);
 });
 
@@ -650,43 +596,224 @@ test("landing: a scheduler on a phone is no different: Today the first time", as
 	check("Today, in place", [desk.urls(), desk.replaces], [["/desk/project/PRJ-00001", "/desk/project-planner/today/2026-10-21"], 1]);
 });
 
-test("landing: a link that names a filter is the sender's", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	const pp = planner(desk);
-	desk.go("project-planner", { project: "PRJ-00001" });
+test("landing: each device keeps its own tab for the same person", async () => {
+	const store = { last: null };
+	const phone = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	const desktop = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	for (const desk of [phone, desktop]) {
+		desk.answers.get_today = ME;
+		serverRow(desk, store);
+	}
+	// The phone: Today the first time, then the week.
+	let ph = openPage(phone, store);
+	phone.go("project-planner");
 	await settle();
-	check("the planner opens on it", pp.loads.length, 1);
-	check("no Today request", desk.called("get_today"), []);
+	check("phone, first time", phone.urls().pop(), "/desk/project-planner/today/2026-10-21");
+	byText(ph.$today, "Planner").click();
+	await settle();
+	check("phone remembers the week", phone.prefs[TAB_KEY], "week");
+	// The desktop meanwhile: the week by default, then the crew board.
+	let dt = openPage(desktop, store);
+	desktop.go("project-planner");
+	await settle();
+	dt.go("crew", "2026-10-21");
+	await settle();
+	check("desktop remembers the crew board", desktop.prefs[TAB_KEY], "crew");
+	check("the phone's tab did not move", phone.prefs[TAB_KEY], "week");
+	// Both come back to their own.
+	phone.go("project", "PRJ-00001");
+	ph = openPage(phone, store);
+	phone.go("project-planner");
+	await settle();
+	check("phone: its week, bare", [phone.urls().pop(), ph.loads.pop().view], ["/desk/project-planner", "week"]);
+	desktop.go("project", "PRJ-00001");
+	dt = openPage(desktop, store);
+	desktop.go("project-planner");
+	await settle();
+	check("desktop: its crew board, in place", [desktop.urls().slice(-2), dt.loads.pop().view], [["/desk/project/PRJ-00001", "/desk/project-planner/crew/2026-10-21"], "crew"]);
+	// And the phone can come back to Today by choosing it.
+	ph.go_today("2026-10-21");
+	await settle();
+	phone.go("project", "PRJ-00001");
+	ph = openPage(phone, store);
+	phone.go("project-planner");
+	await settle();
+	check("phone: Today, because Today was its last", phone.urls().pop(), "/desk/project-planner/today/2026-10-21");
 });
 
-test("landing: a saved Today never takes over a filter link, on a phone or a desktop", async () => {
+test("landing: filters are the person's, on every device; the tab is not", async () => {
+	const store = { last: null };
+	const desktop = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const phone = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	for (const desk of [desktop, phone]) {
+		desk.answers.get_today = ME;
+		serverRow(desk, store);
+	}
+	const dt = openPage(desktop, store);
+	desktop.go("project-planner");
+	await settle();
+	dt.project = "PRJ-1";
+	dt.p6c.restored = true;
+	dt.view = "crew";
+	dt.p6c_state_soon();
+	desktop.flush();
+	check("the person's row holds the filter", store.last.project, "PRJ-1");
+	check("and no tab", "view" in store.last, false);
+	const ph = openPage(phone, store);
+	phone.go("project-planner");
+	await settle();
+	check("the phone applied the desktop's filter", ph.project, "PRJ-1");
+	check("and opened on its own tab, Today", phone.urls().pop().split("?")[0], "/desk/project-planner/today/2026-10-21");
+});
+
+test("landing: an older row's saved view is ignored", async () => {
+	const store = { last: { view: "crew", project: "PRJ-1" } };
+	const phone = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	phone.answers.get_today = ME;
+	openPage(phone, store);
+	phone.go("project-planner");
+	await settle();
+	check("phone: Today, not the row's crew", phone.urls().pop().split("?")[0], "/desk/project-planner/today/2026-10-21");
+	const desktop = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const dt = openPage(desktop, store);
+	desktop.go("project-planner");
+	await settle();
+	check("desktop: the week, not the row's crew", [desktop.urls().pop().split("?")[0], dt.loads.pop().view], ["/desk/project-planner", "week"]);
+});
+
+test("landing: a link that names a filter keeps the device's calendar tab but never opens Today", async () => {
 	for (const phone of [true, false]) {
+		// Today has no filters to show: the link opens the default view with the project.
 		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
 		desk.answers.get_today = ME;
-		const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
+		desk.prefs[TAB_KEY] = "today";
+		const pp = planner(desk, { p6c: nothingSaved() });
 		desk.go("project-planner", { project: "PRJ-00001" });
 		await settle();
 		const where = phone ? "phone" : "desktop";
-		check(`${where}: the planner opens, not Today`, desk.called("get_today"), []);
-		check(`${where}: on the project the link named`, [pp.loads.length, pp.filters().project], [1, "PRJ-00001"]);
-		check(`${where}: the address is the link's`, desk.urls().pop(), "/desk/project-planner?project=PRJ-00001");
+		check(`${where}, stored Today: the planner opens, not Today`, desk.called("get_today"), []);
+		check(`${where}, stored Today: on the project the link named`, [pp.loads.length, pp.filters().project], [1, "PRJ-00001"]);
+		check(`${where}, stored Today: the address is the link's`, desk.urls().pop(), "/desk/project-planner?project=PRJ-00001");
+		// A first visit on a phone is Today by default, which a filter link also skips.
+		const first = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		first.answers.get_today = ME;
+		const fp = planner(first, { p6c: nothingSaved() });
+		first.go("project-planner", { project: "PRJ-00001" });
+		await settle();
+		check(`${where}, first visit: not Today`, [first.called("get_today"), fp.filters().project], [[], "PRJ-00001"]);
+		// The device's calendar tab still applies, with the filter.
+		const crew = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		crew.prefs[TAB_KEY] = "crew";
+		const cp = planner(crew, { p6c: nothingSaved() });
+		crew.go("project-planner", { project: "PRJ-00001" });
+		await settle();
+		check(`${where}, stored crew: the crew view with the filter`, [crew.urls().pop(), cp.filters().project], ["/desk/project-planner/crew/2026-10-21?project=PRJ-00001", "PRJ-00001"]);
 	}
-	// A saved crew view still takes the link, with the filter.
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
-	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "crew" }, saved_text: null, views: [], color_by: "default" } });
-	desk.go("project-planner", { project: "PRJ-00001" });
-	await settle();
-	check("a saved crew view and the filter", [pp.loads.pop().view, pp.filters().project], ["crew", "PRJ-00001"]);
 });
 
-test("landing: someone the planner does not list, with a saved Today, gets the planner", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
-	desk.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
-	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
+test("landing: someone the planner does not list, on a device whose tab is Today, gets the planner", async () => {
+	for (const phone of [true, false]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		desk.prefs[TAB_KEY] = "today";
+		desk.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner");
+		await settle();
+		check(`${phone ? "phone" : "desktop"}: the week, in place of Today`, desk.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/week/2026-10-21"]);
+		check("it loaded", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+		check("and the tab moves off Today", desk.prefs[TAB_KEY], "week");
+	}
+	// A deliberate visit to Today by someone unlisted still says why there is nothing.
+	const desk2 = makeDesk({ start: "/desk/project-planner/today/2026-10-21" });
+	desk2.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
+	const pp2 = planner(desk2);
+	desk2.land();
+	await settle();
+	check("stays on Today with the note", [desk2.urls(), pp2.$today.all().some((el) => el.textValue === "not listed")], [["/desk/project-planner/today/2026-10-21"], true]);
+});
+
+test("landing: a store that throws is a first visit, and never breaks the page", async () => {
+	for (const phone of [true, false]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		desk.answers.get_today = ME;
+		const boom = () => {
+			throw new Error("SecurityError");
+		};
+		desk.window.localStorage.getItem = boom;
+		desk.window.localStorage.setItem = boom;
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner");
+		await settle();
+		if (phone) check("phone: Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
+		else check("desktop: the week", [desk.urls().pop(), pp.loads.length], ["/desk/project-planner", 1]);
+	}
+});
+
+test("landing: two people on one browser keep separate tabs", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	desk.answers.get_today = ME;
+	desk.prefs["ee_project_planner_tab:other@example.com"] = "crew";
+	planner(desk, { p6c: nothingSaved() });
 	desk.go("project-planner");
 	await settle();
-	check("the week, in place of Today", desk.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/week/2026-10-21"]);
-	check("it loaded", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+	check("this person is on their first visit: Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
+	check("the other's tab is untouched", desk.prefs["ee_project_planner_tab:other@example.com"], "crew");
+});
+
+test("landing: a remembered month view is restored, in place, after the saved views are in", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "month";
+	const pp = planner(desk, { p6c: { loaded: false, restored: false, last: null, saved_text: null, views: [], color_by: "default" } });
+	let release;
+	pp.p6c_fetch_views = () =>
+		new Promise((resolve) => {
+			release = () => {
+				pp.p6c.loaded = true;
+				resolve();
+			};
+		});
+	desk.go("project-planner");
+	await settle();
+	check("nothing decided while the views are on their way", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner"]);
+	release();
+	await settle();
+	check("then the month", [desk.urls().pop(), desk.replaces], ["/desk/project-planner/month/2026-10-21", 1]);
+	desk.back();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+});
+
+test("landing: Back and Forward step through the tabs, each its own entry", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	pp.go("crew", "2026-10-21");
+	await settle();
+	pp.go("month", "2026-10-21");
+	await settle();
+	check("three entries on top of the page", desk.urls().slice(1), ["/desk/project-planner", "/desk/project-planner/crew/2026-10-21", "/desk/project-planner/month/2026-10-21"]);
+	desk.back();
+	await settle();
+	check("Back is the crew board", [desk.urls()[desk.index], desk.prefs[TAB_KEY]], ["/desk/project-planner/crew/2026-10-21", "crew"]);
+	desk.forward();
+	await settle();
+	check("Forward is the month", desk.urls()[desk.index], "/desk/project-planner/month/2026-10-21");
+});
+
+test("what is saved for the person has no tab in it", async () => {
+	const store = { last: null };
+	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-21", phone: false });
+	serverRow(desk, store);
+	const pp = openPage(desk, store);
+	desk.land();
+	await settle();
+	pp.project = "PRJ-1";
+	pp.p6c_state_soon();
+	desk.flush();
+	check("filters and colors are saved", store.last.project, "PRJ-1");
+	check("the tab is not", "view" in store.last, false);
+	// A named view is an explicit choice and still carries its view.
+	check("a named view keeps its view", pp.p6c_state(false).view, "week");
 });
 
 test("landing: a screen the address names is never replaced", async () => {
@@ -715,85 +842,6 @@ test("Today is a screen of its own: the calendar's chrome goes, the day shows", 
 	// Leaving for any other screen puts the calendar's chrome back and takes Today away.
 	pp.set_mode("");
 	check("set_mode gives the calendar back", [pp.$toolbar.shown, pp.$grid_wrap.shown, pp.$today.shown], [true, true, false]);
-});
-
-test("Today is remembered as the last used view, without a date", async () => {
-	const desk = makeDesk({ start: "/desk/project-planner/today/2026-10-21" });
-	desk.answers.get_today = ME;
-	const pp = planner(desk);
-	desk.land();
-	await settle();
-	desk.flush();
-	const saves = desk.called("save_last_view");
-	check("one save", saves.length, 1);
-	const saved = JSON.parse(saves[0].args.data);
-	check("the screen", saved.view, "today");
-	check("never a date", Object.keys(saved).filter((key) => /date|anchor|day/.test(key)), []);
-});
-
-test("landing, in sequence: Today first, then the tab used last, wherever that was", async () => {
-	// A stand-in for the planner's per-person store (planner_views_prefs): what save_last_view keeps.
-	const store = { last: null };
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
-	desk.answers.get_today = ME;
-	desk.answers.save_last_view = (args) => {
-		store.last = JSON.parse(args.data);
-		return { last: store.last };
-	};
-	const open = (initial) => {
-		// A new page on the same Desk, as a reload is: the person's saved views come from the store.
-		desk.timers.length = 0;
-		return planner(desk, { p6c: { loaded: true, restored: false, last: store.last, saved_text: null, views: [], color_by: "default" } });
-	};
-	let pp = open();
-	desk.go("project-planner");
-	await settle();
-	check("1. nothing saved: Today, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/today/2026-10-21"]);
-	desk.flush();
-	check("1. and Today is what is saved", store.last.view, "today");
-
-	byText(pp.$today, "Planner").click();
-	await settle();
-	check("2. the week, one entry on", desk.urls().pop(), "/desk/project-planner/week/2026-10-21");
-	pp.p6c_state_soon();
-	desk.flush();
-	check("2. the week is what is saved", store.last.view, "week");
-
-	desk.go("project", "PRJ-00001");
-	pp = open();
-	desk.go("project-planner");
-	await settle();
-	check("3. a bare open after the week is the week", [desk.urls().pop(), pp.loads.pop()], ["/desk/project-planner", { view: "week", anchor: "2026-10-21" }]);
-
-	pp.go_today("2026-10-21");
-	await settle();
-	desk.flush();
-	check("4. Today again is saved", store.last.view, "today");
-
-	desk.go("project", "PRJ-00001");
-	pp = open();
-	desk.go("project-planner");
-	await settle();
-	check("4. a bare open after Today is Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
-
-	// Back from the landing leaves the planner: the bare entry was replaced, not kept under it.
-	desk.back();
-	check("5. Back is the page before", desk.urls()[desk.index], "/desk/project/PRJ-00001");
-});
-
-test("landing: a saved Today is restored on a desktop too, and a first time there stays the week", async () => {
-	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
-	desk.answers.get_today = ME;
-	planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
-	desk.go("project-planner");
-	await settle();
-	check("Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
-
-	const desk2 = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
-	const pp2 = planner(desk2);
-	desk2.go("project-planner");
-	await settle();
-	check("the week, bare", [desk2.urls().pop(), pp2.loads], ["/desk/project-planner", [{ view: "week", anchor: "2026-10-21" }]]);
 });
 
 test("history: the day arrows, This week and Planner each take one entry; Back steps off them", async () => {

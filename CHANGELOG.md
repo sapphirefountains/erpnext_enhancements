@@ -27,20 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     days) and `fountain_move`; the answer carries today's whole `route_payload` for the map, and the
     person's blocks and day notes. It writes nothing.
   - **Landing** (Nik, 2026-10-21: "Use the spec's landing rule for P8: everyone lands on the tab they used
-    last, or Today the first time."). A bare `/project-planner` opens the screen the person used last,
-    from the planner's saved "last used" view (kept per person in the database, so it follows them
-    between devices), schedulers and technicians alike, and **Today** is one of those screens: `today`
-    joins `week`, `month`, `crew` and `heatmap` in the saved-view list on the server
-    (`planner_views_prefs.SCHEMA["project"]["view"]`) and in the page. It is saved without a date, so it
-    always opens on today's date, and a person whose last screen was Today lands on Today, on a desktop
-    too. With nothing saved yet, a phone (under 768 px) opens on Today and a desktop on the week view as
-    before. Today is chosen only after the saved views are in, and the address replaces the bare one, so
-    Back leaves the planner. A link that names a filter (the Project form's *Open in Project Planner*) is
-    left alone. Someone with planner access but no Planner Resource gets the planner they always had, not
-    a note. Today is also reachable from *Planner* and *More ▸ Views ▸ Today* (phones only), and a saved
-    view that holds Today opens it. A link that names a filter (`?project=`) never opens a saved Today:
-    the sender's link wins and opens the calendar with the filter, and a person with no Planner Resource
-    who last used Today gets the planner on every device, not the note.
+    last, or Today the first time", then "Remember the last-used tab per device: my phone keeps its own
+    last tab (Today the first time) and my desktop keeps its own. Filters can stay per person."). A bare
+    `/project-planner` opens **the tab this device last showed**: week, month, crew, heatmap or Today,
+    remembered in the browser's own storage under a key that carries the signed-in user (two people on one
+    browser do not cross) and written whenever one of those screens opens. A blocked or empty store is a
+    first visit. **First visit on a device:** a phone opens Today, scheduler or technician alike; a desktop
+    opens the default calendar view (the week, as before). **Filters and colors stay per person**, in the
+    server's "last used" row as before; that row no longer holds a tab (the page stopped saving one, and
+    the landing never reads an older row's), so `planner_views_prefs` and its list of views are
+    unchanged, and "Save view as…" still carries its view as an explicit choice. The redirect replaces the
+    bare address, so Back leaves the planner; it waits for the saved filters to load. A link that names a
+    filter (the Project form's *Open in Project Planner*) opens this device's calendar tab with that
+    filter, as it always has, and never opens Today, which has no filters to show. Someone with planner access but no Planner
+    Resource, sent to Today by the landing, gets the planner they always had, not a note. Today is also
+    reachable from *Planner* and *More ▸ Views ▸ Today* (phones only).
   - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
     Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
     Back).

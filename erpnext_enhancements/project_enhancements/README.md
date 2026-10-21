@@ -1592,14 +1592,19 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
     Each day is a `day_entry` plus `today_items`: `order`, `leave_by` (`leave_by_clock`: arrival less the
     drive, `route_slots`' arithmetic), `miles`, `weather`, `equipment` (`engine.read_equipment`), `day_of`
     (`task_day_of`: working days, so a weekend is not a day) and `fountain_move`.
-  - **Landing (Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the first time"):** a
-    bare `/project-planner` restores the saved last-used view through `p6c_before_route`, and `today` is
-    one of the saved views (`planner_views_prefs.SCHEMA["project"]["view"]`, `PP6C.schema.view`): saved
-    without a date, so it always opens on today's date, and restored on a desktop as on a phone. With
-    nothing saved, `p8_landing` replaces the bare address with Today on a phone (`max-width: 767px`); a
-    desktop's first time is the week view as before. It runs after the saved views have loaded and only
-    when no saved view names a screen, by `replace_route`, so Back leaves the planner as before. A link
-    that names a filter (`?project=`, the Project form's *Open in Project Planner*) is left alone.
+  - **Landing (Nik, 2026-10-21: "remember the last-used tab per device ... filters can stay per person"):**
+    a bare `/project-planner` opens the tab **this device** last showed (`p8_landing`, called from
+    `p6c_before_route` once the person's saved filters are in): week, month, crew, heatmap or Today, kept
+    in the browser's storage under `ee_project_planner_tab:<user>` (`p8_tab`, `p8_remember_tab`, written
+    in `handle_route`); a blocked or empty store is a first visit. First visit: a phone opens Today
+    (schedulers and technicians alike), a desktop the default view (the week). The server's "last used"
+    row keeps the person's **filters and colors** only: `p6c_state(true)` no longer saves a `view`, and the
+    landing never reads one (an old row's is ignored), so `planner_views_prefs.SCHEMA["project"]["view"]`
+    is unchanged (named views from *Save view as…* still carry their view). The redirect uses
+    `replace_route`, so Back leaves the planner. A link that names a filter (`?project=`, the Project
+    form's *Open in Project Planner*) opens the device's calendar tab with it, and never Today (it has no
+    filters to show). Someone the planner
+    does not list, sent to Today by the landing, gets the planner (`p8_landed`, `render_today`).
   - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
     Forward step through them. *Block my time* takes none of its own (the kit's form owns its Back).
   - **Tests:** `tests/test_planner_today.py` and `scripts/test_planner_today.js` (the real page script

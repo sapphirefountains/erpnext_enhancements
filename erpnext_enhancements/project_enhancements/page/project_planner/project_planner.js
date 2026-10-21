@@ -258,6 +258,7 @@ class ProjectPlanner {
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
+		this.p8_remember_tab(target.view);
 		if (target.view === PP3B.my_week) {
 			this.show_my_week(target.anchor);
 			return;
@@ -3791,16 +3792,21 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // blocking one's own time: no drag, no save_task, no "running late" buttons (declined), and a Fountain
 // Move task is marked Move and stays the Maintenance Planner's to schedule.
 //
-// The landing rule (§4.4; Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the
-// first time"): a bare /project-planner opens the screen the person used last, which the planner
-// restores from their saved "last used" view (p6c_before_route) on every device, and Today is one of
-// those screens: "today" is in the saved-view list on the server and here, saved like the others and
-// without a date (it always opens on today's date), so a person whose last screen was Today lands on
-// Today, desktop included. On a phone with nothing saved yet, Today is the first-time landing, for
-// scheduler and technician alike; a desktop's first time stays the week view. Either redirect replaces
-// the bare address (replace_route), so Back leaves the planner as it would have, and Today's own is
-// chosen only after the saved views are in. A link that names a filter (?project=, the Project form's
-// "Open in Project Planner") is the sender's, and is left alone.
+// The landing rule (§4.4; Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the first
+// time", then "remember the last-used tab per device: my phone keeps its own last tab, Today the first
+// time, and my desktop keeps its own. Filters can stay per person"). The TAB (week, month, crew,
+// heatmap, Today) is remembered per device, in this browser's own storage (load_pref, save_pref) under a key that carries the
+// signed-in user (two people sharing a browser do not cross), written whenever one of those screens
+// opens (p8_remember_tab) and read for a bare /project-planner (p8_landing). A store that is blocked,
+// empty or throws is a first visit on that device. The FILTERS and colors stay per person, in the
+// server's "last used" row as before; that row no longer carries a view, and the landing never reads
+// one (an older row's is ignored). First visit: a phone opens Today, a desktop the default calendar view
+// (the week). The redirect replaces the bare address (replace_route), so Back leaves the planner as it
+// would have; a link that names a filter (?project=, the Project form's "Open in Project Planner") is
+// the sender's: it opens a calendar view with that filter (this device's tab, never Today, which has no
+// filters to show), so Today is never restored over it; and someone the planner does not list,
+// sent to Today by the landing, gets the planner instead of its note. Named saved views ("Save view
+// as…") still carry their view.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
 // (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
@@ -3809,6 +3815,9 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 
 const PP8 = {
 	view: "today",
+	// The screens whose tab a device remembers; the Lookahead (P5) joins them.
+	tabs: ["week", "month", "crew", "heatmap", "today"],
+	tab_pref: "ee_project_planner_tab",
 };
 
 // "07:35" -> "7:35 am"; "25:10" (past midnight, as routing.fmt_clock counts it) -> "1:10 am".
@@ -3883,19 +3892,39 @@ const PP8_METHODS = {
 		return !!(window.matchMedia && window.matchMedia(`(max-width: ${PPTB.phone_max}px)`).matches);
 	},
 
-	// True when it took a bare /project-planner on a phone over for Today (see the block comment). Called
-	// only once the person's saved views are in and name no screen to return to.
+	// This device's remembered tab for the signed-in user, or null (a first visit on this device, a
+	// store that is blocked or throws, a value that is not a tab).
+	p8_tab() {
+		const user = (frappe.session && frappe.session.user) || "";
+		const tab = this.load_pref(`${PP8.tab_pref}:${user}`, "");
+		return PP8.tabs.includes(tab) ? tab : null;
+	},
+
+	p8_remember_tab(view) {
+		if (!PP8.tabs.includes(view)) return;
+		const user = (frappe.session && frappe.session.user) || "";
+		this.save_pref(`${PP8.tab_pref}:${user}`, view);
+	},
+
+	// True when it took a bare /project-planner over for this device's tab (see the block comment).
+	// Called only once the person's saved views (their filters) are in.
 	p8_landing() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== PP.route || route[1]) return false;
 		const opts = frappe.route_options || {};
-		if (PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return false;
-		if (!this.p8_is_phone()) return false;
-		// Replace, never push: Back from Today leaves the planner, as it would have from the bare URL.
+		const link = PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key));
+		let tab = this.p8_tab() || (this.p8_is_phone() ? PP8.view : PP6C.default_view);
+		// A link that names a filter is the sender's: it opens a calendar view with that filter, the device's
+		// own when it has one, but never Today, which has no filters to show.
+		if (link && tab === PP8.view) tab = PP6C.default_view;
+		// The default view is what the bare address already opens.
+		if (tab === PP6C.default_view) return false;
+		// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
 		frappe.route_flags = frappe.route_flags || {};
 		frappe.route_flags.replace_route = true;
-		this.p8_landed = true;
-		frappe.set_route(PP.route, PP8.view, frappe.datetime.get_today());
+		// Sent to Today unasked: someone the planner does not list gets the planner (render_today).
+		if (tab === PP8.view) this.p8_landed = true;
+		frappe.set_route(PP.route, tab, frappe.datetime.get_today());
 		return true;
 	},
 
@@ -7448,7 +7477,7 @@ const PP6C = {
 	legend_limit: 40,
 	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["project"].
 	schema: {
-		view: ["enum", ["week", "month", "crew", "heatmap", "today"]],
+		view: ["enum", ["week", "month", "crew", "heatmap"]],
 		project: ["text"],
 		pm: ["text"],
 		group: ["enum", ["", "Field", "PM", "Design", "Subcontractor"]],
@@ -7476,7 +7505,7 @@ const PP6C = {
 		["pm", "Project manager"],
 		["status", "Status"],
 	],
-	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap", today: "Today" },
+	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap" },
 	none_color: "#94a3b8",
 };
 
@@ -8194,23 +8223,8 @@ const PP6C_METHODS = {
 				p6c.saved_text = JSON.stringify(last);
 			}
 		}
-		const view = last && last.view;
-		// Nothing saved to go back to: a phone opens on Today (P8). A saved Today is restored below, like any
-		// other saved view, on a desktop as on a phone.
-		if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;
-		// A link that names a filter is the sender's: it opens a calendar view with that filter, never a
-		// saved Today, which has no filters to show (P8).
-		const filter_link = PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(frappe.route_options || {}, key));
-		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view) && !(view === PP8.view && filter_link)) {
-			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
-			frappe.route_flags = frappe.route_flags || {};
-			frappe.route_flags.replace_route = true;
-			// A restored Today is a landing like the first-time one: someone the planner does not list gets the planner.
-			if (view === PP8.view) this.p8_landed = true;
-			frappe.set_route(PP.route, view, frappe.datetime.get_today());
-			return true;
-		}
-		return false;
+		// The tab to open on a bare address is this device's (P8, Nik 2026-10-21), not the saved row's.
+		return !route[1] && this.p8_landing();
 	},
 
 	// The page's state as a view. `remembered`: as "last used" (without the Running over chip).
@@ -8226,7 +8240,10 @@ const PP6C_METHODS = {
 			color_by: this.p6c.color_by,
 			color_chosen: !!this.p6c.color_chosen,
 		};
-		if (views.includes(this.view)) state.view = this.view;
+		// "Last used" is the person's filters and colors. The tab they were on is the device's (P8,
+		// p8_remember_tab), so it is not saved in the row that follows them to every device; a named
+		// view ("Save view as…") is an explicit choice and carries its view.
+		if (!remembered && views.includes(this.view)) state.view = this.view;
 		if (!remembered) state.over_only = !!this.over_only;
 		return this.p6c_pick(state);
 	},
@@ -8498,7 +8515,7 @@ const PP6C_METHODS = {
 			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 			return;
 		}
-		if (!PP6C.schema.view[1].includes(this.view) || this.view === PP8.view) {
+		if (!PP6C.schema.view[1].includes(this.view)) {
 			frappe.msgprint(__("Open the week, month, crew or heatmap view to print it."));
 			return;
 		}

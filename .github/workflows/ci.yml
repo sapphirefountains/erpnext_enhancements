@@ -912,8 +912,8 @@ jobs:
       # next (leave-by, miles, equipment, which day of a task), read-only, with today's route and the
       # Maps key for the inline map; distances are miles on screen. Under node, scripts/test_planner_today.js
       # runs the real page script against a model of v16.50's router: a bare /project-planner on a phone
-      # opens the screen used last, or Today the first time (Nik, 2026-10-21; Today is a saved view, undated),
-      # in place so Back leaves the planner, a scheduler no different; a filter link keeps its screen, the day arrows / This week / Planner each take one history
+      # opens the tab this DEVICE showed last, or Today the first time on a phone (Nik, 2026-10-21; filters stay
+      # per person, the tab is not saved on the server), in place so Back leaves the planner; a filter link never lands on Today, the day arrows / This week / Planner each take one history
       # entry, and Block my time is the self-only form. Reuses the Phase 3B harness, so it is unittest,
       # in its own step.
       - name: Project planner Today on the phone (P8)

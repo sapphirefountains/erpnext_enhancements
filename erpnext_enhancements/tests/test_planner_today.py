@@ -19,7 +19,7 @@ What this pins, because each of them fails quietly:
 * **Distances are imperial** on the screen (``mi``, never ``km``); routing stays in km underneath.
 * **The page's rules** (landing, history, Back, Block my time) run in ``scripts/test_planner_today.js``
   against the real page script. This pins the wiring around them: the hooks are where the other suites
-  expect them, Today adds no write, and the landing waits for the saved last-used view (Nik, 2026-10-21: everyone lands on the tab they used last, or Today the first time).
+  expect them, Today adds no write, and the landing opens the tab this DEVICE showed last, or Today the first time on a phone (Nik, 2026-10-21; the tab is per device, the filters per person).
 
 Server tests are bench-free: they reuse ``test_planner_phase3b``'s ``frappe`` stub and the real modules.
 
@@ -343,26 +343,51 @@ class TestThePageScript(unittest.TestCase):
 			"this.init_phase8();",
 			"const today = this.today_target(route);",
 			"this.show_today(target.anchor);",
-			"if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;",
+			"return !route[1] && this.p8_landing();",
+			"this.p8_remember_tab(target.view);",
 			"if (this.$today) this.$today.hide();",
 			"if (this.view === PP8.view) return this.load_today();",
 			"if (mine) this.p8_block(mine.date, mine);",
 		):
 			self.assertEqual(self.code.count(line), 1, line)
 
-	def test_the_landing_waits_for_the_saved_view_and_never_overrides_it(self):
-		"""Nik, 2026-10-21: everyone lands on the tab they used last, or Today the first time."""
+	def test_the_landing_waits_for_the_saved_filters_and_never_reads_a_saved_view(self):
+		"""Nik, 2026-10-21: the tab is per device; the filters stay per person."""
 		body = self.code[self.code.index("\tp6c_before_route() {") :]
 		body = body[: body.index("\n\t},")]
+		# After the person's saved views are in and their filters are applied...
 		hook = body.index("this.p8_landing()")
-		# After the views are in and the last-used state is applied, before the redirect to the last view...
 		self.assertGreater(hook, body.index("if (!p6c.loaded) {"))
 		self.assertGreater(hook, body.index("p6c.restored = true;"))
-		self.assertLess(hook, body.index("view !== PP6C.default_view"))
-		# ...and only when no saved view names a screen to return to.
-		line = next(l for l in body.splitlines() if "this.p8_landing()" in l)
-		self.assertIn("!(view && PP6C.schema.view[1].includes(view))", line)
+		# ...and the server row's view is never read for the landing.
+		self.assertNotIn("last.view", body)
+		self.assertNotIn("PP6C.schema.view", body)
 		self.assertEqual(body.count("this.p8_landing()"), 1)
+
+	def test_the_tab_is_remembered_per_device_and_per_user_never_on_the_server(self):
+		block = self.block
+		self.assertIn('tab_pref: "ee_project_planner_tab"', block)
+		for method in ("p8_tab", "p8_remember_tab"):
+			body = block[block.index(f"\t{method}(") :]
+			body = body[: body.index("\n\t},")]
+			self.assertIn("frappe.session.user", body, method)
+			self.assertRegex(body, r"(load|save)_pref\(`\$\{PP8\.tab_pref\}:\$\{user\}`", method)
+		# load_pref/save_pref wrap the browser store in try/catch: a blocked one is a first visit.
+		for name in ("load_pref", "save_pref"):
+			body = self.code[self.code.index(f"\t{name}(") :]
+			body = body[: body.index("\n\t}")]
+			self.assertIn("catch (e)", body, name)
+		# The person's saved row has no view; only a named view ("Save view as…") carries one.
+		state = self.code[self.code.index("\tp6c_state(remembered) {") :]
+		state = state[: state.index("\n\t},")]
+		self.assertIn("if (!remembered && views.includes(this.view)) state.view = this.view;", state)
+
+	def test_a_link_that_names_a_filter_never_restores_today(self):
+		body = self.block[self.block.index("\tp8_landing() {") :]
+		body = body[: body.index("\n\t},")]
+		self.assertLess(body.index("PP.url_filters.some("), body.index("frappe.set_route("))
+		self.assertIn("if (link && tab === PP8.view) tab = PP6C.default_view;", body)
+		self.assertIn("this.p8_landed = true", body)
 
 	def test_the_landing_does_not_look_at_roles(self):
 		block = self.block
@@ -401,25 +426,17 @@ class TestThePageScript(unittest.TestCase):
 		self.assertIn("self_only: true,", body)
 		self.assertIn("kit.blocks.form(", body)
 
-	def test_today_is_a_remembered_view_on_both_sides(self):
-		"""Nik, 2026-10-21: the tab used last, so Today must be saveable as "last used"."""
-		page = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
-		self.assertTrue(page)
-		page_views = re.findall(r'"([^"]+)"', page.group(1))
-		self.assertIn("today", page_views)
+	def test_today_is_not_in_the_servers_saved_view_list(self):
+		"""The tab is the device's, so the server's list of views a saved row may hold is unchanged."""
 		server = (APP / "api" / "planner_views_prefs.py").read_text(encoding="utf-8")
 		match = re.search(r'"view": \("enum", \(([^)]*)\)\),\n\t\t"project": \("text",\),', server)
 		self.assertTrue(match)
-		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), page_views)
-		self.assertIn('today: "Today"', self.code)
-		# The date is never part of a saved view: Today always opens on today's date.
-		keys = re.search(r'SCHEMA = \{\s*"project": \{(.*?)\n\t\},', server, re.S).group(1)
-		self.assertNotRegex(keys, r'"(date|anchor|day)"')
-
-	def test_print_still_refuses_today(self):
-		body = self.code[self.code.index("\tp6c_print(selection_only) {") :]
-		body = body[: body.index("const win = window.open")]
-		self.assertIn("this.view === PP8.view", body)
+		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), ["week", "month", "crew", "heatmap"])
+		page = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
+		self.assertEqual(re.findall(r'"([^"]+)"', page.group(1)), ["week", "month", "crew", "heatmap"])
+		# The tabs a device remembers are the page's own list, the four plus Today.
+		tabs = re.search(r"tabs: \[(.*?)\]", self.block)
+		self.assertEqual(re.findall(r'"([^"]+)"', tabs.group(1)), ["week", "month", "crew", "heatmap", "today"])
 
 	def test_every_class_it_uses_is_styled(self):
 		css = re.sub(r"/\*.*?\*/", "", PAGE_CSS.read_text(encoding="utf-8"), flags=re.S)
