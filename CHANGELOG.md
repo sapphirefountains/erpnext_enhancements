@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.706.0] - 2026-10-21
+## [1.707.0] - 2026-10-21
 
 ### Added
 - **Today, the phone view of the Project Planner** (P8 of the Planner UX redesign,
