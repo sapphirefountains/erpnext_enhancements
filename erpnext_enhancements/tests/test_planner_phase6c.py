@@ -276,6 +276,19 @@ class TestCleaning(unittest.TestCase):
 		)
 		self.assertEqual(prefs.clean_view("nope", {"view": "week"}), {})
 
+	def test_a_project_view_says_whether_its_color_was_chosen(self):
+		# The page honors a saved Task color ("default", the old default) only when this is set.
+		view = prefs.clean_view("project", {"color_by": "default", "color_chosen": "1"})
+		self.assertEqual(view, {"color_by": "default", "color_chosen": True})
+		self.assertIs(prefs.clean_view("project", {"color_chosen": 0})["color_chosen"], False)
+		# It survives as "last used" and through the stored copy, and the Maintenance Planner has none.
+		self.assertIn("color_chosen", prefs.clean_view("project", {"color_chosen": True}, remembered=True))
+		self.assertNotIn("color_chosen", prefs.clean_view("maintenance", {"color_chosen": True}))
+		prefs.save_last_view("project", json.dumps({"color_by": "default", "color_chosen": True}))
+		self.assertEqual(
+			prefs.get_views("project")["last"], {"color_by": "default", "color_chosen": True}
+		)
+
 	def test_last_used_never_holds_the_running_over_chip(self):
 		self.assertNotIn("over_only", prefs.clean_view("project", {"over_only": True}, remembered=True))
 		self.assertIn("over_only", prefs.clean_view("project", {"over_only": True}))
@@ -1419,6 +1432,7 @@ class TestUnderNode(unittest.TestCase):
 				"foreign": True,
 				"panel": True,
 				"color_by": "pm",
+				"color_chosen": False,
 			},
 		)
 		self.assertIs(pp["state_named"]["over_only"], True)

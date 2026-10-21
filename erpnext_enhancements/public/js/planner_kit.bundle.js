@@ -24,6 +24,8 @@
  *   big_picture                         Phase 6C: card colors, the team capacity strip, saved views, print
  *   toolbar.menu(button, opts) / sheet(opts)  the toolbar's menu buttons (no history entry) and the
  *                                       phone's "Filters and tools" sheet (one, like a drawer)
+ *   toolbar.tabs(container, opts)       the view buttons as a WAI-ARIA tablist (toolbar v2)
+ *   toolbar.sections_to_items(sections) named sections as one menu list (More's Display/Views/Tools/Print)
  *   quiet_call(method, args, opts)      sf_kit's call on its quiet path: a fetch, so frappe shows no
  *                                       dialog; resolves r.message, rejects {status, message,
  *                                       exc_type, session_expired} (docs/app-design-system.md)

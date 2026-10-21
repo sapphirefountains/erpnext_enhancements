@@ -87,6 +87,10 @@ SCHEMA = {
 		"over_only": ("bool",),
 		"panel": ("bool",),
 		"color_by": ("enum", PROJECT_COLOR_MODES),
+		# Whether color_by was picked rather than left at the page's default (Job type, since the planner
+		# UX redesign). An older "last used" view stores "default" (Task color) either way, so the page
+		# honors a saved "default" only when this is set.
+		"color_chosen": ("bool",),
 	},
 	"maintenance": {
 		"view": ("enum", ("month", "week", "crew")),
