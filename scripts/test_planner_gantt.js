@@ -727,6 +727,27 @@ test("The header: the schedule, Publish… and Reset baseline handed to P4, Buil
 	check("no project: the picker alone", planner().ppg_head_html(null).startsWith('<select class="form-control input-sm ppg-project"'), true);
 });
 
+test("Build out ▾ offers the grid and the grid footer's own starting points, each opening the grid first", async () => {
+	const menus = [];
+	const opened = [];
+	const pp = planner({
+		p6b_kit: () => ({ menu: (opts) => menus.push(opts) }),
+		t1_open_build_out: (project, title) => (opened.push([project, title]), (pp.t1 = { grid: { project } }), Promise.resolve()),
+		t3_open_templates: (grid) => opened.push(["template", grid.project]),
+	});
+	pp.ppg_build_menu({ getBoundingClientRect: () => ({ left: 10, bottom: 20 }) }, null);
+	const labels = menus[0].items.map((item) => item.label);
+	check("the grid, then the footer's starting points, never Add row or Create", labels.slice(0, 4), [
+		"Build out grid…",
+		"Start from template…",
+		"Paste a list…",
+		"Copy from project…",
+	]);
+	check("nothing else of the footer", labels.some((label) => /Add row|Create/.test(label)), false);
+	await menus[0].items[1].on_click();
+	check("a template: the grid opens on the project, then the templates", opened, [["PRJ-1", "Riverwalk"], ["template", "PRJ-1"]]);
+});
+
 test("load() asks get_project_gantt for the project, with the drafts and Show all tasks", async () => {
 	const drawn = [];
 	const pp = planner({

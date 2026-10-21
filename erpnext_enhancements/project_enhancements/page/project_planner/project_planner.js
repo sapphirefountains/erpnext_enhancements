@@ -2039,8 +2039,8 @@ class ProjectPlanner {
 			return;
 		}
 		if (this.t1_undo(snap)) return;
-		if (this.ppg_undo(snap)) return; // P6: a link drawn or removed
 		if (this.p6b_undo(snap)) return;
+		if (this.ppg_undo(snap)) return; // P6: a link drawn or removed
 		if (this.as4_undo(snap)) return;
 		const card = this.by_task[snap.task];
 		if (card) {
@@ -13058,23 +13058,24 @@ const PPG_METHODS = {
 		}
 	},
 
-	// Build out ▾: T1's grid in the side panel, opened on the starting point picked.
+	// Build out ▾: T1's grid in the side panel, opened on the starting point picked. The starting points
+	// are the grid footer's own (t1_actions: a template, a pasted list, another project, an AI draft), so
+	// the two lists never differ; Add row and Create belong to a grid already open.
 	ppg_build_menu(el, e) {
 		const state = this.ppg_state();
 		const project = state.project;
 		const title = this.as4_project_title(project);
-		const then = (fn) => () =>
+		const open = (label) => () =>
 			Promise.resolve(this.t1_open_build_out(project, title)).then(() => {
 				const grid = this.t1 && this.t1.grid;
-				if (fn && grid && grid.project === project) fn(grid);
+				if (!label || !grid || grid.project !== project) return;
+				const action = this.t1_actions(grid, 0, 0).find((item) => item.label === label);
+				if (action && action.on_click) action.on_click();
 			});
-		const items = [
-			{ label: __("Build out grid…"), on_click: then(null) },
-			{ label: __("Start from template…"), on_click: then((grid) => this.t3_open_templates(grid)) },
-			{ label: __("Paste a list…"), on_click: then((grid) => this.t1_open_paste_list(grid)) },
-			{ label: __("Copy from project…"), on_click: then((grid) => this.t1_open_copy(grid)) },
-		];
-		if (this.t4_open) items.push({ label: __("AI draft…"), on_click: then((grid) => this.t4_open(grid)) });
+		const starts = this.t1_actions({}, 0, 0).filter((item) => !item.primary && item.label !== __("Add row"));
+		const items = [{ label: __("Build out grid…"), on_click: open(null) }].concat(
+			starts.map((item) => ({ label: item.label, title: item.title, on_click: open(item.label) }))
+		);
 		const kit = this.p6b_kit && this.p6b_kit();
 		if (!kit) {
 			items[0].on_click();
