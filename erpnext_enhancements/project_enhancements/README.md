@@ -1949,8 +1949,14 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   end moved** (`dependent_days`). That covers a move later or earlier and a resize of the right edge;
   a resize of the left edge moves nothing after it. It happens in the same request: one conflict check
   for the lot (`needs_reason` then lists the `moves`), one reason, one notice per person and one Undo.
-  The answer carries `shifted`, `shift_skipped` and `shift_days`. Finished, rental and undated followers
-  stay where they are and are named in an orange alert. **Hold Ctrl (Cmd on a Mac) as the card or its
+  The answer carries `shifted`, `shift_skipped` and `shift_days`. Finished, rental, undated and
+  Fountain Move followers, and those the person cannot change, stay where they are and are named in an
+  orange alert. **The walk only goes on through tasks that move** (`_walk_followers`), so a task that
+  waits on the moved one only through a task that stays, stays too. Tasks past the cap (200, 25 levels)
+  are named. **Working days skip the company's holidays** (its default Holiday List,
+  `_shift_holidays`). **Every follower is checked against every task it waits on**, where those go
+  (`_follower_dependency_lines`). Drafted followers get one batch overbooking check
+  (`_draft_checks`), as warnings. **Hold Ctrl (Cmd on a Mac) as the card or its
   edge is dropped** and just that task moves. A multi-select move does the same through
   `move_many(dependents=1)`. A task that is itself in the selection is moved where it was put, never
   again as a follower. This replaces the old "Shift N tasks that follow?" offer. `shift_successors`
@@ -1990,6 +1996,10 @@ Nik's D8, D10, D11 and D15 (2026-10-21). The page side is the `PPAS` block at th
   for a pencil or firm-up. In those cases `notify` is not sent and the save behaves as before P3. The
   Maintenance Planner asks the same way before `move_visit` (`mpas_with_notify` in its `send()`), once
   for a multi-select move (`mpas_batch`), and never for an Undo (which sends `notify: null`).
+- **Publish keeps a drafted chain on its drafted days.** `_apply_plans` saves drafts furthest first.
+  A push by ERPNext's own reschedule made during the publish is not "changed by someone else"
+  (`since`): the push is undone and the draft applied. A push after a task was saved is put back
+  (`_settle_plans`).
 - **Undo** of a change that moved followers is one `move_many` that puts every task back on its days,
   with the same Notify answer. When the change was more than dates, such as a crew handover with a move
   or a dialog save, the plain Undo's `save_task` then restores the rest of the task.

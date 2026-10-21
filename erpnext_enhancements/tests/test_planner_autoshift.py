@@ -623,6 +623,13 @@ class TestADraftedChainPublishesOnItsDraftedDays(_P4):
 		b = self._stored("TASK-B")
 		self.assertEqual((b["exp_start_date"][:10], b["exp_end_date"][:10]), ("2026-10-29", "2026-10-30"))
 
+	def test_a_reapplied_draft_is_judged_from_where_it_was_drafted_not_from_the_push(self):
+		# Its overlap with A predates the draft, so it is no new conflict: no fallback reason on it.
+		self._draft_chain(("2026-10-26", "2026-10-30"), ("2026-10-28", "2026-10-29"), "2026-10-27")
+		self._erpnext_reschedules("TASK-A", "TASK-B", ("2026-11-03", "2026-11-04"))
+		self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual([c for c in self.frappe.comments if c[0] == "TASK-B"], [])
+
 	def test_someone_elses_change_before_the_publish_is_still_refused(self):
 		self._draft_chain(("2026-10-26", "2026-10-28"), ("2026-10-29", "2026-10-30"), "2026-10-28")
 		self.frappe.docs[("Task", "TASK-B")]["modified"] = "2026-10-08 06:00:00"  # before this publish
@@ -651,6 +658,24 @@ class TestDraftedFollowersWarn(_P4):
 		self.assertIn("Not published yet. Lisa Park: 2026-10-19: Over by 4h", result["warnings"])
 		# One batch: the task and both followers, stored against drafted.
 		self.assertEqual([len(batch) for batch in self.batches], [3, 3])
+
+
+class TestADraftedFollowerAgainstOtherDrafts(_P4):
+	def test_a_predecessors_draft_counts(self):
+		h._task("TASK-A", start="2026-10-12", end="2026-10-14", crew=("RES-1",), project="PRJ-2")
+		h._task("TASK-X", start="2026-10-12", end="2026-10-14", crew=("RES-2",), project="PRJ-2")
+		h._task("TASK-C", start="2026-10-19", end="2026-10-19", crew=("RES-2",), project="PRJ-2")
+		self._depends("TASK-C", "TASK-A")
+		self._depends("TASK-C", "TASK-X")
+		self.api.save_task("TASK-X", BASE, end="2026-10-19", draft="auto")  # X drafted to run on
+		# A's right edge one day earlier: C follows to Friday, before X's DRAFTED end (stored: Wed).
+		result = self.api.save_task(
+			"TASK-A", BASE, start="2026-10-12", end="2026-10-13", draft="auto", dependents=1
+		)
+		self.assertEqual([m["to"] for m in result["shifted"]], ["2026-10-16"])
+		self.assertEqual(
+			result["conflicts"]["Dependencies"], ["Starts before TASK-X (Subject TASK-X) ends on 2026-10-19"]
+		)
 
 
 class TestEveryFollowerAgainstItsOtherPredecessors(_P4):

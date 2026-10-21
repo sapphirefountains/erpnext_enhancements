@@ -19,13 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - a drag later or earlier moves them by the same amount;
     - a resize of the right edge moves them by its change;
     - a resize of the left edge moves nothing after it.
+  - **Working days** are Monday to Friday, minus the company's holidays from its default Holiday
+    List. A shift across Thanksgiving lands where the crew can work.
   - **One request.** Everything is in one conflict check for the lot (`needs_reason` lists the
     `moves`), with one reason, one notice per person and one Undo.
   - **Ctrl (Cmd on a Mac) held as you drop moves just that one task.**
   - A multi-select move does the same through `planner_actions.move_many(dependents=1)`. A task in
-    the selection is never moved a second time as a follower.
-  - Finished, rental, undated and Fountain Move followers stay where they are, and the page names
-    them.
+    the selection is never moved a second time as a follower. When two selected tasks reach the same
+    follower, the nearer one, downstream, carries it with its own shift.
+  - **Which followers stay.** Finished, rental, undated and Fountain Move followers stay where they
+    are, and so do tasks the person moving cannot change. The page names each one. The walk only
+    goes on through tasks that move: a task that waits on the moved one only through a task that
+    stays, stays too.
+  - **Past the cap** of 200 followers or 25 levels, the tasks are named, never silently dropped.
+  - **Every follower is checked against every task it waits on**, wherever those go: one that now
+    starts before another of its predecessors ends gets a "Starts before …" line. Live, that asks
+    for the reason. Drafted, it is a warning, checked against the other drafts on the schedule.
+  - **Drafted followers warn.** Their new overbooking comes from one batch check for the lot and is
+    shown as a warning. A draft never asks for a reason.
   - This replaces the "Shift N tasks that follow?" offer. `shift_successors` is still an endpoint.
 - **A Draft schedule drafts every write** (Nik's D8). The page now sends `draft="auto"` on
   `save_task`, `add_crew`, `swap_crew` and `move_many`, unless *Hold all my changes* is on. The
@@ -80,13 +91,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Moving earlier**, that left the copy in hand stale, so the save raised "changed since you
     opened it" and the whole move rolled back.
   - **Moving later**, the follower moved twice.
-  - `_save_planned` now reloads a task saved since it was loaded and gives it its planned dates.
-    `_settle` then puts back any follower pushed after it was saved, nearest first. `move_many` uses
-    both.
+  - `_save_planned` now reloads a task saved since it was loaded and gives it its planned dates
+    and pencil flag. `_settle` then puts back any follower pushed after it was saved, nearest first.
+    `move_many` uses both.
+- **A drafted chain publishes on its drafted days.** Publish used to save the drafts in the order
+  they were made, task first. ERPNext's own reschedule then pushed each drafted follower by calendar
+  days, and the follower's draft failed as "Changed by someone else". The project stayed Draft. This
+  was the main flow on the 651 Draft projects.
+  - Publish now saves the drafts furthest first.
+  - A push made during the publish is not "someone else": that draft is applied from the days it
+    was drafted from.
+  - A task pushed after it was published is put back.
+  - A change by someone else before the publish is still refused.
 
 ### Notes
 - **Still live on a Draft schedule:** Split, Copy week and the Overdue tray's actions, including
   dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
+- **Behavior change:** `move_many` now checks every task it moves against the tasks it waits on,
+  as `save_task` always has. A multi-select move earlier past a predecessor asks for a reason, even
+  with Ctrl/⌘ held.
+- **Follow-ups:**
+  - The page's own "Move by: working days" for a selection still counts Monday to Friday only; it
+    has no holiday data.
+  - `_downstream_first` walks each selected task's followers to order a large selection. That is
+    fine at today's sizes.
 - **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
   still pushes that dependent by calendar days, as it always did.
 - Tests: `tests/test_planner_autoshift.py` (its own CI step) covers the server on the Phase 3B

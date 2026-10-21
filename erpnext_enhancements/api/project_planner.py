@@ -1684,18 +1684,19 @@ def _is_move_job(project, cache):
 	return cache[project]
 
 
-def _follower_problem(doc, auto=False, drafting=False, move_job=False):
+def _follower_problem(doc, auto=False, drafting=False, move_job=False, writable=True):
 	"""Why a task that follows cannot move with the one in hand, or None. ``move_job``: it is a
 	Fountain Move's. ``auto``: a follower in a project whose schedule says otherwise (drafted when
 	this write is live, or the reverse) is left where it is; moving it belongs to its own project's
-	schedule. A task the caller cannot change is left where it is too, rather than failing the move."""
+	schedule. A task the caller cannot change (``writable`` False, asked once by the caller) is left
+	where it is too, rather than failing the move."""
 	if move_job:
 		return _("It is a Fountain Move: move it on the Maintenance Planner.")
 	if doc.get("status") in engine.FINISHED_STATUSES:
 		return _("It is {0}.").format(doc.get("status"))
 	if doc.get("custom_rental_booking"):
 		return _("Its dates follow Rental Booking {0}.").format(doc.get("custom_rental_booking"))
-	if not frappe.has_permission("Task", "write", doc=doc.get("name")):
+	if not writable:
 		return _("You cannot change it.")
 	if not engine.task_span(_state(doc)):
 		return _("It has no dates.")
@@ -1780,11 +1781,15 @@ def _follower_docs(root, days, wanted=None, exclude=(), auto=False):
 
 	def accept(name):
 		doc = frappe.get_doc("Task", name)
-		problem = _follower_problem(doc, auto=auto, move_job=_is_move_job(doc.get("project"), jobs))
+		problem = _follower_problem(
+			doc,
+			auto=auto,
+			move_job=_is_move_job(doc.get("project"), jobs),
+			writable=frappe.has_permission("Task", "write", doc=name),
+		)
 		if problem:
 			skipped.append(_skip(doc, problem))
 			return False
-		doc.check_permission("write")  # has_permission said yes; the document's own check agrees
 		docs.append(doc)
 		return True
 
@@ -1977,8 +1982,9 @@ def _draft_followers(root, days, auto=False, exclude=()):
 		# _load refuses a Fountain Move task and a task the caller cannot change, so both are named
 		# here, before a draft context is built for them.
 		move_job = _is_move_job(row.get("project"), jobs)
-		if move_job or not frappe.has_permission("Task", "write", doc=name):
-			skipped.append(_skip(row, _follower_problem(row, move_job=move_job)))
+		writable = frappe.has_permission("Task", "write", doc=name)
+		if move_job or not writable:
+			skipped.append(_skip(row, _follower_problem(row, move_job=move_job, writable=writable)))
 			return False
 		context = _draft_context(name, row.get("modified"), drafts)
 		doc = context["doc"]
@@ -2029,12 +2035,35 @@ def _draft_checks(roots, followers):
 		engine.preview_batch([entry["after"] for entry in everyone]),
 	)
 	moved = {entry["doc"].name: entry["after"][0] for entry in everyone}
+	moved.update(_drafted_predecessors(followers, moved))
 	lines = _follower_dependency_lines(
 		[(entry["doc"], entry["before"], entry["after"][0]) for entry in followers], moved
 	)
 	if lines:
 		conflicts[DEPENDENCY_KEY] = lines
 	return conflicts
+
+
+def _drafted_predecessors(followers, moved):
+	"""``{name: drafted state}`` for the tasks the drafted ``followers`` wait on that this request does
+	not move but a draft on the planner does (the caller's, or another scheduler's on a Draft
+	schedule): a draft is checked against the drafted schedule, not only the stored one."""
+	waits = {
+		row.get("task")
+		for entry in followers
+		for row in (entry["doc"].get("depends_on") or [])
+		if row.get("task") and row.get("task") not in moved
+	}
+	if not waits:
+		return {}
+	out = {}
+	rows, _duplicates = _draft_rows()
+	for row in rows:
+		if row.get("task") in waits and not is_new_row(row):
+			doc, problem = _drafted_doc(row)
+			if not problem:
+				out[row.get("task")] = _state(doc)
+	return out
 
 
 def _merge_info(result, conflicts):
@@ -3744,15 +3773,17 @@ def _publish_one(plan, reason, since=None):
 
 	``since`` (P4): when this publish began. A task saved after that was saved by this publish,
 	by ERPNext's own ``reschedule_dependent_tasks`` from a task published before it (a drafted
-	follower that still overlaps it), not by someone else: its draft is applied over the push."""
+	follower that still overlaps it), not by someone else: the push is undone (the task back on the
+	days it had when drafted, ``plan["before"]``) and its draft applied, so its own checks compare
+	the draft with what was drafted from, not with the push."""
 	log, mark = _quiet_message_log()
 	frappe.db.savepoint("planner_publish")
 	try:
 		doc = frappe.get_doc("Task", plan["name"])
-		if not same_moment(plan["row"].get("base_modified"), doc.modified) and not _saved_since(
-			doc.modified, since
-		):
-			return "failed", _("Changed by someone else since you drafted it.")
+		if not same_moment(plan["row"].get("base_modified"), doc.modified):
+			if not _saved_since(doc.modified, since):
+				return "failed", _("Changed by someone else since you drafted it.")
+			doc.update({field: plan["before"][0].get(field) for field in DATE_FIELDS})
 		result = _apply(doc, reason=reason, **plan["kwargs"])
 	except Exception as exc:
 		frappe.db.rollback(save_point="planner_publish")
@@ -3799,9 +3830,19 @@ def _settle_plans(saved):
 		stored = frappe.db.get_value("Task", plan["name"], "modified")
 		if stored is None or same_moment(stored, result.get("modified")):
 			continue
-		doc = frappe.get_doc("Task", plan["name"])
-		doc.update({field: plan["after"][0].get(field) for field in DATE_FIELDS})
-		_save(doc)
+		frappe.db.savepoint("planner_settle")
+		try:
+			doc = frappe.get_doc("Task", plan["name"])
+			doc.update({field: plan["after"][0].get(field) for field in DATE_FIELDS})
+			_save(doc)
+		except Exception:
+			# It stays where ERPNext's push put it; everything else published.
+			frappe.db.rollback(save_point="planner_settle")
+			frappe.log_error(
+				title="Project Planner: a published task could not be put back on its drafted days",
+				message=frappe.get_traceback(),
+			)
+			continue
 		result["modified"] = str(doc.modified)
 
 
