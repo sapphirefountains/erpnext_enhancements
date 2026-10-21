@@ -141,6 +141,9 @@ class _P4(h._Base):
 			if doctype == "Task" and isinstance(field, str):
 				row = self._stored(name)
 				return row.get(field) if row else None
+			if doctype == "Task" and isinstance(field, list | tuple):
+				row = self._stored(name)
+				return h._Doc({key: row.get(key) for key in field}) if row else None
 			return stub_get_value(doctype, name, field, *args, **kwargs)
 
 		def reload(doc):
@@ -351,6 +354,29 @@ class TestTheTasksThatFollowMoveWithIt(_P4):
 			(task2["exp_start_date"], task2["exp_end_date"]), ("2026-10-09 08:00:00", "2026-10-13 17:00:00")
 		)
 		self.assertEqual(self._saves().count("TASK-2"), 1)  # ours, once, after ERPNext's
+
+	def _fountain_move(self):
+		self.frappe.docs[("Task", "TASK-3")]["project"] = "PRJ-MOVE"
+		moves = sys.modules["erpnext_enhancements.project_enhancements.fountain_move_jobs"]
+		patch = mock.patch.object(moves, "move_projects", lambda names: {"PRJ-MOVE"})
+		patch.start()
+		self.addCleanup(patch.stop)
+
+	def test_a_fountain_move_follower_is_left_to_the_maintenance_planner(self):
+		self._fountain_move()
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", dependents=1)
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2"])
+		self.assertIn("Fountain Move", result["shift_skipped"][0]["reason"])
+
+	def test_a_drafted_move_names_a_fountain_move_follower_rather_than_failing(self):
+		# _load refuses a Fountain Move task, so it is named before a draft context is built for it.
+		self._fountain_move()
+		for name in ("TASK-1", "TASK-2"):
+			self.frappe.docs[("Task", name)]["project"] = "PRJ-2"  # a Draft schedule
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", draft="auto", dependents=1)
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2"])
+		self.assertEqual(result["shift_skipped"][0]["task"], "TASK-3")
+		self.assertIn("Fountain Move", result["shift_skipped"][0]["reason"])
 
 	def test_a_crew_handover_with_a_move_carries_them_too(self):
 		result = self.api.swap_crew("TASK-1", "RES-1", "RES-2", BASE, date="2026-10-13", dependents=1)
