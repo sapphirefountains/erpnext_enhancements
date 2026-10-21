@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.709.0] - 2026-10-21
+
+### Added
+- **The Gantt tab: one project from start to finish** (P6 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.3; Nik's D1 "Gantt: phases + deps", D5, D8, D10 and D14).
+  - **Where.** `/desk/project-planner/gantt/<project>`, the second of the planner's tabs. A bare
+    `/gantt` offers a project picker. The tab opens the Project filter's project, else the one this
+    device opened last (remembered per signed-in user). Each project opened is a history entry, so Back
+    and Forward step through them; the zoom and a collapsed phase are not.
+  - **What it draws.** The app's own DHTMLX widget (the one the Project form's Schedule tab and the
+    Projects Dashboard use), fed by the planner's read, `api/planner_gantt.get_project_gantt`: the
+    project's tasks as planner cards, phase and crew work only unless More ▸ Display ▸ Show all tasks
+    (D6), drafts included (another scheduler's named). Groups are the tree, phases first in phase order,
+    and collapse. A bar shows its days and crew; a draft is dashed, a pencil hatched, finished work faded
+    and fixed. Undated work sits under *Not scheduled* at the bottom, so a Build out's new rows show at
+    once. The baseline (P3, D5) is a thin grey bar under each bar.
+  - **Every edit is the planner's.** A drag or a resize goes through the page's own `commit()`, exactly
+    as on the Calendar and the Lookahead: the reason prompt, Undo, the conflict check, P4's auto-draft
+    on a Draft schedule, the tasks that follow (both ways, by working days; hold Ctrl or ⌘ to move just
+    the one) and "Notify crew?". A past day asks first.
+  - **Link by drag.** Drag from the dot at a bar's end onto another bar and that task waits for it
+    (`planner_actions.add_dependency`, finish to start). When it would start before the other ends, the
+    planner asks for a reason, as a move does, and the reason goes on the timeline. Double-click a link
+    to remove it (`remove_dependency`). Both have Undo. A drafted new task, a phase, another project's
+    task, the task itself and a loop are refused with a sentence.
+  - **The header** carries the project's schedule (D8): ◐ *Draft schedule* with **Publish…** (P4's own
+    confirmation), or ● *Published* and when, the baseline's date, **Reset baseline** (P4's own, which
+    names how many tasks change first), **Build out ▾** (T1's grid in the side panel, opened on the grid,
+    a template, a pasted list, another project or an AI draft), and Day / Week / Month. The widget's
+    export (print, PNG, SVG, CSV, Excel, a date range) stays. A click opens the task in the side panel,
+    a right-click the planner's menu, and More ▸ Print ▸ Print this view lists the project's tasks.
+- **Embed hooks on the Gantt widget** (`public/js/gantt_widget/gantt_widget.js`), for a host with rules
+  of its own. All optional; without them the widget is unchanged.
+  - `fetch(server_config)` supplies the rows instead of `get_gantt_data`. The CSV and Excel export still
+    asks the server, with the config's doctype, fields and filters.
+  - `on_write(task, changes, {mode, event})` replaces `update_gantt_row` for a drag. A refusal puts the
+    bar back, and a refresh asked for meanwhile waits for it.
+  - `on_link` makes a link drawn by drag; DHTMLX never adds one itself, and only finish-to-start is
+    offered. Without `on_link`, links cannot be drawn at all (before, `editable.links` let one be drawn
+    that was never saved).
+  - `on_link_dblclick` and `on_task_context` take over DHTMLX's "delete link?" confirm and the
+    right-click.
+  - `baseline: true` draws `ee_baseline_start`/`_end` as a grey bar under each task. A row with
+    `ee_readonly` is never editable.
+- `api/planner_gantt.py` (`get_project_gantt`, GET) and `planner_actions.add_dependency` /
+  `remove_dependency` (POST).
+
+### Changed
+- **Project ▸ View ▸ Open in Project Planner opens that project's Gantt**, with the project as the
+  planner's filter too, so the Lookahead filtered to it is one tab away. Before, it opened the Lookahead
+  (on the week the project starts, for one that had not started).
+
+### Notes
+- **DHTMLX Standard has no task layers.** `gantt.addTaskLayer` is in the MIT bundle's source, but its
+  init mixes the layers API into the instance and then deletes `addTaskLayer` and `addLinkLayer`
+  straight away. Checked in a browser harness against the vendored v10.0.0 on 2026-10-21: `typeof
+  gantt.addTaskLayer` is `"undefined"` before and after `init()`. So the baseline is drawn by the task
+  type's renderer (`config.type_renderers`, core): it appends a bar to the task's own node, offset from
+  the task's start, which the line does not clip.
+- **A drag in the Week or Month zoom snaps to whole days**, not to a week or a month: `round_dnd_dates`
+  is off and `time_step` is a day, and the page rounds what arrives to the nearest midnight.
+- **The Gantt reads one project's Task rows itself**, never `get_planner`: a job runs for months and
+  `get_planner` computes everyone's days over 100 days at most. So a card here carries no `booked`
+  hours (nothing spread them over days), and a conflict shows when a save asks for a reason, as it
+  does everywhere.
+- **A link saves the task with ERPNext's own `reschedule_dependent_tasks` held back**
+  (`flags.ignore_reschedule`): no date changes, and that push is by calendar days (P4's merge blocker).
+  A link is not drafted on a Draft schedule; it tells nobody and moves nothing. The task's Draft rows
+  drafted against it as it was move on to the save, so they do not read as changed by someone else.
+- No patch, fixture or data change.
+
 ## [1.708.0] - 2026-10-21
 
 ### Added

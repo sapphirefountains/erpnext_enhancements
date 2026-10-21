@@ -78,6 +78,14 @@
  *     on_task_click: (id, task) => {},      // optional; composite ids are
  *                                           //   prefixed — route via
  *                                           //   task.ref_doctype/ref_name
+ *     // An embed with its own data and write path (the Project Planner's
+ *     // Gantt tab, P6) supplies these; see "EMBED HOOKS" below.
+ *     fetch: (server_config) => Promise,    // rows in get_gantt_data's shape
+ *     on_write: (task, changes, info) => Promise,  // replaces update_gantt_row
+ *     on_link: ({source, target, type}) => Promise, // a link drawn by drag
+ *     on_link_dblclick: (link, source, target) => {},
+ *     on_task_context: (id, task, event) => {},     // right-click on a row
+ *     baseline: true,                       // grey bar from ee_baseline_start/end
  *   });
  *   w.ready.then(...); w.refresh(); w.destroy();
  *   w.set_zoom("week");                     // quarter_day|half_day|day|week|month
@@ -124,6 +132,31 @@
  * pre-drag state is snapshotted and restored if the write is refused.
  * Re-mounting onto a container that already hosts a widget destroys the old
  * instance first, so callers may simply mount again on every form refresh.
+ *
+ * EMBED HOOKS (P6 of the planner UX redesign). A host whose rows and writes
+ * have rules of their own supplies them instead of the generic endpoints:
+ *   - `fetch(server_config)` resolves the rows (`{tasks, links, meta}`, the
+ *     shape get_gantt_data answers) on every refresh. Export to CSV/XLSX still
+ *     goes to export_gantt_data with the config's doctype/fields/filters.
+ *   - `on_write(task, changes, info)` replaces update_gantt_row for a drag.
+ *     `changes` is what update_gantt_row takes (`start`/`end` in wire format,
+ *     end exclusive, or `progress`); `info` is `{mode, event}` (the drop's
+ *     pointer event, for a held Ctrl/⌘). It resolves `{status: "success"}`
+ *     to keep the bar, or anything else to put it back (`message` shown).
+ *   - `on_link({source, target, type})` makes a link drawn from a bar's end
+ *     dot onto another bar; dhtmlx never adds it itself, so a refused link
+ *     never shows, and an accepted one arrives with the next refresh. Only
+ *     finish-to-start ("0") is offered. Without on_link, links cannot be drawn.
+ *   - `on_link_dblclick(link, source, target)` takes over dhtmlx's own
+ *     "delete link?" confirm, so removing one goes through the host too.
+ *   - `on_task_context(id, task, event)` opens the host's menu on a row.
+ *   - `baseline: true` draws a thin grey bar under each task from its
+ *     `ee_baseline_start` / `ee_baseline_end` (inclusive YYYY-MM-DD). Not by
+ *     gantt.addTaskLayer: the Standard build mixes the layers API in and then
+ *     deletes it again (verified in a browser harness, 2026-10-21: typeof
+ *     addTaskLayer is "undefined" before and after init), so the bar is added
+ *     to the task's own node by a type renderer (`config.type_renderers`, core).
+ *   - A row with `ee_readonly` is never editable, whatever the server says.
  */
 frappe.provide("erpnext_enhancements.gantt");
 
@@ -484,7 +517,8 @@ frappe.provide("erpnext_enhancements.gantt");
 			g.config.drag_move = !!edit.dates;
 			g.config.drag_resize = !!edit.dates;
 			g.config.drag_progress = !!edit.progress;
-			g.config.drag_links = !!edit.links;
+			// A drawn link is only ever kept through the host (EMBED HOOKS).
+			g.config.drag_links = !!(edit.links && this.config.on_link);
 			g.config.details_on_dblclick = false; // no built-in lightbox
 			g.config.date_format = "%Y-%m-%d %H:%i";
 			// Lazy branches. DHTMLX's own dynamic loading (config.branch_loading
@@ -554,11 +588,16 @@ frappe.provide("erpnext_enhancements.gantt");
 			g.templates.rightside_text = (start, end, task) =>
 				label_fits(start, end, task) ? "" : task.text;
 
+			if (this.config.baseline) {
+				this._init_baseline(g);
+			}
+
 			Object.assign(g.config, this.config.gantt || {});
 			Object.assign(g.templates, this.config.templates || {});
 			if (this.config.zoom && ZOOM_PRESETS[this.config.zoom]) {
 				g.config.scales = ZOOM_PRESETS[this.config.zoom];
 			}
+			this._init_embed_events(g);
 
 			if (this.config.on_task_click) {
 				g.attachEvent("onTaskClick", (id, e) => {
@@ -591,8 +630,8 @@ frappe.provide("erpnext_enhancements.gantt");
 					};
 					return true;
 				});
-				g.attachEvent("onAfterTaskDrag", (id, mode) => {
-					this._commit_drag(id, mode);
+				g.attachEvent("onAfterTaskDrag", (id, mode, e) => {
+					this._commit_drag(id, mode, e);
 					return true;
 				});
 			}
@@ -615,6 +654,106 @@ frappe.provide("erpnext_enhancements.gantt");
 
 			g.init(this.chart_el);
 			await this.refresh();
+		}
+
+		/**
+		 * The baseline: a thin bar under each task from `ee_baseline_start` to
+		 * `ee_baseline_end` (inclusive days), appended to the task's own node by
+		 * the task type's renderer (see EMBED HOOKS for why not addTaskLayer).
+		 * The task line does not clip (its content does), so the bar may start
+		 * before the task and end after it. Its offset is measured from the
+		 * task's start as drawn, so it stays on the baseline's days while the
+		 * task is dragged. The bar is shortened to leave the row room for it.
+		 */
+		_init_baseline(g) {
+			const row = g.config.row_height || 36;
+			g.config.bar_height = Math.max(12, row - 16);
+			g.config.type_renderers = g.config.type_renderers || {};
+			g.config.type_renderers[g.config.types.task] = (task, render_default) => {
+				const node = render_default(task);
+				const start = str_to_date(`${task.ee_baseline_start || ""} 00:00`);
+				const last = str_to_date(`${task.ee_baseline_end || task.ee_baseline_start || ""} 00:00`);
+				if (!node || !start || !last || !task.start_date) {
+					return node;
+				}
+				const end = new Date(last.getTime() + DAY_MS);
+				const left = g.posFromDate(start) - g.posFromDate(task.start_date);
+				const width = Math.max(g.posFromDate(end) - g.posFromDate(start), 2);
+				const bar = document.createElement("div");
+				bar.className = "ee-gantt-baseline";
+				bar.style.left = `${Math.round(left)}px`;
+				bar.style.width = `${Math.round(width)}px`;
+				bar.style.top = `${g.config.bar_height + 3}px`;
+				bar.setAttribute("aria-hidden", "true");
+				node.appendChild(bar);
+				return node;
+			};
+		}
+
+		/** The host's link, link-removal and right-click hooks (EMBED HOOKS). */
+		_init_embed_events(g) {
+			if (this.config.on_link) {
+				g.attachEvent("onBeforeLinkAdd", (id, link) => {
+					this._commit_link(link);
+					return false; // the next refresh brings an accepted link in
+				});
+			}
+			if (this.config.on_link_dblclick) {
+				g.attachEvent("onLinkDblClick", (id) => {
+					const link = g.isLinkExists(id) ? g.getLink(id) : null;
+					if (link) {
+						const task = (tid) => (g.isTaskExists(tid) ? g.getTask(tid) : null);
+						this.config.on_link_dblclick(link, task(link.source), task(link.target));
+					}
+					return false; // never dhtmlx's own delete confirm
+				});
+			}
+			if (this.config.on_task_context) {
+				g.attachEvent("onContextMenu", (id, link_id, e) => {
+					if (!id || !g.isTaskExists(id)) {
+						return true;
+					}
+					this.config.on_task_context(id, g.getTask(id), e);
+					return false; // dhtmlx then prevents the browser's own menu
+				});
+			}
+		}
+
+		/** A link drawn by drag, handed to the host. Finish-to-start only. */
+		async _commit_link(link) {
+			const g = this.gantt;
+			if (!g || this.destroyed || !link) {
+				return;
+			}
+			if (String(link.type) !== String(g.config.links.finish_to_start)) {
+				frappe.show_alert(
+					{ message: __("Draw a link from the end of one bar to the start of the next."), indicator: "orange" },
+					6
+				);
+				return;
+			}
+			const task = (id) => (g.isTaskExists(id) ? g.getTask(id) : null);
+			const source = task(link.source);
+			const target = task(link.target);
+			if (!source || !target) {
+				return;
+			}
+			this._edits_in_flight += 1;
+			try {
+				await this.config.on_link({ source, target, type: link.type });
+			} catch (e) {
+				// the host has shown its own message
+			} finally {
+				this._settle_edit();
+			}
+		}
+
+		_settle_edit() {
+			this._edits_in_flight -= 1;
+			if (this._refresh_pending && this._edits_in_flight === 0) {
+				this._refresh_pending = false;
+				this.refresh();
+			}
 		}
 
 		// ------------------------------------------------------------------
@@ -1110,10 +1249,13 @@ frappe.provide("erpnext_enhancements.gantt");
 			// Overlapping refreshes: only the latest requested may render, or a
 			// slow earlier response would overwrite a newer one on arrival.
 			const seq = (this._refresh_seq = (this._refresh_seq || 0) + 1);
-			const r = await frappe.call({
-				method: "erpnext_enhancements.api.gantt.get_gantt_data",
-				args: { config: this._server_config() },
-			});
+			// An embed with its own rows (EMBED HOOKS) answers in get_gantt_data's shape.
+			const r = this.config.fetch
+				? { message: await this.config.fetch(this._server_config()) }
+				: await frappe.call({
+						method: "erpnext_enhancements.api.gantt.get_gantt_data",
+						args: { config: this._server_config() },
+					});
 			if (this.destroyed || seq !== this._refresh_seq) {
 				return;
 			}
@@ -1241,7 +1383,13 @@ frappe.provide("erpnext_enhancements.gantt");
 			}
 			const can_write = (data.meta && data.meta.can_write) || {};
 			(data.tasks || []).forEach((task) => {
-				if (task.ee_placeholder || task.type === "project" || !task.ref_doctype || !task.ref_name) {
+				if (
+					task.ee_placeholder ||
+					task.ee_readonly ||
+					task.type === "project" ||
+					!task.ref_doctype ||
+					!task.ref_name
+				) {
 					return;
 				}
 				if (can_write[task.ref_doctype]) {
@@ -1255,7 +1403,7 @@ frappe.provide("erpnext_enhancements.gantt");
 		 * mutates the task in place before onAfterTaskDrag), so this is an
 		 * optimistic update: on refusal the pre-drag snapshot is restored.
 		 */
-		async _commit_drag(id, mode) {
+		async _commit_drag(id, mode, event) {
 			const snapshot = this._drag_snapshot;
 			this._drag_snapshot = null;
 			if (!this.gantt || this.destroyed || !this.gantt.isTaskExists(id)) {
@@ -1290,16 +1438,19 @@ frappe.provide("erpnext_enhancements.gantt");
 
 			this._edits_in_flight += 1;
 			try {
-				const r = await frappe.call({
-					method: "erpnext_enhancements.api.gantt.update_gantt_row",
-					args: {
-						config: this._server_config(),
-						ref_doctype: task.ref_doctype,
-						ref_name: task.ref_name,
-						changes: changes,
-						modified: task.ee_modified || null,
-					},
-				});
+				// The host's write path, when it has one (EMBED HOOKS).
+				const r = this.config.on_write
+					? { message: await this.config.on_write(task, changes, { mode, event }) }
+					: await frappe.call({
+							method: "erpnext_enhancements.api.gantt.update_gantt_row",
+							args: {
+								config: this._server_config(),
+								ref_doctype: task.ref_doctype,
+								ref_name: task.ref_name,
+								changes: changes,
+								modified: task.ee_modified || null,
+							},
+						});
 				const result = (r && r.message) || {};
 				if (result.status === "success") {
 					task.ee_modified = result.modified;
@@ -1316,11 +1467,7 @@ frappe.provide("erpnext_enhancements.gantt");
 				// a throw (permission, validation) surfaces its own message
 				rollback(null);
 			} finally {
-				this._edits_in_flight -= 1;
-				if (this._refresh_pending) {
-					this._refresh_pending = false;
-					this.refresh();
-				}
+				this._settle_edit();
 			}
 		}
 

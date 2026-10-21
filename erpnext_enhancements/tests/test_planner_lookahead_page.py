@@ -112,7 +112,8 @@ class TestTheBlock(unittest.TestCase):
 		# Week and Month are the Calendar tab's switch, never tabs themselves.
 		self.assertIn('.attr("data-ppl-cal", view)', code)
 		self.assertIn("this.tb.tabs.sync(this.ppl_tab());", code)
-		self.assertEqual(code.count("this.ppl_sync_tabs();"), 3)
+		# load, load_heatmap, load_utilization, and P6's ppg_load.
+		self.assertEqual(code.count("this.ppl_sync_tabs();"), 4)
 
 	def test_the_home_tab_and_last_used(self):
 		code = self.code
