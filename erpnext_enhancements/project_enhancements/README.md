@@ -44,7 +44,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `planner_templates.py` | T3 (v1.608.0): the Build out grid's phase templates and task bundles, pure (no frappe): a Project Template's template Tasks as phases or a bundle (`structure_from_tasks`), and as grid rows with `row:N` dependencies (`template_rows`: in order inside a group, PM aside; 500 and 600 side by side; 800 never); the seed's checks; the checklist as a Quill tick list | `template_rows`, `structure_from_tasks`, `checklist_html`, `seed_problems` | `api/planner_templates.py`, `api/planner_actions.build_out_tasks`, `patches/seed_planner_templates.py` |
 | `data/planner_templates.json` | T3 seed: the DOC-0041 phase template (100–700) and six starter bundles, derived by `scripts/derive_planner_templates.py` | — | `patches/seed_planner_templates.py` |
 | `task_templates.py` | Phase 5 (v1.583.0): a Task made from a template Task gets the template's hours, crew size, qualifications and the two flags wherever it has none of its own; never overwrites, never copies the crew | `copy_template_planning` | `doc_events["Task"]["before_insert"]` |
-| `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
+| `doctype/planner_draft_change/` | One pending change per planner per task (Project Planner) or per maintenance visit (Maintenance Planner, v1.601.0: `visit`, with `task` no longer mandatory and `validate` requiring exactly one) while in draft mode; Publish applies them, Discard drops them, each planner its own, except on a project whose schedule is still Draft, where they are the project's and every scheduler shares them (P3) | `PlannerDraftChange` | `api/project_planner`, `api/maintenance_drafts` |
 | `doctype/planner_block/` | Phase 6D: time one person is not available on one day ("unavailable 2–4 pm", "shop day"), all day or from–to, with a private note. `PBLK-.YYYY.-.#####`. Desk: System Manager writes, the schedulers read; every planner write goes through `api/planner_blocks` (own-or-scheduler) | `PlannerBlock` (validates the person is active and the times, warns on a past day; C4: a block with `source` "Google" is read-only to everyone but the import) | read by the engine (never the note) |
 | `doctype/planner_day_note/` | Phase 6D: a note on a day for the whole crew or one group ("Shop meeting 7 am"), optionally about a project. `PDN-.YYYY.-.#####`. The schedulers write it | `PlannerDayNote` | `api/planner_blocks`; both planners, My week, the digests |
 | `doctype/planner_conflict_ack/` | Phase 6D: a conflict kept on purpose from the Conflict center, with its reason and a fingerprint of what was kept. `PCA-.YYYY.-.#####`, never edited | `PlannerConflictAck` | `api/planner_conflicts.acknowledge_conflict` |
@@ -1903,6 +1903,39 @@ Server side it is one endpoint, [`api/planner_ai_draft.draft_task_breakdown`](..
 - **Gate**: the planner roles, Task create, Project read, customer jobs only. **Model**: the app's
   `api/gemini.py` client, so its `MODEL_ID`; usage is an AI Model Usage row under `planner_task_breakdown`.
 - Tests: `tests/test_planner_ai_draft.py` (own `ci.yml` step; fake Gemini; nothing real is called).
+
+### Per-project publish and baseline (P3, v1.702.0, Planner UX redesign)
+
+The back end for Nik's D5, D8 and D11 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.8). The page
+that calls it is P4; until then nothing on screen changes.
+
+- **Each project's schedule is *Draft* or *Published*** (`Project.custom_schedule_status`, read-only,
+  `no_copy`, default Draft; a blank reads Draft). `get_planner`'s `projects` carry it as `schedule:
+  {status, published_on, baseline_set_on}`. The patch `mark_project_schedule_states` published the
+  projects that already had dated work with someone on it (10 of 661 on production) and left the
+  rest Draft.
+- **A Draft project's drafts are shared.** `_draft_rows` also returns the other schedulers' rows on a
+  Draft project (`shared: True`, raw SQL after the role gate), so one person's draft schedule is the
+  project's: anyone can see it, edit it (the row is saved with `ignore_permissions`, since
+  `if_owner` would refuse it) and publish it. On a Published project rows stay private, as before.
+- **`publish_drafts(project=)` / `discard_drafts(project=)`** act on one project's rows, shared ones
+  included. Without `project` both act on the caller's own rows only, exactly as before.
+- **`publish_project_schedule(project, reason=None)`** publishes that project's drafts (one conflict
+  check, one reason, one notice per person), then marks it Published and **sets the baseline**: each
+  dated task's first and last day into `Task.custom_baseline_start` / `custom_baseline_end`, copied
+  **once** (a task that has a baseline keeps it). A publish that asks for a reason changes nothing;
+  one that leaves a draft behind (skipped or failed) keeps the project Draft so it can be finished.
+- **`reset_baseline(project, dry_run=0)`** re-copies every task's days now (an undated task loses
+  its baseline); `dry_run=1` only counts them, for the confirmation. It is also the first *Set
+  baseline* of a project the patch published without one.
+- **Baseline and state writes are `db.set_value(update_modified=False)`**, never a save: copying a
+  date is not an edit, so no assignment sync, change alert, calendar sync or ERPNext reschedule, and
+  no planner with the task open is told it changed. The project's timeline gets a comment.
+- **"Notify crew?"**: `save_task`, `add_crew`, `swap_crew`, `shift_successors`,
+  `planner_actions.move_many` and `maintenance_planner.move_visit` take `notify`. Unset changes
+  nothing. `1` sends the publish notice to the people whose bookings moved (never the editor); `0`
+  tells nobody; `auto` is Notify when the change touches today or the 13 days after it, before or
+  after the move. Any answer holds back that save's 48-hour change alert.
 
 ## Calendar sync (C2, v1.604.0)
 
