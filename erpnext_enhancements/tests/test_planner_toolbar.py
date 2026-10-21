@@ -18,7 +18,8 @@ BOTH planners, so the bar is the same structure on every screen. It is still one
 * **alert chips** (Conflicts, Running over and Overdue on the Project Planner; Conflicts and Overdue
   on the Maintenance Planner), a count and a word, there only above zero, each opening what its
   button opened;
-* **the draft strip** under the bar while Draft mode is on, with the existing Publish and Discard;
+* **the draft strip** under the bar while "Hold all my changes" is on, with the existing Publish and
+  Discard (P4 adds a line per project with drafts; scripts/test_planner_autoshift.js tests those);
 * **Utilization** as the Project Planner's fifth view, a route like the others;
 * **tips in the "?" help**, and the color keys in Display;
 * on a phone, **one compact bar** and a "Filters and tools" sheet that takes the kit's one history

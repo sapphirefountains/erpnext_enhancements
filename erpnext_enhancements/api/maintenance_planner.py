@@ -1066,10 +1066,17 @@ def _apply_visit_notified(doc, notify, reason=None, **edits):
 	before and after (``maintenance_drafts.engine_row``) goes to that planner's own publish notice,
 	so a live move with Notify tells people exactly what publishing the same draft would."""
 	from erpnext_enhancements.api import maintenance_drafts
-	from erpnext_enhancements.api.project_planner import notify_choice
 
 	before = maintenance_drafts.engine_row(doc)
-	result = _apply_visit(doc, reason=reason, **edits)
+	return _with_visit_notice(doc, notify, before, _apply_visit(doc, reason=reason, **edits))
+
+
+def _with_visit_notice(doc, notify, before, result):
+	"""``result`` with ``"notified"``: the visit's publish notice to the people it moved when the
+	"Notify crew?" answer is Notify (``before`` is ``maintenance_drafts.engine_row`` before the edit)."""
+	from erpnext_enhancements.api import maintenance_drafts
+	from erpnext_enhancements.api.project_planner import notify_choice
+
 	if result.get("needs_reason"):
 		return result
 	after = maintenance_drafts.engine_row(doc)
@@ -1218,7 +1225,7 @@ def _edit_visit(
 
 
 @frappe.whitelist(methods=["POST"])
-def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
+def add_crew(record, user, modified=None, reason=None, hours=None, notify=None, draft=0):
 	"""Add a helper to a visit's crew (P1.8): a technician chip dropped on a visit.
 
 	Refuses a finished or started visit, and a projected one (it is not a record yet:
@@ -1232,6 +1239,9 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	:func:`_apply_visit`, which checks the new person's day exactly as this does.
 
 	Returns the same shape as :func:`move_visit`.
+
+	``notify`` (P4, the page's "Notify crew?" answer): as :func:`move_visit` takes it. Unset, nothing
+	changes; ignored with ``draft=1``.
 	"""
 	_require_planner()
 	if "|" in str(record or "") or not frappe.db.exists("Sapphire Maintenance Record", record):
@@ -1267,6 +1277,10 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	if user == doc.get("technician") or user in [entry["user"] for entry in current]:
 		return _visit_result(doc, [])
 
+	from erpnext_enhancements.api import maintenance_drafts
+	from erpnext_enhancements.api.maintenance_drafts import _given
+
+	before = maintenance_drafts.engine_row(doc) if _given(notify) is not None else None
 	set_crew(doc, [*current, {"user": user, "hours": hours}])
 	conflicts = {}
 	if doc.get("scheduled_visit_date"):
@@ -1281,7 +1295,7 @@ def add_crew(record, user, modified=None, reason=None, hours=None, draft=0):
 	result = _visit_result(doc, warnings)
 	if conflicts:
 		result["conflicts"] = conflicts
-	return result
+	return result if before is None else _with_visit_notice(doc, notify, before, result)
 
 
 def _refuse_finished(doc):

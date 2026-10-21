@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.705.0] - 2026-10-21
+
+### Added
+- **Moving a task moves the tasks that follow it, later or earlier** (P4 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md`; Nik's D10 and D15 of 2026-10-21).
+  - **What moves, and by how much.** A drag, a resize, a dialog's dates, *Next free day*, a booked
+    suggestion and *Tap to move* now send `dependents=1` on `save_task` and `swap_crew`. The server
+    moves every open, dated task that waits on the moved one, directly or through others. Each moves
+    by the **working days the task's end moved**:
+    - a drag later or earlier moves them by the same amount;
+    - a resize of the right edge moves them by its change;
+    - a resize of the left edge moves nothing after it.
+  - **Working days** are Monday to Friday, minus the company's holidays from its default Holiday
+    List. A shift across Thanksgiving lands where the crew can work.
+  - **One request.** Everything is in one conflict check for the lot (`needs_reason` lists the
+    `moves`), with one reason, one notice per person and one Undo.
+  - **Ctrl (Cmd on a Mac) held as you drop moves just that one task.**
+  - A multi-select move does the same through `planner_actions.move_many(dependents=1)`. A task in
+    the selection is never moved a second time as a follower. When two selected tasks reach the same
+    follower, the nearer one, downstream, carries it with its own shift.
+  - **Which followers stay.** Finished, rental, undated and Fountain Move followers stay where they
+    are, and so do tasks the person moving cannot change. The page names each one. The walk only
+    goes on through tasks that move: a task that waits on the moved one only through a task that
+    stays, stays too.
+  - **Past the cap** of 200 followers or 25 levels, the tasks are named, never silently dropped.
+  - **Every follower is checked against every task it waits on**, wherever those go: one that now
+    starts before another of its predecessors ends gets a "Starts before …" line. Live, that asks
+    for the reason. Drafted, it is a warning, checked against the other drafts on the schedule.
+  - **Drafted followers warn.** Their new overbooking comes from one batch check for the lot and is
+    shown as a warning. A draft never asks for a reason.
+  - This replaces the "Shift N tasks that follow?" offer. `shift_successors` is still an endpoint.
+- **A Draft schedule drafts every write** (Nik's D8). The page now sends `draft="auto"` on
+  `save_task`, `add_crew`, `swap_crew` and `move_many`, unless *Hold all my changes* is on. The
+  server drafts a task whose project schedule is Draft (blank counts as Draft) and saves the rest.
+  `move_many` splits one batch between the two, and followers are drafted along.
+  - A follower in a project whose schedule says otherwise is left where it is. A draft never moves a
+    published schedule, and a live save never reaches into a Draft one.
+  - Quick add, duplicate, build out and the AI draft are drafted on a Draft schedule's project.
+  - The planner now always reads with the drafts. Another scheduler's draft shows as "Draft ·
+    Clegg" (`drafted_by`), and `drafts.projects` counts the drafts per project, out-of-date ones
+    included.
+- **A line per project with drafts in the strip under the toolbar.**
+  - A Draft schedule's line offers *Publish…*. After a confirmation, it runs
+    `publish_project_schedule`, which sets the baseline and tells each person once, and asks for a
+    reason when one is needed.
+  - Its *Discard* says how many of the drafts are other people's.
+  - A published project with held changes offers *Publish* (`publish_drafts(project=)`) and
+    *Discard*.
+  - The project peek offers *Publish schedule…* and *Set baseline…* / *Reset baseline…*. A reset
+    does a dry run first, then a confirmation that names how many tasks change.
+- **"Notify crew?"** (Nik's D11), on both planners. On a published schedule, a change to the dates
+  or crew of a task somebody is on asks once per gesture, however many tasks it moves. That includes
+  the crews of the tasks that follow, on screen.
+  - **Notify is the default** when the change touches today through the 14th day, counting the old
+    days as much as the new. It is the primary button and has the focus, so Enter takes it. Past
+    the 14th day, Don't notify is the default.
+  - **Esc puts the change back.**
+  - The answer goes as `notify=1` or `0`, and Undo sends the same answer again.
+  - **Nothing is asked** on a Draft schedule, while the hold is on, for a task nobody is on, or for
+    a pencil.
+  - On the Maintenance Planner, `move_visit` asks the same way. `add_crew` (a technician chip
+    dropped on a visit) asks too, and the server's `add_crew` now takes `notify`. A multi-select
+    move asks once for all of its visits.
+
+### Changed
+- **The board-wide switch is called "Hold all my changes" everywhere** (Nik, 2026-10-21). That is
+  the menu, the strip ("Holding your changes: N not published yet") and the toast. "Draft" now
+  means only a project's Draft schedule.
+- **Every active customer job is published on this deploy** (patch `publish_active_job_schedules`;
+  Nik, 2026-10-21: "Keep Draft/Published as designed; publish the 47 active Draft jobs before P4
+  merges"). P4 drafts every write to a Draft project, so this runs first, after P3's
+  `mark_project_schedule_states`.
+  - **The rule:** `status` Active, a customer job by the planner's own rule
+    (`crew_availability.planner_job_sql` / `is_planner_job`, so it cannot drift), and a schedule that
+    is not Published.
+  - **Measured on production on 2026-10-21, read-only: 47 projects**, all Draft, none blank. That is
+    Service 33 (PRJ-00775, the Fountain Move, among them), Design 8, Events 5 and Build 1: PRJ-00119, PRJ-00127, PRJ-00134, PRJ-00136, PRJ-00179, PRJ-00183, PRJ-00228, PRJ-00262, PRJ-00280, PRJ-00316, PRJ-00385, PRJ-00408, PRJ-00443, PRJ-00446, PRJ-00459, PRJ-00469, PRJ-00471, PRJ-00500, PRJ-00581, PRJ-00599, PRJ-00600, PRJ-00608, PRJ-00614, PRJ-00617, PRJ-00694, PRJ-00695, PRJ-00696, PRJ-00701, PRJ-00703, PRJ-00705, PRJ-00710, PRJ-00713, PRJ-00715, PRJ-00717, PRJ-00740, PRJ-00741, PRJ-00744, PRJ-00753, PRJ-00756, PRJ-00766, PRJ-00768, PRJ-00769, PRJ-00770, PRJ-00773, PRJ-00774, PRJ-00775, PRJ-00776.
+  - **How it writes:** one raw `UPDATE`, as P3's did, with no save, hooks, `modified` bump or calendar
+    sync.
+  - **Not written:** no baseline and no `custom_schedule_published_on`, as for P3's ten; the first
+    *Set baseline* gives each its baseline.
+  - **Never touched:** a Published project is never set back, and Completed and Canceled projects
+    are left alone. The patch cannot raise and is safe twice.
+  - **New projects still start Draft**, as designed (D8). Their writes are drafts until someone
+    presses *Publish…*.
+- **What today's users will notice.** After this deploy, the 10 projects P3 published and these 47
+  active jobs save live, as before, now with the "Notify crew?" question. Every other project
+  (inactive, completed or not a customer job) is a Draft schedule. A planner edit on one of those is
+  a draft, shown with a dashed outline and a strip line, and it reaches nobody until *Publish…*.
+- **Undo** of a change that moved followers is one `move_many` that puts every task back. When the
+  change was more than dates, the plain Undo's save then restores the rest of the task.
+
+### Fixed
+- **A follower that ERPNext's own reschedule pushed mid-move is put back, and the move no longer
+  fails.** ERPNext's `Task.on_update → reschedule_dependent_tasks` pushes an Open dependent the saved
+  task now overlaps to the day after its end, by the calendar, and saves it. The followers' save
+  order (furthest first when later) leaves it nothing to push. The exception is a dependent that
+  already overlapped the task before it: shifted alike, it still overlaps.
+  - **Moving earlier**, that left the copy in hand stale, so the save raised "changed since you
+    opened it" and the whole move rolled back.
+  - **Moving later**, the follower moved twice.
+  - `_save_planned` now reloads a task saved since it was loaded and gives it its planned dates
+    and pencil flag. `_settle` then puts back any follower pushed after it was saved, nearest first.
+    `move_many` uses both.
+- **A drafted chain publishes on its drafted days.** Publish used to save the drafts in the order
+  they were made, task first. ERPNext's own reschedule then pushed each drafted follower by calendar
+  days, and the follower's draft failed as "Changed by someone else". The project stayed Draft. This
+  was the main flow on the 651 Draft projects.
+  - Publish now saves the drafts furthest first.
+  - A push made during the publish is not "someone else": that draft is applied from the days it
+    was drafted from.
+  - A task pushed after it was published is put back.
+  - A change by someone else before the publish is still refused.
+
+### Notes
+- **Still live on a Draft schedule:** Split, Copy week and the Overdue tray's actions, including
+  dropping an overdue task on a day. They have no draft form yet, and they do not move followers.
+- **Behavior change:** `move_many` now checks every task it moves against the tasks it waits on,
+  as `save_task` always has. A multi-select move earlier past a predecessor asks for a reason, even
+  with Ctrl/⌘ held.
+- **Follow-ups:**
+  - The page's own "Move by: working days" for a selection still counts Monday to Friday only; it
+    has no holiday data.
+  - `_downstream_first` walks each selected task's followers to order a large selection. That is
+    fine at today's sizes.
+- **Ctrl/Cmd cannot stop ERPNext's own push.** A lone task dragged later into its Open dependent
+  still pushes that dependent by calendar days, as it always did.
+- Tests: `tests/test_planner_autoshift.py` (its own CI step) covers the server on the Phase 3B
+  harness, and `scripts/test_planner_autoshift.js` drives both real pages under node.
+
 ## [1.704.0] - 2026-10-21
 
 ### Added

@@ -1813,12 +1813,13 @@ class TestPageSource(unittest.TestCase):
 		)
 
 	def test_the_page_sends_draft_one_for_the_three_creating_calls(self):
-		self.assertIn("this.draft_args()", self._method("p6b_duplicate"))
-		self.assertIn("this.draft_args()", self._method("p6b_quick_add_save"))
+		# P4: each names its project, so a Draft schedule drafts the new task as the hold does.
+		self.assertIn("this.draft_args(card.project)", self._method("p6b_duplicate"))
+		self.assertIn("this.draft_args(values.project)", self._method("p6b_quick_add_save"))
 		# v1.608.0 (T3) builds the arguments first, to add a template's phase checklists.
 		self.assertRegex(
 			self.bare,
-			r"const args = Object\.assign\(\{[^}]*\}, this\.draft_args\(\)\);[^;]*;[^;]*;\s*"
+			r"const args = Object\.assign\(\{[^}]*\}, this\.draft_args\(state\.project\)\);[^;]*;[^;]*;\s*"
 			r'return this\.t1_send\("build_out_tasks", args, \{\}\)',
 		)
 

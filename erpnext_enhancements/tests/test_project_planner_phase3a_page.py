@@ -132,22 +132,15 @@ class TestDependenciesAndQualifications(unittest.TestCase):
 		self.assertNotIn("qualification", _method(code, "ask_reason").lower())
 		self.assertNotIn("qualification_gaps", _method(code, "send"))
 
-	def test_moving_later_offers_to_shift_the_tasks_that_follow(self):
+	def test_moving_a_task_moves_the_tasks_that_follow(self):
+		# P4 (D10, D15) replaced the "Shift N tasks that follow?" offer: the save itself carries
+		# dependents=1, so the server moves them in the same request, later or earlier (one reason, one
+		# Undo). tests/test_planner_autoshift.py and scripts/test_planner_autoshift.js test it in full.
 		code = _code_without_comments()
 		commit = _method(code, "commit")
-		self.assertIn("this.offer_shift(snapshot, method, result)", commit)
-		offer = _method(code, "offer_shift")
-		self.assertIn("result.successors", offer)
-		self.assertIn("Shift {0} tasks that follow", offer)
-		self.assertIn("working days", offer)
-		self.assertIn("frappe.confirm(", offer)
-		self.assertIn("this.shift_successors(", offer)
-		# The shift goes through send(), so a conflict asks for a reason like any other change.
-		self.assertIn('this.send("shift_successors", args)', code)
-		# It is given the successors still to move, so ERPNext's own reschedule is not doubled.
-		self.assertIn("args.tasks = JSON.stringify(names)", code)
-		# Working days skip Saturday and Sunday.
-		self.assertIn("isoWeekday() <= 5", _method(code, "working_days_between"))
+		self.assertIn("this.as4_prepare([this.as4_change(card, method, args)], opts, go)", commit)
+		self.assertNotIn("offer_shift", code)
+		self.assertNotIn('this.send("shift_successors"', code)
 
 
 class TestHeatmap(unittest.TestCase):
@@ -338,7 +331,7 @@ class TestPhase3aConventions(unittest.TestCase):
 		code = _code_without_comments()
 		for method in ("get_heatmap", "get_overdue"):
 			self.assertIn(f"${{PP.api}}.{method}", code)
-		for method in ("shift_successors", "bulk_update", "copy_week"):
+		for method in ("bulk_update", "copy_week"):
 			self.assertRegex(code, rf'this\.send\("{method}"')
 		self.assertNotRegex(code, r"type:\s*[\"']GET[\"']")
 
