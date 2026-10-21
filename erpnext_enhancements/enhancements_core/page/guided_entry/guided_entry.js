@@ -885,7 +885,7 @@ class GuidedEntry {
 		const status = this.kit.header_status(this.flow && this.flow.header, this.values);
 		const key = status ? `${status.tone}|${status.label}|${status.value}` : "";
 		if ($chip.attr("data-key") === key) return;
-		$chip.attr("data-key", key).empty();
+		$chip.attr("data-key", key).removeAttr("title").empty();
 		if (!status) return;
 		$chip.append($('<span class="sr-only"></span>').text(`${status.label}: `));
 		$chip.append(this.sf.chip(__(status.value), status.tone));

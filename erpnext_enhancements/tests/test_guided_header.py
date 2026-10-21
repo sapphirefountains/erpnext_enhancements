@@ -278,6 +278,7 @@ class TestTheShellDrawsThem(unittest.TestCase):
 		self.assertIn("this.attach(files)", drop)
 		self.assertIn('"Please save before attaching."', drop, "the form's own sentence")
 		self.assertIn("$root.off(ns)", drop, "bound once per mount, not once per record")
+		self.assertIn("Array.from(dt.files)", drop, "the event's DataTransfer is emptied once the handler returns")
 		attach = self.tools[self.tools.index("\tattach(dropped) {") :]
 		attach = attach[: attach.index("\n\t}\n")]
 		self.assertIn("files: dropped", attach)

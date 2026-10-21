@@ -329,9 +329,11 @@ export class RecordTools {
 		$root.on(`drop${ns}`, (event) => {
 			$root.removeClass("is-dropping-files");
 			const dt = event.originalEvent && event.originalEvent.dataTransfer;
-			const files = dt && dt.files;
+			// Copied now: a browser empties the event's DataTransfer once the handler returns, and the
+			// uploader may open later (the dialog waits for the history guard).
+			const files = dt && dt.files ? Array.from(dt.files) : [];
 			const verdict = this.ed.kit.files_drop({
-				has_files: !!(files && files.length),
+				has_files: files.length > 0,
 				is_new: !!this.ed.is_new,
 				loaded: !!this.info && this.current(),
 				can_add: this.can_add_file(),
@@ -342,7 +344,7 @@ export class RecordTools {
 			if (verdict === "attach") this.attach(files);
 			else if (verdict === "save") this.sf().toast(__("Please save before attaching."), { tone: "warning", timeout: 5000 });
 			else if (verdict === "wait") this.sf().toast(__("This record's files are still loading. Try again in a moment."), { tone: "warning", timeout: 5000 });
-			else this.sf().toast(__("You cannot attach more files to this record."), { tone: "warning", timeout: 5000 });
+			else this.sf().toast(__("You cannot attach files to this record."), { tone: "warning", timeout: 5000 });
 		});
 	}
 
@@ -377,7 +379,9 @@ export class RecordTools {
 					body: (err && err.message) || "",
 					on_action: retry,
 				});
+				// The files section says so itself: an empty "Attachments" would read as no files.
 				this.$files.empty();
+				if (this.$dock.length) $('<p class="ge-muted ge-tools-none"></p>').text(__("The attachments could not be loaded.")).appendTo(this.$files);
 				this.$activity.empty();
 			});
 	}
@@ -617,7 +621,7 @@ export class RecordTools {
 			write: perms.write,
 			delete: perms.delete,
 		});
-		if (rules.can_add_file({ write: perms.write, max_attachments: meta.max_attachments, count: all.length })) {
+		if (this.can_add_file()) {
 			$('<button type="button" class="sf-btn sf-btn--secondary ge-tools-add"></button>')
 				.text(__("Attach a file"))
 				.on("click", () => this.attach())
