@@ -399,10 +399,25 @@ class TestThePageScript(unittest.TestCase):
 		self.assertIn("self_only: true,", body)
 		self.assertIn("kit.blocks.form(", body)
 
-	def test_today_is_not_a_last_used_view(self):
-		views = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
-		self.assertTrue(views)
-		self.assertNotIn("today", views.group(1))
+	def test_today_is_a_remembered_view_on_both_sides(self):
+		"""Nik, 2026-10-21: the tab used last, so Today must be saveable as "last used"."""
+		page = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
+		self.assertTrue(page)
+		page_views = re.findall(r'"([^"]+)"', page.group(1))
+		self.assertIn("today", page_views)
+		server = (APP / "api" / "planner_views_prefs.py").read_text(encoding="utf-8")
+		match = re.search(r'"view": \("enum", \(([^)]*)\)\),\n\t\t"project": \("text",\),', server)
+		self.assertTrue(match)
+		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), page_views)
+		self.assertIn('today: "Today"', self.code)
+		# The date is never part of a saved view: Today always opens on today's date.
+		keys = re.search(r'SCHEMA = \{\s*"project": \{(.*?)\n\t\},', server, re.S).group(1)
+		self.assertNotRegex(keys, r'"(date|anchor|day)"')
+
+	def test_print_still_refuses_today(self):
+		body = self.code[self.code.index("\tp6c_print(selection_only) {") :]
+		body = body[: body.index("const win = window.open")]
+		self.assertIn("this.view === PP8.view", body)
 
 	def test_every_class_it_uses_is_styled(self):
 		css = re.sub(r"/\*.*?\*/", "", PAGE_CSS.read_text(encoding="utf-8"), flags=re.S)

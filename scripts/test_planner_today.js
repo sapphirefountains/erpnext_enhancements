@@ -687,15 +687,83 @@ test("Today is a screen of its own: the calendar's chrome goes, the day shows", 
 	check("set_mode gives the calendar back", [pp.$toolbar.shown, pp.$grid_wrap.shown, pp.$today.shown], [true, true, false]);
 });
 
-test("Today is not remembered as the last used view", async () => {
+test("Today is remembered as the last used view, without a date", async () => {
 	const desk = makeDesk({ start: "/desk/project-planner/today/2026-10-21" });
 	desk.answers.get_today = ME;
 	const pp = planner(desk);
 	desk.land();
 	await settle();
+	desk.flush();
+	const saves = desk.called("save_last_view");
+	check("one save", saves.length, 1);
+	const saved = JSON.parse(saves[0].args.data);
+	check("the screen", saved.view, "today");
+	check("never a date", Object.keys(saved).filter((key) => /date|anchor|day/.test(key)), []);
+});
+
+test("landing, in sequence: Today first, then the tab used last, wherever that was", async () => {
+	// A stand-in for the planner's per-person store (planner_views_prefs): what save_last_view keeps.
+	const store = { last: null };
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: true });
+	desk.answers.get_today = ME;
+	desk.answers.save_last_view = (args) => {
+		store.last = JSON.parse(args.data);
+		return { last: store.last };
+	};
+	const open = (initial) => {
+		// A new page on the same Desk, as a reload is: the person's saved views come from the store.
+		desk.timers.length = 0;
+		return planner(desk, { p6c: { loaded: true, restored: false, last: store.last, saved_text: null, views: [], color_by: "default" } });
+	};
+	let pp = open();
+	desk.go("project-planner");
+	await settle();
+	check("1. nothing saved: Today, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/today/2026-10-21"]);
+	desk.flush();
+	check("1. and Today is what is saved", store.last.view, "today");
+
+	byText(pp.$today, "Planner").click();
+	await settle();
+	check("2. the week, one entry on", desk.urls().pop(), "/desk/project-planner/week/2026-10-21");
 	pp.p6c_state_soon();
 	desk.flush();
-	check("no save_last_view", desk.called("save_last_view"), []);
+	check("2. the week is what is saved", store.last.view, "week");
+
+	desk.go("project", "PRJ-00001");
+	pp = open();
+	desk.go("project-planner");
+	await settle();
+	check("3. a bare open after the week is the week", [desk.urls().pop(), pp.loads.pop()], ["/desk/project-planner", { view: "week", anchor: "2026-10-21" }]);
+
+	pp.go_today("2026-10-21");
+	await settle();
+	desk.flush();
+	check("4. Today again is saved", store.last.view, "today");
+
+	desk.go("project", "PRJ-00001");
+	pp = open();
+	desk.go("project-planner");
+	await settle();
+	check("4. a bare open after Today is Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
+
+	// Back from the landing leaves the planner: the bare entry was replaced, not kept under it.
+	desk.back();
+	check("5. Back is the page before", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+});
+
+test("landing: a saved Today is restored on a desktop too, and a first time there stays the week", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.answers.get_today = ME;
+	planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
+	desk.go("project-planner");
+	await settle();
+	check("Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
+
+	const desk2 = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp2 = planner(desk2);
+	desk2.go("project-planner");
+	await settle();
+	check("the week, bare", [desk2.urls().pop(), pp2.loads], ["/desk/project-planner", [{ view: "week", anchor: "2026-10-21" }]]);
 });
 
 test("history: the day arrows, This week and Planner each take one entry; Back steps off them", async () => {

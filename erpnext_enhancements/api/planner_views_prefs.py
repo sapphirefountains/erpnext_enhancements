@@ -79,7 +79,9 @@ BOARD_SORT_KEYS = (
 #: own constants are checked against this by tests/test_planner_phase6c.py.
 SCHEMA = {
 	"project": {
-		"view": ("enum", ("week", "month", "crew", "heatmap")),
+		# "today" (P8, the phone's Today) is remembered like the rest, as the screen and not a date: it
+		# always opens on today's date.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "today")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),

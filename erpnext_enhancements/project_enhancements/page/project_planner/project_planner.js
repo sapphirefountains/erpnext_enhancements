@@ -3792,14 +3792,15 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // Move task is marked Move and stays the Maintenance Planner's to schedule.
 //
 // The landing rule (§4.4; Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the
-// first time"): a bare /project-planner on a phone opens the screen the person used last, which the
-// planner already restores from their saved "last used" view (p6c_before_route), and Today when
-// nothing is saved yet, for scheduler and technician alike. Today comes after that restore, never
-// before it, and the address replaces the bare one (replace_route), so Back leaves the planner as it
-// would have. Today itself is not a saved view (the server's list is week, month, crew, heatmap), so a
-// person who opens the week view once lands there from then on; Today is one tap away (Planner / More ▸
-// Views ▸ Today). A link that names a filter (?project=, the Project form's "Open in Project Planner")
-// is the sender's, and is left alone. Desktop is unchanged.
+// first time"): a bare /project-planner opens the screen the person used last, which the planner
+// restores from their saved "last used" view (p6c_before_route) on every device, and Today is one of
+// those screens: "today" is in the saved-view list on the server and here, saved like the others and
+// without a date (it always opens on today's date), so a person whose last screen was Today lands on
+// Today, desktop included. On a phone with nothing saved yet, Today is the first-time landing, for
+// scheduler and technician alike; a desktop's first time stays the week view. Either redirect replaces
+// the bare address (replace_route), so Back leaves the planner as it would have, and Today's own is
+// chosen only after the saved views are in. A link that names a filter (?project=, the Project form's
+// "Open in Project Planner") is the sender's, and is left alone.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
 // (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
@@ -7447,7 +7448,7 @@ const PP6C = {
 	legend_limit: 40,
 	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["project"].
 	schema: {
-		view: ["enum", ["week", "month", "crew", "heatmap"]],
+		view: ["enum", ["week", "month", "crew", "heatmap", "today"]],
 		project: ["text"],
 		pm: ["text"],
 		group: ["enum", ["", "Field", "PM", "Design", "Subcontractor"]],
@@ -7475,7 +7476,7 @@ const PP6C = {
 		["pm", "Project manager"],
 		["status", "Status"],
 	],
-	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap" },
+	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap", today: "Today" },
 	none_color: "#94a3b8",
 };
 
@@ -8194,7 +8195,8 @@ const PP6C_METHODS = {
 			}
 		}
 		const view = last && last.view;
-		// Nothing saved to go back to: a phone opens on Today (P8).
+		// Nothing saved to go back to: a phone opens on Today (P8). A saved Today is restored below, like any
+		// other saved view, on a desktop as on a phone.
 		if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;
 		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
 			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
@@ -8491,7 +8493,7 @@ const PP6C_METHODS = {
 			frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 			return;
 		}
-		if (!PP6C.schema.view[1].includes(this.view)) {
+		if (!PP6C.schema.view[1].includes(this.view) || this.view === PP8.view) {
 			frappe.msgprint(__("Open the week, month, crew or heatmap view to print it."));
 			return;
 		}
