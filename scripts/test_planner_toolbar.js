@@ -2075,7 +2075,7 @@ test("Project Planner: leaving Capacity drops its boxes, and Capacity is not a c
 });
 
 // A saved or last-used view that says heatmap (before P7) is Capacity.
-test("Project Planner: saved views and the last used view that say heatmap open Capacity", () => {
+test("Project Planner: the remembered tab and saved views that say heatmap open Capacity", () => {
 	const env = projectPlanner();
 	const { pp, route, frappe } = env;
 	delete pp.p6c_matching_view;
@@ -2083,17 +2083,21 @@ test("Project Planner: saved views and the last used view that say heatmap open 
 	pp.p6c.restored = true;
 	pp.p6c.loaded = true;
 	const set = route.set;
+	// The tab a bare address opens is this device's (P8): a device that remembered Heatmap or Capacity lands on
+	// Capacity, which is the Crew path with the flag, replaced and never pushed.
 	route.now = ["project-planner"];
-	pp.p6c.last = { view: "heatmap", group: "Field" };
-	check("a bare address restores it as Capacity: replaced, never pushed", [pp.p6c_before_route(), frappe.route_flags && frappe.route_flags.replace_route], [true, true]);
+	pp.p8_is_phone = () => false;
+	pp.p8_tab = () => "heatmap";
+	check("a bare address on a device that remembered the Heatmap: Capacity, replaced, never pushed", [pp.p8_landing(), frappe.route_flags && frappe.route_flags.replace_route], [true, true]);
 	check("on the Crew path with the flag", set[0], ["project-planner", "crew", "2026-10-14", { capacity: "1" }]);
-	pp.p6c.last = { view: "capacity" };
+	pp.p8_tab = () => "capacity";
 	frappe.route_flags = {};
-	pp.p6c_before_route();
-	check("a view saved as Capacity does the same", set[1], ["project-planner", "crew", "2026-10-14", { capacity: "1" }]);
-	pp.p6c.last = { view: "crew" };
-	pp.p6c_before_route();
+	pp.p8_landing();
+	check("a device that remembered Capacity does the same", set[1], ["project-planner", "crew", "2026-10-14", { capacity: "1" }]);
+	pp.p8_tab = () => "crew";
+	pp.p8_landing();
 	check("the Board is a plain Crew route", set[2], ["project-planner", "crew", "2026-10-14"]);
+	check("both screens are tabs a device remembers", vm.runInContext("PP8.tabs", env.ctx).filter((tab) => tab === "capacity" || tab === "heatmap"), ["heatmap", "capacity"]);
 	// Picking a saved view that says heatmap.
 	const went = [];
 	pp.go = (view, anchor) => went.push([view, anchor]);
