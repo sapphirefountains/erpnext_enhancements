@@ -91,8 +91,19 @@ frappe.provide("erpnext_enhancements.crm");
 				fields: ["name"],
 				limit_page_length: 0,
 			}),
+			// Fountain Move jobs: an Opportunity from the /fountain-move intake preselects the
+			// Fountain Move template (the server ticks the project as a move either way). Advisory,
+			// so a failure only leaves the field empty.
+			frappe
+				.xcall("erpnext_enhancements.project_enhancements.fountain_move_jobs.opportunity_defaults", {
+					opportunity: opportunity_name,
+				})
+				.catch(function () {
+					return {};
+				}),
 		]).then(function (results) {
 			const default_users = results[0] || [];
+			const move_defaults = results[2] || {};
 			// The inboxes are not Users, so they are offered alongside the desk
 			// users rather than found among them.
 			const user_options = default_users.concat(
@@ -121,6 +132,10 @@ frappe.provide("erpnext_enhancements.crm");
 						// in, all dated the project's first day. They are loaded per job from
 						// the planner's Build out grid instead.
 						get_query: () => ({ filters: { custom_template_kind: ["is", "not set"] } }),
+						default: move_defaults.template || undefined,
+						description: move_defaults.is_fountain_move
+							? __("This came from the fountain move form, so the project will be a Fountain Move.")
+							: undefined,
 					},
 					{
 						label: __("Users to Notify"),

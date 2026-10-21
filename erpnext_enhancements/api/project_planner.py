@@ -75,7 +75,7 @@ from frappe import _
 from frappe.utils import cint, date_diff, flt, getdate, nowdate
 
 from erpnext_enhancements.project_enhancements import crew_availability as engine
-from erpnext_enhancements.project_enhancements import planner_tracking, routing
+from erpnext_enhancements.project_enhancements import fountain_move_jobs, planner_tracking, routing
 
 # The people who schedule work: projects staff, and maintenance staff who must see project
 # bookings on their technicians. The task reads below are raw SQL, so this set is the gate.
@@ -645,6 +645,7 @@ def get_planner(start, end, draft=0):
 		for row in unscheduled_rows
 	]
 	_phase5_cards(tasks + unscheduled, today)  # Phase 5: outdoor / customer-facing flags, weather
+	fountain_move_jobs.mark_read_only(tasks + unscheduled)  # moved on the Maintenance Planner
 
 	project_names = {card["project"] for card in tasks + unscheduled if card.get("project")}
 	result = {
@@ -887,10 +888,14 @@ def _projects(names):
 # ---------------------------------------------------------------------- writes
 
 
-def _load(task, modified):
+def _load(task, modified, allow_move_job=False):
+	"""The task to edit, permission- and staleness-checked. A Fountain Move task is refused unless
+	``allow_move_job``: those are scheduled on the Maintenance Planner (``fountain_move_jobs``)."""
 	_require_planner()
 	doc = frappe.get_doc("Task", task)
 	doc.check_permission("write")
+	if not allow_move_job:
+		fountain_move_jobs.refuse_on_project_planner(doc)
 	if str(doc.modified) != str(modified):
 		frappe.throw(
 			_("This task was changed by someone else since the planner loaded. Refresh and try again."),
