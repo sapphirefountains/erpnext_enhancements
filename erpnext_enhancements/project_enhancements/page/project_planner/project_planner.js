@@ -1323,10 +1323,12 @@ class ProjectPlanner {
 
 	// The calendar's label for a task: "3 days · 2 people", then the time slot or the hours when they
 	// are set (only 96 of 1,764 open tasks have hours, and a task without them is a full day per person).
+	// Days are working days (Monday to Friday) across the card's span, at least one.
 	duration_text(card) {
 		const parts = [];
 		if (card.start) {
-			const days = card.end && card.end > card.start ? this.p6c_days_between(card.start, card.end) + 1 : 1;
+			const span = card.end && card.end > card.start ? PP6E_PURE.working_between(PP6B_PURE.ymd_add(card.start, -1), card.end) : 0;
+			const days = Math.max(span, 1);
 			parts.push(days === 1 ? __("1 day") : __("{0} days", [days]));
 		}
 		const people = (card.crew || []).length;

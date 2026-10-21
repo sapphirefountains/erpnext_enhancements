@@ -7,18 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.705.0] - 2026-10-21
+## [1.706.0] - 2026-10-21
 
 ### Changed
 - **The Project Planner's calendar labels its work in days** (P11 of the Planner UX redesign,
   `docs/planner-ux-redesign.md` D7). Only 96 of 1,764 open tasks have hours, and a task without
   hours counts as a full day per person, so the week and month cards now read "3 days · 2 people".
-  The count is the calendar days the card spans, the same basis as its "Day X of Y" chip. Hours are
-  added after the people only when the task has them, and a time slot still shows as a range. The
-  card's tooltip and the quick look at a project's card follow the same label. Nothing is
-  recalculated and nothing is stored differently: the Expected hours field is unchanged.
-  - Not yet in this change: the print sheet still labels cards with hours, and the day count is
-    calendar days, not the working days D7 describes.
+  The count is the **working days** (Monday to Friday) across the card's span, using the same
+  weekday helper as "Move by: working days", so a Friday-to-Monday task reads "2 days". A task
+  that falls only on a weekend still reads "1 day". Hours are added after the people only when the
+  task has them, and a time slot still shows as a range. The card's tooltip and the quick look at a
+  project's card follow the same label. Nothing is recalculated and nothing is stored differently:
+  the Expected hours field is unchanged.
+  - Not yet in this change: the print sheet still labels cards with hours (its Hours column and the
+    calendar card line). Printing needs its own small change to keep the column and the crew line
+    readable, so it is a follow-up.
 
 ## [1.704.0] - 2026-10-21
 
