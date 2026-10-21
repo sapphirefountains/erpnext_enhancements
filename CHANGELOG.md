@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.699.2] - 2026-10-21
+
+### Added
+- **Planner UX redesign proposal** (`docs/planner-ux-redesign.md`, R1 of the Planner UX rethink,
+  TASK-2026-02828/02829). Docs only; no code or behavior changes. Nik asked on 2026-10-21 for the
+  Project and Maintenance Planners to "mimic behavior of other Construction Project Management
+  tools". The proposal rests on three things: a read-only production usage audit, a benchmark of
+  construction and field-service schedulers, and five rounds of his decisions.
+  - **The audit.** One person makes about 88% of the planner traffic. Draft changes, personal blocks
+    and saved views have never been used. 96 of 1,764 open tasks have hours. Each customer job carries
+    about 40 template admin tasks, all dated on one day.
+  - **The proposal.** A Lookahead home tab (projects → phases → tasks over three weeks), a per-project
+    Gantt on the existing DHTMLX widget, a Crew board in days with Heatmap and Utilization merged
+    into Capacity, the familiar Calendar, a managers' Overview with exceptions and a weekly summary,
+    and a phone Today view. A schedule publishes per project, which sets its baseline. Dependents
+    shift with their task, and a "Notify crew?" prompt runs after publish.
+  - **What the doc also holds.** A feature-by-feature map of where every current planner feature
+    goes, the small additive back-end needs, and a 12-PR build plan with dependencies, a merge order
+    and model sizes.
+
 ## [1.699.1] - 2026-10-21
 
 ### Fixed

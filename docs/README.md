@@ -25,6 +25,7 @@ anything.
 | [print-design-system.md](print-design-system.md) | The chrome every printed document shares — the pillar stripe, wordmark, display face — how a format composes it, and why the font is a data URI |
 | [data-normalization.md](data-normalization.md) | How phones, emails, websites, addresses and dates are stored and shown (E.164 with a comma extension, `(801) 555-0100 x123`, `10/14/2026 2:00 PM`), the conservative phone rule, the field registry and its exclusions, the dry-run report, and why fields are typed Phone/Email/URL only after the cleanup |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
+| [planner-ux-redesign.md](planner-ux-redesign.md) | The approved redesign of the Project and Maintenance Planners as construction PM tools (2026-10-21): the usage audit, Nik's decisions, the five tabs, phone Today and Overview, where every current feature goes, and the 12-PR build plan. Design only |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
 | [lead-triage-runbook.md](lead-triage-runbook.md) | Why every enquiry starts as a Lead, the Lead → Opportunity qualification path (and what happens to attribution), triage ownership, and the speed-to-lead SLA |
 | [website-capture/](website-capture/) | The WordPress half of attribution: the capture script, the Fluent Forms field mapping, per-platform `utm_id` tagging |
