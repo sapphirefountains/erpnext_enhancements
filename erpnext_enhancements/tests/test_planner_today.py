@@ -427,16 +427,22 @@ class TestThePageScript(unittest.TestCase):
 		self.assertIn("kit.blocks.form(", body)
 
 	def test_today_is_not_in_the_servers_saved_view_list(self):
-		"""The tab is the device's, so the server's list of views a saved row may hold is unchanged."""
+		"""The tab is the device's, so Today is not in the server's list of views a saved row may hold.
+		The Lookahead (P5) is: a named view ("Save view as…") saved on it carries it, as the calendar
+		views' do; Today has no filters to save."""
 		server = (APP / "api" / "planner_views_prefs.py").read_text(encoding="utf-8")
 		match = re.search(r'"view": \("enum", \(([^)]*)\)\),\n\t\t"project": \("text",\),', server)
 		self.assertTrue(match)
-		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), ["week", "month", "crew", "heatmap", "capacity"])
+		views = ["week", "month", "crew", "heatmap", "capacity", "lookahead"]
+		self.assertEqual(re.findall(r'"([^"]+)"', match.group(1)), views)
 		page = re.search(r'view: \["enum", \[(.*?)\]\]', self.code)
-		self.assertEqual(re.findall(r'"([^"]+)"', page.group(1)), ["week", "month", "crew", "heatmap", "capacity"])
-		# The tabs a device remembers are the page's own list, the four plus Capacity (P7; the old "heatmap" is still read) and Today.
+		self.assertEqual(re.findall(r'"([^"]+)"', page.group(1)), views)
+		# The tabs a device remembers are the page's own list: those (Capacity is P7's; the old "heatmap" is
+		# still read), plus Today.
 		tabs = re.search(r"tabs: \[(.*?)\]", self.block)
-		self.assertEqual(re.findall(r'"([^"]+)"', tabs.group(1)), ["week", "month", "crew", "heatmap", "capacity", "today"])
+		self.assertEqual(
+			re.findall(r'"([^"]+)"', tabs.group(1)), ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead"]
+		)
 
 	def test_every_class_it_uses_is_styled(self):
 		css = re.sub(r"/\*.*?\*/", "", PAGE_CSS.read_text(encoding="utf-8"), flags=re.S)

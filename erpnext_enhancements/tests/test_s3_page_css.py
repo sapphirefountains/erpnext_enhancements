@@ -123,9 +123,9 @@ NAMESPACES = {
 	# under the page body (.sales-pipeline-page) or the TV-mode body class.
 	"sales_pipeline": re.compile(r"\.sales-pipeline-[\w-]+"),
 	"plan_a_trip": re.compile(r"\.tp-[\w-]+"),
-	# The planner's own families: pp- for the page, p6b- and p6e- for two of its phases, t1- for
-	# Build out and t4- for AI draft. Short, so TestProjectPlanner checks no other file styles them.
-	"project_planner": re.compile(r"\.(?:pp|p6b|p6e|t1|t4)-[\w-]+"),
+	# The planner's own families: pp- for the page, ppl- for its Lookahead (P5), p6b- and p6e- for two of
+	# its phases, t1- for Build out and t4- for AI draft. Short, so TestProjectPlanner checks no other file styles them.
+	"project_planner": re.compile(r"\.(?:pp|ppl|p6b|p6e|t1|t4)-[\w-]+"),
 	# Every class of the Maintenance Planner is mp-, its phases' too (mp-p6a-, mp-p6b- ...).
 	"maintenance_planner": re.compile(r"\.mp-[\w-]+"),
 	"rental_planner": re.compile(r"\.rp-[\w-]+"),
@@ -716,10 +716,13 @@ class TestProjectPlanner(unittest.TestCase):
 	def test_every_color_it_reads_is_a_token_or_the_data_color(self):
 		"""No Frappe variable at all (--text-muted, --card-bg, --primary ...), not only the palette
 		ones the shared check refuses: every var() is an --sf-* token or one of the two data
-		colors the script sets."""
+		colors the script sets. The one other is a count, not a color: the Lookahead's number of day
+		columns (--ppl-days, P5), which the script sets on its grid."""
 		self.assertTrue(self.css)
 		read = set(re.findall(r"var\(\s*(--[\w-]+)", self.css))
-		self.assertEqual(sorted(v for v in read if not v.startswith("--sf-")), ["--pp-color", "--pp-p6c-c"])
+		self.assertEqual(
+			sorted(v for v in read if not v.startswith("--sf-")), ["--pp-color", "--pp-p6c-c", "--ppl-days"]
+		)
 
 	def test_the_data_colors_go_in_as_the_custom_property_and_the_css_paints_them(self):
 		# A person's dot (Resources available, the heatmap), a crew badge (a card, a quick look's
@@ -887,15 +890,15 @@ class TestProjectPlanner(unittest.TestCase):
 	def test_every_rule_styles_something_the_page_draws(self):
 		"""A rule for a class nothing draws any more is a rename on one side only. pk- classes are
 		planner_kit's (the day notes, a block, a timeline bar), which the page draws through it."""
-		drawn = set(re.findall(r"(?<![\w-])((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
-		styled = set(re.findall(r"\.((?:pp|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
+		drawn = set(re.findall(r"(?<![\w-])((?:pp|ppl|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.raw_js))
+		styled = set(re.findall(r"\.((?:pp|ppl|p6b|p6e|t1|t4)-[a-z0-9_]+(?:-[a-z0-9_]+)*)", self.css))
 		self.assertTrue(styled)
 		self.assertEqual(sorted(styled - drawn), [], "styled, drawn by nothing")
 
 	def test_its_short_prefixes_are_its_own(self):
 		"""t1- and t4- are short enough for another page to pick; this page's CSS is global for the
 		session, so nothing else may style them (the Maintenance Planner's are mp-p6b- and so on)."""
-		selector = re.compile(r"(?<![\w-])\.(?:pp|p6b|p6e|t1|t4)-[a-z]")
+		selector = re.compile(r"(?<![\w-])\.(?:pp|ppl|p6b|p6e|t1|t4)-[a-z]")
 		found = []
 		for path in APP.rglob("*"):
 			if path.suffix not in (".css", ".scss", ".js", ".html") or "tests" in path.parts:

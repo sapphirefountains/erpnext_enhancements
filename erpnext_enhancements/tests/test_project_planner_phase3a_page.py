@@ -160,8 +160,8 @@ class TestHeatmap(unittest.TestCase):
 		# The Heatmap is no tab of its own now: it is Capacity, under the Crew tab's header.
 		self.assertNotIn("[PP.heatmap_view", code)
 		self.assertIn("[PP.capacity_view, __(\"Capacity\")", _method(code, "render_crew_bar"))
-		# It is not one of the three calendar views.
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		# It is not one of the views drawn from cards.
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 
 	def test_the_heatmap_reads_get_heatmap_for_eight_weeks(self):
 		code = _code_without_comments()

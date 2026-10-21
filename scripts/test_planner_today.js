@@ -581,9 +581,10 @@ test("landing: a desktop with nothing remembered opens the default view and reme
 	const pp = planner(desk);
 	desk.go("project-planner");
 	await settle();
-	check("the address is left bare", desk.urls().pop(), "/desk/project-planner");
-	check("the week loads", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
-	check("and is the device's tab", desk.prefs[TAB_KEY], "week");
+	// P5: the default view is the Lookahead, at its own address in place of the bare one.
+	check("the Lookahead's own address, in place", [desk.urls().pop(), desk.urls().length], ["/desk/project-planner/lookahead/2026-10-21", 2]);
+	check("the Lookahead loads", pp.loads, [{ view: "lookahead", anchor: "2026-10-21" }]);
+	check("and is the device's tab", desk.prefs[TAB_KEY], "lookahead");
 	check("no Today request", desk.called("get_today"), []);
 });
 
@@ -604,28 +605,29 @@ test("landing: each device keeps its own tab for the same person", async () => {
 		desk.answers.get_today = ME;
 		serverRow(desk, store);
 	}
-	// The phone: Today the first time, then the week.
+	// The phone: Today the first time, then the planner (P5: the Lookahead).
 	let ph = openPage(phone, store);
 	phone.go("project-planner");
 	await settle();
 	check("phone, first time", phone.urls().pop(), "/desk/project-planner/today/2026-10-21");
 	byText(ph.$today, "Planner").click();
 	await settle();
-	check("phone remembers the week", phone.prefs[TAB_KEY], "week");
-	// The desktop meanwhile: the week by default, then the crew board.
+	// P5: Today's Planner button opens the planner's home tab, the Lookahead.
+	check("phone remembers the Lookahead", phone.prefs[TAB_KEY], "lookahead");
+	// The desktop meanwhile: the Lookahead by default (P5), then the crew board.
 	let dt = openPage(desktop, store);
 	desktop.go("project-planner");
 	await settle();
 	dt.go("crew", "2026-10-21");
 	await settle();
 	check("desktop remembers the crew board", desktop.prefs[TAB_KEY], "crew");
-	check("the phone's tab did not move", phone.prefs[TAB_KEY], "week");
+	check("the phone's tab did not move", phone.prefs[TAB_KEY], "lookahead");
 	// Both come back to their own.
 	phone.go("project", "PRJ-00001");
 	ph = openPage(phone, store);
 	phone.go("project-planner");
 	await settle();
-	check("phone: its week, bare", [phone.urls().pop(), ph.loads.pop().view], ["/desk/project-planner", "week"]);
+	check("phone: its Lookahead", [phone.urls().pop(), ph.loads.pop().view], ["/desk/project-planner/lookahead/2026-10-21", "lookahead"]);
 	desktop.go("project", "PRJ-00001");
 	dt = openPage(desktop, store);
 	desktop.go("project-planner");
@@ -678,7 +680,7 @@ test("landing: an older row's saved view is ignored", async () => {
 	const dt = openPage(desktop, store);
 	desktop.go("project-planner");
 	await settle();
-	check("desktop: the week, not the row's crew", [desktop.urls().pop().split("?")[0], dt.loads.pop().view], ["/desk/project-planner", "week"]);
+	check("desktop: the default Lookahead, not the row's crew", [desktop.urls().pop().split("?")[0], dt.loads.pop().view], ["/desk/project-planner/lookahead/2026-10-21", "lookahead"]);
 });
 
 test("landing: a link that names a filter keeps the device's calendar tab but never opens Today", async () => {
@@ -693,7 +695,8 @@ test("landing: a link that names a filter keeps the device's calendar tab but ne
 		const where = phone ? "phone" : "desktop";
 		check(`${where}, stored Today: the planner opens, not Today`, desk.called("get_today"), []);
 		check(`${where}, stored Today: on the project the link named`, [pp.loads.length, pp.filters().project], [1, "PRJ-00001"]);
-		check(`${where}, stored Today: the address is the link's`, desk.urls().pop(), "/desk/project-planner?project=PRJ-00001");
+		// P5: the default view, the Lookahead, at its own address with the link's filter.
+		check(`${where}, stored Today: the Lookahead with the link's filter`, desk.urls().pop(), "/desk/project-planner/lookahead/2026-10-21?project=PRJ-00001");
 		// A first visit on a phone is Today by default, which a filter link also skips.
 		const first = makeDesk({ start: "/desk/project/PRJ-00001", phone });
 		first.answers.get_today = ME;
@@ -719,9 +722,10 @@ test("landing: someone the planner does not list, on a device whose tab is Today
 		const pp = planner(desk, { p6c: nothingSaved() });
 		desk.go("project-planner");
 		await settle();
-		check(`${phone ? "phone" : "desktop"}: the week, in place of Today`, desk.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/week/2026-10-21"]);
-		check("it loaded", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
-		check("and the tab moves off Today", desk.prefs[TAB_KEY], "week");
+		// P5: the planner they get is its home tab, the Lookahead.
+		check(`${phone ? "phone" : "desktop"}: the Lookahead, in place of Today`, desk.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21"],);
+		check("it loaded", pp.loads, [{ view: "lookahead", anchor: "2026-10-21" }]);
+		check("and the tab moves off Today", desk.prefs[TAB_KEY], "lookahead");
 	}
 	// A deliberate visit to Today by someone unlisted still says why there is nothing.
 	const desk2 = makeDesk({ start: "/desk/project-planner/today/2026-10-21" });
@@ -745,8 +749,49 @@ test("landing: a store that throws is a first visit, and never breaks the page",
 		desk.go("project-planner");
 		await settle();
 		if (phone) check("phone: Today", desk.urls().pop(), "/desk/project-planner/today/2026-10-21");
-		else check("desktop: the week", [desk.urls().pop(), pp.loads.length], ["/desk/project-planner", 1]);
+		else check("desktop: the Lookahead (P5's default)", [desk.urls().pop(), pp.loads.length], ["/desk/project-planner/lookahead/2026-10-21", 1]);
 	}
+});
+
+test("landing (P5): a fresh desktop opens the Lookahead, replacing the bare address once; Back leaves", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("the Lookahead at its own address, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21"]);
+	check("replaced exactly once, loaded once", [desk.replaces, pp.loads.length], [1, 1]);
+	check("remembered as this device's tab", desk.prefs[TAB_KEY], "lookahead");
+	desk.back();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+});
+
+test("landing (P5): a device whose tab is the Lookahead opens it, on a phone too", async () => {
+	for (const phone of [false, true]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		desk.answers.get_today = ME;
+		desk.prefs[TAB_KEY] = "lookahead";
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner");
+		await settle();
+		const where = phone ? "phone" : "desktop";
+		check(`${where}: the Lookahead, replaced once`, [desk.urls().pop(), desk.replaces, pp.loads.map((l) => l.view)], [
+			"/desk/project-planner/lookahead/2026-10-21",
+			1,
+			["lookahead"],
+		]);
+		check(`${where}: no Today request`, desk.called("get_today"), []);
+	}
+});
+
+test("landing (P5): an old row with a view and P5's tabbed flag still loads its filters, and no tab", async () => {
+	const store = { last: { view: "crew", tabbed: true, project: "PRJ-1", group: "Field" } };
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const pp = openPage(desk, store);
+	desk.go("project-planner");
+	await settle();
+	check("the person's filters", [pp.filters().project, pp.filters().group], ["PRJ-1", "Field"]);
+	check("the default Lookahead, not the row's crew", desk.urls().pop().split("?")[0], "/desk/project-planner/lookahead/2026-10-21");
+	check("a saved row no longer carries a view or the flag", ["view", "tabbed"].map((key) => key in pp.p6c_state(true)), [false, false]);
 });
 
 test("landing: two people on one browser keep separate tabs", async () => {
@@ -777,7 +822,7 @@ test("landing: a remembered month view is restored, in place, after the saved vi
 	check("nothing decided while the views are on their way", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner"]);
 	release();
 	await settle();
-	check("then the month", [desk.urls().pop(), desk.replaces], ["/desk/project-planner/month/2026-10-21", 1]);
+	check("then the month (P5: under the Calendar tab)", [desk.urls().pop(), desk.replaces], ["/desk/project-planner/calendar/month/2026-10-21", 1]);
 	desk.back();
 	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
 });
@@ -791,13 +836,13 @@ test("landing: Back and Forward step through the tabs, each its own entry", asyn
 	await settle();
 	pp.go("month", "2026-10-21");
 	await settle();
-	check("three entries on top of the page", desk.urls().slice(1), ["/desk/project-planner", "/desk/project-planner/crew/2026-10-21", "/desk/project-planner/month/2026-10-21"]);
+	check("three entries on top of the page", desk.urls().slice(1), ["/desk/project-planner/lookahead/2026-10-21", "/desk/project-planner/crew/2026-10-21", "/desk/project-planner/calendar/month/2026-10-21"]);
 	desk.back();
 	await settle();
 	check("Back is the crew board", [desk.urls()[desk.index], desk.prefs[TAB_KEY]], ["/desk/project-planner/crew/2026-10-21", "crew"]);
 	desk.forward();
 	await settle();
-	check("Forward is the month", desk.urls()[desk.index], "/desk/project-planner/month/2026-10-21");
+	check("Forward is the month", desk.urls()[desk.index], "/desk/project-planner/calendar/month/2026-10-21");
 });
 
 test("what is saved for the person has no tab in it", async () => {
@@ -868,13 +913,13 @@ test("history: the day arrows, This week and Planner each take one entry; Back s
 	check("and asks for it", desk.called("get_today").pop().args.date, "2026-10-21");
 	byText(pp.$today, "Planner").click();
 	await settle();
-	check("Planner is the week view, one entry", desk.urls().pop(), "/desk/project-planner/week/2026-10-21");
+	check("Planner is the planner's home tab (P5), one entry", desk.urls().pop(), "/desk/project-planner/lookahead/2026-10-21");
 	desk.back();
 	await settle();
 	check("Back is Today", desk.urls()[desk.index], "/desk/project-planner/today/2026-10-21");
 	desk.forward();
 	await settle();
-	check("Forward is the week", desk.urls()[desk.index], "/desk/project-planner/week/2026-10-21");
+	check("Forward is the Lookahead", desk.urls()[desk.index], "/desk/project-planner/lookahead/2026-10-21");
 });
 
 test("Full route opens the route view, one entry", async () => {

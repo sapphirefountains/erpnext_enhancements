@@ -908,6 +908,14 @@ jobs:
       # unittest, in its own step; under node it runs scripts/test_planner_autoshift.js on both pages.
       - name: Project planner tasks that follow, Draft schedules, Notify crew (P4)
         run: python -m unittest erpnext_enhancements.tests.test_planner_autoshift -v
+      # Planner UX redesign P5, the Lookahead (the planner's home tab). get_lookahead must be get_planner
+      # over whole weeks from the site's first weekday (Sunday on prod) with draft and all_tasks passed
+      # through, so the P2 display rule, P3's drafts and the Fountain Move read-only rule hold on it too;
+      # the tree must group projects, phases (nearest phase-numbered ancestor, by number) and tasks in a
+      # stable order, read baselines only once P3's columns exist, and survive the no-task list failing.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Lookahead, server (P5)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead -v
       # Planner UX redesign P8, Today on the phone. get_today is the signed-in person's own day and the
       # next (leave-by, miles, equipment, which day of a task), read-only, with today's route and the
       # Maps key for the inline map; distances are miles on screen. Under node, scripts/test_planner_today.js
@@ -3668,6 +3676,15 @@ jobs:
       # control the old bars had; node is on PATH in this job, so the harness cannot skip here.
       - name: Planner toolbar menus, alert chips, draft strip and phone sheet (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_toolbar -v
+      # Planner UX redesign P5, the Lookahead tab, page side. Its bars are the planner's own cards, so
+      # every write keeps the page's one send() (reason prompt, drafts, Undo, P4's tasks that follow
+      # and "Notify crew?"); its grips sit only where a task starts or ends on screen; a Fountain Move
+      # bar is read-only; record text is escaped; the phone gets a list by day. Runs
+      # scripts/test_planner_lookahead.js against the real page script; its addresses, the old
+      # /week and /month redirects and Back/Forward run in the S5c router harness above. node is on
+      # PATH in this job, so the harness cannot skip here.
+      - name: Project planner Lookahead tab, page (P5, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_lookahead_page -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server

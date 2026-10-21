@@ -1421,9 +1421,9 @@ test("Project Planner: Capacity is the Crew address with ?capacity=, and the old
 	frappe.route_options = null;
 	check("without the flag it is the Board", pp.route_target(), { view: "crew", anchor: "2026-10-01" });
 	route.now = ["project-planner", "utilization", "2026-10-01"];
-	check("the old Utilization address redirects, asking for the table", pp.route_target(), { view: "capacity", anchor: "2026-10-01", redirect: true, capacity: "utilization" });
+	check("the old Utilization address redirects, asking for the table", pp.route_target(), { view: "capacity", anchor: "2026-10-01", capacity_redirect: true, capacity: "utilization" });
 	route.now = ["project-planner", "heatmap", "2026-10-12"];
-	check("the old Heatmap address redirects", pp.route_target(), { view: "capacity", anchor: "2026-10-12", redirect: true, capacity: "1" });
+	check("the old Heatmap address redirects", pp.route_target(), { view: "capacity", anchor: "2026-10-12", capacity_redirect: true, capacity: "1" });
 	route.now = ["project-planner", "crew", "2026-10-01"];
 	frappe.route_options = { capacity: "1" };
 	const steps = [];
@@ -1580,7 +1580,8 @@ test("Project Planner: the view buttons are tabs, and the tab on screen is the s
 	check("every redraw hands the screen's tab to the tablist (Capacity sits under Crew)", tabs, ["crew", "crew"]);
 	const source = fs.readFileSync(PP_JS, "utf8");
 	check("each button names its view for it", source.includes('.attr("data-tb-tab", view)'), true);
-	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.tab_of_view() })'), true);
+	// P5: the tab of the view on screen (week and month are the Calendar tab).
+	check("the kit's tablist is wired when it loads", source.includes('kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.ppl_tab() })'), true);
 });
 
 test("Project Planner: the phone's sheet takes the filters in and gives them back", () => {
@@ -1958,7 +1959,7 @@ test("Project Planner: Capacity's header switches Board and Capacity as routes o
 	pp.view = "week";
 	pp.render_crew_bar();
 	check("the header is only on the Crew tab", pp.$crewbar.nodes[0].style.display, "none");
-	check("Capacity sits under the Crew tab", [pp.tab_of_view("capacity"), pp.tab_of_view("week")], ["crew", "week"]);
+	check("Capacity sits under the Crew tab", [(pp.view = "capacity", pp.ppl_tab()), (pp.view = "week", pp.ppl_tab())], ["crew", "calendar"]);
 });
 
 // A moment with the little the heatmap draws with: parse, clone, add days, format.
@@ -2114,7 +2115,7 @@ test("Project Planner: the remembered tab and saved views that say heatmap open 
 	pp.p6c_state = () => ({ view: "capacity", group: "" });
 	pp.p6c.views = [{ name: "Old heat", data: { view: "heatmap", group: "" } }];
 	check("a view saved as Heatmap is the one on screen when Capacity is", (pp.p6c_matching_view() || {}).name, "Old heat");
-	check("saved views list it as Capacity", vm.runInContext("PP6C.view_labels", env.ctx), { week: "Week", month: "Month", crew: "Crew", heatmap: "Capacity", capacity: "Capacity" });
+	check("saved views list it as Capacity", vm.runInContext("PP6C.view_labels", env.ctx), { week: "Week", month: "Month", crew: "Crew", heatmap: "Capacity", capacity: "Capacity", lookahead: "Lookahead" });
 });
 
 test("Project Planner: calendar cards say their length in days and people, with hours only when set", () => {

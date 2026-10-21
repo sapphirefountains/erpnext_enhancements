@@ -81,7 +81,8 @@ SCHEMA = {
 	"project": {
 		# "heatmap" is what a view saved before the planner UX redesign's P7 says for Capacity (the Heatmap and
 		# Utilization tabs merged into the Crew tab's Capacity screen); the page treats it as Capacity.
-		"view": ("enum", ("week", "month", "crew", "heatmap", "capacity")),
+		# P5: the Lookahead is a tab a view can name, and the home tab.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "capacity", "lookahead")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),
