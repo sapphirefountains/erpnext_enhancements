@@ -1531,6 +1531,23 @@ class ProjectPlanner {
 		return __("Full day");
 	}
 
+	// The calendar's label for a task: "3 days · 2 people", then the time slot or the hours when they
+	// are set (only 96 of 1,764 open tasks have hours, and a task without them is a full day per person).
+	// Days are working days (Monday to Friday) across the card's span, at least one.
+	duration_text(card) {
+		const parts = [];
+		if (card.start) {
+			const span = card.end && card.end > card.start ? PP6E_PURE.working_between(PP6B_PURE.ymd_add(card.start, -1), card.end) : 0;
+			const days = Math.max(span, 1);
+			parts.push(days === 1 ? __("1 day") : __("{0} days", [days]));
+		}
+		const people = (card.crew || []).length;
+		if (people) parts.push(people === 1 ? __("1 person") : __("{0} people", [people]));
+		if (card.slot && card.slot.length === 2) parts.push(card.slot.join("–"));
+		else if (Number(card.expected_time) > 0) parts.push(__("{0}h", [pp_hours(card.expected_time)]));
+		return parts.join(" · ");
+	}
+
 	badges_html(card) {
 		const crew = card.crew || [];
 		const shown = crew.slice(0, 4);
@@ -1597,7 +1614,7 @@ class ProjectPlanner {
 		if (card.tentative) classes.push("pp-tentative");
 		if (card.saving) classes.push("pp-saving");
 		const color = pp_color(card.color, PP.default_color);
-		const sub = [card.project_title || card.project, this.hours_text(card)].filter(Boolean).join(" · ");
+		const sub = [card.project_title || card.project, this.duration_text(card)].filter(Boolean).join(" · ");
 		const crew_names = (card.crew || []).map((member) => this.resource_label(member.resource, member.label));
 		const tip = [
 			card.subject,
@@ -4937,7 +4954,7 @@ const PP6A_METHODS = {
 			if (!row && card.project) {
 				const sub = el.querySelector(".pp-card-sub");
 				if (sub && !sub.querySelector("[data-pk-project]")) {
-					const rest = this.hours_text(card);
+					const rest = this.duration_text(card);
 					sub.innerHTML =
 						`<span class="pp-p6a-proj" data-pk-project="${pp_esc(key(card.project))}" title="${pp_esc(
 							__("See this project at a glance")
