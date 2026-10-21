@@ -450,6 +450,7 @@ class MaintenancePlanner {
 		this.$title = $('<span class="mp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="mp-seg"></span>').appendTo($bar);
+		this.$seg = $seg;
 		this.$view_buttons = {};
 		[
 			["month", __("Month")],
@@ -457,6 +458,7 @@ class MaintenancePlanner {
 			["crew", __("Crew")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
+				.attr("data-tb-tab", view)
 				.text(label)
 				.on("click", () => this.go(view, this.anchor))
 				.appendTo($seg);
@@ -465,14 +467,14 @@ class MaintenancePlanner {
 		$('<span class="mp-spacer"></span>').appendTo($bar);
 		// The filter (and 6B's search, which joins it) is one group: on a phone the group moves into
 		// the "Filters and tools" sheet and back (toolbar redesign, v1.687.0). Projected visits and
-		// Project work are switches in the Display menu (MPTB).
+		// Project work are switches in More ▸ Display (MPTB).
 		this.$filters = $('<span class="mp-tb-filters"></span>').appendTo($bar);
 		this.$tech = $('<select class="form-control input-sm"></select>')
 			.attr("aria-label", __("Technician"))
 			.on("change", () => this.pick_filter(this.$tech.val() || ""))
 			.appendTo(this.$filters);
-		// The alert chips, then the four menus (both filled by MPTB), then Undo as a small icon while
-		// there is something to undo (its menu item is in Edit), ? and refresh.
+		// The alert chips, then + Add and More (both filled by MPTB), then Undo as a small icon while
+		// there is something to undo (its menu item is in More ▸ Tools), ? and refresh.
 		this.$alerts = $('<span class="mp-tb-alerts mp-tb-empty" role="group"></span>').attr("aria-label", __("Alerts")).appendTo($bar);
 		this.$tools = $('<span class="mp-tb-tools"></span>').appendTo($bar);
 		this.$undo = $('<button type="button" class="btn btn-default btn-sm mp-undo mp-empty">↶</button>')
@@ -486,7 +488,7 @@ class MaintenancePlanner {
 			.appendTo($bar);
 		this.update_undo_button();
 
-		// The key of the visit kinds is in the Display menu (MPTB's tb_kind_items) and the "?" help; it
+		// The key of the visit kinds is in More ▸ Display (MPTB's tb_kind_items) and the "?" help; it
 		// was a row of its own under the toolbar.
 		this.$panel = $('<div class="mp-section mp-res"></div>').appendTo(this.$body);
 		this.$tray = $('<div class="mp-tray"></div>').hide().appendTo(this.$body);
@@ -3439,7 +3441,6 @@ const MP6B_METHODS = {
 			.text(__("Clear"))
 			.on("click", () => this.p6b_clear_selection())
 			.appendTo($bar);
-		this.p6e_bar_switch($bar);
 		$('<span class="mp-p6b-bar-note"></span>').text(this.p6e_bar_note()).appendTo($bar);
 	},
 
@@ -3480,10 +3481,22 @@ const MP6B_METHODS = {
 	p6b_move_panel() {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length) return;
-		const panel = this.p6b_panel({
+		let panel = null;
+		panel = this.p6b_panel({
 			title: __("Move {0} visits", [cards.length]),
 			key: "mp-p6b-move",
 			fields: [
+				// Move by (calendar or working days) lived on the selection bar until the planner UX
+				// redesign (D12); it is a field here now, and a drag still uses the choice it makes.
+				{
+					fieldtype: "Select",
+					fieldname: "unit",
+					label: __("Move by"),
+					options: this.p6e_unit_options(),
+					default: this.p6e_unit_label(this.p6e_unit()),
+					description: __("Also what dragging several selected visits counts in. Remembered on this device."),
+					change: () => this.p6e_panel_unit(panel),
+				},
 				{
 					fieldtype: "Int",
 					fieldname: "days",
@@ -4011,14 +4024,14 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 // The Maintenance Planner's half of Phase 6C (TASK-2026-02469; the Project Planner has the same, see
 // PP6C_METHODS there for the long version):
 //
-//   - Color by (toolbar's Display menu)      Visit type (today's colors, the default), Technician,
+//   - Color by (toolbar's More ▸ Display)      Visit type (today's colors, the default), Technician,
 //                                            Site, Visit status or Contract; the key in Display and
 //                                            in the "?" legend. Site and contract use the kit's
 //                                            stable hash, so a site is always the same color
 //   - "Highlight this site" in a visit's panel, the site drawer's header or the right-click menu, or
 //     a site in the color key                every visit of that site lights up and the rest fade;
 //                                            a toolbar pill and Esc clear it
-//   - Views (toolbar's Views menu)           named views and "last used", saved per person on the
+//   - Views (toolbar's More ▸ Views)           named views and "last used", saved per person on the
 //                                            server (api/planner_views_prefs). Only a bare
 //                                            /maintenance-planner takes the saved view, by replacing
 //                                            its history entry
@@ -4028,7 +4041,7 @@ Object.assign(MaintenancePlanner.prototype, MP6B_METHODS);
 //                                            everyone's day
 //   - Tap to move                            tap a visit, then the day or a technician's day: the
 //                                            drag's own drop -> plan_drop -> apply -> send path
-//   - Print (Print menu)                     the view on screen or 6B's selection, from the loaded
+//   - Print (More ▸ Print)                     the view on screen or 6B's selection, from the loaded
 //                                            data, on the print design system's chrome (the Service
 //                                            pillar), in a browser window
 //
@@ -4094,14 +4107,14 @@ const MP6C_METHODS = {
 			.attr("aria-label", __("Stop highlighting"))
 			.on("click", () => this.p6c_clear_highlight())
 			.appendTo(this.$p6c_pill);
-		// Color by and its key are in the toolbar's Display menu, Tap to move in Edit, the saved views in
+		// Color by and its key are in the toolbar's More ▸ Display, Tap to move in Tools, the saved views in
 		// Views and Print in Print (MPTB, v1.687.0); this block gives each menu its items
 		// (p6c_color_items, p6c_view_items, p6c_print_items).
 		this.$p6c_movebar = $('<div class="mp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
 
 		document.addEventListener("click", (e) => this.p6c_tap_click(e), true);
 		window.addEventListener("keydown", (e) => this.p6c_keydown(e), true);
-		// A site in the color key highlights from the Display menu now (p6c_color_items); the key's own
+		// A site in the color key highlights from More ▸ Display now (p6c_color_items); the key's own
 		// click listener went with the key's row (v1.687.0).
 		this.$body.on("change click", () => this.p6c_state_soon());
 		this.p6c_sync_controls();
@@ -4340,7 +4353,7 @@ const MP6C_METHODS = {
 			title: __("The big picture"),
 			note:
 				mode === "default"
-					? __("Color by in the toolbar's Display menu colors the visits by technician, site, visit status or contract instead of the visit type below.")
+					? __("More ▸ Display ▸ Color by colors the visits by technician, site, visit status or contract instead of the visit type below.")
 					: "",
 			items: [
 				{
@@ -4848,7 +4861,7 @@ const MP6C_METHODS = {
 		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
 	},
 
-	// The Views menu's saved views: one radio item each (the one on screen is ticked), then Save and
+	// The saved views of More ▸ Views: one radio item each (the one on screen is ticked), then Save and
 	// Manage.
 	p6c_view_items() {
 		if (!this.p6c) return [];
@@ -4935,7 +4948,7 @@ const MP6C_METHODS = {
 
 	p6c_views_html() {
 		const views = this.p6c.views || [];
-		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from the Views menu."))}</p>`;
+		if (!views.length) return `<p class="pk-empty">${mp_esc(__("No saved views yet. Save one from More ▸ Views."))}</p>`;
 		const rows = views.map(
 			(entry) => `
 			<li class="mp-p6c-views-row">
@@ -4997,7 +5010,7 @@ const MP6C_METHODS = {
 		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
 	},
 
-	// The Print menu's items: the view on screen, and 6B's selection when there is one. Each runs in
+	// The More ▸ Print items: the view on screen, and 6B's selection when there is one. Each runs in
 	// the menu item's click, so its window opens on the person's own tap.
 	p6c_print_items() {
 		const selected = this.p6c_selection();
@@ -5273,7 +5286,7 @@ const MP6D_METHODS = {
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
-		// The Conflicts count is an alert chip on the toolbar and Block time an item of its Edit menu
+		// The Conflicts count is an alert chip on the toolbar and Block time an item of its More ▸ Tools
 		// (MPTB, v1.687.0): p6d_conflict_count and data.can_schedule say when.
 		const root = this.$body[0];
 		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click.
@@ -5836,7 +5849,7 @@ Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);
 //
 // Two follow-ups to Phase 6B (Nik, 2026-10-09; TASK-2026-02471), for this page:
 //
-//   - "Move by: Calendar days | Working days" in the selection bar, remembered per device. A visit is
+//   - "Move by: Calendar days | Working days" in the Move… panel, remembered per device. A visit is
 //     one day, so with working days it moves by that many weekdays (a Friday plus one is the Monday,
 //     and a drop on a weekend lands on the Monday after it). Calendar days stay the default.
 //   - "Add visit here...": a draft visit for a site, a day and a technician, made from an empty spot
@@ -5853,7 +5866,7 @@ Object.assign(MaintenancePlanner.prototype, MP6D_METHODS);
 // method up, so init_phase6e adds the two endpoints there.
 //
 // Hooks into the class above, one line each: init_phase6e (constructor), render_phase6e (render) and
-// p6e_undo (undo). Phase 6B's block calls p6e_bar_switch, p6e_bar_note, p6e_drop_days, p6e_date,
+// p6e_undo (undo). Phase 6B's block calls p6e_bar_note, p6e_drop_days, p6e_date,
 // p6e_question and p6e_move_label / p6e_move_default / p6e_move_note for the working-days switch.
 
 const MP6E = {
@@ -5953,13 +5966,13 @@ const MP6E_METHODS = {
 		this.p6_menu_providers.push((target) => this.p6e_menu_items(target));
 		this.p6_legend_providers = this.p6_legend_providers || [];
 		this.p6_legend_providers.push(() => this.p6e_legend_sections());
-		// "Add visit…" is an item of the toolbar's Edit menu (MPTB, v1.687.0), for whoever may create
+		// "Add visit…" is an item of the toolbar's + Add menu (MPTB, v2), for whoever may create
 		// visits (data.can_create_visits).
 		this.$body[0].addEventListener("dblclick", (e) => this.p6e_dblclick(e));
 	},
 
 	render_phase6e() {
-		// Nothing of its own to draw: Add visit… is offered by the Edit menu (tb_edit_items).
+		// Nothing of its own to draw: Add visit… is offered by the + Add menu (tb_add_items).
 	},
 
 	// ------------------------------------------------------------------ move by: calendar or working days
@@ -5978,28 +5991,35 @@ const MP6E_METHODS = {
 		this.p6b_render_bar();
 	},
 
-	// "Move by: Calendar days | Working days", in the selection bar.
-	p6e_bar_switch($bar) {
-		const unit = this.p6e_unit();
-		const $switch = $('<span class="mp-p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
-		$('<span class="mp-p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
-		[
-			["calendar", __("Calendar days"), __("Every day counts, weekends too")],
-			["working", __("Working days"), __("Monday to Friday: a visit moves by that many weekdays")],
-		].forEach(([value, label, title]) => {
-			$('<button type="button" class="btn btn-default btn-xs mp-p6e-opt"></button>')
-				.toggleClass("mp-p6e-on", unit === value)
-				.attr({ "aria-pressed": unit === value ? "true" : "false", title })
-				.text(label)
-				.on("click", () => this.p6e_set_unit(value))
-				.appendTo($switch);
-		});
+	// "Move by: Calendar days | Working days", a field of the Move… panel (it was a switch on the
+	// selection bar until the planner UX redesign, D12). The Select shows the words; the unit is the key.
+	p6e_unit_label(unit) {
+		return unit === "working" ? __("Working days") : __("Calendar days");
+	},
+
+	p6e_unit_options() {
+		return MP6E.units.map((unit) => this.p6e_unit_label(unit)).join("\n");
+	},
+
+	// The panel's Select changed: remember the unit, and say what the number below counts now.
+	p6e_panel_unit(panel) {
+		if (!panel) return;
+		const picked = MP6E.units.find((unit) => this.p6e_unit_label(unit) === panel.get_value("unit"));
+		if (!picked || picked === this.p6e_unit()) return;
+		this.p6e_set_unit(picked);
+		const field = panel.fields_dict && panel.fields_dict.days;
+		if (field) {
+			if (field.df) Object.assign(field.df, { label: this.p6e_move_label(), description: this.p6e_move_note() });
+			if (typeof field.set_label === "function") field.set_label(this.p6e_move_label());
+			if (typeof field.set_description === "function") field.set_description(this.p6e_move_note());
+		}
+		panel.set_value("days", this.p6e_move_default());
 	},
 
 	p6e_bar_note() {
 		return this.p6e_unit() === "working"
-			? __("Drag any of them and they all move by the same number of working days (Monday to Friday). Each visit is saved on its own. Esc clears the selection.")
-			: __("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Esc clears the selection.");
+			? __("Drag any of them and they all move by the same number of working days (Monday to Friday). Each visit is saved on its own. Move… changes the unit. Esc clears the selection.")
+			: __("Drag any of them and they all move by the same number of calendar days. Each visit is saved on its own. Move… changes the unit. Esc clears the selection.");
 	},
 
 	p6e_drop_days(from, to) {
@@ -6065,7 +6085,7 @@ const MP6E_METHODS = {
 				items: [
 					{
 						sample_html: "",
-						text: __("Double-click an empty spot, or Add visit… in the toolbar's Edit menu, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
+						text: __("Double-click an empty spot, or + Add ▸ Add visit… in the toolbar, to draft a visit for a site. It is linked to the site's active contract when there is one, so it counts as a scheduled visit; with none, it is a plain visit."),
 					},
 				],
 			},
@@ -6285,7 +6305,7 @@ Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
 // Calendar sync that pushes only committed work comes next, so the two planners need the same line
 // between "trying things" and "the schedule".
 //
-//   - "Draft mode", a switch in the toolbar's Edit menu remembered per browser (ee_maintenance_planner_draft). While it
+//   - "Draft mode", a switch in the toolbar's More ▸ Tools remembered per browser (ee_maintenance_planner_draft). While it
 //     is on, every visit write that send() makes (move_visit and add_crew: drags, the dialog, the
 //     right-click menu, the selection bar, the Conflict center's fixes, Undo) goes with draft=1 and
 //     lands on the planner's own Planner Draft Change rows (api/maintenance_drafts.py). Nobody's
@@ -6327,7 +6347,7 @@ const MPC1 = {
 const MPC1_METHODS = {
 	init_phase_c1() {
 		this.draft_on = this.load_pref(MPC1.pref, "0") === "1";
-		// The switch is an item of the toolbar's Edit menu (MPTB, v1.687.0); the strip sits right under
+		// The switch is an item of the toolbar's More ▸ Tools (MPTB, v1.687.0); the strip sits right under
 		// the toolbar, where the switch's state shows.
 		this.$draft_bar = $('<div class="mp-draft-bar" role="region"></div>')
 			.attr("aria-label", __("Draft mode"))
@@ -6554,37 +6574,42 @@ const MPC1_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MPC1_METHODS);
 
-// ====================================================================== The toolbar (v1.687.0)
+// ====================================================================== The toolbar (v1.687.0, v2)
 //
-// The Maintenance Planner's half of the toolbar redesign Nik picked on 2026-10-14 (the Project
-// Planner's PPTB block has the long version). One bar, made shorter by four menus:
+// The Maintenance Planner's half of the toolbar redesign Nik picked on 2026-10-14, and of the next
+// step he approved on 2026-10-21 (the planner UX redesign, P1). The Project Planner's PPTB block has
+// the long version. One bar, the same structure as that planner's:
 //
 //   ‹ Today ›  title  [highlight]  Month Week Crew   search  Technician
-//   [alert chips]  Views ▾  Display ▾  Edit ▾  Print ▾  [↶]  ?  ↻
+//   [alert chips]  + Add ▾  More ▾  [↶]  ?  ↻
 //
-//   - Views ▾     the saved views (6C), Save current view as…, Manage views…
-//   - Display ▾   Color by (6C) and the key of its colors (the row it had under the toolbar); the
-//                 key of the visit kinds (the legend row it had under the toolbar); Projected visits
-//                 and Project work, each with a check mark
-//   - Edit ▾      Draft mode (C1) and Tap to move (6C); Add visit… (6E, for whoever may create
-//                 visits); Block time… (6D, schedulers); Conflicts… (6D, even at none); Undo
-//   - Print ▾     Print this view and Print selection only (6C)
+//   - + Add ▾     Add visit… (6E, for whoever may create visits) and Day note… (6D, schedulers)
+//   - More ▾      four sections:
+//       Display   Color by (6C; the default is Visit type) and the key of its colors; the key of the
+//                 visit kinds (the legend row it had under the toolbar); Projected visits and
+//                 Project work, each with a check mark
+//       Views     the saved views (6C), Save current view as…, Manage views…
+//       Tools     Block time… (6D, schedulers); Conflicts… (6D, even at none); Tap to move (6C);
+//                 Draft mode (C1); Undo
+//       Print     Print this view and Print selection only (6C); Day Board
 //   - alert chips Conflicts (6D) and Overdue, in the danger tone, a count and a word each, there only
 //                 above zero. Conflicts opens the Conflict center; Overdue opens a side panel listing
 //                 the overdue visits on screen, each of which opens its visit (the planner had no
 //                 overdue list of its own; only a red card and its chip). There is no Running over:
 //                 visits carry no clocked-against-planned hours here
 //   - ↶, ?, ↻     Undo as a small icon only while there is something to undo; the help, whose first
-//                 section is now the tips that used to be banners on load; refresh
+//                 section is the tips that used to be banners on load; refresh
 //   - Draft mode  a strip under the bar, "Draft mode on: N changes not published yet", with
 //                 Publish and Discard (C1's c1_render_bar, c1_publish, c1_discard)
+//   - the tabs    Month Week Crew are a WAI-ARIA tablist (planner_kit toolbar.tabs)
 //
-// The Day Board stays where it was, the page head's secondary button. There is no Utilization view
-// here: the Crew Utilization report is the Project Planner's view, and it counts maintenance visits
-// in every person's booked hours already.
+// The Day Board stays where it was too, the page head's secondary button, and is also in More ▸ Print.
+// The Move by switch (calendar or working days) left the selection bar for a field of the Move…
+// panel (D12). There is no Utilization view here: the Crew Utilization report is the Project
+// Planner's view, and it counts maintenance visits in every person's booked hours already.
 //
 // On a phone the bar is ‹ Today ›, the title, the view switcher and "Filters and tools", which opens
-// planner_kit.toolbar.sheet with the filter, the chips and the menus' items; Back closes it.
+// planner_kit.toolbar.sheet with the filter, the chips and the same sections; Back closes it.
 //
 // Hooks into the class above, one line each: init_toolbar (constructor), tb_ready (p6a_ready),
 // tb_render (render, p6d_after_list) and tb_close_sheet (p6b_pick).
@@ -6596,19 +6621,18 @@ const MPTB = {
 };
 
 const MPTB_METHODS = {
-	// The four menus: [name, label, what is in it]. Written out as __() calls, so they are translated.
+	// The two menus: [name, label, what is in it, the button's text]. Written out as __() calls, so
+	// they are translated.
 	tb_menu_list() {
 		return [
-			["views", __("Views"), __("Your saved views")],
-			["display", __("Display"), __("Card colors, their key, and what else is drawn")],
-			["edit", __("Edit"), __("Draft mode, Tap to move, Add visit, Block time, Undo")],
-			["print", __("Print"), __("Print this view")],
+			["add", __("Add"), __("Add a visit or a day note"), __("+ Add")],
+			["more", __("More"), __("Display, Views, Tools and Print"), __("More")],
 		];
 	},
 
 	init_toolbar() {
-		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null };
-		this.tb_menu_list().forEach(([name, label, title]) => {
+		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null, tabs: null };
+		this.tb_menu_list().forEach(([name, label, title, text]) => {
 			const $button = $('<button type="button" class="btn btn-default btn-sm mp-tb-menu"></button>')
 				.attr("data-tb-menu", name)
 				.attr("title", title)
@@ -6616,7 +6640,7 @@ const MPTB_METHODS = {
 					if (!this.tb.kit) frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 				})
 				.appendTo(this.$tools);
-			$("<span></span>").text(label).appendTo($button);
+			$("<span></span>").text(text || label).appendTo($button);
 			$('<span class="mp-tb-caret" aria-hidden="true">▾</span>').appendTo($button);
 			this.tb.$menus[name] = $button;
 		});
@@ -6642,6 +6666,7 @@ const MPTB_METHODS = {
 		if (kit && kit.toolbar) kit.toolbar.close_all("route");
 	},
 
+	// The kit has loaded (6A's p6a_ready): the buttons become menus, the view buttons tabs.
 	tb_ready() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!this.tb || this.tb.kit || !kit || !kit.toolbar) return;
@@ -6652,15 +6677,54 @@ const MPTB_METHODS = {
 				items: () => this.tb_items(name),
 			});
 		});
+		if (this.$seg && this.$seg[0] && typeof kit.toolbar.tabs === "function") {
+			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view });
+		}
 		this.tb_render();
 	},
 
+	// One menu's items, as planner_kit.toolbar takes them.
 	tb_items(name) {
-		if (name === "views") return this.p6c_view_items();
-		if (name === "display") return this.tb_display_items();
-		if (name === "edit") return this.tb_edit_items();
-		if (name === "print") return this.p6c_print_items();
+		if (name === "add") return this.tb_add_items();
+		if (name === "more") return this.tb_sections_items(this.tb_more_sections());
 		return [];
+	},
+
+	// Named sections as one list (the kit's), or, before the kit has loaded, plainly one after another.
+	tb_sections_items(sections) {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar && typeof kit.toolbar.sections_to_items === "function") return kit.toolbar.sections_to_items(sections);
+		return [].concat(...sections.map((section) => (section.items || []).filter((item) => item && !item.divider && !item.heading)));
+	},
+
+	// More's four sections; the phone's sheet draws the same ones.
+	tb_more_sections() {
+		return [
+			{ key: "display", title: __("Display"), items: this.tb_display_items() },
+			{ key: "views", title: __("Views"), items: this.p6c_view_items() },
+			{ key: "tools", title: __("Tools"), items: this.tb_tools_items() },
+			{ key: "print", title: __("Print"), items: this.tb_print_items() },
+		];
+	},
+
+	// + Add: a visit (the double-click's form, started on the first day on screen) or a day note.
+	tb_add_items() {
+		const items = [];
+		if (this.data && this.data.can_create_visits) {
+			items.push({
+				label: __("Add visit…"),
+				title: __("Draft a visit for a site, a day and a technician. Double-click an empty spot does the same."),
+				on_click: () => this.p6e_add_visit(null),
+			});
+		}
+		if (this.data && this.data.can_schedule) {
+			items.push({
+				label: __("Day note…"),
+				title: __("A note for everyone on a day, such as a shop meeting"),
+				on_click: () => this.p6d_note_form({ date: this.p6d_default_date() }),
+			});
+		}
+		return items;
 	},
 
 	// The visit kinds, each drawn with its card's own class, so the key and the calendar agree (the
@@ -6709,31 +6773,8 @@ const MPTB_METHODS = {
 		);
 	},
 
-	tb_edit_items() {
-		const items = [
-			{
-				label: __("Draft mode"),
-				checked: !!this.draft_on,
-				title: __("Keep your changes to yourself until you publish them"),
-				on_click: () => this.set_draft_mode(!this.draft_on),
-			},
-		];
-		if (this.p6c) {
-			items.push({
-				label: __("Tap to move"),
-				checked: !!this.p6c.tap,
-				title: __("Tap a visit, then tap the day where it goes, instead of dragging"),
-				on_click: () => this.p6c_set_tap(!this.p6c.tap),
-			});
-		}
-		items.push({ divider: true });
-		if (this.data && this.data.can_create_visits) {
-			items.push({
-				label: __("Add visit…"),
-				title: __("Draft a visit for a site, a day and a technician. Double-click an empty spot does the same."),
-				on_click: () => this.p6e_add_visit(null),
-			});
-		}
+	tb_tools_items() {
+		const items = [];
 		if (this.data && this.data.can_schedule) {
 			items.push({
 				label: __("Block time…"),
@@ -6748,6 +6789,20 @@ const MPTB_METHODS = {
 			title: __("Everything wrong in the dates on screen, with one-click fixes"),
 			on_click: () => this.p6d_open_conflicts(null),
 		});
+		if (this.p6c) {
+			items.push({
+				label: __("Tap to move"),
+				checked: !!this.p6c.tap,
+				title: __("Tap a visit, then tap the day where it goes, instead of dragging"),
+				on_click: () => this.p6c_set_tap(!this.p6c.tap),
+			});
+		}
+		items.push({
+			label: __("Draft mode"),
+			checked: !!this.draft_on,
+			title: __("Keep your changes to yourself until you publish them"),
+			on_click: () => this.set_draft_mode(!this.draft_on),
+		});
 		const last = this.undo_stack[this.undo_stack.length - 1];
 		items.push(
 			{ divider: true },
@@ -6760,6 +6815,16 @@ const MPTB_METHODS = {
 			}
 		);
 		return items;
+	},
+
+	tb_print_items() {
+		return this.p6c_print_items().concat([
+			{
+				label: __("Day Board"),
+				title: __("Today's visits, technician by technician, to print or hand out"),
+				on_click: () => frappe.set_route("maintenance-day-board"),
+			},
+		]);
 	},
 
 	// ------------------------------------------------------------------ alert chips
@@ -6872,6 +6937,7 @@ const MPTB_METHODS = {
 		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
 		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
 		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
+		if (this.tb.tabs) this.tb.tabs.sync(this.view);
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
 
@@ -6912,19 +6978,18 @@ const MPTB_METHODS = {
 		}));
 		return [
 			{ title: __("Alerts"), items: alerts },
-			{ title: __("Views"), items: keep(this.p6c_view_items()) },
-			{ title: __("Display"), items: keep(this.tb_display_items()) },
-			{ title: __("Edit"), items: keep(this.tb_edit_items()) },
-			{ title: __("Print"), items: this.p6c_print_items() },
-			{
-				title: __("This page"),
-				items: [
-					{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
-					{ label: __("Day Board"), on_click: () => frappe.set_route("maintenance-day-board") },
-					{ label: __("Refresh"), on_click: () => this.load() },
-				],
-			},
-		];
+			{ title: __("Add"), items: this.tb_add_items() },
+		]
+			.concat(this.tb_more_sections().map((section) => ({ title: section.title, items: keep(section.items) })))
+			.concat([
+				{
+					title: __("This page"),
+					items: [
+						{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
+						{ label: __("Refresh"), on_click: () => this.load() },
+					],
+				},
+			]);
 	},
 };
 

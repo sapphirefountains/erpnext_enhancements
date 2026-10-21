@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.701.0] - 2026-10-21
+
+### Changed
+- **Planner toolbar v2: one bar with the same structure in both planners** (P1 of the planner UX
+  redesign, `docs/planner-ux-redesign.md`, approved by Nik on 2026-10-21 with "Approve as is"). The
+  four menus of v1.687.0 (Views, Display, Edit, Print) are now two: **+ Add ▾** and **More ▾**.
+  Nothing was removed; every control moved to a place the spec's feature map names.
+  - **+ Add ▾** holds *Quick add task…* (the double-click dialog, opened on today or the first day on
+    screen), *Build out tasks…* (T1's grid, for the project in the filter or one picked first) and
+    *Day note…* on the Project Planner; *Add visit…* and *Day note…* on the Maintenance Planner.
+  - **More ▾** holds four sections: **Display** (Color by and its key, *Highlight a project…*,
+    maintenance / rentals / travel, or projected visits and project work), **Views** (My week, saved
+    views), **Tools** (Copy week…, Block time…, Conflicts…, Tap to move, *Hold all my changes*, which is
+    the old board-wide Draft mode, and Undo) and **Print** (this view, selection, crew sheet; the Day
+    Board on the Maintenance Planner). The phone's "Filters and tools" sheet draws the same sections, and
+    Back still closes it. A section with nothing on the screen is left out with its heading.
+  - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
+    roving tabindex, ArrowLeft/Right/Home/End move focus. No new views yet; the control is what the
+    Lookahead, Gantt and Overview tabs of the next PRs plug into.
+  - **The Move by switch left the selection bar.** *Calendar days | Working days* is now the first
+    field of the **Move…** panel (choosing one is remembered per device as before and re-labels the
+    number below it), and dragging several selected cards still counts in the unit it picks. Split was
+    already only in the right-click menu and the task panel.
+  - **Job type is the default color on the Project Planner** (it was Task color). The stored value
+    `default` is the old Task color, and every "last used" view saved before this carries it whether or
+    not anyone had chosen it. So a Project Planner view now says whether its color was picked: a new
+    `color_chosen` flag in `api/planner_views_prefs.SCHEMA["project"]` (and the page's `PP6C.schema`, held
+    equal by a test), saved with the view on the server, so it follows the person to any device. The page
+    honors a saved `default` only when `color_chosen` is set; a "last used" view without it is dropped of
+    its color. Applying a named view saved before the flag that holds Task color counts as a choice (it was
+    a snapshot someone took). The Maintenance Planner's default is still Visit type.
+- Tests: `scripts/test_planner_toolbar.js` now covers the kit's tabs and section flattening, every old
+  control's new home in both planners (each item run and the method it reaches checked, in the menu's
+  list and in the phone's sheet), + Add, the Highlight and Build out prompts, the Move by field, the
+  color default and its migration. `test_planner_phase6d_ui`, `phase6e` and `project_planner_phase3a_page`
+  follow the renamed methods (`tb_tools_items`, `tb_add_items`) and the Move by field.
 ## [1.699.2] - 2026-10-21
 
 ### Added

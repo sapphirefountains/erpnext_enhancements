@@ -1455,6 +1455,14 @@ a.pk-stop-addr {
 	outline: none;
 }
 
+/* A section of the More menu (Display, Views, Tools, Print): its heading is the first line of the
+ * group, heavier than the sub-headings (Color by, Saved views) inside it. */
+.pk-tb-section {
+	padding-top: 6px;
+	font-weight: var(--sf-weight-bold);
+	color: var(--sf-text);
+}
+
 .pk-tb-item {
 	justify-content: flex-start;
 	gap: 8px;
