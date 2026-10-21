@@ -60,6 +60,8 @@ CI = REPO_ROOT / ".github/workflows/ci.yml"
 D = datetime.date
 BASE = h.BASE
 ACTIONS = "erpnext_enhancements.api.planner_actions"
+#: When ERPNext's own reschedule saves a task in these tests: after this publish began (h.NOW).
+PUSHED_AT = "2026-10-08 11:11:11"
 
 
 def setUpModule():
@@ -155,6 +157,12 @@ class _P4(h._Base):
 
 		frappe.db.get_value = get_value
 		frappe.tables["Task Depends On"] = []
+		# Task rows as the database holds them now (each task's latest save), for _task_rows.
+		frappe.tables["Task"] = lambda filters: [
+			row
+			for row in (self._stored(name) for (doctype, name) in list(frappe.docs) if doctype == "Task")
+			if row and h._matches(row, filters)
+		]
 		self.batch_hook = None
 		self.batches = []
 		self.notified = []
@@ -215,6 +223,7 @@ class _P4(h._Base):
 
 	def _depends(self, task, on):
 		self.frappe.tables["Task Depends On"].append({"parent": task, "parenttype": "Task", "task": on})
+		self.frappe.docs[("Task", task)].setdefault("depends_on", []).append(h._Doc(task=on))
 
 	def _saves(self):
 		return [step.split(":", 1)[1] for step in self.frappe.sequence if step.startswith("save:TASK")]
@@ -528,8 +537,246 @@ class TestShiftSuccessorsStillWorks(_P4):
 
 	def test_it_honors_the_names_it_is_given(self):
 		self._chain()
-		result = self.api.shift_successors("TASK-1", -1, BASE, tasks=json.dumps(["TASK-2"]))
+		# One day earlier, TASK-2 starts before TASK-1 (which stays) ends: that asks for a reason now.
+		asked = self.api.shift_successors("TASK-1", -1, BASE, tasks=json.dumps(["TASK-2"]))
+		self.assertEqual(list(asked["conflicts"]), ["Dependencies"])
+		result = self.api.shift_successors("TASK-1", -1, BASE, tasks=json.dumps(["TASK-2"]), reason="ok")
 		self.assertEqual([m["task"] for m in result["moved"]], ["TASK-2"])
+
+
+# ====================================================================== the manager's review (P4 #1323)
+
+
+class TestADraftedChainPublishesOnItsDraftedDays(_P4):
+	"""Finding 1: drafted followers must survive Publish. ERPNext's own reschedule, fired by the task
+	published before them, used to make the follower's draft fail as "Changed by someone else"."""
+
+	def setUp(self):
+		super().setUp()
+		self.patches.append(
+			mock.patch.object(
+				h.engine,
+				"_compute",
+				lambda *a, **k: {
+					"resources": [{"name": p["name"], "label": p["resource_name"]} for p in h.PEOPLE],
+					"days": {},
+				},
+			)
+		)
+		self.patches[-1].start()
+
+	def _erpnext_reschedules(self, saved, follower, pushed_to):
+		"""ERPNext's Task.on_update: saving ``saved`` pushes ``follower`` when it starts on or before
+		``saved``'s new end (as the database holds it then), by the calendar, and saves it."""
+		real_save = self.api._save
+
+		def save(doc):
+			out = real_save(doc)
+			if doc.name == saved:
+				row = self._stored(follower)
+				if str(row["exp_start_date"])[:10] <= str(doc.get("exp_end_date"))[:10]:
+					row.update(exp_start_date=pushed_to[0], exp_end_date=pushed_to[1], _db_modified=PUSHED_AT)
+					self.frappe.saved.append(row)
+					self.frappe.docs[("Task", follower)].update(
+						exp_start_date=pushed_to[0], exp_end_date=pushed_to[1], modified=PUSHED_AT
+					)
+					self.frappe.sequence.append(f"save:{follower}:erpnext")
+			return out
+
+		self.patches.append(mock.patch.object(self.api, "_save", save))
+		self.patches[-1].start()
+
+	def _draft_chain(self, a_span, b_span, drag_to):
+		h._task("TASK-A", start=a_span[0], end=a_span[1], crew=("RES-1",), project="PRJ-2")
+		h._task("TASK-B", start=b_span[0], end=b_span[1], crew=("RES-2",), project="PRJ-2")
+		self._depends("TASK-B", "TASK-A")
+		return self.api.save_task("TASK-A", BASE, start=drag_to, draft="auto", dependents=1)
+
+	def test_the_managers_scenario_publishes_both_on_their_drafted_days(self):
+		# A Mon-Wed, B Thu-Fri after it; A dragged two days later: A Wed-Fri, B the Monday-Tuesday after.
+		drafted = self._draft_chain(("2026-10-26", "2026-10-28"), ("2026-10-29", "2026-10-30"), "2026-10-28")
+		self.assertEqual(
+			[(m["task"], m["to"], m["to_end"]) for m in drafted["shifted"]],
+			[("TASK-B", "2026-11-02", "2026-11-03")],
+		)
+		self._erpnext_reschedules("TASK-A", "TASK-B", ("2026-10-31", "2026-11-01"))
+		result = self.api.publish_drafts(project="PRJ-2")
+
+		self.assertEqual(result["failed"], [])
+		self.assertEqual(sorted(p["task"] for p in result["published"]), ["TASK-A", "TASK-B"])
+		b = self._stored("TASK-B")
+		self.assertEqual((b["exp_start_date"][:10], b["exp_end_date"][:10]), ("2026-11-02", "2026-11-03"))
+		# Furthest first: B is saved before A, so A's save finds it already out of the way.
+		self.assertEqual(self._saves(), ["TASK-B", "TASK-A"])
+		self.assertNotIn("save:TASK-B:erpnext", self.frappe.sequence)
+
+	def test_a_follower_erpnext_pushed_during_the_publish_still_takes_its_draft(self):
+		# B already overlapped A (it runs inside it), so A's save pushes it whatever the order: the
+		# push happened in this publish, so it is not "changed by someone else".
+		drafted = self._draft_chain(("2026-10-26", "2026-10-30"), ("2026-10-28", "2026-10-29"), "2026-10-27")
+		self.assertEqual([m["to"] for m in drafted["shifted"]], ["2026-10-29"])
+		self._erpnext_reschedules("TASK-A", "TASK-B", ("2026-11-03", "2026-11-04"))
+		result = self.api.publish_drafts(project="PRJ-2")
+
+		self.assertEqual(result["failed"], [])
+		self.assertIn("save:TASK-B:erpnext", self.frappe.sequence)
+		b = self._stored("TASK-B")
+		self.assertEqual((b["exp_start_date"][:10], b["exp_end_date"][:10]), ("2026-10-29", "2026-10-30"))
+
+	def test_someone_elses_change_before_the_publish_is_still_refused(self):
+		self._draft_chain(("2026-10-26", "2026-10-28"), ("2026-10-29", "2026-10-30"), "2026-10-28")
+		self.frappe.docs[("Task", "TASK-B")]["modified"] = "2026-10-08 06:00:00"  # before this publish
+		result = self.api.publish_drafts(project="PRJ-2")
+		self.assertEqual([s["task"] for s in result["skipped"]], ["TASK-B"])
+
+
+class TestDraftedFollowersWarn(_P4):
+	"""Finding 2: a drafted follower that overbooks someone warns, from one batch check."""
+
+	def test_the_lot_is_checked_together_and_says_so(self):
+		self._chain()
+		for name in ("TASK-1", "TASK-2", "TASK-3"):
+			self.frappe.docs[("Task", name)]["project"] = "PRJ-2"
+
+		def hook(changes):
+			spans = {state.get("name"): h.engine.task_span(state) for state, _crew in changes}
+			if spans.get("TASK-2") and spans["TASK-2"][0] == D(2026, 10, 19):
+				return {"Lisa Park": ["2026-10-19: Over by 4h"]}
+			return {}
+
+		self.batch_hook = hook
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", draft="auto", dependents=1)
+		self.assertTrue(result["drafted"])
+		self.assertEqual(result["conflicts"]["Lisa Park"], ["2026-10-19: Over by 4h"])
+		self.assertIn("Not published yet. Lisa Park: 2026-10-19: Over by 4h", result["warnings"])
+		# One batch: the task and both followers, stored against drafted.
+		self.assertEqual([len(batch) for batch in self.batches], [3, 3])
+
+
+class TestEveryFollowerAgainstItsOtherPredecessors(_P4):
+	"""Finding 3: a follower is checked against every task it waits on, and the walk stops at a task
+	that stays."""
+
+	def test_moved_earlier_past_a_predecessor_that_stays_asks_for_a_reason(self):
+		h._task("TASK-1", crew=("RES-1",))  # Mon 12 - Wed 14
+		h._task("TASK-X", start="2026-10-12", end="2026-10-16", crew=("RES-2",))  # stays
+		h._task("TASK-C", start="2026-10-19", end="2026-10-19", crew=("RES-2",))
+		self._depends("TASK-C", "TASK-1")
+		self._depends("TASK-C", "TASK-X")
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-09", dependents=1)  # three earlier
+		self.assertTrue(result["needs_reason"])
+		self.assertEqual(
+			result["conflicts"]["Dependencies"], ["Starts before TASK-X (Subject TASK-X) ends on 2026-10-16"]
+		)
+		self.assertEqual(self.frappe.saved, [])
+
+	def test_moved_with_its_predecessor_is_not_news(self):
+		self._chain()
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-09", dependents=1)
+		self.assertNotIn("needs_reason", result)
+
+	def test_the_walk_stops_at_a_task_that_stays(self):
+		self._chain()
+		self.frappe.docs[("Task", "TASK-2")]["status"] = "Completed"
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", dependents=1)
+		self.assertEqual(result["shifted"], [])  # TASK-3 waits on TASK-1 only through TASK-2
+		self.assertEqual([s["task"] for s in result["shift_skipped"]], ["TASK-2"])
+		self.assertEqual(self._saves(), ["TASK-1"])
+
+
+class TestAFollowerTheCallerCannotChange(_P4):
+	"""Finding 4: one unwritable follower is named and left, never the whole gesture refused."""
+
+	def setUp(self):
+		super().setUp()
+		self._chain()
+		self.frappe.has_permission = lambda doctype=None, ptype=None, doc=None, **k: doc != "TASK-2"
+
+	def test_live(self):
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", dependents=1)
+		self.assertEqual(result["shifted"], [])
+		self.assertEqual(
+			[(s["task"], s["reason"]) for s in result["shift_skipped"]], [("TASK-2", "You cannot change it.")]
+		)
+		self.assertEqual(self._saves(), ["TASK-1"])
+
+	def test_drafted(self):
+		for name in ("TASK-1", "TASK-2", "TASK-3"):
+			self.frappe.docs[("Task", name)]["project"] = "PRJ-2"
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", draft="auto", dependents=1)
+		self.assertEqual(result["shifted"], [])
+		self.assertEqual([s["task"] for s in result["shift_skipped"]], ["TASK-2"])
+		self.assertEqual([row["task"] for row in self._drafts()], ["TASK-1"])
+
+
+class TestTheNearerMovedTaskCarriesAFollower(_P4):
+	"""Finding 5: two selected tasks moved by different amounts; a follower takes the nearer one's."""
+
+	def test_downstream_first(self):
+		self._chain()
+		self._depends("TASK-3", "TASK-1")  # C waits on both A and B
+		moves = [
+			{"task": "TASK-1", "modified": BASE, "start": "2026-10-13", "end": "2026-10-15"},  # +1
+			{"task": "TASK-2", "modified": BASE, "start": "2026-10-21", "end": "2026-10-22"},  # +4
+		]
+		result = _actions().move_many(json.dumps(moves), dependents=1)
+		moved = {m["task"]: m for m in result["moved"]}
+		self.assertEqual(moved["TASK-3"]["to"], "2026-10-23")  # Mon 19 + 4 working days, with B
+		self.assertTrue(moved["TASK-3"]["dependent"])
+
+
+class TestThePencilFlagIsPutBackToo(unittest.TestCase):
+	"""Finding 6."""
+
+	def test_planned_carries_the_pencil(self):
+		doc = h._TaskDoc({"exp_start_date": "2026-10-12", "custom_tentative": 1})
+		self.assertEqual(h.api._planned(doc)["custom_tentative"], 1)
+
+
+class TestHolidaysAndTheCap(_P4):
+	"""Note 7: the company's holidays are no working days, and the tasks past the cap are named."""
+
+	def test_the_working_day_maths_skips_holidays(self):
+		api = h.api
+		holiday = {D(2026, 10, 20)}  # a Tuesday
+		self.assertEqual(api.add_working_days(D(2026, 10, 19), 1, holiday), D(2026, 10, 21))
+		self.assertEqual(api.add_working_days(D(2026, 10, 21), -1, holiday), D(2026, 10, 19))
+		self.assertEqual(api.working_days_between(D(2026, 10, 16), D(2026, 10, 21), holiday), 2)
+		self.assertEqual(
+			api.dependent_days(("2026-10-16", "2026-10-16"), ("2026-10-21", "2026-10-21"), holiday), 2
+		)
+
+	def test_a_shift_steps_over_the_companys_holiday(self):
+		self.frappe.values[("Company", "Sapphire Fountains", "default_holiday_list")] = "HL-2026"
+		self.frappe.tables["Holiday"] = [
+			{
+				"parent": "HL-2026",
+				"parenttype": "Holiday List",
+				"holiday_date": "2026-10-20",
+				"weekly_off": 0,
+			},
+			{
+				"parent": "HL-2026",
+				"parenttype": "Holiday List",
+				"holiday_date": "2026-10-17",
+				"weekly_off": 1,
+			},
+		]
+		self._chain()
+		result = self.api.save_task("TASK-1", BASE, start="2026-10-14", dependents=1)  # +2
+		moved = {m["task"]: (m["to"], m["to_end"]) for m in result["shifted"]}
+		# Thu-Fri 15-16 + 2 working days, Tuesday the 20th a holiday: Mon 19 - Wed 21.
+		self.assertEqual(moved["TASK-2"], ("2026-10-19", "2026-10-21"))
+		self.assertEqual(moved["TASK-3"], ("2026-10-22", "2026-10-22"))
+
+	def test_the_tasks_past_the_cap_are_named(self):
+		self._chain()
+		with mock.patch.object(self.api, "SUCCESSOR_LIMIT", 1):
+			result = self.api.save_task("TASK-1", BASE, start="2026-10-14", dependents=1)
+		self.assertEqual([m["task"] for m in result["shifted"]], ["TASK-2"])
+		((cut,),) = [result["shift_skipped"]]
+		self.assertEqual(cut["task"], "TASK-3")
+		self.assertIn("Too many tasks follow", cut["reason"])
 
 
 # ====================================================================== the drafts strip

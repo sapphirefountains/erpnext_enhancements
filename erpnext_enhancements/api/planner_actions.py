@@ -1757,15 +1757,19 @@ def _draft_many(entries, follow=False, auto=False, exclude=()):
 	``follow`` (P4): the tasks that follow each moved one are drafted along by the working days its
 	end moved (``pp._draft_followers``), each once, marked ``"dependent": True``. ``auto``: a
 	follower in a published project is left alone (``shift_skipped``). ``exclude``: tasks the same
-	request moves another way."""
+	request moves another way. What the lot creates together comes back as warnings
+	(``pp._draft_checks``), and when two moved tasks reach the same follower, the one nearer it, the
+	downstream one, carries it (``pp._downstream_first``)."""
 	moved, warnings, conflicts, skipped = [], [], {}, []
 	taken = {entry["task"] for entry in entries} | set(exclude or ())
+	roots, holidays = {}, pp._shift_holidays()
 	for entry in entries:
 		context = pp._draft_context(entry["task"], entry["modified"])
 		doc = context["doc"]
 		if entry["start"] or entry["end"]:
 			_refuse_rental(doc, _("moved"))
-		old = pp._span_text(pp._state(doc))
+		before_state = pp._state(doc)
+		old = pp._span_text(before_state)
 		result = pp._store_draft(
 			context, start=entry["start"], end=entry["end"], tentative=entry["tentative"]
 		)
@@ -1779,15 +1783,27 @@ def _draft_many(entries, follow=False, auto=False, exclude=()):
 			for line in lines:
 				if line not in known:
 					known.append(line)
-		days = pp.dependent_days(old, new) if follow and old[0] and new[0] else 0
-		if days:
-			shifted, left = pp._draft_followers(doc.name, days, auto=auto, exclude=taken)
-			taken.update(move["task"] for move in shifted)
-			moved.extend(dict(move, dependent=True, drafted=True) for move in shifted)
-			skipped.extend(left)
+		roots[doc.name] = {
+			"doc": doc,
+			"stored": context["stored"],
+			"before": before_state,
+			"after": (pp._state(doc), pp._current_crew(doc)),
+			"days": pp.dependent_days(old, new, holidays) if follow and old[0] and new[0] else 0,
+		}
 	answer = {"drafted": True, "moved": moved, "warnings": warnings, "conflicts": conflicts}
-	if follow:
-		answer["shift_skipped"] = skipped
+	if not follow:
+		return answer
+	followers = []
+	for name in pp._downstream_first(list(roots)):
+		if not roots[name]["days"]:
+			continue
+		shifted, left, found = pp._draft_followers(name, roots[name]["days"], auto=auto, exclude=taken)
+		taken.update(move["task"] for move in shifted)
+		moved.extend(dict(move, dependent=True, drafted=True) for move in shifted)
+		skipped.extend(left)
+		followers.extend(found)
+	pp._merge_info(answer, pp._draft_checks(list(roots.values()), followers))
+	answer["shift_skipped"] = skipped
 	return answer
 
 
@@ -1870,9 +1886,15 @@ def _move_live(entries, reason, notify, follow, auto, exclude=()):
 	skipped = []
 	if follow:
 		taken = {doc.name for doc in docs} | set(exclude or ())
-		for report in list(reports):
+		holidays = pp._shift_holidays()
+		by_task = {report["task"]: report for report in reports}
+		# Downstream first: a follower two moved tasks reach takes the nearer one's shift.
+		for name in pp._downstream_first([report["task"] for report in reports]):
+			report = by_task[name]
 			days = (
-				pp.dependent_days((report["from"], report["from_end"]), (report["to"], report["to_end"]))
+				pp.dependent_days(
+					(report["from"], report["from_end"]), (report["to"], report["to_end"]), holidays
+				)
 				if report["from"] and report["to"]
 				else 0
 			)
@@ -1891,6 +1913,13 @@ def _move_live(entries, reason, notify, follow, auto, exclude=()):
 			)
 
 	conflicts = pp.conflict_delta(engine.preview_batch(before), engine.preview_batch(after))
+	# P4: each task the batch moves against every task it waits on, where those go ("Starts before").
+	lines = pp._follower_dependency_lines(
+		[(doc, was[0], now[0]) for doc, was, now in zip(docs, before, after, strict=True)],
+		{doc.name: now[0] for doc, now in zip(docs, after, strict=True)},
+	)
+	if lines:
+		conflicts[pp.DEPENDENCY_KEY] = lines
 	reason = (pp.given(reason) or "").strip()
 	if conflicts and not reason:
 		return {"needs_reason": True, "conflicts": conflicts, "moves": reports}
