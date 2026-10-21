@@ -133,7 +133,7 @@
 	outline: 1px solid var(--sf-focus);
 }
 
-/* ---- The toolbar (v1.687.0): the filters, alert chips, four menus, the phone's one button --- */
+/* ---- The toolbar (v1.687.0): the filters, alert chips, + Add and More, the phone's one button --- */
 
 .pp-tb-filters,
 .pp-tb-tools,
@@ -3123,34 +3123,6 @@ body.p6b-resizing * {
 .t1-tray-sub {
 	font-size: 11px;
 	color: var(--sf-text-muted);
-}
-
-/* ======================================================================================== */
-/* Phase 6E: Move by calendar or working days (PP6E_STYLE).                                 */
-/* ======================================================================================== */
-
-.p6e-switch {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-
-.p6e-switch-label {
-	font-size: 12px;
-	color: var(--sf-text-muted);
-}
-
-.p6e-opt {
-	border-color: var(--sf-field-border);
-	border-radius: var(--sf-radius-control);
-}
-
-/* The unit in use: the primary fill and the weight. */
-.p6e-opt.p6e-on {
-	background: var(--sf-primary);
-	border-color: var(--sf-primary);
-	color: var(--sf-on-primary);
-	font-weight: var(--sf-weight-bold);
 }
 
 /* ======================================================================================== */

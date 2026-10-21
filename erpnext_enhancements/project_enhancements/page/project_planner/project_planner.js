@@ -577,6 +577,7 @@ class ProjectPlanner {
 		this.$title = $('<span class="pp-title" tabindex="-1"></span>').appendTo($bar);
 
 		const $seg = $('<span class="pp-seg"></span>').appendTo($bar);
+		this.$seg = $seg;
 		this.$view_buttons = {};
 		[
 			["month", __("Month")],
@@ -586,6 +587,7 @@ class ProjectPlanner {
 			[PP.util_view, __("Utilization")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
+				.attr("data-tb-tab", view)
 				.text(label)
 				.on("click", () => this.go(view, this.anchor))
 				.appendTo($seg);
@@ -603,8 +605,8 @@ class ProjectPlanner {
 		this.$group.val(PP.groups.includes(this.group) ? this.group : "");
 		this.group = this.$group.val() || "";
 
-		// The alert chips, then the four menus (both filled by the toolbar block, PPTB), then Undo as
-		// a small icon while there is something to undo (its menu item is in Edit), ? and refresh.
+		// The alert chips, then + Add and More (both filled by the toolbar block, PPTB), then Undo as
+		// a small icon while there is something to undo (its menu item is in More ▸ Tools), ? and refresh.
 		this.$alerts = $('<span class="pp-tb-alerts" role="group"></span>').attr("aria-label", __("Alerts")).appendTo($bar);
 		this.$tools = $('<span class="pp-tb-tools"></span>').appendTo($bar);
 		this.$undo = $('<button type="button" class="btn btn-default btn-sm pp-undo pp-empty">↶</button>')
@@ -3364,7 +3366,7 @@ class ProjectPlanner {
 //                                             (tap for Google Maps), crewmates, hours and notes,
 //                                             and a link to that day's route view
 //
-// Draft mode is a switch in the toolbar's Edit menu, remembered per browser. While it is on, every
+// Draft mode is a switch in the toolbar's More ▸ Tools, remembered per browser. While it is on, every
 // drag, dialog save and Undo is sent with draft=1, so it lands on the planner's own drafts (Planner
 // Draft Change) instead of the Task: nobody's assignments move and nobody is told. Drafted cards get
 // a dashed outline and a "Draft" chip, and a strip under the toolbar says "Draft mode on: N changes
@@ -3398,8 +3400,7 @@ const PP3B_METHODS = {
 		this.my_week_date = "";
 		this.my_week_data = null;
 
-		// The Draft mode switch, My week and Print crew sheet are items of the toolbar's Edit, Views and
-		// Print menus (PPTB). The strip sits right under the toolbar, where the switch's state shows.
+		// The Draft mode switch, My week and Print crew sheet are items of the toolbar's More menu (PPTB). The strip sits right under the toolbar, where the switch's state shows.
 		this.$draft_bar = $('<div class="pp-draft-bar" role="region"></div>')
 			.attr("aria-label", __("Draft mode"))
 			.hide()
@@ -6462,7 +6463,6 @@ const PP6B_METHODS = {
 			.text(__("Clear"))
 			.on("click", () => this.p6b_clear_selection())
 			.appendTo($bar);
-		this.p6e_bar_switch($bar);
 		$('<span class="p6b-bar-note"></span>').text(this.p6e_bar_note()).appendTo($bar);
 	},
 
@@ -6504,10 +6504,22 @@ const PP6B_METHODS = {
 	p6b_move_panel() {
 		const cards = this.p6b_selected_cards();
 		if (!cards.length) return;
-		const panel = this.p6b_panel({
+		let panel = null;
+		panel = this.p6b_panel({
 			title: __("Move {0} tasks", [cards.length]),
 			key: "p6b-move",
 			fields: [
+				// Move by (calendar or working days) lived on the selection bar until the planner UX
+				// redesign (D12); it is a field here now, and a drag still uses the choice it makes.
+				{
+					fieldtype: "Select",
+					fieldname: "unit",
+					label: __("Move by"),
+					options: this.p6e_unit_options(),
+					default: this.p6e_unit_label(this.p6e_unit()),
+					description: __("Also what dragging several selected tasks counts in. Remembered on this device."),
+					change: () => this.p6e_panel_unit(panel),
+				},
 				{
 					fieldtype: "Int",
 					fieldname: "days",
@@ -7014,7 +7026,7 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 // TASK-2026-02469. Nik picked all six on 2026-10-09; each is on both planners (the Maintenance Planner
 // has the same block, MP6C_METHODS):
 //
-//   - Color by (toolbar's Display menu)      the cards' left edge by Task color (today's look, the
+//   - Color by (toolbar's More ▸ Display)      the cards' left edge by Task color (today's look, the
 //                                            default), Person (the lead, or the row in the crew view),
 //                                            Job type, Project, Project manager or Status; the key in
 //                                            Display and in the "?" legend. Job type and status
@@ -7027,7 +7039,7 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 //                                            every card of that project lights up and the rest fade,
 //                                            in every view and week; a toolbar pill and Esc clear it.
 //                                            Not remembered: a reload starts clear
-//   - Views (toolbar's Views menu)           named views ("Field crew, Build only") saved on the
+//   - Views (toolbar's More ▸ Views)           named views ("Field crew, Build only") saved on the
 //                                            server per person (api/planner_views_prefs), switch and
 //                                            delete; the view last used is saved a moment after any
 //                                            change and restored when the planner opens, on any
@@ -7039,13 +7051,13 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 //                                            everyone the group filter shows, amber at 90% booked,
 //                                            red past capacity, pencil hatched; click a day for
 //                                            everyone's day (6A's day peek)
-//   - Tap to move (Edit menu; on by default on a touch screen)
+//   - Tap to move (More ▸ Tools; on by default on a touch screen)
 //                                            tap a card, then the day (or a person's day in the crew
 //                                            view): the move goes through drop -> plan_drop ->
 //                                            commit -> send, exactly like a drag, so the reason
 //                                            prompt, the past-day question and Undo all apply. A tap
 //                                            on a card with it off still opens the card
-//   - Print (Print menu)                     exactly what is on screen (view, range, filters, colors,
+//   - Print (More ▸ Print)                     exactly what is on screen (view, range, filters, colors,
 //                                            highlight), or only 6B's selection, built from the
 //                                            loaded data (never the live DOM) on the print design
 //                                            system's chrome, printed from a browser window
@@ -7076,6 +7088,11 @@ const PP6C = {
 		panel: ["bool"],
 		color_by: ["enum", ["default", "person", "job_type", "project", "pm", "status"]],
 	},
+	// What the cards are colored by until someone chooses (D12, the planner UX redesign): Job type. The
+	// stored value "default" is the old Task color, which every saved "last used" view carries whether
+	// or not anyone picked it, so it counts as a choice only once color_pref says the person made one.
+	default_color: "job_type",
+	color_pref: "ee_project_planner_color_chosen",
 	// Phase 4's Running over chip is never restored on its own the next morning (a named view may hold it).
 	not_remembered: ["over_only"],
 	color_modes: [
@@ -7093,7 +7110,7 @@ const PP6C = {
 const PP6C_METHODS = {
 	init_phase6c() {
 		this.p6c = {
-			color_by: "default",
+			color_by: PP6C.default_color,
 			highlight: null,
 			moving: null,
 			tap: this.p6c_tap_default(),
@@ -7119,8 +7136,8 @@ const PP6C_METHODS = {
 			.attr("aria-label", __("Stop highlighting"))
 			.on("click", () => this.p6c_clear_highlight())
 			.appendTo(this.$p6c_pill);
-		// Color by and its key are in the toolbar's Display menu, Tap to move in Edit, the saved views in
-		// Views and Print in Print (PPTB, v1.687.0); this block gives each menu its items
+		// Color by and its key are in the toolbar's More ▸ Display, Tap to move in Tools, the saved views in
+		// Views and Print in Print (PPTB, v1.687.0, v2); this block gives each section its items
 		// (p6c_color_items, p6c_view_items, p6c_print_items).
 		this.$p6c_movebar = $('<div class="pp-p6c-movebar" role="status"></div>').hide().appendTo(this.$body);
 
@@ -7206,7 +7223,9 @@ const PP6C_METHODS = {
 
 	p6c_set_color(mode) {
 		const known = PP6C.color_modes.map(([value]) => value);
-		this.p6c.color_by = known.includes(mode) ? mode : "default";
+		this.p6c.color_by = known.includes(mode) ? mode : PP6C.default_color;
+		// A choice, even of Task color: from now on the planner opens with it (p6c_before_route).
+		this.save_pref(PP6C.color_pref, "1");
 		this.render();
 	},
 
@@ -7356,7 +7375,7 @@ const PP6C_METHODS = {
 			title: __("Card colors: {0}", [this.p6c_mode_label(mode)]),
 			note:
 				mode === "default"
-					? __("Each card's left edge is the task's own color. Color by in the toolbar's Display menu colors the cards by person, job type, project, project manager or status instead.")
+					? __("Each card's left edge is the task's own color. More ▸ Display ▸ Color by colors the cards by person, job type, project, project manager or status instead.")
 					: "",
 			items:
 				mode === "default"
@@ -7792,6 +7811,8 @@ const PP6C_METHODS = {
 		const last = p6c.last ? this.p6c_pick(p6c.last) : null;
 		// The server never remembers these; nor does the page, whatever an older row says.
 		if (last) PP6C.not_remembered.forEach((key) => delete last[key]);
+		// "Task color" saved before it was a choice is the old default, not a wish: Job type instead.
+		if (last && last.color_by === "default" && this.load_pref(PP6C.color_pref, "") !== "1") delete last.color_by;
 		if (!p6c.restored) {
 			p6c.restored = true;
 			if (last) {
@@ -7893,7 +7914,7 @@ const PP6C_METHODS = {
 		return (this.p6c.views || []).find((entry) => JSON.stringify(this.p6c_pick(entry.data || {})) === now) || null;
 	},
 
-	// The Views menu's saved views: one radio item each (the one on screen is ticked), then Save and
+	// The saved views of More ▸ Views: one radio item each (the one on screen is ticked), then Save and
 	// Manage.
 	p6c_view_items() {
 		if (!this.p6c) return [];
@@ -7932,7 +7953,9 @@ const PP6C_METHODS = {
 		if (view.pm) parts.push(view.pm);
 		if (view.over_only) parts.push(__("Running over"));
 		if (view.foreign === false) parts.push(__("No maintenance, rentals, travel"));
-		if (view.color_by && view.color_by !== "default") parts.push(__("{0} colors", [this.p6c_mode_label(view.color_by)]));
+		if (view.color_by && view.color_by !== PP6C.default_color) {
+			parts.push(view.color_by === "default" ? __("Task colors") : __("{0} colors", [this.p6c_mode_label(view.color_by)]));
+		}
 		return parts.join(" · ");
 	},
 
@@ -7982,7 +8005,7 @@ const PP6C_METHODS = {
 
 	p6c_views_html() {
 		const views = this.p6c.views || [];
-		if (!views.length) return `<p class="pk-empty">${pp_esc(__("No saved views yet. Save one from the Views menu."))}</p>`;
+		if (!views.length) return `<p class="pk-empty">${pp_esc(__("No saved views yet. Save one from More ▸ Views."))}</p>`;
 		const rows = views.map(
 			(entry) => `
 			<li class="pp-p6c-views-row">
@@ -8044,7 +8067,7 @@ const PP6C_METHODS = {
 		return selection && typeof selection.has === "function" && selection.size ? selection : new Set();
 	},
 
-	// The Print menu's own items: the view on screen, and 6B's selection when there is one. Each runs
+	// The More ▸ Print items: the view on screen, and 6B's selection when there is one. Each runs
 	// in the menu item's click, so its window opens on the person's own tap.
 	p6c_print_items() {
 		const selected = this.p6c_selection();
@@ -8336,7 +8359,7 @@ Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
 // kit's (planner_kit/conflicts.js and blocks.js), shared with the Maintenance Planner.
 //
 //   - the "N Conflicts" chip on the toolbar the Conflict center for the dates on screen. N is what
-//     (and Conflicts… in its Edit menu)      nobody has kept; the chip shows only above 0 (PPTB), read
+//     (and Conflicts… in More ▸ Tools)      nobody has kept; the chip shows only above 0 (PPTB), read
 //                                            after each load (one call, debounced), never on a plain
 //                                            re-render. A card in
 //                                            a conflict has its Conflict chip turned into the way in
@@ -8347,7 +8370,7 @@ Object.assign(ProjectPlanner.prototype, PP6C_METHODS);
 //                                            asks for a reason, Draft mode drafts it and Undo puts it
 //                                            back. "Pick someone who's free" lists who_is_free and
 //                                            picks nobody; "Keep it with a reason" needs a reason.
-//   - Block time… (Edit menu), "Block       the block form. A block shows in the crew view as a
+//   - Block time… (More ▸ Tools), "Block       the block form. A block shows in the crew view as a
 //     time…" in a person's drawer and the    hatched "Unavailable 2–4 pm" bar, in week and month as a
 //     right-click menu                       chip; its note only when block_notes has it. Blocks are
 //                                            never dragged.
@@ -8386,7 +8409,7 @@ const PP6D_METHODS = {
 		// The right-click menu registry (phase6-wave2): 6B opens the menu, this adds its items.
 		this.p6_menu_providers = this.p6_menu_providers || [];
 		this.p6_menu_providers.push((target) => this.p6d_menu_items(target));
-		// The Conflicts count is an alert chip on the toolbar and Block time an item of its Edit menu
+		// The Conflicts count is an alert chip on the toolbar and Block time an item of its More ▸ Tools
 		// (PPTB, v1.687.0): p6d_conflict_count and p6d_toolbar_block say when.
 		const root = this.$body[0];
 		// Capture phase: a block, a note or a conflict marker inside a card or a day is its own click,
@@ -9017,7 +9040,7 @@ Object.assign(ProjectPlanner.prototype, PP6D_METHODS);
 //     split_task re-points them); the Undo has to hand the list back (p6e_dependents), because
 //     remove_created_task puts exactly those back on the first part.
 //
-// Hooks into Phase 6B's block, one line each: p6e_bar_switch and p6e_bar_note (p6b_render_bar),
+// Hooks into Phase 6B's block, one line each: p6e_bar_note (p6b_render_bar),
 // p6e_drop_days (p6b_drop), p6e_move_label / p6e_move_default / p6e_move_note (p6b_move_panel),
 // p6e_moves and p6e_message (p6b_move_selection) and p6e_dependents (p6b_split_save). The first use of
 // the switch adds its style, so the constructor needs no hook of its own.
@@ -9127,28 +9150,35 @@ const PP6E_METHODS = {
 		this.p6b_render_bar();
 	},
 
-	// "Move by: Calendar days | Working days", in the selection bar.
-	p6e_bar_switch($bar) {
-		const unit = this.p6e_unit();
-		const $switch = $('<span class="p6e-switch" role="group"></span>').attr("aria-label", __("Move by")).appendTo($bar);
-		$('<span class="p6e-switch-label"></span>').text(__("Move by:")).appendTo($switch);
-		[
-			["calendar", __("Calendar days"), __("Every day counts, weekends too")],
-			["working", __("Working days"), __("Monday to Friday; each task keeps its length in working days")],
-		].forEach(([value, label, title]) => {
-			$('<button type="button" class="btn btn-default btn-xs p6e-opt"></button>')
-				.toggleClass("p6e-on", unit === value)
-				.attr({ "aria-pressed": unit === value ? "true" : "false", title })
-				.text(label)
-				.on("click", () => this.p6e_set_unit(value))
-				.appendTo($switch);
-		});
+	// "Move by: Calendar days | Working days", a field of the Move… panel (it was a switch on the
+	// selection bar until the planner UX redesign, D12). The Select shows the words; the unit is the key.
+	p6e_unit_label(unit) {
+		return unit === "working" ? __("Working days") : __("Calendar days");
+	},
+
+	p6e_unit_options() {
+		return PP6E.units.map((unit) => this.p6e_unit_label(unit)).join("\n");
+	},
+
+	// The panel's Select changed: remember the unit, and say what the number below counts now.
+	p6e_panel_unit(panel) {
+		if (!panel) return;
+		const picked = PP6E.units.find((unit) => this.p6e_unit_label(unit) === panel.get_value("unit"));
+		if (!picked || picked === this.p6e_unit()) return;
+		this.p6e_set_unit(picked);
+		const field = panel.fields_dict && panel.fields_dict.days;
+		if (field) {
+			if (field.df) Object.assign(field.df, { label: this.p6e_move_label(), description: this.p6e_move_note() });
+			if (typeof field.set_label === "function") field.set_label(this.p6e_move_label());
+			if (typeof field.set_description === "function") field.set_description(this.p6e_move_note());
+		}
+		panel.set_value("days", this.p6e_move_default());
 	},
 
 	p6e_bar_note() {
 		return this.p6e_unit() === "working"
-			? __("Drag any of them and they all move by the same number of working days (Monday to Friday), each keeping its length in working days. Esc clears the selection.")
-			: __("Drag any of them and they all move by the same number of calendar days, each keeping its length. Esc clears the selection.");
+			? __("Drag any of them and they all move by the same number of working days (Monday to Friday), each keeping its length in working days. Move… changes the unit. Esc clears the selection.")
+			: __("Drag any of them and they all move by the same number of calendar days, each keeping its length. Move… changes the unit. Esc clears the selection.");
 	},
 
 	p6e_drop_days(from, to) {
@@ -10513,41 +10543,55 @@ const PPT4_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPT4_METHODS);
 
-// ====================================================================== The toolbar (v1.687.0)
+// ====================================================================== The toolbar (v1.687.0, v2)
 //
-// Nik picked the toolbar redesign from a mockup on 2026-10-14. Every phase used to append its own
-// buttons to the bar, so it had grown into one long flat row. It is still one bar, made shorter by
-// four menus:
+// Nik picked the toolbar redesign from a mockup on 2026-10-14, and on 2026-10-21 approved the next
+// step of it (the planner UX redesign, P1: "Approve as is"). Every phase used to append its own
+// buttons to the bar, so it had grown into one long flat row. v1.687.0 folded them into four menus;
+// v2 folds those into two, so the bar is the same on every screen of both planners:
 //
 //   ‹ Today ›  title  [highlight]  Month Week Crew Heatmap Utilization   search  Project  PM  Group
-//   [alert chips]  Views ▾  Display ▾  Edit ▾  Print ▾  [↶]  ?  ↻
+//   [alert chips]  + Add ▾  More ▾  [↶]  ?  ↻
 //
-//   - Views ▾     My week; the saved views (6C), Save current view as…, Manage views…
-//   - Display ▾   Color by (6C) and the key of its colors (the row it had under the toolbar);
-//                 Maintenance, rentals, travel
-//   - Edit ▾      Draft mode (3B) and Tap to move (6C), each with a check mark; Block time… (6D);
-//                 Copy week… (week and crew views); Conflicts… (6D, even at none); Undo
-//   - Print ▾     Print this view and Print selection only (6C); Print crew sheet (3B)
+//   - + Add ▾     Quick add task… (the double-click dialog, on today or the first day on screen),
+//                 Build out tasks… (the T1 grid; a project is asked for when none is filtered) and
+//                 Day note… (6D)
+//   - More ▾      four sections:
+//       Display   Color by (6C; the default is now Job type) and the key of its colors; Highlight a
+//                 project…; Maintenance, rentals, travel
+//       Views     My week; the saved views (6C), Save current view as…, Manage views…
+//       Tools     Copy week… (week and crew views); Block time… (6D); Conflicts… (6D, even at none);
+//                 Tap to move (6C); Hold all my changes (the old Draft mode, 3B); Undo
+//       Print     Print this view and Print selection only (6C); Print crew sheet (3B)
 //   - alert chips Conflicts (6D) and Overdue in the danger tone, Running over (4) in warn, each a
 //                 count and its word, there only above zero (Running over also while it filters).
 //                 A chip opens what its button did: the Conflict center, the Running over filter,
 //                 the Overdue tray (opened and scrolled to)
 //   - ↶           Undo, as a small icon only while there is something to undo
-//   - ?           the help, whose first section is now the tips that used to be banners on load
+//   - ?           the help, whose first section is the tips that used to be banners on load
 //   - Draft mode  a strip under the bar, "Draft mode on: N changes not published yet", with
 //                 Publish and Discard (3B's render_draft_bar, publish_drafts, discard_drafts)
-//   - Utilization a fifth view (PPU, below)
+//   - the tabs    Month Week Crew Heatmap Utilization are a WAI-ARIA tablist (planner_kit
+//                 toolbar.tabs): arrow keys move focus, Enter opens. Later PRs of the redesign swap
+//                 the list for Lookahead / Gantt / Crew / Calendar / Overview; the control stays.
+//
+// Gone from the bar and kept elsewhere (D12, "nothing familiar disappears"): Split is in the
+// right-click menu and the task panel only; the Move by switch (calendar or working days) is a field
+// of the Move… panel on the selection bar (p6b_move_panel); Color by, the saved views, Copy week and
+// Print are in More.
 //
 // The menus are planner_kit.toolbar.menu (a menu button: arrow keys, Esc gives focus back, a click
 // elsewhere closes it, and opening one pushes no history entry). Each menu's items are built when it
 // opens, from the page's own state, through the methods the phases already had: nothing is clicked
 // on someone's behalf, and an item whose control was hidden on a screen (Copy week in the month view,
-// Block time for someone who cannot schedule) is left out of the menu there.
+// Block time for someone who cannot schedule) is left out of the menu there. A section with nothing
+// in it is left out with its heading.
 //
 // On a phone (767px and under) the bar is ‹ Today ›, the title, the view switcher and "Filters and
 // tools", which opens planner_kit.toolbar.sheet: the filters (moved in, and back when it closes), the
-// alert chips, the four menus' items and the help and refresh. The sheet is a screen, so it takes the
-// kit's one history entry, and the phone's Back closes it (Nik's rule: never break Back/Forward).
+// alert chips, the same sections as sheet sections (Add, Display, Views, Tools, Print) and the help
+// and refresh. The sheet is a screen, so it takes the kit's one history entry, and the phone's Back
+// closes it (Nik's rule: never break Back/Forward).
 //
 // Hooks into the class above, one line each: init_toolbar (constructor), tb_ready (p6a_ready),
 // tb_render (render, set_mode, load_overdue, p6d_after_list) and tb_close_sheet (p6b_pick).
@@ -10560,19 +10604,18 @@ const PPTB = {
 };
 
 const PPTB_METHODS = {
-	// The four menus: [name, label, what is in it]. Written out as __() calls, so they are translated.
+	// The two menus: [name, label, what is in it, the button's text]. Written out as __() calls, so
+	// they are translated.
 	tb_menu_list() {
 		return [
-			["views", __("Views"), __("Saved views and My week")],
-			["display", __("Display"), __("Card colors, their key, and what else is drawn")],
-			["edit", __("Edit"), __("Draft mode, Tap to move, Block time, Copy week, Undo")],
-			["print", __("Print"), __("Print this view or the crew sheet")],
+			["add", __("Add"), __("Add a task, build out a project's tasks, or add a day note"), __("+ Add")],
+			["more", __("More"), __("Display, Views, Tools and Print"), __("More")],
 		];
 	},
 
 	init_toolbar() {
-		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null };
-		this.tb_menu_list().forEach(([name, label, title]) => {
+		this.tb = { kit: null, menus: {}, $menus: {}, sheet: null, tabs: null };
+		this.tb_menu_list().forEach(([name, label, title, text]) => {
 			const $button = $('<button type="button" class="btn btn-default btn-sm pp-tb-menu"></button>')
 				.attr("data-tb-menu", name)
 				.attr("title", title)
@@ -10581,7 +10624,7 @@ const PPTB_METHODS = {
 					if (!this.tb.kit) frappe.show_alert({ message: __("One moment: the planner is still loading."), indicator: "blue" }, 4);
 				})
 				.appendTo(this.$tools);
-			$("<span></span>").text(label).appendTo($button);
+			$("<span></span>").text(text || label).appendTo($button);
 			$('<span class="pp-tb-caret" aria-hidden="true">▾</span>').appendTo($button);
 			this.tb.$menus[name] = $button;
 		});
@@ -10610,7 +10653,7 @@ const PPTB_METHODS = {
 		if (kit && kit.toolbar) kit.toolbar.close_all("route");
 	},
 
-	// The kit has loaded (6A's p6a_ready): the buttons become menus.
+	// The kit has loaded (6A's p6a_ready): the buttons become menus, the view buttons tabs.
 	tb_ready() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!this.tb || this.tb.kit || !kit || !kit.toolbar) return;
@@ -10621,6 +10664,9 @@ const PPTB_METHODS = {
 				items: () => this.tb_items(name),
 			});
 		});
+		if (this.$seg && this.$seg[0] && typeof kit.toolbar.tabs === "function") {
+			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view });
+		}
 		this.tb_render();
 	},
 
@@ -10631,11 +10677,85 @@ const PPTB_METHODS = {
 
 	// One menu's items, as planner_kit.toolbar takes them.
 	tb_items(name) {
-		if (name === "views") return this.tb_views_items();
-		if (name === "display") return this.tb_display_items();
-		if (name === "edit") return this.tb_edit_items();
-		if (name === "print") return this.tb_print_items();
+		if (name === "add") return this.tb_add_items();
+		if (name === "more") return this.tb_sections_items(this.tb_more_sections());
 		return [];
+	},
+
+	// Named sections as one list (the kit's), or, before the kit has loaded, plainly one after another.
+	tb_sections_items(sections) {
+		const kit = this.tb && this.tb.kit;
+		if (kit && kit.toolbar && typeof kit.toolbar.sections_to_items === "function") return kit.toolbar.sections_to_items(sections);
+		return [].concat(...sections.map((section) => this.tb_kit_tidy(section.items)));
+	},
+
+	// More's four sections; the phone's sheet draws the same ones.
+	tb_more_sections() {
+		return [
+			{ key: "display", title: __("Display"), items: this.tb_display_items() },
+			{ key: "views", title: __("Views"), items: this.tb_views_items() },
+			{ key: "tools", title: __("Tools"), items: this.tb_tools_items() },
+			{ key: "print", title: __("Print"), items: this.tb_print_items() },
+		];
+	},
+
+	// + Add: the ways to make a task or a note without touching a card. The task dialog is the
+	// double-click's (p6b_quick_add), started on the first day on screen (today when it is there).
+	tb_add_items() {
+		const items = [];
+		const data = this.data;
+		if (this.tb_calendar() && data && data.can_edit) {
+			items.push({
+				label: __("Quick add task…"),
+				title: __("Add one task: the project, a subject, a person and a day. Double-click an empty spot does the same."),
+				on_click: () => this.p6b_quick_add({ kind: "cell", resource: "", ymd: this.p6d_default_date() }),
+			});
+		}
+		if (this.t1_can && this.t1_can()) {
+			items.push({
+				label: __("Build out tasks…"),
+				title: __("Add many tasks to one project at once: a grid, a pasted list, another project's tasks, a template or an AI draft"),
+				on_click: () => this.tb_build_out(),
+			});
+		}
+		if (this.tb_calendar() && data && data.can_schedule) {
+			items.push({
+				label: __("Day note…"),
+				title: __("A note for everyone on a day, such as a shop meeting"),
+				on_click: () => this.p6d_note_form({ date: this.p6d_default_date() }),
+			});
+		}
+		return items;
+	},
+
+	// Build out tasks… from the bar: for the project in the filter, or for the one picked first.
+	tb_build_out() {
+		if (!this.t1_can()) return;
+		const open = (project) => {
+			if (project) this.t1_open_build_out(project, (this.by_project[project] || {}).title);
+		};
+		if (this.project && this.by_project[this.project]) {
+			open(this.project);
+			return;
+		}
+		// The planner's own list of projects: Active customer jobs.
+		const names = (this.data.projects || []).map((project) => project.name);
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Link",
+					fieldname: "project",
+					label: __("Project"),
+					options: "Project",
+					reqd: 1,
+					description: __("Customer jobs only."),
+					get_query: () => ({ filters: { name: ["in", names.length ? names : [""]] } }),
+				},
+			],
+			(values) => open(values && values.project),
+			__("Build out tasks for"),
+			__("Open the grid")
+		);
 	},
 
 	tb_views_items() {
@@ -10652,8 +10772,7 @@ const PPTB_METHODS = {
 
 	tb_display_items() {
 		if (!this.tb_calendar()) return [];
-		return this.p6c_color_items().concat([
-			{ divider: true },
+		return this.p6c_color_items().concat([{ divider: true }], this.tb_highlight_items(), [
 			{
 				label: __("Maintenance, rentals, travel"),
 				checked: !!this.show_foreign,
@@ -10663,38 +10782,66 @@ const PPTB_METHODS = {
 		]);
 	},
 
-	tb_edit_items() {
-		// Utilization edits nothing: no Draft mode, no Undo, so no Edit menu at all (tb_render).
-		if (this.view === PP.util_view) return [];
-		const items = [
+	// Highlight a project: on, it can be switched off here (Esc and the pill's × do too); off, a project
+	// is asked for. A project's name on a card, its peek and a project in the color key start it as well.
+	tb_highlight_items() {
+		if (!this.p6c) return [];
+		const hi = this.p6c.highlight;
+		if (hi) {
+			return [
+				{
+					label: __("Highlighting {0}", [hi.label || hi.key]),
+					checked: true,
+					title: __("Stop highlighting (Esc)"),
+					on_click: () => this.p6c_clear_highlight(),
+				},
+			];
+		}
+		if (!((this.data && this.data.projects) || []).length) return [];
+		return [
 			{
-				label: __("Draft mode"),
-				checked: !!this.draft_on,
-				title: __("Keep your changes to yourself until you publish them"),
-				on_click: () => this.set_draft_mode(!this.draft_on),
+				label: __("Highlight a project…"),
+				title: __("Light up one project's tasks on the calendar and fade the rest"),
+				on_click: () => this.tb_highlight_prompt(),
 			},
 		];
-		if (this.tb_calendar() && this.p6c) {
-			items.push({
-				label: __("Tap to move"),
-				checked: !!this.p6c.tap,
-				title: __("Tap a card, then tap the day where it goes, instead of dragging"),
-				on_click: () => this.p6c_set_tap(!this.p6c.tap),
-			});
-		}
-		items.push({ divider: true });
-		if (this.p6d_toolbar_block()) {
-			items.push({
-				label: __("Block time…"),
-				title: __("Mark someone unavailable for part of a day or all of it"),
-				on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),
-			});
-		}
+	},
+
+	tb_highlight_prompt() {
+		const projects = (this.data && this.data.projects) || [];
+		if (!projects.length) return;
+		frappe.prompt(
+			[
+				{
+					fieldtype: "Autocomplete",
+					fieldname: "project",
+					label: __("Project"),
+					reqd: 1,
+					options: projects.map((project) => ({ value: project.name, label: this.p6c_project_label(project.name) })),
+				},
+			],
+			(values) => values && values.project && this.p6c_highlight(values.project),
+			__("Highlight a project"),
+			__("Highlight")
+		);
+	},
+
+	tb_tools_items() {
+		// Utilization edits nothing: no Draft mode, no Undo, so no Tools at all (tb_render).
+		if (this.view === PP.util_view) return [];
+		const items = [];
 		if (this.tb_calendar() && this.view !== "month" && this.data && this.data.can_edit) {
 			items.push({
 				label: __("Copy week…"),
 				title: __("Copy tasks from this week into another week"),
 				on_click: () => this.open_copy_week(),
+			});
+		}
+		if (this.p6d_toolbar_block()) {
+			items.push({
+				label: __("Block time…"),
+				title: __("Mark someone unavailable for part of a day or all of it"),
+				on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),
 			});
 		}
 		if (this.tb_calendar()) {
@@ -10706,6 +10853,20 @@ const PPTB_METHODS = {
 				on_click: () => this.p6d_open_conflicts(null),
 			});
 		}
+		if (this.tb_calendar() && this.p6c) {
+			items.push({
+				label: __("Tap to move"),
+				checked: !!this.p6c.tap,
+				title: __("Tap a card, then tap the day where it goes, instead of dragging"),
+				on_click: () => this.p6c_set_tap(!this.p6c.tap),
+			});
+		}
+		items.push({
+			label: __("Hold all my changes"),
+			checked: !!this.draft_on,
+			title: __("Draft mode: keep every change to yourself until you publish them"),
+			on_click: () => this.set_draft_mode(!this.draft_on),
+		});
 		if (this.view !== PP.heatmap_view && this.view !== PP.util_view) {
 			const last = this.undo_stack[this.undo_stack.length - 1];
 			items.push(
@@ -10821,11 +10982,12 @@ const PPTB_METHODS = {
 		const total = alerts.reduce((sum, alert) => sum + (Number(alert.count) || 0), 0);
 		this.$tb_more_count.text(total ? String(total) : "").toggle(!!total);
 		this.$tb_more.attr("aria-label", total ? __("Filters and tools, {0} alerts", [total]) : __("Filters and tools"));
-		// A menu with nothing for this screen is not offered (Display and Edit on Utilization).
+		// A menu with nothing for this screen is not offered (+ Add on Utilization).
 		this.tb_menu_list().forEach(([name]) => {
 			const $button = this.tb.$menus[name];
 			if ($button) $button.toggleClass("pp-tb-off", !this.tb_kit_tidy(this.tb_items(name)).length);
 		});
+		if (this.tb.tabs) this.tb.tabs.sync(this.view);
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
 
@@ -10864,8 +11026,8 @@ const PPTB_METHODS = {
 		if (this.tb && this.tb.sheet) this.tb.sheet.close("user");
 	},
 
-	// The sheet's lists: the chips, the four menus and the page's own buttons. A switch (a check mark
-	// or a radio) keeps the sheet open and redraws it; anything else closes it first.
+	// The sheet's lists: the chips, + Add, More's four sections and the page's own buttons. A switch
+	// (a check mark or a radio) keeps the sheet open and redraws it; anything else closes it first.
 	tb_sheet_sections() {
 		const keep = (items) => items.map((item) => Object.assign({}, item, { keep_open: typeof item.checked === "boolean" }));
 		const alerts = this.tb_alerts().map((alert) => ({
@@ -10877,18 +11039,18 @@ const PPTB_METHODS = {
 		}));
 		return [
 			{ title: __("Alerts"), items: keep(alerts) },
-			{ title: __("Views"), items: keep(this.tb_views_items()) },
-			{ title: __("Display"), items: keep(this.tb_display_items()) },
-			{ title: __("Edit"), items: keep(this.tb_edit_items()) },
-			{ title: __("Print"), items: this.tb_print_items() },
-			{
-				title: __("This page"),
-				items: [
-					{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
-					{ label: __("Refresh"), on_click: () => this.load() },
-				],
-			},
-		];
+			{ title: __("Add"), items: this.tb_add_items() },
+		]
+			.concat(this.tb_more_sections().map((section) => ({ title: section.title, items: keep(section.items) })))
+			.concat([
+				{
+					title: __("This page"),
+					items: [
+						{ label: __("How to read the planner"), on_click: () => this.p6a_legend() },
+						{ label: __("Refresh"), on_click: () => this.load() },
+					],
+				},
+			]);
 	},
 };
 

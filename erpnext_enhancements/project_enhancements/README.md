@@ -1117,38 +1117,70 @@ method (`init_phase6a`, `render_phase6a`, `p6a_route` in `go`, `p6a_drag_source`
 resource, no time-off reason, no money without a cost role, internal projects refused) and, under
 node, drives the kit's history handling against a fake browser history.
 
-### The toolbar (v1.687.0)
+### The toolbar (v1.687.0, v2)
 
 Nik picked the redesign from a mockup on 2026-10-14. Every phase had appended its own buttons to the
 bar (6A's help, 6B's search, 6C's Color by, Tap to move, Views and Print, 3B's Draft mode, My week and
 crew sheet, 6D's Conflicts and Block time, Phase 4's Running over and Utilization, Copy week, Undo),
-so it had grown into one long flat row. It is still **one bar**, made shorter by four menus
-(`planner_kit.toolbar.menu`); each menu's items are built when it opens, from the page's own state,
-through the methods the phases already had, and an item whose control was hidden on a screen (Copy
-week in the month view, Block time for someone who cannot schedule) is left out there.
+so it had grown into one long flat row. v1.687.0 made it **one bar** with four menus
+(`planner_kit.toolbar.menu`). **Toolbar v2** (P1 of the planner UX redesign, `docs/planner-ux-redesign.md`,
+approved 2026-10-21) folds those four into two, and gives both planners the same structure:
+
+```
+‹ Today ›  title   [Month] Week Crew Heatmap Utilization   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+```
+
+- **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
+  roving tabindex, ArrowLeft/Right/Home/End move focus (choosing one is a route change with its own
+  history entry, so Enter does it). Later PRs of the redesign swap the list for Lookahead, Gantt,
+  Crew, Calendar and Overview; the control stays.
+- **+ Add ▾** holds *Quick add task…* (the double-click's dialog, opened on today or the first day on
+  screen), *Build out tasks…* (T1's grid; for the project in the filter, else a Project is asked for
+  first) and *Day note…* (6D). The Maintenance Planner's holds *Add visit…* and *Day note…*.
+- **More ▾** holds four sections, built by `tb_more_sections()` and flattened by
+  `planner_kit.toolbar.sections_to_items` (a section with nothing on the screen is left out with its
+  heading):
+  **Display** (*Color by*, whose default is now **Job type**, and the key of its colors; *Highlight a
+  project…*; *Maintenance, rentals, travel*), **Views** (*My week*, the saved views, *Save current view
+  as…*, *Manage views…*), **Tools** (*Copy week…* on week and crew only, *Block time…*, *Conflicts…* at
+  any count, *Tap to move*, *Hold all my changes*, which is the old board-wide Draft mode, and *Undo*) and
+  **Print** (*Print this view*, *selection only*, *Print crew sheet*).
+- Each menu's items are built when it opens, from the page's own state, through the methods the
+  phases already had, and an item whose control was hidden on a screen (Copy week in the month view,
+  Block time for someone who cannot schedule) is left out there.
+- **Gone from the bar and kept elsewhere (D12):** *Split* is in the right-click menu and the task
+  panel only; the *Move by* switch (calendar or working days) is the first field of the **Move…**
+  panel on the selection bar, and a drag still counts in the unit it picks; Color by, the saved views,
+  Copy week and Print are in More.
+- **Job type is the default color.** The stored value `default` is the old *Task color*, which every
+  "last used" view carried whether or not anyone picked it, so the planner ignores a saved `default` until
+  the person has picked a color themselves (a device preference, `ee_project_planner_color_chosen`).
 
 | Old control | Project Planner now | Maintenance Planner now |
 |---|---|---|
 | ‹ Today ›, title, view switcher, search, filters, ?, ↻ | in the bar (Utilization joins the switcher) | in the bar |
-| Views (saved views) | **Views ▾** with *My week*, *Save current view as…*, *Manage views…* | **Views ▾** |
-| My week | Views ▾ | (none) |
-| Color by, and its key row | **Display ▾**: radio items, then the key (a project in it is a switch for its highlight) | Display ▾, likewise (a site) |
-| Maintenance, rentals, travel / Projected visits, Project work | Display ▾ (check marks) | Display ▾ |
-| The visit-kind legend row | | Display ▾ (*Visit kinds*) and "?" |
-| Draft mode, Tap to move | **Edit ▾** (check marks) | Edit ▾ |
-| Block time, Copy week, Add visit | Edit ▾ (Copy week on week and crew only) | Edit ▾ (*Add visit…*, *Block time…*) |
-| Conflicts (N) | a **danger chip** above 0, and *Conflicts…* in Edit at any count | the same |
+| Views (saved views) | **More ▸ Views** with *My week*, *Save current view as…*, *Manage views…* | **More ▸ Views** |
+| My week | More ▸ Views | (none) |
+| Color by, and its key row | **More ▸ Display**: radio items, then the key (a project in it is a switch for its highlight) | More ▸ Display, likewise (a site) |
+| Highlight a project | More ▸ Display (*Highlight a project…*, or *Highlighting X* to switch it off), a project's name on a card, the project drawer, Esc | a site's panel, the site drawer, the key |
+| Maintenance, rentals, travel / Projected visits, Project work | More ▸ Display (check marks) | More ▸ Display |
+| The visit-kind legend row | | More ▸ Display (*Visit kinds*) and "?" |
+| Draft mode, Tap to move | **More ▸ Tools** (*Hold all my changes*, *Tap to move*; check marks) | More ▸ Tools (*Draft mode*, *Tap to move*) |
+| Block time, Copy week | More ▸ Tools (Copy week on week and crew only) | More ▸ Tools (*Block time…*) |
+| Quick add, Build out, Day note / Add visit | **+ Add** | **+ Add** (*Add visit…*, *Day note…*) |
+| Conflicts (N) | a **danger chip** above 0, and *Conflicts…* in Tools at any count | the same |
 | Running over (N) | a **warn chip** while above 0 or while it filters | (visits have no planned-vs-clocked hours) |
 | Overdue | a **danger chip** opening the Overdue tray | a **danger chip** opening a side panel listing the overdue visits on screen |
-| Undo | Edit ▾, and a small ↶ icon while there is something to undo | the same |
-| Print, Print crew sheet | **Print ▾** | Print ▾ (*Print this view*, *selection only*) |
+| Undo | More ▸ Tools, and a small ↶ icon while there is something to undo | the same |
+| Print, Print crew sheet | **More ▸ Print** | More ▸ Print (*Print this view*, *selection only*, *Day Board*) |
+| Move by (calendar or working days) | the Move… panel's first field | the same |
 | Utilization (button to the report) | the fifth **view**, `/project-planner/utilization/<date>` | (none: the Project Planner's view counts visits already) |
 | First-time tip banners | the first section of "?" | the same |
 | Draft mode's bottom bar | a strip **under the toolbar**: "Draft mode on: N changes not published yet", Publish, Discard | the same |
 
 **On a phone** (767px and under) the bar is ‹ Today ›, the title, the view switcher and **Filters and
 tools** (with the alerts' total), which opens `planner_kit.toolbar.sheet`: the filters and search
-(moved in from the bar, and back when it closes), the alert chips, the four menus' items, and the
+(moved in from the bar, and back when it closes), the alert chips, + Add and More's four sections as sheet sections, and the
 help, refresh (and the Day Board, on the Maintenance Planner). It takes the kit's one history entry,
 so the phone's Back closes it.
 
@@ -1346,7 +1378,7 @@ do to a drag.
   or a click on empty space clears it. Drag any selected card and they all move by **the same number of
   calendar days**, each keeping its length: the card in hand lands exactly where it is dropped, as a
   single drag does, and a weekend is not skipped (working days would land the others somewhere the
-  drag does not show; since Phase 6E the bar's *Move by: Calendar days | Working days* switch counts
+  drag does not show; since Phase 6E the *Move by: Calendar days | Working days* choice (a field of the Move… panel since toolbar v2) counts
   working days instead). A drop on another person's row is refused while several are selected (hand one
   over with the selection cleared). `move_many` checks the lot together (`preview_batch`, as
   `shift_successors` and `copy_week` do), asks for one reason, saves all or nothing, furthest first when
@@ -1403,7 +1435,7 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
 `MP6C_METHODS`, the pure half is the kit's `big_picture`, and the one backend module is
 [`api/planner_views_prefs.py`](../api/planner_views_prefs.py).
 
-- **Color by** (the toolbar's Display menu, v1.687.0). The Project Planner colors each card's left edge by *Task color* (the
+- **Color by** (More ▸ Display; the default is Job type since toolbar v2). The Project Planner colors each card's left edge by *Task color* (the
   default, today's look: the task's own color), *Person* (the lead, or in the crew view the row's
   person, in the same color as their dot and badges), *Job type*, *Project*, *Project manager* or
   *Status*; the Maintenance Planner by *Visit type* (the default, today's colors), *Technician*, *Site*,
@@ -1565,8 +1597,8 @@ Four small changes Nik decided on 2026-10-09, after using Phases 6B and 6D. The 
 `PP6E_METHODS` / `MP6E_METHODS` at the end of each page file (the Maintenance Planner's *Add visit* is
 its own section in [sapphire_maintenance/README.md](../sapphire_maintenance/README.md#maintenance-planner)).
 
-- **Move by: Calendar days | Working days** (both planners). The selection bar gets a switch beside
-  *Clear*; the choice is kept per device with the page's `save_pref` (`ee_project_planner_move_by`,
+- **Move by: Calendar days | Working days** (both planners; a field of the Move… panel since toolbar v2, it was a switch on the selection bar beside
+  *Clear*); the choice is kept per device with the page's `save_pref` (`ee_project_planner_move_by`,
   `ee_maintenance_planner_move_by`) and **calendar days stay the default**, exactly Phase 6B's move.
   With working days (Monday to Friday) every selected task moves by the same number of working days
   **counted from its own start**: a Friday plus one is the Monday, a landing on a weekend goes to the

@@ -275,7 +275,7 @@ class TestHooks(unittest.TestCase):
 			self.assertIn('target.kind === "cell"', items)
 			self.assertIn('target.kind === "person"', items)
 			# Every action also has a way in of its own: since the toolbar redesign (v1.687.0) the
-			# Conflicts count is an alert chip and Conflicts… and Block time… are items of Edit.
+			# Conflicts count is an alert chip and Conflicts… and Block time… are items of More ▸ Tools.
 			self.assertIn("this.tb_render();", _obj_method(block, "p6d_after_list"))
 			count = _obj_method(block, "p6d_conflict_count")
 			self.assertIn("const count = center ? center.count() : null;", count)
@@ -285,7 +285,7 @@ class TestHooks(unittest.TestCase):
 			self.assertIn('target.closest("[data-p6d-conflict]")', _obj_method(block, "p6d_click"))
 		self.assertIn("Block my time", PP_BLOCK)
 		for page in (PP, MP):
-			edit = _obj_method(page, "tb_edit_items")
+			edit = _obj_method(page, "tb_tools_items")
 			self.assertIn('label: __("Block time…"),', edit)
 			self.assertIn("on_click: () => this.p6d_block_form({ date: this.p6d_default_date() }),", edit)
 			self.assertIn('label: __("Conflicts…"),', edit)
