@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`flags.ignore_reschedule`): no date changes, and that push is by calendar days (P4's merge blocker).
   A link is not drafted on a Draft schedule; it tells nobody and moves nothing. The task's Draft rows
   drafted against it as it was move on to the save, so they do not read as changed by someone else.
+  While More ▸ Tools ▸ Hold all my changes is on, drawing or removing a link is refused with a
+  sentence, because it would reach the tasks at once.
+- `project_planner.drafts_block(overlay)` is the `drafts` block `get_planner` answers with, now shared
+  with `get_project_gantt` instead of built in two places.
 - No patch, fixture or data change.
 
 ## [1.708.0] - 2026-10-21

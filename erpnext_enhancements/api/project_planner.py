@@ -3713,14 +3713,22 @@ def _with_drafts(result, overlay, start, end):
 	result["tasks"] = tasks
 	result["unscheduled"] = [card for card in result["unscheduled"] if card["name"] not in drafted] + tray
 	result["needs_crew"] = [name for name in result["needs_crew"] if name in visible or name not in drafted]
-	result["drafts"] = {
+	result["drafts"] = drafts_block(overlay)
+	return result
+
+
+def drafts_block(overlay):
+	"""The ``drafts`` an answer carries for the page's strip and Publish…: how many unpublished changes,
+	which tasks, the drafted phases, the stale drafts and the count per project. ``get_planner`` and the
+	Gantt tab's ``planner_gantt.get_project_gantt`` both answer with it."""
+	drafted = overlay["drafted"]
+	return {
 		"count": len(drafted) + len(overlay.get("phases") or []) + len(overlay["stale"]),
 		"tasks": sorted(drafted),
 		"phases": list(overlay.get("phases") or []),
 		"stale": overlay["stale"],
 		"projects": overlay.get("projects") or {},
 	}
-	return result
 
 
 def _publish_plan(row):

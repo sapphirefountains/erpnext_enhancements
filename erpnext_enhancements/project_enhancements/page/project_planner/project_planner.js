@@ -12878,7 +12878,9 @@ const PPG_METHODS = {
 		if (!g) return;
 		const days = { day: 7, week: 28, month: 91 }[state.zoom] || 28;
 		const scroll = g.getScrollState();
-		const step = g.posFromDate(new Date(2026, 0, 1 + days)) - g.posFromDate(new Date(2026, 0, 1));
+		// Measured from the chart's own first day: posFromDate gives 0 for a date off its scale.
+		const first = g.getState().min_date;
+		const step = g.posFromDate(new Date(first.getTime() + days * 86400000)) - g.posFromDate(first);
 		g.scrollTo(Math.max(0, scroll.x + sign * step), null);
 	},
 
@@ -13014,7 +13016,7 @@ const PPG_METHODS = {
 			})
 			.join("");
 		const hidden = Number(this.data.hidden_tasks) || 0;
-		const note = !this.all_tasks && hidden ? `<span class="ppg-note">${pp_esc(__("{0} admin task(s) not shown", [hidden]))}</span>` : "";
+		const note = !this.all_tasks && hidden ? `<span class="ppg-note">${pp_esc(__("{0} task(s) not shown", [hidden]))}</span>` : "";
 		return `${picker}<span class="ppg-bits">${bits.join("")}</span>${note}<span class="pp-spacer"></span><span class="pp-seg ppg-zoom" role="group" aria-label="${pp_esc(
 			__("Zoom")
 		)}">${zooms}</span>`;
@@ -13167,10 +13169,12 @@ const PPG_METHODS = {
 		const moved = args.start !== card.start;
 		const message = moved ? __("{0} moved to {1}", [subject, pp_when(args.start)]) : __("{0} now ends {1}", [subject, pp_when(args.end)]);
 		const solo = this.as4_solo(info && info.event);
+		// commit() resolves with send()'s answer, or null when nothing was saved (backed out of a question,
+		// or refused): then the bar goes back at once, before the reload repaints the truth.
 		const run = () =>
-			Promise.resolve(this.commit(card, "save_task", Object.assign({ task: card.name }, args), message, { solo })).then(() => ({
-				status: "success",
-			}));
+			Promise.resolve(this.commit(card, "save_task", Object.assign({ task: card.name }, args), message, { solo })).then((result) =>
+				result ? { status: "success" } : { status: "cancelled" }
+			);
 		if (!moved || args.start >= this.today()) return run();
 		// Tasks, unlike visits, may be recorded after the fact; a past day only needs a yes (as plan_drop).
 		return new Promise((resolve) => {
@@ -13188,6 +13192,17 @@ const PPG_METHODS = {
 		});
 	},
 
+	// A link is never drafted (it holds no dates and tells nobody), so while "Hold all my changes" is on,
+	// when nothing is meant to reach the tasks, it is refused rather than written live.
+	ppg_held() {
+		if (!this.draft_on) return false;
+		frappe.show_alert(
+			{ message: __("Hold all my changes is on, and a link saves straight to the tasks. Turn it off to change links."), indicator: "orange" },
+			8
+		);
+		return true;
+	},
+
 	// A link drawn from `source`'s end onto `target`: target waits on source.
 	ppg_link(source, target) {
 		const args = PPG_PURE.link_args(source, target);
@@ -13199,6 +13214,7 @@ const PPG_METHODS = {
 			return Promise.resolve(null);
 		}
 		if ((card.depends_on || []).includes(pred.name)) return Promise.resolve(null);
+		if (this.ppg_held()) return Promise.resolve(null);
 		const subject = card.subject || card.name;
 		const other = pred.subject || pred.name;
 		return this.send(
@@ -13215,7 +13231,7 @@ const PPG_METHODS = {
 	ppg_unlink(source, target) {
 		const args = PPG_PURE.link_args(source, target);
 		const card = args && this.by_task[args.task];
-		if (!card || !this.data || !this.data.can_edit) return;
+		if (!card || !this.data || !this.data.can_edit || this.ppg_held()) return;
 		const pred = this.by_task[args.depends_on];
 		const subject = card.subject || card.name;
 		const other = (pred && (pred.subject || pred.name)) || args.depends_on;

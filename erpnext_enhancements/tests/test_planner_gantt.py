@@ -109,16 +109,18 @@ class TestTheTree(unittest.TestCase):
 		self.assertEqual(pg.project_span(cards), ("2026-10-12", "2026-11-02"))
 		self.assertEqual(pg.project_span([]), (None, None))
 
-	def test_the_drafts_block_is_get_planners(self):
+	def test_the_drafts_block_is_get_planners_own(self):
+		self.assertNotIn("def drafts_summary", GANTT_PATH.read_text(encoding="utf-8"))
+		self.assertIn('result["drafts"] = pp.drafts_block(overlay)', GANTT_PATH.read_text(encoding="utf-8"))
 		overlay = {
 			"drafted": {"T1": {"credentials": []}, "draft-new:PDC-2": {"new": True}},
 			"phases": [{"name": "draft-new:PDC-3"}],
 			"stale": [{"task": "T9"}],
 			"projects": {"PRJ-1": {"count": 3, "shared": 1}},
 		}
-		ours = pg.drafts_summary(overlay)
 		theirs = h.api._with_drafts({"tasks": [], "unscheduled": [], "needs_crew": []}, overlay, "2026-10-01", "2026-10-31")
-		self.assertEqual(ours, theirs["drafts"])
+		self.assertEqual(theirs["drafts"]["count"], 4)
+		self.assertEqual(h.api.drafts_block(overlay), theirs["drafts"])
 
 
 class TestLinkRules(unittest.TestCase):
@@ -197,6 +199,7 @@ class _Feed(unittest.TestCase):
 	def setUp(self):
 		h._reset()
 		h.frappe.tables["Project"] = [{"name": "PRJ-1"}]
+		h.frappe.tables["Planner Resource"] = [dict(p) for p in h.PEOPLE]
 		self.overlay = None
 		self.under = {"T1", "T2", "T3", "T4"}
 		pp = h.api
@@ -204,7 +207,6 @@ class _Feed(unittest.TestCase):
 		crews = {"CREWED": [h._Doc(resource="RES-1", hours=0, is_lead=1, resource_name="Austin Healey")]}
 		patches = [
 			mock.patch.object(pg, "_project_rows", lambda project: [dict(r) for r in ROWS]),
-			mock.patch.object(engine, "_read_resources", lambda names=None: ([h._Doc(p) for p in h.PEOPLE], {})),
 			mock.patch.object(engine, "read_crews", lambda names: (crews, {})),
 			mock.patch.object(engine, "tasks_under_a_phase", lambda names: {n for n in names if n in self.under}),
 			mock.patch.object(engine, "read_equipment", lambda names: {}),

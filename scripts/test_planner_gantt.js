@@ -351,6 +351,10 @@ test("Widget: the baseline is a bar the task renderer appends, not addTaskLayer"
 	const env = await mountWith({ baseline: true });
 	const g = env.g;
 	check("the bar leaves the row room for it", g.config.bar_height, 18);
+	const small = await mountWith({ baseline: true, gantt: { row_height: 24 } });
+	check("sized from the embed's own row height", small.g.config.bar_height, 12);
+	const own = await mountWith({ baseline: true, gantt: { row_height: 40, bar_height: 30 } });
+	check("an embed's own bar height wins", own.g.config.bar_height, 30);
 	const render = g.config.type_renderers && g.config.type_renderers.task;
 	check("a renderer for the task type", typeof render, "function");
 	const node = render(g.getTask("T1"), () => new El("div"));
@@ -595,7 +599,8 @@ test("Any other screen takes the chart down; the Gantt's own project is taken fr
 
 test("A drag goes through the page's commit(), as on every tab", async () => {
 	const committed = [];
-	const pp = planner({ commit: (c, method, args, message, opts) => (committed.push([c.name, method, args, message, opts]), Promise.resolve()) });
+	let saved = {};
+	const pp = planner({ commit: (c, method, args, message, opts) => (committed.push([c.name, method, args, message, opts]), Promise.resolve(saved)) });
 	const result = await pp.ppg_write({ ref_name: "T1" }, { start: "2026-10-22 00:00", end: "2026-10-26 00:00" }, { mode: "move", event: { ctrlKey: false } });
 	check("save_task with the new days", committed[0].slice(0, 3), ["T1", "save_task", { task: "T1", start: "2026-10-22", end: "2026-10-25" }]);
 	check("its message and the tasks that follow", [committed[0][3], committed[0][4]], ["Excavate basin moved to Thu, Oct 22", { solo: false }]);
@@ -609,11 +614,43 @@ test("A drag goes through the page's commit(), as on every tab", async () => {
 	const refused = await pp.ppg_write({ ref_name: "T3" }, { start: "2026-10-05 00:00", end: "2026-10-07 00:00" }, { mode: "move" });
 	check("finished work is refused, and the bar goes back", [refused.status, committed.length], ["refused", 2]);
 	check("no change sends nothing", [await pp.ppg_write({ ref_name: "T1" }, { start: "2026-10-20 00:00", end: "2026-10-24 00:00" }, {}), committed.length], [{ status: "success" }, 2]);
+	// commit() resolves null when nothing was saved (Esc on Notify crew?, a reason not given, a refusal).
+	saved = null;
+	const backed = await pp.ppg_write({ ref_name: "T1" }, { start: "2026-10-22 00:00", end: "2026-10-26 00:00" }, { mode: "move" });
+	check("nothing saved: the widget puts the bar back at once", backed, { status: "cancelled" });
+});
+
+test("While Hold all my changes is on, links are refused rather than written live", async () => {
+	const sent = [];
+	const pp = planner({ draft_on: true, send: (method) => (sent.push(method), Promise.resolve({})), load: () => null });
+	ctx.confirms.length = 0;
+	await pp.ppg_link({ id: "T1", ref_name: "T1" }, { id: "U1", ref_name: "U1" });
+	pp.ppg_unlink({ id: "T1", ref_name: "T1" }, { id: "T2", ref_name: "T2" });
+	check("nothing sent, nothing asked", [sent, ctx.confirms.length], [[], 0]);
+	check("and it says why", ctx.alerts.slice(-1)[0], "Hold all my changes is on, and a link saves straight to the tasks. Turn it off to change links.");
+});
+
+test("‹ and › scroll a step of the zoom, measured on the chart's own scale", () => {
+	const pp = planner();
+	const scrolled = [];
+	// posFromDate gives 0 for a date off the scale, as DHTMLX does.
+	const min = new Date(2027, 2, 1);
+	const g = {
+		getState: () => ({ min_date: min }),
+		getScrollState: () => ({ x: 500, y: 0 }),
+		posFromDate: (d) => (d < min ? 0 : Math.round((d - min) / 86400000) * 10),
+		scrollTo: (x, y) => scrolled.push([x, y]),
+	};
+	pp.ppg.widget = { gantt: g, destroy() {} };
+	pp.ppg.zoom = "week";
+	pp.ppg_shift(1);
+	pp.ppg_shift(-1);
+	check("28 days either way, on a chart that starts in 2027", scrolled, [[780, null], [220, null]]);
 });
 
 test("A past day asks first, and backing out settles the widget", async () => {
 	const committed = [];
-	const pp = planner({ commit: (c, m, args) => (committed.push(args), Promise.resolve()) });
+	const pp = planner({ commit: (c, m, args) => (committed.push(args), Promise.resolve({ name: c.name })) });
 	ctx.confirms.length = 0;
 	const asked = pp.ppg_write({ ref_name: "T1" }, { start: "2026-10-12 00:00", end: "2026-10-16 00:00" }, { mode: "move" });
 	check("asked", ctx.confirms.length, 1);
@@ -673,7 +710,7 @@ test("The header: the schedule, Publish… and Reset baseline handed to P4, Buil
 	const html = pp.ppg_head_html(pp.data.gantt);
 	check("a Draft schedule offers Publish…", [html.includes("◐ Draft schedule"), html.includes("data-ppg-publish")], [true, true]);
 	check("Set baseline, Build out ▾ and the three zooms", [html.includes(">Set baseline<"), html.includes("Build out ▾"), (html.match(/data-ppg-zoom=/g) || []).length], [true, true, 3]);
-	check("the admin tasks the display rule left out are counted", html.includes("3 admin task(s) not shown"), true);
+	check("the tasks the display rule left out are counted", html.includes("3 task(s) not shown"), true);
 	check("project names are escaped in the picker", [html.includes("<script>"), html.includes("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;")], [false, true]);
 	check("the Gantt's project is the one picked", /<option value="PRJ-1" selected>Riverwalk \(PRJ-1\)<\/option>/.test(html), true);
 	const published = Object.assign({}, pp.data.gantt, { schedule: { status: "Published", published_on: "2026-10-21 09:00:00", baseline_set_on: "2026-10-21" } });

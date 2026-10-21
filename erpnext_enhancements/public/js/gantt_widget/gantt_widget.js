@@ -588,11 +588,11 @@ frappe.provide("erpnext_enhancements.gantt");
 			g.templates.rightside_text = (start, end, task) =>
 				label_fits(start, end, task) ? "" : task.text;
 
+			Object.assign(g.config, this.config.gantt || {});
+			// After the embed's own config, so the bar is sized from its row height.
 			if (this.config.baseline) {
 				this._init_baseline(g);
 			}
-
-			Object.assign(g.config, this.config.gantt || {});
 			Object.assign(g.templates, this.config.templates || {});
 			if (this.config.zoom && ZOOM_PRESETS[this.config.zoom]) {
 				g.config.scales = ZOOM_PRESETS[this.config.zoom];
@@ -663,11 +663,13 @@ frappe.provide("erpnext_enhancements.gantt");
 		 * The task line does not clip (its content does), so the bar may start
 		 * before the task and end after it. Its offset is measured from the
 		 * task's start as drawn, so it stays on the baseline's days while the
-		 * task is dragged. The bar is shortened to leave the row room for it.
+		 * task is dragged. The bar is shortened to leave the row room for it,
+		 * unless the embed's own config set a bar height (`gantt.bar_height`).
 		 */
 		_init_baseline(g) {
 			const row = g.config.row_height || 36;
-			g.config.bar_height = Math.max(12, row - 16);
+			const own = this.config.gantt && this.config.gantt.bar_height;
+			g.config.bar_height = Number(own) > 0 ? Number(own) : Math.max(12, row - 16);
 			g.config.type_renderers = g.config.type_renderers || {};
 			g.config.type_renderers[g.config.types.task] = (task, render_default) => {
 				const node = render_default(task);

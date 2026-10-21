@@ -19,8 +19,8 @@ planner's own :func:`project_planner.build_card`. A card is the same shape as ev
 * **Drafts** (``draft=1``, the default, as the page always reads) are the caller's and, on a Draft
   schedule, everyone's (P3's shared rows), from :func:`project_planner._draft_overlay`. A drafted task
   shows its drafted days and crew, and a drafted new task (``draft-new:…``) shows under the group it
-  is filed under. ``drafts`` is the same summary ``get_planner`` gives, for every project, so the
-  page's strip stays whole on this tab.
+  is filed under. ``drafts`` is ``get_planner``'s own block (:func:`project_planner.drafts_block`), for
+  every project, so the page's strip stays whole on this tab.
 * **Finished work stays on the chart, read-only.** Completed tasks are part of a job's history, so
   they draw but never move. Canceled and template tasks are left out.
 * **Each card gains** ``baseline`` (P3's ``custom_baseline_start``/``_end``), ``span_days`` (working
@@ -103,19 +103,6 @@ def project_span(cards):
 		base = card.get("baseline") or {}
 		days += [day for day in (base.get("start"), base.get("end")) if day]
 	return (min(days), max(days)) if days else (None, None)
-
-
-def drafts_summary(overlay):
-	"""The ``drafts`` block ``get_planner`` answers with (``project_planner._with_drafts``), for every
-	project, so the page's strip and its Publish… read the same thing on this tab."""
-	drafted = overlay["drafted"]
-	return {
-		"count": len(drafted) + len(overlay.get("phases") or []) + len(overlay["stale"]),
-		"tasks": sorted(drafted),
-		"phases": list(overlay.get("phases") or []),
-		"stale": overlay["stale"],
-		"projects": overlay.get("projects") or {},
-	}
 
 
 # ---------------------------------------------------------------------- reads
@@ -208,7 +195,15 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 			drafted[name] = info
 			drafted_crew[name] = crew
 
-	resources = engine._read_resources()[0]
+	# The active Planner Resources, for crew labels and the page's people (their work patterns are not
+	# needed: nothing here spreads hours over days).
+	resources = frappe.get_all(
+		"Planner Resource",
+		filters={"is_active": 1},
+		fields=["name", "resource_name", "resource_type", "employee", "user", "resource_group", "home_team", "color"],
+		order_by="resource_name asc",
+		limit_page_length=0,
+	)
 	user_to_resource = {p.get("user"): p.get("name") for p in resources if p.get("user")}
 	labels = {p.get("name"): p.get("resource_name") or p.get("name") for p in resources}
 	stored = [name for name in work if not pp.is_draft_ref(name)]
@@ -333,5 +328,5 @@ def get_project_gantt(project=None, all_tasks=0, draft=1):
 		},
 	}
 	if overlay is not None:
-		result["drafts"] = drafts_summary(overlay)
+		result["drafts"] = pp.drafts_block(overlay)
 	return result
