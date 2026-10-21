@@ -956,6 +956,19 @@
 	background: color-mix(in srgb, var(--sf-chip-edge-neutral) 8%, var(--sf-surface));
 }
 
+/* A Fountain Move task (MPFM): moved here like a visit, so a solid card, on the Service pillar's tint
+   with the Rent pillar's edge, which no visit uses. */
+.mp-card.mp-move {
+	border-left-color: var(--sf-chip-edge-rent);
+	background: color-mix(in srgb, var(--sf-pillar-service) 8%, var(--sf-surface));
+}
+
+.mp-chip.mp-move-chip {
+	background: color-mix(in srgb, var(--sf-pillar-rent) 18%, var(--sf-surface));
+	color: var(--sf-text);
+	font-weight: 600;
+}
+
 /* The picked technician's free hours in a day's head: the load's status as text. */
 .mp-day-free {
 	font-size: 11px;

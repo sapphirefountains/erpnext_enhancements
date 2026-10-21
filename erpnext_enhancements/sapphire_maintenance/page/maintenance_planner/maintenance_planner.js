@@ -89,7 +89,7 @@ const MP = {
 	project_route: "project-planner",
 	// Labels for one-off visits; any other label is a seasonal visit.
 	extra_labels: ["Extra Visit", "Chemistry Follow-Up"],
-	status_order: { draft: 0, pending: 1, projected: 2, done: 3, booking: 4 },
+	status_order: { draft: 0, move: 0, pending: 1, projected: 2, done: 3, booking: 4 },
 	// Engine booking kind -> chip text. The engine calls a project task "task".
 	booking_kinds: { task: "Project", rental: "Rental", travel: "Travel" },
 };
@@ -101,6 +101,8 @@ MP.methods = {
 	move_projected: `${MP.api}.move_projected`,
 	// Adding a helper to a visit's crew is its own POST: dropping a chip on a visit sends it.
 	add_crew: `${MP.api}.add_crew`,
+	// A Fountain Move task's day and crew (MPFM below): the Project Planner's write, on this page.
+	move_fountain_move: `${MP.api}.move_fountain_move`,
 };
 
 const mp_ymd = (m) => m.format("YYYY-MM-DD");
@@ -547,7 +549,7 @@ class MaintenancePlanner {
 			this.tech_by_user[person.user] = person;
 			this.tech_names[person.user] = person.name;
 		});
-		[].concat(data.visits || [], data.unscheduled || [], data.projected || []).forEach((card) => {
+		[].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.fm_cards()).forEach((card) => {
 			if (card.modified) this.modified[card.name] = card.modified;
 			// A helper who is not on the technician list still has a name on the card.
 			(card.crew || []).forEach((member) => {
@@ -579,7 +581,7 @@ class MaintenancePlanner {
 
 	all_cards() {
 		const data = this.data || {};
-		return [].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.booking_cards());
+		return [].concat(data.visits || [], data.unscheduled || [], data.projected || [], this.fm_cards(), this.booking_cards());
 	}
 
 	// The engine's read-only bookings as cards, one per booking per day. Never movable: they carry
@@ -1062,7 +1064,7 @@ class MaintenancePlanner {
 			if (card.kind === "booking" && !this.show_project_work) return;
 			if (card.kind === "projected" && !this.show_projected) return;
 			if (!card.date) {
-				if (card.kind === "visit") unscheduled.push(card);
+				if (card.kind === "visit" || card.kind === "move") unscheduled.push(card);
 				return;
 			}
 			// A multi-person visit sits in every crew member's row.
@@ -1196,6 +1198,7 @@ class MaintenancePlanner {
 	// row, and a drag needs to know which person's chip was picked up. The calendar passes none.
 	card_row_html(card, row_user) {
 		if (card.kind === "booking") return this.booking_html(card);
+		if (card.kind === "move") return this.fm_card_html(card, row_user);
 		const sub = [];
 		if (card.label) sub.push(__(card.label));
 		if (card.feature) sub.push(card.feature);
@@ -1499,6 +1502,7 @@ class MaintenancePlanner {
 			const card = this.by_key[target.key];
 			const name = this.tech_name(source.user);
 			if (!card || card.kind === "booking") return { refuse: __("Drop {0} onto a visit.", [name]) };
+			if (card.kind === "move") return this.fm_plan_person(card, source.user);
 			const site = this.site_of(card);
 			if (card.kind === "projected") {
 				return {
@@ -1520,6 +1524,7 @@ class MaintenancePlanner {
 		}
 
 		const card = source.card;
+		if (card.kind === "move") return this.fm_plan_move(source, target);
 		// C1: Draft mode holds back changes to drafted visits only; a projected one moves its contract.
 		if (card.kind === "projected" && this.draft_on) return { refuse: __(MPC1.refusals.move_projected) };
 		if (target.date !== card.date && target.date < this.today()) {
@@ -1569,6 +1574,10 @@ class MaintenancePlanner {
 		}
 		if (plan.add_crew) {
 			this.add_to_crew(plan.card, plan.add_crew);
+			return;
+		}
+		if (plan.fm) {
+			this.fm_apply(plan.card, plan.fm);
 			return;
 		}
 		this.apply(plan.card, plan.change);
@@ -1764,7 +1773,12 @@ class MaintenancePlanner {
 							.join("")}</ul></div>`
 				)
 				.join("");
-			const where = noun === "contract" ? __("the contract's timeline") : __("the visit's timeline");
+			const where =
+				noun === "contract"
+					? __("the contract's timeline")
+					: noun === "task"
+					? __("the task's timeline")
+					: __("the visit's timeline");
 			const dialog = new frappe.ui.Dialog({
 				title: __("This booking has conflicts"),
 				fields: [
@@ -1820,6 +1834,7 @@ class MaintenancePlanner {
 		}
 		if (this.p6b_undo(snap)) return;
 		if (this.p6e_undo(snap)) return;
+		if (this.fm_undo(snap)) return;
 		const today = this.today();
 		const reason = __(MP.undo_reason);
 		if (snap.kind === "drafted") {
@@ -1902,6 +1917,10 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ dialog
 
 	open_card(card) {
+		if (card.kind === "move") {
+			frappe.set_route("Form", "Task", card.name);
+			return;
+		}
 		if (card.kind === "booking") {
 			// Travel days open their trip; project and rental bookings are Tasks.
 			if (card.booking_kind === "travel") frappe.set_route("Form", "Travel Trip", card.ref);
@@ -3141,6 +3160,7 @@ const MP6B_METHODS = {
 	p6b_card_items(target) {
 		const card = target.card;
 		if (card.kind === "booking") return [];
+		if (card.kind === "move") return this.fm_card_items(card);
 		const visit = card.kind === "visit";
 		const can = !!(this.data && this.data.can_move_visits);
 		const movable = !!(visit && card.movable && can);
@@ -6299,6 +6319,192 @@ const MP6E_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MP6E_METHODS);
 
+// ====================================================================== Fountain Move jobs
+//
+// Nik, 2026-10-21: "the Maintenance planner also handles Fountain Moves". A move job is a Service
+// project with Fountain Move ticked (project_enhancements/fountain_move_jobs.py). Its tasks with
+// hours (the Move day; the office tasks have none) are cards here, `kind: "move"`, and they move
+// here: the Project Planner shows them read-only. A deliberate exception to "each planner moves only
+// its own work".
+//
+//   - get_planner's `moves` (dated, on the task's first day) and `unscheduled_moves` (the tray). A card
+//     has a visit card's shape where it matters (technician = the lead, crew = the rest, date, site,
+//     movable), so the technician filter, the crew view rows and the badges read it as a visit.
+//   - Dragging one to a day moves the task; to another person's row in the crew view hands that
+//     person's place to them; dropping a technician on it adds them. All three go to
+//     move_fountain_move, which is the Project Planner's own write (conflicts ask for a reason,
+//     overbooking warns and never blocks). Undo puts the day and the crew back.
+//   - Draft mode does not hold them back (MPC1.refusals.move_fountain_move): drafts are visits.
+//   - Their hours are already in each person's day through the shared engine; the read-only Project
+//     booking of the same task is left out (maintenance_planner._drop_move_bookings).
+//
+// Hooks into the class above, one line each: index, all_cards, render_crew (the tray), card_row_html,
+// plan_drop (twice), drop, ask_reason (noun "task"), undo, open_card and p6b_card_items.
+
+const MPFM_METHODS = {
+	fm_cards() {
+		const data = this.data || {};
+		return [].concat(data.moves || [], data.unscheduled_moves || []);
+	},
+
+	fm_card_html(card, row_user) {
+		const people = this.visit_people(card);
+		const in_row = this.view === "crew" && !!card.date;
+		const sub = [card.subject, __("{0}h", [mp_hours(card.hours)])];
+		if (card.end) sub.push(__("until {0}", [mp_when(card.end)]));
+		const chips = [`<span class="mp-chip mp-move-chip">${mp_esc(__("Move"))}</span>`];
+		if (card.tentative) chips.push(`<span class="mp-chip mp-pencil-chip">${mp_esc(__("Pencil"))}</span>`);
+		if (card.short > 0) {
+			chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Needs {0} more", [card.short]))}</span>`);
+		}
+		if (card.overdue) chips.push(`<span class="mp-chip mp-red">${mp_esc(__("Overdue"))}</span>`);
+		const who = people.length ? people.map((user) => this.tech_name(user)).join(", ") : __("Unassigned");
+		const tip = [
+			card.site_full,
+			sub.join(" · "),
+			people.length > 1 ? `${__("Crew")}: ${who}` : who,
+			__("Fountain Move: moved here, read-only on the Project Planner."),
+		]
+			.filter(Boolean)
+			.join("\n");
+		const classes = ["mp-card", "mp-move"];
+		if (card.movable) classes.push("mp-movable");
+		if (card.saving) classes.push("mp-saving");
+		if (card.tentative) classes.push("mp-pencil");
+		if (card.overdue) classes.push("mp-overdue");
+		const row_attr = row_user === undefined ? "" : ` data-row-user="${mp_esc(row_user)}"`;
+		return `
+			<div class="${classes.join(" ")}" data-key="${mp_esc(card.key)}"${row_attr} tabindex="0" title="${mp_esc(tip)}">
+				<div class="mp-card-top">
+					<span class="mp-card-title">${mp_esc(card.site || card.project || card.name)}</span>
+					${this.people_badges(card, in_row)}
+				</div>
+				<div class="mp-card-sub">${mp_esc(sub.join(" · "))}</div>
+				<div class="mp-card-who">${in_row ? "" : mp_esc(who)} ${chips.join("")}</div>
+			</div>`;
+	},
+
+	// A technician dropped on a move card joins its crew (the first one on an empty task leads it).
+	fm_plan_person(card, user) {
+		const name = this.tech_name(user);
+		const site = this.site_of(card);
+		if (!card.movable) return { refuse: __("You cannot change {0}.", [site]) };
+		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
+		const people = this.visit_people(card);
+		if (people.includes(user)) return { refuse: __("{0} is already on {1}.", [name, site]) };
+		return { card, fm: { crew: people.concat([user]), added: user } };
+	},
+
+	// A move card dropped on a day (and, in the crew view, on a person's row).
+	fm_plan_move(source, target) {
+		const card = source.card;
+		if (this.draft_on) return { refuse: __(MPC1.refusals.move_fountain_move) };
+		if (target.date !== card.date && target.date < this.today()) {
+			return { refuse: __("Move jobs can only be moved to today or a later day.") };
+		}
+		const change = {};
+		if (target.date && target.date !== card.date) change.date = target.date;
+		const people = this.visit_people(card);
+		const row_user = source.from_user == null ? card.technician || "" : source.from_user;
+		if (target.row && (target.user || "") !== row_user) {
+			if (!target.user) {
+				return { refuse: __("Drop {0} on a technician's row to hand it over.", [this.site_of(card)]) };
+			}
+			if (people.includes(target.user)) {
+				return { refuse: __("{0} is already on {1}.", [this.tech_name(target.user), this.site_of(card)]) };
+			}
+			// That person's place goes to the new one; from the Unassigned row, they join.
+			change.crew = row_user
+				? people.map((user) => (user === row_user ? target.user : user))
+				: people.concat([target.user]);
+			change.from_user = row_user;
+			change.added = target.user;
+		}
+		return Object.keys(change).length ? { card, fm: change } : null;
+	},
+
+	// Show it straight away, save it, reload: the reload is the truth.
+	fm_apply(card, change) {
+		const before = { date: card.date || null, crew: this.visit_people(card) };
+		const site = this.site_of(card);
+		const args = { task: card.name, modified: this.modified[card.name] || card.modified };
+		if (change.date) {
+			args.date = change.date;
+			card.date = change.date;
+		}
+		if (change.crew) {
+			args.crew = JSON.stringify(change.crew);
+			card.technician = change.crew[0] || null;
+			card.crew = change.crew.slice(1).map((user) => ({ user, name: this.tech_name(user), hours: null }));
+		}
+		let message;
+		if (change.from_user && change.added) {
+			message = __("{0}: {1} handed over to {2}", [site, this.tech_name(change.from_user), this.tech_name(change.added)]);
+		} else if (change.added) {
+			message = __("{0} added to {1}", [this.tech_name(change.added), site]);
+		} else {
+			message = __("{0} moved to {1}", [site, mp_when(change.date)]);
+		}
+		if (change.date && change.crew) message += `, ${__("moved to {0}", [mp_when(change.date)])}`;
+		card.saving = true;
+		this.render();
+		return this.send("move_fountain_move", args, {
+			snapshot: { kind: "move", site, task: card.name, date: before.date, crew: before.crew },
+			message,
+			noun: "task",
+		}).finally(() => this.load());
+	},
+
+	// Undo a move-job change: its day (unless that day has passed, or it was unscheduled) and its crew.
+	fm_undo(snap) {
+		if (!snap || snap.kind !== "move") return false;
+		const card = this.by_key[`move|${snap.task}`];
+		const args = {
+			task: snap.task,
+			modified: this.modified[snap.task] || (card && card.modified) || "",
+			crew: JSON.stringify(snap.crew || []),
+		};
+		const date_back = !!(snap.date && snap.date >= this.today());
+		if (date_back) args.date = snap.date;
+		if (card) {
+			card.saving = true;
+			this.render();
+		}
+		this.send("move_fountain_move", args, {
+			message: __("Undone: {0}", [snap.site]),
+			auto_reason: __(MP.undo_reason),
+			noun: "task",
+		})
+			.then((result) => {
+				if (result && !date_back && card && card.date !== snap.date) {
+					frappe.show_alert(
+						{
+							message: __(
+								"{0} keeps its day: a task cannot go back to a day that has passed or to unscheduled.",
+								[snap.site]
+							),
+							indicator: "orange",
+						},
+						10
+					);
+				}
+			})
+			.finally(() => this.load());
+		return true;
+	},
+
+	// The right-click menu of a move card: open the task or its project.
+	fm_card_items(card) {
+		const items = [{ label: __("Open task"), on_click: () => this.open_card(card) }];
+		if (card.project) {
+			items.push({ label: __("Open project"), on_click: () => frappe.set_route("Form", "Project", card.project) });
+		}
+		return items;
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPFM_METHODS);
+
 // ====================================================================== C1: Draft mode and pencil visits
 //
 // The Project Planner's draft mode and pencil, on the Maintenance Planner (v1.601.0). A Google
@@ -6337,6 +6543,8 @@ const MPC1 = {
 	// The writes Draft mode cannot hold back (the server's maintenance_drafts.PROJECTED_REFUSAL and
 	// DRAFT_REFUSAL say the same).
 	refusals: {
+		move_fountain_move:
+			"Draft mode holds back changes to visits only. A Fountain Move task is saved at once, as it is on the Project Planner. Turn Draft mode off to move it.",
 		move_projected:
 			"Draft mode holds back changes to drafted visits only. This visit is projected from its contract, and moving it changes the contract's next visit date at once. Turn Draft mode off to move it.",
 		create_visit:
