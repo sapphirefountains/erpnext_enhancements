@@ -19,7 +19,7 @@ What this pins, because each of them fails quietly:
 * **Distances are imperial** on the screen (``mi``, never ``km``); routing stays in km underneath.
 * **The page's rules** (landing, history, Back, Block my time) run in ``scripts/test_planner_today.js``
   against the real page script. This pins the wiring around them: the hooks are where the other suites
-  expect them, Today adds no write, and the scheduler role list the landing rule uses is the server's.
+  expect them, Today adds no write, and the landing waits for the saved last-used view (Nik, 2026-10-21: everyone lands on the tab they used last, or Today the first time).
 
 Server tests are bench-free: they reuse ``test_planner_phase3b``'s ``frappe`` stub and the real modules.
 
@@ -336,40 +336,45 @@ class TestThePageScript(unittest.TestCase):
 		cls.raw = PAGE_JS.read_text(encoding="utf-8")
 		cls.block = _block(cls.code)
 
-	def test_the_landing_roles_are_the_servers_scheduler_roles(self):
-		match = re.search(r"scheduler_roles: \[(.*?)\]", self.block)
-		self.assertTrue(match)
-		roles = set(re.findall(r'"([^"]+)"', match.group(1)))
-		source = (APP / "project_enhancements" / "crew_availability.py").read_text(encoding="utf-8")
-		server = re.search(r"^SCHEDULER_ROLES = frozenset\(\{(.*?)\}\)", source, re.M | re.S)
-		self.assertTrue(server)
-		self.assertEqual(roles, set(re.findall(r'"([^"]+)"', server.group(1))))
-
 	def test_the_hooks_into_the_class_are_one_line_each(self):
 		for line in (
 			"this.init_phase8();",
 			"const today = this.today_target(route);",
 			"this.show_today(target.anchor);",
-			"if (this.p8_landing()) return true;",
+			"if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;",
 			"if (this.$today) this.$today.hide();",
 			"if (this.view === PP8.view) return this.load_today();",
 			"if (mine) this.p8_block(mine.date, mine);",
 		):
 			self.assertEqual(self.code.count(line), 1, line)
 
-	def test_the_landing_comes_before_the_saved_view_is_restored(self):
+	def test_the_landing_waits_for_the_saved_view_and_never_overrides_it(self):
+		"""Nik, 2026-10-21: everyone lands on the tab they used last, or Today the first time."""
 		body = self.code[self.code.index("\tp6c_before_route() {") :]
 		body = body[: body.index("\n\t},")]
-		self.assertLess(body.index("this.p8_landing()"), body.index("p6c.loaded"))
-		self.assertLess(body.index("this.p8_landing()"), body.index("PP6C.default_view"))
+		hook = body.index("this.p8_landing()")
+		# After the views are in and the last-used state is applied, before the redirect to the last view...
+		self.assertGreater(hook, body.index("if (!p6c.loaded) {"))
+		self.assertGreater(hook, body.index("p6c.restored = true;"))
+		self.assertLess(hook, body.index("view !== PP6C.default_view"))
+		# ...and only when no saved view names a screen to return to.
+		line = next(l for l in body.splitlines() if "this.p8_landing()" in l)
+		self.assertIn("!(view && PP6C.schema.view[1].includes(view))", line)
+		self.assertEqual(body.count("this.p8_landing()"), 1)
+
+	def test_the_landing_does_not_look_at_roles(self):
+		block = self.block
+		self.assertNotIn("scheduler_roles", block)
+		self.assertNotIn("p8_is_scheduler", block)
+		self.assertNotIn("has_role", block)
 
 	def test_the_landing_replaces_and_never_pushes(self):
 		body = self.block[self.block.index("\tp8_landing() {") :]
 		body = body[: body.index("\n\t},")]
 		self.assertIn("frappe.route_flags.replace_route = true;", body)
 		self.assertLess(body.index("replace_route"), body.index("frappe.set_route("))
-		# A bare address only, a phone only, a person who is not a scheduler only, and a filter link left alone.
-		for needle in ("route[1]) return false", "PP.url_filters.some(", "this.p8_is_phone()", "this.p8_is_scheduler()"):
+		# A bare address only, a phone only, and a filter link left alone.
+		for needle in ("route[1]) return false", "PP.url_filters.some(", "this.p8_is_phone()"):
 			self.assertIn(needle, body)
 
 	def test_the_only_server_call_is_get_today_and_nothing_is_written(self):

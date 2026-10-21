@@ -1592,14 +1592,15 @@ its own write path. No new endpoint: everything calls the Phase 6D backend above
     Each day is a `day_entry` plus `today_items`: `order`, `leave_by` (`leave_by_clock`: arrival less the
     drive, `route_slots`' arithmetic), `miles`, `weather`, `equipment` (`engine.read_equipment`), `day_of`
     (`task_day_of`: working days, so a weekend is not a day) and `fountain_move`.
-  - **Landing (`p8_landing`, called first in `p6c_before_route`):** a bare `/project-planner` on a phone
-    (`max-width: 767px`) opens Today for anyone who is not a scheduler (not one of
-    `crew_availability.SCHEDULER_ROLES`), by `replace_route`, so Back leaves the planner as before. It
-    deliberately beats "last used": every screen a person opens is saved as last used, so one visit to the
-    week view would otherwise pin a phone there for good (the spec's "last-used tab, else Today" would
-    do that). A link that names a filter (`?project=`, the Project form's *Open in Project Planner*) and a
-    scheduler on a phone keep their screen; a scheduler reaches Today from *More ▸ Views ▸ Today*
-    (phones only). Desktop is unchanged. Today is not a saved/last-used view.
+  - **Landing (`p8_landing`, called from `p6c_before_route`; Nik, 2026-10-21: "everyone lands on the tab
+    they used last, or Today the first time"):** a bare `/project-planner` on a phone (`max-width: 767px`)
+    opens the saved last-used view (the planner's own `p6c` restore) and Today only when nothing is saved
+    yet, for schedulers and technicians alike, by `replace_route`, so Back leaves the planner as before.
+    The call comes after the saved views have loaded and only when no saved view names a screen. Today
+    is not a saved view (the server's list is week, month, crew, heatmap), so opening the week once makes
+    it the landing from then on; Today is reached from *Planner* / *More ▸ Views ▸ Today* (phones only).
+    A link that names a filter (`?project=`, the Project form's *Open in Project Planner*) is left alone.
+    Desktop is unchanged.
   - **History:** the day arrows, *This week*, *Planner* and *Full route* each take one entry; Back and
     Forward step through them. *Block my time* takes none of its own (the kit's form owns its Back).
   - **Tests:** `tests/test_planner_today.py` and `scripts/test_planner_today.js` (the real page script

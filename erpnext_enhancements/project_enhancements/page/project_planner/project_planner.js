@@ -3774,13 +3774,15 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 // blocking one's own time: no drag, no save_task, no "running late" buttons (declined), and a Fountain
 // Move task is marked Move and stays the Maintenance Planner's to schedule.
 //
-// The landing rule (§4.4): a bare /project-planner on a phone opens Today for anyone who is not a
-// scheduler. The address replaces the bare one (replace_route), so Back leaves the planner as it would
-// have, and it overrides "last used": the planner remembers every screen a person opens, so one visit
-// to the week view on a phone would otherwise pin them there for good. A link that names a filter
-// (?project=, the Project form's "Open in Project Planner") is the sender's, and is left alone, and so
-// is a scheduler on a phone, who keeps their screen until the Lookahead list exists and reaches Today
-// from More ▸ Views. Desktop is unchanged.
+// The landing rule (§4.4; Nik, 2026-10-21: "everyone lands on the tab they used last, or Today the
+// first time"): a bare /project-planner on a phone opens the screen the person used last, which the
+// planner already restores from their saved "last used" view (p6c_before_route), and Today when
+// nothing is saved yet, for scheduler and technician alike. Today comes after that restore, never
+// before it, and the address replaces the bare one (replace_route), so Back leaves the planner as it
+// would have. Today itself is not a saved view (the server's list is week, month, crew, heatmap), so a
+// person who opens the week view once lands there from then on; Today is one tap away (Planner / More ▸
+// Views ▸ Today). A link that names a filter (?project=, the Project form's "Open in Project Planner")
+// is the sender's, and is left alone. Desktop is unchanged.
 //
 // Everything P8 adds is in this block. The hooks into the class above are one line each: init_phase8
 // (constructor), today_target (route_target), show_today and p8_landing (handle_route), the Today
@@ -3789,8 +3791,6 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 
 const PP8 = {
 	view: "today",
-	// crew_availability.SCHEDULER_ROLES; tests/test_planner_today.py keeps the two lists equal.
-	scheduler_roles: ["System Manager", "Projects Manager", "Projects User", "Maintenance Supervisor"],
 };
 
 // "07:35" -> "7:35 am"; "25:10" (past midnight, as routing.fmt_clock counts it) -> "1:10 am".
@@ -3865,17 +3865,14 @@ const PP8_METHODS = {
 		return !!(window.matchMedia && window.matchMedia(`(max-width: ${PPTB.phone_max}px)`).matches);
 	},
 
-	p8_is_scheduler() {
-		return PP8.scheduler_roles.some((role) => frappe.user && frappe.user.has_role && frappe.user.has_role(role));
-	},
-
-	// True when it took a bare /project-planner on a phone over for Today (see the block comment).
+	// True when it took a bare /project-planner on a phone over for Today (see the block comment). Called
+	// only once the person's saved views are in and name no screen to return to.
 	p8_landing() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== PP.route || route[1]) return false;
 		const opts = frappe.route_options || {};
 		if (PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return false;
-		if (!this.p8_is_phone() || this.p8_is_scheduler()) return false;
+		if (!this.p8_is_phone()) return false;
 		// Replace, never push: Back from Today leaves the planner, as it would have from the bare URL.
 		frappe.route_flags = frappe.route_flags || {};
 		frappe.route_flags.replace_route = true;
@@ -8157,7 +8154,6 @@ const PP6C_METHODS = {
 		if (!p6c) return false;
 		const route = frappe.get_route() || [];
 		if (route[0] !== PP.route) return false;
-		if (this.p8_landing()) return true;
 		if (!p6c.loaded) {
 			if (!p6c.waiting) {
 				p6c.waiting = true;
@@ -8181,6 +8177,8 @@ const PP6C_METHODS = {
 			}
 		}
 		const view = last && last.view;
+		// Nothing saved to go back to: a phone opens on Today (P8).
+		if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;
 		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
 			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
 			frappe.route_flags = frappe.route_flags || {};

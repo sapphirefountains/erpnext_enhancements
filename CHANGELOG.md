@@ -26,14 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ping say the same), `miles`, `weather`, `equipment`, `day_of` (the n-th of a multi-day task's working
     days) and `fountain_move`; the answer carries today's whole `route_payload` for the map, and the
     person's blocks and day notes. It writes nothing.
-  - **Landing.** A bare `/project-planner` on a phone (under 768 px) opens Today for anyone who is not
-    a scheduler (not a System Manager, Projects Manager, Projects User or Maintenance Supervisor). The
-    address replaces the bare one, so Back leaves the planner as before. This deliberately beats "last
-    used": the planner saves every screen a person opens as last used, so one visit to the week view
-    would otherwise keep a phone there for good. A link that names a filter (the Project form's *Open in
-    Project Planner*) and a scheduler on a phone keep their screen, and a scheduler reaches Today from
-    *More ▸ Views ▸ Today* (phones only). Someone with planner access but no Planner Resource gets the
-    planner they always had, not a note. Desktop is unchanged. Today is never saved as a last-used view.
+  - **Landing** (Nik, 2026-10-21: "Use the spec's landing rule for P8: everyone lands on the tab they used
+    last, or Today the first time."). A bare `/project-planner` on a phone (under 768 px) opens the
+    screen the person used last, from the planner's existing saved "last used" view (it is kept per
+    person in the database, so it follows them between devices), and **Today the first time**, when
+    nothing is saved. The rule is the same for schedulers and technicians. Today is chosen only after the
+    saved views are in and name no screen to return to, and the address replaces the bare one, so Back
+    leaves the planner as before. Today is not itself a saved view (the server's list is week, month,
+    crew and heatmap), so a person who opens the week view once lands there from then on; Today is one
+    tap away from *Planner* and *More ▸ Views ▸ Today* (phones only). A link that names a filter (the
+    Project form's *Open in Project Planner*) is left alone. Someone with planner access but no Planner
+    Resource gets the planner they always had, not a note. Desktop is unchanged.
   - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
     Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
     Back).

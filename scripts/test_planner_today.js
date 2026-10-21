@@ -545,7 +545,7 @@ test("a stop: leave and arrival, the work, miles, escaped", () => {
 
 // ------------------------------------------------------------------ the landing
 
-test("landing: a phone, a person who is not a scheduler, a bare address -> Today, in place", async () => {
+test("landing: a phone, nothing saved yet, a bare address -> Today, in place", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	desk.answers.get_today = ME;
 	const pp = planner(desk);
@@ -575,14 +575,60 @@ test("landing: someone the planner does not list gets the planner, in place", as
 	check("stays on Today with the note", [desk2.urls(), pp2.$today.all().some((el) => el.textValue === "not listed")], [["/desk/project-planner/today/2026-10-21"], true]);
 });
 
-test("landing: it beats the last used view, which every visit overwrites", async () => {
+test("landing: a phone goes back to the screen used last, not to Today", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	desk.answers.get_today = ME;
 	const last = { view: "crew" };
-	planner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [], color_by: "default" } });
+	const pp = planner(desk, { p6c: { loaded: true, restored: false, last, saved_text: null, views: [], color_by: "default" } });
 	desk.go("project-planner");
 	await settle();
-	check("Today, not the crew view", desk.urls()[desk.index], "/desk/project-planner/today/2026-10-21");
+	check("the crew view, in place of the bare entry", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/crew/2026-10-21"]);
+	check("the planner loaded it", pp.loads, [{ view: "crew", anchor: "2026-10-21" }]);
+	check("no Today request", desk.called("get_today"), []);
+});
+
+test("landing: a saved week view (the default) stays bare and is not Today", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	desk.answers.get_today = ME;
+	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "week" }, saved_text: null, views: [], color_by: "default" } });
+	desk.go("project-planner");
+	await settle();
+	check("the address is left", desk.urls()[desk.index], "/desk/project-planner");
+	check("the week loads", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+	check("no Today request", desk.called("get_today"), []);
+});
+
+test("landing: saved filters alone do not stop the first-time Today", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	desk.answers.get_today = ME;
+	planner(desk, { p6c: { loaded: true, restored: false, last: { project: "PRJ-1" }, saved_text: null, views: [], color_by: "default" } });
+	desk.go("project-planner");
+	await settle();
+	// The remembered filters ride in the address as they do on every planner screen.
+	check("Today", desk.urls()[desk.index].split("?")[0], "/desk/project-planner/today/2026-10-21");
+});
+
+test("landing: it waits for the saved views before it decides", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	desk.answers.get_today = ME;
+	desk.answers.get_views = { last: { view: "month" }, views: [] };
+	const pp = planner(desk, { p6c: { loaded: false, restored: false, last: null, saved_text: null, views: [], color_by: "default" } });
+	let release;
+	pp.p6c_fetch_views = () =>
+		new Promise((resolve) => {
+			release = () => {
+				pp.p6c.loaded = true;
+				pp.p6c.last = { view: "month" };
+				resolve();
+			};
+		});
+	desk.go("project-planner");
+	await settle();
+	check("nothing decided while the views are on their way", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner"]);
+	check("no Today flash", desk.called("get_today"), []);
+	release();
+	await settle();
+	check("then the month they used last", desk.urls()[desk.index], "/desk/project-planner/month/2026-10-21");
 });
 
 test("landing: a desktop keeps the screen it had", async () => {
@@ -595,13 +641,13 @@ test("landing: a desktop keeps the screen it had", async () => {
 	check("no Today request", desk.called("get_today"), []);
 });
 
-test("landing: a scheduler on a phone keeps the screen they had", async () => {
+test("landing: a scheduler on a phone is no different: Today the first time", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001", roles: ["Projects User"] });
-	const pp = planner(desk);
+	desk.answers.get_today = ME;
+	planner(desk);
 	desk.go("project-planner");
 	await settle();
-	check("the bare address is left", desk.urls()[desk.index], "/desk/project-planner");
-	check("the week loads", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+	check("Today, in place", [desk.urls(), desk.replaces], [["/desk/project/PRJ-00001", "/desk/project-planner/today/2026-10-21"], 1]);
 });
 
 test("landing: a link that names a filter is the sender's", async () => {
