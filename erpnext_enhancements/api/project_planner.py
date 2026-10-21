@@ -4810,8 +4810,11 @@ def get_today(date=None):
 	details = routing.locate(stop_bookings, detail=True) if stop_bookings else {}
 	titles = _project_titles(b.get("project") for b in stop_bookings)
 	moves = fountain_move_jobs.move_projects(b.get("project") for b in stop_bookings if b.get("project"))
-	equipment = engine.read_equipment(
-		[b.get("ref") for b in stop_bookings if b.get("kind") in ("task", "rental") and b.get("ref")]
+	# Labels read fresh (an Asset's asset_name), as get_planner does, not the one frozen on the row.
+	equipment = _equipment_labelled(
+		engine.read_equipment(
+			[b.get("ref") for b in stop_bookings if b.get("kind") in ("task", "rental") and b.get("ref")]
+		)
 	)
 	tasks = {t.get("name"): t for t in data.get("tasks") or []}
 	routes = data.get("routes") or {}

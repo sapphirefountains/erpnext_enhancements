@@ -8198,10 +8198,15 @@ const PP6C_METHODS = {
 		// Nothing saved to go back to: a phone opens on Today (P8). A saved Today is restored below, like any
 		// other saved view, on a desktop as on a phone.
 		if (!route[1] && !(view && PP6C.schema.view[1].includes(view)) && this.p8_landing()) return true;
-		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view)) {
+		// A link that names a filter is the sender's: it opens a calendar view with that filter, never a
+		// saved Today, which has no filters to show (P8).
+		const filter_link = PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(frappe.route_options || {}, key));
+		if (!route[1] && view && view !== PP6C.default_view && PP6C.schema.view[1].includes(view) && !(view === PP8.view && filter_link)) {
 			// Replace, never push: Back from here leaves the planner, as it would have from the bare URL.
 			frappe.route_flags = frappe.route_flags || {};
 			frappe.route_flags.replace_route = true;
+			// A restored Today is a landing like the first-time one: someone the planner does not list gets the planner.
+			if (view === PP8.view) this.p8_landed = true;
 			frappe.set_route(PP.route, view, frappe.datetime.get_today());
 			return true;
 		}

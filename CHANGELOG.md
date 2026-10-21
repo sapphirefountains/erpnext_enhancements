@@ -38,7 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Back leaves the planner. A link that names a filter (the Project form's *Open in Project Planner*) is
     left alone. Someone with planner access but no Planner Resource gets the planner they always had, not
     a note. Today is also reachable from *Planner* and *More ▸ Views ▸ Today* (phones only), and a saved
-    view that holds Today opens it.
+    view that holds Today opens it. A link that names a filter (`?project=`) never opens a saved Today:
+    the sender's link wins and opens the calendar with the filter, and a person with no Planner Resource
+    who last used Today gets the planner on every device, not the note.
   - **History.** Today, its day arrows, *This week*, *Planner* and *Full route* each take one entry, so
     Back and Forward step through them. *Block my time* takes none of its own (the kit's form owns its
     Back).
@@ -54,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `test_project_planner` and `test_project_planner_page` list `get_today` among the planner's GET
   endpoints and its one `date` argument.
+
 ## [1.706.0] - 2026-10-21
 
 ### Changed

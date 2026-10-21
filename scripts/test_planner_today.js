@@ -659,6 +659,36 @@ test("landing: a link that names a filter is the sender's", async () => {
 	check("no Today request", desk.called("get_today"), []);
 });
 
+test("landing: a saved Today never takes over a filter link, on a phone or a desktop", async () => {
+	for (const phone of [true, false]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		desk.answers.get_today = ME;
+		const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
+		desk.go("project-planner", { project: "PRJ-00001" });
+		await settle();
+		const where = phone ? "phone" : "desktop";
+		check(`${where}: the planner opens, not Today`, desk.called("get_today"), []);
+		check(`${where}: on the project the link named`, [pp.loads.length, pp.filters().project], [1, "PRJ-00001"]);
+		check(`${where}: the address is the link's`, desk.urls().pop(), "/desk/project-planner?project=PRJ-00001");
+	}
+	// A saved crew view still takes the link, with the filter.
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
+	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "crew" }, saved_text: null, views: [], color_by: "default" } });
+	desk.go("project-planner", { project: "PRJ-00001" });
+	await settle();
+	check("a saved crew view and the filter", [pp.loads.pop().view, pp.filters().project], ["crew", "PRJ-00001"]);
+});
+
+test("landing: someone the planner does not list, with a saved Today, gets the planner", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.answers.get_today = { resource: null, message: "not listed", days: [], date: "2026-10-21" };
+	const pp = planner(desk, { p6c: { loaded: true, restored: false, last: { view: "today" }, saved_text: null, views: [], color_by: "default" } });
+	desk.go("project-planner");
+	await settle();
+	check("the week, in place of Today", desk.urls().slice(-2), ["/desk/project/PRJ-00001", "/desk/project-planner/week/2026-10-21"]);
+	check("it loaded", pp.loads, [{ view: "week", anchor: "2026-10-21" }]);
+});
+
 test("landing: a screen the address names is never replaced", async () => {
 	const desk = makeDesk({ start: "/desk/project/PRJ-00001" });
 	const pp = planner(desk);

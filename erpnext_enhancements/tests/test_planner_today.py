@@ -227,7 +227,8 @@ class TestGetToday(base._Base):
 			mock.patch.object(api, "_phase6d", lambda: blocks),
 			mock.patch.object(api.routing, "locate", lambda bookings, detail=False: {}),
 			mock.patch.object(api.fountain_move_jobs, "move_projects", lambda names: {"PRJ-1"}),
-			mock.patch.object(api.engine, "read_equipment", lambda names: {"TASK-1": [{"type": "Asset", "name": "A1", "label": "Skid steer"}]}),
+			mock.patch.object(api.engine, "read_equipment", lambda names: {"TASK-1": [{"type": "Asset", "name": "A1", "label": "Old row label"}]}),
+			mock.patch.object(api.engine, "read_equipment_details", lambda refs: ({("Asset", "A1"): "Skid steer"}, {})),
 			mock.patch.dict(sys.modules, {"erpnext_enhancements.api.pickup_routing": pickup}),
 		]
 		for patch in self.mine:
@@ -253,6 +254,7 @@ class TestGetToday(base._Base):
 		stop = base.api.get_today("2026-10-08")["days"][0]["items"][0]
 		self.assertEqual(stop["leave_by"], "07:35")
 		self.assertEqual(stop["miles"], 12.4)
+		# The label is read fresh (an Asset's asset_name), as get_planner does, not the row's frozen one.
 		self.assertEqual(stop["equipment"], ["Skid steer"])
 		self.assertEqual(stop["day_of"], [2, 3])
 		self.assertTrue(stop["fountain_move"])
