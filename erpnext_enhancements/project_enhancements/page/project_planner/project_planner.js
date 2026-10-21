@@ -3,9 +3,13 @@
 
 // Project Planner: who is free, and which project tasks they are booked on, moved by dragging.
 //
-//   /desk/project-planner                     this week
-//   /desk/project-planner/week/2026-10-12     the week holding that day
-//   /desk/project-planner/month/2026-10-01    the month holding that day
+//   /desk/project-planner                     the last-used tab; with none, the Lookahead (P5)
+//   /desk/project-planner/lookahead/2026-10-12
+//                                             projects, phases and tasks over three weeks (P5, below)
+//   /desk/project-planner/calendar/week/2026-10-12
+//                                             the week holding that day (/week/<date> redirects here)
+//   /desk/project-planner/calendar/month/2026-10-01
+//                                             the month holding that day (/month/<date> redirects here)
 //   /desk/project-planner/crew/2026-10-12     the crew timeline for the week holding that day
 //   /desk/project-planner/route/<person>/2026-10-12
 //                                             one person's driving day: stops in order, drive
@@ -18,7 +22,7 @@
 //                                             the planner (the arrows step a month)
 //
 // The Project, Project manager and Group filters ride along on every one of those as the query
-// (S5c): /desk/project-planner/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
+// (S5c): /desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
 // opens the planner as its sender saw it, and a reload keeps them. Picking a filter rewrites the
 // address in place; it is not a screen of its own. See "filters in the address" below.
 //
@@ -67,7 +71,9 @@
 const PP = {
 	route: "project-planner",
 	api: "erpnext_enhancements.api.project_planner",
-	views: ["week", "month", "crew"],
+	// The views drawn from get_planner's cards, where a card can be dragged, selected, searched to and
+	// right-clicked. P5 adds the Lookahead (its own block, PPL, at the end), whose bars are those cards.
+	views: ["week", "month", "crew", "lookahead"],
 	route_view: "route",
 	heatmap_view: "heatmap",
 	heatmap_weeks: 8,
@@ -246,6 +252,8 @@ class ProjectPlanner {
 			const date = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 			return { view: PP.util_view, anchor: date };
 		}
+		const lookahead = this.ppl_route_target(route); // P5: lookahead, calendar, the old week/month, bare
+		if (lookahead) return lookahead;
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
@@ -255,9 +263,11 @@ class ProjectPlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		if (target.redirect) return this.ppl_redirect(target.redirect);
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
+		this.ppl_take_target(target);
 		this.p8_remember_tab(target.view);
 		if (target.view === PP3B.my_week) {
 			this.show_my_week(target.anchor);
@@ -495,12 +505,13 @@ class ProjectPlanner {
 
 	go(view, anchor) {
 		const route = frappe.get_route() || [];
-		if (route[0] === PP.route && route[1] === view && route[2] === anchor) {
+		const parts = this.ppl_route_parts(view, anchor); // P5: /lookahead/…, /calendar/week|month/…
+		if (route[0] === PP.route && route.slice(1).join("/") === parts.join("/")) {
 			this.load();
 			return;
 		}
-		this.self_route = [PP.route, view, anchor].join("/");
-		this.p6a_route(() => frappe.set_route(PP.route, view, anchor, this.filter_options()), true);
+		this.self_route = [PP.route].concat(parts).join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, ...parts, this.filter_options()), true);
 	}
 
 	// ------------------------------------------------------------------ prefs
@@ -535,6 +546,7 @@ class ProjectPlanner {
 	}
 
 	range() {
+		if (this.view === PPL.view) return this.ppl_range();
 		const first = this.first_weekday();
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
 		if (this.view === PP.util_view) {
@@ -608,18 +620,32 @@ class ProjectPlanner {
 		const $seg = $('<span class="pp-seg"></span>').appendTo($bar);
 		this.$seg = $seg;
 		this.$view_buttons = {};
+		// The tabs (P5: Lookahead first, the week and month views under Calendar). Heatmap and
+		// Utilization stay tabs until the Crew tab takes them in as Capacity.
 		[
-			["month", __("Month")],
-			["week", __("Week")],
+			[PPL.view, __("Lookahead")],
 			["crew", __("Crew")],
+			[PPL.calendar, __("Calendar")],
 			[PP.heatmap_view, __("Heatmap")],
 			[PP.util_view, __("Utilization")],
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
 				.attr("data-tb-tab", view)
 				.text(label)
-				.on("click", () => this.go(view, this.anchor))
+				.on("click", () => (view === PPL.calendar ? this.ppl_calendar_tab() : this.go(view, this.anchor)))
 				.appendTo($seg);
+		});
+		// The Calendar tab's own switch, Week and Month, shown while it is the tab on screen. Not tabs.
+		this.$cal_seg = $('<span class="pp-seg ppl-cal-seg" role="group"></span>').attr("aria-label", __("Calendar")).hide().appendTo($bar);
+		[
+			["week", __("Week")],
+			["month", __("Month")],
+		].forEach(([view, label]) => {
+			this.$view_buttons[view] = $('<button type="button"></button>')
+				.attr("data-ppl-cal", view)
+				.text(label)
+				.on("click", () => this.go(view, this.anchor))
+				.appendTo(this.$cal_seg);
 		});
 
 		$('<span class="pp-spacer"></span>').appendTo($bar);
@@ -686,14 +712,17 @@ class ProjectPlanner {
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.ppl_sync_tabs(); // P5: the tab on screen, and the Calendar tab's Week/Month switch
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
-			frappe.call({
-				method: `${PP.api}.get_planner`,
-				// P4: always with the drafts, so a Draft schedule's (anyone's) and held changes show.
-				args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks ? { all_tasks: 1 } : {}),
-			})
+			frappe.call(
+				// P5: the Lookahead asks get_lookahead (get_planner's answer with its tree in it).
+				this.ppl_call(start) || {
+					method: `${PP.api}.get_planner`,
+					// P4: always with the drafts, so a Draft schedule's (anyone's) and held changes show.
+					args: Object.assign({ start: pp_ymd(start), end: pp_ymd(end), draft: 1 }, this.all_tasks ? { all_tasks: 1 } : {}),
+				}
+			)
 		)
 			.then((r) => {
 				if (token !== this.request) return;
@@ -823,9 +852,14 @@ class ProjectPlanner {
 			return;
 		}
 		if (!this.data) return;
-		this.render_panel();
+		// P5: the Lookahead draws only an answer of its own (get_lookahead's tree), and has no Resources panel.
+		const lookahead = this.view === PPL.view;
+		if (lookahead && !this.data.lookahead) return;
+		if (lookahead) this.$panel.hide();
+		else this.render_panel();
 		this.render_trays();
-		if (this.view === "crew") this.render_crew();
+		if (lookahead) this.ppl_render();
+		else if (this.view === "crew") this.render_crew();
 		else this.render_calendar();
 		// A project filter with nothing in this range or unscheduled says so by name (S5b).
 		const cards = (this.data.tasks || []).concat(this.data.unscheduled || []);
@@ -836,7 +870,11 @@ class ProjectPlanner {
 				.prependTo(this.$grid_wrap);
 		}
 		this.$hint.text(
-			this.view === "crew"
+			lookahead
+				? __(
+						"Drag a bar to another day to move it and the tasks that follow; drag its edge to change its days. Drag a Not scheduled task onto a day to schedule it. Click a bar to open the task, a project's name for the project at a glance."
+				  )
+				: this.view === "crew"
 				? __(
 						"Drag a task to another day on the same row to move it, or onto someone else's row to hand their place on the crew to that person. On a touch screen, hold for a moment first."
 				  )
@@ -1052,6 +1090,7 @@ class ProjectPlanner {
 	render_trays() {
 		this.$trays.empty();
 		this.render_overdue_tray();
+		if (this.view === PPL.view) return; // P5: the Lookahead's own Needs crew chip and Not scheduled lines
 		const needs = (this.data.tasks || [])
 			.filter((card) => this.needs_crew.has(card.name) && this.task_visible(card))
 			.sort((a, b) => this.compare(a, b));
@@ -1714,7 +1753,7 @@ class ProjectPlanner {
 		}
 		const cell = el.closest(".pp-cell[data-date][data-resource]");
 		if (cell) return { el: cell, date: cell.getAttribute("data-date"), resource: cell.getAttribute("data-resource") };
-		const day = el.closest(".pp-day[data-date]");
+		const day = el.closest(".pp-day[data-date], .ppl-day[data-date]"); // P5: a Lookahead day
 		if (day) return { el: day, date: day.getAttribute("data-date") };
 		return null;
 	}
@@ -2650,7 +2689,7 @@ class ProjectPlanner {
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.ppl_sync_tabs(); // P5: the tab on screen, and the Calendar tab's Week/Month switch
 		this.$body.addClass("pp-loading");
 		return Promise.resolve(
 			frappe.call({ method: `${PP.api}.get_heatmap`, args: { start: pp_ymd(start), weeks: PP.heatmap_weeks } })
@@ -3816,7 +3855,7 @@ Object.assign(ProjectPlanner.prototype, PP3B_METHODS);
 const PP8 = {
 	view: "today",
 	// The screens whose tab a device remembers; the Lookahead (P5) joins them.
-	tabs: ["week", "month", "crew", "heatmap", "today"],
+	tabs: ["week", "month", "crew", "heatmap", "today", "lookahead"],
 	tab_pref: "ee_project_planner_tab",
 };
 
@@ -3924,7 +3963,8 @@ const PP8_METHODS = {
 		frappe.route_flags.replace_route = true;
 		// Sent to Today unasked: someone the planner does not list gets the planner (render_today).
 		if (tab === PP8.view) this.p8_landed = true;
-		frappe.set_route(PP.route, tab, frappe.datetime.get_today());
+		// P5: the tab's own address (/calendar/week/<date>, /lookahead/<date>).
+		frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));
 		return true;
 	},
 
@@ -3994,7 +4034,8 @@ const PP8_METHODS = {
 		if (landed && data && !data.resource) {
 			frappe.route_flags = frappe.route_flags || {};
 			frappe.route_flags.replace_route = true;
-			this.go("week", date);
+			// P5: the planner's home tab.
+			this.go(PPL.view, date);
 			return;
 		}
 		const step = (sign) => this.go_today(pp_ymd(moment(date, "YYYY-MM-DD").add(sign, "days")));
@@ -4015,7 +4056,7 @@ const PP8_METHODS = {
 		// The rest of the planner, one tap away: nothing it does is lost on a phone.
 		$('<button type="button" class="btn btn-default btn-sm"></button>')
 			.text(__("Planner"))
-			.on("click", () => this.go("week", date))
+			.on("click", () => this.go(PPL.view, date))
 			.appendTo($head);
 
 		if (!data) {
@@ -5790,7 +5831,7 @@ const PP6B_METHODS = {
 
 	p6b_route_changed() {
 		const route = frappe.get_route() || [];
-		const calendar = route[0] === PP.route && (!route[1] || PP.views.includes(route[1]));
+		const calendar = route[0] === PP.route && (!route[1] || PP.views.includes(route[1]) || route[1] === PPL.calendar);
 		if (!calendar && this.$p6b_bar) this.$p6b_bar.hide();
 		if (this.p6b.resize) this.p6b_resize_end(false);
 		this.p6b_close_results();
@@ -5896,7 +5937,7 @@ const PP6B_METHODS = {
 			const resource = cell.getAttribute("data-resource");
 			return { kind: "cell", resource, user: this.p6b_user(resource), ymd: cell.getAttribute("data-date"), el: cell };
 		}
-		const day = el.closest(".pp-day[data-date]");
+		const day = el.closest(".pp-day[data-date], .ppl-day[data-date]"); // P5: a Lookahead day, for quick add
 		if (day) return { kind: "cell", resource: null, user: null, ymd: day.getAttribute("data-date"), el: day };
 		return null;
 	},
@@ -6680,7 +6721,7 @@ const PP6B_METHODS = {
 		const resize = this.p6b.resize;
 		e.preventDefault();
 		const el = document.elementFromPoint(e.clientX, e.clientY);
-		const spot = el && el.closest ? el.closest(".pp-cell[data-date], .pp-day[data-date]") : null;
+		const spot = el && el.closest ? el.closest(".pp-cell[data-date], .pp-day[data-date], .ppl-day[data-date]") : null;
 		if (spot && this.$grid_wrap[0].contains(spot)) {
 			const ymd = spot.getAttribute("data-date");
 			// At least one day: an edge never passes the other one.
@@ -6698,7 +6739,13 @@ const PP6B_METHODS = {
 		if (!resize) return;
 		const grid = this.$grid_wrap[0];
 		grid.querySelectorAll(".p6b-span").forEach((el) => el.classList.remove("p6b-span"));
-		const spots = grid.querySelectorAll(this.view === "crew" ? ".pp-cell[data-date][data-resource]" : ".pp-day[data-date]");
+		const spots = grid.querySelectorAll(
+			this.view === "crew"
+				? ".pp-cell[data-date][data-resource]"
+				: this.view === PPL.view
+				? `.ppl-row[data-ppl-row="${CSS.escape(resize.card.name)}"] .ppl-day[data-date]` // P5: the bar's own row
+				: ".pp-day[data-date]"
+		);
 		spots.forEach((el) => {
 			if (this.view === "crew" && resize.row && el.getAttribute("data-resource") !== resize.row) return;
 			const ymd = el.getAttribute("data-date");
@@ -7469,7 +7516,8 @@ Object.assign(ProjectPlanner.prototype, PP6B_METHODS);
 const PP6C = {
 	prefs: "erpnext_enhancements.api.planner_views_prefs",
 	planner: "project",
-	default_view: "week",
+	// P5: the home tab. A bare /project-planner opens it unless "last used" names another tab.
+	default_view: "lookahead",
 	tap_pref: "ee_project_planner_tap_move",
 	save_delay: 1500,
 	restore_wait: 4000,
@@ -7477,7 +7525,7 @@ const PP6C = {
 	legend_limit: 40,
 	// What a saved view may hold: the same rules as api/planner_views_prefs.SCHEMA["project"].
 	schema: {
-		view: ["enum", ["week", "month", "crew", "heatmap"]],
+		view: ["enum", ["week", "month", "crew", "heatmap", "lookahead"]],
 		project: ["text"],
 		pm: ["text"],
 		group: ["enum", ["", "Field", "PM", "Design", "Subcontractor"]],
@@ -7505,7 +7553,7 @@ const PP6C = {
 		["pm", "Project manager"],
 		["status", "Status"],
 	],
-	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap" },
+	view_labels: { week: "Week", month: "Month", crew: "Crew", heatmap: "Heatmap", lookahead: "Lookahead" },
 	none_color: "#94a3b8",
 };
 
@@ -8035,7 +8083,7 @@ const PP6C_METHODS = {
 	p6c_tap_target(el) {
 		const cell = el.closest(".pp-cell[data-date][data-resource]");
 		if (cell) return { el: cell, date: cell.getAttribute("data-date"), resource: cell.getAttribute("data-resource") };
-		const day = el.closest(".pp-day[data-date]");
+		const day = el.closest(".pp-day[data-date], .ppl-day[data-date]"); // P5: a Lookahead day
 		if (day) return { el: day, date: day.getAttribute("data-date") };
 		return null;
 	},
@@ -8287,7 +8335,7 @@ const PP6C_METHODS = {
 		if (!this.data) return;
 		// A view that shows another set of tasks asks the server again (a week that is not on screen yet
 		// loads anyway).
-		if (reload && PP.views.includes(this.view)) this.load();
+		if (reload && (PP.views.includes(this.view) || this.view === PPL.view)) this.load();
 		else this.render();
 	},
 
@@ -8669,6 +8717,7 @@ const PP6C_METHODS = {
 		model.lines = this.p6c_print_lines(false, 0);
 		if (view === PP.heatmap_view) return Object.assign(model, this.p6c_print_heatmap());
 		if (view === "crew") return Object.assign(model, this.p6c_print_crew());
+		if (view === PPL.view) return Object.assign(model, this.ppl_print()); // P5
 		return Object.assign(model, this.p6c_print_calendar());
 	},
 
@@ -11101,7 +11150,7 @@ const PPTB_METHODS = {
 			});
 		});
 		if (this.$seg && this.$seg[0] && typeof kit.toolbar.tabs === "function") {
-			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.view });
+			this.tb.tabs = kit.toolbar.tabs(this.$seg[0], { label: __("Planner views"), selected: this.ppl_tab() });
 		}
 		this.tb_render();
 	},
@@ -11448,7 +11497,7 @@ const PPTB_METHODS = {
 		// empty (My week, the crew sheet), so it is not built here just to be counted.
 		const $add = this.tb.$menus.add;
 		if ($add) $add.toggleClass("pp-tb-off", !this.tb_add_items().length);
-		if (this.tb.tabs) this.tb.tabs.sync(this.view);
+		if (this.tb.tabs) this.tb.tabs.sync(this.ppl_tab());
 		if (this.tb.sheet && this.tb.sheet.is_open()) this.tb.sheet.refresh();
 	},
 
@@ -11571,7 +11620,7 @@ const PPU_METHODS = {
 		const token = ++this.request;
 		this.$title.text(this.title());
 		this.take_title_focus();
-		Object.entries(this.$view_buttons).forEach(([view, $button]) => $button.toggleClass("pp-on", view === this.view));
+		this.ppl_sync_tabs(); // P5: the tab on screen, and the Calendar tab's Week/Month switch
 		const filters = { from_date: pp_ymd(start), to_date: pp_ymd(end), granularity: PPU.granularity };
 		if (!this.util_allowed()) {
 			// Arrived by the address without access: say so, and ask the server nothing.
@@ -11690,6 +11739,858 @@ const PPU_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPU_METHODS);
+
+// ====================================================================== P5: Lookahead, the planner's home
+//
+//   /desk/project-planner                         the person's last-used tab; Lookahead with none
+//                                                 (both replace the bare address with their own)
+//   /desk/project-planner/lookahead/2026-10-19    three weeks from the week holding that day
+//   /desk/project-planner/lookahead/2026-10-19/4  the same, four weeks (2, 3, 4 or 6; 3 is not written)
+//   /desk/project-planner/calendar/week/<date>    the old week view, under the Calendar tab
+//   /desk/project-planner/calendar/month/<date>   the old month view
+//   /desk/project-planner/week/<date>, /month/<date>
+//                                                 old addresses: replaced (never pushed) by the two above
+//
+// P5 of the planner UX redesign (docs/planner-ux-redesign.md §4.2; Nik's D2, 2026-10-21: "Lookahead
+// (all jobs)" is the screen a PM lands on). Rows are projects, then their phases, then tasks; the
+// weeks run across, starting on the site's first weekday (Sunday on production). Each bar is a task,
+// with its crew's initials and its size in working days (D7); a pencil is hatched; the baseline (P3,
+// D5) is a grey ghost behind it and a slip past it a thin red tail; a conflict, running over, a
+// weather flag and a missing qualification are chips on it. Hovering or focusing a bar draws arrows to
+// what it waits on and what waits on it (only then: there are hundreds of links).
+//
+// The bars ARE the planner's cards (.pp-card[data-task]), from get_lookahead, which is get_planner over
+// the window plus the tree. So nothing here writes: a drag is the page's drag (the day under the pointer
+// is the "from" day, set as it goes down), an edge is 6B's resize, a click the side panel, a right-click
+// 6B's menu, and every write goes through commit/send with the reason prompt, drafts, Undo and the
+// conflict check, and P4's auto-draft, tasks that follow, Ctrl/⌘ and "Notify crew?". Fountain Move
+// tasks are read-only (their cards come back not movable). The project row carries its schedule (P3,
+// D8): Draft with Publish… (P4's own confirm and publish), Published and when, or "No tasks yet" with
+// Build out (T1's grid; this row replaces the Needs tasks tray). Undated work is a "Not scheduled" line
+// per project whose chips drag onto a day, and a "Needs crew" chip narrows the board to the tasks short
+// of crew (replacing the Needs crew tray). On a phone the board is a list by day.
+//
+// A tab, a range and a week are screens: each is a route, so Back and Forward step through them. A
+// collapsed project or phase and the Needs crew chip are not: they change nothing in the address.
+//
+// Hooks into the class above, one line each: ppl_route_target (route_target), ppl_redirect and
+// ppl_take_target (handle_route), ppl_range (range), ppl_route_parts (go), ppl_call (load), ppl_tab
+// (the tab highlight and tabs.sync), ppl_render (render), ppl_calendar_tab (the Calendar tab's click),
+// and the .ppl-day drop target in find_target, the 6B resize and Tap to move.
+
+const PPL = {
+	view: "lookahead",
+	// The Calendar tab holds the week and month views.
+	calendar: "calendar",
+	calendar_views: ["week", "month"],
+	method: "erpnext_enhancements.api.planner_lookahead.get_lookahead",
+	weeks: [2, 3, 4, 6],
+	default_weeks: 3,
+	prefs: {
+		weeks: "ee_project_planner_lookahead_weeks",
+		collapsed: "ee_project_planner_lookahead_collapsed",
+	},
+	// The most collapsed rows remembered in this browser, and the Not scheduled chips shown before "+N more".
+	collapsed_max: 300,
+	chips_shown: 12,
+	phone_max: 767,
+};
+
+// Pure helpers: no frappe, no page. scripts/test_planner_lookahead.js runs them under node.
+const PPL_PURE = {
+	// The weeks a route segment or a remembered value asks for, or the default.
+	weeks(value) {
+		const weeks = Number(value);
+		return PPL.weeks.includes(weeks) ? weeks : PPL.default_weeks;
+	},
+	// The first day of the week holding `ymd`, for weeks starting on `first` (0 Sunday … 6 Saturday).
+	week_start(ymd, first) {
+		const weekday = new Date(`${ymd}T00:00:00Z`).getUTCDay();
+		return PP6B_PURE.ymd_add(ymd, -((weekday - (Number(first) || 0) + 7) % 7));
+	},
+	// The lookahead holding `ymd`: whole weeks from its week's first day.
+	window(ymd, first, weeks) {
+		const start = PPL_PURE.week_start(ymd, first);
+		return { start, end: PP6B_PURE.ymd_add(start, 7 * PPL_PURE.weeks(weeks) - 1) };
+	},
+	// Where a span sits in the window: 1-based day columns, and whether it runs on past either end.
+	// Null when it misses the window or has no days.
+	columns(start, end, first, last) {
+		if (!start) return null;
+		const stop = end && end >= start ? end : start;
+		if (stop < first || start > last) return null;
+		const from = start < first ? first : start;
+		const to = stop > last ? last : stop;
+		return {
+			from: PP6B_PURE.ymd_diff(first, from) + 1,
+			to: PP6B_PURE.ymd_diff(first, to) + 1,
+			cut_l: start < first,
+			cut_r: stop > last,
+		};
+	},
+	// The days a set of spans covers, as runs [[from, to]] of 1-based columns: a collapsed row's bars.
+	runs(spans, first, last) {
+		const width = PP6B_PURE.ymd_diff(first, last) + 1;
+		const on = new Array(width + 2).fill(false);
+		(spans || []).forEach((span) => {
+			const cols = span && PPL_PURE.columns(span[0], span[1], first, last);
+			if (!cols) return;
+			for (let col = cols.from; col <= cols.to; col++) on[col] = true;
+		});
+		const runs = [];
+		for (let col = 1; col <= width; col++) {
+			if (!on[col]) continue;
+			const from = col;
+			while (col < width && on[col + 1]) col++;
+			runs.push([from, col]);
+		}
+		return runs;
+	},
+	// A task's size in days (D7), as the calendar's labels count it (P11, duration_text): the working
+	// days across its span, at least one. A weekend-only task is 1 day.
+	span_days(start, end) {
+		if (!start) return 0;
+		const stop = end && end >= start ? end : start;
+		return Math.max(PP6E_PURE.working_between(PP6B_PURE.ymd_add(start, -1), stop), 1);
+	},
+	// The part of a task past its baseline's last day, as [first, last], or null.
+	slip(card) {
+		const base = card && card.baseline;
+		if (!base || !base.end || !card.start) return null;
+		const end = card.end && card.end >= card.start ? card.end : card.start;
+		return end > base.end ? [PP6B_PURE.ymd_add(base.end, 1), end] : null;
+	},
+	// The address of a planner screen, after /project-planner.
+	route_parts(view, anchor, weeks) {
+		if (view === PPL.view) {
+			const parts = [PPL.view, anchor];
+			if (PPL_PURE.weeks(weeks) !== PPL.default_weeks) parts.push(String(PPL_PURE.weeks(weeks)));
+			return parts;
+		}
+		if (PPL.calendar_views.includes(view)) return [PPL.calendar, view, anchor];
+		return [view, anchor];
+	},
+	// The tab a view is under: week and month are the Calendar tab.
+	tab(view) {
+		return PPL.calendar_views.includes(view) ? PPL.calendar : view;
+	},
+};
+
+const PPL_METHODS = {
+	// ------------------------------------------------------------------ routing
+
+	ppl_state() {
+		if (!this.ppl) {
+			let collapsed = [];
+			try {
+				collapsed = JSON.parse(this.load_pref(PPL.prefs.collapsed, "[]")) || [];
+			} catch (e) {
+				collapsed = [];
+			}
+			this.ppl = {
+				weeks: PPL_PURE.weeks(this.load_pref(PPL.prefs.weeks, String(PPL.default_weeks))),
+				// The calendar view this visit used last ("last used" keeps it across visits, as its view).
+				calendar: PPL.calendar_views.includes(this.view) ? this.view : "week",
+				collapsed: new Set(Array.isArray(collapsed) ? collapsed.map(String) : []),
+				needs_only: false,
+				shown_all: new Set(),
+				linked: null,
+				// The tasks short of crew, as a set, for the answer it was built from (ppl_needs).
+				needs: null,
+				needs_for: null,
+			};
+			// Crossing the phone width (a rotation, a resized window) swaps the grid and the list.
+			try {
+				const query = window.matchMedia && window.matchMedia(`(max-width: ${PPL.phone_max}px)`);
+				if (query && typeof query.addEventListener === "function") {
+					query.addEventListener("change", () => {
+						if (this.view === PPL.view && this.data) this.render();
+					});
+				}
+			} catch (e) {
+				// No media queries: the width read at each render still decides.
+			}
+		}
+		return this.ppl;
+	},
+
+	// The routes this block owns, as route_target's answer, or null for the ones it does not.
+	ppl_route_target(route) {
+		const day = (value) => (value && moment(value, "YYYY-MM-DD", true).isValid() ? value : frappe.datetime.get_today());
+		if (route[1] === PPL.view) return { view: PPL.view, anchor: day(route[2]), weeks: PPL_PURE.weeks(route[3]) };
+		if (route[1] === PPL.calendar) {
+			// /calendar/<date> alone is the calendar view used last.
+			if (PPL.calendar_views.includes(route[2])) return { view: route[2], anchor: day(route[3]) };
+			return { view: this.ppl_state().calendar, anchor: day(route[2]) };
+		}
+		// The old addresses: bookmarks, the digest's links, the Project form's link.
+		if (PPL.calendar_views.includes(route[1])) return { redirect: [PPL.calendar, route[1], day(route[2])] };
+		// A bare /project-planner the last-used view did not take over (p6c_before_route) is the home tab,
+		// at its own address, in place: an entry left bare would be taken over by "last used" on the way
+		// Back (open Crew from here, and Back would bounce to Crew), so the Lookahead could never be returned to.
+		if (!route[1]) return { redirect: this.ppl_route_parts(PPL.view, frappe.datetime.get_today()) };
+		return null;
+	},
+
+	// An old address replaced by its new one, the filters it named carried along. Replace, never push:
+	// Back from the new address goes where Back from the old one would have.
+	ppl_redirect(parts) {
+		this.take_route_filters();
+		this.self_route = [PP.route].concat(parts).join("/");
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		// Keys that are not the planner's ride along, as they would have on the old address.
+		frappe.set_route(PP.route, ...parts, Object.assign({}, frappe.route_options || {}, this.filter_options()));
+	},
+
+	ppl_take_target(target) {
+		const state = this.ppl_state();
+		if (target.view === PPL.view) state.weeks = PPL_PURE.weeks(target.weeks);
+		if (PPL.calendar_views.includes(target.view)) state.calendar = target.view;
+	},
+
+	ppl_route_parts(view, anchor) {
+		return PPL_PURE.route_parts(view, anchor, this.ppl_state().weeks);
+	},
+
+	ppl_range() {
+		const win = PPL_PURE.window(this.anchor, this.first_weekday(), this.ppl_state().weeks);
+		return { start: moment(win.start, "YYYY-MM-DD"), end: moment(win.end, "YYYY-MM-DD") };
+	},
+
+	// load()'s call on the Lookahead: get_lookahead, the same answer as get_planner with the tree in it.
+	ppl_call(start) {
+		if (this.view !== PPL.view) return null;
+		return {
+			method: PPL.method,
+			args: Object.assign(
+				// P4: always with the drafts, as get_planner is read.
+				{ start: pp_ymd(start), weeks: this.ppl_state().weeks, draft: 1 },
+				this.all_tasks ? { all_tasks: 1 } : {}
+			),
+		};
+	},
+
+	ppl_tab() {
+		return PPL_PURE.tab(this.view);
+	},
+
+	// The tab on screen is marked, and the Calendar tab shows its Week/Month switch.
+	ppl_sync_tabs() {
+		const tab = this.ppl_tab();
+		Object.entries(this.$view_buttons || {}).forEach(([view, $button]) => $button.toggleClass("pp-on", view === tab || view === this.view));
+		if (this.$cal_seg) this.$cal_seg.toggle(tab === PPL.calendar);
+	},
+
+	// The Calendar tab opens the calendar view used last (week, unless it was the month).
+	ppl_calendar_tab() {
+		this.go(this.ppl_state().calendar, this.anchor);
+	},
+
+	// The range picker: a screen of its own (a route), remembered for the next bare /project-planner.
+	ppl_pick_weeks(weeks) {
+		const state = this.ppl_state();
+		state.weeks = PPL_PURE.weeks(weeks);
+		this.save_pref(PPL.prefs.weeks, String(state.weeks));
+		this.go(PPL.view, this.anchor);
+	},
+
+	// ------------------------------------------------------------------ what is on screen
+
+	// Whether a card is on the board: the page's filters, Group (someone of it on the crew) and, unless
+	// `any_crew`, the Needs crew chip.
+	ppl_card_visible(card, any_crew) {
+		if (!card || !this.task_visible(card)) return false;
+		if (!any_crew && this.ppl_state().needs_only && !this.ppl_needs(card)) return false;
+		if (this.group) {
+			return (card.crew || []).some((member) => {
+				const resource = this.by_resource[member.resource];
+				return !!resource && resource.group === this.group;
+			});
+		}
+		return true;
+	},
+
+	ppl_needs(card) {
+		const state = this.ppl_state();
+		if (state.needs_for !== this.data) {
+			state.needs = new Set(((this.data && this.data.lookahead) || {}).needs_crew || []);
+			state.needs_for = this.data;
+		}
+		return Number(card.short) > 0 || state.needs.has(card.name);
+	},
+
+	ppl_project_visible(project) {
+		if (this.project && project.name !== this.project) return false;
+		if (this.pm) {
+			const known = this.by_project[project.name];
+			if ((known ? known.pm : project.pm) !== this.pm) return false;
+		}
+		return true;
+	},
+
+	ppl_toggle(key) {
+		const state = this.ppl_state();
+		if (state.collapsed.has(key)) state.collapsed.delete(key);
+		else state.collapsed.add(key);
+		this.ppl_save_collapsed();
+		this.render();
+	},
+
+	ppl_set_all(collapsed) {
+		const state = this.ppl_state();
+		const look = (this.data && this.data.lookahead) || {};
+		(look.projects || []).forEach((project) => {
+			if (project.no_tasks) return;
+			const key = `p:${project.name}`;
+			if (collapsed) state.collapsed.add(key);
+			else state.collapsed.delete(key);
+			(project.phases || []).forEach((phase) => state.collapsed.delete(`f:${project.name}|${phase.name || ""}`));
+		});
+		this.ppl_save_collapsed();
+		this.render();
+	},
+
+	ppl_save_collapsed() {
+		const state = this.ppl_state();
+		const keys = Array.from(state.collapsed).slice(-PPL.collapsed_max);
+		state.collapsed = new Set(keys);
+		this.save_pref(PPL.prefs.collapsed, JSON.stringify(keys));
+	},
+
+	ppl_phone() {
+		try {
+			return !!(window.matchMedia && window.matchMedia(`(max-width: ${PPL.phone_max}px)`).matches);
+		} catch (e) {
+			return false;
+		}
+	},
+
+	// ------------------------------------------------------------------ render
+
+	ppl_render() {
+		const look = this.data.lookahead || {};
+		const state = this.ppl_state();
+		const days = this.range_days();
+		state.linked = null;
+		this.$grid_wrap.empty();
+		const $board = $('<div class="pp-section ppl"></div>').appendTo(this.$grid_wrap);
+		const projects = (look.projects || []).filter((project) => this.ppl_project_visible(project));
+		const body = this.ppl_phone() ? this.ppl_list_html(projects, days) : this.ppl_grid_html(projects, days);
+		$board[0].innerHTML = this.ppl_head_html() + body;
+		this.ppl_bind($board);
+	},
+
+	ppl_head_html() {
+		const state = this.ppl_state();
+		const weeks = PPL.weeks
+			.map((n) => {
+				const on = n === state.weeks;
+				return `<button type="button" class="ppl-weeks-btn${on ? " pp-on" : ""}" data-ppl-weeks="${n}" aria-pressed="${
+					on ? "true" : "false"
+				}">${pp_esc(__("{0} weeks", [n]))}</button>`;
+			})
+			.join("");
+		// What pressing the chip would show: the cards the other filters leave, short of crew.
+		const needs = []
+			.concat(this.data.tasks || [], this.data.unscheduled || [])
+			.filter((card) => this.ppl_card_visible(card, true) && this.ppl_needs(card)).length;
+		const needs_chip =
+			needs || state.needs_only
+				? `<button type="button" class="pp-tb-alert pp-tb-warn ppl-needs" data-ppl-needs aria-pressed="${
+						state.needs_only ? "true" : "false"
+				  }" title="${pp_esc(__("Show only the tasks short of crew"))}"><span class="pp-tb-count">${pp_esc(
+						needs
+				  )}</span><span>${pp_esc(__("Needs crew"))}</span></button>`
+				: "";
+		return `<div class="ppl-head">
+			<span class="ppl-head-title">${pp_esc(__("Lookahead · next {0} weeks", [state.weeks]))}</span>
+			<span class="ppl-weeks" role="group" aria-label="${pp_esc(__("Weeks shown"))}">${weeks}</span>
+			${needs_chip}
+			<span class="pp-spacer"></span>
+			<button type="button" class="btn btn-default btn-xs" data-ppl-all="expand">${pp_esc(__("Expand all"))}</button>
+			<button type="button" class="btn btn-default btn-xs" data-ppl-all="collapse">${pp_esc(__("Collapse all"))}</button>
+		</div>`;
+	},
+
+	// One day's marks: today, a weekend, the first day of a week.
+	ppl_day_classes(ymd) {
+		const weekday = moment(ymd, "YYYY-MM-DD").day();
+		const out = [];
+		if (ymd === this.today()) out.push("ppl-today");
+		if (weekday === 0 || weekday === 6) out.push("ppl-weekend");
+		if (weekday === this.first_weekday()) out.push("ppl-week-start");
+		return out;
+	},
+
+	// The day headings: a day note shows as a dot, and the heading opens the day peek, which reads it.
+	ppl_dayheads_html(days) {
+		return days
+			.map((ymd) => {
+				const notes = ((this.data.day_notes || {})[ymd] || []).length;
+				const tip = [pp_when(ymd), notes ? __("{0} day note(s)", [notes]) : ""].filter(Boolean).join(" · ");
+				return `<div class="${["ppl-dayhead"].concat(this.ppl_day_classes(ymd)).join(" ")}" data-pp6a-day="${pp_esc(
+					ymd
+				)}" role="columnheader" tabindex="0" title="${pp_esc(tip)}"><span>${pp_esc(
+					moment(ymd, "YYYY-MM-DD").format("ddd D")
+				)}</span>${notes ? '<i class="ppl-note-dot" aria-hidden="true"></i>' : ""}</div>`;
+			})
+			.join("");
+	},
+
+	// The day cells of one row. A task's, a phase's and a project's are drop targets (.ppl-day), so a
+	// Not scheduled chip has somewhere to land even on a project with no dated work yet; a dated bar
+	// dropped on them moves by the days it was dragged, as anywhere. A no-task project's are not.
+	ppl_cells_html(days, target) {
+		return days
+			.map((ymd, index) => {
+				const cls = [target ? "ppl-day" : "ppl-cell"].concat(this.ppl_day_classes(ymd)).join(" ");
+				return `<div class="${cls}"${target ? ` data-date="${pp_esc(ymd)}"` : ""} style="grid-column: ${index + 2}"></div>`;
+			})
+			.join("");
+	},
+
+	ppl_grid_html(projects, days) {
+		const first = days[0];
+		const last = days[days.length - 1];
+		const rows = [];
+		projects.forEach((project) => rows.push(...this.ppl_project_rows(project, days, first, last)));
+		const empty = rows.length
+			? ""
+			: `<div class="ppl-empty" role="status">${pp_esc(
+					this.ppl_state().needs_only ? __("No task is short of crew in these weeks.") : __("Nothing is scheduled in these weeks.")
+			  )}</div>`;
+		return `<div class="ppl-scroll pp-scroll">
+			<div class="ppl-grid" role="grid" aria-label="${pp_esc(__("Lookahead"))}" style="--ppl-days: ${days.length}">
+				<div class="ppl-row ppl-heads" role="row"><div class="ppl-label ppl-corner" role="columnheader">${pp_esc(
+					__("Project · phase · task")
+				)}</div>${this.ppl_dayheads_html(days)}</div>
+				${rows.join("")}
+				<svg class="ppl-links" aria-hidden="true"></svg>
+			</div>
+		</div>${empty}`;
+	},
+
+	ppl_toggle_html(key, open, label) {
+		return `<button type="button" class="ppl-toggle" data-ppl-toggle="${pp_esc(key)}" aria-expanded="${
+			open ? "true" : "false"
+		}" aria-label="${pp_esc(label)}">${open ? "▾" : "▸"}</button>`;
+	},
+
+	// One project's rows: itself, its phases, their tasks and its Not scheduled line.
+	ppl_project_rows(project, days, first, last) {
+		const state = this.ppl_state();
+		const rows = [];
+		const by_name = (name) => this.by_task[name];
+		const phases = (project.phases || [])
+			.map((phase) => ({
+				phase,
+				tasks: (phase.tasks || []).map(by_name).filter((card) => this.ppl_card_visible(card)),
+				undated: (phase.not_scheduled || []).map(by_name).filter((card) => this.ppl_card_visible(card)),
+			}))
+			.filter((entry) => entry.tasks.length || entry.undated.length);
+		// A project whose work the filters all hide is not drawn; one with no tasks only while unfiltered.
+		if (project.no_tasks ? state.needs_only || this.group : !phases.length) return rows;
+		const pkey = `p:${project.name}`;
+		const open = !project.no_tasks && !state.collapsed.has(pkey);
+		const dated = phases.reduce((all, entry) => all.concat(entry.tasks), []);
+		const toggle = project.no_tasks
+			? '<span class="ppl-toggle-gap"></span>'
+			: this.ppl_toggle_html(pkey, open, __("Show or hide {0}", [project.title || project.name]));
+		const row_class = project.no_tasks ? "ppl-row ppl-project ppl-no-tasks" : "ppl-row ppl-project";
+		rows.push(`<div class="${row_class}" role="row">
+			<div class="ppl-label" role="rowheader">${toggle}${this.ppl_project_label_html(project)}</div>${this.ppl_cells_html(
+			days,
+			!project.no_tasks
+		)}${open ? "" : this.ppl_roll_html(dated, first, last)}</div>`);
+		if (!open) return rows;
+		phases.forEach(({ phase, tasks, undated }) => {
+			const fkey = `f:${project.name}|${phase.name || ""}`;
+			const phase_open = !state.collapsed.has(fkey);
+			const counts = [
+				tasks.length === 1 ? __("1 task") : __("{0} tasks", [tasks.length]),
+				undated.length ? __("{0} not scheduled", [undated.length]) : "",
+			]
+				.filter(Boolean)
+				.join(", ");
+			const subject = phase.name ? phase.subject || phase.name : __("Other work");
+			rows.push(`<div class="ppl-row ppl-phase" role="row">
+				<div class="ppl-label" role="rowheader">${this.ppl_toggle_html(fkey, phase_open, __("Show or hide {0}", [subject]))}
+					<span class="ppl-phase-name" title="${pp_esc(subject)}">${pp_esc(subject)}</span>
+					<span class="ppl-count">${pp_esc(counts)}</span>
+				</div>${this.ppl_cells_html(days, true)}${phase_open ? "" : this.ppl_roll_html(tasks, first, last)}</div>`);
+			if (phase_open) tasks.forEach((card) => rows.push(this.ppl_task_row(card, days, first, last)));
+		});
+		const undated = phases.reduce((all, entry) => all.concat(entry.undated), []);
+		if (undated.length) rows.push(this.ppl_not_scheduled_row(project, undated, days));
+		return rows;
+	},
+
+	// The project's name (its peek), its PM and its schedule: Draft with Publish…, Published and when, a
+	// Fountain Move, or No tasks yet with Build out.
+	ppl_project_label_html(project) {
+		const known = this.by_project[project.name] || {};
+		const schedule = known.schedule || project.schedule || {};
+		const title = project.title || project.name;
+		const pm = known.pm || project.pm;
+		const can_edit = !!(this.data && this.data.can_edit);
+		const parts = [
+			`<span class="ppl-project-name" data-pk-project="${pp_esc(encodeURIComponent(project.name))}" tabindex="0" role="button" title="${pp_esc(
+				__("{0}: open the project at a glance", [title])
+			)}">${pp_esc(title)}</span>`,
+		];
+		if (title !== project.name) parts.push(`<span class="ppl-project-id">${pp_esc(project.name)}</span>`);
+		if (pm) parts.push(`<span class="ppl-pm">${pp_esc(__("PM {0}", [pm]))}</span>`);
+		if (project.no_tasks) {
+			parts.push(`<span class="pp-chip">${pp_esc(__("No tasks yet"))}</span>`);
+			if (can_edit && this.t1_can()) {
+				parts.push(
+					`<button type="button" class="btn btn-default btn-xs" data-ppl-build="${pp_esc(project.name)}">${pp_esc(__("Build out"))}</button>`
+				);
+			}
+		} else if (project.fountain_move) {
+			parts.push(
+				`<span class="pp-chip" title="${pp_esc(__("Fountain Move tasks are scheduled on the Maintenance Planner."))}">${pp_esc(
+					__("Fountain Move")
+				)}</span>`
+			);
+		} else if (schedule.status === "Published") {
+			const when = schedule.published_on ? moment(schedule.published_on).format("MMM D") : "";
+			parts.push(`<span class="pp-chip ppl-published">${pp_esc(when ? __("● Published {0}", [when]) : __("● Published"))}</span>`);
+		} else if (schedule.status) {
+			parts.push(`<span class="pp-chip ppl-draft">${pp_esc(__("◐ Draft schedule"))}</span>`);
+			if (can_edit) {
+				parts.push(
+					`<button type="button" class="btn btn-primary btn-xs" data-ppl-publish="${pp_esc(project.name)}" title="${pp_esc(
+						__("Publish this schedule: the drafts go live, the baseline is set and each person is told once")
+					)}">${pp_esc(__("Publish…"))}</button>`
+				);
+			}
+		}
+		return parts.join(" ");
+	},
+
+	// A collapsed row's bars: the days its tasks cover, as plain runs.
+	ppl_roll_html(cards, first, last) {
+		const spans = (cards || []).map((card) => [card.start, card.end]);
+		return PPL_PURE.runs(spans, first, last)
+			.map(([from, to]) => `<span class="ppl-roll" style="grid-column: ${from + 1} / ${to + 2}"></span>`)
+			.join("");
+	},
+
+	ppl_task_row(card, days, first, last) {
+		const cols = PPL_PURE.columns(card.start, card.end, first, last);
+		const subject = card.subject || card.name;
+		const base = card.baseline ? PPL_PURE.columns(card.baseline.start, card.baseline.end, first, last) : null;
+		const slip = PPL_PURE.slip(card);
+		const slip_cols = slip ? PPL_PURE.columns(slip[0], slip[1], first, last) : null;
+		const marks = [];
+		if (card.tentative) marks.push(`<span class="pp-chip pp-pencil">${pp_esc(__("Pencil"))}</span>`);
+		if (card.fountain_move) marks.push(`<span class="pp-chip">${pp_esc(__("Fountain Move"))}</span>`);
+		const ghost = base
+			? `<span class="ppl-base" style="grid-column: ${base.from + 1} / ${base.to + 2}" title="${pp_esc(
+					__("Baseline: {0} – {1}", [pp_when(card.baseline.start), pp_when(card.baseline.end)])
+			  )}"></span>`
+			: "";
+		const tail = slip_cols
+			? `<span class="ppl-slip" style="grid-column: ${slip_cols.from + 1} / ${slip_cols.to + 2}" title="${pp_esc(
+					__("{0} working day(s) past its baseline", [PPL_PURE.span_days(slip[0], slip[1])])
+			  )}"></span>`
+			: "";
+		return `<div class="ppl-row ppl-task" role="row" data-ppl-row="${pp_esc(card.name)}">
+			<div class="ppl-label" role="rowheader"><span class="ppl-task-name" title="${pp_esc(subject)}">${pp_esc(
+			subject
+		)}</span>${marks.join("")}</div>${this.ppl_cells_html(days, true)}${ghost}${tail}${cols ? this.ppl_bar_html(card, cols, first) : ""}</div>`;
+	},
+
+	// A bar: the task's card, spanning its days, with its crew's initials, its size in working days and
+	// the chips a card carries. Its edges are 6B's grips where the task starts or ends on screen.
+	ppl_bar_html(card, cols, first) {
+		const chips = [];
+		const red = (text) => `<span class="pp-chip pp-red">${pp_esc(text)}</span>`;
+		const amber = (text) => `<span class="pp-chip pp-amber">${pp_esc(text)}</span>`;
+		const conflicts = this.task_conflicts(card);
+		if (conflicts.length) chips.push(red(__("Conflict")));
+		if (card.overdue) chips.push(red(__("Overdue")));
+		this.p4_card_chips(card).forEach((chip) => chips.push(chip));
+		if (Number(card.short) > 0) chips.push(amber(__("Needs {0} more", [card.short])));
+		else if (!(card.crew || []).length && this.ppl_needs(card)) chips.push(amber(__("Needs crew")));
+		if ((card.blocked_by || []).length) chips.push(amber(__("Starts early")));
+		const gaps = (card.qualification_gaps || []).map((gap) => this.gap_type(gap)).filter(Boolean);
+		if (gaps.length) chips.push(amber(__("Missing {0}", [gaps[0]])));
+		chips.push(...this.weather_chips(card, null));
+		const classes = ["pp-card", "ppl-bar"];
+		const movable = card.movable && this.data.can_edit;
+		if (movable) classes.push("pp-movable");
+		if (card.overdue) classes.push("pp-overdue");
+		if (card.tentative) classes.push("pp-tentative");
+		if (card.saving) classes.push("pp-saving");
+		if (cols.cut_l) classes.push("ppl-cut-l");
+		if (cols.cut_r) classes.push("ppl-cut-r");
+		const end = card.end && card.end >= card.start ? card.end : card.start;
+		const size = Number(card.span_days) || PPL_PURE.span_days(card.start, end);
+		const crew = (card.crew || []).map((member) => this.resource_label(member.resource, member.label));
+		const tip = [
+			card.subject,
+			[card.project_title || card.project, `${pp_when(card.start)} – ${pp_when(end)}`, __("{0} working day(s)", [size])]
+				.filter(Boolean)
+				.join(" · "),
+			card.tentative ? __("Pencil (tentative): not counted as booked") : "",
+			crew.join(", "),
+			card.baseline ? __("Baseline: {0} – {1}", [pp_when(card.baseline.start), pp_when(card.baseline.end)]) : "",
+			...conflicts,
+			...this.dependency_lines(card),
+			...this.gap_lines(card),
+			...this.p4_tip_lines(card),
+			...this.weather_lines(card),
+		]
+			.filter(Boolean)
+			.join("\n");
+		// Never on a time-slot task (the slot decides its day), as on the week view.
+		const grip = movable && !(card.slot && card.slot.length === 2);
+		const grips = [
+			grip && !cols.cut_l
+				? `<span class="p6b-grip p6b-grip-l" data-p6b-edge="start" title="${pp_esc(__("Drag to change the first day"))}"></span>`
+				: "",
+			grip && !cols.cut_r
+				? `<span class="p6b-grip p6b-grip-r" data-p6b-edge="end" title="${pp_esc(__("Drag to change the last day"))}"></span>`
+				: "",
+		].join("");
+		// data-date is the day a drag is measured from: the first day on screen until the pointer goes
+		// down on another (ppl_grab_day).
+		const from = card.start < first ? first : card.start;
+		return `<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="${pp_esc(from)}" tabindex="0" title="${pp_esc(
+			tip
+		)}" style="--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))}; grid-column: ${cols.from + 1} / ${cols.to + 2}">
+			<div class="pp-card-top">${this.badges_html(card)}<span class="ppl-size">${pp_esc(__("{0}d", [size]))}</span><span class="pp-card-chips">${chips.join(
+			""
+		)}</span></div>${grips}</div>`;
+	},
+
+	// The project's undated work, as chips that drag onto a day like the old Unscheduled tray's cards.
+	ppl_not_scheduled_row(project, cards, days) {
+		const all = this.ppl_state().shown_all.has(project.name);
+		const shown = all ? cards : cards.slice(0, PPL.chips_shown);
+		const chips = shown
+			.map((card) => {
+				const short = !(card.crew || []).length && this.ppl_needs(card);
+				const classes = ["pp-card", "ppl-undated"];
+				if (card.movable && this.data.can_edit) classes.push("pp-movable");
+				if (card.tentative) classes.push("pp-tentative");
+				const crew = (card.crew || []).map((member) => this.resource_label(member.resource, member.label));
+				const tip = [card.subject, crew.join(", "), short ? __("Needs crew") : "", __("Drag onto a day to schedule it")]
+					.filter(Boolean)
+					.join("\n");
+				return `<div class="${classes.join(" ")}" data-task="${pp_esc(card.name)}" data-date="" tabindex="0" title="${pp_esc(
+					tip
+				)}" style="--pp-color: ${pp_esc(pp_color(card.color, PP.default_color))}"><span class="pp-card-title">${pp_esc(
+					card.subject || card.name
+				)}</span>${this.badges_html(card)}<span class="pp-card-chips">${
+					// P4's draft chip ("Draft", "New") goes first in here too (decorate_drafts).
+					short ? `<span class="pp-chip pp-amber">${pp_esc(__("Needs crew"))}</span>` : ""
+				}</span></div>`;
+			})
+			.join("");
+		const more =
+			cards.length > shown.length
+				? `<button type="button" class="btn btn-default btn-xs" data-ppl-more="${pp_esc(project.name)}">${pp_esc(
+						__("+{0} more", [cards.length - shown.length])
+				  )}</button>`
+				: "";
+		return `<div class="ppl-row ppl-undated-row" role="row">
+			<div class="ppl-label" role="rowheader"><span class="ppl-count">${pp_esc(__("Not scheduled ({0})", [cards.length]))}</span></div>
+			<div class="ppl-undated-chips" style="grid-column: 2 / ${days.length + 2}">${chips}${more}<span class="ppl-hint">${pp_esc(
+			__("Drag onto a day")
+		)}</span></div>
+		</div>`;
+	},
+
+	// The phone: a list by day, each day a drop target, then the work with no dates and the projects
+	// with no tasks. With undated work to place, every day of the window is listed, an empty one as a
+	// short line, so a chip always has a day to land on.
+	ppl_list_html(projects, days) {
+		const state = this.ppl_state();
+		const names = [];
+		projects.forEach((project) => (project.phases || []).forEach((phase) => names.push(...(phase.tasks || []))));
+		const cards = names.map((name) => this.by_task[name]).filter((card) => this.ppl_card_visible(card));
+		const undated = [];
+		projects.forEach((project) =>
+			(project.not_scheduled || []).forEach((name) => {
+				const card = this.by_task[name];
+				if (this.ppl_card_visible(card)) undated.push(card);
+			})
+		);
+		const out = [];
+		days.forEach((ymd) => {
+			const on = cards
+				.filter((card) => card.start <= ymd && (card.end && card.end >= card.start ? card.end : card.start) >= ymd)
+				.sort((a, b) => this.compare(a, b));
+			if (!on.length && !undated.length) return;
+			const cls = ["ppl-list-day", "ppl-day"].concat(this.ppl_day_classes(ymd), on.length ? [] : ["ppl-list-free"]);
+			out.push(`<section class="${cls.join(" ")}" data-date="${pp_esc(ymd)}">
+				<h5 data-pp6a-day="${pp_esc(ymd)}" tabindex="0">${pp_esc(pp_when(ymd))}</h5>
+				${on.length ? on.map((card) => this.card_html(card, ymd)).join("") : `<div class="ppl-hint">${pp_esc(__("Nothing yet"))}</div>`}
+			</section>`);
+		});
+		if (undated.length) {
+			out.push(`<section class="ppl-list-undated"><h5>${pp_esc(__("Not scheduled ({0}): drag onto a day", [undated.length]))}</h5>
+				${undated.map((card) => this.card_html(card, null)).join("")}</section>`);
+		}
+		const empty = state.needs_only || this.group ? [] : projects.filter((project) => project.no_tasks);
+		if (empty.length) {
+			out.push(`<section class="ppl-list-empty"><h5>${pp_esc(__("No tasks yet ({0})", [empty.length]))}</h5>
+				${empty.map((project) => `<div class="ppl-list-project">${this.ppl_project_label_html(project)}</div>`).join("")}</section>`);
+		}
+		if (!out.length) out.push(`<div class="ppl-empty" role="status">${pp_esc(__("Nothing is scheduled in these weeks."))}</div>`);
+		return `<div class="ppl-list">${out.join("")}</div>`;
+	},
+
+	// ------------------------------------------------------------------ the board's own clicks
+
+	ppl_bind($board) {
+		const state = this.ppl_state();
+		const board = $board[0];
+		const on = (selector, fn) => $board.find(selector).on("click", (e) => fn(e.currentTarget));
+		on("[data-ppl-weeks]", (el) => this.ppl_pick_weeks(el.getAttribute("data-ppl-weeks")));
+		on("[data-ppl-needs]", () => {
+			state.needs_only = !state.needs_only;
+			this.render();
+		});
+		on("[data-ppl-all]", (el) => this.ppl_set_all(el.getAttribute("data-ppl-all") === "collapse"));
+		on("[data-ppl-toggle]", (el) => this.ppl_toggle(el.getAttribute("data-ppl-toggle")));
+		on("[data-ppl-more]", (el) => {
+			state.shown_all.add(el.getAttribute("data-ppl-more"));
+			this.render();
+		});
+		on("[data-ppl-build]", (el) => this.t1_open_build_out(el.getAttribute("data-ppl-build")));
+		on("[data-ppl-publish]", (el) => this.ppl_publish(el.getAttribute("data-ppl-publish")));
+		// A bar is grabbed anywhere along its days: the day under the pointer is the one the move is
+		// measured from. This listener is on the board, so it runs before the page's own (on .pp-wrap).
+		board.addEventListener("pointerdown", (e) => {
+			const bar = e.target && e.target.closest ? e.target.closest(".ppl-bar[data-task]") : null;
+			if (bar) this.ppl_grab_day(bar, e.clientX);
+		});
+		// The arrows of a bar's chain, while it is hovered or focused.
+		const show = (e) => {
+			const bar = e.target && e.target.closest ? e.target.closest(".ppl-bar[data-task]") : null;
+			this.ppl_links(bar ? bar.getAttribute("data-task") : null);
+		};
+		board.addEventListener("pointerover", show);
+		board.addEventListener("focusin", show);
+		board.addEventListener("pointerleave", () => this.ppl_links(null));
+	},
+
+	ppl_grab_day(bar, x) {
+		const row = bar.closest(".ppl-row");
+		if (!row) return;
+		const hit = Array.from(row.querySelectorAll(".ppl-day[data-date]")).find((cell) => {
+			const rect = cell.getBoundingClientRect();
+			return x >= rect.left && x < rect.right;
+		});
+		if (hit) bar.setAttribute("data-date", hit.getAttribute("data-date"));
+	},
+
+	// The project row's Publish…: P4's own confirmation and publish (publish_project_schedule).
+	ppl_publish(project) {
+		const drafts = ((this.data && this.data.drafts) || {}).projects || {};
+		const entry = drafts[project] || {};
+		this.as4_confirm_publish({
+			project,
+			title: this.as4_project_title(project),
+			count: Number(entry.count) || 0,
+			shared: Number(entry.shared) || 0,
+			draft_schedule: true,
+		});
+	},
+
+	// More ▸ Print ▸ Print this view on the Lookahead: its rows as a list, in the board's order, with what
+	// the filters and the Needs crew chip leave on screen (collapsed rows are printed all the same).
+	ppl_print() {
+		const look = (this.data && this.data.lookahead) || {};
+		const rows = [];
+		const when = (card) =>
+			card.start
+				? card.end && card.end !== card.start
+					? `${this.p6c_day_label(card.start)} – ${this.p6c_day_label(card.end)}`
+					: this.p6c_day_label(card.start)
+				: __("Not scheduled");
+		(look.projects || [])
+			.filter((project) => this.ppl_project_visible(project) && !project.no_tasks)
+			.forEach((project) => {
+				(project.phases || []).forEach((phase) => {
+					const names = (phase.tasks || []).concat(phase.not_scheduled || []);
+					names
+						.map((name) => this.by_task[name])
+						.filter((card) => this.ppl_card_visible(card))
+						.forEach((card) => {
+							const item = this.p6c_print_item(card, null, null);
+							rows.push({
+								color: item.color,
+								cols: [
+									project.title || project.name,
+									phase.name ? phase.subject || phase.name : __("Other work"),
+									card.subject || card.name,
+									when(card),
+									card.start ? String(Number(card.span_days) || PPL_PURE.span_days(card.start, card.end)) : "",
+									(card.crew || []).map((member) => this.resource_label(member.resource, member.label)).join(", "),
+									item.marks.map((mark) => (typeof mark === "string" ? mark : mark.text)).join(", "),
+								],
+							});
+						});
+				});
+			});
+		return {
+			layout: "list",
+			columns: [__("Project"), __("Phase"), __("Task"), __("Dates"), __("Days"), __("Crew"), __("Notes")],
+			rows,
+			empty: __("Nothing is scheduled in these weeks."),
+		};
+	},
+
+	// The dependency arrows of one task's chain: from each task it waits on into it, and from it into
+	// each task that waits on it, those with a bar on screen. Null clears them.
+	ppl_links(name) {
+		const state = this.ppl_state();
+		const grid = this.$grid_wrap[0] && this.$grid_wrap[0].querySelector(".ppl-grid");
+		const svg = grid && grid.querySelector(".ppl-links");
+		if (!svg || state.linked === name) return;
+		state.linked = name;
+		while (svg.firstChild) svg.removeChild(svg.firstChild);
+		const card = name && this.by_task[name];
+		if (!card) return;
+		const bar_of = (task) => grid.querySelector(`.ppl-bar[data-task="${CSS.escape(task)}"]`);
+		const pairs = (card.depends_on || []).map((pred) => [pred, name]);
+		Object.values(this.by_task).forEach((other) => {
+			if ((other.depends_on || []).includes(name)) pairs.push([name, other.name]);
+		});
+		const box = grid.getBoundingClientRect();
+		const ns = "http://www.w3.org/2000/svg";
+		const add = (d, cls) => {
+			const path = document.createElementNS(ns, "path");
+			path.setAttribute("d", d);
+			path.setAttribute("class", cls);
+			svg.appendChild(path);
+		};
+		pairs.forEach(([from, to]) => {
+			const a = bar_of(from);
+			const b = bar_of(to);
+			if (!a || !b) return;
+			const ra = a.getBoundingClientRect();
+			const rb = b.getBoundingClientRect();
+			const x1 = ra.right - box.left;
+			const y1 = ra.top + ra.height / 2 - box.top;
+			const x2 = rb.left - box.left;
+			const y2 = rb.top + rb.height / 2 - box.top;
+			const bend = Math.max(8, Math.min(24, Math.abs(x2 - x1) / 2));
+			// A successor that starts before its predecessor ends is drawn in the warning tone.
+			const late = x2 < x1 ? " ppl-link-late" : "";
+			add(`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2 - 2},${y2}`, `ppl-link${late}`);
+			add(`M${x2 - 7},${y2 - 4} L${x2 - 1},${y2} L${x2 - 7},${y2 + 4} Z`, `ppl-link-head${late}`);
+		});
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPL_METHODS);
 
 // ====================================================================== P4: the tasks that follow, Draft schedules, "Notify crew?"
 //

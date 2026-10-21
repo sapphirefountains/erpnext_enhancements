@@ -7,8 +7,10 @@
  *
  * frappe.set_route with an options object, never an href or a hand-built URL: on v16.50 it
  * fills frappe.route_options AND writes ?project= to the address, and it is a history entry of
- * its own, so Back returns to this form. A project that has not started yet opens on the week it
- * starts, where its work is, rather than on this week.
+ * its own, so Back returns to this form. A project that has not started yet opens the Lookahead
+ * (the planner's home tab since P5 of the planner UX redesign) on the week it starts, where its work
+ * is, rather than on this week; one under way opens the planner's last-used tab, the Lookahead when
+ * there is none.
  *
  * Only on a project the planner plans: a customer job (its type one of the planner's types,
  * crew_availability.PLANNER_PROJECT_TYPES, which tests/test_form_page_links.py holds this list
@@ -32,7 +34,7 @@ frappe.ui.form.on("Project", {
 				const options = { project: frm.doc.name };
 				const starts = String(frm.doc.expected_start_date || "").slice(0, 10);
 				if (starts && starts > frappe.datetime.get_today()) {
-					frappe.set_route("project-planner", "week", starts, options);
+					frappe.set_route("project-planner", "lookahead", starts, options);
 				} else {
 					frappe.set_route("project-planner", options);
 				}

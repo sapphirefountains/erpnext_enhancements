@@ -467,11 +467,12 @@ test("Project: View > Open in Project Planner opens the planner on that project"
 	check("the PM filter is cleared, so it cannot hide the project's cards", pp.pm, "");
 	check("the unscheduled tray is back to its short list", pp.show_all_unscheduled, false);
 	check("route_options is consumed", desk.frappe.route_options, null);
-	check("one load, this week", pp.loads, [{ view: "week", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
+	// P5: the planner's home tab, the Lookahead, with no last-used view to say otherwise.
+	check("one load, the Lookahead on this week", pp.loads, [{ view: "lookahead", anchor: "2026-10-14", project: "PRJ-00001", pm: "" }]);
 	// S5c (v1.676.0): the planner's filters live in the address, so the link's ?project= stays there.
 	check("a history entry of its own, its ?project= kept as the filter on screen", desk.entries, [
 		"/desk/project/PRJ-00001",
-		"/desk/project-planner?project=PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-14?project=PRJ-00001",
 	]);
 	desk.back();
 	check("Back returns to the form", desk.route, ["project", "PRJ-00001"]);
@@ -517,25 +518,25 @@ test("Project: Back after switching to All does not snap the filter back", () =>
 	// "All projects" in the select, then a task opened from the calendar. The pick rewrites the
 	// entry's address in place (S5c), so the entry Back lands on says All.
 	pp.pick_filter("project", "");
-	check("the pick took the project out of the address", desk.here(), "/desk/project-planner");
+	check("the pick took the project out of the address", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
 	desk.frappe.set_route("Form", "Task", "TASK-0001");
 	check("on the task", desk.route, ["Form", "Task", "TASK-0001"]);
 	desk.back();
-	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner");
+	check("Back is the planner's entry, with no project in it", desk.here(), "/desk/project-planner/lookahead/2026-10-14");
 	check("the filter stays All", pp.project, "");
 	check("and nothing is left in route_options to apply later", desk.frappe.route_options, null);
 });
 
-test("Project: a project that starts later opens on the week it starts", () => {
+test("Project: a project that starts later opens the Lookahead on the week it starts", () => {
 	const desk = projectDesk();
 	const pp = projectPlanner(desk);
 	openForm(desk, "Project", project({ name: "PRJ-00002", expected_start_date: "2026-11-02" })).press(
 		"Open in Project Planner"
 	);
-	check("the week holding its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "week", "2026-11-02"]);
-	check("its address keeps the project", desk.here(), "/desk/project-planner/week/2026-11-02?project=PRJ-00002");
+	check("the Lookahead from its start, as pushed", desk.shows.slice(-1)[0].route, ["project-planner", "lookahead", "2026-11-02"]);
+	check("its address keeps the project", desk.here(), "/desk/project-planner/lookahead/2026-11-02?project=PRJ-00002");
 	check("loaded there with the filter", pp.loads.slice(-1)[0], {
-		view: "week",
+		view: "lookahead",
 		anchor: "2026-11-02",
 		project: "PRJ-00002",
 		pm: "",
@@ -544,7 +545,7 @@ test("Project: a project that starts later opens on the week it starts", () => {
 	openForm(desk, "Project", project({ name: "PRJ-00003", expected_start_date: "2026-09-01" })).press(
 		"Open in Project Planner"
 	);
-	check("a started project opens on this week", desk.here(), "/desk/project-planner?project=PRJ-00003");
+	check("a started project opens on this week", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00003");
 	check("filtered to it", pp.project, "PRJ-00003");
 });
 
@@ -556,7 +557,7 @@ test("Project: this device's last tab still applies, and the project wins over t
 		p6c: { loaded: true, restored: false, last: { project: "PRJ-OLD", pm: "pm@example.com" } },
 	});
 	openForm(desk, "Project", project({ name: "PRJ-00001" })).press("Open in Project Planner");
-	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/month/2026-10-14?project=PRJ-00001");
+	check("the last-used Month view replaces the entry", desk.here(), "/desk/project-planner/calendar/month/2026-10-14?project=PRJ-00001");
 	check("still one entry past the form", desk.entries.length, 2);
 	check("the form's project, not the remembered one", pp.project, "PRJ-00001");
 	check("and no remembered PM hiding it", pp.pm, "");
@@ -572,7 +573,7 @@ test("Project: a name that needs escaping arrives whole, and other options are l
 	// Another page's key in the same options is not the planner's to take.
 	desk.frappe.set_route("project-planner", { project: "PRJ-00009", other: "x" });
 	check("only `project` is taken", desk.frappe.route_options, { other: "x" });
-	check("and the other key stays in the address beside it", desk.here(), "/desk/project-planner?project=PRJ-00009&other=x");
+	check("and the other key stays in the address beside it", desk.here(), "/desk/project-planner/lookahead/2026-10-14?project=PRJ-00009&other=x");
 	check("the new project applies", pp.project, "PRJ-00009");
 });
 

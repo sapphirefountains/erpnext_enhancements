@@ -79,7 +79,8 @@ BOARD_SORT_KEYS = (
 #: own constants are checked against this by tests/test_planner_phase6c.py.
 SCHEMA = {
 	"project": {
-		"view": ("enum", ("week", "month", "crew", "heatmap")),
+		# P5 of the planner UX redesign: the Lookahead is a tab a view can name, and the home tab.
+		"view": ("enum", ("week", "month", "crew", "heatmap", "lookahead")),
 		"project": ("text",),
 		"pm": ("text",),
 		"group": ("enum", PROJECT_GROUPS),

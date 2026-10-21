@@ -632,6 +632,19 @@ class TestShowingDrafts(_Site):
 		self.assertEqual([c["subject"] for c in out_of_range["tasks"]], [])
 		self.assertEqual(out_of_range["drafts"]["count"], 2)
 
+	def test_a_drafted_task_names_the_group_it_is_filed_under_on_its_card(self):
+		# P5: the Lookahead files a drafted new task under its phase from this (no Task row to read).
+		self.quick(parent_task="TASK-P1")
+		overlay = self.api._draft_overlay()
+		((state, crew),) = overlay["extra"]
+		self.assertEqual(overlay["drafted"][state["name"]]["parent_task"], "TASK-P1")
+		card = self.api.build_card(state, crew, {}, [], base.TODAY, True)
+		self.assertNotIn("parent_task", card)
+		shown = self.api._with_drafts(
+			{"tasks": [card], "unscheduled": [], "needs_crew": []}, overlay, base.MON, base.SUN
+		)
+		self.assertEqual((shown["tasks"] + shown["unscheduled"])[0]["parent_task"], "TASK-P1")
+
 	def test_a_drafted_phase_has_no_card_but_is_counted(self):
 		self.build([{"subject": "Set pumps", "phase": "Pumping"}])
 		overlay = self.api._draft_overlay()

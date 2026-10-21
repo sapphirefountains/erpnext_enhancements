@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.708.0] - 2026-10-21
+
+### Added
+- **The Lookahead, the Project Planner's new home tab** (P5 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.2; Nik's D2 of 2026-10-21: "the screen a PM lands on").
+  - **What it shows.** Rows are projects, then their phases, then tasks. The next three weeks run
+    across, starting on the site's first weekday (Sunday on production). The range picker offers 2, 3, 4
+    or 6 weeks, and ‹ › step one week.
+  - **A bar is a task.** It shows the crew's initials, its size in days (D7: working days across its
+    span, at least one, counted as the calendar's labels count them since 1.706.0) and the chips a
+    card carries: Conflict, Overdue, Running over, Needs crew, Starts early, Missing a qualification and
+    weather. A pencil is hatched. The baseline (P3) is a grey ghost behind the bar, and a slip past it a
+    thin red tail. A bar that runs past the window is cut and dashed at that end.
+  - **Dependency arrows.** Hovering or focusing a bar draws arrows from what it waits on and to what
+    waits on it. Only that chain is drawn, because there are hundreds of links.
+  - **Phases.** A task's phase is its nearest ancestor whose subject starts with a phase number,
+    ordered by number. Work under no phase is *Other work*. A project or a phase collapses to plain runs
+    of its days, remembered in this browser.
+  - **The project row** carries its schedule (D8):
+    - ● *Published* with the date;
+    - ◐ *Draft schedule* with **Publish…** (P4's own confirmation);
+    - *Fountain Move* (read-only here; it moves on the Maintenance Planner);
+    - *No tasks yet* with **Build out**, replacing the Needs tasks tray.
+  - **Not scheduled** is a line per project whose chips drag onto a day, as the Unscheduled tray's did.
+    Every row's days take a drop, the project's and its phases' too, so a project with no dated work
+    yet (a fresh build-out opened from its form) still has days to drop on.
+    A **Needs crew** chip narrows the board to the tasks short of crew, replacing the Needs crew tray.
+    The Overdue tray stays.
+  - **On a phone** the board is a list by day, and each day is a drop target; with undated work to
+    place, every day of the window is listed, an empty one as a short line. **Print this view**
+    prints its rows as a list.
+  - **No second save path.** Every bar is the planner's own card, so drag (measured from the day under
+    the pointer), edge resize, the side panel, the right-click menu, selection, search, Color by, Tap to
+    move and double-click quick add all work as on the other tabs. Every write goes through the page's
+    `send()`: the reason prompt, P4's auto-draft on a Draft schedule, the tasks that follow, Ctrl/⌘ and
+    "Notify crew?" apply unchanged.
+  - **The server** is `api/planner_lookahead.get_lookahead(start, weeks, project, pm, group,
+    all_tasks, draft)`. It is `get_planner` over the window plus the tree, so P2's phase-and-crew rule,
+    P3's drafts and schedule state, and the Fountain Move rule are get_planner's own. It reads with
+    Google off (spec §6; `get_planner` gained `google`, unset as before). Each card gains
+    `phase`, `baseline` and `span_days`. Baselines are read only once P3's columns exist. A failure to
+    read the no-task projects is logged and the rest still answers.
+- **Calendar tab.** The week and month views move under a *Calendar* tab with a Week/Month switch, at
+  `/project-planner/calendar/week/<date>` and `/calendar/month/<date>`. The tabs are now Lookahead,
+  Crew, Calendar, Heatmap and Utilization; Heatmap and Utilization fold into Crew in P7.
+
+### Changed
+- **Landing.** The **Lookahead** is the default view: a desktop with no tab of its own (P8's per-device
+  tab store, 1.707.0) opens it, and so does Today's *Planner* button and its fallback for someone the
+  planner does not list. A phone's first visit stays Today. The Lookahead is one of the tabs a device
+  remembers, and a bare `/project-planner` is replaced by the tab's own address (`/lookahead/<today>`,
+  `/calendar/week/<today>`): an entry left bare would be taken over by the device's tab on the way Back,
+  so Back from another tab would bounce off the Lookahead. A named saved view may name the Lookahead
+  (`api/planner_views_prefs`: `lookahead` view).
+- **Old addresses redirect.** `/project-planner/week/<date>` and `/month/<date>` (bookmarks, the
+  digests, Google Calendar event links) are **replaced**, never pushed, by their `/calendar/…`
+  addresses, with the filters and any other query keys. Back from the new address goes where Back
+  from the old one would have.
+- **Every tab, week and range is a history entry** (Nik's rule: never break Back/Forward). Collapsing
+  a row and the Needs crew chip change nothing in the address.
+- The Project form's *Open in Project Planner* sends a project that starts later to the Lookahead on its
+  start week, instead of the week view.
+- A drafted new task's card names the group it is filed under (`parent_task`, carried from the draft
+  overlay through `_with_drafts`), so the Lookahead shows it under its phase. One filed under a phase
+  that is itself still a draft is *Other work* until that phase is published.
+
+### Tests
+- New: `tests/test_planner_lookahead.py` (server, on the Phase 3B harness) and
+  `tests/test_planner_lookahead_page.py`, which runs `scripts/test_planner_lookahead.js` (the board
+  under node). Each has its own CI step. The addresses, the redirects and Back/Forward run in
+  `scripts/test_planner_url_filters.js`.
+- Updated the existing pins that named the old `/week` address, the view list, the tab sync and the
+  saved-view keys.
+
 ## [1.707.0] - 2026-10-21
 
 ### Added

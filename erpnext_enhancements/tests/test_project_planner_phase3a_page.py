@@ -155,8 +155,8 @@ class TestHeatmap(unittest.TestCase):
 		# Stepping and the toolbar button are route changes, so Back and Forward step through them.
 		self.assertIn("this.go(this.view, pp_ymd(next))", _method(code, "shift"))
 		self.assertIn("[PP.heatmap_view, __(", code)
-		# It is not one of the three calendar views.
-		self.assertIn('views: ["week", "month", "crew"]', code)
+		# It is not one of the views drawn from cards.
+		self.assertIn('views: ["week", "month", "crew", "lookahead"]', code)
 
 	def test_the_heatmap_reads_get_heatmap_for_eight_weeks(self):
 		code = _code_without_comments()
