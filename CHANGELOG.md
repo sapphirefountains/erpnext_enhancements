@@ -34,8 +34,8 @@ or items used or added". TASK-2026-02901.
     follow-ups' parts pick the Item itself.
   - Both Item fields are read behind `has_column`, so a fresh install or ERPNext's own test bootstrap
     (before fixtures sync) saves a visit as before.
-  - `tests/test_item_sizes.py` (bench-free, own CI step) and three wizard tests in
-    `scripts/test_wizard_back_forward.mjs`: a tap records the other size's item and saves once; no
+  - `tests/test_item_sizes.py` (bench-free, own CI step) and four wizard tests in
+    `scripts/test_wizard_back_forward.mjs`: a tap records the other size's item and saves once; a size put back from the phone is named as that size; no
     toggle for a one-size product; a submitted visit cannot change.
 - **The Visit Wizard's feature tab strip keeps its scroll position.** The strip is drawn anew on
   every step, tab and save, and it came back scrolled to the start. On Sanctuary's 13 water features

@@ -3768,6 +3768,10 @@ class VisitWizard {
 				const on = $(button).attr("data-item") === row.item;
 				$(button).toggleClass("vz-on", on).attr("aria-checked", on ? "true" : "false");
 			});
+			// Named from the choice, not row.item_name: a size change put back from this phone
+			// (vz_reconcile) restores `item` and leaves the server's name for the other size.
+			const current = choices.find((choice) => choice.item === row.item);
+			if (current) row.item_name = current.item_name;
 			const unit = row.uom ? ` (${row.uom})` : "";
 			$card.find(".vz-card-title").text(`${row.item_name || row.item || ""}${unit}`);
 		};
@@ -3776,7 +3780,6 @@ class VisitWizard {
 				.text(choice.size)
 				.on("click", () => {
 					if (this.doc.docstatus !== 0 || choice.item === row.item) return;
-					row.item_name = choice.item_name;
 					this.set_row("consumables", row, "item", choice.item);
 					paint();
 				})

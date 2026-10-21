@@ -57,10 +57,13 @@ def with_size(name, size):
 	size = (size or "").strip()
 	if not size:
 		return name
-	squash = lambda text: re.sub(r"\s+", "", text).lower()  # noqa: E731
-	if squash(size) in squash(name):
+	if _squash(size) in _squash(name):
 		return name
 	return f"{name} ({size})" if name else size
+
+
+def _squash(text):
+	return re.sub(r"\s+", "", text).lower()
 
 
 def item_sizes(items):

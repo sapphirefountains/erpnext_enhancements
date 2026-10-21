@@ -6192,6 +6192,19 @@ async function visitWizardSizesSuite() {
 		assert.deepEqual(JSON.parse(saves[0].args.patch).rows.consumables, [{ name: "c1", item: "TAB-3" }]);
 	});
 
+	await test("a size put back from the phone is named as that size, not the server's", async () => {
+		visitServer({ "MNT-1": tabletVisit() });
+		withSizes(TABLET_SIZES);
+		boot("visit-wizard", "/desk/visit-wizard/MNT-1");
+		await settle();
+		const w = wizard();
+		const row = w.doc.consumables[0];
+		// What vz_reconcile does with a kept size change: `item` back on, the name untouched.
+		row.item = "TAB-3";
+		w.consumable_card(row);
+		assert.equal(row.item_name, 'CHLORINE TABLETS, 3"');
+	});
+
 	await test("a product in one size, or no sizes known, shows no size choice", async () => {
 		visitServer({ "MNT-1": tabletVisit() });
 		withSizes(TABLET_SIZES);
