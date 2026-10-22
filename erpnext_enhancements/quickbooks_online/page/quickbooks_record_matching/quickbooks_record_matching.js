@@ -45,9 +45,19 @@
  *    ticks. Filters and pages of rows stay out of history, as they do in Frappe's own
  *    list view: an entry per page of rows would bury the tab.
  *
+ *  - Excel round trip (v1.721.0). "Export to Excel" queues a workbook of the queue under
+ *    a filter the dialog asks for (a background job: the whole queue is thousands of rows)
+ *    and polls until the file is ready. "Import from Excel" uploads the worked file
+ *    through Frappe's own uploader and shows a preview -- what will change, what is
+ *    already done, what changed in ERPNext since the export, what cannot be applied --
+ *    and nothing is written until Apply. Apply sends the rows a few at a time, and the
+ *    server re-checks each one before running it through the same Link / Keep / Retry
+ *    code as the buttons on this page. Dialogs only: neither adds a history entry.
+ *
  * Endpoints (erpnext_enhancements.quickbooks_online.core.api): get_match_queue,
  * decide_match, decide_matches, confirm_match, confirm_matches,
- * get_parked_transactions, sync_entity.
+ * get_parked_transactions, sync_entity, start_matching_export,
+ * get_matching_export_status, preview_matching_import, apply_matching_import.
  * Every server-supplied string is escaped before it reaches the DOM.
  */
 frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
@@ -205,6 +215,8 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 
 	page.set_secondary_action(__("QuickBooks Dashboard"), () => frappe.set_route("quickbooks-online-dashboard"));
 	page.add_action_item(__("Sync Mapping list"), () => frappe.set_route("List", "QuickBooks Sync Mapping"));
+	page.add_inner_button(__("Export to Excel"), () => exportExcel());
+	page.add_inner_button(__("Import from Excel"), () => importExcel());
 
 	// ---------------------------------------------------------------- selection
 	/**
@@ -829,15 +841,10 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 			const chunk = items.slice(offset, offset + size);
 			frappe.dom.freeze(progress(offset + 1, offset + chunk.length, items.length));
 			offset += chunk.length;
-			frappe.call({
-				method: API + method,
-				args: Object.assign({ [argName]: chunk }, extra || {}),
-				callback(response) {
-					results.push(...(response.message || []));
-					frappe.dom.unfreeze();
-					next();
-				},
-				error() {
+			settle(method, Object.assign({ [argName]: chunk }, extra || {})).then((reply) => {
+				if (reply.ok) {
+					results.push(...(reply.message || []));
+				} else {
 					chunk.forEach((item) =>
 						results.push({
 							entity_type: item.entity_type,
@@ -846,12 +853,38 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 							error: __("The request failed; Refresh to see whether it landed."),
 						}),
 					);
-					frappe.dom.unfreeze();
-					next();
-				},
+				}
+				frappe.dom.unfreeze();
+				next();
 			});
 		};
 		next();
+	}
+
+	/**
+	 * frappe.call, settled on the promise it returns: resolves {ok: true, message} or
+	 * {ok: false}, and never hangs. Frappe v16's `error` callback is not called on a
+	 * QueryTimeout or a Deadlock (request.js shows its own dialog and stops), so a chunk loop
+	 * that waited on it would sit frozen forever on the first slow request.
+	 */
+	function settle(method, args) {
+		return new Promise((resolve) => {
+			let pending;
+			try {
+				pending = frappe.call({ method: API + method, args });
+			} catch (e) {
+				resolve({ ok: false });
+				return;
+			}
+			if (!pending || typeof pending.then !== "function") {
+				resolve({ ok: false });
+				return;
+			}
+			pending.then(
+				(data) => resolve({ ok: true, message: (data || {}).message }),
+				() => resolve({ ok: false }),
+			);
+		});
 	}
 
 	function runDecisions(decisions, title) {
@@ -1243,6 +1276,293 @@ frappe.pages["quickbooks-record-matching"].on_page_load = function (wrapper) {
 	function retryTxnSelected() {
 		const rows = txnSelection.chosen().map(({ row }) => row);
 		retryTxnRows(rows, __("Re-sync the {0} selected parked transactions, one after another?", [rows.length]));
+	}
+
+	// ------------------------------------------------------------- excel round trip
+	// Keep in sync with matching_excel.EXPORT_STATUSES.
+	const EXPORT_STATUSES = ["Needs decision", "All", "Pending Review", "Conflict", "Auto Matched", "Created", "Manual Matched"];
+	// How long the page waits for the export job: longer than the job may run
+	// (matching_excel.EXPORT_TIMEOUT, 25 min, plus the minute after which the server calls a
+	// still-"running" job lost), so the page never gives up on a job that is still working.
+	const EXPORT_POLL_MS = 2000;
+	const EXPORT_POLLS = 900;
+	// Keep in sync with matching_excel.FILE_FOLDER: every export lands there.
+	const EXPORT_FOLDER = "Home/QuickBooks Matching Excel";
+	let exporting = false;
+
+	function exportExcel() {
+		if (exporting) {
+			frappe.show_alert({ message: __("The Excel file is still being built."), indicator: "orange" }, 5);
+			return;
+		}
+		const labels = Object.fromEntries(STATUSES);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Export to Excel"),
+			fields: [
+				{
+					fieldname: "status",
+					fieldtype: "Select",
+					label: __("Rows"),
+					options: EXPORT_STATUSES.map((value) => ({ value, label: labels[value] || value })),
+					default: EXPORT_STATUSES.includes(state.status) ? state.status : "Needs decision",
+				},
+				{
+					fieldname: "entity",
+					fieldtype: "Select",
+					label: __("Record types"),
+					options: [{ value: "", label: __("All master types") }, ...MASTER_TYPES.map((type) => ({ value: type, label: type }))],
+					default: state.entity,
+				},
+				{ fieldname: "include_parked", fieldtype: "Check", label: __("Add a sheet of parked transactions"), default: 1 },
+				{
+					fieldtype: "HTML",
+					options: `<p class="text-muted small">${__("One sheet per record type, with the suggestions shown on this page and a Decision column to fill in. Building it takes a minute or two; the download appears here when it is ready.")}</p>`,
+				},
+			],
+			primary_action_label: __("Export"),
+			primary_action(values) {
+				dialog.hide();
+				frappe.call({
+					method: API + "start_matching_export",
+					args: {
+						status: values.status,
+						entity_types: values.entity ? [values.entity] : null,
+						include_parked: values.include_parked ? 1 : 0,
+					},
+					callback(response) {
+						const token = (response.message || {}).token;
+						if (!token) {
+							return;
+						}
+						exporting = true;
+						frappe.show_alert({ message: __("Building the Excel file…"), indicator: "blue" }, 6);
+						pollExport(token, 0);
+					},
+				});
+			},
+		});
+		dialog.show();
+	}
+
+	function pollExport(token, tries) {
+		if (tries >= EXPORT_POLLS) {
+			exporting = false;
+			frappe.msgprint({
+				title: __("Still working"),
+				indicator: "orange",
+				message: __("The export has not reported back. If it finishes, the file appears in the {0} folder.", [esc(EXPORT_FOLDER)]),
+				primary_action: {
+					label: __("Open the folder"),
+					action: () => frappe.set_route("List", "File", { folder: EXPORT_FOLDER }),
+				},
+			});
+			return;
+		}
+		setTimeout(() => {
+			settle("get_matching_export_status", { token }).then((reply) => {
+				const job = reply.ok ? reply.message || {} : {};
+				if (job.status === "done") {
+					exporting = false;
+					const counts = Object.entries(job.counts || {})
+						.map(([sheet, n]) => `<li>${esc(sheet)}: ${esc(String(n))}</li>`)
+						.join("");
+					frappe.msgprint({
+						title: __("Excel file ready"),
+						indicator: "green",
+						message: `<p><a href="${esc(job.file_url)}" target="_blank" rel="noopener"><b>${__("Download {0}", [esc(job.file_name)])}</b></a></p><ul>${counts}</ul>`,
+					});
+				} else if (job.status === "failed" || job.status === "unknown") {
+					exporting = false;
+					frappe.msgprint({
+						title: __("Export failed"),
+						indicator: "red",
+						message: esc(job.error || __("The export job was lost (a deploy restarts the workers). Export again.")),
+					});
+				} else {
+					// Queued, running, or a poll that did not get through: ask again.
+					pollExport(token, tries + 1);
+				}
+			});
+		}, EXPORT_POLL_MS);
+	}
+
+	function importExcel() {
+		new frappe.ui.FileUploader({
+			dialog_title: __("Import the worked Excel file"),
+			restrictions: { allowed_file_types: [".xlsx"] },
+			allow_multiple: false,
+			disable_file_browser: true,
+			allow_web_link: false,
+			allow_take_photo: false,
+			allow_google_drive: false,
+			allow_toggle_private: false,
+			make_attachments_public: false,
+			on_success(file_doc) {
+				previewImport(file_doc.name);
+			},
+		});
+	}
+
+	function previewImport(fileName) {
+		frappe.call({
+			method: API + "preview_matching_import",
+			args: { file_name: fileName },
+			freeze: true,
+			freeze_message: __("Reading the file…"),
+			callback(response) {
+				showPreview(response.message || {});
+			},
+		});
+	}
+
+	const PREVIEW_VIEWS = [
+		["change", __("will change")],
+		["unchanged", __("already done")],
+		["stale", __("changed in ERPNext since the export")],
+		["invalid", __("cannot be applied")],
+		["warnings", __("with a warning")],
+	];
+
+	function showPreview(data) {
+		const rows = data.rows || [];
+		const summary = data.summary || {};
+		const changes = rows.filter((row) => row.category === "change");
+		let view = changes.length ? "change" : rows.length ? rows[0].category : "change";
+		const dialog = new frappe.ui.Dialog({
+			title: __("Import preview"),
+			size: "extra-large",
+			fields: [{ fieldname: "body", fieldtype: "HTML" }],
+		});
+		const $body = dialog.fields_dict.body.$wrapper;
+		const render = () => {
+			const errors = (data.errors || []).map((e) => `<div class="qbo-mt-issue">${esc(e)}</div>`).join("");
+			const chips = PREVIEW_VIEWS.map(
+				([key, label]) => `<button class="qbo-mt-chip ${view === key ? "active" : ""}" data-preview-view="${key}"><b>${summary[key] || 0}</b> ${label}</button>`,
+			).join("");
+			const shown = rows.filter((row) => (view === "warnings" ? (row.warnings || []).length : row.category === view));
+			const lines = shown
+				.map((row) => {
+					const to = row.decision === "Link" && row.link_to ? ` → ${esc(row.target_title || row.link_to)}` : "";
+					const warnings = (row.warnings || []).map((w) => `<div class="qbo-mt-issue">${esc(w)}</div>`).join("");
+					return `
+						<tr>
+							<td>${esc(row.sheet)}<div class="qbo-mt-sub">${__("row {0}", [esc(String(row.row_number))])}</div></td>
+							<td>${esc(row.qbo_name || row.qbo_id)}<div class="qbo-mt-sub">${esc(row.qbo_type)} #${esc(row.qbo_id)}</div></td>
+							<td>${esc(row.decision || "")}${to}</td>
+							<td>${esc(row.message || "")}${warnings}</td>
+							<td>${esc(row.note || "")}</td>
+						</tr>`;
+				})
+				.join("");
+			$body.html(`
+				${errors}
+				<div class="qbo-mt-counts">${chips}</div>
+				<p class="text-muted small">${__("Nothing has been changed yet. Apply runs only the rows that will change, and checks each one again first.")}</p>
+				<div class="qbo-mt-confirm-list">
+					${
+						shown.length
+							? `<table class="qbo-mt-confirm-table">
+								<thead><tr><th>${__("Sheet")}</th><th>${__("QuickBooks record")}</th><th>${__("Decision")}</th><th>${__("What happens")}</th><th>${__("Notes")}</th></tr></thead>
+								<tbody>${lines}</tbody>
+							</table>`
+							: `<div class="qbo-mt-empty">${__("No rows here.")}</div>`
+					}
+				</div>`);
+		};
+		$body.on("click", "[data-preview-view]", (event) => {
+			view = $(event.currentTarget).attr("data-preview-view");
+			render();
+		});
+		dialog.set_primary_action(__("Apply {0} changes", [changes.length]), () => {
+			frappe.confirm(__("Apply the {0} rows that will change? Links can merge the import's copies away, as the Link button does.", [changes.length]), () => {
+				dialog.hide();
+				applyImport(data.token, changes, data.apply_chunk || 10);
+			});
+		});
+		dialog.get_primary_btn().prop("disabled", !changes.length);
+		render();
+		dialog.show();
+	}
+
+	/**
+	 * Send the previewed changes to apply_matching_import, one request after another. Links,
+	 * Keeps and notes go `size` at a time; a Retry is a round trip to Intuit and goes alone,
+	 * as the page's own Retry does, so ten of them can never outrun the gateway together.
+	 * Not runInChunks: the chunks are not of one size, and a failed request is reported
+	 * against the preview's own rows, which carry the sheet and row number.
+	 */
+	function applyImport(token, rows, size) {
+		const chunks = [];
+		let batch = [];
+		rows.forEach((row) => {
+			if (row.decision === "Retry") {
+				chunks.push([row]);
+				return;
+			}
+			batch.push(row);
+			if (batch.length >= size) {
+				chunks.push(batch);
+				batch = [];
+			}
+		});
+		if (batch.length) {
+			chunks.push(batch);
+		}
+		const results = [];
+		let done = 0;
+		const next = () => {
+			const chunk = chunks.shift();
+			if (!chunk) {
+				reportImport(results);
+				load();
+				if (state.txn.rows.length) {
+					loadTransactions();
+				}
+				return;
+			}
+			frappe.dom.freeze(__("Applying {0}–{1} of {2}…", [done + 1, done + chunk.length, rows.length]));
+			done += chunk.length;
+			settle("apply_matching_import", { token, indexes: chunk.map((row) => row.index) }).then((reply) => {
+				if (reply.ok) {
+					results.push(...(reply.message || []));
+				} else {
+					// A failed request -- a timeout included -- is reported against these rows and
+					// the rest carry on: each row is its own decision on the server.
+					chunk.forEach((row) =>
+						results.push(
+							Object.assign({}, row, {
+								ok: false,
+								skipped: false,
+								message: __("The request failed; import the file again to see whether it landed."),
+							}),
+						),
+					);
+				}
+				frappe.dom.unfreeze();
+				next();
+			});
+		};
+		next();
+	}
+
+	function reportImport(results) {
+		const where = (r) => (r.sheet ? `${esc(r.sheet)} ${__("row {0}", [esc(String(r.row_number))])}` : __("row {0}", [esc(String(r.index))]));
+		const ok = results.filter((r) => r.ok);
+		const skipped = results.filter((r) => !r.ok && r.skipped);
+		const failed = results.filter((r) => !r.ok && !r.skipped);
+		const list = (items) => "<ul>" + items.map((r) => `<li>${where(r)}${r.qbo_id ? ` (${esc(r.qbo_type)} #${esc(r.qbo_id)})` : ""}: ${esc(r.message || "")}</li>`).join("") + "</ul>";
+		let message = `<p>${__("{0} applied.", [ok.length])}</p>`;
+		if (skipped.length) {
+			message += `<p>${__("{0} skipped, because they changed after the preview or were already done:", [skipped.length])}</p>${list(skipped)}`;
+		}
+		if (failed.length) {
+			message += `<p>${__("{0} failed:", [failed.length])}</p>${list(failed)}`;
+		}
+		const merges = ok.filter((r) => r.merge_failed);
+		if (merges.length) {
+			message += `<p>${__("{0} linked, but the import's copy could not be merged:", [merges.length])}</p>${list(merges)}`;
+		}
+		frappe.msgprint({ title: __("Import finished"), message, indicator: failed.length || skipped.length || merges.length ? "orange" : "green" });
 	}
 
 	load();
