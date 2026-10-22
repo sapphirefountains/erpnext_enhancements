@@ -18,6 +18,9 @@
 //                                             with the Crew Utilization report's figures under it. It
 //                                             replaces the Heatmap and Utilization views, whose old
 //                                             addresses (/heatmap/<date>, /utilization/<date>) redirect here.
+//   /desk/project-planner/overview/2026-10-12
+//                                             every active customer job on one read-only timeline,
+//                                             what needs a manager, and the weekly summary (P9, below)
 //   /desk/project-planner/route/<person>/2026-10-12
 //                                             one person's driving day: stops in order, drive
 //                                             time between them, and a map
@@ -270,6 +273,8 @@ class ProjectPlanner {
 		}
 		const gantt = this.ppg_route_target(route); // P6: /gantt/<project>
 		if (gantt) return gantt;
+		const overview = this.ppo_route_target(route); // P9: /overview/<date>
+		if (overview) return overview;
 		const lookahead = this.ppl_route_target(route); // P5: lookahead, calendar, the old week/month, bare
 		if (lookahead) return lookahead;
 		const view = PP.views.includes(route[1]) ? route[1] : "week";
@@ -326,6 +331,7 @@ class ProjectPlanner {
 		this.anchor = target.anchor;
 		this.ppl_take_target(target);
 		this.ppg_take_target(target); // P6: the Gantt's project; any other screen takes the chart down
+		this.ppo_take_target(target); // P9: the Overview's months; any other screen takes its chart down
 		this.p8_remember_tab(target.view);
 		if (target.view === PP3B.my_week) {
 			this.show_my_week(target.anchor);
@@ -654,6 +660,7 @@ class ProjectPlanner {
 
 	shift(sign) {
 		if (this.view === PPG.view) return this.ppg_shift(sign); // P6: the chart scrolls
+		if (this.view === PPO.view) return this.ppo_shift(sign); // P9: a month earlier or later
 		const anchor = moment(this.anchor, "YYYY-MM-DD");
 		// Capacity steps half its span, so each step keeps four weeks in common.
 		const next =
@@ -665,6 +672,7 @@ class ProjectPlanner {
 
 	title() {
 		if (this.view === PPG.view) return this.ppg_title(); // P6: the project's name
+		if (this.view === PPO.view) return this.ppo_title(); // P9: Overview · Oct – Mar
 		const { start, end } = this.range();
 		if (this.view === "month") return moment(this.anchor, "YYYY-MM-DD").format("MMMM YYYY");
 		if (start.year() !== end.year()) return `${start.format("MMM D, YYYY")} – ${end.format("MMM D, YYYY")}`;
@@ -703,6 +711,7 @@ class ProjectPlanner {
 			[PPG.view, __("Gantt")], // P6
 			["crew", __("Crew")],
 			[PPL.calendar, __("Calendar")],
+			[PPO.view, __("Overview")], // P9
 		].forEach(([view, label]) => {
 			this.$view_buttons[view] = $('<button type="button"></button>')
 				.attr("data-tb-tab", view)
@@ -786,6 +795,7 @@ class ProjectPlanner {
 
 	load() {
 		if (this.view === PPG.view) return this.ppg_load(); // P6: get_project_gantt
+		if (this.view === PPO.view) return this.ppo_load(); // P9: get_overview
 		if (this.view === PP.capacity_view) return this.load_capacity();
 		const { start, end } = this.range();
 		const token = ++this.request;
@@ -923,6 +933,7 @@ class ProjectPlanner {
 
 	render() {
 		if (this.view === PPG.view) return this.ppg_render(); // P6: the chart
+		if (this.view === PPO.view) return this.ppo_render(); // P9: the Overview
 		if (this.view === PP.capacity_view) {
 			this.render_capacity();
 			return;
@@ -4093,7 +4104,7 @@ const PP8 = {
 	// The screens whose tab a device remembers; the Lookahead (P5) joins them, and the Gantt (P6), whose
 	// project this device remembers beside it (PPG.prefs.project).
 	// "heatmap" is what a device that remembered the Heatmap tab before P7 holds: it lands on Capacity.
-	tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt"],
+	tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],
 	tab_pref: "ee_project_planner_tab",
 };
 
@@ -4190,10 +4201,12 @@ const PP8_METHODS = {
 		if (route[0] !== PP.route || route[1]) return false;
 		const opts = frappe.route_options || {};
 		const link = PP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key));
-		let tab = this.p8_tab() || (this.p8_is_phone() ? PP8.view : PP6C.default_view);
+		// P9: a desktop's first visit is the Executive Team's Overview, everyone else's home tab.
+		let tab = this.p8_tab() || (this.p8_is_phone() ? PP8.view : this.ppo_first_tab(link));
 		// A link that names a filter is the sender's: it opens a calendar view with that filter, the device's
 		// own when it has one, but never Today, which has no filters to show.
 		if (link && tab === PP8.view) tab = PP6C.default_view;
+		if (link && tab === PPO.view) tab = PP6C.default_view; // P9: nor the Overview, which is no planning board
 		if (tab === PPG.view) return this.ppg_land(link); // P6: its own project, or the default view
 		// The default view is what the bare address already opens.
 		if (tab === PP6C.default_view) return false;
@@ -11651,7 +11664,7 @@ const PPTB_METHODS = {
 				title: __("A one-page sheet of who is where this week, to print"),
 				on_click: () => this.print_crew_sheet(),
 			},
-		]);
+		]).concat(this.ppo_print_items()); // P9: the weekly summary
 	},
 
 	// ------------------------------------------------------------------ alert chips
@@ -12208,6 +12221,7 @@ const PPL_METHODS = {
 
 	ppl_route_parts(view, anchor) {
 		if (view === PPG.view) return this.ppg_route_parts(); // P6: /gantt/<project>, not a date
+		if (view === PPO.view) return PPO_PURE.overview_address(anchor, this.ppo_state().months); // P9: /overview/<date>[/<months>]
 		return PPL_PURE.route_parts(view, anchor, this.ppl_state().weeks);
 	},
 
@@ -13652,6 +13666,663 @@ const PPG_METHODS = {
 };
 
 Object.assign(ProjectPlanner.prototype, PPG_METHODS);
+
+// ====================================================================== P9: Overview, the whole schedule for managers
+//
+//   /desk/project-planner/overview/2026-10-21     six months from the month holding that day
+//   /desk/project-planner/overview/2026-10-21/12  twelve months (3, 6, 9 or 12; 6 is not written)
+//
+// P9 of the planner UX redesign (docs/planner-ux-redesign.md §4.7; Nik's D3, D14 and D16, 2026-10-21):
+// "All jobs on a timeline", "Exceptions only", "A weekly summary", for James and the approvers. The
+// tab has three parts, one answer (api/planner_overview.get_overview):
+//
+//   - Needs attention: what a manager has to act on, one line each, worst first: a phase behind its
+//     baseline by more than two working days, a task running over its hours, the next two weeks' unresolved
+//     conflicts, and overdue work. Overdue is counted by END DATE, never by the Overdue status (1,005 open
+//     tasks carry it); phase and crew work only, as on the other tabs. When nothing is wrong the box says
+//     so in one line. A line opens its source: the job's Gantt, or the Crew board on the day of a conflict.
+//   - The timeline: the app's DHTMLX widget (erpnext_enhancements.gantt.mount, the one the Project form,
+//     the Projects Dashboard and the Gantt tab draw with), READ-ONLY. One row per active customer job, with
+//     a bar for its whole span; open it and each phase is a bar, coloured by phase and drawn over its
+//     baseline ghost, milestones are diamonds, a Draft schedule is hatched (and marked ◐), a phase that
+//     slipped says by how much. Clicking a row opens that job's Gantt. Nothing here writes.
+//   - The weekly summary: More ▸ Print ▸ Weekly summary, and the button in this tab's header, open
+//     api/planner_overview.weekly_summary_html in a window and print it there (the crew sheet's way). The
+//     Monday email is the server's, behind a Settings switch that is OFF; this page never reads that
+//     Settings (a Settings Single is not for the desk's JS: boot or an endpoint only).
+//
+// A Draft job shows Publish… in the header (P4's own confirmation and publish). The Project, Project
+// manager filters narrow the jobs and their lines; Group does not apply. A month window and a step are
+// screens (a route), so Back and Forward step through them; Expand all, the lines list and a job's caret
+// are not.
+//
+// The landing (Nik, 2026-10-22: "an Executive Team member's desktop FIRST visit opens the Overview
+// instead of the Lookahead; after that the per-device last-used tab applies like everyone else's"): the
+// Overview is a remembered device tab (PP8.tabs), and ppo_first_tab is what a desktop with nothing
+// remembered opens. A phone still opens Today. A link that names a filter never opens the Overview from
+// the landing (the filter is for a planning board), as it never opens Today or an old Gantt.
+//
+// Everything P9 adds is in this block, apart from one-line hooks into the class above: ppo_route_target
+// (route_target), ppo_take_target (handle_route), ppo_load (load), ppo_render (render), ppo_title (title),
+// ppo_shift (shift), the Overview tab (build_shell), ppl_route_parts, ppo_first_tab (p8_landing) and
+// ppo_print_items (tb_print_items).
+
+const PPO = {
+	view: "overview",
+	method: "erpnext_enhancements.api.planner_overview.get_overview",
+	summary: "erpnext_enhancements.api.planner_overview.weekly_summary_html",
+	months: [3, 6, 9, 12],
+	default_months: 6,
+	prefs: { months: "ee_project_planner_portfolio_months" },
+	// The role whose first desktop visit opens the Overview.
+	role: "Executive Team",
+	row_height: 30,
+	// Lines shown before "Show all", jobs named in the foot before "and N more".
+	lines_shown: 6,
+	names_shown: 8,
+	icons: { behind: "▲", over: "⏱", conflicts: "⚠", overdue: "⌛" },
+	// A phase's bar by its hundreds (index 0: work under no phase). Written out, not built, so the stylesheet's
+	// rules and this list are one grep apart.
+	phase_classes: ["ppo-ph-0", "ppo-ph-1", "ppo-ph-2", "ppo-ph-3", "ppo-ph-4", "ppo-ph-5", "ppo-ph-6", "ppo-ph-7"],
+};
+
+// Pure helpers: no frappe, no page. scripts/test_planner_overview.js runs them under node.
+const PPO_PURE = {
+	// The months a route segment or a remembered value asks for, or the default.
+	months(value) {
+		const months = Number(value);
+		return PPO.months.includes(months) ? months : PPO.default_months;
+	},
+	// The first day of the month holding `ymd`.
+	month_start(ymd) {
+		return `${String(ymd).slice(0, 7)}-01`;
+	},
+	// The window holding `ymd`: whole calendar months from its month, as {start, end} (the last day included).
+	months_window(ymd, months) {
+		const start = PPO_PURE.month_start(ymd);
+		const end = new Date(Date.UTC(Number(start.slice(0, 4)), Number(start.slice(5, 7)) - 1 + PPO_PURE.months(months), 0));
+		return { start, end: end.toISOString().slice(0, 10) };
+	},
+	// The first of the month `sign` months from the one holding `ymd`.
+	step(ymd, sign) {
+		const start = PPO_PURE.month_start(ymd);
+		return new Date(Date.UTC(Number(start.slice(0, 4)), Number(start.slice(5, 7)) - 1 + Number(sign), 1)).toISOString().slice(0, 10);
+	},
+	// The address of the Overview, after /project-planner.
+	overview_address(anchor, months) {
+		const parts = [PPO.view, anchor];
+		if (PPO_PURE.months(months) !== PPO.default_months) parts.push(String(PPO_PURE.months(months)));
+		return parts;
+	},
+	// "Oct – Mar 2027", "Oct 2026 – Mar 2027" across a year, "Oct – Dec 2026" within one: the title.
+	heading(span) {
+		const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+		const [y1, m1] = [span.start.slice(0, 4), Number(span.start.slice(5, 7)) - 1];
+		const [y2, m2] = [span.end.slice(0, 4), Number(span.end.slice(5, 7)) - 1];
+		if (y1 === y2) return m1 === m2 ? `${names[m1]} ${y1}` : `${names[m1]} – ${names[m2]} ${y2}`;
+		return `${names[m1]} ${y1} – ${names[m2]} ${y2}`;
+	},
+	// "Oct 21" for a day.
+	day_label(ymd) {
+		const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+		const text = String(ymd || "");
+		if (!/^\d{4}-\d{2}-\d{2}/.test(text)) return "";
+		return `${names[Number(text.slice(5, 7)) - 1]} ${Number(text.slice(8, 10))}`;
+	},
+	// "Oct 21 – Nov 4", or "Oct 21" for one day.
+	span_label(start, end) {
+		const a = PPO_PURE.day_label(start);
+		const b = PPO_PURE.day_label(end);
+		return !b || b === a ? a : `${a} – ${b}`;
+	},
+	// A span clipped to the window: {start, end} (inclusive days), or null when it has no days or misses it.
+	clip(start, end, first, last) {
+		if (!start) return null;
+		const stop = end && end >= start ? end : start;
+		if (stop < first || start > last) return null;
+		return { start: start < first ? first : start, end: stop > last ? last : stop };
+	},
+	// The class a phase's bar takes from its number (Phase 100 … 700; anything else is neutral).
+	phase_class(number) {
+		const hundreds = Math.floor(Number(number) / 100);
+		return PPO.phase_classes[hundreds >= 1 && hundreds <= 7 ? hundreds : 0];
+	},
+	// The tooltip: every value escaped. `ee_*` are the row's facts, already worded by the page.
+	tooltip(task) {
+		const lines = [`<b>${pp_esc(task.text || "")}</b>`];
+		["ee_dates", "ee_base", "ee_note"].forEach((key) => task[key] && lines.push(pp_esc(task[key])));
+		return lines.join("<br/>");
+	},
+	// The rows the widget draws, in get_gantt_data's shape: a row per job (a bar for its whole span), its
+	// phases under it (a bar each, over the baseline ghost) and its milestones. Everything is clipped to the
+	// window, so the chart's scale is the window's (the widget derives it from the rows). `visible(job)` is
+	// the page's filters; `expanded` opens every job; `say` words the facts (see ppo_say).
+	chart_rows(answer, visible, expanded, say) {
+		const first = answer.start;
+		const last = answer.end;
+		const tasks = [];
+		(answer.jobs || []).forEach((job) => {
+			if (visible && !visible(job)) return;
+			const span = PPO_PURE.clip(job.first, job.last, first, last);
+			if (!span) return;
+			const id = `job:${job.name}`;
+			const slips = (job.phases || []).map((p) => Number(p.slip_days) || 0);
+			const worst = Math.max(0, ...slips);
+			const base = PPO_PURE.clip(job.base_first, job.base_last, first, last);
+			const notes = [];
+			if (job.draft) notes.push(say.draft);
+			if (job.source === "project") notes.push(say.estimate);
+			if (worst > 0) notes.push(say.behind(worst));
+			const counts = job.counts || {};
+			const row = {
+				id,
+				text: (job.draft ? "◐ " : "") + job.title,
+				type: "task",
+				parent: 0,
+				open: !!expanded,
+				start_date: PPG_PURE.wire(span.start),
+				end_date: PPG_PURE.wire_end(span.end),
+				progress: counts.tasks ? Math.round(((counts.done || 0) / counts.tasks) * 1000) / 1000 : 0,
+				ee_readonly: true,
+				ee_project: job.name,
+				ee_pm: job.pm || "",
+				ee_slip: worst > 0 ? `+${worst}d` : "",
+				ee_dates: PPO_PURE.span_label(job.first, job.last),
+				ee_note: notes.join(" · "),
+				ee_class: ["ppo-job", job.draft ? "ppo-draft" : "", job.source === "project" ? "ppo-estimate" : ""].filter(Boolean).join(" "),
+			};
+			if (base) {
+				row.ee_baseline_start = base.start;
+				row.ee_baseline_end = base.end;
+				row.ee_base = say.baseline(PPO_PURE.span_label(job.base_first, job.base_last));
+			}
+			tasks.push(row);
+			(job.phases || []).forEach((phase) => {
+				const bar = PPO_PURE.clip(phase.start, phase.end, first, last);
+				if (!bar) return;
+				const ghost = phase.baseline ? PPO_PURE.clip(phase.baseline.start, phase.baseline.end, first, last) : null;
+				const slip = Number(phase.slip_days) || 0;
+				const facts = [say.tasks(phase.done || 0, phase.tasks || 0)];
+				if (slip > 0) facts.push(say.behind(slip));
+				const item = {
+					id: `phase:${job.name}:${phase.key || "other"}`,
+					text: phase.subject,
+					type: "task",
+					parent: id,
+					start_date: PPG_PURE.wire(bar.start),
+					end_date: PPG_PURE.wire_end(bar.end),
+					progress: phase.progress || 0,
+					ee_readonly: true,
+					ee_project: job.name,
+					ee_pm: "",
+					ee_slip: slip > 0 ? `+${slip}d` : "",
+					ee_dates: PPO_PURE.span_label(phase.start, phase.end),
+					ee_note: facts.join(" · "),
+					ee_class: ["ppo-bar", PPO_PURE.phase_class(phase.number), job.draft ? "ppo-draft" : "", phase.tasks && phase.done === phase.tasks ? "ppo-done" : "", slip > 0 ? "ppo-slipped" : ""]
+						.filter(Boolean)
+						.join(" "),
+				};
+				if (ghost) {
+					item.ee_baseline_start = ghost.start;
+					item.ee_baseline_end = ghost.end;
+					item.ee_base = say.baseline(PPO_PURE.span_label(phase.baseline.start, phase.baseline.end));
+				}
+				tasks.push(item);
+			});
+			(job.milestones || []).forEach((mile) => {
+				if (!PPO_PURE.clip(mile.date, mile.date, first, last)) return;
+				tasks.push({
+					id: `ms:${mile.name}`,
+					text: mile.subject,
+					type: "milestone",
+					parent: id,
+					start_date: PPG_PURE.wire(mile.date),
+					ee_readonly: true,
+					ee_project: job.name,
+					ee_pm: "",
+					ee_slip: "",
+					ee_dates: PPO_PURE.day_label(mile.date),
+					ee_class: `ppo-milestone${mile.done ? " ppo-done" : ""}`,
+				});
+			});
+		});
+		return { tasks, links: [], meta: { can_write: { Task: false } } };
+	},
+	// Where an exception line goes: a job's Gantt, or the Crew board on the day of a conflict.
+	target(line) {
+		if (!line) return null;
+		if (line.kind === "conflicts") return { view: "crew", date: line.date || null };
+		return line.project ? { view: PPG.view, project: line.project } : null;
+	},
+	// The lines the filters leave: a job's lines follow the job; the conflicts are the week's, so they stay.
+	lines(answer, visible_project) {
+		return (answer.exceptions || []).filter((line) => !line.project || !visible_project || visible_project(line.project));
+	},
+};
+
+const PPO_METHODS = {
+	ppo_state() {
+		if (!this.ppo) {
+			this.ppo = {
+				months: PPO_PURE.months(this.load_pref(PPO.prefs.months, String(PPO.default_months))),
+				widget: null,
+				drawn_for: null,
+				$root: null,
+				expanded: false,
+				lines_all: false,
+				trouble: false,
+			};
+		}
+		return this.ppo;
+	},
+
+	// ------------------------------------------------------------------ routing
+
+	ppo_route_target(route) {
+		if (route[1] !== PPO.view) return null;
+		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
+		return { view: PPO.view, anchor: day, months: PPO_PURE.months(route[3]) };
+	},
+
+	// Every landing: the Overview's window, or (any other screen) the chart is taken down.
+	ppo_take_target(target) {
+		if (target.view === PPO.view) {
+			this.ppo_state().months = PPO_PURE.months(target.months);
+			return;
+		}
+		this.ppo_destroy();
+	},
+
+	// What a desktop with no remembered tab opens (p8_landing): the Executive Team's Overview (Nik,
+	// 2026-10-22), everyone else's home tab. A link that names a filter is a planning board's, so it gets the
+	// home tab. Roles are the boot's: nothing is fetched.
+	ppo_first_tab(link) {
+		if (link) return PP6C.default_view;
+		let executive = false;
+		try {
+			executive = !!(frappe.user && typeof frappe.user.has_role === "function" && frappe.user.has_role(PPO.role));
+		} catch (e) {
+			executive = false;
+		}
+		return executive ? PPO.view : PP6C.default_view;
+	},
+
+	ppo_title() {
+		const state = this.ppo_state();
+		return `${__("Overview")} · ${PPO_PURE.heading(PPO_PURE.months_window(this.anchor, state.months))}`;
+	},
+
+	// ‹ and ›: a month earlier or later, a screen of its own (a route).
+	ppo_shift(sign) {
+		this.go(PPO.view, PPO_PURE.step(this.anchor, sign));
+	},
+
+	// The 3 / 6 / 9 / 12 months picker: a route too, and this browser's choice for the next visit.
+	ppo_pick_months(months) {
+		const state = this.ppo_state();
+		state.months = PPO_PURE.months(months);
+		this.save_pref(PPO.prefs.months, String(state.months));
+		this.go(PPO.view, this.anchor);
+	},
+
+	// ------------------------------------------------------------------ data
+
+	ppo_load() {
+		const state = this.ppo_state();
+		const token = ++this.request;
+		this.$title.text(this.title());
+		this.take_title_focus();
+		this.ppl_sync_tabs();
+		this.$body.addClass("pp-loading");
+		const args = { start: this.anchor, months: state.months, draft: 1 };
+		// Two handlers, not then/catch: a slip while drawing is not the server failing.
+		return Promise.resolve(frappe.call({ method: PPO.method, args })).then(
+			(r) => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				state.trouble = false;
+				this.data = (r && r.message) || {};
+				this.index();
+				this.fill_filters();
+				this.write_filter_url();
+				this.$title.text(this.title());
+				this.render();
+			},
+			() => {
+				if (token !== this.request) return;
+				this.$body.removeClass("pp-loading");
+				state.trouble = true;
+				this.data = { projects: (this.data && this.data.projects) || [], jobs: [], exceptions: [], counts: {} };
+				this.index();
+				this.render();
+			}
+		);
+	},
+
+	// ------------------------------------------------------------------ what is on screen
+
+	ppo_job_visible(job) {
+		return this.ppl_project_visible({ name: job.name, pm: job.pm });
+	},
+
+	ppo_lines() {
+		return PPO_PURE.lines(this.data || {}, (project) => this.ppl_project_visible({ name: project }));
+	},
+
+	// The words the rows carry, written out as __() calls so they are translated.
+	ppo_say() {
+		return {
+			draft: __("Draft schedule"),
+			estimate: __("The project's own dates: no dated tasks yet"),
+			behind: (days) => (days === 1 ? __("1 working day behind its baseline") : __("{0} working days behind its baseline", [days])),
+			baseline: (text) => __("Baseline {0}", [text]),
+			tasks: (done, total) => __("{0} of {1} tasks done", [done, total]),
+		};
+	},
+
+	// ------------------------------------------------------------------ render
+
+	ppo_render() {
+		const state = this.ppo_state();
+		this.$panel.hide();
+		this.$trays.empty();
+		const data = this.data;
+		// Another tab's answer, still on screen while the Overview's loads.
+		if (!data || !Array.isArray(data.jobs)) return;
+		let root = state.$root && state.$root[0];
+		if (!root || !this.$grid_wrap[0].contains(root)) {
+			this.ppo_destroy();
+			this.$grid_wrap.empty();
+			state.$root = $(
+				'<div class="pp-section ppo-board"><div class="ppo-head"></div><div class="ppo-needs"></div><div class="ppo-chart" role="region"></div><div class="ppo-foot"></div></div>'
+			).appendTo(this.$grid_wrap);
+			state.$root.find(".ppo-chart").attr("aria-label", __("Portfolio timeline"));
+			root = state.$root[0];
+		}
+		root.querySelector(".ppo-head").innerHTML = this.ppo_head_html();
+		root.querySelector(".ppo-needs").innerHTML = this.ppo_needs_html();
+		root.querySelector(".ppo-foot").innerHTML = this.ppo_foot_html();
+		this.ppo_bind(root);
+		const chart = root.querySelector(".ppo-chart");
+		if (state.trouble) {
+			this.ppo_destroy();
+			chart.innerHTML = `<p class="ppo-empty">${pp_esc(__("The Overview could not load. Check the connection, then try again."))} <button type="button" class="btn btn-default btn-xs" data-ppo-retry>${pp_esc(__("Try again"))}</button></p>`;
+			const retry = chart.querySelector("[data-ppo-retry]");
+			if (retry) retry.addEventListener("click", () => this.load());
+		} else if (!state.widget || state.widget.destroyed) {
+			chart.innerHTML = "";
+			this.ppo_mount(chart);
+		} else if (state.drawn_for !== data || state.filtered_for !== this.ppo_filter_key()) {
+			state.drawn_for = data;
+			state.filtered_for = this.ppo_filter_key();
+			state.widget.refresh();
+		}
+		this.$hint.text(
+			__(
+				"One bar per job; open a job (its arrow) for its phases, drawn over the grey baseline. Click a job or a phase to open that job's Gantt. Each line under Needs attention opens what it is about."
+			)
+		);
+		this.render_phase3b();
+		this.render_phase6a();
+		this.tb_render();
+	},
+
+	// What the chart's rows depend on besides the answer: the filters.
+	ppo_filter_key() {
+		return `${this.project}|${this.pm}|${this.ppo_state().expanded ? 1 : 0}`;
+	},
+
+	ppo_head_html() {
+		const state = this.ppo_state();
+		const buttons = PPO.months
+			.map((n) => {
+				const on = n === state.months;
+				return `<button type="button" class="ppo-months-btn${on ? " pp-on" : ""}" data-ppo-months="${n}" aria-pressed="${on ? "true" : "false"}">${pp_esc(
+					__("{0} months", [n])
+				)}</button>`;
+			})
+			.join("");
+		const open = state.expanded;
+		return `<span class="ppo-head-title">${pp_esc(this.ppo_title())}</span>
+			<span class="ppo-months" role="group" aria-label="${pp_esc(__("Months shown"))}">${buttons}</span>
+			<span class="pp-spacer"></span>
+			<button type="button" class="btn btn-default btn-xs" data-ppo-expand="${open ? "0" : "1"}">${pp_esc(open ? __("Collapse all") : __("Expand all"))}</button>
+			<button type="button" class="btn btn-default btn-xs" data-ppo-print title="${pp_esc(
+				__("One page: next week by job and by person, what moved, and what needs a manager. Prints in a new window.")
+			)}">${pp_esc(__("Print weekly summary"))}</button>${this.ppo_drafts_html()}`;
+	},
+
+	// The Draft schedules in view, each with Publish… for someone who can change tasks (P4's own confirmation).
+	ppo_drafts_html() {
+		const jobs = ((this.data && this.data.jobs) || []).filter((job) => job.draft && this.ppo_job_visible(job));
+		if (!jobs.length) return "";
+		const can_edit = !!(this.data && this.data.can_edit);
+		const shown = jobs.slice(0, PPO.names_shown);
+		const chips = shown
+			.map(
+				(job) =>
+					`<span class="ppo-draft-chip"><span class="ppg-state ppg-draft">◐ ${pp_esc(job.title)}</span>${
+						can_edit
+							? ` <button type="button" class="btn btn-primary btn-xs" data-ppo-publish="${pp_esc(job.name)}">${pp_esc(__("Publish…"))}</button>`
+							: ""
+					}</span>`
+			)
+			.join("");
+		const more = jobs.length > shown.length ? `<span class="ppo-note">${pp_esc(__("and {0} more", [jobs.length - shown.length]))}</span>` : "";
+		return `<div class="ppo-drafts" role="group" aria-label="${pp_esc(__("Draft schedules"))}"><span class="ppo-note">${pp_esc(__("Draft schedules (hatched):"))}</span> ${chips}${more}</div>`;
+	},
+
+	ppo_needs_html() {
+		const state = this.ppo_state();
+		const data = this.data || {};
+		const lines = this.ppo_lines();
+		const more = Number(data.more_exceptions) || 0;
+		const note = data.conflicts_ok === false ? `<p class="ppo-note">${pp_esc(__("The conflicts could not be read just now."))}</p>` : "";
+		if (!lines.length) {
+			return `<div class="ppo-needs-box ppo-clear" role="status"><p>${pp_esc(__("Nothing needs a manager's attention."))}</p>${note}</div>`;
+		}
+		const shown = state.lines_all ? lines : lines.slice(0, PPO.lines_shown);
+		const items = shown
+			.map((line) => {
+				const index = lines.indexOf(line);
+				const kind = { behind: __("Behind baseline"), over: __("Running over"), conflicts: __("Conflicts"), overdue: __("Overdue") }[line.kind] || line.kind;
+				const openable = !!PPO_PURE.target(line);
+				return `<li><button type="button" class="ppo-line" data-kind="${pp_esc(line.kind)}" data-ppo-line="${index}"${
+					openable ? "" : " disabled"
+				}><span class="ppo-icon" aria-hidden="true">${pp_esc(PPO.icons[line.kind] || "•")}</span><span class="pp-sr">${pp_esc(kind)}: </span><span class="ppo-text">${pp_esc(
+					line.text
+				)}</span></button></li>`;
+			})
+			.join("");
+		const toggle =
+			lines.length > PPO.lines_shown
+				? `<button type="button" class="btn btn-default btn-xs" data-ppo-lines aria-expanded="${state.lines_all ? "true" : "false"}">${pp_esc(
+						state.lines_all ? __("Show fewer") : __("Show all {0}", [lines.length])
+				  )}</button>`
+				: "";
+		const rest = more && state.lines_all ? `<p class="ppo-note">${pp_esc(__("and {0} more not listed", [more]))}</p>` : "";
+		return `<div class="ppo-needs-box" role="region" aria-label="${pp_esc(__("Needs attention"))}"><h5>${pp_esc(
+			__("Needs attention ({0})", [lines.length + (state.lines_all ? more : 0)])
+		)}</h5><ul class="ppo-lines">${items}</ul>${toggle}${rest}${note}</div>`;
+	},
+
+	ppo_foot_html() {
+		const data = this.data || {};
+		const counts = data.counts || {};
+		const bits = [];
+		const dateless = (data.no_dates || []).filter((job) => this.ppo_job_visible(job));
+		if (dateless.length) {
+			const names = dateless.slice(0, PPO.names_shown).map((job) => pp_esc(job.title)).join(", ");
+			const more = dateless.length > PPO.names_shown ? ` ${pp_esc(__("and {0} more", [dateless.length - PPO.names_shown]))}` : "";
+			bits.push(`${pp_esc(dateless.length === 1 ? __("1 job has no dates yet:") : __("{0} jobs have no dates yet:", [dateless.length]))} ${names}${more}.`);
+		}
+		if (Number(data.outside) > 0) {
+			bits.push(pp_esc(Number(data.outside) === 1 ? __("1 job has nothing in these months.") : __("{0} jobs have nothing in these months.", [data.outside])));
+		}
+		if (Number(counts.jobs) > 0 && Number(counts.baselined) < Number(counts.jobs)) {
+			bits.push(
+				pp_esc(
+					__("{0} of {1} jobs have a baseline. Set one from a job's Gantt to see how far each phase has slipped.", [
+						counts.baselined || 0,
+						counts.jobs,
+					])
+				)
+			);
+		}
+		bits.push(
+			pp_esc(
+				__(
+					"Phase and crew work only, as on the other tabs. Overdue counts a task whose last day has passed; the Overdue status is not used."
+				)
+			)
+		);
+		return bits.map((bit) => `<p class="ppo-note">${bit}</p>`).join("");
+	},
+
+	ppo_bind(root) {
+		const on = (selector, fn) => root.querySelectorAll(selector).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
+		const state = this.ppo_state();
+		on("[data-ppo-months]", (el) => this.ppo_pick_months(el.getAttribute("data-ppo-months")));
+		on("[data-ppo-expand]", (el) => {
+			state.expanded = el.getAttribute("data-ppo-expand") === "1";
+			this.render();
+		});
+		on("[data-ppo-print]", () => this.ppo_print_summary());
+		on("[data-ppo-lines]", () => {
+			state.lines_all = !state.lines_all;
+			this.render();
+		});
+		on("[data-ppo-line]", (el) => {
+			const line = this.ppo_lines()[Number(el.getAttribute("data-ppo-line"))];
+			this.ppo_open_line(line);
+		});
+		on("[data-ppo-publish]", (el) => {
+			const project = el.getAttribute("data-ppo-publish");
+			const entry = (((this.data && this.data.drafts) || {}).projects || {})[project] || {};
+			this.as4_confirm_publish({
+				project,
+				title: this.as4_project_title(project),
+				count: Number(entry.count) || 0,
+				shared: Number(entry.shared) || 0,
+				draft_schedule: true,
+			});
+		});
+	},
+
+	// A line opens its source: the job's Gantt, or the Crew board on the day of the first conflict.
+	ppo_open_line(line) {
+		const target = PPO_PURE.target(line);
+		if (!target) return;
+		if (target.view === PPG.view) this.ppg_open(target.project);
+		else this.go("crew", target.date || this.today());
+	},
+
+	// A row (a job, a phase or a milestone) opens its job's Gantt.
+	ppo_click(task) {
+		const project = task && task.ee_project;
+		if (project) this.ppg_open(project);
+	},
+
+	// ------------------------------------------------------------------ the chart
+
+	ppo_mount(chart) {
+		const state = this.ppo_state();
+		if (!window.erpnext_enhancements || !erpnext_enhancements.gantt || !erpnext_enhancements.gantt.mount) {
+			chart.innerHTML = `<p class="ppo-empty">${pp_esc(__("The Gantt chart could not load. Refresh the page."))}</p>`;
+			return;
+		}
+		state.drawn_for = this.data;
+		state.filtered_for = this.ppo_filter_key();
+		const say = this.ppo_say();
+		state.widget = erpnext_enhancements.gantt.mount(chart, {
+			// The widget's own export (print, PNG, SVG) draws from the rows below; CSV and Excel would ask the
+			// server for Projects, which is not this chart, so they are not offered.
+			doctype: "Project",
+			fields: { text: "project_name", start: "expected_start_date", end: "expected_end_date" },
+			// Read-only: no dates to drag, no links to draw.
+			editable: {},
+			today: true,
+			tooltip: true,
+			baseline: true,
+			zoom: "month",
+			columns: [
+				{ name: "text", label: __("Job / phase"), tree: true, width: "*", min_width: 180 },
+				{ name: "ee_pm", label: __("PM"), width: 72, template: (task) => pp_esc(task.ee_pm || "") },
+				{ name: "ee_slip", label: __("Behind"), width: 60, align: "center", template: (task) => pp_esc(task.ee_slip || "") },
+			],
+			gantt: { row_height: PPO.row_height, show_unscheduled: false, round_dnd_dates: false, grid_width: 360 },
+			templates: {
+				task_class: (start, end, task) => task.ee_class || "",
+				grid_row_class: (start, end, task) => (String(task.ee_class || "").includes("ppo-job") ? "ppo-job-row" : ""),
+				tooltip_text: (start, end, task) => PPO_PURE.tooltip(task),
+			},
+			toolbar: { export: { title: __("Project Planner Overview"), subtitle: this.ppo_title(), filename: "project-planner-overview", formats: ["print", "png", "svg"] } },
+			fetch: () => Promise.resolve(PPO_PURE.chart_rows(this.data || {}, (job) => this.ppo_job_visible(job), this.ppo_state().expanded, say)),
+			on_task_click: (id, task) => this.ppo_click(task),
+		});
+	},
+
+	ppo_destroy() {
+		const state = this.ppo;
+		if (!state || !state.widget) return;
+		try {
+			state.widget.destroy();
+		} catch (e) {
+			// A chart already taken down with its container.
+		}
+		state.widget = null;
+		state.drawn_for = null;
+		state.filtered_for = null;
+	},
+
+	// ------------------------------------------------------------------ the weekly summary
+
+	// More ▸ Print ▸ Weekly summary.
+	ppo_print_items() {
+		return [
+			{
+				label: __("Weekly summary"),
+				title: __("One page for managers: next week by job and by person, what moved, and what needs attention"),
+				on_click: () => this.ppo_print_summary(),
+			},
+		];
+	},
+
+	// The server renders the page; the browser prints it. The window opens on the click itself (one opened
+	// after the request returns is a pop-up the browser blocks) and fills in when the page arrives, as the
+	// crew sheet does.
+	ppo_print_summary() {
+		const win = window.open("", "_blank");
+		if (!win) {
+			frappe.msgprint(__("Allow pop-ups for this site to print the weekly summary."));
+			return;
+		}
+		win.document.write(
+			`<!doctype html><title>${pp_esc(__("Weekly summary"))}</title><p style="font-family:sans-serif">${pp_esc(__("Preparing the weekly summary…"))}</p>`
+		);
+		Promise.resolve(frappe.call({ method: PPO.summary, args: {} }))
+			.then((r) => {
+				const html = r && r.message;
+				if (win.closed) return;
+				if (!html) {
+					win.close();
+					return;
+				}
+				win.document.open();
+				win.document.write(html);
+				win.document.close();
+				win.focus();
+				const fonts = win.document.fonts && win.document.fonts.ready ? win.document.fonts.ready : Promise.resolve();
+				// Let the page lay out and its display face arrive before the print dialog measures it.
+				fonts.then(() => win.setTimeout(() => win.print(), 250));
+			})
+			.catch(() => {
+				if (!win.closed) win.close();
+			});
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPO_METHODS);
 
 // ====================================================================== P4: the tasks that follow, Draft schedules, "Notify crew?"
 //

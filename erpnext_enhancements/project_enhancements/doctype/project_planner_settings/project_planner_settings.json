@@ -32,7 +32,11 @@
   "section_customers",
   "customer_date_confirmations",
   "column_break_customers",
-  "customer_confirmation_phone"
+  "customer_confirmation_phone",
+  "section_summary",
+  "weekly_summary_email",
+  "column_break_summary",
+  "weekly_summary_recipients"
  ],
  "fields": [
   {
@@ -206,12 +210,35 @@
    "fieldtype": "Data",
    "label": "Phone number in the email",
    "options": "Phone"
+  },
+  {
+   "fieldname": "section_summary",
+   "fieldtype": "Section Break",
+   "label": "Telling managers"
+  },
+  {
+   "default": "0",
+   "description": "Every Monday at 6:15 AM, email the weekly schedule summary (the page Overview prints): what is on that week by job and by person, what moved in the last seven days, and what needs a manager. It lists Published schedules only: a Draft schedule is named, never described. Leave this off until the right people are listed on the right: while it is off nothing is sent. Overview > Print weekly summary shows what would go out.",
+   "fieldname": "weekly_summary_email",
+   "fieldtype": "Check",
+   "label": "Email the weekly summary on Mondays"
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "weekly_summary_email",
+   "description": "Email addresses of the managers who get it, separated by commas or new lines. Blank sends nothing.",
+   "fieldname": "weekly_summary_recipients",
+   "fieldtype": "Small Text",
+   "label": "Send it to"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-13 12:00:00.000000",
+ "modified": "2026-10-22 06:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Planner Settings",

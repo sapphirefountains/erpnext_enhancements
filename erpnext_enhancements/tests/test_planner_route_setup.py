@@ -478,9 +478,11 @@ class TestMaterializeDefaults(unittest.TestCase):
 	def test_a_never_saved_single_gets_every_default(self):
 		# Ten declared defaults, plus Phase 3B's two "Telling people" switches (both "0"), plus Phase
 		# 5's customer_date_confirmations ("0"; the phone number has no default), plus v1.605.0's
-		# leave_by_pings ("0") and leave_by_ping_minutes ("10").
-		self.assertEqual(self._run(stored=()), 15)
+		# leave_by_pings ("0") and leave_by_ping_minutes ("10"), plus P9's weekly_summary_email ("0"; the
+		# recipients have no default).
+		self.assertEqual(self._run(stored=()), 16)
 		values = _db_writes[0][1]
+		self.assertEqual(values["weekly_summary_email"], "0")
 		self.assertEqual(values["use_google_routes"], "1")
 		self.assertEqual(values["pad_drive_time"], "1")
 		self.assertEqual(values["default_day_hours"], "8")
@@ -493,7 +495,7 @@ class TestMaterializeDefaults(unittest.TestCase):
 		values = _db_writes[0][1]
 		self.assertEqual(values["use_google_routes"], "1")
 		self.assertNotIn("pad_drive_time", values)
-		self.assertEqual(written, 14)
+		self.assertEqual(written, 15)
 
 	def test_a_whole_single_writes_nothing(self):
 		every = tuple(_settings_meta_fields())

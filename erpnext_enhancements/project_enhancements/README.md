@@ -36,6 +36,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/planner_drive_time/` | Cache of Google drive times between two points, keyed `lat,lng~lat,lng` (5 decimals; never `<` or `>`, which Frappe refuses in a document name — the original `>` failed every write, v1.578.1). Only Google answers are stored; rows older than 90 days are refreshed lazily | `PlannerDriveTime` | written by `routing.drive_matrix` |
 | `planner_notices.py` | Draft-and-publish notices (one per affected person per publish) and the 48-hour change alerts (v1.581.0); both write a bell notification and use the email shell, with SMS through the dispatch digest's helper | `send_publish_notices`, `queue_task_change` (Task `on_update`), `flush_alerts`, `send_change_alerts` | `api/project_planner.publish_drafts`; `doc_events["Task"]["on_update"]` |
 | `planner_digest.py` | The combined 6 AM digest (v1.581.0): one message per person with their whole day from the engine, led by the day's notes for their group and their own blocks (Phase 6D) when the person has something booked, and never sending on a note or block alone (Phase 6E); at most once a day by claiming a `Planner Digest Log` row before sending | `send_daily_digests`, `send_preview`, `covered_users` | `scheduler_events.cron` 6 AM; off unless Settings → *One combined morning digest* |
+| `planner_weekly_summary.py` | The weekly schedule summary and its Monday email (P9, v1.715.0, Nik's D3 and D16): `build_summary` is one read (next week by job and by person, what moved in the last seven days from `tabVersion`, the exception list), drawn as a printout on the print design system (`summary_document`) and as an email through the email shell (`summary_email`). `send_weekly_summary` is the cron job (`15 6 * * 1` in `hooks.py`): **it does nothing, before any query, unless Project Planner Settings > *Email the weekly summary on Mondays* is ticked (it ships OFF) and someone is named under *Send it to***; at most one send per week through a `Planner Digest Log` row keyed `weekly-summary|<first day>`. Published schedules only: a Draft schedule is named, never described | `build_summary`, `summary_document`, `summary_email`, `send_weekly_summary`, `send_preview` | `hooks.py` `scheduler_events`; the Overview tab's *Print weekly summary* |
 | `planner_tracking.py` | Phase 4 tracking (v1.582.0): actual hours per task and person from the kiosk's Job Intervals, *running over*, the project labor forecast (booked from today + clocked, at each day's pay rate, cost only for `COST_ROLES`) with its nightly refresh of the stored Labor-line figure, and the Task equipment validator | `task_actuals`, `labor_forecast`, `refresh_labor_forecasts`, `can_see_cost`, `validate_equipment` | `api/project_planner` (`get_actuals`, `get_labor_forecast`); `budget_rollup.refresh_labor_forecast`; `scheduler_events.daily_long`; `doc_events["Task"]["validate"]` |
 | `doctype/task_equipment/` | Child table on Task (`custom_equipment`): a Fleet Vehicle or an Asset the task uses, with a label filled by `validate_equipment` (one `fetch_from` cannot serve two links) | `TaskEquipment` | child-table controller |
 | `report/crew_utilization/` | **Crew Utilization** Script Report (v1.582.0): per person per week or month, capacity vs booked (tasks, visits, rental, travel, driving) vs clocked, with **Other clocked** for time on non-customer work. Hours only, never money; runs the engine with `google=False` | `execute`, `periods_for`, `aggregate` | Drawn as the Project Planner's **Utilization** view (v1.687.0), which reads it through `frappe.desk.query_report.run` and links to it |
@@ -2157,6 +2158,68 @@ from its first task to its last. It is the page's `PPG` block, the app's DHTMLX 
 - **Tests:** `tests/test_planner_gantt.py` (server, on the Phase 3B harness) and
   `scripts/test_planner_gantt.js` (the real widget on a recording DHTMLX stub, and the real page), run
   by `tests/test_planner_gantt_page.py`.
+
+### The Overview tab and the weekly summary (P9, v1.715.0, Planner UX redesign)
+
+Nik's D3 and D16 of 2026-10-21 (`docs/planner-ux-redesign.md` §4.7), for James and the approvers: "All jobs
+on a timeline", "Exceptions only", "A weekly summary". It is the page's `PPO` block,
+`api/planner_overview.get_overview` and `planner_weekly_summary.py`.
+
+- **Addresses.** `/desk/project-planner/overview/<date>` (the months from the month holding that day;
+  `/<date>/12` for 3, 9 or 12 months instead of 6). A bare or garbled one opens today's month. A step
+  (‹ ›, a month), the months picker and the tab are routes, so Back and Forward step through them;
+  Expand all, the lines list and a job's arrow are not.
+- **The landing** (Nik, 2026-10-22). An **Executive Team** member's desktop *first* visit opens the Overview
+  instead of the Lookahead (`ppo_first_tab`, from the boot's roles; nothing is fetched). After that the
+  per-device last-used tab applies like everyone else's: the Overview is one of P8's remembered tabs. A
+  phone's first visit is still Today. A link that names a filter never lands on the Overview from the
+  landing (it opens the Lookahead with the filter), as it never opens Today or an old Gantt. The redirect
+  replaces the bare address, so Back leaves the planner.
+- **The timeline** is the app's DHTMLX widget, **read-only**: no drag, no link, no write hook. One row per
+  Active customer job with a bar for its whole span; open it (or *Expand all*) and each **phase** is a bar,
+  coloured by its number (`ppo-ph-1`…`7`, design tokens) and drawn over its **baseline** ghost, with how many
+  tasks are done as its progress and `+4d` in the *Behind* column when it slipped; *Other work* is the
+  pale bar. A dated Task flagged `is_milestone` is a diamond. A **Draft** schedule is hatched, dashed and
+  marked ◐, and drawn from its drafts (the caller's, and everyone's on a Draft schedule); *Publish…* for
+  each is in the header (P4's own confirmation). A job with no dated work falls back to the Project's own
+  expected dates (drawn paler, and said so); with none, it is listed under the chart as having no dates.
+  Clicking a job or a phase opens that job's Gantt. The widget's own export draws it as a printout, PNG or
+  SVG (CSV and Excel would export Projects, which is not this chart, so they are not offered).
+- **Needs attention** is the exception list, worst first, one button per line: a phase **behind its
+  baseline** by more than 2 *working days* (`BEHIND_DAYS`; holidays are not working days; work under no
+  phase is judged task by task); a task **running over** its estimate (Phase 4's rule, for open tasks with
+  an estimate); the next two weeks' unresolved **conflicts** (the Conflict center's list, minus those kept
+  with a reason); and **overdue** work, one line per job. A line opens its source: the job's Gantt, or the
+  Crew board on the day of the first conflict. When nothing is wrong the box says so in one line.
+- **Overdue is counted by end date, never by the status value.** 1,005 open tasks carry the status
+  `Overdue` on production, left by an old import. A task is overdue here when it is open and its last day
+  is before today. And only phase and crew work counts (D6), so the ~40 template admin tasks a job gets,
+  all dated its first day, cannot make it look late the day it starts. Without a baseline nothing is
+  behind: production's jobs have none until someone sets one from the Gantt, so today the foot says how
+  many jobs have one.
+- **The weekly summary** is one page: next week by job and by person, what moved in the last seven days
+  (the first old value and the last new value of each start or end in the Version log), and the exception
+  list. *Print weekly summary* in the Overview's header and *More ▸ Print ▸ Weekly summary* open it in a
+  window and print it (the crew sheet's way). "Next week" is the week holding today while it is a day old,
+  else the following week (`default_summary_week`), so the Monday email and a Sunday-night print are about
+  the week ahead.
+- **The Monday email is OFF.** *Project Planner Settings > Telling managers* has **Email the weekly summary
+  on Mondays** (default 0) and **Send it to** (addresses, commas or new lines; a line that is not an
+  address refuses the save). `send_weekly_summary` runs Mondays 06:15 and returns before its first query
+  unless the box is ticked *and* someone is named. At most once per week, through a `Planner Digest Log`
+  row keyed `weekly-summary|<first day>` committed before sending (the deploy `FLUSHDB`s redis, so a cache
+  marker would mail everyone again). It describes **Published** schedules only; a Draft one is named at
+  the foot. *Send me a weekly summary preview* on the Settings form emails the caller the email, with the
+  box unticked, claiming nothing. `patches/backfill_weekly_summary_setting` writes the new Check's
+  `tabSingles` row where there is none (a default never reaches a Single's existing row), never over a
+  stored value, and cannot raise.
+- **The page reads no Settings.** A desk script that read a Settings Single would show "No permission for
+  X Settings" to everyone but a System Manager; the switch and the recipients are the server's.
+- **Tests:** `tests/test_planner_overview.py` and `tests/test_planner_weekly_summary.py` (server, the
+  summary, the OFF job, the patch; on the Phase 3B harness), `scripts/test_planner_overview.js` (the real
+  page: the rows, the three parts, the mounted widget, every control, the printout), run by
+  `tests/test_planner_overview_page.py`, and the landing and Back/Forward scenarios in
+  `scripts/test_planner_today.js`.
 
 ## Calendar sync (C2, v1.604.0)
 
