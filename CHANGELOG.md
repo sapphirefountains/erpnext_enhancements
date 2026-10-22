@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.715.0] - 2026-10-22
+
+### Added
+- **The Project Planner's Overview tab, and the weekly summary** (P9 of the Planner UX redesign,
+  `docs/planner-ux-redesign.md` §4.7; Nik's D3, D14 and D16 of 2026-10-21). For James and the approvers:
+  every active customer job on one timeline, what needs a manager, and a one-page summary to print or to
+  email on Mondays. The Monday email is **OFF** and stays off until Nik ticks a box.
+  - **The timeline** is the app's DHTMLX widget, **read-only** (no drag, no link, no write hook). One row
+    per Active customer job with a bar for its whole span; open it (or *Expand all*) and each **phase** is
+    a bar coloured by its number and drawn over its **baseline** ghost, with `+4d` in a *Behind* column
+    when it slipped and its done tasks as its progress. *Other work* (crew work under no phase) is the pale
+    bar; a dated Task flagged milestone is a diamond. A **Draft** schedule is hatched and marked ◐ and is
+    drawn from its drafts, with *Publish…* in the header (P4's own confirmation). A job with no dated work
+    falls back to the Project's own expected dates (paler, and said so), and with none is listed under the
+    chart. Clicking a job or a phase opens that job's Gantt. The widget's own export prints it or saves a PNG
+    or SVG; CSV and Excel are not offered, because they would export Projects, not this chart. 3, 6, 9 or 12
+    months (6 by default), each a route, so Back and Forward step through the months and the picker.
+  - **Needs attention** is one line per problem, worst first, each a button that opens its source: a phase
+    **behind its baseline** by more than 2 *working days* (holidays are not working days; work under no
+    phase is judged task by task, and nothing is behind without a baseline), a task **running over** its
+    estimate (Phase 4's rule), the next two weeks' unresolved **conflicts** (the Conflict center's own list,
+    without those somebody kept with a reason; the costly engine pass behind them does not depend on the
+    window, so the page keeps the list for two minutes and stepping through months does not repeat it) and
+    **overdue** work (one line per job). Nothing wrong is one line saying so. **Overdue is counted by end date, never by the status value** (spec §8): 1,005 open
+    tasks on production carry the status `Overdue`, left by an old import, so the status is not evidence of
+    anything. A task is overdue when it is open and its last day is before today. Only phase and crew work
+    counts (D6), so the ~40 template admin tasks a job gets, all dated its first day, cannot make it look
+    late the day it starts. Production's jobs have no baseline until somebody sets one from the Gantt, so
+    "behind" is empty today and the foot says how many jobs have one. A flagged milestone is a manager's
+    own marker (six exist on production), so it is a diamond whether or not the display rule would show it
+    as work; it counts as work only if the rule shows it. One read takes at most 20,000 Task rows
+    (production has about 1,400 on its 53 active customer jobs); past that the answer says so and the page
+    says some jobs may show less than they have, rather than let a job it never read look clean.
+  - **The weekly summary** (`planner_weekly_summary.py`): next week by job and by person, what moved in the
+    last seven days (read from the Version log: the first old value and the last new value of each start or
+    end, so a task moved and moved back is not listed), and the exception list. *Print weekly summary* in
+    the Overview's header and *More > Print > Weekly summary* open it in a window and print it, on the print
+    design system's chrome, every value escaped. "Next week" is the week holding today while it is a day old
+    (the Monday email, a Sunday-night print), else the following week. It describes **Published** schedules
+    only: a Draft schedule is private until it is published (D8), so the summary names it at the foot and
+    says nothing more. That includes the sections read from the availability engine, which books a Draft
+    project's *stored* tasks like any other: the by-person lines and the conflicts drop every booking and
+    conflict of a Draft project by name. The Version read is limited to the summary's own projects in SQL,
+    takes the newest 2,000 rows and says so when the log was longer.
+  - **The Monday email is OFF** (D16). *Project Planner Settings > Telling managers* has **Email the weekly
+    summary on Mondays** (a Check, default 0) and **Send it to** (addresses, separated by commas or new
+    lines; a line that is not an address refuses the save, by name). `send_weekly_summary` is scheduled
+    Mondays 06:15 (`15 6 * * 1`, a key used nowhere else in `scheduler_events`) and **returns before its
+    first query** unless the box is ticked and somebody is named. The page is built first (a read, so a
+    failure spends nothing and a rerun that week can still send), then the week is claimed: at most once a
+    week, through a `Planner Digest Log` row keyed `weekly-summary|<first day>` committed before the mail is sent, not
+    through redis: the production deploy `FLUSHDB`s both redis instances, so a cache marker would have
+    mailed everyone again after every merge. A send that fails after the claim is not retried (a missed
+    Monday is better than two), and a failure is logged, never raised. *Send me a weekly summary preview* on
+    the Settings form emails the caller alone the email as it would go (the box need not be ticked, no week
+    is claimed), so Nik can read it before anybody is named.
+  - **The landing** (Nik, 2026-10-22). An **Executive Team** member's desktop *first* visit opens the
+    Overview instead of the Lookahead; after that the per-device last-used tab applies like everyone
+    else's. The Overview joins P8's remembered tabs (`PP8.tabs`); the role is read from the boot, nothing is
+    fetched. A phone's first visit is still Today. A link that names a filter never lands on the Overview
+    from the landing (it opens the Lookahead with the filter), as it never opens Today or an old Gantt. The
+    redirect replaces the bare address, so Back leaves the planner. The Overview is never in the server's
+    saved view (the tab is the device's).
+  - **Where it lives.** The spec's file list put `get_overview` and `weekly_summary_html` in
+    `api/project_planner.py`; as P5 (`planner_lookahead.py`) and P6 (`planner_gantt.py`) did, they are a
+    module of their own, `api/planner_overview.py`, because `project_planner.py` is 6,000 lines. Nothing in
+    `project_planner.py` changed. The page work is the `PPO` block of `project_planner.js` (plus one-line
+    hooks) and `ppo-` rules in its stylesheet; the CSS test's prefix list now knows the `ppo-` family.
+  - **Not done here:** the Maintenance Planner (P10), the "?" help for this tab (P12), and the 1-5 tab
+    shortcuts, which still pick the older views. Milestone diamonds show on an expanded job, not on its
+    collapsed bar.
+
+### Changed
+- **Project Planner Settings gains two fields** (`weekly_summary_email`, a Check, default 0, and
+  `weekly_summary_recipients`, no default). **A `default` on a new field of a Single never reaches the row
+  that already exists**, so `patches/backfill_weekly_summary_setting` writes the new Check's `tabSingles`
+  row (via `project_planner_settings.materialize_defaults`): only where there is none, never over a stored
+  value (an unticked box and a ticked one are decisions), with `set_single_value` (no validate), and a
+  Single never saved is made whole so no later write of one field can blank the rest (the v1.578.1 trap).
+  Switches nothing on. Cannot raise, safe twice. `None` already read as off, so the app behaves the same
+  before and after; the row only keeps the Single whole and the form honest.
+
 ## [1.714.0] - 2026-10-22
 
 ### Changed

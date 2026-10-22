@@ -1054,6 +1054,187 @@ test("landing (P6): Back and Forward step between the Gantt and the other tabs",
 	check("no entry was added or replaced on the way", desk.urls().length, 5);
 });
 
+// ------------------------------------------------------------------ P9: the Executive Team's first visit is the Overview
+//
+// Nik, 2026-10-22: an Executive Team member's desktop FIRST visit opens the Overview instead of the
+// Lookahead. After that the per-device last-used tab applies like everyone else's. The Overview is one of
+// the device's tabs (PP8.tabs); redirects replace, never push; a link that names a filter never lands on it.
+
+const EXEC = ["Projects User", "Executive Team"];
+
+test("landing (P9): an Executive Team member's desktop first visit opens the Overview, in place; Back leaves", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("the Overview at its own address, in place of the bare one", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/overview/2026-10-21"]);
+	check("replaced once, loaded once, on the Overview", [desk.replaces, pp.loads], [1, [{ view: "overview", anchor: "2026-10-21" }]]);
+	check("and it is the device's tab from now on", desk.prefs[TAB_KEY], "overview");
+	check("no Today request", desk.called("get_today"), []);
+	desk.back();
+	check("Back leaves the planner", desk.urls()[desk.index], "/desk/project/PRJ-00001");
+});
+
+test("landing (P9): after the first visit the device's last-used tab applies to them like anyone else", async () => {
+	for (const [tab, address] of [
+		["crew", "/desk/project-planner/crew/2026-10-21"],
+		["lookahead", "/desk/project-planner/lookahead/2026-10-21"],
+		["month", "/desk/project-planner/calendar/month/2026-10-21"],
+		["overview", "/desk/project-planner/overview/2026-10-21"],
+	]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+		desk.prefs[TAB_KEY] = tab;
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner");
+		await settle();
+		check(`${tab}: its own address, replaced once`, [desk.urls().pop(), desk.replaces], [address, 1]);
+		check(`${tab}: loaded once`, pp.loads.length, 1);
+	}
+});
+
+test("landing (P9): the Overview they leave is not the one they return to, and the Lookahead stays reachable", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	pp.go("lookahead", "2026-10-21");
+	await settle();
+	check("the Lookahead is now this device's tab", desk.prefs[TAB_KEY], "lookahead");
+	desk.go("project", "PRJ-00001");
+	desk.go("project-planner");
+	await settle();
+	check("a later bare visit opens the Lookahead, not the Overview", desk.urls().pop(), "/desk/project-planner/lookahead/2026-10-21");
+});
+
+test("landing (P9): on a phone the first visit is Today, executive or not; an ordinary desktop gets the Lookahead", async () => {
+	const phone = makeDesk({ start: "/desk/project/PRJ-00001", phone: true, roles: EXEC });
+	phone.answers.get_today = ME;
+	planner(phone, { p6c: nothingSaved() });
+	phone.go("project-planner");
+	await settle();
+	check("phone: Today", phone.urls().pop(), "/desk/project-planner/today/2026-10-21");
+	const plain = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: ["Projects User"] });
+	planner(plain, { p6c: nothingSaved() });
+	plain.go("project-planner");
+	await settle();
+	check("desktop, no Executive Team role: the Lookahead", plain.urls().pop(), "/desk/project-planner/lookahead/2026-10-21");
+});
+
+test("landing (P9): a link that names a filter never opens the Overview from the landing", async () => {
+	for (const remembered of [null, "overview"]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+		if (remembered) desk.prefs[TAB_KEY] = remembered;
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go("project-planner", { pm: "Clegg" });
+		await settle();
+		check(`${remembered || "first visit"}: the Lookahead with the filter, in place`, desk.urls(), [
+			"/desk/project/PRJ-00001",
+			"/desk/project-planner/lookahead/2026-10-21?pm=Clegg",
+		]);
+		check(`${remembered || "first visit"}: loaded the Lookahead`, pp.loads.map((l) => l.view), ["lookahead"]);
+	}
+});
+
+test("landing (P9): a store that throws is a first visit: an executive gets the Overview and nothing breaks", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	const boom = () => {
+		throw new Error("SecurityError");
+	};
+	desk.window.localStorage.getItem = boom;
+	desk.window.localStorage.setItem = boom;
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("the Overview, loaded", [desk.urls().pop(), pp.loads.map((l) => l.view)], ["/desk/project-planner/overview/2026-10-21", ["overview"]]);
+});
+
+test("landing (P9): a role check that fails is not an executive", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	desk.frappe.user.has_role = () => {
+		throw new Error("no boot");
+	};
+	planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	check("the Lookahead", desk.urls().pop(), "/desk/project-planner/lookahead/2026-10-21");
+});
+
+test("P9: the Overview is a screen: a step, the months picker and a tab each take one entry; Back and Forward step through them", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	pp.ppo_shift(1);
+	await settle();
+	pp.ppo_pick_months(12);
+	await settle();
+	pp.go("crew", "2026-11-01");
+	await settle();
+	check("each its own entry; 6 months is not written, 12 is", desk.urls().slice(1), [
+		"/desk/project-planner/overview/2026-10-21",
+		"/desk/project-planner/overview/2026-11-01",
+		"/desk/project-planner/overview/2026-11-01/12",
+		"/desk/project-planner/crew/2026-11-01",
+	]);
+	check("the picker's choice is this browser's next time", desk.prefs.ee_project_planner_portfolio_months, "12");
+	desk.back();
+	await settle();
+	check("Back: the Overview, twelve months", [desk.urls()[desk.index], pp.view, pp.ppo.months], ["/desk/project-planner/overview/2026-11-01/12", "overview", 12]);
+	desk.back();
+	await settle();
+	check("Back: the address says six, so six", [desk.urls()[desk.index], pp.ppo.months, pp.anchor], ["/desk/project-planner/overview/2026-11-01", 6, "2026-11-01"]);
+	desk.back();
+	await settle();
+	desk.forward();
+	await settle();
+	desk.forward();
+	await settle();
+	check("Forward again: twelve months", [pp.view, pp.ppo.months], ["overview", 12]);
+	check("no entry was added or replaced on the way", [desk.urls().length, desk.replaces], [5, 1]);
+});
+
+test("P9: the Today button and the tab keep the window's months; the address's date is the month's", async () => {
+	const desk = makeDesk({ start: "/desk/project-planner/overview/2026-12-15/9", phone: false, roles: EXEC });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.land();
+	await settle();
+	check("nine months from December", [pp.view, pp.anchor, pp.ppo.months], ["overview", "2026-12-15", 9]);
+	check("the title is the window", pp.ppo_title(), "Overview · Dec 2026 – Aug 2027");
+	pp.go("overview", "2026-10-21");
+	await settle();
+	check("the same months, today's month", desk.urls().pop(), "/desk/project-planner/overview/2026-10-21/9");
+});
+
+test("P9: a bare or garbled /overview opens today's month; a wild months segment is six", async () => {
+	for (const [route, anchor, months] of [
+		[["project-planner", "overview"], "2026-10-21", 6],
+		[["project-planner", "overview", "garbage"], "2026-10-21", 6],
+		[["project-planner", "overview", "2026-13-45", "4"], "2026-10-21", 6],
+		[["project-planner", "overview", "2027-01-10", "3"], "2027-01-10", 3],
+	]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+		const pp = planner(desk, { p6c: nothingSaved() });
+		desk.go(...route);
+		await settle();
+		check(route.join("/"), [pp.view, pp.anchor, pp.ppo.months, desk.replaces], ["overview", anchor, months, 0]);
+	}
+});
+
+test("P9: leaving the Overview takes the chart down, and a tab on screen is not pushed twice", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false, roles: EXEC });
+	const pp = planner(desk, { p6c: nothingSaved() });
+	desk.go("project-planner");
+	await settle();
+	let destroyed = 0;
+	pp.ppo.widget = { destroyed: false, destroy: () => (destroyed += 1) };
+	pp.go("overview", "2026-10-21");
+	await settle();
+	check("the same screen is a reload, not an entry", [desk.urls().length, pp.loads.length], [2, 2]);
+	pp.go("crew", "2026-10-21");
+	await settle();
+	check("the chart was destroyed on the way out", [destroyed, pp.ppo.widget], [1, null]);
+});
+
 test("what is saved for the person has no tab in it", async () => {
 	const store = { last: null };
 	const desk = makeDesk({ start: "/desk/project-planner/week/2026-10-21", phone: false });

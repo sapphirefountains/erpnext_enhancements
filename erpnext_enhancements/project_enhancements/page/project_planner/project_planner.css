@@ -3950,3 +3950,242 @@ body.p6b-resizing .ppl-bar {
 .ppg-chart .gantt_row.ppg-group-row .gantt_tree_content {
 	font-weight: 600;
 }
+
+/* ======================================================================================== */
+/* P9: the Overview tab, every job on one read-only timeline (PPO).                         */
+/* ======================================================================================== */
+
+/* The bar over the chart: the title, the months picker, Expand all, Print weekly summary, and the Draft
+ * schedules in view with their Publish…. */
+.ppo-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.ppo-head-title {
+	font-weight: 600;
+	color: var(--sf-text-strong);
+}
+
+.ppo-months {
+	display: inline-flex;
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-control);
+	overflow: hidden;
+}
+
+.ppo-months-btn {
+	border: 0;
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-size: 12px;
+	padding: 2px 8px;
+}
+
+.ppo-months-btn + .ppo-months-btn {
+	border-left: var(--sf-border-hairline) solid var(--sf-field-border);
+}
+
+.ppo-months-btn.pp-on {
+	background: var(--sf-primary);
+	color: var(--sf-on-primary);
+}
+
+.ppo-drafts {
+	flex-basis: 100%;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+}
+
+.ppo-draft-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ppo-note {
+	color: var(--sf-text-muted);
+	font-size: 12px;
+	margin: 0 0 4px;
+}
+
+/* Needs attention: a ruled box of one-line buttons, worst first. A line is a button because it opens
+ * its source; its icon is decoration, and the kind is read aloud (pp-sr). */
+.ppo-needs-box {
+	border: var(--sf-border-hairline) solid var(--sf-rule);
+	background: var(--sf-surface);
+	padding: 8px 10px;
+	margin-bottom: 10px;
+}
+
+.ppo-needs-box h5 {
+	margin: 0 0 6px;
+	color: var(--sf-text-strong);
+}
+
+.ppo-clear p {
+	margin: 0;
+	color: var(--sf-text);
+}
+
+.ppo-lines {
+	list-style: none;
+	margin: 0 0 6px;
+	padding: 0;
+}
+
+.ppo-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: var(--sf-text);
+	text-align: left;
+	padding: 3px 4px;
+	border-radius: var(--sf-radius-control);
+}
+
+.ppo-line:hover:not(:disabled),
+.ppo-line:focus-visible {
+	background: color-mix(in srgb, var(--sf-primary) 14%, transparent);
+	outline: var(--sf-border-control) solid var(--sf-focus);
+	outline-offset: -2px;
+}
+
+.ppo-line:disabled {
+	cursor: default;
+}
+
+.ppo-icon {
+	flex: none;
+	width: 1.4em;
+	text-align: center;
+}
+
+.ppo-line[data-kind="behind"] .ppo-icon,
+.ppo-line[data-kind="conflicts"] .ppo-icon {
+	color: var(--sf-danger);
+}
+
+.ppo-line[data-kind="over"] .ppo-icon,
+.ppo-line[data-kind="overdue"] .ppo-icon {
+	color: color-mix(in srgb, var(--sf-warn) 50%, var(--sf-text-strong));
+}
+
+.ppo-empty {
+	color: var(--sf-text-muted);
+	padding: 24px 8px;
+}
+
+/* The chart takes the height of the screen below the toolbar and the box above it, and scrolls. */
+.ppo-chart {
+	height: calc(100vh - 420px);
+	min-height: 360px;
+}
+
+.ppo-foot {
+	margin-top: 8px;
+}
+
+/* The bars (the widget's task lines, classed by the page's task_class template). A job is a dark summary bar;
+ * a phase takes its colour from its number; Other work is the pale one. A Draft schedule is hatched and dashed,
+ * finished work faded, a phase that slipped past its baseline outlined in the danger tone. Every bar has a
+ * faint edge, so a deep colour does not vanish into a dark theme's ground. */
+.ppo-chart .gantt_task_line {
+	cursor: pointer;
+	border: var(--sf-border-hairline) solid color-mix(in srgb, var(--sf-text-strong) 35%, transparent);
+}
+
+.ppo-chart .gantt_task_line.ppo-job {
+	background-color: color-mix(in srgb, var(--sf-text-strong) 72%, transparent);
+	color: var(--sf-surface);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-1 {
+	background-color: var(--sf-violet-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-2 {
+	background-color: var(--sf-fresh-blue-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-3 {
+	background-color: var(--sf-bahama-blue);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-4 {
+	background-color: var(--sf-teal-deep);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-5 {
+	background-color: var(--sf-green);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-6 {
+	background-color: var(--sf-navy-800);
+	color: var(--sf-white);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-7 {
+	background-color: var(--sf-violet);
+	color: var(--sf-navy-900);
+}
+
+.ppo-chart .gantt_task_line.ppo-ph-0 {
+	background-color: var(--sf-sky-200);
+	color: var(--sf-navy-900);
+}
+
+.ppo-chart .gantt_task_line .gantt_task_content {
+	color: inherit;
+}
+
+.ppo-chart .gantt_task_line.ppo-draft {
+	border-style: dashed;
+	border-width: 2px;
+	background-image: repeating-linear-gradient(
+		45deg,
+		transparent 0 4px,
+		color-mix(in srgb, var(--sf-white) 40%, transparent) 4px 7px
+	);
+}
+
+.ppo-chart .gantt_task_line.ppo-estimate {
+	opacity: 0.7;
+}
+
+.ppo-chart .gantt_task_line.ppo-done {
+	opacity: 0.55;
+}
+
+.ppo-chart .gantt_task_line.ppo-slipped {
+	border-color: var(--sf-danger);
+	border-width: 2px;
+}
+
+.ppo-chart .gantt_task_line.ppo-milestone {
+	background-color: var(--sf-warn);
+	border-color: var(--sf-on-warn);
+}
+
+.ppo-chart .gantt_row.ppo-job-row .gantt_tree_content {
+	font-weight: 600;
+}
+
+@media (max-width: 767px) {
+	.ppo-chart {
+		height: calc(100vh - 360px);
+	}
+}

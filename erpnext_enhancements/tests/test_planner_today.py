@@ -439,11 +439,11 @@ class TestThePageScript(unittest.TestCase):
 		self.assertEqual(re.findall(r'"([^"]+)"', page.group(1)), views)
 		# The tabs a device remembers are the page's own list: those (Capacity is P7's; the old "heatmap" is
 		# still read), plus Today, plus the Gantt (P6, whose project the device keeps beside it; never in the
-		# server's row, which has no project to open).
+		# server's row, which has no project to open), plus the Overview (P9; also never in the server's row).
 		tabs = re.search(r"tabs: \[(.*?)\]", self.block)
 		self.assertEqual(
 			re.findall(r'"([^"]+)"', tabs.group(1)),
-			["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt"],
+			["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],
 		)
 
 	def test_every_class_it_uses_is_styled(self):

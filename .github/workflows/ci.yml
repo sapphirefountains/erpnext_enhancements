@@ -931,6 +931,22 @@ jobs:
       # moved. Reuses the Phase 3B harness, so it is unittest, in its own step.
       - name: Project planner Gantt, server (P6)
         run: python -m unittest erpnext_enhancements.tests.test_planner_gantt -v
+      # Planner UX redesign P9, the Overview tab, server side. get_overview must count overdue by END DATE and
+      # never by the Overdue status (1,005 open tasks carry it on production), apply the D6 display rule so the
+      # template admin tasks cannot make a job look late, judge behind-baseline in working days and only past
+      # the threshold, fall back to the project's own dates for a job with no dated work, draw a Draft schedule
+      # from its drafts, and read every job in one bound query. Every endpoint keeps the planner's role gate.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner Overview, server (P9)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_overview -v
+      # Planner UX redesign P9, the weekly summary and its Monday email. The email is OFF (the Settings Check
+      # ships unticked and the job returns before its first query), sends at most once a week through a
+      # database row (the deploy FLUSHDBs redis), never describes a Draft schedule, escapes everything typed in
+      # the printout, folds "what moved" out of the Version log, and its backfill patch fills the new Check's
+      # row only where tabSingles has none, never over a stored value, twice-safe and unable to raise.
+      # Reuses the Phase 3B harness, so it is unittest, in its own step.
+      - name: Project planner weekly summary, its OFF switch and its backfill (P9)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_weekly_summary -v
       # Planner UX redesign P8, Today on the phone. get_today is the signed-in person's own day and the
       # next (leave-by, miles, equipment, which day of a task), read-only, with today's route and the
       # Maps key for the inline map; distances are miles on screen. Under node, scripts/test_planner_today.js
@@ -3714,6 +3730,15 @@ jobs:
       # baseline handed to P4, the /gantt/<project> address). node is on PATH in this job.
       - name: Project planner Gantt tab, page and widget hooks (P6, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_planner_gantt_page -v
+      # Planner UX redesign P9, the Overview tab, page side. The chart is the app's DHTMLX widget READ-ONLY (no
+      # write hook, no link), the block makes only the read and the printout, never reads a Settings Single, and
+      # is a remembered device tab and the Executive Team's first desktop visit. Runs
+      # scripts/test_planner_overview.js against the real page script: the chart's rows (a bar per job, a bar per
+      # phase over its baseline ghost, milestones, a Draft schedule hatched, everything clipped to the window),
+      # Needs attention, the foot, the mounted widget's config, every control, the printed summary. The landing
+      # and Back/Forward run in the P8 router harness (test_planner_today). node is on PATH in this job.
+      - name: Project planner Overview tab, page (P9, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_planner_overview_page -v
       # Custom pages S1 (v1.623.0). No hard-coded /app/ link anywhere the Desk renders: on v16
       # an /app href is a full page reload through a redirect, and Back reloads again. Scans
       # every page, report, form and block script, the Desk-loaded public/js, the server
