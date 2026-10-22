@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.710.0] - 2026-10-21
+## [1.713.0] - 2026-10-21
 
 ### Added
 - **The Project Planner's Crew tab counts in days, and Capacity replaces the Heatmap and Utilization tabs**

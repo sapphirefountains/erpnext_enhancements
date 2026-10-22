@@ -638,6 +638,30 @@ test("Project Planner: the old Heatmap and Utilization addresses are replaced by
 	]);
 });
 
+test("Project Planner: Back and Forward step between the Crew tab's two screens and the Gantt", () => {
+	const desk = makeDesk({ start: "/desk/project-planner/crew/2026-10-12?capacity=1" });
+	const pp = projectPlanner(desk);
+	// The Gantt (P6) draws a chart of its own; here it is a recorded load.
+	pp.ppg_load = () => pp.loads.push({ view: pp.view, project: pp.ppg_state().project });
+	pp.ppg_destroy = () => null;
+	desk.land();
+	check("landed on Capacity", [pp.view, desk.here()], ["capacity", "/desk/project-planner/crew/2026-10-12?capacity=1"]);
+	pp.go("gantt", pp.anchor);
+	check("the Gantt is its own entry, without the Capacity flag", [pp.view, desk.route.slice(0, 2), desk.here().includes("capacity")], ["gantt", ["project-planner", "gantt"], false]);
+	pp.go("crew", pp.anchor);
+	// The Gantt has no date of its own, so the day it leaves is today.
+	check("the Board is the Crew path without the flag", [pp.view, desk.here()], ["crew", "/desk/project-planner/crew/2026-10-14"]);
+	desk.back();
+	check("Back: the Gantt", pp.view, "gantt");
+	desk.back();
+	check("Back: Capacity, with its flag", [pp.view, desk.here()], ["capacity", "/desk/project-planner/crew/2026-10-12?capacity=1"]);
+	desk.forward();
+	desk.forward();
+	check("Forward twice: the Board", pp.view, "crew");
+	pp.go("capacity", pp.anchor);
+	check("Capacity again is a new entry", [pp.view, desk.entries.length], ["capacity", 4]);
+});
+
 test("Project Planner: ?capacity= on the Crew address says Capacity; anything else is the Board", () => {
 	const cases = [
 		["1", "capacity"],
