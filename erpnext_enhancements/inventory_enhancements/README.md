@@ -642,10 +642,12 @@ page asks, and sends the same save with `rate` (`stock_scan._receipt_cost`).
 * **Only where ERPNext would refuse.** A cost on record (a rate at the bin, the company average, the last
   purchase rate, the Valuation Rate) is used and never asked for; a `rate` sent for such an item is ignored.
 * **The suggestion** (`_suggested_unit_cost`): the latest submitted Purchase Receipt / Invoice / Order line,
-  per stock unit, then the default buying price list; its source is named. Never `standard_rate` (a selling
-  price).
-* **The price**: positive, at most 100,000 per stock unit (`stock_scan_rules.MAX_UNIT_COST`, Nik 2026-10-22),
-  for this one posting. The Item and the price lists are not written; "Allow Zero Valuation Rate" is never
+  per stock unit, then the default buying price list (valid today, converted to the stock unit); its source is
+  named. Only from sources the caller may read, and never a document they cannot open. Never `standard_rate`
+  (a selling price).
+* **The price**: positive, at most 100,000 per stock unit (`stock_scan_rules.MAX_UNIT_COST`, Nik 2026-10-22)
+  and quantity times price at most 25,000 per add or count (`MAX_ADD_VALUE`; above it the stock is received on
+  its purchase order or posted by a stock manager in the Desk), for this one posting. The Item and the price lists are not written; "Allow Zero Valuation Rate" is never
   set. Written to the Stock Entry's remarks and the log row's `rate`; an add without a purchase order stays
   flagged for review.
 * **Who**: anyone who can post the document (Stock Entry create + submit; Stock Reconciliation for a count),

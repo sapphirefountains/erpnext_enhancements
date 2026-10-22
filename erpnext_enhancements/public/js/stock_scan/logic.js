@@ -764,6 +764,9 @@ export function undoQuestion(log) {
 /** The most one unit may be said to cost: `stock_scan_rules.MAX_UNIT_COST`, which a test holds equal. */
 export const MAX_UNIT_COST = 100000;
 
+/** The most one add or count may put in at a typed cost, quantity times cost: `stock_scan_rules.MAX_ADD_VALUE`. */
+export const MAX_ADD_VALUE = 25000;
+
 /**
  * Whether a save's answer is not a save but the question "what does one cost?": `add` (and the Bin
  * Manager's count) answer `{needs_valuation_rate: true, ...}` for an item ERPNext would refuse to post
@@ -776,9 +779,12 @@ export function isCostPrompt(result) {
 /**
  * What the person typed as a unit cost: `{rate}` or `{problem}`. A positive number, at most
  * MAX_UNIT_COST; the server checks it again (`check_unit_cost`). Thousands commas are allowed
- * ("1,250.50"), and a comma used as a decimal ("2,5") is refused rather than read as 25.
+ * ("1,250.50"), and a comma used as a decimal ("2,5") is refused rather than read as 25. With the
+ * quantity being added (`qty`), the total may not be more than `maxValue` (the server's MAX_ADD_VALUE,
+ * which it sends with its question): saying an unpriced item is worth that much is for a purchase order or
+ * a stock manager. The server checks all of it again.
  */
-export function unitCostProblem(text, uom) {
+export function unitCostProblem(text, uom, qty, maxValue) {
 	const per = uom ? ` per ${uom}` : "";
 	const raw = String(text === null || text === undefined ? "" : text).trim();
 	if (!raw) return { problem: `Enter the unit cost${per}.` };
@@ -791,6 +797,13 @@ export function unitCostProblem(text, uom) {
 	if (!Number.isFinite(rate) || rate <= 0) return { problem: `The unit cost${per} must be more than 0.` };
 	if (rate > MAX_UNIT_COST) {
 		return { problem: `A unit cost${per} above ${MAX_UNIT_COST.toLocaleString("en-US")} is not right. Check the number.` };
+	}
+	const limit = Number(maxValue) > 0 ? Number(maxValue) : MAX_ADD_VALUE;
+	const count = Number(qty);
+	if (Number.isFinite(count) && count > 0 && count * rate > limit + 1e-9) {
+		return {
+			problem: `${plain(count)} at ${plain(rate)} each is ${(count * rate).toLocaleString("en-US", { maximumFractionDigits: 2 })} of stock, and one add may put in at most ${limit.toLocaleString("en-US")}. Receive it on its purchase order, or ask a Stock Manager to post it in the Desk.`,
+		};
 	}
 	return { rate: Math.round(rate * 1e6) / 1e6 };
 }
@@ -813,7 +826,11 @@ export function costPromptText(prompt, qty, verb) {
 		label: `Unit cost per ${uom}`,
 		per: `Enter what ONE ${uom} costs, not the total.`,
 		hint,
-		note: "It is used for this one addition only. The item's price is not changed, and a stock manager reviews it.",
+		// A count is not flagged for review (only an add without a purchase order is), so it does not say so.
+		note:
+			verb === "count in"
+				? "It is used for this one count only. The item's price is not changed."
+				: "It is used for this one addition only. The item's price is not changed, and a stock manager reviews it.",
 		value: p.suggestion ? plain(p.suggestion) : "",
 		button: verb === "count in" ? "Count with this cost" : "Add with this cost",
 	};

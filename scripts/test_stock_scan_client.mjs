@@ -1233,6 +1233,7 @@ async function appUnitCost() {
 		suggestion: suggestion === undefined ? 6.5 : suggestion,
 		source: suggestion === null ? null : "the last purchase of it: Purchase Order PO-0007, Oct 3",
 		max_rate: 100000,
+		max_value: 25000,
 	});
 	let suggestion;
 	const fetchStub = async (url, init) => {
@@ -1335,7 +1336,7 @@ async function appUnitCost() {
 		t.button("Add with this cost").click();
 		await settle();
 		check("answer: the same add sent again with rate 6.5", [adds().length, adds()[1].rate, adds()[1].qty, adds()[1].without_po, adds()[1].item_code], [2, 6.5, 2, 1, "PDT-0008"]);
-		check("answer: a reference of its own (the price is part of the save)", adds()[1].client_ref !== adds()[0].client_ref, true);
+		check("answer: the same reference as the question (one for the life of the sheet; the question made nothing)", adds()[1].client_ref, adds()[0].client_ref);
 		check("answer: saved, sheet closed, in Recent with Undo", [U.sheetDepth(), t.app.recent[0] && t.app.recent[0].action, t.app.recent[0] && t.app.recent[0].can_undo], [0, "Add Without PO", 1]);
 		check("answer: no page-only keys sent", "action" in adds()[1], false);
 
@@ -1364,7 +1365,7 @@ async function appUnitCost() {
 		t = await open();
 		await t.ask();
 		const sentBefore = adds().length;
-		for (const [typed, words] of [["", /Enter the unit cost per Each\./], ["0", /must be more than 0/], ["-3", /as a number/], ["abc", /as a number/], ["2,5", /as a number/], ["100001", /above 100,000/], ["Infinity", /as a number/]]) {
+		for (const [typed, words] of [["", /Enter the unit cost per Each\./], ["0", /must be more than 0/], ["-3", /as a number/], ["abc", /as a number/], ["2,5", /as a number/], ["100001", /above 100,000/], ["Infinity", /as a number/], ["12500.01", /one add may put in at most 25,000/], ["20000", /40,000 of stock/]]) {
 			t.type(typed);
 			t.button("Add with this cost").click();
 			await settle();
@@ -1379,7 +1380,7 @@ async function appUnitCost() {
 		// 5. The server's refusal shows inside the sheet; a retry posts again.
 		t = await open();
 		await t.ask();
-		t.type("99999");
+		t.type("9");
 		next = "refuse";
 		t.button("Add with this cost").click();
 		await settle();
@@ -1401,6 +1402,23 @@ async function appUnitCost() {
 		await settle();
 		const second = adds().slice(-1)[0];
 		check("dropped: the tap again repeats the same save, same reference", [second.rate, second.client_ref], [first.rate, first.client_ref]);
+
+		// ... and a CHANGED price after a reply that never came is still the same reference, so a save that did
+		// reach the server cannot post a second time at the new price (the server answers a seen reference
+		// with the first save).
+		t = await open();
+		await t.ask();
+		t.type("7");
+		next = "drop";
+		t.button("Add with this cost").click();
+		await settle();
+		const lost = adds().slice(-1)[0];
+		t.type("8");
+		t.button("Add with this cost").click();
+		await settle();
+		const changed = adds().slice(-1)[0];
+		check("dropped, then a changed price: still the one reference", [changed.rate, changed.client_ref], [8, lost.client_ref]);
+		check("and the question's reference is that one too", adds().filter((b) => b.client_ref === lost.client_ref).length >= 3, true);
 
 		// 7. Back and Cancel leave nothing posted.
 		t = await open();

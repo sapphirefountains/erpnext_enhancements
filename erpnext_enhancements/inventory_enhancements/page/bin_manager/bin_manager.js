@@ -554,9 +554,18 @@ class BinManagerPage {
 					(out) => {
 						busy = false;
 						button.prop("disabled", false);
-						d.hide();
 						// Not a save: the server asked what one unit costs (an item ERPNext has no cost for).
-						if (out && out.prompt) this.cost_dialog(kind, row, given, out.prompt);
+						if (out && out.prompt) {
+							// Asked again after a price was sent: say so here, rather than closing and reopening.
+							if ("rate" in given) {
+								this.dialog_message(d, __("The server still has no cost for this item. Ask a Stock Manager to set its Valuation Rate."));
+								return;
+							}
+							d.hide();
+							this.cost_dialog(kind, row, given, out.prompt);
+							return;
+						}
+						d.hide();
 					},
 					(err) => {
 						busy = false;
@@ -594,7 +603,12 @@ class BinManagerPage {
 				},
 				{ fieldtype: "Float", fieldname: "rate", label: this.safe(copy.label), default: copy.value === "" ? undefined : Number(copy.value) },
 			],
-			values: (d, picked) => Object.assign({}, given, { rate: picked && picked.rate !== undefined ? picked.rate : d.get_value("rate") }),
+			// Frappe's Float hands back null for a blank box and leaves it out of `picked`: the key is always
+			// set, so logic.check_values asks for the cost instead of the count going out without one.
+			values: (d, picked) => {
+				const rate = picked && picked.rate !== undefined ? picked.rate : d.get_value("rate");
+				return Object.assign({}, given, { rate: rate === undefined ? null : rate, max_value: prompt.max_value });
+			},
 		});
 	}
 

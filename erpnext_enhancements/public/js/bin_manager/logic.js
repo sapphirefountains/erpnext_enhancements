@@ -138,9 +138,10 @@ export function check_values(kind, row, values, current) {
 		if (row && Math.abs(qty - (Number(row.on_hand) || 0)) <= TOLERANCE) {
 			return "That is what the system already shows.";
 		}
-		// A unit cost, when the server asked for one: a positive number, within the cap.
-		if (v.rate !== undefined && v.rate !== null) {
-			const cost = unitCostProblem(v.rate, row && row.stock_uom);
+		// A unit cost, when the server asked for one (the key is there, and Frappe's own Float hands back null
+		// for a blank box, so null is checked too): a positive number, within the caps.
+		if ("rate" in v) {
+			const cost = unitCostProblem(v.rate === null || v.rate === undefined ? "" : v.rate, row && row.stock_uom, qty, v.max_value);
 			if (cost.problem) return cost.problem;
 		}
 		return null;
@@ -181,7 +182,7 @@ export function request(kind, warehouse, row, values, ref) {
 	if (kind === "count") {
 		const args = { item_code, warehouse, qty: number(v.qty), client_ref: ref };
 		// Sent only with a unit cost the person gave when asked; the server uses it only for an item with none.
-		if (v.rate !== undefined && v.rate !== null && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
+		if ("rate" in v && v.rate !== null && v.rate !== undefined && String(v.rate).trim() !== "") args.rate = unitCostProblem(v.rate).rate;
 		return { method, args };
 	}
 	if (kind === "move") {

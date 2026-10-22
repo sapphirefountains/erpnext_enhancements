@@ -1828,7 +1828,10 @@ export class StockScanApp {
 		const key = saveKey(Object.assign({ action }, body));
 		const kept = keptRef(this.pending.get(key), Date.now());
 		if (!kept) this.pending.delete(key);
-		const ref = kept || mintRef();
+		// One reference for the life of the "what does one cost?" sheet (`ui.ref`): a changed price after a
+		// reply that never came would otherwise be a new save, and a save that did reach the server would
+		// post twice. The server answers any resend of a reference with the first save.
+		const ref = (ui && ui.ref) || kept || mintRef();
 		body.client_ref = ref;
 		const keepChange = !!(ui && ui.keepChange);
 
@@ -1855,7 +1858,7 @@ export class StockScanApp {
 				// Asked again after a price was sent: the server is not taking it. Say so in the sheet that
 				// sent it rather than stacking another question on it.
 				if (sheetUi) sheetUi.showError("The server still has no cost for this item. Ask a stock manager to set its Valuation Rate.");
-				else this.askUnitCost(v, method, args, result);
+				else this.askUnitCost(v, method, args, result, ref);
 				return;
 			}
 			if (ui && ui.onDone) ui.onDone();
@@ -1907,7 +1910,7 @@ export class StockScanApp {
 	 * on every resend of the same price. A refusal (a cost above the cap, no permission) shows inside
 	 * the sheet; Cancel and Back leave nothing posted. A sheet is already a history marker (nav.js).
 	 */
-	askUnitCost(v, method, args, prompt) {
+	askUnitCost(v, method, args, prompt, ref) {
 		const copy = costPromptText(prompt, args.qty, "add");
 		const error = errorLine("ee-ss-field-error");
 		let closed = false;
@@ -1922,7 +1925,7 @@ export class StockScanApp {
 		});
 		const submit = (h, btn) => {
 			if (posting) return false;
-			const answer = unitCostProblem(field.value, prompt.uom);
+			const answer = unitCostProblem(field.value, prompt.uom, args.qty, prompt.max_value);
 			if (answer.problem) {
 				error.show(answer.problem);
 				field.focus();
@@ -1931,6 +1934,7 @@ export class StockScanApp {
 			posting = true;
 			this.post(v, method, Object.assign({}, args, { rate: answer.rate }), {
 				button: btn,
+				ref,
 				// `post` clears the line when it starts (""), and speaks only when it fails: a failure frees the button.
 				showError: (text, action) => {
 					if (text) posting = false;

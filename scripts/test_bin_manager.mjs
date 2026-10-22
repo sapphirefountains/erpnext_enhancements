@@ -127,8 +127,8 @@ function makeServer(options) {
 			if (name === "get_recent") return [];
 			// TASK-2026-02914: a count up from an empty bin for an item ERPNext has no cost for is not a save
 			// but the question "what does one cost?" until a rate comes with it.
-			if (name === "set_count" && fixture.nocost && !args.rate) {
-				return { needs_valuation_rate: true, item_code: args.item_code, item_name: "ELBOW, 2 IN", uom: "Unit", suggestion: 6.5, source: "the last purchase of it: Purchase Order PO-0007, Oct 3", max_rate: 100000 };
+			if (name === "set_count" && fixture.nocost && (!args.rate || fixture.stubborn)) {
+				return { needs_valuation_rate: true, item_code: args.item_code, item_name: "ELBOW, 2 IN", uom: "Unit", qty: args.qty, suggestion: 6.5, source: "the last purchase of it: Purchase Order PO-0007, Oct 3", max_rate: 100000, max_value: 25000 };
 			}
 			if (name === "search_items") return [{ item_code: "PDT-0009", item_name: "VALVE", is_stock_item: 1, on_hand_here: 0 }];
 			if (name === "check_new_item") return { checked: true, exists: null, similar: [], blocking: [], advice: [], will_refuse: false };
@@ -817,6 +817,21 @@ test("the real page: a count up for an item with no cost asks what one costs, th
 		check(`cost ${JSON.stringify(typed)} is refused in words`, [words.test(msgOf(ask)), server.writes().length], [true, sent]);
 	}
 
+	// Frappe's real Float hands back null for a blank box (and leaves it out of what the primary button passes
+	// on): that is "no cost given", said in words, never a count sent without one that the server asks about again
+	for (const blank of [null, undefined]) {
+		ask.values.rate = blank;
+		await ask.click_primary();
+		await settle();
+		check(`a blank box (${blank === null ? "null" : "undefined"}) asks for the cost in words, sends nothing, keeps the dialog`, [/Enter the unit cost per Unit\./.test(msgOf(ask)), server.writes().length, ask.shown], [true, sent, true]);
+	}
+	// quantity times cost is capped as well: 3 Unit at 9,000 is 27,000
+	ask.values.rate = 9000;
+	await ask.click_primary();
+	await settle();
+	check("3 at 9,000 is over one add's 25,000 and is said so", [/27,000 of stock/.test(msgOf(ask)), server.writes().length], [true, sent]);
+	check("the count's note does not promise a review (counts are not flagged)", [/reviews it/.test(text), /this one count only/.test(text)], [false, true]);
+
 	// the answer counts again with the rate
 	ask.values.rate = 4.5;
 	await ask.click_primary();
@@ -825,6 +840,22 @@ test("the real page: a count up for an item with no cost asks what one costs, th
 	check("the same count sent again with rate 4.5", [server.writes().length, second.args.item_code, second.args.qty, second.args.rate], [2, "PDT-0002", 3, 4.5]);
 	check("a reference of its own is sent", /^bm-/.test(second.args.client_ref), true);
 	check("the dialog closed, and now it is reported and the bin reloaded", [ask.shown, reads() > locations], [false, true]);
+});
+
+test("the real page: a server that asks again after a price was sent is said so in the dialog, not reopened", async () => {
+	const { server, world, registry, click } = loadPage({ nocost: true, stubborn: true });
+	world.go_to("/desk/bin-manager/" + encodeURIComponent(BIN_A));
+	await settle();
+	click({ "data-act": "count", "data-item": "PDT-0002" });
+	const first = registry.dialogs.pop();
+	first.values.qty = 3;
+	await first.click_primary();
+	await settle();
+	const ask = registry.dialogs.pop();
+	ask.values.rate = 5;
+	await ask.click_primary();
+	await settle();
+	check("one dialog, still open, with the reason in it, and no third dialog", [ask.shown, /still has no cost/.test(msgOf(ask)), registry.dialogs.length, server.writes().length], [true, true, 0, 2]);
 });
 
 test("the real page: a count that needs no cost never asks, and a count to zero is still a count", async () => {

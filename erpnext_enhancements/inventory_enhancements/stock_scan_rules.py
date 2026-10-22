@@ -356,6 +356,24 @@ def check_unit_cost(value, uom=""):
 	return round(rate, 6), None
 
 
+#: The most one add or count may put into the books at a typed unit cost, quantity times cost (review of
+#: #1343: with MAX_QTY and MAX_UNIT_COST both at 100,000 one tap by a stock user could post 1e10). Above it the
+#: stock is received on its purchase order or by a stock manager in the Desk. A cost already on record is not
+#: held to it: this limits what a person can *say* an unpriced item is worth.
+MAX_ADD_VALUE = 25000
+
+
+def check_receipt_value(qty, rate, uom=""):
+	"""A sentence when ``qty`` units at a typed ``rate`` would put more than MAX_ADD_VALUE into the books."""
+	total = (_number(qty) or 0.0) * (_number(rate) or 0.0)
+	if total <= MAX_ADD_VALUE:
+		return None
+	return (
+		f"{plain(qty)} {uom} at {plain(rate)} each is {total:,.2f} of stock, and one add may put in at most "
+		f"{MAX_ADD_VALUE:,}. Receive it on its purchase order, or ask a Stock Manager to post it in the Desk."
+	).replace("  ", " ")
+
+
 def _amount(qty, uom):
 	return f"{plain(qty)} {uom}".strip()
 

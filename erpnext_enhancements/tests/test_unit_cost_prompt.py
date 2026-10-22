@@ -100,9 +100,11 @@ class TestAddWithoutAPurchaseOrder(_Base):
 				"item_code": "PDT-0001",
 				"item_name": out["item_name"],
 				"uom": "Unit",
+				"qty": 2.0,
 				"suggestion": 8.25,
 				"source": "the last purchase of it: Purchase Order PO-1, Oct 3",
 				"max_rate": 100000,
+				"max_value": 25000,
 			},
 		)
 		self.nothing_posted()
@@ -155,8 +157,50 @@ class TestAddWithoutAPurchaseOrder(_Base):
 					rate=bad,
 				)
 		self.nothing_posted()
-		self.add(ref=20, rate=rules.MAX_UNIT_COST)
-		self.assertEqual(base._vouchers("Stock Entry")[0]["items"][0]["basic_rate"], 100000.0)
+
+	def test_the_total_is_capped_too(self):
+		"""Review of #1343: with the quantity and the unit cost each allowed 100,000, one tap could post 1e10.
+		Quantity times a typed cost may be at most MAX_ADD_VALUE (25,000); the boundary itself is allowed."""
+		self.assertEqual(rules.MAX_ADD_VALUE, 25000)
+		self.assertRefused(
+			base.scan.add,
+			"of stock",
+			"at most 25,000",
+			item_code="PDT-0001",
+			warehouse=BIN_A,
+			qty=2,
+			client_ref=base._ref(1),
+			without_po=1,
+			rate=12500.01,
+		)
+		self.assertRefused(
+			base.scan.add,
+			"of stock",
+			item_code="PDT-0001",
+			warehouse=BIN_A,
+			qty=100000,
+			client_ref=base._ref(2),
+			without_po=1,
+			rate=100000,
+		)
+		self.nothing_posted()
+		self.add(ref=3, rate=12500)  # 2 x 12,500 = 25,000
+		self.assertEqual(base._vouchers("Stock Entry")[0]["items"][0]["basic_rate"], 12500.0)
+
+	def test_a_cost_on_record_is_not_held_to_the_total(self):
+		"""The cap limits what a person can SAY an unpriced item is worth, not an item with a history."""
+		STATE["rate"] = 30000
+		self.add(rate=None)
+		self.assertEqual(base._vouchers("Stock Entry")[0]["items"][0]["basic_rate"], 30000.0)
+
+	def test_a_resend_at_a_changed_price_returns_the_first_save(self):
+		"""One reference for the life of the sheet: if the first answer never arrived, a different price on the
+		same reference is not a second posting at the new price."""
+		self.add(ref=1, rate=9)
+		again = self.add(ref=1, rate=11)
+		self.assertTrue(again["repeated"])
+		(se,) = base._vouchers("Stock Entry")
+		self.assertEqual(se["items"][0]["basic_rate"], 9.0, "the first price stands")
 
 	def test_a_blank_cost_is_a_question_not_an_error(self):
 		self.assertTrue(self.add(rate="  ")["needs_valuation_rate"])
@@ -191,8 +235,24 @@ class TestACountUpFromAnEmptyBin(_Base):
 	def test_no_cost_on_record_answers_with_a_payload_and_posts_nothing(self):
 		out = self.count()
 		self.assertTrue(out["needs_valuation_rate"])
-		self.assertEqual((out["item_code"], out["uom"]), ("PDT-0001", "Unit"))
+		self.assertEqual(
+			(out["item_code"], out["uom"], out["qty"], out["max_value"]), ("PDT-0001", "Unit", 3.0, 25000)
+		)
 		self.nothing_posted()
+
+	def test_the_total_is_capped_for_a_count_too(self):
+		self.assertRefused(
+			base.bins.set_count,
+			"of stock",
+			item_code="PDT-0001",
+			warehouse=BIN_A,
+			qty=4,
+			client_ref=base._ref(1),
+			rate=7000,
+		)
+		self.nothing_posted()
+		self.count(ref=2, qty=3, rate=7000)  # 21,000
+		self.assertEqual(len(base._vouchers("Stock Reconciliation")), 1)
 
 	def test_the_answer_posts_one_reconciliation_at_that_cost(self):
 		self.count(rate="4.5")
@@ -270,9 +330,9 @@ class TestTheSuggestion(unittest.TestCase):
 		def sql(query, values=None, as_dict=False, **kwargs):
 			text = " ".join(query.split())
 			self.queries.append(text)
-			if "from `tabPurchase Receipt Item`" in text:
+			if ") purchases where" in text:
 				return self.answers["purchases"]
-			if "from `tabItem Price`" in text:
+			if "from `tabItem Price` ip" in text:
 				return self.answers["price"]
 			return original(query, values, as_dict=as_dict, **kwargs)
 
@@ -287,6 +347,7 @@ class TestTheSuggestion(unittest.TestCase):
 		self._original_get = base.FRAPPE.db.get_value
 
 	def tearDown(self):
+		base.STATE["perm"].clear()
 		base.FRAPPE.db.sql = self._sql
 		if self._single:
 			base.FRAPPE.db.get_single_value = self._single
@@ -329,11 +390,68 @@ class TestTheSuggestion(unittest.TestCase):
 		self.assertNotIn("standard_rate", text)
 		self.assertNotIn("selling", text)
 
+	def test_a_price_is_valid_today_and_converted_to_the_stock_unit(self):
+		self.suggest()
+		price = next(q for q in self.queries if "`tabItem Price` ip" in q)
+		self.assertIn("(ip.valid_from is null or ip.valid_from <= curdate())", price)
+		self.assertIn("(ip.valid_upto is null or ip.valid_upto >= curdate())", price)
+		self.assertIn("`tabUOM Conversion Detail` ucd", price)
+		self.assertIn("nullif(ucd.conversion_factor, 0)", price)
+		self.assertIn(
+			"ifnull(ip.uom, '') in ('', %(uom)s)", price, "the stock unit's own price needs no conversion"
+		)
+
+	def test_a_price_in_another_unit_that_cannot_be_converted_is_skipped_not_misread(self):
+		# the SQL gives NULL for it; the next price down the list is used
+		self.answers["price"] = [(None,), (0,), (3.5,)]
+		rate, source = self.suggest()
+		self.assertEqual(rate, 3.5)
+
+	def test_a_source_the_caller_may_not_read_is_never_queried_or_shown(self):
+		"""A Stock User has no Purchase Invoice and no Item Price read on this site."""
+		base.STATE["perm"][("Purchase Invoice", "read")] = False
+		base.STATE["perm"][("Item Price", "read")] = False
+		self.answers["price"] = [(2.0,)]
+		self.suggest()
+		text = " ".join(self.queries)
+		self.assertNotIn("Purchase Invoice Item", text)
+		self.assertIn("Purchase Order Item", text)
+		self.assertFalse([q for q in self.queries if "`tabItem Price`" in q], "no Item Price query at all")
+		self.assertEqual(self.suggest(), (None, None), "no purchase answer and no price list: no suggestion")
+
+	def test_with_no_purchase_source_readable_nothing_is_queried(self):
+		for doctype in ("Purchase Receipt", "Purchase Invoice", "Purchase Order"):
+			base.STATE["perm"][(doctype, "read")] = False
+		self.suggest()
+		self.assertFalse([q for q in self.queries if ") purchases where" in q])
+
+	def test_a_document_the_caller_cannot_open_is_neither_named_nor_priced(self):
+		self.answers["purchases"] = [
+			base._dict(rate=9.0, doctype="Purchase Order", name="PO-SECRET", on_date="2026-10-09"),
+			base._dict(rate=6.0, doctype="Purchase Order", name="PO-0007", on_date="2026-10-03"),
+		]
+		real = base.FRAPPE.has_permission
+
+		def has_permission(doctype=None, ptype="read", doc=None, **kwargs):
+			if doc == "PO-SECRET":
+				return False
+			return real(doctype, ptype, doc=doc, **kwargs)
+
+		base.FRAPPE.has_permission = has_permission
+		try:
+			rate, source = self.suggest()
+		finally:
+			base.FRAPPE.has_permission = real
+		self.assertEqual(rate, 6.0)
+		self.assertNotIn("PO-SECRET", source)
+		self.assertIn("PO-0007", source)
+
 
 class TestTheClientsHoldTheSameCap(unittest.TestCase):
 	def test_the_page_and_the_bin_manager_use_the_servers_cap(self):
 		logic = (APP / "public" / "js" / "stock_scan" / "logic.js").read_text(encoding="utf-8")
 		self.assertIn(f"export const MAX_UNIT_COST = {rules.MAX_UNIT_COST};", logic)
+		self.assertIn(f"export const MAX_ADD_VALUE = {rules.MAX_ADD_VALUE};", logic)
 		# the Bin Manager re-exports the page's pieces, so the two screens word and cap it alike
 		bm = (APP / "public" / "js" / "bin_manager" / "logic.js").read_text(encoding="utf-8")
 		self.assertIn('from "../stock_scan/logic.js"', bm)
