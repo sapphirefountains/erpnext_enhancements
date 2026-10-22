@@ -28,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `scripts/test_bin_manager.mjs`: the dialog stand-in builds no input for a hidden field, as Frappe does, so
     the Move tests throw on the old code; new tests walk the whole move.
 
+### Changed
+- **"Reorder at" can be 0** (reverses part of the #1338 review). Nik, 2026-10-22: "The reorder at line is
+  refusing to be assigned a 0 even though running out of all stock is a very normal spot to reorder items."
+  The review had refused a level of 0 because it raises a request "whenever stock reaches 0"; that is the point.
+  ERPNext's trigger (`erpnext/stock/reorder_item.py`, version-16) is `if (reorder_level or reorder_qty) and
+  projected_qty <= reorder_level`, and `get_items_for_reorder` does not filter on level > 0: a rule at 0 with a
+  quantity raises a Material Request once projected stock reaches 0 or below, and projected stock counts open
+  Material Requests and Purchase Orders, so it does not raise a second one. **Buy still has to be above 0** (a
+  rule that buys nothing is removed), a level below 0 is still refused, and a blank "Reorder at" box on an
+  existing rule still asks to remove it: a typed 0 is a level, a blank is not. A level of 0 shows as "0", is a
+  rule when read back, and survives a reload and a resend. In `api/reorder_levels.py` `set_reorder_level` and
+  `public/js/reorder_levels/logic.js` `plan_save`; the "Buy" refusal now has a sentence about Buy only.
+  Known and left alone: the KPI dashboards (`Stocked Items Out of Stock` and friends) and
+  `stock_scan._reorder_level` call an item *stocked* when its level is above 0, so an item reordered at 0 is not
+  counted as stocked there; whether they should say "has a rule" instead is a separate decision.
+
 ### Added
 - **An item's name in the Bin Manager links to its Item record** (TASK-2026-02918). A real anchor to the Desk
   form (`/desk/item/<code>`, from `frappe.utils.get_form_link`, never `/app`, which is a full page load on

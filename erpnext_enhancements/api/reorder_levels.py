@@ -41,9 +41,19 @@ harmless: these are absolute values, not increments.
 **What a rule may be (review of #1338, 2026-10-22).** ``Stock Settings.auto_indent`` is on, so every
 rule this module writes drives the nightly automatic Material Requests (ERPNext submits them):
 
-* **Both numbers, both above 0.** A rule is made only when the level *and* the quantity are given, and
-  neither is ever saved as 0: a level of 0 raises a request whenever stock reaches 0. A rule is
-  switched off by *removing* it (:func:`remove_reorder_rule`), which the screens ask about first.
+* **Both numbers given; Buy above 0; Reorder at may be 0.** A rule is made only when the level *and*
+  the quantity are given. ``warehouse_reorder_qty`` is never saved as 0 or less: a rule that buys
+  nothing is no rule, and one is switched off by *removing* it (:func:`remove_reorder_rule`), which the
+  screens ask about first. ``warehouse_reorder_level`` may be **0**. Nik, 2026-10-22: "The reorder at
+  line is refusing to be assigned a 0 even though running out of all stock is a very normal spot to
+  reorder items." The review of #1338 had refused a level of 0 as a request raised "whenever stock
+  reaches 0"; that is exactly what he wants. ERPNext's trigger (``erpnext/stock/reorder_item.py``,
+  version-16) is ``if (reorder_level or reorder_qty) and projected_qty <= reorder_level``, and
+  ``get_items_for_reorder`` does not filter on level > 0: a rule at 0 with a quantity raises a Material
+  Request once projected stock reaches 0 or below, and because projected stock counts open Material
+  Requests and Purchase Orders it does not raise a second one. A level below 0 is still refused.
+  (Known: the KPI dashboards and ``stock_scan._reorder_level`` call an item *stocked* when its level
+  is above 0, so an item reordered at 0 is not counted as stocked there.)
 * **A sane ceiling** (:data:`MAX_AMOUNT`, ``stock_scan_rules.MAX_QTY``, 100,000): a barcode scanned
   into a focused box and followed by the scanner's Enter is a number of twelve digits. And a unit
   that is counted in whole numbers (``UOM.must_be_whole_number``) takes whole numbers.
@@ -350,8 +360,9 @@ def set_reorder_level(item_code, warehouse, modified, level=None, qty=None, view
 	with no rule there gets one, as a Purchase request, **only when both numbers are given**, in
 	the group :func:`_default_group` finds. ``modified`` is the Item's stamp from the read: a
 	changed Item refuses the save, with the sentence to reload. On an existing rule a value left
-	out (None or blank) is kept. Neither number is ever saved as 0 or less: to stop reordering,
-	:func:`remove_reorder_rule`. ``view_warehouse`` is the warehouse the screen is looking at
+	out (None or blank) is kept. ``qty`` is never saved as 0 or less (to stop reordering,
+	:func:`remove_reorder_rule`); ``level`` may be 0, which reorders when stock runs out, but not below
+	0 (see the module docstring). ``view_warehouse`` is the warehouse the screen is looking at
 	(``warehouse`` when not given): the answer's ``elsewhere`` is read against it. Returns
 	``{"saved", "message", "entry"}``; ``saved`` is False when the numbers were already those.
 
@@ -381,9 +392,10 @@ def set_reorder_level(item_code, warehouse, modified, level=None, qty=None, view
 		and flt(target.warehouse_reorder_qty) == new_qty
 	)
 	if not unchanged:
-		# A level of 0 raises a request whenever stock reaches 0, and the nightly run submits them.
-		if new_level <= 0:
-			frappe.throw(_("Reorder at must be more than 0. To stop reordering, remove the rule."))
+		# Reorder at 0 is a rule: it raises a request once projected stock reaches 0 (Nik, 2026-10-22, and
+		# ERPNext's own trigger; see the module docstring). It is the quantity that must be more than 0.
+		if new_level < 0:
+			frappe.throw(_("The reorder level cannot be below 0."))
 		if new_qty <= 0:
 			frappe.throw(_("Buy must be more than 0. To stop reordering, remove the rule."))
 	if created:

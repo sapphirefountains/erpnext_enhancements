@@ -618,8 +618,10 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   labelled with its warehouse and edited there; an item with none gets a Purchase rule on the bin once
   both numbers are given.
 * **What a rule may be.** Automatic re-ordering is on (`Stock Settings`), so a bad rule orders stock:
-  a rule needs **both** numbers and both above 0 (a level of 0 raises a request whenever stock reaches 0);
-  clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
+  a rule needs **both** numbers; **Buy must be above 0, Reorder at may be 0** (Nik, 2026-10-22: running out
+  of all stock is a normal place to reorder; ERPNext reorders when projected stock is at or below the level, so
+  0 raises one request when it runs out, and open requests and orders count, so not two). A blank box is not a
+  0: clearing a box of an existing rule asks "Remove this reorder rule?" and a typed 0 is a level. Clearing a box of an existing rule asks "Remove this reorder rule?" and `remove_reorder_rule` takes
   that row out through the Item; nothing is above 100,000 (`MAX_QTY`; a scanned barcode is twelve
   digits) and a whole-number unit takes whole numbers. A new rule's `warehouse_group` is derived from its
   neighbours (`_default_group`: same depth, nearest group with rules, most common group, own-bin rules
