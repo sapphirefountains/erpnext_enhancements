@@ -26,12 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
        agreement's own cadence, because a Recurring Amount is "per period" of *its* cadence, and a monthly
        amount beside a Quarterly tick in §4.2 would contradict the page.
     2. The Annual Maintenance Fee ÷ `billed_periods_per_year`, the same split and season the maintenance
-       contract derives for itself.
+       contract derives for itself. It is used only before that contract exists or while it bills on the same
+       cadence. A split printed beside a contract that invoices per visit would state a fee nobody is billed.
     3. Nothing: the line is left out. It never prints $0.00 or a blank.
   - **No line for a plan priced per visit.** Per Visit invoicing gets no line. Neither does an agreement whose
     ticked Standard Maintenance has a per-visit rate, whatever it is invoiced on. Its Annual Fee is rate ×
     visits, so splitting it would print a flat price nobody agreed to: Hardware Apartments ($690 a visit,
-    $17,940 a year) would have read "$1,495.00 per month".
+    $17,940 a year) would have read "$1,495.00 per month". An Annually split gets no line either, because it
+    would only repeat the Annual Service Fee Total.
+  - **The Contract Builder** stops listing a blank Annual Maintenance Fee under blanks, and stops counting it in
+    progress, while a Service Fee prints and the template therefore leaves that line out
+    (`contract_builder._printed_only_when_set`).
   - **Annual Service Fee Total** still prints whenever it is set. When a Service Fee prints and no annual total
     is set, the blank "(if applicable)" line beside a stated fee is left out (Day Dairy). With neither figure,
     the paper form keeps its blank. A ticked Standard Maintenance with no per-visit rate reads "base rate in the
@@ -42,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `seed_contract_templates` (insert-only) never updates. It follows the same rules as the v1.611.1 layout
   refresh:
   - It replaces the body only when its SHA-256 is a body this repo shipped: v1.611.1, which matched prod byte
-    for byte on 2026-10-22, or v1.609.0 / v1.611.0. A body edited on the site is logged and left alone.
+    for byte on 2026-10-22, or v1.611.0. Not v1.609.0: that body predates the 2026-10-13 terms, whose own patch
+    resets issued agreements before it swaps. A body edited on the site is logged and left alone.
   - It freezes paper-signed copies first.
   - It waits while a signing link is out.
   - It resets no contract's terms, cannot raise, and finds the body current on a second run.

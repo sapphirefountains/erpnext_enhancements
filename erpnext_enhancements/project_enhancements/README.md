@@ -476,6 +476,17 @@ or sent for the client to sign in their own time.
   (Maintenance, Rental and Owner first). Each sentence restates a clause of the shipped template; change both together (a test
   checks the quoted figures against the template text). The signing page scrolls to the next initials
   box after each one, then to the signature.
+- **The maintenance agreement's Service Fee** (`maintenance_fee.py`, `period_fee` in the render context,
+  v1.724.0): "Service Fee: $1,490.00 per month, billed May through September" in Service Plan Selection, and a
+  matching summary row. The figure is the linked Sapphire Maintenance Contract's Recurring Amount when it bills on
+  the agreement's cadence. Before that contract exists, or when it bills on the same cadence without an amount, the
+  figure is the Annual Fee ÷ `billed_periods_per_year`. Otherwise no line, never $0.00.
+  - No line for Per Visit invoicing, a ticked and priced per-visit Standard rate, or an Annually split that would
+    only repeat the Annual Fee.
+  - With a Service Fee and no Annual Fee, the template drops the blank Annual Service Fee Total line, and the
+    builder's `blanks`/`progress` stop asking for it (`_printed_only_when_set`).
+  - `patches/refresh_maintenance_agreement_fee_line` brings it to the live body (v1.611.1 / v1.611.0 shipped
+    bodies only).
 - **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
   which replaces the live body only when it is exactly the v1.609.0 shipped body):
   Standard Maintenance is the base rate per visit plus chemicals, always billed in addition

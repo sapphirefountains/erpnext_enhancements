@@ -15,7 +15,9 @@ Where the figure comes from, first match wins:
    cadence, so a monthly amount beside a "Quarterly" tick would contradict the page it is on.
 2. **The agreement's Annual Maintenance Fee ÷ billed periods**, the split the maintenance contract
    derives for itself (``SapphireMaintenanceContract._recurring_billing_setup``), with the same helper
-   and so the same billing season.
+   and so the same billing season. Only while there is no maintenance contract yet or it bills on the
+   agreement's cadence: a split printed beside a contract that invoices per visit states a fee nobody
+   is billed.
 3. **Nothing.** The line is left out rather than printed as $0.00 or a blank.
 
 Per Visit agreements have no per-period fee: their price is the per-visit base rate the plan already
@@ -23,8 +25,10 @@ prints. Nor does a plan whose ticked Standard Maintenance carries a per-visit ra
 invoiced on: its Annual Fee is that rate times the visits (``_annualize_options``), so splitting it
 would print a flat monthly price the client never agreed to (Hardware Apartments, $690 a visit, would
 have read "$1,495.00 per month"), and a flat Recurring Amount beside a per-visit rate is a question for
-whoever priced it, not something to print. The billing season (Bill From / Bill Through) lives on the maintenance contract and applies only
-to Monthly billing, as it does when invoicing.
+whoever priced it, not something to print. An Annually agreement whose fee would be its own Annual Fee
+gets no line either: the Annual Service Fee Total already states that figure. The billing season
+(Bill From / Bill Through) lives on the maintenance contract and applies only to Monthly billing, as it
+does when invoicing.
 
 Never raises and is deterministic for the same records: it runs on the print path and inside the e-sign
 drift check, which compares a fresh render with the snapshot the signer was sent.
@@ -87,10 +91,10 @@ def period_fee(doc, maintenance=None):
 	amount, source = 0.0, None
 	if same_cadence and flt(maintenance.get("recurring_amount")) > 0:
 		amount, source = flt(maintenance.get("recurring_amount"), 2), "maintenance_contract"
-	else:
+	elif same_cadence or not maintenance:
 		annual = flt(doc.get("annual_maintenance_fee"))
 		periods = billed_periods_per_year(frequency, *season)
-		if annual > 0 and periods:
+		if annual > 0 and periods and periods > 1:
 			amount, source = flt(annual / periods, 2), "annual_fee"
 	if amount <= 0:
 		return None

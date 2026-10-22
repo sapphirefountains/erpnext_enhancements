@@ -169,6 +169,11 @@ def setUpModule():
 def tearDownModule():
     for mod in STUBBED:
         sys.modules.pop(mod, None)
+        # `from package import module` reads the package attribute before sys.modules, so a suite run
+        # after this one would otherwise get the copy bound to this suite's frappe stub.
+        parent, _, child = mod.rpartition(".")
+        if parent in sys.modules and getattr(sys.modules[parent], child, None) is not None:
+            delattr(sys.modules[parent], child)
     sys.modules.update(_saved)
 
 
@@ -219,7 +224,11 @@ class TestPeriodFee(unittest.TestCase):
         self.assertEqual((monthly["amount"], monthly["per"], monthly["season"]), (1495.0, "month", ""))
         quarterly = fee.period_fee(_Doc(invoicing_frequency="Quarterly", annual_maintenance_fee=12000))
         self.assertEqual((quarterly["amount"], quarterly["per"]), (3000.0, "quarter"))
-        yearly = fee.period_fee(_Doc(invoicing_frequency="Annually", annual_maintenance_fee=9000))
+        # Annually: the split is the Annual Fee itself, which the Annual Service Fee Total already prints.
+        self.assertIsNone(fee.period_fee(_Doc(invoicing_frequency="Annually", annual_maintenance_fee=9000)))
+        yearly = fee.period_fee(
+            _Doc(invoicing_frequency="Annually"), _contract(invoicing_frequency="Annually", recurring_amount=9000)
+        )
         self.assertEqual((yearly["amount"], yearly["per"]), (9000.0, "year"))
 
     def test_per_visit_has_no_period_fee(self):
@@ -254,9 +263,12 @@ class TestPeriodFee(unittest.TestCase):
         """A quarterly amount beside the agreement's "Monthly" tick would contradict §4.2."""
         doc = _Doc(invoicing_frequency="Monthly", annual_maintenance_fee=0)
         self.assertIsNone(fee.period_fee(doc, _contract(invoicing_frequency="Quarterly", recurring_amount=3000)))
+        # Nor is the Annual Fee split: that contract does not invoice monthly either.
         doc["annual_maintenance_fee"] = 12000
-        result = fee.period_fee(doc, _contract(invoicing_frequency="Quarterly", recurring_amount=3000))
-        self.assertEqual((result["amount"], result["season"], result["source"]), (1000.0, "", "annual_fee"))
+        self.assertIsNone(fee.period_fee(doc, _contract(invoicing_frequency="Quarterly", recurring_amount=3000)))
+        self.assertIsNone(fee.period_fee(doc, _contract(invoicing_frequency="Per Visit", recurring_amount=0)))
+        # Before the maintenance contract exists, the split is what it will derive for itself.
+        self.assertEqual(fee.period_fee(doc)["amount"], 1000.0)
 
     def test_a_season_only_applies_to_monthly_billing(self):
         result = fee.period_fee(
@@ -381,7 +393,9 @@ class TestTemplate(unittest.TestCase):
         self.assertIn("<p><b>Service Fee: $3,000.00 per quarter</b>.</p>", html)
         self.assertIn("Annual Service Fee Total (if applicable): $12,000.00", html)
         self.assertIn("The Service Fee and the Annual Service Fee Total count base rates only.", html)
-        yearly = fee.period_fee(_Doc(invoicing_frequency="Annually", annual_maintenance_fee=9000))
+        yearly = fee.period_fee(
+            _Doc(invoicing_frequency="Annually"), _contract(invoicing_frequency="Annually", recurring_amount=9000)
+        )
         self.assertIn("Service Fee: $9,000.00 per year</b>.", self.render(period_fee=yearly))
 
     def test_per_visit_prints_no_fee_line(self):
@@ -472,6 +486,8 @@ class TestPatch(unittest.TestCase):
         self.assertEqual(patch.decide(self.old, self.new), "replace")
         self.assertEqual(patch.decide(self.old + "<p>edited on the site</p>", self.new), "diverged")
         self.assertIn(V1_611_1_SHA256, patch.REPLACEABLE_BODY_SHA256)
+        # v1.609.0 predates the 2026-10-13 terms; their own patch resets issued agreements before swapping.
+        self.assertNotIn("4b77c564f827ccff3ab915a8cab6b582f72bb4493ff67ec730c4b0e07fba2967", patch.REPLACEABLE_BODY_SHA256)
         # Otherwise every migrate would see "replace" and rewrite the record.
         self.assertNotIn(patch.body_sha256(self.new), patch.REPLACEABLE_BODY_SHA256)
 

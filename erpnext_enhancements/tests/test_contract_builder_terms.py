@@ -118,7 +118,7 @@ def _install_frappe_stub():
     utils.cint = lambda value: int(float(value or 0))
     utils.fmt_money = lambda value, currency=None: f"${flt(value):,.2f}"
     utils.formatdate = lambda value: str(value)
-    for name in ("add_days", "add_years", "getdate", "nowdate"):
+    for name in ("add_days", "add_months", "add_years", "getdate", "nowdate"):
         setattr(utils, name, lambda *a, **k: None)
     frappe.utils = utils
 
@@ -1078,6 +1078,30 @@ class TestShownFields(unittest.TestCase):
         plain = builder.progress({"template_key": "maintenance", "property_type": "Commercial"}, steps, body)
         other = builder.progress({"template_key": "maintenance", "property_type": "Other"}, steps, body)
         self.assertEqual(other["total"], plain["total"] + 1)  # Other Property Type appears only for Other
+
+    def test_a_service_fee_hides_the_blank_annual_fee_from_blanks_and_progress(self):
+        """v1.724.0: with a Service Fee and no Annual Fee the template leaves the Annual Service Fee Total
+        out (Day Dairy), so the builder must not ask for it."""
+        steps = builder.builder_steps("maintenance", "Customer")
+        body = TEMPLATE.read_text(encoding="utf-8")
+        frappe = sys.modules["frappe"]
+        frappe.db.get_value = lambda *a, **k: body
+        doc = {"template_key": "maintenance", "name": "SF-MAINT-2026-0018", "invoicing_frequency": "Monthly"}
+        without = builder.progress(doc, steps, body)
+        self.assertIn("annual_maintenance_fee", [row["fieldname"] for row in builder.blanks(doc, steps)])
+        contract = {"name": "MNT-CON-2026-00002", "status": "Active", "recurring_amount": 1490,
+                    "invoicing_frequency": "Monthly", "billing_season_start": "May", "billing_season_end": "September"}
+        saved = frappe.get_all
+        frappe.get_all = lambda doctype, *a, **k: [contract] if doctype == "Sapphire Maintenance Contract" else []
+        try:
+            self.assertNotIn("annual_maintenance_fee", [row["fieldname"] for row in builder.blanks(doc, steps)])
+            self.assertEqual(builder.progress(doc, steps, body)["total"], without["total"] - 1)
+            # A set Annual Fee prints beside the Service Fee, so it counts as filled, not hidden.
+            set_fee = builder.progress(dict(doc, annual_maintenance_fee=7450), steps, body)
+            self.assertEqual(set_fee["total"], without["total"])
+        finally:
+            frappe.get_all = saved
+            frappe.db.get_value = lambda *a, **k: None
 
 
 class TestPartyWording(unittest.TestCase):

@@ -17,8 +17,8 @@ before.
 Same discipline as ``refresh_maintenance_agreement_layout``, whose helpers it shares:
 
 * the body is replaced only when it is exactly one this repo shipped (SHA-256): the v1.611.1 body prod
-  carried when this was written (checked 2026-10-22), or the v1.609.0 / v1.611.0 bodies should an
-  earlier refresh still be waiting on a signing link; a body edited on the site is logged and left alone;
+  carried when this was written (checked 2026-10-22), or the v1.611.0 body should the layout refresh
+  still be waiting on a signing link; a body edited on the site is logged and left alone;
 * contracts signed on paper are frozen first, so their reprint keeps the agreement they were signed on
   (on prod the one signed maintenance agreement, SF-MAINT-2026-0001, was frozen in v1.611.0 already);
 * nothing changes while a signing link for the template is out, since the executed copy is re-rendered
@@ -37,10 +37,10 @@ from erpnext_enhancements.patches.update_maintenance_agreement_terms import (
 	shipped_body,
 )
 
-#: Shipped maintenance bodies this patch may replace.
+#: Shipped maintenance bodies this patch may replace. Not v1.609.0: that body predates the 2026-10-13
+#: terms, whose patch resets issued agreements before it swaps, so a site still on it is left to that patch.
 REPLACEABLE_BODY_SHA256 = {
-	# v1.609.0 and v1.611.0, in case an earlier refresh found a signing link out and waited.
-	"4b77c564f827ccff3ab915a8cab6b582f72bb4493ff67ec730c4b0e07fba2967",
+	# v1.611.0, in case the layout refresh found a signing link out and waited.
 	"123c83c50d44a747c44817c12b132a33b83992d1753c6b8f1822dc2b079c3e40",
 	# v1.611.1, the Word-copy layout: prod's body byte for byte on 2026-10-22.
 	"c2baa1612d4d819f76e6becbdbde50b26d85318a62874440e6a2f3cea2609ba6",

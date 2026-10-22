@@ -515,7 +515,6 @@ def _pct(value, width=6):
 
 def _render_context(doc):
 	from erpnext_enhancements.project_enhancements.contract_summary import summary_html
-	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for
 	from erpnext_enhancements.project_enhancements.esign.initials import (
 		INITIALS_CAPTIONS,
 		initial_markup,
@@ -525,6 +524,7 @@ def _render_context(doc):
 		signature_markup,
 		signed_signature_for,
 	)
+	from erpnext_enhancements.project_enhancements.maintenance_fee import period_fee_for
 
 	phases = {row.phase_key: row for row in (doc.get("phases") or [])}
 	options = {row.option_key: row for row in (doc.get("service_options") or [])}
