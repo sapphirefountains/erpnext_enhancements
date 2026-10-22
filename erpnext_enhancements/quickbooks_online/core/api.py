@@ -30,7 +30,7 @@ import secrets
 
 import frappe
 
-from erpnext_enhancements.quickbooks_online.core import matching
+from erpnext_enhancements.quickbooks_online.core import matching, matching_excel
 from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
 from erpnext_enhancements.quickbooks_online.core.mapping import (
 	link_existing_record as run_link_existing_record,
@@ -506,6 +506,50 @@ def confirm_matches(pairs):
 	if not isinstance(pairs, list):
 		frappe.throw("pairs must be a list of {entity_type, qbo_id}.")
 	return matching.confirm_many(pairs)
+
+
+@frappe.whitelist(methods=["POST"])
+def start_matching_export(status=None, entity_types=None, include_parked=1):
+	"""RPC: queue the Record Matching page's Excel export (v1.721.0) under the page's own
+	filters; the page polls ``get_matching_export_status`` with the token it returns. A
+	background job because the full queue is ~2,700 rows of candidate lookups."""
+	_require_qbo_operator()
+	return matching_excel.start_export(
+		status=status,
+		entity_types=_entity_list(entity_types),
+		include_parked=bool(frappe.utils.cint(include_parked)),
+	)
+
+
+@frappe.whitelist()
+def get_matching_export_status(token):
+	"""RPC: ``queued`` / ``running`` / ``done`` (with the private file's URL) / ``failed``.
+	Keyed on the caller, so one person's token never reads another's export."""
+	_require_qbo_operator()
+	return matching_excel.export_status(token)
+
+
+@frappe.whitelist()
+def preview_matching_import(file_name):
+	"""RPC: read an uploaded export and say, row by row, what Apply would do. Writes
+	nothing -- an upload is never applied by itself."""
+	_require_qbo_operator()
+	return matching_excel.preview(file_name)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_matching_import(token, indexes):
+	"""RPC: apply previewed rows (the page sends a few at a time) through the page's own
+	Link / Keep / Retry code path, each row re-checked first; one result per row."""
+	_require_qbo_operator()
+	if isinstance(indexes, str):
+		try:
+			indexes = json.loads(indexes)
+		except ValueError:
+			indexes = None
+	if not isinstance(indexes, list):
+		frappe.throw("indexes must be a list of preview row numbers.")
+	return matching_excel.apply(token, indexes)
 
 
 def _state_key(state):

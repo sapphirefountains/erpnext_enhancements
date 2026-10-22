@@ -79,6 +79,11 @@ MUST_STAY_WHITELISTED = {
         "confirm_matches",
         "link_existing_record",
         "sync_entity",
+        # The Excel round trip (v1.721.0): the page's Export / Import buttons and nothing else.
+        "start_matching_export",
+        "get_matching_export_status",
+        "preview_matching_import",
+        "apply_matching_import",
     ),
     # The AI write gate's only door (v1.528.0 added the batch half). `_confirm_one` and
     # `_cancel_one` now sit directly above the endpoints that wrap them, and losing a decorator

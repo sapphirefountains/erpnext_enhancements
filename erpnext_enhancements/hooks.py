@@ -1812,6 +1812,10 @@ scheduler_events = {
 		# docs (WI-071). Daily and bounded (max_new) so it cannot run away; the one-time
 		# historical backfill is a manual bench execute of attachments.sync_attachments.
 		"erpnext_enhancements.quickbooks_online.core.tasks.sync_attachments_scheduled",
+		# QuickBooks Record Matching Excel round trip (v1.721.0): delete exports and uploaded
+		# imports older than 7 days from Home/QuickBooks Matching Excel. They hold customer and
+		# vendor data, and nothing else ever removes an unattached private File.
+		"erpnext_enhancements.quickbooks_online.core.matching_excel.delete_old_files",
 		# Historical opportunities (v1.629.0, WI-024, decided 2026-10-13): recompute
 		# Opportunity.custom_is_historical -- created before 2025-08-01 AND, in 90 days, no
 		# person's comment, attachment, assignment or status change and no person-to-person
