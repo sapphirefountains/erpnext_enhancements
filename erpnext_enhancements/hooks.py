@@ -1643,6 +1643,15 @@ scheduler_events = {
 		# Settings.naming_digest_recipients; blank, or a week with nothing failing, sends
 		# nothing. Reads only, so a deploy FLUSHDB costs at most one Monday's email.
 		"0 7 * * 1": ["erpnext_enhancements.inventory_enhancements.item_naming_digest.send_weekly_digest"],
+		# Planner UX redesign P9 (v1.715.0, Nik's D16): Monday 06:15 site time, the weekly schedule
+		# summary (the page Overview prints) to the managers named in Project Planner Settings >
+		# Telling managers. OFF: it does nothing, before any query, unless weekly_summary_email is
+		# ticked AND someone is named (the box ships unticked; backfill_weekly_summary_setting writes
+		# its row). Its own key, used nowhere else in this dict ("15 6" is not "10 6", "45 6" or
+		# "30 6 * * 1-5"); a repeated key would silently replace the entry it collided with. At most
+		# one send per week through a Planner Digest Log row (a deploy FLUSHDBs redis). See
+		# project_enhancements/planner_weekly_summary.py.
+		"15 6 * * 1": ["erpnext_enhancements.project_enhancements.planner_weekly_summary.send_weekly_summary"],
 		# workforce (v1.480.0): the supervisor digest -- yesterday's hours per person,
 		# auto-closed intervals, tracking gaps, off-site clock-ins and pending time
 		# correction requests, per team (Employee.reports_to) and company-wide for HR

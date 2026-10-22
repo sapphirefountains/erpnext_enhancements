@@ -1466,3 +1466,8 @@ erpnext_enhancements.patches.make_prj_00775_a_move_job
 # no baseline, no published_on; never un-publishes; Completed/Canceled untouched. New projects still start Draft. Cannot
 # raise, safe twice. After mark_project_schedule_states, which creates the column.
 erpnext_enhancements.patches.publish_active_job_schedules
+# Planner UX redesign P9 (v1.715.0): Project Planner Settings gained weekly_summary_email (a Check, default 0 = OFF; D16, Nik
+# 2026-10-21) and weekly_summary_recipients. A default never reaches a Single's existing row, so write a row for each declared
+# default that has none (project_planner_settings.materialize_defaults): never over a stored value, no validate, and a Single
+# never saved is made whole. Switches nothing on. Cannot raise, safe twice.
+erpnext_enhancements.patches.backfill_weekly_summary_setting
