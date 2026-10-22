@@ -328,6 +328,52 @@ def check_count(value, whole_number=False, uom=""):
 	return qty, None
 
 
+#: The most one unit of anything may be given as costing, when a person types its cost (TASK-2026-02914).
+#: Nik, 2026-10-22: 100,000. The dearest purchase unit cost on file that day was about 7,015, so this stops
+#: a typo or a barcode scanned into the box and never a real price.
+MAX_UNIT_COST = 100000
+
+
+def check_unit_cost(value, uom=""):
+	"""``(rate, problem)`` for a unit cost typed when an item has none on record.
+
+	``(None, None)`` when nothing was given (the caller then asks for one). Otherwise the cost per
+	**stock unit** as a positive number no more than :data:`MAX_UNIT_COST`, or a sentence. It sets
+	the value of the stock in the books, so zero, negative, ``nan`` and ``inf`` are all refused.
+	"""
+	if value is None or (isinstance(value, str) and not value.strip()):
+		return None, None
+	per = f" per {uom}" if uom else ""
+	rate = _number(value)
+	if rate is None:
+		return None, f"Enter the unit cost{per} as a number."
+	if rate <= 0:
+		return None, f"The unit cost{per} must be more than 0."
+	if rate > MAX_UNIT_COST:
+		return None, (
+			f"A unit cost{per} above {MAX_UNIT_COST:,} is not right. Check the number and try again."
+		)
+	return round(rate, 6), None
+
+
+#: The most one add or count may put into the books at a typed unit cost, quantity times cost (review of
+#: #1343: with MAX_QTY and MAX_UNIT_COST both at 100,000 one tap by a stock user could post 1e10). Above it the
+#: stock is received on its purchase order or by a stock manager in the Desk. A cost already on record is not
+#: held to it: this limits what a person can *say* an unpriced item is worth.
+MAX_ADD_VALUE = 25000
+
+
+def check_receipt_value(qty, rate, uom=""):
+	"""A sentence when ``qty`` units at a typed ``rate`` would put more than MAX_ADD_VALUE into the books."""
+	total = (_number(qty) or 0.0) * (_number(rate) or 0.0)
+	if total <= MAX_ADD_VALUE:
+		return None
+	return (
+		f"{plain(qty)} {uom} at {plain(rate)} each is {total:,.2f} of stock, and one add may put in at most "
+		f"{MAX_ADD_VALUE:,}. Receive it on its purchase order, or ask a Stock Manager to post it in the Desk."
+	).replace("  ", " ")
+
+
 def _amount(qty, uom):
 	return f"{plain(qty)} {uom}".strip()
 
