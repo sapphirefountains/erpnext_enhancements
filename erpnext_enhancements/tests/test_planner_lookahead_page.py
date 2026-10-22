@@ -112,8 +112,8 @@ class TestTheBlock(unittest.TestCase):
 		# Week and Month are the Calendar tab's switch, never tabs themselves.
 		self.assertIn('.attr("data-ppl-cal", view)', code)
 		self.assertIn("this.tb.tabs.sync(this.ppl_tab());", code)
-		# load() and load_capacity() (P7 merged the Heatmap and Utilization loads into the one).
-		self.assertEqual(code.count("this.ppl_sync_tabs();"), 2)
+		# load(), load_capacity() (P7 merged the Heatmap and Utilization loads into the one) and P6's ppg_load.
+		self.assertEqual(code.count("this.ppl_sync_tabs();"), 3)
 
 	def test_the_home_tab_and_last_used(self):
 		code = self.code
@@ -121,7 +121,7 @@ class TestTheBlock(unittest.TestCase):
 		self.assertIn('view: ["enum", ["week", "month", "crew", "heatmap", "capacity", "lookahead"]],', code)
 		# The tab is the device's (P8's store, Nik 2026-10-21): the Lookahead is one of its tabs, and the
 		# landing writes a remembered tab's own address (/calendar/week/…, /lookahead/…).
-		self.assertIn('tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead"],', code)
+		self.assertIn('tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt"],', code)
 		self.assertIn("frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));", code)
 		self.assertNotIn("tabbed", code)
 		prefs = PREFS.read_text(encoding="utf-8")

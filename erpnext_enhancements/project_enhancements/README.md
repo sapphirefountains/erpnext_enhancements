@@ -721,8 +721,9 @@ places at once without being told. Scope set by Nik on 2026-10-08; the whole bui
 under TASK-2026-02427 in PRJ-00580, Phase 1 being TASK-2026-02428.
 
 **Opened from a Project** (v1.667.0). The Project form's *View > Open in Project Planner*
-(`public/js/project_enhancements/project_planner_link.js`) routes to `/desk/project-planner?project=<name>`,
-or to `/lookahead/<expected_start_date>` for a project that has not started yet (the week view before P5). The button is only on
+(`public/js/project_enhancements/project_planner_link.js`) routes to that project's Gantt,
+`/desk/project-planner/gantt/<name>?project=<name>` (P6, v1.709.0; before it, the planner's default view, or
+the Lookahead on the week a project that had not started yet starts). The button is only on
 an open customer job (a `PLANNER_PROJECT_TYPES` type, not Completed or Canceled) and only for
 those whose roles open the page. The planner reads `project` as one of its address filters (below):
 after the last-used view is restored, so it wins over that, with the PM filter at All so it cannot
@@ -2109,6 +2110,50 @@ the site's first weekday (Sunday on production). It is the page's `PPL` block an
 - **Print this view** prints the board's rows as a list.
 - **The Project, PM and Group filters** apply as on every tab. Group keeps the tasks with someone of
   that group on the crew.
+
+### The Gantt tab, one project start to finish (P6, v1.709.0, Planner UX redesign)
+
+Nik's D1 of 2026-10-21 ("Gantt: phases + deps"; `docs/planner-ux-redesign.md` §4.3): a PM plans one job
+from its first task to its last. It is the page's `PPG` block, the app's DHTMLX widget
+(`erpnext_enhancements.gantt.mount`, the Project form's Schedule tab's) and
+`api/planner_gantt.get_project_gantt`.
+
+- **Addresses.** `/desk/project-planner/gantt/<project>`; a bare `/gantt` is a project picker. The tab
+  opens the Project filter's project, else the one this device opened last (localStorage
+  `ee_project_planner_gantt_project:<user>`). Each project opened is a route, so Back and Forward step
+  through them. The zoom (Day, Week, Month; remembered in this browser) and a collapsed phase are not
+  routes. The Project form's *Open in Project Planner* lands here. ‹ › scroll the chart a step of its
+  zoom, and Today scrolls to today.
+- **The landing** (approved 2026-10-21 as Nik's per-device rule, no exception). The Gantt is one of P8's
+  remembered tabs, with its project kept beside it (`ee_project_planner_gantt:<user>`). A bare
+  `/project-planner` on a device whose tab is the Gantt is replaced by `/gantt/<that project>`; with no
+  project stored, or one the server refuses (`ppg_refused`), the device forgets it and the Lookahead
+  replaces the address instead. A link that names a filter opens the Lookahead with it.
+- **The feed is the planner's, not `api/gantt.py`'s.** `get_project_gantt` reads the project's Task rows
+  itself (a job runs for months; `get_planner` stops at 100 days) and builds each task with
+  `project_planner.build_card`, so the page indexes them as it does every tab's cards. The D6 rule
+  applies (Show all tasks in More ▸ Display), drafts show (another scheduler's named), finished work is
+  drawn faded and fixed, and canceled and template tasks are left out. No `booked` hours are claimed:
+  nothing spread them over days.
+- **The chart.** Groups are the tree (phases first, by number) and collapse; a group is drawn only
+  above something shown. A bar shows its days and crew; a draft is dashed, a pencil hatched. Undated
+  work is under *Not scheduled* at the bottom. The baseline is a thin grey bar under each bar, drawn by
+  the task type's renderer: the Standard build deletes `gantt.addTaskLayer` (see the widget's header).
+- **Every edit goes through the page.** The widget's `on_write` hook hands a drag or a resize to
+  `commit()`, so the reason prompt, Undo, the conflict check, P4's auto-draft, the tasks that follow
+  (Ctrl/⌘ for just the one) and "Notify crew?" behave as on the other tabs. `update_gantt_row` is never
+  called from the planner. A drag in Week or Month snaps to whole days.
+- **Links.** Dragging from a bar's end dot onto another bar calls `planner_actions.add_dependency`
+  through `send()` (a reason when it would start before the other ends); double-clicking a link offers
+  `remove_dependency`. Both have Undo. They save with ERPNext's calendar-day push held back, since no
+  date moves, and are live even on a Draft schedule (they tell nobody).
+- **The header**: the project picker, the schedule (Draft with Publish…, or Published and when; P4's
+  own confirmation), the baseline's date and Reset baseline (P4's), Build out ▾ (T1's grid, opened on
+  any of its starting points) and the zoom. The widget's export menu stays. A click opens the side
+  panel, a right-click the planner's menu; Print this view lists the project's tasks.
+- **Tests:** `tests/test_planner_gantt.py` (server, on the Phase 3B harness) and
+  `scripts/test_planner_gantt.js` (the real widget on a recording DHTMLX stub, and the real page), run
+  by `tests/test_planner_gantt_page.py`.
 
 ## Calendar sync (C2, v1.604.0)
 

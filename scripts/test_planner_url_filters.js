@@ -243,9 +243,11 @@ function makeDesk(options) {
 		desk.listeners.forEach((fn) => fn({ type: "popstate", state: history.state }));
 	}
 
-	// The device's remembered tab (P8: "ee_project_planner_tab:<user>") is kept apart from the filter
-	// prefs, which these scenarios compare whole.
-	const store_for = (key) => (String(key).startsWith("ee_project_planner_tab") ? desk.tabs : desk.prefs);
+	// The device's remembered tab (P8: "ee_project_planner_tab:<user>") and its Gantt project (P6:
+	// "ee_project_planner_gantt:<user>") are kept apart from the filter prefs, which these scenarios compare
+	// whole.
+	const store_for = (key) =>
+		/^ee_project_planner_(tab|gantt):/.test(String(key)) ? desk.tabs : desk.prefs;
 	const storage = {
 		getItem: (key) => (key in store_for(key) ? store_for(key)[key] : null),
 		setItem: (key, value) => {
