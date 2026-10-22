@@ -2321,8 +2321,11 @@ test("Maintenance Planner: a strip escapes what people typed, and pencilled hour
 	check("firm and pencilled hours", text([{ kind: "task", hours: 6 }, { kind: "task", hours: 2, tentative: true }]), "Project: 6h + 2h pencil");
 	check("only pencil", text([{ kind: "task", hours: 2, tentative: true }]), "Project: 2h pencil");
 	check("half hours keep their fraction", text([{ kind: "travel", hours: 2.5 }]), "Travel: 2.5h");
-	check("mixed kinds are Project", text([{ kind: "rental", hours: 4 }, { kind: "travel", hours: 4 }]), "Project: 8h");
-	check("no hours at all counts the items", text([{ kind: "task" }, { kind: "task" }]), "Project: 2 item(s)");
+	check("a project task among them makes it Project", [text([{ kind: "task", hours: 4 }, { kind: "travel", hours: 4 }]), text([{ kind: "rental", hours: 3 }, { kind: "task", hours: 5 }])], ["Project: 8h", "Project: 8h"]);
+	check("rental and travel with no project task are labeled by what they are, whatever order the engine listed them", [text([{ kind: "rental", hours: 4 }, { kind: "travel", hours: 4 }]), text([{ kind: "travel", hours: 4 }, { kind: "rental", hours: 4 }])], ["Rental + Travel: 8h", "Rental + Travel: 8h"]);
+	check("a weekend travel day books no hours and is just Travel", [text([{ kind: "travel", hours: 0 }]), text([{ kind: "travel", hours: 0 }, { kind: "travel", hours: 0 }])], ["Travel", "Travel: 2 items"]);
+	check("no hours at all counts the items", text([{ kind: "task" }, { kind: "task" }]), "Project: 2 items");
+	check("and says what they are when mixed", text([{ kind: "task" }, { kind: "travel" }]), "Project + Travel: 2 items");
 	const pencil = simplifyPage({ show_project_cards: false });
 	pencil.mp.data.bookings["austin@x.com"]["2026-10-20"].items = [{ kind: "task", ref: "T", label: "Soft", hours: 4, tentative: true }];
 	const soft = pencil.mp.p10_day_strips_html("2026-10-20");
@@ -2614,13 +2617,76 @@ test("Maintenance Planner: the printed page shows the strips beside the visits, 
 	mp.technician = "";
 	check("the crew sheet's cell is that person's", mp.p10_print_items("2026-10-19", "korben@x.com").map((item) => item.title), ["Rental: 8h"]);
 	mp.p6c.highlight = { key: "PRJ-1" };
-	check("with a site highlighted the strip is faded, like the other bookings", mp.p10_print_items("2026-10-19", null)[0].faded, true);
+	check("with a site highlighted the strip is not faded: on screen the highlight fades cards, never the strip", mp.p10_print_items("2026-10-19", null).map((item) => item.faded), [false, false]);
 	check("the hint names the strip", mp.p10_hint_note().includes("thin grey strip"), true);
 	mp.show_project_cards = true;
 	check("cards mode prints cards (p6c_print_item), not strips", mp.p10_print_items("2026-10-19", null), []);
 	check("and the hint names the cards", mp.p10_hint_note().includes("Cards marked Project"), true);
 	mp.show_project_work = false;
 	check("with project work off the hint says nothing of it", mp.p10_hint_note(), "");
+});
+
+test("Maintenance Planner: a click on a strip in the month opens the week of the day clicked, not today's", () => {
+	const { mp, doc } = simplifyPage();
+	const peeks = [];
+	mp.p6a = { kit: { peeks: { person: (opts) => (peeks.push(opts), { is_open: () => true }) }, drawer: {} } };
+	mp.p6d_person_actions = () => [];
+	mp.range = () => (mp.view === "month" ? { start: miniMoment("2026-09-27"), end: miniMoment("2026-11-07") } : { start: miniMoment("2026-10-18"), end: miniMoment("2026-10-24") });
+	mp.data.bookings["austin@x.com"]["2026-10-29"] = { capacity: 8, booked: 4, free: 4, items: [{ kind: "task", ref: "TASK-7", label: "Late October", hours: 4 }], blocks: [] };
+	mp.view = "month";
+	mp.anchor = "2026-10-01";
+	const strip = (ymd) => {
+		const el = doc.createElement("div");
+		el.setAttribute("data-busy-user", "austin@x.com");
+		el.setAttribute("data-busy-date", ymd);
+		return el;
+	};
+	mp.p10_open_busy(strip("2026-10-29"));
+	check("a strip on Thursday the 29th: the peek starts on that week's Sunday and selects the 29th", [peeks[0].start, peeks[0].selected, peeks[0].user], ["2026-10-25", "2026-10-29", "austin@x.com"]);
+	mp.p10_open_busy(strip("2026-10-20"));
+	check("a strip in today's week: today's week", [peeks[1].start, peeks[1].selected], ["2026-10-18", "2026-10-20"]);
+	mp.p10_open_busy(strip("2026-09-28"));
+	check("a strip in the month's leading days: its own week, in the month before", [peeks[2].start, peeks[2].selected], ["2026-09-27", "2026-09-28"]);
+	check("clicking a technician's name (no day) still opens the week on screen: in the month, the one holding today", (mp.p6a_open_person("austin@x.com"), [peeks[3].start, peeks[3].selected]), ["2026-10-18", null]);
+	check("the Resources summary still speaks of today's week in the month", mp.p6a_week_start(), "2026-10-18");
+	mp.view = "week";
+	mp.anchor = "2026-10-20";
+	mp.p10_open_busy(strip("2026-10-22"));
+	check("in the week view, a day of the week on screen opens that week", peeks[4].start, "2026-10-18");
+	check("a day that is not a date asks for the week on screen", mp.p6a_week_start("not a day"), "2026-10-18");
+});
+
+test("Maintenance Planner: a disabled technician keeps their crew row while they have project work, in the crew view and the print", () => {
+	const { mp } = simplifyPage();
+	mp.data.technicians.push({ user: "jesse@x.com", name: "Jesse Pinkman", enabled: false, resource: "R-J", group: "Field" });
+	mp.tech_names["jesse@x.com"] = "Jesse Pinkman";
+	mp.data.bookings["jesse@x.com"] = { "2026-10-19": { capacity: 8, booked: 8, free: 0, items: [{ kind: "task", ref: "TASK-8", label: "Last week of work", hours: 8 }], blocks: [] } };
+	mp.view = "crew";
+	mp.range_days = () => ["2026-10-19", "2026-10-20"];
+	mp.p6d_crew_notes_row = () => "";
+	mp.p6d_cell_blocks = () => "";
+	mp.card_row_html = (card) => `<card ${card.key}>`;
+	mp.render_tray = () => null;
+	const crew = () => mp.$grid_wrap.nodes[0].querySelector(".mp-crew").innerHTML;
+	const printed = () => mp.p6c_print_crew().rows.map((row) => row.label);
+	mp.render_crew(mp.all_cards());
+	check("strip mode: the row is there, with its strip", [crew().includes('data-user="jesse@x.com"'), strips(crew())], [true, 4]);
+	check("and so is the printed row", printed().includes("Jesse Pinkman"), true);
+	mp.show_project_cards = true;
+	mp.render_crew(mp.all_cards());
+	check("cards mode: the row is there, with its card", [crew().includes('data-user="jesse@x.com"'), crew().includes("<card bk|jesse@x.com")], [true, true]);
+	check("and in the print", printed().includes("Jesse Pinkman"), true);
+	mp.show_project_work = false;
+	mp.render_crew(mp.all_cards());
+	check("project work off: nothing keeps a disabled person's row", [crew().includes('data-user="jesse@x.com"'), printed().includes("Jesse Pinkman")], [false, false]);
+	mp.show_project_work = true;
+	mp.show_project_cards = false;
+	mp.data.bookings["jesse@x.com"]["2026-10-19"].items = [];
+	mp.render_crew(mp.all_cards());
+	check("with nothing on the week there is no row either", [crew().includes('data-user="jesse@x.com"'), printed().includes("Jesse Pinkman")], [false, false]);
+	mp.data.technicians.find((person) => person.user === "jesse@x.com").enabled = true;
+	mp.render_crew(mp.all_cards());
+	check("an enabled technician always has one", crew().includes('data-user="jesse@x.com"'), true);
 });
 
 // ------------------------------------------------------------------ run

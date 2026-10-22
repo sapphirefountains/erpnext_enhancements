@@ -20,10 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Project work is one busy strip a technician-day.** The project tasks, rental crew tasks and travel of the
     same people used to be a read-only card each, which filled the October month grid so that maintenance
     visits were a minority of what was drawn. Now each technician-day with such work gets one thin grey bar,
-    "Project: 8h" ("Rental" or "Travel" when that is all there is, "+ 2h pencil" for soft hours, hatched when
-    that is all). Hover lists the tasks; a click opens the person's week with the day selected (6A's person
-    quick look, one history entry). With *All technicians* the strip names the person. In the crew view it sits
-    in the person's cell. **More ▸ Display ▸ Project work as cards** brings back the old cards (and turns
+    "Project: 8h". It is labeled by what is in it: Project when a project task is among the work, "Rental" or
+    "Travel" when that is all there is, "Rental + Travel" when it is both and no project task; a day the engine
+    books no hours for (the weekend of a trip) reads just "Travel". Pencilled hours follow the firm ones
+    ("+ 2h pencil"), and a strip of pencil alone is hatched. Hover lists the tasks; a click opens the person's
+    week with the day selected (6A's person quick look, one history entry), **the week of the day clicked**: the
+    quick look used to start on the week on screen, or in the month view on today's, so a strip on the 29th
+    opened a week without it. Fixed for every way into that look that names a day (a visit panel's "Name's
+    week", the day peek's person). With *All technicians* the strip names the person. In the crew view it sits
+    in the person's cell, and **a disabled technician's row stays while they have project work that week** (it
+    is no card in the cell in strip mode, so the row has to ask). **More ▸ Display ▸ Project work as cards** brings back the old cards (and turns
     *Project work* on, since asking for cards asks for the work); *Project work* still turns all of it off.
     The choice is kept per browser and in the saved views. **Free hours do not change**: they are the shared
     availability engine's, which counts the work however it is drawn, so "Full" and "Over 2h" read the same with
@@ -31,7 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     move* can still drop a visit on the day under it, and a double-click on it adds no visit. A Fountain Move
     task is not a booking on this page (`_drop_move_bookings` removes it from `items`), so its card, drag and
     Undo are unchanged and it is not in the strip. The printed page draws the strips too (one grey line a
-    technician-day), so "prints exactly what is on screen" still holds.
+    technician-day), so "prints exactly what is on screen" still holds: a site highlight fades the cards in
+    print as on screen, and no strip, because on screen it does not.
   - **Resources available starts collapsed to one line.** "This week: Austin: 3h free Tue · Off Thu–Fri,
     Korben: 8h free Tue …": per technician the days with hours free (equal hours are one stretch, "8h free
     Mon–Wed"; more than three stretches end "+N more"), "Fully booked", "Over 2h Wed", "Booked on a day off Sun"
@@ -40,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     picked: only theirs. *Show* opens the table exactly as before; its open state is `ee_maintenance_planner_resources`
     (a new key, so what the old open-by-default left in a browser is not read as a choice). The names in the line
     are the table's own chips, so a click still opens a person's week and a drag onto a visit still adds them.
+    A technician's stretch sits whole on a row while it fits and wraps inside itself only when it is wider than
+    the row (a 375px phone), so it never pushes the page sideways.
   - **The key of the visit kinds is in "?" only.** More ▸ Display no longer carries *Visit kinds* (it was the legend
     row under the toolbar until v1.687.0, then a section of Display), so its swatch rules are gone. "?" holds them
     under *Visit cards*, with a *Project work* section (the strip and the three sample cards), *Resources
@@ -50,7 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     view tabs, kept on a phone, and *My day* in More ▸ Tools for anyone who has a day of their own. It opens the
     Project Planner's Today screen for the planner's today (`/project-planner/today/<date>`, P8): one history
     entry, and Back returns to the planner. Someone with no day of their own is offered nothing, because Today
-    would only show them a note. The Project Planner's landing and its per-device tab memory are untouched.
+    would only show them a note. **It does touch the Project Planner's per-device tab memory:** opening Today
+    from here records it as that browser's last-used tab (`p8_remember_tab("today")`, written whenever Today
+    opens), so a scheduler who uses *My day* will land on Today the next time they open a bare
+    `/project-planner` on that device. That is P8's rule (Nik: "remember the last-used tab per device"), kept as
+    it is; this change adds no landing code and changes none of the Project Planner's.
   - **The hint under the grid** says how project work is drawn now (a strip, or the cards, or nothing).
 - `api/planner_views_prefs.SCHEMA["maintenance"]` replaces `panel` with `resources` and adds `project_cards`. The
   old default (Resources open) wrote `panel: true` into every user's "last used" row, so keeping that key would

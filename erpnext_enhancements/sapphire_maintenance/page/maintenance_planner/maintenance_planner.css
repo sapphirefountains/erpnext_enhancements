@@ -2100,12 +2100,21 @@ body.mp-drag-active * {
 	color: var(--sf-text-muted);
 }
 
+/* A technician's stretch sits whole on a row while it fits (the row wraps before it shrinks one), and
+ * wraps inside itself only when it is wider than the row alone, as on a 375px phone: it never pushes the
+ * page sideways. */
 .mp-res-sum-item {
 	display: inline-flex;
 	align-items: center;
-	flex: 0 0 auto;
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 100%;
 	gap: 2px;
-	white-space: nowrap;
+}
+
+.mp-res-sum-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .mp-res-sum .mp-person {

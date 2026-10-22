@@ -352,6 +352,14 @@ class TestMaintenanceSimplify(unittest.TestCase):
 		self.assertNotIn("tb_kind_items", js)
 		self.assertNotIn("Visit kinds", js)
 
+	def test_the_person_quick_look_opens_on_the_week_of_the_day_asked_for(self):
+		js = self.js
+		self.assertIn("start: this.p6a_week_start(selected),", _method(js, "p6a_open_person"))
+		week = _method(js, "p6a_week_start")
+		self.assertIn("if (on && moment(on, \"YYYY-MM-DD\", true).isValid()) base = on;", week)
+		# The Resources summary asks for no day, so it still speaks of the week on screen (in the month, today's).
+		self.assertIn("moment(this.p6a_week_start(), ", _method(self.block, "p10_summary_window"))
+
 	def test_the_strip_is_a_div_so_tap_to_move_can_still_drop_on_the_day(self):
 		html = _method(self.js, "p10_busy_html")
 		self.assertIn('<div class="mp-busy', html)
@@ -443,6 +451,13 @@ class TestMaintenanceSimplify(unittest.TestCase):
 		# A finger gets 32px of the thin strip; a card is 44px.
 		coarse = re.search(r"@media \(pointer: coarse\) \{(.*?)\n\}", css, flags=re.S).group(1)
 		self.assertRegex(coarse, r"\.mp-busy \{\s*min-height: 32px;")
+		# A technician's stretch wraps inside itself on a narrow screen and never widens the row (a 375px phone).
+		item = css[css.index("\n.mp-res-sum-item {") :][:400]
+		self.assertIn("flex: 0 1 auto;", item)
+		self.assertIn("min-width: 0;", item)
+		self.assertIn("max-width: 100%;", item)
+		self.assertNotIn("nowrap", item)
+		self.assertRegex(css, r"\.mp-res-sum-text \{\s*min-width: 0;\s*overflow-wrap: anywhere;")
 		# The swatch the Display key drew is gone, and the summary hides the table's group label.
 		self.assertNotIn("mp-swatch", css)
 		self.assertRegex(css, r"\.mp-res-sum \.mp-person-group \{\s*display: none;")

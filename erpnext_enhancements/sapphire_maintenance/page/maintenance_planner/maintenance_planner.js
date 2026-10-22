@@ -1129,7 +1129,9 @@ class MaintenancePlanner {
 		// Every technician, plus a disabled one who still has visits this week, plus Unassigned when
 		// any visit has nobody. The technician filter is for the calendar: here every row is a drop target.
 		const people = (this.data.technicians || []).filter(
-			(person) => person.enabled || days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length)
+			(person) =>
+				person.enabled ||
+				days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length || this.p10_has_strip(person.user, ymd))
 		);
 		const rows = people.map((person) => ({ person, user: person.user }));
 		if (days.some((ymd) => (by_cell[`|${ymd}`] || []).length)) rows.push({ person: null, user: "" });
@@ -2579,11 +2581,15 @@ const MP6A_METHODS = {
 
 	// ------------------------------------------------------------------ the quick looks
 
-	p6a_week_start() {
+	// The week the quick looks open on: the week of `on` when a day is asked for (a click on Thursday the 29th
+	// in the month view opens that week, not today's), else the week on screen, or in the month view the one
+	// holding today.
+	p6a_week_start(on) {
 		const today = this.today();
 		const { start, end } = this.range();
 		let base = this.anchor;
 		if (this.view === "month" && today >= mp_ymd(start) && today <= mp_ymd(end)) base = today;
+		if (on && moment(on, "YYYY-MM-DD", true).isValid()) base = on;
 		const day = moment(base || today, "YYYY-MM-DD");
 		return mp_ymd(day.clone().subtract((day.day() - this.first_weekday() + 7) % 7, "days"));
 	},
@@ -2602,7 +2608,7 @@ const MP6A_METHODS = {
 		this.p6a.peek = kit.peeks.person({
 			user,
 			label: this.tech_name(user),
-			start: this.p6a_week_start(),
+			start: this.p6a_week_start(selected),
 			selected: selected || null,
 			days: 7,
 			owner: MP6A.owner,
@@ -5316,7 +5322,9 @@ const MP6C_METHODS = {
 			});
 		});
 		const people = ((this.data && this.data.technicians) || []).filter(
-			(person) => person.enabled || days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length)
+			(person) =>
+				person.enabled ||
+				days.some((ymd) => (by_cell[`${person.user}|${ymd}`] || []).length || this.p10_has_strip(person.user, ymd))
 		);
 		const entries = people.map((person) => ({ person, user: person.user }));
 		if (days.some((ymd) => (by_cell[`|${ymd}`] || []).length)) entries.push({ person: null, user: "" });
@@ -7506,22 +7514,23 @@ const MP10 = {
 
 const MP10_PURE = {
 	// The engine's bookings of one technician-day (`items`) as one figure: the hours that are firm and the
-	// hours that are pencilled, how many there are, and the one kind they all are ("task" when mixed, which
-	// the strip calls Project, as the toolbar's Project work switch does).
+	// hours that are pencilled, how many there are, and the kinds that are in it (project task, rental,
+	// travel), in that order whatever order the engine listed them.
 	busy(items) {
 		let firm = 0;
 		let soft = 0;
 		let count = 0;
-		const kinds = [];
+		const seen = [];
 		(items || []).forEach((item) => {
 			if (!item) return;
 			const hours = Math.max(0, Number(item.hours) || 0);
 			if (item.tentative) soft += hours;
 			else firm += hours;
 			const kind = item.kind in MP.booking_kinds ? item.kind : "task";
-			if (!kinds.includes(kind)) kinds.push(kind);
+			if (!seen.includes(kind)) seen.push(kind);
 			count += 1;
 		});
+		const kinds = Object.keys(MP.booking_kinds).filter((kind) => seen.includes(kind));
 		const round = (value) => Math.round(value * 100) / 100;
 		return { firm: round(firm), soft: round(soft), count, kinds, kind: kinds.length === 1 ? kinds[0] : "task" };
 	},
@@ -7651,13 +7660,25 @@ const MP10_METHODS = {
 	},
 
 	// "Project: 8h", "Rental: 8h", "Travel: 3h"; pencilled hours after the firm ones.
+	// What the strip calls the work: Project, Rental or Travel when that is all there is; Project when a project
+	// task is among it (rental crew tasks and travel are part of that job's work); else the kinds that are
+	// there, "Rental + Travel". Never "Project" for a day that holds no project task.
+	p10_busy_label(busy) {
+		const names = busy.kinds.map((kind) => __(MP.booking_kinds[kind]));
+		if (busy.kinds.length === 1) return names[0];
+		return busy.kinds.includes("task") ? __(MP.booking_kinds.task) : names.join(" + ");
+	},
+
+	// "Project: 8h", "Rental: 8h", "Rental + Travel: 8h"; pencilled hours after the firm ones. A day the engine
+	// books no hours for (the weekend of a trip) is just what it is: "Travel", or "Travel: 2 items".
 	p10_busy_text(busy) {
-		const label = __(MP.booking_kinds[busy.kind] || "Project");
+		const label = this.p10_busy_label(busy);
 		const hours = (value) => `${mp_hours(value)}h`;
 		if (busy.firm > 0 && busy.soft > 0) return __("{0}: {1} + {2} pencil", [label, hours(busy.firm), hours(busy.soft)]);
 		if (busy.firm > 0) return __("{0}: {1}", [label, hours(busy.firm)]);
 		if (busy.soft > 0) return __("{0}: {1} pencil", [label, hours(busy.soft)]);
-		return __("{0}: {1} item(s)", [label, busy.count]);
+		const named = busy.kinds.map((kind) => __(MP.booking_kinds[kind])).join(" + ");
+		return busy.count > 1 ? __("{0}: {1} items", [named, busy.count]) : named;
 	},
 
 	p10_busy_tip(user, ymd, items, text) {
@@ -7703,6 +7724,14 @@ const MP10_METHODS = {
 			.join("");
 	},
 
+	// Whether this person's day has a strip. A disabled technician's crew row is there only while they have
+	// something on the week, and in strip mode their project work is no card in the cell, so the row asks.
+	p10_has_strip(user, ymd) {
+		if (this.project_work_mode() !== "strip" || !user) return false;
+		const cell = this.cell_of(user, ymd);
+		return !!(cell && (cell.items || []).length);
+	},
+
 	// A crew-view cell is one person's day: the strip needs no name there.
 	p10_cell_strip_html(user, ymd) {
 		if (this.project_work_mode() !== "strip" || !user) return "";
@@ -7724,7 +7753,9 @@ const MP10_METHODS = {
 				color: mp_token_color("--sf-ink-500", "#5c6066"),
 				dashed: false,
 				marks: [],
-				faded: !!(this.p6c && this.p6c.highlight),
+				// A site's highlight fades the cards on screen and not the strip (it is no card of that site), so
+				// the printed page does the same.
+				faded: false,
 				highlight: false,
 			}));
 	},
