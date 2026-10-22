@@ -14927,6 +14927,9 @@ Object.assign(ProjectPlanner.prototype, PPAS_METHODS);
 //     too), Draft and Publish…, Notify crew? and "?"; the Overview step is for the Executive Team only
 //     (the people it is built for), and the editing steps are for people who can edit tasks. A phone's
 //     tour is Today: your day, the route, Block my time, the way to the rest of the planner, and help.
+//     A phone for someone with no day of their own (a project manager or office user who is not a Planner
+//     Resource) gets a short planner tour on whichever planner screen they land on instead: the Lookahead
+//     list, the tabs, the sheet, Draft and Notify for those who edit, help.
 //     It is skippable at every step (Esc, Skip, a press outside), and "?" has Take the tour.
 //   - **"?"** gets sections for the new model: the tabs, where the planner opens, moving a task, Draft
 //     and Published (Publish…, Notify crew?), the baseline (p12_legend_sections). Today, which has no
@@ -14935,7 +14938,8 @@ Object.assign(ProjectPlanner.prototype, PPAS_METHODS);
 // When it opens. Never before the page can show it: the saved views have answered (they carry the
 // flags: planner_views_prefs.get_views), the kit and the toolbar are built, and the screen's data is
 // here. A desktop's tour opens on the planner's own screens (not the route view or My week, which have no
-// toolbar); a phone's opens on Today, for someone who has a day. It waits, and asks again each second
+// toolbar); a phone's opens on Today for someone who has a day and on a planner screen for someone who has
+// none (tour_has_day; a person with a day who lands elsewhere waits for Today). It waits, and asks again each second
 // for a minute, while anything else is on screen that needs a decision: a drawer, a menu, the phone's
 // sheet, a Frappe dialog, a drag. It checks again 0.7 s after each landing, so a redirect settles first.
 // All of it is in try/catch: a tour that cannot show is no reason for the planner not to.
@@ -14972,15 +14976,64 @@ const PPTOUR_PURE = {
 	kind(is_phone) {
 		return is_phone ? "phone" : "desktop";
 	},
-	// Whether the tour opens by itself on this screen. A phone's is Today's (a Planner Resource's own day);
-	// a desktop's is a tab's. `has_day` is Today's answer carrying a resource.
-	auto_screen(kind, view, has_day) {
-		if (kind === "phone") return view === PP8.view && !!has_day;
-		return PPTOUR.desktop_screens.includes(view);
+	// Whether the tour opens by itself on this screen: "ok", "wait" (not known yet) or "" (not here). A desktop's
+	// is a tab's. A phone's depends on whether the person has a day of their own (`has_day`: true, false, or null
+	// while it is not known): with one, Today's tour opens on Today; with none, Today has nothing to show them, so
+	// the planner's phone tour opens on whichever planner screen they land on.
+	auto(kind, view, has_day) {
+		const planner_screen = PPTOUR.desktop_screens.includes(view);
+		if (kind !== "phone") return planner_screen ? "ok" : "";
+		const known = has_day === true || has_day === false;
+		if (view === PP8.view) return !known ? "wait" : has_day ? "ok" : "";
+		if (!planner_screen) return "";
+		return !known ? "wait" : has_day ? "" : "ok";
 	},
-	// The steps for `kind`, written out as __() calls so they are translated. `who`: {executive, can_edit}.
+	// The phone's tour for someone with no day of their own (a project manager or office user who is not a
+	// Planner Resource): the planner's list by day, its tabs, the sheet, Draft and Notify for those who edit, help.
+	phone_planner_steps(w) {
+		const steps = [
+			{
+				title: __("The Lookahead is a list"),
+				text: __("On a phone the Lookahead lists every job by day. Tap a task to open it, or a job's name for the job at a glance."),
+			},
+			{
+				title: __("Tabs along the top"),
+				text: __("Lookahead, Gantt, Crew and Calendar are the tabs. Tap one to switch."),
+				keys: __("All four show the same tasks."),
+			},
+			{
+				title: __("Filters and tools"),
+				text: __("Filters and tools opens a sheet from the bottom: the job, project manager and crew filters, alerts, + Add and More."),
+			},
+		];
+		if (w.can_edit === true) {
+			steps.push(
+				{
+					title: __("Draft until you publish"),
+					text: __(
+						"A new job's schedule starts as a Draft: changes stay private and nobody is told. When it is ready, press Publish… on the job. That tells the crew and sets the baseline, the grey bar you compare against later."
+					),
+				},
+				{
+					title: __("Notify crew?"),
+					text: __(
+						"After a job is published, a change to someone's days asks Notify crew? Notify tells the people affected. Don't notify keeps it quiet. It starts on Notify for changes in the next two weeks."
+					),
+					keys: __("Esc puts the change back."),
+				}
+			);
+		}
+		steps.push({
+			title: __("Help is one tap away"),
+			text: __("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again."),
+		});
+		return steps;
+	},
+	// The steps for `kind`, written out as __() calls so they are translated. `who`: {executive, can_edit, has_day}.
+	// `can_edit` is true only when it is known to be (see tour_can_edit): the editing steps are never a guess.
 	steps(kind, who) {
 		const w = who || {};
+		if (kind === "phone" && w.has_day !== true) return PPTOUR_PURE.phone_planner_steps(w);
 		if (kind === "phone") {
 			return [
 				{
@@ -15020,7 +15073,7 @@ const PPTOUR_PURE = {
 				text: __("Overview puts every active job on one timeline, lists what needs attention, and prints the weekly summary."),
 			});
 		}
-		if (w.can_edit !== false) {
+		if (w.can_edit === true) {
 			steps.push(
 				{
 					title: __("Drag to move"),
@@ -15042,11 +15095,22 @@ const PPTOUR_PURE = {
 				}
 			);
 		} else {
-			// Someone who may look but not change: what a click shows them, in place of the editing steps.
-			steps.push({
-				title: __("Click for the details"),
-				text: __("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
-			});
+			// Someone who may look but not change (or whose permission is not known): how to find a job and what a
+			// click shows them, in place of the editing steps. Four or more steps, like everyone's.
+			steps.push(
+				{
+					title: __("Narrow it down"),
+					text: __("Pick a job, a project manager or a crew group in the filters to narrow every tab to just that. A link that carries a filter shows what its sender saw."),
+				},
+				{
+					title: __("See one job start to finish"),
+					text: __("On the Gantt tab, pick a job to see all of it: its phases fold up, and the grey bar behind a task is where it was planned."),
+				},
+				{
+					title: __("Click for the details"),
+					text: __("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
+				}
+			);
 		}
 		steps.push({
 			title: __("Help is one click away"),
@@ -15159,14 +15223,38 @@ const PPTOUR_METHODS = {
 		if (!kit.tour) return "";
 		const kind = this.tour_kind();
 		if (state.seen[kind] || this.tour_local_seen(kind)) return "";
-		if (!PPTOUR_PURE.auto_screen(kind, this.view, this.today_data && this.today_data.resource)) {
-			// Today's answer may not be in yet.
-			return kind === "phone" && this.view === PP8.view && !this.today_data ? "wait" : "";
-		}
+		// Whether this screen is one it opens on: "wait" while it is not known (Today's answer, or the
+		// planner's list of people, has not arrived), "" when it is not here.
+		const screen = PPTOUR_PURE.auto(kind, this.view, this.tour_has_day());
+		if (screen !== "ok") return screen;
 		if (!this.tb || !this.tb.kit) return "wait";
-		if (kind === "desktop" && !this.tour_screen_ready()) return "wait";
+		if (!this.tour_screen_ready()) return "wait";
 		if (this.tour_busy(kit)) return "wait";
 		return "ok";
+	},
+
+	// Whether the signed-in person has a day of their own: true, false, or null while it is not known. Today's
+	// answer says so outright (it found a Planner Resource for them); the planner's list of people says it
+	// too, by `user`, on every screen that loaded one, which is how a phone that landed anywhere but Today knows.
+	tour_has_day() {
+		if (this.today_data) return !!this.today_data.resource;
+		const me = (frappe.session && frappe.session.user) || "";
+		const people = this.data && Array.isArray(this.data.resources) ? this.data.resources : null;
+		if (!people || !me) return null;
+		return people.some((person) => !!person && person.user === me);
+	},
+
+	// Whether the person may change tasks, from something every screen has. The planner's own answer says so
+	// (the server's `has_permission("Task", "write")`) once there is one; before it, and on Capacity, which loads
+	// none, the Desk's boot permission list does. Unknown is no: the editing steps are never a guess.
+	tour_can_edit() {
+		if (this.data && typeof this.data.can_edit !== "undefined") return !!this.data.can_edit;
+		try {
+			if (frappe.model && typeof frappe.model.can_write === "function") return !!frappe.model.can_write("Task");
+		} catch (e) {
+			return false;
+		}
+		return false;
 	},
 
 	tour_loading() {
@@ -15178,6 +15266,7 @@ const PPTOUR_METHODS = {
 	// answer, so a first landing there has no `data` at all.
 	tour_screen_ready() {
 		if (this.tour_loading()) return false;
+		if (this.view === PP8.view) return !!this.today_data;
 		if (this.view === PP.capacity_view) return !!(this.heatmap || this.data);
 		return !!this.data;
 	},
@@ -15213,7 +15302,7 @@ const PPTOUR_METHODS = {
 		} catch (e) {
 			executive = false;
 		}
-		return { executive, can_edit: this.data ? !!this.data.can_edit : true };
+		return { executive, can_edit: this.tour_can_edit(), has_day: this.tour_has_day() };
 	},
 
 	// Open the tour for this device. `replay`: from "?", which marks nothing (it was marked when first shown).
@@ -15301,52 +15390,52 @@ const PPTOUR_METHODS = {
 	// The help's sections for the planner as it is now, after the tips and before the cards, chips and keys the
 	// phases before it wrote. Samples are the kit's own chips (planner_kit.legend), no markup of the page's.
 	p12_legend_sections() {
-		const item = (text) => ({ sample_html: "", text: __(text) });
-		const chip = (label, text, tone) => ({ chip: { text: __(label), tone: tone || "plain" }, text: __(text) });
+		const item = (text) => ({ sample_html: "", text });
+		const chip = (label, text, tone) => ({ chip: { text: label, tone: tone || "plain" }, text });
 		return [
 			{
 				title: __("The tabs"),
 				note: __("Four views of one schedule, and a fifth for managers. Today is the phone's."),
 				items: [
-					chip("Lookahead", "Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published."),
-					chip("Gantt", "One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Open it from a job's name, or from the Project form's Open in Project Planner."),
-					chip("Crew", "Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it."),
-					chip("Calendar", "The week and month grids you know: cards, double-click to add, drag to move."),
-					chip("Overview", "Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print."),
-					chip("Today", "A phone's home: your stops for today and tomorrow, the route map and Block my time. This week opens your whole week. From the planner on a phone, it is in More ▸ Views."),
+					chip(__("Lookahead"), __("Every job for the next three weeks: projects, then phases, then tasks. Bars are counted in days and carry crew initials. A job's row says whether its schedule is a Draft or Published.")),
+					chip(__("Gantt"), __("One job from start to finish. Phases fold up, bars move and resize, and a dot at a bar's end links it to another task. Pick the job at the top of the tab, click a job in the Overview, or use the Project form's Open in Project Planner.")),
+					chip(__("Crew"), __("Who is where, a row for each person. Board is the people board; Capacity, the switch at the top of the tab, is eight weeks of load with the utilization table under it.")),
+					chip(__("Calendar"), __("The week and month grids you know: cards, double-click to add, drag to move.")),
+					chip(__("Overview"), __("Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print.")),
+					chip(__("Today"), __("A phone's home: your stops for today and tomorrow, the route map and Block my time. This week opens your whole week. From the planner on a phone, it is in More ▸ Views.")),
 				],
 			},
 			{
 				title: __("Where the planner opens"),
 				items: [
-					item("It opens on the tab you used last on this device. A phone and a desktop each remember their own."),
-					item("The first time, a phone opens Today. A desktop opens the Lookahead, and the Executive Team's opens the Overview."),
-					item("Your filters are yours and follow you to any device. A link that carries a filter shows what its sender saw."),
+					item(__("It opens on the tab you used last on this device. A phone and a desktop each remember their own.")),
+					item(__("The first time, a phone opens Today. A desktop opens the Lookahead, and the Executive Team's opens the Overview.")),
+					item(__("Your filters are yours and follow you to any device. A link that carries a filter shows what its sender saw.")),
 				],
 			},
 			{
 				title: __("Moving a task"),
 				items: [
-					item("Drag a bar or card to another day. The tasks that wait on it move with it, by the same number of working days, later or earlier, as one change with one Undo."),
-					item("Hold Ctrl (⌘ on a Mac) while you drop to move just that task."),
-					item("Drag a bar's edge to change its first or last day."),
+					item(__("Drag a bar or card to another day. The tasks that wait on it move with it, by the same number of working days, later or earlier, as one change with one Undo.")),
+					item(__("Hold Ctrl (⌘ on a Mac) while you drop to move just that task.")),
+					item(__("Drag a bar's edge to change its first or last day.")),
 				],
 			},
 			{
 				title: __("Draft and Published"),
 				items: [
-					chip("◐ Draft schedule", "A new job's schedule is a Draft. Every change to its tasks, on any tab, is kept as a draft: nobody is told, nobody is assigned and nothing reaches Google Calendar. Every scheduler sees its drafts.", "amber"),
-					chip("Publish…", "On the job's row (Lookahead, Gantt, Overview) or in its peek. It checks conflicts once, asks for one reason, sets the baseline, tells each person affected once and lets Google Calendar pick the tasks up.", "blue"),
-					chip("● Published", "From then on, edits are live.", "green"),
-					chip("Notify crew?", "A live change that moves someone's days or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back."),
-					item("More ▸ Tools ▸ Hold all my changes is the older board-wide Draft mode: keep every change to yourself, on any job, until you publish or discard."),
+					chip(__("◐ Draft schedule"), __("A new job's schedule is a Draft. Every change to its tasks, on any tab, is kept as a draft: nobody is told, nobody is assigned and nothing reaches Google Calendar. Every scheduler sees its drafts."), "amber"),
+					chip(__("Publish…"), __("On the job's row (Lookahead, Gantt, Overview) or in its peek. It checks conflicts once, asks for one reason, sets the baseline, tells each person affected once and lets Google Calendar pick the tasks up."), "blue"),
+					chip(__("● Published"), __("From then on, edits are live."), "green"),
+					chip(__("Notify crew?"), __("A live change that moves someone's days or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back.")),
+					item(__("More ▸ Tools ▸ Hold all my changes is the older board-wide Draft mode: keep every change to yourself, on any job, until you publish or discard.")),
 				],
 			},
 			{
 				title: __("Baseline"),
 				items: [
-					item("The grey bar behind a task is the baseline: the dates it had when the schedule was published. A thin red tail shows how far it has slipped."),
-					item("Reset baseline (the Gantt's header, or the job's peek) copies today's dates for a re-plan, after asking how many tasks move. A job published without a baseline offers Set baseline."),
+					item(__("The grey bar behind a task is the baseline: the dates it had when the schedule was published. A thin red tail shows how far it has slipped.")),
+					item(__("Reset baseline (the Gantt's header, or the job's peek) copies today's dates for a re-plan, after asking how many tasks move. A job published without a baseline offers Set baseline.")),
 				],
 			},
 		];

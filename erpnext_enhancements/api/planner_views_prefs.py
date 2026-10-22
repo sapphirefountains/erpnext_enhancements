@@ -461,11 +461,24 @@ def mark_tour_seen(planner, kind):
 	kind = clean_text(kind, 20)
 	if kind not in TOUR_KINDS:
 		frappe.throw(_("Unknown tour."))
-	row = _read_row(doctype, for_update=True)
-	seen = read_tour(row)
-	if not seen[kind]:
-		seen[kind] = True
-		_write_row(doctype, _tour_into(row, seen))
+
+	def mark():
+		row = _read_row(doctype, for_update=True)
+		seen = read_tour(row)
+		if not seen[kind]:
+			seen[kind] = True
+			_write_row(doctype, _tour_into(row, seen))
+		return seen
+
+	try:
+		seen = mark()
+	except frappe.QueryDeadlockError:
+		# A person's first save of anything on a planner makes their row, and two requests making it at once
+		# (the tour's mark and the "last used" view, a second apart at the soonest) can pick a deadlock victim
+		# under REPEATABLE READ. This request has written nothing else, so it starts again, once. The page
+		# needs no more of it: a mark that still fails is told to the browser instead (PPTOUR.tour_mark).
+		frappe.db.rollback()
+		seen = mark()
 	return {"planner": planner, "tour": seen}
 
 

@@ -96,12 +96,18 @@ class _PermissionError(Exception):
 	pass
 
 
+class _Deadlock(Exception):
+	"""frappe.QueryDeadlockError: the database picked this request as a deadlock victim."""
+
+
 class _FakeTable:
 	"""``__UserSettings`` as a dict, with the two statements the module runs."""
 
 	def __init__(self):
 		self.rows = {}
 		self.writes = []
+		# How many of the next writes the database refuses as a deadlock victim.
+		self.deadlocks = 0
 
 	def sql(self, query, values=None, **kwargs):
 		if "from `__UserSettings`" in query:
@@ -110,6 +116,9 @@ class _FakeTable:
 		return []
 
 	def multisql(self, sql_dict, values=(), **kwargs):
+		if self.deadlocks:
+			self.deadlocks -= 1
+			raise _Deadlock("Deadlock found when trying to get lock")
 		self.writes.append((sql_dict, values))
 		user, doctype, text, again = values
 		assert text == again
@@ -149,6 +158,7 @@ def _install():
 	frappe.PermissionError = _PermissionError
 	# The Opportunity Board's gate, a read on Opportunity (it has no tour, but it shares get_views).
 	frappe.has_permission = lambda *a, **k: True
+	frappe.QueryDeadlockError = _Deadlock
 	sys.modules.update({"frappe": frappe, "frappe.utils": utils})
 	# The two planners' own role gates, which the module imports lazily.
 	for name in ("project_planner", "maintenance_planner"):
@@ -184,7 +194,10 @@ class TestTheTourFlags(unittest.TestCase):
 		f.dropped = []
 		f.session = types.SimpleNamespace(user=USER)
 		f.cache = types.SimpleNamespace(hdel=lambda name, key: f.dropped.append((name, key)))
-		f.db = types.SimpleNamespace(sql=f.table.sql, multisql=f.table.multisql)
+		f.rollbacks = []
+		f.db = types.SimpleNamespace(
+			sql=f.table.sql, multisql=f.table.multisql, rollback=lambda: f.rollbacks.append(1)
+		)
 
 	def _row(self, planner="Project Planner", user=USER):
 		text = self.frappe.table.rows.get((user, planner))
@@ -278,6 +291,34 @@ class TestTheTourFlags(unittest.TestCase):
 				self.prefs.get_views(planner)
 		self.assertEqual(len(self.frappe.table.writes), 2, "a refused request writes nothing")
 
+	def test_a_deadlock_on_the_first_write_of_a_row_is_retried_once(self):
+		"""Two requests making a person's brand-new row at once can pick one as a deadlock victim under
+		REPEATABLE READ (the tour's mark and the "last used" view). The mark starts again, once."""
+		self.frappe.table.deadlocks = 1
+		answer = self.prefs.mark_tour_seen("project", "desktop")
+		self.assertEqual(answer["tour"], {"desktop": True, "phone": False})
+		self.assertEqual(self.frappe.rollbacks, [1], "rolled back before the second try")
+		self.assertEqual(len(self.frappe.table.writes), 1, "and written once")
+		self.assertEqual(self._row()["planner_tour"]["seen"], {"desktop": True, "phone": False})
+
+	def test_a_second_deadlock_is_the_pages_to_handle_and_other_errors_are_not_retried(self):
+		self.frappe.table.deadlocks = 2
+		with self.assertRaises(_Deadlock):
+			self.prefs.mark_tour_seen("project", "desktop")
+		self.assertEqual(self.frappe.rollbacks, [1], "one retry, not a loop")
+		self.assertEqual(self.frappe.table.writes, [])
+		# A refusal is not a deadlock: no rollback, no second try.
+		self.frappe.rollbacks.clear()
+		with self.assertRaises(_Throw):
+			self.prefs.mark_tour_seen("project", "tablet")
+		self.assertEqual(self.frappe.rollbacks, [])
+		# The already-seen path writes nothing, so it has nothing to deadlock on.
+		self.prefs.mark_tour_seen("project", "phone")
+		self.frappe.table.deadlocks = 1
+		self.prefs.mark_tour_seen("project", "phone")
+		self.assertEqual(self.frappe.table.deadlocks, 1)
+		self.assertEqual(self.frappe.rollbacks, [])
+
 	def test_only_a_real_true_counts_as_seen(self):
 		damaged = {
 			"planner_tour": {"version": 1, "seen": {"desktop": "yes", "phone": 1}},
@@ -350,7 +391,8 @@ class TestTheKitModule(unittest.TestCase):
 		for needle in (
 			'card.setAttribute("role", "dialog");',
 			'card.setAttribute("aria-modal", "true");',
-			'card.setAttribute("aria-labelledby", "pk-tour-title");',
+			'if (name) card.setAttribute("aria-label", name);',
+			'else card.setAttribute("aria-labelledby", "pk-tour-title");',
 			'card.setAttribute("aria-describedby", "pk-tour-text");',
 			'live.setAttribute("aria-live", "polite");',
 			'dots.setAttribute("aria-hidden", "true");',
@@ -362,6 +404,10 @@ class TestTheKitModule(unittest.TestCase):
 			with self.subTest(needle=needle):
 				self.assertIn(needle, code)
 		self.assertEqual(code.count("MAX_STEPS = 8"), 1)
+		# One name for the dialog: aria-labelledby wins over aria-label, so setting both left the tour's own
+		# title ("Project Planner tour") unread. The card gets one or the other, never both.
+		self.assertEqual(code.count('card.setAttribute("aria-label"'), 1)
+		self.assertEqual(code.count('card.setAttribute("aria-labelledby"'), 1)
 
 	def test_the_stylesheet_is_the_kits_bundle_on_the_tokens(self):
 		raw = _text(KIT_CSS)
@@ -438,7 +484,9 @@ class TestThePages(unittest.TestCase):
 			"if (!state.seen || !kit) return \"wait\";",
 			"if (!kit.tour) return \"\";",
 			"if (!this.tb || !this.tb.kit) return \"wait\";",
-			'if (kind === "desktop" && !this.tour_screen_ready()) return "wait";',
+			"const screen = PPTOUR_PURE.auto(kind, this.view, this.tour_has_day());",
+			'if (screen !== "ok") return screen;',
+			'if (!this.tour_screen_ready()) return "wait";',
 			'if (this.tour_busy(kit)) return "wait";',
 		):
 			with self.subTest(needle=needle):
@@ -471,6 +519,30 @@ class TestThePages(unittest.TestCase):
 		# The pages' storage helpers stay the only browser storage (test_planner_phase6c counts it).
 		self.assertEqual(self.pp.count("window.localStorage"), 2)
 		self.assertEqual(self.mp.count("localStorage"), 2)
+
+	def test_every_string_the_tour_and_its_help_say_is_a_literal_in_gettext(self):
+		"""A translation extractor finds __("...") with a string inside it; __(variable) is invisible to it.
+		The step lists, the help's sections and the buttons write each string out at its call site."""
+		for code, name in ((self.pp_code, "PPTOUR"), (self.mp_code, "MPTOUR")):
+			with self.subTest(page=name):
+				block = code[code.index(f"const {name} = {{") :]
+				starts = re.findall(r"__\(\s*(.)", block)
+				self.assertGreater(len(starts), 40)
+				self.assertEqual([c for c in starts if c not in "\"'`"], [])
+				# The helpers of p12_legend_sections take words that are already translated.
+				self.assertIn('const item = (text) => ({ sample_html: "", text });', block)
+				self.assertIn(
+					'const chip = (label, text, tone) => ({ chip: { text: label, tone: tone || "plain" }, text });',
+					block,
+				)
+				legend = block[block.index("\tp12_legend_sections() {") :]
+				legend = legend[: legend.index("\n\t},\n")]
+				# Every call site hands them a string wrapped in __(): item(__("...")), chip(__("..."), __("...")).
+				self.assertEqual(re.findall(r"\bitem\((?!__\()", legend), [])
+				self.assertEqual(re.findall(r"\bchip\((?!__\()", legend), [])
+				self.assertGreaterEqual(
+					len(re.findall(r"\bitem\(__\(", legend)) + len(re.findall(r"\bchip\(__\(", legend)), 8
+				)
 
 	def test_no_history_no_route_no_guard_in_either_block(self):
 		for code, name in ((self.pp_code, "PPTOUR"), (self.mp_code, "MPTOUR")):

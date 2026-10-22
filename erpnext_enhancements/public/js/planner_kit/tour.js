@@ -18,9 +18,11 @@
  *     markup here: there are none). At most MAX_STEPS steps, so a tour cannot grow into a manual.
  *   - Skippable at every step: Esc, the Skip button, or a press outside the card. Back and the arrow
  *     keys step through it; the last step's button says Done.
- *   - Keyboard-complete and named for a screen reader: a modal dialog labelled by the step's heading and
- *     described by its text, the count ("Step 2 of 5") in a polite live region, focus on the Next
- *     button when it opens and trapped inside until it closes, then back where it was.
+ *   - Keyboard-complete and named for a screen reader: a modal dialog named by the tour's title (aria-label
+ *     alone: aria-labelledby would win over it and the title would never be read; with no title, the
+ *     step's heading names it) and described by its text, the count ("Step 2 of 5") in a polite live
+ *     region, focus on the Next button when it opens and trapped inside until it closes, then back where
+ *     it was.
  *   - It never touches the browser's history. The kit's drawers and sheet take one history entry so Back
  *     can close them; the tour does not join that guard, so opening, stepping through and closing it
  *     push, replace and step off nothing, and Back and Forward mean what they meant before it showed.
@@ -128,9 +130,14 @@ export function create_tour(env) {
 		const card = make("div", "pk-tour-card");
 		card.setAttribute("role", "dialog");
 		card.setAttribute("aria-modal", "true");
-		card.setAttribute("aria-labelledby", "pk-tour-title");
+		// One name, so a screen reader says it: aria-labelledby wins over aria-label when both are set, so the
+		// tour's own title ("Project Planner tour") would never be read. With a title the dialog is named by
+		// it; with none it is named by the step's heading. The sentence describes it either way, and the
+		// live region below announces each step as it changes.
+		const name = text_of(opts.title, MAX_TITLE);
+		if (name) card.setAttribute("aria-label", name);
+		else card.setAttribute("aria-labelledby", "pk-tour-title");
 		card.setAttribute("aria-describedby", "pk-tour-text");
-		if (opts.title) card.setAttribute("aria-label", text_of(opts.title, MAX_TITLE));
 		card.setAttribute("tabindex", "-1");
 
 		// One live region holds the count, the heading and the sentence, so a screen reader hears the new
@@ -153,7 +160,8 @@ export function create_tour(env) {
 
 		const actions = make("div", "pk-tour-actions");
 		const skip = button(t("Skip tour"), "btn btn-default btn-sm pk-tour-skip", () => finish("skip"));
-		skip.setAttribute("aria-label", t("Skip the tour"));
+		// A button's name starts with its visible words, so voice control ("click Skip tour") finds it.
+		skip.setAttribute("aria-label", t("Skip tour, close it"));
 		const spacer = make("span", "pk-tour-spacer");
 		const back = button(t("Back"), "btn btn-default btn-sm pk-tour-back", () => step_to(handle.at - 1));
 		const next = button(t("Next"), "btn btn-primary btn-sm pk-tour-next", () => {
@@ -181,7 +189,7 @@ export function create_tour(env) {
 			back.disabled = at === 0;
 			next.textContent = at === steps.length - 1 ? t("Done") : t("Next");
 			next.setAttribute("aria-label", at === steps.length - 1 ? t("Done, close the tour") : t("Next step"));
-			back.setAttribute("aria-label", t("Previous step"));
+			back.setAttribute("aria-label", t("Back to the previous step"));
 		}
 
 		// A tap on the dimmed page, outside the card, skips. It closes on the click, and only when the press

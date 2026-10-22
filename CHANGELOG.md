@@ -16,15 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (P10) and #1332 (P9): merge after both.
   - **The tour.** A few steps in one small dialog, in plain words, one idea each; skippable at every step (Esc,
     *Skip tour*, a press outside the card), keyboard-complete (focus on Next and trapped, the arrows step, Back and
-    Next buttons, *Done* on the last), named for a screen reader (a modal dialog labelled by the step's heading and
-    described by its sentence, "Step 2 of 5" in a polite live region) and fine at 375px (the card sits along the
-    bottom of a phone, 44px buttons on touch, long words wrap). **The Project Planner on a desktop:** *Tabs along
-    the top* (Lookahead, Gantt, Crew, Calendar), *Overview is for managers* (**Executive Team only**), *Drag to
-    move* (the tasks that follow move too; Ctrl or ⌘ moves just one), *Draft until you publish* (Publish…, the
-    baseline), *Notify crew?* and *Help is one click away*; five steps, six for the Executive Team, and three or
-    four for someone who may look but not change tasks (*Click for the details* replaces the editing steps).
-    **On a phone** it is Today's: *This is your day*, *Open the route*, *Block my time*, *The rest of the planner*
-    and *Help is one tap away*. **The Maintenance Planner** has its own: *Month, Week and Crew*, *Drag to
+    Next buttons, *Done* on the last), named for a screen reader (a modal dialog named by the tour's title as an
+    `aria-label` alone, because `aria-labelledby` would win over it and the title would never be read, and
+    described by the step's sentence, "Step 2 of 5" in a polite live region) and fine at 375px (the card sits
+    along the bottom of a phone, 44px buttons on touch, long words wrap). **The Project Planner on a desktop:**
+    *Tabs along the top* (Lookahead, Gantt, Crew, Calendar), *Overview is for managers* (**Executive Team
+    only**), *Drag to move* (the tasks that follow move too; Ctrl or ⌘ moves just one), *Draft until you
+    publish* (Publish…, the baseline), *Notify crew?* and *Help is one click away*; five steps, six for the
+    Executive Team. Someone who may look but not change tasks gets *Narrow it down* (the filters), *See one job
+    start to finish* (the Gantt's job picker) and *Click for the details* in place of the editing steps: five
+    steps, six for the Executive Team, so every variant is four to six. **Who may edit** is the planner's own
+    answer (`can_edit`) when it has one, else the Desk's boot permission list (`frappe.model.can_write("Task")`),
+    which every screen has, Capacity included (it loads no planner answer, so it used to default to "may
+    edit"). Unknown is no. **On a phone, for someone with a day of their own** it is Today's: *This is your day*,
+    *Open the route*, *Block my time*, *The rest of the planner* and *Help is one tap away*, on Today. **On a
+    phone, for someone with none** (a project manager or office user who is not a Planner Resource, for whom
+    Today has nothing to show) it is a short planner tour on whichever planner screen they land on: *The Lookahead
+    is a list*, *Tabs along the top*, *Filters and tools*, *Draft until you publish* and *Notify crew?* (editors
+    only) and *Help is one tap away*. Whether they have a day is Today's answer, or the planner's list of people
+    holding their `user`; a person with a day who lands on a planner screen waits for Today. **The Maintenance
+    Planner** has its own: *Month, Week and Crew*, *Drag to
     reschedule* and *Who hears about a change* (Notify crew?, Draft mode; schedulers only), *Project work is a thin
     strip*, *Resources available*, *My day* (a technician with a day of their own) and help; its phone's is four
     or five (*Your visits*, the strip, *My day*, *Filters and tools*, help).
@@ -39,11 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a real `true` counts, so a damaged row reads as not seen. A desktop's tour and a phone's are separate flags:
     they land on different screens, so a person who has seen the tabs is still shown Today once. **If marking
     fails**, this browser is told instead (`ee_project_planner_tour:<user>:<kind>`, the page's own storage helper),
-    so a server that is down cannot bring it back at every visit.
+    so a server that is down cannot bring it back at every visit. **A deadlock on a person's first write is
+    retried once** (`mark_tour_seen` rolls back and starts again): two requests making a brand-new row at once,
+    the tour's mark and the "last used" view, can pick a victim under REPEATABLE READ. The "last used" save is not
+    retried (it is an existing path and the page saves it again on the next change).
   - **When it opens.** Never before the page can show it: after the saved views have answered (they carry the
     flags), the kit and the toolbar are built, and the screen's data is drawn and not loading. A desktop's opens on
-    the tabs (not the route view or My week, which have no toolbar); a phone's opens on Today, for a person who has
-    a day. It waits, and asks again each second for a minute, while a drawer, a menu, the phone's sheet, a Frappe
+    the tabs (not the route view or My week, which have no toolbar); a phone's opens on Today for a person who has
+    a day and on a planner screen for one who has none. It waits, and asks again each second for a minute, while a drawer, a menu, the phone's sheet, a Frappe
     dialog or a drag is on screen, and settles 0.7 s after a landing so a redirect lands first. A kit already on
     the Desk from before this release has no `tour`, and then nothing happens. Everything is in try/catch: a tour
     that cannot show is no reason for the planner not to.
@@ -61,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     *Draft and Published* (Draft schedule, Publish…, Published, Notify crew?, Hold all my changes) and *Baseline*
     (the grey ghost, the red tail, Reset baseline). The Maintenance Planner's `legend_sections()` (P10's one provider
     function) gets *The views*, *Moving a visit* and *Draft mode and Notify crew?*. The tips stay as they were.
+    Every string of the tour and of these sections is written out as `__("...")` at its call site (the helpers
+    take words already translated), so a translation extractor finds it; `tests/test_planner_tour.py` pins it.
   - **Where it lives.** `public/js/planner_kit/tour.js` in the existing `planner_kit.bundle.js` and its rules
     (`.pk-tour-*`, tokens only, no shadow, no animation) in the existing `planner_kit.bundle.css`; the `PPTOUR` and
     `MPTOUR` blocks, the last in each page script; one-line hooks (`init_tour`, `tour_route` in `handle_route`,

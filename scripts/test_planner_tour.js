@@ -304,9 +304,9 @@ test("The kit: a modal dialog named by its heading, the count in a live region, 
 	check("a modal dialog", [card.getAttribute("role"), card.getAttribute("aria-modal")], ["dialog", "true"]);
 	const title = overlay.querySelector(".pk-tour-title");
 	const text = overlay.querySelector(".pk-tour-text");
-	check("labelled by its heading, described by its sentence", [card.getAttribute("aria-labelledby"), card.getAttribute("aria-describedby")], [title.id, text.id]);
+	// One name only: aria-labelledby wins over aria-label, so with both the tour's title would never be read.
+	check("named by its tour title (aria-label alone), described by its sentence", [card.getAttribute("aria-label"), card.getAttribute("aria-labelledby"), card.getAttribute("aria-describedby")], ["Project Planner tour", null, text.id]);
 	check("the heading is a heading", title.tagName, "H2");
-	check("named for a reader that ignores labelledby", card.getAttribute("aria-label"), "Project Planner tour");
 	const live = overlay.querySelector(".pk-tour-step");
 	check("one polite live region holds the count, heading and sentence", [live.getAttribute("aria-live"), live.contains(title), live.contains(text), live.contains(overlay.querySelector(".pk-tour-count"))], ["polite", true, true, true]);
 	check("step 1", [overlay.querySelector(".pk-tour-count").textContent, title.textContent, text.textContent], ["Step 1 of 3", "One", "First thing."]);
@@ -316,7 +316,7 @@ test("The kit: a modal dialog named by its heading, the count in a live region, 
 	const skip = overlay.querySelector(".pk-tour-skip");
 	check("focus is on Next", doc.activeElement === next, true);
 	check("Back is off on the first step", back.disabled, true);
-	check("the buttons are buttons with names", [next.type, skip.type, skip.getAttribute("aria-label"), next.getAttribute("aria-label")], ["button", "button", "Skip the tour", "Next step"]);
+	check("the buttons are buttons with names that start with what they say", [next.type, skip.type, skip.getAttribute("aria-label"), next.getAttribute("aria-label"), back.getAttribute("aria-label")], ["button", "button", "Skip tour, close it", "Next step", "Back to the previous step"]);
 	check("the dots are decoration, with the current one marked", [overlay.querySelector(".pk-tour-dots").getAttribute("aria-hidden"), overlay.querySelectorAll(".pk-tour-dot").length, overlay.querySelectorAll(".pk-tour-dot-on").length], ["true", 3, 1]);
 
 	next.click();
@@ -334,6 +334,16 @@ test("The kit: a modal dialog named by its heading, the count in a live region, 
 	check("Done closes it as done, at the last step", closed, [["done", 2]]);
 	check("it is gone from the page, and focus is back", [!!overlay.parentNode, tour.is_open(), doc.activeElement === opener], [false, false, true]);
 	check("its key listener went with it", doc.listeners.filter((l) => l.type === "keydown").length, 0);
+});
+
+test("The kit: a tour with no title is named by the step's heading, and one with a title by it alone", () => {
+	const { tour } = tourEnv();
+	const untitled = tour.open({ steps: STEPS }).element().querySelector(".pk-tour-card");
+	check("no title: labelled by the heading, no aria-label to compete with it", [untitled.getAttribute("aria-label"), untitled.getAttribute("aria-labelledby")], [null, "pk-tour-title"]);
+	const titled = tour.open({ title: "  Maintenance   Planner tour ", steps: STEPS }).element().querySelector(".pk-tour-card");
+	check("a title: aria-label alone (labelledby would win and the title would never be read)", [titled.getAttribute("aria-label"), titled.getAttribute("aria-labelledby")], ["Maintenance Planner tour", null]);
+	const blank = tour.open({ title: "   ", steps: STEPS }).element().querySelector(".pk-tour-card");
+	check("a blank title is no title", [blank.getAttribute("aria-label"), blank.getAttribute("aria-labelledby")], [null, "pk-tour-title"]);
 });
 
 test("The kit: skippable by Esc, the Skip button and a press outside; a press inside is not outside", () => {
@@ -512,6 +522,8 @@ function loadPage(file, env) {
 		boot: { sysdefaults: { first_day_of_the_week: "Sunday" } },
 		session: { user: env.user || "nik@example.com" },
 		user: { has_role: (role) => user_roles.includes(role) },
+		// The Desk's boot permission list, which every screen has; a test leaves it out to say it is not there.
+		model: env.can_write === undefined ? undefined : { can_write: (doctype) => doctype === "Task" && !!env.can_write },
 		get_route: () => route.now,
 		set_route: (...args) => sets.push(args),
 		show_alert: () => null,
@@ -626,7 +638,15 @@ function ppPage(opts) {
 	const $body = { hasClass: () => false };
 	Object.assign(pp, {
 		view: o.view,
-		data: o.no_data ? null : { can_edit: o.can_edit !== false, projects: [] },
+		// The planner's answer: its people (by `user`, which is how the page knows whether the signed-in person
+		// has a day) and, unless a test says a screen sends none (Capacity, the Overview), what the server says
+		// about editing.
+		data: o.no_data
+			? null
+			: Object.assign(
+					{ projects: [], resources: o.has_day ? [{ name: "RES-1", user: env.frappe.session.user }, { name: "RES-2", user: "other@example.com" }] : [{ name: "RES-2", user: "other@example.com" }] },
+					o.no_can_edit ? {} : { can_edit: o.can_edit !== false }
+			  ),
 		today_data: o.today === undefined ? null : o.today,
 		drag: null,
 		$body,
@@ -665,7 +685,7 @@ function mpPage(opts) {
 const titles = (steps) => steps.map((s) => s.title);
 const shown = (kit) => (kit.tour.current() ? kit.tour.current().steps.map((s) => s.title) : null);
 
-test("Project Planner steps: four to six for the people it is for, plain words, one idea each", () => {
+test("Project Planner steps: four to six for everyone it is for, plain words, one idea each", () => {
 	const { ctx } = ppPage();
 	const pure = vm.runInContext("PPTOUR_PURE", ctx);
 	const editor = pure.steps("desktop", { executive: false, can_edit: true });
@@ -674,22 +694,31 @@ test("Project Planner steps: four to six for the people it is for, plain words, 
 	check("the Executive Team's has the Overview step, second", titles(exec), ["Tabs along the top", "Overview is for managers", "Drag to move", "Draft until you publish", "Notify crew?", "Help is one click away"]);
 	check("and nobody else's does", [editor, pure.steps("desktop", { executive: false, can_edit: false })].some((steps) => titles(steps).includes("Overview is for managers")), false);
 	const reader = pure.steps("desktop", { executive: false, can_edit: false });
-	check("someone who cannot edit is told nothing about dragging, drafts or notices, and how to look", titles(reader), ["Tabs along the top", "Click for the details", "Help is one click away"]);
-	check("an Executive Team reader gets the Overview too", titles(pure.steps("desktop", { executive: true, can_edit: false })), ["Tabs along the top", "Overview is for managers", "Click for the details", "Help is one click away"]);
-	const phone = pure.steps("phone", { executive: true, can_edit: true });
-	check("a phone's tour is Today's, and the same whoever it is", titles(phone), ["This is your day", "Open the route", "Block my time", "The rest of the planner", "Help is one tap away"]);
-	check("no Overview on a phone", titles(phone).includes("Overview is for managers"), false);
-	[editor, exec, phone].forEach((steps) => check("four to six steps", steps.length >= 4 && steps.length <= 6, true));
-	[editor, exec, reader, phone].forEach((steps) =>
+	check("someone who cannot edit is told nothing about dragging, drafts or notices, and how to find and look instead", titles(reader), ["Tabs along the top", "Narrow it down", "See one job start to finish", "Click for the details", "Help is one click away"]);
+	const exec_reader = pure.steps("desktop", { executive: true, can_edit: false });
+	check("an Executive Team reader gets the Overview too", titles(exec_reader), ["Tabs along the top", "Overview is for managers", "Narrow it down", "See one job start to finish", "Click for the details", "Help is one click away"]);
+	check("an unknown permission is the reader's tour, never the editor's", [titles(pure.steps("desktop", {})), titles(pure.steps("desktop", { can_edit: undefined })), titles(pure.steps("desktop", { can_edit: "yes" }))].map((t) => t.includes("Drag to move")), [false, false, false]);
+	const today = pure.steps("phone", { executive: true, can_edit: true, has_day: true });
+	check("a phone's tour for someone with a day is Today's, and the same whoever it is", titles(today), ["This is your day", "Open the route", "Block my time", "The rest of the planner", "Help is one tap away"]);
+	check("no Overview on a phone", titles(today).includes("Overview is for managers"), false);
+	const phone_editor = pure.steps("phone", { can_edit: true, has_day: false });
+	check("a phone with no day gets the planner's: the list, the tabs, the sheet, Draft, Notify, help", titles(phone_editor), ["The Lookahead is a list", "Tabs along the top", "Filters and tools", "Draft until you publish", "Notify crew?", "Help is one tap away"]);
+	const phone_reader = pure.steps("phone", { can_edit: false, has_day: false });
+	check("and without the editing steps for someone who cannot edit", titles(phone_reader), ["The Lookahead is a list", "Tabs along the top", "Filters and tools", "Help is one tap away"]);
+	check("an unknown day is the planner's phone tour too (it works on any screen)", [titles(pure.steps("phone", {})), titles(pure.steps("phone", { has_day: null }))].map((t) => t[0]), ["The Lookahead is a list", "The Lookahead is a list"]);
+	const all = { editor, exec, reader, exec_reader, today, phone_editor, phone_reader };
+	Object.entries(all).forEach(([name, steps]) => check(`${name}: four to six steps`, steps.length >= 4 && steps.length <= 6, true));
+	Object.entries(all).forEach(([name, steps]) =>
 		steps.forEach((step) => {
-			check(`"${step.title}" has words`, !!step.title && !!step.text, true);
-			check(`"${step.title}" is short: a heading and a sentence or two`, step.title.length <= 40 && step.text.length <= 260, true);
-			check(`"${step.title}" is one idea, in sentences`, step.text.split(/[.?!]\s/).length <= 4, true);
+			check(`${name} "${step.title}" has words`, !!step.title && !!step.text, true);
+			check(`${name} "${step.title}" is short: a heading and a sentence or two`, step.title.length <= 40 && step.text.length <= 260, true);
+			check(`${name} "${step.title}" is one idea, in sentences`, step.text.split(/[.?!]\s/).length <= 4, true);
 		})
 	);
 	check("the Draft step names Publish… and the baseline", /Publish…/.test(editor[2].text) && /baseline/.test(editor[2].text), true);
 	check("the Notify step names both buttons and the two weeks", /Notify tells/.test(editor[3].text) && /Don't notify/.test(editor[3].text) && /two weeks/.test(editor[3].text), true);
 	check("the drag step says the tasks that follow move, and Ctrl/⌘ moves one", /wait on it move with it/.test(editor[1].text) && /Ctrl \(⌘/.test(editor[1].keys), true);
+	check("the Gantt step does not promise a control the build does not have", /Open Gantt/.test(JSON.stringify(all)), false);
 	check("the kinds the server keeps are the page's", vm.runInContext("PPTOUR.kinds", ctx), ["desktop", "phone"]);
 });
 
@@ -818,7 +847,45 @@ test("PP: the Overview step is for the Executive Team only", () => {
 	const reader = ppPage({ roles: [], can_edit: false });
 	reader.pp.tour_take({ desktop: false, phone: false });
 	reader.flush();
-	check("someone who cannot edit gets the short tour", shown(reader.kit), ["Tabs along the top", "Click for the details", "Help is one click away"]);
+	check("someone who cannot edit gets the reader's tour: five steps, none about dragging or publishing", shown(reader.kit), ["Tabs along the top", "Narrow it down", "See one job start to finish", "Click for the details", "Help is one click away"]);
+});
+
+test("PP: whether the person may edit comes from something every screen has, and unknown is no", () => {
+	const drag = (p) => shown(p.kit).includes("Drag to move");
+	// Capacity loads no planner answer, so a first landing there has only the heatmap: the Desk's boot
+	// permissions (frappe.model.can_write) are what is left to ask.
+	const readonly = ppPage({ view: "capacity", no_data: true, can_write: false });
+	readonly.pp.heatmap = { weeks: [], rows: [] };
+	readonly.pp.tour_take({ desktop: false, phone: false });
+	readonly.flush();
+	check("a read-only person's first landing is Capacity: the reader's tour, not drag, publish and notify", [readonly.kit.tour.is_open(), drag(readonly), shown(readonly.kit)], [true, false, ["Tabs along the top", "Narrow it down", "See one job start to finish", "Click for the details", "Help is one click away"]]);
+	const editor = ppPage({ view: "capacity", no_data: true, can_write: true });
+	editor.pp.heatmap = { weeks: [], rows: [] };
+	editor.pp.tour_take({ desktop: false, phone: false });
+	editor.flush();
+	check("an editor's first landing on Capacity gets the editing steps", drag(editor), true);
+	// Nothing to ask at all: no. A page that cannot say who may edit does not tell anyone how to.
+	const unknown = ppPage({ view: "capacity", no_data: true });
+	unknown.pp.heatmap = { weeks: [], rows: [] };
+	unknown.pp.tour_take({ desktop: false, phone: false });
+	unknown.flush();
+	check("no planner answer and no boot permission list: unknown is the reader's tour", [unknown.pp.tour_can_edit(), drag(unknown)], [false, false]);
+	// A boot that throws is no too.
+	const broken = ppPage({ view: "capacity", no_data: true });
+	broken.frappe.model = { can_write: () => { throw new Error("boot not ready"); } };
+	check("a boot that throws is no, not a failure", broken.pp.tour_can_edit(), false);
+	// The planner's own answer is the server's word and wins when it has one; one with no word (the Overview's
+	// answer, the Capacity-less screens) leaves it to the boot.
+	const server_says_no = ppPage({ can_edit: false, can_write: true });
+	check("the server's can_edit: false beats the boot", server_says_no.pp.tour_can_edit(), false);
+	const server_says_yes = ppPage({ can_edit: true, can_write: false });
+	check("and its can_edit: true", server_says_yes.pp.tour_can_edit(), true);
+	const silent_answer = ppPage({ no_can_edit: true, can_write: true });
+	check("an answer that says nothing about editing (the Overview's) leaves it to the boot: yes", silent_answer.pp.tour_can_edit(), true);
+	const silent_no = ppPage({ no_can_edit: true, can_write: false });
+	check("and no", silent_no.pp.tour_can_edit(), false);
+	const who = ppPage({ roles: ["Executive Team"], has_day: true, can_write: true }).pp.tour_who();
+	check("tour_who carries all three", who, { executive: true, can_edit: true, has_day: true });
 });
 
 test("PP: a phone's tour is Today's, with its own flag; a desktop's is the tabs", async () => {
@@ -831,15 +898,52 @@ test("PP: a phone's tour is Today's, with its own flag; a desktop's is the tabs"
 	await settle();
 	check("and marks the phone flag only", [server.marks, server.rows.project], [[{ planner: "project", kind: "phone" }], { desktop: true, phone: true }]);
 
-	const lookahead = ppPage({ phone: true, view: "lookahead" });
-	lookahead.pp.tour_take({ desktop: false, phone: false });
-	lookahead.flush();
-	check("a phone on the Lookahead list is not given Today's tour unasked", lookahead.kit.tour.is_open(), false);
+	// A person with a day who lands on a planner screen on a phone (a link) is not given the planner's phone tour:
+	// Today's is theirs, and it waits for Today.
+	const linked = ppPage({ phone: true, has_day: true, view: "lookahead" });
+	linked.pp.tour_take({ desktop: false, phone: false });
+	linked.flush();
+	check("a phone with a day, landing on the Lookahead: no tour there (Today's is theirs)", [linked.kit.tour.is_open(), linked.pp.tour_has_day()], [false, true]);
+	// A person with no day: Today has nothing to show them, so the planner's phone tour opens on whatever planner
+	// screen they land on.
+	["lookahead", "week", "month", "crew", "capacity", "gantt", "overview"].forEach((view) => {
+		const p = ppPage({ phone: true, view });
+		p.pp.tour_take({ desktop: false, phone: false });
+		p.flush();
+		check(`a phone with no day, on ${view}: the planner's phone tour`, shown(p.kit) && shown(p.kit)[0], "The Lookahead is a list");
+	});
+	const nobody = ppPage({ server, phone: true, view: "lookahead" });
+	nobody.pp.tour_take({ desktop: true, phone: false });
+	nobody.flush();
+	await settle();
+	check("six steps for someone who can edit, the sheet and the tabs before them", shown(nobody.kit), ["The Lookahead is a list", "Tabs along the top", "Filters and tools", "Draft until you publish", "Notify crew?", "Help is one tap away"]);
+	check("it marks the phone flag (the desktop's was seen already and is left alone)", [server.marks.slice(-1), server.rows.project], [[{ planner: "project", kind: "phone" }], { desktop: true, phone: true }]);
+	const reader = ppPage({ phone: true, view: "lookahead", can_edit: false });
+	reader.pp.tour_take({ desktop: false, phone: false });
+	reader.flush();
+	check("someone who cannot edit gets the four-step phone tour", shown(reader.kit), ["The Lookahead is a list", "Tabs along the top", "Filters and tools", "Help is one tap away"]);
+	// It is the same flag whichever phone tour was shown, so the person is not shown the other later.
+	const again = ppPage({ phone: true, view: "lookahead" });
+	again.pp.tour_take({ desktop: false, phone: true });
+	again.flush();
+	check("seen on a phone: not again, on any screen", again.kit.tour.is_open(), false);
+	// The redirect a person with no day gets from Today (the landing sends a phone there first): Today's answer
+	// says they have none, and the Lookahead they are sent to opens the tour.
+	const redirected = ppPage({ phone: true, view: "lookahead", today: { resource: "" } });
+	redirected.pp.tour_take({ desktop: false, phone: false });
+	redirected.flush();
+	check("after the landing's redirect off Today, the Lookahead shows it", shown(redirected.kit) && shown(redirected.kit)[0], "The Lookahead is a list");
+	// Not known yet whether they have a day: wait (planner screen, no list of people and no Today answer).
+	const unknown = ppPage({ phone: true, view: "capacity", no_data: true });
+	unknown.pp.tour_take({ desktop: false, phone: false });
+	unknown.flush();
+	check("neither Today's answer nor the planner's people: it waits, then gives up, and shows nothing", [unknown.kit.tour.is_open(), unknown.pp.tour_has_day(), unknown.timers.ran], [false, null, 61]);
 	const unlisted = ppPage({ phone: true, view: "today", today: { resource: "" }, route: ["project-planner", "today", "2026-10-22"] });
 	unlisted.pp.tour_take({ desktop: false, phone: false });
 	unlisted.flush();
-	check("a person with no day of their own has nothing on Today to explain", unlisted.kit.tour.is_open(), false);
-	const waiting = ppPage({ phone: true, view: "today", today: null, route: ["project-planner", "today", "2026-10-22"] });
+	check("on Today itself, with no day, there is nothing to explain: the Lookahead is where the tour is", unlisted.kit.tour.is_open(), false);
+	// Nothing says yet whether they have a day (no Today answer, no planner answer): it waits.
+	const waiting = ppPage({ phone: true, view: "today", today: null, no_data: true, route: ["project-planner", "today", "2026-10-22"] });
 	waiting.pp.tour_take({ desktop: false, phone: false });
 	waiting.timers.list.forEach((t) => !t.dead && !t.done && ((t.done = true), t.fn()));
 	check("Today's answer not in yet: it waits", [waiting.kit.tour.is_open(), waiting.timers.list.filter((t) => !t.dead && !t.done).length], [false, 1]);

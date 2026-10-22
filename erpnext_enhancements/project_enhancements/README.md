@@ -1254,7 +1254,7 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `toast(message, {action_label, on_action, timeout, tone})` | One small notice at the bottom with one action ("… · Undo"); a new one replaces the old; 8 s by default; stays while hovered. It is sf_kit's toast (`public/js/sf_kit/toast.js`) with the `pk-` class prefix, markup unchanged | `toast.close()` |
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
 | `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
-| `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, labelled by the step's heading and described by its sentence, the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
+| `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, named by `title` through `aria-label` alone, or by the step's heading when there is none, and described by the step's sentence; the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
@@ -2249,13 +2249,24 @@ Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
   Calendar), *Overview is for managers* (**Executive Team only**, the role the landing already tests), *Drag to
   move* (the tasks that follow move too; hold Ctrl or ⌘ to move just that one), *Draft until you publish*
   (Publish… and the baseline), *Notify crew?* (Notify, Don't notify, the next two weeks) and *Help is one click
-  away*. Someone who may look but not change tasks (`data.can_edit` false) gets *Click for the details* in place
-  of the three editing steps, so theirs is three or four.
-- **The phone tour** is Today's, five steps: *This is your day*, *Open the route*, *Block my time*, *The rest of
-  the planner* (Planner, then Filters and tools, the sheet from the bottom) and *Help is one tap away*.
-  It opens **on Today** for a person who has a day (`get_today` answered with a `resource`), never on the
-  Lookahead's phone list and never for someone the planner does not list. A desktop that opens Today is not
-  shown it there either. The kind is `p8_is_phone()`, the toolbar's own 767px.
+  away*. Someone who may look but not change tasks gets *Narrow it down* (the filters), *See one job start to
+  finish* (the Gantt tab's job picker) and *Click for the details* in place of the three editing steps, so
+  theirs is five steps, six for the Executive Team: every variant is four to six.
+  **Who may edit** is `tour_can_edit`: the planner's own answer (`data.can_edit`, the server's
+  `has_permission("Task", "write")`) when it has one, else the Desk's boot permission list
+  (`frappe.model.can_write("Task")`), which every screen has, Capacity included (it loads no planner answer, and
+  the Overview's answer says nothing about editing). **Unknown is no**: the editing steps are never a guess.
+- **The phone tour** has two forms, by whether the person has a day of their own (`tour_has_day`: Today's answer
+  carrying a `resource`, or the planner's list of people holding their `user`, which any planner screen has).
+  With a day it is Today's, five steps: *This is your day*, *Open the route*, *Block my time*, *The rest of the
+  planner* (Planner, then Filters and tools, the sheet from the bottom) and *Help is one tap away*, and it opens
+  **on Today**. With none (a project manager or office user who is not a Planner Resource, for whom Today has
+  nothing to show) it is the planner's phone tour, four to six steps, on **whichever planner screen they land
+  on**: *The Lookahead is a list*, *Tabs along the top*, *Filters and tools*, then *Draft until you publish* and
+  *Notify crew?* for those who may edit, and *Help is one tap away*. A person with a day who lands on a planner
+  screen (a link) waits for Today rather than being shown the wrong one; while it is not known which they are, it
+  waits. Both forms share the one `phone` flag. A desktop that opens Today is not shown the tabs there. The kind
+  is `p8_is_phone()`, the toolbar's own 767px.
 - **Once per person, per kind of device, on the server.** Whether a person has been shown each tour is
   `planner_tour.seen.{desktop, phone}` in their own `__UserSettings` row for the planner (`Project Planner`),
   beside `planner_views` and touching nothing in it. `get_views` carries it (`tour`), so the page needs no request
@@ -2284,8 +2295,10 @@ Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
   planner's own (`handle_route`) or the page hiding closes it (`tour_close("route")`). Its keys are its own: it
   listens on the document in the capture phase for Esc and Tab, and `p6b_key` treats it as a dialog, so the
   planner's `T`, `/`, `?`, `1 2 3` and the arrows do nothing to the page behind it.
-- **Accessible, and fine at 375px.** A modal dialog labelled by the step's heading and described by its sentence,
-  the count ("Step 2 of 5") in a polite live region, focus on Next and trapped, back on the control that started
+- **Accessible, and fine at 375px.** A modal dialog named by the tour's title ("Project Planner tour", as an
+  `aria-label` alone: `aria-labelledby` would win over it and the title would never be read) and described by the
+  step's sentence, the count ("Step 2 of 5") in a polite live region, buttons whose names start with their
+  visible words, focus on Next and trapped, back on the control that started
   it; 44px buttons on a touch screen; on a phone the card sits along the bottom, and long words wrap, so there is
   no sideways scroll. The rules are `.pk-tour-*` in `planner_kit.bundle.css` (tokens only, no shadow, no
   animation); the script is in `planner_kit.bundle.js`. No raw `/assets` path.

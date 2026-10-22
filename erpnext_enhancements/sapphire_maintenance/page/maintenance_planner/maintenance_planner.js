@@ -8271,31 +8271,31 @@ const MPTOUR_METHODS = {
 	// ------------------------------------------------------------------ "?" for the views
 
 	p12_legend_sections() {
-		const item = (text) => ({ sample_html: "", text: __(text) });
-		const chip = (label, text, tone) => ({ chip: { text: __(label), tone: tone || "plain" }, text: __(text) });
+		const item = (text) => ({ sample_html: "", text });
+		const chip = (label, text, tone) => ({ chip: { text: label, tone: tone || "plain" }, text });
 		return [
 			{
 				title: __("The views"),
 				note: __("Three tabs over the same visits. The planner opens on the view you used last, on any device."),
 				items: [
-					chip("Month", "The whole month, a card for each visit."),
-					chip("Week", "One week, day by day: the view for planning visits."),
-					chip("Crew", "A row for each technician. Drag a visit to another day on the same row, or onto another technician's row to hand it over."),
+					chip(__("Month"), __("The whole month, a card for each visit.")),
+					chip(__("Week"), __("One week, day by day: the view for planning visits.")),
+					chip(__("Crew"), __("A row for each technician. Drag a visit to another day on the same row, or onto another technician's row to hand it over.")),
 				],
 			},
 			{
 				title: __("Moving a visit"),
 				items: [
-					item("Drag a visit to another day. Only a draft nobody has started moves."),
-					item("Double-click an empty spot, or use + Add ▸ Add visit…, to draft a new visit there."),
-					item("Undo (Ctrl+Z, or the button in the notice) puts the last change back."),
+					item(__("Drag a visit to another day. Only a draft nobody has started moves.")),
+					item(__("Double-click an empty spot, or use + Add ▸ Add visit…, to draft a new visit there.")),
+					item(__("Undo (Ctrl+Z, or the button in the notice) puts the last change back.")),
 				],
 			},
 			{
 				title: __("Draft mode and Notify crew?"),
 				items: [
-					chip("Draft mode", "More ▸ Tools ▸ Draft mode keeps your changes to yourself until you Publish them. Nobody is told before then, and nothing asks Notify crew?.", "amber"),
-					chip("Notify crew?", "In live mode, a change to a visit's day, technician or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back."),
+					chip(__("Draft mode"), __("More ▸ Tools ▸ Draft mode keeps your changes to yourself until you Publish them. Nobody is told before then, and nothing asks Notify crew?."), "amber"),
+					chip(__("Notify crew?"), __("In live mode, a change to a visit's day, technician or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back.")),
 				],
 			},
 		];
