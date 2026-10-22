@@ -1211,6 +1211,221 @@ async function appStoreRuns() {
  * camera or search opened over it) without leaving the screen, while a save that takes the item
  * off the bin walks back to the bin's list without adding a history entry.
  */
+// ------------------------------------------------------------------ the unit-cost prompt (TASK-2026-02914)
+
+async function appUnitCost() {
+	const today = "2026-10-22";
+	const widget = {
+		item_code: "PDT-0008", item_name: "Widget", warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", stock_uom: "Each", on_hand: 0, available: 0, assigned: true,
+		open_orders: [], elsewhere: [], whole_number: true,
+	};
+	const realFetch = globalThis.fetch;
+	const posted = [];
+	let n = 0;
+	// What the NEXT add gets: null (the server's real answer for the case), "drop" (no answer at all),
+	// "refuse" (a 417 sentence), "hold" (answers once `release()` is called).
+	let next = null;
+	let release = null;
+	let cost = false; // true: the item has a cost on record, so the server never asks
+	const prompt = (suggestion) => ({
+		needs_valuation_rate: true, item_code: "PDT-0008", item_name: "Widget", uom: "Each",
+		suggestion: suggestion === undefined ? 6.5 : suggestion,
+		source: suggestion === null ? null : "the last purchase of it: Purchase Order PO-0007, Oct 3",
+		max_rate: 100000,
+	});
+	let suggestion;
+	const fetchStub = async (url, init) => {
+		const body = JSON.parse((init && init.body) || "{}");
+		const u = String(url);
+		posted.push({ url: u, body });
+		let message = null;
+		if (u.endsWith(".add")) {
+			const plan = next;
+			next = null;
+			if (plan === "drop") throw new TypeError("Failed to fetch");
+			if (plan === "refuse") {
+				return new Response(JSON.stringify({ exc_type: "ValidationError", _server_messages: serverMessages({ message: "A unit cost above 100,000 per Each is not right. Check the number and try again.", raise_exception: 1 }) }), {
+					status: 417, headers: { "Content-Type": "application/json" },
+				});
+			}
+			if (plan === "hold") {
+				await new Promise((resolve) => (release = resolve));
+				release = null;
+			}
+			if (!cost && !body.rate) message = prompt(suggestion);
+			else {
+				message = {
+					log: { name: `SCAN-2026-${String(++n).padStart(5, "0")}`, status: "Posted", action: "Add Without PO", item_code: "PDT-0008", item_name: "Widget", stock_uom: "Each", qty: body.qty, warehouse: "Bin A1 - SF", warehouse_name: "Bin A1", can_undo: 1, posted_at: `${today} 10:00:00`, rate: body.rate || null },
+					item: { ...widget, on_hand: body.qty, available: body.qty },
+					message: `Added ${body.qty} Each of Widget. A Stock Manager will review it.`,
+					repeated: false,
+					run: null,
+				};
+			}
+		} else if (u.endsWith(".get_item")) message = { ...widget, item_code: body.item_code, warehouse: body.warehouse };
+		else if (u.endsWith(".get_recent")) message = [];
+		return new Response(JSON.stringify({ message }), { status: 200, headers: { "Content-Type": "application/json" } });
+	};
+
+	const A = await load("app.js");
+	const U = await load("ui.js");
+	const T = await load("transport.js");
+	const open = async () => {
+		U.closeAllSheets();
+		await settle();
+		const page = fakePage();
+		globalThis.window = page.win;
+		globalThis.document = page.doc;
+		const boot = { user: "tina@example.com", today, now: `${today} 10:00:00`, recent: [], settings: {}, initial: null, decoder_url: "/jsqr.js", csrf_token: "tok", can_manage: true };
+		page.win.EE_STOCK_SCAN_BOOT = boot;
+		const root = page.doc.createElement("div");
+		root.className = "ee-ss-root";
+		page.doc.body.appendChild(root);
+		const app = new A.StockScanApp(root, boot);
+		app.mount();
+		app.showItem({ ...widget }, {});
+		await settle();
+		const host = () => page.doc.getElementById("ee-ss-sheets");
+		const find = (test) => {
+			const top = host();
+			if (!top) return null;
+			for (const node of top.walk()) if (test(node)) return node;
+			return null;
+		};
+		const t = {
+			page, app,
+			text: () => (host() ? host().textContent : ""),
+			field: () => find((node) => node.tagName === "INPUT" && node.getAttribute("aria-label") === "Unit cost per Each"),
+			button: (label) => find((node) => node.tagName === "BUTTON" && node.textContent.trim() === label),
+			fire: (node, type, extra) => {
+				for (const fn of (node.listeners[type] || []).slice()) fn({ type, target: node, preventDefault() {}, ...(extra || {}) });
+			},
+			type: (value) => {
+				const f = t.field();
+				f.value = value;
+				t.fire(f, "input");
+			},
+			ask: async (qty = 2) => {
+				app.post(app.view, T.M.ADD, { action: "add", item_code: "PDT-0008", warehouse: "Bin A1 - SF", qty, without_po: 1 });
+				await settle();
+			},
+		};
+		return t;
+	};
+	const adds = () => posted.filter((p) => p.url.endsWith(".add")).map((p) => p.body);
+
+	globalThis.fetch = fetchStub;
+	try {
+		console.log("\nstock scan unit cost: what does one cost?\n");
+
+		// 1. The server asks: a sheet with the suggestion and where it came from; nothing is saved.
+		let t = await open();
+		const entries = t.page.entries.length;
+		await t.ask();
+		check("prompt: asked once, without a rate", [adds().length, adds()[0].rate], [1, undefined]);
+		check("prompt: a sheet, one history marker, nothing in Recent", [U.sheetDepth(), t.page.entries.length, t.app.recent.length], [1, entries + 1, 0]);
+		truthy("prompt: says no cost is on record for the item and that it is the cost of ONE unit", /No cost is on record for Widget, and ERPNext needs one to add 2 Each\./.test(t.text()) && /Enter what ONE Each costs, not the total\./.test(t.text()), t.text());
+		truthy("prompt: the suggestion and its source are shown", /Suggested: 6\.5 per Each, from the last purchase of it: Purchase Order PO-0007, Oct 3/.test(t.text()), t.text());
+		check("prompt: the box holds the suggestion, decimal keyboard", [t.field().value, t.field().getAttribute("inputmode")], ["6.5", "decimal"]);
+		truthy("prompt: says it is for this one addition and reviewed", /this one addition only/.test(t.text()) && /stock manager reviews it/.test(t.text()));
+		check("prompt: the page is not busy, and the item is not shown as saved", [t.app.saving, t.app.view.name], [false, "item"]);
+
+		// 2. The answer posts the same save with the rate, under a reference of its own.
+		t.button("Add with this cost").click();
+		await settle();
+		check("answer: the same add sent again with rate 6.5", [adds().length, adds()[1].rate, adds()[1].qty, adds()[1].without_po, adds()[1].item_code], [2, 6.5, 2, 1, "PDT-0008"]);
+		check("answer: a reference of its own (the price is part of the save)", adds()[1].client_ref !== adds()[0].client_ref, true);
+		check("answer: saved, sheet closed, in Recent with Undo", [U.sheetDepth(), t.app.recent[0] && t.app.recent[0].action, t.app.recent[0] && t.app.recent[0].can_undo], [0, "Add Without PO", 1]);
+		check("answer: no page-only keys sent", "action" in adds()[1], false);
+
+		// 3. Enter submits; while the save is out nothing can post twice.
+		t = await open();
+		suggestion = null;
+		await t.ask(3);
+		check("no suggestion: says there is no earlier price, the box is empty", [/no earlier price on file/.test(t.text()), t.field().value], [true, ""]);
+		const before = adds().length;
+		t.type("4.25");
+		next = "hold";
+		t.fire(t.field(), "keydown", { key: "Enter" });
+		await settle();
+		const btn = t.button("Saving…");
+		truthy("enter: posting, the button is busy (Saving…, disabled)", btn && btn.disabled, `${btn && btn.disabled}`);
+		t.fire(t.field(), "keydown", { key: "Enter" });
+		btn && btn.click();
+		await settle();
+		check("enter: a second Enter and a tap post nothing more", adds().length, before + 1);
+		release();
+		await settle();
+		check("enter: one add with rate 4.25, sheet closed", [adds().length, adds().slice(-1)[0].rate, U.sheetDepth()], [before + 1, 4.25, 0]);
+		suggestion = undefined;
+
+		// 4. Not a price: nothing is sent, and the box says why.
+		t = await open();
+		await t.ask();
+		const sentBefore = adds().length;
+		for (const [typed, words] of [["", /Enter the unit cost per Each\./], ["0", /must be more than 0/], ["-3", /as a number/], ["abc", /as a number/], ["2,5", /as a number/], ["100001", /above 100,000/], ["Infinity", /as a number/]]) {
+			t.type(typed);
+			t.button("Add with this cost").click();
+			await settle();
+			truthy(`bad cost ${JSON.stringify(typed)} is said in words`, words.test(t.text()), t.text());
+		}
+		check("bad costs: nothing was sent, the sheet is still open", [adds().length, U.sheetDepth()], [sentBefore, 1]);
+		t.type("1,250.50");
+		t.button("Add with this cost").click();
+		await settle();
+		check("a price with a thousands comma is read as 1250.5", adds().slice(-1)[0].rate, 1250.5);
+
+		// 5. The server's refusal shows inside the sheet; a retry posts again.
+		t = await open();
+		await t.ask();
+		t.type("99999");
+		next = "refuse";
+		t.button("Add with this cost").click();
+		await settle();
+		truthy("refusal: the server's sentence is in the sheet, which stays open", /is not right\. Check the number/.test(t.text()) && U.sheetDepth() === 1, t.text());
+		t.type("50");
+		t.button("Add with this cost").click();
+		await settle();
+		check("refusal: a corrected price saves", [adds().slice(-1)[0].rate, U.sheetDepth()], [50, 0]);
+
+		// 6. A dropped answer: the retry carries the SAME reference, so the server returns the first save.
+		t = await open();
+		await t.ask();
+		t.type("7");
+		next = "drop";
+		t.button("Add with this cost").click();
+		await settle();
+		const first = adds().slice(-1)[0];
+		t.button("Add with this cost").click();
+		await settle();
+		const second = adds().slice(-1)[0];
+		check("dropped: the tap again repeats the same save, same reference", [second.rate, second.client_ref], [first.rate, first.client_ref]);
+
+		// 7. Back and Cancel leave nothing posted.
+		t = await open();
+		await t.ask();
+		const n0 = adds().length;
+		t.page.userBack();
+		await settle();
+		check("back: closes the prompt, posts nothing, stays on the item", [U.sheetDepth(), adds().length, t.app.view.name], [0, n0, "item"]);
+		await t.ask();
+		const n1 = adds().length;
+		t.button("Cancel").click();
+		await settle();
+		check("cancel: closes the prompt, posts nothing", [U.sheetDepth(), adds().length - n1], [0, 0]);
+
+		// 8. An item with a cost on record is never asked.
+		cost = true;
+		t = await open();
+		await t.ask();
+		check("a cost on record: no prompt, a plain save", [U.sheetDepth(), t.app.recent[0] && t.app.recent[0].action], [0, "Add Without PO"]);
+		cost = false;
+	} finally {
+		globalThis.fetch = realFetch;
+		U.closeAllSheets();
+	}
+}
+
 async function appBinActions() {
 	const today = "2026-10-14";
 	const BIN_A1 = { warehouse: "Bin A1 - SF", warehouse_name: "Bin A1" };
@@ -2772,6 +2987,7 @@ async function appBinActions() {
 	await appUnderTheReportForm();
 	await appStoreRuns();
 	await appBinActions();
+	await appUnitCost();
 
 	console.log(`\n${passes} passed, ${failures} failed`);
 	process.exit(failures ? 1 : 0);

@@ -57,6 +57,8 @@ import {
 	mintRunId,
 	money,
 	ordersAtStore,
+	costPromptText,
+	isCostPrompt,
 	parseQty,
 	plain,
 	reasonWarning,
@@ -74,6 +76,7 @@ import {
 	siteTimeMs,
 	suggestedReason,
 	undoQuestion,
+	unitCostProblem,
 	validPrice,
 	validTotal,
 } from "./logic.js";
@@ -1845,6 +1848,13 @@ export class StockScanApp {
 			this.saving = false;
 			this.savingView = null;
 			if (sheetUi) busy(sheetUi.button, false);
+			if (isCostPrompt(result)) {
+				// Not a save: the item has no cost on record, ERPNext would refuse the posting, and the server
+				// has posted nothing. Ask what one costs and send this save again with the answer.
+				this.updateStepper();
+				this.askUnitCost(v, method, args, result);
+				return;
+			}
 			if (ui && ui.onDone) ui.onDone();
 			this.afterSave(v, result, keepChange);
 			// A store-run line has more to do once it is in (the run bar, the item at its bin,
@@ -1883,6 +1893,78 @@ export class StockScanApp {
 			}
 			this.updateStepper();
 		}
+	}
+
+	/**
+	 * "What does one cost?" (TASK-2026-02914). The server answered an add with `needs_valuation_rate`
+	 * (`isCostPrompt`): the item has no cost on record. The sheet pre-fills the server's suggestion with
+	 * where it came from, says it is the cost of ONE stock unit, and sends the same save again with
+	 * `rate`. Enter submits; the button is off while the save is out (`post` busies it), so a second tap
+	 * cannot post twice, and the retry has a reference of its own (`saveKey` covers `rate`), the same
+	 * on every resend of the same price. A refusal (a cost above the cap, no permission) shows inside
+	 * the sheet; Cancel and Back leave nothing posted. A sheet is already a history marker (nav.js).
+	 */
+	askUnitCost(v, method, args, prompt) {
+		const copy = costPromptText(prompt, args.qty, "add");
+		const error = errorLine("ee-ss-field-error");
+		let closed = false;
+		let posting = false;
+		const field = input({
+			className: "ee-ss-input ee-ss-cost-input",
+			type: "text",
+			inputmode: "decimal",
+			enterkeyhint: "done",
+			value: copy.value,
+			label: copy.label,
+		});
+		const submit = (h, btn) => {
+			if (posting) return false;
+			const answer = unitCostProblem(field.value, prompt.uom);
+			if (answer.problem) {
+				error.show(answer.problem);
+				field.focus();
+				return false;
+			}
+			posting = true;
+			this.post(v, method, Object.assign({}, args, { rate: answer.rate }), {
+				button: btn,
+				// `post` clears the line when it starts (""), and speaks only when it fails: a failure frees the button.
+				showError: (text, action) => {
+					if (text) posting = false;
+					error.show(text, action);
+				},
+				isOpen: () => !closed,
+				onDone: () => h.close("action"),
+			});
+			return false;
+		};
+		const h = sheet({
+			title: copy.title,
+			onClose: () => {
+				closed = true;
+			},
+			body: append(
+				el("div", "ee-ss-cost"),
+				el("p", "ee-ss-sheet-text", copy.lead),
+				el("label", "ee-ss-field-label", copy.label),
+				field,
+				el("p", "ee-ss-note", copy.per),
+				el("p", "ee-ss-note", copy.hint),
+				error.node,
+				el("p", "ee-ss-note", copy.note)
+			),
+			initialFocus: field,
+		});
+		const [addBtn] = h.setActions([
+			{ label: copy.button, kind: "add", large: true, close: false, onClick: (handle, btn) => submit(handle, btn) },
+			{ label: "Cancel", kind: "ghost" },
+		]);
+		field.addEventListener("keydown", (event) => {
+			if (event.key !== "Enter") return;
+			event.preventDefault();
+			if (addBtn && !addBtn.disabled) submit(h, addBtn);
+		});
+		field.select && field.select();
 	}
 
 	/**

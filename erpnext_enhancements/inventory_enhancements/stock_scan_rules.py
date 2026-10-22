@@ -328,6 +328,34 @@ def check_count(value, whole_number=False, uom=""):
 	return qty, None
 
 
+#: The most one unit of anything may be given as costing, when a person types its cost (TASK-2026-02914).
+#: Nik, 2026-10-22: 100,000. The dearest purchase unit cost on file that day was about 7,015, so this stops
+#: a typo or a barcode scanned into the box and never a real price.
+MAX_UNIT_COST = 100000
+
+
+def check_unit_cost(value, uom=""):
+	"""``(rate, problem)`` for a unit cost typed when an item has none on record.
+
+	``(None, None)`` when nothing was given (the caller then asks for one). Otherwise the cost per
+	**stock unit** as a positive number no more than :data:`MAX_UNIT_COST`, or a sentence. It sets
+	the value of the stock in the books, so zero, negative, ``nan`` and ``inf`` are all refused.
+	"""
+	if value is None or (isinstance(value, str) and not value.strip()):
+		return None, None
+	per = f" per {uom}" if uom else ""
+	rate = _number(value)
+	if rate is None:
+		return None, f"Enter the unit cost{per} as a number."
+	if rate <= 0:
+		return None, f"The unit cost{per} must be more than 0."
+	if rate > MAX_UNIT_COST:
+		return None, (
+			f"A unit cost{per} above {MAX_UNIT_COST:,} is not right. Check the number and try again."
+		)
+	return round(rate, 6), None
+
+
 def _amount(qty, uom):
 	return f"{plain(qty)} {uom}".strip()
 

@@ -1229,11 +1229,13 @@ class TestSetCount(_Base):
 		(sr,) = _vouchers("Stock Reconciliation")
 		self.assertEqual(sr["items"][0]["valuation_rate"], 12.5)
 
-	def test_from_zero_with_no_cost_is_refused(self):
+	def test_from_zero_with_no_cost_asks_for_one_and_posts_nothing(self):
+		"""TASK-2026-02914: not a refusal sentence any more but a payload the page answers with a unit
+		cost (tests/test_unit_cost_prompt.py has the whole behaviour)."""
 		STATE["rate"] = 0
-		self.assertRefused(
-			bins.set_count, "no cost", item_code="PDT-0001", warehouse=BIN_A, qty=3, client_ref=_ref()
-		)
+		out = bins.set_count("PDT-0001", BIN_A, 3, _ref())
+		self.assertTrue(out["needs_valuation_rate"])
+		self.assertEqual(_vouchers("Stock Reconciliation"), [])
 
 	def test_zero_is_a_count(self):
 		_bin("PDT-0001", BIN_A, actual_qty=2)
@@ -1603,7 +1605,7 @@ ENDPOINTS = {
 	"unassign": ["item_code", "warehouse", "client_ref"],
 	"move_to": ["item_code", "from_warehouse", "to_warehouse", "qty", "client_ref", "make_home"],
 	"send_to_boneyard": ["item_code", "from_warehouse", "qty", "client_ref"],
-	"set_count": ["item_code", "warehouse", "qty", "client_ref"],
+	"set_count": ["item_code", "warehouse", "qty", "client_ref", "rate"],
 	# v1.693.0, the Bin Manager page's New item (tests/test_bin_manager.py has its behaviour).
 	"create_and_assign": ["warehouse", "client_ref", "item_code", "item_name", "item_group", "stock_uom"],
 }

@@ -549,11 +549,14 @@ class BinManagerPage {
 				this.dialog_message(d, "");
 				const button = d.get_primary_btn();
 				button.prop("disabled", true);
-				this.ctl.submit(kind, row, values ? values(d, picked) : picked || d.get_values(true) || {}, ref).then(
-					() => {
+				const given = values ? values(d, picked) : picked || d.get_values(true) || {};
+				this.ctl.submit(kind, row, given, ref).then(
+					(out) => {
 						busy = false;
 						button.prop("disabled", false);
 						d.hide();
+						// Not a save: the server asked what one unit costs (an item ERPNext has no cost for).
+						if (out && out.prompt) this.cost_dialog(kind, row, given, out.prompt);
 					},
 					(err) => {
 						busy = false;
@@ -568,6 +571,31 @@ class BinManagerPage {
 		if (on_build) on_build(d);
 		d.show();
 		return d;
+	}
+
+	// "What does one cost?" (TASK-2026-02914): a count up from an empty bin for an item with no cost on
+	// record. ERPNext would refuse the Stock Reconciliation, so the server posted nothing and asked. The
+	// dialog pre-fills its suggestion with where it came from, says the cost is of ONE stock unit, and
+	// counts again with `rate`. The box is not `reqd` (Frappe blanks a required 0 while reading it, see
+	// save_dialog), and logic.check_values refuses a blank, a zero, a negative and a cost above the cap in
+	// words, inside the dialog.
+	cost_dialog(kind, row, given, prompt) {
+		const copy = this.bm.costPromptText(prompt, given.qty, "count in");
+		this.save_dialog({
+			kind,
+			row,
+			title: this.safe(copy.title),
+			primary_label: copy.button,
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "bm_cost_text",
+					options: `<p>${this.esc(copy.lead)}</p><p class="bm-muted">${this.esc(copy.per)}</p><p class="bm-muted">${this.esc(copy.hint)}</p><p class="bm-muted">${this.esc(copy.note)}</p>`,
+				},
+				{ fieldtype: "Float", fieldname: "rate", label: this.safe(copy.label), default: copy.value === "" ? undefined : Number(copy.value) },
+			],
+			values: (d, picked) => Object.assign({}, given, { rate: picked && picked.rate !== undefined ? picked.rate : d.get_value("rate") }),
+		});
 	}
 
 	// Frappe blanked every required box holding a 0 while it read the dialog (see save_dialog): put the

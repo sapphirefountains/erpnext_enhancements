@@ -101,7 +101,7 @@ CONTRACT = {
 	"ADD": (
 		"add",
 		{"item_code", "warehouse", "qty", "client_ref"},
-		{"purchase_order_item", "without_po", "project", "scanned_code"},
+		{"purchase_order_item", "without_po", "project", "scanned_code", "rate"},
 	),
 	"MOVE": (
 		"move_here",
@@ -1088,7 +1088,7 @@ class TestARetriedSaveDoesNotPostTwice(unittest.TestCase):
 			"move_here": ("_transfer_source", "_require"),
 			# add's _require guards its without-PO branch (the receipt branch is checked by
 			# receive_items itself), so it is compared with that branch's _begin_log: the last.
-			"add": ("_require", "_receipt_rate"),
+			"add": ("_require", "_receipt_cost"),
 			# A store run: a store not on the list, another person's run on another day, a price,
 			# a missing job, somebody else's photo, a quick item that could not be made, and the
 			# receipt permission are all sentences before the log row (and before the Item).
