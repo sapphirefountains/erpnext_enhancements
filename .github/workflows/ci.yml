@@ -420,6 +420,16 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_frappe_16_50_desk_compat -v
       - name: Desk sidebar one-time heal (executed, not grepped)
         run: node scripts/test_sidebar_collapse_heal.js
+      # A sidebar a person hides must stay hidden on every page (v1.717.0, Nik 2026-10-22).
+      # Nothing here fails loudly: the record sidebar is simply open again, a phone is left
+      # without a way back, or the left Desk sidebar fights another tab's choice. The node step
+      # executes sidebar_memory.js against a stubbed DOM; the unittest step holds the seams it
+      # cannot see (the stylesheet's selectors are the ones the script's class names produce,
+      # nothing hides below 992px, the old always-expand script stays deleted).
+      - name: Sidebar memory (stylesheet and wiring)
+        run: python -m unittest erpnext_enhancements.tests.test_sidebar_memory -v
+      - name: Sidebar memory (executed, not grepped)
+        run: node scripts/test_sidebar_memory.js
       # An icon name no sprite has draws nothing and raises nothing: on frappe v16.50.0 five
       # slots on our Dock rail were blank, from workspace icons (money, service, water,
       # assistant, mobile) that no v16 sprite ever had, plus book-marked, which 16.50's lucide
