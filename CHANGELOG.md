@@ -87,6 +87,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the billing season lives only on the maintenance contract. A seasonal client's draft agreement therefore
   shows a twelfth of the Annual Fee until its contract is raised. Not built here.
 
+## [1.723.0] - 2026-10-22
+
+### Added
+- **Simple mode for both planners: every job (or site), what is done and what is coming up, on one quiet page.**
+  Nik, 2026-10-22: "Add an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and
+  easily see all the data in a simple view, both historical data and future data." Designed with him first; his
+  fourteen answers (S1–S14) and the production figures behind them are `docs/planner-simple-mode.md`. The planner
+  UX redesign's main complaint was "too much to learn", so this is the opposite of a sixth tab: one switch, one
+  search box, a card per job.
+  - **A switch, not a tab** (S1). *Simple* is the first button in each planner's bar, and on the phone's Today
+    header. On, it opens `/desk/project-planner/simple` or `/desk/maintenance-planner/simple`, a screen with its own
+    history entry, so Back returns to where the person was; the planner's chrome is hidden by one class and its
+    shortcuts stand down. Off, it returns to the full planner.
+  - **Remembered per device** (S7), like the last-used tab: a phone and a desktop each keep their own. On the
+    Project Planner `simple` is one of the device's tabs, and switching off goes to the tab the device showed when
+    it was switched on (through the bare address, so the first-visit rules apply when there is none). The
+    Maintenance Planner keeps its last view per person, so its Simple mode is a device flag in the browser, written
+    only when it changes and read on a bare address before the person's own view. A link that names a filter or a
+    technician never opens Simple mode: it is a planning board's link.
+  - **One card per job** (`api/planner_simple.get_simple_jobs`; S6, S9–S11, S13): every customer job ever, any
+    status (561 on production by the planner's rule, measured 2026-10-22), with work coming up first and soonest, then the rest by last activity; 20 at a
+    time with *Show more jobs*; search across all of them by number, name, customer or PM. **Done** on the left,
+    grey, newest first; **Coming up** on the right, bold, late first; three of each and *Show all N*, and *N not
+    scheduled* for undated open work. On a phone Coming up comes first, and each item's date sits above its name (a
+    range across a year is wider than any column a 375px card can spare). A job whose schedule is still a Draft (P3)
+    says *◐ Draft schedule*, as the Overview hatches it. A job's items are the planner's display rule
+    (D6); **a job with no phase or crew work lists its own top-level groups**, "N of M done", because the 505
+    finished jobs on production (2026-10-22) predate the Phase 100–700 templates and have almost no assigned tasks, so
+    the rule alone would have shown them as empty cards. Late is by end date, never by the Overdue status (1,005 open tasks
+    carry it); on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the
+    assignees, closed ToDos included (that is who did it), drawn as initials with the names on hover.
+  - **One card per site** (`get_simple_sites`; S12, S14): every project with a maintenance contract or a
+    Maintenance Record. Its records (done once submitted or in review, as the Maintenance Planner says), its
+    contract's projected visits for the next 120 days, marked *planned*, and its project's completed tasks.
+    Records only exist from 2026-10-06 and are drafted a week ahead, so without the projections every site would
+    look finished, and without the old tasks it would have three weeks of history (Highlands has 73 visits back to
+    2019 as tasks). Only the page's sites' contracts are projected (`maintenance_planner._projections` takes an
+    optional `projects` list; the Maintenance Planner's own calls are unchanged), so a search does not project
+    every contract. A projection that fails is logged and the site still answers.
+  - **The screen is the planner kit's** (`planner_kit/simple.js`, `.pk-simple-*` in `planner_kit.bundle.css`), so
+    both planners draw the same thing. It writes nothing; a click opens the record as a normal Desk route. Its own
+    controls (the search, Show all, Show more) take no history entry; the search reads again 300 ms after the last
+    key, an answer for an older read is dropped, and a failed read says so with Try again (a quiet GET, so Frappe
+    shows no dialog of its own). A failed *search* takes the previous search's cards, count and paging away with it,
+    so Show more can never add one search's next page to another's cards; a failed *Show more* keeps the cards of
+    the same search and offers Try again in its place. A refresh (Back onto Simple mode) reads as many cards as are shown, up to 1,000,
+    more than every job on production, so nothing the person scrolled to disappears.
+  - **Whose records.** The planner's role gate says who plans; each endpoint also needs read permission on its
+    records (Project and Task for jobs; Project and Sapphire Maintenance Record for sites), and lists only the
+    projects the caller may read (`frappe.get_list("Project")`, so User Permissions and permission query
+    conditions apply), as the Gantt checks its one project. The readable names go into the page query as one
+    bound `IN`, so paging and counts stay right.
+  - **The tour and "?".** The first-visit tours are capped at six steps and the Executive Team's editor tour already
+    has six, so the switch is a sentence in each tour's last step rather than a seventh; "?" lists *Simple* beside
+    the tabs, and Simple mode's own "?" explains the cards and the marks.
+
+### Notes
+- Reads only: no DocType, Custom Field, fixture or patch, so `bench migrate` does nothing new. The deploy ships the
+  rebuilt planner kit bundle (content-hashed) and the two page scripts.
+- `tests/test_planner_simple.py` (its own CI step) pins the card rules, the bound reads, the role gates and the
+  wiring, and runs `scripts/test_planner_simple.js`; the Project Planner's landing, switch and Back/Forward are new
+  cases in `scripts/test_planner_today.js`. Four existing tests that pin the device-tab list and the "?" chips now
+  include Simple.
+
+## [1.721.0] - 2026-10-22
+
+### Added
+- **The QuickBooks Record Matching page exports to Excel and imports the worked file back.** Nik, 2026-10-22: "I
+  need an excel export of the QuickBooks Record Matching screens so Meg can work on them in Excel and later I can
+  take her work and reimport it into ERPNext". Two buttons on the page (`core/matching_excel.py`, four endpoints
+  in `core/api.py`, all behind the page's own System Manager / Accounts Manager gate):
+  - **Export to Excel** asks which rows (the page's status filters, *Needs decision* by default, less *Unmapped
+    payloads*, which have no mapping row to come back to), which record types, and whether to add the parked
+    transactions. It builds one workbook: an Instructions sheet in plain words, a sheet per master type with the
+    same rows, facts and up to five suggestions the Masters tab shows, and a Parked transactions sheet. Meg fills
+    yellow columns: **Decision** (a dropdown of the page's own Link / Keep / Retry; blank leaves the row alone),
+    **Link to** (a per-row dropdown of that row's suggestion IDs, pre-filled with the best one as the page's picker
+    is; any other ID may be typed), **Fill blank fields from QBO** and **Notes**. Hidden columns carry the mapping's
+    Row ID, a Row version and `modified`. The export is a background job the page polls: the full queue is ~2,700
+    rows on production, each with a matcher call, a similar-name query and a title lookup, which one web request
+    would race the gateway timeout with. The file is a private File owned by the person who asked.
+  - **Import from Excel** uploads through Frappe's own uploader (private, .xlsx only) and shows a **preview, never
+    an apply**: per row, *will change* (what exactly -- the new link, the import copy that merges away, the blank
+    fields it fills, the note), *already done*, *changed in ERPNext since the export*, or *cannot be applied* (an
+    unknown Row ID, edited key cells, a decision the row cannot take, a Link target that does not exist as the
+    record type the QBO record belongs to). **Apply** sends the rows ten at a time; the server classifies each
+    one again and runs only a row that is still a change, through `matching.decide` (Link, with its merge
+    policy), `matching.confirm` (Keep) and `sync.sync_entity` (Retry) -- the page's own code -- and reports what
+    applied, what was skipped because it moved after the preview, and what failed.
+  - **Each row is judged again immediately before it runs, not once per request**: a Link earlier in the same
+    request can merge an import copy away, and `rename_doc` re-points every other mapping that pointed at it. A
+    Retry goes in a request of its own, as the page's Retry does, so ten round trips to Intuit cannot outrun the
+    gateway together. A note that fails to save after its decision committed is reported on a row that applied,
+    never as a failure. A refused merge comes back as a `merge_failed` flag, not a phrase the page matches.
+  - **The export reads the queue once** (`matching.master_mapping_rows`, split out of `master_queue` with
+    `build_master_rows`) and builds it 500 rows at a time. Paging by offset would skip rows: the job takes minutes,
+    and each row someone decides on the page meanwhile leaves *Needs decision* and pulls the rows behind it past
+    an offset already read. A job a deploy kills reads as lost once it outlives its RQ timeout, not as running.
+  - **Hardened after the manager's review of the PR (2026-10-22):**
+    - *No formulas from QuickBooks data.* openpyxl stores any string that starts with `=` as a formula, so a
+      QuickBooks name like `=HYPERLINK(...)` would have run in Meg's Excel. Every string cell is now written as text
+      (`data_type = "s"`), and one starting with `=`, `+`, `-` or `@` also gets Excel's quote prefix.
+    - *Link and Keep only on master records.* A row's kind came from whether its sheet had a "Link to" header, so a
+      header pasted onto the Parked sheet made Link on an Invoice call `decide()` against a Sales Invoice. The kind
+      now comes from the row's QBO type.
+    - *Duplicate Row IDs.* The same record on two rows (a copied sheet, a pasted row) that disagree is a conflict:
+      neither is applied, and the preview says why. Copies that agree are applied once. Apply honours the
+      preview's verdict, because one row on its own cannot see its duplicate.
+    - *Notes match exactly.* "Already saved" was a substring test, so a note of "ok", "import" or "Note" counted as
+      saved inside the comment's own heading and was dropped. The import's comment now carries
+      `[Excel note <hash of the exact text>]`, and only that marker counts.
+    - *No silent empty import.* Read-only openpyxl trusts a sheet's stored `<dimension>`, so a file saved with a
+      wrong one read as zero rows with no error. Each sheet's dimensions are reset before reading, and a file with
+      no Record Matching sheet says so. A file that expands past 100 MB is refused before parsing.
+    - *The page never hangs.* Apply, the Link/Keep bulk loops (`runInChunks`, from v1.518.0) and the export poll
+      now settle on the promise `frappe.call` returns. Frappe v16 never calls its `error` callback on a
+      QueryTimeout or Deadlock, so a chunk loop waiting on it froze the screen. The poll now waits 30 minutes,
+      longer than the job's 25-minute timeout, and offers the export folder if the job still hasn't reported back.
+    - *The parked sheet is read once too* (`matching.parked_mapping_rows` + `build_parked_rows`, split out of
+      `parked_transactions`), so a Retry on the page during the export can't skip rows.
+    - *Files are cleaned up.* Exports and uploaded imports go into one File folder, `Home/QuickBooks Matching
+      Excel`, and a new **daily** scheduler job (`matching_excel.delete_old_files`) deletes those older than
+      **7 days**. They hold customer and vendor names, emails and links, and nothing else ever removes an
+      unattached private File. The job deletes **only** Files this feature made or accepted: each carries a tag
+      (`attached_to_field = "qbo_matching_excel"`, which Frappe reads only with an `attached_to_doctype`, so an
+      unattached File never has it otherwise) and is still attached to nothing. A File that is merely in the folder
+      is left alone.
+    - *Preview accepts only your own upload.* Accepting a File tags it for that job, so preview refuses another
+      person's file, a document's attachment or a public file. The page only ever sends a fresh upload, but the
+      endpoint can be called directly with any `.xlsx` the caller can read. An `_export` sheet with a blank value
+      now reports "not made by the export" instead of crashing the preview.
+    - *Key columns are locked.* Each data sheet is protected, with no password: only the yellow cells are
+      unlocked. Filtering and column widths still work; sorting is off, since it would move locked cells. The Row
+      ID / QBO type / QBO ID cross-check stays as the backstop.
+  - Nik's three calls: the decisions are the page's three, not new ones (Keep on a record the import created
+    already means "keep the new record"; blank is "ignore"); a note is saved as a Comment on the row's QuickBooks
+    Sync Mapping, with or without a decision; and two QBO records linked to one ERPNext record -- the usual QBO
+    duplicate -- is a warning on both rows, not a refusal.
+  - **Why "already done" is decided before "changed since the export".** Applying a row changes it, so a second
+    import of the same file would otherwise report every row stale; it checks first whether the row already holds
+    the decision's outcome (linked to that record and decided; reviewed; no longer parked; the note's text already
+    in a comment). Importing the same file twice changes nothing the second time.
+  - **Why the staleness check is not `modified`.** The Row version fingerprints what a decision depends on -- the
+    link, `match_status`, `conflict_status`, `reviewed_on` -- because `modified` moves on every CDC touch of the QBO
+    record, and keying on it would throw away Meg's afternoon because a phone number changed in QuickBooks. A moved
+    `modified` is shown as a warning instead. `reviewed_on` is the one that matters most and `modified` would have
+    missed it: `_stamp_reviewed` writes it with `update_modified=False`. An unlinked row's doctype and a parked
+    transaction's review fields are left out, since the page rows they are exported from never carry them.
+  - Built with openpyxl, which ships with Frappe (`openpyxl~=3.1.5` on v16), for the dropdowns: v16's
+    `frappe.utils.xlsxutils.make_xlsx` writes one plain sheet through xlsxwriter. `matching.master_queue` and
+    `parked_transactions` now also return each row's `modified`.
+  Tests: `tests/test_quickbooks_matching_excel.py` (new; its own pytest step in `ci.yml`, which installs the real
+  openpyxl) -- export shaping and the version fingerprint, the workbook's hidden columns and dropdowns, parsing by
+  header, the preview's every category, apply re-checking each row, one failure not stopping the rest, and the
+  same file imported twice changing nothing. `tests/test_whitelist_placement.py` names the four endpoints.
+
 ## [1.719.0] - 2026-10-22
 
 ### Changed

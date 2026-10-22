@@ -1442,6 +1442,148 @@ test("More > Views offers Today on a phone, so a scheduler can reach it, and not
 	check("desktop", desktop.tb_views_items().map((item) => item.label), ["My week"]);
 });
 
+// ------------------------------------------------------------------ Simple mode (docs/planner-simple-mode.md)
+
+const FULL_KEY = "ee_project_planner_full_tab:nik@example.com";
+
+// The kit's Simple mode stood in for: its mount records the page's options, and a refresh reads through them.
+function simpleKit(desk) {
+	const kit = { mounts: [], refreshes: 0, legends: [] };
+	kit.simple = {
+		mount: (_root, opts) => {
+			kit.mounts.push(opts);
+			return {
+				refresh: () => {
+					kit.refreshes += 1;
+					return opts.load("", 0, null);
+				},
+			};
+		},
+		legend_sections: (kind) => [{ title: kind, items: [] }],
+	};
+	kit.quiet_call = (method, args, opts) => {
+		desk.calls.push({ method: method.split(".").pop(), args, http: opts && opts.method });
+		return Promise.resolve({ cards: [], total: 0 });
+	};
+	kit.legend = (sections, opts) => kit.legends.push({ sections, opts });
+	kit.drawer = { route: (fn) => fn() };
+	return kit;
+}
+
+function simplePlanner(desk) {
+	const pp = planner(desk, { p6c: nothingSaved() });
+	const kit = simpleKit(desk);
+	pp.p6a = { kit };
+	return { pp, kit };
+}
+
+test("Simple: the switch opens a screen of its own; the device remembers it; Back and Forward step over it", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const { pp, kit } = simplePlanner(desk);
+	desk.go("project-planner");
+	await settle();
+	pp.pps_enter();
+	await settle();
+	check("its own address, a new entry", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner/lookahead/2026-10-21",
+		"/desk/project-planner/simple",
+	]);
+	check("it is this device's tab now, and the Lookahead is where the switch goes back to", [desk.prefs[TAB_KEY], desk.prefs[FULL_KEY]], ["simple", "lookahead"]);
+	check("mounted once, read once: get_simple_jobs as a GET", [kit.mounts.length, desk.called("get_simple_jobs").map((c) => [c.args, c.http])], [
+		1,
+		[[{ search: "", start: 0, limit: "" }, "GET"]],
+	]);
+	check("the planner itself was not loaded again", pp.loads.length, 1);
+	desk.back();
+	await settle();
+	check("Back: the Lookahead", [desk.urls()[desk.index], pp.view], ["/desk/project-planner/lookahead/2026-10-21", "lookahead"]);
+	desk.forward();
+	await settle();
+	check("Forward: Simple again, the same screen read again", [pp.view, kit.mounts.length, kit.refreshes], ["simple", 1, 2]);
+	pp.pps_enter();
+	check("the switch on Simple itself does nothing", desk.entries.length, 3);
+});
+
+test("Simple: a bare visit on a device whose tab is Simple opens it, in place; Back leaves; a phone too", async () => {
+	for (const phone of [false, true]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone });
+		desk.prefs[TAB_KEY] = "simple";
+		simplePlanner(desk);
+		desk.go("project-planner");
+		await settle();
+		check(`${phone ? "phone" : "desktop"}: Simple, in place of the bare address`, [desk.urls(), desk.replaces], [["/desk/project/PRJ-00001", "/desk/project-planner/simple"], 1]);
+		check(`${phone ? "phone" : "desktop"}: not Today`, desk.called("get_today"), []);
+		desk.back();
+		check(`${phone ? "phone" : "desktop"}: Back leaves the planner`, desk.urls()[desk.index], "/desk/project/PRJ-00001");
+	}
+});
+
+test("Simple: turned off, the tab this device showed before, as a new entry; Back returns to Simple", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "crew";
+	const { pp, kit } = simplePlanner(desk);
+	desk.go("project-planner");
+	await settle();
+	pp.pps_enter();
+	await settle();
+	kit.mounts[0].off();
+	await settle();
+	check("the Crew board again, after Simple", desk.urls(), [
+		"/desk/project/PRJ-00001",
+		"/desk/project-planner/crew/2026-10-21",
+		"/desk/project-planner/simple",
+		"/desk/project-planner/crew/2026-10-21",
+	]);
+	check("and it is the device's tab again", [desk.prefs[TAB_KEY], pp.view], ["crew", "crew"]);
+	desk.back();
+	await settle();
+	check("Back: Simple", [desk.urls()[desk.index], pp.view], ["/desk/project-planner/simple", "simple"]);
+});
+
+test("Simple: turned off with nothing before it, a first visit's tab: the Lookahead on a desktop, Today on a phone", async () => {
+	for (const [phone, address] of [
+		[false, "/desk/project-planner/lookahead/2026-10-21"],
+		[true, "/desk/project-planner/today/2026-10-21"],
+	]) {
+		const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone, roles: ["Projects User"] });
+		desk.answers.get_today = ME;
+		desk.prefs[TAB_KEY] = "simple";
+		const { kit } = simplePlanner(desk);
+		desk.go("project-planner");
+		await settle();
+		kit.mounts[0].off();
+		await settle();
+		check(`${phone ? "phone" : "desktop"}: ${address}`, desk.urls().pop(), address);
+		check(`${phone ? "phone" : "desktop"}: one entry after Simple`, desk.urls().length, 3);
+	}
+});
+
+test("Simple: a link that names a filter never opens it from the landing", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	desk.prefs[TAB_KEY] = "simple";
+	simplePlanner(desk);
+	desk.go("project-planner", { pm: "Clegg" });
+	await settle();
+	check("the Lookahead with the filter, in place", desk.urls(), ["/desk/project/PRJ-00001", "/desk/project-planner/lookahead/2026-10-21?pm=Clegg"]);
+	check("nothing read for Simple", desk.called("get_simple_jobs"), []);
+});
+
+test("Simple: ? is the kit's help for jobs; an item opens its record; the shortcuts stand down", async () => {
+	const desk = makeDesk({ start: "/desk/project/PRJ-00001", phone: false });
+	const { pp, kit } = simplePlanner(desk);
+	desk.go("project-planner", "simple");
+	await settle();
+	kit.mounts[0].help();
+	check("the help", [kit.legends.length, kit.legends[0].opts.title, kit.legends[0].sections[0].title], [1, "How Simple mode works", "jobs"]);
+	check("the phone test is the page's own", kit.mounts[0].is_phone(), false);
+	const before = desk.entries.length;
+	["today", "prev", "next", "view1", "view2"].forEach((action) => check(`${action} does nothing here`, pp.p6b_run_key(action), false));
+	check("no navigation", desk.entries.length, before);
+	kit.mounts[0].open("Task", "TASK-1");
+	check("an item opens its form, a new entry", desk.urls().pop(), "/desk/Form/Task/TASK-1");
+});
+
 // ------------------------------------------------------------------ run
 
 (async () => {

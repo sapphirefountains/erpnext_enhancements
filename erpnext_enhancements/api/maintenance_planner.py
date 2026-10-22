@@ -695,12 +695,20 @@ def _visit_card(row, today, can_move):
 	}
 
 
-def _projections(start, end, today):
+def _projections(start, end, today, projects=None):
+	"""The projected visits of every Active contract, or (``projects``, a list of Project names) only of the
+	contracts on those projects: Simple mode (``planner_simple``) projects one page of sites, not every contract."""
+	filters = {"status": "Active"}
+	if projects is not None:
+		if not projects:
+			return []
+		filters["project"] = ["in", list(projects)]
+
 	from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
 		iter_seasonal_visits,
 	)
 
-	contracts = frappe.get_all("Sapphire Maintenance Contract", filters={"status": "Active"}, pluck="name")
+	contracts = frappe.get_all("Sapphire Maintenance Contract", filters=filters, pluck="name")
 	if not contracts:
 		return []
 
