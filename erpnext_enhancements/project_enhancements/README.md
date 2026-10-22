@@ -1165,8 +1165,8 @@ approved 2026-10-21) folds those four into two, and gives both planners the same
 | My week | More ▸ Views | (none) |
 | Color by, and its key row | **More ▸ Display**: radio items, then the key (a project in it is a switch for its highlight) | More ▸ Display, likewise (a site) |
 | Highlight a project | More ▸ Display (*Highlight a project…*, or *Highlighting X* to switch it off), a project's name on a card, the project drawer, Esc | a site's panel, the site drawer, the key |
-| Maintenance, rentals, travel / Projected visits, Project work | More ▸ Display (check marks) | More ▸ Display |
-| The visit-kind legend row | | More ▸ Display (*Visit kinds*) and "?" |
+| Maintenance, rentals, travel / Projected visits, Project work | More ▸ Display (check marks) | More ▸ Display (*Project work* is a thin strip a technician-day, *Project work as cards* the old cards; P10) |
+| The visit-kind legend row | | "?" only (it was More ▸ Display's *Visit kinds* from v1.687.0 to P10) |
 | Draft mode, Tap to move | **More ▸ Tools** (*Hold all my changes*, *Tap to move*; check marks) | More ▸ Tools (*Draft mode*, *Tap to move*) |
 | Block time, Copy week | More ▸ Tools (Copy week on week and crew only) | More ▸ Tools (*Block time…*) |
 | Quick add, Build out, Day note / Add visit | **+ Add** | **+ Add** (*Add visit…*, *Day note…*) |
@@ -1490,8 +1490,8 @@ Nik picked all six on 2026-10-09, for **both** planners. The page work is `PP6C_
 - **Saved views, per person, on the server.** The toolbar's *Views* menu: *Save view as…* (a name; the
   same name replaces), switch, *Manage views…* (use, delete). A view holds the calendar view, the
   filters (Project Planner: project, PM, group, *Maintenance, rentals, travel*, *Running over*,
-  Resources available open; Maintenance Planner: technician, projected visits, project work, Resources
-  available open) and the color-by. The view **last used** is saved a moment after any change and
+  Resources available open; Maintenance Planner: technician, projected visits, project work, project
+  work as cards, Resources available open) and the color-by. The view **last used** is saved a moment after any change and
   applied when the planner opens, on any device. Two rules:
   - **The route wins.** A URL that names a view and a date is used as it is, and only the filters are
     restored on the first open. Only a bare `/app/project-planner` (or `/app/maintenance-planner`)

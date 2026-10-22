@@ -1433,7 +1433,12 @@ class TestPages(unittest.TestCase):
 			self.assertIn("\tdrop(source, target) {\n\t\tif (this.p6b_drop(source, target)) return;", code)
 			self.assertIn("if (this.p6b_undo(snap)) return;", _method(code, "undo"))
 			self.assertIn("this.p6b_lift(drag);", _method(code, "lift"))
-			self.assertIn("].concat(this.p6b_legend_sections()),", code)
+			# P10: the Maintenance Planner returns its sections from legend_sections() instead of passing them to
+			# kit.legend, so its list ends in a semicolon, not an argument comma.
+			self.assertIn(
+				"].concat(this.p6b_legend_sections());" if code is self.mp else "].concat(this.p6b_legend_sections()),",
+				code,
+			)
 		# The Project Planner's send() routes the planner_actions writes; nothing else in it changed.
 		send = _method(self.pp, "send")
 		self.assertIn("${(this.p6_send_modules || {})[method] || PP.api}.${method}", send)
