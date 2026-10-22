@@ -7987,77 +7987,77 @@ const MPTOUR_PURE = {
 	auto_screen(view) {
 		return MPTOUR.screens.includes(view);
 	},
-	// The steps for `kind`, in words from `say` (the page's __). `who`: {can_schedule, has_day}.
-	steps(kind, who, say) {
+	// The steps for `kind`, written out as __() calls so they are translated. `who`: {can_schedule, has_day}.
+	steps(kind, who) {
 		const w = who || {};
 		const steps = [];
 		if (kind === "phone") {
 			steps.push(
 				{
-					title: say("Your visits"),
-					text: say("The calendar shows visits by day. Tap one to open it. Month, Week and Crew along the top change the view."),
+					title: __("Your visits"),
+					text: __("The calendar shows visits by day. Tap one to open it. Month, Week and Crew along the top change the view."),
 				},
 				{
-					title: say("Project work is a strip"),
-					text: say("A thin grey strip on a day is project work for the same people. Tap it for their week. It is moved on the Project Planner."),
+					title: __("Project work is a strip"),
+					text: __("A thin grey strip on a day is project work for the same people. Tap it for their week. It is moved on the Project Planner."),
 				}
 			);
 			if (w.has_day) {
 				steps.push({
-					title: say("My day"),
-					text: say("My day opens Today: your stops and the route for today and tomorrow."),
+					title: __("My day"),
+					text: __("My day opens Today: your stops and the route for today and tomorrow."),
 				});
 			}
 			steps.push(
 				{
-					title: say("Filters and tools"),
-					text: say("Filters and tools opens a sheet from the bottom: the technician filter, alerts, + Add and More."),
+					title: __("Filters and tools"),
+					text: __("Filters and tools opens a sheet from the bottom: the technician filter, alerts, + Add and More."),
 				},
 				{
-					title: say("Help is one tap away"),
-					text: say("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again."),
+					title: __("Help is one tap away"),
+					text: __("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again."),
 				}
 			);
 			return steps;
 		}
 		steps.push({
-			title: say("Month, Week and Crew"),
-			text: say("The tabs along the top show the same visits three ways. Month is the big picture, Week is for planning, and Crew gives each technician a row."),
+			title: __("Month, Week and Crew"),
+			text: __("The tabs along the top show the same visits three ways. Month is the big picture, Week is for planning, and Crew gives each technician a row."),
 		});
 		if (w.can_schedule) {
 			steps.push({
-				title: say("Drag to reschedule"),
-				text: say("Drag a visit to another day, or onto another technician's row to hand it over. Double-click an empty spot, or use + Add, to draft a new visit."),
-				keys: say("Ctrl+Z (⌘Z on a Mac) undoes the last change."),
+				title: __("Drag to reschedule"),
+				text: __("Drag a visit to another day, or onto another technician's row to hand it over. Double-click an empty spot, or use + Add, to draft a new visit."),
+				keys: __("Ctrl+Z (⌘Z on a Mac) undoes the last change."),
 			});
 		}
 		steps.push(
 			{
-				title: say("Project work is a thin strip"),
-				text: say("A grey strip on a day is that technician's project work. Hover for the tasks, click for their week. It is read-only here: move it on the Project Planner."),
+				title: __("Project work is a thin strip"),
+				text: __("A grey strip on a day is that technician's project work. Hover for the tasks, click for their week. It is read-only here: move it on the Project Planner."),
 			},
 			{
-				title: say("Resources available"),
+				title: __("Resources available"),
 				text: w.can_schedule
-					? say("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name for their week, or drag it onto a visit to add them to its crew.")
-					: say("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to see their week."),
+					? __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name for their week, or drag it onto a visit to add them to its crew.")
+					: __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to see their week."),
 			}
 		);
 		if (w.can_schedule) {
 			steps.push({
-				title: say("Who hears about a change"),
-				text: say("A change to a visit asks Notify crew?, which starts on Notify for the next two weeks. To rehearse a reshuffle, turn on Draft mode in More, then Publish when it looks right."),
-				keys: say("Esc puts a change back."),
+				title: __("Who hears about a change"),
+				text: __("A change to a visit asks Notify crew?, which starts on Notify for the next two weeks. To rehearse a reshuffle, turn on Draft mode in More, then Publish when it looks right."),
+				keys: __("Esc puts a change back."),
 			});
 		} else if (w.has_day) {
 			steps.push({
-				title: say("My day"),
-				text: say("My day, in the bar, opens Today: your stops and the route for today and tomorrow."),
+				title: __("My day"),
+				text: __("My day, in the bar, opens Today: your stops and the route for today and tomorrow."),
 			});
 		}
 		steps.push({
-			title: say("Help is one click away"),
-			text: say("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+			title: __("Help is one click away"),
+			text: __("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
 		});
 		return steps;
 	},
@@ -8208,7 +8208,7 @@ const MPTOUR_METHODS = {
 		if (!kit || !kit.tour) return false;
 		const kind = this.tour_kind();
 		const state = this.tour_state();
-		const steps = MPTOUR_PURE.steps(kind, this.tour_who(), __);
+		const steps = MPTOUR_PURE.steps(kind, this.tour_who());
 		if (!steps.length) return false;
 		const handle = kit.tour.open({
 			title: __("Maintenance Planner tour"),

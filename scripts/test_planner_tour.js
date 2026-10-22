@@ -353,10 +353,21 @@ test("The kit: skippable by Esc, the Skip button and a press outside; a press in
 		if (how === "skip") overlay.querySelector(".pk-tour-skip").click();
 		if (how === "outside") {
 			fire(overlay.querySelector(".pk-tour-card"), "pointerdown");
+			fire(overlay.querySelector(".pk-tour-card"), "click");
 			check("a press on the card keeps it open", tour.is_open(), true);
 			fire(overlay.querySelector(".pk-tour-title"), "pointerdown");
+			fire(overlay.querySelector(".pk-tour-title"), "click");
 			check("nor a press on its words", tour.is_open(), true);
+			// Selecting a word: the press begins in the card and the release is outside it, so the click lands on
+			// the overlay. That is not a tap outside.
+			fire(overlay.querySelector(".pk-tour-text"), "pointerdown");
+			fire(overlay, "click");
+			check("a drag that begins in the card and ends outside keeps it open", tour.is_open(), true);
+			fire(overlay, "click");
+			check("and a click with no press behind it (a script's) is not a tap", tour.is_open(), true);
 			fire(overlay, "pointerdown");
+			check("the press alone closes nothing: its click would fall through to the page", tour.is_open(), true);
+			fire(overlay, "click");
 		}
 		check(`${how}: closed, gone, focus back`, [tour.is_open(), !!overlay.parentNode, doc.activeElement === opener], [false, false, true]);
 	};
@@ -637,16 +648,15 @@ const shown = (kit) => (kit.tour.current() ? kit.tour.current().steps.map((s) =>
 test("Project Planner steps: four to six for the people it is for, plain words, one idea each", () => {
 	const { ctx } = ppPage();
 	const pure = vm.runInContext("PPTOUR_PURE", ctx);
-	const say = (s) => s;
-	const editor = pure.steps("desktop", { executive: false, can_edit: true }, say);
+	const editor = pure.steps("desktop", { executive: false, can_edit: true });
 	check("an editor's desktop tour", titles(editor), ["Tabs along the top", "Drag to move", "Draft until you publish", "Notify crew?", "Help is one click away"]);
-	const exec = pure.steps("desktop", { executive: true, can_edit: true }, say);
+	const exec = pure.steps("desktop", { executive: true, can_edit: true });
 	check("the Executive Team's has the Overview step, second", titles(exec), ["Tabs along the top", "Overview is for managers", "Drag to move", "Draft until you publish", "Notify crew?", "Help is one click away"]);
-	check("and nobody else's does", [editor, pure.steps("desktop", { executive: false, can_edit: false }, say)].some((steps) => titles(steps).includes("Overview is for managers")), false);
-	const reader = pure.steps("desktop", { executive: false, can_edit: false }, say);
+	check("and nobody else's does", [editor, pure.steps("desktop", { executive: false, can_edit: false })].some((steps) => titles(steps).includes("Overview is for managers")), false);
+	const reader = pure.steps("desktop", { executive: false, can_edit: false });
 	check("someone who cannot edit is told nothing about dragging, drafts or notices, and how to look", titles(reader), ["Tabs along the top", "Click for the details", "Help is one click away"]);
-	check("an Executive Team reader gets the Overview too", titles(pure.steps("desktop", { executive: true, can_edit: false }, say)), ["Tabs along the top", "Overview is for managers", "Click for the details", "Help is one click away"]);
-	const phone = pure.steps("phone", { executive: true, can_edit: true }, say);
+	check("an Executive Team reader gets the Overview too", titles(pure.steps("desktop", { executive: true, can_edit: false })), ["Tabs along the top", "Overview is for managers", "Click for the details", "Help is one click away"]);
+	const phone = pure.steps("phone", { executive: true, can_edit: true });
 	check("a phone's tour is Today's, and the same whoever it is", titles(phone), ["This is your day", "Open the route", "Block my time", "The rest of the planner", "Help is one tap away"]);
 	check("no Overview on a phone", titles(phone).includes("Overview is for managers"), false);
 	[editor, exec, phone].forEach((steps) => check("four to six steps", steps.length >= 4 && steps.length <= 6, true));
@@ -666,16 +676,15 @@ test("Project Planner steps: four to six for the people it is for, plain words, 
 test("Maintenance Planner steps: a scheduler's, a technician's, a phone's", () => {
 	const { ctx } = mpPage();
 	const pure = vm.runInContext("MPTOUR_PURE", ctx);
-	const say = (s) => s;
-	const scheduler = pure.steps("desktop", { can_schedule: true, has_day: false }, say);
+	const scheduler = pure.steps("desktop", { can_schedule: true, has_day: false });
 	check("a scheduler's desktop tour", titles(scheduler), ["Month, Week and Crew", "Drag to reschedule", "Project work is a thin strip", "Resources available", "Who hears about a change", "Help is one click away"]);
-	const tech = pure.steps("desktop", { can_schedule: false, has_day: true }, say);
+	const tech = pure.steps("desktop", { can_schedule: false, has_day: true });
 	check("a technician's: no dragging or notices, but My day", titles(tech), ["Month, Week and Crew", "Project work is a thin strip", "Resources available", "My day", "Help is one click away"]);
-	const viewer = pure.steps("desktop", { can_schedule: false, has_day: false }, say);
+	const viewer = pure.steps("desktop", { can_schedule: false, has_day: false });
 	check("someone with neither", titles(viewer), ["Month, Week and Crew", "Project work is a thin strip", "Resources available", "Help is one click away"]);
-	const phone = pure.steps("phone", { can_schedule: true, has_day: true }, say);
+	const phone = pure.steps("phone", { can_schedule: true, has_day: true });
 	check("a phone's, with a day", titles(phone), ["Your visits", "Project work is a strip", "My day", "Filters and tools", "Help is one tap away"]);
-	check("a phone's, without one", titles(pure.steps("phone", { has_day: false }, say)), ["Your visits", "Project work is a strip", "Filters and tools", "Help is one tap away"]);
+	check("a phone's, without one", titles(pure.steps("phone", { has_day: false })), ["Your visits", "Project work is a strip", "Filters and tools", "Help is one tap away"]);
 	[scheduler, tech, viewer, phone].forEach((steps) => check("four to six steps", steps.length >= 4 && steps.length <= 6, true));
 	check("the scheduler's Resources step offers the drag, the others' does not", [/drag it onto a visit/.test(scheduler[3].text), /drag/.test(tech[2].text)], [true, false]);
 	check("the notice step names Notify crew? and Draft mode", /Notify crew\?/.test(scheduler[4].text) && /Draft mode/.test(scheduler[4].text), true);
@@ -732,7 +741,10 @@ test("PP: the second visit does not show it; Skip, Esc and a press outside each 
 		p.pp.tour_take(s.rows.project);
 		p.flush();
 		if (how === "esc") key(p.doc.activeElement, "Escape");
-		else fire(p.doc.querySelector(".pk-tour"), "pointerdown");
+		else {
+			fire(p.doc.querySelector(".pk-tour"), "pointerdown");
+			fire(p.doc.querySelector(".pk-tour"), "click");
+		}
 		check(`${how}: closed`, p.kit.tour.is_open(), false);
 		p.pp.tour_route();
 		p.flush();
@@ -863,6 +875,15 @@ test("PP: nothing opens before the page can show it, and nothing throws while it
 	check("data: it can go", env.pp.tour_verdict(), "ok");
 	env.pp.$body = { hasClass: (c) => c === "pp-loading" };
 	check("a load in progress: waiting", env.pp.tour_verdict(), "wait");
+
+	// Capacity draws its own heatmap and has no planner answer on a first landing: that is its data.
+	env = ppPage({ no_data: true, view: "capacity" });
+	env.pp.tour_take(flags);
+	check("Capacity with neither the heatmap nor the planner's answer: waiting", env.pp.tour_verdict(), "wait");
+	env.pp.heatmap = { weeks: [], rows: [] };
+	check("its heatmap is its data", env.pp.tour_verdict(), "ok");
+	env.pp.$body = { hasClass: (c) => c === "pp-loading" };
+	check("still loading: waiting", env.pp.tour_verdict(), "wait");
 
 	env = ppPage({ no_kit: true });
 	env.pp.tour_take(flags);

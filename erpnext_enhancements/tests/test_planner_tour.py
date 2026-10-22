@@ -355,6 +355,7 @@ class TestTheKitModule(unittest.TestCase):
 			'live.setAttribute("aria-live", "polite");',
 			'dots.setAttribute("aria-hidden", "true");',
 			'overlay.addEventListener("pointerdown"',
+			'overlay.addEventListener("click"',
 			'doc.addEventListener("keydown", on_key, true);',
 			'doc.removeEventListener("keydown", handle.on_key, true);',
 		):
@@ -437,7 +438,7 @@ class TestThePages(unittest.TestCase):
 			"if (!state.seen || !kit) return \"wait\";",
 			"if (!kit.tour) return \"\";",
 			"if (!this.tb || !this.tb.kit) return \"wait\";",
-			'if (kind === "desktop" && (!this.data || this.tour_loading())) return "wait";',
+			'if (kind === "desktop" && !this.tour_screen_ready()) return "wait";',
 			'if (this.tour_busy(kit)) return "wait";',
 		):
 			with self.subTest(needle=needle):

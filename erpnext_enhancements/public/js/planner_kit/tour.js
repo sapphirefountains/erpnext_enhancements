@@ -176,10 +176,18 @@ export function create_tour(env) {
 			back.setAttribute("aria-label", t("Previous step"));
 		}
 
-		// A press on the dimmed page, outside the card, skips. pointerdown, not click: a drag that starts
-		// in the card (selecting a word) and ends outside it must not close it.
+		// A tap on the dimmed page, outside the card, skips. It closes on the click, and only when the press
+		// began outside the card too: a drag that starts in the card (selecting a word) and ends outside it
+		// must not close it, and closing on the press itself would let the tap's own click fall through to
+		// whatever the page has under the finger once the dialog has gone.
+		let pressed_outside = false;
 		overlay.addEventListener("pointerdown", (e) => {
-			if (e.target === overlay) finish("outside");
+			pressed_outside = e.target === overlay;
+		});
+		overlay.addEventListener("click", (e) => {
+			const outside = pressed_outside && e.target === overlay;
+			pressed_outside = false;
+			if (outside) finish("outside");
 		});
 		// Whatever is pressed inside the card stays inside it: the page's and Frappe's shortcuts are not for
 		// the page behind a dialog. (Default actions are untouched: Enter and Space still press a button.)

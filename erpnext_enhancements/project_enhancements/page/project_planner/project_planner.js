@@ -14978,79 +14978,79 @@ const PPTOUR_PURE = {
 		if (kind === "phone") return view === PP8.view && !!has_day;
 		return PPTOUR.desktop_screens.includes(view);
 	},
-	// The steps for `kind`, in words from `say` (the page's __). `who`: {executive, can_edit}.
-	steps(kind, who, say) {
+	// The steps for `kind`, written out as __() calls so they are translated. `who`: {executive, can_edit}.
+	steps(kind, who) {
 		const w = who || {};
 		if (kind === "phone") {
 			return [
 				{
-					title: say("This is your day"),
-					text: say("Today lists your stops for today and tomorrow, in driving order, with when to leave and who is with you."),
+					title: __("This is your day"),
+					text: __("Today lists your stops for today and tomorrow, in driving order, with when to leave and who is with you."),
 				},
 				{
-					title: say("Open the route"),
-					text: say("The map shows the drive. Tap an address to open it in Google Maps, or Full route for the stops and drive times."),
+					title: __("Open the route"),
+					text: __("The map shows the drive. Tap an address to open it in Google Maps, or Full route for the stops and drive times."),
 				},
 				{
-					title: say("Block my time"),
-					text: say("Need time away? Block my time marks you unavailable for part of a day or all of it. This week shows your whole week."),
+					title: __("Block my time"),
+					text: __("Need time away? Block my time marks you unavailable for part of a day or all of it. This week shows your whole week."),
 				},
 				{
-					title: say("The rest of the planner"),
-					text: say("Planner opens the full schedule. There, Filters and tools opens a sheet from the bottom with the filters, alerts, + Add and More."),
+					title: __("The rest of the planner"),
+					text: __("Planner opens the full schedule. There, Filters and tools opens a sheet from the bottom with the filters, alerts, + Add and More."),
 				},
 				{
-					title: say("Help is one tap away"),
-					text: say("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again. On Today, the ? button opens it too."),
+					title: __("Help is one tap away"),
+					text: __("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again. On Today, the ? button opens it too."),
 				},
 			];
 		}
 		const steps = [
 			{
-				title: say("Tabs along the top"),
-				text: say(
+				title: __("Tabs along the top"),
+				text: __(
 					"Lookahead shows every job for the next three weeks. Gantt shows one job from start to finish. Crew shows who is where. Calendar is the week and month you know."
 				),
-				keys: say("All four show the same tasks."),
+				keys: __("All four show the same tasks."),
 			},
 		];
 		if (w.executive) {
 			steps.push({
-				title: say("Overview is for managers"),
-				text: say("Overview puts every active job on one timeline, lists what needs attention, and prints the weekly summary."),
+				title: __("Overview is for managers"),
+				text: __("Overview puts every active job on one timeline, lists what needs attention, and prints the weekly summary."),
 			});
 		}
 		if (w.can_edit !== false) {
 			steps.push(
 				{
-					title: say("Drag to move"),
-					text: say("Drag a bar or card to a new day. The tasks that wait on it move with it, by the same number of working days."),
-					keys: say("Hold Ctrl (⌘ on a Mac) while dropping to move just that task."),
+					title: __("Drag to move"),
+					text: __("Drag a bar or card to a new day. The tasks that wait on it move with it, by the same number of working days."),
+					keys: __("Hold Ctrl (⌘ on a Mac) while dropping to move just that task."),
 				},
 				{
-					title: say("Draft until you publish"),
-					text: say(
+					title: __("Draft until you publish"),
+					text: __(
 						"A new job's schedule starts as a Draft: changes stay private and nobody is told. When it is ready, press Publish… on the job. That tells the crew and sets the baseline, the grey bar you compare against later."
 					),
 				},
 				{
-					title: say("Notify crew?"),
-					text: say(
+					title: __("Notify crew?"),
+					text: __(
 						"After a job is published, a change to someone's days asks Notify crew? Notify tells the people affected. Don't notify keeps it quiet. It starts on Notify for changes in the next two weeks."
 					),
-					keys: say("Esc puts the change back."),
+					keys: __("Esc puts the change back."),
 				}
 			);
 		} else {
 			// Someone who may look but not change: what a click shows them, in place of the editing steps.
 			steps.push({
-				title: say("Click for the details"),
-				text: say("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
+				title: __("Click for the details"),
+				text: __("Click a bar for its task, a person's name for their week, or a date for everyone's day."),
 			});
 		}
 		steps.push({
-			title: say("Help is one click away"),
-			text: say("? explains every tab, chip and color, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+			title: __("Help is one click away"),
+			text: __("? explains every tab, chip and color, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
 		});
 		return steps;
 	},
@@ -15164,7 +15164,7 @@ const PPTOUR_METHODS = {
 			return kind === "phone" && this.view === PP8.view && !this.today_data ? "wait" : "";
 		}
 		if (!this.tb || !this.tb.kit) return "wait";
-		if (kind === "desktop" && (!this.data || this.tour_loading())) return "wait";
+		if (kind === "desktop" && !this.tour_screen_ready()) return "wait";
 		if (this.tour_busy(kit)) return "wait";
 		return "ok";
 	},
@@ -15172,6 +15172,14 @@ const PPTOUR_METHODS = {
 	tour_loading() {
 		const $body = this.$body;
 		return !!($body && typeof $body.hasClass === "function" && $body.hasClass("pp-loading"));
+	},
+
+	// The screen's own data is drawn and nothing is loading. Capacity reads its heatmap, not the planner's
+	// answer, so a first landing there has no `data` at all.
+	tour_screen_ready() {
+		if (this.tour_loading()) return false;
+		if (this.view === PP.capacity_view) return !!(this.heatmap || this.data);
+		return !!this.data;
 	},
 
 	// Anything on screen that is waiting for a decision, or in the way: a drawer, a menu, the phone's sheet
@@ -15214,7 +15222,7 @@ const PPTOUR_METHODS = {
 		if (!kit || !kit.tour) return false;
 		const kind = this.tour_kind();
 		const state = this.tour_state();
-		const steps = PPTOUR_PURE.steps(kind, this.tour_who(), __);
+		const steps = PPTOUR_PURE.steps(kind, this.tour_who());
 		if (!steps.length) return false;
 		const handle = kit.tour.open({
 			title: __("Project Planner tour"),
