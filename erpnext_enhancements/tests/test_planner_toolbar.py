@@ -160,8 +160,9 @@ class TestTheKitModule(unittest.TestCase):
 class TestThePages(unittest.TestCase):
 	def test_the_toolbar_block_runs_last_and_hooks_in_one_line_each(self):
 		pp, mp = _code(PP_JS), _code(MP_JS)
-		self.assertIn("this.init_t1();\n\t\tthis.init_toolbar();\n\t\tthis.bind_drag();", pp)
-		self.assertIn("this.init_phase_c1();\n\t\tthis.init_toolbar();\n\t\tthis.bind_drag();", mp)
+		# P12 adds init_tour after the toolbar (the tour needs the toolbar built), before the drag listeners.
+		self.assertIn("this.init_t1();\n\t\tthis.init_toolbar();\n\t\tthis.init_tour();\n\t\tthis.bind_drag();", pp)
+		self.assertIn("this.init_phase_c1();\n\t\tthis.init_toolbar();\n\t\tthis.init_tour();\n\t\tthis.bind_drag();", mp)
 		for code, prefix in ((pp, "PP"), (mp, "MP")):
 			with self.subTest(page=prefix):
 				self.assertIn(
@@ -312,7 +313,13 @@ class TestMaintenanceSimplify(unittest.TestCase):
 		cls.prefs = (APP / "api" / "planner_views_prefs.py").read_text(encoding="utf-8")
 
 	def test_the_block_is_last_and_hooks_in_one_line_each(self):
-		self.assertTrue(self.raw.rstrip().endswith("Object.assign(MaintenancePlanner.prototype, MP10_METHODS);"))
+		# P12's block (the first-visit tour) follows it; MP10 is the last block that is not that one.
+		self.assertTrue(self.raw.rstrip().endswith("Object.assign(MaintenancePlanner.prototype, MPTOUR_METHODS);"))
+		self.assertEqual(self.raw.count("Object.assign(MaintenancePlanner.prototype, MP10_METHODS);"), 1)
+		self.assertLess(
+			self.raw.index("Object.assign(MaintenancePlanner.prototype, MP10_METHODS);"),
+			self.raw.index("const MPTOUR = {"),
+		)
 		js = self.js
 		hooks = (
 			# the project-work renderers (the month and week, the crew cell, the print) and the rest
@@ -329,8 +336,9 @@ class TestMaintenanceSimplify(unittest.TestCase):
 		for method, hook in hooks:
 			with self.subTest(method=method):
 				self.assertIn(hook, js[js.index(method) :][:9000])
-		# The constructor is untouched around the toolbar (the toolbar block pins its own order).
-		self.assertIn("this.init_phase_c1();\n\t\tthis.init_toolbar();\n\t\tthis.bind_drag();", js)
+		# The constructor is untouched around the toolbar (the toolbar block pins its own order; P12's
+		# init_tour is the one line added after it).
+		self.assertIn("this.init_phase_c1();\n\t\tthis.init_toolbar();\n\t\tthis.init_tour();\n\t\tthis.bind_drag();", js)
 		# The double-click that adds a visit leaves a strip alone.
 		self.assertIn('".mp-card, .mp-busy, .mp-day-head,', _method(js, "p6e_dblclick"))
 

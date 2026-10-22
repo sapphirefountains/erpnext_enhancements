@@ -1078,9 +1078,11 @@ test("Project Planner: nothing in the old toolbar is lost, and + Add and More ar
 	check("two menus", pp.tb_menu_list().map((m) => m[1]), ["Add", "More"]);
 	check("their buttons read + Add and More", pp.tb_menu_list().map((m) => m[3]), ["+ Add", "More"]);
 	check("More's sections, in order", more.filter((item) => item.section).map((item) => item.heading), ["Display", "Views", "Tools", "Print"]);
+	// P12's sections (the tabs, where it opens, moving, Draft and Published, the baseline) follow the tips.
+	const lines = source.replace(/\r\n/g, "\n");
 	check(
-		"tips are the help's first section",
-		source.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p6c_legend_sections(),") || source.includes("this.p6a_tip_section(),\r\n\t\t\t\t...this.p6c_legend_sections(),"),
+		"tips are the help's first section, P12's new-model sections right after them",
+		lines.includes("this.p6a_tip_section(),\n\t\t\t\t...this.p12_legend_sections(),") && lines.includes("\n\t\t\t\t...this.p6c_legend_sections(),"),
 		true
 	);
 });
@@ -1706,7 +1708,12 @@ test("Maintenance Planner: nothing in the old toolbar is lost, and + Add and Mor
 	check("two menus", mp.tb_menu_list().map((m) => m[1]), ["Add", "More"]);
 	check("their buttons read + Add and More", mp.tb_menu_list().map((m) => m[3]), ["+ Add", "More"]);
 	check("More's sections, in order", more.filter((item) => item.section).map((item) => item.heading), ["Display", "Views", "Tools", "Print"]);
-	check("tips are the help's first section", source.includes("this.p6a_tip_section(),\n\t\t\t...this.p6c_legend_sections(),"), true);
+	const mp_lines = source.replace(/\r\n/g, "\n");
+	check(
+		"tips are the help's first section, P12's sections right after them",
+		mp_lines.includes("this.p6a_tip_section(),\n\t\t\t...this.p12_legend_sections(),") && mp_lines.includes("\n\t\t\t...this.p6c_legend_sections(),"),
+		true
+	);
 	check("the legend row is gone from under the toolbar", source.includes('class="mp-legend"'), false);
 });
 
@@ -2556,7 +2563,12 @@ test("Maintenance Planner: the help is one provider function, with the kinds, th
 	mp.p6a_tip_section = () => ({ title: "Tips", items: [] });
 	frappe.session = { user: "lisa@x.com" };
 	const titles = () => mp.legend_sections().map((section) => section.title);
-	check("the sections, kinds before the strip, Resources after it", titles().slice(0, 5), ["Tips", "Quick looks", "Visit cards", "Project work", "Resources available"]);
+	// P12's three sections (the views, moving a visit, Draft mode and Notify crew?) sit right after the tips.
+	check(
+		"the sections, P12's after the tips, then the kinds before the strip, Resources after it",
+		titles().slice(0, 8),
+		["Tips", "The views", "Moving a visit", "Draft mode and Notify crew?", "Quick looks", "Visit cards", "Project work", "Resources available"]
+	);
 	check("no 'Your day' for someone with no day", titles().includes("Your day"), false);
 	frappe.session = { user: "austin@x.com" };
 	check("a technician's help says what My day is", titles().includes("Your day"), true);

@@ -199,6 +199,7 @@ class MaintenancePlanner {
 		this.init_phase6e();
 		this.init_phase_c1();
 		this.init_toolbar();
+		this.init_tour();
 		this.bind_drag();
 	}
 
@@ -216,6 +217,7 @@ class MaintenancePlanner {
 		if (this.p6c_before_route()) return;
 		const target = this.route_target();
 		if (!target) return;
+		this.tour_route(); // P12: a tour from the last screen closes, and the first-visit check is made again
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
@@ -2814,7 +2816,11 @@ const MP6A_METHODS = {
 	p6a_legend() {
 		const kit = this.p6a && this.p6a.kit;
 		if (!kit) return;
-		kit.legend(this.legend_sections(), { title: __("How to read the Maintenance Planner"), owner: MP6A.owner });
+		kit.legend(this.legend_sections(), {
+			title: __("How to read the Maintenance Planner"),
+			owner: MP6A.owner,
+			actions: this.tour_legend_actions(), // P12: Take the tour
+		});
 	},
 
 	// The "?" help, section by section: the ONE provider function. Everything the help says is built here
@@ -2835,6 +2841,7 @@ const MP6A_METHODS = {
 		const bar = (cls, width) => `<span class="mp-p6a-bar ${cls}"><span class="mp-bar"><i style="width:${width}%"></i></span></span>`;
 		return [
 			this.p6a_tip_section(),
+			...this.p12_legend_sections(), // P12: the views, moving a visit, Draft mode and Notify crew?
 			...this.p6c_legend_sections(),
 			{
 				title: __("Quick looks"),
@@ -4019,7 +4026,8 @@ const MP6B_METHODS = {
 			shift: e.shiftKey,
 			alt: e.altKey,
 			editable,
-			dialog: !!(window.cur_dialog && window.cur_dialog.display),
+			// P12: the first-visit tour is a dialog, and its keys are its own.
+			dialog: !!(window.cur_dialog && window.cur_dialog.display) || this.tour_open(),
 		});
 		if (!action) return;
 		if (target && target.closest && target.closest(".pk-menu")) return;
@@ -4843,6 +4851,7 @@ const MP6C_METHODS = {
 				const answer = (r && r.message) || {};
 				p6c.views = Array.isArray(answer.views) ? answer.views : [];
 				p6c.last = answer.last && typeof answer.last === "object" ? answer.last : null;
+				this.tour_take(answer.tour); // P12: whether this person has been shown each tour
 			})
 			.catch(() => null);
 		const late = new Promise((resolve) => setTimeout(resolve, MP6C.restore_wait));
@@ -7937,3 +7946,360 @@ const MP10_METHODS = {
 };
 
 Object.assign(MaintenancePlanner.prototype, MP10_METHODS);
+
+// ====================================================================== P12: the first-visit tour, and "?" for the views
+//
+// P12 of the planner UX redesign (docs/planner-ux-redesign.md section 7; Nik, 2026-10-21: "a brief and
+// simple tutorial on the planner for every first time visitor"). This planner's half of what the Project
+// Planner's PPTOUR block does (its comment says how it works, and why each rule is so); the differences:
+//
+//   - **The steps.** A desktop's: Month, Week and Crew; dragging a visit (schedulers); the project-work
+//     strip; Resources available; who hears about a change, Notify crew? and Draft mode (schedulers);
+//     My day (a technician who has a day of their own); and "?". A phone's: your visits, the strip, My
+//     day, Filters and tools, and "?". Four to six steps either way.
+//   - **When.** On any of the three views, once the planner's data is drawn, the kit and the toolbar are
+//     built and the saved views (which carry the flags: planner_views_prefs.get_views) have answered; a
+//     phone's too, since this planner has no screen of its own for a phone.
+//   - **"?"** gets the views, moving a visit, and Draft mode with Notify crew? (p12_legend_sections),
+//     right after the tips; P10's legend_sections() calls it. The help drawer's footer has Take the tour.
+//
+// Hooks into the class above, one line each: init_tour (constructor), tour_route (handle_route), tour_take
+// (p6c_fetch_views), tour_open (p6b_key's dialog test), p12_legend_sections and tour_legend_actions
+// (legend_sections, p6a_legend).
+
+const MPTOUR = {
+	prefs: "erpnext_enhancements.api.planner_views_prefs",
+	planner: "maintenance",
+	kinds: ["desktop", "phone"],
+	local_pref: "ee_maintenance_planner_tour",
+	// The three views; every one is a screen the tour may open on.
+	screens: ["month", "week", "crew"],
+	settle_ms: 700,
+	retry_ms: 1000,
+	retries: 60,
+};
+
+// Pure: no frappe, no page. scripts/test_planner_tour.js runs it under node.
+const MPTOUR_PURE = {
+	kind(is_phone) {
+		return is_phone ? "phone" : "desktop";
+	},
+	auto_screen(view) {
+		return MPTOUR.screens.includes(view);
+	},
+	// The steps for `kind`, written out as __() calls so they are translated. `who`: {can_schedule, has_day}.
+	steps(kind, who) {
+		const w = who || {};
+		const steps = [];
+		if (kind === "phone") {
+			steps.push(
+				{
+					title: __("Your visits"),
+					text: __("The calendar shows visits by day. Tap one to open it. Month, Week and Crew along the top change the view."),
+				},
+				{
+					title: __("Project work is a strip"),
+					text: __("A thin grey strip on a day is project work for the same people. Tap it for their week. It is moved on the Project Planner."),
+				}
+			);
+			if (w.has_day) {
+				steps.push({
+					title: __("My day"),
+					text: __("My day opens Today: your stops and the route for today and tomorrow."),
+				});
+			}
+			steps.push(
+				{
+					title: __("Filters and tools"),
+					text: __("Filters and tools opens a sheet from the bottom: the technician filter, alerts, + Add and More."),
+				},
+				{
+					title: __("Help is one tap away"),
+					text: __("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again."),
+				}
+			);
+			return steps;
+		}
+		steps.push({
+			title: __("Month, Week and Crew"),
+			text: __("The tabs along the top show the same visits three ways. Month is the big picture, Week is for planning, and Crew gives each technician a row."),
+		});
+		if (w.can_schedule) {
+			steps.push({
+				title: __("Drag to reschedule"),
+				text: __("Drag a visit to another day, or onto another technician's row to hand it over. Double-click an empty spot, or use + Add, to draft a new visit."),
+				keys: __("Ctrl+Z (⌘Z on a Mac) undoes the last change."),
+			});
+		}
+		steps.push(
+			{
+				title: __("Project work is a thin strip"),
+				text: __("A grey strip on a day is that technician's project work. Hover for the tasks, click for their week. It is read-only here: move it on the Project Planner."),
+			},
+			{
+				title: __("Resources available"),
+				text: w.can_schedule
+					? __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name for their week, or drag it onto a visit to add them to its crew.")
+					: __("Closed, it is one line for the week: who has hours free and who is off. Show opens the full table. Click a name to see their week."),
+			}
+		);
+		if (w.can_schedule) {
+			steps.push({
+				title: __("Who hears about a change"),
+				text: __("A change to a visit asks Notify crew?, which starts on Notify for the next two weeks. To rehearse a reshuffle, turn on Draft mode in More, then Publish when it looks right."),
+				keys: __("Esc puts a change back."),
+			});
+		} else if (w.has_day) {
+			steps.push({
+				title: __("My day"),
+				text: __("My day, in the bar, opens Today: your stops and the route for today and tomorrow."),
+			});
+		}
+		steps.push({
+			title: __("Help is one click away"),
+			text: __("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+		});
+		return steps;
+	},
+};
+
+const MPTOUR_METHODS = {
+	init_tour() {
+		this.tour = { seen: null, timer: null, handle: null };
+		const wrapper = this.page && this.page.wrapper;
+		if (wrapper && typeof wrapper.on === "function") {
+			wrapper.on("hide", (e) => {
+				if (e.target === wrapper[0]) this.tour_close("route");
+			});
+		}
+	},
+
+	tour_state() {
+		if (!this.tour) this.tour = { seen: null, timer: null, handle: null };
+		return this.tour;
+	},
+
+	// True while the tour is on screen: the page's shortcut handlers (p6b_key) treat it as a dialog.
+	tour_open() {
+		const kit = this.p6a && this.p6a.kit;
+		return !!(kit && kit.tour && typeof kit.tour.is_open === "function" && kit.tour.is_open());
+	},
+
+	tour_is_phone() {
+		return !!(window.matchMedia && window.matchMedia(`(max-width: ${MPTB.phone_max}px)`).matches);
+	},
+
+	tour_kind() {
+		return MPTOUR_PURE.kind(this.tour_is_phone());
+	},
+
+	tour_close(how) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const state = this.tour_state();
+		if (state.handle) {
+			try {
+				state.handle.close(how || "api");
+			} catch (e) {
+				state.handle = null;
+			}
+		}
+	},
+
+	tour_take(answer) {
+		try {
+			if (answer && typeof answer === "object") {
+				this.tour_state().seen = { desktop: answer.desktop === true, phone: answer.phone === true };
+			}
+			this.tour_nudge();
+		} catch (e) {
+			// A tour is never a reason for the planner to fail.
+		}
+	},
+
+	tour_route() {
+		try {
+			this.tour_close("route");
+			this.tour_nudge();
+		} catch (e) {
+			// As above.
+		}
+	},
+
+	tour_nudge(wait, tries) {
+		try {
+			const state = this.tour_state();
+			if (state.timer) clearTimeout(state.timer);
+			state.timer = setTimeout(() => this.tour_check(tries || 0), wait == null ? MPTOUR.settle_ms : wait);
+		} catch (e) {
+			// No timer, no tour.
+		}
+	},
+
+	tour_check(tries) {
+		const state = this.tour_state();
+		state.timer = null;
+		let verdict = "";
+		try {
+			verdict = this.tour_verdict();
+		} catch (e) {
+			return;
+		}
+		if (verdict === "ok") {
+			try {
+				this.tour_start(false);
+			} catch (e) {
+				// Not shown, not marked: the next visit tries again.
+			}
+		} else if (verdict === "wait" && (tries || 0) < MPTOUR.retries) this.tour_nudge(MPTOUR.retry_ms, (tries || 0) + 1);
+	},
+
+	// "ok": open it now. "wait": not yet. "": not on this screen, already seen, or no way to show it.
+	tour_verdict() {
+		if (!this.p6b_page_live()) return "";
+		const state = this.tour_state();
+		if (state.handle || this.tour_open()) return "";
+		const kit = this.p6a && this.p6a.kit;
+		if (!state.seen || !kit) return "wait";
+		if (!kit.tour) return "";
+		const kind = this.tour_kind();
+		if (state.seen[kind] || this.tour_local_seen(kind)) return "";
+		if (!MPTOUR_PURE.auto_screen(this.view)) return "";
+		if (!this.tb || !this.tb.kit) return "wait";
+		if (!this.data || this.tour_loading()) return "wait";
+		if (this.tour_busy(kit)) return "wait";
+		return "ok";
+	},
+
+	tour_loading() {
+		const $body = this.$body;
+		return !!($body && typeof $body.hasClass === "function" && $body.hasClass("mp-loading"));
+	},
+
+	// Anything on screen that is waiting for a decision, or in the way (see the Project Planner's twin).
+	tour_busy(kit) {
+		if (this.drag) return true;
+		if (kit.drawer && typeof kit.drawer.current === "function" && kit.drawer.current()) return true;
+		if (kit.guard && typeof kit.guard.top === "function" && kit.guard.top()) return true;
+		if (window.cur_dialog && window.cur_dialog.display) return true;
+		try {
+			if (document.querySelector && document.querySelector(".modal.show")) return true;
+		} catch (e) {
+			return false;
+		}
+		return false;
+	},
+
+	tour_local_key(kind) {
+		const user = (frappe.session && frappe.session.user) || "";
+		return `${MPTOUR.local_pref}:${user}:${kind}`;
+	},
+
+	tour_local_seen(kind) {
+		return this.load_pref(this.tour_local_key(kind), "") === "1";
+	},
+
+	tour_who() {
+		return { can_schedule: this.data ? !!this.data.can_schedule : false, has_day: this.p10_has_day() };
+	},
+
+	tour_start(replay) {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return false;
+		const kind = this.tour_kind();
+		const state = this.tour_state();
+		const steps = MPTOUR_PURE.steps(kind, this.tour_who());
+		if (!steps.length) return false;
+		const handle = kit.tour.open({
+			title: __("Maintenance Planner tour"),
+			steps,
+			owner: MP6A.owner,
+			return_focus: replay && this.$p6a_help ? this.$p6a_help[0] : null,
+			on_close: () => {
+				if (state.handle === handle) state.handle = null;
+			},
+		});
+		state.handle = handle || null;
+		if (handle && !replay) this.tour_mark(kind);
+		return !!handle;
+	},
+
+	tour_mark(kind) {
+		const state = this.tour_state();
+		state.seen = Object.assign({ desktop: false, phone: false }, state.seen, { [kind]: true });
+		const args = { planner: MPTOUR.planner, kind };
+		const method = `${MPTOUR.prefs}.mark_tour_seen`;
+		const kit = this.p6a && this.p6a.kit;
+		const failed = () => this.save_pref(this.tour_local_key(kind), "1");
+		try {
+			const call =
+				kit && typeof kit.quiet_call === "function"
+					? kit.quiet_call(method, args)
+					: frappe.call({ method, args, silent: true });
+			Promise.resolve(call).then(null, failed);
+		} catch (e) {
+			failed();
+		}
+	},
+
+	tour_replay() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return;
+		const open = () => {
+			try {
+				this.tour_start(true);
+			} catch (e) {
+				// Nothing to show.
+			}
+		};
+		if (kit.drawer && typeof kit.drawer.navigate === "function") kit.drawer.navigate(open);
+		else open();
+	},
+
+	tour_legend_actions() {
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit || !kit.tour) return [];
+		return [
+			{
+				label: __("Take the tour"),
+				title: __("A few short steps through the planner"),
+				on_click: () => this.tour_replay(),
+			},
+		];
+	},
+
+	// ------------------------------------------------------------------ "?" for the views
+
+	p12_legend_sections() {
+		const item = (text) => ({ sample_html: "", text });
+		const chip = (label, text, tone) => ({ chip: { text: label, tone: tone || "plain" }, text });
+		return [
+			{
+				title: __("The views"),
+				note: __("Three tabs over the same visits. The planner opens on the view you used last, on any device."),
+				items: [
+					chip(__("Month"), __("The whole month, a card for each visit.")),
+					chip(__("Week"), __("One week, day by day: the view for planning visits.")),
+					chip(__("Crew"), __("A row for each technician. Drag a visit to another day on the same row, or onto another technician's row to hand it over.")),
+				],
+			},
+			{
+				title: __("Moving a visit"),
+				items: [
+					item(__("Drag a visit to another day. Only a draft nobody has started moves.")),
+					item(__("Double-click an empty spot, or use + Add ▸ Add visit…, to draft a new visit there.")),
+					item(__("Undo (Ctrl+Z, or the button in the notice) puts the last change back.")),
+				],
+			},
+			{
+				title: __("Draft mode and Notify crew?"),
+				items: [
+					chip(__("Draft mode"), __("More ▸ Tools ▸ Draft mode keeps your changes to yourself until you Publish them. Nobody is told before then, and nothing asks Notify crew?."), "amber"),
+					chip(__("Notify crew?"), __("In live mode, a change to a visit's day, technician or crew asks once. Notify tells the people affected (never you); Don't notify keeps it quiet. It starts on Notify when the change touches the next 14 days. Esc puts the change back.")),
+				],
+			},
+		];
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPTOUR_METHODS);

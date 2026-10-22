@@ -1,10 +1,14 @@
 # Planner UX redesign: the Project and Maintenance Planners as construction PM tools
 
 Status: **approved by Nik on 2026-10-21 ("Approve as is")**. This is R1 of the Planner UX rethink (TASK-2026-02828 /
-TASK-2026-02829 on PRJ-00580). Nothing is built yet.
+TASK-2026-02829 on PRJ-00580). **Built.** All twelve PRs of the build plan ([section 7](#7-build-plan)) were written
+between 2026-10-21 and 2026-10-22, P12 (help, legend, tips and the first-visit tour) last, in v1.716.0. The table in
+section 7 says which PR built each row; [Built, and where it differs](#built-and-where-it-differs) lists what the
+build does differently from the text below. The text itself is left as it was approved, so it reads as the design
+and the section 7 table and that list read as what shipped.
 Written 2026-10-21 from a production usage audit, a benchmark of construction and field-service
 scheduling tools, the planner code at v1.699.0, and five rounds of questions answered by Nik Bradshaw.
-Nothing in this document changes code. The build plan at the end lists the PRs that would.
+This document changes no code.
 
 Scope, as Nik set it: **rework the UX only.** The data model and back end stay. That covers Planner
 Resource and its work patterns, the availability engine (`crew_availability.py`), Planner Draft Change,
@@ -519,20 +523,20 @@ Each PR is independent once its dependencies have merged. Each one ships with th
 changelog entry, README updates and tests the repo requires. Model sizes follow Nik's rule: Haiku for
 mechanical work, Sonnet for medium, Opus for cross-cutting.
 
-| # | PR | Scope | Main files | Depends on | Model |
-|---|---|---|---|---|---|
-| P1 | **Shared toolbar v2 + declutter** | Tabs control, **+ Add ▾**, **More ▾** with Display / Views / Tools / Print, alert chips, the phone sheet. Moves Color by, saved views, Copy week, Split, the Move-by switch and Print off the bar (D12). Default color Job type. Both planners use it; no new views yet | `public/js/planner_kit/toolbar.js`, `project_planner.js` (PPTB), `maintenance_planner.js` (MPTB), both CSS files, `tests/test_planner_toolbar.py` + its node script | — | Sonnet |
-| P2 | **Schedulable-task filter** | The D6 rule server-side (display only), `all_tasks` argument, *Show all tasks* switch in More ▸ Display, the Unscheduled tray and search follow it | `api/project_planner.py`, `crew_availability.py` (helper only), `project_planner.js`, new bench-free test | P1 | Sonnet |
-| P3 | **Schedule state, baseline, per-project publish (back end)** | The fields and patch, `publish_project_schedule`, `reset_baseline`, project filters on publish/discard, shared drafts for Draft projects, the `notify` argument on live writes | fixtures (custom fields), `patches/`, `api/project_planner.py`, `api/maintenance_planner.py`, `planner_notices.py`, `doctype/planner_draft_change`, tests | — (parallel with P1/P2) | Opus |
-| P4 | **Auto-shift + Notify prompt (page side)** | Drags move successors by working days with Ctrl/⌘ opt-out (one Undo), replacing the offer. A Draft project's writes auto-draft. The *Notify crew?* prompt after publish. Applies to Calendar and Crew today and becomes the shared write path for P5/P6 | `project_planner.js` (commit/send, 3A successor block), `maintenance_planner.js` (notify only), tests | P1, P3 | Opus |
-| P5 | **Lookahead tab (new home)** | `get_lookahead` + the tab: project/phase/task rows, bars in days, baseline ghost, chips, *Not scheduled* rows, *No tasks yet · Build out* rows, project schedule chips with Publish…, drag/resize via P4, phone list. Landing-screen rules and old-URL redirects | `api/project_planner.py` (or `api/planner_lookahead.py`), `project_planner.js` (new PPL block), CSS, tests | P2, P3, P4 | Opus |
-| P6 | **Gantt tab (one project)** | Widget write hook, planner task feed, link-by-drag (`add_dependency`/`remove_dependency`), baseline layer, Reset baseline, Build out ▾ docked, Publish. "Open in Project Planner" lands here | `public/js/gantt_widget/gantt_widget.js`, `api/gantt.py` (feed shape only if needed), `api/planner_actions.py`, `project_planner.js` (new PPG block), `project_planner_link.js`, `tests/test_gantt_api.py` + new tests | P3, P4 | Opus |
-| P7 | **Crew board in days + Capacity** | Crew bars in days, side tray (Not scheduled, Needs crew), *Board / Capacity* switch merging Heatmap + Utilization, redirects from `/heatmap` and `/utilization` | `project_planner.js` (crew, PP3A heatmap, PPU blocks), CSS, `tests/test_planner_url_filters.py` | P1, P2 | Sonnet |
-| P8 | **Today (phone)** | Today + tomorrow list, inline route map, Block my time, This week link, landing rule on phones; covers project tasks and visits | `api/project_planner.get_my_week` (read the same shape; maybe a `get_today`), `project_planner.js` (PP3B my-week block), CSS, tests | P1 | Sonnet |
-| P9 | **Overview + weekly summary** | Portfolio timeline (widget, read-only), exception list, weekly summary print, Monday email behind an OFF switch, landing rule for Executive Team | `api/project_planner.py` (`get_overview`, `weekly_summary_html`), `project_planner_settings` (one Check + backfill patch, per the Singles rule), `project_planner.js` (PPO block), tests | P3, P6 (widget hook not needed, shared feed helpers) | Sonnet |
-| P10 | **Maintenance Planner simplify** | P1's toolbar applied fully, project work as a per-day busy strip with cards under More ▸ Display (D13), Resources available collapsed to a summary, legend row into "?", the visit-kind defaults, Today link for techs | `maintenance_planner.js`, `maintenance_planner.css`, `tests/test_planner_toolbar.py` | P1 (P8 for the Today link) | Sonnet |
-| P11 | **Calendar labels in days** | Week/month cards and the panel say "3 days · 2 people" (hours shown only when set); duration field in days | `project_planner.js` (card/panel builders), CSS | P1 | Haiku |
-| P12 | **Help, legend, tips, docs** | "?" sections for the new tabs, first-run tips, README sections for both modules, this doc marked as built | `project_planner.js` / `maintenance_planner.js` legend providers, `project_enhancements/README.md`, `sapphire_maintenance/README.md` | all | Haiku |
+| # | PR | Scope | Main files | Depends on | Model | Built |
+|---|---|---|---|---|---|---|
+| P1 | **Shared toolbar v2 + declutter** | Tabs control, **+ Add ▾**, **More ▾** with Display / Views / Tools / Print, alert chips, the phone sheet. Moves Color by, saved views, Copy week, Split, the Move-by switch and Print off the bar (D12). Default color Job type. Both planners use it; no new views yet | `public/js/planner_kit/toolbar.js`, `project_planner.js` (PPTB), `maintenance_planner.js` (MPTB), both CSS files, `tests/test_planner_toolbar.py` + its node script | — | Sonnet | Built in #1319 (v1.701.0). |
+| P2 | **Schedulable-task filter** | The D6 rule server-side (display only), `all_tasks` argument, *Show all tasks* switch in More ▸ Display, the Unscheduled tray and search follow it | `api/project_planner.py`, `crew_availability.py` (helper only), `project_planner.js`, new bench-free test | P1 | Sonnet | Built in #1322 (v1.704.0). |
+| P3 | **Schedule state, baseline, per-project publish (back end)** | The fields and patch, `publish_project_schedule`, `reset_baseline`, project filters on publish/discard, shared drafts for Draft projects, the `notify` argument on live writes | fixtures (custom fields), `patches/`, `api/project_planner.py`, `api/maintenance_planner.py`, `planner_notices.py`, `doctype/planner_draft_change`, tests | — (parallel with P1/P2) | Opus | Built in #1320 (v1.702.0). |
+| P4 | **Auto-shift + Notify prompt (page side)** | Drags move successors by working days with Ctrl/⌘ opt-out (one Undo), replacing the offer. A Draft project's writes auto-draft. The *Notify crew?* prompt after publish. Applies to Calendar and Crew today and becomes the shared write path for P5/P6 | `project_planner.js` (commit/send, 3A successor block), `maintenance_planner.js` (notify only), tests | P1, P3 | Opus | Built in #1323 (v1.705.0). |
+| P5 | **Lookahead tab (new home)** | `get_lookahead` + the tab: project/phase/task rows, bars in days, baseline ghost, chips, *Not scheduled* rows, *No tasks yet · Build out* rows, project schedule chips with Publish…, drag/resize via P4, phone list. Landing-screen rules and old-URL redirects | `api/project_planner.py` (or `api/planner_lookahead.py`), `project_planner.js` (new PPL block), CSS, tests | P2, P3, P4 | Opus | Built in #1327 (v1.708.0). |
+| P6 | **Gantt tab (one project)** | Widget write hook, planner task feed, link-by-drag (`add_dependency`/`remove_dependency`), baseline layer, Reset baseline, Build out ▾ docked, Publish. "Open in Project Planner" lands here | `public/js/gantt_widget/gantt_widget.js`, `api/gantt.py` (feed shape only if needed), `api/planner_actions.py`, `project_planner.js` (new PPG block), `project_planner_link.js`, `tests/test_gantt_api.py` + new tests | P3, P4 | Opus | Built in #1330 (v1.709.0). |
+| P7 | **Crew board in days + Capacity** | Crew bars in days, side tray (Not scheduled, Needs crew), *Board / Capacity* switch merging Heatmap + Utilization, redirects from `/heatmap` and `/utilization` | `project_planner.js` (crew, PP3A heatmap, PPU blocks), CSS, `tests/test_planner_url_filters.py` | P1, P2 | Sonnet | Built in #1325 (v1.713.0). |
+| P8 | **Today (phone)** | Today + tomorrow list, inline route map, Block my time, This week link, landing rule on phones; covers project tasks and visits | `api/project_planner.get_my_week` (read the same shape; maybe a `get_today`), `project_planner.js` (PP3B my-week block), CSS, tests | P1 | Sonnet | Built in #1326 (v1.707.0). |
+| P9 | **Overview + weekly summary** | Portfolio timeline (widget, read-only), exception list, weekly summary print, Monday email behind an OFF switch, landing rule for Executive Team | `api/project_planner.py` (`get_overview`, `weekly_summary_html`), `project_planner_settings` (one Check + backfill patch, per the Singles rule), `project_planner.js` (PPO block), tests | P3, P6 (widget hook not needed, shared feed helpers) | Sonnet | Built in #1332 (v1.715.0), stacked: merges before P12. |
+| P10 | **Maintenance Planner simplify** | P1's toolbar applied fully, project work as a per-day busy strip with cards under More ▸ Display (D13), Resources available collapsed to a summary, legend row into "?", the visit-kind defaults, Today link for techs | `maintenance_planner.js`, `maintenance_planner.css`, `tests/test_planner_toolbar.py` | P1 (P8 for the Today link) | Sonnet | Built in #1331 (v1.714.0), stacked: merges before P12. |
+| P11 | **Calendar labels in days** | Week/month cards and the panel say "3 days · 2 people" (hours shown only when set); duration field in days | `project_planner.js` (card/panel builders), CSS | P1 | Haiku | Built in #1324 (v1.706.0). |
+| P12 | **Help, legend, tips, docs** | "?" sections for the new tabs, first-run tips, README sections for both modules, this doc marked as built | `project_planner.js` / `maintenance_planner.js` legend providers, `project_enhancements/README.md`, `sapphire_maintenance/README.md` | all | Haiku | Built in #1333 (v1.716.0). |
 
 **Merge order:** P1 → P3 → P2 → P4 → P5 → P6 → P7 → P8 → P10 → P11 → P9 → P12.
 
@@ -558,6 +562,35 @@ mechanical work, Sonnet for medium, Opus for cross-cutting.
 - **DHTMLX Standard and the baseline layer.** P6 must verify `addTaskLayer` exists in the Standard build in the browser
   harness before relying on it. The fallback is a second thin bar drawn by a task template.
 - **Shared drafts** (P3) are the only behavior change to an existing path. They are limited to projects in *Draft*.
+
+## Built, and where it differs
+
+All twelve rows of the [build plan](#7-build-plan) are built; the last column of that table says which PR did
+each, and the PR's CHANGELOG entry says why anything below differs. What the build does differently from the
+text above:
+
+- **Where the new endpoints live.** `get_lookahead` is in `api/planner_lookahead.py` (P5), the Gantt's feed in
+  `api/planner_gantt.py` (P6), and `get_overview` and `weekly_summary_html` in `api/planner_overview.py` (P9),
+  not in `api/project_planner.py`, which is 6,000 lines. The spec's other additions (publish, baseline, the
+  `notify` argument) are where §6 put them.
+- **The number keys.** §5.3 has `1` to `5` pick the five tabs. They don't yet: `1 2 3` still pick Week, Month
+  and Crew, as the "?" help's Keyboard section says. The tab buttons are a tablist, so the arrow keys, Home and
+  End work on them.
+- **The Crew board is not yet one true bar.** A multi-day task is a chip per day, drawn joined and labeled
+  *Day 2 of 5* (P7). The chip is what is dragged, resized and tapped; a single spanning bar is a possible follow-up.
+- **The Overdue tray is not filtered by D6** (§6 names the schedule and the Unscheduled tray), and the **print
+  sheet** still labels cards with hours (P2, P11).
+- **The Overview** draws a job's milestones as diamonds when the job is expanded, not on its collapsed bar (P9).
+- **Today's help.** Today has no toolbar, so it has no "?"; P12 gave it a "?" button beside *Planner*, so the
+  phone's help and tour are not two screens away.
+
+What P12 added beyond the table's scope, because Nik asked on 2026-10-21 ("When we are close to finishing, I'd
+like a brief and simple tutorial on the planner for every first time visitor"): the **first-visit tour** for each
+planner. Four to six short steps, a desktop's and a phone's apart; shown once per person, with the flag in the
+person's own `__UserSettings` row for that planner (never frappe's Redis-only user_settings); skippable at every
+step; **"?" ▸ Take the tour** shows it again; the Overview step is for the Executive Team only. It takes no
+history entry. See "The first-visit tour and the help" in `project_enhancements/README.md` and
+`sapphire_maintenance/README.md`.
 
 ## Appendix A: Walkthrough
 

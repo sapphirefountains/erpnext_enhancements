@@ -1653,6 +1653,119 @@ a.pk-stop-addr {
 }
 
 /* ======================================================================================== */
+/* The first-visit tour (tour.js, P12 of the planner UX redesign).                           */
+/* ======================================================================================== */
+
+/* A small dialog over a dimmed page, drawn like the guided page's pop-up (.ge-overlay): square, an edge
+ * instead of a shadow. It is above everything the kit draws (the drawer 1025, the toast 1046, the menu
+ * 1047) and below a datepicker (9999); the page waits for the way to be clear before it opens one, so
+ * nothing the person has to decide is ever under it. The card never outgrows the screen (a width and a
+ * height in the viewport's own units) and breaks long words, so a 375px phone gets no sideways scroll. */
+.pk-tour {
+	position: fixed;
+	inset: 0;
+	z-index: 1048;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	padding: var(--sf-space-15);
+	overflow: hidden;
+	background: color-mix(in srgb, var(--sf-navy-900) 55%, transparent);
+}
+
+.pk-tour-card {
+	box-sizing: border-box;
+	width: min(460px, 100%);
+	max-height: calc(100vh - 32px);
+	overflow-x: hidden;
+	overflow-y: auto;
+	padding: var(--sf-space-20);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-none);
+	background: var(--sf-surface);
+	color: var(--sf-text);
+	font-family: var(--sf-font-sans);
+	font-size: var(--sf-text-md);
+	line-height: var(--sf-leading-body);
+	overflow-wrap: anywhere;
+	outline: none;
+}
+
+.pk-tour-count {
+	margin: 0 0 var(--sf-space-5);
+	font-size: var(--sf-text-xs);
+	font-weight: var(--sf-weight-bold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--sf-eyebrow);
+}
+
+.pk-tour-title {
+	margin: 0 0 var(--sf-space-10);
+	font-family: var(--sf-font-display);
+	font-size: var(--sf-display-sm);
+	font-weight: var(--sf-weight-regular);
+	line-height: var(--sf-leading-display);
+	color: var(--sf-heading);
+}
+
+.pk-tour-text {
+	margin: 0 0 var(--sf-space-10);
+}
+
+/* The keys a step names, set apart so they are not read as part of the sentence. */
+.pk-tour-keys {
+	margin: 0 0 var(--sf-space-10);
+	font-size: var(--sf-text-sm);
+	color: var(--sf-text-muted);
+}
+
+.pk-tour-keys[hidden] {
+	display: none;
+}
+
+/* The place in the tour: a filled dot is this step. The count above says the same in words. */
+.pk-tour-dots {
+	display: flex;
+	gap: var(--sf-space-5);
+	margin: 0 0 var(--sf-space-15);
+}
+
+.pk-tour-dot {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	width: var(--sf-space-10);
+	height: var(--sf-space-10);
+	border: var(--sf-border-hairline) solid var(--sf-field-border);
+	border-radius: var(--sf-radius-circle);
+	background: var(--sf-surface);
+}
+
+.pk-tour-dot-on {
+	border-color: var(--sf-focus);
+	background: var(--sf-focus);
+}
+
+.pk-tour-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sf-space-10);
+}
+
+.pk-tour-spacer {
+	flex: 1 1 auto;
+}
+
+.pk-tour-skip:focus-visible,
+.pk-tour-back:focus-visible,
+.pk-tour-next:focus-visible {
+	outline: 2px solid var(--sf-focus);
+	outline-offset: 2px;
+}
+
+/* ======================================================================================== */
 /* Touch, phones and motion.                                                                 */
 /* ======================================================================================== */
 
@@ -1667,7 +1780,10 @@ a.pk-stop-addr {
 	.pk-hint-close,
 	.pk-day-head,
 	.pk-cc-person,
-	.pk-sheet-item {
+	.pk-sheet-item,
+	.pk-tour-skip,
+	.pk-tour-back,
+	.pk-tour-next {
 		min-height: var(--sf-touch-min);
 	}
 }
@@ -1698,6 +1814,18 @@ a.pk-stop-addr {
 
 	.pk-legend-sample {
 		flex-basis: 88px;
+	}
+
+	/* The tour is a card along the bottom of a phone, within reach of a thumb, as the sheet is. */
+	.pk-tour {
+		align-items: flex-end;
+		padding: var(--sf-space-10) var(--sf-space-10) calc(var(--sf-space-10) + env(safe-area-inset-bottom));
+	}
+
+	.pk-tour-card {
+		width: 100%;
+		max-height: 85vh;
+		padding: var(--sf-space-15);
 	}
 
 	.pk-tl-row {
