@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.724.0] - 2026-10-22
+
+### Added
+- **The maintenance agreement prints its per-period Service Fee.** Nik, 2026-10-22: "add a monthly (per-period)
+  fee line to the maintenance agreement template, filled from the linked maintenance contract's Recurring Amount
+  when set, plus fix SF-MAINT-2026-0018 so Day Dairy prints $1,490 per month." Service Plan Selection priced only
+  per visit, per event and the Annual Service Fee Total, so `recurring_amount`, the amount the recurring-billing
+  job actually invoices, appeared nowhere on the agreement. Day Dairy's agreement printed no fee at all. Nik then
+  set Day Dairy's price at $1,465.00 ("make it $1,465.00 instead of $1,490.00"), the figure MNT-CON-2026-00002
+  already carried.
+  - **The line.** "Service Fee: **$1,465.00 per month**, billed May through September." Per month, quarter or
+    year follows the agreement's Invoicing Frequency. The season is the maintenance contract's Bill From / Bill
+    Through, shown only for Monthly billing, as invoicing applies it. The summary at the top gains a matching
+    "Service fee:" row. Both come from one figure resolved in `_render_context`, so they cannot disagree. The
+    template queries nothing.
+  - **Only for a stored template that has the line.** `_render_context` now receives the body it renders and
+    resolves a fee only when that body reads `period_fee` (`maintenance_fee.template_prints_fee`); the builder's
+    blanks and progress use the same gate. The summary row is Python, and the v1.611.1 body already calls
+    `summary()`, so without the gate the row would reach every agreement at deploy, including one whose signing
+    link is out while the patch below waits. Until the stored body is swapped, nothing about the fee prints.
+  - **Where the figure comes from** (`project_enhancements/maintenance_fee.py`), first match wins:
+    1. The Recurring Amount of the Sapphire Maintenance Contract whose `project_contract` is this agreement
+       (Active first, then the newest; Canceled ignored). It is used only when that contract bills on the
+       agreement's own cadence, because a Recurring Amount is "per period" of *its* cadence, and a monthly
+       amount beside a Quarterly tick in §4.2 would contradict the page.
+    2. The Annual Maintenance Fee ÷ `billed_periods_per_year`, the same split and season the maintenance
+       contract derives for itself. It is used only before that contract exists or while it bills on the same
+       cadence. A split printed beside a contract that invoices per visit would state a fee nobody is billed.
+    3. Nothing: the line is left out. It never prints $0.00 or a blank.
+  - **No line for a plan priced per visit.** Per Visit invoicing gets no line. Neither does an agreement whose
+    ticked Standard Maintenance has a per-visit rate, whatever it is invoiced on. Its Annual Fee is rate ×
+    visits, so splitting it would print a flat price nobody agreed to: Hardware Apartments ($690 a visit,
+    $17,940 a year) would have read "$1,495.00 per month". An Annually split gets no line either, because it
+    would only repeat the Annual Service Fee Total.
+  - **The Contract Builder** stops listing a blank Annual Maintenance Fee under blanks, and stops counting it in
+    progress, while a Service Fee prints and the template therefore leaves that line out
+    (`contract_builder._printed_only_when_set`).
+  - **Annual Service Fee Total** still prints whenever it is set. When a Service Fee prints and no annual total
+    is set, the blank "(if applicable)" line beside a stated fee is left out (Day Dairy). With neither figure,
+    the paper form keeps its blank. A ticked Standard Maintenance with no per-visit rate reads "base rate in the
+    Service Fee below" instead of a blank rate.
+  - **An agreement with no fee renders byte for byte as before.** The test suite rebuilds the v1.611.1 body
+    from the new one and compares the two renders, so the change reaches only agreements that have a figure.
+- **Patch `refresh_maintenance_agreement_fee_line`** brings the change to the live Contract Template, which
+  `seed_contract_templates` (insert-only) never updates. It follows the same rules as the v1.611.1 layout
+  refresh:
+  - It replaces the body only when its SHA-256 is a body this repo shipped: v1.611.1, which matched prod byte
+    for byte on 2026-10-22, or v1.611.0. Not v1.609.0: that body predates the 2026-10-13 terms, whose own patch
+    resets issued agreements before it swaps. A body edited on the site is logged and left alone.
+  - It freezes paper-signed copies first.
+  - It waits while a signing link is out.
+  - It resets no contract's terms, cannot raise, and finds the body current on a second run.
+  - **A wait is retried.** Patch Log records the patch as done even when it waited, so
+    `retry_after_migrate` (`hooks.after_migrate`) runs the same guarded swap after every migrate. It is silent
+    when there is nothing to do and installs only the v1.724.0 body (`FEE_LINE_BODY_SHA256`), so a later
+    template release is left to its own patch. A wait therefore ends at the first deploy after the last
+    signing link is signed or voided. Running the patch's `execute` by hand ends it sooner.
+
+  Signed agreements cannot change: an e-signed contract prints its request's `agreement_html`, and one marked
+  signed on paper prints `executed_html`. On prod the only signed maintenance agreement, SF-MAINT-2026-0001, was
+  frozen in v1.611.0, and no signing link was out.
+
+### Notes
+- **What changes on prod at deploy:** Day Dairy (SF-MAINT-2026-0018, from MNT-CON-2026-00002) and
+  SF-MAINT-2026-0010 ($7,920 a month, May to September, the same figure its Exhibit A states) gain the line.
+  SF-MAINT-2026-0021 (Capitol) prices $559 a visit, so it gets no line, although its maintenance contract
+  bills a flat $1,118 a month. That mismatch is for whoever priced it. Every other maintenance agreement renders
+  as before.
+- **Day Dairy's Exhibit A** (`custom_plan_details`) said $1,330.00 per month. It was changed to $1,465.00 on
+  2026-10-22, with Nik's approval, through AI Pending Action AI-PA-2026-1323674. That was a data change on prod,
+  not part of this release. Agreement and maintenance contract now state the same figure.
+- **Don't change a maintenance contract's monthly amount, billing frequency or season while its agreement is
+  out for signature.** The Service Fee is read from the maintenance contract every time the agreement renders,
+  and the executed copy is rendered again at signing. Such an edit changes what the client signs, not what they
+  were shown. The e-sign drift check records it as `document_drifted` on the signature request, but it does not
+  stop the signing.
+- **Known follow-up:** with no maintenance contract yet, a Monthly Annual Fee split uses 12 periods, because
+  the billing season lives only on the maintenance contract. A seasonal client's draft agreement therefore
+  shows a twelfth of the Annual Fee until its contract is raised. Not built here.
+
 ## [1.723.0] - 2026-10-22
 
 ### Added

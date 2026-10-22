@@ -2537,6 +2537,13 @@ after_migrate = [
 	# `_gate.py` -- not that page -- is the source of truth. The doc_event on the same doctype
 	# covers rows FAC creates AFTER this runs. Returns at once without FAC; never raises.
 	"erpnext_enhancements.ai_governance.fac_tool_categories.sync_fac_tool_categories",
+	# project_enhancements (v1.724.0): finish the maintenance agreement's Service Fee swap if the
+	# patch refresh_maintenance_agreement_fee_line had to wait on a signing link. Patch Log marks
+	# that patch done either way, so without this a wait would never be retried. The same guarded
+	# replace (shipped bodies only, paper-signed copies frozen first, nothing while a link is out),
+	# silent when there is nothing to do, and it installs only the v1.724.0 body, so a later
+	# template release is left to its own patch. One read per migrate; never raises.
+	"erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line.retry_after_migrate",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
