@@ -181,6 +181,10 @@
 		// so it costs no space above the rail.
 		this.page.sidebar.append(this.root);
 
+		// Tells global_enhancements/sidebar_memory.js the rail is in, so a page whose person hid the
+		// sidebar gets the show/hide button in its page head. A no-op where nothing listens.
+		$(document).trigger("ee-page-sidebar-ready", [this.page]);
+
 		this.wide = window.matchMedia(WIDE);
 		this.details.open = this.wide.matches;
 		var onChange = function (event) {

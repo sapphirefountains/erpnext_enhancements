@@ -126,6 +126,10 @@ import "./global_enhancements/sidebar_pref_heal.js";
 // MODULE sidebar (and the Help menu with it) and remembers that per browser. Nothing in
 // this app may click .sidebar-toggle-btn; tests/test_frappe_16_50_desk_compat.py holds it.
 import "./global_enhancements/sidebar_collapse_heal.js";
+// v1.717.0: a hidden sidebar stays hidden on every page until it is shown again (the left Desk
+// sidebar across tabs, the record sidebar and the Training rail on every form and page), kept in
+// this browser. tests/test_sidebar_memory.py + scripts/test_sidebar_memory.js hold it.
+import "./global_enhancements/sidebar_memory.js";
 // erpnext_enhancements.workspace_blocks.onWorkspaceReturn: reloads a workspace's data
 // blocks when you come back to it. v16's Workspace.show() returns early on the
 // workspace already shown, so a return from a form re-runs no block script, and every

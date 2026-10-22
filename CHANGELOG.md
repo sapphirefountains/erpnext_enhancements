@@ -62,6 +62,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cases in `scripts/test_planner_today.js`. Four existing tests that pin the device-tab list and the "?" chips now
   include Simple.
 
+## [1.717.0] - 2026-10-22
+
+### Added
+- **A sidebar you hide stays hidden on every page until you show it again** (Nik, 2026-10-22: "if they toggle
+  the sidebar once and then hide the menu picker on the left side, it should globally do that until they change
+  it back"). Decided with him the same day: the left Desk sidebar is "the menu picker"; two settings, one for the
+  left navigation and one for the record sidebar; kept **in this browser only** (localStorage), not on the user's
+  record; a phone ignores both. New `global_enhancements/sidebar_memory.js` (global bundle) and a block at the end of
+  `desk_enhancements.bundle.css`.
+  - **The record sidebar and the Training rail.** frappe v16.50.0 has no in-page toggle for the right-hand
+    sidebar of a form at all, only the Desk Settings checkbox, which is server-side and all-or-nothing. Every
+    form, and every Training page, now has a small panel icon in the page head (*Hide sidebar* / *Show sidebar*; its accessible name stays "Sidebar" and `aria-expanded` carries the state).
+    One click saves the choice and sets `ee-page-sidebar-hidden` on `<html>`; the stylesheet hides
+    `.layout-side-section.right` (the form's) and `.tn-host .layout-side-section` (the Training rail) under it. The
+    class is set when the bundle evaluates, before the desk draws a page, so a sidebar you hid is never painted and
+    then removed, and every page opened afterwards follows it. A new, unsaved record has no sidebar, so the button
+    is out of sight there until it is saved. The Training rail tells the module it mounted
+    (`ee-page-sidebar-ready`, one line in `desk_nav.js`) so the button is there on its first show.
+  - **Only from 992px up.** Below that the form's sidebar is frappe's responsive layout and the Training rail is a
+    stacked "Training menu" disclosure; hiding either would leave a phone with no way back, so the stylesheet
+    applies nothing there and the button is out of sight.
+  - **The left Desk sidebar: four gaps in what frappe already does.** frappe saves a collapse in
+    `desk-sidebar-collapsed` (written by `Sidebar.close()`/`open()`) and re-reads it each time the sidebar is
+    redrawn. Left alone, that failed four ways, each now closed by wrapping one `Sidebar` method (the original
+    still runs; everything below is desktop only, a phone drawer is left as frappe has it):
+    1. **A route with an empty sidebar reopened a collapsed one.** `restore_expanded_state()` sets the panel
+       expanded, without saving, whenever the sidebar it just drew has no items (a route whose module has no
+       Workspace Sidebar), so the panel popped open over a saved collapse and folded again on the next route.
+       The wrapper folds it again when a collapse is saved. **Not verified on production data**: I could not
+       tell which of our routes resolve to an empty sidebar; check a collapsed sidebar stays collapsed on the
+       Training pages and the planners.
+    2. **A Dock click erased the choice.** Every click on a Dock item runs `open_dock_entry()`, which switches
+       module and then calls `Sidebar.open()`: it unfolds the panel and writes `"0"`. Beside a pinned Dock
+       (everyone here) the Dock is the only way to switch module while the panel is collapsed, so collapse, click
+       Selling, and the sidebar sprang open with the choice gone in every tab. The wrapper silences `open()` for
+       the length of that call when a collapse is saved: the module still switches, the panel stays folded, the key
+       stays `"1"`, and `open()` is put back exactly as it was.
+    3. **Another tab's change was not noticed.** The module listens for the `storage` event and folds or opens
+       the live sidebar to match. This is the only place it drives the sidebar; a route change drives nothing.
+    4. **The key is per browser.** On a shared browser one person's collapse became the next person's. Each
+       person's choice is also kept as `ee-nav-collapsed@<user>` (written by a wrapper on `save_collapsed_state`)
+       and copied back into frappe's key when the bundle evaluates, before the sidebar reads it. Someone who has
+       never chosen, on a browser another person used last, starts open; the first person after this ships keeps
+       the choice they already had. The user comes from `frappe.session`, falling back to the `user_id` cookie
+       (the session is not always set when the bundle evaluates); Guest keeps the shared key.
+  - **The record-sidebar choice is per user too** (`ee-page-sidebar-hidden@<user>`), for the same reason.
+  - **Hiding the record sidebar closes an open attachment preview first.** In v16.50 the preview lives inside
+    `.layout-side-section.right`, and frappe's `:has(.attachment-preview:not(.hidden))` rule keeps the main column
+    shrunk while one is open, which left a blank gap beside the hidden sidebar until Esc. The module clicks
+    frappe's own close button, which also unbinds its Escape handler.
+  - **The button's "on" colour shows.** It carries Bootstrap's `.text-muted`, which is `!important`, so the
+    active colour is `!important` too.
+  - Storage that throws (a private window, blocked site data) is caught; the toggle still works for the life of
+    the page. The toggle is one click, a page-head button, and changes nothing about Back/Forward: no route is
+    touched.
+
+### Removed
+- **`enforce_sidebar_expanded()` in `erpnext_enhancements.js`**, an old script that removed `body.sidebar-collapsed`
+  on every desktop class change and window resize and zeroed `frappe.boot.user.sidebar_collapsed`, so that a
+  person's collapse could never hold. Nothing in frappe v16.50.0 styles on that class, so it did little visible
+  harm, but it was a second opinion fighting the desk's own state on every resize, and it contradicted the feature
+  above. `tests/test_sidebar_memory.py` fails the build if it returns.
+
+### Tests
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (78 checks:
+  the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
+  get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
+  that throws; a route change never touches the left sidebar; the empty-sidebar and Dock-click wrappers; the
+  per-user keys and the shared-browser hand-over; the attachment preview). `tests/test_sidebar_memory.py` holds the seams it
+  cannot see (the stylesheet's selectors are the ones the script's class names produce, nothing hides below 992px,
+  the always-expand script stays deleted). Both run in CI.
+
+## [1.716.2] - 2026-10-22
+
+### Changed
+Three changes to the Project form, all Nik's, 2026-10-22.
+- **The "Planner schedule" section is hidden.** "hide the planner schedule from the form view of Projects as well."
+  Asked which block he meant, he answered: just the *Planner schedule* section on the Schedule tab, the one holding
+  *Schedule status* (Draft or Published), *Schedule published on* and *Baseline set on*. It is now `hidden: 1` on the
+  `Project-custom_schedule_state_section` Custom Field, which hides the whole section. The Schedule tab keeps its
+  Gantt chart, dates, rent schedule and notes, and *View > Open in Project Planner* is untouched.
+  - **Hidden, not deleted.** Every field stays in the database and the fixture, so the planner still reads and
+    writes `custom_schedule_status`, `custom_schedule_published_on` and `custom_baseline_set_on` exactly as before
+    (Publish schedule, Set baseline, the Draft/Published gate on crew views), and a new Project still starts
+    `Draft`.
+  - **Pinned** in `tests/test_planner_publish_baseline.py` (`TestFixtures`): the section is hidden, the Gantt
+    section and its HTML field and the Schedule tab are not, and no script in the app un-hides it.
+- **The "Production Tracking" section is hidden.** "Production tracking section in the project doctype needs to be
+  hidden as well." `hidden: 1` on the `Project-custom_production_section` Custom Field (Scope tab, between Build
+  Deliverables and Service Scope), which hides Build Status, Bid Cost, Production Started and Completed, and
+  Quality Sign-Off By and Date with it.
+  - **Hidden, not deleted, and checked first for what writes to it.** Nothing on the form does. The Production
+    Builds Kanban board moves `custom_build_status` itself, quality scheduling (`quality/scheduling.py`,
+    `api/quality_due.py`) reads it, and the Project Brief prints all of them; none of that goes through the form,
+    and a hidden field still saves. No field is required, so a hidden one cannot block a save. **One thing to
+    know:** with the section hidden, Build Status can only be moved on the Production Builds board (or by
+    API), not on the Project form.
+- **The activity feed shows on the Project's Comments tab only.** "Can we move the Activity Log to only display
+  under Comments tab of the Project view." The feed is the form timeline (activity entries with their `#N` badges
+  and the comment box) that Frappe draws below the tabs. It showed on every tab; it now shows on the Comments tab
+  and on no other tab of a Project, Details included. Comments, `@mentions` and the comment box are untouched: they
+  are just visible on that one tab. Checked on prod (16.50.0) by opening a Project read-only, running this script
+  against the page and clicking through the tabs: hidden on Details, Scope and Schedule, shown on Comments.
+  - **The existing "first tab only" feature never worked on v16, and this fixes the mechanism it shares.** Since
+    v1.259.4 (TASK-2026-00353; "fixed" in v1.299.2 and v1.331.1) `activity_first_tab_only.js` and its stylesheet
+    looked for `.form-footer` inside `.form-page`. In v16 the footer is built on `page.main.parent()` (`form.js`),
+    so it sits in `.layout-main-section-wrapper` beside `.layout-main-section`, and no `.form-page` contains
+    one: `apply()` returned early on every form and the class was never set, on any doctype. Those earlier
+    CHANGELOG entries claiming it hides the feed were wrong for v16. Its tests passed against a fake DOM of the
+    same wrong shape. The class now goes on `.layout-main-section-wrapper`, and the CSS rule is
+    `.layout-main-section-wrapper.ee-activity-off-tab .form-footer`.
+  - **Tab changes are seen from the class change, not `shown.bs.tab`.** Frappe's click handler (`tab.js`) adds
+    `active` before `layout.js` calls Bootstrap's `.tab("show")`, which returns early on an already-active link, so
+    `shown.bs.tab` is not fired for a Frappe tab click. Each `.form-tabs` list is observed for its links' `class`
+    attribute instead (attached once), plus `form-refresh` and a childList observer for first paint and footer
+    rebuilds.
+  - **Only Project is switched on.** The shared script has a `HOME_TABS` map (doctype -> Tab Break fieldname,
+    `Project: custom_comments`); the tab is found by the id Frappe gives its link (`project-custom_comments-tab`).
+    **Every other doctype is unchanged: the feed stays on every tab, which is what it has really done all along.**
+    The original "first tab of every tabbed form" rule is still in the code behind `FIRST_TAB_FOR_ALL = false`.
+    Turning that on would change every tabbed form on the site at once (Task, Customer,
+    and so on) for the first time, so it is Nik's call and not a side effect of a Project change.
+    A footer that a doctype already moves inside a tab pane (ERPNext's CRM doctypes) is left alone as before.
+  - **Pinned** in `tests/test_project_form_hides.py`, which runs `scripts/test_activity_home_tab.js`: the real script
+    against a fake DOM rebuilt from the v16 structure (footer beside `.layout-main-section`, not under
+    `.form-page`; tab switches are class changes only, no `shown.bs.tab`). Covers first paint on each tab,
+    switching to and from Comments, other doctypes unchanged, no Comments tab, mid-render, one tab, a footer in a
+    pane, no footer, and two forms open at once. `tests/test_activity_first_tab_only.py` now also pins the
+    wrapper in both halves and that the script no longer relies on `shown.bs.tab` (read from the code, not its
+    comments). Own CI step.
+
+### On deploy
+`bench migrate` re-applies `fixtures/custom_field.json` and flips `hidden` on two Custom Fields
+(`Project-custom_schedule_state_section`, `Project-custom_production_section`). No patch, Property Setter, schema or
+data change. The feed change is a JS change in the global bundle.
+
+## [1.716.1] - 2026-10-22
+
+### Fixed
+- **The Project Planner's Crew tray now scrolls by itself.** Nik, 2026-10-22: "On the Crew page of the Project
+  Planner the side bar of the tasks, should scroll independently of the other scroll so that way you can select a
+  task or view a task without needing to scroll the entire page." The Not scheduled and Needs crew trays sit in a
+  260px column beside the Crew board (P7), and the column was part of the page's flow: a long list meant
+  scrolling the whole page, and the board went with it. On a wide screen the column is now
+  `position: sticky` under Frappe's navbar and page head (`top: 120px`), at most the board's own cap (the
+  viewport less 150px) tall, so the row is no taller than the board, with `overflow-y: auto` and `overscroll-behavior: contain`, so a wheel or a swipe inside it moves only
+  the tray, and one on the board (which already scrolls inside its own box) never moves the tray. Dragging a task
+  out of it onto a day works as before, and a drag held near the tray's top or bottom edge scrolls the tray, as
+  it does the board and the people panel (`p6a_edge_scroll`). On a phone the tray goes back above the board in
+  plain flow, and a printout carries the whole tray; Lookahead, Gantt, Calendar, Overview and Capacity do not
+  use the Crew layout and are unchanged. The 120px is a literal because the page's stylesheet may read only
+  `--sf-*` tokens; it is Frappe's 48px navbar and 60px page head, plus air.
+  Tests: `TestProjectPlanner` in `tests/test_s3_page_css.py` pins the sticky tray, its offset and cap, the phone
+  and print resets, and the edge-scroll hook.
+
 ## [1.716.0] - 2026-10-22
 
 ### Added
