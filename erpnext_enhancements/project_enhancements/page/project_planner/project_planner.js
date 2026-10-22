@@ -24,6 +24,8 @@
 //   /desk/project-planner/route/<person>/2026-10-12
 //                                             one person's driving day: stops in order, drive
 //                                             time between them, and a map
+//   /desk/project-planner/simple              Simple mode: every customer job, a card each, Done and
+//                                             Coming up, one search box (the PPS block, at the end)
 //
 // The Project, Project manager and Group filters ride along on every one of those as the query
 // (S5c): /desk/project-planner/calendar/week/2026-10-12?project=PRJ-00001&pm=…&group=Field. A link with them
@@ -228,6 +230,7 @@ class ProjectPlanner {
 		);
 		this.$body = $('<div class="pp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		this.init_simple(); // Simple mode: the switch at the start of the bar, and its screen
 		// The person's own filters, and those the address gave while they are on screen (S5c).
 		this.own_filters = this.filters();
 		this.url_filters = null;
@@ -255,6 +258,8 @@ class ProjectPlanner {
 		if (mine) return mine;
 		const today = this.today_target(route);
 		if (today) return today;
+		const simple = this.pps_route_target(route); // Simple mode: /simple
+		if (simple) return simple;
 		// /project-planner/route/<person>/<date>
 		if (route[1] === PP.route_view && route[2]) {
 			const date = route[3] && moment(route[3], "YYYY-MM-DD", true).isValid() ? route[3] : frappe.datetime.get_today();
@@ -341,6 +346,10 @@ class ProjectPlanner {
 		}
 		if (target.view === PP8.view) {
 			this.show_today(target.anchor);
+			return;
+		}
+		if (target.view === PPS.view) {
+			this.pps_show();
 			return;
 		}
 		if (target.view === PP.route_view) {
@@ -550,6 +559,7 @@ class ProjectPlanner {
 		this.$route.toggle(!!route);
 		if (this.$my_week) this.$my_week.hide();
 		if (this.$today) this.$today.hide();
+		this.pps_hide(); // Simple mode's screen goes with any other
 		this.p4_set_mode(mode);
 		this.p6c_set_mode(mode);
 		if (route && this.$draft_bar) this.$draft_bar.hide();
@@ -796,6 +806,7 @@ class ProjectPlanner {
 	// ------------------------------------------------------------------ data
 
 	load() {
+		if (this.view === PPS.view) return this.pps_refresh(); // Simple mode: get_simple_jobs
 		if (this.view === PPG.view) return this.ppg_load(); // P6: get_project_gantt
 		if (this.view === PPO.view) return this.ppo_load(); // P9: get_overview
 		if (this.view === PP.capacity_view) return this.load_capacity();
@@ -4106,7 +4117,7 @@ const PP8 = {
 	// The screens whose tab a device remembers; the Lookahead (P5) joins them, and the Gantt (P6), whose
 	// project this device remembers beside it (PPG.prefs.project).
 	// "heatmap" is what a device that remembered the Heatmap tab before P7 holds: it lands on Capacity.
-	tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview"],
+	tabs: ["week", "month", "crew", "heatmap", "capacity", "today", "lookahead", "gantt", "overview", "simple"],
 	tab_pref: "ee_project_planner_tab",
 };
 
@@ -4209,6 +4220,7 @@ const PP8_METHODS = {
 		// own when it has one, but never Today, which has no filters to show.
 		if (link && tab === PP8.view) tab = PP6C.default_view;
 		if (link && tab === PPO.view) tab = PP6C.default_view; // P9: nor the Overview, which is no planning board
+		if (link && tab === PPS.view) tab = PP6C.default_view; // nor Simple mode, which has no filters
 		if (tab === PPG.view) return this.ppg_land(link); // P6: its own project, or the default view
 		// The default view is what the bare address already opens.
 		if (tab === PP6C.default_view) return false;
@@ -4317,6 +4329,7 @@ const PP8_METHODS = {
 			.text(__("Planner"))
 			.on("click", () => this.go(PPL.view, date))
 			.appendTo($head);
+		this.pps_today_button($head); // Simple mode, one tap from Today
 		this.tour_today_help($head); // P12: Today has no toolbar, so no "?" without this
 
 		if (!data) {
@@ -5228,6 +5241,7 @@ const PP6A_METHODS = {
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person"), kit.hover_glow(this.$body[0], "project")];
 		this.p6c_ready();
 		this.tb_ready();
+		this.pps_kit_ready(); // Simple mode draws with the kit
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -12228,6 +12242,7 @@ const PPL_METHODS = {
 	ppl_route_parts(view, anchor) {
 		if (view === PPG.view) return this.ppg_route_parts(); // P6: /gantt/<project>, not a date
 		if (view === PPO.view) return PPO_PURE.overview_address(anchor, this.ppo_state().months); // P9: /overview/<date>[/<months>]
+		if (view === PPS.view) return [PPS.view]; // Simple mode: no date
 		return PPL_PURE.route_parts(view, anchor, this.ppl_state().weeks);
 	},
 
@@ -14916,6 +14931,143 @@ const PPAS_METHODS = {
 
 Object.assign(ProjectPlanner.prototype, PPAS_METHODS);
 
+// ====================================================================== Simple mode
+//
+//   /desk/project-planner/simple     every customer job ever, a card each: Done and Coming up
+//
+// docs/planner-simple-mode.md (Nik, 2026-10-22: "an easy view that is simple and doesn't overwhelm the user,
+// but enables them to quickly and easily see all the data ... both historical data and future data"). Not a
+// sixth tab: a switch, first in the bar (S1). Turned on, it opens /simple, a screen of its own, so Back returns
+// to where the person was. The screen is the kit's (planner_kit/simple.js), drawn from
+// api/planner_simple.get_simple_jobs: one search box, the switch and "?", and a card per job, the ones with work
+// coming up first. It writes nothing, and the planner's shortcuts do nothing on it (p6b_run_key knows only the
+// planning views).
+//
+// Remembered per device (S7), like any tab: "simple" is one of PP8.tabs, so a device whose last planner screen
+// was Simple opens Simple at a bare /project-planner, and a link that names a filter never opens it (it has no
+// filters to show). Turning it off opens the full planner on the tab this device showed when it was turned on
+// (PPS.full_pref), through the bare address, so p8_landing decides exactly as it does for a visit: a remembered
+// Gantt its project, a first visit Today on a phone, the Overview for the Executive Team.
+//
+// Hooks into the class above, one line each: init_simple (constructor), pps_route_target (route_target),
+// pps_show (handle_route), pps_hide (set_mode), pps_refresh (load), pps_kit_ready (p6a_ready),
+// pps_today_button (render_today), PP8.tabs, p8_landing, ppl_route_parts.
+
+const PPS = {
+	view: "simple",
+	method: "erpnext_enhancements.api.planner_simple.get_simple_jobs",
+	// A read: sent as a GET.
+	http: "GET",
+	// The full planner's tab this device showed when Simple mode was turned on, per user: where the switch goes
+	// back to.
+	full_pref: "ee_project_planner_full_tab",
+};
+
+const PPS_METHODS = {
+	init_simple() {
+		this.pps = { view: null };
+		this.$simple = $('<div class="pp-simple"></div>').hide().appendTo(this.$body);
+		// The switch, first in the bar. It is off wherever the bar shows; Simple mode draws its own, on.
+		this.$simple_switch = $('<button type="button" class="btn btn-default btn-sm pp-simple-switch" role="switch" aria-checked="false"></button>')
+			.text(__("Simple"))
+			.attr("title", __("Simple mode: every job on one quiet page, done and coming up"))
+			.on("click", () => this.pps_enter())
+			.prependTo(this.$toolbar);
+	},
+
+	pps_route_target(route) {
+		if (route[1] !== PPS.view) return null;
+		return { view: PPS.view, anchor: frappe.datetime.get_today() };
+	},
+
+	pps_user() {
+		return (frappe.session && frappe.session.user) || "";
+	},
+
+	// The switch, on: a screen, so it is a history entry. The filters ride along as on every planner screen. The
+	// tab this device shows now (p8_remember_tab wrote it on landing) is where the switch will come back to.
+	pps_enter() {
+		const route = frappe.get_route() || [];
+		if (route[0] === PP.route && route[1] === PPS.view) return;
+		const tab = this.p8_tab();
+		if (tab && tab !== PPS.view) this.save_pref(`${PPS.full_pref}:${this.pps_user()}`, tab);
+		this.self_route = [PP.route, PPS.view].join("/");
+		this.p6a_route(() => frappe.set_route(PP.route, PPS.view, this.filter_options()), false);
+	},
+
+	// The switch, off: this device's full-planner tab becomes its tab again (none: a first visit's), and the bare
+	// address lands there through p8_landing, which replaces it, so one Back returns to Simple mode.
+	pps_leave() {
+		const user = this.pps_user();
+		const full = this.load_pref(`${PPS.full_pref}:${user}`, "");
+		this.save_pref(`${PP8.tab_pref}:${user}`, full && full !== PPS.view && PP8.tabs.includes(full) ? full : "");
+		this.p6a_route(() => frappe.set_route(PP.route), false);
+	},
+
+	// Simple mode is a screen of its own, as Today is: set_mode takes the last screen away, then the class hides
+	// the planner's own chrome (project_planner.css) while the kit's screen shows.
+	pps_show() {
+		if (!this.pps) this.init_simple();
+		this.set_mode(true);
+		this.$body.addClass("pp-simple-on");
+		this.$simple.show();
+		this.pps_mount();
+		this.pps_refresh();
+	},
+
+	pps_hide() {
+		if (this.$body) this.$body.removeClass("pp-simple-on");
+		if (this.$simple) this.$simple.hide();
+	},
+
+	pps_refresh() {
+		if (this.pps && this.pps.view) return this.pps.view.refresh();
+		return null;
+	},
+
+	pps_mount() {
+		if (this.pps.view) return;
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) {
+			this.$simple.empty().append($('<div class="pp-route-note"></div>').text(__("Loading…")));
+			return;
+		}
+		if (!kit.simple) {
+			// An older kit already on the Desk: a reload brings the new one.
+			this.$simple.empty().append($('<div class="pp-route-note"></div>').text(__("Reload the page to use Simple mode.")));
+			return;
+		}
+		this.$simple.empty();
+		this.pps.view = kit.simple.mount(this.$simple[0], {
+			title: __("Project Planner"),
+			placeholder: __("Search jobs, customers, PMs…"),
+			noun: [__("job"), __("jobs")],
+			load: (search, start, limit) => kit.quiet_call(PPS.method, { search, start, limit: limit || "" }, { method: PPS.http }),
+			open: (doctype, name) => frappe.set_route("Form", doctype, name),
+			off: () => this.pps_leave(),
+			help: () => kit.legend(kit.simple.legend_sections("jobs"), { title: __("How Simple mode works"), owner: PP6A.owner }),
+			is_phone: () => this.p8_is_phone(),
+		});
+	},
+
+	// The kit loads after the first landing: a Simple screen already showing draws once it is here.
+	pps_kit_ready() {
+		if (!this.pps || this.view !== PPS.view || this.pps.view) return;
+		this.pps_mount();
+		this.pps_refresh();
+	},
+
+	pps_today_button($head) {
+		$('<button type="button" class="btn btn-default btn-sm"></button>')
+			.text(__("Simple"))
+			.attr("title", __("Simple mode: every job on one quiet page, done and coming up"))
+			.on("click", () => this.pps_enter())
+			.appendTo($head);
+	},
+};
+
+Object.assign(ProjectPlanner.prototype, PPS_METHODS);
+
 // ====================================================================== P12: the first-visit tour, and "?" for the new tabs
 //
 // P12 of the planner UX redesign (docs/planner-ux-redesign.md section 7; Nik, 2026-10-21: "When we are
@@ -15025,7 +15177,7 @@ const PPTOUR_PURE = {
 		}
 		steps.push({
 			title: __("Help is one tap away"),
-			text: __("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again."),
+			text: __("In Filters and tools, How to read the planner explains everything and has Take the tour to see this again. Simple, at the start of the bar, shows every job on one page."),
 		});
 		return steps;
 	},
@@ -15114,7 +15266,7 @@ const PPTOUR_PURE = {
 		}
 		steps.push({
 			title: __("Help is one click away"),
-			text: __("? explains every tab, chip and color, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+			text: __("? explains every tab, chip and color, and has Take the tour to see this again. More holds Display, Views, Tools and Print. Simple, at the start of the bar, shows every job on one quiet page."),
 		});
 		return steps;
 	},
@@ -15403,6 +15555,7 @@ const PPTOUR_METHODS = {
 					chip(__("Calendar"), __("The week and month grids you know: cards, double-click to add, drag to move.")),
 					chip(__("Overview"), __("Every active job on one read-only timeline, what needs a manager's attention, and the weekly summary to print.")),
 					chip(__("Today"), __("A phone's home: your stops for today and tomorrow, the route map and Block my time. This week opens your whole week. From the planner on a phone, it is in More ▸ Views.")),
+					chip(__("Simple"), __("The switch at the start of the bar. Every job, one card each: what is done and what is coming up, with one search box. Turn it off for the full planner.")),
 				],
 			},
 			{

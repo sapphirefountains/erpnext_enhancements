@@ -372,6 +372,19 @@ planner for every first time visitor." This planner's half is the page's `MPTOUR
 - **Tests:** `tests/test_planner_tour.py` and `scripts/test_planner_tour.js`; the toolbar harness
   (`scripts/test_planner_toolbar.js`) pins that P12's sections come right after the tips.
 
+### Simple mode (v1.723.0)
+
+*Simple*, the first button in the bar, opens `/desk/maintenance-planner/simple`: one card per maintenance site (a
+project with a contract or a Maintenance Record), **Done** on the left in grey and **Coming up** on the right in
+bold, with one search box. A site's card has its Maintenance Records (done once submitted or in review), its
+contract's projected visits for the next 120 days and its project's completed tasks, so its history goes back
+before the records began. It writes nothing. This device remembers it (a flag in the browser, written only when it
+changes): a bare `/desk/maintenance-planner` on a device that used Simple mode last opens it, never a link that
+names a technician. Turned off, the planner opens on the person's own last view. The screen is the planner kit's,
+shared with the Project Planner; see
+[Simple mode](../project_enhancements/README.md#simple-mode-v17230) and
+[`docs/planner-simple-mode.md`](../../docs/planner-simple-mode.md).
+
 ## Visit Review
 
 Phase A of the 2026-10-12 Maintenance tools plan (TASK-2026-02473, v1.595.0) is for the four

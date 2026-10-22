@@ -7,6 +7,8 @@
 //   /desk/maintenance-planner/month/2026-10-01   the month holding that day
 //   /desk/maintenance-planner/week/2026-10-05    the week holding that day
 //   /desk/maintenance-planner/crew/2026-10-05    the crew timeline for the week holding that day
+//   /desk/maintenance-planner/simple             Simple mode: every site, a card each, Done and Coming up,
+//                                                one search box (the MPS block, at the end)
 //
 // Every move between months, weeks and views is a route, so Back and Forward step through them
 // (Nik's rule: never break Back/Forward). The page moves only with frappe.set_route; Back and
@@ -188,6 +190,7 @@ class MaintenancePlanner {
 		this.page.set_secondary_action(__("Day Board"), () => frappe.set_route("maintenance-day-board"));
 		this.$body = $('<div class="mp-wrap"></div>').appendTo(page.main);
 		this.build_shell();
+		this.init_simple(); // Simple mode: the switch at the start of the bar, and its screen
 		// The person's own filter, and the one the address gave while it is on screen (S5c).
 		this.own_filters = this.filters();
 		this.url_filters = null;
@@ -208,6 +211,7 @@ class MaintenancePlanner {
 	route_target() {
 		const route = frappe.get_route() || [];
 		if (route[0] !== MP.route) return null;
+		if (route[1] === MPS.view) return { view: MPS.view, anchor: frappe.datetime.get_today() }; // Simple mode
 		const view = MP.views.includes(route[1]) ? route[1] : "month";
 		const day = route[2] && moment(route[2], "YYYY-MM-DD", true).isValid() ? route[2] : frappe.datetime.get_today();
 		return { view, anchor: day };
@@ -221,6 +225,7 @@ class MaintenancePlanner {
 		this.take_route_filters();
 		this.view = target.view;
 		this.anchor = target.anchor;
+		if (this.mps_take(target.view)) return; // Simple mode: its own screen, remembered on this device
 		this.load();
 	}
 
@@ -549,6 +554,7 @@ class MaintenancePlanner {
 	// ------------------------------------------------------------------ data
 
 	load() {
+		if (this.view === MPS.view) return this.mps_refresh(); // Simple mode: get_simple_sites
 		const { start, end } = this.range();
 		const token = ++this.request;
 		this.$title.text(this.title());
@@ -2383,6 +2389,7 @@ const MP6A_METHODS = {
 		this.p6a.glow = [kit.hover_glow(this.$body[0], "person")];
 		this.p6c_ready();
 		this.tb_ready();
+		this.mps_kit_ready(); // Simple mode draws with the kit
 	},
 
 	// ------------------------------------------------------------------ hooks
@@ -4041,6 +4048,7 @@ const MP6B_METHODS = {
 	},
 
 	p6b_run_key(action) {
+		if (this.view === MPS.view) return false; // Simple mode has no calendar to step or switch
 		if (action === "today") {
 			this.go(this.view, frappe.datetime.get_today());
 			return true;
@@ -4886,6 +4894,7 @@ const MP6C_METHODS = {
 				p6c.saved_text = JSON.stringify(last);
 			}
 		}
+		if (!route[1] && this.mps_landing()) return true; // Simple mode, when this device used it last
 		const view = last && last.view;
 		if (!route[1] && view && view !== MP6C.default_view && MP6C.schema.view[1].includes(view)) {
 			frappe.route_flags = frappe.route_flags || {};
@@ -7471,6 +7480,140 @@ const MPAS_METHODS = {
 
 Object.assign(MaintenancePlanner.prototype, MPAS_METHODS);
 
+// ====================================================================== Simple mode
+//
+//   /desk/maintenance-planner/simple     every maintenance site, a card each: Done and Coming up
+//
+// docs/planner-simple-mode.md (Nik, 2026-10-22; S5 "Both planners", S12 "One row per site", S14 "Visits + old
+// service tasks"). A switch, first in the bar; turned on, it opens /simple, a screen of its own, so Back returns
+// to where the person was. The screen is the kit's (planner_kit/simple.js, the Project Planner's too), drawn
+// from api/planner_simple.get_simple_sites: a card per site (a contract's project), its Maintenance Records,
+// its contract's projected visits and its project's completed tasks. It writes nothing, and the planner's
+// shortcuts do nothing on it (p6b_run_key).
+//
+// Remembered per device (S7). This planner keeps its last view per person (6C's "last used"); Simple mode is
+// the device's instead, as the Project Planner's tabs are: a flag in this browser for the signed-in user, set
+// when /simple opens and cleared when any other screen does. A bare /maintenance-planner on a device whose
+// flag is set opens Simple mode, in place (replace), so Back leaves the planner as it would have. Turning it off
+// clears the flag and opens the bare address, which lands on the person's own last view as any visit does.
+//
+// Hooks into the class above, one line each: init_simple (constructor), route_target, mps_take (handle_route),
+// mps_landing (p6c_before_route), mps_refresh (load), mps_kit_ready (p6a_ready), p6b_run_key.
+
+const MPS = {
+	view: "simple",
+	method: "erpnext_enhancements.api.planner_simple.get_simple_sites",
+	// A read: sent as a GET.
+	http: "GET",
+	// This device's "Simple mode was the last screen", per user.
+	device_pref: "ee_maintenance_planner_simple",
+};
+
+const MPS_METHODS = {
+	init_simple() {
+		this.mps = { view: null };
+		this.$simple = $('<div class="mp-simple"></div>').hide().appendTo(this.$body);
+		// The switch, first in the bar. It is off wherever the bar shows; Simple mode draws its own, on.
+		this.$simple_switch = $('<button type="button" class="btn btn-default btn-sm mp-simple-switch" role="switch" aria-checked="false"></button>')
+			.text(__("Simple"))
+			.attr("title", __("Simple mode: every site on one quiet page, visits done and coming up"))
+			.on("click", () => this.mps_enter())
+			.prependTo(this.$body.children(".mp-toolbar").first());
+	},
+
+	mps_key() {
+		return `${MPS.device_pref}:${(frappe.session && frappe.session.user) || ""}`;
+	},
+
+	// Every landing: Simple mode shows (true, nothing else to do) or goes, and this device remembers which. The
+	// flag is written only when it changes, so a device that never used Simple mode stores nothing.
+	mps_take(view) {
+		const simple = view === MPS.view;
+		const was = this.load_pref(this.mps_key(), "0") === "1";
+		if (simple !== was) this.save_pref(this.mps_key(), simple ? "1" : "0");
+		if (!simple) {
+			this.mps_hide();
+			return false;
+		}
+		if (!this.mps) this.init_simple();
+		this.$body.addClass("mp-simple-on");
+		this.$simple.show();
+		this.mps_mount();
+		this.mps_refresh();
+		return true;
+	},
+
+	mps_hide() {
+		if (this.$body) this.$body.removeClass("mp-simple-on");
+		if (this.$simple) this.$simple.hide();
+	},
+
+	// A bare address on a device that used Simple mode last: Simple mode, in place of the bare entry. A link that
+	// names a technician is a calendar's, so it never lands here.
+	mps_landing() {
+		if (this.load_pref(this.mps_key(), "0") !== "1") return false;
+		const opts = frappe.route_options || {};
+		if (MP.url_filters.some((key) => Object.prototype.hasOwnProperty.call(opts, key))) return false;
+		frappe.route_flags = frappe.route_flags || {};
+		frappe.route_flags.replace_route = true;
+		frappe.set_route(MP.route, MPS.view);
+		return true;
+	},
+
+	// The switch, on: a screen, so it is a history entry. The technician filter rides along as on every screen.
+	mps_enter() {
+		const route = frappe.get_route() || [];
+		if (route[0] === MP.route && route[1] === MPS.view) return;
+		this.self_route = [MP.route, MPS.view].join("/");
+		this.p6a_route(() => frappe.set_route(MP.route, MPS.view, this.filter_options()), false);
+	},
+
+	// The switch, off: the bare address, which lands on the person's own last view (6C), one entry after Simple.
+	mps_leave() {
+		this.save_pref(this.mps_key(), "0");
+		this.p6a_route(() => frappe.set_route(MP.route), false);
+	},
+
+	mps_refresh() {
+		if (this.mps && this.mps.view) return this.mps.view.refresh();
+		return null;
+	},
+
+	mps_mount() {
+		if (this.mps.view) return;
+		const kit = this.p6a && this.p6a.kit;
+		if (!kit) {
+			this.$simple.empty().append($('<div class="mp-simple-note"></div>').text(__("Loading…")));
+			return;
+		}
+		if (!kit.simple) {
+			// An older kit already on the Desk: a reload brings the new one.
+			this.$simple.empty().append($('<div class="mp-simple-note"></div>').text(__("Reload the page to use Simple mode.")));
+			return;
+		}
+		this.$simple.empty();
+		this.mps.view = kit.simple.mount(this.$simple[0], {
+			title: __("Maintenance Planner"),
+			placeholder: __("Search sites and customers…"),
+			noun: [__("site"), __("sites")],
+			load: (search, start, limit) => kit.quiet_call(MPS.method, { search, start, limit: limit || "" }, { method: MPS.http }),
+			open: (doctype, name) => frappe.set_route("Form", doctype, name),
+			off: () => this.mps_leave(),
+			help: () => kit.legend(kit.simple.legend_sections("sites"), { title: __("How Simple mode works"), owner: MP6A.owner }),
+			is_phone: () => this.tour_is_phone(),
+		});
+	},
+
+	// The kit loads after the first landing: a Simple screen already showing draws once it is here.
+	mps_kit_ready() {
+		if (!this.mps || this.view !== MPS.view || this.mps.view) return;
+		this.mps_mount();
+		this.mps_refresh();
+	},
+};
+
+Object.assign(MaintenancePlanner.prototype, MPS_METHODS);
+
 // ====================================================================== P10: Maintenance Planner simplify
 //
 // P10 of the planner UX redesign (docs/planner-ux-redesign.md section 4.9, D9 "Keep as is, simplify"
@@ -8015,7 +8158,7 @@ const MPTOUR_PURE = {
 				},
 				{
 					title: __("Help is one tap away"),
-					text: __("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again."),
+					text: __("In Filters and tools, How to read the planner explains the cards and colors, and has Take the tour to see this again. Simple, at the start of the bar, shows every site on one page."),
 				}
 			);
 			return steps;
@@ -8057,7 +8200,7 @@ const MPTOUR_PURE = {
 		}
 		steps.push({
 			title: __("Help is one click away"),
-			text: __("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print."),
+			text: __("? explains the cards, chips and colors, and has Take the tour to see this again. More holds Display, Views, Tools and Print. Simple, at the start of the bar, shows every site on one quiet page."),
 		});
 		return steps;
 	},
@@ -8281,6 +8424,7 @@ const MPTOUR_METHODS = {
 					chip(__("Month"), __("The whole month, a card for each visit.")),
 					chip(__("Week"), __("One week, day by day: the view for planning visits.")),
 					chip(__("Crew"), __("A row for each technician. Drag a visit to another day on the same row, or onto another technician's row to hand it over.")),
+					chip(__("Simple"), __("The switch at the start of the bar. Every site, one card each: the visits done and the visits coming up, with one search box. Turn it off for the calendar.")),
 				],
 			},
 			{

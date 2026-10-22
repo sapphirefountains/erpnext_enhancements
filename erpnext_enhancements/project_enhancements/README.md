@@ -81,6 +81,7 @@ Related code outside this folder:
 - `api/planner_ai_draft.py` — the Build out grid's **AI draft…** (T4, v1.609.0): one POST endpoint, `draft_task_breakdown`, that asks the app's Gemini client for a task breakdown and returns grid rows. It writes nothing and never picks a person or a day. See [AI draft](#ai-draft-a-task-breakdown-for-the-grid-t4-v1609).
 - `public/js/planner_kit/` + `public/js/planner_kit.bundle.js` — the planner kit, the small UI layer both planner pages share (drawer, side panel, toast, menu, legend, hints, hover glow, the person and day peeks). Loaded only by the two planner pages. See [Planner kit](#planner-kit).
 - `api/planner_views_prefs.py` — Phase 6C: each person's saved views for both planners, in their own `__UserSettings` row, and the print design system's chrome for *Print this view*. See [Big picture](#big-picture-tablet-mode-and-print-phase-6c--task-2026-02469).
+- `api/planner_simple.py` and `public/js/planner_kit/simple.js` — **Simple mode** for both planners: a card per job (or site), Done and Coming up, one search box. Reads only. See [Simple mode](#simple-mode-v17230).
 - `public/js/planner_kit/tour.js` — P12: the first-visit tour, a few short steps in one modal dialog, skippable everywhere and never a history entry. See [The first-visit tour and the help](#the-first-visit-tour-and-the-help-p12-v17160-planner-ux-redesign).
 - `public/js/planner_kit/conflicts.js` and `blocks.js` — Phase 6D UI: the Conflict center drawer and the personal-block and day-note markup and forms both planners and My week use. See [On screen](#on-screen-the-conflict-center-blocks-and-day-notes-phase-6d-ui--task-2026-02470).
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
@@ -1255,6 +1256,7 @@ planner while it is on its way does not ask again either. It installs `window.pl
 | `menu({anchor, items, title, owner, on_close})` | An anchored menu: `anchor` is an element or `{x, y}` (a right-click); items `{label, on_click, hint, disabled, danger}` or `{divider: true}` | Closes on an item (before running it), Esc, a click elsewhere and Back; arrow keys move between items. Built for 6B's right-click menu |
 | `legend(sections, {title, owner, actions})` | The help drawer: sections `{title, note, items: [{sample_html, text}]}`, an item's sample being the page's own markup, or `{swatch: {color, style, fill}}` / `{chip: {text, tone}}`; `actions` are the drawer's footer buttons `{label, title, primary, on_click(handle)}` (P12: the planners' *Take the tour*) | `text`, titles and chip text are escaped; `sample_html` is trusted, built by the page from fixed strings. `legend_html` is the pure renderer |
 | `tour.open({title, steps, owner, return_focus, on_close})` | The first-visit tour (P12): `steps` are `{title, text, keys?}`, at most 8 (`clean_steps` drops a step with no words and caps each text); `on_close(how, index)` hears `"done" \| "skip" \| "esc" \| "outside" \| "route" \| "replaced"` | One modal dialog (`role="dialog"`, `aria-modal`, named by `title` through `aria-label` alone, or by the step's heading when there is none, and described by the step's sentence; the count in a polite live region), focus on Next and trapped, Esc / Skip / a press outside skip, the arrows step. **Not part of the history guard**: no entry pushed, replaced or stepped off. Every key pressed inside stays inside, except while a Frappe dialog is open over it (`.modal.show`), which owns Esc and Tab. A tap outside closes it on the click, and only when the press began outside too (so selecting text and releasing outside keeps it open). Returns `{next, back, go, close(how), is_open, index, element}`; `tour.current()`, `tour.is_open()`, `tour.close(how)`. Words are set as text |
+| `simple.mount(root, {title, placeholder, noun, load, open, off, help, is_phone})` | Simple mode's screen: the bar (heading, search, the switch shown on, "?"), a card per job or site from `load(search, start, limit)` (a promise of `get_simple_jobs`/`get_simple_sites`' answer), "N of M jobs", Show more | Draws only; `open(doctype, name)`, `off()` and `help()` are the page's. The search reads again 300 ms after the last key and closes every Show all; an answer for an older read is dropped; a failed read says so with Try again; Show all / Show fewer and Show more take no history entry. Returns `{refresh, render, root, state}`; `refresh()` reads as many cards as are shown. `simple.card_html`, `simple.initials` and `simple.legend_sections("jobs" \| "sites")` are pure |
 | `hint(key, text, {container})` | A first-time tip with a *Got it* button, remembered per user and browser (`pk_hint:<user>:<key>`, every storage access in try/catch) | `hint.seen(key)`, `hint.reset(key?)` |
 | `hover_glow(container, "person" \| "project" \| {source, carriers, cls, scope})` | Hovering an element with `data-pk-<kind>="<key>"` adds `pk-glow` to every element whose `data-pk-<kind>s` list holds that key | Keys are written with `glow_key` (encoded: no spaces, no quotes). Returns `{clear, destroy}` |
 | `peeks.person({resource \| user, label, start, days, selected, owner, push, can_drag, on_full_route, actions})` and `peeks.day({date, group, owner, push, person_key, only, can_drag, on_person, on_week, head_html, on_head_click, actions})` | The two quick looks both planners share, drawn from `api/planner_views.py` | Return a controller `{refresh, is_open, data}` the page refreshes after a change (the day's also `render()` and `date()`). `can_drag(booking, day, person, data)` decides what the page owns; those rows carry `data-pk-drag="1"` with `data-pk-kind/ref/key/date/resource/user` for the page's drag code (never a drive or a personal block, whatever `can_drag` says). Phase 6D UI's extension points: `actions` are footer buttons (the person's get `{resource, user, date, data}`, the day's the date), `head_html(date, data)` is drawn above everyone's columns and `on_head_click(e, date)` sees a click first (true when it took it) |
@@ -2315,6 +2317,45 @@ Planner has its twin (`MPTOUR`; see the Sapphire Maintenance README).
   the Executive Team only; no history entry, no route and no guard overlay; nothing opens or throws before the data
   and the toolbar exist. It cannot be seen in a browser from a bench-free test, so the first look on a phone at
   375px is a person's.
+
+### Simple mode (v1.723.0)
+
+Nik, 2026-10-22: "an easy view that is simple and doesn't overwhelm the user, but enables them to quickly and easily
+see all the data in a simple view, both historical data and future data". The design and his decisions S1–S14 are
+[`docs/planner-simple-mode.md`](../../docs/planner-simple-mode.md).
+
+- **A switch, not a tab** (S1). *Simple* is the first button in each planner's bar (and on Today's header). On, it
+  opens `/desk/project-planner/simple` (or `/desk/maintenance-planner/simple`): a screen of its own, so Back returns
+  to where the person was. The planner's own chrome is hidden by one class (`pp-simple-on` / `mp-simple-on`) and the
+  kit draws the screen: a heading, one search box, the switch (on) and "?". The planner's shortcuts do nothing there.
+- **Remembered per device** (S7). On the Project Planner, `simple` is one of the device's tabs (`PP8.tabs`), so a
+  bare address on a device whose last screen was Simple opens it in place, and a link that names a filter never
+  does. Turned off, it goes to the tab the device showed when it was turned on (`ee_project_planner_full_tab:<user>`),
+  through the bare address and `p8_landing`, so a first visit's rules apply when there is none. The Maintenance
+  Planner keeps its last view per person; its Simple mode is a device flag
+  (`ee_maintenance_planner_simple:<user>`), written only when it changes, read on a bare address before the person's
+  own last view.
+- **A card per job** (`api/planner_simple.get_simple_jobs`, S6, S9–S11, S13). Every customer job ever, any status, the
+  ones with work coming up first and soonest, then the rest by last activity, 20 at a time with *Show more jobs*;
+  search across all of them (number, name, customer, PM). **Done** (grey, newest first) and **Coming up** (bold,
+  late first), three of each and *Show all N*; *N not scheduled* counts undated open work. A job's items are the
+  planner's display rule (D6); a job with no phase or crew work (all 505 finished jobs on production, 2026-10-22, are from before the phase
+  templates) lists its own top-level groups, each "N of M done". Late is by end date, never by the Overdue status;
+  on a finished job nothing is late, and work never done says *not done*. Who is the crew rows and the assignees,
+  open or closed, drawn as initials with the names on hover.
+- **A card per site** (`get_simple_sites`, S12, S14). Every project with a maintenance contract or a Maintenance
+  Record: its records (done once submitted or in review), its contract's projected visits for the next 120 days,
+  marked *planned*, and its project's completed tasks, its history from before the records.
+- **Reads only.** Both endpoints are GETs behind each planner's own role gate and read permission on their
+  records (Project and Task; Project and Sapphire Maintenance Record), listing only the projects the caller may
+  read (`frappe.get_list("Project")`, so User Permissions apply), raw SQL with bound parameters
+  (search text included, `%` and `_` literal). A click opens the record (a Task, a Maintenance Record, a contract or
+  the Project) as a normal Desk route.
+- **The tour and "?"**. The tour's last step mentions the switch (the tours are capped at six steps); "?" lists
+  *Simple* with the tabs, and Simple mode's own "?" explains the cards and the marks.
+- **Tests.** `tests/test_planner_simple.py` (the card rules, the bound reads, the role gates, the wiring) runs
+  `scripts/test_planner_simple.js` (the real kit module on a fake DOM, and the Maintenance Planner's device flag);
+  the Project Planner's landing, the switch and Back/Forward are in `scripts/test_planner_today.js`.
 
 ## Calendar sync (C2, v1.604.0)
 

@@ -27,6 +27,8 @@
  *   tour.open({title, steps, owner, on_close})  the first-visit tour (P12): a few short steps in one
  *                                       modal dialog, skippable everywhere, keyboard-complete, and
  *                                       never a history entry (planner_kit/tour.js)
+ *   simple.mount(root, opts)            Simple mode: a card per job or site, Done and Coming up, one search
+ *                                       box (planner_kit/simple.js; docs/planner-simple-mode.md)
  *   toolbar.tabs(container, opts)       the view buttons as a WAI-ARIA tablist (toolbar v2)
  *   toolbar.sections_to_items(sections) named sections as one menu list (More's Display/Views/Tools/Print)
  *   quiet_call(method, args, opts)      sf_kit's call on its quiet path: a fetch, so frappe shows no
@@ -54,6 +56,7 @@ import { CSS, STYLE_ID } from "./planner_kit/styles.js";
 import * as big_picture from "./planner_kit/big_picture.js";
 import { create_toolbar } from "./planner_kit/toolbar.js";
 import { create_tour } from "./planner_kit/tour.js";
+import { create_simple, card_html as simple_card_html, initials as simple_initials, legend_sections as simple_legend } from "./planner_kit/simple.js";
 import { call as sf_call } from "./sf_kit/call.js";
 import { state_html } from "./sf_kit/state.js";
 
@@ -184,6 +187,8 @@ function install() {
 		toolbar: create_toolbar(env),
 		// The first-visit tour (P12). Not part of the history guard: it takes no entry of its own.
 		tour: create_tour(env),
+		// Simple mode (docs/planner-simple-mode.md): a card per job or site, Done and Coming up. Reads only.
+		simple: Object.assign(create_simple(env), { card_html: simple_card_html, initials: simple_initials, legend_sections: simple_legend }),
 		// A request whose refusal the page reports in its own panel (the Utilization view).
 		quiet_call: (method, args, opts) => sf_call(call_env, method, args, Object.assign({}, opts, { quiet: true })),
 		state_html,
