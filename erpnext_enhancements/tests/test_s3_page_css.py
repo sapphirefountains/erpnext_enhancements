@@ -974,30 +974,39 @@ class TestMaintenancePlanner(unittest.TestCase):
 	def test_the_legends_draw_the_cards_own_classes(self):
 		"""Both legends painted a hex per kind: the toolbar's through jQuery .css(), the help's through
 		the kit's swatch. Each is the card's own kind class now, so the legend and the calendar cannot
-		drift apart, and both follow the theme. The toolbar's legend row is the Display menu's key of
-		the visit kinds since v1.687.0 (tb_kind_items)."""
-		self.assertIn('sample_html: `<i class="mp-swatch${kind ? ` ${kind}` : ""}"></i>`,', self.js)
-		kinds = re.findall(
-			r'\["(mp-[a-z-]+)", __\("',
-			self.js[self.js.index("tb_kind_items() {") :][:1200],
-		)
+		drift apart, and both follow the theme. The toolbar's legend row was the Display menu's key of
+		the visit kinds from v1.687.0 (tb_kind_items, with a swatch of its own); since P10 of the
+		planner UX redesign the key is the "?" help's only, drawn with the cards themselves, so the
+		swatch and its rules are gone."""
+		self.assertNotIn("tb_kind_items", self.js)
+		self.assertNotIn("mp-swatch", self.js)
+		self.assertNotIn("mp-swatch", self.css)
+		help_body = self.js[self.js.index("legend_sections() {") :]
+		help_body = help_body[: help_body.index("\n\t},\n")]
+		kinds = re.findall(r'card\("((?:mp-[a-z-]+ ?)*)", "', help_body)
 		self.assertEqual(
 			kinds,
 			[
+				"",
 				"mp-seasonal",
 				"mp-extra",
 				"mp-pending",
 				"mp-done",
 				"mp-projected",
+				"mp-projected mp-movable",
 				"mp-overdue",
-				"mp-bk-task",
-				"mp-bk-rental",
-				"mp-bk-travel",
 			],
 		)
-		for kind in kinds:
+		for kind in kinds[1:]:
+			edge = kind.split()[0]
 			with self.subTest(kind=kind):
-				self.assertRegex(self.css, rf"\.mp-swatch\.{kind}\s*[,{{]")
+				self.assertRegex(self.css, rf"\.mp-card\.{edge}\s*[,{{]")
+		# The read-only bookings' samples moved with the project work section (p10_legend_sections).
+		project = self.js[self.js.index("p10_legend_sections() {") :]
+		for kind in ("mp-bk-task", "mp-bk-rental", "mp-bk-travel"):
+			with self.subTest(kind=kind):
+				self.assertIn(f'card("mp-booking {kind}"', project)
+				self.assertRegex(self.css, rf"\.mp-card\.mp-booking\.{kind}\s*[,{{]")
 		self.assertNotIn("swatch(", self.js)
 		self.assertIn('`<span class="mp-card mp-p6a-sample-card${cls ? ` ${cls}` : ""}">', self.js)
 		self.assertIn('<span class="mp-tech mp-p6a-sample-badge">AH</span>', self.js)

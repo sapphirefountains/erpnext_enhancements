@@ -860,8 +860,12 @@ class TestProjectBookings(unittest.TestCase):
 
 	def test_the_legend_names_the_new_kinds(self):
 		code = (PAGE_DIR / "maintenance_planner.js").read_text(encoding="utf-8")
-		for label in ("Project task (read-only)", "Rental crew (read-only)", "Travel (read-only)"):
-			self.assertIn(f'__("{label}")', code)
+		# P10 of the planner UX redesign: the key of the visit kinds is the "?" help's only, and its Project
+		# work section draws a sample card of each booking kind (the cards that More > Display > Project
+		# work as cards brings back).
+		for kind, label in (("mp-bk-task", "Project"), ("mp-bk-rental", "Rental"), ("mp-bk-travel", "Travel")):
+			self.assertIn(f'card("mp-booking {kind}", "{label}"', code)
+		self.assertNotIn("tb_kind_items", code)
 
 
 def _engine_day_conflicts(capacity, off, bookings):
@@ -1331,10 +1335,11 @@ class TestPlannerParity(unittest.TestCase):
 		self.assertIn('this.view !== "crew"', panel)  # the crew view's rows are the panel
 		for text in ("{0}h free", "Full", "Over {0}h", "Holiday", "Time off", "Not a work day"):
 			self.assertIn(f'__("{text}"', code)
-		# Remembered open or closed, behind the same try/catch as every other pref.
-		self.assertIn('panel_key: "ee_maintenance_planner_panel"', code)
-		self.assertIn('this.load_pref(MP.panel_key, "1") !== "0"', code)
-		self.assertIn("this.save_pref(MP.panel_key,", code)
+		# Remembered open or closed, behind the same try/catch as every other pref. Closed to a one-line
+		# summary unless someone opened it (P10; the key is new, so what the old default left is not read).
+		self.assertIn('resources_key: "ee_maintenance_planner_resources"', code)
+		self.assertIn('this.load_pref(MP.resources_key, "0") === "1"', code)
+		self.assertIn("this.save_pref(MP.resources_key,", code)
 		self.assertEqual(code.count("localStorage"), 2)  # load_pref and save_pref, nowhere else
 		# The numbers are the engine's.
 		self.assertIn("this.data.bookings", code)
