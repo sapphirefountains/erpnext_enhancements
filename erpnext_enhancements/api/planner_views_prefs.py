@@ -102,7 +102,12 @@ SCHEMA = {
 		"technician": ("text",),
 		"projected": ("bool",),
 		"project_work": ("bool",),
-		"panel": ("bool",),
+		# P10 of the planner UX redesign: project work as cards (off: the busy strip, D13) and Resources
+		# available open (it starts collapsed). "resources" replaces "panel", which the old default (open) put
+		# in every user's "last used" row, so a stored "panel" must not hold the panel open against the new
+		# default: the page no longer reads it, and the next save drops it.
+		"project_cards": ("bool",),
+		"resources": ("bool",),
 		"color_by": ("enum", MAINTENANCE_COLOR_MODES),
 	},
 	# The board's filter bar, view and table sort (board.js VIEW_SCHEMA, key for key).
