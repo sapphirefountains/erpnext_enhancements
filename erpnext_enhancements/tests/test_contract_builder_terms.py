@@ -1089,7 +1089,7 @@ class TestShownFields(unittest.TestCase):
         doc = {"template_key": "maintenance", "name": "SF-MAINT-2026-0018", "invoicing_frequency": "Monthly"}
         without = builder.progress(doc, steps, body)
         self.assertIn("annual_maintenance_fee", [row["fieldname"] for row in builder.blanks(doc, steps)])
-        contract = {"name": "MNT-CON-2026-00002", "status": "Active", "recurring_amount": 1490,
+        contract = {"name": "MNT-CON-2026-00002", "status": "Active", "recurring_amount": 1465,
                     "invoicing_frequency": "Monthly", "billing_season_start": "May", "billing_season_end": "September"}
         saved = frappe.get_all
         frappe.get_all = lambda doctype, *a, **k: [contract] if doctype == "Sapphire Maintenance Contract" else []
@@ -1097,8 +1097,13 @@ class TestShownFields(unittest.TestCase):
             self.assertNotIn("annual_maintenance_fee", [row["fieldname"] for row in builder.blanks(doc, steps)])
             self.assertEqual(builder.progress(doc, steps, body)["total"], without["total"] - 1)
             # A set Annual Fee prints beside the Service Fee, so it counts as filled, not hidden.
-            set_fee = builder.progress(dict(doc, annual_maintenance_fee=7450), steps, body)
+            set_fee = builder.progress(dict(doc, annual_maintenance_fee=7325), steps, body)
             self.assertEqual(set_fee["total"], without["total"])
+            # A stored body without the fee line (the patch still waiting) prints the Annual line, so it is asked for.
+            legacy = body.replace("period_fee", "no_fee")
+            self.assertEqual(builder.progress(doc, steps, legacy)["total"], without["total"])
+            frappe.db.get_value = lambda *a, **k: legacy
+            self.assertIn("annual_maintenance_fee", [row["fieldname"] for row in builder.blanks(doc, steps)])
         finally:
             frappe.get_all = saved
             frappe.db.get_value = lambda *a, **k: None

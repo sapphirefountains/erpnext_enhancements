@@ -32,6 +32,18 @@ does when invoicing.
 
 Never raises and is deterministic for the same records: it runs on the print path and inside the e-sign
 drift check, which compares a fresh render with the snapshot the signer was sent.
+
+**Only for a template that prints the line** (:func:`template_prints_fee`). The summary's "Service fee:"
+row is built in Python, but the v1.611.1 body already calls ``summary()``, so without this gate the row
+would reach every agreement at deploy, including one whose signing link is out while
+``refresh_maintenance_agreement_fee_line`` waits to swap the body. A body without the fee line gets no
+fee at all, so it renders exactly as it did.
+
+**Don't change a contract's monthly amount, or its billing frequency or season, while its agreement is
+out for signature.** The figure is read from the maintenance contract at render time, and the executed
+copy is rendered again at signing. Such an edit therefore changes what the client signs; the e-sign
+drift check records that as ``document_drifted`` on the signature request, but it does not stop the
+signing.
 """
 
 import frappe
@@ -39,6 +51,14 @@ from frappe.utils import cint, flt
 
 #: The agreement's Invoicing Frequency → the word after "per".
 PERIOD_WORDS = {"Monthly": "month", "Quarterly": "quarter", "Annually": "year"}
+
+#: What a template body that prints the Service Fee reads from the render context.
+FEE_LINE_MARKER = "period_fee"
+
+
+def template_prints_fee(body):
+	"""Whether a Contract Template body has the Service Fee line (v1.724.0 or later)."""
+	return FEE_LINE_MARKER in (body or "")
 
 
 def linked_maintenance_contract(name):

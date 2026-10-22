@@ -2,7 +2,8 @@
 
 Nik, 2026-10-22: "add a monthly (per-period) fee line to the maintenance agreement template, filled
 from the linked maintenance contract's Recurring Amount when set, plus fix SF-MAINT-2026-0018 so Day
-Dairy prints $1,490 per month." Pinned here:
+Dairy prints $1,490 per month." He then set the price at $1,465.00 ("make it $1,465.00 instead of
+$1,490.00"), which is the fixture below. Pinned here:
 
 * where the figure comes from: the maintenance contract's Recurring Amount on the agreement's own
   cadence, else the Annual Fee split over the billed periods (the billing season included), else
@@ -187,7 +188,7 @@ def _contract(**fields):
     row = _Doc(
         name="MNT-CON-2026-00002",
         status="Active",
-        recurring_amount=1490,
+        recurring_amount=1465,
         invoicing_frequency="Monthly",
         billing_season_start="May",
         billing_season_end="September",
@@ -206,7 +207,7 @@ class TestPeriodFee(unittest.TestCase):
     def test_day_dairy_prints_the_maintenance_contracts_recurring_amount(self):
         result = fee.period_fee(_Doc(invoicing_frequency="Monthly", annual_maintenance_fee=0), _contract())
         self.assertEqual(
-            result, {"amount": 1490.0, "per": "month", "season": "May through September", "source": "maintenance_contract"}
+            result, {"amount": 1465.0, "per": "month", "season": "May through September", "source": "maintenance_contract"}
         )
 
     def test_the_recurring_amount_wins_over_the_annual_split(self):
@@ -216,8 +217,8 @@ class TestPeriodFee(unittest.TestCase):
         self.assertEqual((result["amount"], result["season"], result["source"]), (1118.0, "", "maintenance_contract"))
 
     def test_without_a_recurring_amount_the_annual_fee_is_split_over_the_season(self):
-        result = fee.period_fee(_Doc(invoicing_frequency="Monthly", annual_maintenance_fee=7450), _contract(recurring_amount=0))
-        self.assertEqual((result["amount"], result["season"], result["source"]), (1490.0, "May through September", "annual_fee"))
+        result = fee.period_fee(_Doc(invoicing_frequency="Monthly", annual_maintenance_fee=7325), _contract(recurring_amount=0))
+        self.assertEqual((result["amount"], result["season"], result["source"]), (1465.0, "May through September", "annual_fee"))
 
     def test_with_no_maintenance_contract_the_annual_fee_is_split_over_the_year(self):
         monthly = fee.period_fee(_Doc(invoicing_frequency="Monthly", annual_maintenance_fee=17940))
@@ -248,7 +249,7 @@ class TestPeriodFee(unittest.TestCase):
         # An unticked or unpriced Standard row does not count: Day Dairy's is both.
         for row in (_Doc(option_key="standard", included=0, price=690), _Doc(option_key="standard", included=1, price=0)):
             doc = _Doc(invoicing_frequency="Monthly", service_options=[row])
-            self.assertEqual(fee.period_fee(doc, _contract())["amount"], 1490.0)
+            self.assertEqual(fee.period_fee(doc, _contract())["amount"], 1465.0)
 
     def test_no_figure_means_no_line_never_zero(self):
         self.assertIsNone(fee.period_fee(_Doc(invoicing_frequency="Monthly", annual_maintenance_fee=0)))
@@ -319,16 +320,31 @@ class TestLinkedContract(unittest.TestCase):
     def test_period_fee_for_reads_the_linked_contract(self):
         STATE["tables"]["Sapphire Maintenance Contract"] = [_contract()]
         result = fee.period_fee_for(_Doc(name="SF-MAINT-2026-0018", invoicing_frequency="Monthly"))
-        self.assertEqual((result["amount"], result["season"]), (1490.0, "May through September"))
+        self.assertEqual((result["amount"], result["season"]), (1465.0, "May through September"))
 
     def test_the_render_context_passes_one_figure_to_the_template_and_the_summary(self):
         source = (APP / "project_enhancements" / "doctype" / "project_contract" / "project_contract.py").read_text(
             encoding="utf-8"
         )
         context = source[source.index("def _render_context("):source.index("def _hold_points(")]
-        self.assertIn('fee = period_fee_for(doc) if doc.get("template_key") == "maintenance" else None', context)
+        self.assertIn('if doc.get("template_key") == "maintenance" and template_prints_fee(body)', context)
         self.assertIn('"period_fee": fee,', context)
         self.assertIn("summary_html(doc, period_fee=fee)", context)
+        # render_body hands the context the body it renders, so the gate reads the stored template.
+        self.assertIn("frappe.render_template(body, _render_context(self, body))", source)
+
+    def test_only_a_body_with_the_fee_line_gets_a_fee(self):
+        """The summary row is Python and the v1.611.1 body already calls summary(): without this gate the
+        row would reach every agreement at deploy, even while the patch waits on a signing link."""
+        new = TEMPLATE.read_text(encoding="utf-8")
+        old = new
+        for before, after in CHANGES:
+            old = old.replace(after, before)
+        self.assertTrue(fee.template_prints_fee(new))
+        self.assertFalse(fee.template_prints_fee(old))
+        self.assertFalse(fee.template_prints_fee(None))
+        builder = (APP / "project_enhancements" / "contract_builder.py").read_text(encoding="utf-8")
+        self.assertIn("if template_prints_fee(body) and period_fee_for(doc):", builder)
 
 
 # --------------------------------------------------------------------------- the printed agreement
@@ -380,9 +396,9 @@ class TestTemplate(unittest.TestCase):
     def day_dairy(self):
         return fee.period_fee(_Doc(invoicing_frequency="Monthly"), _contract())
 
-    def test_day_dairy_prints_1490_a_month_for_the_season(self):
+    def test_day_dairy_prints_its_monthly_fee_for_the_season(self):
         html = self.render(period_fee=self.day_dairy())
-        self.assertIn("<p><b>Service Fee: $1,490.00 per month</b>, billed May through September.</p>", html)
+        self.assertIn("<p><b>Service Fee: $1,465.00 per month</b>, billed May through September.</p>", html)
         self.assertNotIn("Annual Service Fee Total", html)  # no annual figure, so no blank line beside the fee
         self.assertIn("The Service Fee counts base rates only.", html)
         self.assertNotIn("$0.00", html)
@@ -461,7 +477,7 @@ class TestSummary(unittest.TestCase):
     def test_states_the_fee_the_agreement_prints(self):
         period = fee.period_fee(_Doc(invoicing_frequency="Monthly"), _contract())
         html = summary.summary_html(self.doc(), period_fee=period)
-        self.assertIn("<b>Service fee:</b> $1,490.00 a month, billed May through September.", html)
+        self.assertIn("<b>Service fee:</b> $1,465.00 a month, billed May through September.", html)
         self.assertIn("standard maintenance visits every two weeks", html)
 
     def test_no_fee_no_row(self):
@@ -533,6 +549,64 @@ class TestPatch(unittest.TestCase):
         lines = [line for line in (APP / "patches.txt").read_text(encoding="utf-8").splitlines() if line and line[0] != "#"]
         layout = lines.index("erpnext_enhancements.patches.refresh_maintenance_agreement_layout")
         self.assertGreater(lines.index("erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line"), layout)
+
+
+class TestRetryAfterMigrate(unittest.TestCase):
+    """Patch Log marks the patch done even when it waited on a signing link, so the swap is retried after every
+    migrate, silently, until it lands."""
+
+    def setUp(self):
+        self.new = TEMPLATE.read_text(encoding="utf-8")
+        old = self.new
+        for before, after in CHANGES:
+            old = old.replace(after, before)
+        _reset(body=old)
+        STATE["tables"]["Project Contract"] = ["SF-MAINT-2026-0001"]
+
+    def test_a_wait_is_finished_by_the_first_migrate_after_the_link_closes(self):
+        STATE["tables"]["Contract Signature Request"] = ["CSR-0001"]
+        patch.execute()
+        self.assertEqual(STATE["errors"], ["Maintenance agreement fee line: template not updated yet"])
+        patch.retry_after_migrate()  # the same migrate: still out, and nothing logged twice
+        self.assertEqual((STATE["writes"], len(STATE["errors"])), ([], 1))
+        STATE["tables"]["Contract Signature Request"] = []  # signed or voided
+        patch.retry_after_migrate()
+        self.assertEqual(STATE["body"], self.new)
+        self.assertEqual(STATE["writes"], [("Contract Template", "maintenance", "body")])
+        patch.retry_after_migrate()  # current from now on
+        self.assertEqual((len(STATE["writes"]), len(STATE["errors"])), (1, 1))
+
+    def test_silent_on_a_body_edited_on_the_site(self):
+        STATE["body"] = STATE["body"] + "<p>edited on the site</p>"
+        patch.retry_after_migrate()
+        self.assertEqual((STATE["writes"], STATE["frozen"], STATE["errors"]), ([], [], []))
+
+    def test_installs_only_the_body_this_release_shipped(self):
+        """A later release changes the template file; its own patch owns that swap, not this retry."""
+        self.assertEqual(
+            patch.FEE_LINE_BODY_SHA256,
+            patch.body_sha256(self.new),
+            "The template changed after v1.724.0. Leave FEE_LINE_BODY_SHA256 pinned and flip this to assertNotEqual: "
+            "the later release's own patch installs its body.",
+        )
+        saved = patch.FEE_LINE_BODY_SHA256
+        patch.FEE_LINE_BODY_SHA256 = "0" * 64
+        try:
+            patch.retry_after_migrate()
+        finally:
+            patch.FEE_LINE_BODY_SHA256 = saved
+        self.assertEqual((STATE["writes"], STATE["frozen"]), ([], []))
+
+    def test_never_raises(self):
+        STATE["get_value_raises"] = True
+        patch.retry_after_migrate()
+        self.assertEqual(STATE["errors"], ["Maintenance agreement fee line retry failed"])
+
+    def test_runs_after_every_migrate(self):
+        hooks = (APP / "hooks.py").read_text(encoding="utf-8")
+        block = hooks[hooks.index("after_migrate = ["):]
+        block = block[: block.index("\n]")]
+        self.assertIn('"erpnext_enhancements.patches.refresh_maintenance_agreement_fee_line.retry_after_migrate"', block)
 
 
 if __name__ == "__main__":

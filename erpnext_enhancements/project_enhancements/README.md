@@ -486,7 +486,14 @@ or sent for the client to sign in their own time.
   - With a Service Fee and no Annual Fee, the template drops the blank Annual Service Fee Total line, and the
     builder's `blanks`/`progress` stop asking for it (`_printed_only_when_set`).
   - `patches/refresh_maintenance_agreement_fee_line` brings it to the live body (v1.611.1 / v1.611.0 shipped
-    bodies only).
+    bodies only). If it has to wait on a signing link, its `retry_after_migrate` (`after_migrate`) finishes the
+    swap at the first migrate after the link closes.
+  - A fee reaches only a stored body that prints the line (`template_prints_fee`, `_render_context(doc, body)`).
+    That keeps the summary's Python-built row from appearing before the template has the line.
+  - **Don't change a maintenance contract's monthly amount, billing frequency or season while its agreement is
+    out for signature.** The fee is read from that contract every time the agreement renders, and the executed
+    copy is rendered again at signing. Such an edit changes what the client signs. The e-sign drift check marks
+    the request `document_drifted`, but it does not stop the signing.
 - **The maintenance agreement's terms** (template + `patches/update_maintenance_agreement_terms`,
   which replaces the live body only when it is exactly the v1.609.0 shipped body):
   Standard Maintenance is the base rate per visit plus chemicals, always billed in addition
