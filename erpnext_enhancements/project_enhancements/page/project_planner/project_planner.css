@@ -961,10 +961,21 @@
 	min-width: 0;
 }
 
+/* The tray stays in view beside the board and scrolls by itself: top clears Frappe's navbar (48px)
+ * and its sticky page head (60px) with a little air, and the height is the board's own cap (the
+ * same 150px), so the row is no taller than the board and the tray never sets the page's
+ * height. overscroll-behavior stops the wheel handing the page the rest of the scroll
+ * when the tray reaches its end. The board's own box (.pp-crew-view .pp-scroll) scrolls on its
+ * own too, so neither moves the other. */
 .pp-main-crew > .pp-trays {
 	order: 2;
 	flex: 0 0 260px;
 	max-width: 260px;
+	position: sticky;
+	top: 120px;
+	max-height: calc(100vh - 150px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
 .pp-main-crew > .pp-trays:empty {
@@ -985,6 +996,18 @@
 		order: 0;
 		flex: none;
 		max-width: none;
+		position: static;
+		max-height: none;
+		overflow-y: visible;
+	}
+}
+
+/* A printout carries the whole tray, not the part that fits a screen. */
+@media print {
+	.pp-main-crew > .pp-trays {
+		position: static;
+		max-height: none;
+		overflow: visible;
 	}
 }
 
