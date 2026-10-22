@@ -379,6 +379,11 @@ jobs:
       # would quietly stop matching and the feed would follow you around again.
       - name: Activity feed on the first tab only (JS + CSS agree)
         run: python -m unittest erpnext_enhancements.tests.test_activity_first_tab_only -v
+      # Project form (v1.716.2): the Production Tracking section is hidden (fields kept), and the
+      # activity feed shows on Project's Comments tab only. Runs scripts/test_activity_home_tab.js, the
+      # real shared script against a fake DOM; node is on PATH in this job.
+      - name: Project form hides (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_project_form_hides -v
       # The glass theme blurs `.page-head` and `.btn`, and `backdrop-filter` makes a
       # STACKING CONTEXT of whatever carries it -- so both menus frappe opens INSIDE
       # those elements (the page "..." menu, the list sort menu) were sealed into a

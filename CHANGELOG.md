@@ -50,6 +50,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     mounting through the shared widget). Both run in CI.
   - **Deploy.** `bench migrate` overwrites the block's `html`, `script` and `style` from these files. No schema,
     fixture or data change.
+## [1.716.2] - 2026-10-22
+
+### Changed
+Three changes to the Project form, all Nik's, 2026-10-22.
+- **The "Planner schedule" section is hidden.** "hide the planner schedule from the form view of Projects as well."
+  Asked which block he meant, he answered: just the *Planner schedule* section on the Schedule tab, the one holding
+  *Schedule status* (Draft or Published), *Schedule published on* and *Baseline set on*. It is now `hidden: 1` on the
+  `Project-custom_schedule_state_section` Custom Field, which hides the whole section. The Schedule tab keeps its
+  Gantt chart, dates, rent schedule and notes, and *View > Open in Project Planner* is untouched.
+  - **Hidden, not deleted.** Every field stays in the database and the fixture, so the planner still reads and
+    writes `custom_schedule_status`, `custom_schedule_published_on` and `custom_baseline_set_on` exactly as before
+    (Publish schedule, Set baseline, the Draft/Published gate on crew views), and a new Project still starts
+    `Draft`.
+  - **Pinned** in `tests/test_planner_publish_baseline.py` (`TestFixtures`): the section is hidden, the Gantt
+    section and its HTML field and the Schedule tab are not, and no script in the app un-hides it.
+- **The "Production Tracking" section is hidden.** "Production tracking section in the project doctype needs to be
+  hidden as well." `hidden: 1` on the `Project-custom_production_section` Custom Field (Scope tab, between Build
+  Deliverables and Service Scope), which hides Build Status, Bid Cost, Production Started and Completed, and
+  Quality Sign-Off By and Date with it.
+  - **Hidden, not deleted, and checked first for what writes to it.** Nothing on the form does. The Production
+    Builds Kanban board moves `custom_build_status` itself, quality scheduling (`quality/scheduling.py`,
+    `api/quality_due.py`) reads it, and the Project Brief prints all of them; none of that goes through the form,
+    and a hidden field still saves. No field is required, so a hidden one cannot block a save. **One thing to
+    know:** with the section hidden, Build Status can only be moved on the Production Builds board (or by
+    API), not on the Project form.
+- **The activity feed shows on the Project's Comments tab only.** "Can we move the Activity Log to only display
+  under Comments tab of the Project view." The feed is the form timeline (activity entries with their `#N` badges
+  and the comment box) that Frappe draws below the tabs. It showed on every tab; it now shows on the Comments tab
+  and on no other tab of a Project, Details included. Comments, `@mentions` and the comment box are untouched: they
+  are just visible on that one tab. Checked on prod (16.50.0) by opening a Project read-only, running this script
+  against the page and clicking through the tabs: hidden on Details, Scope and Schedule, shown on Comments.
+  - **The existing "first tab only" feature never worked on v16, and this fixes the mechanism it shares.** Since
+    v1.259.4 (TASK-2026-00353; "fixed" in v1.299.2 and v1.331.1) `activity_first_tab_only.js` and its stylesheet
+    looked for `.form-footer` inside `.form-page`. In v16 the footer is built on `page.main.parent()` (`form.js`),
+    so it sits in `.layout-main-section-wrapper` beside `.layout-main-section`, and no `.form-page` contains
+    one: `apply()` returned early on every form and the class was never set, on any doctype. Those earlier
+    CHANGELOG entries claiming it hides the feed were wrong for v16. Its tests passed against a fake DOM of the
+    same wrong shape. The class now goes on `.layout-main-section-wrapper`, and the CSS rule is
+    `.layout-main-section-wrapper.ee-activity-off-tab .form-footer`.
+  - **Tab changes are seen from the class change, not `shown.bs.tab`.** Frappe's click handler (`tab.js`) adds
+    `active` before `layout.js` calls Bootstrap's `.tab("show")`, which returns early on an already-active link, so
+    `shown.bs.tab` is not fired for a Frappe tab click. Each `.form-tabs` list is observed for its links' `class`
+    attribute instead (attached once), plus `form-refresh` and a childList observer for first paint and footer
+    rebuilds.
+  - **Only Project is switched on.** The shared script has a `HOME_TABS` map (doctype -> Tab Break fieldname,
+    `Project: custom_comments`); the tab is found by the id Frappe gives its link (`project-custom_comments-tab`).
+    **Every other doctype is unchanged: the feed stays on every tab, which is what it has really done all along.**
+    The original "first tab of every tabbed form" rule is still in the code behind `FIRST_TAB_FOR_ALL = false`.
+    Turning that on would change every tabbed form on the site at once (Task, Customer,
+    and so on) for the first time, so it is Nik's call and not a side effect of a Project change.
+    A footer that a doctype already moves inside a tab pane (ERPNext's CRM doctypes) is left alone as before.
+  - **Pinned** in `tests/test_project_form_hides.py`, which runs `scripts/test_activity_home_tab.js`: the real script
+    against a fake DOM rebuilt from the v16 structure (footer beside `.layout-main-section`, not under
+    `.form-page`; tab switches are class changes only, no `shown.bs.tab`). Covers first paint on each tab,
+    switching to and from Comments, other doctypes unchanged, no Comments tab, mid-render, one tab, a footer in a
+    pane, no footer, and two forms open at once. `tests/test_activity_first_tab_only.py` now also pins the
+    wrapper in both halves and that the script no longer relies on `shown.bs.tab` (read from the code, not its
+    comments). Own CI step.
+
+### On deploy
+`bench migrate` re-applies `fixtures/custom_field.json` and flips `hidden` on two Custom Fields
+(`Project-custom_schedule_state_section`, `Project-custom_production_section`). No patch, Property Setter, schema or
+data change. The feed change is a JS change in the global bundle.
 
 ## [1.716.1] - 2026-10-22
 
