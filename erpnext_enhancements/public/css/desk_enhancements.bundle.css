@@ -1646,6 +1646,7 @@ body.desktop-page .desktop-icon .icon-title,
         display: none !important;
     }
 }
+/* !important: the button also carries Bootstrap's `.text-muted`, which is !important. */
 .ee-page-sidebar-toggle.active {
-    color: var(--text-color);
+    color: var(--text-color) !important;
 }

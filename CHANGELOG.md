@@ -28,19 +28,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Only from 992px up.** Below that the form's sidebar is frappe's responsive layout and the Training rail is a
     stacked "Training menu" disclosure; hiding either would leave a phone with no way back, so the stylesheet
     applies nothing there and the button is out of sight.
-  - **A route with an empty sidebar no longer reopens a collapsed one.** frappe's
-    `Sidebar.restore_expanded_state()` sets the panel expanded, without saving, whenever the sidebar it just drew has
-    no items (a route whose module has no Workspace Sidebar). So the panel popped open over a saved collapse on
-    such a route and folded again on the next: "it resets when I navigate". The module wraps that one method (the
-    original still runs first) so a saved collapse wins on a desktop. **Not verified on production data**: I could
-    not tell which of our routes resolve to an empty sidebar, so check that a collapsed sidebar now stays collapsed
-    on the Training pages and the planners. A phone drawer is left as frappe has it.
-  - **The left Desk sidebar, across tabs.** frappe already saves this one (`desk-sidebar-collapsed`, written by
-    `Sidebar.close()`/`open()`) and re-reads it on every redraw of the sidebar, so a route change needs nothing more
-    and this file deliberately does not re-apply it: a second writer would fight frappe, which forces an empty
-    workspace's sidebar open on purpose. What frappe does not do is notice another tab changing the key; the module
-    listens for the `storage` event and folds or opens the live sidebar to match, on a desktop only (below 768px
-    the sidebar is a drawer that neither reads nor writes the key).
+  - **The left Desk sidebar: four gaps in what frappe already does.** frappe saves a collapse in
+    `desk-sidebar-collapsed` (written by `Sidebar.close()`/`open()`) and re-reads it each time the sidebar is
+    redrawn. Left alone, that failed four ways, each now closed by wrapping one `Sidebar` method (the original
+    still runs; everything below is desktop only, a phone drawer is left as frappe has it):
+    1. **A route with an empty sidebar reopened a collapsed one.** `restore_expanded_state()` sets the panel
+       expanded, without saving, whenever the sidebar it just drew has no items (a route whose module has no
+       Workspace Sidebar), so the panel popped open over a saved collapse and folded again on the next route.
+       The wrapper folds it again when a collapse is saved. **Not verified on production data**: I could not
+       tell which of our routes resolve to an empty sidebar; check a collapsed sidebar stays collapsed on the
+       Training pages and the planners.
+    2. **A Dock click erased the choice.** Every click on a Dock item runs `open_dock_entry()`, which switches
+       module and then calls `Sidebar.open()`: it unfolds the panel and writes `"0"`. Beside a pinned Dock
+       (everyone here) the Dock is the only way to switch module while the panel is collapsed, so collapse, click
+       Selling, and the sidebar sprang open with the choice gone in every tab. The wrapper silences `open()` for
+       the length of that call when a collapse is saved: the module still switches, the panel stays folded, the key
+       stays `"1"`, and `open()` is put back exactly as it was.
+    3. **Another tab's change was not noticed.** The module listens for the `storage` event and folds or opens
+       the live sidebar to match. This is the only place it drives the sidebar; a route change drives nothing.
+    4. **The key is per browser.** On a shared browser one person's collapse became the next person's. Each
+       person's choice is also kept as `ee-nav-collapsed@<user>` (written by a wrapper on `save_collapsed_state`)
+       and copied back into frappe's key when the bundle evaluates, before the sidebar reads it. Someone who has
+       never chosen, on a browser another person used last, starts open; the first person after this ships keeps
+       the choice they already had. The user comes from `frappe.session`, falling back to the `user_id` cookie
+       (the session is not always set when the bundle evaluates); Guest keeps the shared key.
+  - **The record-sidebar choice is per user too** (`ee-page-sidebar-hidden@<user>`), for the same reason.
+  - **Hiding the record sidebar closes an open attachment preview first.** In v16.50 the preview lives inside
+    `.layout-side-section.right`, and frappe's `:has(.attachment-preview:not(.hidden))` rule keeps the main column
+    shrunk while one is open, which left a blank gap beside the hidden sidebar until Esc. The module clicks
+    frappe's own close button, which also unbinds its Escape handler.
+  - **The button's "on" colour shows.** It carries Bootstrap's `.text-muted`, which is `!important`, so the
+    active colour is `!important` too.
   - Storage that throws (a private window, blocked site data) is caught; the toggle still works for the life of
     the page. The toggle is one click, a page-head button, and changes nothing about Back/Forward: no route is
     touched.
@@ -53,10 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above. `tests/test_sidebar_memory.py` fails the build if it returns.
 
 ### Tests
-- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (50 checks:
+- `scripts/test_sidebar_memory.js` executes the module against a stubbed DOM, jQuery, storage and frappe (78 checks:
   the class is on `<html>` before the first page; one click toggles, saves and re-labels every button; which pages
   get the button; three events add it and never twice; another tab's choice; a drawer is never driven; storage
-  that throws; a route change never touches the left sidebar). `tests/test_sidebar_memory.py` holds the seams it
+  that throws; a route change never touches the left sidebar; the empty-sidebar and Dock-click wrappers; the
+  per-user keys and the shared-browser hand-over; the attachment preview). `tests/test_sidebar_memory.py` holds the seams it
   cannot see (the stylesheet's selectors are the ones the script's class names produce, nothing hides below 992px,
   the always-expand script stays deleted). Both run in CI.
 

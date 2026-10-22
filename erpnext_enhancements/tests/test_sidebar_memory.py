@@ -118,8 +118,8 @@ class TestNotDrivenOnRoute(unittest.TestCase):
         self.assertIn("sync_nav()", handler.group(0))
         for token in ("frappe.router", "set_route"):
             self.assertNotIn(token, code)
-        # app_ready is only the retry for installing the restore wrapper.
-        self.assertEqual(re.findall(r'on\("app_ready", (\w+)\)', code), ["patch_restore"])
+        # app_ready is only the retry for installing the Sidebar wrappers.
+        self.assertEqual(re.findall(r'on\("app_ready", (\w+)\)', code), ["patch_sidebar"])
 
     def test_an_empty_sidebar_cannot_override_a_saved_collapse(self):
         """frappe v16.50.0 Sidebar.restore_expanded_state() sets sidebar_expanded = true whenever
@@ -127,8 +127,23 @@ class TestNotDrivenOnRoute(unittest.TestCase):
         Workspace Sidebar and folds again on the next. The wrapper must keep calling the original."""
         code = strip_js_comments(read(MODULE))
         self.assertIn("proto.restore_expanded_state", code)
-        self.assertIn("original.apply(this, arguments)", code)
-        self.assertIn("_ee_restore_patched", code)
+        self.assertIn("restore.apply(this, arguments)", code)
+        self.assertIn("_ee_sidebar_patched", code)
+
+    def test_a_dock_click_cannot_unfold_a_collapsed_panel(self):
+        """frappe v16.50.0 open_dock_entry() calls Sidebar.open(), which expands the panel and writes
+        "0". The Dock is the only way to switch module beside a collapsed panel, so without the wrapper
+        every module switch erased the saved choice."""
+        code = strip_js_comments(read(MODULE))
+        self.assertIn("proto.open_dock_entry", code)
+        self.assertIn("this.open = function () {};", code)
+        self.assertRegex(code, r"finally \{\s*if \(own\) this\.open = previous;\s*else delete this\.open;")
+
+    def test_the_choices_are_per_user_and_the_preview_is_closed_first(self):
+        code = strip_js_comments(read(MODULE))
+        self.assertIn("function user_key(base)", code)
+        self.assertIn("user_id=", code)  # the cookie fallback
+        self.assertIn("attachment-preview-close", code)
 
     def test_it_never_clicks_the_page_head_toggle(self):
         code = strip_js_comments(read(MODULE))

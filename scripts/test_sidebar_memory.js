@@ -19,6 +19,11 @@
  *   6. Storage that throws (private window) never escapes, and the toggle still works in memory.
  *   7. The left sidebar is NOT driven on a route change: frappe restores it from its own key on
  *      every redraw, and a second writer would fight it.
+ *   9. A Dock click (open_dock_entry -> Sidebar.open(), which unfolds the panel AND writes "0")
+ *      switches module without unfolding a collapsed panel or erasing the saved choice.
+ *  10. The choices are per USER, so a shared browser does not hand one person's to the next.
+ *  11. Hiding the record sidebar closes an open attachment preview, or the main column stays
+ *      shrunk beside a sidebar that is gone.
  *   8. ...except in the one case frappe gets wrong: restore_expanded_state() forces the panel open
  *      when the sidebar it drew has no items, over a saved collapse. The wrapper lets the collapse win
  *      on a desktop, never on a phone drawer, and never twice.
@@ -144,7 +149,7 @@ function makePage({ governed = true, hideSidebar = false } = {}) {
 }
 
 // Evaluates the module once, as one page load would.
-function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvents = false, SidebarClass } = {}) {
+function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvents = false, SidebarClass, user = '', cookie = '' } = {}) {
 	const world = { buttons: [] };
 	const events = {};
 	const winHandlers = {};
@@ -154,6 +159,7 @@ function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvent
 		app: sidebar ? { sidebar } : undefined,
 		container: { page: { page: null } },
 		is_mobile: () => mobile,
+		session: user ? { user } : undefined,
 		ui: SidebarClass ? { Sidebar: SidebarClass } : undefined,
 	};
 	function $(arg) {
@@ -161,9 +167,15 @@ function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvent
 			if (arg.startsWith('<')) return makeButton(world);
 			if (arg === '.' + BTN) {
 				const all = world.buttons.slice();
-				all.length = all.length;
 				all.each = (fn) => all.forEach((b, i) => fn.call(b, i, b));
 				return all;
+			}
+			if (arg.includes('.attachment-preview-close')) {
+				return {
+					trigger(event) {
+						world.previewClosed = (world.previewClosed || 0) + (event === 'click' ? 1 : 0);
+					},
+				};
 			}
 			throw new Error('unexpected selector ' + arg);
 		}
@@ -179,6 +191,7 @@ function load({ storage = makeStorage(), sidebar, mobile = false, noStorageEvent
 		frappe,
 		localStorage: storage,
 		document: {
+			cookie,
 			documentElement: {
 				classList: {
 					toggle: (name, on) => (on ? htmlClasses.add(name) : htmlClasses.delete(name)),
@@ -435,7 +448,7 @@ function makeSidebarClass(storage, { drawer = false } = {}) {
 	const storage = makeStorage({ [NAV]: '1' });
 	const Sidebar = makeSidebarClass(storage);
 	const page = load({ storage, SidebarClass: Sidebar });
-	check(Sidebar.prototype._ee_restore_patched === true, 'the restore wrapper is installed at evaluation when the desk class exists');
+	check(Sidebar.prototype._ee_sidebar_patched === true, 'the restore wrapper is installed at evaluation when the desk class exists');
 	const empty = new Sidebar([]);
 	empty.restore_expanded_state();
 	check(!empty.sidebar_expanded, 'an empty sidebar no longer pops open over a saved collapse');
@@ -474,7 +487,7 @@ function makeSidebarClass(storage, { drawer = false } = {}) {
 	s.restore_expanded_state();
 	check(!s.sidebar_expanded, 'and the retry installs the wrapper');
 	page.fire('app_ready');
-	check(Sidebar.prototype._ee_restore_patched === true, 'a second app_ready is harmless');
+	check(Sidebar.prototype._ee_sidebar_patched === true, 'a second app_ready is harmless');
 }
 {
 	const storage = makeStorage({ [NAV]: '1' });
@@ -492,6 +505,169 @@ function makeSidebarClass(storage, { drawer = false } = {}) {
 		threw = e;
 	}
 	check(!threw && page.warnings.length === 1, 'a failure while folding is a warning, never a broken route');
+}
+
+
+// --- 12. A Dock click does not unfold a collapsed panel ------------------------------------------
+// frappe v16.50.0: open_dock_entry() selects the shell, calls this.open(), then sets the route.
+function makeDockSidebarClass(storage, { drawer = false } = {}) {
+	class Sidebar {
+		constructor() {
+			this.sidebar_items = [{}];
+			this.sidebar_expanded = !drawer && storage.getItem(NAV) !== '1';
+			this.routes = [];
+			this.opens = 0;
+		}
+		panel_can_close() {
+			return drawer;
+		}
+		save_collapsed_state(collapsed) {
+			if (drawer) return;
+			storage.setItem(NAV, collapsed ? '1' : '0');
+		}
+		open() {
+			this.opens += 1;
+			this.sidebar_expanded = true;
+			this.save_collapsed_state(false);
+		}
+		select_shell() {
+			this.restore_expanded_state();
+		}
+		restore_expanded_state() {
+			this.sidebar_expanded = !drawer && storage.getItem(NAV) !== '1';
+			if (this.sidebar_items.length === 0) this.sidebar_expanded = true;
+		}
+		apply_expanded_state() {}
+		open_dock_entry(entry) {
+			if (entry.module) this.select_shell(entry.module);
+			this.open();
+			this.routes.push(entry.route);
+		}
+	}
+	return Sidebar;
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeDockSidebarClass(storage);
+	load({ storage, SidebarClass: Sidebar });
+	const sb = new Sidebar();
+	sb.open_dock_entry({ module: 'Selling', route: 'selling' });
+	check(sb.routes.length === 1 && sb.routes[0] === 'selling', 'the Dock click still switches module and sets the route');
+	check(!sb.sidebar_expanded, 'a collapsed panel stays collapsed after a Dock click');
+	check(storage.getItem(NAV) === '1', 'and the saved choice is not overwritten with "0"');
+	check(sb.opens === 0, 'open() did not run during the click');
+	check(!Object.prototype.hasOwnProperty.call(sb, 'open') && sb.open === Sidebar.prototype.open, 'open() is back exactly as it was afterwards');
+	sb.open();
+	check(sb.sidebar_expanded && storage.getItem(NAV) === '0', 'a person unfolding it on purpose still works after a Dock click');
+}
+{
+	const storage = makeStorage({ [NAV]: '0' });
+	const Sidebar = makeDockSidebarClass(storage);
+	load({ storage, SidebarClass: Sidebar });
+	const sb = new Sidebar();
+	sb.open_dock_entry({ module: 'Selling', route: 'selling' });
+	check(sb.opens === 1 && sb.sidebar_expanded, 'an open panel is opened by a Dock click exactly as before');
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeDockSidebarClass(storage, { drawer: true });
+	load({ storage, SidebarClass: Sidebar });
+	const sb = new Sidebar();
+	sb.open_dock_entry({ module: 'Selling', route: 'selling' });
+	check(sb.opens === 1, 'on a phone drawer a Dock click still opens it');
+}
+{
+	const storage = makeStorage({ [NAV]: '1' });
+	const Sidebar = makeDockSidebarClass(storage);
+	load({ storage, SidebarClass: Sidebar });
+	const sb = new Sidebar();
+	sb.select_shell = () => {
+		throw new Error('boom');
+	};
+	let threw = null;
+	try {
+		sb.open_dock_entry({ module: 'Selling', route: 'selling' });
+	} catch (e) {
+		threw = e;
+	}
+	check(threw && threw.message === 'boom', 'an error inside the Dock click is not swallowed');
+	check(!Object.prototype.hasOwnProperty.call(sb, 'open'), 'and open() is restored even then');
+}
+
+// --- 13. Per user: a shared browser does not hand one person's choice to the next -----------------
+const A = 'lisa@example.com';
+const B = 'james@example.com';
+{
+	const storage = makeStorage();
+	const first = load({ storage, user: A });
+	first.world.buttons.length = 0;
+	first.fire('form-refresh', { page: makePage() });
+	first.world.buttons[0].click();
+	check(storage.getItem(PAGE + '@' + A) === '1' && storage.getItem(PAGE) === null, 'the record-sidebar choice is saved under the user');
+	check(load({ storage, user: A }).html(), 'the same person gets it back on the next load');
+	check(!load({ storage, user: B }).html(), 'the next person on this browser starts with the sidebar shown');
+	check(load({ storage, user: A }).html(), 'and the first person still has theirs afterwards');
+}
+{
+	// Cookie fallback when frappe.session is not set yet at evaluation.
+	const storage = makeStorage({ [PAGE + '@' + A]: '1' });
+	check(load({ storage, cookie: 'sid=abc; user_id=lisa%40example.com' }).html(), 'frappe.session missing at evaluation: the user_id cookie names the user');
+	check(!load({ storage, cookie: 'user_id=Guest' }).html(), 'Guest keeps the shared key and never reads a user\'s');
+}
+{
+	// frappe's own key: first person after deploy keeps what they had; a stranger starts open.
+	const storage = makeStorage({ [NAV]: '1' });
+	load({ storage, user: A });
+	check(storage.getItem(NAV) === '1' && storage.getItem('ee-nav-collapsed@' + A) === '1', 'the first person after this ships keeps the collapse they already had');
+	load({ storage, user: B });
+	check(storage.getItem(NAV) === '0', 'a different person on that browser, never having chosen, starts open');
+	load({ storage, user: A });
+	check(storage.getItem(NAV) === '1', 'and the first person gets their own collapse back, over the other\'s');
+}
+{
+	// The wrapper on save_collapsed_state keeps the per-user copy current.
+	const storage = makeStorage();
+	const Sidebar = makeDockSidebarClass(storage);
+	load({ storage, SidebarClass: Sidebar, user: A });
+	const sb = new Sidebar();
+	sb.save_collapsed_state(true);
+	check(storage.getItem('ee-nav-collapsed@' + A) === '1', 'collapsing the panel saves this person\'s copy');
+	sb.save_collapsed_state(false);
+	check(storage.getItem('ee-nav-collapsed@' + A) === '0', 'and so does opening it');
+	const guest = makeStorage();
+	const G = makeDockSidebarClass(guest);
+	load({ storage: guest, SidebarClass: G });
+	new G().save_collapsed_state(true);
+	check(![...guest.data.keys()].some((k) => k.startsWith('ee-nav-collapsed')), 'with no user nothing per-user is written');
+	const drawerStorage = makeStorage();
+	const D = makeDockSidebarClass(drawerStorage, { drawer: true });
+	load({ storage: drawerStorage, SidebarClass: D, user: A });
+	new D().save_collapsed_state(true);
+	check(drawerStorage.getItem('ee-nav-collapsed@' + A) === null, 'a phone drawer never writes it');
+}
+{
+	// A storage event for ANOTHER user's key changes nothing here.
+	const storage = makeStorage();
+	const page = load({ storage, user: A });
+	storage.setItem(PAGE + '@' + B, '1');
+	page.storageEvent(PAGE + '@' + B);
+	check(!page.html(), 'another user\'s record-sidebar choice arriving in this browser does not hide it here');
+	storage.setItem(PAGE + '@' + A, '1');
+	page.storageEvent(PAGE + '@' + A);
+	check(page.html(), 'this user\'s own choice from another tab does');
+}
+
+// --- 14. An open attachment preview is closed before the sidebar hides ------------------------------
+{
+	const page = load();
+	page.fire('form-refresh', { page: makePage() });
+	page.world.buttons[0].click();
+	check(page.world.previewClosed === 1, 'hiding closes an open attachment preview through frappe\'s own close button');
+	page.world.buttons[0].click();
+	check(page.world.previewClosed === 1, 'showing the sidebar again closes nothing');
+	page.storage.setItem(PAGE, '1');
+	page.storageEvent(PAGE);
+	check(page.world.previewClosed === 2, 'and so does the sidebar being hidden from another tab');
 }
 
 console.log('');
