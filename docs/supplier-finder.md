@@ -64,8 +64,9 @@ every push.
    - A term with a digit, or a word of six letters or more, also matches inside the squashed text ("SQ 3-65" finds
      SQ365). Shorter words do not, or LAMP would find CLAMP.
    - A short synonym table covers the old vocabulary, for example LIGHT/LAMP, WIRE/CABLE and NOZZLE/JET.
-   - The whole search squashed and found as an item code or supplier part number (or inside one) is a **model match**
-     and ranks first.
+   - The whole search squashed and equal to an item code or supplier part number is a **model match** and ranks
+     first. Inside a longer code it counts only when the search has a digit, as a model number does. Otherwise
+     "pump" would be a model match for the code CHEMPUMP-STENNER-45M1, which is what the code review caught.
    - An item whose name *starts* with the term ("PUMP, …") outranks one that only mentions it ("COVER, PUMP, …").
    - When an item matches every term, only those items are shown. When none does, items matching at least half the
      terms are shown with a "partial" note.
@@ -74,7 +75,8 @@ every push.
    - A model search names no group. It uses the matched items' category word instead: EQKT750 is a PUMP, so the pump
      groups apply.
 4. **Evidence** for the matched items, per supplier–item pair:
-   - submitted PO lines and Purchase Receipt lines (count, last date, last nonzero rate);
+   - submitted PO lines and Purchase Receipt lines (count, last date, and the last nonzero rate per pair, picked
+     with `row_number()` in the database so no pair is cut off);
    - Supplier Quotation lines;
    - Item Supplier rows (and part numbers);
    - Item Default `default_supplier`;

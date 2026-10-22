@@ -37,6 +37,7 @@ Indentation is tabs (new file).
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import re
 from collections.abc import Iterable
 
@@ -135,6 +136,7 @@ def squash(text) -> str:
 	return _NON_ALNUM.sub("", str(text or "").upper())
 
 
+@functools.lru_cache(maxsize=2048)
 def synonyms_of(term: str) -> frozenset[str]:
 	"""``term`` and every word :data:`SYNONYMS` says means the same."""
 	out = {term}
@@ -223,11 +225,15 @@ def score_item(item: dict, terms: list[str], whole: str) -> dict | None:
 	if whole and len(whole) >= 3:
 		code_sq = fields["code"][1]
 		part_sqs = [squash(p) for p in item.get("part_nos") or ()]
+		# Inside a longer code or name only when the search has a digit, as a model number does. A
+		# plain word is not a model: PUMP is inside the code CHEMPUMP-STENNER-45M1, and as a "model
+		# match" that chemical feed pump outranked every real pump and switched the AI step off.
+		has_digit = bool(_DIGIT.search(whole))
 		if whole == code_sq or whole in part_sqs:
 			model, score = True, 120.0
-		elif whole in code_sq or any(whole in p for p in part_sqs if p):
+		elif has_digit and len(whole) >= 4 and (whole in code_sq or any(whole in p for p in part_sqs if p)):
 			model, score = True, 100.0
-		elif len(whole) >= 5 and _DIGIT.search(whole) and whole in fields["name"][1]:
+		elif has_digit and len(whole) >= 5 and whole in fields["name"][1]:
 			model, score = True, 80.0
 	hits = 0
 	for term in terms:
@@ -441,6 +447,7 @@ def rank_suppliers(
 	term_count: int = 1,
 	today=None,
 	limit: int = SUPPLIERS_MAX,
+	items_per_supplier: int | None = ITEMS_PER_SUPPLIER,
 ) -> list[dict]:
 	"""Suppliers for a search, best first, duplicates folded.
 
@@ -452,6 +459,7 @@ def rank_suppliers(
 	  ``groups`` is its primary group first and then the others.
 	* ``group_hits`` and ``name_hits`` map a supplier's docname to the number of terms its groups,
 	  or its name, matched.
+	* ``items_per_supplier`` caps each row's ``items`` (None: all of them, for one supplier's history).
 
 	Each answer row is ``{"supplier", "supplier_name", "aliases", "groups", "tier", "score",
 	"last_date", "items", "item_count", "bought_count", "group_match", "name_match", "disabled"}``. ``items`` are this supplier's
@@ -555,7 +563,7 @@ def rank_suppliers(
 				"tier": tier,
 				"score": round(score, 3),
 				"last_date": str(last) if last else None,
-				"items": item_rows[:ITEMS_PER_SUPPLIER],
+				"items": item_rows[:items_per_supplier] if items_per_supplier else item_rows,
 				"item_count": len(item_rows),
 				"bought_count": sum(1 for r in item_rows if r.get("po_lines") or r.get("pr_lines")),
 				"group_match": bool(g_hit),

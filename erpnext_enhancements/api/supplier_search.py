@@ -37,6 +37,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, cstr, getdate, nowdate
 
+from erpnext_enhancements.api.item_suggest import ai_configured
 from erpnext_enhancements.inventory_enhancements import supplier_search_rules as rules
 
 #: Model calls a person may make in an hour. Counted per user.
@@ -46,8 +47,6 @@ RATE_WINDOW_SECONDS = 3600
 THINKING_LEVEL = "LOW"
 TIMEOUT_SECONDS = 20
 CACHE_SECONDS = 24 * 3600
-#: Purchase rows read for the last price paid, newest first, before they are folded per pair.
-RATE_ROWS_MAX = 4000
 
 MSG_EMPTY = "Type what you are looking for: a kind of item, a model or a part number."
 MSG_AI_OFF = "The AI step is not set up, so these are keyword results."
@@ -91,6 +90,33 @@ def _items():
 			}
 		)
 	return out
+
+
+def _item(item_code):
+	"""One Item by its code, enabled or not, as an :func:`_items` row in a list; [] when there is none."""
+	row = frappe.db.sql(
+		"select name as item_code, item_name, item_group from `tabItem` where name = %s",
+		(item_code,),
+		as_dict=True,
+	)
+	if not row:
+		return []
+	parts = frappe.db.sql(
+		"""
+		select supplier_part_no from `tabItem Supplier`
+		where parenttype = 'Item' and parent = %s and ifnull(supplier_part_no, '') != ''
+		""",
+		(item_code,),
+	)
+	return [
+		{
+			"item_code": row[0].item_code,
+			"item_name": row[0].item_name or "",
+			"item_group": row[0].item_group or "",
+			"description": "",
+			"part_nos": [p[0] for p in parts],
+		}
+	]
 
 
 def _suppliers():
@@ -188,15 +214,21 @@ def _evidence(item_codes=None, suppliers=None, with_rates=False):
 			row[key] += cint(r.n)
 			_later(row, r.last_date)
 		if with_rates:
-			# Newest first, so the first nonzero rate seen for a pair is the last price paid. 377 of
-			# 592 PO lines on prod were $0 on 2026-10-22, so a zero is no price at all.
+			# The newest nonzero rate per pair, ranked in the database so no pair is cut off however
+			# long the history. 377 of 592 PO lines on prod were $0 on 2026-10-22, so a zero is no
+			# price at all.
 			for r in frappe.db.sql(
 				f"""
-				select p.supplier, c.item_code, c.rate, c.uom, p.{date_field} as dt
-				from `tab{child}` c join `tab{doctype}` p on p.name = c.parent
-				where p.docstatus = 1 and c.rate > 0 and {where("c.item_code", "p.supplier")}
-				order by p.{date_field} desc, p.modified desc
-				limit {RATE_ROWS_MAX}
+				select supplier, item_code, rate, uom, dt from (
+					select p.supplier, c.item_code, c.rate, c.uom, p.{date_field} as dt,
+						row_number() over (
+							partition by p.supplier, c.item_code
+							order by p.{date_field} desc, p.modified desc
+						) as rn
+					from `tab{child}` c join `tab{doctype}` p on p.name = c.parent
+					where p.docstatus = 1 and c.rate > 0 and {where("c.item_code", "p.supplier")}
+				) latest
+				where rn = 1
 				""",
 				values,
 				as_dict=True,
@@ -265,16 +297,6 @@ def _evidence(item_codes=None, suppliers=None, with_rates=False):
 
 
 # --- the AI step -------------------------------------------------------------------
-
-
-def ai_configured():
-	"""Is the Google service account the Gemini client signs in with set up? A boolean."""
-	try:
-		from erpnext_enhancements.google_drive.drive_utils import get_service_account_info
-
-		return bool(get_service_account_info())
-	except Exception:
-		return False
 
 
 def _enforce_rate():
@@ -382,7 +404,9 @@ def run_search(query=None, item_code=None, use_ai=False, limit=None):
 
 	catalog = _items()
 	if item_code:
-		pinned = [i for i in catalog if i["item_code"] == item_code]
+		# Straight from the table: the catalog leaves out disabled Items and templates, and the Item
+		# form's button is just as likely to be pressed on one of those.
+		pinned = [i for i in catalog if i["item_code"] == item_code] or _item(item_code)
 		query = query or item_code
 		terms = rules.query_terms(query)
 		items = [
@@ -512,36 +536,17 @@ def run_supplier_history(supplier):
 			{"codes": tuple({r["item_code"] for r in rows}) or ("",)},
 		)
 	)
-	merged = {}
-	for r in rows:
-		m = merged.setdefault(
-			r["item_code"],
-			dict(
-				r,
-				supplier=supplier,
-				po_lines=0,
-				pr_lines=0,
-				sq_lines=0,
-				last_date=None,
-				last_rate=None,
-				uom=None,
-			),
-		)
-		for k in ("po_lines", "pr_lines", "sq_lines"):
-			m[k] += r[k]
-		for k in ("listed", "default", "price"):
-			m[k] = m[k] or r[k]
-		m["part_no"] = m["part_no"] or r["part_no"]
-		if r["last_date"] and (not m["last_date"] or r["last_date"] > m["last_date"]):
-			m["last_date"] = r["last_date"]
-			if r["last_rate"]:
-				m["last_rate"], m["uom"] = r["last_rate"], r["uom"]
-		elif r["last_rate"] and not m["last_rate"]:
-			m["last_rate"], m["uom"] = r["last_rate"], r["uom"]
-	items = []
-	for m in merged.values():
-		m["item_name"] = names.get(m["item_code"], "")
-		items.append(m)
+	# The ranker folds the aliases' evidence the same way the search does, so a card and this
+	# screen never disagree about a last price.
+	ranked = rules.rank_suppliers(
+		rows,
+		[{"item_code": c, "item_name": n} for c, n in names.items()],
+		{m: supplier_info[m] for m in members},
+		today=getdate(nowdate()),
+		limit=1,
+		items_per_supplier=None,
+	)
+	items = ranked[0]["items"] if ranked else []
 	items.sort(key=lambda r: (r["last_date"] or "", r["po_lines"] + r["pr_lines"]), reverse=True)
 	groups = []
 	for s in [supplier] + [m for m in members if m != supplier]:

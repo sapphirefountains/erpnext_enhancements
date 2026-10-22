@@ -215,6 +215,7 @@ _STUBBED = (
 	"frappe_assistant_core",
 	"frappe_assistant_core.core",
 	"frappe_assistant_core.core.base_tool",
+	"erpnext_enhancements.api.item_suggest",
 	"erpnext_enhancements.api.supplier_search",
 	"erpnext_enhancements.assistant_tools",
 	"erpnext_enhancements.assistant_tools._gate",
@@ -255,7 +256,8 @@ class Base(unittest.TestCase):
 		)
 		STATE["counts"].clear()
 		self._saved = {
-			name: getattr(api, name) for name in ("_items", "_suppliers", "_group_names", "_evidence")
+			name: getattr(api, name)
+			for name in ("_items", "_item", "_suppliers", "_group_names", "_evidence")
 		}
 		api._items = lambda: [dict(i) for i in CATALOG]
 		api._suppliers = lambda: {k: dict(v, groups=list(v["groups"])) for k, v in SUPPLIERS.items()}
@@ -325,6 +327,22 @@ class SearchTest(Base):
 		self.assertEqual(answer["suppliers"][0]["supplier"], "Bright Lamp Works")
 		self.assertEqual(STATE["model_calls"], [])
 
+	def test_pinned_item_outside_the_catalog_is_read_directly(self):
+		# The catalog leaves out disabled Items and templates; the form button still works on them.
+		api._item = lambda code: [
+			{
+				"item_code": code,
+				"item_name": "PUMP, OLD MODEL",
+				"item_group": "",
+				"description": "",
+				"part_nos": [],
+			}
+		]
+		answer = api.run_search(None, item_code="OLD-1")
+		self.assertEqual([i["item_code"] for i in answer["items"]], ["OLD-1"])
+		api._item = lambda code: []
+		self.assertEqual(api.run_search(None, item_code="NOPE")["items"], [])
+
 	def test_search_endpoint_needs_supplier_and_item_read(self):
 		for doctype in ("Supplier", "Item"):
 			STATE["perm"] = {(doctype, "read"): False}
@@ -335,14 +353,15 @@ class SearchTest(Base):
 
 class AiStepTest(Base):
 	def test_expansion_adds_items_and_groups(self):
-		catalog = CATALOG + [
+		catalog = [
+			*CATALOG,
 			{
 				"item_code": "SP-9",
 				"item_name": "PUMP, SUBMERSIBLE, FOUNTAIN, 1/2HP",
 				"item_group": "Products",
 				"description": "",
 				"part_nos": [],
-			}
+			},
 		]
 		api._items = lambda: [dict(i) for i in catalog]
 		answer = api.run_search("something to move water in a small fountain", use_ai=1)

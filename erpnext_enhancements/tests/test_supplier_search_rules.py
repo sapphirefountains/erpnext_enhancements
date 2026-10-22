@@ -121,6 +121,20 @@ class ItemMatchTest(unittest.TestCase):
 		self.assertEqual(_codes(found)[0], "340605")
 		self.assertTrue(found["items"][0]["model"])
 
+	def test_a_plain_word_inside_a_code_is_not_a_model_match(self):
+		# Prod, 2026-10-22: PUMP is inside CHEMPUMP-STENNER-45M1, and as a model match that one
+		# chemical feed pump outranked every real pump and switched the AI step off.
+		catalog = [
+			*CATALOG,
+			_item("CHEMPUMP-STENNER-45M1", "Chemical Feed Pump, Stenner 45M1"),
+			_item("V-9", "VALVE, CHECK", parts=["PUMPHOUSE-1"]),
+		]
+		found = _search("pump", catalog)
+		self.assertFalse(any(r["model"] for r in found["items"]))
+		self.assertEqual(_codes(found)[-1], "V-9")  # a word start in a part number: matched, last
+		self.assertEqual(_codes(found)[0], "340605")
+		self.assertTrue(_search("45M1", catalog)["items"][0]["model"])
+
 	def test_exact_code_outranks_a_code_containing_it(self):
 		catalog = [_item("A1234", "VALVE, BALL"), _item("1234", "VALVE, CHECK")]
 		self.assertEqual(_codes(_search("1234", catalog))[0], "1234")

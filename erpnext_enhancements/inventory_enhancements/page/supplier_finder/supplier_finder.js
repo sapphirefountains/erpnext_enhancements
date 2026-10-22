@@ -108,7 +108,19 @@ class SupplierFinderPage {
 		}
 	}
 
+	state_key(opts) {
+		// ai is 1 from the search box and "1" from the address bar: the same screen either way.
+		const ai = String(opts.ai) === "1" ? "1" : "";
+		return JSON.stringify([opts.q || "", ai, opts.item || "", opts.supplier || ""]);
+	}
+
+	// The screen already showing (a search that failed, say) is run again in place: routing to the
+	// address already in the bar pushes nothing and fires no route change.
 	go(opts) {
+		if (this.showing() && this.state_key(opts) === this.state) {
+			this.show(opts);
+			return;
+		}
 		frappe.set_route(SFN_PAGE, opts);
 	}
 
@@ -124,7 +136,7 @@ class SupplierFinderPage {
 			if (!this.showing()) return;
 			const opts = Object.assign({}, frappe.route_options || {});
 			frappe.route_options = null;
-			const key = JSON.stringify([opts.q || "", opts.ai || "", opts.item || "", opts.supplier || ""]);
+			const key = this.state_key(opts);
 			if (key === this.state) return;
 			this.state = key;
 			this.show(opts);
