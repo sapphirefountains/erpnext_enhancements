@@ -540,6 +540,8 @@ def _master_row(row, payload, titles, settings) -> dict:
 		"suggestions": suggestions,
 		"reviewed_by": row.reviewed_by,
 		"reviewed_on": str(row.reviewed_on) if row.reviewed_on else None,
+		# The Excel export's staleness check reads it (matching_excel.row_version).
+		"modified": str(row.modified) if getattr(row, "modified", None) else None,
 		"unmapped": False,
 	}
 
@@ -575,6 +577,39 @@ def _master_where(entity_types, status, search):
 	return " and ".join(clauses), params
 
 
+def master_mapping_rows(where, params, *, start=None, page_length=None) -> list:
+	"""The mapping rows behind the queue, in the queue's order: one page, or -- with no
+	``page_length`` -- every row at once. The Excel export takes them all in one read, because
+	paging by offset over a filter that rows leave as people decide them would skip rows."""
+	# The clause text is assembled from literals in _master_where; every value is bound.
+	limit = ""
+	if page_length is not None:
+		limit = " limit %(start)s, %(page_length)s"
+		params = dict(params, start=start or 0, page_length=page_length)
+	return frappe.db.sql(
+		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
+		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on,"
+		" modified from `tabQuickBooks Sync Mapping` where "
+		+ where
+		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
+		+ limit,
+		params,
+		as_dict=True,
+	)
+
+
+def build_master_rows(rows) -> list:
+	"""Page rows for mapping rows: the payloads and current titles batched, then a candidate
+	search per row (``_master_row``)."""
+	settings = frappe.get_single("QuickBooks Online Settings")
+	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
+	titles = _record_titles([(row.erpnext_doctype, row.erpnext_name) for row in rows])
+	return [
+		_master_row(row, payloads.get((row.qbo_entity_type, str(row.qbo_id))) or {}, titles, settings)
+		for row in rows
+	]
+
+
 def master_queue(
 	entity_types=None, status=None, search=None, start=0, page_length=DEFAULT_PAGE_LENGTH
 ) -> dict:
@@ -587,30 +622,12 @@ def master_queue(
 		return _unmapped_queue(entity_types, start, page_length)
 
 	where, params = _master_where(entity_types, status, search)
-	# The clause text is assembled from literals in _master_where; every value is bound.
-	rows = frappe.db.sql(
-		"select name, qbo_entity_type, qbo_id, erpnext_doctype, erpnext_name, match_status,"
-		" conflict_status, match_rule, match_confidence, owned_fields, reviewed_by, reviewed_on"
-		" from `tabQuickBooks Sync Mapping` where "
-		+ where
-		+ " order by qbo_entity_type asc, erpnext_name asc, qbo_id asc"
-		+ " limit %(start)s, %(page_length)s",
-		dict(params, start=start, page_length=page_length),
-		as_dict=True,
-	)
+	rows = master_mapping_rows(where, params, start=start, page_length=page_length)
 	total = cint(
 		frappe.db.sql("select count(*) from `tabQuickBooks Sync Mapping` where " + where, params)[0][0]
 	)
-
-	settings = frappe.get_single("QuickBooks Online Settings")
-	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
-	titles = _record_titles([(row.erpnext_doctype, row.erpnext_name) for row in rows])
-	items = [
-		_master_row(row, payloads.get((row.qbo_entity_type, str(row.qbo_id))) or {}, titles, settings)
-		for row in rows
-	]
 	return {
-		"rows": items,
+		"rows": build_master_rows(rows),
 		"total": total,
 		"start": start,
 		"page_length": page_length,
@@ -694,25 +711,8 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 		TRANSACTION_ENTITIES
 	)
 	start, page_length = _page_args(start, page_length)
-	filters = {"qbo_entity_type": ["in", entity_types], "match_status": "Pending Review", "deleted": 0}
-	rows = frappe.get_all(
-		MAPPING_DOCTYPE,
-		filters=filters,
-		fields=[
-			"name",
-			"qbo_entity_type",
-			"qbo_id",
-			"erpnext_doctype",
-			"erpnext_name",
-			"match_rule",
-			"owned_fields",
-			"last_synced_at",
-		],
-		order_by="qbo_entity_type asc, last_synced_at desc, qbo_id asc",
-		limit_start=start,
-		limit_page_length=page_length,
-	)
-	total = frappe.db.count(MAPPING_DOCTYPE, filters)
+	rows = parked_mapping_rows(entity_types, start=start, page_length=page_length)
+	total = frappe.db.count(MAPPING_DOCTYPE, _parked_filters(entity_types))
 	# Raw SQL for the same reason as _master_where: a string aggregate in get_all's fields
 	# is refused by Frappe 16's query engine.
 	per_type = frappe.db.sql(
@@ -722,6 +722,45 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 		{"types": tuple(TRANSACTION_ENTITIES)},
 		as_dict=True,
 	)
+	return {
+		"rows": build_parked_rows(rows),
+		"total": total,
+		"start": start,
+		"page_length": page_length,
+		"counts": {row.qbo_entity_type: cint(row.n) for row in per_type},
+	}
+
+
+def _parked_filters(entity_types) -> dict:
+	return {"qbo_entity_type": ["in", entity_types], "match_status": "Pending Review", "deleted": 0}
+
+
+def parked_mapping_rows(entity_types, *, start=0, page_length=None) -> list:
+	"""The parked transactions' mapping rows in the tab's order: one page, or -- with no
+	``page_length`` -- all of them, which is how the Excel export reads them (see
+	``master_mapping_rows``)."""
+	return frappe.get_all(
+		MAPPING_DOCTYPE,
+		filters=_parked_filters(entity_types),
+		fields=[
+			"name",
+			"qbo_entity_type",
+			"qbo_id",
+			"erpnext_doctype",
+			"erpnext_name",
+			"match_rule",
+			"owned_fields",
+			"last_synced_at",
+			"modified",
+		],
+		order_by="qbo_entity_type asc, last_synced_at desc, qbo_id asc",
+		limit_start=start or 0,
+		limit_page_length=page_length or 0,
+	)
+
+
+def build_parked_rows(rows) -> list:
+	"""Tab rows for parked mapping rows: the newest payloads batched, the draft checked."""
 	payloads = latest_payloads([(row.qbo_entity_type, row.qbo_id) for row in rows])
 	items = []
 	for row in rows:
@@ -742,15 +781,10 @@ def parked_transactions(entity_types=None, start=0, page_length=DEFAULT_PAGE_LEN
 				"issues": parse_review_notes(row.owned_fields)["issues"],
 				"match_rule": row.match_rule,
 				"last_synced_at": str(row.last_synced_at) if row.last_synced_at else None,
+				"modified": str(row.modified) if getattr(row, "modified", None) else None,
 			}
 		)
-	return {
-		"rows": items,
-		"total": total,
-		"start": start,
-		"page_length": page_length,
-		"counts": {row.qbo_entity_type: cint(row.n) for row in per_type},
-	}
+	return items
 
 
 # ---------------------------------------------------------------------------

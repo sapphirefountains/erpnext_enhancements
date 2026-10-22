@@ -3122,6 +3122,16 @@ jobs:
       # because a shortcut without its content block renders as nothing.
       - name: QuickBooks record matching (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_matching.py -q
+      # The Record Matching page's Excel round trip (v1.721.0). Own pytest step, and the REAL
+      # openpyxl at Frappe v16's pin: the dropdowns, hidden key columns and header lookup are
+      # what is under test, and a stub would agree with anything. Guards the import's
+      # preview classification (already done before stale, or a second import of the same
+      # file reports every row stale), that apply re-checks each row and runs only the page's
+      # own Link/Keep/Retry, and that importing the same file twice changes nothing.
+      - name: QuickBooks record matching Excel round trip (bench-free pytest suite)
+        run: |
+          python -m pip install "openpyxl~=3.1.5"
+          python -m pytest erpnext_enhancements/tests/test_quickbooks_matching_excel.py -q
       - name: Stripe Payments (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_stripe_payments.py -q
       # Plaid bank balances over the NATIVE ERPNext link. Own step, own frappe stub.
