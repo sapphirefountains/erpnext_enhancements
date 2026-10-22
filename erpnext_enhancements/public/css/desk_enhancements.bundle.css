@@ -1620,3 +1620,32 @@ body.desktop-page .desktop-icon .icon-title,
     font-size: var(--text-sm);
     margin: var(--margin-xs) 0 0;
 }
+
+/* --------------------------------------------------------------------------
+   Sidebar memory (v1.717.0, global_enhancements/sidebar_memory.js)
+
+   `html.ee-page-sidebar-hidden` is set from localStorage before the desk draws its first page, and
+   stays until the person shows the sidebar again, so every form and every Training page follows it.
+   It hides the RECORD sidebar (the form's right-hand column) and the Training rail (the left column
+   of the Training pages). The left Desk sidebar is not here: frappe remembers that one itself.
+
+   !important because frappe's own code writes `display` inline on the sidebar (a new record's
+   `page.sidebar.hide()`, a later `.show()`), and an inline style outranks any selector.
+
+   Only from 992px up. Below that the form's sidebar is frappe's responsive layout and the Training
+   rail is a stacked "Training menu" disclosure; hiding either would strand a phone with no way back,
+   and the toggle button is out of sight there for the same reason. */
+@media (min-width: 992px) {
+    html.ee-page-sidebar-hidden .layout-side-section.right,
+    html.ee-page-sidebar-hidden .tn-host .layout-side-section {
+        display: none !important;
+    }
+}
+@media (max-width: 991.98px) {
+    .ee-page-sidebar-toggle {
+        display: none !important;
+    }
+}
+.ee-page-sidebar-toggle.active {
+    color: var(--text-color);
+}
