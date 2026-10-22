@@ -662,6 +662,22 @@ test("Project Planner: Back and Forward step between the Crew tab's two screens 
 	check("Capacity again is a new entry", [pp.view, desk.entries.length], ["capacity", 4]);
 });
 
+test("Project Planner: a link's filters survive the landing on a device whose tab is Capacity", () => {
+	for (const remembered of ["capacity", "heatmap"]) {
+		const desk = makeDesk({ start: "/desk/project-planner?group=Field" });
+		const pp = projectPlanner(desk);
+		// A bare address that names a filter (the Project form's link, a shared link): the router has copied the
+		// query into route_options, and the landing may only add to it.
+		desk.route = ["project-planner"];
+		desk.frappe.route_options = { group: "Field" };
+		pp.p8_is_phone = () => false;
+		pp.p8_tab = () => remembered;
+		check(`${remembered}: the landing took the address over`, pp.p8_landing(), true);
+		check(`${remembered}: Capacity, on the Crew path, with the link's filter and the flag`, desk.here(), `/desk/project-planner/crew/${desk.today}?group=Field&capacity=1`);
+		check(`${remembered}: replaced, not pushed`, desk.entries.length, 1);
+	}
+});
+
 test("Project Planner: ?capacity= on the Crew address says Capacity; anything else is the Board", () => {
 	const cases = [
 		["1", "capacity"],

@@ -1882,22 +1882,51 @@ test("Project Planner: the crew board counts a task in days, and joins a task's 
 	check("the hours stay in the tooltip", /title="[^"]*8h[^"]*"/.test(html("2026-10-13")), true);
 });
 
-test("Project Planner: a task running past the edge of the week is counted in weekdays from its own dates", () => {
-	const { pp, week, T1 } = crewPage();
-	// Friday of the week before to Wednesday: four weekdays, and Monday is the second.
+test("Project Planner: Day n of N is the task's working days, the same count as the calendar card's days", () => {
+	const { pp, T1 } = crewPage();
+	// Friday of the week before to Wednesday: four working days, and Monday is the second.
 	T1.start = "2026-10-09";
 	T1.end = "2026-10-14";
-	const set = new Set(["2026-10-12", "2026-10-13", "2026-10-14"]);
-	check("Monday: day 2 of 4 (Friday, Monday, Tuesday, Wednesday)", pp.crew_day_count(T1, "2026-10-12", set, week), { n: 2, total: 4 });
-	check("Tuesday: day 3 of 4", pp.crew_day_count(T1, "2026-10-13", set, week), { n: 3, total: 4 });
-	// A task with no end is one day.
+	check("Monday: day 2 of 4 (Friday, Monday, Tuesday, Wednesday)", pp.crew_day_count(T1, "2026-10-12"), { n: 2, total: 4 });
+	check("Tuesday: day 3 of 4", pp.crew_day_count(T1, "2026-10-13"), { n: 3, total: 4 });
+	check("the card calls the same task 4 days", pp.duration_text(T1), "4 days");
+	// A person who works Monday to Wednesday is booked on three chips of a five-day task: the label is the task's.
 	T1.start = "2026-10-12";
+	T1.end = "2026-10-16";
+	check("a chip of a five-day task says of 5, whatever days this person works", ["2026-10-12", "2026-10-14"].map((ymd) => pp.crew_day_count(T1, ymd)), [{ n: 1, total: 5 }, { n: 3, total: 5 }]);
+	check("and the card says 5 days", pp.duration_text(T1), "5 days");
+	// A task with no end is one day.
 	T1.end = null;
-	check("no end: a day", pp.crew_day_count(T1, "2026-10-12", new Set(["2026-10-12"]), week), { n: 1, total: 1 });
-	// A day off inside the task is not a day of work: counted from the bookings when the whole task is on screen.
-	T1.end = "2026-10-15";
-	const gap = new Set(["2026-10-12", "2026-10-14", "2026-10-15"]);
-	check("counted from the person's bookings when the task is all on screen", pp.crew_day_count(T1, "2026-10-14", gap, week), { n: 2, total: 3 });
+	check("no end: a day", pp.crew_day_count(T1, "2026-10-12"), { n: 1, total: 1 });
+	// A booking on a weekend counts as the Friday before it, never past the end.
+	T1.start = "2026-10-12";
+	T1.end = "2026-10-16";
+	check("never past the task's length", pp.crew_day_count(T1, "2026-10-17"), { n: 5, total: 5 });
+});
+
+test("Project Planner: Capacity's hint is set on every load, and the selection bar leaves with the screen", async () => {
+	const env = capacityPage();
+	env.ctx.moment = richMoment;
+	const { pp, route, $ } = env;
+	pp.view = "capacity";
+	pp.range = () => ({ start: { format: () => "2026-10-11" }, end: { format: () => "2026-12-05" } });
+	pp.$hint = $("<div></div>");
+	pp.$hint.text("Drag a task card to another day to move it.");
+	const loading = pp.load_capacity();
+	check("the Board's or Gantt's drag help is gone the moment Capacity starts loading", pp.$hint.nodes[0].textContent.includes("Each square is one person's week"), true);
+	await loading;
+	// The bar stays on a calendar screen and goes on Capacity, by the page's own view (handle_route has run).
+	const hidden = [];
+	pp.$p6b_bar = { hide: () => hidden.push(1) };
+	pp.p6b = { resize: null };
+	pp.p6b_close_results = () => null;
+	route.now = ["project-planner", "crew", "2026-10-12"];
+	pp.view = "crew";
+	pp.p6b_route_changed();
+	check("on the Board the bar is left alone", hidden.length, 0);
+	pp.view = "capacity";
+	pp.p6b_route_changed();
+	check("on Capacity (?capacity= already taken off route_options) it is hidden", hidden.length, 1);
 });
 
 test("Project Planner: the whole crew board draws a bar of days along the person's row", () => {

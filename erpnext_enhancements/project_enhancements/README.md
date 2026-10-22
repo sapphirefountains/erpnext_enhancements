@@ -1128,7 +1128,7 @@ so it had grown into one long flat row. v1.687.0 made it **one bar** with four m
 approved 2026-10-21) folds those four into two, and gives both planners the same structure:
 
 ```
-‹ Today ›  title   [Month] Week Crew   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
+‹ Today ›  title   [Lookahead] Gantt Crew Calendar   search  Project  PM  Group   [alert chips]  + Add ▾  More ▾  ↶  ?  ↻
 ```
 
 - **The view buttons are a tablist** (`planner_kit.toolbar.tabs`): `role="tab"`, `aria-selected`, a
@@ -1195,8 +1195,11 @@ in a header of their own, each its own history entry:
   *Show hours* (a browser preference, off) adds the hours or the time slot beside the days. A task with no
   hours still books a full day (the engine's rule, `crew_availability.full_day_hours`), so the day cell
   says *Full*, *3h free* or *Off* as before. The tray (*Not scheduled*, *Needs crew*) sits beside the board
-  on a laptop and above it on a phone. Day counts come from the person's bookings when the whole task is on
-  screen, and from weekdays between the task's own dates when it runs past the edge of the range.
+  on a laptop and above it on a phone. *Day n of N* counts the **task's** working days from its own dates,
+  the same count as the calendar card's *5 days* (`duration_text`), not how many of those days this person is
+  booked: someone on a Monday to Wednesday pattern has chips on three days of a task both views call five.
+  **It is not yet one true bar:** a multi-day task is still one chip per day, drawn joined, because the chip
+  is what is dragged, resized and tapped; a single spanning bar is a possible follow-up.
 - **Capacity** (`/project-planner/crew/<date>?capacity=1`): it replaces the Heatmap and Utilization views.
   The eight-week heatmap is on top and the Crew Utilization report's rows are under it for the same eight
   weeks (whole weeks, so the month view's clipped first and last weeks are gone). ‹ › step four weeks.

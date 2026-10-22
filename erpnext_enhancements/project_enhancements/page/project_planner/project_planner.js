@@ -696,8 +696,8 @@ class ProjectPlanner {
 		const $seg = $('<span class="pp-seg"></span>').appendTo($bar);
 		this.$seg = $seg;
 		this.$view_buttons = {};
-		// The tabs (P5: Lookahead first, the week and month views under Calendar). Heatmap and
-		// Utilization stay tabs until the Crew tab takes them in as Capacity.
+		// The tabs (P5: Lookahead first, the week and month views under Calendar; P6's Gantt is added with its
+		// own hook). The Heatmap and Utilization are not tabs: they are the Crew tab's Capacity screen (P7).
 		[
 			[PPL.view, __("Lookahead")],
 			[PPG.view, __("Gantt")], // P6
@@ -1362,32 +1362,20 @@ class ProjectPlanner {
 		return {
 			prev: at > 0 && set.has(days[at - 1]),
 			next: at >= 0 && at < days.length - 1 && set.has(days[at + 1]),
-			count: this.crew_day_count(card, ymd, set, days),
+			count: this.crew_day_count(card, ymd),
 		};
 	}
 
-	// Day n of N for one chip. When the whole task is inside the days on screen it is counted from this
-	// person's bookings (so a day off inside it is not a day of work); a task that runs past the edge of
-	// the range is counted in weekdays from the task's own dates, which is the same number for a plain
-	// Monday-to-Friday crew.
-	crew_day_count(card, ymd, set, days) {
-		const start = card.start;
-		const end = card.end && card.end >= start ? card.end : start;
-		if (!start) return { n: 1, total: 1 };
-		if (set.size && start >= days[0] && end <= days[days.length - 1]) {
-			const list = Array.from(set).sort();
-			return { n: Math.max(1, list.indexOf(ymd) + 1), total: list.length };
-		}
-		const utc = (ymd_text) => Date.UTC(Number(ymd_text.slice(0, 4)), Number(ymd_text.slice(5, 7)) - 1, Number(ymd_text.slice(8, 10)));
-		const weekdays = (a, b) => {
-			let count = 0;
-			for (let t = utc(a); t <= utc(b); t += 86400000) {
-				const dow = new Date(t).getUTCDay();
-				if (dow !== 0 && dow !== 6) count += 1;
-			}
-			return count;
-		};
-		return { n: Math.max(1, weekdays(start, ymd)), total: Math.max(1, weekdays(start, end)) };
+	// Day n of N for one chip: the task's working days from its own dates, the same count as the calendar
+	// card's "5 days" (duration_text), so a chip reading "Day 2 of 5" belongs to a task the card calls 5 days.
+	// It is the task's length, not how many of those days this person is booked: someone on a Monday to
+	// Wednesday pattern sees chips on three of the five.
+	crew_day_count(card, ymd) {
+		if (!card.start) return { n: 1, total: 1 };
+		const end = card.end && card.end > card.start ? card.end : card.start;
+		const before = PP6B_PURE.ymd_add(card.start, -1);
+		const total = Math.max(PP6E_PURE.working_between(before, end), 1);
+		return { n: Math.min(Math.max(PP6E_PURE.working_between(before, ymd), 1), total), total };
 	}
 
 	crew_days_text(count) {
@@ -2904,6 +2892,8 @@ class ProjectPlanner {
 		this.take_title_focus();
 		this.ppl_sync_tabs(); // P5: the tab on screen, and the Calendar tab's Week/Month switch
 		this.capacity_shell();
+		// Set on the load, not only when an answer is drawn: the Board's or the Gantt's drag help must not stay up.
+		this.capacity_hint();
 		this.$body.addClass("pp-loading");
 		return Promise.all([this.load_heatmap(token), this.load_utilization(token)]).then(() => {
 			if (token === this.request) this.$body.removeClass("pp-loading");
@@ -2918,13 +2908,17 @@ class ProjectPlanner {
 		this.$cap_util = $('<div class="pp-cap-util"></div>').appendTo(this.$grid_wrap);
 	}
 
-	render_capacity() {
-		this.capacity_shell();
+	capacity_hint() {
 		this.$hint.text(
 			__(
 				"Each square is one person's week: firm booked hours against their hours. Hatching is pencilled (tentative) work. Driving here uses saved and estimated times only. Click a week to open it. Under the squares, the Crew Utilization report's figures for the same weeks: what was booked, and what each person clocked at the kiosk on customer jobs."
 			)
 		);
+	}
+
+	render_capacity() {
+		this.capacity_shell();
+		this.capacity_hint();
 		this.render_heatmap();
 		this.render_utilization();
 	}
@@ -4210,7 +4204,10 @@ const PP8_METHODS = {
 		if (tab === PP8.view) this.p8_landed = true;
 		// P5: the tab's own address (/calendar/week/<date>, /lookahead/<date>); Capacity (P7) is the Crew tab's
 		// second screen, not a path of its own.
-		if (tab === PP.capacity_view || PP.capacity_aliases[tab]) frappe.set_route(PP.route, "crew", frappe.datetime.get_today(), { capacity: "1" });
+		// The link's filters (route_options) ride along: an options object passed to set_route replaces them.
+		if (tab === PP.capacity_view || PP.capacity_aliases[tab]) {
+			frappe.set_route(PP.route, "crew", frappe.datetime.get_today(), Object.assign({}, frappe.route_options || {}, { capacity: "1" }));
+		}
 		else frappe.set_route(PP.route, ...this.ppl_route_parts(tab, frappe.datetime.get_today()));
 		return true;
 	},
@@ -6078,8 +6075,9 @@ const PP6B_METHODS = {
 
 	p6b_route_changed() {
 		const route = frappe.get_route() || [];
-		// Capacity is the Crew address with ?capacity=: no cards either.
-		const capacity = route[1] === "crew" && !!this.capacity_param();
+		// Capacity has no cards either. By the time the router says change, handle_route has already set the
+		// view (and taken ?capacity= off route_options), so the page's own view is what tells.
+		const capacity = this.view === PP.capacity_view;
 		const calendar =
 			route[0] === PP.route && (!route[1] || PP.views.includes(route[1]) || route[1] === PPL.calendar) && !capacity;
 		if (!calendar && this.$p6b_bar) this.$p6b_bar.hide();

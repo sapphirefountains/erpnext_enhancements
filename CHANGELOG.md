@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`swap_crew`), resize and tap-to-move is unchanged. **Show hours** (a header checkbox, kept in this
     browser, off) puts the hours or time slot back beside the days; the tooltip always has them. A task
     with no hours still books a full day in the engine (only 96 of 1,764 open tasks have hours), so the
-    day cell still says *Full*, *3h free* or *Off*. Day counts come from the person's bookings when the
-    whole task is on screen, and from weekdays between the task's own dates when it runs past the edge
-    of the week.
+    day cell still says *Full*, *3h free* or *Off*. *Day n of N* counts the **task's** working days from
+    its own dates, the same count as the calendar card's "5 days" (`duration_text`, P11), not how many of
+    those days a person is booked. **It is not yet one true bar:** a multi-day task is still drawn as one
+    chip per day, joined visually, because the chip is what is dragged, resized and tapped; a single
+    spanning bar is a possible follow-up for Nik.
   - **Side tray.** *Not scheduled* and *Needs crew* sit beside the board on a laptop and above it on a
     phone (`.pp-main-crew`; the trays and the grid now share a `.pp-main` box).
   - **Capacity** is the Crew tab's second screen, switched from a *Board | Capacity* header, at
@@ -43,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     them.
 
 ### Changed
-- The view switcher has three tabs, Month, Week and Crew; the Heatmap and Utilization tabs and their
-  Utilization-only gate on a tab are gone (the gate now decides whether Capacity has its table). Capacity
+- The view switcher's tabs are Lookahead, Gantt, Crew and Calendar; the Heatmap and Utilization tabs and
+  their Utilization-only gate on a tab are gone (the gate now decides whether Capacity has its table). Capacity
   has Heatmap's toolbar behavior: Draft mode, saved views and Print stay, there is no Undo.
 - `planner_views_prefs.SCHEMA["project"]["view"]` accepts `capacity` beside the legacy `heatmap`. The set of
   keys is unchanged.
@@ -55,7 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/test_planner_toolbar.js` runs the Crew board's days (chips, joins, day counts, Show hours), the
   header as routes, Capacity's two sections, the Utilization gate, and the saved-view redirects;
   `scripts/test_planner_url_filters.js` runs Capacity's address, the old addresses' redirects and
-  `?capacity=` against a model of the v16.50 router.
+  `?capacity=` against a model of the v16.50 router, a filter link landing on a device whose remembered
+  tab is Capacity, and Back and Forward between Crew, Capacity and the Gantt.
+
+### Fixed
+- A link that names a filter (`/project-planner?group=Field`) opened on a device whose remembered tab is
+  Capacity (or the old Heatmap) lost its filters: the landing replaced `route_options`. It carries them now.
+- Capacity set its hint only when an answer was drawn, so the Board's or Gantt's drag help stayed under the
+  heatmap while it loaded. It is set on every load.
+- The selection bar could stay up on Capacity: `p6b_route_changed` read `?capacity=` after `handle_route` had
+  already taken it off `route_options`. It reads the page's own view.
 
 ## [1.712.0] - 2026-10-21
 
