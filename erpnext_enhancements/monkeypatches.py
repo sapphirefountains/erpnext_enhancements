@@ -142,10 +142,23 @@ def _patch_templates_cannot_read_kb_drafts():
     template_guard.apply_patches()
 
 
+def _patch_fac_list_documents_count():
+    """The AI connector's ``list_documents`` counts in a form Frappe 16 accepts (v1.728.0).
+
+    FAC 3.0.0 counts with ``fields=["count(name) as count"]``, which Frappe 16 refuses, so every
+    call wrote an Error Log row and returned ``total_count: None``. Inert unless FAC's module is
+    exactly 3.0.0's; fixed upstream in FAC 3.1.0. See ``ai_governance/fac_list_documents_count.py``.
+    """
+    from erpnext_enhancements.ai_governance import fac_list_documents_count
+
+    fac_list_documents_count.apply()
+
+
 _PATCHES = (
     _patch_get_modules_from_app_none_safe,
     _patch_private_files_are_never_served_inline,
     _patch_templates_cannot_read_kb_drafts,
+    _patch_fac_list_documents_count,
 )
 
 
