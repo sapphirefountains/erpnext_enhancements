@@ -629,6 +629,35 @@ rule each, 83 on `Inventory Room - SF`, 33 on a bin).
   required by each page apart from its own files and optional. A save is never a history entry. Tests:
   `tests/test_reorder_levels.py`, `scripts/test_reorder_levels.mjs`.
 
+### Adding stock to an item with no cost: "What does one cost?" (v1.727.0)
+
+ERPNext will not post stock for an item it has no cost for (Material Receipt: "Valuation Rate Missing";
+Stock Reconciliation row: "Valuation Rate required"). The two screens that add stock outside a purchase
+order, `/stock-scan`'s *Add without a purchase order* (`stock_scan.add`) and the Bin Manager's *Change
+quantity* up from an empty bin (`bin_assignments.set_count`), used to end in "ask a Stock Manager to set its
+Valuation Rate". They now take an optional `rate` and, with no cost on record and none given, answer
+`{needs_valuation_rate: true, item_code, item_name, uom, suggestion, source, max_rate}` and post nothing; the
+page asks, and sends the same save with `rate` (`stock_scan._receipt_cost`).
+
+* **Only where ERPNext would refuse.** A cost on record (a rate at the bin, the company average, the last
+  purchase rate, the Valuation Rate) is used and never asked for; a `rate` sent for such an item is ignored.
+* **The suggestion** (`_suggested_unit_cost`): the latest submitted Purchase Receipt / Invoice / Order line,
+  per stock unit, then the default buying price list (valid today, converted to the stock unit); its source is
+  named. Only from sources the caller may read, and never a document they cannot open. Never `standard_rate`
+  (a selling price).
+* **The price**: positive, at most 100,000 per stock unit (`stock_scan_rules.MAX_UNIT_COST`, Nik 2026-10-22)
+  and quantity times price at most 25,000 per add or count (`MAX_ADD_VALUE`; above it the stock is received on
+  its purchase order or posted by a stock manager in the Desk), for this one posting. The Item and the price lists are not written; "Allow Zero Valuation Rate" is never
+  set. Written to the Stock Entry's remarks and the log row's `rate`; an add without a purchase order stays
+  flagged for review.
+* **Who**: anyone who can post the document (Stock Entry create + submit; Stock Reconciliation for a count),
+  checked before the question. No `ignore_permissions`.
+* **The Inventory Scanner Audit** never meets this: it builds a *draft* Stock Reconciliation for a stock
+  manager to review and submit, and posts nothing.
+* Client: `public/js/stock_scan/logic.js` (`isCostPrompt`, `unitCostProblem`, `costPromptText`), shared by the
+  Bin Manager (`public/js/bin_manager/logic.js` re-exports them), `app.js` `askUnitCost`, and the Bin Manager's
+  `cost_dialog`.
+
 ## Item naming
 
 `item_naming_rules.py` implements the *ERPNext Item Naming Schema* SOP v1.0

@@ -88,6 +88,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the guard leaves FAC's module untouched on a hash mismatch, without FAC, and when another `frappe` is
       present, logs at the intended levels and never raises.
 
+## [1.727.0] - 2026-10-22
+
+### Added
+- **Adding stock to an item with no cost now asks "What does one cost?" instead of turning the person away**
+  (TASK-2026-02914, Nik: "fix please"). ERPNext will not post stock for an item it has no cost for (a Material
+  Receipt is refused with "Valuation Rate Missing", a Stock Reconciliation row with "Valuation Rate required"),
+  and `/stock-scan`'s *Add without a purchase order* and the Bin Manager's *Change quantity* up from an empty bin
+  met that with a sentence, "ask a Stock Manager to set its Valuation Rate". The task named
+  `api/inventory_scanner.py` and `www/stock-scan.html`; neither is where this happens (the Inventory Scanner
+  Audit posts nothing, it builds a *draft* reconciliation for a stock manager, and the page's code is
+  `public/js/stock_scan/`), and the refusal was never a 500: `_receipt_rate` finds a cost or the save was
+  refused with a sentence, before any document.
+  - **The prompt.** `stock_scan.add` and `bin_assignments.set_count` take an optional `rate`. With no cost on
+    record and none given they answer, not with a save, with `{needs_valuation_rate: true, item_code,
+    item_name, uom, suggestion, source, max_rate}`, and post nothing (no voucher, no log row). `/stock-scan`
+    opens a sheet and the Bin Manager a dialog: the item, "enter what ONE <unit> costs, not the total", a box
+    pre-filled with the suggestion and where it came from, Enter to submit, the button off while the save is
+    out, Cancel and Back leave nothing posted. The answer sends the same save with `rate`.
+  - **Only where ERPNext would refuse.** An item with a cost on record (a rate at that bin, the company's
+    average, its last purchase rate or Valuation Rate) is never asked, and a `rate` sent for it is ignored: a
+    screen cannot restate what an item with a history costs.
+  - **The suggestion**, in this order, with its source named: the item's latest submitted Purchase Receipt,
+    Purchase Invoice or Purchase Order line (per stock unit, in the company's currency), then the default
+    buying price list's Item Price (valid today, and converted to the stock unit through the item's UOM
+    conversion rather than skipped when it is in another unit). The Item's Valuation Rate is what
+    `_receipt_rate` already tried, and `standard_rate` is a *selling* rate that would overstate a cost, so it is
+    not offered. These are raw reads, so each source is used only when the person may read its doctype (a
+    Stock User has no Purchase Invoice and no Item Price read here) and the document it names is one they can
+    open; a rate and a document number they could not see are never shown.
+  - **What the price may be.** Positive and at most **100,000 per unit** (Nik's cap; the dearest purchase unit
+    cost on file is about 7,015): zero, negative, `nan`, `inf`, text and "2,5" are refused in words, on both
+    sides, and a refused price is not answered with the prompt again. **And a total cap: quantity times the
+    typed cost may be at most 25,000** (`MAX_ADD_VALUE`; independent review of #1343: with the quantity and the
+    unit cost each allowed 100,000, one tap could post 1e10). Above it the sentence says to receive it on its
+    purchase order or ask a Stock Manager to post it in the Desk. A refusal, not a "yes, post it": 25,000 is
+    far above anything unpriced the shop adds, and a stock manager can post the rare larger one. It limits what
+    a person can *say* an unpriced item is worth; an item with a cost on record is not held to it. It is for this one posting: the Item and
+    the price lists are not written, "Allow Zero Valuation Rate" is never set, and the voucher is posted as the
+    user (no `ignore_permissions`).
+  - **Who.** Anyone who can post the document, which is what ERPNext allows: a Stock Entry for *Add without a
+    purchase order*, a Stock Reconciliation (Stock Manager) for a count. The permission is checked before the
+    question, so a person who could not post it is never asked for a price. The cost is written to the Stock
+    Entry's remarks and the log row's `rate`, and an add without a purchase order stays flagged for a stock
+    manager's review.
+  - **Idempotent.** The question creates nothing, so its reference is free for the answer, and the sheet
+    keeps **one reference for its whole life** (the Bin Manager's dialog already did): a changed price after a
+    reply that never came is the same reference, and the server answers a seen reference with the first save,
+    so a save that did reach it cannot post a second time at the new price.
+  - **The words are true.** An add without a purchase order says a stock manager reviews it (it is flagged);
+    a count does not say so, because counts are not flagged for review.
+  - **Bin Manager.** A blank cost box comes back from Frappe's Float as `null`, which used to skip the check,
+    send the count without a cost, and reopen the question with no message; it now says "Enter the unit cost
+    per <unit>." A server that asks again after a price was sent is said so in the dialog rather than reopened.
+  - Known and left alone: a handful of bins hold stock at a zero rate, and a recount of one still meets
+    ERPNext's own path; that is a different problem from an item with no cost at all.
+  - Tests: `tests/test_unit_cost_prompt.py` (the server on the real `stock_scan.py` and `bin_assignments.py`),
+    the prompt on the real `app.js` in `scripts/test_stock_scan_client.mjs` and on the real Bin Manager page in
+    `scripts/test_bin_manager.mjs`; one CI step.
+
 ## [1.726.0] - 2026-10-22
 
 ### Added
